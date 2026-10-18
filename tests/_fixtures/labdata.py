@@ -274,13 +274,13 @@ def make_console_host(ne: str, **kwargs: Any) -> UnixHost:
 
 
 def json_lab_sources(
-    sut_dir: Path, paths: list[Path], *, name: str = "fake"
+    root: Path, paths: list[Path], *, name: str = "fake"
 ) -> list[PendingLabSource]:
     """The ``[[lab.sources]]`` list a Repo STAND-IN must carry.
 
     Repo stand-ins (``SimpleNamespace``/``MagicMock``) that only set the old
-    ``labs`` list model a ``Repo`` that no longer exists: ``build_lab_sources``
-    and the completion cache read :attr:`~otto.config.repo.Repo.lab_sources`,
+    ``labs`` list model a ``Project`` that no longer exists: ``build_lab_sources``
+    and the completion cache read :attr:`~otto.config.project.Project.lab_sources`,
     so such a double contributes no host source at all and silently completes
     nothing. One home for the shape, so the doubles cannot drift from what
     :func:`~otto.labs.sources.compile_lab_sources` actually produces for a repo
@@ -291,7 +291,7 @@ def json_lab_sources(
             backend="json",
             label=f"{name}/json#1",
             raw=FrozenMap.freeze_json({"paths": [str(p) for p in paths]}),
-            origin=str(sut_dir / ".otto" / "settings.toml"),
-            repo_dir=sut_dir,
+            origin=str(root / ".otto" / "settings.toml"),
+            project_root=root,
         )
     ]

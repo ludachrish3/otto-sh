@@ -165,12 +165,12 @@ def unix_link_id() -> str:
     return declared_link_id("test1", "test2")
 
 
-def tunnel_target(sut_dir) -> ChaosTarget:
+def tunnel_target(root) -> ChaosTarget:
     """ChaosTarget for CLI-driven tunnel commands against `cli_sut_dir`'s isolated SUT.
 
     Hoisted from two former per-module copies (``test_tunnel_link_chaos.py``,
     ``test_reboot_chaos.py`` — verified byte-identical before the hoist).
-    ``spawn_otto`` only ever reads ``target.sut_dir``/``target.lab`` (see
+    ``spawn_otto`` only ever reads ``target.root``/``target.lab`` (see
     ``tests/integration/chaos/_driver.py::_otto_env``) — the ssh_* fields
     exist to feed the asyncssh oracle in ``tests.integration.chaos._target``,
     unused here since tunnel-process reconciliation goes through
@@ -180,7 +180,7 @@ def tunnel_target(sut_dir) -> ChaosTarget:
     test1 = host_data("test1")
     cred = test1["creds"][0]
     return ChaosTarget(
-        sut_dir=sut_dir,
+        root=root,
         lab="unix",
         host_id="test1",
         ssh_host=test1["ip"],
@@ -321,7 +321,7 @@ def busybox_target() -> ChaosTarget:
     hop = host_data(BUSYBOX_HOP_ELEMENT)
     cred = hop["creds"][0]
     return ChaosTarget(
-        sut_dir=REPO_E2E,
+        root=REPO_E2E,
         lab="busybox",
         host_id=make_host_id(
             element_for(BUSYBOX_CHAOS_ELEMENT).name, guest.get("board"), guest.get("slot")

@@ -69,7 +69,7 @@ dependencies = [
 ]
 ```
 
-`name` and `version` are required by the file format but otherwise unused — your repo
+`name` and `version` are required by the file format but otherwise unused — your project
 does not become a Python package, and no build configuration is needed: uv treats a
 `pyproject.toml` without a build backend as a *virtual* project and installs only its
 dependencies.
@@ -87,7 +87,7 @@ call `otto` directly.
 ### With pip and venv
 
 pip cannot install a project's dependencies from `pyproject.toml` without turning the
-repo into a buildable Python package, which a C/C++ repo should not be. The pip
+project into a buildable Python package, which a C/C++ project should not be. The pip
 equivalent is a `requirements.txt` (the same shape as a `conanfile.txt`):
 
 ```text
@@ -123,51 +123,51 @@ the current mechanics.
 
 ## Multi-project workspaces
 
-Everything above sets up **one** repo. When several repos are under test at
-once (`OTTO_SUT_DIRS` naming more than one), a second question appears: which
+Everything above sets up **one** project. When several projects are under test at
+once (`OTTOPATH` naming more than one), a second question appears: which
 environment do they all run in?
 
-Otto is a single process on a single interpreter. Every active repo's
-instruction modules and test code import into *that* interpreter, so a per-repo
+Otto is a single process on a single interpreter. Every active project's
+instruction modules and test code import into *that* interpreter, so a per-project
 virtualenv never participates at runtime — there is no arrangement in which
-each repo brings its own. Three environments exist; only the middle one is
+each project brings its own. Three environments exist; only the middle one is
 otto's business:
 
-1. **A repo's own venv.** For single-repo development. Each repo manages it
+1. **A project's own venv.** For single-project development. Each project manages it
    with its own tools from its own `pyproject.toml`. otto does not touch it.
 2. **The orchestration venv.** Where multi-project runs happen: one per user
    per workspace, and necessarily a **superset** — it has to satisfy the
-   imports of every active repo at once.
-3. **Anything else otto happens to run from.** Legal for single-repo work,
-   discouraged once several repos are active, because nothing guarantees it
+   imports of every active project at once.
+3. **Anything else otto happens to run from.** Legal for single-project work,
+   discouraged once several projects are active, because nothing guarantees it
    holds all of their requirements.
 
 {doc}`cli/env/index` builds and maintains the second:
 
 ```console
-$ export OTTO_SUT_DIRS=~/work/repo-a:~/work/repo-b
+$ export OTTOPATH=~/work/project-a:~/work/project-b
 $ otto env create
-created ~/.otto/134b91c0-repo-a-repo-b/env
-  installed (editable): repo-b
-  skipped, no pyproject.toml: repo-a
+created ~/.otto/134b91c0-project-a-project-b/env
+  installed (editable): project-b
+  skipped, no pyproject.toml: project-a
   backend: uv
 
 Activate it with:
-  source ~/.otto/134b91c0-repo-a-repo-b/env/bin/activate
+  source ~/.otto/134b91c0-project-a-project-b/env/bin/activate
 ```
 
-Each repo that has a `pyproject.toml` is installed **editable**, so your
-checkouts stay live; repos without one are skipped and said so, since their
+Each project that has a `pyproject.toml` is installed **editable**, so your
+checkouts stay live; projects without one are skipped and said so, since their
 `libs` reach `sys.path` at bootstrap anyway. otto installs itself too, matching
 how your otto is installed — an editable checkout stays that checkout.
 
 ### The uv-workspace alternative
 
-If your repos are already members of a
+If your projects are already members of a
 [uv workspace](https://docs.astral.sh/uv/concepts/projects/workspaces/), you
 have the same property by another route: one lockfile across the members, one
 environment, resolved together. That needs no otto involvement at all, and it
-is the better answer when you control all the repos and can make them share a
+is the better answer when you control all the projects and can make them share a
 lockfile.
 
 `otto env` exists for the common case where they are independent checkouts —
@@ -297,7 +297,7 @@ same directory.
 ```
 
 **uv-flavored variant.** uv has no `pip download` equivalent, so the lockfile-faithful
-route goes through an export. From a project repo with the recommended
+route goes through an export. From a project with the recommended
 `pyproject.toml` + `uv.lock`:
 
 ```bash

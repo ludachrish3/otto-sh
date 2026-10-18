@@ -183,10 +183,10 @@ describe("tierRows: hideAsserted (Task 11)", () => {
 
 describe("withHideAssertedSuffix (Task 11)", () => {
   it("appends the suffix while active", () => {
-    expect(withHideAssertedSuffix("whole repo", true)).toBe("whole repo · asserted hidden");
+    expect(withHideAssertedSuffix("whole project", true)).toBe("whole project · asserted hidden");
   });
 
   it("is a no-op when inactive — byte-identical to the bare scope string", () => {
-    expect(withHideAssertedSuffix("whole repo", false)).toBe("whole repo");
+    expect(withHideAssertedSuffix("whole project", false)).toBe("whole project");
   });
 });

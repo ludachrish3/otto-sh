@@ -16,8 +16,9 @@ link to the contract when you outgrow them.
 
 ## What you write first
 
-A project is a directory with `.otto/settings.toml`. The example's identity
-and where its lab data lives:
+A [project root](../../overview.md#projects-project-roots-and-ottopath)
+is the directory holding `.otto/settings.toml`. The example's identity and
+where its lab data lives:
 
 ```{literalinclude} ../../examples/getting-started/.otto/settings.toml
 :language: toml

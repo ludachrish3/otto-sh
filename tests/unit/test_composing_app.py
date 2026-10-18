@@ -57,7 +57,7 @@ def _fresh(tmp_path: Path, source: str) -> "list[object]":
     """Run *source* in a new interpreter over ``tests/repo1``; return its last JSON line."""
     env = {
         **os.environ,
-        "OTTO_SUT_DIRS": str(_REPO1),
+        "OTTOPATH": str(_REPO1),
         "OTTO_HOME": str(tmp_path / "home"),
     }
     env.pop("PYTEST_ADDOPTS", None)

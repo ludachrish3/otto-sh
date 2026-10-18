@@ -7,7 +7,7 @@ runtime form is :class:`~otto.host.declared_product.DeclaredProduct`; this
 module maps an entry's params onto it — and, through :func:`build_declared`,
 onto any ``class =`` subclass — so the two routes cannot drift.
 
-Anything richer than this is a repo-registered kind — the mechanism working
+Anything richer than this is a project-registered kind — the mechanism working
 as intended, not a limitation.
 """
 
@@ -306,7 +306,7 @@ def build_declared(
         uninstall = substitute_placeholders(entry, "uninstall", uninstall, values)
         check = substitute_placeholders(entry, "check", check, values)
     return cls(
-        # Local path: forward slashes in TOML, anchored to the declaring repo
+        # Local path: forward slashes in TOML, anchored to the declaring project's root
         # (never the CWD); stage_dir stays in the HOST's path domain — host.put
         # resolves it against the host's default_dest_dir (spec §4).
         artifact=anchor_path(Path(artifact), entry.base_dir),

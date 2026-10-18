@@ -64,12 +64,12 @@ def _repo(tmp_path, name: str, requirement: str) -> Any:
         f'[project]\nname = "otto-sample-{name}"\nversion = "0.1.0"\n'
         f"dependencies = ['{requirement}']\n"
     )
-    return fake_repo(name, sut_dir=root)
+    return fake_repo(name, root=root)
 
 
 def _wire(
     monkeypatch: pytest.MonkeyPatch,
-    repos: "list[Any]",
+    projects: "list[Any]",
     *,
     include: "tuple[str, ...]" = (),
     exclude: "tuple[str, ...]" = (),
@@ -78,13 +78,13 @@ def _wire(
     """Install *repos* as the discovered set and a context with these switches."""
     monkeypatch.setattr(
         "otto.bootstrap.bootstrap",
-        lambda: types.SimpleNamespace(ordered_repos=repos, errors=[], repos=repos),
+        lambda: types.SimpleNamespace(ordered_projects=projects, errors=[], projects=projects),
     )
     ctx = OttoContext(
         lab=Lab(name="t"),
         include_projects=tuple(include),
         exclude_projects=tuple(exclude),
-        bootstrap=fake_bootstrap_result(repos),
+        bootstrap=fake_bootstrap_result(projects),
     )
     seed_scope_verdicts(ctx, scopes or {})
     monkeypatch.setattr("otto.run_context.get_context", lambda: ctx)
@@ -114,7 +114,7 @@ class TestSeverity:
             refuse_unsatisfied_dependencies()
         assert excinfo.value.exit_code == 1
         out = capsys.readouterr().out
-        assert f"error: repo 'repo4' requires '{ABSENT} >= 0.1'" in out
+        assert f"error: project 'repo4' requires '{ABSENT} >= 0.1'" in out
         assert "not satisfied in this environment (found: none)" in out
         assert "fix: otto env sync" in out
         assert f"or:  uv pip install '{ABSENT} >= 0.1'" in out
@@ -202,8 +202,8 @@ class TestSeverity:
         assert excinfo.value.exit_code == 1
         captured = capsys.readouterr()
         assert "repo3 is inactive for this run" in captured.err
-        assert "error: repo 'repo4'" in captured.out
-        assert "error: repo 'repo3'" not in captured.out
+        assert "error: project 'repo4'" in captured.out
+        assert "error: project 'repo3'" not in captured.out
 
 
 class TestRendering:
@@ -238,8 +238,8 @@ class TestRendering:
             refuse_unsatisfied_dependencies()
         assert excinfo.value.exit_code == 1
         out = capsys.readouterr().out
-        assert "error: repo 'repo3'" in out
-        assert "error: repo 'repo4'" in out
+        assert "error: project 'repo3'" in out
+        assert "error: project 'repo4'" in out
         assert out.count("fix: otto env sync") == 1
         assert f"or:  uv pip install '{ABSENT} >= 0.1' '{ABSENT} >= 0.2'" in out
 
@@ -253,7 +253,7 @@ class TestRendering:
             refuse_unsatisfied_dependencies()
         assert excinfo.value.exit_code == 1
         captured = capsys.readouterr()
-        assert "error: repo 'repo4'" in captured.out
+        assert "error: project 'repo4'" in captured.out
         assert captured.err == ""
 
     def test_an_uncheckable_repo_warns_on_stderr_and_does_not_refuse(
@@ -271,7 +271,7 @@ class TestRendering:
             '[project]\nname = "nothing-installed-anywhere"\n'
             'version = "0.1.0"\ndynamic = ["dependencies"]\n'
         )
-        _wire(monkeypatch, [fake_repo("repo4", sut_dir=root)])
+        _wire(monkeypatch, [fake_repo("repo4", root=root)])
         refuse_unsatisfied_dependencies()  # must not raise
         captured = capsys.readouterr()
         assert "cannot preflight repo4" in captured.err
@@ -340,10 +340,12 @@ class TestPreambleWiring:
                 reset_context(token)
 
         request.addfinalizer(_reset)
-        repo = _repo(tmp_path, "repo4", f"{ABSENT} >= 0.1")
+        project = _repo(tmp_path, "repo4", f"{ABSENT} >= 0.1")
         monkeypatch.setattr(
             "otto.bootstrap.bootstrap",
-            lambda: types.SimpleNamespace(ordered_repos=[repo], errors=[], repos=[repo]),
+            lambda: types.SimpleNamespace(
+                ordered_projects=[project], errors=[], projects=[project]
+            ),
         )
         monkeypatch.setattr(
             invoke,

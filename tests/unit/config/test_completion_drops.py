@@ -39,7 +39,7 @@ def _repo(tmp_path: Path, inventory_settings: dict, *, hosts: list[dict], name: 
     write_lab_json(lab / "lab.json", hosts, declare_labs=True)
     return fake_repo(
         name,
-        sut_dir=sut,
+        root=sut,
         lab_sources=json_lab_sources(sut, [lab]),
         settings={"inventory": dict(inventory_settings)},
     )
@@ -90,17 +90,17 @@ def test_an_entry_whose_reference_cannot_resolve_is_dropped_by_place(tmp_path, m
     """
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     table = _json_inventory(tmp_path, _RECORD)
-    repo = _repo(tmp_path, table, hosts=[_ref("dut-1", "dut"), _ref("ghost", "phantom")])
+    project = _repo(tmp_path, table, hosts=[_ref("dut-1", "dut"), _ref("ghost", "phantom")])
 
-    ids = cc.collect_host_ids([repo])
-    drops = cc.collect_host_drops([repo])
+    ids = cc.collect_host_ids([project])
+    drops = cc.collect_host_drops([project])
 
     assert "dut" in ids
     assert "phantom" not in ids
     assert len(drops) == 1, drops
     (drop,) = drops
-    assert drop["repo"] == "sut"
-    assert drop["where"] == f"{repo.sut_dir / 'lab' / 'lab.json'}: element 'phantom' hosts[0]"
+    assert drop["project"] == "sut"
+    assert drop["where"] == f"{project.root / 'lab' / 'lab.json'}: element 'phantom' hosts[0]"
     assert "ghost" in drop["reason"]
 
 
@@ -128,13 +128,13 @@ def test_a_malformed_lab_file_is_dropped_by_name(tmp_path, monkeypatch):
     ``lab files`` line, not a drop.
     """
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
-    repo = _repo(tmp_path, {}, hosts=[{"ip": "10.0.0.9", "element": "plain", "creds": _CREDS}])
-    broken = repo.sut_dir / "broken.json"
+    project = _repo(tmp_path, {}, hosts=[{"ip": "10.0.0.9", "element": "plain", "creds": _CREDS}])
+    broken = project.root / "broken.json"
     broken.write_text("{not json")
-    repo.lab_sources = json_lab_sources(repo.sut_dir, [repo.sut_dir / "lab", broken])
+    project.lab_sources = json_lab_sources(project.root, [project.root / "lab", broken])
 
-    ids = cc.collect_host_ids([repo])
-    drops = cc.collect_host_drops([repo])
+    ids = cc.collect_host_ids([project])
+    drops = cc.collect_host_drops([project])
 
     assert "plain" in ids  # the good file still counts
     assert [d["where"] for d in drops] == [str(broken)], drops
@@ -144,33 +144,33 @@ def test_a_malformed_lab_file_is_dropped_by_name(tmp_path, monkeypatch):
 def test_a_stalled_host_source_is_dropped_with_the_deadline(tmp_path, monkeypatch):
     """The deadline wrapper's give-up is a drop too, not just a warning."""
     monkeypatch.setenv(cc.HOST_SUMMARY_DEADLINE_ENV_VAR, "0.05")
-    repo = fake_repo(sut_dir=tmp_path / "slow")
+    project = fake_repo(root=tmp_path / "slow")
 
-    def _stalls(abandoned: threading.Event) -> cc.RepoEnumeration:
+    def _stalls(abandoned: threading.Event) -> cc.ProjectEnumeration:
         abandoned.wait(5)  # returns as soon as the wrapper gives up on us
-        return cc.RepoEnumeration()
+        return cc.ProjectEnumeration()
 
-    result = cc._bounded(_stalls, repo)
+    result = cc._bounded(_stalls, project)
 
     assert result.summaries == []
     assert len(result.drops) == 1
-    assert result.drops[0].where == str(repo.sut_dir)
+    assert result.drops[0].where == str(project.root)
     assert "did not answer within" in result.drops[0].reason
     assert cc.HOST_SUMMARY_DEADLINE_ENV_VAR in result.drops[0].reason
 
 
 def test_an_enumeration_that_raises_is_dropped_for_the_repo(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
-    repo = _repo(tmp_path, {}, hosts=[])
+    project = _repo(tmp_path, {}, hosts=[])
 
     def _explodes(_repos, *, profiles):
         raise RuntimeError("backend on fire")
 
     monkeypatch.setattr("otto.labs.sources.build_lab_sources", _explodes)
 
-    drops = cc.collect_host_drops([repo])
+    drops = cc.collect_host_drops([project])
 
-    assert [d["where"] for d in drops] == [str(repo.sut_dir)]
+    assert [d["where"] for d in drops] == [str(project.root)]
     assert "backend on fire" in drops[0]["reason"]
 
 
@@ -179,26 +179,26 @@ def test_an_enumeration_that_raises_is_dropped_for_the_repo(tmp_path, monkeypatc
 
 def test_host_drops_ride_the_names_payload(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
-    repo = _repo(tmp_path, {}, hosts=[])
-    recorded = [{"repo": "sut", "where": "somewhere", "reason": "some reason"}]
+    project = _repo(tmp_path, {}, hosts=[])
+    recorded = [{"project": "sut", "where": "somewhere", "reason": "some reason"}]
 
-    cc.write_cache([repo], instructions=[], hosts=["dut"], host_drops=recorded)
+    cc.write_cache([project], instructions=[], hosts=["dut"], host_drops=recorded)
 
-    assert cc.read_cache([repo])["host_drops"] == recorded
+    assert cc.read_cache([project])["host_drops"] == recorded
 
 
 def test_a_names_payload_missing_host_drops_still_reads_as_an_empty_list(tmp_path, monkeypatch):
     """Older payload shape without the key: empty, not a miss and not a crash."""
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
-    repo = _repo(tmp_path, {}, hosts=[])
-    cc.write_cache([repo], instructions=[], hosts=["dut"])
+    project = _repo(tmp_path, {}, hosts=[])
+    cc.write_cache([project], instructions=[], hosts=["dut"])
     path = cc._cache_path()
     assert path is not None
     data = json.loads(path.read_text())
     del data["sections"]["names"]["payload"]["host_drops"]
     path.write_text(json.dumps(data))
 
-    assert cc.read_cache([repo])["host_drops"] == []
+    assert cc.read_cache([project])["host_drops"] == []
 
 
 # --- inspect_section: what `otto cache info` reads ---------------------------------
@@ -206,10 +206,10 @@ def test_a_names_payload_missing_host_drops_still_reads_as_an_empty_list(tmp_pat
 
 def test_inspect_reports_fresh_with_the_payload(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
-    repo = _repo(tmp_path, {}, hosts=[])
-    cc.write_cache([repo], instructions=[], hosts=["dut"])
+    project = _repo(tmp_path, {}, hosts=[])
+    cc.write_cache([project], instructions=[], hosts=["dut"])
 
-    status = cc.inspect_section([repo], "names")
+    status = cc.inspect_section([project], "names")
 
     assert status.state == "fresh"
     assert status.payload is not None
@@ -220,13 +220,13 @@ def test_inspect_reports_fresh_with_the_payload(tmp_path, monkeypatch):
 
 def test_inspect_reports_stale_after_a_key_file_moves_and_keeps_the_payload(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
-    repo = _repo(tmp_path, {}, hosts=[])
-    cc.write_cache([repo], instructions=[], hosts=["dut"])
-    lab_file = repo.sut_dir / "lab" / "lab.json"
+    project = _repo(tmp_path, {}, hosts=[])
+    cc.write_cache([project], instructions=[], hosts=["dut"])
+    lab_file = project.root / "lab" / "lab.json"
     later = lab_file.stat().st_mtime + 10
     os.utime(lab_file, (later, later))
 
-    status = cc.inspect_section([repo], "names")
+    status = cc.inspect_section([project], "names")
 
     assert status.state == "stale"
     assert status.payload is not None
@@ -235,27 +235,27 @@ def test_inspect_reports_stale_after_a_key_file_moves_and_keeps_the_payload(tmp_
 
 def test_inspect_reports_expired_tainted_outdated_unreadable_and_missing(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
-    repo = _repo(tmp_path, {}, hosts=[])
-    assert cc.inspect_section([repo], "names").state == "missing"
+    project = _repo(tmp_path, {}, hosts=[])
+    assert cc.inspect_section([project], "names").state == "missing"
 
-    cc.write_cache([repo], instructions=[], hosts=["dut"], tainted=True)
-    assert cc.inspect_section([repo], "names").state == "tainted"
+    cc.write_cache([project], instructions=[], hosts=["dut"], tainted=True)
+    assert cc.inspect_section([project], "names").state == "tainted"
 
-    cc.write_cache([repo], instructions=[], hosts=["dut"])
+    cc.write_cache([project], instructions=[], hosts=["dut"])
     path = cc._cache_path()
     assert path is not None
     data = json.loads(path.read_text())
     data["sections"]["names"]["generated_at"] = time.time() - 2 * cc.CACHE_TTL_SECONDS
     path.write_text(json.dumps(data))
-    assert cc.inspect_section([repo], "names").state == "expired"
+    assert cc.inspect_section([project], "names").state == "expired"
 
     data["sections"]["names"]["generated_at"] = time.time()
     data["schema"] = cc.SCHEMA_VERSION - 1
     path.write_text(json.dumps(data))
-    assert cc.inspect_section([repo], "names").state == "outdated"
+    assert cc.inspect_section([project], "names").state == "outdated"
 
     path.write_text("{corrupt")
-    assert cc.inspect_section([repo], "names").state == "unreadable"
+    assert cc.inspect_section([project], "names").state == "unreadable"
 
 
 # --- describe_inventory --------------------------------------------------------------
@@ -283,11 +283,11 @@ def test_describe_inventory_names_each_case(tmp_path, monkeypatch):
 
 def test_describe_inventory_says_when_completion_can_never_cache(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
-    repo = _repo(tmp_path, {}, hosts=[])
+    project = _repo(tmp_path, {}, hosts=[])
     unfingerprinted = SimpleNamespace(label="probe:live", fingerprint=lambda: None)
     monkeypatch.setattr("otto.inventory.config.build_inventory", lambda _repos: unfingerprinted)
 
-    described = cc.describe_inventory([repo])
+    described = cc.describe_inventory([project])
 
     assert described.text.startswith("probe:live")
     assert "never caches" in described.text

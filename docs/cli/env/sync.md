@@ -29,7 +29,7 @@ remove it, and it does not remove anything from it. If you need a clean build,
 that is {doc}`create` with `--force`.
 
 `sync` is the verb otto's own messages suggest — when {doc}`show` reports a
-repo as stale, when a dependency preflight refuses a run — and following it is
+project as stale, when a dependency preflight refuses a run — and following it is
 always safe.
 
 ## A missing environment is created, not refused
@@ -49,9 +49,9 @@ says otherwise.
 
 ## When to run it
 
-- After a repo's `pyproject.toml` changes — {doc}`show` flags this as `stale`.
-- After adding or removing a repo from `OTTO_SUT_DIRS`. Note that this changes
-  the workspace, and therefore the environment: a different repo set is a
+- After a project's `pyproject.toml` changes — {doc}`show` flags this as `stale`.
+- After adding or removing a project from `OTTOPATH`. Note that this changes
+  the workspace, and therefore the environment: a different project set is a
   different workspace home, so the first `sync` there builds rather than
   updates.
 - After pulling changes that add a dependency.

@@ -15,11 +15,11 @@ _HOSTS = [
 def _repo(*, labs: list[Path] | None = None):
     """A stand-in Repo whose only host source is a json one over `labs` —
     what a real repo without a custom backend compiles to."""
-    sut_dir = (labs or [Path()])[0]
+    root = (labs or [Path()])[0]
     return fake_repo(
         "stand-in",
-        lab_sources=json_lab_sources(sut_dir, labs or []) if labs else [],
-        sut_dir=sut_dir,
+        lab_sources=json_lab_sources(root, labs or []) if labs else [],
+        root=root,
     )
 
 

@@ -80,11 +80,13 @@ the monitor. Multiple labs can be merged by combining their names with `+`
 ]
 ```
 
-### Repos and settings
+### Projects and settings
 
-Otto discovers your project through a `.otto/settings.toml` file at the
-repository root. This file tells otto where to find your Python libraries,
-tests, run instructions, and lab data:
+Otto discovers your project through a `.otto/settings.toml` file at its
+project root, the directory you list in `OTTOPATH` (the vocabulary is in
+[docs/overview.md](docs/overview.md#projects-project-roots-and-ottopath)).
+This file tells otto where to find your Python libraries, tests, run
+instructions, and lab data:
 
 ```toml
 name = "my_project"
@@ -99,7 +101,7 @@ backend = "json"
 paths = ["../lab_data"]
 ```
 
-Relative paths resolve against the repository root at load time. The `init`
+Relative paths resolve against the project root at load time. The `init`
 list names Python modules that otto imports at startup — this is where you
 register your instructions and shared options. `[[lab.sources]]` declares
 where hosts come from, in order; several sources combine, with later ones
@@ -136,10 +138,10 @@ otto -l my_lab run deploy --debug
 ### Tests (`otto test`)
 
 otto tests are pytest tests: `Test`-prefixed classes and `test_`-prefixed
-functions in your repo's test directories. Fixtures, `conftest.py`, markers,
+functions in your project's test directories. Fixtures, `conftest.py`, markers,
 parametrize and pytest plugins all work as pytest documents them.
 `otto test` runs them by name or marker expression. Its flags include those of
-every options class a repo registers for the `test` verb, and a test reads
+every options class a project registers for the `test` verb, and a test reads
 their values with `ctx.options(...)`:
 
 ```python
@@ -168,7 +170,7 @@ and built-in monitoring.
 An options class is declared in an init module (a module listed in your
 `init` setting), with the verbs whose flags it joins:
 `@otto.options(verbs=["test"])` for flags only tests take, or
-`@otto.options(verbs=["run", "test"])` for repo-wide flags such as a device
+`@otto.options(verbs=["run", "test"])` for project-wide flags such as a device
 type or a lab environment, which every instruction and every test run then
 take.
 
@@ -207,10 +209,10 @@ per-build-type instrumenting subpages (GCC, clang, embedded).
 
 ## Quick-start example
 
-1. **Set the environment** — point otto at your repo and lab:
+1. **Set the environment** — point otto at your project and lab:
 
    ```bash
-   export OTTO_SUT_DIRS=/path/to/my_project
+   export OTTOPATH=/path/to/my_project
    otto --lab my_lab --list-hosts          # verify hosts are visible
    ```
 

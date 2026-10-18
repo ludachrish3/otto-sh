@@ -32,20 +32,22 @@ def test_unknown_id_or_unregistered_name_yields_none(monkeypatch):
 
 
 def test_falls_back_to_discovery_when_the_cache_is_cold(monkeypatch):
-    """A cold cache resolves from DISCOVERED repos — never `get_repos()`, which would bootstrap."""
+    """A cold cache resolves from DISCOVERED repos — never `get_projects()`, which bootstraps."""
     import otto.config.completion_cache as cc
 
     monkeypatch.setattr(expose_module, "_discovered_host_classes", None)
     monkeypatch.setattr("otto.registry.get_completion_names", lambda: None)
-    monkeypatch.setattr("otto.config.repo.discover", lambda: SimpleNamespace(repos=["discovered"]))
     monkeypatch.setattr(
-        "otto.declared.get_repos",
+        "otto.config.project.discover", lambda: SimpleNamespace(projects=["discovered"])
+    )
+    monkeypatch.setattr(
+        "otto.declared.get_projects",
         lambda: pytest.fail("get_repos() must not run during completion"),
     )
     monkeypatch.setattr(
         cc,
         "collect_host_classes_by_id",
-        lambda repos: {"u1": "unix"} if repos == ["discovered"] else {},
+        lambda projects: {"u1": "unix"} if projects == ["discovered"] else {},
     )
     assert cached_host_class_for_id("u1") is UnixHost
 
@@ -57,11 +59,13 @@ def test_cold_cache_collector_runs_once_per_process(monkeypatch):
 
     monkeypatch.setattr(expose_module, "_discovered_host_classes", None)
     monkeypatch.setattr("otto.registry.get_completion_names", lambda: None)
-    monkeypatch.setattr("otto.config.repo.discover", lambda: SimpleNamespace(repos=["discovered"]))
+    monkeypatch.setattr(
+        "otto.config.project.discover", lambda: SimpleNamespace(projects=["discovered"])
+    )
     calls: list[list[str]] = []
 
-    def _counting_collect(repos):
-        calls.append(repos)
+    def _counting_collect(projects):
+        calls.append(projects)
         return {"u1": "unix"}
 
     monkeypatch.setattr(cc, "collect_host_classes_by_id", _counting_collect)
@@ -79,11 +83,13 @@ def test_non_dict_mapping_falls_back_to_discovery_without_raising(monkeypatch):
         "otto.registry.get_completion_names",
         lambda: {"host_classes_by_id": ["not", "a", "dict"]},
     )
-    monkeypatch.setattr("otto.config.repo.discover", lambda: SimpleNamespace(repos=["discovered"]))
+    monkeypatch.setattr(
+        "otto.config.project.discover", lambda: SimpleNamespace(projects=["discovered"])
+    )
     monkeypatch.setattr(
         cc,
         "collect_host_classes_by_id",
-        lambda repos: {"u1": "unix"} if repos == ["discovered"] else {},
+        lambda projects: {"u1": "unix"} if projects == ["discovered"] else {},
     )
     assert cached_host_class_for_id("u1") is UnixHost
 

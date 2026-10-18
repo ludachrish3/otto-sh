@@ -129,7 +129,7 @@ def test_the_rule_reads_as_this_test_expects():
     assert _flagged("otto.lab", "get_lab")
     assert not _flagged("otto.lab", "EmptySelectionError")
     assert _flagged("otto.labs", "loader")
-    assert _flagged("otto.bootstrap", "get_env")  # discovery, in otto.config.repo
+    assert _flagged("otto.bootstrap", "get_env")  # discovery, in otto.config.project
     assert not _flagged("otto.bootstrap", "bootstrap")
     assert not _flagged("otto.labs", "LabRepositoryError")
     assert {"otto", "otto.config", "otto.coverage", "otto.host", "otto.lab"} <= set(LAZY_FACADES)

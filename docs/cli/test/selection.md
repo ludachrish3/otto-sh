@@ -1,15 +1,15 @@
 # Choosing tests
 
 `otto test` runs the tests its names and `-m` select, across every
-configured repo. This page is how that selection works.
+configured project. This page is how that selection works.
 
 ## Names
 
-Each name is looked up in every repo's tests, as pytest collects them:
+Each name is looked up in every project's tests, as pytest collects them:
 
 | Name | Selects |
 | --- | --- |
-| `test_reboot` | every test named `test_reboot`, in any class, module or repo |
+| `test_reboot` | every test named `test_reboot`, in any class, module or project |
 | `TestDevice` | every test in every class named `TestDevice` |
 | `TestDevice::test_reboot` | `test_reboot` in every class named `TestDevice` |
 
@@ -41,7 +41,7 @@ File paths and full pytest test IDs are not names.
 
 `-m EXPRESSION` (`--markers`) is a pytest marker expression. With names, it
 narrows the named tests to those the expression selects. On its own, it
-selects every matching test in every repo that has one. Where your own
+selects every matching test in every project that has one. Where your own
 markers are declared, and the markers otto adds, are in
 [Markers](index.md#markers).
 
@@ -49,13 +49,13 @@ markers are declared, and the markers otto adds, are in
 
 Tests run in a random order by default
 ([Test order and reproducibility](index.md#test-order-and-reproducibility)).
-With `--no-random` they run in pytest's collection order: repo by repo, file
+With `--no-random` they run in pytest's collection order: project by project, file
 by file, and in source order within each file. The order you write the names
 in doesn't change it.
 
 ## Nested test directories
 
-Collection starts at each directory in the repo's `tests` setting and
+Collection starts at each directory in the project's `tests` setting and
 recurses as pytest does: `test_*.py` files at any depth are collected, each
 directory's `conftest.py` loads for the tests below it, and `norecursedirs`
 is honored. A test in `tests/router/test_basic.py` is selected by name like
@@ -63,36 +63,36 @@ any other.
 
 ## What a run collects
 
-Each repo's pytest session both finds the names and runs what they select,
-and it collects the repo's whole test tree, as `pytest -k` would: pytest,
+Each project's pytest session both finds the names and runs what they select,
+and it collects the project's whole test tree, as `pytest -k` would: pytest,
 with your `python_files`, `collect_ignore` and conftests, decides which
 tests exist. So a run with names executes exactly the tests pytest
 collects for them, including tests that a JSON file, an environment
 variable or a flag in another module turns on, and a same-named test in a
-file or repo you never ran before.
+file or project you never ran before.
 
 otto also keeps a cache of what pytest last collected, the **test-names
 cache**, for [tab completion](#tab-completing-names). A run never lets it
 narrow what pytest collects. It uses it for two things only:
 
 - **Refusing an unknown name before any test runs.** A name the cache
-  doesn't place in any repo (a typo, or a test you just wrote) is looked
-  for first by one repo's session: one whose test files changed since the
+  doesn't place in any project (a typo, or a test you just wrote) is looked
+  for first by one project's session: one whose test files changed since the
   cache saw them, or else the first. That session runs before any other
-  repo's, and it stops before running a test if it doesn't find the name;
-  the next repo then looks, and so on. A name found nowhere is the error
+  project's, and it stops before running a test if it doesn't find the name;
+  the next project then looks, and so on. A name found nowhere is the error
   above, which also names any file that failed to collect, and no test runs
-  in any repo. The session that stopped prints pytest's session header and
+  in any project. The session that stopped prints pytest's session header and
   its "no tests ran" line (and whatever a conftest printed while it
   loaded); its JUnit file is neither written nor put in place of an earlier
-  one. A repo whose collection can't finish while it looks (a conftest that
+  one. A project whose collection can't finish while it looks (a conftest that
   fails to load, say) ends the run there, before any test, with pytest's
   exit code and the reason logged.
 - **Keeping itself current.** Every run writes back what its sessions
   collected, so tab completion offers what the run saw.
 
 A name the cache places somewhere that turns out to be gone (an edit it
-couldn't see) is reported as unknown once every repo's session is done:
+couldn't see) is reported as unknown once every project's session is done:
 loud, never a silent run of fewer tests.
 
 ## A file that fails to collect
@@ -100,7 +100,7 @@ loud, never a silent run of fewer tests.
 A file that fails to import is logged as an error naming it:
 
 ```text
-ERROR    Test collection failed for tests/router/test_broken.py in repo 'acme':
+ERROR    Test collection failed for tests/router/test_broken.py in project 'acme':
          ModuleNotFoundError: No module named 'nonexistent_mod'
 ```
 
@@ -109,16 +109,16 @@ that hit a collection error exits 1 even when every test passed, and every
 run reports the file until you fix it: a file that doesn't import might hold
 one of the names.
 
-## Several repos
+## Several projects
 
-Each repo runs its own pytest session, and gets its own JUnit file and
+Each project runs its own pytest session, and gets its own JUnit file and
 artifact directory ([Where a run's files go](index.md#where-a-runs-files-go)).
-A repo in which no test is selected takes no part in the result. With names,
-every repo's session runs, since any repo may hold a name, in the configured
+A project in which no test is selected takes no part in the result. With names,
+every project's session runs, since any project may hold a name, in the configured
 order, after the one that looks for a name the cache places nowhere
 ([above](#what-a-run-collects)). Repeating
 (`--iterations`/`-i`, `--duration`/`-d`, `--threshold`), `--cov*`,
-`--monitor*` and every registered option apply to every repo's session alike.
+`--monitor*` and every registered option apply to every project's session alike.
 
 ## Tab-completing names
 
@@ -134,11 +134,11 @@ The candidates come from the test-names cache, so they are the names
 pytest collected, inherited and generated tests included. `-m` completes
 marker names from the same cache.
 
-- **The first TAB waits once.** With no cache yet for a repo, or one that
+- **The first TAB waits once.** With no cache yet for a project, or one that
   must be collected whole ([below](#what-the-cache-cant-follow)), the TAB waits
   while pytest collects the whole test tree in a background process, capped
   at 15 seconds, and then answers. If that collection fails or times out, the
-  TAB offers no names for that repo, and no TAB tries again for a minute;
+  TAB offers no names for that project, and no TAB tries again for a minute;
   `otto test --list-tests` shows why the collection failed.
 - **After that, a TAB answers at once**, from the names pytest last
   recorded. It doesn't look at your test files at all, in any shell, so the
@@ -150,8 +150,8 @@ marker names from the same cache.
   completion up to ten minutes (and one TAB) after you save it, or at once
   after an `otto test` run, a `--list-tests` or a dry run that finished,
   since each of those brings the cache up to date. (`--list-markers` only
-  collects a repo that has no usable cache yet, and an interrupted run may
-  leave some repos unread.) When a collection finds that a test file now
+  collects a project that has no usable cache yet, and an interrupted run may
+  leave some projects unread.) When a collection finds that a test file now
   takes its tests from another file (a new base-class module, say), the
   next check collects that test file once more; its names are right either
   way.
@@ -163,8 +163,8 @@ marker names from the same cache.
 The cache notices a change by a file's modification time and size, and
 remembers which other files each test file takes its tests from: a base
 class in another module, a library, a module it imports whole. The whole
-test tree is collected again on the first TAB in a repo; after you add or
-edit a pytest config file at the repo's root (`pyproject.toml`,
+test tree is collected again on the first TAB in a project; after you add or
+edit a pytest config file at the project's root (`pyproject.toml`,
 `pytest.ini` and the like) or edit its `.otto/settings.toml`; after a
 package is installed, upgraded or removed; when you switch to another
 Python or virtualenv; and a day or more after the last whole-tree

@@ -4,7 +4,7 @@ Otto reads credentials through a **creds store**: a small class that answers
 "which logins does the machine with this inventory key accept?" with the same
 `creds` entries a lab file spells. One ships with otto, the `json` file
 ({ref}`credentials-layered`); anything else — a vault, a secrets manager, a
-team database — is a store you register from your own repo.
+team database — is a store you register from your own project.
 
 This page is the contract. The user-facing side — the `[creds]` table, the
 three-layer merge, what the doctor checks — lives in
@@ -109,7 +109,7 @@ The factory receives the parsed configuration as
 `c.config`, and `c.env`, a {class}`~otto.creds.CredsEnv`, carries
 `anchor_dir`, the directory the declaration came from (the repository root
 for a project table, `~/.otto` for the user file), and `origin`, the
-settings file. Two repos whose tables parse to the same configuration name
+settings file. Two projects whose tables parse to the same configuration name
 the same store.
 
 For an HTTPS vault signed by an internal CA, build the client with

@@ -3,7 +3,7 @@
 The built-in JSON backend is the fastest way to experiment and, for
 small teams, a perfectly adequate production setup.
 
-Add a `[reservations]` section to your repo's `.otto/settings.toml`:
+Add a `[reservations]` section to your project's `.otto/settings.toml`:
 
 ```toml
 [reservations]
@@ -59,7 +59,7 @@ need to merge them before writing the file.
 
 Two common layouts work well:
 
-- **Checked-in** — put `reservations.json` under `.otto/` in the repo
+- **Checked-in** — put `reservations.json` under `.otto/` in the project
   and commit it.  Reservation changes land as normal PRs; the full git
   history shows who had what and when.  Good when churn is low and a
   PR-level review is desirable.
@@ -68,5 +68,5 @@ Two common layouts work well:
   some other tool.  Good when reservations change frequently throughout
   the day and PR overhead would feel absurd.
 
-Relative paths resolve against the repo root — see
+Relative paths resolve against the project root — see
 {doc}`../../configuration/settings`.

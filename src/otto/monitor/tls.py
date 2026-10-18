@@ -1,4 +1,4 @@
-"""Resolve the dashboard's ``[monitor]`` TLS declaration across repos."""
+"""Resolve the dashboard's ``[monitor]`` TLS declaration across projects."""
 
 import ssl
 from collections.abc import Sequence
@@ -7,14 +7,14 @@ from typing import TYPE_CHECKING
 from .errors import MonitorTlsError
 
 if TYPE_CHECKING:
-    from ..config.repo import Repo
+    from ..config.project import Project
     from ..config.scope import MonitorSettings
 
 
-def resolve_monitor_tls(repos: "Sequence[Repo]") -> "MonitorSettings | None":
-    """Resolve the ``[monitor]`` TLS declaration across ``repos``.
+def resolve_monitor_tls(projects: "Sequence[Project]") -> "MonitorSettings | None":
+    """Resolve the ``[monitor]`` TLS declaration across ``projects``.
 
-    Fail-loud rules: more than one repo declaring *different* values is a
+    Fail-loud rules: more than one project declaring *different* values is a
     configuration error; a declared cert/key path whose file is missing, or
     that cannot be loaded as a certificate/key pair, is an error (never a
     silent fall-back to HTTP, which would be a quiet security downgrade); no
@@ -22,28 +22,28 @@ def resolve_monitor_tls(repos: "Sequence[Repo]") -> "MonitorSettings | None":
     The caller frames the refusal.
 
     Args:
-        repos: The configured repos; only ``name`` and ``monitor_settings``
+        projects: The configured projects; only ``name`` and ``monitor_settings``
             are read.
 
     Returns:
-        The agreed settings, or ``None`` when no repo declares TLS.
+        The agreed settings, or ``None`` when no project declares TLS.
 
     Raises:
-        MonitorTlsError: Repos disagree, a declared file is missing, or the
+        MonitorTlsError: Projects disagree, a declared file is missing, or the
             pair cannot be loaded.
     """
     declaring = [
-        (r.name, r.monitor_settings) for r in repos if r.monitor_settings.tls_cert is not None
+        (r.name, r.monitor_settings) for r in projects if r.monitor_settings.tls_cert is not None
     ]
     if not declaring:
         return None
     names = sorted(name for name, _ in declaring)
     if len({(ms.tls_cert, ms.tls_key) for _, ms in declaring}) > 1:
         raise MonitorTlsError(
-            f"[monitor] TLS settings disagree across repos ({', '.join(names)}); "
+            f"[monitor] TLS settings disagree across projects ({', '.join(names)}); "
             "make them identical or declare TLS in only one settings.toml.",
             setting=None,
-            repos=names,
+            projects=names,
         )
     settings = declaring[0][1]
     for field_name, path in (("tls_cert", settings.tls_cert), ("tls_key", settings.tls_key)):
@@ -53,7 +53,7 @@ def resolve_monitor_tls(repos: "Sequence[Repo]") -> "MonitorSettings | None":
                 "fix .otto/settings.toml or create the certificate "
                 "(see the monitor guide's 'Securing the dashboard' section).",
                 setting=field_name,
-                repos=names,
+                projects=names,
             )
 
     # Both files exist, but existence doesn't mean valid: a corrupted/
@@ -76,6 +76,6 @@ def resolve_monitor_tls(repos: "Sequence[Repo]") -> "MonitorSettings | None":
             f"[monitor] tls_cert {settings.tls_cert} / tls_key {key_desc} "
             f"could not be loaded as a TLS certificate/key pair: {err}",
             setting="tls_cert",
-            repos=names,
+            projects=names,
         ) from err
     return settings

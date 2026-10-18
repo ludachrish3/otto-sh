@@ -32,12 +32,12 @@ def test_replaces_names_every_built_in_lab_source():
 
 
 def test_a_replaced_json_source_is_what_build_lab_sources_builds(tmp_path):
-    from otto.config.repo import Repo
+    from otto.config.project import Project
 
     make_sut_repo(
         tmp_path, name="r", extra='[[lab.sources]]\nbackend = "json"\npaths = ["lab_data"]\n'
     )
-    repo = Repo(sut_dir=tmp_path)
+    project = Project(root=tmp_path)
     spy = _Spy()
     entry = LAB_REPOSITORIES.peek("json")
     seen = []
@@ -47,10 +47,10 @@ def test_a_replaced_json_source_is_what_build_lab_sources_builds(tmp_path):
         return spy
 
     register_lab_repository("json", config=entry.config, factory=factory, overwrite=True)
-    composite = build_lab_sources([repo])
+    composite = build_lab_sources([project])
     assert isinstance(composite, CompositeLabRepository)
     assert [source.repository for source in composite.sources] == [spy]
     (configured,) = seen
     assert configured.config.paths == (tmp_path / "lab_data",)
-    assert configured.env.repo_dir == tmp_path
+    assert configured.env.project_root == tmp_path
     assert configured.env.label == "r/json#1"

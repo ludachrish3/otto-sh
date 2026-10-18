@@ -1,20 +1,20 @@
 # Use-cases
 
-A **use-case** is a named, cross-repo deployment: "bring up `integration`" is
+A **use-case** is a named, cross-project deployment: "bring up `integration`" is
 one command whatever combination of projects is currently active. `otto docker
 compose up`, `compose down` and `compose build` all speak use-cases, and so
 does the library API that instructions and tests import.
 
-The unit a repo declares is not the whole use-case — it is a **fragment** of
-one. Every active repo contributes the fragments it declares under the name,
+The unit a project declares is not the whole use-case — it is a **fragment** of
+one. Every active project contributes the fragments it declares under the name,
 otto decides which fragments take part, assembles one env mapping, and runs
 **one** `docker compose up` on the parent over the merged file set. Which lab
 host the parent is, is {ref}`Which host <docker-which-host>`.
 
 ```toml
-# repo-a/.otto/settings.toml
+# project-a/.otto/settings.toml
 [[docker.images]]
-name = "repo-a-api"                   # the image name, verbatim; only for an
+name = "project-a-api"                   # the image name, verbatim; only for an
                                       # image otto builds
 dockerfile = "docker/Dockerfile"
 context = "docker"
@@ -65,7 +65,7 @@ $ otto --lab unix docker use-cases integration
 docker: edge goes to repo1 (priority 10); repo2 (priority 0) stands down
 ```
 
-A `<repo>[<handles>]` cell names one fragment: the repo that declared it and
+A `<project>[<handles>]` cell names one fragment: the project that declared it and
 the compose handles it contributes. Omit the argument to list every declared
 use-case.
 
@@ -88,10 +88,10 @@ Two files, two languages, one boundary between them.
 ### The product side: plain compose, no otto anywhere
 
 ```yaml
-# repo-a/docker/compose.yml — a deliverable product artifact
+# project-a/docker/compose.yml — a deliverable product artifact
 services:
   api:
-    image: repo-a-api:latest
+    image: project-a-api:latest
     environment:
       - EDGE_ADDR                      # pass-through from the compose env
       - LOG_LEVEL=${LOG_LEVEL:-info}   # native interpolation, native default
@@ -106,7 +106,7 @@ Nothing here knows otto exists.
 ### The otto side: fact references, confined to `settings.toml`
 
 ```toml
-# repo-a/.otto/settings.toml — the only file that speaks otto
+# project-a/.otto/settings.toml — the only file that speaks otto
 [[docker.use_cases]]
 name = "integration"
 composes = ["core"]
@@ -135,7 +135,7 @@ environment only because a channel below explicitly mapped it there.
 ### Running the compose file without otto
 
 A product's compose file also runs by hand, with no otto involved. From the
-repo root, with the image already built:
+project root, with the image already built:
 
 ```console
 $ EDGE_ADDR=10.0.0.5 LOG_LEVEL=debug docker compose -f docker/compose.yml up -d
@@ -166,8 +166,8 @@ under the names the product chose. So:
 | `${otto:parent.addr}` | Address of the parent this stack is being deployed to |
 | `${otto:parent.id}` | The parent's lab id |
 
-"In scope" is each participating repo's project scope (see {doc}`../projects`),
-unioned across every repo taking part in the deployment. It is *not* narrowed to
+"In scope" is each participating project's project scope (see {doc}`../projects`),
+unioned across every project taking part in the deployment. It is *not* narrowed to
 docker-capable hosts, so a container can be told the address of the bench
 device it is supposed to drive. Two limits apply — the namespace
 covers **unix** lab hosts only, so a serial-attached or Zephyr target is not
@@ -189,8 +189,8 @@ later one winning:
    from your invoking shell (an explicit allowlist; a variable that is absent
    is simply left unset and reported). `pass_env` is applied after every
    fragment's static table, so a name in both wins from the shell.
-2. **The repo adapter** — code, for values only code can compute
-   ([below](#the-repo-adapter)).
+2. **The project adapter** — code, for values only code can compute
+   ([below](#the-project-adapter)).
 3. **The caller** — `--env K=V` and `--env-file PATH` on the CLI, `env=` and
    `env_files=` on the library verbs. Wins over everything (`--env` over
    `--env-file`).
@@ -201,7 +201,7 @@ Channel 1 is assembled from *every* participating fragment, in selection
 order, and a later fragment's value silently replaces an earlier one's. There
 is no refusal and no warning.
 
-The practical consequence: a variable two repos both care about is not a
+The practical consequence: a variable two projects both care about is not a
 coordination mechanism. If the value matters, name it something only one
 fragment sets, or pin it from the caller with `--env`, which beats every
 fragment. `otto docker use-cases` lists each fragment's env KEY names, so an
@@ -217,10 +217,10 @@ whatever your compose version.
 
 The examples from here on are a different deployment from the templating
 walkthrough above — `repo1` and `repo2`, rather than the walkthrough's
-`repo-a`. Read each half on its own.
+`project-a`. Read each half on its own.
 
-Two projects can offer the same thing. A repo that owns the real edge service
-and a repo that ships a mock of it both want to supply `edge` — and they must
+Two projects can offer the same thing. A project that owns the real edge service
+and a project that ships a mock of it both want to supply `edge` — and they must
 never both run.
 
 A fragment may declare `provides` (a capability name) and `priority`:
@@ -248,7 +248,7 @@ The rules:
   wins and **every loser is excluded whole**.
 - An exact tie is a hard error naming both fragments. Break it for one
   invocation with `--provide edge=repo1` (repeatable), or fix the priorities.
-  A tie between two fragments of the *same* repo is always a config error —
+  A tie between two fragments of the *same* project is always a config error —
   there is no knob for it.
 
 The convention (documented, not enforced): real infrastructure declares a
@@ -286,7 +286,7 @@ the fragment stands down entirely. If repo1's `api` must survive a mock swap,
 it belongs in a *separate* fragment that declares no `provides`, exactly as
 repo2 splits its own `core` from its `mock-edge`.
 
-`--provide` narrows the field to one repo *before* ranking, so the winner can
+`--provide` narrows the field to one project *before* ranking, so the winner can
 carry a lower priority than the fragment it displaced — as it does above. The
 displacement line names who won, at what priority, and who stood down.
 
@@ -347,10 +347,10 @@ services:
     user: ${SERVICE_USER:-1000:1000}   # runtime user — the compose file's concern, lab-varied via env
 ```
 
-## The repo adapter
+## The project adapter
 
 For values only code can compute, or for compose files that must be *rendered*
-rather than shipped verbatim, a repo registers an adapter from its init
+rather than shipped verbatim, a project registers an adapter from its init
 module:
 
 ```python
@@ -370,7 +370,7 @@ The registration line is the only otto touchpoint; everything beneath it is
 the product's own templating, with its own syntax, owned by the product.
 
 `facts` is plain JSON-able data — `use_case`, `compose_project`, `parent`,
-`hosts`, `files` (the repo's winning compose files by handle), and
+`hosts`, `files` (the project's winning compose files by handle), and
 `scratch_dir`, a private temp dir the adapter may write to.
 {class}`~otto.docker.adapter.AdapterResult` returns `files` (compose handle ->
 replacement text; omitted handles ship verbatim), `extra_files` (extra files
@@ -378,15 +378,15 @@ staged beside the compose files, for `env_file:`-style references), and `env`,
 which merges as channel 2.
 
 Adapters must be **pure with respect to devices** — no host access. They run
-under `--dry-run` too, so the full plan is printable. One adapter per (repo,
+under `--dry-run` too, so the full plan is printable. One adapter per (project,
 use-case): a second registration for the same use-case raises
 {class}`~otto.registry.DuplicateRegistration`, unless it passes
 `overwrite=True` (`@register_compose_adapter("integration", overwrite=True)`),
-which replaces the repo's adapter deliberately. Registering outside an init
+which replaces the project's adapter deliberately. Registering outside an init
 module's import raises {class}`~otto.registry.RegistrationRefused`, since that
-import is what names the repo. Both are decided when the decorator is
+import is what names the project. Both are decided when the decorator is
 applied, not when `register_compose_adapter(...)` is called: the adapter
-belongs to the repo whose init import applies it, and applying it outside an
+belongs to the project whose init import applies it, and applying it outside an
 init import is refused.
 
 See {mod}`otto.docker.adapter` for the API.
@@ -455,9 +455,9 @@ and this answers what *would happen*.
   never collide. There is no `otto-` prefix. Design notes on each segment:
   {doc}`../../architecture/subsystems/docker-hosts`.
 - **Container host ids:** `<parent>.<usecase>.<service>`, as
-  [Container hosts](index.md#container-hosts) describes. A repo migrating from
+  [Container hosts](index.md#container-hosts) describes. A project migrating from
   a composes-only declaration keeps its container ids literally unchanged by
-  naming its use-case after the repo.
+  naming its use-case after the project.
 
 ## From instructions and tests
 

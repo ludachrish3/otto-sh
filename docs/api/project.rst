@@ -1,13 +1,13 @@
 project
 =======
 
-The project package is the layer between a repo's products and a one-line
+The project package is the layer between a project's products and a one-line
 ``otto run install``. :class:`otto.project.actions.ProjectActions` is what ONE
-repo does to the lab — otto's owner-scoped defaults, or the subclass that repo
+project does to the lab — otto's owner-scoped defaults, or the subclass that project
 registered with :func:`otto.project.actions.register_project_actions` — and
 :mod:`otto.project.orchestrator` composes those actions across every configured
-repo in dependency order, performing the host-global steps that belong to no
-repo. The first-party options classes a repo's override
+project in dependency order, performing the host-global steps that belong to no
+project. The first-party options classes a project's override
 inherits (``InstallOptions`` and its five siblings) are exported from
 ``otto.project``. :doc:`../cli/run/defaults` is the guide-level
 treatment, flag tables and all.

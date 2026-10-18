@@ -105,7 +105,7 @@ async def _converge(step: str, source: "OptionsSource") -> None:
     This is the function ``otto run <name> --ensure`` calls, so a marker and
     the command cannot diverge. *source* is the dispatched verb's parsed
     flags (:meth:`otto.context.OttoContext.verb_option_source`), which each
-    repo's install body builds its own options class from by field name, as
+    project's install body builds its own options class from by field name, as
     ``otto run`` does: a flag registered only for ``run`` takes its default
     here. The function is looked up on the package at call time (not
     imported at module scope): ``otto.project`` is the seam every other
@@ -160,7 +160,7 @@ class OttoFixturesPlugin:
     def _module_dir(request: pytest.FixtureRequest) -> Path:
         """Return this module's artifact directory, shared by every test in it. Created on request.
 
-        ``<run output dir>/<module's path relative to its repo's test root,
+        ``<run output dir>/<module's path relative to its project's test root,
         suffix dropped>`` — see
         :meth:`~otto.suite.layout.ArtifactLayout.module_dir` for the exact
         rule (it disambiguates two same-named modules living in different

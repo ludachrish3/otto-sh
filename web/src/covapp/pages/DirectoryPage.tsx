@@ -480,7 +480,7 @@ export function DirectoryPage({ index, segments }: DirectoryPageProps) {
 
   // Denominator scoping (spec §6.3): keeps only the files/dirs the
   // pinned ticket touched, recomputing each one's line total/hit against the
-  // ticket's OWN lines — never a passthrough of the whole-repo numbers. A
+  // ticket's OWN lines — never a passthrough of the whole-project numbers. A
   // `null` scopeTreeToTicket result (the ticket touched nothing in THIS
   // subtree) degrades to the all-zero empty node rather than falling back
   // to the unscoped tree — falling back would silently show "everything",
@@ -511,16 +511,16 @@ export function DirectoryPage({ index, segments }: DirectoryPageProps) {
   }
 
   const isRoot = segments.length === 0;
-  const title = isRoot ? index.project_name : `${node.name}/`;
+  const title = isRoot ? index.report_title : `${node.name}/`;
   // The unpinned scope LINE (what the card says it is describing), distinct
   // from `scope` above (the numerator narrowing) — renamed when the latter
   // arrived so the two can't be confused.
-  const pathScope = isRoot ? "whole repo" : `${segments.join("/")}/`;
+  const pathScope = isRoot ? "whole project" : `${segments.join("/")}/`;
   const scopeWithTicket = ticketReady ? `ticket: ${ticketSummary?.id}` : pathScope;
 
   return (
     <AppShell
-      crumbs={crumbsFor(index.project_name, segments)}
+      crumbs={crumbsFor(index.report_title, segments)}
       title={title}
       meta={
         <>

@@ -4,7 +4,7 @@ Copy any of these as a starting point:
 
 - :mod:`otto.examples.lab_repository` — an in-memory host-source backend.
 - :mod:`otto.examples.reservations` — an in-memory reservation backend.
-- :mod:`otto.examples.options` — repo-wide ``@options`` classes for suites and
+- :mod:`otto.examples.options` — project-wide ``@options`` classes for suites and
   instructions.
 - :mod:`otto.examples.monitor` — a custom metric parser for ``otto monitor``.
 - :mod:`otto.examples.login_proxy` — a login proxy that becomes a user by

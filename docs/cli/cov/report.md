@@ -16,7 +16,7 @@ otto cov report <output_dir> --dir ./my_report
    migration shim, so re-collect with this version of otto.
 2. **Unit harvest** — every `unit`-kind tier's `harvest_dirs`, plus each of
    its named `products` views, swept fresh from the current build tree.
-3. **Manual store** — every capture committed under the repo's
+3. **Manual store** — every capture committed under the project's
    `.otto/coverage/manual/`, loaded automatically with the validity
    pass applied.
 
@@ -51,7 +51,7 @@ otto cov report run1_output/ run2_output/ run3_output/ --dir ./combined_report
 | `OUTPUT_DIRS`             | `otto test`/`otto cov get` output dirs with `cov/` subdirectories    | none — report is built from the manual store alone |
 | `--dir, -d PATH`          | Where to place the generated coverage report                        | `cov_report/` under {ref}`this invocation's output directory <invocation-output-directory>` |
 | `--overwrite-dir`         | Allow `--dir` to clear an existing non-empty directory               | off                 |
-| `--project-name STR`      | Title shown in the report header                                     | `Coverage Report`   |
+| `--report-title STR`      | Title shown in the report header                                     | `Coverage Report`   |
 | `--tier NAME[=PATH]`      | Git-less escape hatch (see below); repeatable, order = precedence    | the configured tiers (or `system` with none configured) |
 | `--tickets-json PATH`     | Also write a per-ticket coverage summary (see {ref}`coverage-tickets-json`).  Requires `[coverage.tickets]` to have attributed at least one ticket; fails loud (exit 1) otherwise | not written |
 

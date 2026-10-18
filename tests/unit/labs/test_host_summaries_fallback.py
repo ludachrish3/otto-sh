@@ -87,10 +87,10 @@ def test_a_backend_defining_its_own_local_keeps_it():
     a real host's address from tunnel narrowing on this path while the
     capability fast path (which never filtered) kept it.
     """
-    repo = _MinimalRepo(
+    repository = _MinimalRepo(
         {"east": [{"ip": "10.9.9.9", "element": "local", "creds": _CREDS}]},
     )
-    (summary,) = host_summaries(repo)
+    (summary,) = host_summaries(repository)
     assert summary.id == "local"
     assert summary.ip == "10.9.9.9"
 
@@ -110,12 +110,12 @@ def test_a_failing_lab_is_skipped_not_raised():
                 raise RuntimeError("backend exploded")
             return super().load_lab(name, preferences)
 
-    repo = _HalfBroken(
+    repository = _HalfBroken(
         {
             "ok": [{"ip": "10.0.0.1", "element": "fine", "creds": _CREDS}],
             "broken": [{"ip": "10.0.0.2", "element": "never", "creds": _CREDS}],
         }
     )
-    ids = [s.id for s in host_summaries(repo)]
+    ids = [s.id for s in host_summaries(repository)]
     assert "fine" in ids
     assert "never" not in ids

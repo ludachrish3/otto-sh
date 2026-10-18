@@ -37,14 +37,14 @@ def _bump(path: Path, seconds: int = 5) -> None:
 
 
 def _the_repo():
-    from otto.bootstrap import get_repos
+    from otto.bootstrap import get_projects
 
-    [repo] = get_repos()
-    return repo
+    [project] = get_projects()
+    return project
 
 
 @pytest.fixture
-def repo(sut_repo, tmp_path) -> ImportLogRepo:
+def project(sut_repo, tmp_path) -> ImportLogRepo:
     """``tests/test_a.py`` (``TestA``), ``tests/test_b.py``, ``tests/sub/test_c.py``, a conftest."""
     shell = ImportLogRepo(tmp_path / "sut")
     shell.root = sut_repo(
@@ -66,7 +66,7 @@ def sessions(monkeypatch) -> list:
     seen: list = []
     real = run_module._run_pytest_session
 
-    def spy(repo, selection, run=None, **kwargs):
+    def spy(project, selection, run=None, **kwargs):
         files = selection.candidates
         seen.append(
             {
@@ -75,7 +75,7 @@ def sessions(monkeypatch) -> list:
                 "collect_only": run is None,
             }
         )
-        return real(repo, selection, run, **kwargs)
+        return real(project, selection, run, **kwargs)
 
     monkeypatch.setattr(run_module, "_run_pytest_session", spy)
     return seen
@@ -84,17 +84,17 @@ def sessions(monkeypatch) -> list:
 _WHOLE_TREE = {"files": None, "dirs": [], "collect_only": True}
 
 
-def _refresh() -> "tr.RepoTable | None":
+def _refresh() -> "tr.ProjectTable | None":
     [table] = _refresh_tables([_the_repo()])
     return table
 
 
-def _seed(repo: ImportLogRepo, sessions: list) -> tr.RepoTable:
+def _seed(project: ImportLogRepo, sessions: list) -> tr.ProjectTable:
     assert tr.read_table(_the_repo()) is None, "it was cold"
     table = _refresh()
     assert table is not None, "and it is seeded"
     assert sessions == [_WHOLE_TREE]
-    repo.next_run()
+    project.next_run()
     sessions.clear()
     return table
 
@@ -102,52 +102,52 @@ def _seed(repo: ImportLogRepo, sessions: list) -> tr.RepoTable:
 # ── the seed ─────────────────────────────────────────────────────────────────
 
 
-def test_a_cold_table_is_seeded_by_one_whole_tree_collection(repo, sessions, capfd):
+def test_a_cold_table_is_seeded_by_one_whole_tree_collection(project, sessions, capfd):
     seeded = _refresh()
 
     assert seeded is not None
     assert sessions == [_WHOLE_TREE]
-    assert repo.imported() == ["test_a", "test_b", "test_c"]
-    assert repo.ran_tests() == [], "a collection runs nothing"
+    assert project.imported() == ["test_a", "test_b", "test_c"]
+    assert project.ran_tests() == [], "a collection runs nothing"
     assert capfd.readouterr().out == "", "and prints nothing"
     table = tr.read_table(_the_repo())
     assert table == seeded
     assert {"TestA", "TestA::test_a1", "test_a2", "test_b1", "test_c1"} <= set(table.names)
-    tests = repo.root / "tests"
+    tests = project.root / "tests"
     assert set(table.dirs) == {str(tests), str(tests / "sub")}
     assert str(tests / "sub" / "conftest.py") in table.files
     assert tr.classify(_the_repo(), table).is_current
 
 
-def test_a_current_table_is_returned_without_a_collection(repo, sessions):
-    seeded = _seed(repo, sessions)
+def test_a_current_table_is_returned_without_a_collection(project, sessions):
+    seeded = _seed(project, sessions)
 
     assert _refresh() == seeded
     assert sessions == []
-    assert repo.imported() == []
+    assert project.imported() == []
 
 
-def test_the_seed_writes_nothing_into_the_repo(repo, sessions, real_shell_bytecode):
+def test_the_seed_writes_nothing_into_the_repo(project, sessions, real_shell_bytecode):
     """No ``__pycache__`` beside a test file, no ``.pytest_cache``: a TAB must not move the tree."""
-    before = sorted(p.relative_to(repo.root) for p in repo.root.rglob("*"))
+    before = sorted(p.relative_to(project.root) for p in project.root.rglob("*"))
 
     _refresh()
 
-    assert repo.imported() == ["test_a", "test_b", "test_c"]
-    assert sorted(p.relative_to(repo.root) for p in repo.root.rglob("*")) == before
+    assert project.imported() == ["test_a", "test_b", "test_c"]
+    assert sorted(p.relative_to(project.root) for p in project.root.rglob("*")) == before
 
 
-def test_another_env_seeds_the_whole_tree_again(repo, sessions):
-    _seed(repo, sessions)
-    repo.write("pytest.ini", "[pytest]\n")
+def test_another_env_seeds_the_whole_tree_again(project, sessions):
+    _seed(project, sessions)
+    project.write("pytest.ini", "[pytest]\n")
 
     assert _refresh() is not None
     assert sessions == [_WHOLE_TREE]
-    assert repo.imported() == ["test_a", "test_b", "test_c"]
+    assert project.imported() == ["test_a", "test_b", "test_c"]
 
 
-def test_a_table_past_its_ttl_is_seeded_again(repo, sessions):
-    seeded = _seed(repo, sessions)
+def test_a_table_past_its_ttl_is_seeded_again(project, sessions):
+    seeded = _seed(project, sessions)
     old = seeded.generated_at - cc.CACHE_TTL_SECONDS - 1
     tr.write_tables([dataclasses.replace(seeded, generated_at=old)])
 
@@ -161,8 +161,8 @@ def test_a_table_past_its_ttl_is_seeded_again(repo, sessions):
 _STOPS = "import pytest\n\npytest.exit('the lab is not configured')\n"
 
 
-def test_a_seed_whose_collection_cannot_finish_writes_nothing(repo, sessions):
-    repo.write("tests/conftest.py", _STOPS)
+def test_a_seed_whose_collection_cannot_finish_writes_nothing(project, sessions):
+    project.write("tests/conftest.py", _STOPS)
 
     assert _refresh() is None
 
@@ -170,11 +170,11 @@ def test_a_seed_whose_collection_cannot_finish_writes_nothing(repo, sessions):
     assert tr.read_table(_the_repo()) is None
 
 
-def test_a_cold_table_whose_seed_cannot_finish_is_not_offered(repo, sessions):
+def test_a_cold_table_whose_seed_cannot_finish_is_not_offered(project, sessions):
     """Another env made the stored table cold; a seed that stops early leaves no table to offer."""
-    _seed(repo, sessions)
-    repo.write("pytest.ini", "[pytest]\n")
-    repo.write("tests/conftest.py", _STOPS)
+    _seed(project, sessions)
+    project.write("pytest.ini", "[pytest]\n")
+    project.write("tests/conftest.py", _STOPS)
 
     assert _refresh() is None
 
@@ -190,7 +190,7 @@ def test_a_repo_with_no_test_directory_collects_nothing_wherever_otto_runs(
     Its table is seeded empty, and warm: a directory that later appears is
     read by the next refresh.
     """
-    from otto.config.repo import Repo
+    from otto.config.project import Project
     from tests._fixtures.sutrepo import make_sut_repo
 
     sut = make_sut_repo(tmp_path / "sut", name="sut", tests=tests)
@@ -207,20 +207,20 @@ def test_a_repo_with_no_test_directory_collects_nothing_wherever_otto_runs(
 
     real_main = pytest.main
     monkeypatch.setattr(pytest, "main", no_session)
-    repo = Repo(sut_dir=sut)
+    project = Project(root=sut)
 
-    [table] = _refresh_tables([repo])
+    [table] = _refresh_tables([project])
 
     assert not imported.exists()
     assert table is not None
     assert table.names == []
     assert all(Path(key).is_relative_to(sut) for key in table.files)
-    assert tr.read_table(repo) == table
-    assert not tr.classify(repo, table).whole_tree
+    assert tr.read_table(project) == table
+    assert not tr.classify(project, table).whole_tree
     if tests:
         monkeypatch.setattr(pytest, "main", real_main)
         ImportLogRepo(sut).write("tests/test_late.py", logged_test("test_late"))
-        [late] = _refresh_tables([repo])
+        [late] = _refresh_tables([project])
         assert late is not None
         assert "test_late" in late.names
 
@@ -228,10 +228,10 @@ def test_a_repo_with_no_test_directory_collects_nothing_wherever_otto_runs(
 # ── the refresh: only what moved ─────────────────────────────────────────────
 
 
-def test_a_deleted_file_is_dropped_without_a_session(repo, sessions):
+def test_a_deleted_file_is_dropped_without_a_session(project, sessions):
     """Its directory's stat is as it was (a rename elsewhere, a restored mtime): nothing to read."""
-    _seed(repo, sessions)
-    tests = repo.root / "tests"
+    _seed(project, sessions)
+    tests = project.root / "tests"
     st = tests.stat()
     (tests / "test_b.py").unlink()
     os.utime(tests, ns=(st.st_atime_ns, st.st_mtime_ns))
@@ -239,37 +239,37 @@ def test_a_deleted_file_is_dropped_without_a_session(repo, sessions):
     table = _refresh()
 
     assert sessions == []
-    assert repo.imported() == []
+    assert project.imported() == []
     assert table is not None
     assert "test_b1" not in table.names
     assert tr.read_table(_the_repo()) == table
     assert tr.classify(_the_repo(), table).is_current
 
 
-def test_cold_only_leaves_a_warm_table_whose_files_moved_alone(repo, sessions):
-    seeded = _seed(repo, sessions)
-    repo.write("tests/test_b.py", repo.module("test_b", logged_test("test_b9")))
-    _bump(repo.root / "tests" / "test_b.py")
+def test_cold_only_leaves_a_warm_table_whose_files_moved_alone(project, sessions):
+    seeded = _seed(project, sessions)
+    project.write("tests/test_b.py", project.module("test_b", logged_test("test_b9")))
+    _bump(project.root / "tests" / "test_b.py")
 
     assert _refresh_tables([_the_repo()], cold_only=True) == [seeded]
     assert sessions == []
-    assert repo.imported() == []
+    assert project.imported() == []
 
 
-def test_a_refresh_collects_exactly_the_edited_file(repo, sessions):
-    _seed(repo, sessions)
-    repo.write(
+def test_a_refresh_collects_exactly_the_edited_file(project, sessions):
+    _seed(project, sessions)
+    project.write(
         "tests/test_b.py",
-        repo.module("test_b", logged_test("test_b1") + "\n\n" + logged_test("test_b2")),
+        project.module("test_b", logged_test("test_b1") + "\n\n" + logged_test("test_b2")),
     )
-    _bump(repo.root / "tests" / "test_b.py")
+    _bump(project.root / "tests" / "test_b.py")
 
     classification = tr.classify(_the_repo(), tr.read_table(_the_repo()))
     assert [p.name for p in classification.changed] == ["test_b.py"]
     table = _refresh()
 
     assert sessions == [{"files": ["test_b.py"], "dirs": [], "collect_only": True}]
-    assert repo.imported() == ["test_b"]
+    assert project.imported() == ["test_b"]
     assert table is not None
     assert "test_b2" in table.names
     assert tr.read_table(_the_repo()) == table
@@ -357,11 +357,11 @@ def test_a_file_edited_while_pytest_reads_it_is_stamped_stale(sut_repo, tmp_path
     assert [p.name for p in after.changed] == ["test_self.py"]
 
 
-def test_a_directory_whose_conftest_breaks_is_tried_again_once_it_is_fixed(repo, sessions):
-    _seed(repo, sessions)
-    repo.write("tests/new/conftest.py", "raise RuntimeError('broken conftest')\n")
-    repo.write("tests/new/test_n.py", repo.module("test_n", logged_test("test_n1")))
-    _bump(repo.root / "tests")
+def test_a_directory_whose_conftest_breaks_is_tried_again_once_it_is_fixed(project, sessions):
+    _seed(project, sessions)
+    project.write("tests/new/conftest.py", "raise RuntimeError('broken conftest')\n")
+    project.write("tests/new/test_n.py", project.module("test_n", logged_test("test_n1")))
+    _bump(project.root / "tests")
 
     assert _refresh() is None, "a directory it set out to list is still to be listed"
 
@@ -369,10 +369,10 @@ def test_a_directory_whose_conftest_breaks_is_tried_again_once_it_is_fixed(repo,
     assert first is not None
     assert "test_n1" not in first.names
     still = tr.classify(_the_repo(), first)
-    assert repo.root / "tests" in still.candidate_dirs, "its listing did not complete"
+    assert project.root / "tests" in still.candidate_dirs, "its listing did not complete"
 
-    repo.write("tests/new/conftest.py", "")
-    repo.next_run()
+    project.write("tests/new/conftest.py", "")
+    project.next_run()
     second = _refresh()
 
     assert second is not None
@@ -380,8 +380,8 @@ def test_a_directory_whose_conftest_breaks_is_tried_again_once_it_is_fixed(repo,
     assert tr.classify(_the_repo(), second).is_current
 
 
-def test_the_table_has_no_source_field(repo, sessions):
-    _seed(repo, sessions)
-    raw = json.loads(cc._cache_path().read_text())[cc.COLLECTED_TESTS_KEY][str(repo.root)]
+def test_the_table_has_no_source_field(project, sessions):
+    _seed(project, sessions)
+    raw = json.loads(cc._cache_path().read_text())[cc.COLLECTED_TESTS_KEY][str(project.root)]
     assert raw["schema_version"] == tr.RECORDS_SCHEMA_VERSION == 5
     assert all("source" not in record for record in raw["files"].values())

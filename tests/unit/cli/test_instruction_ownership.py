@@ -1,7 +1,7 @@
 """An instruction's owning repo and the ``otto run`` dispatch gate (spec §5).
 
 An instruction's owner is the repo whose init modules registered it
-(``INSTRUCTIONS.repo(name)``), and dispatch refuses one whose owner is inactive
+(``INSTRUCTIONS.project(name)``), and dispatch refuses one whose owner is inactive
 for this invocation. Three things this module is deliberate about, each of
 them a defect this branch already ate once:
 
@@ -41,7 +41,7 @@ from otto.cli.registry import CommandSpec
 from otto.context import OttoContext
 from otto.instruction_catalog import INSTRUCTIONS, STANDALONE_INSTRUCTIONS, InstructionEntry
 from otto.labs.loader import Lab
-from otto.registry import registering_repo
+from otto.registry import registering_project
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result, seed_scope_verdicts
 from tests._fixtures.bootstrapstub import bootstrap_stub
 from tests._fixtures.clickctx import chain
@@ -83,7 +83,7 @@ async def _noop() -> None: ...
 
 def _install_entry(name: str, owner: str) -> None:
     """Register standalone *name* from *owner*'s init import, so *owner* owns it."""
-    with registering_repo(owner):
+    with registering_project(owner):
         STANDALONE_INSTRUCTIONS.register(
             name, InstructionEntry(name=name, handler=_noop, module="m")
         )
@@ -143,7 +143,7 @@ _FOLDING_CASES = [
         "switch",
         {"owner": _SWITCH_OWNER, "excluded_by_switch": True},
         (
-            f"'flash-b' belongs to repo '{_SWITCH_OWNER}', which was switched off for "
+            f"'flash-b' belongs to project '{_SWITCH_OWNER}', which was switched off for "
             f"this run (--exclude-projects {_SWITCH_OWNER})"
         ),
         f"  activate it: remove --exclude-projects {_SWITCH_OWNER}    or: -I {_SWITCH_OWNER}",
@@ -159,7 +159,7 @@ _FOLDING_CASES = [
             ),
         },
         (
-            f"'flash-b' belongs to repo '{_LAB_OWNER}', which is inactive for the "
+            f"'flash-b' belongs to project '{_LAB_OWNER}', which is inactive for the "
             f"loaded lab(s) [bench] (lab_patterns: bench-lab, unix-lab, zephyr-lab)"
         ),
         f"  activate it: -l bench-lab / -l unix-lab / -l zephyr-lab    or: -I {_LAB_OWNER}",
@@ -171,7 +171,7 @@ _FOLDING_CASES = [
             "scope": verdict(_LAB_ONE_PATTERN_OWNER, excluded=True),
         },
         (
-            f"'flash-b' belongs to repo '{_LAB_ONE_PATTERN_OWNER}', which is inactive "
+            f"'flash-b' belongs to project '{_LAB_ONE_PATTERN_OWNER}', which is inactive "
             f"for the loaded lab(s) [bench] (lab_patterns: {_LAB_ONE_PATTERN_OWNER}-lab)"
         ),
         f"  activate it: -l {_LAB_ONE_PATTERN_OWNER}-lab    or: -I {_LAB_ONE_PATTERN_OWNER}",
@@ -180,7 +180,7 @@ _FOLDING_CASES = [
         "host-starved",
         {"owner": _STARVED_OWNER, "scope": verdict(_STARVED_OWNER, universe=())},
         (
-            f"'flash-b' belongs to repo '{_STARVED_OWNER}', which is inactive: its "
+            f"'flash-b' belongs to project '{_STARVED_OWNER}', which is inactive: its "
             f"[project] host_patterns (.*) match no host in the loaded lab(s) [bench]"
         ),
         f"  activate it: widen host_patterns, or: -I {_STARVED_OWNER}",
@@ -207,12 +207,12 @@ class TestOwner:
     def test_decorator_records_the_registering_repo(self) -> None:
         from otto.cli.run import instruction
 
-        with registering_repo("repo9"):
+        with registering_project("repo9"):
 
             @instruction()
             async def probe_owner() -> None: ...
 
-        assert INSTRUCTIONS.repo("probe-owner") == "repo9"
+        assert INSTRUCTIONS.project("probe-owner") == "repo9"
 
     def test_first_party_registration_records_none(self) -> None:
         from otto.cli.run import instruction
@@ -220,16 +220,16 @@ class TestOwner:
         @instruction()
         async def probe_first_party() -> None: ...
 
-        assert INSTRUCTIONS.repo("probe-first-party") is None
+        assert INSTRUCTIONS.project("probe-first-party") is None
 
     def test_a_hand_built_entry_is_owned_by_the_repo_that_registers_it(self) -> None:
         """Ownership is the registration's, not a field a hand-built entry can omit."""
         _install_entry("hand", "repo3")
-        assert INSTRUCTIONS.repo("hand") == "repo3"
+        assert INSTRUCTIONS.project("hand") == "repo3"
 
     def test_a_project_instruction_has_no_owner(self) -> None:
         """Otto's six derive with no owner: a body per repo, not one owning repo."""
-        assert INSTRUCTIONS.repo("install") is None
+        assert INSTRUCTIONS.project("install") is None
 
     def test_a_registration_here_does_not_leak(self) -> None:
         """The root conftest's ``_isolate_registries`` is what cleans up after these.
@@ -267,7 +267,7 @@ class TestRefusal:
             refuse_inactive_instruction(_dispatch_ctx("flash-b"))
         assert excinfo.value.exit_code == 1
         out = capsys.readouterr().out
-        assert "'flash-b' belongs to repo 'repo2'" in out
+        assert "'flash-b' belongs to project 'repo2'" in out
         assert "which was switched off for this run (--exclude-projects repo2)" in out
         assert "activate it: remove --exclude-projects repo2    or: -I repo2" in out
 
@@ -364,7 +364,7 @@ class TestRefusal:
         with pytest.raises(typer.Exit) as excinfo:
             refuse_inactive_instruction(chain("otto", "run", "flash-b", "sub"))
         assert excinfo.value.exit_code == 1
-        assert "'flash-b' belongs to repo 'repo2'" in capsys.readouterr().out
+        assert "'flash-b' belongs to project 'repo2'" in capsys.readouterr().out
 
 
 class TestRefusalRendering:
@@ -421,7 +421,7 @@ class TestRefusalRendering:
         """
         self._refuse(monkeypatch, verdict("repo2", excluded=True))
         captured = capsys.readouterr()
-        assert "belongs to repo 'repo2'" in captured.out
+        assert "belongs to project 'repo2'" in captured.out
         assert captured.err == ""
 
     @pytest.mark.parametrize(
@@ -533,7 +533,7 @@ class TestPreambleWiring:
         with pytest.raises(typer.Exit) as excinfo:
             invoke.command_preamble(_PreambleCtx("flash-b", spec))  # ty: ignore[invalid-argument-type]
         assert excinfo.value.exit_code == 1
-        assert "belongs to repo 'repo2'" in capsys.readouterr().out
+        assert "belongs to project 'repo2'" in capsys.readouterr().out
 
     def test_the_gate_runs_after_the_lab_session_exists(
         self, monkeypatch: pytest.MonkeyPatch

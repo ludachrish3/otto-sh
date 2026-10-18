@@ -28,10 +28,10 @@ def test_review_source_error_always_names_source():
 
 
 def test_tls_error_carries_setting_and_repos():
-    exc = MonitorTlsError("bad", setting="tls_key", repos=["a", "b"])
+    exc = MonitorTlsError("bad", setting="tls_key", projects=["a", "b"])
     assert isinstance(exc, OttoError)
     assert not isinstance(exc, FieldError)
-    assert (exc.setting, exc.repos) == ("tls_key", ["a", "b"])
+    assert (exc.setting, exc.projects) == ("tls_key", ["a", "b"])
 
 
 def test_empty_walk_says_the_lab_is_empty_and_never_mentions_a_pattern():

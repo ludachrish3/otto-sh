@@ -41,6 +41,6 @@ class TestLoadHostsPattern:
 async def test_collect_coverage_refuses_a_non_string_selector(tmp_path):
     # The caller-level contract: the loader's refusal propagates out of
     # collect_coverage as the CoverageConfigError its callers already print.
-    repo = fake_repo(settings={"coverage": {"hosts": ["host1", "host2"]}})
+    project = fake_repo(settings={"coverage": {"hosts": ["host1", "host2"]}})
     with pytest.raises(CoverageConfigError, match="hosts must be a string"):
-        await collect_coverage(tmp_path, repos=[repo])
+        await collect_coverage(tmp_path, projects=[project])

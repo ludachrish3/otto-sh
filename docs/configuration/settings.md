@@ -6,7 +6,7 @@ project initialization.
 
 ```{note}
 The `.otto` name is shared by three directories holding three different
-kinds of thing.  This page is about the **repo's** `.otto/` — source
+kinds of thing.  This page is about the **project's** `.otto/` — source
 config, committed with the code.  The xdir holds run outputs, and
 `~/.otto` — otto's user-level home — holds derived state otto can rebuild.
 See [The workspace home](../cli/index.md#the-workspace-home).
@@ -14,7 +14,7 @@ See [The workspace home](../cli/index.md#the-workspace-home).
 
 ## The settings file
 
-Create `.otto/settings.toml` in your repo root:
+Create `.otto/settings.toml` in your project root:
 
 ```toml
 name = "acme"
@@ -30,7 +30,7 @@ init  = ["acme_instructions"]
 backend = "json"
 paths = ["../lab_data"]
 
-# Optional: product preferences applied to every host this repo touches.
+# Optional: product preferences applied to every host this project touches.
 # Selector = Python regex matched against the host id; ".*" = all hosts.
 # Values win over lab.json; CLI --term/--transfer win over everything.
 [host_preferences.".*"]
@@ -67,12 +67,12 @@ pins it at `WARNING` by default), so the trace actually reaches the console
 under `--log-level DEBUG`. The `[logging.levels] asyncssh = "DEBUG"` entry
 below does the same without the env var — but a valid `OTTO_SSH_DEBUG`
 overrides it from the first connect on, for the rest of the process; unset
-the env var to get the repo entry back.
+the env var to get the project entry back.
 
 ### Path resolution
 
 Every path that otto itself interprets is expanded with `~` (your home
-directory), and if it is still relative it resolves against **the repo
+directory), and if it is still relative it resolves against **the project
 root** — the directory containing `.otto/`.  Absolute paths are used as
 written.  (`ssh_options` values, merged `host_preferences` fields, and any
 path in the *host's* own domain — a `[[products]]` entry's `stage_dir` or
@@ -80,30 +80,30 @@ path in the *host's* own domain — a `[[products]]` entry's `stage_dir` or
 whatever consumes them.)
 
 ```toml
-tests    = ["tests"]                # <repo>/tests
-libs     = ["../shared/pylib"]      # <repo>/../shared/pylib
+tests    = ["tests"]                # <project>/tests
+libs     = ["../shared/pylib"]      # <project>/../shared/pylib
 tls_cert = "~/.otto/tls/cert.pem"   # [monitor] table: $HOME/.otto/tls/cert.pem
 ```
 
 A path is never interpreted relative to the directory you happen to run `otto`
 from.  Use `~` when you want a per-user location, such as TLS material.
 
-When several repos are active at once (`OTTO_SUT_DIRS`), each `settings.toml`
-resolves against its own repo root.
+When several projects are active at once (`OTTOPATH`), each `settings.toml`
+resolves against its own project root.
 
 #### Removed: `${sut_dir}`
 
-Earlier versions expanded `${sut_dir}` to the repo root.  It is gone, and no
-longer special in any way: a settings file still containing it gets a directory
-literally named `${sut_dir}`.
+Earlier versions expanded `${sut_dir}` to the project root.  It is gone, and
+no longer special in any way: a settings file still containing it gets a
+directory literally named `${sut_dir}`.
 
 Drop the prefix: `"${sut_dir}/tests"` becomes `"tests"`, and
 `"${sut_dir}/../shared"` becomes `"../shared"`.
 
 Values otto hands on without interpreting them (`ssh_options`) must now be
 absolute.  A custom lab-source or reservation backend's options are parsed by
-its own config model, which receives the repo root
-(`LabSourceEnv.repo_dir`, `ReservationEnv.repo_dir`) and can anchor a relative
+its own config model, which receives the project root
+(`LabSourceEnv.project_root`, `ReservationEnv.project_root`) and can anchor a relative
 path there, as the built-in `[reservations.json] path` does — see
 {doc}`../cli/reservation/index`.
 
@@ -125,7 +125,7 @@ version
   only `backend` and `name`; the backend's keys are checked when otto prepares
   the source, after `init`.  Every declared source is
   read, in order, and a later one overrides an earlier one one element (or one
-  `labs` table entry) at a time.  A repo may declare none; the `[lab]` table
+  `labs` table entry) at a time.  A project may declare none; the `[lab]` table
   holds nothing but `sources`.  See {doc}`host-sources` for the full treatment.
 
 libs
@@ -134,8 +134,8 @@ libs
   libraries.  Defaults to `[]`.
 
 tests
-: The repo's test directories.  `otto test` hands them to pytest, one session
-  per repo, and pytest collects them the way it always does: `test_*.py` files
+: The project's test directories.  `otto test` hands them to pytest, one session
+  per project, and pytest collects them the way it always does: `test_*.py` files
   at any depth, each directory's `conftest.py`, `norecursedirs` honored.  otto
   imports test files only inside a pytest session: `otto test`'s own, and the
   background collection that fills test-name completion.  No other command
@@ -147,7 +147,7 @@ init
 : List of Python module names (dot-separated) to import at startup.  Use
   this to register instructions (`@instruction()`) and shared option classes.
   These modules must be importable from a `libs` directory or `sys.path`.
-  Defaults to `[]`; omitted or `[]` means the repo has no init modules, which
+  Defaults to `[]`; omitted or `[]` means the project has no init modules, which
   is legitimate (`otto init` reports the instructions area as not present).
 
 \[host_preferences\]
@@ -162,14 +162,14 @@ init
   > tables move under `[host_preferences."<selector>".<opt>]`.
 
 \[project\]
-: Optional table declaring this repo's **fleet of interest** — `lab_patterns`
+: Optional table declaring this project's **fleet of interest** — `lab_patterns`
   (the labs it applies to) and `host_patterns` (the hosts it targets inside
   them).  Both are Python regexes matched with `re.fullmatch`; `host_patterns`
   defaults to `[".*"]` and `lab_patterns` has no default.  It bounds every
-  fleet walk the repo drives and gates its product/dev-tool providers, and it
-  becomes **required** the moment the repo registers one of those providers —
+  fleet walk the project drives and gates its product/dev-tool providers, and it
+  becomes **required** the moment the project registers one of those providers —
   or declares a non-empty `[[products]]`/`[[dev_tools]]` array (see below):
-  either way the repo is *providing*, and bootstrap refuses a providing repo
+  either way the project is *providing*, and bootstrap refuses a providing project
   with no `[project]` scope. See {ref}`project-scope` in {doc}`lab-config` for
   the full schema and {doc}`../cli/run/defaults` for what it does to a walk.
 
@@ -189,9 +189,9 @@ init
   sub-table must contain a `base` key naming a registered host class
   (e.g. `"unix"`, `"zephyr"`, or a class registered by an `init` module)
   and may contain any default field values to bundle with that profile.
-  A table is not a registration: otto reads it for the repos it runs with,
+  A table is not a registration: otto reads it for the projects it runs with,
   so lab-data entries can select it by `os_type` name, and checks its
-  `base` and defaults after `init`, naming the repo.  See {doc}`os-profiles`
+  `base` and defaults after `init`, naming the project.  See {doc}`os-profiles`
   for the full treatment.
 
 \[coverage\]
@@ -219,14 +219,14 @@ init
 : Optional table selecting the **host inventory** — the tool-agnostic layer a
   host entry reads its machine facts from.  Its usual home is the user-level
   file described below; a table here is a per-project **override**, and when
-  more than one active repo declares one, the tables must be identical or
+  more than one active project declares one, the tables must be identical or
   bootstrap fails naming both.  Two keys are otto's own: `backend` (a
   registered name — `"json"` and `"netbox"` ship with otto) and `cache_ttl`
   (`"0"`, or `<n>m` / `<n>h` / `<n>d`; default `"24h"`).  Every other key
   belongs to the selected backend: `path` (required) and `supplies` for
   `json`; `url`, `token_env`, `filter`, `ip_source`,
   `custom_fields`, `extra_custom_fields` and `timeout` (seconds per request,
-  default `30`) for `netbox`.  A relative `path` anchors to the repo root,
+  default `30`) for `netbox`.  A relative `path` anchors to the project root,
   like every other settings path.  See {doc}`inventory` for the full
   treatment.
 
@@ -237,7 +237,7 @@ init
   homes and the same override-and-agree rule as `[inventory]`, resolved
   independently of it; requires an inventory to be keyed against. `backend` is
   otto's (`"json"` ships with otto); the `json` store takes `path`, anchored to
-  the repo root. See {doc}`inventory`.
+  the project root. See {doc}`inventory`.
 
 \[logging.levels\]
 : Optional table setting the per-library noise floor — which third-party
@@ -275,19 +275,19 @@ noisy_vendor_sdk = "ERROR"  # quiet a library of your own
   is legitimate. An unrecognized level name is a validation error.
 - **`otto` and `otto.*` are rejected.** otto's own verbosity is
   `--log-level`'s job, not this table's.
-- **Multi-repo tables merge.** When more than one active repo sets
-  `[logging.levels]`, the tables union; two repos setting the *same*
-  logger to *different* levels is a validation error naming both repos and
+- **Multi-project tables merge.** When more than one active project sets
+  `[logging.levels]`, the tables union; two projects setting the *same*
+  logger to *different* levels is a validation error naming both projects and
   the logger. The same level twice is fine.
 
-The `capture` key that used to live under `[logging]` — a per-repo
+The `capture` key that used to live under `[logging]` — a per-project
 allowlist this table replaces — is gone: capture is automatic now that
 otto configures the root logger, so a `settings.toml` still carrying it
 fails validation, naming the file and pointing here.
 
 ### User-level settings
 
-One file sits outside every repo: `~/.otto/settings.toml`, otto's
+One file sits outside every project root: `~/.otto/settings.toml`, otto's
 **user-level** settings.  It holds what is true of the person and the machine
 rather than of a project — today that is two tables, `[inventory]` and
 `[creds]`:
@@ -305,7 +305,7 @@ path = "~/.otto/creds.json"
 Otto neither creates nor scaffolds this file; write it by hand when you adopt
 an inventory.  It lives under otto's home, so `OTTO_HOME` relocates it along
 with everything else there, and a relative path inside it anchors to that
-directory (`~/.otto`) rather than to any repo.  A repo-only table pasted into
+directory (`~/.otto`) rather than to any project.  A project-only table pasted into
 it is an error naming the key — this file is not a second `settings.toml`.
 
 Each table's keys other than `backend` (and `cache_ttl` for `[inventory]`)
@@ -318,7 +318,7 @@ A value of the right type that the backend refuses when it is built (NetBox's
 same way.
 
 A project's own `[inventory]` or `[creds]` table overrides the matching one,
-which is the seam for a repo that has moved to a different inventory or store
+which is the seam for a project that has moved to a different inventory or store
 ahead of the rest.  See {doc}`inventory`.
 
 ## What happens at startup
@@ -326,23 +326,23 @@ ahead of the rest.  See {doc}`inventory`.
 When you run any `otto` command, the following initialization sequence
 occurs:
 
-1. **Environment parsing** -- Otto reads `OTTO_SUT_DIRS` to find repo root
-   directories.
+1. **Environment parsing** -- Otto reads `OTTOPATH` to find the project
+   roots.
 
-2. **Repo discovery** -- For each path in `OTTO_SUT_DIRS`, otto creates a
-   `Repo` object and reads its `.otto/settings.toml`.
+2. **Project discovery** -- For each path in `OTTOPATH`, otto creates a
+   `Project` object and reads its `.otto/settings.toml`.
 
-3. **Apply settings** -- For each repo, otto:
+3. **Apply settings** -- For each project, otto:
    - Adds `libs` directories to `sys.path`
    - Imports modules listed in `init` (this registers instructions)
 
    Test files are not imported here, only inside a pytest session (see
    `tests` above).
 
-4. **Lab loading** -- After every repo's `init` modules have run, otto
-   prepares each repo's `[[lab.sources]]` entries through their registered
+4. **Lab loading** -- After every project's `init` modules have run, otto
+   prepares each project's `[[lab.sources]]` entries through their registered
    backends (parsing each backend's own keys), builds the host source via
-   `build_lab_sources`, concatenating the entries in `OTTO_SUT_DIRS`
+   `build_lab_sources`, concatenating the entries in `OTTOPATH`
    order, and loads the lab(s) named by `--lab` or `OTTO_LAB`. Every declared
    source is live: a later one overrides an earlier one wholesale per record
    (an element, or a `labs` table entry), with a warning naming both.
@@ -351,31 +351,33 @@ occurs:
    {doc}`host-sources`.
 
 5. **Context creation** -- The global `OttoContext` is created with the
-   loaded repos and lab and installed via `set_context()`, making hosts
+   loaded projects and lab and installed via `set_context()`, making hosts
    available to the zero-argument accessors (`get_host`, `all_hosts`) in
    all commands.
 
 See {doc}`../architecture/subsystems/bootstrap` for how this sequence
-composes multiple repos into one process and contains per-file failures.
+composes multiple projects into one process and contains per-file failures.
 
-## Multiple repos
+## Multiple projects
 
-Otto supports multiple repos simultaneously.  Set `OTTO_SUT_DIRS` to a list
-separated by the OS path separator, as for `PATH`: `:` on Linux and macOS,
-`;` on Windows. A comma is not a separator; it is part of a path.
+Otto supports multiple projects simultaneously: list each project root in
+`OTTOPATH` (see
+[Projects, project roots and OTTOPATH](../overview.md#projects-project-roots-and-ottopath)).
+A comma is not a separator; it is part of a path.
 
 ```bash
-export OTTO_SUT_DIRS=/path/to/repo1:/path/to/repo2
+export OTTOPATH=/path/to/project-a:/path/to/project-b
 ```
 
-Each repo has its own settings, libs, tests, and host-data sources.  They
+Each project has its own settings, libs, tests, and host-data sources.  They
 are all merged at startup -- instructions and registered options from every
-repo appear in the CLI, `otto test` finds tests in every repo, and every repo's `[[lab.sources]]` entries are concatenated in
-`OTTO_SUT_DIRS` order.
+project appear in the CLI, `otto test` finds tests in every project, and
+every project's `[[lab.sources]]` entries are concatenated in `OTTOPATH`
+order.
 
-### Declaring dependencies between repos
+### Declaring dependencies between projects
 
-When one repo's libs or tests build on another's, declare it in
+When one project's libs or tests build on another's, declare it in
 `.otto/settings.toml`:
 
 ```toml
@@ -384,32 +386,32 @@ required = ["vantage >= 2.1, < 3", "common-libs"]
 optional = ["metrics >= 1.4"]
 ```
 
-Entries are a project name (matched against other repos' `name` fields,
+Entries are a project name (matched against other projects' `name` fields,
 case- and punctuation-insensitively) optionally followed by comma-ANDed
 version constraints using `==`, `!=`, `>=`, `<=`, `>`, `<`. Versions may be
 shortened (`< 3` means `< 3.0.0`). A version's extra tag (`1.2.3-rc1`) is
 never compared — `1.2.3-rc1` satisfies `>= 1.2.3` — and constraints may not
 carry one.
 
-At startup, otto validates the declarations after discovering every repo in
-`OTTO_SUT_DIRS`:
+At startup, otto validates the declarations after discovering every project in
+`OTTOPATH`:
 
 - A **required** dependency that is missing or version-incompatible fails
-  that repo loudly (its instructions and tests do not load; other repos are
-  unaffected). Repos that require a failed repo are skipped too, with the
+  that project loudly (its instructions and tests do not load; other projects are
+  unaffected). Projects that require a failed project are skipped too, with the
   root cause named.
 - An **optional** dependency that is absent is fine. Present but
   incompatible prints a startup warning (the feature stays disabled) and
   never blocks commands.
 - otto also checks that a compatible version is *possible* at all: if two
-  repos' required constraints on the same project can never both hold
+  projects' required constraints on the same project can never both hold
   (`>= 2` vs `< 2`), every participant gets an error naming all the
   constraints — no version hunt can fix a contradictory declaration set.
 - Registration order follows the dependency graph (a dependency's libs and
-  init modules load before its dependents'). Repos with no declared
-  dependencies keep `OTTO_SUT_DIRS` order exactly.
+  init modules load before its dependents'). Projects with no declared
+  dependencies keep `OTTOPATH` order exactly.
 
-Inspect the outcome at runtime via {func}`otto.bootstrap.get_repos` — each repo
+Inspect the outcome at runtime via {func}`otto.bootstrap.get_projects` — each project
 carries a `dependencies` list with per-dependency status and the provider's
 version.
 
@@ -420,25 +422,25 @@ version.
 backend = "uv"   # or "pip"; omit to auto-detect
 ```
 
-This repo's standing choice of installer for the environment
+This project's standing choice of installer for the environment
 {doc}`../cli/env/index` builds. It is a **preference, not a requirement**:
 `--backend` on the command line outranks it. Omit it to auto-detect: uv when it
 is on `PATH`, otherwise the standard library's `venv` plus pip.
 
-Two repos in one workspace declaring different values is a hard error naming
+Two projects in one workspace declaring different values is a hard error naming
 both.
 
-### `[dependencies]` names repos; `pyproject.toml` names packages
+### `[dependencies]` names projects; `pyproject.toml` names packages
 
 The two are easy to confuse and never overlap:
 
 | Where | What it declares |
 | ----- | ---------------- |
-| `[dependencies]` in `.otto/settings.toml` | Other **repos** in `OTTO_SUT_DIRS` this one needs |
-| `[project.dependencies]` in `pyproject.toml` | **Python packages** this repo imports |
+| `[dependencies]` in `.otto/settings.toml` | Other **projects** in `OTTOPATH` this one needs |
+| `[project.dependencies]` in `pyproject.toml` | **Python packages** this project imports |
 
-`otto env` reads the second: it installs each repo from its `pyproject.toml`,
-so that is where a Python requirement belongs. A repo with no `pyproject.toml`
+`otto env` reads the second: it installs each project from its `pyproject.toml`,
+so that is where a Python requirement belongs. A project with no `pyproject.toml`
 declares no Python dependencies to otto at all — it is skipped by `otto env`,
 and its `libs` reach `sys.path` at bootstrap exactly as before.
 
@@ -447,10 +449,10 @@ them apart:
 
 | Where | Read by | To decide |
 | ----- | ------- | --------- |
-| `[dependencies]` | the dependency pass at bootstrap | the ORDER repos load in, and which are skipped |
-| `[project.dependencies]` | the preflight, before every ordinary command | whether this environment can satisfy the repo at all |
+| `[dependencies]` | the dependency pass at bootstrap | the ORDER projects load in, and which are skipped |
+| `[project.dependencies]` | the preflight, before every ordinary command | whether this environment can satisfy the project at all |
 
-So a missing *repo* is a load-order problem and a missing *package* is an
+So a missing *project* is a load-order problem and a missing *package* is an
 environment problem, and each is reported by the thing that owns it — see
 {doc}`../cli/env/index`, which also documents what the preflight does not
 cover.
@@ -468,7 +470,7 @@ otto for a team:
    page, above) with every optional section present but commented out, the
    generated editor schemas
    (`.otto/schemas/` + `.vscode` wiring, see {doc}`../cli/schema/editors`), an example
-   lab host, and a `RepoOptions` class that the example instructions module
+   lab host, and a `ProjectOptions` class that the example instructions module
    registers for both `otto run` and `otto test`, and that the example tests
    read — so `otto test TestExample` and `otto run smoke` share a `--message`
    flag out of the box. `otto init --all`
@@ -479,7 +481,7 @@ otto for a team:
    entry on the built-in `json` backend (commit `lab.json` under `lab_data/`).
    Add an entry for a CMDB or inventory API if you have one, and mind the
    order: sources are read in order and a later one overrides an earlier one
-   one element (or one `labs` table entry) at a time, which is how a repo
+   one element (or one `labs` table entry) at a time, which is how a project
    layers its own equipment over a global database. See {doc}`host-sources`.
 3. **Decide on reservation gating** — leave it off (`backend = "none"`, the
    default) for sandbox labs, or wire `[reservations]` to your scheduler so otto
@@ -498,7 +500,7 @@ otto for a team:
    access key is the default and needs no setup; add TLS only if a lab
    needs it. A team owner creates a CA once and distributes trust to
    viewers; each machine that runs `otto monitor` then gets its own leaf
-   cert, and the repo's `settings.toml` gains a `[monitor]` table pointing
+   cert, and the project's `settings.toml` gains a `[monitor]` table pointing
    at it. See {doc}`../cli/monitor/index`'s [Securing the
    dashboard](../cli/monitor/serving.md#serving-the-dashboard) section for the steps.
 
@@ -552,7 +554,7 @@ build does with them: the tag it applies and how an archive is used.
 authoritative: it is the list otto registers container hosts from, not a hint.
 Its cardinality is unrelated to `[[docker.images]]`: one built image can back
 several services, and a service may run a published image otto never builds.
-(The per-repo `compose_up` primitive additionally compares the declared list
+(The per-project `compose_up` primitive additionally compares the declared list
 against `docker compose config --services` after bringing the stack up and
 warns on drift; the use-case deploy path registers from the declaration
 alone.)
@@ -562,7 +564,7 @@ entry in `services`, and values are non-empty, whitespace-free strings passed
 to docker verbatim (`"1000:1000"`, `"postgres"`, `"postgres:staff"`). See
 {ref}`container-users` for how commands consume it.
 
-Relative paths resolve against the repo root — see
+Relative paths resolve against the project root — see
 [Path resolution](#path-resolution).
 
 A use-case fragment no longer takes `role` or `placement`: both are removed

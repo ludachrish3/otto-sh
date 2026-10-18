@@ -7,7 +7,7 @@ committed: docs/conf.py runs this script on every Sphinx build, so the help
 text and completion candidates shown in the docs are captured from the
 *current* CLI and can never drift from it.
 
-How it works: ``otto init --all`` scaffolds a small demo repo into a temp
+How it works: ``otto init --all`` scaffolds a small demo project into a temp
 directory (the same scaffold a new user gets), and every capture runs against
 it — ``otto <command> --help`` for the per-command pages, and typer's
 completion protocol (``_OTTO_COMPLETE=complete_bash`` + ``COMP_WORDS``) for
@@ -64,7 +64,7 @@ COMMANDS = [
 # Tab-completion showcases: snippet name -> the COMP_WORDS line completed.
 # Every candidate list is served by otto's real completion machinery — the
 # registries (instructions, term backends), the test names the completion
-# cache parses from the repo's test files, the class-scoped host verb menu,
+# cache parses from the project's test files, the class-scoped host verb menu,
 # and the host-id sources.
 COMPLETIONS = {
     "host-ids": "otto host ",
@@ -121,11 +121,11 @@ def _write_placeholders() -> None:
 
 
 def _otto_env(demo: Path) -> dict[str, str]:
-    """Build a clean environment rooted at the demo repo, with deterministic width."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith("OTTO_")}
+    """Build a clean environment rooted at the demo project, with deterministic width."""
+    env = {k: v for k, v in os.environ.items() if not (k.startswith("OTTO_") or k == "OTTOPATH")}
     env.update(
-        OTTO_SUT_DIRS=str(demo),
-        # A private user-level home beside the demo repo, so the completion
+        OTTOPATH=str(demo),
+        # A private user-level home beside the demo project, so the completion
         # cache each capture writes dies with the TemporaryDirectory instead
         # of leaving a workspace in the real ~/.otto on every docs build.
         OTTO_HOME=str(demo.parent / ".otto-home"),
@@ -140,8 +140,8 @@ def _otto_env(demo: Path) -> dict[str, str]:
 def _run_otto(args: list[str], demo: Path, *, no_repo: bool = False, **env_extra: str) -> str:
     otto_bin = Path(sys.executable).parent / "otto"  # console script; runs entry()
     env = _otto_env(demo)
-    if no_repo:  # `otto init` runs before the demo repo exists to be discovered
-        env.pop("OTTO_SUT_DIRS", None)
+    if no_repo:  # `otto init` runs before the demo project exists to be discovered
+        env.pop("OTTOPATH", None)
     env.update(env_extra)
     proc = subprocess.run(  # noqa: S603 — venv otto binary + fixed argv, no shell
         [str(otto_bin), *args],
@@ -201,7 +201,7 @@ def _capture(demo: Path) -> None:
 
 
 def main() -> None:
-    """Resolve the mode, scaffold the demo repo, and capture (or skip)."""
+    """Resolve the mode, scaffold the demo project, and capture (or skip)."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--mode",

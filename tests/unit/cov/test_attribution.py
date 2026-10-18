@@ -114,94 +114,94 @@ def test_empty_diff_is_empty():
     assert parse_commit_diff("") == {}
 
 
-def _git(repo: Path, *args: str) -> str:
+def _git(git_repo: Path, *args: str) -> str:
     return subprocess.run(
         ["git", *args],
-        cwd=repo,
+        cwd=git_repo,
         check=True,
         capture_output=True,
         text=True,
-        env=git_env(repo),
+        env=git_env(git_repo),
     ).stdout
 
 
-def _repo(tmp_path: Path) -> Path:
+def _git_repo(tmp_path: Path) -> Path:
     return TmpGitRepo(tmp_path / "r").root
 
 
-def _commit(repo: Path, message: str) -> str:
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-q", "-m", message)
-    return _head(repo)
+def _commit(git_repo: Path, message: str) -> str:
+    _git(git_repo, "add", "-A")
+    _git(git_repo, "commit", "-q", "-m", message)
+    return _head(git_repo)
 
 
-def _head(repo: Path) -> str:
+def _head(git_repo: Path) -> str:
     """Return the sha of the current HEAD commit."""
-    return _git(repo, "rev-parse", "HEAD").strip()
+    return _git(git_repo, "rev-parse", "HEAD").strip()
 
 
 def _make_ticket_repo(tmp_path: Path, message: str) -> Path:
     """Create a repo with a single commit touching a.c line 1, with the given message."""
-    repo = _repo(tmp_path)
-    (repo / "a.c").write_text("one\n")
-    _commit(repo, message)
-    return repo
+    git_repo = _git_repo(tmp_path)
+    (git_repo / "a.c").write_text("one\n")
+    _commit(git_repo, message)
+    return git_repo
 
 
 def _make_two_commit_ticket_repo(tmp_path: Path) -> Path:
     """Create a repo with two commits: c1 touches line 1, c2 touches line 2."""
-    repo = _repo(tmp_path)
-    (repo / "a.c").write_text("one\ntwo\n")
-    _commit(repo, "fix #1")
-    (repo / "a.c").write_text("one\nCHANGED\n")
-    _commit(repo, "fix #2")
-    return repo
+    git_repo = _git_repo(tmp_path)
+    (git_repo / "a.c").write_text("one\ntwo\n")
+    _commit(git_repo, "fix #1")
+    (git_repo / "a.c").write_text("one\nCHANGED\n")
+    _commit(git_repo, "fix #2")
+    return git_repo
 
 
 def test_each_line_attributed_to_the_commit_that_last_touched_it(tmp_path):
-    repo = _repo(tmp_path)
-    (repo / "a.c").write_text("one\ntwo\n")
-    first = _commit(repo, "c1")
-    (repo / "a.c").write_text("one\nCHANGED\n")
-    second = _commit(repo, "c2")
+    git_repo = _git_repo(tmp_path)
+    (git_repo / "a.c").write_text("one\ntwo\n")
+    first = _commit(git_repo, "c1")
+    (git_repo / "a.c").write_text("one\nCHANGED\n")
+    second = _commit(git_repo, "c2")
 
-    got = attribute_lines(repo, {"a.c": 2})
+    got = attribute_lines(git_repo, {"a.c": 2})
 
     assert got["a.c"] == {1: first, 2: second}
 
 
 def test_created_file_attributes_all_lines_to_its_creating_commit(tmp_path):
-    repo = _repo(tmp_path)
-    (repo / "seed.c").write_text("s\n")
-    _commit(repo, "seed")
-    (repo / "new.c").write_text("a\nb\nc\n")
-    created = _commit(repo, "add new.c")
+    git_repo = _git_repo(tmp_path)
+    (git_repo / "seed.c").write_text("s\n")
+    _commit(git_repo, "seed")
+    (git_repo / "new.c").write_text("a\nb\nc\n")
+    created = _commit(git_repo, "add new.c")
 
-    got = attribute_lines(repo, {"new.c": 3})
+    got = attribute_lines(git_repo, {"new.c": 3})
 
     assert got["new.c"] == {1: created, 2: created, 3: created}
 
 
 def test_whitespace_only_edit_does_not_reattribute(tmp_path):
-    repo = _repo(tmp_path)
-    (repo / "a.c").write_text("int x;\n")
-    first = _commit(repo, "c1")
-    (repo / "a.c").write_text("    int x;\n")
-    _commit(repo, "reindent")
+    git_repo = _git_repo(tmp_path)
+    (git_repo / "a.c").write_text("int x;\n")
+    first = _commit(git_repo, "c1")
+    (git_repo / "a.c").write_text("    int x;\n")
+    _commit(git_repo, "reindent")
 
-    got = attribute_lines(repo, {"a.c": 1})
+    got = attribute_lines(git_repo, {"a.c": 1})
 
     assert got["a.c"] == {1: first}
 
 
 def test_rename_is_followed_across_m_flag(tmp_path):
-    repo = _repo(tmp_path)
-    (repo / "old.c").write_text("".join(f"line{i}\n" for i in range(20)))
-    first = _commit(repo, "c1")
-    _git(repo, "mv", "old.c", "new.c")
-    _commit(repo, "move it")
+    git_repo = _git_repo(tmp_path)
+    (git_repo / "old.c").write_text("".join(f"line{i}\n" for i in range(20)))
+    first = _commit(git_repo, "c1")
+    _git(git_repo, "mv", "old.c", "new.c")
+    _commit(git_repo, "move it")
 
-    got = attribute_lines(repo, {"new.c": 20})
+    got = attribute_lines(git_repo, {"new.c": 20})
 
     assert got["new.c"][1] == first
 
@@ -216,17 +216,17 @@ def test_rename_with_edit_before_and_after_attributes_each_side_correctly(tmp_pa
     them touch ``new.c``. That would misattribute the pre-rename lines to
     whoever did the move, crediting them with code they did not write.
     """
-    repo = _repo(tmp_path)
+    git_repo = _git_repo(tmp_path)
     body = [f"line{i}\n" for i in range(25)]
-    (repo / "old.c").write_text("".join(body))
-    seed = _commit(repo, "seed")
-    _git(repo, "mv", "old.c", "new.c")
-    _commit(repo, "rename")
+    (git_repo / "old.c").write_text("".join(body))
+    seed = _commit(git_repo, "seed")
+    _git(git_repo, "mv", "old.c", "new.c")
+    _commit(git_repo, "rename")
     body[5] = "post-rename edit\n"
-    (repo / "new.c").write_text("".join(body))
-    after = _commit(repo, "edit after rename")
+    (git_repo / "new.c").write_text("".join(body))
+    after = _commit(git_repo, "edit after rename")
 
-    got = attribute_lines(repo, {"new.c": len(body)})
+    got = attribute_lines(git_repo, {"new.c": len(body)})
 
     assert got["new.c"][6] == after  # 1-indexed: body[5] is line 6
     assert got["new.c"][1] == seed
@@ -245,16 +245,16 @@ def test_double_rename_is_followed_across_the_bounded_walk(tmp_path):
     module exists to route around), crediting the first-rename commit with
     lines the seed commit actually wrote.
     """
-    repo = _repo(tmp_path)
+    git_repo = _git_repo(tmp_path)
     body = [f"line{i}\n" for i in range(15)]
-    (repo / "old1.c").write_text("".join(body))
-    seed = _commit(repo, "seed")
-    _git(repo, "mv", "old1.c", "mid.c")
-    _commit(repo, "first rename")
-    _git(repo, "mv", "mid.c", "new.c")
-    _commit(repo, "second rename")
+    (git_repo / "old1.c").write_text("".join(body))
+    seed = _commit(git_repo, "seed")
+    _git(git_repo, "mv", "old1.c", "mid.c")
+    _commit(git_repo, "first rename")
+    _git(git_repo, "mv", "mid.c", "new.c")
+    _commit(git_repo, "second rename")
 
-    got = attribute_lines(repo, {"new.c": len(body)})
+    got = attribute_lines(git_repo, {"new.c": len(body)})
 
     assert got["new.c"][1] == seed
     assert got["new.c"][len(body)] == seed
@@ -264,28 +264,28 @@ def test_expand_historical_paths_follows_double_rename(tmp_path):
     """White-box check on the discovery pass itself: transitively pulls in
     both ``old1.c`` and ``mid.c`` for a file now known as ``new.c``.
     """
-    repo = _repo(tmp_path)
-    (repo / "old1.c").write_text("x\n")
-    _commit(repo, "seed")
-    _git(repo, "mv", "old1.c", "mid.c")
-    _commit(repo, "first rename")
-    _git(repo, "mv", "mid.c", "new.c")
-    _commit(repo, "second rename")
+    git_repo = _git_repo(tmp_path)
+    (git_repo / "old1.c").write_text("x\n")
+    _commit(git_repo, "seed")
+    _git(git_repo, "mv", "old1.c", "mid.c")
+    _commit(git_repo, "first rename")
+    _git(git_repo, "mv", "mid.c", "new.c")
+    _commit(git_repo, "second rename")
 
-    result = attribution._expand_historical_paths(repo, {"new.c"}, first_parent=True)
+    result = attribution._expand_historical_paths(git_repo, {"new.c"}, first_parent=True)
 
     assert result == {"new.c", "mid.c", "old1.c"}
 
 
 def test_expand_historical_paths_does_not_grow_for_a_never_renamed_file(tmp_path):
     """The common case: a covered file with no rename history expands to itself only."""
-    repo = _repo(tmp_path)
-    (repo / "a.c").write_text("x\n")
-    _commit(repo, "c1")
-    (repo / "a.c").write_text("y\n")
-    _commit(repo, "c2")
+    git_repo = _git_repo(tmp_path)
+    (git_repo / "a.c").write_text("x\n")
+    _commit(git_repo, "c1")
+    (git_repo / "a.c").write_text("y\n")
+    _commit(git_repo, "c2")
 
-    result = attribution._expand_historical_paths(repo, {"a.c"}, first_parent=True)
+    result = attribution._expand_historical_paths(git_repo, {"a.c"}, first_parent=True)
 
     assert result == {"a.c"}
 
@@ -302,18 +302,18 @@ def test_parse_rename_records_empty_block_is_empty():
 
 
 def test_uncommitted_edit_gets_the_sentinel_not_the_previous_committer(tmp_path):
-    repo = _repo(tmp_path)
-    (repo / "a.c").write_text("one\ntwo\n")
-    first = _commit(repo, "c1")
-    (repo / "a.c").write_text("one\nDIRTY\n")
+    git_repo = _git_repo(tmp_path)
+    (git_repo / "a.c").write_text("one\ntwo\n")
+    first = _commit(git_repo, "c1")
+    (git_repo / "a.c").write_text("one\nDIRTY\n")
 
-    got = attribute_lines(repo, {"a.c": 2})
+    got = attribute_lines(git_repo, {"a.c": 2})
 
     assert got["a.c"] == {1: first, 2: UNCOMMITTED}
 
 
-def _sign_with_ssh(repo: Path, tmp_path: Path) -> None:
-    """Arm *repo* for SSH commit signing with a fresh, passphrase-less key.
+def _sign_with_ssh(git_repo: Path, tmp_path: Path) -> None:
+    """Arm *git_repo* for SSH commit signing with a fresh, passphrase-less key.
 
     SSH signing (``gpg.format=ssh``) needs no keyring, agent, or
     ``allowedSignersFile`` setup to *create* a signature — only to verify
@@ -324,8 +324,8 @@ def _sign_with_ssh(repo: Path, tmp_path: Path) -> None:
     """
     key = tmp_path / "id_ed25519"
     subprocess.run(["ssh-keygen", "-t", "ed25519", "-N", "", "-f", str(key), "-q"], check=True)
-    _git(repo, "config", "gpg.format", "ssh")
-    _git(repo, "config", "user.signingkey", f"{key}.pub")
+    _git(git_repo, "config", "gpg.format", "ssh")
+    _git(git_repo, "config", "user.signingkey", f"{key}.pub")
 
 
 def test_attribution_survives_hostile_repo_local_git_config(tmp_path):
@@ -357,39 +357,39 @@ def test_attribution_survives_hostile_repo_local_git_config(tmp_path):
     them via CLI flags on every git invocation this module makes
     (``otto.coverage.capture.gitio._pin``) is what survives it.
     """
-    repo = _repo(tmp_path)
-    _sign_with_ssh(repo, tmp_path)
+    git_repo = _git_repo(tmp_path)
+    _sign_with_ssh(git_repo, tmp_path)
 
-    (repo / "a.c").write_text("one\ntwo\nthree\n")
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-q", "-S", "-m", "seed")
-    first = _head(repo)
+    (git_repo / "a.c").write_text("one\ntwo\nthree\n")
+    _git(git_repo, "add", "-A")
+    _git(git_repo, "commit", "-q", "-S", "-m", "seed")
+    first = _head(git_repo)
 
-    (repo / "a.c").write_text("one\nCHANGED\nthree\n")
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-q", "-S", "-m", "second")
-    second = _head(repo)
+    (git_repo / "a.c").write_text("one\nCHANGED\nthree\n")
+    _git(git_repo, "add", "-A")
+    _git(git_repo, "commit", "-q", "-S", "-m", "second")
+    second = _head(git_repo)
 
-    (repo / "a.c").write_text("one\nCHANGED\nDIRTY\n")  # uncommitted edit to line 3
+    (git_repo / "a.c").write_text("one\nCHANGED\nDIRTY\n")  # uncommitted edit to line 3
 
-    _git(repo, "config", "diff.mnemonicprefix", "true")
-    _git(repo, "config", "log.showSignature", "true")
-    _git(repo, "config", "diff.external", "/bin/false")
+    _git(git_repo, "config", "diff.mnemonicprefix", "true")
+    _git(git_repo, "config", "log.showSignature", "true")
+    _git(git_repo, "config", "diff.external", "/bin/false")
 
-    got = attribute_lines(repo, {"a.c": 3})
+    got = attribute_lines(git_repo, {"a.c": 3})
 
     assert got["a.c"] == {1: first, 2: second, 3: UNCOMMITTED}
 
 
 def test_tickets_map_lines_and_collect_commits(tmp_path):
-    repo = _repo(tmp_path)
-    (repo / "a.c").write_text("one\ntwo\n")
-    _commit(repo, "seed PROJ-1")
-    (repo / "a.c").write_text("one\nCHANGED\n")
-    sha = _commit(repo, "fix PROJ-2 and PROJ-3")
+    git_repo = _git_repo(tmp_path)
+    (git_repo / "a.c").write_text("one\ntwo\n")
+    _commit(git_repo, "seed PROJ-1")
+    (git_repo / "a.c").write_text("one\nCHANGED\n")
+    sha = _commit(git_repo, "fix PROJ-2 and PROJ-3")
 
     spec = build_ticket_spec(r"[A-Z]{2,10}-[0-9]+", None)
-    lines, commits, shas = attribute_tickets(repo, {"a.c": 2}, spec)
+    lines, commits, shas = attribute_tickets(git_repo, {"a.c": 2}, spec)
 
     assert lines["a.c"][1] == ["PROJ-1"]
     assert lines["a.c"][2] == ["PROJ-2", "PROJ-3"]
@@ -398,24 +398,24 @@ def test_tickets_map_lines_and_collect_commits(tmp_path):
 
 
 def test_commit_with_no_ticket_yields_empty_id_list(tmp_path):
-    repo = _repo(tmp_path)
-    (repo / "a.c").write_text("one\n")
-    _commit(repo, "chore: bump")
+    git_repo = _git_repo(tmp_path)
+    (git_repo / "a.c").write_text("one\n")
+    _commit(git_repo, "chore: bump")
 
     spec = build_ticket_spec(r"[A-Z]{2,10}-[0-9]+", None)
-    lines, _, _shas = attribute_tickets(repo, {"a.c": 1}, spec)
+    lines, _, _shas = attribute_tickets(git_repo, {"a.c": 1}, spec)
 
     assert lines["a.c"][1] == []
 
 
 def test_untracked_file_is_entirely_uncommitted(tmp_path):
     """git knows nothing about it, so no commit can own its lines."""
-    repo = _repo(tmp_path)
-    (repo / "a.c").write_text("one\n")
-    _commit(repo, "c1")
-    (repo / "new.c").write_text("x\ny\n")  # never added
+    git_repo = _git_repo(tmp_path)
+    (git_repo / "a.c").write_text("one\n")
+    _commit(git_repo, "c1")
+    (git_repo / "new.c").write_text("x\ny\n")  # never added
 
-    got = attribute_lines(repo, {"a.c": 1, "new.c": 2})
+    got = attribute_lines(git_repo, {"a.c": 1, "new.c": 2})
 
     assert got["new.c"] == {1: UNCOMMITTED, 2: UNCOMMITTED}
 
@@ -429,42 +429,42 @@ def test_attribute_tickets_exposes_owning_sha_so_callers_can_tell_uncommitted_fr
     ``attribute_lines`` sha map, computed internally either way, so a
     caller (``CoverageReporter._annotate_tickets``) can assign the right
     sentinel without a second git log walk."""
-    repo = _repo(tmp_path)
-    (repo / "a.c").write_text("one\ntwo\n")
-    sha = _commit(repo, "chore: bump")
-    (repo / "a.c").write_text("one\nDIRTY\n")
+    git_repo = _git_repo(tmp_path)
+    (git_repo / "a.c").write_text("one\ntwo\n")
+    sha = _commit(git_repo, "chore: bump")
+    (git_repo / "a.c").write_text("one\nDIRTY\n")
 
     spec = build_ticket_spec(r"[A-Z]{2,10}-[0-9]+", None)
-    lines, _commits, shas = attribute_tickets(repo, {"a.c": 2}, spec)
+    lines, _commits, shas = attribute_tickets(git_repo, {"a.c": 2}, spec)
 
     assert lines["a.c"] == {1: [], 2: []}
     assert shas["a.c"] == {1: sha, 2: UNCOMMITTED}
 
 
 def test_reattribution_replaces_the_parsed_ticket_set(tmp_path):
-    repo = _make_ticket_repo(tmp_path, "fix #1")
-    sha = _head(repo)
+    git_repo = _make_ticket_repo(tmp_path, "fix #1")
+    sha = _head(git_repo)
     spec = build_ticket_spec("#(?P<n>[0-9]+)", None)
-    lines, commits, _ = attribute_tickets(repo, {"a.c": 1}, spec, reattributions={sha: ["#9"]})
+    lines, commits, _ = attribute_tickets(git_repo, {"a.c": 1}, spec, reattributions={sha: ["#9"]})
     assert lines["a.c"][1] == ["#9"]
     assert "#1" not in commits
     assert commits["#9"] == [sha]
 
 
 def test_reattribution_to_empty_list_means_no_ticket(tmp_path):
-    repo = _make_ticket_repo(tmp_path, "fix #1")
-    sha = _head(repo)
+    git_repo = _make_ticket_repo(tmp_path, "fix #1")
+    sha = _head(git_repo)
     spec = build_ticket_spec("#(?P<n>[0-9]+)", None)
-    lines, commits, _ = attribute_tickets(repo, {"a.c": 1}, spec, reattributions={sha: []})
+    lines, commits, _ = attribute_tickets(git_repo, {"a.c": 1}, spec, reattributions={sha: []})
     assert lines["a.c"][1] == []
     assert commits == {}
 
 
 def test_reattribution_leaves_other_commits_alone(tmp_path):
-    repo = _make_two_commit_ticket_repo(tmp_path)
-    c2 = _head(repo)
+    git_repo = _make_two_commit_ticket_repo(tmp_path)
+    c2 = _head(git_repo)
     spec = build_ticket_spec("#(?P<n>[0-9]+)", None)
-    lines, _, _ = attribute_tickets(repo, {"a.c": 2}, spec, reattributions={c2: ["#7"]})
+    lines, _, _ = attribute_tickets(git_repo, {"a.c": 2}, spec, reattributions={c2: ["#7"]})
     assert lines["a.c"][1] == ["#1"]
     assert lines["a.c"][2] == ["#7"]
 
@@ -479,13 +479,13 @@ def test_commit_message_matching_a_reserved_sentinel_id_is_dropped_not_merged(tm
     no-ticket-match commit would: an empty id list."""
     from otto.coverage.attribution import NO_TICKET
 
-    repo = _repo(tmp_path)
-    (repo / "a.c").write_text("one\n")
-    _commit(repo, "fix (no ticket) needed here")
+    git_repo = _git_repo(tmp_path)
+    (git_repo / "a.c").write_text("one\n")
+    _commit(git_repo, "fix (no ticket) needed here")
 
     spec = build_ticket_spec(r"\(no ticket\)", None)
     with caplog.at_level("WARNING"):
-        lines, commits, _shas = attribute_tickets(repo, {"a.c": 1}, spec)
+        lines, commits, _shas = attribute_tickets(git_repo, {"a.c": 1}, spec)
 
     assert lines["a.c"][1] == []
     assert NO_TICKET not in commits
@@ -493,7 +493,7 @@ def test_commit_message_matching_a_reserved_sentinel_id_is_dropped_not_merged(tm
     assert any("sentinel" in rec.message.lower() for rec in caplog.records)
 
 
-def _spawn_count(repo: Path, monkeypatch, n_files: int) -> int:
+def _spawn_count(git_repo: Path, monkeypatch, n_files: int) -> int:
     calls: list[list[str]] = []
     real = gitio._run_raw
 
@@ -503,7 +503,7 @@ def _spawn_count(repo: Path, monkeypatch, n_files: int) -> int:
 
     monkeypatch.setattr(gitio, "_run_raw", counting)
     spec = build_ticket_spec(r"[A-Z]{2,10}-[0-9]+", None)
-    attribute_tickets(repo, {f"f{n}.c": 1 for n in range(n_files)}, spec)
+    attribute_tickets(git_repo, {f"f{n}.c": 1 for n in range(n_files)}, spec)
     return len(calls)
 
 
@@ -525,13 +525,13 @@ def test_git_subprocess_count_is_constant_in_file_count(tmp_path, monkeypatch):
     ``_run_raw`` entirely (and so recorded zero calls) could not make this
     pass vacuously.
     """
-    repo = _repo(tmp_path)
+    git_repo = _git_repo(tmp_path)
     for n in range(50):
-        (repo / f"f{n}.c").write_text(f"line {n}\n")
-    _commit(repo, "seed PROJ-1")
+        (git_repo / f"f{n}.c").write_text(f"line {n}\n")
+    _commit(git_repo, "seed PROJ-1")
 
-    small = _spawn_count(repo, monkeypatch, 5)
-    large = _spawn_count(repo, monkeypatch, 50)
+    small = _spawn_count(git_repo, monkeypatch, 5)
+    large = _spawn_count(git_repo, monkeypatch, 50)
 
     assert small == large, f"spawn count grew with file count: {small} (5 files) vs {large} (50)"
     assert large > 0, "recorded zero git spawns — _run_raw interception is not wired up"
@@ -539,14 +539,14 @@ def test_git_subprocess_count_is_constant_in_file_count(tmp_path, monkeypatch):
 
 
 def _unrestricted_lines(
-    repo: Path, line_counts: dict[str, int], *, first_parent: bool = True
+    git_repo: Path, line_counts: dict[str, int], *, first_parent: bool = True
 ) -> dict[str, dict[int, str]]:
     """Reference implementation: the pre-Task-4b engine, fed straight into
     ``attribute_lines`` via its ``walk=`` override so the replay logic under
     test is identical and only the walk's pathspec differs.
     """
-    walk = gitio.log_walk_u0(repo, ["."], first_parent=first_parent)
-    return attribute_lines(repo, line_counts, first_parent=first_parent, walk=walk)
+    walk = gitio.log_walk_u0(git_repo, ["."], first_parent=first_parent)
+    return attribute_lines(git_repo, line_counts, first_parent=first_parent, walk=walk)
 
 
 def test_bounded_walk_matches_unrestricted_walk_exactly_on_synthetic_history(tmp_path):
@@ -557,32 +557,32 @@ def test_bounded_walk_matches_unrestricted_walk_exactly_on_synthetic_history(tmp
     between the bounded engine (``attribute_lines``'s real ``_fetch_walk``)
     and the unrestricted reference above.
     """
-    repo = _repo(tmp_path)
+    git_repo = _git_repo(tmp_path)
 
     # a.c: created, edited, never renamed.
-    (repo / "a.c").write_text("a1\na2\n")
+    (git_repo / "a.c").write_text("a1\na2\n")
     # b_old.c: will be renamed once, then edited post-rename.
-    (repo / "b_old.c").write_text("".join(f"b{i}\n" for i in range(10)))
-    _commit(repo, "seed a.c and b_old.c")
+    (git_repo / "b_old.c").write_text("".join(f"b{i}\n" for i in range(10)))
+    _commit(git_repo, "seed a.c and b_old.c")
 
-    (repo / "a.c").write_text("a1\nCHANGED\n")
-    _git(repo, "mv", "b_old.c", "b_mid.c")
-    _commit(repo, "edit a.c, first rename of b")
+    (git_repo / "a.c").write_text("a1\nCHANGED\n")
+    _git(git_repo, "mv", "b_old.c", "b_mid.c")
+    _commit(git_repo, "edit a.c, first rename of b")
 
-    _git(repo, "mv", "b_mid.c", "b_new.c")
+    _git(git_repo, "mv", "b_mid.c", "b_new.c")
     # c_old.c: created and renamed within the same window (double rename setup for c too).
-    (repo / "c_old.c").write_text("c1\nc2\nc3\n")
-    _commit(repo, "second rename of b, create c_old.c")
+    (git_repo / "c_old.c").write_text("c1\nc2\nc3\n")
+    _commit(git_repo, "second rename of b, create c_old.c")
 
     b_body = [f"b{i}\n" for i in range(10)]
     b_body[3] = "post-rename b edit\n"
-    (repo / "b_new.c").write_text("".join(b_body))
-    _git(repo, "mv", "c_old.c", "c_new.c")
-    _commit(repo, "edit b_new.c, rename c")
+    (git_repo / "b_new.c").write_text("".join(b_body))
+    _git(git_repo, "mv", "c_old.c", "c_new.c")
+    _commit(git_repo, "edit b_new.c, rename c")
 
     # d.c: plain creation, no rename, added last.
-    (repo / "d.c").write_text("d1\n")
-    _commit(repo, "create d.c")
+    (git_repo / "d.c").write_text("d1\n")
+    _commit(git_repo, "create d.c")
 
     line_counts = {
         "a.c": 2,
@@ -591,7 +591,7 @@ def test_bounded_walk_matches_unrestricted_walk_exactly_on_synthetic_history(tmp
         "d.c": 1,
     }
 
-    bounded = attribute_lines(repo, line_counts)
-    unrestricted = _unrestricted_lines(repo, line_counts)
+    bounded = attribute_lines(git_repo, line_counts)
+    unrestricted = _unrestricted_lines(git_repo, line_counts)
 
     assert bounded == unrestricted

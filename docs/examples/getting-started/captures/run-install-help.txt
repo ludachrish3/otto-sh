@@ -8,7 +8,7 @@ $ otto run install --help
                                                                                                     
  Usage: otto run install [OPTIONS]                                                                  
                                                                                                     
- Install every repo's products, dependencies first, stopping at the first failure.                  
+ Install every project's products, dependencies first, stopping at the first failure.               
                                                                                                     
 ╭─ Options ────────────────────────────────────────────────────────────────────────────────────────╮
 │ --ensure                  --no-ensure                    Converge: check state first, recover a  │

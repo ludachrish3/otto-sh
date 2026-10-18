@@ -37,8 +37,8 @@ class ReservationEnv:
     ``Configured.env``.
     """
 
-    repo_dir: Path
-    """The root of the repo whose ``[reservations]`` table is in effect; a
+    project_root: Path
+    """The root of the project whose ``[reservations]`` table is in effect; a
     relative path in the sub-table anchors to it."""
 
     username: str | None

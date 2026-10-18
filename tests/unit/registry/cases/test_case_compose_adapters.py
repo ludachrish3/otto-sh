@@ -9,7 +9,7 @@ from otto.docker.adapter import (
     adapter_for,
     register_compose_adapter,
 )
-from otto.registry import DuplicateRegistration, RegistrationRefused, registering_repo
+from otto.registry import DuplicateRegistration, RegistrationRefused, registering_project
 
 from .. import conformance
 
@@ -36,31 +36,31 @@ def test_raw_case():
 
 
 def test_the_decorator_credits_the_decorating_module():
-    with registering_repo("acme"):
+    with registering_project("acme"):
         register_compose_adapter("bench")(_fn)
     assert COMPOSE_ADAPTERS.origin("acme:bench") == __name__
     assert adapter_for("acme", "bench") is _fn
 
 
 def test_a_key_that_disagrees_with_the_record_is_refused():
-    with registering_repo("acme"), pytest.raises(ValueError, match="use case"):
+    with registering_project("acme"), pytest.raises(ValueError, match="use case"):
         COMPOSE_ADAPTERS.register("acme:other", ComposeAdapterEntry(use_case="bench", fn=_fn))
 
 
 def test_a_key_naming_another_repo_is_refused():
-    with registering_repo("beta"), pytest.raises(ValueError, match="use case"):
+    with registering_project("beta"), pytest.raises(ValueError, match="use case"):
         COMPOSE_ADAPTERS.register("acme:bench", ComposeAdapterEntry("bench", _fn))
     assert "acme:bench" not in COMPOSE_ADAPTERS
 
 
 def test_a_raw_use_case_containing_a_colon_is_refused():
-    with registering_repo("acme"), pytest.raises(ValueError, match="use case"):
+    with registering_project("acme"), pytest.raises(ValueError, match="use case"):
         COMPOSE_ADAPTERS.register("acme:a:b", ComposeAdapterEntry("a:b", _fn))
     assert "acme:a:b" not in COMPOSE_ADAPTERS
 
 
 def test_a_second_adapter_needs_overwrite():
-    with registering_repo("acme"):
+    with registering_project("acme"):
         register_compose_adapter("bench")(_fn)
         with pytest.raises(DuplicateRegistration):
             register_compose_adapter("bench")(_fn)

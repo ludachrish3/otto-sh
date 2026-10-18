@@ -14,50 +14,50 @@ import json
 
 import pytest
 
-import otto.config.repo as config_repo
+import otto.config.project as config_repo
 from otto import bootstrap
 from tests._fixtures.fake_repo import fake_repo
 from tests._fixtures.generated_repo import generate_repo
 
 
 @pytest.fixture
-def repos(tmp_path, monkeypatch):
+def projects(tmp_path, monkeypatch):
     """Discovered repos for a generated tree.
 
     discover() caches module-globally (bootstrap.py:192-224), so every fixture
     must invalidate or it silently returns the previous test's repos and the
     assertions pass against the wrong tree.
     """
-    repo = generate_repo(tmp_path, files=20, dirs=2, top_level=2)
-    monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
+    project = generate_repo(tmp_path, files=20, dirs=2, top_level=2)
+    monkeypatch.setenv("OTTOPATH", str(project))
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     bootstrap.invalidate()
-    yield repo, config_repo.discover().repos
+    yield project, config_repo.discover().projects
     bootstrap.invalidate()
 
 
-def test_names_digest_ignores_nested_test_edits(repos):
+def test_names_digest_ignores_nested_test_edits(projects):
     """Nested files cannot register, so they must not key the names section."""
     from otto.config.cache_sections import section_by_name, section_digest
 
-    repo, discovered = repos
+    project, discovered = projects
     names = section_by_name("names")
     before = section_digest(names, discovered)
 
-    nested = next(repo.rglob("sub*/test_*.py"))
+    nested = next(project.rglob("sub*/test_*.py"))
     nested.write_text("def test_x():\n    pass\n# edited\n")
 
     assert section_digest(names, discovered) == before
 
 
-def test_no_section_digest_moves_on_a_top_level_test_edit(repos):
+def test_no_section_digest_moves_on_a_top_level_test_edit(projects):
     """No test file can register anything, so none keys any section."""
     from otto.config.cache_sections import SECTIONS, section_digests
 
-    repo, discovered = repos
+    project, discovered = projects
     before = section_digests(discovered, SECTIONS)
 
-    top = repo / "tests" / "test_top0.py"
+    top = project / "tests" / "test_top0.py"
     top.write_text("def test_y():\n    pass\n# edited\n")
 
     assert section_digests(discovered, SECTIONS) == before
@@ -70,37 +70,37 @@ def test_no_section_digest_moves_on_a_top_level_test_edit(repos):
         ("pytest.ini", "[pytest]\nmarkers =\n    slow\n"),
     ],
 )
-def test_no_section_digest_moves_on_a_pytest_config_edit(repos, config, body):
+def test_no_section_digest_moves_on_a_pytest_config_edit(projects, config, body):
     """A pytest config decides which files are tests; no section reads one.
 
     The per-file test tables watch the pytest configs themselves (their ``env``).
     """
     from otto.config.cache_sections import SECTIONS, section_digests
 
-    repo, discovered = repos
+    project, discovered = projects
     before = section_digests(discovered, SECTIONS)
 
-    (repo / config).write_text(body)
+    (project / config).write_text(body)
 
     assert section_digests(discovered, SECTIONS) == before
 
 
-def test_names_digest_moves_on_settings_edit(repos):
+def test_names_digest_moves_on_settings_edit(projects):
     """settings.toml decides init list, libs and tests dirs — it keys every section."""
     from otto.config.cache_sections import section_by_name, section_digest
 
-    repo, discovered = repos
+    project, discovered = projects
     names = section_by_name("names")
     before = section_digest(names, discovered)
 
-    settings = repo / ".otto" / "settings.toml"
+    settings = project / ".otto" / "settings.toml"
     edited = settings.read_text() + "\n# edited\n"
     settings.write_text(edited)  # sutrepo-exempt: edits a scaffolded file to move a digest
 
     assert section_digest(names, discovered) != before
 
 
-def test_tainted_section_is_not_served(repos):
+def test_tainted_section_is_not_served(projects):
     """A section written while bootstrap reported errors must force a full load.
 
     Otherwise help goes silently and permanently partial: the broken file's
@@ -108,12 +108,12 @@ def test_tainted_section_is_not_served(repos):
     """
     from otto.config.cache_sections import read_section, write_section
 
-    _, discovered = repos
+    _, discovered = projects
     write_section(discovered, "names", {"commands": []}, tainted=True)
     assert read_section(discovered, "names") is None
 
 
-def test_write_section_round_trips_and_leaves_others_cold(repos):
+def test_write_section_round_trips_and_leaves_others_cold(projects):
     """The untainted positive control, and per-section independence.
 
     One written section serves back exactly its payload; a section nobody
@@ -121,19 +121,19 @@ def test_write_section_round_trips_and_leaves_others_cold(repos):
     """
     from otto.config.cache_sections import read_section, write_section
 
-    _, discovered = repos
+    _, discovered = projects
     payload = {"commands": [{"name": "x", "help": None, "lab_free": True}]}
     write_section(discovered, "names", payload)
     assert read_section(discovered, "names") == payload
     assert read_section(discovered, "shim") is None
 
 
-def test_unknown_section_names_raise_key_error(repos):
+def test_unknown_section_names_raise_key_error(projects):
     """An unregistered name is a caller bug and must raise, never read as a miss."""
     from otto.config import completion_cache as cc
     from otto.config.cache_sections import section_by_name, write_section
 
-    _, discovered = repos
+    _, discovered = projects
     with pytest.raises(KeyError):
         section_by_name("no_such_section")
     with pytest.raises(KeyError):
@@ -142,7 +142,7 @@ def test_unknown_section_names_raise_key_error(repos):
         cc.read_sections(discovered, ["no_such_section"])
 
 
-def test_a_miss_then_write_hashes_each_section_key_set_at_most_once(repos, monkeypatch):
+def test_a_miss_then_write_hashes_each_section_key_set_at_most_once(projects, monkeypatch):
     """The spec's never-compute-the-fingerprint-twice, as an executable claim — two halves.
 
     Seed a valid entry, invalidate the names section by editing the init
@@ -161,9 +161,9 @@ def test_a_miss_then_write_hashes_each_section_key_set_at_most_once(repos, monke
     from otto.config import corpus_snapshot as cs
     from otto.config.cache_sections import SECTIONS
 
-    repo, discovered = repos
+    project, discovered = projects
     cc.write_cache(discovered, [], [])
-    init = repo / "pylib" / "genrepo_instructions.py"
+    init = project / "pylib" / "genrepo_instructions.py"
     init.write_text(init.read_text() + "\n# edited\n")
 
     counts: Counter = Counter()
@@ -209,15 +209,15 @@ def test_a_miss_then_write_hashes_each_section_key_set_at_most_once(repos, monke
     assert not restated, f"key paths not stat'd exactly once inside the scope: {restated}"
 
 
-def test_shim_digest_moves_iff_the_names_digest_moves(repos):
+def test_shim_digest_moves_iff_the_names_digest_moves(projects):
     from otto.config.cache_sections import SECTIONS, section_digests
 
-    repo, discovered = repos
+    project, discovered = projects
     before = section_digests(discovered, SECTIONS)
-    nested = next(repo.rglob("sub*/test_*.py"))
+    nested = next(project.rglob("sub*/test_*.py"))
     nested.write_text("def test_x():\n    pass\n\ndef test_moved():\n    pass\n")
     assert section_digests(discovered, SECTIONS) == before, "a test edit moves neither"
-    init = repo / "pylib" / "genrepo_instructions.py"
+    init = project / "pylib" / "genrepo_instructions.py"
     init.write_text(init.read_text() + "\n# edit\n")
     after_init = section_digests(discovered, SECTIONS)
     assert after_init["names"] != before["names"]
@@ -225,16 +225,16 @@ def test_shim_digest_moves_iff_the_names_digest_moves(repos):
     assert section_digests(discovered, SECTIONS) == after_init  # stable when nothing moves
 
 
-def test_a_derived_digest_alone_computes_its_children(repos):
-    """`section_digests(repos, [shim])` asks for the shim alone; its children compute inside."""
+def test_a_derived_digest_alone_computes_its_children(projects):
+    """`section_digests(projects, [shim])` asks for the shim alone; its children compute inside."""
     from otto.config.cache_sections import SECTIONS, section_by_name, section_digests
 
-    _repo, discovered = repos
+    _repo, discovered = projects
     alone = section_digests(discovered, [section_by_name("shim")])
     assert alone["shim"] == section_digests(discovered, SECTIONS)["shim"]
 
 
-def test_a_third_registered_section_does_not_break_read_cache(repos, monkeypatch):
+def test_a_third_registered_section_does_not_break_read_cache(projects, monkeypatch):
     """Registering a Section must not turn every read_cache into a permanent miss.
 
     read_cache/write_cache are the LEGACY pair over a FIXED membership
@@ -246,11 +246,11 @@ def test_a_third_registered_section_does_not_break_read_cache(repos, monkeypatch
     from otto.config import cache_sections as cs
     from otto.config import completion_cache as cc
 
-    _, discovered = repos
+    _, discovered = projects
     throwaway = cs.Section(
         name="throwaway",
-        key_paths=lambda repos: [],
-        collect=lambda repos: {},
+        key_paths=lambda projects: [],
+        collect=lambda projects: {},
     )
     monkeypatch.setattr(cs, "SECTIONS", [*cs.SECTIONS, throwaway])
 
@@ -283,24 +283,24 @@ def test_lab_file_edits_move_the_names_digest(tmp_path, monkeypatch):
     touch_settings(sut)
     lab_file = lab / "lab.json"
     write_lab_json(lab_file, [], declare_labs=True)
-    repo = fake_repo(sut_dir=sut, lab_sources=json_lab_sources(sut, [lab]))
+    project = fake_repo(root=sut, lab_sources=json_lab_sources(sut, [lab]))
     names = section_by_name("names")
-    names_before = section_digest(names, [repo])
+    names_before = section_digest(names, [project])
 
     lab_file.write_text(lab_file.read_text() + "\n")
 
-    assert section_digest(names, [repo]) != names_before, (
+    assert section_digest(names, [project]) != names_before, (
         "a lab.json edit must invalidate the names section (hosts are served from it)"
     )
 
 
-def test_write_cache_preserves_reserved_namespaces_and_drops_old_entries(repos):
+def test_write_cache_preserves_reserved_namespaces_and_drops_old_entries(projects):
     """Reserved ``__*__`` namespaces survive a sections write; pre-v15
     fingerprint-keyed entries do not — they can never be served again and
     would otherwise be parsed by every TAB forever."""
     from otto.config import completion_cache as cc
 
-    _, discovered = repos
+    _, discovered = projects
     cache_path = cc._cache_path()
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     dead_key = "a" * 64
@@ -323,7 +323,7 @@ def test_write_cache_preserves_reserved_namespaces_and_drops_old_entries(repos):
     assert data["schema"] == cc.SCHEMA_VERSION
 
 
-def test_write_cache_keys_match_the_names_collector(repos):
+def test_write_cache_keys_match_the_names_collector(projects):
     """write_cache's keywords and the ``names`` collector cannot drift.
 
     The registry's collect callable is the section-shaped rebuild path; the
@@ -335,7 +335,7 @@ def test_write_cache_keys_match_the_names_collector(repos):
     from otto.config import completion_cache as cc
     from otto.config.cache_sections import section_by_name
 
-    _, discovered = repos
+    _, discovered = projects
     cc.write_cache(discovered, [], [])
     data = json.loads(cc._cache_path().read_text())
     stored_keys = set(data["sections"]["names"]["payload"])
@@ -345,7 +345,7 @@ def test_write_cache_keys_match_the_names_collector(repos):
     assert set(cc.read_cache(discovered) or {}) == stored_keys
 
 
-def test_names_payload_keys_are_all_checked_or_delegated(repos):
+def test_names_payload_keys_are_all_checked_or_delegated(projects):
     """Every key the names collector emits must be classified: checked or delegated.
 
     ``_cached_names_payload`` shape-checks ``RAW_ITERATED_NAMES_KEYS`` because
@@ -363,7 +363,7 @@ def test_names_payload_keys_are_all_checked_or_delegated(repos):
     )
     from otto.config.cache_sections import section_by_name
 
-    _, discovered = repos
+    _, discovered = projects
     assert (
         set(section_by_name("names").collect(discovered, _completion_collectors()))
         == set(RAW_ITERATED_NAMES_KEYS) | DELEGATED_NAMES_KEYS
@@ -372,7 +372,7 @@ def test_names_payload_keys_are_all_checked_or_delegated(repos):
     assert not set(RAW_ITERATED_NAMES_KEYS) & DELEGATED_NAMES_KEYS
 
 
-def test_a_wholly_tainted_rewrite_of_an_identical_entry_is_skipped(repos):
+def test_a_wholly_tainted_rewrite_of_an_identical_entry_is_skipped(projects):
     """A tainted entry is never served, so re-storing it byte-for-byte is cost.
 
     Task 5's skip exists because a write on a network filesystem needs a
@@ -382,7 +382,7 @@ def test_a_wholly_tainted_rewrite_of_an_identical_entry_is_skipped(repos):
     """
     from otto.config import completion_cache as cc
 
-    _, discovered = repos
+    _, discovered = projects
     cc.write_cache(discovered, [], [], tainted=True)
     cache = cc._cache_path()
     first = cache.stat().st_mtime_ns
@@ -391,7 +391,7 @@ def test_a_wholly_tainted_rewrite_of_an_identical_entry_is_skipped(repos):
     assert cache.stat().st_mtime_ns == first, "an identical tainted entry was rewritten"
 
 
-def test_a_tainted_write_still_replaces_an_untainted_entry(repos):
+def test_a_tainted_write_still_replaces_an_untainted_entry(projects):
     """THE OTHER HALF of the skip's condition, and it cannot be dropped.
 
     Stored-clean + writing-tainted + matching digest: the workspace was
@@ -404,7 +404,7 @@ def test_a_tainted_write_still_replaces_an_untainted_entry(repos):
     """
     from otto.config import completion_cache as cc
 
-    _, discovered = repos
+    _, discovered = projects
     cc.write_cache(discovered, [], [])  # clean
     cache = cc._cache_path()
     before = json.loads(cache.read_text())["sections"]

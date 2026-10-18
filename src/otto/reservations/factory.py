@@ -12,7 +12,7 @@ from .check import ReservationGate
 from .identity import resolve_username
 
 if TYPE_CHECKING:
-    from ..config.repo import Repo
+    from ..config.project import Project
     from ..registry import Prepared
     from .protocol import ReservationBackend
     from .registry import ReservationEnv
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 def _prepare(
     settings: "dict[str, Any]",
-    repo_dir: Path,
+    project_root: Path,
     *,
     username: "str | None",
     origin: "str | None",
@@ -33,25 +33,25 @@ def _prepare(
     from .registry import RESERVATION_BACKENDS, ReservationEnv
 
     # An empty dict is the ABSENT table, which build_reservation_gate passes
-    # when no repo declares [reservations]: no checker, so the null backend.
+    # when no project declares [reservations]: no checker, so the null backend.
     # A table with keys must name its backend; the envelope refuses one
     # that does not, rather than silently allowing everything.
     try:
         cfg = ReservationConfigSpec.model_validate(settings or {"backend": "none"})
     except ValidationError as e:
         raise ValueError(f"Invalid [reservations] settings: {compact_validation_error(e)}") from e
-    source = origin or str(repo_dir / ".otto" / "settings.toml")
+    source = origin or str(project_root / ".otto" / "settings.toml")
     return RESERVATION_BACKENDS.prepare(
         cfg.backend,
         settings.get(cfg.backend) or {},
-        ReservationEnv(repo_dir, username, source, cfg.url),
+        ReservationEnv(project_root, username, source, cfg.url),
         source=source,
     )
 
 
 def build_backend(
     settings: "dict[str, Any]",
-    repo_dir: Path,
+    project_root: Path,
     *,
     username: "str | None" = None,
     origin: "str | None" = None,
@@ -66,17 +66,17 @@ def build_backend(
         :func:`~otto.reservations.register_reservation_backend`), an optional
         ``url``, and the backend's own ``[reservations.<backend>]`` sub-table.
         ``backend`` is required whenever the table has any key; only an EMPTY
-        dict (no ``[reservations]`` table in any repo) means ``"none"``.
-    repo_dir : Path
-        The root of the repo the table came from. A relative path in the
+        dict (no ``[reservations]`` table in any project) means ``"none"``.
+    project_root : Path
+        The root of the project the table came from. A relative path in the
         sub-table anchors to it; the backend receives it as
-        :attr:`~otto.reservations.ReservationEnv.repo_dir`.
+        :attr:`~otto.reservations.ReservationEnv.project_root`.
     username : str | None
         The identity otto resolved for this invocation, handed to the backend
         as :attr:`~otto.reservations.ReservationEnv.username`.
     origin : str | None
         The settings file the table came from, named in every error; by
-        default ``<repo_dir>/.otto/settings.toml``.
+        default ``<project_root>/.otto/settings.toml``.
 
     Returns
     -------
@@ -97,13 +97,13 @@ def build_backend(
     from .registry import RESERVATION_BACKENDS
 
     return RESERVATION_BACKENDS.build(
-        _prepare(settings, repo_dir, username=username, origin=origin)
+        _prepare(settings, project_root, username=username, origin=origin)
     )
 
 
 def gate_from_settings(
     settings: "dict[str, Any]",
-    repo_dir: Path,
+    project_root: Path,
     *,
     holder: "str | None",
     skip_reservation_check: bool,
@@ -130,7 +130,9 @@ def gate_from_settings(
         from .registry import RESERVATION_BACKENDS
 
         if not prepared:
-            prepared.append(_prepare(settings, repo_dir, username=identity.username, origin=None))
+            prepared.append(
+                _prepare(settings, project_root, username=identity.username, origin=None)
+            )
         return RESERVATION_BACKENDS.build(prepared[0])
 
     backend = None if skip_reservation_check else _factory()
@@ -143,15 +145,15 @@ def gate_from_settings(
 
 
 def build_reservation_gate(
-    repos: "list[Repo]",
+    projects: "list[Project]",
     *,
     holder: str | None,
     skip_reservation_check: bool,
     cwd_fallback: Path,
 ) -> ReservationGate:
-    """Resolve the per-invocation reservation gate from the active repos.
+    """Resolve the per-invocation reservation gate from the active projects.
 
-    The first repo with a ``[reservations]`` section wins. Construction follows
+    The first project with a ``[reservations]`` section wins. Construction follows
     :func:`gate_from_settings`.
 
     Raises
@@ -160,11 +162,11 @@ def build_reservation_gate(
         If construction fails and ``skip_reservation_check`` is False.
     """
     settings: dict[str, Any] = {}
-    repo_dir: Path = repos[0].sut_dir if repos else cwd_fallback
-    for repo in repos:
-        if repo.reservation_settings:
-            settings, repo_dir = repo.reservation_settings, repo.sut_dir
+    project_root: Path = projects[0].root if projects else cwd_fallback
+    for project in projects:
+        if project.reservation_settings:
+            settings, project_root = project.reservation_settings, project.root
             break
     return gate_from_settings(
-        settings, repo_dir, holder=holder, skip_reservation_check=skip_reservation_check
+        settings, project_root, holder=holder, skip_reservation_check=skip_reservation_check
     )

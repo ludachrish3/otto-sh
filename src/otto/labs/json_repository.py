@@ -329,7 +329,7 @@ class JsonFileLabRepository:
         file), or a glob (expanded to the ``.json`` files it matches).
         Entries that do not resolve to an existing file are skipped.
 
-        *profiles* are the repo data profiles the hosts' ``os_type`` resolves
+        *profiles* are the project data profiles the hosts' ``os_type`` resolves
         through (the source's :attr:`~otto.labs.sources.LabSourceEnv.profiles`);
         omitted, none.
         """
@@ -702,19 +702,19 @@ class JsonLabSourceConfig(OttoModel):
     """A ``backend = "json"`` source's options: the ``paths`` it reads lab files from.
 
     Each entry is a directory (its ``lab.json`` is read), a ``.json`` file, or
-    a glob over ``.json`` files. A relative entry is anchored to the repo
+    a glob over ``.json`` files. A relative entry is anchored to the project
     root, and ``~`` is expanded.
     """
 
     model_config = ConfigDict(frozen=True)
 
     paths: tuple[Path, ...] = Field(min_length=1)
-    """The directories, ``.json`` files and globs the source reads, anchored to the repo."""
+    """The directories, ``.json`` files and globs the source reads, anchored to the project root."""
 
     @field_validator("paths", mode="before")
     @classmethod
     def _no_empty_entry(cls, value: object) -> object:
-        """Refuse an empty string, which would otherwise read as the repo root."""
+        """Refuse an empty string, which would otherwise read as the project root."""
         if isinstance(value, (list, tuple)) and any(entry == "" for entry in value):
             raise ValueError("an entry is empty; name a directory, a .json file or a glob")
         return value
@@ -722,14 +722,14 @@ class JsonLabSourceConfig(OttoModel):
     @field_validator("paths", mode="after")
     @classmethod
     def _anchor(cls, value: tuple[Path, ...], info: ValidationInfo) -> tuple[Path, ...]:
-        """Anchor every relative entry to the repo the source is declared in."""
+        """Anchor every relative entry to the root of the project that declares the source."""
         env = (info.context or {}).get("env")
         if env is None:
             raise ValueError(
                 "a json lab source is validated with its LabSourceEnv in the validation "
                 'context (context={"env": env}); otto passes it when it prepares the source'
             )
-        return tuple(anchor_path(p, env.repo_dir, quote=False) for p in value)
+        return tuple(anchor_path(p, env.project_root, quote=False) for p in value)
 
     def prepared_facts(self) -> LabSourceFacts:
         """Return the entries this source reads; otto fingerprints their files for the cache."""
@@ -801,7 +801,7 @@ def _add_host(
         ) from e
     except Exception as e:
         # ``Exception``, not the validation errors alone: past the specs, the
-        # factory runs SUT-REPO code — ``to_host`` plus the product and
+        # factory runs project code — ``to_host`` plus the product and
         # dev-tool providers — which may raise anything at all. The composite
         # absorbs only LabNotFoundError, so a provider bug caught narrowly here
         # would surface as a raw traceback naming none of the hundred entries

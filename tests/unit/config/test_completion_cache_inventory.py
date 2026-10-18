@@ -40,20 +40,20 @@ def _repo(
     touch_settings(sut)
     write_lab_json(lab / "lab.json", hosts if hosts is not None else [], declare_labs=True)
     return fake_repo(
-        sut_dir=sut,
+        root=sut,
         lab_sources=json_lab_sources(sut, [lab]),
         settings={"inventory": dict(inventory_settings)},
     )
 
 
-def _digest(repos) -> str:
+def _digest(projects) -> str:
     """The ``names`` section's digest: every section ends with the inventory's line."""
     from otto.config.cache_sections import section_by_name, section_digest
 
-    return section_digest(section_by_name("names"), repos)
+    return section_digest(section_by_name("names"), projects)
 
 
-def _with_inventory(repo, inventory_settings: dict):
+def _with_inventory(project, inventory_settings: dict):
     """The SAME repo — same files, same mtimes — carrying a different ``[inventory]``.
 
     Calling ``_repo`` twice would rewrite ``settings.toml`` and ``lab.json``,
@@ -65,7 +65,7 @@ def _with_inventory(repo, inventory_settings: dict):
     settings table makes every other fingerprint input byte-identical, which
     is what the comparison claims.
     """
-    return fake_repo(**{**vars(repo), "settings": {"inventory": dict(inventory_settings)}})
+    return fake_repo(**{**vars(project), "settings": {"inventory": dict(inventory_settings)}})
 
 
 def _json_inventory(tmp_path: Path, records: dict, *, name: str = "sut") -> dict:
@@ -100,8 +100,8 @@ def test_a_declared_inventory_changes_the_digest(tmp_path, monkeypatch):
 def test_without_an_inventory_the_digest_is_stable(tmp_path, monkeypatch):
     """``none`` is a constant: no inventory must not mean no caching."""
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
-    repo = _repo(tmp_path, {})
-    assert _digest([repo]) == _digest([repo])
+    project = _repo(tmp_path, {})
+    assert _digest([project]) == _digest([project])
 
 
 def test_editing_the_inventory_file_moves_the_digest(tmp_path, monkeypatch):
@@ -114,12 +114,12 @@ def test_editing_the_inventory_file_moves_the_digest(tmp_path, monkeypatch):
     """
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     table = _json_inventory(tmp_path, _RECORD)
-    repo = _repo(tmp_path, table)
-    before = _digest([repo])
+    project = _repo(tmp_path, table)
+    before = _digest([project])
     (tmp_path / "sut" / "inventory.json").write_text(
         json.dumps({"dut-1": {"ip": "10.0.0.1"}, "dut-2": {"ip": "10.0.0.2"}})
     )
-    assert _digest([repo]) != before
+    assert _digest([project]) != before
 
 
 def test_a_broken_declaration_hashes_its_error_and_the_fix_moves_the_digest(tmp_path, monkeypatch):
@@ -195,8 +195,8 @@ def test_an_uncacheable_backend_never_matches_its_own_entry(tmp_path, monkeypatc
     """
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     with _registered("uncacheable-test", _Uncacheable) as table:
-        repo = _repo(tmp_path, table)
-        assert _digest([repo]) != _digest([repo])
+        project = _repo(tmp_path, table)
+        assert _digest([project]) != _digest([project])
 
 
 def test_an_uncacheable_inventory_writes_nothing_at_all(tmp_path, monkeypatch):
@@ -210,13 +210,13 @@ def test_an_uncacheable_inventory_writes_nothing_at_all(tmp_path, monkeypatch):
     """
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     with _registered("uncacheable-write-test", _Uncacheable) as table:
-        repo = _repo(tmp_path, table)
+        project = _repo(tmp_path, table)
         cache_path = cc._cache_path()
         assert cache_path is not None
 
         for _ in range(2):
-            cc.write_cache([repo], [], ["dut"])
-            cc.record_tunnel_ids([repo], ["tun-abc123def456-22"])
+            cc.write_cache([project], [], ["dut"])
+            cc.record_tunnel_ids([project], ["tun-abc123def456-22"])
 
         entries = json.loads(cache_path.read_text()) if cache_path.is_file() else {}
         assert entries == {}, f"an uncacheable inventory must leave no entry behind, got {entries}"
@@ -240,11 +240,11 @@ def test_a_backend_whose_freshness_probe_raises_does_not_crash_the_command(tmp_p
     """
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     with _registered("exploding-test", _Exploding) as table:
-        repo = _repo(tmp_path, table)
-        digest = _digest([repo])
+        project = _repo(tmp_path, table)
+        digest = _digest([project])
         assert isinstance(digest, str)
         assert len(digest) == 64  # sha256 hex — a real digest, not a swallowed None
-        cc.write_cache([repo], [], ["dut"])  # must not raise
+        cc.write_cache([project], [], ["dut"])  # must not raise
 
 
 def test_an_erroring_probe_writes_nothing_either(tmp_path, monkeypatch):
@@ -262,13 +262,13 @@ def test_an_erroring_probe_writes_nothing_either(tmp_path, monkeypatch):
     """
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     with _registered("exploding-write-test", _Exploding) as table:
-        repo = _repo(tmp_path, table)
+        project = _repo(tmp_path, table)
         cache_path = cc._cache_path()
         assert cache_path is not None
 
         for _ in range(2):
-            cc.write_cache([repo], [], ["dut"])
-            cc.record_tunnel_ids([repo], ["tun-abc123def456-22"])
+            cc.write_cache([project], [], ["dut"])
+            cc.record_tunnel_ids([project], ["tun-abc123def456-22"])
 
         entries = json.loads(cache_path.read_text()) if cache_path.is_file() else {}
         assert entries == {}, f"a failed probe must leave no entry behind, got {entries}"
@@ -298,13 +298,15 @@ def test_a_referenced_host_completes_only_with_the_inventory(tmp_path, monkeypat
     resolved = cc.resolve_process_inventory([with_inventory])
     summaries = {
         s.id: s
-        for s in cc.repo_host_summaries(with_inventory, resolved, profiles=ProfileContext.empty())
+        for s in cc.project_host_summaries(
+            with_inventory, resolved, profiles=ProfileContext.empty()
+        )
     }
     assert summaries["dut"].ip == "10.0.0.1"
 
     monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})
     assert (
-        cc.repo_host_summaries(
+        cc.project_host_summaries(
             without, cc.resolve_process_inventory([without]), profiles=ProfileContext.empty()
         )
         == []
@@ -334,8 +336,8 @@ def test_a_host_referencing_another_repos_inventory_completes(tmp_path, monkeypa
     resolved = cc.resolve_process_inventory([declaring, referencing])
     summaries = {
         s.id: s
-        for s in cc.repo_host_summaries(
-            referencing, resolved, profiles=ProfileContext.from_repos([declaring, referencing])
+        for s in cc.project_host_summaries(
+            referencing, resolved, profiles=ProfileContext.from_projects([declaring, referencing])
         )
     }
     assert summaries["dut"].ip == "10.0.0.1"

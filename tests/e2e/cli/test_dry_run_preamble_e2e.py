@@ -78,7 +78,7 @@ def test_a_host_verb_under_dry_run_exits_0_and_runs_no_body(tmp_path: Path) -> N
     in the dry run's own output; only the ``touch``'s effect distinguishes
     "announced" from "executed".
     """
-    repo = _make_repo(tmp_path / "dryrunrepo")
+    project = _make_repo(tmp_path / "dryrunrepo")
     xdir = tmp_path / "xdir"
     xdir.mkdir()
     marker = tmp_path / "body-ran.marker"
@@ -86,7 +86,7 @@ def test_a_host_verb_under_dry_run_exits_0_and_runs_no_body(tmp_path: Path) -> N
     dry = run_otto(
         ["-n", "host", "local", "exec", f"touch {marker}"],
         xdir=xdir,
-        sut_dirs=repo,
+        roots=project,
         lab="unix",
     )
     combined = dry.stdout + dry.stderr
@@ -104,7 +104,7 @@ def test_a_host_verb_under_dry_run_exits_0_and_runs_no_body(tmp_path: Path) -> N
     real = run_otto(
         ["host", "local", "exec", f"touch {marker}"],
         xdir=xdir,
-        sut_dirs=repo,
+        roots=project,
         lab="unix",
     )
     assert real.returncode == 0, (

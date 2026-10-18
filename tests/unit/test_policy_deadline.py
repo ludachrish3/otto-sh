@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-import otto.config.repo as config_repo
+import otto.config.project as config_repo
 from otto import bootstrap as bs
 from otto import lifecycle
 from otto.invocation import RunPolicy, install_policy, reset_binding
@@ -98,15 +98,15 @@ def test_preparation_reads_the_deadline_through_the_env_settings(monkeypatch):
     class _Env:
         teardown_deadline = 3.5
 
-    monkeypatch.setattr("otto.config.repo.get_env", _Env)
+    monkeypatch.setattr("otto.config.project.get_env", _Env)
     assert config_repo.discovered_teardown_deadline() == 3.5
 
 
 def test_preparation_reads_no_deadline_when_discovery_is_unavailable(monkeypatch):
     def _boom():
-        raise FileNotFoundError("no OTTO_SUT_DIRS")
+        raise FileNotFoundError("no OTTOPATH")
 
-    monkeypatch.setattr("otto.config.repo.get_env", _boom)
+    monkeypatch.setattr("otto.config.project.get_env", _boom)
     assert config_repo.discovered_teardown_deadline() is None
 
 
@@ -124,7 +124,7 @@ def test_discovery_fills_the_prepared_deadline(monkeypatch):
 def test_failed_discovery_leaves_ten_seconds_even_under_an_ambient_policy(monkeypatch, tmp_path):
     from otto.run_context import fill_teardown_deadline, prepared_policy
 
-    monkeypatch.setenv("OTTO_SUT_DIRS", str(tmp_path / "missing"))
+    monkeypatch.setenv("OTTOPATH", str(tmp_path / "missing"))
     ambient = install_policy(RunPolicy(teardown_deadline=3.0))  # an outer run's deadline
     try:
         assert config_repo.discovered_teardown_deadline() is None
@@ -141,7 +141,7 @@ async def test_a_nested_open_context_with_failed_discovery_runs_under_ten_second
     from otto.invocation import current_policy
     from otto.labs.loader import Lab
 
-    monkeypatch.setattr("otto.config.repo.discovered_teardown_deadline", lambda: None)
+    monkeypatch.setattr("otto.config.project.discovered_teardown_deadline", lambda: None)
     bs._reset()
     install_composed(monkeypatch, fake_bootstrap_result([]))
     ambient = install_policy(RunPolicy(teardown_deadline=3.0))

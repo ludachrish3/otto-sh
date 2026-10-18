@@ -45,7 +45,7 @@ def _flat(output: str) -> str:
 def _empty_build_report():
     from otto.docker.reports import BuildReport
 
-    return BuildReport(repos=[])
+    return BuildReport(projects=[])
 
 
 def test_an_unknown_parent_exits_2_and_names_the_capable_hosts(lab_two_parents_tied):

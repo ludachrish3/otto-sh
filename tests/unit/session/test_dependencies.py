@@ -13,9 +13,9 @@ from tests._fixtures.bootstrapstub import bootstrap_stub
 from tests._fixtures.fake_repo import fake_repo
 from tests._fixtures.scoping import verdict
 
-_BAD = Unsatisfied(repo="acme", requirement="x>=1", found="0.1")
+_BAD = Unsatisfied(project="acme", requirement="x>=1", found="0.1")
 _WARNING = (
-    "repo 'acme' requires 'x>=1' — not satisfied in this environment (found: 0.1), "
+    "project 'acme' requires 'x>=1' — not satisfied in this environment (found: 0.1), "
     "but acme is inactive for this run — continuing without it"
 )
 
@@ -45,8 +45,8 @@ def _preflight(monkeypatch: pytest.MonkeyPatch, *, unsatisfied, warnings) -> "li
     """
     seen: list[Any] = []
 
-    def stub(repos):
-        seen.append(repos)
+    def stub(projects):
+        seen.append(projects)
         return PreflightResult(unsatisfied=list(unsatisfied), warnings=list(warnings))
 
     monkeypatch.setattr(
@@ -108,7 +108,7 @@ def test_a_lab_excluded_repo_warns(monkeypatch):
 def test_an_inactive_repo_does_not_suppress_an_active_one(monkeypatch):
     from otto.session import DependencyRefusedError, check_dependencies
 
-    other = Unsatisfied(repo="beta", requirement="y>=2", found="none")
+    other = Unsatisfied(project="beta", requirement="y>=2", found="none")
     _preflight(monkeypatch, unsatisfied=[_BAD, other], warnings=[])
     with pytest.raises(DependencyRefusedError) as exc:
         check_dependencies(_ctx(exclude=("acme",)))

@@ -1,16 +1,16 @@
-"""Check each repo's declared Python requirements against the running environment.
+"""Check each project's declared Python requirements against the running environment.
 
 METADATA-ONLY, and that is the whole design. This module reads
 ``pyproject.toml`` as TEXT and ``*.dist-info`` as METADATA -- it imports
-nothing from any repo, opens no socket and starts no subprocess. That is what
+nothing from any project, opens no socket and starts no subprocess. That is what
 makes it safe to run on the path of every ordinary command, which is where the
 answer is worth having: a missing Python dependency should stop a run before a
 host is contacted, not halfway through one as an ``ImportError`` traceback.
 
 Requirement source, in order:
 
-1. **The installed distribution's metadata.** Look the repo's pyproject
-   ``[project].name`` up with :mod:`importlib.metadata`; if the repo is
+1. **The installed distribution's metadata.** Look the project's pyproject
+   ``[project].name`` up with :mod:`importlib.metadata`; if the project is
    installed here (editable or not), its ``Requires-Dist`` is the exact answer
    and the only one that can speak for ``dynamic = ["dependencies"]``.
 2. **The pyproject's own ``[project.dependencies]``**, when it is not
@@ -23,8 +23,8 @@ dependencies only (transitive consistency is the installer's promise, not
 otto's).
 
 ``packaging`` is imported INSIDE the evaluation path, never at module scope.
-Every repo without a pyproject returns before reaching the evaluation, and
-every sample repo is that shape -- so the lazy import is what keeps a real
+Every project without a pyproject returns before reaching the evaluation, and
+every sample project is that shape -- so the lazy import is what keeps a real
 run's footprint where it was. The guard for it is a direct one
 (``test_importing_the_module_does_not_import_packaging``): the import budget's
 file-operation ceilings would see this import only as about a hundred more
@@ -39,18 +39,18 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
 PYPROJECT = "pyproject.toml"
-"""The file a repo declares its Python requirements in."""
+"""The file a project declares its Python requirements in."""
 
 
 @dataclasses.dataclass(frozen=True)
 class Unsatisfied:
-    """One requirement a repo declares that this environment does not meet."""
+    """One requirement a project declares that this environment does not meet."""
 
-    repo: str
-    """The declaring repo's ``Repo.name``, so the message can name it."""
+    project: str
+    """The declaring project's ``Project.name``, so the message can name it."""
 
     requirement: str
-    """The requirement AS THE REPO WROTE IT -- reprinted verbatim so the
+    """The requirement AS THE PROJECT WROTE IT -- reprinted verbatim so the
     operator can paste it into an installer without translating otto's
     rendering back into a requirement string."""
 
@@ -66,41 +66,41 @@ class PreflightResult:
 
     The two lists answer DIFFERENT questions and so cannot be one list. An
     :class:`Unsatisfied` is a verdict -- this environment does not meet a
-    declared requirement -- and what it costs depends on whether the repo is
+    declared requirement -- and what it costs depends on whether the project is
     part of this run. A warning says the check could not be MADE at all, which
-    is not a verdict about the repo and is reported the same way regardless.
+    is not a verdict about the project and is reported the same way regardless.
     """
 
     unsatisfied: "list[Unsatisfied]"
-    """Requirements this environment does not meet, in repo order."""
+    """Requirements this environment does not meet, in project order."""
 
     warnings: "list[str]"
-    """One line per repo that could not be checked, already phrased for a user."""
+    """One line per project that could not be checked, already phrased for a user."""
 
 
-def read_project_table(repo: Any) -> "dict[str, Any] | None":
-    """Return *repo*'s pyproject ``[project]`` table, or None if there isn't one.
+def read_project_table(project: Any) -> "dict[str, Any] | None":
+    """Return *project*'s pyproject ``[project]`` table, or None if there isn't one.
 
     None covers three shapes on purpose -- no pyproject, an unreadable one, and
     one with no ``[project]`` table -- because every caller here treats them
     identically: there is nothing to check, and no verdict to render.
 
     Unreadable is NOT an error this module reports. A malformed pyproject
-    already has an owner: discovery frames a broken repo, and an installer
+    already has an owner: discovery frames a broken project, and an installer
     refuses one in its own words. Diagnosing it a second time here would put
     otto's name on a syntax error it did not parse.
     """
     import tomli
 
-    pyproject = Path(repo.sut_dir) / PYPROJECT
+    pyproject = Path(project.root) / PYPROJECT
     if not pyproject.is_file():
         return None
     try:
         data = tomli.loads(pyproject.read_text())
     except (OSError, ValueError):  # tomli.TOMLDecodeError subclasses ValueError
         return None
-    project = data.get("project")
-    return project if isinstance(project, dict) else None
+    pyproject_table = data.get("project")
+    return pyproject_table if isinstance(pyproject_table, dict) else None
 
 
 class _Environment:
@@ -108,8 +108,8 @@ class _Environment:
 
     Enumeration is the only part of this module with a cost worth thinking
     about, so it happens LAZILY and once per :func:`preflight` call rather than
-    once per repo. A workspace whose repos have no pyproject never enumerates
-    at all -- which is every sample repo, and the reason the preflight is free
+    once per project. A workspace whose projects have no pyproject never enumerates
+    at all -- which is every sample project, and the reason the preflight is free
     on the suites that do not exercise it.
     """
 
@@ -147,33 +147,33 @@ class _Environment:
 
 
 def _requirements(
-    repo: Any, project: "dict[str, Any]", env: _Environment
+    project: Any, pyproject_table: "dict[str, Any]", env: _Environment
 ) -> "tuple[list[str], str | None]":
-    """Return (*requirement strings*, *warning*) for one repo.
+    """Return (*requirement strings*, *warning*) for one project.
 
-    The order is the contract, not a preference: an INSTALLED repo's
+    The order is the contract, not a preference: an INSTALLED project's
     ``Requires-Dist`` is what its interpreter will actually enforce, and a
     pyproject that has since gained a requirement describes a future install
     rather than this one.
     """
     from ..models.dependencies import normalize_name
 
-    name = project.get("name")
+    name = pyproject_table.get("name")
     dist = env.dists.get(normalize_name(str(name))) if name else None
     if dist is not None:
         return [str(r) for r in (dist.requires or [])], None
-    if "dependencies" in (project.get("dynamic") or []):
+    if "dependencies" in (pyproject_table.get("dynamic") or []):
         return [], (
-            f"cannot preflight {repo.name}: dependencies are dynamic and "
-            f"{repo.name} is not installed in this environment"
+            f"cannot preflight {project.name}: dependencies are dynamic and "
+            f"{project.name} is not installed in this environment"
         )
-    return [str(d) for d in (project.get("dependencies") or [])], None
+    return [str(d) for d in (pyproject_table.get("dependencies") or [])], None
 
 
-def _check(repo: Any, env: _Environment) -> "tuple[list[Unsatisfied], str | None]":
-    """Evaluate one repo's requirements, returning its findings and any warning."""
-    project = read_project_table(repo)
-    if project is None:
+def _check(project: Any, env: _Environment) -> "tuple[list[Unsatisfied], str | None]":
+    """Evaluate one project's requirements, returning its findings and any warning."""
+    pyproject_table = read_project_table(project)
+    if pyproject_table is None:
         return [], None
 
     from packaging.requirements import InvalidRequirement, Requirement
@@ -181,7 +181,7 @@ def _check(repo: Any, env: _Environment) -> "tuple[list[Unsatisfied], str | None
 
     from ..models.dependencies import normalize_name
 
-    requirements, warning = _requirements(repo, project, env)
+    requirements, warning = _requirements(project, pyproject_table, env)
     if warning is not None:
         return [], warning
 
@@ -201,7 +201,7 @@ def _check(repo: Any, env: _Environment) -> "tuple[list[Unsatisfied], str | None
             continue
         dist = env.dists.get(normalize_name(req.name))
         if dist is None:
-            unsatisfied.append(Unsatisfied(repo=repo.name, requirement=raw, found="none"))
+            unsatisfied.append(Unsatisfied(project=project.name, requirement=raw, found="none"))
             continue
         version = str(dist.version)
         try:
@@ -219,26 +219,28 @@ def _check(repo: Any, env: _Environment) -> "tuple[list[Unsatisfied], str | None
         # second-guessing the resolver it defers to everywhere else.
         satisfied = req.specifier.contains(parsed, prereleases=True)
         if not satisfied:
-            unsatisfied.append(Unsatisfied(repo=repo.name, requirement=raw, found=version))
+            unsatisfied.append(Unsatisfied(project=project.name, requirement=raw, found=version))
     return unsatisfied, None
 
 
-def check_repo(repo: Any, site_dirs: "Iterable[Path] | None" = None) -> "list[Unsatisfied]":
-    """Return the requirements *repo* declares that this environment does not meet.
+def check_project(project: Any, site_dirs: "Iterable[Path] | None" = None) -> "list[Unsatisfied]":
+    """Return the requirements *project* declares that this environment does not meet.
 
-    *repo* is duck-typed: only ``.name`` and ``.sut_dir`` are read. That is
+    *project* is duck-typed: only ``.name`` and ``.root`` are read. That is
     deliberate -- it keeps this module free of ``otto.config`` and makes the
     evaluator testable against a two-attribute stand-in.
 
     *site_dirs* exists so tests can stage a fabricated site directory. Real
     callers pass None and the live environment answers.
     """
-    unsatisfied, _ = _check(repo, _Environment(site_dirs))
+    unsatisfied, _ = _check(project, _Environment(site_dirs))
     return unsatisfied
 
 
-def preflight(repos: "Iterable[Any]", site_dirs: "Iterable[Path] | None" = None) -> PreflightResult:
-    """Check every repo and report what this environment does not meet.
+def preflight(
+    projects: "Iterable[Any]", site_dirs: "Iterable[Path] | None" = None
+) -> PreflightResult:
+    """Check every project and report what this environment does not meet.
 
     Raises nothing. The caller decides what a finding costs -- severity is an
     activation question, and this module deliberately knows nothing about
@@ -247,8 +249,8 @@ def preflight(repos: "Iterable[Any]", site_dirs: "Iterable[Path] | None" = None)
     env = _Environment(site_dirs)
     unsatisfied: "list[Unsatisfied]" = []
     warnings: "list[str]" = []
-    for repo in repos:
-        found, warning = _check(repo, env)
+    for project in projects:
+        found, warning = _check(project, env)
         unsatisfied.extend(found)
         if warning is not None:
             warnings.append(warning)

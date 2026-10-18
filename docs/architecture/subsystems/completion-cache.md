@@ -1,10 +1,10 @@
 # The completion cache
 
 The completion cache is one JSON file per workspace. It holds what shell
-completion and the root help screen need to know about your repos: command
+completion and the root help screen need to know about your projects: command
 and instruction names, `otto test`'s registered flags, host ids, the
 serialised command tree the console-script shim answers a bash TAB from,
-and, for each repo, a table of the test names and markers pytest collected.
+and, for each project, a table of the test names and markers pytest collected.
 This page is the one place that explains what the file holds, how otto
 decides whether it can trust it, who reads it, and who writes it. The shim
 that answers from it is on {doc}`completion`, the user-facing commands that
@@ -13,9 +13,9 @@ sees of the test names is on {doc}`../../cli/test/selection`.
 
 ## Why there is a cache
 
-A TAB keystroke and `otto --help` both need the names your repos register.
+A TAB keystroke and `otto --help` both need the names your projects register.
 Without a cache, getting those names means running
-{func}`~otto.bootstrap.bootstrap`, which imports every repo's init modules.
+{func}`~otto.bootstrap.bootstrap`, which imports every project's init modules.
 That is user code. It may be slow, it may print, and it may be broken. None
 of that is acceptable while the user waits for a
 candidate list, and anything printed into a completing shell corrupts the
@@ -32,7 +32,7 @@ whether it is still valid by touching as few paths as possible.
 
 The file is `$OTTO_HOME/<workspace key>/completion_cache.json`, with
 `OTTO_HOME` defaulting to `~/.otto`. The workspace key comes from the set of
-SUT directories in `OTTO_SUT_DIRS` ({func}`otto.config.home.workspace_key`):
+project roots in `OTTOPATH` ({func}`otto.config.home.workspace_key`):
 a short hash plus a readable slug. It does not depend on the directory otto
 was run from, so one workspace has exactly one cache.
 
@@ -51,7 +51,7 @@ A few terms recur below:
 - A completion **site** is the value a TAB is completing: a test-name site
   is a TAB at `otto test`'s `NAMES` positional, and an `-m` site is a TAB
   inside the value of `-m`.
-- A repo's table in the **test-names cache** is what pytest last collected
+- A project's table in the **test-names cache** is what pytest last collected
   from each of its test files ([below](#the-test-names-cache)).
 
 - **One file.** Every reader validates what it needs from a single `open`.
@@ -87,7 +87,7 @@ from a test file.
 **`names`** holds everything whose source is bounded by the files that can
 register something. Its payload keys are `instructions`, `test_options`,
 `hosts`, `hosts_by_lab`, `host_drops`, `docker_hosts`, `docker_use_cases`,
-`docker_images`, `docker_services_by_use_case`, `repos`, `term_backends`, `transfer_backends`, `usernames`, `commands`, `labs`,
+`docker_images`, `docker_services_by_use_case`, `active_projects`, `term_backends`, `transfer_backends`, `usernames`, `commands`, `labs`,
 `host_classes_by_id`, `projects`, `links`, `logins_by_host` and
 `docker_default_parent_by_lab` (each lab to the parent the docker verbs default to by the one rule;
 a lab the rule refuses is absent, and the container ids in `hosts` and `hosts_by_lab` sit under that parent only).
@@ -101,8 +101,9 @@ a lab the rule refuses is absent, and the container ids in `hosts` and `hosts_by
 - Its readers are {func}`otto.cli.main.entry`, which installs it for the
   completers and for the root help screen, the shim, which reads its values
   when a TAB completes one of them, and `otto cache info`, which reads
-  `host_drops` and the host lists.
-- Its key set is small: each repo's `.otto/settings.toml`, the files of its
+  `host_drops` (each entry names its `project`, the `where` and the `reason`)
+  and the host lists.
+- Its key set is small: each project's `.otto/settings.toml`, the files of its
   init modules and its lab key paths (below), plus every directory those were
   found in. Test files and pytest configs are not in it: a test file cannot
   register anything, and nothing in this payload reads one.
@@ -110,7 +111,7 @@ a lab the rule refuses is absent, and the container ids in `hosts` and `hosts_by
 **`shim`** holds what the console-script shim needs to answer a TAB without
 importing otto's CLI: the serialised command `tree`, the stat triples of the
 `names` key set (`keys`), an `inventory` block, the effective `ttl_seconds`,
-and `tables`, the SUT directories whose tables a test-name or `-m` TAB
+and `tables`, the project roots whose tables a test-name or `-m` TAB
 reads. Its only reader is `otto._shim_complete`.
 {doc}`completion` describes each field from the shim's side. It has no key
 set of its own: it describes the same registrations as `names`, so it is
@@ -121,12 +122,12 @@ stale exactly when `names` is, and its digest is composed from `names`'s
 just bootstrapped, which imports no test file, and its digest covers a
 fixed key set. Test names come only from pytest, and a key set that covered
 them would be the whole test tree, which every `names` reader would then
-pay for. They live in each repo's table instead
+pay for. They live in each project's table instead
 ([The test-names cache](#the-test-names-cache)), which validates itself.
 
 ## Freshness
 
-This is how a section is validated; a repo's table has rules of its own
+This is how a section is validated; a project's table has rules of its own
 ([below](#the-test-names-cache)). A section is served only when all of these
 hold:
 
@@ -139,7 +140,7 @@ An entry without a usable `ttl_seconds` or `lab_key_paths` is a miss.
 
 **The lab key paths** are the files each lab source reads, then every
 directory their enumeration entered. Only the writer computes them: it runs
-after init, prepares each repo's sources and asks each for the files it
+after init, prepares each project's sources and asks each for the files it
 reads ({doc}`../../cookbook/extending/lab-source-backends`, "Files and the
 completion cache"), then stores the list with the entry. A reader re-stats
 the stored paths and never prepares a source or expands a glob, so a new
@@ -175,7 +176,7 @@ and stores it with each entry as `ttl_seconds`; a reader enforces the stored
 value against the entry's own `generated_at` and never decides it again. It
 is `CACHE_TTL_SECONDS` (a day) normally. It drops to
 `UNFINGERPRINTED_CACHE_TTL_SECONDS` (five minutes) for the whole workspace
-when any repo has one of these:
+when any project has one of these:
 
 - a `[[lab.sources]]` entry whose backend is not registered, whose options
   do not prepare, or that is not file-backed (decided by the prepared
@@ -223,8 +224,8 @@ trade. How stat-based validation behaves when several machines share one
 Three top-level keys sit beside `"sections"`. A rebuild writes none of them,
 and each has writers of its own:
 
-- **`__collected_tests__`** holds each repo's table in the test-names
-  cache, keyed by its SUT directory. Only a pytest collection writes it: an
+- **`__collected_tests__`** holds each project's table in the test-names
+  cache, keyed by its project root. Only a pytest collection writes it: an
   `otto test` run, `--list-tests`, `otto -n test`, `--list-markers` on a
   cold table, and the collect child a test-name or `-m` TAB starts. What a
   table holds and how it stays right is the next section.
@@ -283,7 +284,7 @@ again.
 
 ## The test-names cache
 
-Each repo's table (`otto.config.collected_tests`, with its own
+Each project's table (`otto.config.collected_tests`, with its own
 `schema_version`, 5) holds, for each test file and conftest, what pytest
 collected there the last time it read the file: its tests as
 `(classes, base name)` pairs, parametrizations collapsed; the markers
@@ -292,9 +293,9 @@ file's stat from just before pytest read it. Beside the file records it
 holds the stat of every directory pytest entered under the test
 directories, every file a record's tests depend on (below), the markers
 pytest registered, `generated_at`, and `env`. `env` is what decides
-collection for the whole repo: the pytest config files at the repo's root
+collection for the whole project: the pytest config files at the project's root
 (`pyproject.toml`, `pytest.ini` and the others pytest reads, each watched
-whether or not it exists), the repo's `.otto/settings.toml`, the stat of
+whether or not it exists), the project's `.otto/settings.toml`, the stat of
 the site-packages directories pytest and otto are installed in (its mtime
 moves when any package is installed or removed), and the Python version,
 `sys.prefix` and the pytest and otto versions. The stored layout is in the
@@ -337,7 +338,7 @@ test function, what a star-import brings in, a module imported whole whose
 flag decides whether a test exists. Each record names those files, as its
 pytest session imported them ({doc}`execution`, "Handing off to pytest",
 has how the session finds them), and the table stores each one's stat
-once. Tracked: the repo's own files, its libs, an editable install's
+once. Tracked: the project's own files, its libs, an editable install's
 source, any directory on `PYTHONPATH`, and a sourceless library through its
 `.pyc`. Not tracked file by file: installed packages under `site-packages`
 or `dist-packages`, and the standard library, since `env` already covers
@@ -368,13 +369,13 @@ is when the tables were last checked.
 
 A completer never runs pytest itself: its standard output belongs to the
 shell. It starts the venv's `otto` again with `_OTTO_DUMP_TEST_NAMES=1`,
-and that child brings every repo's table up to date and prints nothing
+and that child brings every project's table up to date and prints nothing
 (`collect_child_main`, through `_refresh_tables`). The child first takes
 `.completion_collect.lock` beside the cache file. A second child finds it
 held and leaves at once, and a lock older than 45 seconds was left by a
 child that died, and is taken over.
 Only then does the child arm its 15-second deadline and bootstrap, so the
-repos' init modules and the collection both run under the deadline. Any
+projects' init modules and the collection both run under the deadline. Any
 failure (a timeout, a broken init module, a directory whose listing a
 refresh could not finish) writes `.completion_collect.failed`, and for a
 minute after that no TAB starts another child or waits for one. The child
@@ -382,9 +383,9 @@ runs in the workspace home, never in the shell's directory.
 
 It is used in two ways:
 
-- **The seed blocks once.** A TAB that finds a repo's table cold waits for
+- **The seed blocks once.** A TAB that finds a project's table cold waits for
   the child, then answers from what the child wrote. It waits at most two
-  seconds past the child's deadline, and then kills it. A repo the child
+  seconds past the child's deadline, and then kills it. A project the child
   could not seed offers no names until a run, a listing or a later TAB
   seeds it. The wait happens once per cold table, not once per TAB.
 - **The refresh is detached.** Once a TAB has printed its answer, it may
@@ -406,7 +407,7 @@ reaches a TAB one check late: at most the window plus one TAB after the
 change. A finished run, `--list-tests` or dry run, or a child, that updated
 a table has touched the marker, so a TAB right after one of them starts
 nothing. `--list-markers` does so only when it seeded a cold table, and an
-interrupted run may leave some repos unread.
+interrupted run may leave some projects unread.
 
 A run never depends on the child. It classifies every table before it
 decides anything, and collects what moved in its own session, whatever the
@@ -423,7 +424,7 @@ cache in the home's `pytest-cache/`. So a session adds no entry to a test
 directory, and a directory's stat moves only when a file in it is added,
 removed or renamed. Otherwise a `__pycache__` or a `.pytest_cache`
 appearing in a test directory would move a stored stat and cost one more
-collection (issue #456). This covers otto's pytest sessions only. The repos'
+collection (issue #456). This covers otto's pytest sessions only. The projects'
 init modules, which otto imports at startup outside any session, still
 compile beside themselves unless `PYTHONPYCACHEPREFIX` is set
 ({doc}`../startup-performance`).
@@ -473,15 +474,15 @@ digraph cache_paths {
 | Invocation | Answered from | Validates and rebuilds |
 | --- | --- | --- |
 | `otto --version` | nothing | nothing |
-| bash TAB answered by the shim | `shim` and `names`; at a test-name or `-m` site also each repo's table | compares the stored `names` triples (unless the marker vouches for them) and, at a test-name or `-m` site, each table's `env`; never rebuilds; starts the detached collect child once the check window has lapsed |
-| bash TAB handed over because the cache is stale (`Handover.stale`), a cold table included | no section: it skips the `names` fast path and bootstraps | validates both sections and rebuilds on a miss; skipped with no repos, no home or an uncacheable inventory |
+| bash TAB answered by the shim | `shim` and `names`; at a test-name or `-m` site also each project's table | compares the stored `names` triples (unless the marker vouches for them) and, at a test-name or `-m` site, each table's `env`; never rebuilds; starts the detached collect child once the check window has lapsed |
+| bash TAB handed over because the cache is stale (`Handover.stale`), a cold table included | no section: it skips the `names` fast path and bootstraps | validates both sections and rebuilds on a miss; skipped with no projects, no home or an uncacheable inventory |
 | bash TAB handed over for any other reason, or a zsh/fish TAB | `names` | on a `names` miss, bootstraps, validates both sections and rebuilds on a miss |
-| test-name or `-m` TAB that reached the full path | `names`, then each repo's table | like any handed-over TAB for the sections; checks each table's `env` as the shim does; a cold one waits once for the collect child, and once the check window has lapsed the child starts detached after the answer |
+| test-name or `-m` TAB that reached the full path | `names`, then each project's table | like any handed-over TAB for the sections; checks each table's `env` as the shim does; a cold one waits once for the collect child, and once the check window has lapsed the child starts detached after the answer |
 | root `otto --help` | `names` | on a `names` miss, bootstraps, validates both sections and rebuilds on a miss |
-| an `otto test` run | each repo's table | never a section; classifies every table before any session, and writes each table from its own sessions |
-| `otto test --list-tests`, `otto -n test` | each repo's table | never a section; collect as a run would, with `--collect-only`, and write each table from those sessions |
-| `otto test --list-markers` | each repo's table | never a section; seeds a cold table with one whole-tree collection (`_refresh_tables`) and reads a warm one as it is |
-| the collect child | each repo's table | never a section; seeds a cold table, collects what moved in a warm one, writes the tables and touches the `tests` marker |
+| an `otto test` run | each project's table | never a section; classifies every table before any session, and writes each table from its own sessions |
+| `otto test --list-tests`, `otto -n test` | each project's table | never a section; collect as a run would, with `--collect-only`, and write each table from those sessions |
+| `otto test --list-markers` | each project's table | never a section; seeds a cold table with one whole-tree collection (`_refresh_tables`) and reads a warm one as it is |
+| the collect child | each project's table | never a section; seeds a cold table, collects what moved in a warm one, writes the tables and touches the `tests` marker |
 | any other command | nothing | nothing |
 | `otto tunnel list`/`remove` | nothing | never; writes `__dynamic_tunnels__` only (keyed by the narrow tunnel-scope digest, which reads no test file) |
 | a docker verb that asks a daemon (`ps`, `images`, `build`, `compose ps`/`build`/`up`/`down`) | nothing | never a section; writes the host's `__docker_observed__` sub-entries only |
@@ -491,7 +492,7 @@ digraph cache_paths {
 why. `Handover.stale` is true when the cache itself is at fault: no cache
 file, a schema mismatch, a missing section, an expired TTL, a stored `names`
 path that is gone, has appeared or has changed, or, at a test-name or `-m`
-site, a repo whose table is missing, expired or has another `env`.
+site, a project whose table is missing, expired or has another `env`.
 `otto._shim.main` passes the flag on as `entry(cache_stale=True)`.
 {func}`~otto.cli.main.entry` then skips the `names` fast path, bootstraps,
 checks and rebuilds the sections, and lets Typer answer the TAB; at a
@@ -507,7 +508,7 @@ would not make the next TAB answerable either.
 
 **A missing or stale `names` section also rebuilds.** Completion and root help
 read `names` first. On a miss they bootstrap. After bootstrap, `entry()`
-first asks `cache_is_writable`, which stats no key path. With no repos,
+first asks `cache_is_writable`, which stats no key path. With no projects,
 no home or an uncacheable inventory, no entry could be stored, and nothing
 below runs. Otherwise `cache_is_stale` validates both sections in one
 read, and `entry()` rewrites both on any miss, in one atomic update. The
@@ -543,20 +544,20 @@ the last thing in a rebuild that read one. 26 added
 - **A rebuild** costs the `names` key-set stats and the bootstrap. It reads
   no test file and imports no pytest. It happens once per change to the
   workspace.
-- **Checking a repo's table** costs one stat per file, directory and
+- **Checking a project's table** costs one stat per file, directory and
   dependency it tracks. `otto test`'s runs, listings and dry run pay it, and
   so do the collect child and every full-path test-name TAB; a bash TAB
   never does.
 - **A collection** costs pytest's own start plus roughly a hundred file
   operations per test file it imports. A run's session imports every test
-  file of its repo: the tables are a hint, so they cannot narrow it
+  file of its project: the tables are a hint, so they cannot narrow it
   ({doc}`execution`, #592). Only the collect child's refresh is narrowed,
   to the files that changed.
 - **Everything else** costs nothing: `otto --version` and ordinary commands
   do no completion-cache I/O.
 
 The import-budget guard (`scripts/import_budget.py`, run by `make profile`)
-pins these on a generated repo shaped like a real one:
+pins these on a generated project shaped like a real one:
 
 - The scaling pins measure the same command at 50 test files in 5
   directories and at 200 in 20, and allow at most five more `workspace`
@@ -603,7 +604,7 @@ ceilings are. The counters are described in {doc}`../startup-performance`
 - `otto.config.completion_cache` — the file: location, schema, TTLs,
   `hash_file`, `read_sections` / `write_sections`,
   `cache_is_writable` / `cache_is_stale`, the collectors that read the
-  repos and the registries, the reserved namespaces, and the collect
+  projects and the registries, the reserved namespaces, and the collect
   child's lock, cooldown and spawn.
 - `otto.cli.registry` — the collectors that walk the CLI's own command
   tree (`collect_current_commands`, `collect_test_verb_options`,

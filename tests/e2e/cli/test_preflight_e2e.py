@@ -65,13 +65,13 @@ def _repo4(tmp_path, *, eager: bool = False):
     return dst
 
 
-def _run(argv, *, home, sut_dirs, binary=None, timeout=60):
+def _run(argv, *, home, roots, binary=None, timeout=60):
     """Run *binary* (default: the dev checkout's otto) with OTTO_HOME pinned."""
     return subprocess.run(
         [str(binary or OTTO_BIN), "-R", *argv],
         env=otto_subprocess_env(
-            sut_dirs=None,
-            extra_env={"OTTO_SUT_DIRS": str(sut_dirs), "OTTO_HOME": str(home)},
+            roots=None,
+            extra_env={"OTTOPATH": str(roots), "OTTO_HOME": str(home)},
         ),
         capture_output=True,
         text=True,
@@ -97,11 +97,11 @@ class TestTheAcceptancePair:
         result = _run(
             ["--lab", "unix", "run", "use-beetroot"],
             home=tmp_path / "home",
-            sut_dirs=f"{REPO1}{os.pathsep}{_repo4(tmp_path)}",
+            roots=f"{REPO1}{os.pathsep}{_repo4(tmp_path)}",
         )
         assert result.returncode == 1, result.stdout + result.stderr
         blob = result.stdout + result.stderr
-        assert f"error: repo 'repo4' requires '{REQUIREMENT}'" in blob
+        assert f"error: project 'repo4' requires '{REQUIREMENT}'" in blob
         assert "not satisfied in this environment (found: none)" in blob
         assert "fix: otto env sync" in blob
         assert f"or:  uv pip install '{REQUIREMENT}'" in blob
@@ -116,11 +116,11 @@ class TestTheAcceptancePair:
         work from the environment it built.
         """
         home = tmp_path / "home"
-        sut_dirs = f"{REPO1}{os.pathsep}{_repo4(tmp_path)}"
+        roots = f"{REPO1}{os.pathsep}{_repo4(tmp_path)}"
         sync = _run(
             ["env", "sync", "--", "--find-links", str(WHEELS_DIR)],
             home=home,
-            sut_dirs=sut_dirs,
+            roots=roots,
             timeout=BUILD_TIMEOUT,
         )
         assert sync.returncode == 0, sync.stdout + sync.stderr
@@ -130,7 +130,7 @@ class TestTheAcceptancePair:
         result = _run(
             ["--lab", "unix", "run", "use-beetroot"],
             home=home,
-            sut_dirs=sut_dirs,
+            roots=roots,
             binary=built,
             timeout=BUILD_TIMEOUT,
         )
@@ -150,10 +150,10 @@ class TestTheAcceptancePair:
         result = _run(
             ["env", "show"],
             home=tmp_path / "home",
-            sut_dirs=f"{REPO1}{os.pathsep}{_repo4(tmp_path)}",
+            roots=f"{REPO1}{os.pathsep}{_repo4(tmp_path)}",
         )
         assert result.returncode == 0, result.stdout + result.stderr
-        assert "error: repo 'repo4'" not in result.stdout + result.stderr
+        assert "error: project 'repo4'" not in result.stdout + result.stderr
 
 
 def test_an_eager_import_fails_at_bootstrap_before_the_preflight_can_speak(tmp_path):
@@ -174,11 +174,11 @@ def test_an_eager_import_fails_at_bootstrap_before_the_preflight_can_speak(tmp_p
     result = _run(
         ["--lab", "unix", "run", "use-beetroot"],
         home=tmp_path / "home",
-        sut_dirs=f"{REPO1}{os.pathsep}{_repo4(tmp_path, eager=True)}",
+        roots=f"{REPO1}{os.pathsep}{_repo4(tmp_path, eager=True)}",
     )
     assert result.returncode == 1
     blob = result.stdout + result.stderr
     assert "failed to load repo4_lib" in blob
     assert "No module named 'otto_fixture_beetroot'" in blob
-    assert "Cannot run commands while a repo fails to load" in blob
+    assert "Cannot run commands while a project fails to load" in blob
     assert "fix: otto env sync" not in blob

@@ -34,13 +34,13 @@ Omit the option to monitor every real host in the lab (Docker containers
 excluded).
 
 "The hosts the run may walk" is the run's **fleet of interest**, not
-necessarily every host in the lab: when a repo declares a `[project]` table in
+necessarily every host in the lab: when a project declares a `[project]` table in
 its `.otto/settings.toml`, `--hosts` selects a subset of what that declaration
 admits. See {ref}`project-scope`.
 
 If the **driving** project's own declaration admits no host here — no loaded lab
 applies to it, or none of their hosts match its `host_patterns` — `--live`
-refuses before it builds a fleet at all, naming the repo and the file to edit.
+refuses before it builds a fleet at all, naming the project and the file to edit.
 A dependency's declaration never refuses: a lab that another project narrowed
 out is still this one's to watch.
 

@@ -21,7 +21,7 @@ methods, no write methods of any kind.  Otto never mutates scheduler
 state.  The recommended way to satisfy it is to inherit
 :class:`~otto.reservations.ReservationBackendBase`, which declares the two
 methods as abstract, adds the cached ``reservations`` member every consumer
-reads, and keeps the ``url``, ``repo_dir`` and ``username`` your factory hands
+reads, and keeps the ``url``, ``project_root`` and ``username`` your factory hands
 it.
 
 ``fetch_reservations`` answers in :class:`~otto.reservations.protocol.Reservation`
@@ -51,7 +51,7 @@ overwrite=False)``), and selected by that name with ``backend = "<name>"`` in
 the ``[reservations]`` table.  Otto parses the ``[reservations.<name>]``
 sub-table with the config model, then calls the factory with a
 :class:`~otto.registry.Configured` carrying that parsed configuration and a
-:class:`~otto.reservations.ReservationEnv` (``url``, ``repo_dir``,
+:class:`~otto.reservations.ReservationEnv` (``url``, ``project_root``,
 ``username`` and ``origin``).  The factory returns the backend.  Any failure on
 that path raises :class:`~otto.reservations.ReservationConstructionError`.
 :data:`~otto.reservations.RESERVATION_BACKENDS` is the registry itself.

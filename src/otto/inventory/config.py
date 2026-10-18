@@ -1,7 +1,7 @@
 """``[inventory]`` → one :class:`~otto.inventory.protocol.Inventory` per process (spec §8).
 
-Resolution, first hit wins: a project override in an active repo (all
-declaring repos must agree), else ``~/.otto/settings.toml``, else none. There
+Resolution, first hit wins: an override in an active project's settings (all
+declaring projects must agree), else ``~/.otto/settings.toml``, else none. There
 is no implicit discovery — an inventory is always declared, in one of exactly
 two places, and a process has exactly one.
 
@@ -36,7 +36,7 @@ from .protocol import Inventory
 from .registry import INVENTORY_BACKENDS, InventoryEnv, InventoryMetadata
 
 if TYPE_CHECKING:
-    from ..config.repo import Repo
+    from ..config.project import Project
     from ..creds.config import CompiledCreds
     from ..models.settings import InventoryConfigSpec, UserSettingsModel
     from ..registry import Prepared
@@ -54,7 +54,7 @@ class JsonInventoryConfig(OttoModel):
     model_config = ConfigDict(frozen=True)
 
     path: Path
-    """The inventory file; a relative path anchors to the declaring repo; ``~`` is expanded."""
+    """The inventory file; a relative path anchors to its project root; ``~`` is expanded."""
 
     supplies: list[str] | None = None
     """The record fields this inventory supplies; ``None`` means every fillable field."""
@@ -62,7 +62,7 @@ class JsonInventoryConfig(OttoModel):
     @field_validator("path", mode="before")
     @classmethod
     def _not_empty(cls, value: object) -> object:
-        """Refuse an empty string, which would otherwise read as the repo root."""
+        """Refuse an empty string, which would otherwise read as the project root."""
         if value == "":
             raise ValueError("must name the inventory file")
         return value
@@ -108,7 +108,7 @@ class InventoryDeclaration:
     origin: str
     """The settings file that declared it — for error text."""
     anchor_dir: Path
-    """Directory relative paths anchor to (the repo root; ``~/.otto`` for the user file)."""
+    """Directory relative paths anchor to (the project root; ``~/.otto`` for the user file)."""
     table: dict[str, Any] = field(default_factory=dict)
     creds_table: dict[str, Any] = field(default_factory=dict)
     """The same file's ``[creds]`` table, ``{}`` when absent (spec 2026-09-06 creds-store §4.2)."""
@@ -134,11 +134,11 @@ class CompiledInventory:
 
         Backend, normalized configuration AND ``cache_ttl`` must agree — every
         field the table configures. ``cache_ttl`` is in here because it is
-        behaviour, not decoration: two repos declaring ``"0"`` and ``"7d"``
+        behaviour, not decoration: two projects declaring ``"0"`` and ``"7d"``
         would otherwise be "the same", and declaration order would silently
         decide whether the process caches at all (spec §8 requires identical
         tables). ``origin`` and ``anchor_dir`` are excluded, which is the whole
-        point — two repos naming the same inventory from their own settings
+        point — two projects naming the same inventory from their own settings
         files, each anchoring it to its own root, are not a conflict. ``creds``
         is excluded too: it is compared per table by
         :meth:`~otto.creds.config.CompiledCreds.same_as` in ``_resolve_creds``,
@@ -163,7 +163,7 @@ def compile_inventory(
     here, naming the backend, the module that registered it and *origin*.
 
     Anchoring, not resolving: ``anchor_dir`` makes a committed relative path
-    resolve stably wherever the repo is checked out. Symlink resolution
+    resolve stably wherever the project is checked out. Symlink resolution
     happens later, in the backend's factory, where the path reaches the
     object whose ``fingerprint()`` the spec says is the resolved one (§9.1).
 
@@ -297,7 +297,7 @@ def _resolve_creds(
     user_settings: "UserSettingsModel | None",
     user_settings_file: "Path | None",
 ) -> "CompiledCreds | None":
-    """Run the §4.2 walk for ``[creds]``: repos that declare it must agree, else the user file.
+    """Run the §4.2 walk for ``[creds]``: projects that declare it must agree, else the user file.
 
     Independent of the ``[inventory]`` walk — each table finds its own first
     declaration. Every ``CredsError`` becomes an ``InventoryError`` here so
@@ -326,7 +326,7 @@ def _resolve_creds(
         for other in compiled[1:]:
             if not other.same_as(compiled[0]):
                 raise InventoryError(
-                    f"two active repos declare different [creds] tables: {compiled[0].origin} "
+                    f"two active projects declare different [creds] tables: {compiled[0].origin} "
                     f"and {other.origin}; a process has exactly one creds store"
                 )
         if compiled:
@@ -353,7 +353,7 @@ def build_inventory_from_declarations(
 
     Split out from :func:`build_inventory` so the doctor can report on the
     same resolution without re-reading the files, and so the rules are
-    testable without a repo on disk. *user_settings_file* names the file
+    testable without a project on disk. *user_settings_file* names the file
     *user_settings* came from (for error text); it defaults to
     :func:`~otto.config.user_settings.user_settings_path`.
     """
@@ -361,7 +361,7 @@ def build_inventory_from_declarations(
     for other in compiled[1:]:
         if not other.same_as(compiled[0]):
             raise InventoryError(
-                f"two active repos declare different [inventory] tables: {compiled[0].origin} "
+                f"two active projects declare different [inventory] tables: {compiled[0].origin} "
                 f"and {other.origin}; a process has exactly one inventory"
             )
     creds = _resolve_creds(
@@ -390,9 +390,9 @@ def build_inventory_from_declarations(
 
 
 def build_inventory(
-    repos: "Sequence[Repo]", *, user_settings_path: "Path | None" = None
+    projects: "Sequence[Project]", *, user_settings_path: "Path | None" = None
 ) -> "Inventory | None":
-    """Resolve the process inventory from the active repos and the user file (spec §8).
+    """Resolve the process inventory from the active projects and the user file (spec §8).
 
     Called once at bootstrap; the result is what every ``inventory=`` caller
     passes. ``None`` means nothing declared one anywhere — inline hosts work as
@@ -403,20 +403,20 @@ def build_inventory(
     naming it, rather than degrading to "no inventory".
     """
     # Deferred: see the module docstring. TOML_SETTINGS_PATH rather than a
-    # hand-spelled ".otto"/"settings.toml" — one owner for where a repo's
+    # hand-spelled ".otto"/"settings.toml" — one owner for where a project's
     # settings live, so a relocation cannot leave this error text lying.
     from ..config.scope import TOML_SETTINGS_PATH
     from ..config.user_settings import load_user_settings
 
     declarations = [
         InventoryDeclaration(
-            origin=str(repo.sut_dir / TOML_SETTINGS_PATH),
-            anchor_dir=repo.sut_dir,
-            table=dict(repo.inventory_settings),
-            creds_table=dict(repo.creds_settings),
+            origin=str(project.root / TOML_SETTINGS_PATH),
+            anchor_dir=project.root,
+            table=dict(project.inventory_settings),
+            creds_table=dict(project.creds_settings),
         )
-        for repo in repos
-        if repo.inventory_settings or repo.creds_settings
+        for project in projects
+        if project.inventory_settings or project.creds_settings
     ]
     try:
         user = load_user_settings(user_settings_path)

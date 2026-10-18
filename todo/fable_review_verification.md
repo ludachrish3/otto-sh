@@ -295,7 +295,7 @@ with zero error containment — one broken file bricks the whole CLI.**
 `configmodule/__init__.py:52-53,130-154` runs repo discovery +
 `apply_repo_settings` at package-import time; `import_init_modules` /
 `import_test_files` (repo.py:652-683,705-713) call `spec.loader.exec_module`
-raw. A syntax error in one `test_*.py` under `OTTO_SUT_DIRS` makes **every**
+raw. A syntax error in one `test_*.py` under `OTTOPATH` makes **every**
 otto invocation (`--help`, `--version`, completion) die with a raw chained
 traceback before Typer parses argv. Stark asymmetry: bad lab *data* fails with
 beautiful layered errors; bad user *code* fails as an interpreter crash with no

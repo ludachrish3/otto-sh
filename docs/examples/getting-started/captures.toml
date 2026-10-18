@@ -48,7 +48,7 @@ argv = ["{otto}", "--log-level", "DEBUG", "--lab", "embedded", "host", "zephyr37
 # forwarding port, the tunnel-connect duration, the telnetlib3
 # negotiation-complete duration, and the uptime response's own byte length --
 # plus the per-run scratch output directory, which otto names from a non-ISO
-# YYYYMMDD_HHMMSS_mmm timestamp. The repo's commit is not among them: the
+# YYYYMMDD_HHMMSS_mmm timestamp. The repository's commit is not among them: the
 # capture runs against a scratch copy, so otto's git read fails and no hash
 # is ever printed. The telnet client's own "Connected to <Peer ...>" line is
 # INFO, not DEBUG-only, so it appears in every Zephyr capture, ephemeral port

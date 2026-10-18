@@ -49,7 +49,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("run_exec_e2e")]
 
 def _run_otto(
     *args: str,
-    sut_dirs: Path = REPO1,
+    roots: Path = REPO1,
     lab: str = "unix",
     xdir: Path | None = None,
     compose_suffix: str | None = None,
@@ -64,7 +64,7 @@ def _run_otto(
     return run_otto(
         list(args),
         xdir=xdir,
-        sut_dirs=sut_dirs,
+        roots=roots,
         lab=lab,
         extra_argv_prefix=["-R"],
         extra_env=(None if compose_suffix is None else {"OTTO_COMPOSE_SUFFIX": compose_suffix}),

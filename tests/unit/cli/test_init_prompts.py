@@ -56,13 +56,13 @@ def test_area_flag_pulls_in_missing_settings_with_note(tmp_path: Path) -> None:
     assert (tmp_path / ".otto" / "settings.toml").is_file()
     assert (tmp_path / "lab_data" / "lab.json").is_file()
     assert not (tmp_path / "tests" / "test_example.py").exists()
-    assert "repo marker" in result.output
+    assert "project marker" in result.output
 
 
 def test_tests_pull_in_the_init_module_that_registers_their_options(tmp_path: Path) -> None:
     """``--tests`` alone also scaffolds the instructions module, with a note.
 
-    The example tests import ``RepoOptions`` from the init module, which
+    The example tests import ``ProjectOptions`` from the init module, which
     declares and registers it, so a tests-only repo would fail at run time.
     """
     result = _invoke(["--tests", "--name", "widget", "--path", str(tmp_path)])
@@ -94,13 +94,13 @@ def test_tests_beside_an_existing_instructions_area_name_the_registration(tmp_pa
 
     assert result.exit_code == 0, result.output
     assert (tmp_path / "tests" / "test_example.py").is_file()
-    assert "import RepoOptions from widget_instructions" in result.output
+    assert "import ProjectOptions from widget_instructions" in result.output
     assert '@otto.options(verbs=["run", "test"])' in result.output
     assert "prerequisite" not in result.output
 
 
 def test_tests_beside_an_init_module_of_another_name_import_from_it(tmp_path: Path) -> None:
-    """The example tests import ``RepoOptions`` from the repo's real init module.
+    """The example tests import ``ProjectOptions`` from the repo's real init module.
 
     ``init = ["foo"]`` already exists, so the instructions area is found and
     not scaffolded: the tests must import from ``foo``, and the note must name
@@ -120,9 +120,9 @@ def test_tests_beside_an_init_module_of_another_name_import_from_it(tmp_path: Pa
 
     assert result.exit_code == 0, result.output
     test_src = (tmp_path / "tests" / "test_example.py").read_text()
-    assert "from foo import RepoOptions" in test_src
+    assert "from foo import ProjectOptions" in test_src
     assert "widget_instructions" not in test_src
-    assert "import RepoOptions from foo" in result.output
+    assert "import ProjectOptions from foo" in result.output
     assert '@otto.options(verbs=["run", "test"])' in result.output
     assert "message" in result.output
     assert "widget_instructions" not in result.output
@@ -161,7 +161,7 @@ def test_later_area_uses_existing_settings_name(tmp_path: Path) -> None:
 
 def test_epilogue_prints_next_steps(tmp_path: Path) -> None:
     result = _invoke(["--all", "--name", "widget", "--path", str(tmp_path)])
-    assert f"export OTTO_SUT_DIRS={tmp_path.resolve()}" in result.output
+    assert f"export OTTOPATH={tmp_path.resolve()}" in result.output
     assert "otto --install-completion" in result.output
     # Installing the completion script does not activate it in the current
     # shell; the panel has to say so (see test_init_banner.py).
@@ -176,9 +176,9 @@ def test_epilogue_prints_next_steps(tmp_path: Path) -> None:
 
 
 def test_epilogue_skips_sut_dirs_when_already_set(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("OTTO_SUT_DIRS", str(tmp_path))
+    monkeypatch.setenv("OTTOPATH", str(tmp_path))
     result = _invoke(["--all", "--name", "widget", "--path", str(tmp_path)])
-    assert "export OTTO_SUT_DIRS" not in result.output
+    assert "export OTTOPATH" not in result.output
     # Not vacuous: the block itself was printed.
     assert "source ~/.bash_completions/otto.sh" in result.output
 
@@ -194,27 +194,27 @@ def test_second_run_is_pure_report(tmp_path: Path) -> None:
 
 
 def test_epilogue_skips_sut_dirs_when_pathsep_separated(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("OTTO_SUT_DIRS", f"/somewhere/else{os.pathsep}{tmp_path}")
+    monkeypatch.setenv("OTTOPATH", f"/somewhere/else{os.pathsep}{tmp_path}")
     result = _invoke(["--all", "--name", "widget", "--path", str(tmp_path)])
-    assert "export OTTO_SUT_DIRS" not in result.output
+    assert "export OTTOPATH" not in result.output
     # Not vacuous: the block itself was printed.
     assert "source ~/.bash_completions/otto.sh" in result.output
 
 
 def test_epilogue_keeps_sut_dirs_when_comma_separated(tmp_path: Path, monkeypatch) -> None:
     """A comma does not separate: ``/somewhere/else,<root>`` is one path, not the repo."""
-    monkeypatch.setenv("OTTO_SUT_DIRS", f"/somewhere/else,{tmp_path}")
+    monkeypatch.setenv("OTTOPATH", f"/somewhere/else,{tmp_path}")
     result = _invoke(["--all", "--name", "widget", "--path", str(tmp_path)])
-    assert f"export OTTO_SUT_DIRS={tmp_path.resolve()}" in result.output
+    assert f"export OTTOPATH={tmp_path.resolve()}" in result.output
 
 
 def test_epilogue_keeps_sut_dirs_when_the_entry_has_a_leading_space(
     tmp_path: Path, monkeypatch
 ) -> None:
     """The loader reads ``<sep> <root>`` as ``" <root>"``, a path that does not exist."""
-    monkeypatch.setenv("OTTO_SUT_DIRS", f"/somewhere/else{os.pathsep} {tmp_path}")
+    monkeypatch.setenv("OTTOPATH", f"/somewhere/else{os.pathsep} {tmp_path}")
     result = _invoke(["--all", "--name", "widget", "--path", str(tmp_path)])
-    assert f"export OTTO_SUT_DIRS={tmp_path.resolve()}" in result.output
+    assert f"export OTTOPATH={tmp_path.resolve()}" in result.output
 
 
 def test_schemas_flag_refreshes_stale_files(tmp_path: Path) -> None:
@@ -256,7 +256,7 @@ def test_declining_every_area_writes_nothing_and_still_reports(tmp_path: Path) -
     result = _invoke(["--path", str(tmp_path)], input="widget\n0.1.0\nn\nn\nn\nn\nn\n")
     assert result.exit_code == 0, result.output
     assert list(tmp_path.iterdir()) == []
-    assert "repo marker" not in result.output
+    assert "project marker" not in result.output
     assert "— scaffolding it" not in result.output
     assert "otto init —" in result.output
     assert "Next steps" in result.output
@@ -266,4 +266,4 @@ def test_settings_is_pulled_in_when_declined_but_another_area_is_chosen(tmp_path
     result = _invoke(["--path", str(tmp_path)], input="widget\n0.1.0\nn\nn\ny\nn\nn\n")
     assert result.exit_code == 0, result.output
     assert (tmp_path / ".otto" / "settings.toml").is_file()
-    assert "repo marker" in result.output
+    assert "project marker" in result.output

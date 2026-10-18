@@ -101,7 +101,7 @@ def _insert_lines(
 
 
 def load_capture_into_store(
-    store: CoverageStore, capture: Capture, repo_root: Path, run_id: int | None = None
+    store: CoverageStore, capture: Capture, project_root: Path, run_id: int | None = None
 ) -> None:
     """Fold a base_commit==HEAD (e2e-kind) capture into *store* verbatim.
 
@@ -113,12 +113,12 @@ def load_capture_into_store(
     """
     store.register_tier(capture.tier)
     for rel_str, fc in capture.files.items():
-        file_rec = store.get_or_create_file(repo_root / Path(rel_str))
+        file_rec = store.get_or_create_file(project_root / Path(rel_str))
         _insert_lines(file_rec, capture.tier, fc.lines, fc.branches, run_id=run_id)
 
 
 def load_dirty_capture_into_store(
-    store: CoverageStore, capture: Capture, repo_root: Path, run_id: int | None = None
+    store: CoverageStore, capture: Capture, project_root: Path, run_id: int | None = None
 ) -> None:
     """Fold a base_commit==HEAD e2e capture in, remapping HEAD → dirty working tree.
 
@@ -135,7 +135,7 @@ def load_dirty_capture_into_store(
     store.register_tier(capture.tier)
     for rel_str, fc in capture.files.items():
         relpath = Path(rel_str)
-        remapper = LineRemapper(parse_u0_hunks(gitio.diff_worktree_file_u0(repo_root, relpath)))
+        remapper = LineRemapper(parse_u0_hunks(gitio.diff_worktree_file_u0(project_root, relpath)))
 
         mapped_lines: dict[int, int] = {}
         for lineno, count in fc.lines.items():
@@ -149,7 +149,7 @@ def load_dirty_capture_into_store(
             if new_line is not None:
                 mapped_branches.setdefault(new_line, []).extend(triples)
 
-        file_rec = store.get_or_create_file(repo_root / relpath)
+        file_rec = store.get_or_create_file(project_root / relpath)
         _insert_lines(file_rec, capture.tier, mapped_lines, mapped_branches, run_id=run_id)
 
 
@@ -205,7 +205,7 @@ def _apply_unverifiable_capture(
 def apply_manual_capture(
     store: CoverageStore,
     capture: Capture,
-    repo_root: Path,
+    project_root: Path,
     max_age_days: int | None,
     today: datetime | None = None,
     run_id: int | None = None,
@@ -216,15 +216,15 @@ def apply_manual_capture(
     if aging and run_id is not None:
         store.runs[run_id].aging = True
 
-    resolver = AnchorResolver(repo_root, capture.base_commit, files=capture.files)
+    resolver = AnchorResolver(project_root, capture.base_commit, files=capture.files)
     for rel_str, fc in capture.files.items():
         relpath = Path(rel_str)
         result = resolver.resolve(relpath, fc)
         if result.new_relpath is None:
-            file_rec = store.get_or_create_file(repo_root / relpath)
+            file_rec = store.get_or_create_file(project_root / relpath)
             _apply_unverifiable_capture(file_rec, capture, rel_str, fc, run_id)
             continue
-        file_rec = store.get_or_create_file(repo_root / result.new_relpath)
+        file_rec = store.get_or_create_file(project_root / result.new_relpath)
         remapper = LineRemapper(result.hunks)
 
         # Remap base_commit (OLD) coordinates → current-worktree (NEW)

@@ -64,7 +64,7 @@ registration, so an `insmod` that succeeds has both files.
 
 ## Getting the library
 
-- **In a repo otto scaffolds**: `otto init --kmodcov` vendors the sources into
+- **In a project otto scaffolds**: `otto init --kmodcov` vendors the sources into
   `third_party/otto_kmodcov` (`--kmodcov-dir` names another directory), appends a
   commented `[[dev_tools]]` entry of kind `kmodcov` to fill in, and writes a
   consumer starter beside it — the two sentinel files, a `Kbuild.example`,
@@ -81,7 +81,7 @@ registration, so an `insmod` that succeeds has both files.
   reports the same drift as a warning for every declared kmodcov `source`.
   Neither command notices a file that a later otto no longer ships — both
   walk only the list of files this otto currently ships — so a re-export
-  after an upgrade can leave such a file behind, for the repo's own diff to
+  after an upgrade can leave such a file behind, for the project's own diff to
   catch.
 - **Kernel differences**: the library builds from 2.6.32 on; the 2.6.39 to
   3.5 window builds from arms no kernel in the proof set has run, marked
@@ -109,10 +109,10 @@ registration, so an `insmod` that succeeds has both files.
 
 The worked example throughout this page is `tests/repo5/kmod/demo/`, a
 small bounded queue driven from a debugfs control file, living inside the
-repo that declares it as a product. A repo that reports coverage for a
+project that declares it as a product. A project that reports coverage for a
 module must own that module's sources and build them in place: coverage
-capture anchors every measured file to a committed git blob under the SUT
-repo. The library's own `README.md` — the copy you hold, e.g.
+capture anchors every measured file to a committed git blob under the
+project root. The library's own `README.md` — the copy you hold, e.g.
 `third_party/otto_kmodcov/README.md` (`src/otto/kmodcov/README.md` in otto's
 own source tree) — documents the same three steps that follow, in more
 general terms, for any consumer.
@@ -202,7 +202,7 @@ otto host test1 exec --sudo dmesg
 ```
 
 The vendored copy's own `build.sh <build-dir> [<release>]`
-(`third_party/otto_kmodcov/build.sh` in a user's repo; `src/otto/kmodcov/build.sh`
+(`third_party/otto_kmodcov/build.sh` in a user's project; `src/otto/kmodcov/build.sh`
 in otto's own tree — the same script, copied verbatim by `export`) takes
 the release as its second, optional argument, defaulting to the build
 machine's own running kernel when none is given, and checks the resulting
@@ -222,7 +222,7 @@ checks the resulting `vermagic` before calling either build a success:
 `tests/repo5/build.sh` is the human entry point: it runs that script and
 then the container image's own `docker/build.sh`.
 
-A product repo's own module follows the same shape: build `otto_kmodcov` out
+A product project's own module follows the same shape: build `otto_kmodcov` out
 of tree once, then build the module against it in place, checking
 `vermagic` the same way before it ships anywhere. Only the library's `.ko`
 carries `modinfo -F version`: `<otto version>+kmodcov<n>`, naming the otto
@@ -454,7 +454,7 @@ lies about its APIs, or to replace an untested arm that misbehaves:
 ## Declaring the module and its library
 
 The two live in different seams. The library is a `[[dev_tools]]` entry of
-kind `kmodcov` — repo tooling nothing measures, one entry per kernel, pointed
+kind `kmodcov` — project tooling nothing measures, one entry per kernel, pointed
 at the hosts running it by its `match` table — and the consumer is an
 ordinary `kmod` product with `coverage = "module"`:
 

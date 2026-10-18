@@ -14,7 +14,7 @@ Every table here is synthetic: no file is read, no pytest runs.
 
 from pathlib import Path
 
-from otto.config.collected_tests import Classification, FileRecord, RecordedTest, RepoTable
+from otto.config.collected_tests import Classification, FileRecord, ProjectTable, RecordedTest
 from otto.suite.run import _decide, _Known
 
 
@@ -35,8 +35,8 @@ def _known(
 
     *found*: the repo was searched in this run, and its session matched these names.
     """
-    table = RepoTable(
-        sut_dir=root,
+    table = ProjectTable(
+        root=root,
         env={},
         dirs={},
         files={str(root / k): _record(*tests) for k, tests in files.items()},

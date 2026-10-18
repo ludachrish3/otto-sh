@@ -52,18 +52,18 @@ class NoMonitorableHostsError(OttoError):
 
 
 class MonitorTlsError(OttoError):
-    """The repos' declared ``[monitor]`` TLS cannot be served.
+    """The projects' declared ``[monitor]`` TLS cannot be served.
 
     Not a :class:`~otto.errors.FieldError`: no flag spells it, it is a
     settings refusal. ``setting`` is ``"tls_cert"`` or ``"tls_key"`` for a
-    file that is missing or unloadable, ``None`` when repos disagree;
-    ``repos`` names the declaring repos.
+    file that is missing or unloadable, ``None`` when projects disagree;
+    ``projects`` names the declaring projects.
     """
 
-    def __init__(self, message: str, *, setting: "str | None", repos: list[str]) -> None:
+    def __init__(self, message: str, *, setting: "str | None", projects: list[str]) -> None:
         super().__init__(message)
         self.setting = setting
-        self.repos = repos
+        self.projects = projects
 
 
 def _message(ids: list[str]) -> str:

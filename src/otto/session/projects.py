@@ -1,12 +1,12 @@
-"""Project selection and the bootstrap gate: who takes part, and whether a broken repo stops it."""
+"""Project selection and the bootstrap gate: who takes part, and whether a broken one stops it."""
 
 import dataclasses
 from typing import TYPE_CHECKING, Literal
 
-from .errors import ProjectSelectionError, RepoLoadError
+from .errors import ProjectLoadError, ProjectSelectionError
 
 if TYPE_CHECKING:
-    from ..config.repo import Repo
+    from ..config.project import Project
     from ..config.scope import BootstrapError
     from ..declared import BootstrapResult
 
@@ -20,14 +20,14 @@ class ProjectSelection:
 
 
 @dataclasses.dataclass(frozen=True)
-class DemotedRepo:
-    """A load error that does not stop the run, because its repo is inactive before the lab."""
+class DemotedProject:
+    """A load error that does not stop the run, because its project is inactive before the lab."""
 
     error: "BootstrapError"
-    repo: str
-    """The repo's name as discovered."""
-    project: str
-    """The repo's normalised name, the spelling ``include_projects`` takes."""
+    name: str
+    """The project's name as discovered."""
+    normalized_name: str
+    """The project's normalised name, the spelling ``include_projects`` takes."""
     reason: 'Literal["excluded", "out_of_scope"]'
     labs: list[str] = dataclasses.field(default_factory=list)
     """The lab selection an ``"out_of_scope"`` verdict was made against."""
@@ -36,31 +36,31 @@ class DemotedRepo:
     def message(self) -> str:
         """The library's sentence for this demotion, in field names."""
         why = (
-            f"exclude_projects {self.project}"
+            f"exclude_projects {self.normalized_name}"
             if self.reason == "excluded"
             else f"not applicable to lab(s) [{', '.join(self.labs)}]"
         )
         return (
-            f"repo {self.repo!r} failed to load, but is inactive for this run ({why})"
+            f"project {self.name!r} failed to load, but is inactive for this run ({why})"
             " — continuing without it"
         )
 
 
 @dataclasses.dataclass(frozen=True)
-class RepoCheck:
+class ProjectCheck:
     """What the bootstrap gate let through."""
 
-    demoted: list[DemotedRepo] = dataclasses.field(default_factory=list)
+    demoted: list[DemotedProject] = dataclasses.field(default_factory=list)
 
 
 @dataclasses.dataclass(frozen=True)
 class LoadErrorVerdicts:
-    """Which bootstrap errors stop a run, and which only demote their repo."""
+    """Which bootstrap errors stop a run, and which only demote their project."""
 
     fatal: "list[BootstrapError]" = dataclasses.field(default_factory=list)
-    """An active repo's error, one ``include`` forces, or one no discovered repo owns."""
-    demoted: list[DemotedRepo] = dataclasses.field(default_factory=list)
-    """Errors of repos inactive before the lab: switched off, or outside its labs."""
+    """An active project's error, one ``include`` forces, or one no discovered project owns."""
+    demoted: list[DemotedProject] = dataclasses.field(default_factory=list)
+    """Errors of projects inactive before the lab: switched off, or outside its labs."""
 
 
 def classify_load_errors(
@@ -72,11 +72,11 @@ def classify_load_errors(
 ) -> LoadErrorVerdicts:
     """Decide, before the lab exists, which of *result*'s errors are fatal.
 
-    The one rule :func:`check_repos` and :func:`otto.config.scope.scopes_of`
-    share. An error is owned by the repo whose ``sut_dir`` matches by
+    The one rule :func:`check_projects` and :func:`otto.config.scope.scopes_of`
+    share. An error is owned by the project whose ``root`` matches by
     ``str()``. An unowned error (a ``settings.toml`` that would not parse) is
-    fatal: that repo's declaration cannot be known. An owned error is demoted
-    when its repo is switched off or inactive before the lab, and fatal
+    fatal: that project's declaration cannot be known. An owned error is demoted
+    when its project is switched off or inactive before the lab, and fatal
     otherwise, whatever its kind.
 
     *include* and *exclude* may be spelled any way (PEP 503 normalised here,
@@ -90,28 +90,30 @@ def classify_load_errors(
     from ..models.dependencies import normalize_name
 
     included, excluded = set(_normalised(list(include))), set(_normalised(list(exclude)))
-    by_dir = {str(repo.sut_dir): repo for repo in result.repos}
+    by_dir = {str(project.root): project for project in result.projects}
     fatal: "list[BootstrapError]" = []
-    demoted: list[DemotedRepo] = []
+    demoted: list[DemotedProject] = []
     for err in result.errors:
-        repo = by_dir.get(str(err.sut_dir))
-        if repo is None:
+        project = by_dir.get(str(err.root))
+        if project is None:
             fatal.append(err)
             continue
-        name = normalize_name(repo.name)
+        name = normalize_name(project.name)
         reason: Literal["excluded", "out_of_scope"]
         if name in excluded:
             reason = "excluded"
         elif name in included:
             fatal.append(err)
             continue
-        elif inactive_before_lab(repo.project_scope, labs or None):
+        elif inactive_before_lab(project.project_scope, labs or None):
             reason = "out_of_scope"
         else:
             fatal.append(err)
             continue
         demoted.append(
-            DemotedRepo(error=err, repo=repo.name, project=name, reason=reason, labs=list(labs))
+            DemotedProject(
+                error=err, name=project.name, normalized_name=name, reason=reason, labs=list(labs)
+            )
         )
     return LoadErrorVerdicts(fatal=fatal, demoted=demoted)
 
@@ -131,7 +133,7 @@ def _normalised(names: list[str]) -> list[str]:
 def check_project_overlap(include: list[str], exclude: list[str]) -> None:
     """Refuse a project named in both ``include_projects`` and ``exclude_projects``.
 
-    Separate from :func:`select_projects` because it needs no discovered repo:
+    Separate from :func:`select_projects` because it needs no discovered project:
     the CLI refuses a contradictory command line as soon as it is parsed.
     """
     overlap = sorted(set(_normalised(include)) & set(_normalised(exclude)))
@@ -145,16 +147,35 @@ def check_project_overlap(include: list[str], exclude: list[str]) -> None:
         )
 
 
-def select_projects(
-    repos: "list[Repo]", include: list[str], exclude: list[str]
-) -> ProjectSelection:
-    """Normalise and validate the project switches against the discovered repos.
+def refused_names(errors: "list[BootstrapError]") -> list[str]:
+    """Return the normalized names discovery refused because two roots claimed them."""
+    from ..config.scope import DuplicateProjectError
 
-    A name in both lists is refused first; then a name no discovered repo
+    return sorted({e.name for e in errors if isinstance(e, DuplicateProjectError)})
+
+
+def select_projects(
+    projects: "list[Project]", include: list[str], exclude: list[str]
+) -> ProjectSelection:
+    """Normalise and validate the project switches against the discovered projects.
+
+    A name in both lists is refused first; then a name no discovered project
     carries, with the closest known name as a suggestion. Both sides of the
-    comparison are normalised, so ``My_Repo`` selects ``my-repo``. Give one
+    comparison are normalised, so ``My_Project`` selects ``my-project``. Give one
     project name per list item: a comma-separated string is one (unknown)
     name here, since the CLI's ``-I a,b`` comma-splits before this point.
+    """
+    return select_projects_with_refused(projects, include, exclude, refused=[])
+
+
+def select_projects_with_refused(
+    projects: "list[Project]", include: list[str], exclude: list[str], refused: list[str]
+) -> ProjectSelection:
+    """:func:`select_projects`, with the names discovery refused counted as known.
+
+    A name in *refused* (see :func:`refused_names`) counts as known, so
+    ``-I``/``-E`` naming a project with two roots reaches the duplicate-root
+    error instead of 'no project'.
     """
     import difflib
 
@@ -164,7 +185,7 @@ def select_projects(
     inc, exc = _normalised(include), _normalised(exclude)
     if not (inc or exc):
         return ProjectSelection()
-    known = sorted({normalize_name(repo.name) for repo in repos})
+    known = sorted({normalize_name(project.name) for project in projects} | set(refused))
     for field, names in (("include_projects", inc), ("exclude_projects", exc)):
         for name in names:
             if name in known:
@@ -182,16 +203,16 @@ def select_projects(
     return ProjectSelection(include=inc, exclude=exc)
 
 
-def check_repos(
+def check_projects(
     result: "BootstrapResult", labs: list[str], selection: ProjectSelection
-) -> RepoCheck:
+) -> ProjectCheck:
     """Run the bootstrap gate, decided before the lab exists.
 
-    An error is fatal when its repo is active, when ``include_projects`` names
-    it, or when no discovered repo owns it (a ``settings.toml`` that failed to
+    An error is fatal when its project is active, when ``include_projects`` names
+    it, or when no discovered project owns it (a ``settings.toml`` that failed to
     parse). Inactivity is the pre-lab projection
     (:func:`otto.config.scope.inactive_before_lab`): the explicit switches plus
-    lab-name inference. A repo that is inactive only because it is
+    lab-name inference. A project that is inactive only because it is
     host-starved cannot be seen before the lab, so its errors stay fatal.
     Bootstrap warnings never gate.
 
@@ -201,10 +222,10 @@ def check_repos(
     :func:`otto.config.scope.active` does.
     """
     if not result.errors:
-        return RepoCheck()
+        return ProjectCheck()
     verdicts = classify_load_errors(
         result, labs, include=selection.include, exclude=selection.exclude
     )
     if verdicts.fatal:
-        raise RepoLoadError(verdicts.fatal, verdicts.demoted)
-    return RepoCheck(demoted=verdicts.demoted)
+        raise ProjectLoadError(verdicts.fatal, verdicts.demoted)
+    return ProjectCheck(demoted=verdicts.demoted)

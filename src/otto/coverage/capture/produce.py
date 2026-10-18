@@ -12,7 +12,7 @@ directory this:
 2. Runs :meth:`~otto.coverage.merge.merger.LcovMerger.capture` for
    that product alone, producing ``<host>/<product>/board.info``.
 3. Auto-discovers path mappings and rewrites the embedded ``SF:`` paths
-   to their local, ``repo_root``-relative form, producing
+   to their local, ``project_root``-relative form, producing
    ``<host>/<product>/board.resolved.info``.
 4. Builds and saves ``<host>/<product>/capture.json`` via
    :func:`~otto.coverage.capture.model.build_capture`.
@@ -79,7 +79,7 @@ async def produce_captures(
     cov_dir: Path,
     *,
     tier: str,
-    repo_root: Path,
+    project_root: Path,
     labs: list[str],
     tester: dict[str, str] | None = None,
     ticket: str | None = None,
@@ -97,7 +97,7 @@ async def produce_captures(
             containing ``<host>/<product>/`` subdirs and a
             ``.otto_cov_meta.json`` sidecar.
         tier: Coverage tier name to annotate onto each capture.
-        repo_root: SUT git repo root, used for base_commit/blob resolution
+        project_root: the project's checkout root, used for base_commit/blob resolution
             and as the path-remapping target.
         labs: Lab identifiers to annotate onto each capture.
         tester: Optional tester identity to annotate onto each capture.
@@ -111,7 +111,7 @@ async def produce_captures(
         product), in host-then-product sort order.
 
     Raises:
-        otto.coverage.capture.gitio.GitUnavailableError: If *repo_root*
+        otto.coverage.capture.gitio.GitUnavailableError: If *project_root*
             is not a git repository.
         otto.config.coverage_settings.CoverageConfigError: If a host dir holds
             coverage data directly (the pre-product one-level tree).
@@ -140,7 +140,7 @@ async def produce_captures(
             logger.info("=== Capturing %s / %s ===", board, product)
             await merger.capture(board_dir, gcno_dir, raw_info, toolchain=toolchain)
 
-            mappings = await discover_path_mappings(raw_info, repo_root, localhost)
+            mappings = await discover_path_mappings(raw_info, project_root, localhost)
             remapper = PathRemapper(mappings)
             resolved_info = board_dir / "board.resolved.info"
             _write_resolved_info(raw_info, resolved_info, remapper)
@@ -148,7 +148,7 @@ async def produce_captures(
             capture = build_capture(
                 info_path=resolved_info,
                 tier=tier,
-                repo_root=repo_root,
+                project_root=project_root,
                 board=board,
                 product=product,
                 labs=labs,

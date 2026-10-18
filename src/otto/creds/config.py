@@ -3,7 +3,7 @@
 Compilation prepares the table with the selected store's configuration model
 (:data:`~otto.creds.registry.CREDS_BACKENDS`), which anchors paths to the
 declaring directory; construction builds the store with its factory.
-Resolution across repos and the user file — and the rule that a store needs an
+Resolution across projects and the user file — and the rule that a store needs an
 inventory to be keyed against — lives in :mod:`otto.inventory.config`, which
 owns the one-inventory-per-process walk.
 
@@ -32,17 +32,17 @@ if TYPE_CHECKING:
 
 
 class JsonCredsConfig(OttoModel):
-    """The json store's ``[creds]`` keys: the file's ``path``, anchored to the declaring repo."""
+    """The json store's ``[creds]`` keys: the file's ``path``, anchored to its project root."""
 
     model_config = ConfigDict(frozen=True)
 
     path: Path
-    """The creds file; a relative path is anchored to the declaring repo, and ``~`` is expanded."""
+    """The creds file; a relative path is anchored to its project root, and ``~`` is expanded."""
 
     @field_validator("path", mode="before")
     @classmethod
     def _not_empty(cls, value: object) -> object:
-        """Refuse an empty string, which would otherwise read as the repo root."""
+        """Refuse an empty string, which would otherwise read as the project root."""
         if value == "":
             raise ValueError("must name the creds file")
         return value
@@ -69,10 +69,10 @@ class CompiledCreds:
     def same_as(self, other: "CompiledCreds") -> bool:
         """Return whether this names the same store as *other* — origin and anchor excluded.
 
-        Two repos declaring the same store from their own settings files are
-        not a conflict; two repos whose parsed configurations differ are. The
+        Two projects declaring the same store from their own settings files are
+        not a conflict; two projects whose parsed configurations differ are. The
         configurations are compared in their normalized form, so one file
-        named relatively from one repo and absolutely from another is one store.
+        named relatively from one project and absolutely from another is one store.
         """
         return (self.prepared.backend, self.prepared.normalized) == (
             other.prepared.backend,

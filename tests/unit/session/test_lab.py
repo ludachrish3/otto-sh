@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from otto.config.repo import Repo
+from otto.config.project import Project
 from tests._fixtures.fake_repo import fake_repo
 from tests._fixtures.labdata import write_lab_json
 from tests._fixtures.sutrepo import make_sut_repo
@@ -23,11 +23,11 @@ def _host(element: str, ip: str) -> dict:
     }
 
 
-def _repo(root: Path, name: str, sources_toml: str, labfiles: dict[str, list[dict]]) -> Repo:
+def _repo(root: Path, name: str, sources_toml: str, labfiles: dict[str, list[dict]]) -> Project:
     sut = make_sut_repo(root, name=name, extra=sources_toml)
     for rel, hosts in labfiles.items():
         write_lab_json(root / rel, hosts)
-    return Repo(sut)
+    return Project(sut)
 
 
 # `OTTO_HOME` is relocated in the inventory tests below: `build_inventory` reads
@@ -49,11 +49,11 @@ _REFERENCED = {
 }
 
 
-def _inventory_repo(root: Path, table: str) -> Repo:
+def _inventory_repo(root: Path, table: str) -> Project:
     """A repo whose one lab entry is REFERENCED, plus the given ``[inventory]`` table."""
-    repo = _repo(root, "r1", f"{_SOURCES}\n{table}", {"lab/lab.json": [_REFERENCED]})
+    project = _repo(root, "r1", f"{_SOURCES}\n{table}", {"lab/lab.json": [_REFERENCED]})
     (root / "inv.json").write_text(json.dumps({"dut-1": {"ip": "10.0.0.7"}}))
-    return repo
+    return project
 
 
 def test_build_lab_resolves_referenced_entries(tmp_path, monkeypatch) -> None:
@@ -61,10 +61,10 @@ def test_build_lab_resolves_referenced_entries(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     from otto.session import build_lab
 
-    repo = _inventory_repo(
+    project = _inventory_repo(
         tmp_path / "r1", '[inventory]\nbackend = "json"\npath = "inv.json"\nsupplies = ["ip"]\n'
     )
-    lab = build_lab([repo], ["merged"])
+    lab = build_lab([project], ["merged"])
     assert lab.hosts["dut"].ip == "10.0.0.7"
     assert lab.hosts["dut"].inventory_ref.key == "dut-1"
 
@@ -73,9 +73,9 @@ def test_a_broken_inventory_declaration_is_an_inventory_refusal(tmp_path, monkey
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     from otto.session import LabBuildError, build_lab
 
-    repo = _inventory_repo(tmp_path / "r1", '[inventory]\nbackend = "no-such-backend"\n')
+    project = _inventory_repo(tmp_path / "r1", '[inventory]\nbackend = "no-such-backend"\n')
     with pytest.raises(LabBuildError) as exc:
-        build_lab([repo], ["merged"])
+        build_lab([project], ["merged"])
     assert exc.value.kind == "inventory"
     assert "inventory unavailable" in str(exc.value)
 
@@ -92,9 +92,9 @@ def test_an_unknown_lab_keeps_the_sources_own_text(tmp_path):
     from otto.labs import LabNotFoundError
     from otto.session import LabBuildError, build_lab
 
-    repo = _repo(tmp_path / "r1", "r1", _SOURCES, {"lab/lab.json": [_host("alt1", "10.0.0.1")]})
+    project = _repo(tmp_path / "r1", "r1", _SOURCES, {"lab/lab.json": [_host("alt1", "10.0.0.1")]})
     with pytest.raises(LabBuildError) as exc:
-        build_lab([repo], ["nope"])
+        build_lab([project], ["nope"])
     assert (exc.value.kind, exc.value.field) == ("unknown_lab", "labs")
     assert isinstance(exc.value.__cause__, LabNotFoundError)
     assert str(exc.value) == str(exc.value.__cause__) == exc.value.detail
@@ -103,9 +103,9 @@ def test_an_unknown_lab_keeps_the_sources_own_text(tmp_path):
 def test_an_unknown_backend_is_a_sources_refusal(tmp_path):
     from otto.session import LabBuildError, build_lab
 
-    repo = _repo(tmp_path / "r1", "r1", '[[lab.sources]]\nbackend = "nope"\n', {})
+    project = _repo(tmp_path / "r1", "r1", '[[lab.sources]]\nbackend = "nope"\n', {})
     with pytest.raises(LabBuildError) as exc:
-        build_lab([repo], ["merged"])
+        build_lab([project], ["merged"])
     assert (exc.value.kind, exc.value.field) == ("sources", None)
     assert str(exc.value).startswith("host source unavailable: ")
 
@@ -135,19 +135,19 @@ def test_declared_containers_are_registered(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(
         "otto.docker.compose.register_declared_container_hosts",
-        lambda lab, repos: calls.append((lab, list(repos))) or 0,
+        lambda lab, projects: calls.append((lab, list(projects))) or 0,
     )
-    repo = _repo(tmp_path / "r1", "r1", _SOURCES, {"lab/lab.json": [_host("alt1", "10.0.0.1")]})
-    lab = build_lab([repo], ["merged"])
-    assert calls == [(lab, [repo])]
+    project = _repo(tmp_path / "r1", "r1", _SOURCES, {"lab/lab.json": [_host("alt1", "10.0.0.1")]})
+    lab = build_lab([project], ["merged"])
+    assert calls == [(lab, [project])]
 
 
 def test_the_merged_host_preferences_reach_the_load(tmp_path):
     from otto.session import build_lab
 
     prefs = '[host_preferences.".*".ssh_options]\nport = 2222\n'
-    repo = _repo(
+    project = _repo(
         tmp_path / "r1", "r1", _SOURCES + prefs, {"lab/lab.json": [_host("alt1", "10.0.0.1")]}
     )
-    lab = build_lab([repo], ["merged"])
+    lab = build_lab([project], ["merged"])
     assert lab.hosts["alt1"].ssh_options.port == 2222

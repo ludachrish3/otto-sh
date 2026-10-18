@@ -1,4 +1,4 @@
-"""Templates ``otto init`` scaffolds into a new repo.
+"""Templates ``otto init`` scaffolds into a new project.
 
 String constants only — the scaffolding logic is :mod:`otto.init.areas`.
 ``SETTINGS_TEMPLATE`` follows the sshd_config comment convention: prose
@@ -12,7 +12,7 @@ from typing import Any
 
 SETTINGS_TEMPLATE = """\
 #:schema ./schemas/settings.schema.json
-# {name} — otto repo settings. Reference: docs/configuration/settings.md.
+# {name} — otto project settings. Reference: docs/configuration/settings.md.
 # Lines starting "#key" or "#[section]" are optional settings: remove the
 # leading "#" to enable them. Your editor autocompletes every field from the
 # schema line above (regenerate with `otto schema export`).
@@ -20,7 +20,7 @@ SETTINGS_TEMPLATE = """\
 name = "{name}"
 version = "{version}"
 
-# Where otto looks for things. Relative paths resolve against this repo's
+# Where otto looks for things. Relative paths resolve against the project
 # root (the directory holding .otto/); "~" expands to your home directory.
 tests = ["tests"]     # defines where test discovery happens
 libs = ["pylib"]      # added to sys.path at startup
@@ -35,17 +35,17 @@ init = ["{init_module}"]           # modules imported at startup (register instr
 backend = "json"
 paths = ["lab_data"]
 
-# --- [dependencies] — other OTTO_SUT_DIRS projects this repo depends on ------
+# --- [dependencies] — other OTTOPATH projects this project depends on --------
 # Entries are "name" or "name <op> X.Y.Z[, <op> X.Y.Z ...]"; names match other
-# repos' `name` fields (case/punctuation-insensitive). Required deps must be
-# present and compatible or this repo fails to load; optional deps warn when
+# projects' `name` fields (case/punctuation-insensitive). Required deps must be
+# present and compatible or this project fails to load; optional deps warn when
 # present but incompatible.
 #[dependencies]
 #required = ["other-project >= 1.0"]
 #optional = ["nice-to-have-project"]
 
 # --- [project] — which labs and hosts this project targets -------------------
-# Optional until this repo registers a product/dev-tool provider; REQUIRED
+# Optional until this project registers a product/dev-tool provider; REQUIRED
 # after (bootstrap fails loud without it). Regexes are FULL matches: "bench"
 # does not match "bench-2"; write "bench.*" to prefix-match.
 #[project]
@@ -109,7 +109,7 @@ paths = ["lab_data"]
 # creds store under the same key. Creds layer by login: lab.json over the
 # inventory record over the creds store, field by field, and lab.json's order
 # is the login order. The usual home for both tables is ~/.otto/settings.toml
-# (declared once per user); a table here overrides it for this repo. Grow
+# (declared once per user); a table here overrides it for this project. Grow
 # `supplies` as inventory.json takes over more fields.
 # See docs/configuration/inventory.md.
 [inventory]
@@ -201,7 +201,7 @@ path = "lab_data/creds.json"
 #tls_key = "~/.otto/tls/monitor-key.pem"
 
 # --- [env] — orchestration-venv preference (optional) -----------------------
-# This repo's standing choice of installer for `otto env`; --backend wins over
+# This project's standing choice of installer for `otto env`; --backend wins over
 # it. Omit to auto-detect (uv when on PATH, else stdlib venv + pip).
 #[env]
 #backend = "uv"
@@ -319,7 +319,7 @@ It is a JSON object with three sections, each optional:
   ssh/telnet access, carrying UDP/HTTP/RTP/etc.). Empty by default; see the
   `links` section below.
 
-Older otto repos listed every host in a top-level `hosts` array. That shape is
+Older otto projects listed every host in a top-level `hosts` array. That shape is
 gone: otto refuses a `lab.json` that still has one and names where each field
 moved. See "Migrating from the hosts array" in
 `docs/configuration/lab-config.md`.
@@ -426,7 +426,7 @@ import logging
 
 import pytest
 
-from {init_module} import RepoOptions
+from {init_module} import ProjectOptions
 
 logger = logging.getLogger(__name__)
 
@@ -442,9 +442,9 @@ class TestExample:
         A fixture defined ON the class at class scope is a classmethod. Make it
         `async` and it runs on the run's one event loop, like every test — open
         host sessions here, `yield` them, and close them after the yield.
-        `ctx.options(RepoOptions)` is this run's `--message`.
+        `ctx.options(ProjectOptions)` is this run's `--message`.
         """
-        text = ctx.options(RepoOptions).message
+        text = ctx.options(ProjectOptions).message
         logger.info("tests starting: %s", text)
         return text
 
@@ -457,7 +457,7 @@ class TestExample:
         test's own artifact directory under the run's output dir."""
         expect(len("otto") == 4, "four letters")
         note = test_dir / "message.txt"
-        note.write_text(ctx.options(RepoOptions).message)
+        note.write_text(ctx.options(ProjectOptions).message)
         assert note.exists()
 
 
@@ -467,7 +467,7 @@ def test_example_function() -> None:
 '''
 
 CONFTEST_TEMPLATE = '''\
-"""Repo-wide fixtures — available to every test under tests/ (any depth)."""
+"""Project-wide fixtures — available to every test under tests/ (any depth)."""
 
 import pytest
 
@@ -505,7 +505,7 @@ def repo_marker() -> str:
 '''
 
 INSTRUCTIONS_TEMPLATE = '''\
-"""{name} instructions: this repo's init module.
+"""{name} instructions: this project's init module.
 
 settings.toml's `init` names this module, so otto imports it at startup for
 every command. That makes it the place to register things: options classes,
@@ -525,14 +525,14 @@ logger = logging.getLogger(__name__)
 
 
 @otto.options(verbs=["run", "test"])
-class RepoOptions:
+class ProjectOptions:
     """Flags every `otto test` run and every `otto run` instruction takes.
 
     `@otto.options` makes the class a pydantic dataclass, so every field is
     validated, and `verbs=["run", "test"]` registers it for both verbs, so
     every field is a flag on both. A test reads the values with
-    `ctx.options(RepoOptions)`, importing the class from this module; an
-    instruction takes a `RepoOptions` parameter. See
+    `ctx.options(ProjectOptions)`, importing the class from this module; an
+    instruction takes a `ProjectOptions` parameter. See
     docs/cookbook/authoring/options-classes.md.
     """
 
@@ -543,9 +543,9 @@ class RepoOptions:
 
 # `install`, `uninstall`, `cleanup`, `get-logs`, `install-tools` and `status`
 # already exist — otto registers them for every lab, over your registered
-# products. They are PROJECT INSTRUCTIONS: one body per repo, walked in
+# products. They are PROJECT INSTRUCTIONS: one body per project, walked in
 # dependency order. Do NOT define standalone instructions with those names
-# here: they are refused at startup. To change what one does for this repo —
+# here: they are refused at startup. To change what one does for this project —
 # or to give it a flag of its own — subclass ProjectActions and register it
 # from this module; the options class MUST inherit otto's for that name:
 #
@@ -575,12 +575,12 @@ class RepoOptions:
 
 @instruction()
 async def smoke(
-    opts: RepoOptions,
+    opts: ProjectOptions,
     loud: Annotated[bool, typer.Option(help="Uppercase the message.")] = False,
 ) -> None:
-    """Log the repo-wide message — replace with your first real instruction.
+    """Log the project-wide message — replace with your first real instruction.
 
-    `opts` is injected: RepoOptions is registered for `run`, so `--message`
+    `opts` is injected: ProjectOptions is registered for `run`, so `--message`
     is already a flag here. `--loud` is this instruction's own.
     """
     logger.info(opts.message.upper() if loud else opts.message)

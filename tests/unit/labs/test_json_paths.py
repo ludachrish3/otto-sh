@@ -20,14 +20,14 @@ HOST = {
 
 def test_directory_entry_still_finds_lab_json(tmp_path: Path) -> None:
     write_lab_json(tmp_path / "lab" / "lab.json", [HOST])
-    repo = JsonFileLabRepository(search_paths=[tmp_path / "lab"])
-    assert "alt1" in repo.load_lab("veg").hosts
+    repository = JsonFileLabRepository(search_paths=[tmp_path / "lab"])
+    assert "alt1" in repository.load_lab("veg").hosts
 
 
 def test_json_file_entry_is_used_directly(tmp_path: Path) -> None:
     f = write_lab_json(tmp_path / "global-hosts.json", [HOST])
-    repo = JsonFileLabRepository(search_paths=[f])
-    assert "alt1" in repo.load_lab("veg").hosts
+    repository = JsonFileLabRepository(search_paths=[f])
+    assert "alt1" in repository.load_lab("veg").hosts
 
 
 def test_mixed_file_and_directory_entries_merge(tmp_path: Path) -> None:
@@ -36,8 +36,8 @@ def test_mixed_file_and_directory_entries_merge(tmp_path: Path) -> None:
     # The second file only CONTRIBUTES members: within one source a lab
     # declared in two files is an error (spec §2.4).
     f = write_lab_json(tmp_path / "extra.json", [other], declare_labs=False)
-    repo = JsonFileLabRepository(search_paths=[tmp_path / "lab", f])
-    assert set(repo.load_lab("veg").hosts) == {"alt1", "test2"}
+    repository = JsonFileLabRepository(search_paths=[tmp_path / "lab", f])
+    assert set(repository.load_lab("veg").hosts) == {"alt1", "test2"}
 
 
 def test_missing_json_file_entry_is_skipped_like_missing_dir(tmp_path: Path) -> None:
@@ -52,8 +52,8 @@ def test_glob_entry_expands_sorted_json_files_only(tmp_path: Path) -> None:
     write_lab_json(d / "a.json", [dict(HOST, element="a", ip="10.0.0.1")], declare_labs=False)
     (d / "notes.md").write_text("not a lab file")
     (tmp_path / "labs.json").write_text(json.dumps({"labs": {"veg": {"resources": ["bed"]}}}))
-    repo = JsonFileLabRepository([tmp_path / "labs.json", tmp_path / "elements" / "*.json"])
-    lab = repo.load_lab("veg")
+    repository = JsonFileLabRepository([tmp_path / "labs.json", tmp_path / "elements" / "*.json"])
+    lab = repository.load_lab("veg")
     assert set(lab.hosts) == {"a", "b"}
     assert lab.resources == {"bed"}  # declared in a labs-only file, members elsewhere
 
@@ -62,8 +62,10 @@ def test_recursive_glob(tmp_path: Path) -> None:
     (tmp_path / "sites" / "east").mkdir(parents=True)
     write_lab_json(tmp_path / "sites" / "east" / "e.json", [HOST], declare_labs=False)
     (tmp_path / "labs.json").write_text(json.dumps({"labs": {"veg": {}}}))
-    repo = JsonFileLabRepository([tmp_path / "labs.json", tmp_path / "sites" / "**" / "*.json"])
-    assert set(repo.load_lab("veg").hosts) == {"alt1"}
+    repository = JsonFileLabRepository(
+        [tmp_path / "labs.json", tmp_path / "sites" / "**" / "*.json"]
+    )
+    assert set(repository.load_lab("veg").hosts) == {"alt1"}
 
 
 def test_glob_matching_nothing_contributes_nothing(tmp_path: Path) -> None:
@@ -81,8 +83,8 @@ def test_glob_matching_nothing_contributes_nothing(tmp_path: Path) -> None:
             }
         )
     )
-    repo = JsonFileLabRepository([tmp_path / "labs.json", tmp_path / "nothing" / "*.json"])
-    assert set(repo.load_lab("veg").hosts) == {"x"}
+    repository = JsonFileLabRepository([tmp_path / "labs.json", tmp_path / "nothing" / "*.json"])
+    assert set(repository.load_lab("veg").hosts) == {"x"}
 
 
 def test_overlapping_path_entries_read_a_file_once(tmp_path: Path) -> None:
@@ -94,8 +96,8 @@ def test_overlapping_path_entries_read_a_file_once(tmp_path: Path) -> None:
     """
     d = tmp_path / "lab"
     write_lab_json(d / "lab.json", [HOST])
-    repo = JsonFileLabRepository([d, d / "*.json"])
-    assert set(repo.load_lab("veg").hosts) == {"alt1"}
+    repository = JsonFileLabRepository([d, d / "*.json"])
+    assert set(repository.load_lab("veg").hosts) == {"alt1"}
 
 
 def test_expand_lab_paths_dedupes_keeping_first_seen_order(tmp_path: Path) -> None:
@@ -114,13 +116,13 @@ def test_expand_lab_paths_dedupes_keeping_first_seen_order(tmp_path: Path) -> No
 def test_duplicate_element_across_files_of_one_source_errors(tmp_path: Path) -> None:
     write_lab_json(tmp_path / "one.json", [HOST], declare_labs=False)
     write_lab_json(tmp_path / "two.json", [dict(HOST, ip="10.0.0.9")], declare_labs=False)
-    repo = JsonFileLabRepository([tmp_path / "*.json"])
+    repository = JsonFileLabRepository([tmp_path / "*.json"])
     # Identical spellings take the plain duplicate form, the same one
     # ``parse_elements`` uses within a file (spec §6), with the two paths
     # standing where its two entry indices stand.
     match = r"duplicate element 'alt1' in .*one\.json and .*two\.json"
     with pytest.raises(LabRepositoryError, match=match):
-        repo.load_lab("veg")
+        repository.load_lab("veg")
 
 
 def test_elements_that_slug_alike_across_files_of_one_source_error(tmp_path: Path) -> None:
@@ -135,10 +137,10 @@ def test_elements_that_slug_alike_across_files_of_one_source_error(tmp_path: Pat
     write_lab_json(
         tmp_path / "two.json", [dict(HOST, element="Alt1", ip="10.0.0.9")], declare_labs=False
     )
-    repo = JsonFileLabRepository([tmp_path / "*.json"])
+    repository = JsonFileLabRepository([tmp_path / "*.json"])
     match = r"one\.json 'alt1' and .*two\.json 'Alt1' both slug to 'alt1'"
     with pytest.raises(LabRepositoryError, match=match):
-        repo.load_lab("veg")
+        repository.load_lab("veg")
 
 
 def test_the_first_files_spelling_survives_the_cross_file_slug_error(tmp_path: Path) -> None:
@@ -153,9 +155,9 @@ def test_the_first_files_spelling_survives_the_cross_file_slug_error(tmp_path: P
     write_lab_json(
         tmp_path / "two.json", [dict(HOST, element="Alt1", ip="10.0.0.9")], declare_labs=False
     )
-    repo = JsonFileLabRepository([tmp_path / "*.json"])
+    repository = JsonFileLabRepository([tmp_path / "*.json"])
     with pytest.raises(LabRepositoryError) as excinfo:
-        repo.load_lab("veg")
+        repository.load_lab("veg")
     message = str(excinfo.value)
     assert "'ALT1'" in message, message
     assert "'Alt1'" in message, message

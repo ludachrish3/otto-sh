@@ -4,12 +4,12 @@ import pytest
 
 from otto.docker import adapter as adapter_mod
 from otto.docker.adapter import AdapterResult, adapter_for, register_compose_adapter
-from otto.registry import DuplicateRegistration, RegistrationRefused, registering_repo
+from otto.registry import DuplicateRegistration, RegistrationRefused, registering_project
 
 
 @pytest.fixture
 def _as_repo():
-    with registering_repo("repo1"):
+    with registering_project("repo1"):
         yield
 
 
@@ -63,7 +63,7 @@ def test_outside_init_module_is_refused():
     names, revision = adapter_mod.COMPOSE_ADAPTERS.names(), adapter_mod.COMPOSE_ADAPTERS.revision
     with pytest.raises(
         RegistrationRefused,
-        match=r"^compose adapter 'integration' must be registered from a repo init module",
+        match=r"^compose adapter 'integration' must be registered from a project init module",
     ):
         register_compose_adapter("integration")(lambda facts: AdapterResult())
     assert adapter_mod.COMPOSE_ADAPTERS.names() == names

@@ -25,7 +25,7 @@ otto cache prune [--age DAYS] [--dry-run]
 | Subcommand | Description |
 | ---------- | ----------- |
 | `info` | List every workspace under the home, oldest cache first: key, cache size (the two session directories included), cache age, whether an `env/` virtualenv lives there, and any other entries |
-| `clear` | Remove **this** workspace's cache files and session directories (the workspace `OTTO_SUT_DIRS` resolves to); never removes the workspace directory itself. `--all` clears every workspace regardless of age |
+| `clear` | Remove **this** workspace's cache files and session directories (the workspace `OTTOPATH` resolves to); never removes the workspace directory itself. `--all` clears every workspace regardless of age |
 | `prune` | Remove cache files older than `--age` days (default 60) across every workspace, and the session directories of each workspace left with no younger cache file; `--dry-run` reports what would be removed without touching anything |
 
 `otto cache` is **lab-free** — it needs no `--lab` — and every verb acts
@@ -91,7 +91,7 @@ often) is omitted from the table rather than aborting the rest of the listing,
 and an empty or missing home prints `no cached workspaces` and exits 0.
 
 The block after the caption is about the workspace `otto` is running *in* —
-the repos on `OTTO_SUT_DIRS` — and is the answer to "why does my host not
+the projects on `OTTOPATH` — and is the answer to "why does my host not
 complete". Completion skips a lab entry it cannot build without printing a
 warning into the shell, so this block is where those skips are explained.
 `completion names` is the standing of this workspace's cache entry — `fresh`
@@ -111,7 +111,7 @@ shim fits into completion overall.
 `test names` is what the next test-name TAB would do: answer from the
 test-names cache, with how many names it offers, when the test files were
 last checked and when the next check is due; or hand over, and why (for
-instance, no cache yet for a repo, which the TAB then collects).
+instance, no cache yet for a project, which the TAB then collects).
 `collect child` is the background process that collects the test files:
 `idle`, `running`, or `cooling down` after it failed, with the reason it
 recorded. A background collection has no terminal to print to, so this line
@@ -129,7 +129,7 @@ test files); `clear` and `prune` remove them with the cache.
 
 `inventory` is the host inventory as completion resolved it — once per process,
 the way commands do, so a broken `[inventory]` table shows as `BROKEN` and
-empties every repo — followed by the lab files each declared source actually
+empties every project — followed by the lab files each declared source actually
 read (a source on a custom backend is marked `not file-backed`). While the
 inventory is broken, or cannot report freshness, nothing is written for the
 workspace at all, and the standing line says so instead of promising a rebuild.
@@ -139,7 +139,7 @@ key that does not exist, a lab file that did not parse, a source that failed or
 did not answer in time. The block reads the entry whatever its standing — a
 stale entry still records the last enumeration, which is what the question is
 about — and says `hosts offered: unknown` when no entry has been written yet.
-Without a workspace (no `OTTO_SUT_DIRS`) the listing above is all there is.
+Without a workspace (no `OTTOPATH`) the listing above is all there is.
 
 ## clear
 
@@ -152,7 +152,7 @@ removed ~/.otto/13739bf0-repo1/pytest-cache
 ```
 
 Bare, `clear` acts on exactly one workspace — the one the current
-`OTTO_SUT_DIRS` resolves to — and unlinks both `completion_cache.json` and its
+`OTTOPATH` resolves to — and unlinks both `completion_cache.json` and its
 remote-path sidecar `remote_completion_cache.json` if present, then removes
 the `pycache/` and `pytest-cache/` directories. It never removes the workspace
 directory itself. The next `otto test` compiles its test files again.

@@ -1,8 +1,8 @@
-"""Tolerant readers of a repo's raw ``.otto/settings.toml``.
+"""Tolerant readers of a project's raw ``.otto/settings.toml``.
 
 Every reader returns ``None`` rather than raising on an absent or unparsable
 file: that is what lets the doctor and the scaffolder fall back to the
-conventional layout on a repo otto has not scaffolded yet.
+conventional layout on a project otto has not scaffolded yet.
 """
 
 from pathlib import Path
@@ -22,9 +22,9 @@ def settings_data(root: Path) -> dict[str, Any] | None:
     """Return the raw parsed ``.otto/settings.toml`` (``None`` if absent/unparseable).
 
     Returning ``None`` (rather than raising) is what lets every doctor check
-    fall back to the conventional layout on a repo otto has not scaffolded
+    fall back to the conventional layout on a project otto has not scaffolded
     yet; the settings area itself reports the parse error through
-    :func:`otto.config.repo.validate_settings`. Decoded as UTF-8, as TOML
+    :func:`otto.config.project.validate_settings`. Decoded as UTF-8, as TOML
     requires and that check reads it, whatever the locale: an undecodable
     file is unreadable here too, never a ``UnicodeDecodeError`` out of a
     reader the doctor relies on not to raise.
@@ -89,7 +89,7 @@ def existing_settings_name(root: Path) -> str | None:
 def declared_init(root: Path) -> list[str] | None:
     """Return the init modules the settings declare.
 
-    ``[]`` when ``init`` is omitted or empty — a repo with no init modules,
+    ``[]`` when ``init`` is omitted or empty — a project with no init modules,
     which is legitimate. ``None`` when there is no readable settings file, or
     ``init`` is not a list of strings: the settings area reports that error.
     """

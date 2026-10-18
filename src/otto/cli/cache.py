@@ -51,7 +51,7 @@ if TYPE_CHECKING:
 
     from ..config.cache_maintenance import MaintenanceReport
     from ..config.completion_cache import CollectChildState, InventoryDescription, SectionStatus
-    from ..config.repo import Repo
+    from ..config.project import Project
 
 cache_app = typer.Typer(
     name="cache",
@@ -235,11 +235,11 @@ def _section_state_text(status: "SectionStatus", inventory: "InventoryDescriptio
     return text
 
 
-def _docker_observed_text(repos: "list[Repo]") -> str:
+def _docker_observed_text(projects: "list[Project]") -> str:
     """Word the `docker observed` line: hosts whose last-seen docker names are still vouched for."""
     from ..config.completion_cache import read_docker_observed, read_docker_observed_hosts
 
-    observed = {h: read_docker_observed(repos, h) for h in read_docker_observed_hosts(repos)}
+    observed = {h: read_docker_observed(projects, h) for h in read_docker_observed_hosts(projects)}
     with_images = [h for h, s in observed.items() if s.image_refs]
     with_containers = [h for h, s in observed.items() if s.container_names]
     parts = []
@@ -289,14 +289,14 @@ def _print_this_workspace() -> None:
     so it says whether the next TAB is answered without loading otto and, if
     not, the exact reason (a stale key file, an opaque inventory, an expired
     or tainted entry). It touches the marker like a TAB does. The ``test
-    names`` line runs the checks a test-name TAB adds (each repo's test
+    names`` line runs the checks a test-name TAB adds (each project's test
     table and its ``env``, a few ``stat`` calls whatever the corpus size):
     served, with when the tables were last checked and when the next check
     is due, or handed over to a seed, and why. The ``collect child`` line is
     that check's lock and cooldown: a detached child fails silently, and
     this is where its failure shows.
 
-    Nothing to say without a workspace (no ``OTTO_SUT_DIRS``, no repo): the
+    Nothing to say without a workspace (no ``OTTOPATH``, no project): the
     home-wide listing above already covered the rest.
     """
     from .._shim_complete import inspect_shim, inspect_tests
@@ -307,14 +307,14 @@ def _print_this_workspace() -> None:
         inspect_section,
     )
     from ..config.home import workspace_key
-    from ..config.repo import discover
+    from ..config.project import discover
 
-    repos = discover().repos
-    if not repos:
+    projects = discover().projects
+    if not projects:
         return
-    status = inspect_section(repos, "names")
-    inventory = describe_inventory(repos)
-    typer.echo(f"this workspace: {workspace_key([r.sut_dir for r in repos])}")
+    status = inspect_section(projects, "names")
+    inventory = describe_inventory(projects)
+    typer.echo(f"this workspace: {workspace_key([r.root for r in projects])}")
     typer.echo(f"  completion names: {_section_state_text(status, inventory)}")
     cache_path = _cache_path()
     shim_text = (
@@ -326,14 +326,14 @@ def _print_this_workspace() -> None:
     )
     typer.echo(f"  test names: {tests_text}")
     typer.echo(f"  collect child: {_collect_child_text(collect_child_state())}")
-    typer.echo(f"  docker observed: {_docker_observed_text(repos)}")
+    typer.echo(f"  docker observed: {_docker_observed_text(projects)}")
     typer.echo(f"  inventory: {inventory.text}")
     from ..config.cache_sections import describe_lab_sources
     from ..host.os_profile import ProfileContext
 
-    profiles = ProfileContext.from_repos(repos)
-    for repo in repos:
-        for label, files in describe_lab_sources(repo, profiles=profiles):
+    profiles = ProfileContext.from_projects(projects)
+    for project in projects:
+        for label, files in describe_lab_sources(project, profiles=profiles):
             typer.echo(f"  lab files ({label}): {files}")
     payload = status.payload
     if payload is None:
@@ -352,7 +352,7 @@ def _print_this_workspace() -> None:
     for drop in drops:
         if not isinstance(drop, dict):
             continue
-        typer.echo(f"    [{drop.get('repo')}] {drop.get('where')}: {drop.get('reason')}")
+        typer.echo(f"    [{drop.get('project')}] {drop.get('where')}: {drop.get('reason')}")
 
 
 @cache_app.command("clear")

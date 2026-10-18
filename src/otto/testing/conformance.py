@@ -11,7 +11,7 @@ violations, so a backend author sees every problem at once instead of fixing
 them one failed assertion at a time.
 
 Structural/type rules always run. Behavioral round-trip rules run only when the
-caller supplies known ground truth (so a SUT author can leverage their own
+caller supplies known ground truth (so a project author can leverage their own
 fixtures).
 
 Usage, importing the six conformance suites (the registrability check is
@@ -95,12 +95,12 @@ tolerance.
 
 
 def assert_lab_repository_conforms(
-    repo: LabRepository,
+    repository: LabRepository,
     *,
     expected_labs: list[str] | None = None,
     expect_host_summaries: bool = False,
 ) -> None:
-    """Assert *repo* satisfies the :class:`~otto.labs.protocol.LabRepository` contract.
+    """Assert *repository* satisfies the :class:`~otto.labs.protocol.LabRepository` contract.
 
     Runs structural rules unconditionally; for every listed lab, asserts it
     loads to a valid :class:`~otto.labs.loader.Lab`; asserts an unknown
@@ -115,7 +115,7 @@ def assert_lab_repository_conforms(
 
     Parameters
     ----------
-    repo : LabRepository
+    repository : LabRepository
         The backend instance under test.
     expected_labs : list[str] | None
         Optional lab names the caller knows the backend should provide.
@@ -133,26 +133,26 @@ def assert_lab_repository_conforms(
     c = ExpectCollector()
 
     c.expect(
-        isinstance(repo, LabRepository),
+        isinstance(repository, LabRepository),
         "LabRepository: must satisfy the runtime_checkable LabRepository protocol",
     )
     c.expect(
-        callable(getattr(repo, "load_lab", None)),
+        callable(getattr(repository, "load_lab", None)),
         "LabRepository: load_lab must be callable",
     )
     c.expect(
-        callable(getattr(repo, "list_labs", None)),
+        callable(getattr(repository, "list_labs", None)),
         "LabRepository: list_labs must be callable",
     )
-    if callable(getattr(repo, "load_lab", None)):
-        params = inspect.signature(repo.load_lab).parameters
+    if callable(getattr(repository, "load_lab", None)):
+        params = inspect.signature(repository.load_lab).parameters
         c.expect(
             "inventory" in params,
             "LabRepository: load_lab must accept an inventory= keyword "
             "(spec 2026-08-28 host-inventory §6)",
         )
 
-    names = repo.list_labs() if callable(getattr(repo, "list_labs", None)) else []
+    names = repository.list_labs() if callable(getattr(repository, "list_labs", None)) else []
     names_ok = isinstance(names, list)
     c.expect(
         names_ok,
@@ -169,7 +169,7 @@ def assert_lab_repository_conforms(
             if not isinstance(n, str):
                 continue
             try:
-                lab = repo.load_lab(n)
+                lab = repository.load_lab(n)
             except Exception as e:  # noqa: BLE001 — conformance check, must catch any impl exception to report violation
                 c.expect(False, f"LabRepository: load_lab({n!r}) raised {type(e).__name__}: {e}")
                 continue
@@ -191,7 +191,7 @@ def assert_lab_repository_conforms(
                         f"host.id {getattr(host, 'id', None)!r}",
                     )
                 try:
-                    lab2 = repo.load_lab(n)
+                    lab2 = repository.load_lab(n)
                 except Exception as e:  # noqa: BLE001 — conformance check, must catch any impl exception to report violation
                     c.expect(
                         False,
@@ -207,7 +207,7 @@ def assert_lab_repository_conforms(
 
     # Unknown lab must raise LabNotFoundError (not return None / bare KeyError).
     try:
-        repo.load_lab(_NO_SUCH_LAB)
+        repository.load_lab(_NO_SUCH_LAB)
         c.expect(
             False,
             f"LabRepository: load_lab({_NO_SUCH_LAB!r}) must raise LabNotFoundError "
@@ -227,7 +227,7 @@ def assert_lab_repository_conforms(
         for n in expected_labs:
             c.expect(n in listed, f"LabRepository: expected lab {n!r} to appear in list_labs()")
             try:
-                repo.load_lab(n)
+                repository.load_lab(n)
             except Exception as e:  # noqa: BLE001 — conformance check, must catch any impl exception to report violation
                 c.expect(
                     False, f"LabRepository: expected lab {n!r} to load, got {type(e).__name__}: {e}"
@@ -237,22 +237,22 @@ def assert_lab_repository_conforms(
     # same shape as SupportsUsernameCompletion for reservation backends).
     # `expect_host_summaries=True` turns that skip into a failure, because
     # absence is legal for the contract but not necessarily for THIS caller.
-    if expect_host_summaries and not isinstance(repo, SupportsHostSummaries):
+    if expect_host_summaries and not isinstance(repository, SupportsHostSummaries):
         c.expect(
             False,
             "SupportsHostSummaries: expect_host_summaries=True, but the repository does not "
             "implement list_host_summaries() — completion would fall back to loading every "
             "lab instead of the fast path this caller asserts it has",
         )
-    if isinstance(repo, SupportsHostSummaries) and names_ok:
-        _expect_host_summaries_conform(c, repo, names)
+    if isinstance(repository, SupportsHostSummaries) and names_ok:
+        _expect_host_summaries_conform(c, repository, names)
 
     c.raise_if_failures()
 
 
 def _expect_host_summaries_conform(
     c: ExpectCollector,
-    repo: "SupportsHostSummaries",
+    repository: "SupportsHostSummaries",
     names: list[str],
 ) -> None:
     """Check the optional ``SupportsHostSummaries`` capability's contract.
@@ -283,7 +283,7 @@ def _expect_host_summaries_conform(
     # a no-argument method — and then TypeErrors in the shell the first time
     # otto calls it for real. This asserter once called it with no arguments
     # itself, certifying exactly that backend.
-    params = inspect.signature(repo.list_host_summaries).parameters
+    params = inspect.signature(repository.list_host_summaries).parameters
     c.expect(
         "inventory" in params,
         "SupportsHostSummaries: list_host_summaries must accept an inventory= keyword "
@@ -292,7 +292,7 @@ def _expect_host_summaries_conform(
     if "inventory" not in params:
         return
     try:
-        summaries = repo.list_host_summaries(inventory=None)
+        summaries = repository.list_host_summaries(inventory=None)
     except Exception as e:  # noqa: BLE001 — conformance check, any failure is a violation
         c.expect(
             False, f"SupportsHostSummaries: list_host_summaries() raised {type(e).__name__}: {e}"
@@ -332,7 +332,7 @@ def _expect_host_summaries_conform(
         if not isinstance(n, str):
             continue
         try:
-            hosts = repo.load_lab(n).hosts  # ty: ignore[unresolved-attribute]
+            hosts = repository.load_lab(n).hosts  # ty: ignore[unresolved-attribute]
         except Exception:  # noqa: BLE001, S112 — load failures are reported by the caller's own rules
             continue
         loaded.add(n)

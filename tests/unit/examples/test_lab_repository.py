@@ -17,9 +17,9 @@ from otto.testing import assert_lab_repository_conforms
 
 
 def test_default_demo_dataset_lists_and_loads():
-    repo = ExampleLabRepository()
-    assert repo.list_labs() == ["east", "west"]
-    lab = repo.load_lab("east")
+    repository = ExampleLabRepository()
+    assert repository.list_labs() == ["east", "west"]
+    lab = repository.load_lab("east")
     assert isinstance(lab, Lab)
     assert lab.name == "east"
     assert len(lab.hosts) == 1
@@ -28,13 +28,13 @@ def test_default_demo_dataset_lists_and_loads():
 
 
 def test_unknown_lab_raises_lab_not_found():
-    repo = ExampleLabRepository()
+    repository = ExampleLabRepository()
     with pytest.raises(LabNotFoundError):
-        repo.load_lab("does-not-exist")
+        repository.load_lab("does-not-exist")
 
 
 def test_custom_dataset_overrides_demo():
-    repo = ExampleLabRepository(
+    repository = ExampleLabRepository(
         labs={
             "only": [
                 {
@@ -51,8 +51,8 @@ def test_custom_dataset_overrides_demo():
         # declaration alone.
         resources={"only": {"node"}},
     )
-    assert repo.list_labs() == ["only"]
-    lab = repo.load_lab("only")
+    assert repository.list_labs() == ["only"]
+    lab = repository.load_lab("only")
     assert "node" in lab.hosts
     assert lab.resources == {"node"}
 
@@ -64,7 +64,7 @@ def test_an_elements_own_data_reaches_every_host_it_groups():
     matters: one element dict, its ``id``/``metadata``/``resources``, and the
     hosts it groups — all of which reach the hosts as one shared ``Element``.
     """
-    repo = ExampleLabRepository(
+    repository = ExampleLabRepository(
         labs={
             "rig": [
                 {
@@ -81,13 +81,13 @@ def test_an_elements_own_data_reaches_every_host_it_groups():
         },
         resources={},
     )
-    lab = repo.load_lab("rig")
+    lab = repository.load_lab("rig")
     cpu, io = lab.hosts["chassis-cpu"], lab.hosts["chassis-io"]
     assert cpu.element is io.element  # one Element per element dict, shared
     assert (cpu.element.name, cpu.element.id) == ("chassis", 7)
     assert cpu.element.metadata == {"rack": "B4"}
     assert cpu.element.resources == frozenset({"chassis-7"})
-    assert {s.id for s in repo.list_host_summaries()} == {"chassis-cpu", "chassis-io"}
+    assert {s.id for s in repository.list_host_summaries()} == {"chassis-cpu", "chassis-io"}
 
 
 def test_the_factory_builds_from_a_sources_parsed_options(tmp_path):
@@ -95,9 +95,9 @@ def test_the_factory_builds_from_a_sources_parsed_options(tmp_path):
     env = LabSourceEnv(tmp_path, "r/example", "settings.toml", ProfileContext.empty())
     raw = {"labs": {"only": [{"name": "node", "hosts": [{"ip": "10.9.9.9"}]}]}, "resources": {}}
     config = ExampleLabSourceConfig.model_validate(raw, context={"env": env})
-    repo = example_lab_source(Configured(config, env))
-    assert repo.list_labs() == ["only"]
-    assert repo.load_lab("only").resources == set()
+    repository = example_lab_source(Configured(config, env))
+    assert repository.list_labs() == ["only"]
+    assert repository.load_lab("only").resources == set()
 
 
 def test_the_config_model_refuses_an_unknown_option():
@@ -140,7 +140,7 @@ def test_list_host_summaries_skips_a_malformed_element_entry():
     entries beside one good one, so a guard that only covered the first kind
     still reddens.
     """
-    repo = ExampleLabRepository(
+    repository = ExampleLabRepository(
         labs={
             "mixed": [
                 # No "name": KeyError inside _element_of.
@@ -154,6 +154,6 @@ def test_list_host_summaries_skips_a_malformed_element_entry():
         },
         resources={},
     )
-    summaries = repo.list_host_summaries()
+    summaries = repository.list_host_summaries()
     assert [s.id for s in summaries] == ["good"]
     assert summaries[0].ip == "10.0.0.3"

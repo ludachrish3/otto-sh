@@ -66,8 +66,8 @@ _ENVS = pytest.mark.parametrize(
 def _run(
     tmp_path: Path, argv: list[str], extra_env: dict[str, str] | None
 ) -> subprocess.CompletedProcess[str]:
-    repo = make_selection_repo(tmp_path, suite_src=_SUITE)
-    return run_otto(argv, xdir=tmp_path, sut_dirs=repo, lab="unix", extra_env=extra_env)
+    project = make_selection_repo(tmp_path, suite_src=_SUITE)
+    return run_otto(argv, xdir=tmp_path, roots=project, lab="unix", extra_env=extra_env)
 
 
 @_ENVS

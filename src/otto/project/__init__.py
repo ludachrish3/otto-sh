@@ -1,12 +1,12 @@
-"""Project-level lifecycle: per-repo actions over the whole lab.
+"""Project-level lifecycle: per-project actions over the whole lab.
 
-The layer between a repo's products and a one-line ``install`` command.
-:class:`~otto.project.actions.ProjectActions` is what one repo does to the
-fleet -- otto's owner-scoped defaults, or the subclass that repo registered
+The layer between a project's products and a one-line ``install`` command.
+:class:`~otto.project.actions.ProjectActions` is what one project does to the
+fleet -- otto's owner-scoped defaults, or the subclass that project registered
 with :func:`~otto.project.actions.register_project_actions` -- and
 :mod:`otto.project.state` is the vocabulary its answers are given in.
 
-Composition ACROSS repos (dependency-ordered walks, the single host-level debug
+Composition ACROSS projects (dependency-ordered walks, the single host-level debug
 sweep, the ``ensure_*`` converge layer) is :mod:`otto.project.orchestrator`'s,
 and its module-level functions are re-exported here: ``otto.project.install()``
 and friends are the lab-level verbs that instructions, suites, and fixtures
@@ -45,15 +45,15 @@ if TYPE_CHECKING:
     from .orchestrator import uninstall as uninstall
     from .plan import HostPlan as HostPlan
     from .plan import ProductPlanEntry as ProductPlanEntry
-    from .plan import RepoPlan as RepoPlan
+    from .plan import ProjectPlan as ProjectPlan
     from .plan import plan_instruction as plan_instruction
     from .state import Cleanliness as Cleanliness
     from .state import CleanlinessItem as CleanlinessItem
     from .state import CleanlinessKind as CleanlinessKind
     from .state import CleanlinessReport as CleanlinessReport
     from .state import InstallState as InstallState
+    from .state import ProjectScopeSummary as ProjectScopeSummary
     from .state import ProjectStatus as ProjectStatus
-    from .state import RepoScope as RepoScope
     from .state import combine_install_states as combine_install_states
 
 # name -> the module that defines it, imported on first access by __getattr__.
@@ -82,7 +82,7 @@ _LAZY_ATTRS: dict[str, str] = {
     "uninstall": "otto.project.orchestrator",
     "HostPlan": "otto.project.plan",
     "ProductPlanEntry": "otto.project.plan",
-    "RepoPlan": "otto.project.plan",
+    "ProjectPlan": "otto.project.plan",
     "plan_instruction": "otto.project.plan",
     "Cleanliness": "otto.project.state",
     "CleanlinessItem": "otto.project.state",
@@ -90,7 +90,7 @@ _LAZY_ATTRS: dict[str, str] = {
     "CleanlinessReport": "otto.project.state",
     "InstallState": "otto.project.state",
     "ProjectStatus": "otto.project.state",
-    "RepoScope": "otto.project.state",
+    "ProjectScopeSummary": "otto.project.state",
     "combine_install_states": "otto.project.state",
 }
 
@@ -123,9 +123,9 @@ __all__ = [
     "InstallToolsOptions",
     "ProductPlanEntry",
     "ProjectActions",
+    "ProjectPlan",
+    "ProjectScopeSummary",
     "ProjectStatus",
-    "RepoPlan",
-    "RepoScope",
     "StatusOptions",
     "UninstallOptions",
     "actions_for",

@@ -1,7 +1,8 @@
 # Data at the boundary
 
 otto consumes data from three outside sources: lab files (`lab.json`),
-repo settings (`.otto/settings.toml`), and `OTTO_*` environment variables.
+project settings (`.otto/settings.toml`), and the environment (`OTTOPATH` and
+`OTTO_*`).
 The rule for all of them is the same: **pydantic at the boundary, plain
 objects inside**. External data is validated exactly once, by a pydantic spec
 model, and what crosses into the rest of the codebase is an ordinary runtime
@@ -54,7 +55,7 @@ selected term or transfer, the host class or the id run in both:
   would raise, so the doctor and the loader report the same message.
 
 The doctor therefore refuses only what no preference can rescue. It does not
-promise the repo loads: an entry that passes through one selection still fails
+promise the project loads: an entry that passes through one selection still fails
 to load when its preferences select another. The rules themselves are in
 {doc}`../../configuration/lab-config` and, for the console term,
 {ref}`console-term`.
@@ -120,9 +121,9 @@ lookup of a class given by `Ref`), not at load; see
 
 ## Settings and environment
 
-`OttoEnvSettings` (pydantic-settings) is the single reader of `OTTO_*`
-variables. Repo `settings.toml` files are parsed during bootstrap phase 1
-into `Repo` objects ({doc}`../lifecycle`); their tables (`[docker]`,
+`OttoEnvSettings` (pydantic-settings) is the single reader of `OTTOPATH` and
+the `OTTO_*` variables. Project `settings.toml` files are parsed during bootstrap phase 1
+into `Project` objects ({doc}`../lifecycle`); their tables (`[docker]`,
 `[reservations]`, `[coverage]`, `[[os_profiles]]`, `[host_preferences]`) each
 have spec models. `otto.models.settings` must not import `otto.config` at
 module scope, or validation would drag the app bootstrap into every boundary
@@ -145,11 +146,11 @@ register a name, a config model and a factory via
 against the contract, and `otto.examples.lab_repository` is a copyable
 reference implementation. See {doc}`../../configuration/host-sources`.
 
-A process reads *every* source every repo declares. Settings parse keeps
+A process reads *every* source every project declares. Settings parse keeps
 each `[[lab.sources]]` entry as an envelope (`backend`, `name`, the raw
-options); after every repo's `init` modules have run, otto prepares each one
+options); after every project's `init` modules have run, otto prepares each one
 through the backend registry (its config model parses the options, once per
-parse of the repo) and {func}`otto.labs.build_lab_sources` builds each
+parse of the project) and {func}`otto.labs.build_lab_sources` builds each
 prepared source with its factory and wraps them — always, even a single one — in a `CompositeLabRepository`
 that consults them in order and lets a later source override an earlier one
 wholesale per record (an element, or a `labs` table entry), with a warning
@@ -167,7 +168,7 @@ that portion as a lab of its own.
 The source list exists for one layering: physical devices are global truth —
 every team must be served the same records, from a database or a globally
 shared file — while the VMs and QEMU guests a project deploys, re-images and
-reconfigures are the project's own and belong in its repo. The override warning
+reconfigures are the project's own and belong in its own source. The override warning
 in ordinary command output is the whole transparency story: an override is a
 deliberate act, and otto says so every time one takes effect.
 
@@ -194,10 +195,10 @@ is filled in, else from the lab file" — reads as convenience and behaves as a
 trap: the day somebody fills the field in, the lab file's value goes silent
 with no error anywhere. The collision check runs on the raw entry, before the
 fill, so the fill cannot fool it. For the same reason a process has exactly one
-inventory: when several active repos declare one, the tables must be identical,
+inventory: when several active projects declare one, the tables must be identical,
 or two inventories would reintroduce precedence through the back door.
 `cache_ttl` is part of that comparison because it is behaviour, not decoration
-— one repo saying `"0"` and another `"24h"` would let declaration order decide
+— one project saying `"0"` and another `"24h"` would let declaration order decide
 whether the process caches at all. `element_id` is never filled, only
 cross-checked, because a record is per host and an element is shared.
 
@@ -228,7 +229,7 @@ thing is a way for them to disagree.
 **Location and caching.** The inventory lives in the user-level
 `~/.otto/settings.toml`, which `otto init` never scaffolds, because an
 inventory is not project-shaped: a machine is a machine regardless of which
-repo you are working in. A remote inventory's snapshot cache defaults to `24h`
+project you are working in. A remote inventory's snapshot cache defaults to `24h`
 because NetBox changes on a human cadence, and `cache_ttl` accepts one spelling
 per duration, so two settings files that mean the same thing look the same. An
 unreachable backend serves the snapshot of any age with a warning — a lab that
@@ -252,7 +253,7 @@ schema older than the installed otto because a schema older than the validator
 would quietly bless data otto now rejects.
 
 Extensions surface automatically: because project-registered host classes
-bring their own spec models ({doc}`hosts`), a repo that extends otto sees its
+bring their own spec models ({doc}`hosts`), a project that extends otto sees its
 fields in the export; `--builtins-only` restricts the export to otto's own
 types.
 

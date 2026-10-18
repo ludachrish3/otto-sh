@@ -128,7 +128,7 @@ def generate_repo(
     realistic: bool = False,
     ssh_lab_port: int | None = None,
 ) -> Path:
-    """Write a sut-dir repo under *root*; return the path for ``OTTO_SUT_DIRS``.
+    """Write a sut-dir repo under *root*; return the path for ``OTTOPATH``.
 
     *files* nested test files spread across *dirs* subdirectories, plus
     *top_level* test files directly in the tests dir.
@@ -157,7 +157,7 @@ def generate_repo(
     if ssh_lab_port is not None:
         extra += _LAB_SOURCE.format(lab=root / name / "budget_lab")
         repo_files["budget_lab/lab.json"] = _budget_ssh_lab(ssh_lab_port)
-    repo = make_sut_repo(
+    project = make_sut_repo(
         root / name,
         name=name,
         version="0.1.0",
@@ -166,7 +166,7 @@ def generate_repo(
         files=repo_files,
     )
 
-    tests_root = repo / "tests"
+    tests_root = project / "tests"
     tests_root.mkdir(parents=True, exist_ok=True)
     for d in range(dirs):
         (tests_root / f"sub{d}").mkdir(exist_ok=True)
@@ -182,7 +182,7 @@ def generate_repo(
         # import them, each a one-line module with no imports of its own.
         subdir = tests_root / f"sub{i % dirs}"
         (subdir / f"test_{i}.py").write_text(_TEST_BODY)
-    return repo
+    return project
 
 
 def argv_writing_test_file_bytecode(entry: str) -> list[str]:

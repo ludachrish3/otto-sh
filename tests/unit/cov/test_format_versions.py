@@ -171,8 +171,8 @@ def test_the_manual_store_rewrite_of_each_read_sample_keeps_it(version, tmp_path
 def test_tickets_export_stamps_the_declared_write_version(version):
     payload = build_ticket_export(
         CoverageStore.load(_store_sample(8)),
-        repo_root=Path("/work"),
-        project="p",
+        project_root=Path("/work"),
+        report_title="p",
         otto_version="0",
         generated="2026-07-01T00:00:00Z",
     )

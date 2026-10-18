@@ -1,7 +1,8 @@
 """Thin subprocess wrappers around the git plumbing coverage needs.
 
-Everything is synchronous and side-effect-free on the repo (read-only
-commands only).  Callers pass the sut repo root; a non-repo raises
+Everything is synchronous and side-effect-free on the git repository (read-only
+commands only).  Callers pass the project root; a path outside any
+git repository raises
 :class:`GitUnavailableError` with a clean message — specifically
 :class:`NotAGitRepoError`, one of the three subclasses every failure here is
 classified into (:class:`GitMissingError`, :class:`NotAGitRepoError`,
@@ -17,7 +18,7 @@ from ...errors import OttoError
 
 
 class GitUnavailableError(OttoError, RuntimeError):
-    """Raised when git cannot answer (not a repo / git missing).
+    """Raised when git cannot answer (not a git repository / git missing).
 
     The family root, and still what a caller that does not care WHY should
     catch. Every raise from the two runners below is one of the three
@@ -27,9 +28,9 @@ class GitUnavailableError(OttoError, RuntimeError):
 
 
 class GitMissingError(GitUnavailableError):
-    """No ``git`` executable on PATH — an environment error, not a repo answer.
+    """No ``git`` executable on PATH — an environment error, not a repository's answer.
 
-    Never means "absent from the repo": a caller that folds this into a
+    Never means "absent from the git repository": a caller that folds this into a
     None/False "not found" answer reports every path as new.
     """
 
@@ -67,13 +68,13 @@ _DIFF_FLAG_PIN: list[str] = ["--no-color", "--no-ext-diff", "--no-show-signature
 Each has a direct flag form, so a flag pins it rather than another ``-c``
 — preferred per the review, and it reads as plumbing options alongside the
 ``-w``/``-U0``/``-M`` this module already passes. Real reproductions from
-the review, all against a repo-local or ``~/.gitconfig`` setting this
+the review, all against a repository-local or ``~/.gitconfig`` setting this
 module must not trust:
 
 - ``diff.external`` set to any program makes the diff subprocess hard-fail
   (``GitUnavailableError``) instead of running git's own diff engine —
   ``--no-ext-diff`` disallows the external helper outright.
-- ``log.showSignature = true`` on a repo with even one signed commit
+- ``log.showSignature = true`` on a git repository with even one signed commit
   interleaves gpg/ssh signature-check text (e.g. ``No signature``) into
   the NUL-delimited metadata stream :func:`log_walk_u0` parses, corrupting
   that commit's sha field — with every commit signed this empties the
@@ -102,9 +103,9 @@ so there is no signature to suppress.
 def _pin(subcommand: str, *rest: str) -> list[str]:
     """Build a git argv for *subcommand* immune to hostile ambient config.
 
-    Every porcelain command this module runs against the SUT repo goes
+    Every porcelain command this module runs against the project's checkout goes
     through this so ``diff.mnemonicprefix``, ``diff.external``,
-    ``log.showSignature``, and ``color.ui`` — the SUT repo's local config
+    ``log.showSignature``, and ``color.ui`` — the checkout's local config
     and the invoking user's ``~/.gitconfig`` alike — can never silently
     change what a caller parses back out of stdout. See ``_CONFIG_PIN``
     and ``_DIFF_FLAG_PIN`` for the specific reproductions this closes.
@@ -118,8 +119,8 @@ def _pin_no_index(*rest: str) -> list[str]:
     """Build a ``git diff --no-index`` argv immune to hostile ambient config.
 
     These two calls run outside any repository, on throwaway anchor files
-    rather than the SUT tree, and were originally left unpinned on the
-    reasoning that no repo config could therefore reach them. That
+    rather than the project's tree, and were originally left unpinned on the
+    reasoning that no repository config could therefore reach them. That
     reasoning is wrong — **git still loads the invoking user's global
     ``~/.gitconfig``** — and two common settings each corrupt the output
     silently (pinned by
@@ -130,8 +131,8 @@ def _pin_no_index(*rest: str) -> list[str]:
       :func:`~otto.coverage.capture.treediff.parse_multifile_u0` and
       :func:`~otto.coverage.capture.remap.parse_u0_hunks` matches nothing.
     - ``diff.mnemonicPrefix = true`` emits ``1/``/``2/`` path prefixes
-      here — *different letters* from the ``c/``/``w/`` a repo diff emits,
-      so ``_CONFIG_PIN``'s repo-side reproduction does not describe this
+      here — *different letters* from the ``c/``/``w/`` an in-repository diff emits,
+      so ``_CONFIG_PIN``'s repository-side reproduction does not describe this
       one — and :func:`diff_no_index_dir_u0`'s ``<dir>/``-prefixed lookup
       then misses every file.
 
@@ -160,7 +161,7 @@ def _inside_work_tree(cwd: Path) -> bool:
     it is a spawn those guards cannot see — the instrument has to keep
     counting every process, including the ones on failure paths.
 
-    ``ok_codes`` admits 128 (and 1) so that "not a repo" is a normal ANSWER
+    ``ok_codes`` admits 128 (and 1) so that "not a git repository" is a normal ANSWER
     here rather than a failure that would re-enter classification. Runs only
     after a primary call already failed, so the success path the budget bounds
     is untouched.
@@ -266,56 +267,56 @@ def _run_raw_input(
     return proc.stdout
 
 
-def head_commit(repo_root: Path) -> str:
+def head_commit(project_root: Path) -> str:
     """Return the current HEAD commit SHA."""
-    return _run(["rev-parse", "HEAD"], repo_root).strip()
+    return _run(["rev-parse", "HEAD"], project_root).strip()
 
 
-def rev_parse_commit(repo_root: Path, rev: str) -> str:
+def rev_parse_commit(project_root: Path, rev: str) -> str:
     """Resolve *rev* (full/abbreviated sha, ref) to a full commit sha.
 
     ``^{commit}`` peels tags and rejects non-commit objects; ``--verify``
     makes an unknown or ambiguous *rev* a loud :class:`GitCommandFailedError`
     instead of echoing the input back.
     """
-    return _run(["rev-parse", "--verify", f"{rev}^{{commit}}"], repo_root).strip()
+    return _run(["rev-parse", "--verify", f"{rev}^{{commit}}"], project_root).strip()
 
 
-def config_value(repo_root: Path, key: str) -> str | None:
-    """Return the git config value for *key* as seen from *repo_root*, or None.
+def config_value(project_root: Path, key: str) -> str | None:
+    """Return the git config value for *key* as seen from *project_root*, or None.
 
-    Runs in *repo_root* so the repo's own local config wins — a caller's
-    process CWD (which may be a different repo, or no repo) never leaks into
+    Runs in *project_root* so the checkout's own local config wins — a caller's
+    process CWD (which may be a different git repository, or none) never leaks into
     the answer. rc=1 (key unset) is a normal outcome, not an error.
     """
-    out = _run(["config", key], repo_root, ok_codes=(0, 1)).strip()
+    out = _run(["config", key], project_root, ok_codes=(0, 1)).strip()
     return out or None
 
 
-def rev_list_first_parent(repo_root: Path) -> list[str]:
+def rev_list_first_parent(project_root: Path) -> list[str]:
     """Every first-parent commit sha reachable from HEAD, newest first.
 
     One process for the whole list; callers index it to answer "is commit A
     at/before commit B on the mainline" without per-pair subprocesses.
     """
-    return _run(["rev-list", "--first-parent", "HEAD"], repo_root).split()
+    return _run(["rev-list", "--first-parent", "HEAD"], project_root).split()
 
 
-def is_dirty(repo_root: Path) -> bool:
+def is_dirty(project_root: Path) -> bool:
     """Return True if there are uncommitted changes."""
-    return bool(_run(["status", "--porcelain"], repo_root).strip())
+    return bool(_run(["status", "--porcelain"], project_root).strip())
 
 
-def blob_sha(repo_root: Path, relpath: Path, rev: str = "HEAD") -> str | None:
+def blob_sha(project_root: Path, relpath: Path, rev: str = "HEAD") -> str | None:
     """Return the SHA of a blob at a path/revision, or None if not found.
 
-    The ``./`` prefix makes git resolve the path against ``repo_root``
-    (our cwd) — a bare ``REV:<path>`` resolves against the repo toplevel,
-    which is wrong whenever ``repo_root`` is a subdirectory of a larger
-    repo (e.g. a sut checked out inside another project).
+    The ``./`` prefix makes git resolve the path against ``project_root``
+    (our cwd) — a bare ``REV:<path>`` resolves against the git repository's toplevel,
+    which is wrong whenever ``project_root`` is a subdirectory of a larger
+    git repository (e.g. a project checked out inside another one).
     """
     try:
-        return _run(["rev-parse", f"{rev}:./{relpath.as_posix()}"], repo_root).strip()
+        return _run(["rev-parse", f"{rev}:./{relpath.as_posix()}"], project_root).strip()
     except (NotAGitRepoError, GitMissingError):
         # An unusable git ENVIRONMENT is not "this path is absent at this
         # rev". Folding either into None makes every file look new (and
@@ -325,12 +326,12 @@ def blob_sha(repo_root: Path, relpath: Path, rev: str = "HEAD") -> str | None:
         return None
 
 
-def hash_object(repo_root: Path, path: Path) -> str:
+def hash_object(project_root: Path, path: Path) -> str:
     """Return the SHA1 hash of a file object."""
-    return _run(["hash-object", str(path)], repo_root).strip()
+    return _run(["hash-object", str(path)], project_root).strip()
 
 
-def hash_objects(repo_root: Path, paths: list[Path]) -> list[str]:
+def hash_objects(project_root: Path, paths: list[Path]) -> list[str]:
     """Hash many files in one spawn via ``git hash-object --stdin-paths``.
 
     Output order matches *paths* order. Reads paths from stdin instead of
@@ -340,14 +341,14 @@ def hash_objects(repo_root: Path, paths: list[Path]) -> list[str]:
     identical file-for-file.
     """
     stdin = "".join(f"{p}\n" for p in paths).encode()
-    out = _run_raw_input(["hash-object", "--stdin-paths"], repo_root, stdin)
+    out = _run_raw_input(["hash-object", "--stdin-paths"], project_root, stdin)
     return out.decode().splitlines()
 
 
-def blob_exists(repo_root: Path, sha: str) -> bool:
+def blob_exists(project_root: Path, sha: str) -> bool:
     """Return True if a blob exists in the repository."""
     try:
-        _run(["cat-file", "-e", sha], repo_root)
+        _run(["cat-file", "-e", sha], project_root)
     except (NotAGitRepoError, GitMissingError):
         # See :func:`blob_sha`: an unusable git environment must not read as
         # "this blob is absent".
@@ -357,14 +358,14 @@ def blob_exists(repo_root: Path, sha: str) -> bool:
     return True
 
 
-def blobs_exist(repo_root: Path, shas: list[str]) -> set[str]:
+def blobs_exist(project_root: Path, shas: list[str]) -> set[str]:
     """Return the subset of *shas* present in the object database, in one spawn.
 
     ``git cat-file --batch-check`` answers one line per input sha: ``<sha>
     <type> <size>`` when present, ``<sha> missing`` when absent.
     """
     stdin = "".join(f"{sha}\n" for sha in shas).encode()
-    out = _run_raw_input(["cat-file", "--batch-check"], repo_root, stdin).decode()
+    out = _run_raw_input(["cat-file", "--batch-check"], project_root, stdin).decode()
     present: set[str] = set()
     for line in out.splitlines():
         if not line.endswith("missing"):
@@ -372,15 +373,15 @@ def blobs_exist(repo_root: Path, shas: list[str]) -> set[str]:
     return present
 
 
-def cat_blob(repo_root: Path, sha: str) -> bytes:
+def cat_blob(project_root: Path, sha: str) -> bytes:
     """Return the contents of a blob."""
-    return _run_raw(["cat-file", "blob", sha], repo_root)
+    return _run_raw(["cat-file", "blob", sha], project_root)
 
 
 _BATCH_HEADER_FIELDS = 3  # "<sha> <type> <size>"; a miss is "<sha> missing" (2 fields)
 
 
-def cat_blobs(repo_root: Path, shas: list[str]) -> dict[str, bytes]:
+def cat_blobs(project_root: Path, shas: list[str]) -> dict[str, bytes]:
     r"""Fetch many blobs' contents in one spawn via ``git cat-file --batch``.
 
     The batch stream is ``<sha> <type> <size>\n`` followed by exactly
@@ -390,7 +391,7 @@ def cat_blobs(repo_root: Path, shas: list[str]) -> dict[str, bytes]:
     overwrite earlier ones in the returned dict.
     """
     stdin = "".join(f"{sha}\n" for sha in shas).encode()
-    out = _run_raw_input(["cat-file", "--batch"], repo_root, stdin)
+    out = _run_raw_input(["cat-file", "--batch"], project_root, stdin)
     result: dict[str, bytes] = {}
     pos = 0
     while pos < len(out):
@@ -407,7 +408,7 @@ def cat_blobs(repo_root: Path, shas: list[str]) -> dict[str, bytes]:
     return result
 
 
-def diff_worktree_file_u0(repo_root: Path, relpath: Path) -> str:
+def diff_worktree_file_u0(project_root: Path, relpath: Path) -> str:
     """Return unified diff (U0, whitespace-insensitive) of HEAD vs worktree file.
 
     ``-w`` (``--ignore-all-space``) suppresses whitespace-only line
@@ -424,11 +425,11 @@ def diff_worktree_file_u0(repo_root: Path, relpath: Path) -> str:
     exposure shared with :func:`diff_tree_u0`, closed in the same wave as
     the newer walk commands below since it was a one-line change.
     """
-    return _run(_pin("diff", "-w", "-U0", "HEAD", "--", relpath.as_posix()), repo_root)
+    return _run(_pin("diff", "-w", "-U0", "HEAD", "--", relpath.as_posix()), project_root)
 
 
 def diff_no_index_u0(path_a: Path, path_b: Path) -> str:
-    """Return unified diff (U0, whitespace-insensitive) between two files outside a repo.
+    """Return unified diff (U0, whitespace-insensitive) between two files outside a git repository.
 
     ``-w`` matches :func:`diff_worktree_file_u0` so the report-time anchor
     chain (base_commit blob vs current file) ignores whitespace-only edits the
@@ -438,7 +439,7 @@ def diff_no_index_u0(path_a: Path, path_b: Path) -> str:
     the remapper treats as verbatim.
 
     Pinned against hostile *global* git config (``_pin_no_index``) —
-    running outside a repo does not exempt it from ``~/.gitconfig``.
+    running outside a git repository does not exempt it from ``~/.gitconfig``.
     """
     return _run(_pin_no_index("-w", "-U0", str(path_a), str(path_b)), cwd=None, ok_codes=(0, 1))
 
@@ -469,14 +470,14 @@ def diff_no_index_dir_u0(dir_a: Path, dir_b: Path) -> str:
     )
 
 
-def diff_tree_u0(repo_root: Path, base: str) -> str:
+def diff_tree_u0(project_root: Path, base: str) -> str:
     """Tree-wide ``-U0`` diff of *base* vs the working tree, rename-detecting.
 
     One subprocess per capture replaces the per-file anchor diffs (spec
     §9). ``-M`` reports renames (spec §8.2: git's tracking is the whole
     policy); ``-w`` matches :func:`diff_worktree_file_u0`'s whitespace
     immunity (spec §8.1); ``--relative -- .`` scopes and re-roots paths
-    when ``repo_root`` is nested inside a larger repository.
+    when ``project_root`` is nested inside a larger repository.
 
     Raises:
         GitCommandFailedError: *base* is not a resolvable commit here
@@ -490,13 +491,13 @@ def diff_tree_u0(repo_root: Path, base: str) -> str:
     """
     return _run(
         _pin("diff", "-M", "-w", "-U0", "--relative", base, "--", "."),
-        repo_root,
+        project_root,
     )
 
 
-def is_shallow(repo_root: Path) -> bool:
-    """Return whether the repo is a shallow clone (affects anchor degradation hints)."""
-    return _run(["rev-parse", "--is-shallow-repository"], repo_root).strip() == "true"
+def is_shallow(project_root: Path) -> bool:
+    """Return whether the checkout is a shallow clone (affects anchor degradation hints)."""
+    return _run(["rev-parse", "--is-shallow-repository"], project_root).strip() == "true"
 
 
 _REC_SEP = "\x1e"
@@ -522,7 +523,7 @@ class CommitDiff:
 
 
 def log_walk_u0(
-    repo_root: Path, relpaths: list[str], *, first_parent: bool = True
+    project_root: Path, relpaths: list[str], *, first_parent: bool = True
 ) -> list[CommitDiff]:
     """Stream ``git log -p -U0 -w -M`` over *relpaths*, newest commit first.
 
@@ -535,7 +536,7 @@ def log_walk_u0(
         GitUnavailableError: the two streams' commit shas disagree — a
             sha the diff call found has no metadata entry (or vice versa).
             Both calls walk the same pathspec/``--first-parent`` setting,
-            so a healthy repo always joins every commit; a mismatch means
+            so a healthy git repository always joins every commit; a mismatch means
             something corrupted one stream (this is what
             ``log.showSignature`` did before the pin above existed —
             interleaved gpg/ssh signature-check text broke the sha field a
@@ -552,7 +553,7 @@ def log_walk_u0(
         args_meta.append("--first-parent")
     args_meta += ["--", *relpaths]
 
-    raw_meta = _run(_pin("log", *args_meta), repo_root)
+    raw_meta = _run(_pin("log", *args_meta), project_root)
 
     # Parse metadata: split by \x00, every 3 fields is one commit
     metadata: dict[str, tuple[str, str]] = {}
@@ -578,7 +579,7 @@ def log_walk_u0(
         args_diff.append("--first-parent")
     args_diff += ["--", *relpaths]
 
-    raw_diff = _run(_pin("log", *args_diff), repo_root)
+    raw_diff = _run(_pin("log", *args_diff), project_root)
 
     # Parse diffs by splitting on \n\x1e; restore newline for symmetry
     out: list[CommitDiff] = []
@@ -620,7 +621,7 @@ def log_walk_u0(
     return out
 
 
-def name_status_walk_u0(repo_root: Path, *, first_parent: bool = True) -> list[str]:
+def name_status_walk_u0(project_root: Path, *, first_parent: bool = True) -> list[str]:
     """Stream ``git log --name-status -M -w``, one raw block per commit, newest first.
 
     Deliberately **unrestricted** in pathspec, unlike every other walk in
@@ -645,19 +646,19 @@ def name_status_walk_u0(repo_root: Path, *, first_parent: bool = True) -> list[s
     args = ["log", "--name-status", "-M", "-w", "--format=%x00"]
     if first_parent:
         args.append("--first-parent")
-    raw = _run(args, repo_root)
+    raw = _run(args, project_root)
     if not raw:
         return []
     return raw.split("\x00")[1:]
 
 
-def diff_worktree_u0(repo_root: Path, relpaths: list[str]) -> str:
+def diff_worktree_u0(project_root: Path, relpaths: list[str]) -> str:
     """One ``git diff -w -U0 HEAD`` covering *relpaths* — not one per file.
 
     The per-file sibling :func:`diff_worktree_file_u0` is right for the
     validity pass, which resolves one capture at a time; attribution covers
     the whole store at once and is budgeted at O(1) subprocesses. Pinned
-    against hostile ambient config (``_pin``) — a repo-local or
+    against hostile ambient config (``_pin``) — a repository-local or
     ``~/.gitconfig`` ``diff.mnemonicprefix = true`` renders ``c/``/``w/``
     path prefixes here instead of ``a/``/``b/``, which silently defeats
     ``_apply_worktree_overlay``'s path lookup and lets an uncommitted edit
@@ -665,4 +666,4 @@ def diff_worktree_u0(repo_root: Path, relpaths: list[str]) -> str:
     """
     if not relpaths:
         return ""
-    return _run(_pin("diff", "-w", "-U0", "HEAD", "--", *relpaths), repo_root)
+    return _run(_pin("diff", "-w", "-U0", "HEAD", "--", *relpaths), project_root)

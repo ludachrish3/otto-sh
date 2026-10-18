@@ -19,7 +19,7 @@ return are imported from the package::
         container_logs,
         DockerVerbError,
         BuildReport,
-        RepoBuild,
+        ProjectBuild,
         FailedImage,
         HostReport,
         TeardownReport,

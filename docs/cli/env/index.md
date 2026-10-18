@@ -3,9 +3,9 @@
 `otto env` builds and maintains the **orchestration environment** — the one
 virtualenv a multi-project run happens in.
 
-Otto is a single process on a single interpreter. When several repos are active
-at once (`OTTO_SUT_DIRS`), their glue code all imports into *that* interpreter,
-so each repo's own virtualenv never participates at runtime. The orchestration
+Otto is a single process on a single interpreter. When several projects are active
+at once (`OTTOPATH`), their glue code all imports into *that* interpreter,
+so each project's own virtualenv never participates at runtime. The orchestration
 environment is the one that must satisfy all of them at once.
 
 ```{raw} html
@@ -27,7 +27,7 @@ otto env show
 | [`show`](show.md) | Report where it is, how it was built, and what is in it |
 
 Both `create` and `sync` are **lab-free** — they need no `--lab` — and they act
-on the **discovered** repo set rather than the active one: an environment
+on the **discovered** project set rather than the active one: an environment
 belongs to a workspace, so the labs a command loads do not change what goes
 into it (see {doc}`../projects`).
 
@@ -35,24 +35,24 @@ into it (see {doc}`../projects`).
 
 There are three, and only the second is otto's business:
 
-1. **A repo's own venv** — for single-repo development. Each repo manages it
+1. **A project's own venv** — for single-project development. Each project manages it
    with its own tools from its own `pyproject.toml`. otto does not touch it.
 2. **The orchestration venv** — where multi-project runs happen. One per user
    per workspace, and it must be a **superset**: it satisfies the glue imports
-   of every active repo at once. This is what `otto env` builds.
-3. **Anything else otto happens to run from** — legal for single-repo work,
+   of every active project at once. This is what `otto env` builds.
+3. **Anything else otto happens to run from** — legal for single-project work,
    discouraged for multi-project work.
 
 If you already use a [uv workspace](https://docs.astral.sh/uv/concepts/projects/workspaces/)
 across your member projects, you have the same thing by another route: one
 lockfile, one environment, no otto involvement needed. `otto env` exists for
-the common case where the repos are independent checkouts that were never
+the common case where the projects are independent checkouts that were never
 designed to share a lockfile.
 
 ## Where it lives
 
 Under the workspace home — `~/.otto/<hash8>-<slug>/env` — so one environment
-serves every invocation against the same repos, from wherever you run them.
+serves every invocation against the same projects, from wherever you run them.
 See [The workspace home](../index.md#the-workspace-home) for the layout and for
 what `OTTO_HOME` moves.
 
@@ -69,11 +69,11 @@ Activate it with:
 
 ## What goes in
 
-- **Every discovered repo that has a `pyproject.toml`**, installed *editable*,
+- **Every discovered project that has a `pyproject.toml`**, installed *editable*,
   so your live checkouts stay live.
-- **Repos without one are skipped**, with a notice naming them. That is not an
+- **Projects without one are skipped**, with a notice naming them. That is not an
   error: their `libs` ride `sys.path` at bootstrap. A workspace made entirely
-  of such repos still gets an environment, because otto itself goes into it.
+  of such projects still gets an environment, because otto itself goes into it.
 - **otto**, at whatever version you are running — and *the way* you are running
   it. If your otto is an editable install from a checkout, the environment gets
   that same checkout; if it came from a wheel, the environment pins that
@@ -82,12 +82,12 @@ Activate it with:
 ## The dependency preflight
 
 You do not have to remember to run `sync`. Before any ordinary command does its
-work, otto checks each repo's declared Python requirements against the
-interpreter it is running on, and stops if an active repo's are unsatisfied:
+work, otto checks each project's declared Python requirements against the
+interpreter it is running on, and stops if an active project's are unsatisfied:
 
 ```console
 $ otto --lab unix run use-beetroot
-error: repo 'repo4' requires 'otto-fixture-beetroot >= 0.1' — not satisfied in this environment (found: none)
+error: project 'repo4' requires 'otto-fixture-beetroot >= 0.1' — not satisfied in this environment (found: none)
   fix: otto env sync
   or:  uv pip install 'otto-fixture-beetroot >= 0.1'
 ```
@@ -96,17 +96,17 @@ error: repo 'repo4' requires 'otto-fixture-beetroot >= 0.1' — not satisfied in
 different problems with different fixes. The second line always names
 `env sync`; the third is for operators who manage the environment by hand.
 
-A repo that is **not part of this run** warns instead, and the run continues:
+A project that is **not part of this run** warns instead, and the run continues:
 
 ```console
 $ otto -E repo4 --lab unix run test-instruction
-warning: repo 'repo4' requires 'otto-fixture-beetroot >= 0.1' — not satisfied in this environment (found: none), but repo4 is inactive for this run — continuing without it
+warning: project 'repo4' requires 'otto-fixture-beetroot >= 0.1' — not satisfied in this environment (found: none), but repo4 is inactive for this run — continuing without it
 ```
 
 The check is metadata only — `importlib.metadata` lookups and requirement
 evaluation, no network and no imports. It reads the **installed**
-distribution's metadata when the repo is installed here (exact, and the only
-thing that can answer for `dynamic = ["dependencies"]`) and the repo's
+distribution's metadata when the project is installed here (exact, and the only
+thing that can answer for `dynamic = ["dependencies"]`) and the project's
 `pyproject.toml` otherwise. Base dependencies only, direct dependencies only:
 an extra's requirements are not checked, and transitive consistency is left to
 the installer.
@@ -114,8 +114,8 @@ the installer.
 ### Where it runs, and what that excludes
 
 It runs **after the lab loads and before anything is contacted**, so it asks
-the real activation question — whether *this* repo is part of *this* run. A
-repo whose `host_patterns` match no host in the loaded lab is inactive, and
+the real activation question — whether *this* project is part of *this* run. A
+project whose `host_patterns` match no host in the loaded lab is inactive, and
 warns.
 
 Four consequences worth knowing:
@@ -128,14 +128,14 @@ Four consequences worth knowing:
   ({func}`otto.session.check_dependencies`) once its context is installed, and
   refuses with {class}`~otto.session.DependencyRefusedError`. A script that
   skips `open_context` calls `check_dependencies` itself if it wants the check.
-- **An eager import still fails at bootstrap.** If a repo's `init` module
+- **An eager import still fails at bootstrap.** If a project's `init` module
   imports a missing package at module scope, it fails while otto is registering
-  the repo — before the check can speak — and you get the generic "failed to
+  the project — before the check can speak — and you get the generic "failed to
   load" report with the `ImportError`. Importing inside the function that needs
   it is what lets the preflight give you the better message.
 
-Repos with no `pyproject.toml` declare no Python requirements to otto and are
-always satisfied. A repo whose dependencies are dynamic and which is not
+Projects with no `pyproject.toml` declare no Python requirements to otto and are
+always satisfied. A project whose dependencies are dynamic and which is not
 installed here cannot be checked at all; otto says so in one line and checks
 nothing rather than guessing.
 
@@ -149,7 +149,7 @@ The choice is resolved in this order:
 | Source | Meaning |
 | ------ | ------- |
 | `--backend` | This invocation's decision |
-| `[env] backend` in `settings.toml` | The repo's standing decision |
+| `[env] backend` in `settings.toml` | The project's standing decision |
 | Recorded in the environment | Keeps an existing environment self-consistent |
 | Auto-detect | What happens when nobody has said anything |
 
@@ -160,7 +160,7 @@ Switching backends under an existing environment is a `create --force` matter,
 not a silent migration — the recorded value lives *inside* the venv, so
 `--force` takes it with the rebuild.
 
-If two repos in one workspace declare different `[env] backend` values, that is
+If two projects in one workspace declare different `[env] backend` values, that is
 a hard error naming both.
 
 ## Passing arguments to the installer
@@ -173,7 +173,7 @@ $ otto env sync -- --find-links ../wheels
 ```
 
 Use it for hermetic index pins. Note that `--no-index` applies to the
-*entire* install, including building any repo that needs a build backend — so
+*entire* install, including building any project that needs a build backend — so
 an air-gapped run has to supply those wheels too.
 
 ## Resolver failures
@@ -183,14 +183,14 @@ back in the installer's own words:
 
 ```console
 $ otto env create
-error: installing repos failed:
+error: installing projects failed:
   × No solution found when resolving dependencies:
   ╰─▶ Because otto-fixture-beetroot was not found in the package registry and
       otto-sample-repo4==0.1.0 depends on otto-fixture-beetroot>=0.1, we can
       conclude that otto-sample-repo4==0.1.0 cannot be used.
 ```
 
-At most one line is added, naming the two repos whose requirements collided,
+At most one line is added, naming the two projects whose requirements collided,
 and only when otto can actually attribute the failure.
 
 ```{toctree}

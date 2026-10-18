@@ -341,7 +341,7 @@ function chunkWithAsserted(): FileChunk {
 
 function makeFileIndex(overrides: Partial<IndexPayload> = {}): IndexPayload {
   return makeIndex({
-    project_name: "acme-fw",
+    report_title: "acme-fw",
     generated_at: "2026-07-25 14:02 UTC",
     otto_version: "0.7.5",
     tier_order: ["system", "unit"],

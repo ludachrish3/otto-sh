@@ -477,7 +477,7 @@ def cli_sut_dir(tmp_path: Path, *, links: Iterable[dict[str, Any]] = ()) -> Path
     )
 
 
-def run_tunnel_cli(sut_dir: Path, *args: str) -> str:
+def run_tunnel_cli(root: Path, *args: str) -> str:
     """Invoke the real ``otto tunnel`` CLI against *sut_dir* and return stdout.
 
     Same invocation mechanism as
@@ -488,7 +488,7 @@ def run_tunnel_cli(sut_dir: Path, *args: str) -> str:
     invocation fails loud with the real stdout/stderr rather than silently
     mismatching whatever a caller asserts against the returned string.
     """
-    proc = run_otto(["tunnel", *args], sut_dirs=sut_dir, lab="unix", timeout=180)
+    proc = run_otto(["tunnel", *args], roots=root, lab="unix", timeout=180)
     assert proc.returncode == 0, (
         f"otto tunnel {' '.join(args)} failed:\n{proc.stdout}\n{proc.stderr}"
     )

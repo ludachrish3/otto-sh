@@ -29,8 +29,8 @@ from typing import TYPE_CHECKING, Any
 from ..errors import OttoError
 
 if TYPE_CHECKING:
-    from ..config.collected_tests import Classification, FileRecord, RepoTable
-    from ..config.repo import Repo
+    from ..config.collected_tests import Classification, FileRecord, ProjectTable
+    from ..config.project import Project
     from ..coverage.reports import CleanReport
     from ..registry import RegistrationRefused
     from ..run_context import OttoContext
@@ -47,8 +47,8 @@ RUN_OPTIONS_KEY = "otto_test_run_options"
 class NoTestsMatchedError(OttoError, ValueError):
     """A test-name / ``-m`` selection resolved to nothing to run.
 
-    Raised by :func:`run_tests` when no repo's session had a test to run — no
-    repos configured, no repo carrying the marker, named tests the marker
+    Raised by :func:`run_tests` when no project's session had a test to run — no
+    projects configured, no project carrying the marker, named tests the marker
     expression excludes, or no test universe to search at all. It is
     distinct from
     :class:`otto.suite.selection.UnknownSelectionError` (a genuinely unknown
@@ -109,7 +109,7 @@ class RunOptions:
     """Implies ``cov_report``. Must not be or contain ``cov_dir``: clearing
     the report directory would clear the coverage data it reports on."""
     overwrite_cov_report_dir: bool = False
-    project_name: str = "Coverage Report"
+    report_title: str = "Coverage Report"
     cov_tickets_json: Path | None = None
     """Implies ``cov_report``."""
     monitor: bool = False
@@ -123,7 +123,7 @@ class RunOptions:
     def __post_init__(self) -> None:
         """Apply the implications and refuse the contradictions, for every constructor.
 
-        Pure: no I/O, no repo config. The CLI, a script and a test all
+        Pure: no I/O, no project config. The CLI, a script and a test all
         construct the same class, so what a destination implies for one it
         implies for the other. ``dataclasses.replace`` re-runs this, so a
         copy cannot lose an invariant.
@@ -231,7 +231,7 @@ class SuiteRunResult:
 class _Selection:
     """What one session collects and selects: see :class:`otto.suite.plugin.OttoPlugin`.
 
-    *table* is the repo's table as the run read it, and *classification*
+    *table* is the project's table as the run read it, and *classification*
     what :func:`~otto.config.collected_tests.classify` made of it: the
     session trusts its stats for the files it does not read, and what it
     reads is merged into *table*. ``candidates`` ``None`` collects the whole
@@ -241,7 +241,7 @@ class _Selection:
     table still records everything collected.
     """
 
-    table: "RepoTable | None"
+    table: "ProjectTable | None"
     classification: "Classification"
     candidates: list[Path] | None = None
     names: list[str] = dataclasses.field(default_factory=list)
@@ -258,7 +258,7 @@ class _Selection:
 class _SessionOutcome:
     """Result of one inner ``_run_pytest_session``.
 
-    The rc, the stability verdict and report path, and the repo's table as
+    The rc, the stability verdict and report path, and the project's table as
     the session left it. Every field after those is what the session's
     ``OttoPlugin`` learned: see :class:`otto.suite.plugin.OttoPlugin` for
     each of them.
@@ -267,7 +267,7 @@ class _SessionOutcome:
     rc: int
     unstable: bool
     report: Path | None
-    table: "RepoTable | None" = None
+    table: "ProjectTable | None" = None
     """The table with what the session read merged in; ``None`` when its
     collection did not finish (it vouches for nothing)."""
     collection_finished: bool = False
@@ -373,7 +373,7 @@ def _session_context(log_dir: Path) -> "Iterator[OttoContext]":
     active = try_get_context()
     if active is None:
         # The composition root: importing it installs the initiator that composes
-        # the library context's repos on their first read (spec 2026-10-11
+        # the library context's projects on their first read (spec 2026-10-11
         # placement-and-phases §3.12).
         from .. import bootstrap
 
@@ -457,23 +457,23 @@ def prepare_run(opts: RunOptions, *, dry_run: bool = False) -> None:
         # post-run warning in _post_run_coverage.
         #
         # The composition root: importing it installs the initiator that composes
-        # the run's repos when no run is installed (spec 2026-10-11
+        # the run's projects when no run is installed (spec 2026-10-11
         # placement-and-phases §3.12).
         from .. import bootstrap
 
         del bootstrap
         from ..config.coverage_settings import get_cov_config
         from ..coverage.tickets import load_ticket_spec
-        from ..declared import current_repos
+        from ..declared import current_projects
         from ..params import OptionsValidationError
 
-        if load_ticket_spec(get_cov_config(current_repos())) is None:
+        if load_ticket_spec(get_cov_config(current_projects())) is None:
             raise OptionsValidationError(
                 "cov_tickets_json requires [coverage.tickets] to be configured"
             )
 
 
-def resolve_coverage(opts: RunOptions, repos: "list[Repo]", *, command: str) -> RunOptions:
+def resolve_coverage(opts: RunOptions, projects: "list[Project]", *, command: str) -> RunOptions:
     """Turn the tri-state ``cov`` into a decision — a copy with ``cov: bool``.
 
     Runs the local instrumentation scan over the coverage hosts once, before
@@ -512,7 +512,7 @@ def resolve_coverage(opts: RunOptions, repos: "list[Repo]", *, command: str) -> 
     from ..coverage.instrumentation import decide_coverage, detect_for_lab
 
     forced_on = opts.cov is True
-    has_cov_config = bool(get_cov_config(repos))
+    has_cov_config = bool(get_cov_config(projects))
     if forced_on and not has_cov_config:
         raise CoverageConfigError(
             f"{command}: coverage was requested but no [coverage] table is configured — "
@@ -520,7 +520,7 @@ def resolve_coverage(opts: RunOptions, repos: "list[Repo]", *, command: str) -> 
         )
 
     try:
-        report = detect_for_lab(repos)
+        report = detect_for_lab(projects)
     except (EmptySelectionError, CoverageConfigError) as e:
         if forced_on:
             raise
@@ -545,10 +545,10 @@ def _cov_command_label(opts: RunOptions, command: str) -> str:
     return f"{command} --cov" if opts.cov else command
 
 
-async def _pre_run_cov_clean(repos: "list[Repo]", opts: RunOptions) -> None:
+async def _pre_run_cov_clean(projects: "list[Project]", opts: RunOptions) -> None:
     """Pre-run cleanup of coverage counters on the lab's hosts, when --cov and --cov-clean.
 
-    Called once per invocation, never once per repo inside the session loop.
+    Called once per invocation, never once per project inside the session loop.
     The clean itself lives in :func:`otto.coverage.collect.clean_coverage`; it
     is imported lazily so this module never pulls the coverage stack at load
     time. The ``--cov``/``--cov-clean`` gate stays here. A failed reset is
@@ -562,7 +562,7 @@ async def _pre_run_cov_clean(repos: "list[Repo]", opts: RunOptions) -> None:
     from ..coverage.collect import clean_coverage
     from ..coverage.errors import CoverageCleanError
 
-    report = await clean_coverage(repos)
+    report = await clean_coverage(projects)
     if not report.ok:
         raise CoverageCleanError(report)
     _log_clean_summary(report, "before the run")
@@ -582,29 +582,29 @@ def _log_clean_summary(report: "CleanReport", when: str) -> None:
 
 def _post_run_coverage_beside(
     in_flight: BaseException | None,
-    repos: "list[Repo]",
-    taking_part: "list[tuple[_RepoRun, _SessionOutcome]]",
+    projects: "list[Project]",
+    taking_part: "list[tuple[_ProjectRun, _SessionOutcome]]",
     log_dir: Path,
     opts: RunOptions,
 ) -> None:
     """Collect the coverage of the tests that ran, never hiding the error that ended the run.
 
-    With *in_flight* set (a later repo refused a registration, say), a
-    coverage failure is logged, naming the repos whose tests ran, and the
+    With *in_flight* set (a later project refused a registration, say), a
+    coverage failure is logged, naming the projects whose tests ran, and the
     original error goes on propagating. With nothing in flight it raises.
     """
     from ..lifecycle import run_command
 
     try:
-        run_command(_post_run_coverage(repos, log_dir, opts))
+        run_command(_post_run_coverage(projects, log_dir, opts))
     except Exception:
         if in_flight is None:
             raise
-        ran = ", ".join(run.repo.name for run, _ in taking_part)
+        ran = ", ".join(run.project.name for run, _ in taking_part)
         logger.exception("coverage collection for %s failed after the run already failed", ran)
 
 
-async def _post_run_coverage(repos: "list[Repo]", log_dir: Path, opts: RunOptions) -> None:
+async def _post_run_coverage(projects: "list[Project]", log_dir: Path, opts: RunOptions) -> None:
     """Post-run coverage collection and optional HTML report, shared by both run paths.
 
     Collection runs through :func:`otto.coverage.collect.collect_coverage` (the
@@ -636,7 +636,7 @@ async def _post_run_coverage(repos: "list[Repo]", log_dir: Path, opts: RunOption
         cov_dir = opts.cov_dir or log_dir / "cov"
         # collect_coverage fails loud; a bare `otto test --cov` run must never
         # let a coverage-collection failure (no [coverage] section, no .gcda
-        # retrieved, an ambiguous/misconfigured tier, a non-git sut, or a
+        # retrieved, an ambiguous/misconfigured tier, a non-git project root, or a
         # merge/produce error) turn an otherwise-successful test run red. Log
         # and swallow, leaving the raw artifacts on disk for manual recovery
         # via `otto cov get`. %s-formats *e* through escape_markup: the
@@ -644,7 +644,7 @@ async def _post_run_coverage(repos: "list[Repo]", log_dir: Path, opts: RunOption
         # message may echo a literal bracket (e.g. "no [coverage] section").
         result = None
         try:
-            result = await collect_coverage(cov_dir, repos=repos)
+            result = await collect_coverage(cov_dir, projects=projects)
         except (ValueError, RuntimeError, FileNotFoundError) as e:
             logger.warning(
                 "Coverage collection failed (%s); raw coverage artifacts remain in %s",
@@ -676,7 +676,7 @@ async def _post_run_coverage(repos: "list[Repo]", log_dir: Path, opts: RunOption
         # destination gate (prepare_destination, which raises a field-named
         # DestinationError — a report-dir collision on a library re-run into
         # a reused output_dir warns and skips rather than raising typer from
-        # a public library entrypoint), a non-git sut, a polluted tree, a
+        # a public library entrypoint), a non-git project root, a polluted tree, a
         # malformed manual capture, or a malformed override file are logged
         # and swallowed, leaving the raw coverage artifacts on disk.
         # resolve_report_inputs lives inside this try (not resolved ahead of
@@ -687,12 +687,12 @@ async def _post_run_coverage(repos: "list[Repo]", log_dir: Path, opts: RunOption
         # failing an otherwise-successful test run.
         inputs = None
         try:
-            inputs = resolve_report_inputs(repos)
+            inputs = resolve_report_inputs(projects)
             store = await run_coverage_report(
                 [cov_dir],
                 report_dir,
                 inputs,
-                project_name=opts.project_name,
+                report_title=opts.report_title,
                 overwrite=opts.overwrite_cov_report_dir,
             )
         except (ValueError, RuntimeError, FileNotFoundError) as e:
@@ -739,8 +739,8 @@ async def _post_run_coverage(repos: "list[Repo]", log_dir: Path, opts: RunOption
                 # before the test run even starts; this stays the catch-all
                 # for the genuinely unknowable case (config present, but the
                 # git walk matched nothing) plus any library caller that
-                # skipped that preflight (e.g. no repo_root at all here).
-                if inputs.repo_root is None:
+                # skipped that preflight (e.g. no project_root at all here).
+                if inputs.project_root is None:
                     logger.warning(
                         "Ticket export skipped (no ticket data in this report — "
                         "[coverage.tickets] must be configured for --cov-tickets-json); "
@@ -755,8 +755,8 @@ async def _post_run_coverage(repos: "list[Repo]", log_dir: Path, opts: RunOption
                         write_ticket_export(
                             store,
                             opts.cov_tickets_json,
-                            repo_root=inputs.repo_root,
-                            project=opts.project_name,
+                            project_root=inputs.project_root,
+                            report_title=opts.report_title,
                             otto_version=get_version(),
                             generated=make_generated_stamp(),
                         )
@@ -868,8 +868,10 @@ class _SessionStdout:
 
 
 @contextlib.contextmanager
-def _outside_the_repo(*, collect_only: bool, home: Path | None = None) -> Iterator[list[str]]:
-    """Keep one session's bytecode and pytest's cache out of the repo; yield its pytest args.
+def _outside_the_project_root(
+    *, collect_only: bool, home: Path | None = None
+) -> Iterator[list[str]]:
+    """Keep a session's bytecode and pytest's cache out of the project root; yield its pytest args.
 
     While the session runs, ``sys.pycache_prefix`` points at the workspace's
     ``pycache`` directory under ``OTTO_HOME`` (:data:`otto.config.home.PYCACHE_DIRNAME`),
@@ -881,13 +883,13 @@ def _outside_the_repo(*, collect_only: bool, home: Path | None = None) -> Iterat
 
     The args give a run pytest's cache in the workspace's ``pytest-cache``
     directory; a collection has none at all. pytest otherwise writes
-    ``.pytest_cache/`` into its rootdir, which for a repo with no pytest
+    ``.pytest_cache/`` into its rootdir, which for a project with no pytest
     config of its own is a test directory.
 
-    So a session adds no entry to any directory of the repo, and a test
+    So a session adds no entry to any directory of the project root, and a test
     directory's stat moves only when a file in it is added, removed or
     renamed. *home* is the workspace home when the caller already has it
-    (:func:`otto.config.home.workspace_home`, which resolves every SUT dir).
+    (:func:`otto.config.home.workspace_home`, which resolves every project root).
     """
     from ..config.home import PYCACHE_DIRNAME, PYTEST_CACHE_DIRNAME, workspace_home
 
@@ -905,19 +907,23 @@ def _outside_the_repo(*, collect_only: bool, home: Path | None = None) -> Iterat
 
 
 def _run_pytest_session(
-    repo: "Repo", selection: _Selection, run: "_RunSetup | None" = None, *, home: Path | None = None
+    project: "Project",
+    selection: _Selection,
+    run: "_RunSetup | None" = None,
+    *,
+    home: Path | None = None,
 ) -> _SessionOutcome:
-    """Collect *repo*'s tests in one inner pytest session, and write what it read into its table.
+    """Collect *project*'s tests in one inner pytest session, and write what it read into its table.
 
-    The one way anything learns what a repo's test files hold: the seed of a
+    The one way anything learns what a project's test files hold: the seed of a
     cold table, a refresh, a run and a listing all come through here. The
-    session covers *repo*'s test directories as *selection* says
+    session covers *project*'s test directories as *selection* says
     (:class:`_Selection`), and *run* says how it runs the tests the names
     select. *home* is the workspace home, when the caller has it
-    (:func:`_outside_the_repo`: no session writes into the repo).
+    (:func:`_outside_the_project_root`: no session writes into the project root).
 
     With *run* ``None`` the session is ``--collect-only``, in collection
-    order: it runs nothing, prints nothing and writes no JUnit. A repo with
+    order: it runs nothing, prints nothing and writes no JUnit. A project with
     no test directory starts no session at all: pytest given no path
     collects its cwd.
 
@@ -943,9 +949,9 @@ def _run_pytest_session(
 
     from ..config.collected_tests import updated_table, write_tables
 
-    targets = [str(d) for d in repo.tests if d.exists()]
+    targets = [str(d) for d in project.tests if d.exists()]
     if targets:
-        outcome = _pytest_session(repo, targets, selection, run, home)
+        outcome = _pytest_session(project, targets, selection, run, home)
     else:
         outcome = _SessionOutcome(
             rc=pytest.ExitCode.NO_TESTS_COLLECTED,
@@ -959,7 +965,7 @@ def _run_pytest_session(
         return outcome
     whole_tree = selection.candidates is None
     table = updated_table(
-        repo,
+        project,
         selection.table,
         selection.classification,
         outcome.records,
@@ -978,7 +984,7 @@ _COLLECTING = RunOptions(random_order=False)
 
 
 def _pytest_session(
-    repo: "Repo",
+    project: "Project",
     targets: list[str],
     selection: _Selection,
     run: "_RunSetup | None",
@@ -1028,11 +1034,11 @@ def _pytest_session(
         # session per invocation of this function.
         "-p",
         "no:tach",
-        # Cut conftest loading at the repo root: the user repo's whole
+        # Cut conftest loading at the project root: the user project's whole
         # conftest hierarchy loads; otto's own tests/conftest.py (which resets
-        # logging management state) stays excluded for in-tree example repos
-        # because it lives above their sut_dir.
-        f"--confcutdir={repo.sut_dir}",
+        # logging management state) stays excluded for in-tree example projects
+        # because it lives above their root.
+        f"--confcutdir={project.root}",
         # pytest-asyncio registers anyio for assertion rewriting, but anyio is
         # already imported by the time pytest.main() is called from within otto.
         # The warning is harmless (anyio's internals don't affect test results)
@@ -1075,7 +1081,7 @@ def _pytest_session(
 
         collector = _StabilityCollector()
     otto_plugin = OttoPlugin(
-        sut_test_dirs=list(repo.tests) if run is None else run.sut_test_dirs,
+        project_test_dirs=list(project.tests) if run is None else run.project_test_dirs,
         iterations=opts.iterations,
         duration=opts.duration,
         monitor=opts.monitor,
@@ -1095,7 +1101,7 @@ def _pytest_session(
         stability_collector=collector,
     )
     fixtures_plugin = OttoFixturesPlugin(
-        layout=ArtifactLayout(root=repo.sut_dir, test_roots=repo.tests)
+        layout=ArtifactLayout(root=project.root, test_roots=project.tests)
         if run is None
         else run.layout
     )
@@ -1112,14 +1118,14 @@ def _pytest_session(
     from ..registry import loading_test_files
 
     # Capture the exit code so we can propagate it after post-run steps. The
-    # session imports the repo's test files and conftests, and those may not
+    # session imports the project's test files and conftests, and those may not
     # register anything: extensions belong in an init module.
     # What a session that raised out of pytest.main() is taken to have
     # returned: its JUnit file, if any, is kept as evidence.
     rc: int = pytest.ExitCode.INTERNAL_ERROR
     try:
         with (
-            _outside_the_repo(collect_only=collect_only, home=home) as cache_args,
+            _outside_the_project_root(collect_only=collect_only, home=home) as cache_args,
             loading_test_files(),
             contextlib.redirect_stdout(stream),  # type: ignore[type-var]
         ):
@@ -1143,7 +1149,7 @@ def _pytest_session(
     report: Path | None = None
     if run is not None and collector is not None and rc not in _NOTHING_RAN:
         unstable = _print_stability_report(
-            f"selection:{repo.name}",
+            f"selection:{project.name}",
             collector,
             opts.iterations,
             opts.duration,
@@ -1215,7 +1221,7 @@ def _print_stability_report(
 
 @dataclasses.dataclass
 class _Known:
-    """What a run knows of one repo's tests before its session: its table, and how far to trust it.
+    """What a run knows of a project's tests before its session: its table, and how far to trust it.
 
     The table is what pytest last collected, and a hint only: a test can
     appear or vanish without any file the table watches changing (a JSON
@@ -1226,7 +1232,7 @@ class _Known:
     matched there.
     """
 
-    table: "RepoTable | None"
+    table: "ProjectTable | None"
     classification: "Classification"
     searched: bool = False
     """A session earlier in this run collected the whole tree: :attr:`found` is all there is."""
@@ -1268,55 +1274,57 @@ class _Decision:
     """What a run does next; see :func:`_decide`."""
 
     unknown: list[str] = dataclasses.field(default_factory=list)
-    """Names no repo holds: refused before any session starts."""
+    """Names no project holds: refused before any session starts."""
     sessions: dict[int, _Selection] = dataclasses.field(default_factory=dict)
-    """Each run session, by its repo's position in the run's repo list, in the order they run."""
+    """Each run session, by its project's position in the run's projects, in the order they run."""
     searching: int | None = None
-    """The repo, not yet searched, whose run session runs first and looks for the names
+    """The project, not yet searched, whose run session runs first and looks for the names
     no record places."""
 
 
-def _decide(names: list[str], repos: list[_Known], markers: str = "") -> _Decision:
-    """Decide which repos run a session for *names*, and which names each must find.
+def _decide(names: list[str], projects: list[_Known], markers: str = "") -> _Decision:
+    """Decide which projects run a session for *names*, and which names each must find.
 
-    Every session collects its repo's whole tree, and the names select from
+    Every session collects its project's whole tree, and the names select from
     what pytest collected: the tables never narrow a collection, because a
     table is a hint (:class:`_Known`). They decide only the order of the
-    sessions, and how early a name no repo holds is refused.
+    sessions, and how early a name no project holds is refused.
 
-    A name is placed when some repo holds it (:meth:`_Known.holds`). A name
-    placed nowhere may be in any repo this run has not searched. With none,
+    A name is placed when some project holds it (:meth:`_Known.holds`). A name
+    placed nowhere may be in any project this run has not searched. With none,
     it is unknown, before any session. Otherwise one of them searches: the first whose table is
     :attr:`~_Known.stale` (where a test was just written), or the first.
     Its run session runs first and must find the name: lacking it, the
-    session stops before any test, the repo is searched, and the caller
-    decides again (:meth:`_Sessions.run`). So a name no repo holds is
-    refused before any test in any repo, each repo collected once.
+    session stops before any test, the project is searched, and the caller
+    decides again (:meth:`_Sessions.run`). So a name no project holds is
+    refused before any test in any project, each project collected once.
 
-    Every repo gets one run session, in the configured order, except one
+    Every project gets one run session, in the configured order, except one
     this run searched that holds none of the names. Each must find the
-    names no other repo of the run can hold (should it lack one, it says so
+    names no other project of the run can hold (should it lack one, it says so
     before its tests run), and *markers* narrows what it selects.
     """
-    holding = [{name: known.holds(name) for name in names} for known in repos]
+    holding = [{name: known.holds(name) for name in names} for known in projects]
     unplaced = [name for name in names if not any(held[name] for held in holding)]
-    unsearched = [i for i, known in enumerate(repos) if not known.searched]
+    unsearched = [i for i, known in enumerate(projects) if not known.searched]
     if unplaced and not unsearched:
         return _Decision(unknown=unplaced)
     searching = None
     if unplaced:
-        searching = next((i for i in unsearched if repos[i].stale), unsearched[0])
-    running = [i for i, known in enumerate(repos) if not known.searched or any(holding[i].values())]
+        searching = next((i for i in unsearched if projects[i].stale), unsearched[0])
+    running = [
+        i for i, known in enumerate(projects) if not known.searched or any(holding[i].values())
+    ]
 
     def elsewhere(i: int, name: str) -> bool:
-        return any(j != i and (not repos[j].searched or holding[j][name]) for j in running)
+        return any(j != i and (not projects[j].searched or holding[j][name]) for j in running)
 
     sessions: dict[int, _Selection] = {}
     for i in sorted(running, key=lambda i: i != searching):
         must_match = [n for n in names if not elsewhere(i, n) or (i == searching and n in unplaced)]
         sessions[i] = _Selection(
-            table=repos[i].table,
-            classification=repos[i].classification,
+            table=projects[i].table,
+            classification=projects[i].classification,
             names=names,
             must_match=must_match,
             markers=markers,
@@ -1335,57 +1343,57 @@ class _RunSetup:
     results_path: Path
     layout: "ArtifactLayout"
     log_dir: Path
-    sut_test_dirs: list[Path]
-    """Every repo's test directories: a run's sessions share one lab."""
+    project_test_dirs: list[Path]
+    """Every project's test directories: a run's sessions share one lab."""
     before_tests: "Callable[[], None] | None" = None
 
 
 @dataclasses.dataclass
-class _RepoRun:
-    """One repo's part in a run: what the run knows of it, and how its session runs tests."""
+class _ProjectRun:
+    """One project's part in a run: what the run knows of it, and how its session runs tests."""
 
-    repo: "Repo"
+    project: "Project"
     known: _Known
     setup: _RunSetup | None = None
     """Where its session writes and how it runs the tests; ``None``: it only collects."""
     matched: set[str] = dataclasses.field(default_factory=set)
-    """The requested names this repo's run session found."""
+    """The requested names this project's run session found."""
     outcome: _SessionOutcome | None = None
-    """The session that ran this repo's tests, or whose collection did not finish."""
+    """The session that ran this project's tests, or whose collection did not finish."""
     broken: bool = False
-    """A search of this repo that stopped read a file that did not collect: should no
-    later session of the repo run, the run still exits 1 for it, as pytest would."""
+    """A search of this project that stopped read a file that did not collect: should no
+    later session of the project run, the run still exits 1 for it, as pytest would."""
 
 
 class _Sessions:
-    """The pytest sessions of one run: at most one run session per repo.
+    """The pytest sessions of one run: at most one run session per project.
 
-    With names, the sessions :func:`_decide` plans, which says which repo
+    With names, the sessions :func:`_decide` plans, which says which project
     collects what, and when a name is unknown before any test runs. With no
-    names, each repo gets one whole-tree session. Each session writes what it
-    collected back to the table. A repo with no :attr:`_RepoRun.setup` has
+    names, each project gets one whole-tree session. Each session writes what it
+    collected back to the table. A project with no :attr:`_ProjectRun.setup` has
     its sessions collect only (a listing, a dry run): the same sessions, and
     nothing runs.
 
     An interrupt stops the run; so does a session searching for a name no
-    table places (a ``--collect-only`` one, or the one uncertain repo's run
+    table places (a ``--collect-only`` one, or the one uncertain project's run
     session) whose collection cannot finish (a conftest that fails to load,
-    a ``pytest.exit``): it is logged, naming the repo and why, and the run
+    a ``pytest.exit``): it is logged, naming the project and why, and the run
     fails with its exit code (:attr:`failed`) before any test. Any other
-    run session that cannot finish fails its repo's part, the run goes on,
+    run session that cannot finish fails its project's part, the run goes on,
     and no name it was to find is called unknown; a collection that cannot
     finish is logged and fails the run just the same.
     """
 
     def __init__(
         self,
-        repos: "list[Repo]",
-        runs: list[_RepoRun],
+        projects: "list[Project]",
+        runs: list[_ProjectRun],
         names: list[str],
         opts: RunOptions,
         home: Path,
     ) -> None:
-        self.repos = repos
+        self.projects = projects
         self.runs = runs
         self.names = names
         self.opts = opts
@@ -1396,10 +1404,10 @@ class _Sessions:
         self._cleaned = False
         self._clean_error: BaseException | None = None
         self._logged: set[tuple[str, str]] = set()
-        """(repo, file) pairs whose collection failure this run already logged."""
+        """(project, file) pairs whose collection failure this run already logged."""
 
     def run(self) -> None:
-        """Run every repo's session; stop at an interrupt or an unfinished search."""
+        """Run every project's session; stop at an interrupt or an unfinished search."""
         markers = self.opts.markers
         if not self.names:
             for run in self.runs:
@@ -1426,7 +1434,7 @@ class _Sessions:
             # edit its stat did not show): tests may have run, but it is said.
             raise self._unknown(unmatched)
 
-    def refresh(self, run: _RepoRun) -> bool:
+    def refresh(self, run: _ProjectRun) -> bool:
         """Bring *run*'s table up to date for completion, running nothing; ``False`` to stop.
 
         One ``--collect-only`` session over the changed and new files and the
@@ -1440,27 +1448,27 @@ class _Sessions:
         c = run.known.classification
         candidates = None if c.whole_tree else sorted({*c.changed, *c.new})
         if candidates == [] and not c.candidate_dirs and run.known.table is not None:
-            table = updated_table(run.repo, run.known.table, c, {})
+            table = updated_table(run.project, run.known.table, c, {})
             if table != run.known.table:
                 write_tables([table], home=self.home)
-            run.known = _Known(table=table, classification=classify(run.repo, table))
+            run.known = _Known(table=table, classification=classify(run.project, table))
             return True
         selection = _Selection(run.known.table, c, candidates)
         outcome = self._collected(run, selection, None, searching=True)
         if outcome is None or outcome.table is None:
             return False
-        run.known = _Known(table=outcome.table, classification=classify(run.repo, outcome.table))
+        run.known = _Known(table=outcome.table, classification=classify(run.project, outcome.table))
         return True
 
     def _session(
-        self, run: _RepoRun, selection: _Selection, *, searching: bool = False
+        self, run: _ProjectRun, selection: _Selection, *, searching: bool = False
     ) -> bool | None:
         """Run *run*'s one session over *selection*; ``False`` to stop.
 
         *searching*: the session must find names no table places
         (:attr:`_Decision.searching`), so one that cannot finish ends the
         run, and one that lacks a name ran no test: it returns ``None``, the
-        repo now searched, for the run to decide again.
+        project now searched, for the run to decide again.
 
         Raises:
             otto.suite.selection.UnknownSelectionError: the session stopped
@@ -1494,16 +1502,16 @@ class _Sessions:
         return True
 
     def _collected(
-        self, run: _RepoRun, selection: _Selection, setup: _RunSetup | None, *, searching: bool
+        self, run: _ProjectRun, selection: _Selection, setup: _RunSetup | None, *, searching: bool
     ) -> _SessionOutcome | None:
-        """Run one session of *run*'s repo under the interrupt policy; ``None`` once interrupted.
+        """Run one session of *run*'s project under the interrupt policy; ``None`` once interrupted.
 
-        One that could not finish is logged, naming the repo and why. When it
+        One that could not finish is logged, naming the project and why. When it
         was *searching* for names no table places, or only collects, it also
         sets :attr:`failed`: a run session's own exit code already fails the run.
         """
         outcome, self.interrupted = _guarded_pytest_session(
-            run.repo, selection, setup, home=self.home
+            run.project, selection, setup, home=self.home
         )
         if self._clean_error is not None:
             raise self._clean_error
@@ -1511,8 +1519,8 @@ class _Sessions:
             return None
         if outcome.table is None:
             logger.error(
-                "Could not collect the tests of repo %r (pytest exit code %d): %s",
-                run.repo.name,
+                "Could not collect the tests of project %r (pytest exit code %d): %s",
+                run.project.name,
                 outcome.rc,
                 outcome.stop_reason or "pytest gave no reason",
             )
@@ -1540,13 +1548,13 @@ class _Sessions:
             return
         self._cleaned = True
         try:
-            run_command(_pre_run_cov_clean(self.repos, self.opts))
+            run_command(_pre_run_cov_clean(self.projects, self.opts))
         except (Exception, SystemExit) as exc:  # noqa: BLE001 — re-raised by _session
             self._clean_error = exc
             pytest.exit(f"coverage pre-clean failed: {exc}", returncode=pytest.ExitCode.USAGE_ERROR)
 
     def _unknown(self, unknown: list[str]) -> Exception:
-        """Return the error for names no repo answers to: did-you-mean, and what broke.
+        """Return the error for names no project answers to: did-you-mean, and what broke.
 
         :class:`NoTestsMatchedError` when no table knows a single name and no
         file failed to collect (no test universe to suggest from).
@@ -1562,39 +1570,39 @@ class _Sessions:
             known.update(table.names)
             for key, record in table.files.items():
                 if record.error is not None:
-                    broken.append(f"{_shown(run.repo, key)} did not collect: {record.error}")
+                    broken.append(f"{_shown(run.project, key)} did not collect: {record.error}")
         if not (known or broken):
             return NoTestsMatchedError("No tests matched the selection.")
         return UnknownSelectionError(unknown_names_message(unknown, known, broken=broken))
 
-    def _log_broken(self, run: _RepoRun, outcome: _SessionOutcome) -> None:
+    def _log_broken(self, run: _ProjectRun, outcome: _SessionOutcome) -> None:
         """Log each file *outcome*'s session could not collect, once per run."""
         for key, record in outcome.records.items():
-            if record.error is not None and (run.repo.name, key) not in self._logged:
-                self._logged.add((run.repo.name, key))
+            if record.error is not None and (run.project.name, key) not in self._logged:
+                self._logged.add((run.project.name, key))
                 logger.error(
-                    "Test collection failed for %s in repo %r: %s",
-                    _shown(run.repo, key),
-                    run.repo.name,
+                    "Test collection failed for %s in project %r: %s",
+                    _shown(run.project, key),
+                    run.project.name,
                     record.error,
                 )
 
 
-def _shown(repo: "Repo", key: str) -> Path:
-    """Return *key* (an absolute path) as a user reads it: relative to *repo* when inside it."""
+def _shown(project: "Project", key: str) -> Path:
+    """Return absolute path *key* as a user reads it: relative to *project*'s root if inside it."""
     path = Path(key)
-    return path.relative_to(repo.sut_dir) if path.is_relative_to(repo.sut_dir) else path
+    return path.relative_to(project.root) if path.is_relative_to(project.root) else path
 
 
-def _read_known(repos: "list[Repo]", home: Path) -> list[_Known]:
-    """Return what the stored tables say of each of *repos*, in order (one cache-file read)."""
+def _read_known(projects: "list[Project]", home: Path) -> list[_Known]:
+    """Return what the stored tables say of each of *projects*, in order (one cache-file read)."""
     from ..config.collected_tests import classify, read_tables
 
-    tables = read_tables(repos, home=home)
+    tables = read_tables(projects, home=home)
     known: list[_Known] = []
-    for repo in repos:
-        table = tables.get(str(repo.sut_dir))
-        known.append(_Known(table=table, classification=classify(repo, table)))
+    for project in projects:
+        table = tables.get(str(project.root))
+        known.append(_Known(table=table, classification=classify(project, table)))
     return known
 
 
@@ -1605,7 +1613,7 @@ def run_tests(
     options: list[object] | None = None,
     output_dir: Path | None = None,
 ) -> SuiteRunResult:
-    """Run the named tests, and/or those a marker expression selects, in every repo.
+    """Run the named tests, and/or those a marker expression selects, in every project.
 
     *names* select by :func:`otto.suite.selection.matches_name`'s rule:
     ``test_reboot`` selects every test of that name, ``TestDevice`` every
@@ -1613,10 +1621,10 @@ def run_tests(
     in every such class. ``run_options.markers`` narrows the named tests, or,
     with no names, selects on its own.
 
-    Each repo runs in one pytest session over its test directories, and
+    Each project runs in one pytest session over its test directories, and
     that session both finds the names and runs what they select, in
     collection order. Before any session starts, the test-names cache
-    of every repo say which files hold the names; a session then collects
+    of every project say which files hold the names; a session then collects
     only those files and the files that changed since the table saw them
     (the whole tree when the table is cold: none yet, another pytest
     config or installation, or past its TTL). A file's record is trusted to
@@ -1624,23 +1632,23 @@ def run_tests(
     nor any file its tests come from (a base class in another module or a
     library) changed since; tests generated from a data file are the one
     case no stat follows. Where a name no record holds is looked for, and
-    in what order the repos run, is decided from the tables alone (the rule
+    in what order the projects run, is decided from the tables alone (the rule
     is ``_decide``'s, in this module): a name found nowhere is unknown, and
-    no test runs in any repo.
+    no test runs in any project.
 
     A file that fails to collect is logged and doesn't stop the tests that
     were asked for, but the run then exits 1, as pytest does. A collection
     that cannot finish (a conftest that fails to load) fails the run with
-    its exit code; one that was to search its repo for a name no table
+    its exit code; one that was to search its project for a name no table
     holds ends the run before any test. Every session writes what it
     collected back to the table.
 
     Sessions fold into one :class:`SuiteRunResult`: ``exit_code`` is the
-    worst exit code (stability-aware) of the repos with a test to run, and
-    ``junit_paths`` lists their JUnit files in repo order. A repo whose
+    worst exit code (stability-aware) of the projects with a test to run, and
+    ``junit_paths`` lists their JUnit files in project order. A project whose
     session had nothing to run takes no part in the result. When more than
-    one repo has a test directory, each repo's artifacts go under
-    ``<output_dir>/<repo name>/`` and its JUnit file is ``junit_<repo>.xml``.
+    one project has a test directory, each project's artifacts go under
+    ``<output_dir>/<project name>/`` and its JUnit file is ``junit_<project>.xml``.
 
     *options* are instances of classes registered for the ``test`` verb
     (:func:`otto.params.register_options`); they are bound on the context, so
@@ -1649,21 +1657,21 @@ def run_tests(
     that is not passed is built from its defaults, as the command line would
     build it, and a required field raises.
 
-    A repo's libraries are imported once per process: after editing one,
+    A project's libraries are imported once per process: after editing one,
     start a new process to see the change.
 
     Raises:
         ValueError: neither *names* nor ``run_options.markers`` was given —
-            with both empty a run would match every test in every repo.
+            with both empty a run would match every test in every project.
         otto.params.OptionsRegistrationError: an instance in *options* is of a
             class not registered for ``test``.
         otto.suite.selection.UnknownSelectionError: a name matches no test
-            in any repo although there were collected tests to search; the
+            in any project although there were collected tests to search; the
             message carries did-you-mean suggestions and names each file
             that did not collect. No test has run, except when a table's
             record said a name was there and an edit its file's stat did
             not show took it away: then the error comes after the run.
-        NoTestsMatchedError: no repo had a test to run — no repos, no repo
+        NoTestsMatchedError: no project had a test to run — no projects, no project
             carrying the marker, named tests the marker expression excludes,
             or no test universe to search at all. Both this and
             ``UnknownSelectionError`` subclass ``ValueError``; catch
@@ -1691,10 +1699,10 @@ def run_tests(
     log_dir = resolve_output_dir(output_dir)
 
     with _session_context(log_dir) as session_ctx:
-        # The context first, then its repos: an inherited context's snapshot, or
+        # The context first, then its projects: an inherited context's snapshot, or
         # the library sentinel's, read once (the sentinel bootstraps lazily).
-        repos = session_ctx.repos
-        searched = [r for r in repos if any(d.exists() for d in r.tests)]
+        projects = session_ctx.projects
+        searched = [r for r in projects if any(d.exists() for d in r.tests)]
         multi = len(searched) > 1
         # Bound first: every test (and the `ensure` converge) reads the
         # options off this context, and a bad value fails before any
@@ -1709,7 +1717,7 @@ def run_tests(
         # empties a destination. The remote pre-clean waits for the first
         # session that is committed to running tests (_Sessions._before_tests).
         prepare_run(opts, dry_run=True)
-        opts = resolve_coverage(opts, repos, command=_cov_command_label(opts, "otto test"))
+        opts = resolve_coverage(opts, projects, command=_cov_command_label(opts, "otto test"))
         prepare_run(opts)
         session_ctx.cov_decision = bool(opts.cov)
         if opts.random_order:
@@ -1722,35 +1730,35 @@ def run_tests(
             )
 
         # One workspace home for the table's read and write and every
-        # session's bytecode and cache: each lookup resolves every SUT dir.
+        # session's bytecode and cache: each lookup resolves every project root.
         home = workspace_home()
-        sut_test_dirs = [p for r in repos for p in r.tests]
-        runs: list[_RepoRun] = []
-        for repo, known in zip(searched, _read_known(searched, home), strict=True):
-            default_junit = log_dir / (f"junit_{repo.name}.xml" if multi else "junit.xml")
+        project_test_dirs = [p for r in projects for p in r.tests]
+        runs: list[_ProjectRun] = []
+        for project, known in zip(searched, _read_known(searched, home), strict=True):
+            default_junit = log_dir / (f"junit_{project.name}.xml" if multi else "junit.xml")
             if opts.results and multi:
                 # A single explicit --results path would otherwise have every
-                # repo's session overwrite the last one's junit output. Fan
+                # project's session overwrite the last one's junit output. Fan
                 # out from the same stem instead: PATH -> PATH_repo.
                 results_source = Path(opts.results)
-                results_path = results_source.with_stem(f"{results_source.stem}_{repo.name}")
+                results_path = results_source.with_stem(f"{results_source.stem}_{project.name}")
             else:
                 results_path = Path(opts.results) if opts.results else default_junit
             setup = _RunSetup(
                 opts=opts,
                 results_path=results_path,
-                # The repo layer whenever more than one repo is searched, so
+                # The project layer whenever more than one project is searched, so
                 # where a run's files go never depends on the cache. Each
-                # session's own repo.tests: it only collects there.
+                # session's own project.tests: it only collects there.
                 layout=ArtifactLayout(
-                    root=log_dir / repo.name if multi else log_dir, test_roots=repo.tests
+                    root=log_dir / project.name if multi else log_dir, test_roots=project.tests
                 ),
                 log_dir=log_dir,
-                sut_test_dirs=sut_test_dirs,
+                project_test_dirs=project_test_dirs,
             )
-            runs.append(_RepoRun(repo=repo, known=known, setup=setup))
-        sessions = _Sessions(repos, runs, names, opts, home)
-        taking_part: list[tuple[_RepoRun, _SessionOutcome]] = []
+            runs.append(_ProjectRun(project=project, known=known, setup=setup))
+        sessions = _Sessions(projects, runs, names, opts, home)
+        taking_part: list[tuple[_ProjectRun, _SessionOutcome]] = []
         in_flight: BaseException | None = None
         try:
             sessions.run()
@@ -1758,8 +1766,8 @@ def run_tests(
             in_flight = exc
             raise
         finally:
-            # The repos whose session had a test to run; pytest's "no tests
-            # collected" is no match in that repo, not a failure of the run.
+            # The projects whose session had a test to run; pytest's "no tests
+            # collected" is no match in that project, not a failure of the run.
             taking_part = [
                 (run, outcome)
                 for run in runs
@@ -1774,10 +1782,10 @@ def run_tests(
 
             abandon_closed_loops()
             # Tests that ran have their coverage collected even when a later
-            # repo's session then raises (a refused registration); an
-            # interrupt means STOP: no further repos, no post-coverage.
+            # project's session then raises (a refused registration); an
+            # interrupt means STOP: no further projects, no post-coverage.
             if sessions.interrupted is None and taking_part:
-                _post_run_coverage_beside(in_flight, repos, taking_part, log_dir, opts)
+                _post_run_coverage_beside(in_flight, projects, taking_part, log_dir, opts)
         if sessions.interrupted is not None:
             raise SystemExit(128 + sessions.interrupted)
         if not taking_part and sessions.failed is None:
@@ -1797,19 +1805,21 @@ def run_tests(
     )
 
 
-def _refresh_tables(repos: "list[Repo]", *, cold_only: bool = False) -> "list[RepoTable | None]":
-    """Bring each of *repos*' tables in the test-names cache up to date, running nothing.
+def _refresh_tables(
+    projects: "list[Project]", *, cold_only: bool = False
+) -> "list[ProjectTable | None]":
+    """Bring each of *projects*' tables in the test-names cache up to date, running nothing.
 
-    Each repo is refreshed as a run refreshes one it must search
+    Each project is refreshed as a run refreshes one it must search
     (:meth:`_Sessions.refresh`): a cold table (none, another pytest config
     or installation, past its TTL) is seeded by one whole-tree
     ``--collect-only`` session, and a warm one re-reads only what moved. A
     table that is current is left as it is; with *cold_only*, so is every
     warm one. Every table written is written as a run writes it.
 
-    Returns the tables in the order of *repos*. ``None`` is a repo whose
+    Returns the tables in the order of *projects*. ``None`` is a project whose
     table this could not bring up to date: its collection did not finish
-    (logged, naming the repo and why), or a directory it set out to list is
+    (logged, naming the project and why), or a directory it set out to list is
     still to be listed (a conftest at or under it failed to load), so it
     stays a candidate for the next collection.
 
@@ -1821,9 +1831,12 @@ def _refresh_tables(repos: "list[Repo]", *, cold_only: bool = False) -> "list[Re
     from ..config.home import workspace_home
 
     home = workspace_home()
-    runs = [_RepoRun(repo=r, known=k) for r, k in zip(repos, _read_known(repos, home), strict=True)]
-    sessions = _Sessions(repos, runs, [], _COLLECTING, home)
-    tables: list[RepoTable | None] = []
+    runs = [
+        _ProjectRun(project=r, known=k)
+        for r, k in zip(projects, _read_known(projects, home), strict=True)
+    ]
+    sessions = _Sessions(projects, runs, [], _COLLECTING, home)
+    tables: list[ProjectTable | None] = []
     for run in runs:
         before = run.known.classification
         if before.is_current or (cold_only and not before.whole_tree):
@@ -1839,55 +1852,55 @@ def _refresh_tables(repos: "list[Repo]", *, cold_only: bool = False) -> "list[Re
 
 @dataclasses.dataclass(frozen=True)
 class Listing:
-    """What :func:`selected_tests` collected: each repo's selected tests, and how it went."""
+    """What :func:`selected_tests` collected: each project's selected tests, and how it went."""
 
     tests: "dict[str, list[SelectedTest]]"
-    """Each repo's selected tests, by repo name, in collection order; a repo no
+    """Each project's selected tests, by project name, in collection order; a project no
     session collected (or whose collection did not finish) has none."""
     exit_code: int
     """``0``, or the exit code of a collection that could not finish (it was logged)."""
 
 
 def selected_tests(names: list[str], *, markers: str = "") -> Listing:
-    """Collect what *names* and *markers* select in every repo, as :func:`run_tests` would.
+    """Collect what *names* and *markers* select in every project, as :func:`run_tests` would.
 
     The sessions a run would start, each ``--collect-only``: the same
     decision over the test-names cache, the same pruned or whole-tree
     collections, and every table written back. Nothing runs: pytest imports
     the test files and conftests it collects, and no test, fixture or host
-    is touched. With neither names nor *markers*, each repo's whole tree is
+    is touched. With neither names nor *markers*, each project's whole tree is
     collected, so every file is read again.
 
-    A repo's libraries are imported once per process: after editing one,
+    A project's libraries are imported once per process: after editing one,
     start a new process to see the change.
 
     Raises:
-        otto.suite.selection.UnknownSelectionError: a name no repo holds,
+        otto.suite.selection.UnknownSelectionError: a name no project holds,
             with did-you-mean suggestions.
         NoTestsMatchedError: a name, and no collected test to suggest from.
         otto.registry.RegistrationRefused: a test file or conftest
             registered something while loading.
     """
     # The composition root: importing it installs the initiator that composes
-    # the run's repos when no run is installed (spec 2026-10-11
+    # the run's projects when no run is installed (spec 2026-10-11
     # placement-and-phases §3.12).
     from .. import bootstrap
 
     del bootstrap
     from ..config.home import workspace_home
-    from ..declared import current_repos
+    from ..declared import current_projects
 
     names = [n.strip() for n in names if n.strip()]
-    repos = current_repos()
-    searched = [r for r in repos if any(d.exists() for d in r.tests)]
+    projects = current_projects()
+    searched = [r for r in projects if any(d.exists() for d in r.tests)]
     home = workspace_home()
     known = _read_known(searched, home)
-    runs = [_RepoRun(repo=r, known=k) for r, k in zip(searched, known, strict=True)]
-    sessions = _Sessions(repos, runs, names, RunOptions(markers=markers), home)
+    runs = [_ProjectRun(project=r, known=k) for r, k in zip(searched, known, strict=True)]
+    sessions = _Sessions(projects, runs, names, RunOptions(markers=markers), home)
     sessions.run()
     if sessions.interrupted is not None:
         raise SystemExit(128 + sessions.interrupted)
     return Listing(
-        tests={run.repo.name: run.outcome.selected for run in runs if run.outcome is not None},
+        tests={run.project.name: run.outcome.selected for run in runs if run.outcome is not None},
         exit_code=sessions.failed or 0,
     )

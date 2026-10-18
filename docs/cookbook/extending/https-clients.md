@@ -23,8 +23,8 @@ from otto.tls import os_trust_session
 
 
 class MyTeamBackend(ReservationBackendBase):
-    def __init__(self, *, url=None, repo_dir=None, username=None):
-        super().__init__(url=url, repo_dir=repo_dir, username=username)
+    def __init__(self, *, url=None, project_root=None, username=None):
+        super().__init__(url=url, project_root=project_root, username=username)
         self._http = os_trust_session()
 
     @override

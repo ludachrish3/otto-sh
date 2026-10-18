@@ -50,7 +50,7 @@ def _run_otto(
     # every test here would read and write the developer's real ~/.otto.
     if xdir is not None:
         env.setdefault("OTTO_HOME", str(_home(xdir)))
-    return run_otto(argv, xdir=xdir, sut_dirs=REPO1, extra_env=env)
+    return run_otto(argv, xdir=xdir, roots=REPO1, extra_env=env)
 
 
 def _home(xdir: Path) -> Path:
@@ -278,7 +278,7 @@ def test_no_xdir_still_caches(tmp_path: Path) -> None:
     None when no xdir was set and an operator who never set one had completion
     caching silently disabled on every invocation -- paying the slow path
     forever without being told. The workspace home is a stable per-user
-    location derived from ``OTTO_SUT_DIRS`` alone, so that case no longer
+    location derived from ``OTTOPATH`` alone, so that case no longer
     exists.
     """
     home = tmp_path / "otto-home"
@@ -312,7 +312,7 @@ def test_fast_path_completes_plugin_group_children(tmp_path: Path) -> None:
     child metadata (closing the boundary previously documented in
     extending-cli.md).
     """
-    plugin_repo = {"OTTO_SUT_DIRS": str(REPO_E2E)}
+    plugin_repo = {"OTTOPATH": str(REPO_E2E)}
     seed = _run_otto(["--help"], xdir=tmp_path, extra_env=plugin_repo)
     assert seed.returncode == 0, seed.stderr
 

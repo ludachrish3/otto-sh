@@ -36,7 +36,7 @@ class CredsEnv:
 
     anchor_dir: Path
     """The directory a relative path in the table anchors to, which is the
-    declaring repo's root, or ``~/.otto`` for the user settings file."""
+    declaring project's root, or ``~/.otto`` for the user settings file."""
 
     origin: str
     """The settings file that declared the table, for messages."""

@@ -20,70 +20,71 @@ from ..result import CommandNotRunError
 from . import deployment
 from .build import BuildOptions, build_command, build_images
 from .observe import DockerVerbError, docker_parent
-from .reports import BuildReport, RepoBuild
+from .reports import BuildReport, ProjectBuild
 from .staging import stage_key
 
 if TYPE_CHECKING:
-    from ..config.repo import Repo
+    from ..config.project import Project
     from .resolve import Displacement
 
 
-def _select_docker_repos(repo: "str | None") -> "list[Repo]":
-    """Every loaded repo with a ``[docker]`` section, narrowed to *repo* when given."""
-    from ..declared import current_repos
+def _select_docker_projects(project: "str | None") -> "list[Project]":
+    """Every loaded project with a ``[docker]`` section, narrowed to *project* when given."""
+    from ..declared import current_projects
 
-    docker_repos = [
+    docker_projects = [
         r
-        for r in current_repos()
+        for r in current_projects()
         if r.docker_settings.images or r.docker_settings.composes or r.docker_settings.use_cases
     ]
-    if repo is None:
-        return docker_repos
-    matches = [r for r in docker_repos if r.name == repo]
+    if project is None:
+        return docker_projects
+    matches = [r for r in docker_projects if r.name == project]
     if not matches:
         raise DockerVerbError(
-            f"repo {repo!r} is not a loaded repo with a [docker] section; docker repos: "
-            f"{sorted(r.name for r in docker_repos)}",
-            field="repo",
+            f"project {project!r} is not a loaded project with a [docker] section; "
+            f"docker projects: {sorted(r.name for r in docker_projects)}",
+            field="project",
         )
     return matches
 
 
-def _check_images(repos: "Sequence[Repo]", images: "Sequence[str] | None") -> None:
+def _check_images(projects: "Sequence[Project]", images: "Sequence[str] | None") -> None:
     """Refuse a selection that cannot be built as asked.
 
     The refusals: an unknown image name; a selection with nothing to build; an
     archive context that is not a file; one image name declared by more than
-    one selected repo (the name is the name docker sees); and two selected
-    images of one repo whose names flatten to one staging directory key
-    (staging is per repo, so only a repo's own images can share a directory).
+    one selected project (the name is the name docker sees); and two selected
+    images of one project whose names flatten to one staging directory key
+    (staging is per project, so only a project's own images can share a directory).
     """
-    declared = {img.name for r in repos for img in r.docker_settings.images}
+    declared = {img.name for r in projects for img in r.docker_settings.images}
     if images is not None:
         unknown = sorted(set(images) - declared)
         if unknown:
             raise DockerVerbError(
-                f"no selected repo declares an image named {', '.join(map(repr, unknown))}; "
+                f"no selected project declares an image named {', '.join(map(repr, unknown))}; "
                 f"declared: {sorted(declared)}",
                 field="images",
             )
-    for r in repos:
+    for r in projects:
         for img in r.docker_settings.images:
             if images is not None and img.name not in images:
                 continue
             if img.is_archive and not img.context.is_file():
                 raise DockerVerbError(
-                    f"image {img.name!r} of repo {r.name!r}: the context archive "
+                    f"image {img.name!r} of project {r.name!r}: the context archive "
                     f"{img.context} is not a file",
                     field="images",
                 )
     if not declared:
         raise DockerVerbError(
-            f"nothing to build: none of {sorted(r.name for r in repos)} declares [[docker.images]]",
+            f"nothing to build: none of {sorted(r.name for r in projects)} "
+            "declares [[docker.images]]",
             field=None,
         )
     owners: "dict[str, list[str]]" = {}
-    for r in repos:
+    for r in projects:
         for img in r.docker_settings.images:
             if images is None or img.name in images:
                 owners.setdefault(img.name, []).append(r.name)
@@ -93,12 +94,12 @@ def _check_images(repos: "Sequence[Repo]", images: "Sequence[str] | None") -> No
             f"{name!r} by {', '.join(who)}" for name, who in sorted(clashes.items())
         )
         raise DockerVerbError(
-            f"one image name is declared by more than one selected repo ({described}); "
-            f"an image name is the name docker sees, so narrow the selection to one repo "
+            f"one image name is declared by more than one selected project ({described}); "
+            f"an image name is the name docker sees, so narrow the selection to one project "
             f"or rename one declaration",
             field="images",
         )
-    for r in repos:
+    for r in projects:
         by_key: "dict[str, str]" = {}
         for img in r.docker_settings.images:
             if images is not None and img.name not in images:
@@ -107,23 +108,23 @@ def _check_images(repos: "Sequence[Repo]", images: "Sequence[str] | None") -> No
             other = by_key.setdefault(key, img.name)
             if other != img.name:
                 raise DockerVerbError(
-                    f"images {other!r} and {img.name!r} of repo {r.name!r} would share "
+                    f"images {other!r} and {img.name!r} of project {r.name!r} would share "
                     f"the staging directory key {key!r}; rename one declaration",
                     field="images",
                 )
 
 
-def _dependency_order(repos: "Sequence[Repo]") -> "list[Repo]":
-    """*repos* in bootstrap dependency order; a repo the order omits sorts last."""
-    from ..declared import current_ordered_repos
+def _dependency_order(projects: "Sequence[Project]") -> "list[Project]":
+    """*projects* in bootstrap dependency order; a project the order omits sorts last."""
+    from ..declared import current_ordered_projects
 
-    order = {r.name: i for i, r in enumerate(current_ordered_repos())}
-    return sorted(repos, key=lambda r: order.get(r.name, len(order)))
+    order = {r.name: i for i, r in enumerate(current_ordered_projects())}
+    return sorted(projects, key=lambda r: order.get(r.name, len(order)))
 
 
-def _names_for(repo: "Repo", images: "Sequence[str] | None") -> "list[str] | None":
-    """Return the subset of *images* this repo declares (None = all), in declared order."""
-    declared = [img.name for img in repo.docker_settings.images]
+def _names_for(project: "Project", images: "Sequence[str] | None") -> "list[str] | None":
+    """Return the subset of *images* this project declares (None = all), in declared order."""
+    declared = [img.name for img in project.docker_settings.images]
     if images is None:
         return None
     wanted = set(images)
@@ -131,14 +132,14 @@ def _names_for(repo: "Repo", images: "Sequence[str] | None") -> "list[str] | Non
 
 
 def _check_tags(
-    plan: "list[tuple[UnixHost, Repo, list[str] | None]]", tags: "Sequence[str] | None"
+    plan: "list[tuple[UnixHost, Project, list[str] | None]]", tags: "Sequence[str] | None"
 ) -> None:
     """Refuse ``tags`` when the selection holds more than one image."""
     if not tags:
         return
     selected: "list[str]" = []
-    for _parent, repo, names in plan:
-        declared = [img.name for img in repo.docker_settings.images]
+    for _parent, project, names in plan:
+        declared = [img.name for img in project.docker_settings.images]
         selected.extend(declared if names is None else names)
     if len(selected) > 1:
         raise DockerVerbError(
@@ -149,25 +150,25 @@ def _check_tags(
 
 
 async def _build_plan(
-    plan: "list[tuple[UnixHost, Repo, list[str] | None]]",
+    plan: "list[tuple[UnixHost, Project, list[str] | None]]",
     *,
     options: BuildOptions,
-) -> "list[RepoBuild]":
-    """Run *plan* in order: one ``build_images`` per (host, repo), each with *options*."""
-    entries: "list[RepoBuild]" = []
-    for parent, repo, names in plan:
-        if not repo.docker_settings.images:
-            entries.append(RepoBuild(repo.name, parent.id, "no_images"))
+) -> "list[ProjectBuild]":
+    """Run *plan* in order: one ``build_images`` per (host, project), each with *options*."""
+    entries: "list[ProjectBuild]" = []
+    for parent, project, names in plan:
+        if not project.docker_settings.images:
+            entries.append(ProjectBuild(project.name, parent.id, "no_images"))
             continue
         if names is not None and not names:
             continue  # declares images, but none of the requested ones
-        results = await build_images(repo, parent, image_names=names, options=options)
-        entries.append(RepoBuild(repo.name, parent.id, "built", dict(results)))
+        results = await build_images(project, parent, image_names=names, options=options)
+        entries.append(ProjectBuild(project.name, parent.id, "built", dict(results)))
     return entries
 
 
 def _plan_text(
-    plan: "list[tuple[UnixHost, Repo, list[str] | None]]",
+    plan: "list[tuple[UnixHost, Project, list[str] | None]]",
     displaced: "Sequence[Displacement]" = (),
     *,
     options: BuildOptions,
@@ -185,19 +186,19 @@ def _plan_text(
     nothing and never has one to show, so it keeps the default ``()``.
     """
     by_host: "dict[str, list[str]]" = {}
-    for parent, repo, names in plan:
-        declared = [img.name for img in repo.docker_settings.images]
+    for parent, project, names in plan:
+        declared = [img.name for img in project.docker_settings.images]
         chosen = declared if names is None else names
         if not chosen:
             continue
-        by_host.setdefault(parent.id, []).append(f"{repo.name}[{','.join(chosen)}]")
+        by_host.setdefault(parent.id, []).append(f"{project.name}[{','.join(chosen)}]")
     per_host = "; ".join(f"{host} <- {'; '.join(items)}" for host, items in by_host.items())
     displaced_text = ". ".join(d.describe() for d in displaced)
     displaced_note = f" Displaced: {displaced_text}." if displaced_text else ""
     commands = [
-        f"on {parent.id}: {build_command(repo.name, img, options)}"
-        for parent, repo, names in plan
-        for img in repo.docker_settings.images
+        f"on {parent.id}: {build_command(project.name, img, options)}"
+        for parent, project, names in plan
+        for img in project.docker_settings.images
         if names is None or img.name in names
     ]
     command_note = f" Would run: {'; '.join(commands)}." if commands else ""
@@ -210,7 +211,7 @@ def _plan_text(
 async def build_on(
     parent: "str | None" = None,
     *,
-    repo: "str | None" = None,
+    project: "str | None" = None,
     images: "Sequence[str] | None" = None,
     tags: "Sequence[str] | None" = None,
     no_cache: bool = False,
@@ -218,14 +219,14 @@ async def build_on(
     build_args: "Mapping[str, str] | None" = None,
     target: "str | None" = None,
 ) -> BuildReport:
-    """Build the selected repos' declared images on *parent* (``otto docker build``).
+    """Build the selected projects' declared images on *parent* (``otto docker build``).
 
     Args:
         parent: The lab id of a docker-capable unix host to build on; ``None``
             is the default parent (spec §2).
-        repo: Narrow the selection to this repo by name.
+        project: Narrow the selection to this project by name.
         images: Build only these declared ``[[docker.images]]`` names; each
-            selected repo builds the subset it declares.
+            selected project builds the subset it declares.
         tags: ``docker build -t``: the references to tag, as typed. They
             replace the default ``<name>:latest`` and nothing is added to them.
             A tag names one image, so more than one selected image refuses.
@@ -236,15 +237,15 @@ async def build_on(
         target: ``docker build --target``, replacing a declared target.
 
     Returns:
-        A :class:`~otto.docker.reports.BuildReport`, one entry per selected repo
-        in dependency order; a repo declaring no images is a ``no_images`` entry.
+        A :class:`~otto.docker.reports.BuildReport`, one entry per selected project
+        in dependency order; a project declaring no images is a ``no_images`` entry.
 
     Raises:
         DockerVerbError: *parent* is not a docker-capable unix host in
-            the active lab, or ``None`` and the one rule picks none; *repo*
-            names no docker repo; an *images* name no selected repo declares;
-            no selected repo declares any image; two selected repos declare one
-            image name, or two selected images of one repo share a staging
+            the active lab, or ``None`` and the one rule picks none; *project*
+            names no docker project; an *images* name no selected project declares;
+            no selected project declares any image; two selected projects declare one
+            image name, or two selected images of one project share a staging
             directory key; or *tags* is given with more than one image selected.
         ~otto.result.CommandNotRunError: this is a dry run; the message carries
             the whole plan.
@@ -253,9 +254,9 @@ async def build_on(
 
     lab = require_run().lab
     parent_host = docker_parent(lab, parent)
-    repos = _dependency_order(_select_docker_repos(repo))
-    _check_images(repos, images)
-    plan = [(parent_host, r, _names_for(r, images)) for r in repos]
+    projects = _dependency_order(_select_docker_projects(project))
+    _check_images(projects, images)
+    plan = [(parent_host, r, _names_for(r, images)) for r in projects]
     _check_tags(plan, tags)
     options = BuildOptions(
         tags=list(tags or []),
@@ -268,7 +269,7 @@ async def build_on(
         raise CommandNotRunError(
             f"build_on({parent_host.id})", parent_host.id, _plan_text(plan, options=options)
         )
-    return BuildReport(repos=await _build_plan(plan, options=options))
+    return BuildReport(projects=await _build_plan(plan, options=options))
 
 
 async def compose_build(
@@ -292,7 +293,7 @@ async def compose_build(
         use_case: The declared use-case name.
         parent: The parent to build on, by host id; ``None`` is the lab's
             default parent by the one rule (spec §2).
-        provide: ``capability -> repo`` overrides for the competition (§4).
+        provide: ``capability -> project`` overrides for the competition (§4).
         images: Build only these declared image names, over the winners.
         no_cache: ``docker build --no-cache``, for every image.
         pull: ``docker build --pull``, for every image.
@@ -319,18 +320,18 @@ async def compose_build(
     # call see it -- the placement differential pins compose_build against
     # deploy by patching exactly that seam.
     resolution = deployment.resolve_use_case(use_case, parent=parent, provide=provide)
-    plan: "list[tuple[UnixHost, Repo, list[str] | None]]" = []
-    winners: "list[Repo]" = []
+    plan: "list[tuple[UnixHost, Project, list[str] | None]]" = []
+    winners: "list[Project]" = []
     seen: "set[str]" = set()
     for host_id in sorted(resolution.placed):
         parent_host = deployment.parent_for(resolution.lab, host_id)
         for unit in deployment._units(  # noqa: SLF001 — see seam note above
             deployment._ordered(resolution.placed[host_id], resolution.order)  # noqa: SLF001 — see seam note above
         ):
-            plan.append((parent_host, unit.repo, _names_for(unit.repo, images)))
-            if unit.repo.name not in seen:
-                seen.add(unit.repo.name)
-                winners.append(unit.repo)
+            plan.append((parent_host, unit.project, _names_for(unit.project, images)))
+            if unit.project.name not in seen:
+                seen.add(unit.project.name)
+                winners.append(unit.project)
     _check_images(winners, images)
     options = BuildOptions(no_cache=no_cache, pull=pull, build_args=dict(build_args or {}))
     if is_dry_run():
@@ -340,6 +341,6 @@ async def compose_build(
             _plan_text(plan, resolution.selection.displaced, options=options),
         )
     return BuildReport(
-        repos=await _build_plan(plan, options=options),
+        projects=await _build_plan(plan, options=options),
         displaced=list(resolution.selection.displaced),
     )

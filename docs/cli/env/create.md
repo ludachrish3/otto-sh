@@ -61,7 +61,7 @@ dry-run seam stops lab-free commands before the command body runs — see
 
 ## What it installs
 
-Each discovered repo with a `pyproject.toml`, editable; then otto itself. Repos
+Each discovered project with a `pyproject.toml`, editable; then otto itself. Projects
 without a `pyproject.toml` are named in the output and passed over — they are
 not installable, and their `libs` reach `sys.path` at bootstrap regardless.
 

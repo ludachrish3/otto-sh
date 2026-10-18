@@ -22,7 +22,7 @@ medium = 70
 Both values must fall within `0`-`100`, and `medium` must not exceed
 `high` — an inverted or out-of-range `[coverage.report]` block is a
 settings error, rejected at parse time rather than at report time.
-These are the only two keys; a repo with no `[coverage.report]`
+These are the only two keys; a project with no `[coverage.report]`
 section gets the defaults shown above. This is distinct from the
 per-tier {ref}`legend colors <coverage-colors>`, which color source
 lines and table columns by which tier covered them, not by

@@ -51,11 +51,11 @@ its payload (built by `otto.config.completion_tree.build_shim_payload`):
   `none`, `stat` with the triples of the files a file-derived backend read,
   or `opaque`, which always hands over (`inventory_block`);
 - `ttl_seconds` — the TTL the writer applied;
-- `tables` — the SUT directories whose tables in the test-names cache a
+- `tables` — the project roots whose tables in the test-names cache a
   test-name or `-m` TAB reads, in order;
 - `tree` — described next.
 
-At a test-name or `-m` site the shim answers from those repos' tables in
+At a test-name or `-m` site the shim answers from those projects' tables in
 the test-names cache (the cache file's `__collected_tests__` namespace),
 with the names and markers pytest last recorded. It checks each table's
 `env` and age, but stats nothing the table tracks; the check of the test

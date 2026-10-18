@@ -54,13 +54,13 @@ with several products there is no single result to hand back.
 With no products, `stage`/`install`/`uninstall` are successful no-ops and
 `is_installed()` is `False`.
 
-The five product verbs take `owner=` — the name of the repo whose products to
-act on (`None`, the default, means all of them). That is what keeps one repo's
-`install` off another repo's products on a shared host; the empty-list rule
-above applies to the *filtered* list, so a repo with nothing here is not
+The five product verbs take `owner=` — the name of the project whose products to
+act on (`None`, the default, means all of them). That is what keeps one project's
+`install` off another project's products on a shared host; the empty-list rule
+above applies to the *filtered* list, so a project with nothing here is not
 reported installed by someone else's products. `cleanup()` and `is_clean()`
 have no `owner=`: both reach past products into the host's dev tools and
-toolchain tools, which are host-wide, so there is no per-repo answer to give.
+toolchain tools, which are host-wide, so there is no per-project answer to give.
 
 ## Log retrieval
 

@@ -51,23 +51,23 @@ def _make_repo(tmp_path: Path) -> tuple[Path, str]:
     return root, sha
 
 
-def _commit_all(repo_root: Path) -> str:
+def _commit_all(project_root: Path) -> str:
     """Stage and commit all changes, return new HEAD sha."""
     subprocess.run(
         ["git", "add", "-A"],
-        cwd=repo_root,
+        cwd=project_root,
         check=True,
         capture_output=True,
-        env=git_env(repo_root.parent),
+        env=git_env(project_root.parent),
     )
     subprocess.run(
         ["git", "commit", "-qm", "change"],
-        cwd=repo_root,
+        cwd=project_root,
         check=True,
         capture_output=True,
-        env=git_env(repo_root.parent),
+        env=git_env(project_root.parent),
     )
-    return head_commit(repo_root)
+    return head_commit(project_root)
 
 
 @pytest.fixture

@@ -24,7 +24,7 @@ monkeypatch, so the suite patches where a name is defined everywhere.
 
 Scope: every lazy facade, whichever table it declares: each package whose
 ``__init__`` declares one, and each plain module that does (``otto.bootstrap``
-re-exports discovery's ``get_env`` lazily from ``otto.config.repo``).
+re-exports discovery's ``get_env`` lazily from ``otto.config.project``).
 ``_LAZY_ATTRS`` maps
 a name to the module that defines it. ``_LAZY_EXPORTS`` (``otto``,
 ``otto.config``, ``otto.logger``) maps it to either a ``(module, attr)`` pair

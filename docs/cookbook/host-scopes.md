@@ -24,7 +24,7 @@ is shared across the whole run, and you write nothing to get that. otto
 forces this with pytest-asyncio's settings `asyncio_mode=auto`,
 `asyncio_default_test_loop_scope=session` and
 `asyncio_default_fixture_loop_scope=session`, passed on pytest's command line,
-so a repo's own pytest configuration can't change them; a pin, below, is the
+so a project's own pytest configuration can't change them; a pin, below, is the
 way to get a narrower loop.
 
 | Share one connection across | How |

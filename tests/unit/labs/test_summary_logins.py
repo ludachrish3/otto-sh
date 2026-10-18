@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from otto.config import completion_cache as cc
-from otto.config.repo import Repo
+from otto.config.project import Project
 from otto.host.element import Element
 from otto.host.os_profile import ProfileContext
 from otto.labs import HostSummary, LoginSummary
@@ -17,18 +17,18 @@ _CREDS = [
 ]
 
 
-def _repo(tmp_path: Path, hosts: list[dict]) -> Repo:
+def _repo(tmp_path: Path, hosts: list[dict]) -> Project:
     lab = tmp_path / "lab"
     lab.mkdir()
     write_lab_json(lab / "lab.json", hosts)
-    return fake_repo(lab_sources=json_lab_sources(tmp_path, [lab]), sut_dir=tmp_path)
+    return fake_repo(lab_sources=json_lab_sources(tmp_path, [lab]), root=tmp_path)
 
 
-def _summaries(repo) -> dict[str, HostSummary]:
+def _summaries(project) -> dict[str, HostSummary]:
     return {
         s.id: s
-        for s in cc.repo_host_summaries(
-            repo, cc.resolve_process_inventory([repo]), profiles=ProfileContext.empty()
+        for s in cc.project_host_summaries(
+            project, cc.resolve_process_inventory([project]), profiles=ProfileContext.empty()
         )
     }
 
@@ -41,8 +41,8 @@ EXPECTED = [
 
 
 def test_json_backend_records_login_identities_only(tmp_path):
-    repo = _repo(tmp_path, [{"ip": "1.1.1.1", "element": "u1", "labs": ["e"], "creds": _CREDS}])
-    assert _summaries(repo)["u1"].logins == EXPECTED
+    project = _repo(tmp_path, [{"ip": "1.1.1.1", "element": "u1", "labs": ["e"], "creds": _CREDS}])
+    assert _summaries(project)["u1"].logins == EXPECTED
 
 
 def test_no_secret_field_exists_on_a_login_summary():
@@ -57,8 +57,8 @@ def test_the_field_defaults_empty_for_backends_that_do_not_know():
 def test_composite_carries_logins_across_sources(tmp_path):
     from otto.labs import build_lab_sources
 
-    repo = _repo(tmp_path, [{"ip": "1.1.1.1", "element": "u1", "labs": ["e"], "creds": _CREDS}])
-    composite = build_lab_sources([repo])
+    project = _repo(tmp_path, [{"ip": "1.1.1.1", "element": "u1", "labs": ["e"], "creds": _CREDS}])
+    composite = build_lab_sources([project])
     got = {s.id: s.logins for s in composite.list_host_summaries()}
     assert got == {"u1": EXPECTED}
 

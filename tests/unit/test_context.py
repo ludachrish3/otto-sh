@@ -202,7 +202,7 @@ async def test_run_on_all_hosts_normalizes_str_to_list():
 
 
 def test_for_repo_is_a_facade_over_the_same_context_not_a_copy(tmp_path):
-    """``for_repo`` narrows walks and nothing else — same lab, live flags.
+    """``for_project`` narrows walks and nothing else — same lab, live flags.
 
     A view that COPIED the context would pass every scoping test in
     ``tests/unit/fleet/test_fleet_scoping.py`` and still be wrong: a flag set
@@ -211,7 +211,7 @@ def test_for_repo_is_a_facade_over_the_same_context_not_a_copy(tmp_path):
     """
     lab = _lab_with("test1")
     ctx = OttoContext(lab=lab, policy=RunPolicy(dry_run=True))
-    view = ctx.for_repo("acme")
+    view = ctx.for_project("acme")
 
     assert view.lab is ctx.lab
     assert view.dry_run is True
@@ -351,7 +351,7 @@ async def test_open_context_loads_the_lab_with_the_process_inventory(tmp_path, m
     import shutil
 
     import otto
-    from otto.config.repo import Repo
+    from otto.config.project import Project
     from tests._fixtures.labdata import lab_data_dir
     from tests._fixtures.sutrepo import make_sut_repo
 
@@ -361,7 +361,7 @@ async def test_open_context_loads_the_lab_with_the_process_inventory(tmp_path, m
     )
     (sut / "lab").mkdir()
     shutil.copy(fixture / "lab.json", sut / "lab" / "lab.json")
-    _install_result(monkeypatch, repos=[Repo(sut)])
+    _install_result(monkeypatch, projects=[Project(sut)])
     home = tmp_path / "home"
     home.mkdir()
     settings = home / "settings.toml"
@@ -610,7 +610,7 @@ def test_cov_detection_with_unreachable_repos_is_false(monkeypatch):
 def test_cov_reads_through_a_repo_view(cov_detection):
     """The repo-scoped view delegates live, so instructions' self.ctx sees it too."""
     ctx = OttoContext(lab=_lab_with("test1"))
-    assert ctx.for_repo("acme").cov is True
+    assert ctx.for_project("acme").cov is True
 
 
 # --- open_context makes the CLI's decisions -------------------------------------
@@ -621,7 +621,7 @@ def test_cov_reads_through_a_repo_view(cov_detection):
 # previous result back afterwards.
 
 
-def _install_result(monkeypatch, *, repos=(), errors=()):
+def _install_result(monkeypatch, *, projects=(), errors=()):
     """Make *repos* and *errors* what ``bootstrap()`` returns for this test.
 
     Published to the composed-repos catalog too, as a finished ``bootstrap()``
@@ -633,10 +633,10 @@ def _install_result(monkeypatch, *, repos=(), errors=()):
     bs._reset()
     result = bs.BootstrapResult(
         env=None,
-        repos=list(repos),
+        projects=list(projects),
         errors=list(errors),
         warnings=[],
-        ordered_repos=list(repos),  # as bootstrap() fills it, so the real preflight sees them
+        ordered_projects=list(projects),  # as bootstrap() fills it, so the real preflight sees them
     )
     publish_composed(result, complete=True)
     return result
@@ -656,17 +656,17 @@ def _host(element: str, ip: str) -> dict:
 @pytest.fixture
 def installed_repos(monkeypatch):
     """Build a real SUT repo from settings + lab files and install it as bootstrap's result."""
-    from otto.config.repo import Repo
+    from otto.config.project import Project
     from tests._fixtures.labdata import write_lab_json
     from tests._fixtures.sutrepo import make_sut_repo
 
-    def _install(root: Path, extra: str, labfiles: "dict[str, list[dict]]") -> Repo:
+    def _install(root: Path, extra: str, labfiles: "dict[str, list[dict]]") -> Project:
         sut = make_sut_repo(root, name=root.name, extra=extra)
         for rel, hosts in labfiles.items():
             write_lab_json(root / rel, hosts)
-        repo = Repo(sut)
-        _install_result(monkeypatch, repos=[repo])
-        return repo
+        project = Project(sut)
+        _install_result(monkeypatch, projects=[project])
+        return project
 
     return _install
 
@@ -683,9 +683,9 @@ def _broken_repo(name: str, *, lab_patterns: "list[str] | None" = None):
             lab_patterns=[re.compile(p) for p in lab_patterns], host_patterns=[]
         )
     )
-    sut_dir = Path(f"/repos/{name}")
-    repo = fake_repo(name, sut_dir=sut_dir, project_scope=scope)
-    return repo, bs.DependencyError(str(sut_dir), "dependency 'y' is not satisfied")
+    root = Path(f"/repos/{name}")
+    project = fake_repo(name, root=root, project_scope=scope)
+    return project, bs.DependencyError(str(root), "dependency 'y' is not satisfied")
 
 
 @pytest.mark.asyncio
@@ -698,18 +698,18 @@ async def test_open_context_builds_the_lab_build_lab_builds(tmp_path, installed_
     placeholder_labs: "list[Lab]" = []
     real_register = compose.register_declared_container_hosts
 
-    def _spy(lab, repos):
+    def _spy(lab, projects):
         placeholder_labs.append(lab)
-        return real_register(lab, repos)
+        return real_register(lab, projects)
 
     monkeypatch.setattr(compose, "register_declared_container_hosts", _spy)
-    repo = installed_repos(
+    project = installed_repos(
         tmp_path / "r1",
         '[[lab.sources]]\nbackend = "json"\npaths = ["lab"]\n'
         '[host_preferences.".*".ssh_options]\nport = 2222\n',
         {"lab/lab.json": [_host("alt1", "10.0.0.1")]},
     )
-    expected = build_lab([repo], ["merged"])
+    expected = build_lab([project], ["merged"])
     async with otto.open_context(lab="merged") as ctx:
         assert set(ctx.lab.hosts) == set(expected.hosts)
         assert "alt1" in ctx.lab.hosts  # the repo's [[lab.sources]] record
@@ -725,11 +725,11 @@ async def test_a_combined_lab_string_is_split_before_the_gate(monkeypatch):
     out of scope, and its error is merely demoted.
     """
     import otto
-    from otto.session import RepoLoadError
+    from otto.session import ProjectLoadError
 
-    repo, error = _broken_repo("Repo2", lab_patterns=["b"])
-    _install_result(monkeypatch, repos=[repo], errors=[error])
-    with pytest.raises(RepoLoadError) as exc:
+    project, error = _broken_repo("Repo2", lab_patterns=["b"])
+    _install_result(monkeypatch, projects=[project], errors=[error])
+    with pytest.raises(ProjectLoadError) as exc:
         async with otto.open_context(lab="a+b"):
             pass
     assert exc.value.errors == [error]
@@ -742,19 +742,19 @@ async def test_a_list_of_labs_is_split_like_repeated_lab_flags(monkeypatch):
     import otto
     from otto.session import projects
 
-    real_check_repos = projects.check_repos
+    real_check_repos = projects.check_projects
     seen: "dict[str, list[str]]" = {}
 
     def _check_repos(result, labs, selection):
         seen["gate"] = list(labs)
         return real_check_repos(result, labs, selection)
 
-    def _build_lab(repos, labs):
+    def _build_lab(projects, labs):
         seen["build"] = list(labs)
         return _lab_with("test1")
 
     _install_result(monkeypatch)
-    monkeypatch.setattr(projects, "check_repos", _check_repos)
+    monkeypatch.setattr(projects, "check_projects", _check_repos)
     monkeypatch.setattr("otto.session.lab.build_lab", _build_lab)
     async with otto.open_context(lab=["a", "b+c"]):
         pass
@@ -765,11 +765,11 @@ async def test_a_list_of_labs_is_split_like_repeated_lab_flags(monkeypatch):
 async def test_a_lab_object_still_runs_the_gate(monkeypatch):
     """Labs come from component_names; a broken active repo refuses."""
     import otto
-    from otto.session import RepoLoadError
+    from otto.session import ProjectLoadError
 
-    repo, error = _broken_repo("Repo2", lab_patterns=["t"])
-    _install_result(monkeypatch, repos=[repo], errors=[error])
-    with pytest.raises(RepoLoadError) as exc:
+    project, error = _broken_repo("Repo2", lab_patterns=["t"])
+    _install_result(monkeypatch, projects=[project], errors=[error])
+    with pytest.raises(ProjectLoadError) as exc:
         async with otto.open_context(lab=_lab_with("test1")):
             pass
     assert exc.value.errors == [error]
@@ -785,8 +785,8 @@ async def test_a_lab_objects_component_names_are_the_gates_labs(monkeypatch, cap
     """
     import otto
 
-    repo, error = _broken_repo("Repo2", lab_patterns=["elsewhere"])
-    _install_result(monkeypatch, repos=[repo], errors=[error])
+    project, error = _broken_repo("Repo2", lab_patterns=["elsewhere"])
+    _install_result(monkeypatch, projects=[project], errors=[error])
     lab = _lab_with("test1")
     with caplog.at_level(logging.WARNING, logger="otto.context"):
         async with otto.open_context(lab=lab) as ctx:
@@ -798,8 +798,8 @@ async def test_a_lab_objects_component_names_are_the_gates_labs(monkeypatch, cap
 async def test_a_demoted_error_is_logged_not_raised(caplog, monkeypatch):
     import otto
 
-    repo, error = _broken_repo("Repo2")
-    _install_result(monkeypatch, repos=[repo], errors=[error])
+    project, error = _broken_repo("Repo2")
+    _install_result(monkeypatch, projects=[project], errors=[error])
     with caplog.at_level(logging.WARNING, logger="otto.context"):
         async with otto.open_context(lab=_lab_with("test1"), exclude_projects=["Repo2"]) as ctx:
             assert ctx.exclude_projects == ("repo2",)
@@ -811,8 +811,8 @@ async def test_the_selected_projects_reach_the_context(monkeypatch):
     """``include_projects`` is normalised and carried on the context, as the CLI carries ``-I``."""
     import otto
 
-    repo, _ = _broken_repo("My_Repo")
-    _install_result(monkeypatch, repos=[repo])
+    project, _ = _broken_repo("My_Repo")
+    _install_result(monkeypatch, projects=[project])
     async with otto.open_context(lab=_lab_with("test1"), include_projects=["My_Repo"]) as ctx:
         assert (ctx.include_projects, ctx.exclude_projects) == (("my-repo",), ())
 
@@ -822,8 +822,8 @@ async def test_an_unknown_project_is_refused(monkeypatch):
     import otto
     from otto.session import ProjectSelectionError
 
-    repo, _ = _broken_repo("Repo2")
-    _install_result(monkeypatch, repos=[repo])
+    project, _ = _broken_repo("Repo2")
+    _install_result(monkeypatch, projects=[project])
     with pytest.raises(ProjectSelectionError) as exc:
         async with otto.open_context(lab=_lab_with("test1"), include_projects=["nope"]):
             pass
@@ -888,7 +888,7 @@ async def test_the_variant_is_set_for_the_lab_build_and_the_body(monkeypatch):
 
     seen_at_build = []
 
-    def _build_lab(repos, labs):
+    def _build_lab(projects, labs):
         seen_at_build.append(variant())
         return _lab_with("test1")
 
@@ -925,8 +925,8 @@ async def test_the_variant_is_restored_when_setup_refuses(monkeypatch):
     from otto.context import variant
     from otto.session import ProjectSelectionError
 
-    repo, _ = _broken_repo("Repo2")
-    _install_result(monkeypatch, repos=[repo])
+    project, _ = _broken_repo("Repo2")
+    _install_result(monkeypatch, projects=[project])
     with pytest.raises(ProjectSelectionError):
         async with otto.open_context(
             lab=_lab_with("test1"), include_projects=["nope"], variant="field"
@@ -1002,7 +1002,7 @@ def _reservations_repo(tmp_path, holdings: "dict[str, list[str]]"):
     )
     return fake_repo(
         "res",
-        sut_dir=tmp_path,
+        root=tmp_path,
         settings={"reservations": {"backend": "json", "json": {"path": str(path)}}},
     )
 
@@ -1024,7 +1024,7 @@ async def test_open_context_refuses_an_unheld_resource_with_its_report(tmp_path,
     import otto
     from otto.reservations import MissingReservationError
 
-    _install_result(monkeypatch, repos=[_reservations_repo(tmp_path, {"bob": ["rack1"]})])
+    _install_result(monkeypatch, projects=[_reservations_repo(tmp_path, {"bob": ["rack1"]})])
     _as_user(monkeypatch, "alice")
     with pytest.raises(MissingReservationError) as exc:
         async with otto.open_context(lab=_lab_needing("rack1")):
@@ -1039,7 +1039,7 @@ async def test_open_context_passes_when_held_and_holder_changes_who_is_checked(
 ):
     import otto
 
-    _install_result(monkeypatch, repos=[_reservations_repo(tmp_path, {"bob": ["rack1"]})])
+    _install_result(monkeypatch, projects=[_reservations_repo(tmp_path, {"bob": ["rack1"]})])
     _as_user(monkeypatch, "alice")
     async with otto.open_context(lab=_lab_needing("rack1"), holder="bob") as ctx:
         assert ctx.lab.name
@@ -1049,7 +1049,7 @@ async def test_open_context_passes_when_held_and_holder_changes_who_is_checked(
 async def test_an_empty_holder_is_no_holder(tmp_path, monkeypatch, caplog):
     import otto
 
-    _install_result(monkeypatch, repos=[_reservations_repo(tmp_path, {"alice": ["rack1"]})])
+    _install_result(monkeypatch, projects=[_reservations_repo(tmp_path, {"alice": ["rack1"]})])
     _as_user(monkeypatch, "alice")
     with caplog.at_level(logging.INFO, logger="otto.context"):
         # "" falls back to the invoking user (alice, who holds rack1), not a user named "".
@@ -1062,7 +1062,7 @@ async def test_an_empty_holder_is_no_holder(tmp_path, monkeypatch, caplog):
 async def test_a_holder_is_logged_as_the_identity_acted_as(tmp_path, monkeypatch, caplog):
     import otto
 
-    _install_result(monkeypatch, repos=[_reservations_repo(tmp_path, {"bob": ["rack1"]})])
+    _install_result(monkeypatch, projects=[_reservations_repo(tmp_path, {"bob": ["rack1"]})])
     _as_user(monkeypatch, "alice")
     with caplog.at_level(logging.INFO, logger="otto.context"):
         async with otto.open_context(lab=_lab_needing("rack1"), holder="bob"):
@@ -1083,7 +1083,7 @@ async def test_skip_builds_no_backend_and_logs_the_warning(tmp_path, monkeypatch
         raise AssertionError("no backend may be built under skip")
 
     monkeypatch.setattr(factory, "build_backend", _never)
-    _install_result(monkeypatch, repos=[_reservations_repo(tmp_path, {})])
+    _install_result(monkeypatch, projects=[_reservations_repo(tmp_path, {})])
     with caplog.at_level(logging.WARNING):
         async with otto.open_context(lab=_lab_needing("rack1"), skip_reservation_check=True):
             pass
@@ -1096,7 +1096,7 @@ async def test_dry_run_is_gated_too(tmp_path, monkeypatch):
     import otto
     from otto.reservations import MissingReservationError
 
-    _install_result(monkeypatch, repos=[_reservations_repo(tmp_path, {})])
+    _install_result(monkeypatch, projects=[_reservations_repo(tmp_path, {})])
     with pytest.raises(MissingReservationError):
         async with otto.open_context(lab=_lab_needing("rack1"), dry_run=True):
             pass
@@ -1106,7 +1106,7 @@ async def test_dry_run_is_gated_too(tmp_path, monkeypatch):
 async def test_no_reservations_table_is_a_no_op(monkeypatch):
     import otto
 
-    _install_result(monkeypatch, repos=[fake_repo("plain")])
+    _install_result(monkeypatch, projects=[fake_repo("plain")])
     async with otto.open_context(lab=_lab_needing("rack1")):
         pass
 
@@ -1125,8 +1125,8 @@ async def test_an_unbuildable_backend_refuses_before_any_context(tmp_path, monke
         raise TypeError("cannot connect")
 
     register_reservation_backend("boom", config=_NoKeys, factory=_boom)
-    repo = fake_repo("res", sut_dir=tmp_path, settings={"reservations": {"backend": "boom"}})
-    _install_result(monkeypatch, repos=[repo])
+    project = fake_repo("res", root=tmp_path, settings={"reservations": {"backend": "boom"}})
+    _install_result(monkeypatch, projects=[project])
     installed = []
     real_set_context = set_context
     monkeypatch.setattr(
@@ -1147,9 +1147,9 @@ async def test_a_backend_failing_at_query_time_uninstalls_the_context(tmp_path, 
     from otto.context import variant
     from otto.reservations import ReservationBackendError
 
-    repo = _reservations_repo(tmp_path, {})
+    project = _reservations_repo(tmp_path, {})
     (tmp_path / "reservations.json").write_text("{not json")
-    _install_result(monkeypatch, repos=[repo])
+    _install_result(monkeypatch, projects=[project])
     installed = []
     real_set_context = set_context
     monkeypatch.setattr(
@@ -1171,7 +1171,7 @@ def _owner_of_test1(host_pattern: str):
     scope = ProjectScopeConfig(
         lab_patterns=[re.compile(".*")], host_patterns=[re.compile(host_pattern)]
     )
-    return fake_repo("owner", sut_dir=Path("/repos/owner"), project_scope=scope)
+    return fake_repo("owner", root=Path("/repos/owner"), project_scope=scope)
 
 
 def _lab_whose_test1_needs_slot():
@@ -1192,7 +1192,7 @@ async def test_exclude_projects_narrows_the_reservation_requirement(tmp_path, mo
 
     _as_user(monkeypatch, "alice")
     res = _reservations_repo(tmp_path, {"bob": ["slot"]})
-    _install_result(monkeypatch, repos=[res, _owner_of_test1("test1")])
+    _install_result(monkeypatch, projects=[res, _owner_of_test1("test1")])
 
     with pytest.raises(MissingReservationError) as exc:
         async with otto.open_context(lab=_lab_whose_test1_needs_slot()):

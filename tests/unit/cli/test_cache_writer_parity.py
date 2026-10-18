@@ -16,7 +16,7 @@ same collectors, per section key. A writer that bypasses the collectors, or
 passes the real app or key, stores something else and fails here. So does one
 that passes its own repo list: of the two repos, the second's required
 dependency is missing, so the dependency-ordered list (``bootstrap()``'s
-``ordered_repos``) leaves it out while discovery, the list the sections read,
+``ordered_projects``) leaves it out while discovery, the list the sections read,
 keeps it.
 """
 
@@ -28,6 +28,7 @@ from pathlib import Path
 
 import pytest
 
+from otto.config.env import is_otto_env_var
 from tests._fixtures.generated_repo import generate_repo
 from tests._fixtures.sutrepo import make_sut_repo
 
@@ -81,14 +82,14 @@ try:
 except SystemExit:
     pass
 
-from otto.config.repo import discover
+from otto.config.project import discover
 from otto.config.cache_sections import section_by_name
 
-repos = discover().repos
+projects = discover().projects
 cli = marked()
 print(json.dumps({
-    "names": section_by_name("names").collect(repos, cli),
-    "shim": section_by_name("shim").collect(repos, cli),
+    "names": section_by_name("names").collect(projects, cli),
+    "shim": section_by_name("shim").collect(projects, cli),
 }, sort_keys=True))
 """
 
@@ -98,14 +99,14 @@ SKIPPED = "zz-parity-skipped"
 
 @pytest.fixture
 def repo_env(tmp_path):
-    repo = generate_repo(tmp_path, files=4, dirs=1)
+    project = generate_repo(tmp_path, files=4, dirs=1)
     skipped = make_sut_repo(
         tmp_path / "skipped",
         name=SKIPPED,
         extra='[dependencies]\nrequired = ["zz-parity-missing"]\n',
     )
-    env = {k: v for k, v in os.environ.items() if not k.startswith("OTTO_")}
-    env["OTTO_SUT_DIRS"] = os.pathsep.join([str(repo), str(skipped)])
+    env = {k: v for k, v in os.environ.items() if not is_otto_env_var(k)}
+    env["OTTOPATH"] = os.pathsep.join([str(project), str(skipped)])
     env["OTTO_HOME"] = str(tmp_path / "home")
     return env
 

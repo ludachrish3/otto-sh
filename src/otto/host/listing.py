@@ -1,10 +1,10 @@
-"""What the repos declare and what each host gets: the data behind ``otto --list-products``.
+"""What the projects declare and what each host gets: the data behind ``otto --list-products``.
 
 Two views, both pure reads that never contact a host (no exec, no
 ``login_home``, no probe):
 
 * **declared** — :func:`declared_rows` and :func:`provider_notes` describe the
-  ``[[products]]`` / ``[[dev_tools]]`` entries the bootstrapped repos hold and the
+  ``[[products]]`` / ``[[dev_tools]]`` entries the bootstrapped projects hold and the
   code providers they registered. Nothing about a host is known yet, so what a
   provider supplies cannot be listed.
 * **lab** — :func:`lab_rows` describes what ingest attached to each host of a
@@ -27,7 +27,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ..declared import DeclaredEntry, MatchValue, declared_for_host, host_matches, surviving_repos
+from ..declared import (
+    DeclaredEntry,
+    MatchValue,
+    declared_for_host,
+    host_matches,
+    surviving_projects,
+)
 from ..utils import anchor_path
 from .dev_tool import registered_dev_tool_providers
 from .product import LOGIN_HOME, registered_product_providers, scan_for_instrumentation
@@ -74,7 +80,7 @@ class DeclaredRow:
     instrumented: str
     """:func:`_declared_instrumented`'s answer for the declared artifact."""
 
-    repo: str
+    project: str
     match: str
     """The host selector rendered compactly; :data:`ANY_HOST` when empty."""
 
@@ -96,7 +102,7 @@ class LabRow:
     instrumented: str
     """:func:`instrumented_cell`'s answer for the built item."""
 
-    repo: str
+    project: str
     hosts: list[str]
     """Ids of the hosts carrying it, in lab order."""
 
@@ -112,7 +118,7 @@ class UnusedEntry:
 
     name: str
     kind: str
-    repo: str
+    project: str
     reason: str
 
 
@@ -124,17 +130,17 @@ class LabListing:
     unused: list[UnusedEntry] = field(default_factory=list[UnusedEntry])
 
 
-def active_repos() -> list[Any]:
-    """Return the bootstrapped repos whose declarations apply, in discovery order.
+def active_projects() -> list[Any]:
+    """Return the bootstrapped projects whose declarations apply, in discovery order.
 
-    Delegates to :func:`otto.declared.surviving_repos`, the same set
+    Delegates to :func:`otto.declared.surviving_projects`, the same set
     :func:`otto.declared.declared_for_host` collects from.
     """
-    return surviving_repos()
+    return surviving_projects()
 
 
-def _entries(repo: Any, seam: str) -> list[DeclaredEntry]:
-    return list(getattr(repo, _SEAMS[seam]["entries"], None) or [])
+def _entries(project: Any, seam: str) -> list[DeclaredEntry]:
+    return list(getattr(project, _SEAMS[seam]["entries"], None) or [])
 
 
 def _leaf(value: Any) -> str:
@@ -213,25 +219,25 @@ def _declared_instrumented(entry: DeclaredEntry) -> str:
     return _VERDICT.get(scan_for_instrumentation(path), "unknown")  # type: ignore[arg-type]
 
 
-def declared_rows(repos: list[Any], seam: str) -> list[DeclaredRow]:
-    """One row per *seam* entry across *repos*: repo order, then declaration order."""
+def declared_rows(projects: list[Any], seam: str) -> list[DeclaredRow]:
+    """One row per *seam* entry across *projects*: project order, then declaration order."""
     return [
         DeclaredRow(
             name=entry.name,
             kind=entry.kind_label,
             variant=entry.variant or ANY_VARIANT,
             instrumented=_declared_instrumented(entry),
-            repo=repo.name,
+            project=project.name,
             match=_match_cell(entry.match),
             artifact=_declared_artifact(entry),
         )
-        for repo in repos
-        for entry in _entries(repo, seam)
+        for project in projects
+        for entry in _entries(project, seam)
     ]
 
 
-def provider_notes(repos: list[Any], seam: str) -> list[str]:
-    """One line per provider that a repo in *repos* registered for *seam*.
+def provider_notes(projects: list[Any], seam: str) -> list[str]:
+    """One line per provider that a project in *projects* registered for *seam*.
 
     A provider's output depends on the host it is asked about, so the declared
     view cannot list it; the line says so and points at ``--lab``.
@@ -241,15 +247,15 @@ def provider_notes(repos: list[Any], seam: str) -> list[str]:
         registered_product_providers() if seam == "products" else registered_dev_tool_providers()
     )
     notes = []
-    for repo in repos:
+    for project in projects:
         for provider, owner in providers:
-            if owner != repo.name:
+            if owner != project.name:
                 continue
             module = getattr(provider, "__module__", "<unknown>")
             qualname = getattr(provider, "__qualname__", repr(provider))
             where = f"{module}.{qualname}"
             notes.append(
-                f"{repo.name} also registers a {noun} provider ({where}); "
+                f"{project.name} also registers a {noun} provider ({where}); "
                 "what it supplies depends on the host, so it is listed only with --lab."
             )
     return notes
@@ -261,7 +267,7 @@ def _kind_cell(item: Any) -> str:
     return f"code ({type(item).__name__})"
 
 
-def _artifact_cell(item: Any, repo_roots: dict[str, Path]) -> str:
+def _artifact_cell(item: Any, project_roots: dict[str, Path]) -> str:
     image = getattr(item, "image", None)
     if isinstance(image, str) and image:
         return image
@@ -269,7 +275,7 @@ def _artifact_cell(item: Any, repo_roots: dict[str, Path]) -> str:
     if artifact is None or str(artifact) in ("", "."):
         return ""
     path = Path(artifact)
-    root = repo_roots.get(getattr(item, "owner", None) or "")
+    root = project_roots.get(getattr(item, "owner", None) or "")
     if root is not None and path.is_absolute():
         try:
             return path.relative_to(root).as_posix()
@@ -285,7 +291,7 @@ def _stage_cell(item: Any, host: Any) -> str:
     return LOGIN_HOME_CELL if key == LOGIN_HOME else key
 
 
-def _unused_declared(repos: list[Any], seam: str, hosts: list[Any]) -> list[UnusedEntry]:
+def _unused_declared(projects: list[Any], seam: str, hosts: list[Any]) -> list[UnusedEntry]:
     """List the declared entries that built on no host, each with the furthest it got.
 
     Per host: the entries :func:`~otto.declared.declared_for_host` admits passed
@@ -313,20 +319,20 @@ def _unused_declared(repos: list[Any], seam: str, hosts: list[Any]) -> list[Unus
             if (source := getattr(item, "source_entry", None)) is not None
         )
     out = []
-    for repo in repos:
-        for entry in _entries(repo, seam):
+    for project in projects:
+        for entry in _entries(project, seam):
             key = id(entry)
             if key in built:
                 continue
-            if key not in scoped and hosts and getattr(repo, "project_scope", None) is not None:
-                reason = f"outside {repo.name}'s [project] scope"
+            if key not in scoped and hosts and getattr(project, "project_scope", None) is not None:
+                reason = f"outside {project.name}'s [project] scope"
             elif entry.variant is not None and entry.variant != run:
                 reason = f"variant {entry.variant!r} (run is {run})"
             elif key not in matched:
                 reason = "no host matches"
             else:
                 reason = f"shadowed by an earlier entry named {entry.name!r}"
-            out.append(UnusedEntry(entry.name, entry.kind_label, repo.name, reason))
+            out.append(UnusedEntry(entry.name, entry.kind_label, project.name, reason))
     return out
 
 
@@ -354,10 +360,10 @@ def _unused_providers(seam: str, hosts: list[Any]) -> list[UnusedEntry]:
     return out
 
 
-def lab_rows(lab: Any, repos: list[Any], seam: str) -> LabListing:
+def lab_rows(lab: Any, projects: list[Any], seam: str) -> LabListing:
     """Describe what ingest attached to *lab*'s hosts for *seam*, and what it left out.
 
-    One row per distinct (repo, name, kind, variant, instrumented, artifact,
+    One row per distinct (project, name, kind, variant, instrumented, artifact,
     stage dir), rows in order of first appearance walking the lab's hosts,
     each carrying the ids of the hosts that have it. ``unused`` lists declared
     entries that built on no host (with the reason), then provider instances
@@ -365,7 +371,7 @@ def lab_rows(lab: Any, repos: list[Any], seam: str) -> LabListing:
     nothing here asks a host anything.
     """
     hosts = list(lab.hosts.values())
-    roots = {r.name: Path(r.sut_dir) for r in repos if getattr(r, "sut_dir", None) is not None}
+    roots = {r.name: Path(r.root) for r in projects if getattr(r, "root", None) is not None}
     by_key: dict[tuple[str, str, str, str, str, str, str], LabRow] = {}
     # Each host builds its own instance of a shared definition; scan an artifact
     # once per listing, not once per host that carries it. A definition is the
@@ -374,7 +380,7 @@ def lab_rows(lab: Any, repos: list[Any], seam: str) -> LabListing:
     instrumented_memo: dict[Any, str] = {}
     for host in hosts:
         for item in getattr(host, _SEAMS[seam]["attached"], []):
-            repo = getattr(item, "owner", None) or ""
+            project = getattr(item, "owner", None) or ""
             kind = _kind_cell(item)
             artifact = _artifact_cell(item, roots)
             stage = _stage_cell(item, host)
@@ -388,15 +394,15 @@ def lab_rows(lab: Any, repos: list[Any], seam: str) -> LabListing:
             if memo_key not in instrumented_memo:
                 instrumented_memo[memo_key] = instrumented_cell(item)
             instrumented = instrumented_memo[memo_key]
-            key = (repo, item.name, kind, variant, instrumented, artifact, stage)
+            key = (project, item.name, kind, variant, instrumented, artifact, stage)
             row = by_key.get(key)
             if row is None:
                 by_key[key] = LabRow(
-                    item.name, kind, variant, instrumented, repo, [host.id], artifact, stage
+                    item.name, kind, variant, instrumented, project, [host.id], artifact, stage
                 )
             elif host.id not in row.hosts:
                 row.hosts.append(host.id)
     return LabListing(
         rows=list(by_key.values()),
-        unused=_unused_declared(repos, seam, hosts) + _unused_providers(seam, hosts),
+        unused=_unused_declared(projects, seam, hosts) + _unused_providers(seam, hosts),
     )

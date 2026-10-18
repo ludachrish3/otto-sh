@@ -1,5 +1,5 @@
 $ otto --lab embedded host zephyr37-lfs exec 'kernel version'
-INFO     fleet of interest: 0 of 9 lab hosts (1 repo(s), 1 excluded)                                
+INFO     fleet of interest: 0 of 9 lab hosts (1 project(s), 1 excluded)                             
 INFO     Connected to <Peer 127.0.0.1 <port>>                                                        
 INFO     @zephyr37_lfs   |                                                                          
 INFO     @zephyr37_lfs > |                                                                          

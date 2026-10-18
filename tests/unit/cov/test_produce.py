@@ -35,7 +35,8 @@ def repo(tmp_path: Path) -> Path:
 
 def _write_meta(cov_dir: Path, repo: Path) -> None:
     (cov_dir / ".otto_cov_meta.json").write_text(
-        f'{{"repo_name": "r", "sut_dir": "{repo}", "toolchains": {{}}, "source_roots": {{}}}}'
+        f'{{"project_name": "r", "project_root": "{repo}", '
+        '"toolchains": {}, "source_roots": {}}'
     )
 
 
@@ -88,7 +89,7 @@ async def test_produce_writes_per_product_captures(
     _write_meta(cov_dir, repo)
     _stub_merger(monkeypatch, repo)
 
-    written = await produce_captures(cov_dir, tier="system", repo_root=repo, labs=["lab1"])
+    written = await produce_captures(cov_dir, tier="system", project_root=repo, labs=["lab1"])
 
     assert written == [
         cov_dir / "host1" / "app" / "capture.json",
@@ -117,7 +118,7 @@ async def test_produce_writes_one_capture_per_product_under_one_host(
     _write_meta(cov_dir, repo)
     _stub_merger(monkeypatch, repo)
 
-    written = await produce_captures(cov_dir, tier="system", repo_root=repo, labs=["lab1"])
+    written = await produce_captures(cov_dir, tier="system", project_root=repo, labs=["lab1"])
 
     assert written == [
         cov_dir / "host1" / "agent" / "capture.json",
@@ -139,7 +140,7 @@ async def test_produce_skips_product_dirs_without_counters(
     _stub_merger(monkeypatch, repo)
 
     with caplog.at_level("WARNING"):
-        written = await produce_captures(cov_dir, tier="system", repo_root=repo, labs=["lab1"])
+        written = await produce_captures(cov_dir, tier="system", project_root=repo, labs=["lab1"])
 
     assert written == [cov_dir / "host1" / "app" / "capture.json"]
     assert any("empty_dir" in rec.message for rec in caplog.records)
@@ -159,7 +160,7 @@ async def test_produce_annotates_display_names_by_host(
     written = await produce_captures(
         cov_dir,
         tier="system",
-        repo_root=repo,
+        project_root=repo,
         labs=["lab1"],
         display_names={"host1": "Rack 2 Slot 4"},
     )
@@ -193,7 +194,7 @@ async def test_produce_reads_each_product_with_the_gcov_its_stamp_names(
     gcov_12 = _gcov_on_path(tmp_path, monkeypatch, "gcov-12")
     seen = _capture_spy(monkeypatch, repo)
 
-    await produce_captures(cov_dir, tier="system", repo_root=repo, labs=["lab1"])
+    await produce_captures(cov_dir, tier="system", project_root=repo, labs=["lab1"])
 
     (toolchain,) = seen
     assert toolchain is not None
@@ -210,8 +211,8 @@ async def test_produce_keeps_a_recorded_gcov_over_the_stamp(
     (cov_dir / ".otto_cov_meta.json").write_text(
         json.dumps(
             {
-                "repo_name": "r",
-                "sut_dir": str(repo),
+                "project_name": "r",
+                "project_root": str(repo),
                 "toolchains": {
                     "host1": {"sysroot": "/", "lcov": "usr/bin/lcov", "gcov": "/opt/cross/gcov"}
                 },
@@ -221,7 +222,7 @@ async def test_produce_keeps_a_recorded_gcov_over_the_stamp(
     )
     seen = _capture_spy(monkeypatch, repo)
 
-    await produce_captures(cov_dir, tier="system", repo_root=repo, labs=["lab1"])
+    await produce_captures(cov_dir, tier="system", project_root=repo, labs=["lab1"])
 
     (toolchain,) = seen
     assert toolchain is not None

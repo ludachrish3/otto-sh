@@ -14,9 +14,9 @@ To see what an install would do on those hosts before touching one, run
 the product would make, and `otto -n run install-tools` does the same for dev
 tools ({ref}`dry-run-lab-verbs`).
 
-A repo that declares a non-empty `[[products]]` or `[[dev_tools]]` array must
+A project that declares a non-empty `[[products]]` or `[[dev_tools]]` array must
 also declare its fleet in a `[project]` table; otherwise otto exits 1 at
-startup with an error naming the repo. See {ref}`project-scope-required` for
+startup with an error naming the project. See {ref}`project-scope-required` for
 what to write.
 
 ```toml
@@ -50,7 +50,7 @@ naming the unknown key and listing the valid ones.
 
 A kind supplies **what drives its verbs** — install, check, uninstall, and how
 its coverage counters are collected. Use one of otto's built-ins below, or a
-repo-registered kind ([Custom kinds](#custom-kinds)), when something brings
+project-registered kind ([Custom kinds](#custom-kinds)), when something brings
 runtime knowledge to those verbs; anything else is a `shell` entry, whose verbs
 are the shell commands you write and whose artifact can be anything a shell
 command can install.
@@ -85,16 +85,16 @@ will not do what a specifier-prefixed string does.
 
 An entry with no `match` at all — and an entry whose `match` is an empty
 table — applies to every host: there is no clause to fail, so the entry is the
-repo's blanket declaration, bounded only by its `[project]` targeting below.
+project's blanket declaration, bounded only by its `[project]` targeting below.
 
 An attribute that is unset (or a metadata key a lab doesn't carry) never
 matches — declare a fallback entry last if one should apply. When several
 entries share a `name`, the first matching one wins, in declaration order.
-Across repos this means DISCOVERY order decides which entry is "first": when
-two repos each declare the same name, the one from the repo earlier in
-`sut_dirs` wins — not init-module registration order, which the dependency
-pass can reorder topologically. Entries are also bounded by the repo's
-`[project]` targeting, exactly like providers. A repo skipped by the
+Across projects this means DISCOVERY order decides which entry is "first": when
+two projects each declare the same name, the one from the project earlier in
+`OTTOPATH` wins — not init-module registration order, which the dependency
+pass can reorder topologically. Entries are also bounded by the project's
+`[project]` targeting, exactly like providers. A project skipped by the
 dependency pass (a required dependency missing) contributes **no** entries:
 its init modules never ran, so neither half of it — declared or code — is
 present.
@@ -106,7 +106,7 @@ param; everything else is optional:
 
 | Param | Meaning |
 |---|---|
-| `artifact` | **Required.** Local file, forward slashes, anchored to the repo root |
+| `artifact` | **Required.** Local file, forward slashes, anchored to the project root |
 | `stage_dir` | Staging directory on the *host*, accepted by **every kind that places a file**. Must be an **absolute** path — a relative one (or a `~`, which no transfer backend expands) would mean a different directory to the transfer that puts the artifact and to the command that names it afterwards, so it is refused at lab load. Leave it empty and otto resolves it: the host's `default_dest_dir` when the host record declares one, otherwise the login user's home, read from the host once per host object. The artifact lands at `<stage_dir>/<artifact basename>`; a `shell` product's STAYS there (it is the product), while the transient kinds (`kmod`, `docker_image`, the kernel-module dev tools) delete their copy once it is consumed. Two entries on ONE host — products and dev tools together — that would stage the same basename into the same directory are refused at lab load, naming both. An `embedded` entry has no `stage_dir`: the load is the transfer, so there is no directory to name |
 | `install` / `uninstall` / `check` | optional command strings run on the host |
 | `cov_dir` | host directory the product writes its coverage counters under (its `GCOV_PREFIX`); default `/tmp/<name>`, and the empty string is refused |
@@ -125,7 +125,7 @@ serves.
 
 `install`, `uninstall` and `check` run under the host's default command timeout
 (30 seconds) — the `shell` kind passes no `timeout` to `host.run`. An install
-that needs longer belongs to a repo-registered kind instead.
+that needs longer belongs to a project-registered kind instead.
 
 (declared-placeholders)=
 
@@ -172,7 +172,7 @@ host. A literal brace is doubled, `{{` and `}}`, which is what an `awk
 
 `class = "package.module:ClassName"` names a subclass of
 {class}`~otto.host.declared_product.DeclaredProduct` importable from the
-repo's `libs`. The entry's other keys are the class's fields: every `shell`
+project's `libs`. The entry's other keys are the class's fields: every `shell`
 key (`artifact`, `stage_dir`, `install`, `uninstall`, `check`, `cov_dir`,
 `debug_log_globs`, `instrumented`) and any field the subclass adds with
 `@dataclass`. A `str`, `int`, `bool`, `Path` or `list[str]` field is checked
@@ -218,7 +218,7 @@ provider, never both. When a provider returns a name a declared entry placed
 on the host, the lab refuses to load:
 
 ```text
-[[products]] 'firmware' (repo acme) is also defined by provider acme.init:products (repo acme) — a product is defined in data OR in code; to give a declared entry custom behaviour, set `class = "pkg.mod:Class"` on it
+[[products]] 'firmware' (project acme) is also defined by provider acme.init:products (project acme) — a product is defined in data OR in code; to give a declared entry custom behaviour, set `class = "pkg.mod:Class"` on it
 ```
 
 Two entries with one name are selection, not two definitions: declaration
@@ -351,7 +351,7 @@ example, and how a report reads back what it captured.
 
 ### As a dev tool
 
-A `[[dev_tools]]` entry of `kind = "kmod"` is a kernel module a repo places on
+A `[[dev_tools]]` entry of `kind = "kmod"` is a kernel module a project places on
 a host as tooling — a tracer, a test driver — rather than as software under
 test: `install-tools` loads it with `insmod` before any product, `cleanup`
 unloads it with `rmmod` after every product, and it is never part of a
@@ -383,7 +383,7 @@ dev tool.
 | `artifact` | **Required.** The built `.ko`, as the `kmod` form |
 | `stage_dir` | Where the `.ko` is staged before the `insmod`, as the `kmod` form |
 | `params` | Appended to `insmod` verbatim, as the `kmod` form — must not set `cov_dir=`, which is the consumer's own parameter (see below) |
-| `source` | Optional: the vendored directory (`otto init --kmodcov` / `otto cov kmodcov export`) this build came from, repo-anchored — named in the interface-mismatch remedy below |
+| `source` | Optional: the vendored directory (`otto init --kmodcov` / `otto cov kmodcov export`) this build came from, project-anchored — named in the interface-mismatch remedy below |
 
 `module_name` is not a kmodcov key: it is fixed to `otto_kmodcov`, and declaring
 it is an unknown-param error.

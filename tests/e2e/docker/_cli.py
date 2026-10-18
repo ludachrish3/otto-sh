@@ -45,7 +45,7 @@ def _flat(text: str) -> str:
 
 def _run_otto(
     *args: str,
-    sut_dirs: str = str(REPO1),
+    roots: str = str(REPO1),
     lab: str = "unix",
     xdir: Path | None = None,
     compose_suffix: str | None = None,
@@ -60,11 +60,11 @@ def _run_otto(
     same docker host. *env* merges last, for the few tests that need to pin
     something else about the child (``COLUMNS``, a ``pass_env`` value).
 
-    ``OTTO_SUT_DIRS`` goes through ``extra_env`` rather than the runner's
-    ``sut_dirs=``: the multi-repo tests pass an ``os.pathsep``-joined *string*
+    ``OTTOPATH`` goes through ``extra_env`` rather than the runner's
+    ``roots=``: the multi-repo tests pass an ``os.pathsep``-joined *string*
     of two repo roots, which is not a single path.
     """
-    extra_env: dict[str, str] = {"OTTO_SUT_DIRS": sut_dirs}
+    extra_env: dict[str, str] = {"OTTOPATH": roots}
     if compose_suffix is not None:
         extra_env["OTTO_COMPOSE_SUFFIX"] = compose_suffix
     if env is not None:
@@ -73,7 +73,7 @@ def _run_otto(
     return run_otto(
         list(args),
         xdir=xdir,
-        sut_dirs=None,
+        roots=None,
         lab=lab,
         extra_argv_prefix=["-R"],
         extra_env=extra_env,

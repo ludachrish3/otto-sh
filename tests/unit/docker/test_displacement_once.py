@@ -9,7 +9,7 @@ printed plus the log records the library emitted. A mock's call list would
 count what the test arranged.
 
 Stubbed: the lab and its host's ``exec``/``put`` transport, the repo tables,
-``scope_for_repo`` (no ``[project]`` scope narrows anything), the container-id
+``scope_for_project`` (no ``[project]`` scope narrows anything), the container-id
 backoff, and, in the live ``compose build`` test only, ``_build_plan`` (no
 image is built). Everything else, selection through rendering, is the shipped
 code.
@@ -29,7 +29,7 @@ import pytest
 
 from otto.cli import docker as docker_cli
 from otto.docker import resolve as resolve_mod
-from otto.docker.reports import ImageBuild, RepoBuild
+from otto.docker.reports import ImageBuild, ProjectBuild
 from otto.docker.resolve import Displacement
 from otto.host.element import Element
 from otto.host.unix_host import UnixHost
@@ -49,7 +49,7 @@ _SENTINEL = "SENTINEL-FROM-DESCRIBE"
 
 @pytest.fixture(autouse=True)
 def _admit_all_scopes():
-    with patch.object(resolve_mod, "scope_for_repo", return_value=None):
+    with patch.object(resolve_mod, "scope_for_project", return_value=None):
         yield
 
 
@@ -80,7 +80,7 @@ def _two_providers(tmp_path, *, images=()):
 
 
 @contextmanager
-def _run_over(lab, repos, *, dry_run=False):
+def _run_over(lab, projects, *, dry_run=False):
     """Install a context over *lab* whose run's repos are *repos*, for one dispatched command.
 
     The dry-run variants need an installed context anyway (its policy carries
@@ -88,7 +88,7 @@ def _run_over(lab, repos, *, dry_run=False):
     (``bootstrap=``), as they do on the CLI's context: one seam for both
     shapes.
     """
-    with active_context(lab, dry_run=dry_run, bootstrap=fake_bootstrap_result(repos)):
+    with active_context(lab, dry_run=dry_run, bootstrap=fake_bootstrap_result(projects)):
         yield
 
 
@@ -98,7 +98,11 @@ def _invoke(*argv: str):
 
 def test_describe_names_who_won_at_what_and_who_stands_down_without_ranking():
     d = Displacement(
-        capability="edge", loser_repo="a", loser_priority=10, winner_repo="b", winner_priority=5
+        capability="edge",
+        loser_project="a",
+        loser_priority=10,
+        winner_project="b",
+        winner_priority=5,
     )
     assert d.describe() == "edge goes to b (priority 5); a (priority 10) stands down"
     assert "higher" not in d.describe()
@@ -138,7 +142,7 @@ def test_compose_build_shows_a_displacement_once(tmp_path, caplog):
     a, b, lab = _two_providers(tmp_path, images=("api",))
     built = AsyncMock(
         return_value=[
-            RepoBuild(
+            ProjectBuild(
                 "b",
                 "test3",
                 "built",
@@ -187,7 +191,7 @@ def test_use_cases_shows_a_displacement_once(caplog):
     lab.add_host(UnixHost(ip="10.0.0.1", creds=[], element=Element("test3"), docker_capable=True))
     with (
         caplog.at_level(logging.INFO),
-        patch("otto.declared.get_repos", return_value=[winner, loser]),
+        patch("otto.declared.get_projects", return_value=[winner, loser]),
         patch("otto.fleet.get_lab", return_value=lab),
     ):
         result = _invoke("use-cases")
@@ -233,7 +237,7 @@ def test_the_live_build_report_renders_through_describe(tmp_path, caplog, sentin
     a, b, lab = _two_providers(tmp_path, images=("api",))
     built = AsyncMock(
         return_value=[
-            RepoBuild(
+            ProjectBuild(
                 "b",
                 "test3",
                 "built",
@@ -267,7 +271,7 @@ def test_use_cases_renders_through_describe(sentinel):
     lab = Lab(name="unix")
     lab.add_host(UnixHost(ip="10.0.0.1", creds=[], element=Element("test3"), docker_capable=True))
     with (
-        patch("otto.declared.get_repos", return_value=[winner, loser]),
+        patch("otto.declared.get_projects", return_value=[winner, loser]),
         patch("otto.fleet.get_lab", return_value=lab),
     ):
         result = _invoke("use-cases")
@@ -318,9 +322,9 @@ def test_the_log_line_keeps_markup_looking_names_literal(caplog):
 
     d = Displacement(
         capability="edge[x]",
-        loser_repo="a[bold]",
+        loser_project="a[bold]",
         loser_priority=10,
-        winner_repo="b",
+        winner_project="b",
         winner_priority=5,
     )
     with caplog.at_level(logging.INFO, logger="otto.docker.deployment"):

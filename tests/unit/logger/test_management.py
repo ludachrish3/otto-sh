@@ -158,7 +158,7 @@ def test_a_warn_alias_from_settings_drives_a_real_setlevel(tmp_path):
     as ``ValueError: Unknown level``, at CLI startup, on a config that
     validated.
     """
-    from otto.config.repo import Repo
+    from otto.config.project import Project
     from tests._fixtures.sutrepo import make_sut_repo
 
     sut = make_sut_repo(
@@ -166,10 +166,10 @@ def test_a_warn_alias_from_settings_drives_a_real_setlevel(tmp_path):
         name="aliasrepo",
         extra='[logging.levels]\nvendor = "warn"\nloud_vendor = "CRIT"\n',
     )
-    repo = Repo(sut_dir=sut)
+    project = Project(root=sut)
 
     management.init_cli_logging(xdir=tmp_path, log_level="INFO", keep_days=7)
-    management.apply_library_levels(repo.logging_levels)
+    management.apply_library_levels(project.logging_levels)
 
     assert logging.getLogger("vendor").level == logging.WARNING
     assert logging.getLogger("loud_vendor").level == logging.CRITICAL

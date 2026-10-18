@@ -633,7 +633,7 @@ export function FilePage({ index, segments, node }: FilePageProps) {
     // No chunk yet, so no stats and no line counts in `meta`.
     return (
       <AppShell
-        crumbs={crumbsFor(index.project_name, segments)}
+        crumbs={crumbsFor(index.report_title, segments)}
         title={<span className="font-mono">{node.name}</span>}
         meta={
           <>
@@ -772,7 +772,7 @@ export function FilePage({ index, segments, node }: FilePageProps) {
 
   return (
     <AppShell
-      crumbs={crumbsFor(index.project_name, segments)}
+      crumbs={crumbsFor(index.report_title, segments)}
       title={<span className="font-mono">{node.name}</span>}
       meta={
         <>

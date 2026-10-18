@@ -12,14 +12,14 @@ the warm module set; the ``completion_repo_warm`` budget surface denies typer, c
 rich and pydantic. Every function that mirrors product code names what it mirrors;
 change both or neither: ``tests/unit/shim/test_differential.py`` is the net.
 
-A test-name or ``-m`` TAB (a *tests site*) is answered from each repo's per-file
+A test-name or ``-m`` TAB (a *tests site*) is answered from each project's per-file
 table (``otto.config.collected_tests``), which pytest's collections write, with
 the names pytest last recorded, and without a ``stat`` of anything the table
 tracks: its file operations do not grow with the corpus. Once
 :data:`CHECK_WINDOW_SECONDS` have passed since the tables were last checked, the
 collect child is started behind the answer; it stats what they track and
 re-reads what moved (design 2026-09-27 §9.2, as Chris revised it on
-2026-09-28). A repo with no table, a table whose ``env`` moved or one past its
+2026-09-28). A project with no table, a table whose ``env`` moved or one past its
 TTL hands over: only a pytest collection can seed it.
 
 The parser mirrored here is Typer's vendored click (``typer._click``); each rule
@@ -39,7 +39,7 @@ import time
 from typing import Any
 
 CACHE_FILENAME = "completion_cache.json"
-SCHEMA = 27
+SCHEMA = 28
 """Must equal ``otto.config.completion_cache.SCHEMA_VERSION`` (pinned by tests/unit/shim)."""
 WINDOW_SECONDS = 60
 """How long the ``names`` marker vouches for the ``names`` key set."""
@@ -67,7 +67,8 @@ COLLECT_COOLDOWN_FILENAME = ".completion_collect.failed"
 COLLECT_COOLDOWN_SECONDS = 60
 DUMP_TESTS_ENV_VAR = "_OTTO_DUMP_TEST_NAMES"
 COLLECT_OWNER_ENV_VAR = "_OTTO_COLLECT_OWNER"
-_CHILD_PATH_VARS = ("OTTO_SUT_DIRS", "OTTO_XDIR", "OTTO_HOME")
+OTTOPATH_VAR = "OTTOPATH"
+_CHILD_PATH_VARS = (OTTOPATH_VAR, "OTTO_XDIR", "OTTO_HOME")
 _NORMALIZE_RE = re.compile(r"[-_.]+")
 _PATH_LIST_SEP = re.compile(re.escape(os.pathsep))
 """``otto.utils._PATH_LIST_SEP``: path lists split on ``os.pathsep`` only."""
@@ -79,7 +80,7 @@ class Handover(Exception):  # noqa: N818
     """The shim cannot answer this TAB; the reason is for `otto cache info` and tests.
 
     ``stale`` is True when the CACHE is what failed (missing, expired, or a key
-    path moved; on a tests site, a repo's test table missing, expired or its
+    path moved; on a tests site, a project's test table missing, expired or its
     ``env`` moved), so the full path should rebuild or seed it; False when the
     cache is fine and this TAB is simply one the shim does not model.
     """
@@ -91,6 +92,29 @@ class Handover(Exception):  # noqa: N818
 
 
 # --- mirrors -----------------------------------------------------------------
+
+
+def kept_path_spelling(entry: str) -> str:
+    """Mirror ``otto.utils.kept_path_spelling``, verbatim."""
+    path = os.path.expanduser(entry)
+    return path if os.path.isabs(path) else os.path.join(os.getcwd(), path)
+
+
+def collapse_path_list(entries: list[str]) -> list[str]:
+    """Mirror ``otto.utils.collapse_path_list`` in behaviour.
+
+    The product caches each key in ``otto.utils.root_key``; this stdlib-only copy does not.
+    """
+    if len(entries) <= 1:
+        return list(entries)
+    seen: set[str] = set()
+    kept: list[str] = []
+    for entry in entries:
+        key = os.path.realpath(entry)
+        if key not in seen:
+            seen.add(key)
+            kept.append(entry)
+    return kept
 
 
 def split_arg_string(string: str) -> list[str]:
@@ -108,8 +132,8 @@ def split_arg_string(string: str) -> list[str]:
     return out
 
 
-def workspace_key(sut_dirs: list[str]) -> str:
-    """Mirror ``otto.config.home.workspace_key`` over raw ``OTTO_SUT_DIRS`` entries.
+def workspace_key(roots: list[str]) -> str:
+    """Mirror ``otto.config.home.workspace_key`` over raw ``OTTOPATH`` entries.
 
     The product sorts ``Path`` objects, which compare component-wise
     (``PurePath.__lt__``); a plain string sort orders by raw characters and so
@@ -120,11 +144,11 @@ def workspace_key(sut_dirs: list[str]) -> str:
     without importing ``pathlib``.
     """
     resolved = sorted(
-        {os.path.realpath(os.path.expanduser(d)) for d in sut_dirs}, key=lambda p: p.split(os.sep)
+        {os.path.realpath(os.path.expanduser(d)) for d in roots}, key=lambda p: p.split(os.sep)
     )
     digest = hashlib.sha256("\n".join(resolved).encode()).hexdigest()
     names = "-".join(os.path.basename(p) for p in resolved)
-    slug = _NORMALIZE_RE.sub("-", names.lower()) if resolved else "no-repos"
+    slug = _NORMALIZE_RE.sub("-", names.lower()) if resolved else "no-projects"
     return f"{digest[:8]}-{slug[:40]}"
 
 
@@ -749,12 +773,12 @@ def complete(
 
 def locate_cache(environ: dict[str, str]) -> str:
     """Locate ``<OTTO_HOME or ~/.otto>/<workspace_key>/completion_cache.json`` from *environ*."""
-    raw = environ.get("OTTO_SUT_DIRS", "")
-    sut_dirs = [p for p in _PATH_LIST_SEP.split(raw) if p]
-    if not sut_dirs:
-        raise Handover("no SUT dirs")
+    raw = environ.get(OTTOPATH_VAR, "")
+    roots = collapse_path_list([kept_path_spelling(p) for p in _PATH_LIST_SEP.split(raw) if p])
+    if not roots:
+        raise Handover("no OTTOPATH roots")
     home = environ.get("OTTO_HOME") or os.path.join(os.path.expanduser("~"), ".otto")
-    return os.path.join(os.path.expanduser(home), workspace_key(sut_dirs), CACHE_FILENAME)
+    return os.path.join(os.path.expanduser(home), workspace_key(roots), CACHE_FILENAME)
 
 
 def servable_shim(data: Any, now: float) -> dict[str, Any]:
@@ -871,7 +895,7 @@ def _stat_pair(path: str) -> list[int] | None:
 
 
 def selectable_names(classes: list[str], name: str) -> list[str]:
-    """Mirror ``otto.config.repo.selectable_names``, verbatim."""
+    """Mirror ``otto.config.project.selectable_names``, verbatim."""
     base = name.partition("[")[0]
     return [base, *classes, *([f"{classes[-1]}::{base}"] if classes else [])]
 
@@ -881,7 +905,7 @@ def _python_version() -> str:
     return f"{major}.{minor}.{micro}"
 
 
-def _env_pass(sut_dir: str, env: dict[str, Any], stat: Any) -> None:
+def _env_pass(root: str, env: dict[str, Any], stat: Any) -> None:
     """Mirror ``classify``'s ``env`` comparison (``collected_tests.current_env``), by stat.
 
     The interpreter's own fields are compared by value: the Python version,
@@ -897,7 +921,7 @@ def _env_pass(sut_dir: str, env: dict[str, Any], stat: Any) -> None:
     watched = [
         *env["site_packages"].items(),
         *env["configs"].items(),
-        (os.path.join(sut_dir, SETTINGS_RELPATH), env["settings"]),
+        (os.path.join(root, SETTINGS_RELPATH), env["settings"]),
     ]
     for path, before in watched:
         if stat(path) != before:
@@ -905,18 +929,18 @@ def _env_pass(sut_dir: str, env: dict[str, Any], stat: Any) -> None:
 
 
 def _tables(data: dict[str, Any], payload: dict[str, Any], now: float) -> list[Any]:
-    """Every repo's table, in the order the payload lists the repos; a cold one hands over."""
+    """Every project's table, in the order the payload lists the projects; a cold one hands over."""
     namespace = data.get(TABLES_KEY)
     namespace = namespace if isinstance(namespace, dict) else {}
     tables = []
-    for sut_dir in payload["tables"]:
-        table = namespace.get(sut_dir)
+    for root in payload["tables"]:
+        table = namespace.get(root)
         if not isinstance(table, dict) or table.get("schema_version") != TABLE_SCHEMA:
-            raise Handover(f"no test-names cache for {sut_dir}", stale=True)
+            raise Handover(f"no test-names cache for {root}", stale=True)
         at = table.get("generated_at")
         if not isinstance(at, int) or now - at > TABLE_TTL_SECONDS:
-            raise Handover(f"test-names cache expired for {sut_dir}", stale=True)
-        tables.append((sut_dir, table))
+            raise Handover(f"test-names cache expired for {root}", stale=True)
+        tables.append((root, table))
     return tables
 
 
@@ -949,8 +973,8 @@ def table_view(cache_path: str, data: dict[str, Any], now: float) -> TestNames:
     tables = _tables(data, payload, now)
     names: set[str] = set()
     markers: set[str] = set()
-    for sut_dir, table in tables:
-        _env_pass(sut_dir, table["env"], _stat_pair)
+    for root, table in tables:
+        _env_pass(root, table["env"], _stat_pair)
         markers.update(table["registered_markers"])
         for record in table["files"].values():
             markers.update(record["markers"])
@@ -979,7 +1003,9 @@ def _child_environ(environ: dict[str, str]) -> dict[str, str]:
         env.pop(var, None)
     for var in _CHILD_PATH_VARS:
         if env.get(var):
-            paths = [os.path.abspath(p) for p in _PATH_LIST_SEP.split(env[var]) if p]
+            paths = [kept_path_spelling(p) for p in _PATH_LIST_SEP.split(env[var]) if p]
+            if var == OTTOPATH_VAR:
+                paths = collapse_path_list(paths)
             env[var] = os.pathsep.join(paths)
     env[DUMP_TESTS_ENV_VAR] = "1"
     env[COLLECT_OWNER_ENV_VAR] = f"{os.getpid()}-{time.monotonic_ns()}"

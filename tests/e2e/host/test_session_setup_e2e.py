@@ -102,7 +102,7 @@ async def test_two_dialect_hook_on_test1_py(test1_lease):
 def test_login_lands_in_the_set_up_shell(test1_lease, tmp_path: Path) -> None:
     xdir = tmp_path / "xdir"
     with InteractiveOttoSession(
-        ["-R", "-l", "unix", "host", "test1", "login"], xdir=xdir, sut_dirs=EXAMPLE
+        ["-R", "-l", "unix", "host", "test1", "login"], xdir=xdir, roots=EXAMPLE
     ) as sess:
         sess.expect(b"Press Ctrl+] to disconnect", timeout=60)
         sess.drain(1.0)
@@ -131,7 +131,7 @@ def test_login_lands_in_the_set_up_shell(test1_lease, tmp_path: Path) -> None:
 def test_login_lands_in_the_python_repl(test1_lease, tmp_path: Path) -> None:
     xdir = tmp_path / "xdir"
     with InteractiveOttoSession(
-        ["-R", "-l", "pyrepl", "host", "test1-py", "login"], xdir=xdir, sut_dirs=EXAMPLE
+        ["-R", "-l", "pyrepl", "host", "test1-py", "login"], xdir=xdir, roots=EXAMPLE
     ) as sess:
         sess.expect(b"Press Ctrl+] to disconnect", timeout=60)
         sess.drain(1.0)

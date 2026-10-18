@@ -84,14 +84,14 @@ def _write_lab(tmp_path: Path, hosts: list[dict]) -> JsonFileLabRepository:
 
 def test_summary_ids_match_constructed_host_ids(tmp_path):
     """Every summarized id is an id load_lab() produces, for every lab."""
-    repo = _write_lab(tmp_path, _HOSTS)
+    project = _write_lab(tmp_path, _HOSTS)
 
-    summaries = repo.list_host_summaries()
+    summaries = project.list_host_summaries()
     assert summaries, "positive control: the fixture must produce summaries"
 
     builtins = set(builtin_host_ids())
-    for lab in repo.list_labs():
-        constructed = set(repo.load_lab(lab).hosts) - builtins
+    for lab in project.list_labs():
+        constructed = set(project.load_lab(lab).hosts) - builtins
         summarized = {s.id for s in summaries if lab in s.labs}
         assert summarized == constructed, f"lab {lab!r} diverged"
 
@@ -105,20 +105,20 @@ def test_profile_defaulted_identity_fields_reach_the_summary(tmp_path, profile_d
         "labs": ["e"],
         "creds": _CREDS,
     }
-    repo = _write_lab(tmp_path, [host])
+    project = _write_lab(tmp_path, [host])
 
-    (summary,) = repo.list_host_summaries()
+    (summary,) = project.list_host_summaries()
     # Raw derivation would say "r" — the profile's board/slot are invisible there.
     assert summary.id == "r-cpu-0"
-    assert summary.id in repo.load_lab("e").hosts
+    assert summary.id in project.load_lab("e").hosts
     # docker_capable likewise comes from the merged spec, not the raw dict.
     assert summary.docker_capable is True
 
 
 def test_multi_lab_host_merges_into_one_summary(tmp_path):
     """A host listed in two labs is one summary carrying both lab names."""
-    repo = _write_lab(tmp_path, _HOSTS)
-    shared = [s for s in repo.list_host_summaries() if s.id == "shared"]
+    project = _write_lab(tmp_path, _HOSTS)
+    shared = [s for s in project.list_host_summaries() if s.id == "shared"]
     assert len(shared) == 1
     assert sorted(shared[0].labs) == ["e", "w"]
 
@@ -138,7 +138,7 @@ def test_two_records_deriving_one_id_keep_the_first_with_its_whole_membership(tm
     membership: both records are the one element's, so the kept summary
     already carries every lab either of them could contribute.
     """
-    repo = _write_lab(
+    project = _write_lab(
         tmp_path,
         [
             {
@@ -158,7 +158,7 @@ def test_two_records_deriving_one_id_keep_the_first_with_its_whole_membership(tm
         ],
     )
 
-    (summary,) = repo.list_host_summaries()
+    (summary,) = project.list_host_summaries()
     assert summary.id == "dup-seed", "both boards slug to 'seed'"
     assert summary.ip == "10.0.0.1", "first record wins"
     assert sorted(summary.labs) == ["e", "w"], "keeping the first keeps the whole membership"
@@ -214,12 +214,12 @@ def test_two_elements_composing_one_id_record_a_drop_naming_both(
     """
     from otto.labs.drops import collecting_drops
 
-    repo = _two_file_repo(tmp_path, {**first, "labs": ["e"]}, {**second, "labs": ["w"]})
-    assert "x-cpu-1" in repo.load_lab("e").hosts
-    assert "x-cpu-1" in repo.load_lab("w").hosts
+    repository = _two_file_repo(tmp_path, {**first, "labs": ["e"]}, {**second, "labs": ["w"]})
+    assert "x-cpu-1" in repository.load_lab("e").hosts
+    assert "x-cpu-1" in repository.load_lab("w").hosts
 
     with collecting_drops() as drops:
-        (summary,) = repo.list_host_summaries()
+        (summary,) = repository.list_host_summaries()
 
     assert (summary.id, summary.ip, summary.labs) == ("x-cpu-1", first["ip"], ["e"])
     (drop,) = drops
@@ -239,14 +239,14 @@ def test_two_elements_at_one_address_are_one_machine_in_both_labs(tmp_path):
     """
     from otto.labs.drops import collecting_drops
 
-    repo = _two_file_repo(
+    repository = _two_file_repo(
         tmp_path,
         {"ip": "10.0.0.1", "element": "a-b", "labs": ["e"], "creds": _CREDS},
         {"ip": "10.0.0.1", "element": "a", "board": "b", "labs": ["w"], "creds": _CREDS},
     )
 
     with collecting_drops() as drops:
-        (summary,) = repo.list_host_summaries()
+        (summary,) = repository.list_host_summaries()
 
     assert (summary.id, summary.ip, summary.labs) == ("a-b", "10.0.0.1", ["e", "w"])
     assert summary.lab_patterns == ["e", "w"]
@@ -265,7 +265,7 @@ def test_a_same_lab_kebab_pair_at_one_address_folds_in_completion_but_is_refused
     """
     from otto.labs.errors import LabRepositoryError
 
-    repo = _write_lab(
+    project = _write_lab(
         tmp_path,
         [
             {"ip": "10.0.0.1", "element": "a-b", "labs": ["e"], "creds": _CREDS},
@@ -273,10 +273,10 @@ def test_a_same_lab_kebab_pair_at_one_address_folds_in_completion_but_is_refused
         ],
     )
 
-    assert [s.id for s in repo.list_host_summaries()] == ["a-b"]
+    assert [s.id for s in project.list_host_summaries()] == ["a-b"]
 
     with pytest.raises(LabRepositoryError) as excinfo:
-        repo.load_lab("e")
+        project.load_lab("e")
     message = str(excinfo.value)
     assert "element 'a' hosts[0]: host id 'a-b' in lab 'e':" in message
     assert message.count("in lab 'e'") == 1
@@ -301,10 +301,10 @@ def test_a_restated_host_with_the_same_address_folds_without_a_drop(tmp_path):
         "labs": ["e", "w"],
         "creds": _CREDS,
     }
-    repo = _write_lab(tmp_path, [host, dict(host)])
+    project = _write_lab(tmp_path, [host, dict(host)])
 
     with collecting_drops() as drops:
-        (summary,) = repo.list_host_summaries()
+        (summary,) = project.list_host_summaries()
 
     assert (summary.id, summary.ip, sorted(summary.labs)) == ("dup-seed", "10.0.0.1", ["e", "w"])
     assert drops == []
@@ -313,11 +313,11 @@ def test_a_restated_host_with_the_same_address_folds_without_a_drop(tmp_path):
 def test_ip_comes_from_the_validated_spec_not_the_raw_dict(tmp_path, profile_defaulting_ip):
     """A profile-supplied ip must reach the summary, like every other field."""
     host = {"element": "profiled", "os_type": profile_defaulting_ip, "labs": ["e"], "creds": _CREDS}
-    repo = _write_lab(tmp_path, [host])
+    project = _write_lab(tmp_path, [host])
 
-    (summary,) = repo.list_host_summaries()
+    (summary,) = project.list_host_summaries()
     assert summary.ip == "10.7.7.7"
-    assert summary.ip == repo.load_lab("e").hosts["profiled"].ip
+    assert summary.ip == project.load_lab("e").hosts["profiled"].ip
 
 
 def test_malformed_entries_are_skipped_not_raised(tmp_path):
@@ -328,14 +328,14 @@ def test_malformed_entries_are_skipped_not_raised(tmp_path):
     its whole file out of the enumeration — see
     ``test_json_repository.py`` for that layer.
     """
-    repo = _write_lab(
+    project = _write_lab(
         tmp_path,
         [
             _HOSTS[0],
             {"element": "bad", "slot": "not-an-int", "labs": ["e"], "creds": _CREDS},
         ],
     )
-    ids = [s.id for s in repo.list_host_summaries()]
+    ids = [s.id for s in project.list_host_summaries()]
     assert ids == ["router"]
 
 
@@ -355,8 +355,10 @@ def test_an_element_the_runtime_refuses_is_dropped_and_said_not_raised(tmp_path,
         {"ip": "10.0.0.1", "element": "bad", "labs": ["e"], "creds": _CREDS},
         {"ip": "10.0.0.2", "element": "good", "labs": ["e"], "creds": _CREDS},
     ]
-    repo = _write_lab(tmp_path, hosts)
-    assert sorted(s.id for s in repo.list_host_summaries()) == ["bad", "good"], "positive control"
+    project = _write_lab(tmp_path, hosts)
+    assert sorted(s.id for s in project.list_host_summaries()) == ["bad", "good"], (
+        "positive control"
+    )
 
     original = ElementSpec.to_element
 
@@ -368,7 +370,7 @@ def test_an_element_the_runtime_refuses_is_dropped_and_said_not_raised(tmp_path,
     monkeypatch.setattr(ElementSpec, "to_element", _refuse_bad)
 
     with collecting_drops() as drops:
-        ids = [s.id for s in repo.list_host_summaries()]
+        ids = [s.id for s in project.list_host_summaries()]
 
     assert ids == ["good"]
     (drop,) = drops

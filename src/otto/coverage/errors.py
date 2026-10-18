@@ -81,8 +81,9 @@ class CoverageInputError(FieldError, ValueError):
     """A coverage verb's input is unusable; nothing was touched.
 
     ``field`` is the parameter at fault: ``tier``, ``ticket`` or
-    ``output_dir`` (:func:`~otto.coverage.get.get_coverage`), ``cov_dirs`` or
-    ``tier_specs`` (:func:`~otto.coverage.reporter.run_coverage_report`).
+    ``output_dir`` (:func:`~otto.coverage.get.get_coverage`), ``cov_dirs``
+    (stale coverage metadata too) or ``tier_specs``
+    (:func:`~otto.coverage.reporter.run_coverage_report`).
     """
 
 

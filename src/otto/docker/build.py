@@ -11,7 +11,7 @@ import shlex
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
-from ..config.repo import Repo
+from ..config.project import Project
 from ..config.scope import DockerImage
 from ..host.host import Host, is_dry_run
 from ..result import CommandNotRunError, CommandResult
@@ -178,16 +178,16 @@ async def _build_one(
 
 
 async def build_images(
-    repo: Repo,
+    project: Project,
     parent: Host,
     *,
     image_names: Iterable[str] | None = None,
     options: BuildOptions | None = None,
 ) -> dict[str, ImageBuild]:
-    """Build all (or selected) images for *repo* on *parent*.
+    """Build all (or selected) images for *project* on *parent*.
 
     Args:
-        repo: The :class:`~otto.config.repo.Repo` whose ``[docker]`` settings
+        project: The :class:`~otto.config.project.Project` whose ``[docker]`` settings
             declare the images.
         parent: A docker-capable lab host. Builds happen here.
         image_names: Optional filter — only build images whose ``name`` is
@@ -205,7 +205,7 @@ async def build_images(
             image was selected. A dry run builds nothing, so there is no
             ``docker build`` result to return -- see the arm below.
     """
-    settings = repo.docker_settings
+    settings = project.docker_settings
     if not settings.images:
         return {}
 
@@ -216,7 +216,7 @@ async def build_images(
     )
 
     # Below the pure filtering, above every device touch. An empty selection
-    # still answers {} because "this repo declares no such image" is settled
+    # still answers {} because "this project declares no such image" is settled
     # from configuration and is equally true in a dry run; a NON-empty one has
     # no honest answer at all. Every value in the dict is the result of a
     # `docker build` that ran on the parent, and under a dry run none did --
@@ -226,12 +226,14 @@ async def build_images(
     # which is the wrong story told at the wrong altitude.
     if selected and is_dry_run():
         raise CommandNotRunError(
-            f"build_images({repo.name}: {', '.join(img.name for img in selected)})",
+            f"build_images({project.name}: {', '.join(img.name for img in selected)})",
             parent.id,
             "No context was staged and no image was built.",
         )
 
     results: dict[str, ImageBuild] = {}
     for image in selected:
-        results[image.name] = await _build_one(parent, repo.name, image, options or BuildOptions())
+        results[image.name] = await _build_one(
+            parent, project.name, image, options or BuildOptions()
+        )
     return results

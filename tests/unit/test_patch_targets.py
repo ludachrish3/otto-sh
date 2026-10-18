@@ -37,7 +37,7 @@ hand. Objects without a ``__module__`` (a constant, a registry instance) are
 out of its reach. A test whose consumer still reads the name through the
 re-export, and so must patch it there, is excluded, each exclusion naming the
 landing that retires it; an exclusion that matches nothing fails. There is
-one: ``session/logs.py`` reads ``get_repos`` through ``otto.bootstrap``, so its
+one: ``session/logs.py`` reads ``get_projects`` through ``otto.bootstrap``, so its
 test patches it there until that module reads it from ``otto.declared``.
 """
 
@@ -212,11 +212,11 @@ class TestTheScannerSeesEveryForm:
     def test_the_defining_module_and_unrelated_targets_pass(self):
         source = (
             "import otto.config as config\n"
-            'monkeypatch.setattr("otto.declared.get_repos", f)\n'
+            'monkeypatch.setattr("otto.declared.get_projects", f)\n'
             'monkeypatch.setattr("otto.config.load_otto_env", f)\n'
             'monkeypatch.setattr(config, "load_otto_env", f)\n'
             'patch("otto.logger.management._ConsoleHandler")\n'
-            'monkeypatch.setattr(thing, "get_repos", f)\n'
+            'monkeypatch.setattr(thing, "get_projects", f)\n'
         )
         assert self.scan(source) == []
 
@@ -262,7 +262,7 @@ def eager_reexports(module: str) -> dict[str, str]:
     """``name -> owner.name`` for each name *module* exports that another otto module defines.
 
     Only the names in *module*'s ``__all__`` count: a helper the module imports
-    for its own use (``otto.bootstrap``'s ``registering_repo``) is read through
+    for its own use (``otto.bootstrap``'s ``registering_project``) is read through
     that binding, so patching it there is right.
     """
     namespace = vars(importlib.import_module(module))
@@ -361,17 +361,17 @@ def test_the_bootstrap_error_types_are_re_exported_from_their_owner():
     found = eager_reexports("otto.bootstrap")
     for name in ["BootstrapError", "BootstrapWarning", "DependencyError", "ProjectScopeError"]:
         assert found.get(name) == f"otto.config.scope.{name}", (name, found.get(name))
-    for name in ["BootstrapResult", "get_repos", "get_ordered_repos", "is_bootstrapped"]:
+    for name in ["BootstrapResult", "get_projects", "get_ordered_projects", "is_bootstrapped"]:
         assert found.get(name) == f"otto.declared.{name}", (name, found.get(name))
     assert "bootstrap" not in found, "otto.bootstrap's own function counted as a re-export"
-    assert "registering_repo" not in found, "a helper otto.bootstrap uses counted as a re-export"
+    assert "registering_project" not in found, "a helper otto.bootstrap uses counted as a re-export"
 
 
 _FIXED_REEXPORTS = {
     "otto.bootstrap": {
         "BootstrapError": "otto.config.scope.BootstrapError",
         "ProjectScopeError": "otto.config.scope.ProjectScopeError",
-        "get_repos": "otto.declared.get_repos",
+        "get_projects": "otto.declared.get_projects",
     }
 }
 """The self-tests' re-export table: fixed, so they do not depend on the tree's."""
@@ -411,19 +411,19 @@ class TestTheEagerScanSeesEveryForm:
     def test_a_moved_accessor_patched_at_the_root(self):
         source = (
             "from otto import bootstrap as bs\n"
-            'monkeypatch.setattr("otto.bootstrap.get_repos", f)\n'
-            'monkeypatch.setattr(bs, "get_repos", f)\n'
+            'monkeypatch.setattr("otto.bootstrap.get_projects", f)\n'
+            'monkeypatch.setattr(bs, "get_projects", f)\n'
         )
         assert self.scan(source) == [
-            "t.py:2 otto.bootstrap.get_repos -> patch otto.declared.get_repos",
-            "t.py:3 otto.bootstrap.get_repos -> patch otto.declared.get_repos",
+            "t.py:2 otto.bootstrap.get_projects -> patch otto.declared.get_projects",
+            "t.py:3 otto.bootstrap.get_projects -> patch otto.declared.get_projects",
         ]
 
     def test_the_owner_and_the_root_s_own_names_pass(self):
         source = (
             "from otto import bootstrap as bs\n"
             'monkeypatch.setattr("otto.config.scope.BootstrapError", f)\n'
-            'monkeypatch.setattr("otto.declared.get_repos", f)\n'
+            'monkeypatch.setattr("otto.declared.get_projects", f)\n'
             'monkeypatch.setattr("otto.bootstrap.bootstrap", f)\n'
             'monkeypatch.setattr(bs, "bootstrap", f)\n'
             'monkeypatch.setattr(thing, "BootstrapError", f)\n'

@@ -55,7 +55,7 @@ def addressing_from_dict(
     through the ``os_profile`` / ``command_frame`` registries and validates.
     A record naming a profile or frame the current process never registered
     RAISES, and callers enumerating whole files must skip such records rather
-    than let one deny the rest. *profiles* is the repo data the ``os_type``
+    than let one deny the rest. *profiles* is the project data the ``os_type``
     resolves through, as in :func:`~otto.host.factory.host_identity`.
     """
     host_id = host_identity(host_data, element, profiles=profiles).id

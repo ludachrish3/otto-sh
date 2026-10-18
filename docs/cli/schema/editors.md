@@ -6,14 +6,14 @@ inventory file — so your editor offers field autocomplete and flags typos.
 `otto schema export` produces them from the otto you have installed, so they
 match your version; there is nothing to download.
 
-New repos get all of this automatically: `otto init` exports the schemas to
+New projects get all of this automatically: `otto init` exports the schemas to
 `.otto/schemas/`, stamps the scaffolded `settings.toml` (`#:schema` directive)
 and `lab.json` (`$schema` key) so single files self-wire, writes
 `.vscode/otto.code-snippets` ([Snippets](#snippets) below), and writes
 `.vscode/settings.json` + `.vscode/extensions.json` when they don't already
 exist (an existing file is never modified — add the associations below by
 hand). The `otto init` doctor also flags stale schemas after an upgrade. The
-manual steps below are for existing repos or other editors — generate the
+manual steps below are for existing projects or other editors — generate the
 files first with {doc}`export`.
 
 ## VS Code
@@ -34,7 +34,7 @@ file are covered by the built-in JSON language server. Add to your workspace
 ```
 
 The inventory association covers a file kept inside the workspace. An
-inventory shared across projects usually lives outside every repo (see
+inventory shared across projects usually lives outside every project root (see
 {doc}`../../configuration/inventory`), so add the same entry to whatever
 workspace you edit it in.
 
@@ -65,7 +65,7 @@ any `.vscode/*.code-snippets` file, so there is nothing to wire up.
 | `otto-embedded-host` | The same for an embedded host |
 | `otto-cred` | One `creds` entry |
 
-A repo that registers its own host classes gets a snippet per registered type,
+A project that registers its own host classes gets a snippet per registered type,
 named the same way — the set follows the live registry, exactly as the schema
 export does.
 
@@ -103,7 +103,7 @@ honours schema directives. Either add a directive at the top of the file:
 #:schema ./schemas/settings.schema.json
 ```
 
-This path is relative to `.otto/settings.toml` itself, not the repo root — so
+This path is relative to `.otto/settings.toml` itself, not the project root — so
 `./schemas/` here means `.otto/schemas/`. (`otto init` stamps this line for
 you.)
 

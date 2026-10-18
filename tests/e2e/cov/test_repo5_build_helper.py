@@ -334,9 +334,9 @@ def test_the_overlay_names_only_lcov_arguments_in_every_host_entry(clang_overlay
 
 def test_the_overlay_repo_points_a_lab_source_at_that_lab_file(tmp_path):
     tc = helper.Toolchain("clang", {"LLVM": "1"}, lcov_args=list(helper.CLANG_LCOV_ARGS))
-    repo = helper.overlay_repo(tc, tmp_path)
-    assert repo is not None
-    settings = (repo / ".otto" / "settings.toml").read_text()
+    project = helper.overlay_repo(tc, tmp_path)
+    assert project is not None
+    settings = (project / ".otto" / "settings.toml").read_text()
     assert 'backend = "json"' in settings
     lab = helper.overlay_lab(tc, tmp_path)
     assert lab is not None

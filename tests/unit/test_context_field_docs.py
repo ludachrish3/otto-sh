@@ -23,8 +23,8 @@ from otto.context import OttoContext
 FIELDS = {
     "policy": "The run's policy, read live by every host",
     "cov_decision": "Whether coverage is on for this run, once decided",
-    "include_projects": "Repo names forced ACTIVE this invocation",
-    "exclude_projects": "Repo names forced INACTIVE this invocation",
+    "include_projects": "Project names forced ACTIVE this invocation",
+    "exclude_projects": "Project names forced INACTIVE this invocation",
     "verb": "The verb this invocation dispatched",
 }
 

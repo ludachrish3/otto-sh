@@ -20,7 +20,7 @@ note: >
   (`const meta = getByTestId("page-meta").textContent ?? ""`), and a
   receiver-shaped pattern is a gate that permanently cannot fire over the
   variable-bound form. An anchored constraint makes the width safe: a string that is
-  ENTIRELY 1-2 digits has no legitimate toContain use this repo has found —
+  ENTIRELY 1-2 digits has no legitimate toContain use this codebase has found —
   fractions ("8/10"), labelled counts ("2 stale"), and 3+ digit values
   ("118 credits revoked") all fall outside the constraint.
 

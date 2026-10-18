@@ -42,7 +42,7 @@ def _hash_path(path: Path) -> str:
 
 
 def _repo(tmp_path: Path):
-    from otto.config.repo import Repo
+    from otto.config.project import Project
 
     root = make_sut_repo(
         tmp_path / "sut",
@@ -70,7 +70,7 @@ def _repo(tmp_path: Path):
         [{"ip": "3.3.3.3", "element": "h3", "labs": ["e"], "creds": _CREDS}],
         declare_labs=False,
     )
-    return Repo(sut_dir=root)
+    return Project(root=root)
 
 
 def test_walkers_report_visited_directories(tmp_path):
@@ -78,16 +78,16 @@ def test_walkers_report_visited_directories(tmp_path):
     parent, glob root, and glob-match parent — four distinct directories,
     four distinct code paths, none of them redundant with another.
     """
-    repo = _repo(tmp_path)
-    names = set(writer_key_paths(section_by_name("names"), [repo]))
+    project = _repo(tmp_path)
+    names = set(writer_key_paths(section_by_name("names"), [project]))
     assert {
-        repo.sut_dir / "lab",  # bare directory entry
-        repo.sut_dir / "solo",  # `.json` entry's parent
-        repo.sut_dir / "extra",  # glob's non-glob root
-        repo.sut_dir / "extra" / "nested",  # a glob match's parent
+        project.root / "lab",  # bare directory entry
+        project.root / "solo",  # `.json` entry's parent
+        project.root / "extra",  # glob's non-glob root
+        project.root / "extra" / "nested",  # a glob match's parent
     } <= names
     # No test file keys `names`, so no tests directory does either.
-    assert repo.sut_dir / "tests" not in names
+    assert project.root / "tests" not in names
 
 
 def test_a_new_lab_file_in_a_globbed_directory_moves_the_names_digest(tmp_path):
@@ -98,20 +98,20 @@ def test_a_new_lab_file_in_a_globbed_directory_moves_the_names_digest(tmp_path):
     change: `extra/nested` was untouched, and every other key path is
     unrelated to this write.
     """
-    repo = _repo(tmp_path)
+    project = _repo(tmp_path)
     # Backdate `extra`'s mtime 2s: Linux stamps directory mtimes off a coarse
     # clock, so the fixture's `mkdir` (of `extra/nested`) and this write below
     # can land in the same tick, leaving the mtime unchanged despite the entry
     # having changed — backdating guarantees the write must move it.
     t = time.time_ns() - 2_000_000_000
-    os.utime(repo.sut_dir / "extra", ns=(t, t))
-    keys = sorted(set(writer_key_paths(section_by_name("names"), [repo])))
+    os.utime(project.root / "extra", ns=(t, t))
+    keys = sorted(set(writer_key_paths(section_by_name("names"), [project])))
     before = [_hash_path(p) for p in keys]
-    write_lab_json(repo.sut_dir / "extra" / "more.json", [], declare_labs=False)
+    write_lab_json(project.root / "extra" / "more.json", [], declare_labs=False)
     after = [_hash_path(p) for p in keys]
     assert after != before
     changed = [key for key, b, a in zip(keys, before, after, strict=True) if b != a]
-    assert changed == [repo.sut_dir / "extra"]
+    assert changed == [project.root / "extra"]
 
 
 def test_a_new_nested_test_file_moves_no_digest(tmp_path):
@@ -119,7 +119,7 @@ def test_a_new_nested_test_file_moves_no_digest(tmp_path):
     directory — so a new one moves nothing: test names live in the per-file
     tables, which see it through its directory's stat.
     """
-    repo = _repo(tmp_path)
-    names_before = section_digest(section_by_name("names"), [repo])
-    (repo.sut_dir / "tests" / "sub" / "test_new.py").write_text("def test_c():\n    pass\n")
-    assert section_digest(section_by_name("names"), [repo]) == names_before
+    project = _repo(tmp_path)
+    names_before = section_digest(section_by_name("names"), [project])
+    (project.root / "tests" / "sub" / "test_new.py").write_text("def test_c():\n    pass\n")
+    assert section_digest(section_by_name("names"), [project]) == names_before

@@ -50,7 +50,7 @@ FIRST_ALL = {
     "otto.examples.lab_repository": ["ExampleLabRepository"],
     "otto.examples.login_proxy": ["enter_container"],
     "otto.examples.monitor": ["UptimeParser"],
-    "otto.examples.options": ["DeviceTestOptions", "RepoOptions"],
+    "otto.examples.options": ["DeviceTestOptions", "ProjectOptions"],
     "otto.examples.reservations": [
         "ExampleReservationBackend",
         "ExampleReservationConfig",
@@ -135,7 +135,7 @@ FIRST_ALL = {
         "register_options",
         "verbs_for",
     ],
-    "otto.registry": ["Ref", "RegistrationRefused", "Registry", "registering_repo"],
+    "otto.registry": ["Ref", "RegistrationRefused", "Registry", "registering_project"],
     "otto.result": [
         "CommandNotRunError",
         "CommandResult",

@@ -1,6 +1,6 @@
 """Public API for otto tests: ``run_tests`` and the ``OttoFixturesPlugin`` pytest plugin.
 
-``run_tests`` runs tests by name and/or marker across every repo, taking a
+``run_tests`` runs tests by name and/or marker across every project, taking a
 ``RunOptions`` record and returning a ``SuiteRunResult``; a selection that
 matches nothing raises ``NoTestsMatchedError``, or ``UnknownSelectionError``
 for a name no collected test matches.

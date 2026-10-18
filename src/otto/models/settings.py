@@ -1,4 +1,4 @@
-"""Pydantic boundary specs for ``.otto/settings.toml`` and the ``OTTO_*`` env.
+"""Pydantic boundary specs for ``.otto/settings.toml`` and the ``OTTO_*`` and ``OTTOPATH`` env.
 
 These validate the settings dict (``extra='forbid'``) and build the **unchanged**
 runtime objects (``DockerSettings``/``DockerImage``/``DockerCompose`` frozen
@@ -52,7 +52,13 @@ from ..host.option_specs import (
     UserlandOptionsSpec,
 )
 from ..logger.levels import LEVEL_NAMES
-from ..utils import anchor_path, parse_cache_ttl, split_path_list
+from ..utils import (
+    anchor_path,
+    collapse_path_list,
+    kept_path_spelling,
+    ottopath_entries,
+    parse_cache_ttl,
+)
 from .base import OttoModel
 from .color import validate_color
 from .dependencies import clauses_satisfiable, normalize_name, parse_dependency_entry
@@ -67,29 +73,29 @@ if TYPE_CHECKING:
     )
 
 
-def anchor_to_repo(v: Path, info: ValidationInfo) -> Path:
-    """Expand ``~``, then anchor a still-relative path to the repo root.
+def anchor_to_project_root(v: Path, info: ValidationInfo) -> Path:
+    """Expand ``~``, then anchor a still-relative path to the project root.
 
     ``settings.toml`` is committed and shared team-wide, so a CWD-relative
     value in it can never resolve stably. Absolute paths (including
     ``~``-rooted ones, already expanded here) pass through untouched.
 
-    The repo root arrives via pydantic's validation context, which
-    ``Repo.parse_settings`` supplies as ``{"sut_dir": ...}``. With no
+    The project root arrives via pydantic's validation context, which
+    ``Project.parse_settings`` supplies as ``{"root": ...}``. With no
     context the path is expanded but left relative so ``SettingsModel`` stays
     independently validatable.
 
     Deliberately does not ``resolve()``: that would collapse symlinks and
-    change path identity for repos reached through symlinked checkouts.
+    change path identity for projects reached through symlinked checkouts.
     """
-    sut_dir = (info.context or {}).get("sut_dir")
-    if sut_dir is None:
+    root = (info.context or {}).get("root")
+    if root is None:
         return v.expanduser()
-    return anchor_path(v, Path(sut_dir))
+    return anchor_path(v, Path(root))
 
 
-RepoPath = Annotated[Path, AfterValidator(anchor_to_repo)]
-"""A ``settings.toml`` path, ``~``-expanded and then anchored to the repo root."""
+ProjectPath = Annotated[Path, AfterValidator(anchor_to_project_root)]
+"""A ``settings.toml`` path, ``~``-expanded and then anchored to the project root."""
 
 
 class DockerImageSpec(OttoModel):
@@ -102,15 +108,15 @@ class DockerImageSpec(OttoModel):
     """
 
     name: str
-    dockerfile: RepoPath
-    context: RepoPath
+    dockerfile: ProjectPath
+    context: ProjectPath
     target: str | None = None
     # dict[str, Any] (not dict[str, str]) for parity with the old TOML parser:
     # a build arg written as a bare scalar (``PORT = 8080``) stays accepted and
     # is stringified below, rather than rejected at validation.
     build_args: dict[str, Any] = Field(default_factory=dict)
 
-    # The Dockerfile string as written, kept before ``RepoPath`` anchors it: for
+    # The Dockerfile string as written, kept before ``ProjectPath`` anchors it: for
     # an archive context it is a path INSIDE the archive. A private attribute,
     # not a field, so the exported settings schema does not change.
     _dockerfile_as_written: str = PrivateAttr(default="")
@@ -166,7 +172,7 @@ class DockerComposeSpec(OttoModel):
     """
 
     name: str | None = None
-    path: RepoPath
+    path: ProjectPath
     services: tuple[str, ...] = ()
     users: dict[str, str] = Field(default_factory=dict)
 
@@ -208,7 +214,7 @@ class DockerUseCaseSpec(OttoModel):
     """Boundary spec for a ``[[docker.use_cases]]`` fragment (spec §3.1).
 
     A fragment is the atomic unit of participation. Same-named fragments
-    across repos form one use-case; ``provides``/``priority`` enter the
+    across projects form one use-case; ``provides``/``priority`` enter the
     provider competition (spec §4). ``env`` accepts scalar TOML values and
     stringifies them, like ``build_args``. The removed ``role`` and
     ``placement`` keys are refused by name: a use-case deploys on one parent.
@@ -318,15 +324,15 @@ class MonitorSettingsSpec(OttoModel):
     """Boundary spec for the ``[monitor]`` section of ``settings.toml``.
 
     TLS for the dashboard server. Paths follow the settings-wide convention
-    (``RepoPath``): ``~``-expanded, then anchored to the repo root if still
+    (``ProjectPath``): ``~``-expanded, then anchored to the project root if still
     relative. The committed value is shared by the whole team, so it
     conventionally points under ``~/.otto/tls/`` — identical text,
     per-user resolution. ``tls_key`` without ``tls_cert`` is rejected;
     ``tls_cert`` alone is fine (bundled PEM).
     """
 
-    tls_cert: RepoPath | None = None
-    tls_key: RepoPath | None = None
+    tls_cert: ProjectPath | None = None
+    tls_key: ProjectPath | None = None
 
     @model_validator(mode="after")
     def _key_requires_cert(self) -> "MonitorSettingsSpec":
@@ -464,15 +470,15 @@ class LoggingConfigSpec(OttoModel):
     @classmethod
     def _reject_removed_capture(cls, data: Any, info: ValidationInfo) -> Any:
         if isinstance(data, dict) and "capture" in data:
-            sut_dir = (info.context or {}).get("sut_dir")
+            root = (info.context or {}).get("root")
             where = ""
-            if sut_dir is not None:
+            if root is not None:
                 # Lazy, and only on this error path: this module must not import
                 # otto.config at module scope (module docstring; ast-grep rule
                 # models-no-module-scope-config-import).
                 from ..config.scope import TOML_SETTINGS_PATH
 
-                where = f"{Path(sut_dir) / TOML_SETTINGS_PATH}: "
+                where = f"{Path(root) / TOML_SETTINGS_PATH}: "
             raise ValueError(
                 f"{where}[logging] `capture` was removed: capture is automatic "
                 "(otto logs through the root logger — every library's records "
@@ -505,7 +511,7 @@ class LabSourceSpec(OttoModel):
     custom backend's connection settings). Settings parse keeps them as
     written (:func:`otto.labs.sources.compile_lab_sources`); the backend's
     registered config model parses them when otto prepares the source, after
-    every repo's init modules have run.
+    every project's init modules have run.
     """
 
     model_config = ConfigDict(extra="allow")
@@ -669,10 +675,10 @@ class CoverageTierSpec(OttoModel):
 def _compilable_pattern(v: str) -> str:
     """Compile *v* here, at parse, so an unusable regex is a settings error.
 
-    Same reason ``config.repo`` compiles lab-source regexes at parse: the
+    Same reason ``config.project`` compiles lab-source regexes at parse: the
     alternative is a coverage run that dies (or silently matches nothing)
     long after the config was accepted. ``load_exclusion_rules`` compiles
-    again for its own use — the duplication is inherent to this repo's
+    again for its own use — the duplication is inherent to otto's
     validate-then-re-read-raw split, which already duplicates the
     exactly-one-matcher rule.
     """
@@ -830,7 +836,7 @@ class CoverageSettingsSpec(OttoModel):
 
 
 class EnvSettingsSpec(OttoModel):
-    """``[env]`` — this repo's standing preference for the orchestration venv.
+    """``[env]`` — this project's standing preference for the orchestration venv.
 
     One key today. It is a PREFERENCE, not a requirement: ``--backend`` on the
     command line outranks it, because the operator in front of the terminal
@@ -842,11 +848,11 @@ class EnvSettingsSpec(OttoModel):
 
 
 class DependenciesSpec(OttoModel):
-    """``[dependencies]`` — inter-project dependencies on other ``OTTO_SUT_DIRS`` repos.
+    """``[dependencies]`` — inter-project dependencies on other ``OTTOPATH`` projects.
 
     Entries are ``"name"`` or ``"name <op> N[.N[.N]], ..."``; names match other
-    repos' ``name`` fields PEP-503-normalized. Parsed here only to validate —
-    the resolution pass re-parses via ``Repo.declared_dependencies``.
+    projects' ``name`` fields PEP-503-normalized. Parsed here only to validate —
+    the resolution pass re-parses via ``Project.declared_dependencies``.
     """
 
     required: list[str] = Field(default_factory=list)
@@ -866,9 +872,9 @@ class DependenciesSpec(OttoModel):
 
 
 class ProjectScopeSpec(OttoModel):
-    """``[project]`` — the labs and hosts this repo is about (its "fleet of interest").
+    """``[project]`` — the labs and hosts this project is about (its "fleet of interest").
 
-    A repo declares its reach as regexes rather than names so a lab family
+    A project declares its reach as regexes rather than names so a lab family
     (``tech-1``, ``tech-2``, …) is one line that keeps working as the lab set
     grows.  Both axes are matched with ``re.fullmatch`` at runtime, never
     ``re.search``: ``"bench"`` does not admit ``"bench-overflow"``.  Write
@@ -876,7 +882,7 @@ class ProjectScopeSpec(OttoModel):
     default that quietly widens a project's fleet.
 
     ``lab_patterns`` is optional in the schema and required in practice for any
-    repo that registers product or dev-tool providers; that check runs at
+    project that registers product or dev-tool providers; that check runs at
     bootstrap phase 2, after init imports have registered them, so it can name
     what registered.  Leaving it unset does NOT mean "every lab" — it compiles
     to no patterns at all (see
@@ -885,7 +891,7 @@ class ProjectScopeSpec(OttoModel):
     Patterns are compiled here, at settings parse, so an unclosed group fails
     the parse instead of silently fullmatching nothing on every later fleet
     walk.  The message names the pattern and the ``re`` complaint but not the
-    repo — the repo is the caller's frame to add.
+    project — the project is the caller's frame to add.
     """
 
     lab_patterns: list[str] | None = None
@@ -901,7 +907,7 @@ class ProjectScopeSpec(OttoModel):
 
         One ``try`` around the whole loop (not one per entry): ``re.error``
         carries the offending ``pattern`` itself, so the message loses nothing.
-        Pydantic supplies the field name — the caller supplies the repo.
+        Pydantic supplies the field name — the caller supplies the project.
         """
         try:
             for pattern in v or []:
@@ -923,7 +929,7 @@ class DeclaredEntrySpec(OttoModel):
     validated here, at parse, because a match table is static (the
     :class:`ProjectScopeSpec` compile-at-parse rule). Builds a
     :class:`~otto.declared.DeclaredEntry` via :meth:`to_runtime`; the caller
-    supplies what the TOML cannot know — the declaring repo, its root, and
+    supplies what the TOML cannot know — the declaring project, its root, and
     which array the entry came from.
     """
 
@@ -972,7 +978,7 @@ class DeclaredEntrySpec(OttoModel):
 
 
 class SettingsModel(OttoModel):
-    """Boundary model for a repo's ``.otto/settings.toml``.
+    """Boundary model for a project's ``.otto/settings.toml``.
 
     ``extra='forbid'`` turns a typo'd top-level key into an error.
     """
@@ -984,8 +990,8 @@ class SettingsModel(OttoModel):
     coverage: CoverageSettingsSpec = CoverageSettingsSpec()
 
     # paths + module/name lists
-    libs: list[RepoPath] = Field(default_factory=list)
-    tests: list[RepoPath] = Field(default_factory=list)
+    libs: list[ProjectPath] = Field(default_factory=list)
+    tests: list[ProjectPath] = Field(default_factory=list)
     init: list[str] = Field(default_factory=list)
 
     # structured sub-tables
@@ -1003,7 +1009,7 @@ class SettingsModel(OttoModel):
     """Per-project inventory override (spec 2026-08-28 host-inventory §8).
 
     ``~/.otto/settings.toml`` is the usual home — an inventory is a per-user
-    fact; this key exists for the fractured phase where one repo needs its own.
+    fact; this key exists for the fractured phase where one project needs its own.
     """
     creds: CredsConfigSpec | None = None
     """Per-project creds-store override (spec 2026-09-06 creds-store §4.2). Same
@@ -1014,7 +1020,7 @@ class SettingsModel(OttoModel):
     project: ProjectScopeSpec | None = None
     products: list[DeclaredEntrySpec] = Field(default_factory=list)
     """``[[products]]`` — settings-declared products (spec 2026-09-01
-    declared-products-tools §2); converted per-repo by ``Repo.parse_settings``."""
+    declared-products-tools §2); converted per-project by ``Project.parse_settings``."""
     dev_tools: list[DeclaredEntrySpec] = Field(default_factory=list)
     """``[[dev_tools]]`` — the identical schema feeding the dev-tool seam."""
 
@@ -1117,7 +1123,7 @@ class UserSettingsModel(OttoModel):
 
     Spec 2026-08-28 host-inventory §8. A general per-user file —
     ``[inventory]`` is its first table, not its purpose. ``extra='forbid'``
-    (inherited from :class:`~otto.models.base.OttoModel`) so a repo-only table
+    (inherited from :class:`~otto.models.base.OttoModel`) so a project-only table
     pasted here (``[lab]``, ``[reservations]``) errors naming the key instead
     of being silently ignored.
     """
@@ -1127,19 +1133,19 @@ class UserSettingsModel(OttoModel):
 
 
 # ---------------------------------------------------------------------------
-# OttoEnvSettings — typed view of the OTTO_* environment surface
+# OttoEnvSettings — typed view of the OTTO_* and OTTOPATH environment surface
 # ---------------------------------------------------------------------------
 
 
 class OttoEnvSettings(BaseSettings):
-    """Typed view of the ``OTTO_*`` environment surface; single source of truth for otto's env vars.
+    """Typed view of the ``OTTO_*`` and ``OTTOPATH`` environment; the one source of otto's env vars.
 
     The six CLI-option vars are read by Typer's ``envvar=`` at parse time; this model
-    documents the whole surface and is the reader for the non-CLI reads: sut_dirs,
-    compose_suffix, and the completion-cache xdir.
+    documents the whole surface and is the reader for the non-CLI reads:
+    ottopath (read from OTTOPATH), compose_suffix, and the completion-cache xdir.
 
-    sut_dirs existence-checking is done by ``config.env.load_otto_env`` so a
-    missing dir raises ``FileNotFoundError`` (not a wrapped ValidationError).
+    The existence check on ottopath's roots is done by ``config.env.load_otto_env``, so a
+    missing root raises ``FileNotFoundError`` (not a wrapped ValidationError).
     """
 
     # env_ignore_empty: an empty env var (e.g. ``OTTO_LOG_DAYS=``, a common
@@ -1148,10 +1154,10 @@ class OttoEnvSettings(BaseSettings):
     # (os.environ.get(...) falsiness / Typer's envvar handling).
     model_config = SettingsConfigDict(env_prefix="OTTO_", extra="ignore", env_ignore_empty=True)
 
-    # NoDecode: stop pydantic-settings from JSON-decoding the env string for this
-    # "complex" (list) field, so the raw OTTO_SUT_DIRS value reaches the
-    # ``_split_path_list`` validator below (``otto.utils.split_path_list``).
-    sut_dirs: Annotated[list[Path], NoDecode] = []
+    # NoDecode: stop pydantic-settings from JSON-decoding this list field, so the
+    # raw OTTOPATH value reaches the validator below.
+    # An aliased field takes no env_prefix: the variable is exactly OTTOPATH.
+    ottopath: Annotated[list[Path], NoDecode] = Field([], alias="OTTOPATH")
     lab: str | None = None
     xdir: Path | None = None
     home: Path | None = None
@@ -1164,9 +1170,16 @@ class OttoEnvSettings(BaseSettings):
     field_products: str | None = None
     compose_suffix: str | None = None
 
-    @field_validator("sut_dirs", mode="before")
+    @field_validator("ottopath", mode="before")
     @classmethod
-    def _split_path_list(cls, v: object) -> object:
+    def _split_ottopath(cls, v: object) -> object:
+        """Split OTTOPATH, keep each root's spelling, and collapse repeats.
+
+        Done here rather than in the loader, so every construction of these
+        settings (discovery, the workspace home, compose) sees one list.
+        """
         if isinstance(v, str):
-            return split_path_list(v)
+            return [Path(p) for p in ottopath_entries(v)]
+        if isinstance(v, list):
+            return [Path(p) for p in collapse_path_list([kept_path_spelling(str(p)) for p in v])]
         return v

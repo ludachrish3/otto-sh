@@ -9,14 +9,14 @@ from pathlib import Path
 
 import pytest
 
-from otto.config.repo import Repo
+from otto.config.project import Project
 from otto.config.scope import MonitorSettings
 from otto.monitor.errors import MonitorTlsError
 from otto.monitor.tls import resolve_monitor_tls
 from tests._fixtures.fake_repo import fake_repo
 
 
-def _repo(name: str, cert=None, key=None) -> Repo:
+def _repo(name: str, cert=None, key=None) -> Project:
     return fake_repo(name, monitor_settings=MonitorSettings(tls_cert=cert, tls_key=key))
 
 
@@ -77,9 +77,9 @@ def test_agreeing_repos_resolve_to_the_declaration(tmp_path):
 
 def test_disagreeing_repos_refuse_naming_both(tmp_path):
     c1, c2 = tmp_path / "1.pem", tmp_path / "2.pem"
-    with pytest.raises(MonitorTlsError, match=r"disagree across repos \(a, b\)") as excinfo:
+    with pytest.raises(MonitorTlsError, match=r"disagree across projects \(a, b\)") as excinfo:
         resolve_monitor_tls([_repo("b", c2), _repo("a", c1)])
-    assert (excinfo.value.setting, excinfo.value.repos) == (None, ["a", "b"])
+    assert (excinfo.value.setting, excinfo.value.projects) == (None, ["a", "b"])
 
 
 def test_missing_cert_file_refuses_naming_the_setting(tmp_path):
@@ -88,7 +88,7 @@ def test_missing_cert_file_refuses_naming_the_setting(tmp_path):
         resolve_monitor_tls([_repo("a", missing)])
     assert excinfo.value.setting == "tls_cert"
     assert str(missing) in str(excinfo.value)
-    assert excinfo.value.repos == ["a"]
+    assert excinfo.value.projects == ["a"]
 
 
 def test_missing_key_file_refuses_naming_the_setting(tmp_path):

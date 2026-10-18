@@ -197,7 +197,7 @@ ordinary library logger — `propagate = True`, no handlers beyond the
 import-time `NullHandler` — and otto's own modules emit via
 `logging.getLogger(__name__)` exactly like any consumer's code. Handlers go
 on root instead, which is what makes capture zero-registration: a record
-from ANY logger in the process — otto's own, a repo's product code, a suite
+from ANY logger in the process — otto's own, a project's product code, a suite
 module, a third-party library — reaches the three sinks above by ordinary
 propagation. There is no allowlist to keep in sync and nothing to register.
 
@@ -214,11 +214,11 @@ Three postures cover every way the process gets configured:
 - **Library mode** — `import otto` configures nothing beyond the
   `NullHandler`; an embedding process opts in with one call, and undoes
   it with {func}`otto.logger.reset <otto.logger.management.reset>`. The call
-  is {func}`otto.session.install_logging`, which applies the repos'
+  is {func}`otto.session.install_logging`, which applies the projects'
   {ref}`[logging.levels] <logging-levels>` noise-floor table as the CLI does,
   or the raw primitive underneath it,
   {func}`otto.logger.install <otto.logger.management.install>`, which knows
-  nothing of repos. See {doc}`the library page <../../cookbook/python-library>`
+  nothing of projects. See {doc}`the library page <../../cookbook/python-library>`
   for the embedder API.
 
 ### Handler ownership

@@ -34,8 +34,8 @@ def _save(path: Path, text: str) -> None:
 def _repo(name: str | None = None):
     import otto.bootstrap
 
-    repos = otto.bootstrap.get_repos()
-    return repos[0] if name is None else next(r for r in repos if r.name == name)
+    projects = otto.bootstrap.get_projects()
+    return projects[0] if name is None else next(r for r in projects if r.name == name)
 
 
 def _recorded(root: Path, rel: str) -> list[str]:
@@ -124,7 +124,7 @@ def test_two_repos_with_the_same_test_file_name_both_list_and_both_run(
     listed = selected_tests([])
 
     assert listed.exit_code == 0
-    assert {repo: [t.name for t in tests] for repo, tests in listed.tests.items()} == {
+    assert {project: [t.name for t in tests] for project, tests in listed.tests.items()} == {
         "repo_a": ["test_in_a"],
         "repo_b": ["test_in_b"],
     }
@@ -135,14 +135,14 @@ def test_two_repos_with_the_same_test_file_name_both_list_and_both_run(
 
 def _lib_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, files: dict[str, str]) -> Path:
     """A repo whose ``pylib`` is a library on ``sys.path``, wired as the only repo."""
-    from otto.config.repo import Repo
+    from otto.config.project import Project
     from tests._fixtures.sutrepo import make_sut_repo
 
     sut = make_sut_repo(
         tmp_path / "sut", name="sut", tests=["tests"], extra='libs = ["pylib"]\n', files=files
     )
-    repo = Repo(sut_dir=sut)
-    patch_bootstrap(monkeypatch, [repo])
+    project = Project(root=sut)
+    patch_bootstrap(monkeypatch, [project])
     monkeypatch.syspath_prepend(str(sut / "pylib"))
     return sut
 
@@ -241,7 +241,7 @@ def test_a_session_keeps_what_it_imported_from_outside_the_test_directories(tmp_
     The bootstrap imports the libraries, and what their init modules
     register must stay the one class a test reaches.
     """
-    from otto.config.repo import Repo
+    from otto.config.project import Project
     from tests._fixtures.sutrepo import make_sut_repo
 
     tag = f"lib{abs(hash(tmp_path)) % 10**8}"
@@ -255,8 +255,8 @@ def test_a_session_keeps_what_it_imported_from_outside_the_test_directories(tmp_
             "tests/test_l.py": f"from {tag} import Shared\n\ndef test_l():\n    assert Shared\n",
         },
     )
-    repo = Repo(sut_dir=sut)
-    patch_bootstrap(monkeypatch, [repo])
+    project = Project(root=sut)
+    patch_bootstrap(monkeypatch, [project])
     monkeypatch.syspath_prepend(str(sut / "pylib"))
     try:
         assert run_tests(["test_l"], output_dir=tmp_path / "out").exit_code == 0

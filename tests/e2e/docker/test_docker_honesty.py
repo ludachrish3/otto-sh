@@ -185,7 +185,7 @@ context = "{archive}"
 
 def _build_archive_image(host: str, sut: Path, xdir):
     return _run_otto(
-        "docker", "build", _ARCHIVE_IMAGE, "--parent", host, sut_dirs=str(sut), xdir=xdir, env=_WIDE
+        "docker", "build", _ARCHIVE_IMAGE, "--parent", host, roots=str(sut), xdir=xdir, env=_WIDE
     )
 
 

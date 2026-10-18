@@ -47,7 +47,7 @@ def test_area_flags_reach_scaffold_candidates_exactly(
     with (
         patch("otto.init.scaffolder.scaffold_candidates", return_value=["lab"]) as candidates,
         patch("otto.init.scaffolder.scaffold", return_value=_EMPTY) as scaffold,
-        patch("otto.init.doctor.check_repo", return_value=_OK) as check,
+        patch("otto.init.doctor.check_project", return_value=_OK) as check,
     ):
         result = _invoke([*flags, "--path", str(tmp_path)])
     assert result.exit_code == 0, result.output
@@ -62,7 +62,7 @@ def test_name_version_and_kmodcov_dir_reach_the_config(tmp_path: Path) -> None:
     with (
         patch("otto.init.scaffolder.scaffold_candidates", return_value=[]),
         patch("otto.init.scaffolder.scaffold", return_value=_EMPTY) as scaffold,
-        patch("otto.init.doctor.check_repo", return_value=_OK),
+        patch("otto.init.doctor.check_project", return_value=_OK),
     ):
         result = _invoke(
             [
@@ -107,7 +107,7 @@ def test_a_failing_doctor_exits_1(tmp_path: Path) -> None:
     with (
         patch("otto.init.scaffolder.scaffold_candidates", return_value=[]),
         patch("otto.init.scaffolder.scaffold", return_value=_EMPTY),
-        patch("otto.init.doctor.check_repo", return_value=failed),
+        patch("otto.init.doctor.check_project", return_value=failed),
     ):
         result = _invoke(["--all", "--path", str(tmp_path)])
     assert result.exit_code == 1
@@ -134,7 +134,7 @@ def test_a_library_refusal_from_scaffold_reaches_the_user_in_flag_spelling(tmp_p
     with (
         patch("otto.init.scaffolder.scaffold_candidates", return_value=["kmodcov"]),
         patch("otto.init.scaffolder.scaffold", side_effect=refusal),
-        patch("otto.init.doctor.check_repo", return_value=_OK),
+        patch("otto.init.doctor.check_project", return_value=_OK),
     ):
         result = _invoke(["--kmodcov", "--path", str(tmp_path)])
     assert result.exit_code == 2, result.output

@@ -89,8 +89,8 @@ matches none of the hosts the run may walk raises
 {class}`otto.lab.EmptySelectionError <otto.config.scope.EmptySelectionError>` rather than iterating nothing.
 
 `all_hosts()` walks the run's **fleet of interest** — the hosts the active
-repos' `[project]` declarations admit — which is the whole loaded lab when no
-repo declared one.  `get_host()` is unscoped and reaches any host.
+projects' `[project]` declarations admit — which is the whole loaded lab when no
+project declared one.  `get_host()` is unscoped and reaches any host.
 See [The fleet of interest](../../cli/run/defaults.md#the-fleet-of-interest).
 
 For fan-out across the lab — running the same command or async
@@ -208,7 +208,7 @@ parameters alone.
 ### Using registered options in an instruction
 
 A class registered for `run` puts its flags on **every** `otto run` command,
-so repo-wide flags such as a device type or a lab environment are declared
+so project-wide flags such as a device type or a lab environment are declared
 once, in an init module:
 
 ```python
@@ -221,7 +221,7 @@ import otto
 
 
 @otto.options(verbs=["run", "test"])
-class RepoOptions:
+class ProjectOptions:
     device_type: Annotated[str, typer.Option(help="Type of device under test.")] = "router"
     lab_env: Annotated[str, typer.Option(help="Lab environment to target.")] = "staging"
 ```
@@ -234,20 +234,20 @@ import logging
 
 from otto.instructions import instruction
 
-from acme_instructions import RepoOptions  # registered for ["run", "test"]
+from acme_instructions import ProjectOptions  # registered for ["run", "test"]
 
 logger = logging.getLogger(__name__)
 
 
 @instruction()
-async def show_env(opts: RepoOptions) -> None:
+async def show_env(opts: ProjectOptions) -> None:
     logger.info(f"device_type={opts.device_type!r} lab_env={opts.lab_env!r}")
 ```
 
 `otto run show-env --help` shows `--device-type` and `--lab-env`, and so
 does every other `otto run` command, whether or not it declares the parameter.
-Because `RepoOptions` is registered for `test` as well, `otto test` takes the
-same flags, and a test reads the same values with `ctx.options(RepoOptions)`
+Because `ProjectOptions` is registered for `test` as well, `otto test` takes the
+same flags, and a test reads the same values with `ctx.options(ProjectOptions)`
 ({doc}`writing-tests`).
 
 An instruction's own options class may inherit a registered class. Each
@@ -264,15 +264,15 @@ Three rungs, and the question they each answer:
 | ---- | ------- | -------- |
 | `Product` / `DevTool` | How does *this artifact* install on a host? | `Product`, `ShellProduct`, `DevTool` |
 | Host class | How does *this family of machines* do it? | `UnixHost`, `EmbeddedHost`, … |
-| `ProjectActions` | What does *this repo* do to the whole lab? | `ProjectActions` |
+| `ProjectActions` | What does *this project* do to the whole lab? | `ProjectActions` |
 
 Climb only as far as the question goes. A product that installs with a
 different command is a `Product` override; a host family whose debug logs come
-out of journald overrides `get_debug_logs`; a repo that must push a license
+out of journald overrides `get_debug_logs`; a project that must push a license
 before anything installs overrides `ProjectActions.install`.
 
 Register the subclass from a module listed in your settings file's `init`
-field — that import is what attributes the class to its repo:
+field — that import is what attributes the class to its project:
 
 ```python
 # pylib/widget_instructions/__init__.py  (listed in .otto/settings.toml [init])
@@ -304,9 +304,9 @@ class WidgetActions(ProjectActions):
 ```
 
 `install` is a **project instruction**, so the override is a decorated method
-and it carries an options class — otto's own here, since this repo adds no flag
+and it carries an options class — otto's own here, since this project adds no flag
 of its own. [Project instructions](#project-instructions) below is the full
-declaration; `options=` and what a repo may and may not restate are its
+declaration; `options=` and what a project may and may not restate are its
 subject.
 
 Two things that example relies on:
@@ -315,30 +315,30 @@ Two things that example relies on:
   changing and call up for the rest; a subclass may also mix custom sequencing
   with the per-host verbs (`await host.install()` for chosen hosts) — nothing in
   the defaults is privileged.
-- **`self.repo` and `self.ctx` are provided.** `self.repo.name` is the owner
-  scope, and `self.ctx` is this repo's *view* of the live context —
+- **`self.project` and `self.ctx` are provided.** `self.project.name` is the owner
+  scope, and `self.ctx` is this project's *view* of the live context —
   `self.ctx.all_hosts()` and `self.ctx.do_for_all_hosts(...)` are the fleet and
-  its dispatch, already bounded to this repo's fleet of interest and already
+  its dispatch, already bounded to this project's fleet of interest and already
   supplying `owner=` to the host verb. Subclass code spells neither. To
   dispatch a host verb that takes no owner, pass
   `self.ctx.do_for_all_hosts(verb, with_owner=False)`.
 
 ```{important}
-**Let `actions_for` build it.** `otto.project.actions_for(repo, ctx)` is what
-hands the instance `ctx.for_repo(repo.name)` — the view that both bounds the
-fleet and supplies the `owner=`. Constructing `ProjectActions(repo, ctx)` by
+**Let `actions_for` build it.** `otto.project.actions_for(project, ctx)` is what
+hands the instance `ctx.for_project(project.name)` — the view that both bounds the
+fleet and supplies the `owner=`. Constructing `ProjectActions(project, ctx)` by
 hand with a plain `OttoContext` raises `TypeError`.
 ```
 
-A repo registers **at most one** `ProjectActions`; a second registration from
-the same repo fails loud. Different repos each registering their own is the
-intended composition, not a collision. A repo that registers nothing gets
+A project registers **at most one** `ProjectActions`; a second registration from
+the same project fails loud. Different projects each registering their own is the
+intended composition, not a collision. A project that registers nothing gets
 `ProjectActions` itself.
 
-Some things are *not* per-repo, and the defaults refuse them: **debug logs**
-and **toolchain tools** belong to a host, not to a repo, and **impairments and
+Some things are *not* per-project, and the defaults refuse them: **debug logs**
+and **toolchain tools** belong to a host, not to a project, and **impairments and
 tunnels** belong to the lab. All of them are performed once, by the layer
-above the repo walk.
+above the project walk.
 
 ## Declaring lab state in tests
 
@@ -366,8 +366,8 @@ the bullets below are what each step does.
 - **Function-scoped**: the guarantee is per test *case*. When the state already
   holds, the cost is one probe of it — but not the same probe for all three.
   `installed` and `uninstalled` ask `status()`, which counts the
-  *counted* repos' products. `clean` asks `is_clean()` instead, and that
-  is much the heavier sweep: **every** repo is asked (not only the counted
+  *counted* projects' products. `clean` asks `is_clean()` instead, and that
+  is much the heavier sweep: **every** project is asked (not only the counted
   ones), dev tools are probed alongside products, each host is asked once more
   for `toolchain_tools_absent()`, every impairable link's netem state is read,
   and the lab is scanned for tunnel processes.
@@ -403,15 +403,15 @@ the bullets below are what each step does.
 ## Project instructions
 
 Everything above this section is a **standalone instruction**: `@instruction`
-on a free function, one body, belonging to one repo, its own `otto run`
+on a free function, one body, belonging to one project, its own `otto run`
 subcommand. A **project instruction** is the other kind — `@instruction` on a
-`ProjectActions` method. One name, one walk across the lab's repos, and one
-body *per repo*; `otto run <name>` runs every applicable repo's body in
+`ProjectActions` method. One name, one walk across the lab's projects, and one
+body *per project*; `otto run <name>` runs every applicable project's body in
 dependency order.
 
 otto's six defaults — `install`, `uninstall`, `cleanup`, `get-logs`,
 `install-tools` and `status` — are project instructions otto declares on
-`ProjectActions` itself, before any repo's init module is imported. A repo
+`ProjectActions` itself, before any project's init module is imported. A project
 overrides one, or adds a project instruction of its own, by the same decorator:
 
 ```python
@@ -447,7 +447,7 @@ class WidgetActions(ProjectActions):
         walk="forward",
         continue_on_failure=False,
         require_dependencies=True,
-        help="Deploy every repo's build, dependencies first.",
+        help="Deploy every project's build, dependencies first.",
     )
     async def deploy(self, opts: DeployOpts) -> Result:
         """Deploy widget's build."""
@@ -460,35 +460,35 @@ What the decorator on a method does differently:
 - It registers into the **project-instruction table** under the name, instead
   of building a standalone Typer command. On a free function it builds that
   standalone command.
-- The body is repo-scoped through `self.ctx` and `self.repo`, so nothing is
+- The body is project-scoped through `self.ctx` and `self.project`, so nothing is
   handed to it beyond its options.
 - The walk-shape keywords — `walk`, `continue_on_failure`,
   `require_dependencies`, `dry_run_preview`, `combine_results` and `render` — are fixed by the
   **first** declaration of the name (`dry_run_preview` is honoured only for
   otto's `install`, `uninstall` and `install-tools`, and refused on any other
-  name). otto's six instructions are fixed before a repo can speak; a repo restating one of them fails at init, naming the keyword. A repo
-  declaring a new name sets them, and the next repo to declare that name
-  inherits them. Each keyword's meaning is tabulated under [Your repo's flags on
-  a default](../../cli/run/defaults.md#your-repos-flags-on-a-default).
+  name). otto's six instructions are fixed before a project can speak; a project restating one of them fails at init, naming the keyword. A project
+  declaring a new name sets them, and the next project to declare that name
+  inherits them. Each keyword's meaning is tabulated under [Your project's flags on
+  a default](../../cli/run/defaults.md#your-projects-flags-on-a-default).
 - An override of a first-party name **must** pass an `options=` class that
   inherits the first-party class for that name
   (`InstallOptions` and its five siblings, all
-  exported from `otto.project`); registration refuses anything else. A repo's
+  exported from `otto.project`); registration refuses anything else. A project's
   own new name has no base and declares freely.
 
 `otto run <name>` exposes the union of every registered body's fields, and each
 body receives its own class. Which fields merge into one flag, what a
-cross-repo collision looks like, and where a shared base class belongs are in
-[One command, every repo's flags](../../cli/run/defaults.md#one-command-every-repos-flags).
+cross-project collision looks like, and where a shared base class belongs are in
+[One command, every project's flags](../../cli/run/defaults.md#one-command-every-projects-flags).
 
 ## The collision error
 
 A **standalone** instruction may not take a project instruction's name — any of
-them, otto's six and a repo's own alike. Otto refuses it while that repo's init
+them, otto's six and a project's own alike. Otto refuses it while that project's init
 modules are being imported:
 
 ```text
-repo 'widget' defines instruction 'install', which is a project instruction.
+project 'widget' defines instruction 'install', which is a project instruction.
 Override lab behavior by declaring the method on a ProjectActions subclass
 instead (see docs/cli/run/defaults.md), or rename the instruction.
 ```
@@ -496,10 +496,10 @@ instead (see docs/cli/run/defaults.md), or rename the instruction.
 A **method** declaration of the same name is the sanctioned override and passes;
 it is the shape the section above shows.
 
-If you are upgrading a repo that already has an `install` instruction, the
+If you are upgrading a project that already has an `install` instruction, the
 migration is one of two moves:
 
-1. **It really is your repo's install.** Declare it as a method with
+1. **It really is your project's install.** Declare it as a method with
    `@instruction(options=...)` on your `ProjectActions` subclass, inheriting
    `InstallOptions`, and delete the standalone
    instruction. Every surface — the command, scripts, tests, the `installed`
@@ -597,7 +597,7 @@ any registered `run` class you want to set; for a project instruction, it
 holds its bodies' own options instances and any registered `run` class.
 Either way, an omitted registered class takes its defaults, and the return
 value is the handler's -- nothing is printed and no exit code is derived.
-An instruction whose repo is inactive for the run is refused with
+An instruction whose project is inactive for the run is refused with
 {class}`~otto.session.InstructionInactiveError`, as `otto run` refuses it.
 
 ```python

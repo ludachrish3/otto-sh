@@ -1,23 +1,23 @@
 """
-otto.init — the library behind ``otto init``: a repo-setup doctor and scaffolder.
+otto.init — the library behind ``otto init``: a project-setup doctor and scaffolder.
 
 Not to be confused with the ``init`` key of ``.otto/settings.toml``, which
-names the repo's *init modules* (imported at startup to register
+names the project's *init modules* (imported at startup to register
 instructions, host classes and options). This package checks and scaffolds a
-whole repo; one of the areas it handles is those init modules.
+whole project; one of the areas it handles is those init modules.
 
-The doctor, :func:`check_repo`, runs the loader's own settings compile, so a
-repo it passes is a repo otto loads. The scaffolder, :func:`scaffold`, writes
+The doctor, :func:`check_project`, runs the loader's own settings compile, so a
+project it passes is a project otto loads. The scaffolder, :func:`scaffold`, writes
 what is missing through one write policy: otto-owned files are refreshed,
 user-owned files are created only when absent and never edited. Neither
 prints; ``otto init`` renders their reports.
 
     from pathlib import Path
-    from otto.init import InitConfig, check_repo, scaffold, scaffold_candidates
+    from otto.init import InitConfig, check_project, scaffold, scaffold_candidates
 
-    config = InitConfig.for_repo(Path("."), name="acme")
+    config = InitConfig.for_project(Path("."), name="acme")
     report = scaffold(config, scaffold_candidates(config.root, all_areas=True))
-    doctor = check_repo(config.root)
+    doctor = check_project(config.root)
     assert doctor.ok, [v.problems for v in doctor.verdicts]
 
 Every name is exported lazily (PEP 562); see ``otto.config``'s ``__dir__``.
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from .config import InitConfig as InitConfig
     from .doctor import AreaVerdict as AreaVerdict
     from .doctor import DoctorReport as DoctorReport
-    from .doctor import check_repo as check_repo
+    from .doctor import check_project as check_project
     from .errors import InitInputError as InitInputError
     from .scaffolder import ScaffoldReport as ScaffoldReport
     from .scaffolder import scaffold as scaffold
@@ -48,7 +48,7 @@ _LAZY_ATTRS: dict[str, str] = {
     "InitConfig": "otto.init.config",
     "InitInputError": "otto.init.errors",
     "ScaffoldReport": "otto.init.scaffolder",
-    "check_repo": "otto.init.doctor",
+    "check_project": "otto.init.doctor",
     "detect_areas": "otto.init.areas",
     "scaffold": "otto.init.scaffolder",
     "scaffold_candidates": "otto.init.scaffolder",
@@ -78,7 +78,7 @@ __all__ = [
     "InitConfig",
     "InitInputError",
     "ScaffoldReport",
-    "check_repo",
+    "check_project",
     "detect_areas",
     "scaffold",
     "scaffold_candidates",

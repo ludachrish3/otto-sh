@@ -11,7 +11,7 @@ note: >
 
   The house rule ("callables return dataclasses") converted from prose into a
   gate, and the sibling of no-bare-status-return. The prose version failed the
-  way this repo's prose always fails: `refactor(docker)!: build results are
+  way this codebase's prose always fails: `refactor(docker)!: build results are
   CommandResults, not (Status, str) pairs` (9f1731c3) states the rule verbatim
   while converting docker away from tuples — and two days later 5475ff27
   WIDENED bootstrap.discover() from a 2-tuple to a 3-tuple, paying the exact
@@ -45,7 +45,7 @@ note: >
   tables are the live count, this note is not.
 
   The regex admits ONE optional leading quote, and that is not cosmetic: this
-  repo bans `from __future__ import annotations` (it trips Sphinx `-W`), so a
+  codebase bans `from __future__ import annotations` (it trips Sphinx `-W`), so a
   quoted string is the only forward-reference spelling available, and 125
   return annotations under src/otto are written that way. The rule's own
   motivating defect was one of them — bootstrap.discover()'s pre-refactor

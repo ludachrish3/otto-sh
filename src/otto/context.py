@@ -5,8 +5,8 @@ aliases (``otto.open_context``, ``otto.OttoContext``, ``otto.get_context``,
 ``otto.try_get_context``). Each name is implemented in another module and
 documented there, once:
 
-- :class:`~otto.run_context.OttoContext`, a run's lab, policy and repos, and
-  :func:`~otto.run_context.open_context`, which composes the repos and opens
+- :class:`~otto.run_context.OttoContext`, a run's lab, policy and projects, and
+  :func:`~otto.run_context.open_context`, which composes the projects and opens
   a run on a lab;
 - :func:`~otto.run_context.get_context`, :func:`~otto.run_context.try_get_context`,
   :func:`~otto.run_context.set_context` and :func:`~otto.run_context.reset_context`:
@@ -20,7 +20,7 @@ documented there, once:
 
 Every name is exported lazily (PEP 562): ``import otto.context`` loads none of
 the modules that implement it, and a name loads its defining module on first
-access. ``OttoContext`` and ``open_context`` compose the run's repos without a
+access. ``OttoContext`` and ``open_context`` compose the run's projects without a
 run in hand, so resolving either first imports the composition root,
 :mod:`otto.bootstrap`, which installs the initiator the run layer composes
 through and composes nothing itself (spec 2026-10-11 placement-and-phases
@@ -72,7 +72,7 @@ _LAZY_ATTRS: dict[str, str] = {
     "variant": "otto.run_context",
 }
 
-# The names whose use composes the run's repos with no run in hand: resolving
+# The names whose use composes the run's projects with no run in hand: resolving
 # one imports the composition root first.
 _COMPOSING = frozenset({"OttoContext", "open_context"})
 

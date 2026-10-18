@@ -6,9 +6,9 @@ the adapter call (§7), the env mapping (§6) and the rendered compose texts —
 is settled from configuration, which is what lets ``--dry-run`` decline with
 a resolved plan rather than a shrug.
 
-The three verbs mirror the per-repo primitives one layer up:
+The three verbs mirror the per-project primitives one layer up:
 :func:`deploy` / :func:`teardown` / :func:`deployed` are to a use-case what
-``compose_up`` / ``compose_down`` / ``composed`` are to one repo's stack, and
+``compose_up`` / ``compose_down`` / ``composed`` are to one project's stack, and
 they keep the same sharing contract (tear down only what this call brought
 up, unless ``own=True``).
 """
@@ -55,7 +55,7 @@ from .staging import (
 )
 
 if TYPE_CHECKING:
-    from ..config.repo import Repo
+    from ..config.project import Project
     from ..config.scope import DockerCompose
     from ..labs.loader import Lab
     from ..result import CommandResult
@@ -126,43 +126,43 @@ def parent_for(lab: "Lab", host_id: str) -> UnixHost:
     return host
 
 
-def _compose_entry(repo: "Repo", handle: str) -> "DockerCompose":
-    """Resolve one of a fragment's ``composes`` handles to its repo's entry.
+def _compose_entry(project: "Project", handle: str) -> "DockerCompose":
+    """Resolve one of a fragment's ``composes`` handles to its project's entry.
 
-    Settings validation already refuses a fragment naming a handle its repo
-    does not declare, so this is the backstop for a ``Repo`` assembled in
+    Settings validation already refuses a fragment naming a handle its project
+    does not declare, so this is the backstop for a ``Project`` assembled in
     code (a suite's fixture, an embedder) rather than parsed from
     ``settings.toml`` — where the same mistake would otherwise surface as a
     ``StopIteration`` deep inside the render.
     """
-    for compose in repo.docker_settings.composes:
+    for compose in project.docker_settings.composes:
         if compose.name == handle:
             return compose
-    known = sorted(c.name for c in repo.docker_settings.composes) or ["<none>"]
+    known = sorted(c.name for c in project.docker_settings.composes) or ["<none>"]
     raise UseCaseResolutionError(
-        f"repo {repo.name!r}: a use-case fragment names compose handle {handle!r}, "
-        f"which the repo does not define; declared handles: {known}"
+        f"project {project.name!r}: a use-case fragment names compose handle {handle!r}, "
+        f"which the project does not define; declared handles: {known}"
     )
 
 
 @dataclass
-class _RepoUnit:
-    """One participating repo's contribution on one host, in dependency order."""
+class _ProjectUnit:
+    """One participating project's contribution on one host, in dependency order."""
 
-    repo: "Repo"
+    project: "Project"
     handles: "list[str]"
 
 
-def _units(frags: "list[SelectedFragment]") -> "list[_RepoUnit]":
-    """Group a host's fragments by repo, preserving the caller's order.
+def _units(frags: "list[SelectedFragment]") -> "list[_ProjectUnit]":
+    """Group a host's fragments by project, preserving the caller's order.
 
-    Keyed by repo NAME, never by hashing the fragment dataclasses: they are
-    not hashable by contract, and identity keying would split one repo's two
+    Keyed by project NAME, never by hashing the fragment dataclasses: they are
+    not hashable by contract, and identity keying would split one project's two
     fragments into two adapter invocations.
     """
-    units: "dict[str, _RepoUnit]" = {}
+    units: "dict[str, _ProjectUnit]" = {}
     for sf in frags:
-        unit = units.setdefault(sf.repo.name, _RepoUnit(repo=sf.repo, handles=[]))
+        unit = units.setdefault(sf.project.name, _ProjectUnit(project=sf.project, handles=[]))
         for handle in sf.fragment.composes:
             if handle not in unit.handles:
                 unit.handles.append(handle)
@@ -213,16 +213,16 @@ def _declared(frags: "list[SelectedFragment]", *, report: bool = False) -> "_Dec
     seen: "set[tuple[str, str]]" = set()
     for sf in frags:
         for handle in sf.fragment.composes:
-            entry = _compose_entry(sf.repo, handle)
-            # Deduped by (repo, handle), not by identity: one repo's fragment
+            entry = _compose_entry(sf.project, handle)
+            # Deduped by (project, handle), not by identity: one project's fragment
             # pair naming the same handle resolves to the same entry twice,
             # and feeding it twice to the users merge would be self-agreement
             # noise rather than a second declaration.
-            if (sf.repo.name, handle) not in seen:
-                seen.add((sf.repo.name, handle))
+            if (sf.project.name, handle) not in seen:
+                seen.add((sf.project.name, handle))
                 composes.append(entry)
             for service in entry.services:
-                where = f"{sf.repo.name}[{handle}]"
+                where = f"{sf.project.name}[{handle}]"
                 if service in owner:
                     if report and owner[service] != where:
                         logger.warning(
@@ -322,7 +322,7 @@ def _plan_host(
 ) -> _HostPlan:
     """Build one host's env mapping and rendered compose texts (spec §6, §7).
 
-    The adapters run HERE, exactly once per repo, and their result feeds both
+    The adapters run HERE, exactly once per project, and their result feeds both
     halves: ``env`` merges over the fragment static tables, ``files``
     overrides the committed compose texts, ``extra_files`` rides along to
     staging. Splitting the env and the render into two passes would invoke
@@ -335,7 +335,7 @@ def _plan_host(
     """
     units = _units(frags)
     files_fact = {
-        handle: str(_compose_entry(unit.repo, handle).path)
+        handle: str(_compose_entry(unit.project, handle).path)
         for unit in units
         for handle in unit.handles
     }
@@ -363,17 +363,17 @@ def _plan_host(
 
     results: "dict[str, AdapterResult]" = {}
     for unit in units:
-        adapter = adapter_for(unit.repo.name, use_case)
+        adapter = adapter_for(unit.project.name, use_case)
         if adapter is None:
             continue
-        # A per-repo view: an adapter may only see the files it is
-        # responsible for rendering, never a peer repo's (spec §7). Handing
-        # over the union would invite a repo to render another's compose file
+        # A per-project view: an adapter may only see the files it is
+        # responsible for rendering, never a peer project's (spec §7). Handing
+        # over the union would invite a project to render another's compose file
         # and make the merge order decide who won.
-        repo_facts = dict(facts)
-        repo_facts["files"] = {h: files_fact[h] for h in unit.handles}
-        result = adapter(repo_facts)
-        results[unit.repo.name] = result
+        project_facts = dict(facts)
+        project_facts["files"] = {h: files_fact[h] for h in unit.handles}
+        result = adapter(project_facts)
+        results[unit.project.name] = result
         env.update(result.env)
 
     for path in env_files or ():
@@ -383,17 +383,17 @@ def _plan_host(
     rendered: "list[ComposeFileToStage]" = []
     extra: "dict[str, str]" = {}
     for unit in units:
-        result = results.get(unit.repo.name)
+        result = results.get(unit.project.name)
         for name, text in (result.extra_files if result else {}).items():
             if name in extra and extra[name] != text:
                 logger.warning(
                     rf"\[docker] two adapters generated different content for "
-                    f"extra file {name!r}; {unit.repo.name}'s wins. They share one "
+                    f"extra file {name!r}; {unit.project.name}'s wins. They share one "
                     f"staging dir, so give the sidecars distinct relative names."
                 )
             extra[name] = text
         for handle in unit.handles:
-            entry = _compose_entry(unit.repo, handle)
+            entry = _compose_entry(unit.project, handle)
             override = result.files.get(handle) if result else None
             text = override if override is not None else entry.path.read_text()
             rendered.append(
@@ -465,10 +465,12 @@ def _up_command(
     return " ".join(parts)
 
 
-def _unit_services(unit: _RepoUnit) -> "set[str]":
-    """Return the services one repo contributes to a host, from its winning handles."""
+def _unit_services(unit: _ProjectUnit) -> "set[str]":
+    """Return the services one project contributes to a host, from its winning handles."""
     return {
-        service for handle in unit.handles for service in _compose_entry(unit.repo, handle).services
+        service
+        for handle in unit.handles
+        for service in _compose_entry(unit.project, handle).services
     }
 
 
@@ -529,17 +531,17 @@ def acting_hosts(
     return acting
 
 
-async def _build_for(units: "list[_RepoUnit]", parent: UnixHost) -> None:
-    """Build every participating repo's images, once each, in the given order."""
+async def _build_for(units: "list[_ProjectUnit]", parent: UnixHost) -> None:
+    """Build every participating project's images, once each, in the given order."""
     for unit in units:
-        if not unit.repo.docker_settings.images:
+        if not unit.project.docker_settings.images:
             continue
-        results = await build_images(unit.repo, parent)
+        results = await build_images(unit.project, parent)
         for name, built in results.items():
             if not built.is_ok:
                 # value, not msg: the captured build output is the diagnosis.
                 raise HostCommandError(
-                    f"build for image {name!r} of repo {unit.repo.name!r} failed "
+                    f"build for image {name!r} of project {unit.project.name!r} failed "
                     f"before the use-case stack came up: {built.result.value}"
                 )
 
@@ -560,7 +562,7 @@ class UseCaseResolution:
     placed: "dict[str, list[SelectedFragment]]"
     """The parent's id to every fragment that won; one key."""
     order: "dict[str, int]"
-    """Repo name to its dependency-order position."""
+    """Project name to its dependency-order position."""
 
 
 def resolve_use_case(
@@ -582,30 +584,30 @@ def resolve_use_case(
             (``field="parent"``).
         ~otto.docker.resolve.UseCaseResolutionError: the selection refused.
     """
-    from ..declared import current_ordered_repos, current_repos
+    from ..declared import current_ordered_projects, current_projects
     from ..invocation import require_run
     from .observe import docker_parent
 
     lab = require_run().lab
     host = docker_parent(lab, parent)
-    selection = select_fragments(use_case, current_repos(), provide=provide)
+    selection = select_fragments(use_case, current_projects(), provide=provide)
     placed = place(selection, host)
-    order = {repo.name: i for i, repo in enumerate(current_ordered_repos())}
+    order = {project.name: i for i, project in enumerate(current_ordered_projects())}
     return UseCaseResolution(lab, selection, host, placed, order)
 
 
 def _ordered(
     frags: "list[SelectedFragment]", order: "Mapping[str, int]"
 ) -> "list[SelectedFragment]":
-    """Sort a host's fragments into repo dependency order.
+    """Sort a host's fragments into project dependency order.
 
     This IS the ``-f`` order, and the ``-f`` order is what decides which
     fragment's key survives a merge: dependents come later so they override
-    their dependencies, never the other way round. A repo missing from the
+    their dependencies, never the other way round. A project missing from the
     order map (skipped by bootstrap) sorts last rather than first — it
     depends on nothing that is present.
     """
-    return sorted(frags, key=lambda sf: order.get(sf.repo.name, len(order)))
+    return sorted(frags, key=lambda sf: order.get(sf.project.name, len(order)))
 
 
 async def deploy(
@@ -631,9 +633,9 @@ async def deploy(
         env_files: ``K=V`` files merged under *env* and over the adapters.
         parent: The parent to deploy on, by host id; ``None`` is the lab's
             default parent by the one rule (spec §2).
-        provide: ``capability -> repo`` overrides for the provider
+        provide: ``capability -> project`` overrides for the provider
             competition (§4).
-        build: Build each participating repo's declared images first (the
+        build: Build each participating project's declared images first (the
             default is docker's: build nothing).
         force_recreate: Pass ``--force-recreate`` to ``docker compose up``.
         pull: ``docker compose up``'s ``--pull`` policy, passed through verbatim.
@@ -722,10 +724,10 @@ async def deploy(
                 )
                 continue
             if build:
-                # Only the repos that still contribute a service being started.
+                # Only the projects that still contribute a service being started.
                 # A build is minutes, and `services=["api"]` is a request to
                 # deploy `api` -- not a request to build the four images of the
-                # three repos whose services were just excluded. Their compose
+                # three projects whose services were just excluded. Their compose
                 # files still join the `-f` merge (compose needs the whole
                 # document set to resolve the merge), they simply have nothing
                 # running, so nothing of theirs needs an image.
@@ -815,7 +817,7 @@ def _log_displacements(use_case: str, selection: Selection) -> None:
     """
     from rich.markup import escape
 
-    # The log message is rich markup, so a repo or capability name carrying
+    # The log message is rich markup, so a project or capability name carrying
     # `[x]` would be eaten as a style tag unescaped.
     for d in selection.displaced:
         logger.info(rf"\[docker] use-case {use_case}: {escape(d.describe())}")
@@ -848,7 +850,7 @@ def _plan(placed: "dict[str, list[SelectedFragment]]", selection: Selection) -> 
     """
     per_host = "; ".join(
         f"{host_id} <- "
-        + ", ".join(f"{sf.repo.name}[{','.join(sf.fragment.composes)}]" for sf in frags)
+        + ", ".join(f"{sf.project.name}[{','.join(sf.fragment.composes)}]" for sf in frags)
         for host_id, frags in placed.items()
     )
     keys = sorted({key for frags in placed.values() for sf in frags for key in sf.fragment.env})

@@ -24,7 +24,7 @@ def _view(left, right, calls=None) -> "RegistryView[Rec]":
             calls.append(1)
         for source in (left, right):
             for name, entry in source.raw_items():
-                yield Derived(name, entry, source.origin(name), source.repo(name))
+                yield Derived(name, entry, source.origin(name), source.project(name))
 
     return RegistryView(
         "derived thing", register_hint="register_left()", sources=[left, right], derive=derive
@@ -92,7 +92,7 @@ def test_origin_and_repo_come_from_the_derived_rows():
     left.register("a", Rec(1))
     view = _view(left, right)
     assert view.origin("a") == __name__
-    assert view.repo("a") is None
+    assert view.project("a") is None
 
 
 def test_a_name_derived_twice_raises():

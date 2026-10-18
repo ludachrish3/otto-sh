@@ -37,8 +37,8 @@ These options are available on every `otto` command:
 | `--skip-reservation-check, -R` | | `False` | Bypass the reservation check entirely (emergency use only) |
 | `--list-labs` | | | List available lab names and exit |
 | `--list-hosts` | | | List host IDs in the loaded lab and exit |
-| `--list-products` | | | List the products the repos declare; with `--lab`, which hosts each lands on — see {ref}`list-products-flag` |
-| `--list-tools` | | | List the dev tools the repos declare; with `--lab`, which hosts each lands on — see {ref}`list-products-flag` |
+| `--list-products` | | | List the products the projects declare; with `--lab`, which hosts each lands on — see {ref}`list-products-flag` |
+| `--list-tools` | | | List the dev tools the projects declare; with `--lab`, which hosts each lands on — see {ref}`list-products-flag` |
 | `--show-lab` | | | Print full lab details and exit |
 | `--lab-depth` | | `3` | Nesting depth for `--show-lab` output — how deep the lab's host details are expanded (0 = unlimited) |
 | `--version` | | | Show version and exit |
@@ -89,18 +89,18 @@ otto --lab my_lab --show-lab       # full lab details (use -v for expanded outpu
 ### Inspecting products and dev tools
 
 `--list-products` and `--list-tools` print a table of the products or dev tools
-your repos declare in {doc}`../configuration/declared-products-tools`. Neither
+your projects declare in {doc}`../configuration/declared-products-tools`. Neither
 contacts a host, and neither is lab-gated: they work with or without `--lab`.
 
-Without `--lab` the table is what the repos **declare** — one row per
-`[[products]]` (or `[[dev_tools]]`) entry, in repo then declaration order, with
+Without `--lab` the table is what the projects **declare** — one row per
+`[[products]]` (or `[[dev_tools]]`) entry, in project then declaration order, with
 the entry's host selector under `match` (`any host` when it has none):
 
 ```bash
 otto --list-products
 ```
 
-A repo that also registers a code provider
+A project that also registers a code provider
 ({func}`~otto.host.product.register_product_provider`) gets one line after the
 table, because what a provider supplies depends on the host and is only known
 once a lab is loaded.
@@ -118,20 +118,20 @@ otto --lab my_lab --list-products
 ```
 
 ```text
-                                             products in lab my_lab
-╭───────┬─────────────────────┬─────────┬──────────────┬───────┬──────────────┬────────────────────┬────────────╮
-│ name  │ kind                │ variant │ instrumented │ repo  │ hosts        │ artifact           │ stage dir  │
-├───────┼─────────────────────┼─────────┼──────────────┼───────┼──────────────┼────────────────────┼────────────┤
-│ agent │ shell               │ any     │ unknown      │ repo1 │ test1, test2 │ build/agent.tar.gz │ /opt/stage │
-│ kcov  │ kmod                │ any     │ yes          │ repo1 │ test1        │ build/kcov.ko      │ login home │
-│ probe │ code (ProbeProduct) │ any     │ unknown      │ repo2 │ test3        │                    │            │
-╰───────┴─────────────────────┴─────────┴──────────────┴───────┴──────────────┴────────────────────┴────────────╯
+                                              products in lab my_lab
+╭───────┬─────────────────────┬─────────┬──────────────┬─────────┬──────────────┬────────────────────┬────────────╮
+│ name  │ kind                │ variant │ instrumented │ project │ hosts        │ artifact           │ stage dir  │
+├───────┼─────────────────────┼─────────┼──────────────┼─────────┼──────────────┼────────────────────┼────────────┤
+│ agent │ shell               │ any     │ unknown      │ repo1   │ test1, test2 │ build/agent.tar.gz │ /opt/stage │
+│ kcov  │ kmod                │ any     │ yes          │ repo1   │ test1        │ build/kcov.ko      │ login home │
+│ probe │ code (ProbeProduct) │ any     │ unknown      │ repo2   │ test3        │                    │            │
+╰───────┴─────────────────────┴─────────┴──────────────┴─────────┴──────────────┴────────────────────┴────────────╯
 not used in this lab:
   fw (embedded, repo2): no host matches
 ```
 
-The reasons an entry is not used are `no host matches`, `outside <repo>'s
-[project] scope` (the repo's `[project]` table does not target any host of the
+The reasons an entry is not used are `no host matches`, `outside <project>'s
+[project] scope` (the project's `[project]` table does not target any host of the
 lab; see {ref}`project-scope-required`), `variant 'field' (run is debug)` (see
 below), and `shadowed by an earlier entry named '<name>'` — the first entry
 with a name wins on a host. A provider product whose name a declared entry
@@ -147,7 +147,7 @@ not say) or `missing` (the artifact is not built). An entry passed over for
 its variant reads `variant 'field' (run is debug)` under *not used*.
 
 Both listings answer from local configuration and files present on this
-machine: the repos' settings, the lab's data, the artifacts' bytes. Neither
+machine: the projects' settings, the lab's data, the artifacts' bytes. Neither
 opens a connection, runs a command, or needs the bed to be up. What is
 installed *right now* is `otto run status`'s question
 ({doc}`run/defaults`), and the counters are `otto cov`'s.
@@ -155,7 +155,7 @@ installed *right now* is `otto run status`'s question
 ## Environment variables
 
 Most environment variables below back a global option; where one does, the
-flag always wins when both are present.  `OTTO_SUT_DIRS`, `OTTO_HOME`,
+flag always wins when both are present.  `OTTOPATH`, `OTTO_HOME`,
 `OTTO_TEARDOWN_DEADLINE`, `OTTO_SSH_DEBUG` and `PYDANTIC_DISABLE_PLUGINS` have
 no flag.
 
@@ -167,8 +167,8 @@ no flag.
 | `OTTO_LOG_DAYS` | `--log-days` | |
 | `OTTO_LOG_LEVEL` | `--log-level` | |
 | `OTTO_LOG_RICH` | `--rich-log-file` | |
-| `OTTO_SUT_DIRS` | *(no flag)* | Paths to the repo roots under test, separated by the OS path separator (`:` on Linux/macOS, `;` on Windows), as for `PATH`. A comma is part of a path, not a separator. Required when a development repo is under test |
-| `OTTO_HOME` | *(no flag)* | otto's user-level home; defaults to `~/.otto`.  Holds one workspace home per `OTTO_SUT_DIRS` set — see [The workspace home](#the-workspace-home) |
+| `OTTOPATH` | *(no flag)* | The project roots under test. Required when a development project is under test. See [Projects, project roots and OTTOPATH](../overview.md#projects-project-roots-and-ottopath) |
+| `OTTO_HOME` | *(no flag)* | otto's user-level home; defaults to `~/.otto`.  Holds one workspace home per `OTTOPATH` set — see [The workspace home](#the-workspace-home) |
 | `OTTO_TEARDOWN_DEADLINE` | *(no flag)* | Seconds an interrupted command's graceful cleanup may run before it is abandoned; defaults to `10`; read when a run is prepared (the CLI, `open_context`, library `run_tests`). Outside them, the readers of this deadline (`run_command`, `sync_phase`, `compensate`) use 10 s, while a hand-built context's `ctx.sweep_loop(...)` without `deadline=` waits for every close — see {doc}`../architecture/lifecycle` |
 | `OTTO_SSH_DEBUG` | *(no flag)* | asyncssh's own debug level, `1`..`3`; `2` prints the offered and chosen key-exchange, host-key, cipher and MAC lists under `--log-level DEBUG` (a valid value also lifts otto's own `asyncssh` logger floor to `DEBUG`) — see [Legacy SSH servers](../configuration/settings.md#legacy-ssh-servers) |
 | `PYDANTIC_DISABLE_PLUGINS` | *(no flag)* | pydantic's own switch, which the `otto` command sets to `__all__` when you have not set it. Looking for pydantic plugins opens a file in every installed package on the first model build, a network round trip each when the venv is on NFS, and otto uses no pydantic plugins. It covers everything in the process, including the tests `otto test` runs in-process, and every process otto starts inherits it (a host command on `local`, a subprocess of a test). To use pydantic plugins, set it to the empty string (`PYDANTIC_DISABLE_PLUGINS=`); any value you set is kept. Importing otto as a library leaves it alone |
@@ -213,7 +213,7 @@ next to the window on
 What hands over: any shell but bash, tunnel ids, remote paths, a `tunnel add
 --hosts` list past its first comma, a value written onto a flag that takes
 none (`otto --debug=x <TAB>`), an inventory backend that cannot report
-which files it read, a test name or marker for a repo whose test-names cache must
+which files it read, a test name or marker for a project whose test-names cache must
 first be collected whole (the first time, for instance), and any entry
 [`otto cache info`](cache/index.md#info) reports as `handing over`.
 
@@ -350,14 +350,14 @@ staging).
 Three directories carry the `.otto` name, and each holds exactly one kind of
 thing:
 
-- a repo's `.otto/` holds **source config** — `settings.toml`, coverage
+- a project's `.otto/` holds **source config** — `settings.toml`, coverage
   overrides, the schemas `otto init` scaffolds.  Committed, shared by the team.
 - the xdir holds **run outputs** — the per-invocation directories above.
 - the **workspace home** holds everything otto derived and can rebuild.
 
 The third is otto's user-level home (`~/.otto`, relocatable wholesale with
-`OTTO_HOME`), sharded by *workspace* — the normalized `OTTO_SUT_DIRS` set — so
-one directory serves every invocation against the same repos, from wherever
+`OTTO_HOME`), sharded by *workspace* — the normalized `OTTOPATH` set — so
+one directory serves every invocation against the same projects, from wherever
 you run them:
 
 ```text
@@ -376,12 +376,12 @@ when their directories share basenames. `<slug>` is those basenames joined
 with `-` and normalized, cut to 40 characters.
 
 `pycache/` and `pytest-cache/` exist so that otto's pytest sessions write
-nothing into your repo: every pytest session otto starts (a run, a listing, a
+nothing into your project: every pytest session otto starts (a run, a listing, a
 dry run, or the background collection behind a TAB) writes the bytecode of
 what it imports under `pycache/` (unless you set `PYTHONPYCACHEPREFIX`, which
 otto uses instead), and a run keeps pytest's cache in `pytest-cache/` rather
 than a `.pytest_cache/` in pytest's rootdir. That covers the sessions, not
-all of `otto test`: your repo's init modules, which otto imports when it
+all of `otto test`: your project's init modules, which otto imports when it
 starts, compile into a `__pycache__` beside themselves as any Python module
 does, unless you set `PYTHONPYCACHEPREFIX`; and a run's output directory is
 under `--xdir`, which is the current directory unless you choose another
@@ -391,7 +391,7 @@ Everything under a workspace home is derived, so the whole directory is
 disposable — delete it and otto rebuilds what it needs on the next run.
 `OTTO_HOME` moves all of it at once.
 
-Nothing here shrinks on its own: every distinct `OTTO_SUT_DIRS` set gets its
+Nothing here shrinks on its own: every distinct `OTTOPATH` set gets its
 own workspace directory, and none is ever removed automatically.
 [`otto cache`](cache/index.md) is how you inspect, clear, and bound that
 growth — see {doc}`../architecture/startup-performance` for what it costs to keep this
@@ -435,12 +435,12 @@ verdicts instead: see {doc}`check-verdicts`.
 
 | Command | What it does |
 | --- | --- |
-| [`otto init`](init.md) | Scaffold a new otto repo, or validate an existing one |
+| [`otto init`](init.md) | Scaffold a new otto project, or validate an existing one |
 | [`otto env`](env/index.md) | Build and maintain this workspace's orchestration environment |
 | [`otto host`](host/index.md) | Run commands and transfer files on lab hosts |
 | [`otto cache`](cache/index.md) | Inspect, clear, and prune otto's per-workspace caches |
 | [`otto run`](run/index.md) | Run a registered instruction on the lab |
-| [`otto test`](test/index.md) | Run your repos' pytest tests by name or marker |
+| [`otto test`](test/index.md) | Run your projects' pytest tests by name or marker |
 | [`otto docker`](docker/index.md) | Build images and deploy use-case stacks on docker-capable lab hosts |
 | [`otto link`](link/index.md) | Inspect and impair the lab's **static** links — the edges that already exist |
 | [`otto tunnel`](tunnel/index.md) | Create, list and remove host-resident tunnels — paths that do not exist until you build them |

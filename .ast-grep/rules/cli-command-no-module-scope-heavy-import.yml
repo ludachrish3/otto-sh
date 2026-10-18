@@ -30,18 +30,18 @@ note: >
     - otto.host.errors/unix_host/remote_host: cli.cov, cli.docker, cli.host
       (also spelled as otto.host's lazy UnixHost/RemoteHost/OsType and its
       error names MountNotFoundError/RawLandingError/SessionSetupError);
-    - otto.fleet, otto.config.repo and otto.labs.loader (the lab model and its
+    - otto.fleet, otto.config.project and otto.labs.loader (the lab model and its
       loader): cli.docker, cli.host, cli.monitor, cli.callbacks, cli.link,
-      cli.tunnel (also spelled as otto.config's lazy Repo, otto.labs' loader
+      cli.tunnel (also spelled as otto.config's lazy Project, otto.labs' loader
       submodule and otto.lab's lazy Lab/load_lab/get_lab/get_host/all_hosts/...).
-      otto.config's lazy Docker*/MonitorSettings stay banned with Repo: a
-      command reads them from the repo it loads, in its body;
+      otto.config's lazy Docker*/MonitorSettings stay banned with Project: a
+      command reads them from the project it loads, in its body;
     - otto.context: cli.test, cli.host;
     - the top-level otto package's lazy names for the entries above (its
       context and fleet/lab names, and `options`, which is pydantic's
       dataclass) are banned on the same grounds;
     - otto.docker (any submodule): cli.docker;
-    - otto.bootstrap's lazy get_env, which loads otto.config.repo.
+    - otto.bootstrap's lazy get_env, which loads otto.config.project.
 
   Module scope means: not inside a function body and not in the consequence
   of `if TYPE_CHECKING:` (its `else:` branch, a `try:` block and a class body
@@ -64,7 +64,7 @@ utils:
   # (`..x` from src/otto/cli/, `...x` from a package under it), optionally
   # followed by a submodule.
   denied-module-path:
-    regex: '^(asyncio|pydantic|rich\.table|(\.{2,}|otto\.)(coverage\.(reporter|merge|store|tree|errors)|host\.(errors|unix_host|remote_host)|config\.repo|fleet|labs\.loader|context|docker))(\.[\w.]+)?$'
+    regex: '^(asyncio|pydantic|rich\.table|(\.{2,}|otto\.)(coverage\.(reporter|merge|store|tree|errors)|host\.(errors|unix_host|remote_host)|config\.project|fleet|labs\.loader|context|docker))(\.[\w.]+)?$'
 rule:
   all:
   - any:
@@ -74,7 +74,7 @@ rule:
         any:
         - kind: dotted_name
         - kind: aliased_import
-        regex: '^(asyncio|pydantic|rich\.table|otto\.(coverage\.(reporter|merge|store|tree|errors)|host\.(errors|unix_host|remote_host)|config\.repo|fleet|labs\.loader|context|docker))(\.[\w.]+)?(\s+as\s+\w+)?$'
+        regex: '^(asyncio|pydantic|rich\.table|otto\.(coverage\.(reporter|merge|store|tree|errors)|host\.(errors|unix_host|remote_host)|config\.project|fleet|labs\.loader|context|docker))(\.[\w.]+)?(\s+as\s+\w+)?$'
     # from asyncio import ... / from ..fleet import ... / from ..docker import ...
     - kind: import_from_statement
       has:
@@ -115,7 +115,7 @@ rule:
           any:
           - kind: dotted_name
           - kind: aliased_import
-          regex: '^(repo|Repo|DockerCompose|DockerImage|DockerSettings|MonitorSettings)(\s+as\s+\w+)?$'
+          regex: '^(project|Project|DockerCompose|DockerImage|DockerSettings|MonitorSettings)(\s+as\s+\w+)?$'
     - kind: import_from_statement
       all:
       - has:

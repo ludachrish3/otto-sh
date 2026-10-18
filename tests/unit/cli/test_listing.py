@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 from rich.console import Console
 from typer.testing import CliRunner
 
-from otto.config.repo import Repo
+from otto.config.project import Project
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result
 from tests._fixtures.labdata import write_lab_json
 from tests._fixtures.sutrepo import make_sut_repo
@@ -51,10 +51,10 @@ def _make_sut(
 
 
 def _add_test_file(
-    sut_dir: Path, filename: str = "test_example.py", content: str | None = None
+    root: Path, filename: str = "test_example.py", content: str | None = None
 ) -> Path:
     """Write a test file into the SUT's tests/ directory."""
-    tests_dir = sut_dir / "tests"
+    tests_dir = root / "tests"
     tests_dir.mkdir(exist_ok=True)
     if content is None:
         content = "def test_pass():\n    assert True\n\ndef test_another():\n    assert True\n"
@@ -71,17 +71,17 @@ def _add_test_file(
 class TestGetLabPanel:
     def test_lists_lab_names_from_host_source(self, tmp_path):
         """The default json backend's lab names render as bulleted entries."""
-        sut_dir = _make_sut(
+        root = _make_sut(
             tmp_path, extra_toml='[[lab.sources]]\nbackend = "json"\npaths = ["labdata"]\n'
         )
-        labdata = sut_dir / "labdata"
+        labdata = root / "labdata"
         labdata.mkdir()
         write_lab_json(
             labdata / "lab.json",
             [{"ip": "10.0.0.1", "element": "a", "labs": ["alpha", "beta"]}],
         )
-        repo = Repo(sut_dir=sut_dir)
-        text = _render(repo.get_lab_panel())
+        project = Project(root=root)
+        text = _render(project.get_lab_panel())
         assert "alpha" in text
         assert "beta" in text
 
@@ -92,16 +92,16 @@ class TestGetLabPanel:
         an empty panel — indistinguishable from a source that answered with
         zero labs. The two are different problems and must read differently.
         """
-        repo = Repo(sut_dir=_make_sut(tmp_path))
-        assert repo.lab_sources == []
-        assert "no [[lab.sources]] declared" in _render(repo.get_lab_panel())
+        project = Project(root=_make_sut(tmp_path))
+        assert project.lab_sources == []
+        assert "no [[lab.sources]] declared" in _render(project.get_lab_panel())
 
     def test_unknown_backend_renders_error_not_traceback(self, tmp_path):
         """A misconfigured [[lab.sources]] backend surfaces in-panel instead of crashing."""
-        sut_dir = _make_sut(tmp_path, extra_toml='[[lab.sources]]\nbackend = "does-not-exist"\n')
-        repo = Repo(sut_dir=sut_dir)
+        root = _make_sut(tmp_path, extra_toml='[[lab.sources]]\nbackend = "does-not-exist"\n')
+        project = Project(root=root)
         # Must not raise — get_lab_panel catches the build failure.
-        text = _render(repo.get_lab_panel())
+        text = _render(project.get_lab_panel())
         assert "host source unavailable" in text
         assert "does-not-exist" in text
 
@@ -113,14 +113,14 @@ class TestGetLabPanel:
 
 class TestGetMarkersPanel:
     def test_populated_panel_shows_markers(self, tmp_path):
-        repo = Repo(sut_dir=_make_sut(tmp_path))
-        text = _render(repo.get_markers_panel(["slow", "smoke"]))
+        project = Project(root=_make_sut(tmp_path))
+        text = _render(project.get_markers_panel(["slow", "smoke"]))
         assert "slow" in text
         assert "smoke" in text
 
     def test_empty_panel_shows_placeholder(self, tmp_path):
-        repo = Repo(sut_dir=_make_sut(tmp_path))
-        text = _render(repo.get_markers_panel([]))
+        project = Project(root=_make_sut(tmp_path))
+        text = _render(project.get_markers_panel([]))
         assert "no markers found" in text
 
 
@@ -132,7 +132,7 @@ class TestGetMarkersPanel:
 class TestListMarkers:
     def test_a_repo_with_no_tests_shows_the_placeholder(self, tmp_path):
         sut = _make_sut(tmp_path)
-        with patch("otto.declared.get_repos", return_value=[Repo(sut_dir=sut)]):
+        with patch("otto.declared.get_projects", return_value=[Project(root=sut)]):
             result = runner.invoke(_test_app(), ["--list-markers"])
         assert result.exit_code == 0
         assert "no markers found" in result.stdout
@@ -140,7 +140,7 @@ class TestListMarkers:
     def test_list_markers_includes_otto_builtins(self, tmp_path):
         """`ensure` and `retry` are otto's, not the repo's — they get their own panel."""
         sut = _make_sut(tmp_path)
-        with patch("otto.declared.get_repos", return_value=[Repo(sut_dir=sut)]):
+        with patch("otto.declared.get_projects", return_value=[Project(root=sut)]):
             result = runner.invoke(_test_app(), ["--list-markers"])
         assert result.exit_code == 0
         assert "ensure(*steps)" in result.stdout
@@ -171,47 +171,47 @@ class TestGetInstructionsPanel:
         return registry
 
     def test_shows_command_from_matching_module(self, tmp_path):
-        sut_dir = _make_sut(tmp_path, extra_toml='init = ["my_instructions"]\n')
-        repo = Repo(sut_dir=sut_dir)
+        root = _make_sut(tmp_path, extra_toml='init = ["my_instructions"]\n')
+        project = Project(root=root)
         fake = self._fake_registry(("do-something", "my_instructions.cmd"))
         with patch("otto.instruction_catalog.INSTRUCTIONS", fake):
-            text = _render(repo.get_instructions_panel())
+            text = _render(project.get_instructions_panel())
         assert "do-something" in text
 
     def test_excludes_command_from_other_module(self, tmp_path):
-        sut_dir = _make_sut(tmp_path, extra_toml='init = ["my_instructions"]\n')
-        repo = Repo(sut_dir=sut_dir)
+        root = _make_sut(tmp_path, extra_toml='init = ["my_instructions"]\n')
+        project = Project(root=root)
         fake = self._fake_registry(("foreign-command", "other_repo.cmd"))
         with patch("otto.instruction_catalog.INSTRUCTIONS", fake):
-            text = _render(repo.get_instructions_panel())
+            text = _render(project.get_instructions_panel())
         assert "foreign-command" not in text
         assert "no instructions found" in text
 
     def test_explicit_cmd_name_takes_priority_over_func_name(self, tmp_path):
         """The registered name is already the explicit/derived name at registration time."""
-        sut_dir = _make_sut(tmp_path, extra_toml='init = ["my_instructions"]\n')
-        repo = Repo(sut_dir=sut_dir)
+        root = _make_sut(tmp_path, extra_toml='init = ["my_instructions"]\n')
+        project = Project(root=root)
         fake = self._fake_registry(("explicit-name", "my_instructions.cmd"))
         with patch("otto.instruction_catalog.INSTRUCTIONS", fake):
-            text = _render(repo.get_instructions_panel())
+            text = _render(project.get_instructions_panel())
         assert "explicit-name" in text
         assert "func-name" not in text
 
     def test_matches_top_level_init_module(self, tmp_path):
         """Module name exactly equal to an init entry (not just a prefix) should match."""
-        sut_dir = _make_sut(tmp_path, extra_toml='init = ["my_instructions"]\n')
-        repo = Repo(sut_dir=sut_dir)
+        root = _make_sut(tmp_path, extra_toml='init = ["my_instructions"]\n')
+        project = Project(root=root)
         fake = self._fake_registry(("top-level-cmd", "my_instructions"))
         with patch("otto.instruction_catalog.INSTRUCTIONS", fake):
-            text = _render(repo.get_instructions_panel())
+            text = _render(project.get_instructions_panel())
         assert "top-level-cmd" in text
 
     def test_empty_when_no_groups(self, tmp_path):
-        sut_dir = _make_sut(tmp_path, extra_toml='init = ["my_instructions"]\n')
-        repo = Repo(sut_dir=sut_dir)
+        root = _make_sut(tmp_path, extra_toml='init = ["my_instructions"]\n')
+        project = Project(root=root)
         fake = self._fake_registry()
         with patch("otto.instruction_catalog.INSTRUCTIONS", fake):
-            text = _render(repo.get_instructions_panel())
+            text = _render(project.get_instructions_panel())
         assert "no instructions found" in text
 
 
@@ -221,7 +221,7 @@ class TestGetInstructionsPanel:
 
 
 class TestListTests:
-    def _repo_with_tests(self, tmp_path: Path) -> Repo:
+    def _repo_with_tests(self, tmp_path: Path) -> Project:
         sut = _make_sut(tmp_path)
         _add_test_file(
             sut,
@@ -234,19 +234,19 @@ class TestListTests:
         (sut / "tests" / "conftest.py").write_text(
             "def pytest_configure(config):\n    config.addinivalue_line('markers','slow: x')\n"
         )
-        return Repo(sut_dir=sut)
+        return Project(root=sut)
 
     def test_list_tests_lists_all_and_exits(self, tmp_path: Path) -> None:
-        repo = self._repo_with_tests(tmp_path)
-        with patch("otto.bootstrap.bootstrap", return_value=fake_bootstrap_result([repo])):
+        project = self._repo_with_tests(tmp_path)
+        with patch("otto.bootstrap.bootstrap", return_value=fake_bootstrap_result([project])):
             result = runner.invoke(_test_app(), ["--list-tests"])
         assert result.exit_code == 0
         assert "test_alpha" in result.stdout
         assert "test_beta" in result.stdout
 
     def test_list_tests_filters_by_marker(self, tmp_path: Path) -> None:
-        repo = self._repo_with_tests(tmp_path)
-        with patch("otto.bootstrap.bootstrap", return_value=fake_bootstrap_result([repo])):
+        project = self._repo_with_tests(tmp_path)
+        with patch("otto.bootstrap.bootstrap", return_value=fake_bootstrap_result([project])):
             result = runner.invoke(_test_app(), ["--list-tests", "--markers", "slow"])
         assert result.exit_code == 0
         assert "test_beta" in result.stdout

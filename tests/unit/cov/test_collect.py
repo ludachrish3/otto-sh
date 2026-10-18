@@ -86,10 +86,10 @@ class TestNoCoverageConfig:
     """A tree with no ``[coverage]`` section fails loud (ValueError)."""
 
     def test_no_coverage_config_raises_valueerror(self, tmp_path):
-        repo = MagicMock()
-        repo.settings = {}  # no [coverage] section
+        project = MagicMock()
+        project.settings = {}  # no [coverage] section
         with pytest.raises(ValueError, match=r"\[coverage\]"):
-            asyncio.run(collect_coverage(tmp_path, repos=[repo]))
+            asyncio.run(collect_coverage(tmp_path, projects=[project]))
 
 
 class TestNamedExceptions:
@@ -102,10 +102,10 @@ class TestNamedExceptions:
     def test_no_coverage_config_raises_coverage_config_error(self, tmp_path):
         from otto.config.coverage_settings import CoverageConfigError
 
-        repo = MagicMock()
-        repo.settings = {}
+        project = MagicMock()
+        project.settings = {}
         with pytest.raises(CoverageConfigError) as excinfo:
-            asyncio.run(collect_coverage(tmp_path, repos=[repo]))
+            asyncio.run(collect_coverage(tmp_path, projects=[project]))
         assert isinstance(excinfo.value, ValueError)
         assert str(excinfo.value) == "No [coverage] section found in .otto/settings.toml"
 
@@ -115,9 +115,9 @@ class TestNamedExceptions:
 
         cov_dir = tmp_path / "cov"
         cov_dir.mkdir()
-        repo = MagicMock()
-        repo.sut_dir = tmp_path
-        repo.name = "repo"
+        project = MagicMock()
+        project.root = tmp_path
+        project.name = "repo"
 
         host = MagicMock(spec=UnixHost)
         host.id = "test1"
@@ -133,7 +133,7 @@ class TestNamedExceptions:
             ),
             pytest.raises(NoCoverageDataError) as excinfo,
         ):
-            asyncio.run(collect_coverage(cov_dir, repos=[repo]))
+            asyncio.run(collect_coverage(cov_dir, projects=[project]))
         assert isinstance(excinfo.value, ValueError)
         assert str(excinfo.value) == (
             "no .gcda counters retrieved from any product (searched: test1:app:/var/cov/app)"
@@ -160,9 +160,9 @@ class TestFetchStage:
 
         cov_dir = tmp_path / "cov"
         cov_dir.mkdir()
-        repo = MagicMock()
-        repo.sut_dir = tmp_path
-        repo.name = "repo"
+        project = MagicMock()
+        project.root = tmp_path
+        project.name = "repo"
 
         host = MagicMock(spec=UnixHost)
         host.id = "test1"
@@ -180,7 +180,7 @@ class TestFetchStage:
             ),
             pytest.raises(ValueError, match=r"no \.gcda counters retrieved from any product"),
         ):
-            asyncio.run(collect_coverage(cov_dir, repos=[repo]))
+            asyncio.run(collect_coverage(cov_dir, projects=[project]))
 
         # The fetcher stages into the exact cov_dir it was handed (no override
         # logic — the caller resolves the destination now), carrying the
@@ -194,9 +194,9 @@ class TestFetchStage:
 
         cov_dir = tmp_path / "cov"
         cov_dir.mkdir()
-        repo = MagicMock()
-        repo.sut_dir = tmp_path
-        repo.name = "repo"
+        project = MagicMock()
+        project.root = tmp_path
+        project.name = "repo"
 
         h1 = MagicMock(spec=UnixHost)
         h1.id = "test1"
@@ -217,7 +217,7 @@ class TestFetchStage:
                 ValueError, match=r"searched: test1:app:/var/cov/app, test2:agent:/tmp/agent"
             ),
         ):
-            asyncio.run(collect_coverage(cov_dir, repos=[repo]))
+            asyncio.run(collect_coverage(cov_dir, projects=[project]))
 
     def test_an_uninstrumented_product_is_not_searched(self, tmp_path):
         """Only instrumented products reach the message — the fetcher skips the rest."""
@@ -225,9 +225,9 @@ class TestFetchStage:
 
         cov_dir = tmp_path / "cov"
         cov_dir.mkdir()
-        repo = MagicMock()
-        repo.sut_dir = tmp_path
-        repo.name = "repo"
+        project = MagicMock()
+        project.root = tmp_path
+        project.name = "repo"
 
         host = MagicMock(spec=UnixHost)
         host.id = "test1"
@@ -243,7 +243,7 @@ class TestFetchStage:
             ),
             pytest.raises(ValueError, match=r"searched: test1:app:/var/cov/app\)") as excinfo,
         ):
-            asyncio.run(collect_coverage(cov_dir, repos=[repo]))
+            asyncio.run(collect_coverage(cov_dir, projects=[project]))
         assert "dbg" not in str(excinfo.value)
 
     def test_the_runner_is_never_named_as_searched(self, tmp_path):
@@ -254,9 +254,9 @@ class TestFetchStage:
 
         cov_dir = tmp_path / "cov"
         cov_dir.mkdir()
-        repo = MagicMock()
-        repo.sut_dir = tmp_path
-        repo.name = "repo"
+        project = MagicMock()
+        project.root = tmp_path
+        project.name = "repo"
 
         host = MagicMock(spec=UnixHost)
         host.id = "test1"
@@ -275,7 +275,7 @@ class TestFetchStage:
             ),
             pytest.raises(ValueError, match=r"no \.gcda counters") as excinfo,
         ):
-            asyncio.run(collect_coverage(cov_dir, repos=[repo]))
+            asyncio.run(collect_coverage(cov_dir, projects=[project]))
         assert str(excinfo.value) == (
             "no .gcda counters retrieved from any product (searched: test1:app:/var/cov/app)"
         )
@@ -291,9 +291,9 @@ class TestProductsOnly:
 
         cov_dir = tmp_path / "cov"
         cov_dir.mkdir()
-        repo = MagicMock()
-        repo.sut_dir = tmp_path
-        repo.name = "repo"
+        project = MagicMock()
+        project.root = tmp_path
+        project.name = "repo"
         host = MagicMock(spec=UnixHost)
         host.id = "test1"
         host.products = [_product("app", "/var/cov/app"), _product("agent")]
@@ -307,7 +307,7 @@ class TestProductsOnly:
             ),
             pytest.raises(NoCoverageDataError) as excinfo,
         ):
-            asyncio.run(collect_coverage(cov_dir, repos=[repo]))
+            asyncio.run(collect_coverage(cov_dir, projects=[project]))
         assert str(excinfo.value) == (
             "no .gcda counters retrieved from any product (searched: "
             "test1:app:/var/cov/app, test1:agent:/tmp/agent)"
@@ -325,9 +325,9 @@ class TestProductsOnly:
 
         cov_dir = tmp_path / "cov"
         cov_dir.mkdir()
-        repo = MagicMock()
-        repo.sut_dir = tmp_path
-        repo.name = "repo"
+        project = MagicMock()
+        project.root = tmp_path
+        project.name = "repo"
         board = MagicMock(spec=EmbeddedHost)
         board.id = "bench-1"
         board.products = [_product("blink")]
@@ -340,7 +340,7 @@ class TestProductsOnly:
             ),
             pytest.raises(NoCoverageDataError) as excinfo,
         ):
-            asyncio.run(collect_coverage(cov_dir, repos=[repo]))
+            asyncio.run(collect_coverage(cov_dir, projects=[project]))
         assert str(excinfo.value) == (
             "no .gcda counters retrieved from any product (searched: bench-1:blink:console)"
         )
@@ -352,9 +352,9 @@ class TestProductsOnly:
 
         cov_dir = tmp_path / "cov"
         cov_dir.mkdir()
-        repo = MagicMock()
-        repo.sut_dir = tmp_path
-        repo.name = "repo"
+        project = MagicMock()
+        project.root = tmp_path
+        project.name = "repo"
         host = MagicMock(spec=UnixHost)
         host.id = "test1"
         host.products = []
@@ -368,7 +368,7 @@ class TestProductsOnly:
             ),
             pytest.raises(NoCoverageDataError) as excinfo,
         ):
-            asyncio.run(collect_coverage(cov_dir, repos=[repo]))
+            asyncio.run(collect_coverage(cov_dir, projects=[project]))
         assert str(excinfo.value) == (
             "no .gcda counters retrieved from any product "
             "(no instrumented products on any host: test1)"
@@ -390,9 +390,9 @@ class TestCleanAfterFetch:
     def _run(self, cov_dir, *, clean_after_fetch=True):
         from otto.host import UnixHost
 
-        repo = MagicMock()
-        repo.sut_dir = cov_dir.parent
-        repo.name = "repo"
+        project = MagicMock()
+        project.root = cov_dir.parent
+        project.name = "repo"
 
         host = MagicMock(spec=UnixHost)
         host.id = "test1"
@@ -415,20 +415,20 @@ class TestCleanAfterFetch:
             patch("otto.coverage.collect.clean_coverage", clean_mock),
             # get_cov_repo None short-circuits the metadata + capture tail so the
             # test pins only the fetch/clean seam.
-            patch("otto.config.coverage_settings.get_cov_repo", return_value=None),
+            patch("otto.config.coverage_settings.get_cov_project", return_value=None),
         ):
             result = asyncio.run(
-                collect_coverage(cov_dir, repos=[repo], clean_after_fetch=clean_after_fetch)
+                collect_coverage(cov_dir, projects=[project], clean_after_fetch=clean_after_fetch)
             )
-        return result, clean_mock, board, repo
+        return result, clean_mock, board, project
 
     def test_true_default_calls_clean_coverage_scoped_to_contributing_hosts(self, tmp_path):
         cov_dir = tmp_path / "cov"
         cov_dir.mkdir()
-        result, clean_mock, board, repo = self._run(cov_dir)  # default True
+        result, clean_mock, board, project = self._run(cov_dir)  # default True
         # Scoped to the hosts that actually contributed a product, through the
         # same repo list collect_coverage itself resolved.
-        clean_mock.assert_awaited_once_with([repo], host_ids=["test1"])
+        clean_mock.assert_awaited_once_with([project], host_ids=["test1"])
         assert result.product_dirs == {("test1", "app"): board}
         assert result.clean == CleanReport(hosts={})
 
@@ -453,7 +453,7 @@ class TestCollectEmbedded:
     capture production."""
 
     def test_collects_embedded_when_only_embedded_configured(self, tmp_path):
-        repo = MagicMock()
+        project = MagicMock()
         cov_dir = tmp_path / "cov"
         cov_dir.mkdir()
 
@@ -463,9 +463,9 @@ class TestCollectEmbedded:
             patch("otto.config.coverage_settings.get_cov_config", return_value={"embedded": {}}),
             patch("otto.fleet.all_hosts", return_value=[]),
             patch("otto.coverage.fetcher.embedded.collect_embedded_coverage", new=embedded_collect),
-            patch("otto.config.coverage_settings.get_cov_repo", return_value=None),
+            patch("otto.config.coverage_settings.get_cov_project", return_value=None),
         ):
-            result = asyncio.run(collect_coverage(cov_dir, repos=[repo]))
+            result = asyncio.run(collect_coverage(cov_dir, projects=[project]))
 
         embedded_collect.assert_awaited_once()
         assert isinstance(result, CollectResult)
@@ -493,9 +493,9 @@ class TestCollectEmbedded:
         build_dir = tmp_path / "build" / "cov_ext_app"
         build_dir.mkdir(parents=True)
 
-        repo = MagicMock()
-        repo.name = "repo3"
-        repo.sut_dir = tmp_path / "repo3"  # NOT what sut_dir should resolve to
+        project = MagicMock()
+        project.name = "repo3"
+        project.root = tmp_path / "repo3"  # NOT what sut_dir should resolve to
 
         hop = MagicMock(spec=UnixHost)
         hop.id = "test4"  # a Unix hop, produces no coverage
@@ -521,13 +521,13 @@ class TestCollectEmbedded:
             patch("otto.fleet.all_hosts", return_value=[hop, zephyr37_llext]),
             patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=_empty_fetcher()),
             patch("otto.coverage.fetcher.embedded.collect_embedded_coverage", new=embedded_collect),
-            patch("otto.config.coverage_settings.get_cov_repo", return_value=repo),
+            patch("otto.config.coverage_settings.get_cov_project", return_value=project),
             patch("otto.coverage.capture.produce.produce_captures", new=AsyncMock(return_value=[])),
         ):
-            asyncio.run(collect_coverage(cov_dir, repos=[repo]))
+            asyncio.run(collect_coverage(cov_dir, projects=[project]))
 
         meta = json.loads((cov_dir / ".otto_cov_meta.json").read_text())
-        assert meta["sut_dir"] == str(build_dir.resolve())
+        assert meta["project_root"] == str(build_dir.resolve())
         # element "zephyr37_llext" slugs to the id "zephyr37-llext" (underscore -> hyphen).
         assert set(meta["toolchains"]) == {"zephyr37-llext"}
         assert "test4" not in meta["toolchains"]
@@ -552,9 +552,9 @@ class TestCollectEmbedded:
         build_dir = tmp_path / "build"
         (build_dir / "zephyr").mkdir(parents=True)
 
-        repo = MagicMock()
-        repo.name = "repo3"
-        repo.sut_dir = tmp_path / "repo3"
+        project = MagicMock()
+        project.name = "repo3"
+        project.root = tmp_path / "repo3"
 
         embedded_collect = AsyncMock(
             return_value={("zephyr37-llext", "cov_ext"): cov_dir / "zephyr37-llext" / "cov_ext"}
@@ -564,10 +564,10 @@ class TestCollectEmbedded:
             patch("otto.config.coverage_settings.get_cov_config", return_value=cov_config),
             patch("otto.fleet.all_hosts", return_value=[host]),
             patch("otto.coverage.fetcher.embedded.collect_embedded_coverage", new=embedded_collect),
-            patch("otto.config.coverage_settings.get_cov_repo", return_value=repo),
+            patch("otto.config.coverage_settings.get_cov_project", return_value=project),
             patch("otto.coverage.capture.produce.produce_captures", new=AsyncMock(return_value=[])),
         ):
-            asyncio.run(collect_coverage(cov_dir, repos=[repo]))
+            asyncio.run(collect_coverage(cov_dir, projects=[project]))
 
         meta = json.loads((cov_dir / ".otto_cov_meta.json").read_text())
         # element "zephyr37_llext" slugs to the id "zephyr37-llext" (underscore -> hyphen).
@@ -588,9 +588,9 @@ class TestCollectEmbedded:
         build_dir = tmp_path / "build"
         build_dir.mkdir()
 
-        repo = MagicMock()
-        repo.name = "repo3"
-        repo.sut_dir = tmp_path / "repo3"
+        project = MagicMock()
+        project.name = "repo3"
+        project.root = tmp_path / "repo3"
 
         embedded_collect = AsyncMock(
             return_value={("zephyr37-llext", "cov_ext"): cov_dir / "zephyr37-llext" / "cov_ext"}
@@ -610,11 +610,11 @@ class TestCollectEmbedded:
             patch("otto.config.coverage_settings.get_cov_config", return_value=cov_config),
             patch("otto.fleet.all_hosts", return_value=[host]),
             patch("otto.coverage.fetcher.embedded.collect_embedded_coverage", new=embedded_collect),
-            patch("otto.config.coverage_settings.get_cov_repo", return_value=repo),
+            patch("otto.config.coverage_settings.get_cov_project", return_value=project),
             patch("otto.host.toolchain_discovery.discover_toolchain_from_gcno", new=_fake_discover),
             patch("otto.coverage.capture.produce.produce_captures", new=AsyncMock(return_value=[])),
         ):
-            asyncio.run(collect_coverage(cov_dir, repos=[repo]))
+            asyncio.run(collect_coverage(cov_dir, projects=[project]))
 
         meta = json.loads((cov_dir / ".otto_cov_meta.json").read_text())
         # element "zephyr37_llext" slugs to the id "zephyr37-llext"; the collect result is
@@ -627,7 +627,7 @@ class TestCollectEmbedded:
         embedded host selectors, so the collect-from set is repo-declared
         rather than inferred from which hosts happened to emit ``.gcda``.
         """
-        repo = MagicMock()
+        project = MagicMock()
         cov_dir = tmp_path / "cov"
         cov_dir.mkdir()
 
@@ -640,11 +640,11 @@ class TestCollectEmbedded:
             ),
             patch("otto.fleet.all_hosts", new=all_hosts_mock),
             patch("otto.coverage.fetcher.embedded.collect_embedded_coverage", new=embedded_collect),
-            patch("otto.config.coverage_settings.get_cov_repo", return_value=None),
+            patch("otto.config.coverage_settings.get_cov_project", return_value=None),
             # No host produced .gcda → fail loud (the selectors still ran).
             pytest.raises(ValueError, match=r"no \.gcda counters"),
         ):
-            asyncio.run(collect_coverage(cov_dir, repos=[repo]))
+            asyncio.run(collect_coverage(cov_dir, projects=[project]))
 
         unix_pat = all_hosts_mock.call_args.kwargs.get("pattern")
         assert unix_pat is not None
@@ -657,7 +657,7 @@ class TestCollectEmbedded:
 
     def test_unset_coverage_hosts_passes_no_pattern(self, tmp_path):
         """Unset ``[coverage].hosts`` → ``pattern=None`` (collect from all hosts)."""
-        repo = MagicMock()
+        project = MagicMock()
         cov_dir = tmp_path / "cov"
         cov_dir.mkdir()
 
@@ -667,10 +667,10 @@ class TestCollectEmbedded:
             patch("otto.config.coverage_settings.get_cov_config", return_value={"embedded": {}}),
             patch("otto.fleet.all_hosts", new=all_hosts_mock),
             patch("otto.coverage.fetcher.embedded.collect_embedded_coverage", new=embedded_collect),
-            patch("otto.config.coverage_settings.get_cov_repo", return_value=None),
+            patch("otto.config.coverage_settings.get_cov_project", return_value=None),
             pytest.raises(ValueError, match=r"no \.gcda counters"),
         ):
-            asyncio.run(collect_coverage(cov_dir, repos=[repo]))
+            asyncio.run(collect_coverage(cov_dir, projects=[project]))
 
         assert all_hosts_mock.call_args.kwargs.get("pattern") is None
         assert embedded_collect.await_args.kwargs.get("pattern") is None
@@ -689,9 +689,9 @@ class TestCollectEmbedded:
         build44 = tmp_path / "build" / "v4_4"
         build44.mkdir(parents=True)
 
-        repo = MagicMock()
-        repo.name = "repo3"
-        repo.sut_dir = tmp_path / "repo3"
+        project = MagicMock()
+        project.name = "repo3"
+        project.root = tmp_path / "repo3"
 
         zephyr37_fat = ZephyrHost(
             ip="192.0.2.33",
@@ -734,10 +734,10 @@ class TestCollectEmbedded:
             patch("otto.config.coverage_settings.get_cov_config", return_value=cov_config),
             patch("otto.fleet.all_hosts", return_value=[zephyr37_fat, zephyr44_fat]),
             patch("otto.coverage.fetcher.embedded.collect_embedded_coverage", new=embedded_collect),
-            patch("otto.config.coverage_settings.get_cov_repo", return_value=repo),
+            patch("otto.config.coverage_settings.get_cov_project", return_value=project),
             patch("otto.coverage.capture.produce.produce_captures", new=AsyncMock(return_value=[])),
         ):
-            asyncio.run(collect_coverage(cov_dir, repos=[repo]))
+            asyncio.run(collect_coverage(cov_dir, projects=[project]))
 
         meta = json.loads((cov_dir / ".otto_cov_meta.json").read_text())
         assert meta["source_roots"]["zephyr37-fat"] == str(build37.resolve())
@@ -758,9 +758,9 @@ class TestFetchedToolchainMetadata:
 
         cov_dir = tmp_path / "cov"
         cov_dir.mkdir()
-        repo = MagicMock()
-        repo.name = "repo1"
-        repo.sut_dir = tmp_path / "repo1"
+        project = MagicMock()
+        project.name = "repo1"
+        project.root = tmp_path / "repo1"
 
         doubles = []
         fetched = {}
@@ -783,10 +783,10 @@ class TestFetchedToolchainMetadata:
                 "otto.coverage.fetcher.embedded.collect_embedded_coverage",
                 new=AsyncMock(return_value={}),
             ),
-            patch("otto.config.coverage_settings.get_cov_repo", return_value=repo),
+            patch("otto.config.coverage_settings.get_cov_project", return_value=project),
             patch("otto.coverage.capture.produce.produce_captures", new=AsyncMock(return_value=[])),
         ):
-            asyncio.run(collect_coverage(cov_dir, repos=[repo]))
+            asyncio.run(collect_coverage(cov_dir, projects=[project]))
 
         return json.loads((cov_dir / ".otto_cov_meta.json").read_text())["toolchains"]
 
@@ -858,7 +858,7 @@ class TestBuildDirPathAnchoring:
     """``[coverage.embedded] build_dir`` (and the per-version
     ``[coverage.embedded.builds.<ver>] build_dir``) is a passthrough
     ``dict[str, Any]`` value read raw from ``cov_config`` — it never passes
-    through the pydantic model's ``RepoPath``, so it must be anchored by hand
+    through the pydantic model's ``ProjectPath``, so it must be anchored by hand
     at the point it's read to obey the documented path-resolution convention
     (docs/configuration/settings.md ``### Path resolution``): ``~`` expansion,
     then repo-root anchoring for a still-relative value. Regression coverage
@@ -884,7 +884,7 @@ class TestBuildDirPathAnchoring:
         )
         return ZephyrHost(**kwargs)
 
-    def _collect(self, tmp_path, repo, host, cov_config):
+    def _collect(self, tmp_path, project, host, cov_config):
         cov_dir = tmp_path / "cov"
         cov_dir.mkdir()
         embedded_collect = AsyncMock(
@@ -894,36 +894,36 @@ class TestBuildDirPathAnchoring:
             patch("otto.config.coverage_settings.get_cov_config", return_value=cov_config),
             patch("otto.fleet.all_hosts", return_value=[host]),
             patch("otto.coverage.fetcher.embedded.collect_embedded_coverage", new=embedded_collect),
-            patch("otto.config.coverage_settings.get_cov_repo", return_value=repo),
+            patch("otto.config.coverage_settings.get_cov_project", return_value=project),
             patch("otto.coverage.capture.produce.produce_captures", new=AsyncMock(return_value=[])),
         ):
-            asyncio.run(collect_coverage(cov_dir, repos=[repo]))
+            asyncio.run(collect_coverage(cov_dir, projects=[project]))
         return json.loads((cov_dir / ".otto_cov_meta.json").read_text())
 
     # ── single ``build_dir`` fallback ────────────────────────────────────────
 
     def test_relative_build_dir_anchors_to_repo_root_not_cwd(self, tmp_path, monkeypatch):
         """A bare relative ``build_dir`` resolves under the repo root
-        (``cov_repo.sut_dir``), never the process CWD.
+        (``cov_project.root``), never the process CWD.
 
         Without the fix, ``Path(build_dir).resolve()`` resolves relative to
         wherever ``otto cov`` happens to be invoked from.
         """
-        repo_root = tmp_path / "repo3"
-        (repo_root / "build").mkdir(parents=True)
+        project_root = tmp_path / "repo3"
+        (project_root / "build").mkdir(parents=True)
         elsewhere = tmp_path / "elsewhere"
         elsewhere.mkdir()
         monkeypatch.chdir(elsewhere)
 
-        repo = MagicMock()
-        repo.name = "repo3"
-        repo.sut_dir = repo_root
+        project = MagicMock()
+        project.name = "repo3"
+        project.root = project_root
 
         host = self._zephyr_host(element="zephyr37_llext")
         cov_config = {"embedded": {"build_dir": "build"}}
 
-        meta = self._collect(tmp_path, repo, host, cov_config)
-        assert meta["sut_dir"] == str((repo_root / "build").resolve())
+        meta = self._collect(tmp_path, project, host, cov_config)
+        assert meta["project_root"] == str((project_root / "build").resolve())
 
     def test_tilde_build_dir_expands_via_home(self, tmp_path, monkeypatch):
         """A ``~``-rooted ``build_dir`` expands against ``HOME``, hermetically
@@ -936,15 +936,15 @@ class TestBuildDirPathAnchoring:
         build_dir = home / "covbuild"
         build_dir.mkdir()
 
-        repo = MagicMock()
-        repo.name = "repo3"
-        repo.sut_dir = tmp_path / "repo3"
+        project = MagicMock()
+        project.name = "repo3"
+        project.root = tmp_path / "repo3"
 
         host = self._zephyr_host(element="zephyr37_llext")
         cov_config = {"embedded": {"build_dir": "~/covbuild"}}
 
-        meta = self._collect(tmp_path, repo, host, cov_config)
-        assert meta["sut_dir"] == str(build_dir.resolve())
+        meta = self._collect(tmp_path, project, host, cov_config)
+        assert meta["project_root"] == str(build_dir.resolve())
 
     # ── per-version ``builds.<ver>.build_dir`` ──────────────────────────────
 
@@ -955,21 +955,23 @@ class TestBuildDirPathAnchoring:
         anchoring rule as the single fallback: relative values resolve under
         the repo root, not the process CWD.
         """
-        repo_root = tmp_path / "repo3"
-        (repo_root / "build" / "v3_7").mkdir(parents=True)
+        project_root = tmp_path / "repo3"
+        (project_root / "build" / "v3_7").mkdir(parents=True)
         elsewhere = tmp_path / "elsewhere"
         elsewhere.mkdir()
         monkeypatch.chdir(elsewhere)
 
-        repo = MagicMock()
-        repo.name = "repo3"
-        repo.sut_dir = repo_root
+        project = MagicMock()
+        project.name = "repo3"
+        project.root = project_root
 
         host = self._zephyr_host(element="zephyr37_fat", os_version="3.7")
         cov_config = {"embedded": {"builds": {"3.7": {"build_dir": "build/v3_7"}}}}
 
-        meta = self._collect(tmp_path, repo, host, cov_config)
-        assert meta["source_roots"]["zephyr37-fat"] == str((repo_root / "build" / "v3_7").resolve())
+        meta = self._collect(tmp_path, project, host, cov_config)
+        assert meta["source_roots"]["zephyr37-fat"] == str(
+            (project_root / "build" / "v3_7").resolve()
+        )
 
     def test_per_version_tilde_build_dir_expands_via_home(self, tmp_path, monkeypatch):
         """The per-version ``builds.<ver>.build_dir`` expands a ``~`` prefix
@@ -981,14 +983,14 @@ class TestBuildDirPathAnchoring:
         build_dir = home / "v3_7"
         build_dir.mkdir()
 
-        repo = MagicMock()
-        repo.name = "repo3"
-        repo.sut_dir = tmp_path / "repo3"
+        project = MagicMock()
+        project.name = "repo3"
+        project.root = tmp_path / "repo3"
 
         host = self._zephyr_host(element="zephyr37_fat", os_version="3.7")
         cov_config = {"embedded": {"builds": {"3.7": {"build_dir": "~/v3_7"}}}}
 
-        meta = self._collect(tmp_path, repo, host, cov_config)
+        meta = self._collect(tmp_path, project, host, cov_config)
         assert meta["source_roots"]["zephyr37-fat"] == str(build_dir.resolve())
 
 
@@ -1000,16 +1002,16 @@ class TestCaptureTail:
     returns the produced paths in :class:`CollectResult`. Unlike the old inline
     tail it never swallows — an ambiguous tier or a non-git sut *raise*."""
 
-    def _collect(self, repo, cov_dir, cov_config):
+    def _collect(self, project, cov_dir, cov_config):
         """Drive collect_coverage with one embedded board already collected."""
         embedded_collect = AsyncMock(return_value={("board1", "app"): cov_dir / "board1"})
         with (
             patch("otto.config.coverage_settings.get_cov_config", return_value=cov_config),
             patch("otto.fleet.all_hosts", return_value=[]),
             patch("otto.coverage.fetcher.embedded.collect_embedded_coverage", new=embedded_collect),
-            patch("otto.config.coverage_settings.get_cov_repo", return_value=repo),
+            patch("otto.config.coverage_settings.get_cov_project", return_value=project),
         ):
-            return asyncio.run(collect_coverage(cov_dir, repos=[repo]))
+            return asyncio.run(collect_coverage(cov_dir, projects=[project]))
 
     def test_happy_path_writes_pinned_capture(self, tmp_path, sut_repo, monkeypatch):
         """A well-formed single-tier repo leaves behind a real capture.json and
@@ -1026,13 +1028,13 @@ class TestCaptureTail:
 
         monkeypatch.setattr(produce_mod.LcovMerger, "capture", fake_capture)
 
-        repo = MagicMock()
-        repo.sut_dir = sut_repo
-        repo.name = "repo"
+        project = MagicMock()
+        project.root = sut_repo
+        project.name = "repo"
 
         # Non-empty (truthy) but no explicit [coverage.tiers] -> implicit
         # single "system" e2e tier.
-        result = self._collect(repo, cov_dir, {"tiers": {}})
+        result = self._collect(project, cov_dir, {"tiers": {}})
 
         capture_path = cov_dir / "board1" / "app" / "capture.json"
         assert capture_path.is_file()
@@ -1054,9 +1056,9 @@ class TestCaptureTail:
 
         monkeypatch.setattr(produce_mod.LcovMerger, "capture", fake_capture)
 
-        repo = MagicMock()
-        repo.sut_dir = sut_repo
-        repo.name = "repo"
+        project = MagicMock()
+        project.root = sut_repo
+        project.name = "repo"
 
         cov_config = {
             "tiers": {
@@ -1066,7 +1068,7 @@ class TestCaptureTail:
         }
 
         with pytest.raises(ValueError, match=r"e2e-kind tiers"):
-            self._collect(repo, cov_dir, cov_config)
+            self._collect(project, cov_dir, cov_config)
 
         assert not (cov_dir / "board1" / "app" / "capture.json").exists()
 
@@ -1089,18 +1091,18 @@ class TestCaptureTail:
 
         monkeypatch.setattr(produce_mod.LcovMerger, "capture", fake_capture)
 
-        repo = MagicMock()
-        repo.sut_dir = notgit
-        repo.name = "repo"
+        project = MagicMock()
+        project.root = notgit
+        project.name = "repo"
 
         with pytest.raises(GitUnavailableError):
-            self._collect(repo, cov_dir, {"tiers": {}})
+            self._collect(project, cov_dir, {"tiers": {}})
 
     def test_annotations_passed_through_to_produce(self, tmp_path):
         """tier/ticket/note/tester/display_names thread through to produce_captures."""
-        repo = MagicMock()
-        repo.sut_dir = tmp_path / "sut"
-        repo.name = "repo"
+        project = MagicMock()
+        project.root = tmp_path / "sut"
+        project.name = "repo"
         cov_dir = tmp_path / "cov"
         cov_dir.mkdir()
 
@@ -1116,13 +1118,13 @@ class TestCaptureTail:
             patch("otto.config.coverage_settings.get_cov_config", return_value=cov_config),
             patch("otto.fleet.all_hosts", return_value=[]),
             patch("otto.coverage.fetcher.embedded.collect_embedded_coverage", new=embedded_collect),
-            patch("otto.config.coverage_settings.get_cov_repo", return_value=repo),
+            patch("otto.config.coverage_settings.get_cov_project", return_value=project),
             patch("otto.coverage.capture.produce.produce_captures", new=produce_mock),
         ):
             result = asyncio.run(
                 collect_coverage(
                     cov_dir,
-                    repos=[repo],
+                    projects=[project],
                     tier="manual",
                     ticket="JIRA-1",
                     note="hi",
@@ -1153,9 +1155,9 @@ class TestTierPassthrough:
     def test_tierconfig_object_skips_resolve_get_tier(self, tmp_path):
         from otto.coverage.tiers import TierConfig
 
-        repo = MagicMock()
-        repo.sut_dir = tmp_path / "sut"
-        repo.name = "repo"
+        project = MagicMock()
+        project.root = tmp_path / "sut"
+        project.name = "repo"
         cov_dir = tmp_path / "cov"
         cov_dir.mkdir()
 
@@ -1166,11 +1168,11 @@ class TestTierPassthrough:
             patch("otto.config.coverage_settings.get_cov_config", return_value={"tiers": {}}),
             patch("otto.fleet.all_hosts", return_value=[]),
             patch("otto.coverage.fetcher.embedded.collect_embedded_coverage", new=embedded_collect),
-            patch("otto.config.coverage_settings.get_cov_repo", return_value=repo),
+            patch("otto.config.coverage_settings.get_cov_project", return_value=project),
             patch("otto.coverage.capture.produce.produce_captures", new=produce_mock),
             patch("otto.coverage.tiers.resolve_get_tier") as resolve_mock,
         ):
-            result = asyncio.run(collect_coverage(cov_dir, repos=[repo], tier=tier_obj))
+            result = asyncio.run(collect_coverage(cov_dir, projects=[project], tier=tier_obj))
 
         resolve_mock.assert_not_called()
         assert produce_mock.await_args.kwargs["tier"] == "manual"
@@ -1186,7 +1188,7 @@ class TestPostRunSwallowPolicy:
     logged and swallowed, leaving raw artifacts on disk. (Moved from the old
     coverage-collection swallow tests.)"""
 
-    def _drive_post_run(self, repo, cov_dir, cov_config):
+    def _drive_post_run(self, project, cov_dir, cov_config):
         from otto.suite.run import RunOptions, _post_run_coverage
 
         embedded_collect = AsyncMock(return_value={("board1", "app"): cov_dir / "board1"})
@@ -1195,18 +1197,18 @@ class TestPostRunSwallowPolicy:
             patch("otto.config.coverage_settings.get_cov_config", return_value=cov_config),
             patch("otto.fleet.all_hosts", return_value=[]),
             patch("otto.coverage.fetcher.embedded.collect_embedded_coverage", new=embedded_collect),
-            patch("otto.config.coverage_settings.get_cov_repo", return_value=repo),
+            patch("otto.config.coverage_settings.get_cov_project", return_value=project),
         ):
-            asyncio.run(_post_run_coverage([repo], cov_dir.parent / "log", opts))
+            asyncio.run(_post_run_coverage([project], cov_dir.parent / "log", opts))
 
     def test_ambiguous_tiers_do_not_fail_the_run(self, tmp_path, sut_repo, caplog):
         cov_dir = tmp_path / "cov"
         (cov_dir / "board1" / "app").mkdir(parents=True)
         (cov_dir / "board1" / "app" / "x.gcda").write_bytes(b"")
 
-        repo = MagicMock()
-        repo.sut_dir = sut_repo
-        repo.name = "repo"
+        project = MagicMock()
+        project.root = sut_repo
+        project.name = "repo"
 
         cov_config = {
             "tiers": {
@@ -1216,7 +1218,7 @@ class TestPostRunSwallowPolicy:
         }
 
         with caplog.at_level("WARNING"):
-            self._drive_post_run(repo, cov_dir, cov_config)
+            self._drive_post_run(project, cov_dir, cov_config)
 
         assert not (cov_dir / "board1" / "app" / "capture.json").exists()
         assert any("Coverage collection failed" in rec.message for rec in caplog.records)
@@ -1238,12 +1240,12 @@ class TestPostRunSwallowPolicy:
 
         monkeypatch.setattr(produce_mod.LcovMerger, "capture", fake_capture)
 
-        repo = MagicMock()
-        repo.sut_dir = notgit
-        repo.name = "repo"
+        project = MagicMock()
+        project.root = notgit
+        project.name = "repo"
 
         with caplog.at_level("WARNING"):
-            self._drive_post_run(repo, cov_dir, {"tiers": {}})
+            self._drive_post_run(project, cov_dir, {"tiers": {}})
 
         assert not (cov_dir / "board1" / "app" / "capture.json").exists()
         assert any("Coverage collection failed" in rec.message for rec in caplog.records)

@@ -14,8 +14,8 @@ labs named by a scheme.  A host entry is one addressable portion of its
 element: a board, a console, a management interface.
 
 This page is the full field reference for all four levels: the `labs` table,
-the element entry, the host entry, and the declared link.  For repo-level
-settings (paths, libs, init modules) see {doc}`settings`; for how a repo
+the element entry, the host entry, and the declared link.  For project-level
+settings (paths, libs, init modules) see {doc}`settings`; for how a project
 declares the sources it reads lab data from, see {doc}`host-sources`.
 
 (lab-files)=
@@ -26,7 +26,7 @@ Each directory a json `[[lab.sources]]` entry lists in `paths` (in
 `.otto/settings.toml`) may contain a `lab.json` file — and a `paths` entry
 may name a `.json` file directly, or a glob matching several, `**` included
 ({ref}`Splitting lab data across files and directories <lab-data-across-files>`).
-Otto checks `paths` when it prepares the source, after the repo's `init`
+Otto checks `paths` when it prepares the source, after the project's `init`
 modules have run, not at settings parse.
 The file is a JSON **object** with three sections:
 
@@ -304,8 +304,8 @@ that names no `board` may still get one, and a different id than the record
 alone suggests.  When authoring a link endpoint, take the id from `otto host
 <TAB>` (or `otto --show-lab`) rather than composing it by eye: an endpoint
 naming an id no host answers to fails the lab load.  The profile is resolved
-with every selected repo's `[os_profiles]` tables, so a lab in one repo may
-name a table another repo declares; a custom lab backend receives them as
+with every selected project's `[os_profiles]` tables, so a lab in one project may
+name a table another project declares; a custom lab backend receives them as
 `env.profiles` ({doc}`../cookbook/extending/lab-source-backends`).
 
 Element names are unique per source, compared **by slug**: `Server` and
@@ -844,9 +844,9 @@ instead of silently no-opping.
 1. The hardcoded dataclass defaults in `otto.host.options`.
 2. The host's own `*_options` table and `term`/`transfer` pin in
    `lab.json` (the `valid_*` menu hard-gates selections).
-3. `[host_preferences]` from each repo — product values **win over**
-   `lab.json`.  Repos are applied in `OTTO_SUT_DIRS` order (later repo
-   wins); within a repo, selectors are applied in definition order (later
+3. `[host_preferences]` from each project — product values **win over**
+   `lab.json`.  Projects are applied in `OTTOPATH` order (later project
+   wins); within a project, selectors are applied in definition order (later
    selector wins on the same key).
 4. CLI `--term` / `--transfer` — final word, applied at invocation time.
 
@@ -861,11 +861,11 @@ For the full `*_options` field reference and per-field semantics, see
 
 (project-scope)=
 
-## Project scope: the labs and hosts a repo targets
+## Project scope: the labs and hosts a project targets
 
-A lab database can describe every host an organization owns; a given repo
+A lab database can describe every host an organization owns; a given project
 usually cares about a fraction of them.  The `[project]` table in
-`.otto/settings.toml` is where a repo declares its **fleet of interest** — the
+`.otto/settings.toml` is where a project declares its **fleet of interest** — the
 labs it applies to, and the hosts it targets inside them.
 
 ```toml
@@ -890,18 +890,18 @@ lab is applicable **and any** `host_patterns` entry matches its id.
 
 `host_patterns`
 : The hosts of interest within those labs.  Defaults to `[".*"]` — every host
-  of every applicable lab — so a repo that only needs the lab axis writes only
+  of every applicable lab — so a project that only needs the lab axis writes only
   `lab_patterns`.
 
 ```{warning}
-Writing `[project]` **without** `lab_patterns` declares a repo that applies to
-no lab at all.  That is not a quiet no-op: the repo is excluded, and if it is
+Writing `[project]` **without** `lab_patterns` declares a project that applies to
+no lab at all.  That is not a quiet no-op: the project is excluded, and if it is
 the project driving the run, every project-layer verb aborts naming the loaded
 labs and your patterns.  A `[project]` table with only `host_patterns` in it is
 the shape that hits this.
 ```
 
-An invalid regex fails at settings parse — the moment the repo is discovered,
+An invalid regex fails at settings parse — the moment the project is discovered,
 not on the first fleet walk — naming the offending pattern and what `re` made
 of it:
 
@@ -911,9 +911,9 @@ of it:
 
 (project-scope-required)=
 
-### Required once a repo provides products or dev tools
+### Required once a project provides products or dev tools
 
-A repo that registers a product or dev-tool provider (see
+A project that registers a product or dev-tool provider (see
 {doc}`../cli/host/capabilities/index`), or declares a non-empty `[[products]]`
 or `[[dev_tools]]` array ({doc}`declared-products-tools`), **must** declare
 `lab_patterns`.  The check runs at bootstrap, right after init modules have
@@ -921,9 +921,9 @@ been imported.  It does not warn: otto prints the message below, prefixed
 `error:`, and exits 1.
 
 ```text
-repo 'sensors' registers product/dev-tool providers or declares
+project 'sensors' registers product/dev-tool providers or declares
 [[products]]/[[dev_tools]] entries but declares no [project] lab_patterns in
-.otto/settings.toml. A providing repo must say which labs it applies to. Add:
+.otto/settings.toml. A providing project must say which labs it applies to. Add:
 
     [project]
     lab_patterns = [".*"]   # every lab — make the reach explicit
@@ -935,9 +935,9 @@ and narrow the patterns to the labs this project actually targets.
 `lab_patterns = []` gets the same refusal: an empty list is not a narrower
 declaration, it is the same "no lab" the missing key compiles to.  An empty
 `host_patterns = []` is refused separately — it admits no host in any lab, so
-every provider or declared entry the repo registers would be dead code.
+every provider or declared entry the project registers would be dead code.
 
-A repo that registers no providers and declares no `[[products]]` or
+A project that registers no providers and declares no `[[products]]` or
 `[[dev_tools]]` entries needs no `[project]` table at all.
 
 ### What the declaration changes
@@ -945,31 +945,31 @@ A repo that registers no providers and declares no `[[products]]` or
 - **Fleet walks are bounded by it.**  `ctx.all_hosts()`,
   `ctx.do_for_all_hosts(...)` and `ctx.run_on_all_hosts(...)` iterate the
   declared universe rather than the whole loaded lab.  See
-  {doc}`../cli/run/defaults` for the walk semantics, the union across repos, and
-  the whole-lab fallback for repos that declare nothing.
-- **A repo that cannot load never widens a walk.**  A fleet walk resolves every
-  parsed repo's declaration, a repo the dependency pass skipped included.  A
+  {doc}`../cli/run/defaults` for the walk semantics, the union across projects, and
+  the whole-lab fallback for projects that declare nothing.
+- **A project that cannot load never widens a walk.**  A fleet walk resolves every
+  parsed project's declaration, a project the dependency pass skipped included.  A
   load error that would stop a run (an unparseable `settings.toml`, or an
-  active repo's failure) refuses the walk with
-  {class}`otto.session.RepoLoadError`, the same error
+  active project's failure) refuses the walk with
+  {class}`otto.session.ProjectLoadError`, the same error
   {func}`otto.open_context <otto.context.open_context>` raises.  A switched-off
-  or lab-inactive repo's error only demotes it, and its declaration still
+  or lab-inactive project's error only demotes it, and its declaration still
   narrows the fleet.  See {doc}`../cli/run/defaults` for the walk semantics.
 - **It can be computed without a run.**
   {func}`otto.lab.fleet_of_interest <otto.fleet.fleet_of_interest>` returns the
-  ids a walk would take, from a loaded lab and its repos, without connecting or
+  ids a walk would take, from a loaded lab and its projects, without connecting or
   bootstrapping; {doc}`../getting-started/boards-of-interest` runs it.
-- **Providers are gated by it.**  A repo's product and dev-tool providers are
-  not invoked at all on a host outside its universe, so nothing that repo owns
+- **Providers are gated by it.**  A project's product and dev-tool providers are
+  not invoked at all on a host outside its universe, so nothing that project owns
   can attach to a machine it never declared.
 - **Explicit targeting is not bounded by it.**  `otto host <id> <verb>`,
   `ctx.get_host("id")` and the `otto host` id listing reach any host in the
-  loaded lab — including a jump host the repo does not own.
+  loaded lab — including a jump host the project does not own.
 
 ### Merged labs and containers
 
 A host is matched against the **component** lab it came from, never a
-composite display name.  Under `otto --lab lab_a+lab_b` a repo declaring
+composite display name.  Under `otto --lab lab_a+lab_b` a project declaring
 `lab_patterns = ["lab_a"]` still applies — its hosts are stamped `lab_a` — and
 it targets the `lab_a` hosts only.  A pattern written to match the merged name
 (`lab_a\+lab_b`) matches nothing.
@@ -1027,6 +1027,6 @@ chowned — which is how `arm-linux-gnueabihf-gdb` installs as plain `gdb`. Thos
 destinations are usually root-owned, hence the per-tool `user` and `mode`.
 
 One toolchain serves every owner on a host, so placing and removing it is a
-host-wide step: no repo's actions touch it (see
+host-wide step: no project's actions touch it (see
 {doc}`../cli/run/defaults`), and the default `install_toolchain_tools` is the method
 most likely to need project surgery — override it on the host class.

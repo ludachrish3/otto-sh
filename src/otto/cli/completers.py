@@ -82,12 +82,12 @@ def lab_scoped_host_ids(ctx: typer.Context) -> list[str]:
     completion still works.
     """
     # The composition root: importing it installs the initiator that composes
-    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    # the projects this reads (spec 2026-10-11 placement-and-phases §3.12).
     from .. import bootstrap
 
     del bootstrap
     from ..config.completion_cache import collect_host_ids
-    from ..declared import get_repos
+    from ..declared import get_projects
     from ..registry import get_completion_names
 
     labs = selected_lab_names(ctx)
@@ -107,10 +107,10 @@ def lab_scoped_host_ids(ctx: typer.Context) -> list[str]:
                     *(by_lab.get(lab, []) for lab in labs),
                 )
             )
-        return collect_host_ids(get_repos(), lab_names=labs)
+        return collect_host_ids(get_projects(), lab_names=labs)
     if cached is not None and isinstance(cached.get("hosts"), list):
         return list(cached["hosts"])
-    return collect_host_ids(get_repos())
+    return collect_host_ids(get_projects())
 
 
 @dataclass(frozen=True)
@@ -189,12 +189,12 @@ def host_user_completer(flavour: str) -> Callable[[typer.Context, str], list[str
     )
     def _complete(ctx: typer.Context, incomplete: str) -> list[str]:
         # The composition root: importing it installs the initiator that composes
-        # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+        # the projects this reads (spec 2026-10-11 placement-and-phases §3.12).
         from .. import bootstrap
 
         del bootstrap
         from ..config.completion_cache import collect_logins_by_host
-        from ..declared import get_repos
+        from ..declared import get_projects
         from ..registry import get_completion_names
 
         request = host_group_request(ctx)
@@ -203,7 +203,7 @@ def host_user_completer(flavour: str) -> Callable[[typer.Context, str], list[str
         cached = get_completion_names()
         by_host = cached.get("logins_by_host") if cached is not None else None
         if not isinstance(by_host, dict):
-            by_host = collect_logins_by_host(get_repos())
+            by_host = collect_logins_by_host(get_projects())
         entries = by_host.get(request.host_id, [])
         return filter_logins(
             entries if isinstance(entries, list) else [],

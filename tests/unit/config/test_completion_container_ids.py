@@ -15,13 +15,13 @@ that mismatch is the point, not incidental naming.
 from pathlib import Path
 
 from otto.config.completion_cache import collect_host_ids
-from otto.config.repo import Repo
+from otto.config.project import Project
 from otto.config.scope import DockerCompose, DockerSettings, DockerUseCase
 from tests._fixtures.fake_repo import fake_repo
 from tests._fixtures.labdata import json_lab_sources, write_lab_json
 
 
-def _repo(tmp_path: Path, *, name: str, docker: DockerSettings) -> Repo:
+def _repo(tmp_path: Path, *, name: str, docker: DockerSettings) -> Project:
     """A duck-typed Repo carrying one docker-capable host and a [docker] block."""
     labs_dir = tmp_path / "labs"
     labs_dir.mkdir()
@@ -40,7 +40,7 @@ def _repo(tmp_path: Path, *, name: str, docker: DockerSettings) -> Repo:
     return fake_repo(
         name,
         lab_sources=json_lab_sources(labs_dir.parent, [labs_dir]),
-        sut_dir=labs_dir.parent,
+        root=labs_dir.parent,
         docker_settings=docker,
     )
 

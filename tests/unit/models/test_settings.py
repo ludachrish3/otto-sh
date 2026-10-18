@@ -22,7 +22,7 @@ from otto.models.settings import (
 )
 
 _OTTO_ENV_VARS = (
-    "OTTO_SUT_DIRS",
+    "OTTOPATH",
     "OTTO_LAB",
     "OTTO_XDIR",
     "OTTO_COMPOSE_SUFFIX",
@@ -559,7 +559,7 @@ def test_docker_spec_fields_match_runtime_dataclass():
 
 def test_otto_env_settings_defaults(clean_otto_env):
     env = OttoEnvSettings()
-    assert env.sut_dirs == []
+    assert env.ottopath == []
     assert env.lab is None
     assert env.xdir is None
     assert env.log_days == 30
@@ -575,10 +575,10 @@ def test_otto_field_default_is_gone(clean_otto_env):
 
 
 def test_otto_env_settings_reads_prefixed_vars(clean_otto_env, tmp_path):
-    clean_otto_env.setenv("OTTO_SUT_DIRS", str(tmp_path))
+    clean_otto_env.setenv("OTTOPATH", str(tmp_path))
     clean_otto_env.setenv("OTTO_COMPOSE_SUFFIX", "ci")
     env = OttoEnvSettings()
-    assert env.sut_dirs == [tmp_path]
+    assert env.ottopath == [tmp_path]
     assert env.compose_suffix == "ci"
 
 
@@ -587,10 +587,10 @@ def test_otto_env_settings_splits_sut_dirs_on_pathsep_only(clean_otto_env, tmp_p
     b = tmp_path / "b"
     a.mkdir()
     b.mkdir()
-    clean_otto_env.setenv("OTTO_SUT_DIRS", f"{a}{os.pathsep}{b}")
-    assert OttoEnvSettings().sut_dirs == [a, b]
-    clean_otto_env.setenv("OTTO_SUT_DIRS", f"{a},{b}")
-    assert OttoEnvSettings().sut_dirs == [Path(f"{a},{b}")]
+    clean_otto_env.setenv("OTTOPATH", f"{a}{os.pathsep}{b}")
+    assert OttoEnvSettings().ottopath == [a, b]
+    clean_otto_env.setenv("OTTOPATH", f"{a},{b}")
+    assert OttoEnvSettings().ottopath == [Path(f"{a},{b}")]
 
 
 def test_otto_env_settings_empty_values_use_defaults(clean_otto_env):
@@ -826,7 +826,7 @@ def test_project_block_unknown_key_fails():
 
 
 def test_lab_sources_parse_and_reach_repo(tmp_path):
-    from otto.config.repo import Repo
+    from otto.config.project import Project
     from tests._fixtures.sutrepo import make_sut_repo
 
     sut = make_sut_repo(
@@ -834,12 +834,12 @@ def test_lab_sources_parse_and_reach_repo(tmp_path):
         name="srcrepo",
         extra='[[lab.sources]]\nbackend = "json"\npaths = ["lab_data"]\n',
     )
-    repo = Repo(sut)
-    (src,) = repo.lab_sources
+    project = Project(sut)
+    (src,) = project.lab_sources
     assert src.label == "srcrepo/json#1"
     assert src.backend == "json"
     assert src.raw.thaw_json() == {"paths": ["lab_data"]}
-    assert src.repo_dir == sut
+    assert src.project_root == sut
 
 
 # ── [[products]] / [[dev_tools]] declared entries ────────────────────────────
@@ -921,7 +921,7 @@ def test_an_archive_context_keeps_the_dockerfile_as_a_path_inside_it(tmp_path):
     # be the string the user wrote.
     spec = DockerImageSpec.model_validate(
         {"name": "api", "dockerfile": "docker/Dockerfile", "context": "build/ctx.tar.gz"},
-        context={"sut_dir": str(tmp_path)},
+        context={"root": str(tmp_path)},
     )
     image = spec.to_runtime()
     assert image.context == tmp_path / "build" / "ctx.tar.gz"

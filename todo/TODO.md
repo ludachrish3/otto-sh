@@ -47,7 +47,7 @@
 - Add other Zephyr configs and versions so that the embedded OS support is hardened.
 - Add REPL sessions that can live within an active shell session and has a special prompt. The session can be recognized as ending when a REPL end sentinel is seen maybe?
 - Have one of the projects define a custom stat collector beyond the default definitions. This helps prove out the workflow for defining custom parsers and graphs.
-- Change the `--project-name` option (or similar) to default to the product name from the repo info. Change the options to `--report-name`, which will append the name as a subtitle to the project name, still derived from the repo's name
+- Change the `--report-title` option (or similar) to default to the product name from the project info. Change the options to `--report-name`, which will append the name as a subtitle to the report title, still derived from the project's name
 - Add a `--list-markers` option to the test subcommand
 - Make --show-hosts display a Rich.Tree of hosts within an NE. Group by NE in panels and order by slot number.
 - Maybe hosts can have their own list of all supported protocols? This would allow for sane flexibility when choosing a host's term or transfer type, but the host might be limited.

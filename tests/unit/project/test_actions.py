@@ -31,12 +31,12 @@ from otto.project import (
     actions_for,
     register_project_actions,
 )
-from otto.registry import registering_repo
+from otto.registry import registering_project
 from otto.result import Result
 from otto.utils import Status
 from tests._fixtures.fake_repo import fake_repo
 
-REPO = fake_repo("acme")
+PROJECT = fake_repo("acme")
 OTHER_REPO = fake_repo("other")
 
 
@@ -121,7 +121,7 @@ class _FakeCtx:
     """OttoContext double — the two dispatch seams ProjectActions uses.
 
     A PLAIN-CONTEXT double, deliberately: ``ProjectActions`` is constructed
-    around ``ctx.for_repo(name)``, so what these tests exercise is the REAL
+    around ``ctx.for_project(name)``, so what these tests exercise is the REAL
     :class:`~otto.context.ProjectContextView` sitting on top of this. The owner
     every host verb below records therefore comes from production code, not
     from a double reimplementing the injection it is meant to certify.
@@ -135,7 +135,7 @@ class _FakeCtx:
     # The real seam, applied to the double: `for_repo` only wraps, so borrowing
     # OttoContext's own method keeps a second copy of the wiring out of the
     # tests that exist to certify it.
-    for_repo = OttoContext.for_repo
+    for_project = OttoContext.for_project
 
     def __init__(self, hosts):
         self.hosts = list(hosts)
@@ -175,8 +175,8 @@ def _fake_ctx(n=2, **host_kwargs):
     return _FakeCtx(hosts), hosts
 
 
-def _actions(ctx, repo=REPO, cls=ProjectActions):
-    """Build actions the way production does — around ``ctx.for_repo(repo.name)``.
+def _actions(ctx, project=PROJECT, cls=ProjectActions):
+    """Build actions the way production does — around ``ctx.for_project(project.name)``.
 
     ``actions_for`` is the only constructor a user's repo ever reaches, and the
     repo-scoped view it supplies is what carries the owner scope now that no
@@ -185,7 +185,7 @@ def _actions(ctx, repo=REPO, cls=ProjectActions):
     every ``{"owner": "acme"}`` assertion below would be measuring the absence
     of a seam rather than the seam.
     """
-    return cls(repo=repo, ctx=ctx.for_repo(repo.name))
+    return cls(project=project, ctx=ctx.for_project(project.name))
 
 
 def _ctx_with_products(owner, installed_flags, other_flags=()):
@@ -371,7 +371,7 @@ async def test_cleanup_hands_a_repo_override_an_instance_of_its_own_class():
     class SoftUninstall(UninstallOptions):
         soft: Annotated[bool, typer.Option(help="Quiesce before teardown.")] = True
 
-    with registering_repo("softy"):
+    with registering_project("softy"):
 
         @register_project_actions
         class Softy(ProjectActions):
@@ -419,7 +419,7 @@ async def test_cleanup_refuses_an_uninstall_override_with_a_required_field():
     class DrainUninstall(UninstallOptions):
         drain: Annotated[bool, typer.Option(help="Drain before teardown.")]
 
-    with registering_repo("drainer"):
+    with registering_project("drainer"):
 
         @register_project_actions
         class Drainer(ProjectActions):
@@ -794,7 +794,7 @@ async def test_is_uninstalled_hands_a_repo_override_an_instance_of_its_own_class
     class DeepStatus(StatusOptions):
         deep: Annotated[bool, typer.Option(help="Probe the device, not the file.")] = True
 
-    with registering_repo("prober"):
+    with registering_project("prober"):
 
         @register_project_actions
         class Prober(ProjectActions):
@@ -830,7 +830,7 @@ async def test_is_uninstalled_refuses_a_status_override_with_a_required_field():
     class DeepStatus(StatusOptions):
         deep: Annotated[bool, typer.Option(help="Probe the device, not the file.")]
 
-    with registering_repo("prober"):
+    with registering_project("prober"):
 
         @register_project_actions
         class Prober(ProjectActions):
@@ -917,7 +917,7 @@ def test_register_project_actions_requires_init_import_context():
 
 
 def test_register_twice_from_same_repo_fails_loud():
-    with registering_repo("acme"):
+    with registering_project("acme"):
         register_project_actions(ProjectActions)
         with pytest.raises(ValueError, match="acme"):
             register_project_actions(ProjectActions)
@@ -930,9 +930,9 @@ def test_two_repos_each_registering_is_the_intended_composition():
     class Theirs(ProjectActions):
         pass
 
-    with registering_repo("acme"):
+    with registering_project("acme"):
         register_project_actions(Mine)
-    with registering_repo("other"):
+    with registering_project("other"):
         register_project_actions(Theirs)
     assert PROJECT_ACTIONS.get("acme").cls is Mine
     assert PROJECT_ACTIONS.get("other").cls is Theirs
@@ -942,7 +942,7 @@ def test_register_project_actions_returns_the_class_so_it_decorates():
     class Custom(ProjectActions):
         pass
 
-    with registering_repo("acme"):
+    with registering_project("acme"):
         assert register_project_actions(Custom) is Custom
 
 
@@ -951,7 +951,7 @@ def test_registration_survives_a_repeat_run():
     # this file needs no isolation fixture of its own: if the root conftest's
     # _isolate_registries did not reach PROJECT_ACTIONS, the entry left by the
     # test above would make THIS registration the loud duplicate.
-    with registering_repo("acme"):
+    with registering_project("acme"):
         register_project_actions(ProjectActions)
     assert PROJECT_ACTIONS.get("acme").cls is ProjectActions
 
@@ -960,10 +960,10 @@ def test_actions_for_prefers_registered_class_else_default():
     class Custom(ProjectActions):
         pass
 
-    with registering_repo("acme"):
+    with registering_project("acme"):
         register_project_actions(Custom)
     ctx, _ = _fake_ctx(n=0)
-    assert type(actions_for(REPO, ctx)) is Custom
+    assert type(actions_for(PROJECT, ctx)) is Custom
     assert type(actions_for(fake_repo("unregistered"), ctx)) is ProjectActions
 
 
@@ -977,18 +977,18 @@ def test_actions_for_hands_the_instance_a_view_bound_to_its_own_repo():
     through the same view ``actions_for`` does.
     """
     ctx, _ = _fake_ctx(n=0)
-    actions = actions_for(REPO, ctx)
-    assert actions.repo is REPO
+    actions = actions_for(PROJECT, ctx)
+    assert actions.project is PROJECT
     assert isinstance(actions.ctx, ProjectContextView)
-    assert actions.ctx._repo_name == REPO.name
+    assert actions.ctx._project_name == PROJECT.name
     assert actions.ctx.hosts is ctx.hosts  # the SAME context underneath, not a copy
 
 
 def test_hand_building_actions_around_a_plain_context_refuses():
     """The constructor's side door is shut, because the same spelled code turned destructive.
 
-    ``ProjectActions(repo, ctx)`` was legal AND owner-safe before the scope
-    moved onto the view: the bodies passed ``owner=repo.name`` themselves. Now
+    ``ProjectActions(project, ctx)`` was legal AND owner-safe before the scope
+    moved onto the view: the bodies passed ``owner=project.name`` themselves. Now
     they do not, so a hand-built instance over a plain context would walk the
     ambient union with ``owner=None`` — which the host layer reads as every
     owner's products, making its ``cleanup()`` a silent teardown of the
@@ -997,17 +997,21 @@ def test_hand_building_actions_around_a_plain_context_refuses():
     ctx = OttoContext(lab=Lab(name="t"))
 
     with pytest.raises(TypeError) as excinfo:
-        ProjectActions(repo=REPO, ctx=ctx)
+        ProjectActions(project=PROJECT, ctx=ctx)
     message = str(excinfo.value)
     assert "actions_for" in message  # the constructor to use instead
     assert "acme" in message
     assert "owner=None" in message  # WHY it is refused, not just that it is
+    # The remedy names the real API, so following it works.
+    assert "actions_for(project, ctx)" in message
+    assert "ctx.for_project(project.name)" in message
+    assert "for_repo" not in message
 
     # The two constructions that ARE the seam are untouched: the real context's
-    # own view, and a double that borrows `for_repo` to build one.
-    assert isinstance(actions_for(REPO, ctx).ctx, ProjectContextView)
+    # own view, and a double that borrows `for_project` to build one.
+    assert isinstance(actions_for(PROJECT, ctx).ctx, ProjectContextView)
     fake, _ = _fake_ctx(n=0)
-    assert isinstance(actions_for(REPO, fake).ctx, ProjectContextView)
+    assert isinstance(actions_for(PROJECT, fake).ctx, ProjectContextView)
 
 
 # ── state vocabulary ─────────────────────────────────────────────────────
@@ -1024,7 +1028,7 @@ def test_a_cleanliness_row_is_unknown_exactly_when_it_carries_an_error():
         (Cleanliness.DIRTY, RuntimeError("h9 never answered")),
     ]:
         with pytest.raises(ValueError, match="UNKNOWN"):
-            CleanlinessItem(kind=CleanlinessKind.REPO, name="acme", state=state, error=error)
+            CleanlinessItem(kind=CleanlinessKind.PROJECT, name="acme", state=state, error=error)
 
 
 def test_the_cleanliness_aggregate_keeps_a_dirty_row_over_an_unreadable_one():
@@ -1047,8 +1051,10 @@ def test_the_cleanliness_aggregate_keeps_a_dirty_row_over_an_unreadable_one():
 
 def test_project_status_defaults_to_an_empty_per_repo_map():
     status = ProjectStatus(overall=InstallState.UNINSTALLED)
-    assert status.repos == {}
-    assert ProjectStatus(overall=InstallState.PARTIAL, repos={"acme": InstallState.PARTIAL}).repos
+    assert status.projects == {}
+    assert ProjectStatus(
+        overall=InstallState.PARTIAL, projects={"acme": InstallState.PARTIAL}
+    ).projects
 
 
 # ── project-instruction body registration ───────────────────────────────
@@ -1065,7 +1071,7 @@ class TestBodyRegistration:
         for name in names:
             body = PROJECT_INSTRUCTIONS.get(name).body_for(ProjectActions)
             assert body is not None
-            assert body.repo is None
+            assert body.project is None
 
     def test_a_fresh_process_declares_the_six_at_import(self) -> None:
         """Pins ``declare()`` at import: importing the module is all the six need.
@@ -1090,7 +1096,7 @@ class TestBodyRegistration:
             "ok = all(\n"
             "    (b := PROJECT_INSTRUCTIONS.get(n).body_for(mod.ProjectActions)) is not None\n"
             "    and b.owner_class is mod.ProjectActions\n"
-            "    and b.repo is None\n"
+            "    and b.project is None\n"
             "    for n in names\n"
             ")\n"
             "print('OK' if ok else 'FAIL')\n"
@@ -1113,7 +1119,7 @@ class TestBodyRegistration:
         from otto.cli.run import instruction
         from otto.instruction_catalog import PROJECT_INSTRUCTIONS
         from otto.project import InstallOptions
-        from otto.registry import registering_repo
+        from otto.registry import registering_project
 
         @options
         class WidgetInstall(InstallOptions):
@@ -1123,7 +1129,7 @@ class TestBodyRegistration:
         class DeployOpts:
             dry: Annotated[bool, typer.Option(help="d")] = False
 
-        with registering_repo("widget"):
+        with registering_project("widget"):
 
             @register_project_actions
             class Widget(ProjectActions):
@@ -1137,7 +1143,7 @@ class TestBodyRegistration:
 
         install = PROJECT_INSTRUCTIONS.get("install")
         assert install.body_for(Widget).options_cls is WidgetInstall
-        assert install.body_for(Widget).repo == "widget"
+        assert install.body_for(Widget).project == "widget"
         deploy = PROJECT_INSTRUCTIONS.get("deploy")
         assert deploy.spec.walk == "reverse"
         assert deploy.spec.declared_by == "widget"
@@ -1150,14 +1156,14 @@ class TestBodyRegistration:
         from otto import options
         from otto.cli.run import instruction
         from otto.instruction_catalog import ProjectInstructionError
-        from otto.registry import registering_repo
+        from otto.registry import registering_project
 
         @options
         class Foreign:
             ensure: Annotated[bool, typer.Option(help="e")] = False
 
         with (
-            registering_repo("widget"),
+            registering_project("widget"),
             pytest.raises(ProjectInstructionError, match="InstallOptions"),
         ):
 
@@ -1184,14 +1190,14 @@ class TestBodyRegistration:
         from otto import options
         from otto.cli.run import instruction
         from otto.instruction_catalog import ProjectInstructionError
-        from otto.registry import registering_repo
+        from otto.registry import registering_project
 
         @options
         class DeployOpts:
             dry: Annotated[bool, typer.Option(help="d")] = False
 
         with (
-            registering_repo("widget"),
+            registering_project("widget"),
             pytest.raises(ProjectInstructionError, match=r"'deploy' twice") as caught,
         ):
 
@@ -1219,13 +1225,13 @@ class TestBodyRegistration:
         from otto import options
         from otto.cli.run import instruction
         from otto.instruction_catalog import PROJECT_INSTRUCTIONS, ProjectInstructionError
-        from otto.registry import registering_repo
+        from otto.registry import registering_project
 
         @options
         class DeployOpts:
             dry: Annotated[bool, typer.Option(help="d")] = False
 
-        with registering_repo("widget"), pytest.raises(ProjectInstructionError):
+        with registering_project("widget"), pytest.raises(ProjectInstructionError):
 
             @register_project_actions
             class Widget(ProjectActions):

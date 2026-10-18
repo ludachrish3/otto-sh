@@ -22,7 +22,7 @@ from .completers import completion_source
 from .invoke import fail, print_error
 
 if TYPE_CHECKING:
-    from ..config.repo import Repo
+    from ..config.project import Project
     from ..tunnel.check import TunnelCheckReport
     from ..tunnel.manage import DryRunPlan
     from ..tunnel.model import Tunnel
@@ -76,8 +76,8 @@ def _l2_reachable(host_id: str, ip_by_host: dict[str, str]) -> list[str]:
     return sorted(h for h, ip in ip_by_host.items() if h != host_id and net24(ip) == mine)
 
 
-def _ip_by_host(repos: list["Repo"]) -> dict[str, str]:
-    """Best-effort ``{host_id: ip}`` map from each repo's configured host source.
+def _ip_by_host(projects: list["Project"]) -> dict[str, str]:
+    """Best-effort ``{host_id: ip}`` map from each project's configured host source.
 
     Feeds :func:`_l2_reachable`'s completion narrowing. Goes through the same
     enumeration :func:`~otto.config.completion_cache.collect_host_ids` uses, so
@@ -87,14 +87,14 @@ def _ip_by_host(repos: list["Repo"]) -> dict[str, str]:
     building hosts. Malformed entries are silently skipped: the caller falls
     back to the unnarrowed host list on any error, so this must never raise.
     """
-    from ..config.completion_cache import repo_host_summaries, resolve_process_inventory
+    from ..config.completion_cache import project_host_summaries, resolve_process_inventory
     from ..host.os_profile import ProfileContext
 
     ip_by_host: dict[str, str] = {}
-    resolution = resolve_process_inventory(repos)
-    profiles = ProfileContext.from_repos(repos)
-    for repo in repos:
-        for summary in repo_host_summaries(repo, resolution, profiles=profiles):
+    resolution = resolve_process_inventory(projects)
+    profiles = ProfileContext.from_projects(projects)
+    for project in projects:
+        for summary in project_host_summaries(project, resolution, profiles=profiles):
             if summary.ip:
                 ip_by_host[summary.id] = summary.ip
     return ip_by_host
@@ -105,11 +105,11 @@ def _ip_by_host(repos: list["Repo"]) -> dict[str, str]:
 )
 def _hosts_completer(ctx: typer.Context, incomplete: str) -> list[str]:
     # The composition root: importing it installs the initiator that composes
-    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    # the projects this reads (spec 2026-10-11 placement-and-phases §3.12).
     from .. import bootstrap
 
     del bootstrap
-    from ..declared import get_repos
+    from ..declared import get_projects
     from .completers import lab_scoped_host_ids
 
     try:
@@ -132,7 +132,7 @@ def _hosts_completer(ctx: typer.Context, incomplete: str) -> list[str]:
         try:
             last_host, _iface = _parse_endpoint(head.rsplit(",", 1)[-1])
             narrowed = [
-                h for h in _l2_reachable(last_host, _ip_by_host(get_repos())) if h in candidates
+                h for h in _l2_reachable(last_host, _ip_by_host(get_projects())) if h in candidates
             ]
         except Exception:  # noqa: BLE001 — narrowing is best-effort only; fall back below
             narrowed = []
@@ -145,14 +145,14 @@ def _hosts_completer(ctx: typer.Context, incomplete: str) -> list[str]:
 @completion_source(kind="live")
 def _tunnel_id_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: ARG001
     # The composition root: importing it installs the initiator that composes
-    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    # the projects this reads (spec 2026-10-11 placement-and-phases §3.12).
     from .. import bootstrap
 
     del bootstrap
-    from ..declared import get_repos
+    from ..declared import get_projects
 
     try:
-        ids = read_tunnel_ids(get_repos()) or []
+        ids = read_tunnel_ids(get_projects()) or []
     except Exception:  # noqa: BLE001
         ids = []
     return sorted(i for i in ids if i.startswith(incomplete))
@@ -388,11 +388,11 @@ async def list_tunnels() -> None:
     from rich.table import Table
 
     # The composition root: importing it installs the initiator that composes
-    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    # the projects this reads (spec 2026-10-11 placement-and-phases §3.12).
     from .. import bootstrap
 
     del bootstrap
-    from ..declared import get_repos
+    from ..declared import get_projects
     from ..fleet import get_lab
 
     lab = get_lab()
@@ -420,7 +420,7 @@ async def list_tunnels() -> None:
             soft_wrap=True,
         )
         return
-    record_tunnel_ids(get_repos(), [d.tunnel.id for d in discovery.tunnels])
+    record_tunnel_ids(get_projects(), [d.tunnel.id for d in discovery.tunnels])
     if discovery.tunnels:
         # Borderless + single-space gaps: the worst-case row (20-char id,
         # 22-char endpoints, "degraded (3/4)") must survive an 80-column
@@ -466,11 +466,11 @@ async def remove(
 ) -> None:
     """Remove a tunnel by id (all hops, both directions), or all tunnels."""
     # The composition root: importing it installs the initiator that composes
-    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    # the projects this reads (spec 2026-10-11 placement-and-phases §3.12).
     from .. import bootstrap
 
     del bootstrap
-    from ..declared import get_repos
+    from ..declared import get_projects
     from ..fleet import get_lab
 
     # These two usage-error exits are deliberately kept OUT of the try/except
@@ -501,7 +501,7 @@ async def remove(
         # here would make a preview change state a real run changes.
         _print_dry_run_plan("--all" if all_ else (tunnel_id or ""), report.plan)
         return
-    record_tunnel_ids(get_repos(), [])  # invalidate; next scan refreshes
+    record_tunnel_ids(get_projects(), [])  # invalidate; next scan refreshes
     removed = ", ".join(report.removed_ids) if report.removed_ids else "(none found)"
     rprint(f"[green]removed[/green] {removed}")
     if report.survivors:

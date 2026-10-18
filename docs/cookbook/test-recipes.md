@@ -138,7 +138,7 @@ async def test_capture_logs(dut, test_dir) -> None:
 
 Both are created when first requested, like `tmp_path`; a test that never
 names them leaves nothing behind. What `<run dir>` is, and where they sit in a class, in a nested
-test directory, in a repeating run and in a run across several repos, are in
+test directory, in a repeating run and in a run across several projects, are in
 [Where a run's files go](../cli/test/index.md#where-a-runs-files-go).
 
 ## Docker from instructions and tests
@@ -161,7 +161,7 @@ async def smoke():
 nothing by default; leave it out when the images are already on the host.
 
 {func}`~otto.docker.deployment.deployed` is the recommended scope. It deploys
-a **use-case** — the same named, cross-repo deployment `otto docker compose up` brings
+a **use-case** — the same named, cross-project deployment `otto docker compose up` brings
 up, with the same provider competition and parent — and hands back a
 {class}`~otto.docker.deployment.UseCaseStack`: `hosts` (service -> container
 host, flattened), `by_host`, the final `env` mapping, and the selection
@@ -174,9 +174,9 @@ here (`parent=`, `provide=`, `env=`, `services=`); see
 {doc}`../cli/docker/use-cases` for what each one does and
 {mod}`otto.docker.deployment` for the signatures.
 
-The per-repo primitives stay public and supported —
+The per-project primitives stay public and supported —
 {func}`~otto.docker.compose.composed`, `compose_up`, `compose_down`,
-`build_images`. `composed(repo, lab, own=True)` scopes **one repo's** compose
+`build_images`. `composed(project, lab, own=True)` scopes **one project's** compose
 files with the same sharing contract, and is what `deploy` is built from;
-reach for it when you genuinely want a single repo's stack rather than a
+reach for it when you genuinely want a single project's stack rather than a
 use-case.

@@ -41,7 +41,7 @@ from ..config.coverage_settings import CoverageConfigError
 from .errors import NoCoverageDataError
 
 if TYPE_CHECKING:
-    from ..config.repo import Repo
+    from ..config.project import Project
     from ..host.toolchain import Toolchain
     from ..result import Result
     from .reports import CleanReport
@@ -82,7 +82,7 @@ class CollectResult:
 
 
 async def clean_coverage(
-    repos: "list[Repo] | None" = None,
+    projects: "list[Project] | None" = None,
     *,
     host_ids: "list[str] | None" = None,
 ) -> "CleanReport":
@@ -111,7 +111,7 @@ async def clean_coverage(
     """
     from ..config.coverage_settings import get_cov_config, load_hosts_pattern
     from ..config.scope import EmptySelectionError
-    from ..declared import current_repos
+    from ..declared import current_projects
     from ..errors import is_containable
     from ..fleet import all_hosts, do_for_all_hosts
     from ..result import Result
@@ -120,15 +120,15 @@ async def clean_coverage(
     from .instrumentation import instrumented_products
     from .reports import CleanReport
 
-    if repos is None:
+    if projects is None:
         # The composition root: importing it installs the initiator that composes
-        # the run's repos when no run is installed (spec 2026-10-11
+        # the run's projects when no run is installed (spec 2026-10-11
         # placement-and-phases §3.12).
         from .. import bootstrap
 
         del bootstrap
-        repos = current_repos()
-    cov_config = get_cov_config(repos)
+        projects = current_projects()
+    cov_config = get_cov_config(projects)
     if not cov_config:
         raise CoverageConfigError("No [coverage] section found in .otto/settings.toml")
 
@@ -201,7 +201,7 @@ async def _reset_products(host: "Any") -> "dict[str, Result]":
 async def collect_coverage(
     cov_dir: Path,
     *,
-    repos: "list[Repo] | None" = None,
+    projects: "list[Project] | None" = None,
     tier: "str | TierConfig | None" = None,
     ticket: str | None = None,
     note: str | None = None,
@@ -234,7 +234,7 @@ async def collect_coverage(
       :func:`~otto.coverage.tiers.resolve_get_tier`) — only reachable when
       *tier* is a name (or ``None``); a resolved :class:`~otto.coverage.tiers.TierConfig`
       passed directly skips resolution entirely;
-    * a non-git sut, a polluted tree, an incompatible gcov, or a merge failure
+    * a project root outside git, a polluted tree, an incompatible gcov, or a merge failure
       propagate as :class:`~otto.coverage.capture.gitio.GitUnavailableError`,
       :class:`~otto.coverage.errors.CoverageDataMismatchError`,
       :class:`~otto.coverage.errors.CoverageToolVersionError`, or
@@ -242,8 +242,8 @@ async def collect_coverage(
 
     Args:
         cov_dir: Destination directory for the collected coverage.
-        repos: Repo list to resolve ``[coverage]`` from (defaults to the
-            run's repos, :func:`otto.declared.current_repos`).
+        projects: Project list to resolve ``[coverage]`` from (defaults to the
+            run's projects, :func:`otto.declared.current_projects`).
         tier: Tier name to annotate onto each capture; ``None`` resolves the
             sole e2e-kind tier. A caller that has already resolved a
             :class:`~otto.coverage.tiers.TierConfig` (e.g. ``otto cov get``,
@@ -272,7 +272,7 @@ async def collect_coverage(
         the produced capture paths.
     """
     from ..config.coverage_settings import get_cov_config, load_hosts_pattern
-    from ..declared import current_repos
+    from ..declared import current_projects
     from ..fleet import all_hosts
     from ..host.embedded_host import EmbeddedHost
     from ..host.local_host import LocalHost
@@ -280,20 +280,20 @@ async def collect_coverage(
     from .fetcher.remote import GcdaFetcher
     from .instrumentation import instrumented_products
 
-    if repos is None:
+    if projects is None:
         # The composition root: importing it installs the initiator that composes
-        # the run's repos when no run is installed (spec 2026-10-11
+        # the run's projects when no run is installed (spec 2026-10-11
         # placement-and-phases §3.12).
         from .. import bootstrap
 
         del bootstrap
-        repos = current_repos()
+        projects = current_projects()
 
-    cov_config = get_cov_config(repos)
+    cov_config = get_cov_config(projects)
     if not cov_config:
         raise CoverageConfigError("No [coverage] section found in .otto/settings.toml")
 
-    # The set of hosts to collect coverage from is repo-declared: an optional
+    # The set of hosts to collect coverage from is project-declared: an optional
     # ``[coverage].hosts`` regex (matched against each host id) selects targets,
     # defaulting to every host in the lab. This is how a lab's SSH **hop** (e.g.
     # `test4` fronting `zephyr37_llext`) is kept out of the coverage set — it is
@@ -351,13 +351,13 @@ async def collect_coverage(
         # each has a real reset now. A failed reset is reported, never logged
         # and dropped — the caller (otto test) fails the run on it.
         clean_report = await clean_coverage(
-            repos, host_ids=sorted({host_id for host_id, _product in product_dirs})
+            projects, host_ids=sorted({host_id for host_id, _product in product_dirs})
         )
 
     logger.info("Coverage data collected to %s (%d product dir(s))", cov_dir, len(product_dirs))
 
     await _write_metadata(
-        repos=repos,
+        projects=projects,
         cov_config=cov_config,
         fetch_hosts=fetch_hosts,
         fetched_host_ids={host_id for host_id, _product in fetched},
@@ -367,7 +367,7 @@ async def collect_coverage(
     )
 
     captures_written = await _produce_capture_tail(
-        repos=repos,
+        projects=projects,
         cov_config=cov_config,
         cov_dir=cov_dir,
         tier=tier,
@@ -387,7 +387,7 @@ async def collect_coverage(
 
 async def _produce_capture_tail(
     *,
-    repos: "list[Repo]",
+    projects: "list[Project]",
     cov_config: dict[str, Any],
     cov_dir: Path,
     tier: "str | TierConfig | None",
@@ -401,10 +401,10 @@ async def _produce_capture_tail(
     So a bare ``otto test --cov`` run always leaves behind capture artifacts
     (not just raw ``.gcda``) — the same production step ``otto cov get`` uses for
     a manual/on-demand pull. Unlike the old inline tail this does **not** swallow
-    errors: an ambiguous/unknown tier (:class:`ValueError`), a non-git sut, a
+    errors: an ambiguous/unknown tier (:class:`ValueError`), a project root outside git, a
     stamp mismatch, or a merge failure propagate to the caller, which decides
     whether to fail the run. Returns an empty list (no captures) when no
-    ``[coverage]`` repo resolved a git root.
+    ``[coverage]`` project resolved a git root.
 
     *tier* skips :func:`~otto.coverage.tiers.resolve_get_tier` entirely when
     it is already a :class:`~otto.coverage.tiers.TierConfig` (a caller like
@@ -412,12 +412,12 @@ async def _produce_capture_tail(
     manual-tier ``--ticket`` requirement, must not pay for — or risk
     diverging from — a second resolution by name here).
     """
-    from ..config.coverage_settings import get_cov_repo
+    from ..config.coverage_settings import get_cov_project
     from .capture.produce import produce_captures
     from .tiers import TierConfig, load_tiers, resolve_get_tier
 
-    cov_repo = get_cov_repo(repos)
-    if cov_repo is None:
+    cov_project = get_cov_project(projects)
+    if cov_project is None:
         return []
 
     if isinstance(tier, TierConfig):
@@ -428,8 +428,8 @@ async def _produce_capture_tail(
     written = await produce_captures(
         cov_dir,
         tier=resolved_tier.name,
-        repo_root=cov_repo.sut_dir,
-        labs=[cov_repo.name],
+        project_root=cov_project.root,
+        labs=[cov_project.name],
         tester=tester,
         ticket=ticket,
         note=note,
@@ -458,7 +458,7 @@ def _toolchain_meta(tc: "Toolchain") -> dict[str, Any]:
 
 
 async def _write_metadata(
-    repos: "list[Repo]",
+    projects: "list[Project]",
     cov_config: dict[str, Any],
     fetch_hosts: list[Any],
     fetched_host_ids: set[str],
@@ -474,12 +474,12 @@ async def _write_metadata(
     """
     import json
 
-    from ..config.coverage_settings import get_cov_repo
+    from ..config.coverage_settings import get_cov_project
     from ..host.toolchain import Toolchain
     from ..utils import anchor_path
 
-    cov_repo = get_cov_repo(repos)
-    if not cov_repo:
+    cov_project = get_cov_project(projects)
+    if not cov_project:
         return
 
     toolchains: dict[str, dict[str, Any]] = {}
@@ -497,7 +497,7 @@ async def _write_metadata(
         tc = host.toolchain
         toolchains[host.id] = _toolchain_meta(tc)
 
-    sut_dir = str(cov_repo.sut_dir.resolve())
+    root = str(cov_project.root.resolve())
 
     # Embedded hosts now carry a per-host Toolchain (lab-data ``toolchain``),
     # exactly like Unix hosts: the bed declares the cross-gcov for binaries it
@@ -517,9 +517,9 @@ async def _write_metadata(
 
         Applies the documented path-resolution convention (docs/configuration/
         settings.md ``### Path resolution``): ``~`` expansion and
-        repo-root anchoring for a still-relative value.
+        project-root anchoring for a still-relative value.
         """
-        return str(anchor_path(Path(raw), cov_repo.sut_dir))
+        return str(anchor_path(Path(raw), cov_project.root))
 
     embedded_build_dir = embedded_cfg.get("build_dir")  # single legacy/fallback
     if embedded_build_dir:
@@ -543,7 +543,7 @@ async def _write_metadata(
         # Cache .gcno-discovery per build dir so hosts sharing a build dir do
         # not re-trigger the (potentially slow) filesystem scan.
         discovery_cache: dict[str, Toolchain | None] = {}
-        # sorted(), not set order: the sut_dir fallback below reads the FIRST
+        # sorted(), not set order: the root fallback below reads the FIRST
         # resolved root, and a set's iteration order is not stable across runs.
         for host_id in sorted(embedded_host_ids):
             host = embedded_hosts.get(host_id)
@@ -564,13 +564,13 @@ async def _write_metadata(
         if not fetched_host_ids:
             # Use the single fallback if present; otherwise the first resolved root.
             if embedded_build_dir:
-                sut_dir = str(Path(embedded_build_dir).resolve())
+                root = str(Path(embedded_build_dir).resolve())
             elif source_roots:
-                sut_dir = next(iter(source_roots.values()))
+                root = next(iter(source_roots.values()))
 
     meta: dict[str, object] = {
-        "repo_name": cov_repo.name,
-        "sut_dir": sut_dir,
+        "project_name": cov_project.name,
+        "project_root": root,
         "toolchains": toolchains,
         "source_roots": source_roots,
     }

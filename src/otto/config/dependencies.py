@@ -1,8 +1,8 @@
-"""Inter-repo dependency resolution: statuses, satisfiability, skip set, ordering.
+"""Inter-project dependency resolution: statuses, satisfiability, skip set, ordering.
 
 Runs inside ``bootstrap()`` between phase-1 discovery and phase-2
-registration. Everything here is index-based over the discovered repo list
-(``Repo`` defines ``__eq__`` via dataclass, so instances are unhashable).
+registration. Everything here is index-based over the discovered project list
+(``Project`` defines ``__eq__`` via dataclass, so instances are unhashable).
 """
 
 import bisect
@@ -14,7 +14,7 @@ from .scope import BootstrapWarning, DependencyError
 
 if TYPE_CHECKING:
     from ..models.dependencies import ParsedDependency
-    from .repo import Repo
+    from .project import Project
     from .version import Version
 
 # Named DepStatus, not Status: the core `otto.utils.Status` enum is a
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 # (.ast-grep/rules/no-bare-status-return.yml) matches the bare name in a
 # return annotation — a collision here would fire it on correct code with
 # advice that makes no sense for a resolution verdict.
-DepStatus = Literal["satisfied", "missing", "incompatible", "ambiguous"]
+DepStatus = Literal["satisfied", "missing", "incompatible"]
 
 _MIN_CONFLICTING_ENTRIES = 2
 """Below this, a single declared entry was already proven satisfiable at settings-parse time."""
@@ -30,7 +30,7 @@ _MIN_CONFLICTING_ENTRIES = 2
 
 @dataclass(frozen=True)
 class ResolvedDependency:
-    """Resolution outcome for one declared dependency of one repo."""
+    """Resolution outcome for one declared dependency of one project."""
 
     name: str
     """Dependency name as declared."""
@@ -44,7 +44,7 @@ class ResolvedDependency:
     required: bool
     status: DepStatus
     provider_version: "Version | None"
-    """The providing repo's version; ``None`` for ``missing``/``ambiguous``."""
+    """The providing project's version; ``None`` for ``missing``."""
 
 
 @dataclass(frozen=True)
@@ -63,8 +63,8 @@ class _StatusOutcome:
     dependent's optional dep still reads "satisfied"."""
 
 
-def _resolve_statuses(repos: "list[Repo]") -> _StatusOutcome:
-    """Resolve every declared dep; populate ``repo.dependencies`` on each repo."""
+def _resolve_statuses(projects: "list[Project]") -> _StatusOutcome:
+    """Resolve every declared dep; populate ``project.dependencies`` on each project."""
     errors: list[DependencyError] = []
     warnings: list[BootstrapWarning] = []
     skip_reason: dict[int, str] = {}
@@ -73,16 +73,16 @@ def _resolve_statuses(repos: "list[Repo]") -> _StatusOutcome:
     satisfied_optionals: list[tuple[int, int, "ParsedDependency"]] = []
 
     providers: dict[str, list[int]] = {}
-    for i, repo in enumerate(repos):
-        providers.setdefault(normalize_name(repo.name), []).append(i)
+    for i, project in enumerate(projects):
+        providers.setdefault(normalize_name(project.name), []).append(i)
 
-    for i, repo in enumerate(repos):
+    for i, project in enumerate(projects):
         resolved: list[ResolvedDependency] = []
-        for dep in repo.declared_dependencies:
+        for dep in project.declared_dependencies:
             status, version = _resolve_one(
                 i,
                 dep,
-                repos,
+                projects,
                 providers,
                 errors,
                 warnings,
@@ -102,9 +102,9 @@ def _resolve_statuses(repos: "list[Repo]") -> _StatusOutcome:
             )
             if dep.required and status != "satisfied" and i not in skip_reason:
                 skip_reason[i] = f"dependency {dep.raw!r} ({status})"
-        repo.dependencies = resolved
+        project.dependencies = resolved
 
-    _check_combined_satisfiability(repos, errors, skip_reason)
+    _check_combined_satisfiability(projects, errors, skip_reason)
     return _StatusOutcome(
         errors=errors,
         warnings=warnings,
@@ -118,7 +118,7 @@ def _resolve_statuses(repos: "list[Repo]") -> _StatusOutcome:
 def _resolve_one(
     i: int,
     dep: "ParsedDependency",
-    repos: "list[Repo]",
+    projects: "list[Project]",
     providers: dict[str, list[int]],
     errors: list[DependencyError],
     warnings: list[BootstrapWarning],
@@ -127,30 +127,20 @@ def _resolve_one(
     satisfied_optionals: list[tuple[int, int, "ParsedDependency"]],
 ) -> "tuple[DepStatus, Version | None]":
     """Status + provider version for one dep; append its error/warning/edge."""
-    repo = repos[i]
+    project = projects[i]
     candidates = providers.get(dep.normalized, [])
-    if len(candidates) > 1:
-        if dep.required:
-            dirs = ", ".join(str(repos[c].sut_dir) for c in candidates)
-            errors.append(
-                DependencyError(
-                    repo.sut_dir,
-                    f"dependency {dep.raw!r}: name {dep.name!r} is ambiguous — provided by {dirs}",
-                )
-            )
-        return "ambiguous", None
     if not candidates:
         if dep.required:
             errors.append(
                 DependencyError(
-                    repo.sut_dir,
+                    project.root,
                     f"dependency {dep.raw!r} is not satisfied: no project named "
-                    f"{dep.name!r} in OTTO_SUT_DIRS",
+                    f"{dep.name!r} in OTTOPATH",
                 )
             )
         return "missing", None
     provider_idx = candidates[0]
-    version = repos[provider_idx].version
+    version = projects[provider_idx].version
     if all(c.matches(version.key) for c in dep.clauses):
         if dep.required:
             required_edges.add((provider_idx, i))
@@ -161,15 +151,15 @@ def _resolve_one(
     if dep.required:
         errors.append(
             DependencyError(
-                repo.sut_dir,
+                project.root,
                 f"dependency {dep.raw!r} is not satisfied: found {dep.name} {version}",
             )
         )
     else:
         warnings.append(
             BootstrapWarning(
-                repo.sut_dir,
-                f"repo {repo.sut_dir}: optional dependency {dep.raw!r} not satisfied "
+                project.root,
+                f"project root {project.root}: optional dependency {dep.raw!r} not satisfied "
                 f"(found {version}) — feature disabled",
             )
         )
@@ -177,14 +167,14 @@ def _resolve_one(
 
 
 def _check_combined_satisfiability(
-    repos: "list[Repo]",
+    projects: "list[Project]",
     errors: list[DependencyError],
     skip_reason: dict[int, str],
 ) -> None:
-    """Error every repo whose required constraints on a name can NEVER all hold."""
+    """Error every project whose required constraints on a name can NEVER all hold."""
     by_name: dict[str, list[tuple[int, "ParsedDependency"]]] = {}
-    for i, repo in enumerate(repos):
-        for dep in repo.declared_dependencies:
+    for i, project in enumerate(projects):
+        for dep in project.declared_dependencies:
             if dep.required:
                 by_name.setdefault(dep.normalized, []).append((i, dep))
     for _norm, entries in sorted(by_name.items()):
@@ -194,7 +184,7 @@ def _check_combined_satisfiability(
         if clauses_satisfiable(combined):
             continue
         detail = ", ".join(
-            f"{repos[i].name} requires {(dep.constraint or 'any')!r}" for i, dep in entries
+            f"{projects[i].name} requires {(dep.constraint or 'any')!r}" for i, dep in entries
         )
         seen: set[int] = set()
         for i, dep in entries:
@@ -203,7 +193,7 @@ def _check_combined_satisfiability(
             seen.add(i)
             errors.append(
                 DependencyError(
-                    repos[i].sut_dir,
+                    projects[i].root,
                     f"no possible version of {dep.name!r} satisfies all required "
                     f"constraints: {detail}",
                 )
@@ -215,41 +205,41 @@ def _check_combined_satisfiability(
 class ResolutionOutcome:
     """Everything the dependency pass produced for ``bootstrap()``."""
 
-    ordered: "list[Repo]"
-    """Non-skipped repos in registration order (stable topo sort, sut-dir tie-break)."""
+    ordered: "list[Project]"
+    """Non-skipped projects in registration order (stable topo sort, project-root tie-break)."""
 
     errors: list[DependencyError]
     warnings: list[BootstrapWarning]
 
 
-def resolve_dependencies(repos: "list[Repo]") -> ResolutionOutcome:
+def resolve_dependencies(projects: "list[Project]") -> ResolutionOutcome:
     """Resolve declared dependencies; return ordering, errors, warnings.
 
-    Side effect: populates ``repo.dependencies`` on every repo (including
+    Side effect: populates ``project.dependencies`` on every project (including
     skipped ones — the statuses are the diagnostic).
     """
-    status = _resolve_statuses(repos)
+    status = _resolve_statuses(projects)
     errors = list(status.errors)
     warnings = list(status.warnings)
     skip_reason = dict(status.skip_reason)
 
-    _propagate_skips(repos, status.required_edges, skip_reason, errors)
-    alive = [i for i in range(len(repos)) if i not in skip_reason]
-    survivors = _skip_required_cycles(repos, alive, status.required_edges, skip_reason, errors)
+    _propagate_skips(projects, status.required_edges, skip_reason, errors)
+    alive = [i for i in range(len(projects)) if i not in skip_reason]
+    survivors = _skip_required_cycles(projects, alive, status.required_edges, skip_reason, errors)
     # skip_reason is now final (propagation + cycle skips both landed): warn
-    # about any non-skipped repo whose satisfied optional dep's provider
+    # about any non-skipped project whose satisfied optional dep's provider
     # nonetheless never registers.
-    warnings.extend(_skipped_provider_warnings(repos, status.satisfied_optionals, skip_reason))
+    warnings.extend(_skipped_provider_warnings(projects, status.satisfied_optionals, skip_reason))
     order = _stable_topo_order(survivors, status.required_edges, status.soft_edges)
     return ResolutionOutcome(
-        ordered=[repos[i] for i in order],
+        ordered=[projects[i] for i in order],
         errors=errors,
         warnings=warnings,
     )
 
 
 def _skipped_provider_warnings(
-    repos: "list[Repo]",
+    projects: "list[Project]",
     satisfied_optionals: list[tuple[int, int, "ParsedDependency"]],
     skip_reason: dict[int, str],
 ) -> list[BootstrapWarning]:
@@ -259,7 +249,7 @@ def _skipped_provider_warnings(
     pass, before the skip set was finalized. If its provider is later
     skipped (its own required deps unsatisfied, or a required-dependency
     cycle) it never registers, so the dependent's "feature enabled" signal
-    — still reading ``"satisfied"`` in ``repo.dependencies`` — is stale. This
+    — still reading ``"satisfied"`` in ``project.dependencies`` — is stale. This
     does not change the stored status (it describes the discovered set, not
     registration success); it only surfaces the gap as a startup warning.
     """
@@ -269,9 +259,9 @@ def _skipped_provider_warnings(
             continue
         out.append(
             BootstrapWarning(
-                repos[dependent].sut_dir,
-                f"repo {repos[dependent].sut_dir}: optional dependency {dep.raw!r} "
-                f"unavailable — provider repo {repos[provider].sut_dir} was skipped "
+                projects[dependent].root,
+                f"project root {projects[dependent].root}: optional dependency {dep.raw!r} "
+                f"unavailable — provider project root {projects[provider].root} was skipped "
                 "— feature disabled",
             )
         )
@@ -279,12 +269,12 @@ def _skipped_provider_warnings(
 
 
 def _propagate_skips(
-    repos: "list[Repo]",
+    projects: "list[Project]",
     required_edges: set[tuple[int, int]],
     skip_reason: dict[int, str],
     errors: list[DependencyError],
 ) -> None:
-    """BFS along satisfied-required edges: a dependent of a skipped repo is skipped."""
+    """BFS along satisfied-required edges: a dependent of a skipped project is skipped."""
     dependents: dict[int, list[int]] = {}
     for provider, dependent in sorted(required_edges):
         dependents.setdefault(provider, []).append(dependent)
@@ -297,9 +287,9 @@ def _propagate_skips(
             skip_reason[dependent] = skip_reason[current]
             errors.append(
                 DependencyError(
-                    repos[dependent].sut_dir,
-                    f"skipped: required dependency {repos[current].name!r} "
-                    f"(repo {repos[current].sut_dir}) was skipped — "
+                    projects[dependent].root,
+                    f"skipped: required dependency {projects[current].name!r} "
+                    f"(project root {projects[current].root}) was skipped — "
                     f"root cause: {skip_reason[current]}",
                 )
             )
@@ -307,7 +297,7 @@ def _propagate_skips(
 
 
 def _skip_required_cycles(
-    repos: "list[Repo]",
+    projects: "list[Project]",
     alive: list[int],
     required_edges: set[tuple[int, int]],
     skip_reason: dict[int, str],
@@ -337,16 +327,16 @@ def _skip_required_cycles(
     in_cycle: set[int] = set()
     for cycle in _find_cycles(leftover, preds):
         in_cycle.update(cycle)
-        path = " -> ".join(repos[i].name for i in [*cycle, cycle[0]])
+        path = " -> ".join(projects[i].name for i in [*cycle, cycle[0]])
         for i in cycle:
             skip_reason[i] = f"required dependency cycle: {path}"
-            errors.append(DependencyError(repos[i].sut_dir, f"required dependency cycle: {path}"))
+            errors.append(DependencyError(projects[i].root, f"required dependency cycle: {path}"))
     for i in leftover:
         if i not in in_cycle:
             skip_reason[i] = "downstream of a required dependency cycle"
             errors.append(
                 DependencyError(
-                    repos[i].sut_dir,
+                    projects[i].root,
                     "skipped: a required dependency is part of a dependency cycle "
                     "(see cycle errors above)",
                 )
@@ -391,12 +381,12 @@ def _stable_topo_order(
     required_edges: set[tuple[int, int]],
     soft_edges: list[tuple[int, int]],
 ) -> list[int]:
-    """Kahn with a sut-dir-ordered ready queue; soft edges dropped if cycle-closing."""
+    """Kahn with a project-root-ordered ready queue; soft edges dropped if cycle-closing."""
     graph: dict[int, set[int]] = {i: set() for i in survivors}
     for provider, dependent in sorted(required_edges):
         if provider in graph and dependent in graph:
             graph[provider].add(dependent)
-    for provider, dependent in soft_edges:  # already (dependent sut-dir, declaration) order
+    for provider, dependent in soft_edges:  # already (dependent project-root, declaration) order
         if provider not in graph or dependent not in graph:
             continue
         if _reachable(graph, start=dependent, target=provider):

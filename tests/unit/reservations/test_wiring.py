@@ -11,12 +11,12 @@ from otto.reservations import (
 from tests._fixtures.fake_repo import fake_repo
 
 
-def _repo(reservation_settings, sut_dir):
-    return fake_repo(sut_dir=sut_dir, settings={"reservations": reservation_settings})
+def _repo(reservation_settings, root):
+    return fake_repo(root=root, settings={"reservations": reservation_settings})
 
 
 def test_skip_does_not_build_backend(tmp_path, monkeypatch):
-    def _spy(settings, repo_dir):
+    def _spy(settings, project_root):
         raise AssertionError("build_backend must not be called under -R")
 
     monkeypatch.setattr(factory, "build_backend", _spy)
@@ -68,7 +68,7 @@ def test_factory_passes_resolved_username(tmp_path):
 
 
 def test_build_failure_propagates(tmp_path, monkeypatch):
-    def _boom(settings, repo_dir, username=None):
+    def _boom(settings, project_root, username=None):
         raise ReservationBackendError("unreachable")
 
     monkeypatch.setattr(factory, "build_backend", _boom)
@@ -102,38 +102,38 @@ class TestAPresentTableMustNameItsBackend:
     """
 
     def test_absent_table_means_no_checker(self, tmp_path):
-        from otto.config.repo import Repo
+        from otto.config.project import Project
         from tests._fixtures.sutrepo import make_sut_repo
 
-        repo = Repo(sut_dir=make_sut_repo(tmp_path))
-        assert repo.reservation_settings == {}
+        project = Project(root=make_sut_repo(tmp_path))
+        assert project.reservation_settings == {}
 
     def test_bare_header_refuses_the_load_naming_the_key(self, tmp_path):
         from pydantic import ValidationError
 
-        from otto.config.repo import Repo
+        from otto.config.project import Project
         from tests._fixtures.sutrepo import make_sut_repo
 
         sut = make_sut_repo(tmp_path, extra="[reservations]\n")
         with pytest.raises(ValidationError, match=r"reservations\.backend"):
-            Repo(sut_dir=sut)
+            Project(root=sut)
 
     def test_url_only_table_refuses_the_load_naming_the_key(self, tmp_path):
         from pydantic import ValidationError
 
-        from otto.config.repo import Repo
+        from otto.config.project import Project
         from tests._fixtures.sutrepo import make_sut_repo
 
         sut = make_sut_repo(tmp_path, extra='[reservations]\nurl = "https://sched.example"\n')
         with pytest.raises(ValidationError, match=r"reservations\.backend"):
-            Repo(sut_dir=sut)
+            Project(root=sut)
 
     def test_explicit_none_still_loads(self, tmp_path):
-        from otto.config.repo import Repo
+        from otto.config.project import Project
         from tests._fixtures.sutrepo import make_sut_repo
 
-        repo = Repo(sut_dir=make_sut_repo(tmp_path, extra='[reservations]\nbackend = "none"\n'))
-        assert repo.reservation_settings == {"backend": "none"}
+        project = Project(root=make_sut_repo(tmp_path, extra='[reservations]\nbackend = "none"\n'))
+        assert project.reservation_settings == {"backend": "none"}
 
 
 def test_gate_from_settings_builds_no_backend_under_skip(tmp_path):

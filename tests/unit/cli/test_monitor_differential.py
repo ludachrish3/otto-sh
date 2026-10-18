@@ -79,15 +79,15 @@ def test_live_hands_run_live_exactly_its_flags(argv, kwargs, tmp_path):
 def test_review_hands_serve_review_the_source_and_the_repos(tmp_path, monkeypatch):
     src = tmp_path / "x.json"
     src.write_text("{}")
-    repos = [object()]
-    monkeypatch.setattr("otto.declared.get_repos", lambda: repos)
+    projects = [object()]
+    monkeypatch.setattr("otto.declared.get_projects", lambda: projects)
     fake = AsyncMock(return_value=None)
     with patch("otto.monitor.review.serve_review", fake):
         result = _invoke([str(src)])
     assert result.exit_code == 0, result.output
     fake.assert_awaited_once()
     assert fake.await_args.args == (src,)
-    assert fake.await_args.kwargs == {"repos": repos}
+    assert fake.await_args.kwargs == {"projects": projects}
 
 
 # The REAL library refuses these before touching any lab: the row proves the
@@ -100,7 +100,7 @@ USAGE_ROWS = [
 
 @pytest.mark.parametrize(("argv", "flag", "text"), USAGE_ROWS, ids=["interval", "hosts"])
 def test_library_input_refusals_are_usage_errors_in_flag_spelling(argv, flag, text, monkeypatch):
-    monkeypatch.setattr("otto.declared.get_repos", list)
+    monkeypatch.setattr("otto.declared.get_projects", list)
     result = _invoke(argv)
     assert result.exit_code == 2, result.output
     flat = _flat(result.output)
@@ -109,7 +109,7 @@ def test_library_input_refusals_are_usage_errors_in_flag_spelling(argv, flag, te
 
 
 def test_a_bad_review_source_is_a_usage_error_naming_source(tmp_path, monkeypatch):
-    monkeypatch.setattr("otto.declared.get_repos", list)
+    monkeypatch.setattr("otto.declared.get_projects", list)
     src = tmp_path / "x.csv"
     src.write_text("a")
     result = _invoke([str(src)])
@@ -123,7 +123,7 @@ FAIL_ROWS = [
     EmptySelectionError("x", 3),
     ProjectScopeError("/repo", "the [project] scope admits no host here"),
     NoMonitorableHostsError(["z1"]),
-    MonitorTlsError("[monitor] TLS settings disagree", setting=None, repos=["a", "b"]),
+    MonitorTlsError("[monitor] TLS settings disagree", setting=None, projects=["a", "b"]),
 ]
 
 
@@ -140,7 +140,7 @@ def test_review_tls_refusal_is_framed_exit_1(tmp_path):
     src = tmp_path / "x.json"
     src.write_text("{}")
     exc = MonitorTlsError(
-        "[monitor] tls_cert /nope does not exist", setting="tls_cert", repos=["a"]
+        "[monitor] tls_cert /nope does not exist", setting="tls_cert", projects=["a"]
     )
     with patch("otto.monitor.review.serve_review", AsyncMock(side_effect=exc)):
         result = _invoke([str(src)])

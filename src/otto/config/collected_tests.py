@@ -1,15 +1,15 @@
-"""What each test file holds, per repo, validated by one ``stat`` per path.
+"""What each test file holds, per project, validated by one ``stat`` per path.
 
 The completion cache's reserved ``__collected_tests__`` namespace holds one
-**table** per repo, keyed by the repo's absolute ``sut_dir``::
+**table** per project, keyed by the project's absolute ``root``::
 
     {"schema_version": 5,
      "generated_at": 1727400000,
      "env":   {"python": "3.10.12", "prefix": "/path/to/venv",
                "pytest": "9.1.1", "otto": "0.16.1",
                "site_packages": {"<dir>": [mtime_ns, size]},
-               "configs": {"<sut>/pyproject.toml": [mtime_ns, size],
-                           "<sut>/pytest.ini": null, ...},
+               "configs": {"<root>/pyproject.toml": [mtime_ns, size],
+                           "<root>/pytest.ini": null, ...},
                "settings": [mtime_ns, size]},
      "dirs":  {"<abs dir>": [mtime_ns, size], ...},
      "deps":  {"<abs file a record's tests come from>": [mtime_ns, size] | null, ...},
@@ -44,8 +44,8 @@ changed.
 its stat from before pytest listed it. A directory whose stat moved has
 gained or lost an entry, so a collection enters it again and pytest decides
 what in it is a test file: otto applies no ``python_files`` rule of its own.
-``env`` holds what decides collection for the whole repo: the pytest config
-files, the repo's ``settings.toml``, the stat of the site-packages directory
+``env`` holds what decides collection for the whole project: the pytest config
+files, the project's ``settings.toml``, the stat of the site-packages directory
 pytest and otto are installed in (its mtime moves when any distribution is
 installed or removed, the cheapest honest proxy for "the plugin set
 changed"), and the python, pytest and otto versions. ``generated_at`` is when
@@ -94,16 +94,16 @@ from .completion_cache import (
     _cache_path,
     ancestor_conftests,
 )
-from .repo import pytest_config_paths, selectable_names
+from .project import pytest_config_paths, selectable_names
 from .scope import TOML_SETTINGS_PATH
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
 
-    from .repo import Repo
+    from .project import Project
 
 RECORDS_SCHEMA_VERSION = 5
-"""The per-repo table's own schema. A table with any other version reads as absent.
+"""The per-project table's own schema. A table with any other version reads as absent.
 
 1-3 were one whole-corpus entry per digest of the test tree; one may still
 sit in the same namespace, under a digest rather than a path, until the next
@@ -124,7 +124,7 @@ _ABSENT = "absent"
 class RecordedTest:
     """One test a file holds: the classes around it, outermost first, and its base name.
 
-    The pair :func:`~otto.config.repo.selectable_names` and ``otto test``'s
+    The pair :func:`~otto.config.project.selectable_names` and ``otto test``'s
     name matching take. ``name`` never carries a parametrization id.
     """
 
@@ -167,12 +167,12 @@ class FileRecord:
 
 
 @dataclass
-class RepoTable:
-    """One repo's table: its file records, its directory stats and its ``env``."""
+class ProjectTable:
+    """One project's table: its file records, its directory stats and its ``env``."""
 
-    sut_dir: Path
+    root: Path
     env: dict[str, Any]
-    """What decides collection for the whole repo; see :func:`current_env`."""
+    """What decides collection for the whole project; see :func:`current_env`."""
     dirs: dict[str, list[int] | None]
     """Every directory the tests-dir walk entered, by absolute path.
 
@@ -281,10 +281,10 @@ def _record_from_json(raw: object) -> FileRecord | None:
     )
 
 
-def table_from_json(sut_dir: Path, raw: object) -> RepoTable | None:
+def table_from_json(root: Path, raw: object) -> ProjectTable | None:
     """Parse one stored table, or ``None`` for another schema or anything malformed.
 
-    ``None`` is "no table": the caller treats the repo as never collected.
+    ``None`` is "no table": the caller treats the project as never collected.
     """
     if not isinstance(raw, dict) or raw.get("schema_version") != RECORDS_SCHEMA_VERSION:
         return None
@@ -309,8 +309,8 @@ def table_from_json(sut_dir: Path, raw: object) -> RepoTable | None:
         if not isinstance(key, str) or record is None:
             return None
         records[key] = record
-    return RepoTable(
-        sut_dir=sut_dir,
+    return ProjectTable(
+        root=root,
         env=env,
         dirs=dict(dirs),
         files=records,
@@ -344,43 +344,45 @@ def _namespace(data: dict[str, Any]) -> dict[str, Any]:
     return dict(namespace) if isinstance(namespace, dict) else {}
 
 
-def read_tables(repos: "Iterable[Repo]", *, home: Path | None = None) -> dict[str, RepoTable]:
-    """Every repo's stored table, keyed by ``str(sut_dir)``, from one read of the cache file.
+def read_tables(
+    projects: "Iterable[Project]", *, home: Path | None = None
+) -> dict[str, ProjectTable]:
+    """Every project's stored table, keyed by ``str(root)``, from one read of the cache file.
 
-    A repo with no table, a table from another schema or a malformed one is
+    A project with no table, a table from another schema or a malformed one is
     simply absent from the result. *home* is the workspace home
     (:func:`otto.config.home.workspace_home`) when the caller has it: looking
-    it up resolves every SUT dir.
+    it up resolves every project root.
     """
     namespace = _namespace(_load_cache_file(_cache_file(home)))
-    tables: dict[str, RepoTable] = {}
-    for repo in repos:
-        key = str(repo.sut_dir)
-        table = table_from_json(repo.sut_dir, namespace.get(key))
+    tables: dict[str, ProjectTable] = {}
+    for project in projects:
+        key = str(project.root)
+        table = table_from_json(project.root, namespace.get(key))
         if table is not None:
             tables[key] = table
     return tables
 
 
-def read_table(repo: "Repo") -> RepoTable | None:
-    """*repo*'s stored table, or ``None``; see :func:`read_tables`."""
-    return read_tables([repo]).get(str(repo.sut_dir))
+def read_table(project: "Project") -> ProjectTable | None:
+    """*project*'s stored table, or ``None``; see :func:`read_tables`."""
+    return read_tables([project]).get(str(project.root))
 
 
 def _is_live(key: object) -> bool:
-    """Whether a namespace key is the ``sut_dir`` of a repo that is still there."""
+    """Whether a namespace key is the ``root`` of a project that is still there."""
     return isinstance(key, str) and Path(key).is_absolute() and Path(key).is_dir()
 
 
-def write_tables(tables: list[RepoTable], *, home: Path | None = None) -> None:
+def write_tables(tables: list[ProjectTable], *, home: Path | None = None) -> None:
     """Store *tables* in the cache file, in one atomic replace.
 
     Only the tables' own keys in ``__collected_tests__`` change: other live
-    repos' tables and the rest of the file are carried forward as they are.
-    A key that names no directory now is dropped: a repo whose ``sut_dir``
+    projects' tables and the rest of the file are carried forward as they are.
+    A key that names no directory now is dropped: a project whose ``root``
     was removed or renamed, or a whole-corpus entry an older otto stored
     under a digest. The console-script shim parses the whole file on every
-    TAB, so a table no repo can use again is pure cost. No inventory gate,
+    TAB, so a table no project can use again is pure cost. No inventory gate,
     unlike the sections: a table depends on no inventory, so it is never an
     entry that could not be read back. *home* as for :func:`read_tables`.
     """
@@ -391,7 +393,7 @@ def write_tables(tables: list[RepoTable], *, home: Path | None = None) -> None:
     data = _load_cache_file(cache_path)
     namespace = {key: raw for key, raw in _namespace(data).items() if _is_live(key)}
     for table in tables:
-        namespace[str(table.sut_dir)] = table.to_json()
+        namespace[str(table.root)] = table.to_json()
     data[COLLECTED_TESTS_KEY] = namespace
     _atomic_write_json(cache_path, data)
     mark_tables_checked(cache_path.parent)
@@ -495,14 +497,14 @@ def _stat_pair(path: Path) -> list[int] | None:
     return None if st is None else [st.st_mtime_ns, st.st_size]
 
 
-def current_env(repo: "Repo") -> dict[str, Any]:
-    """*repo*'s ``env`` as it is now: one ``stat`` per path in it, JSON-shaped.
+def current_env(project: "Project") -> dict[str, Any]:
+    """*project*'s ``env`` as it is now: one ``stat`` per path in it, JSON-shaped.
 
     A table whose stored ``env`` differs is wholly stale: a config, the
     settings, the installed distributions or a version moved.
     """
     install = _installation()
-    configs = pytest_config_paths(repo.sut_dir)
+    configs = pytest_config_paths(project.root)
     return {
         "python": install.python,
         "prefix": install.prefix,
@@ -510,7 +512,7 @@ def current_env(repo: "Repo") -> dict[str, Any]:
         "otto": install.otto,
         "site_packages": {site: _stat_pair(Path(site)) for site in install.site_packages},
         "configs": {str(path): _stat_pair(path) for path in configs},
-        "settings": _stat_pair(repo.sut_dir / TOML_SETTINGS_PATH),
+        "settings": _stat_pair(project.root / TOML_SETTINGS_PATH),
     }
 
 
@@ -566,15 +568,15 @@ class Classification:
         )
 
 
-def _watched_conftests(repo: "Repo") -> set[str]:
+def _watched_conftests(project: "Project") -> set[str]:
     """Return each conftest pytest loads before listing anything: the tests dirs' own, and above.
 
     Watched whether or not they exist: creating one is seen by its own stat.
     """
     watched: set[str] = set()
-    for test_dir in repo.tests:
+    for test_dir in project.tests:
         watched.add(str(test_dir / CONFTEST_FILENAME))
-        watched.update(str(p) for p in ancestor_conftests(test_dir, repo.sut_dir))
+        watched.update(str(p) for p in ancestor_conftests(test_dir, project.root))
     return watched
 
 
@@ -630,13 +632,13 @@ def _invalidate_dependents(
             status[key] = _CHANGED
 
 
-def _expired(table: RepoTable) -> bool:
+def _expired(table: ProjectTable) -> bool:
     """Whether the whole tree was last collected longer ago than the cache's TTL."""
     return time.time() - table.generated_at > CACHE_TTL_SECONDS
 
 
-def classify(repo: "Repo", table: RepoTable | None) -> Classification:
-    """Say which of *repo*'s test files *table* still describes, and which it does not.
+def classify(project: "Project", table: ProjectTable | None) -> Classification:
+    """Say which of *project*'s test files *table* still describes, and which it does not.
 
     One ``stat`` per stored file, directory and dependency, per watched
     conftest and per ``env`` path, and no listing: a file whose stat matches
@@ -661,12 +663,12 @@ def classify(repo: "Repo", table: RepoTable | None) -> Classification:
     collected, or the TTL sends the tree to a whole collection. A run never
     lets it narrow what pytest collects (``otto.suite.run._decide``, #592).
     """
-    env = current_env(repo)
+    env = current_env(project)
     whole_tree = table is None or table.env != env or _expired(table)
     stored_files = table.files if table is not None else {}
     stored_dirs = table.dirs if table is not None else {}
-    watched = _watched_conftests(repo)
-    test_dirs = {str(t) for t in repo.tests}
+    watched = _watched_conftests(project)
+    test_dirs = {str(t) for t in project.tests}
 
     stats = {key: _stat_pair(Path(key)) for key in stored_files}
     status = _stored_status(stored_files, stats, watched)
@@ -740,7 +742,7 @@ def _tracked_dependency(path: str) -> bool:
     ``env`` stats the site-packages directories, so an installed distribution
     (anything under ``site-packages`` or ``dist-packages``) is covered, and it
     names the interpreter, so the standard library is too. Everything else is
-    tracked: the repo's own files, its libs, an editable install's source, a
+    tracked: the project's own files, its libs, an editable install's source, a
     ``PYTHONPATH`` directory.
     """
     parts = Path(path).parts
@@ -776,8 +778,8 @@ def _missing_dependencies(
 
 
 def _merged_dirs(
-    repo: "Repo",
-    stored: RepoTable | None,
+    project: "Project",
+    stored: ProjectTable | None,
     classification: Classification,
     listed: dict[str, list[int] | None] | None,
     *,
@@ -791,7 +793,7 @@ def _merged_dirs(
         for key in map(str, classification.candidate_dirs):
             dirs[key] = before.get(key)
         return dirs
-    test_dirs = {str(t) for t in repo.tests}
+    test_dirs = {str(t) for t in project.tests}
     meant = set(dirs) if whole_tree else {str(d) for d in classification.candidate_dirs}
     for key in meant - set(listed) - test_dirs:
         # Meant to be listed, and pytest did not go there: it is not a test directory now.
@@ -809,8 +811,8 @@ def _merged_dirs(
 
 
 def updated_table(
-    repo: "Repo",
-    stored: RepoTable | None,
+    project: "Project",
+    stored: ProjectTable | None,
     classification: Classification,
     records: dict[str, FileRecord],
     *,
@@ -818,7 +820,7 @@ def updated_table(
     whole_tree: bool = False,
     dirs: dict[str, list[int] | None] | None = None,
     dep_stats: dict[str, list[int] | None] | None = None,
-) -> RepoTable:
+) -> ProjectTable:
     """Merge a collection's *records* into *stored*, per *classification*.
 
     *records* maps an absolute file path to what was read from it. A record
@@ -846,7 +848,7 @@ def updated_table(
     installed distribution, the standard library) or they have no file (a
     sourceless ``.pyc``), and each is stamped with
     the stat *classification* saw before the read, or ``None`` when it is
-    first seen now (see :attr:`RepoTable.deps`). *dep_stats* overrides
+    first seen now (see :attr:`ProjectTable.deps`). *dep_stats* overrides
     that stat for the dependencies it names: a library the process imported
     before this collection, stamped with the stat it was imported at, so
     an edit the process cannot see leaves its holders stale.
@@ -863,7 +865,7 @@ def updated_table(
 
     *whole_tree* says the collection covered the whole tree (so does a
     whole-tree *classification*): the table is dated now
-    (:attr:`RepoTable.generated_at`). *registered_markers* replaces the
+    (:attr:`ProjectTable.generated_at`). *registered_markers* replaces the
     stored list when given; otherwise the stored one is kept unless the
     ``env`` moved.
     """
@@ -906,7 +908,7 @@ def updated_table(
             files[key] = replace(before, stat=None) if before else FileRecord(None)
     for key in sorted(set(records) - set(files) - set(status)):
         files[key] = taken(records[key], _stat_pair(Path(key)), key)
-    for key in sorted(_watched_conftests(repo) - set(files)):
+    for key in sorted(_watched_conftests(project) - set(files)):
         seen = key in classification.stats
         stat = classification.stats[key] if seen else _stat_pair(Path(key))
         files[key] = FileRecord(stat=stat, collected_at=now)
@@ -928,9 +930,9 @@ def updated_table(
             deps[dep] = classification.deps[dep]
         else:
             deps[dep] = classification.stats.get(dep)
-    merged = _merged_dirs(repo, stored, classification, dirs, whole_tree=whole_tree)
-    table = RepoTable(
-        sut_dir=repo.sut_dir,
+    merged = _merged_dirs(project, stored, classification, dirs, whole_tree=whole_tree)
+    table = ProjectTable(
+        root=project.root,
         env=classification.env,
         dirs=dict(sorted(merged.items())),
         files=dict(sorted(files.items())),
@@ -955,7 +957,7 @@ def updated_table(
 
 @dataclass
 class CompletionView:
-    """What a completer offers for test names and markers, across repos."""
+    """What a completer offers for test names and markers, across projects."""
 
     names: list[str]
     """Every selectable name, sorted, each once."""
@@ -963,17 +965,17 @@ class CompletionView:
     """Every marker name, sorted, each once."""
 
 
-def completion_view(repos: "list[Repo]") -> CompletionView:
+def completion_view(projects: "list[Project]") -> CompletionView:
     """Test names and markers for a TAB, answered as the console-script shim answers one.
 
-    Each repo's table is read and its ``env`` compared (:func:`current_env`:
+    Each project's table is read and its ``env`` compared (:func:`current_env`:
     a handful of ``stat`` calls, whatever the corpus size); nothing a table
-    tracks is stat'ed. A repo with no table, another ``env`` or an expired
+    tracks is stat'ed. A project with no table, another ``env`` or an expired
     table is cold: this waits once for the collect child
     (:func:`otto.config.completion_cache.run_collect_child`, bounded, locked,
     with a cooldown after a failure) and answers from what it wrote, and
     never offers a cold table. Every other table offers what each record
-    held when pytest last read it (:attr:`RepoTable.names`), so a file
+    held when pytest last read it (:attr:`ProjectTable.names`), so a file
     added, edited or deleted since shows up one check late. The check is the
     collect child's: when one is due (:func:`tables_check_due`), the child
     is asked for, detached, once the answer is written
@@ -981,13 +983,13 @@ def completion_view(repos: "list[Repo]") -> CompletionView:
     """
     from .completion_cache import request_collect_refresh, run_collect_child
 
-    def warm() -> list[RepoTable | None]:
-        """Each repo's table, or ``None`` for a cold one."""
-        stored = read_tables(repos)
-        tables: list[RepoTable | None] = []
-        for repo in repos:
-            table = stored.get(str(repo.sut_dir))
-            cold = table is None or table.env != current_env(repo) or _expired(table)
+    def warm() -> list[ProjectTable | None]:
+        """Each project's table, or ``None`` for a cold one."""
+        stored = read_tables(projects)
+        tables: list[ProjectTable | None] = []
+        for project in projects:
+            table = stored.get(str(project.root))
+            cold = table is None or table.env != current_env(project) or _expired(table)
             tables.append(None if cold else table)
         return tables
 
@@ -1055,22 +1057,22 @@ def _expire_collect_child(lock: Path) -> None:
 
 
 def collect_child_main(
-    load_repos: "Callable[[], list[Repo]]",
-    refresh: "Callable[[list[Repo]], list[RepoTable | None]]",
+    load_projects: "Callable[[], list[Project]]",
+    refresh: "Callable[[list[Project]], list[ProjectTable | None]]",
 ) -> int:
-    """Bring every repo's table up to date, printing nothing: the collect child's whole job.
+    """Bring every project's table up to date, printing nothing: the collect child's whole job.
 
     Run by :func:`otto.cli.main.entry` in a process of its own, spawned by a
     completer: waited for when a table is cold, detached when a check of
     the tables is due. It takes the collect lock first (and exits at once
     when another process holds it), then arms its deadline
     (:data:`~otto.config.completion_cache.COLLECT_TIMEOUT_SECONDS`), and only
-    then calls *load_repos*, the bootstrap that imports the repos' init
+    then calls *load_projects*, the bootstrap that imports the projects' init
     modules: a burst of TABs starts one child that does the work, and a hung
     init module is stopped like a hung collection. *refresh* is the run's
     own (``otto.suite.run._refresh_tables``): it seeds a cold table, re-reads
     what moved in a warm one and leaves a current one as it is. The check
-    is recorded either way (:func:`mark_tables_checked`). A repo whose table
+    is recorded either way (:func:`mark_tables_checked`). A project whose table
     it could not bring up to date, a directory whose listing did not finish
     included, stamps the cooldown, as does any other failure, so the next
     TAB neither waits nor spawns again for a while. Returns the exit code.
@@ -1093,10 +1095,10 @@ def collect_child_main(
         return 0
     try:
         with _deadline(COLLECT_TIMEOUT_SECONDS, lambda: _expire_collect_child(lock)):
-            repos = load_repos()
-            failed = [r.name for r, t in zip(repos, refresh(repos), strict=True) if t is None]
+            projects = load_projects()
+            failed = [r.name for r, t in zip(projects, refresh(projects), strict=True) if t is None]
             if failed:
-                stamp_collect_cooldown(f"could not collect repo {failed[0]!r}")
+                stamp_collect_cooldown(f"could not collect project {failed[0]!r}")
                 return 1
     except Exception as exc:  # noqa: BLE001 — a child that failed says so with its exit code
         stamp_collect_cooldown(f"{type(exc).__name__}: {exc}")

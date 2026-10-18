@@ -6,7 +6,7 @@ include them between the ``# doc: begin`` / ``# doc: end`` markers.
 The project actions this project defines are NOT imported here:
 ``gs_example.actions`` is listed in ``init`` in its own right, so the inventory
 twin next door — which shares this package for its login proxy alone — does
-not become a providing repo. The dev tool is a ``[[dev_tools]]`` entry in
+not become a providing project. The dev tool is a ``[[dev_tools]]`` entry in
 ``.otto/settings.toml``, and ``gs_example.products`` is named by the ``agent``
 entry's ``class`` key and imported by the registry when the entry is built,
 not by an init module.

@@ -2,7 +2,7 @@
 
 Each carries the facts its message was built from as attributes. A renderer
 (the CLI) formats its own text from those attributes and never rewrites the
-message: a message can quote a repo name or a path, and word-by-word flag
+message: a message can quote a project name or a path, and word-by-word flag
 spelling would corrupt it.
 """
 
@@ -13,13 +13,13 @@ from ..errors import FieldError, OttoError
 if TYPE_CHECKING:
     from ..config.scope import BootstrapError
     from ..env.preflight import Unsatisfied
-    from .projects import DemotedRepo
+    from .projects import DemotedProject
 
 
 class ProjectSelectionError(FieldError, ValueError):
     """``include_projects`` / ``exclude_projects`` cannot select what they name.
 
-    ``kind`` is ``"unknown"`` (``names`` holds the one name no discovered repo
+    ``kind`` is ``"unknown"`` (``names`` holds the one name no discovered project
     carries; ``suggestion`` is the closest known name, or ``None``) or
     ``"overlap"`` (``names`` appear in both lists; ``field`` is
     ``include_projects``).
@@ -41,27 +41,27 @@ class ProjectSelectionError(FieldError, ValueError):
         self.suggestion = suggestion
 
 
-class RepoLoadError(OttoError):
-    """An active repo failed to load, so the run cannot start.
+class ProjectLoadError(OttoError):
+    """An active project failed to load, so the run cannot start.
 
-    ``errors`` are the fatal bootstrap errors: an active repo's, one forced by
-    ``include_projects``, or one with no repo to attribute it to (an
+    ``errors`` are the fatal bootstrap errors: an active project's, one forced by
+    ``include_projects``, or one with no project to attribute it to (an
     unparsable ``settings.toml``). ``demoted`` are the errors that would not
     have stopped the run on their own, so a renderer can still report them.
     """
 
     def __init__(
-        self, errors: "list[BootstrapError]", demoted: "list[DemotedRepo] | None" = None
+        self, errors: "list[BootstrapError]", demoted: "list[DemotedProject] | None" = None
     ) -> None:
         """Frame every fatal error, one per line."""
         lines = "\n".join(f"  {error}" for error in errors)
-        super().__init__(f"cannot run while a repo fails to load:\n{lines}")
+        super().__init__(f"cannot run while a project fails to load:\n{lines}")
         self.errors = list(errors)
         self.demoted = list(demoted or [])
 
 
 class LabBuildError(FieldError):
-    """The lab could not be built from the repos' configuration.
+    """The lab could not be built from the projects' configuration.
 
     ``kind``: ``"no_labs"`` (nothing selected), ``"unknown_lab"`` (the
     message IS the source's own not-found text), ``"sources"`` (a bad
@@ -85,11 +85,11 @@ class LabBuildError(FieldError):
 
 
 class DependencyRefusedError(OttoError):
-    """An active repo declares a Python requirement this environment does not meet.
+    """An active project declares a Python requirement this environment does not meet.
 
     ``unsatisfied`` are the blocking requirements. ``warnings`` are what the
     preflight would have reported had it passed: checks it could not make,
-    and the unmet requirements of inactive repos.
+    and the unmet requirements of inactive projects.
     """
 
     def __init__(
@@ -100,7 +100,7 @@ class DependencyRefusedError(OttoError):
         # message renders as a bare class name.
         super().__init__(
             "\n".join(
-                f"repo {bad.repo!r} requires {bad.requirement!r} — not satisfied in "
+                f"project {bad.project!r} requires {bad.requirement!r} — not satisfied in "
                 f"this environment (found: {bad.found})"
                 for bad in unsatisfied
             )
@@ -114,10 +114,10 @@ _ACTIVATE = "add {project} to include_projects"
 
 
 class InstructionInactiveError(OttoError):
-    """A repo-owned instruction was asked for while its repo is inactive.
+    """A project-owned instruction was asked for while its project is inactive.
 
     ``reason``: ``"excluded"`` (switched off by ``exclude_projects``),
-    ``"out_of_lab_scope"`` (no loaded lab matches the repo's ``lab_patterns``)
+    ``"out_of_lab_scope"`` (no loaded lab matches the project's ``lab_patterns``)
     or ``"host_starved"`` (the labs match, but its ``host_patterns`` select no
     host). The scope facts are empty for ``"excluded"``.
     """
@@ -133,7 +133,7 @@ class InstructionInactiveError(OttoError):
         lab_patterns: "list[str] | None" = None,
         host_patterns: "list[str] | None" = None,
     ) -> None:
-        """Say whose instruction it is, why that repo is inactive, and what would activate it."""
+        """Say whose instruction it is, why that project is inactive, and what would activate it."""
         self.instruction = instruction
         self.owner = owner
         self.project = project
@@ -157,13 +157,15 @@ class InstructionInactiveError(OttoError):
                 f"match no host in the loaded lab(s) [{loaded}]"
             )
             fix = f"widen host_patterns, or {activate}"
-        super().__init__(f"{instruction!r} belongs to repo {owner!r}, {why}; to activate it, {fix}")
+        super().__init__(
+            f"{instruction!r} belongs to project {owner!r}, {why}; to activate it, {fix}"
+        )
 
 
 class LoggingLevelsConflictError(OttoError, ValueError):
-    """Two repos disagree about one logger's ``[logging.levels]`` entry.
+    """Two projects disagree about one logger's ``[logging.levels]`` entry.
 
     A settings error, so it subclasses ``ValueError`` like the model-level
-    ones — but it cannot live in the model, which validates one repo's
+    ones — but it cannot live in the model, which validates one project's
     ``settings.toml`` and has never seen the others.
     """

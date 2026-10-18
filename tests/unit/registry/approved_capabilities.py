@@ -11,9 +11,9 @@ pairs.
 
 APPROVED: dict[str, list[tuple[str, str]]] = {
     "otto.docker.adapter:COMPOSE_ADAPTERS": [
-        ("RequireRepo", "one adapter per (repo, use case); the repo is half the key")
+        ("RequireProject", "one adapter per (project, use case); the project is half the key")
     ],
     "otto.instruction_catalog:PROJECT_ACTIONS": [
-        ("RequireRepo", "one actions class per repo; the repo is the key")
+        ("RequireProject", "one actions class per project; the project is the key")
     ],
 }

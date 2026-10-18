@@ -32,13 +32,13 @@ def _junit_files(xdir: Path) -> list[Path]:
 
 
 def test_names_run_named_tests_across_classes(tmp_path: Path) -> None:
-    repo = make_selection_repo(tmp_path)
+    project = make_selection_repo(tmp_path)
     xdir = tmp_path / "xdir"
     xdir.mkdir()
     r = run_otto(
         ["test", "test_alpha_one", "test_beta_one"],
         xdir=xdir,
-        sut_dirs=repo,
+        roots=project,
         lab="unix",
     )
     assert r.returncode == 0, r.stdout + r.stderr
@@ -47,13 +47,13 @@ def test_names_run_named_tests_across_classes(tmp_path: Path) -> None:
 
 
 def test_plain_function_runs_by_name(tmp_path: Path) -> None:
-    repo = make_selection_repo(tmp_path)
+    project = make_selection_repo(tmp_path)
     xdir = tmp_path / "xdir"
     xdir.mkdir()
     r = run_otto(
         ["test", "test_plain_function"],
         xdir=xdir,
-        sut_dirs=repo,
+        roots=project,
         lab="unix",
     )
     assert r.returncode == 0, r.stdout + r.stderr
@@ -62,13 +62,13 @@ def test_plain_function_runs_by_name(tmp_path: Path) -> None:
 
 
 def test_qualified_name_selects_one_class(tmp_path: Path) -> None:
-    repo = make_selection_repo(tmp_path)
+    project = make_selection_repo(tmp_path)
     xdir = tmp_path / "xdir"
     xdir.mkdir()
     r = run_otto(
         ["test", "TestAlpha::test_alpha_one"],
         xdir=xdir,
-        sut_dirs=repo,
+        roots=project,
         lab="unix",
     )
     assert r.returncode == 0, r.stdout + r.stderr
@@ -77,13 +77,13 @@ def test_qualified_name_selects_one_class(tmp_path: Path) -> None:
 
 
 def test_marker_alone_runs_both_classes(tmp_path: Path) -> None:
-    repo = make_selection_repo(tmp_path)
+    project = make_selection_repo(tmp_path)
     xdir = tmp_path / "xdir"
     xdir.mkdir()
     r = run_otto(
         ["test", "-m", "shared"],
         xdir=xdir,
-        sut_dirs=repo,
+        roots=project,
         lab="unix",
     )
     assert r.returncode == 0, r.stdout + r.stderr
@@ -92,13 +92,13 @@ def test_marker_alone_runs_both_classes(tmp_path: Path) -> None:
 
 
 def test_unknown_name_is_loud_with_suggestion(tmp_path: Path) -> None:
-    repo = make_selection_repo(tmp_path)
+    project = make_selection_repo(tmp_path)
     xdir = tmp_path / "xdir"
     xdir.mkdir()
     r = run_otto(
         ["test", "test_alpha_won"],
         xdir=xdir,
-        sut_dirs=repo,
+        roots=project,
         lab="unix",
     )
     # Rich wraps the error panel to terminal width and can insert a
@@ -114,13 +114,13 @@ def test_unknown_name_is_loud_with_suggestion(tmp_path: Path) -> None:
 
 
 def test_a_class_name_selects_every_test_in_it(tmp_path: Path) -> None:
-    repo = make_selection_repo(tmp_path)
+    project = make_selection_repo(tmp_path)
     xdir = tmp_path / "xdir"
     xdir.mkdir()
     r = run_otto(
         ["test", "TestAlpha"],
         xdir=xdir,
-        sut_dirs=repo,
+        roots=project,
         lab="unix",
     )
     assert r.returncode == 0, r.stdout + r.stderr
@@ -129,13 +129,13 @@ def test_a_class_name_selects_every_test_in_it(tmp_path: Path) -> None:
 
 
 def test_bare_otto_test_is_a_usage_error(tmp_path: Path) -> None:
-    repo = make_selection_repo(tmp_path)
+    project = make_selection_repo(tmp_path)
     xdir = tmp_path / "xdir"
     xdir.mkdir()
     r = run_otto(
         ["test"],
         xdir=xdir,
-        sut_dirs=repo,
+        roots=project,
         lab="unix",
     )
     assert r.returncode == 2, r.stdout + r.stderr
@@ -145,13 +145,13 @@ def test_bare_otto_test_is_a_usage_error(tmp_path: Path) -> None:
 
 
 def test_stability_mode_works_on_selection(tmp_path: Path) -> None:
-    repo = make_selection_repo(tmp_path)
+    project = make_selection_repo(tmp_path)
     xdir = tmp_path / "xdir"
     xdir.mkdir()
     r = run_otto(
         ["test", "-i", "2", "test_plain_function"],
         xdir=xdir,
-        sut_dirs=repo,
+        roots=project,
         lab="unix",
     )
     assert r.returncode == 0, r.stdout + r.stderr
@@ -163,12 +163,12 @@ def test_multi_repo_selection_runs_one_session_per_repo(tmp_path: Path) -> None:
     repo_b = make_selection_repo(tmp_path, name="repoB", suite_src=PLAIN_SUITE_SRC, with_lab=False)
     xdir = tmp_path / "xdir"
     xdir.mkdir()
-    sut_dirs = f"{repo_a}{os.pathsep}{repo_b}"
+    roots = f"{repo_a}{os.pathsep}{repo_b}"
     r = run_otto(
         ["test", "test_plain_function"],
         xdir=xdir,
         lab="unix",
-        extra_env={"OTTO_SUT_DIRS": sut_dirs},
+        extra_env={"OTTOPATH": roots},
     )
     assert r.returncode == 0, r.stdout + r.stderr
     junit_files = _junit_files(xdir)
@@ -186,13 +186,13 @@ def test_multi_repo_explicit_results_fans_out_per_repo(tmp_path: Path) -> None:
     repo_b = make_selection_repo(tmp_path, name="repoB", suite_src=PLAIN_SUITE_SRC, with_lab=False)
     xdir = tmp_path / "xdir"
     xdir.mkdir()
-    sut_dirs = f"{repo_a}{os.pathsep}{repo_b}"
+    roots = f"{repo_a}{os.pathsep}{repo_b}"
     results_path = xdir / "custom.xml"
     r = run_otto(
         ["test", "test_plain_function", "--results", str(results_path)],
         xdir=xdir,
         lab="unix",
-        extra_env={"OTTO_SUT_DIRS": sut_dirs},
+        extra_env={"OTTOPATH": roots},
     )
     assert r.returncode == 0, r.stdout + r.stderr
     custom_files = sorted(xdir.glob("custom*.xml"))
@@ -211,12 +211,12 @@ def test_marker_alone_leaves_nothing_for_a_repo_without_matches(tmp_path: Path) 
     repo_b = make_selection_repo(tmp_path, name="repoB", suite_src=PLAIN_SUITE_SRC, with_lab=False)
     xdir = tmp_path / "xdir"
     xdir.mkdir()
-    sut_dirs = f"{repo_a}{os.pathsep}{repo_b}"
+    roots = f"{repo_a}{os.pathsep}{repo_b}"
     r = run_otto(
         ["test", "-m", "shared"],
         xdir=xdir,
         lab="unix",
-        extra_env={"OTTO_SUT_DIRS": sut_dirs},
+        extra_env={"OTTOPATH": roots},
     )
     assert r.returncode == 0, r.stdout + r.stderr
     # Two repos searched -> the per-repo JUnit name, whichever of them matched.
@@ -228,11 +228,11 @@ def test_marker_alone_leaves_nothing_for_a_repo_without_matches(tmp_path: Path) 
 def test_a_warm_run_still_finds_the_names(tmp_path: Path) -> None:
     # The second run reads the collected-tests table the first one wrote and
     # collects only the file holding the name.
-    repo = make_selection_repo(tmp_path)
+    project = make_selection_repo(tmp_path)
     xdir = tmp_path / "xdir"
     xdir.mkdir()
     for _ in range(2):
-        r = run_otto(["test", "TestAlpha"], xdir=xdir, sut_dirs=repo, lab="unix")
+        r = run_otto(["test", "TestAlpha"], xdir=xdir, roots=project, lab="unix")
         assert r.returncode == 0, r.stdout + r.stderr
         [junit] = _junit_files(xdir)
         assert _testcase_count(junit) == 2
@@ -245,12 +245,12 @@ def test_multi_repo_worst_exit_code_wins(tmp_path: Path) -> None:
     )
     xdir = tmp_path / "xdir"
     xdir.mkdir()
-    sut_dirs = f"{repo_a}{os.pathsep}{repo_b}"
+    roots = f"{repo_a}{os.pathsep}{repo_b}"
     r = run_otto(
         ["test", "test_plain_function"],
         xdir=xdir,
         lab="unix",
-        extra_env={"OTTO_SUT_DIRS": sut_dirs},
+        extra_env={"OTTOPATH": roots},
     )
     assert r.returncode != 0
     junit_files = _junit_files(xdir)

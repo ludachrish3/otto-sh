@@ -4,7 +4,7 @@
 lab's docker-capable hosts. The containers it brings up become first-class lab
 hosts: they appear in `--list-hosts` and accept every `otto host` verb.
 
-A use-case is one named deployment that several active repos contribute
+A use-case is one named deployment that several active projects contribute
 fragments to; `compose build`, `compose up`, `compose down`, `compose ps` and
 `compose logs` all speak it.
 {doc}`use-cases` is the workflow home for that model — start there.
@@ -18,12 +18,12 @@ fragments to; `compose build`, `compose up`, `compose down`, `compose ps` and
 
 | otto | docker analogue | scope | `--parent` omitted means |
 | --- | --- | --- | --- |
-| `otto docker build [--parent HOST] [--repo NAME] [IMAGE...] [-t REF]... [--no-cache] [--pull] [--build-arg K=V]... [--target STAGE]` | `docker build` | the selected repos' images, on one parent | the default parent |
+| `otto docker build [--parent HOST] [--project NAME] [IMAGE...] [-t REF]... [--no-cache] [--pull] [--build-arg K=V]... [--target STAGE]` | `docker build` | the selected projects' images, on one parent | the default parent |
 | `otto docker ps [-a] [--parent HOST]` | `docker ps` | containers per host, as docker prints them | every docker-capable host |
 | `otto docker images [--parent HOST]` | `docker images` | images per host, as docker prints them | every docker-capable host |
 | `otto docker logs CONTAINER [--tail N] [--since T] [-t] [-f|--follow] [--parent HOST]` | `docker logs` | one container's log, a docker name or id on the parent | the default parent |
 | `otto docker use-cases [USE_CASE]` | none | declared inventory, config only | no `--parent` flag; shows the default parent |
-| `otto docker compose build [USE_CASE [IMAGE]...] [--parent HOST] [--provide CAP=REPO]... [--no-cache] [--pull] [--build-arg K=V]...` | `docker compose build` | the images `up` would deploy, on the parent | the default parent |
+| `otto docker compose build [USE_CASE [IMAGE]...] [--parent HOST] [--provide CAP=PROJECT]... [--no-cache] [--pull] [--build-arg K=V]...` | `docker compose build` | the images `up` would deploy, on the parent | the default parent |
 | `otto docker compose up [USE_CASE [SERVICE]...] [--parent HOST] [--build] [--force-recreate] [--pull POLICY] [--provide]... [--env]... [--env-file]...` | `docker compose up` | deploy a use-case on the parent | the default parent |
 | `otto docker compose down [USE_CASE [SERVICE]...] [--parent HOST] [--provide]...` | `docker compose down` | tear a use-case down on the parent | the default parent |
 | `otto docker compose ps [USE_CASE] [-a] [--parent HOST] [--provide]...` | `docker compose ps` | the use-case's containers per host, as docker prints them | every docker-capable host |
@@ -61,8 +61,8 @@ never a daemon socket.
 
 ## Completion
 
-TAB always offers the names a repo declares: the images in `[[docker.images]]`,
-the services of the use-case already on the line, the repo names, and the
+TAB always offers the names a project declares: the images in `[[docker.images]]`,
+the services of the use-case already on the line, the project names, and the
 lab's container host ids. It adds what a docker daemon last said, once a verb
 has asked it: `ps`, `compose ps`, `compose up` and `compose down` record that
 host's containers, `images`, `build` and `compose build` its images, and only for the
@@ -78,23 +78,23 @@ verb records what, for how long, and how the record is kept.
 ## Synopsis
 
 ```text
-otto docker build     [--parent HOST] [--repo NAME] [IMAGE...] [-t/--tag REF]... [--no-cache]
+otto docker build     [--parent HOST] [--project NAME] [IMAGE...] [-t/--tag REF]... [--no-cache]
                       [--pull] [--build-arg K=V]... [--target STAGE]
 otto docker ps        [-a|--all] [--parent HOST]
 otto docker images    [--parent HOST]
 otto docker logs      CONTAINER [--tail N] [--since T] [-t|--timestamps] [-f|--follow]
                       [--parent HOST]
 otto docker use-cases [USE_CASE]
-otto docker compose build [USE_CASE [IMAGE]...] [--parent HOST] [--provide CAP=REPO]...
+otto docker compose build [USE_CASE [IMAGE]...] [--parent HOST] [--provide CAP=PROJECT]...
                           [--no-cache] [--pull] [--build-arg K=V]...
 otto docker compose up    [USE_CASE [SERVICE]...] [--parent HOST] [--build] [--force-recreate]
-                          [--pull POLICY] [--provide CAP=REPO]... [--env K=V]...
+                          [--pull POLICY] [--provide CAP=PROJECT]... [--env K=V]...
                           [--env-file PATH]...
-otto docker compose down  [USE_CASE [SERVICE]...] [--parent HOST] [--provide CAP=REPO]...
-otto docker compose ps    [USE_CASE] [-a|--all] [--parent HOST] [--provide CAP=REPO]...
+otto docker compose down  [USE_CASE [SERVICE]...] [--parent HOST] [--provide CAP=PROJECT]...
+otto docker compose ps    [USE_CASE] [-a|--all] [--parent HOST] [--provide CAP=PROJECT]...
 otto docker compose logs  [USE_CASE [SERVICE]...] [--tail N] [--since WHEN]
                           [-t|--timestamps] [-f|--follow] [--parent HOST]
-                          [--provide CAP=REPO]...
+                          [--provide CAP=PROJECT]...
 ```
 
 ## Container hosts
@@ -173,7 +173,7 @@ async def test_api_answers(integration):
 
 `deploy` leaves the stack running when the run ends; use
 {func}`~otto.docker.deployment.deployed` instead to tear it down again (see
-{doc}`../../cookbook/test-recipes`). A repo whose compose files are not part of
+{doc}`../../cookbook/test-recipes`). A project whose compose files are not part of
 a use-case starts its own stack with {func}`~otto.docker.compose.compose_up`.
 
 (docker-persistent-shell-state)=

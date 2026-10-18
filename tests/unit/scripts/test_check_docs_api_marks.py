@@ -451,7 +451,7 @@ def _public_page_findings(tmp_path, body):
             "CLI metadata (~otto.utils.Arg(…))",
         ),
         (
-            "class otto.host.RepoBuild(repo: str, images: dict[str, ~otto.docker.ImageBuild])",
+            "class otto.host.ProjectBuild(repo: str, images: dict[str, ~otto.docker.ImageBuild])",
             "a raw ~otto. prefix: Sphinx could not parse it",
         ),
         (

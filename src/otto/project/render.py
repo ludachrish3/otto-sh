@@ -1,4 +1,4 @@
-"""How ``otto run status`` prints: the per-repo table, the --full sections, the exit-code answer."""
+"""How ``otto run status`` prints: the per-project table, the --full sections, the exit code."""
 
 from typing import TYPE_CHECKING
 
@@ -10,8 +10,8 @@ if TYPE_CHECKING:
     from rich.table import Table
 
     from ..params import OptionsSource
-    from .plan import RepoPlan
-    from .state import CleanlinessReport, ProjectStatus, RepoScope
+    from .plan import ProjectPlan
+    from .state import CleanlinessReport, ProjectScopeSummary, ProjectStatus
 
 STATE_ANSWERS: "dict[InstallState, Result]" = {
     InstallState.INSTALLED: Result(Status.Success, value="lab is installed"),
@@ -54,7 +54,7 @@ means anything.
 """
 
 _CLEANLINESS_LABELS: "dict[CleanlinessKind, str]" = {
-    CleanlinessKind.REPO: "products & dev tools",
+    CleanlinessKind.PROJECT: "products & dev tools",
     CleanlinessKind.TOOLCHAIN: "toolchain tools",
     CleanlinessKind.IMPAIRMENT: "impairments",
     CleanlinessKind.TUNNEL: "tunnels",
@@ -90,21 +90,21 @@ async def render_status(report: "ProjectStatus", source: "OptionsSource") -> Res
     from .options import StatusOptions
 
     full = source.build(StatusOptions).full
-    # A dependency-skipped repo appears only in --full's scoping table.
+    # A dependency-skipped project appears only in --full's scoping table.
     unusable = [
         (name, row) for name, row in report.scoping.items() if not row.usable and not row.skipped
     ]
-    if report.repos or unusable:
+    if report.projects or unusable:
         table = Table(show_header=False, box=None, padding=(0, 2, 0, 0))
-        for repo_name, state in report.repos.items():
-            table.add_row(repo_name, f"[{_STATE_STYLES[state]}]{state.value}[/]")
-        for repo_name, row in unusable:
+        for project_name, state in report.projects.items():
+            table.add_row(project_name, f"[{_STATE_STYLES[state]}]{state.value}[/]")
+        for project_name, row in unusable:
             # A ``Text``, not a markup string like the states above, because the
             # lab names and the patterns in this cell come from a settings file:
             # a '[' in one -- and a host_patterns entry like `[a-z]+` is a
             # character class -- would be read as markup and swallow the rest of
             # the row.
-            table.add_row(repo_name, Text(_skipped_cell(row), style="dim"))
+            table.add_row(project_name, Text(_skipped_cell(row), style="dim"))
         rprint(table)
     if full:
         _print_scoping(report.scoping)
@@ -112,18 +112,18 @@ async def render_status(report: "ProjectStatus", source: "OptionsSource") -> Res
     return STATE_ANSWERS[report.overall]
 
 
-def _skipped_cell(row: "RepoScope") -> str:
-    """Say why the walks left this repo out, in the terms of the axis that failed.
+def _skipped_cell(row: "ProjectScopeSummary") -> str:
+    """Say why the walks left this project out, in the terms of the axis that failed.
 
     The display twin of the orchestrator's skip WARNING and of D3's abort
-    message, and it splits on the same flag both of those do. A repo the walks
+    message, and it splits on the same flag both of those do. A project the walks
     skipped is either EXCLUDED -- it declared labs and none of them was loaded,
     so the loaded labs are what it needs to see -- or applicable to a loaded
     lab and matching no host in it, where naming the labs would blame the one
     thing that is already right and hide the ``host_patterns`` that are not.
 
     Args:
-        row: A skipped repo's row (``usable`` False).
+        row: A skipped project's row (``usable`` False).
 
     Returns:
         The cell text, patterns and all.
@@ -142,29 +142,29 @@ def _joined(names: "tuple[str, ...]") -> str:
     return ", ".join(names) or "(none)"
 
 
-def _print_scoping(scoping: "dict[str, RepoScope]") -> None:
-    """Print each repo's fleet of interest -- the labs it applies to, the hosts it targets.
+def _print_scoping(scoping: "dict[str, ProjectScopeSummary]") -> None:
+    """Print each project's fleet of interest -- the labs it applies to, the hosts it targets.
 
     ``--full`` only, and for the reason the cleanliness rows are: the answer a
     bare ``otto run status`` is asked is "are the products on?", and the
     resolved fleet is a second axis, not part of it.
 
-    ONE ROW PER RESOLVED REPO, declared or not. An undeclared repo is not
+    ONE ROW PER RESOLVED PROJECT, declared or not. An undeclared project is not
     skipped here: its verdict is the whole-lab fallback, so its row says every
     loaded lab and every host, which is the true answer to "which hosts does
-    this repo even mean" and the only way an operator can tell a repo that
-    narrowed nothing from a repo that narrowed to everything by writing
-    ``[".*"]``. A repo the dependency pass skipped gets its row too, marked
+    this project even mean" and the only way an operator can tell a project that
+    narrowed nothing from a project that narrowed to everything by writing
+    ``[".*"]``. A project the dependency pass skipped gets its row too, marked
     in a fourth cell: its declaration narrows the fleet even though no walk
     acts on it. The early return below is NOT a fallback rule -- it covers a
     genuinely empty mapping, which means nothing was RESOLVED (a library
-    context, a run with no SUT directories), and an announced heading over an empty
+    context, a run with no project roots), and an announced heading over an empty
     table reads as a renderer that lost its data.
 
     The hosts are the resolve-time universe. It is display data by
     construction (a walk re-derives membership live), which is exactly what
     makes it safe to print: this is the operator's answer to "which hosts does
-    this repo even mean", not a walk's answer to "which host next".
+    this project even mean", not a walk's answer to "which host next".
     """
     if not scoping:
         return
@@ -173,9 +173,9 @@ def _print_scoping(scoping: "dict[str, RepoScope]") -> None:
     from rich.text import Text
 
     table = Table(show_header=False, box=None, padding=(0, 2, 0, 0))
-    for repo_name, row in scoping.items():
+    for project_name, row in scoping.items():
         table.add_row(
-            repo_name,
+            project_name,
             Text(f"labs: {_joined(row.applicable_labs)}"),
             Text(f"hosts: {_joined(row.universe)}"),
             Text("skipped (unmet dependencies)" if row.skipped else ""),
@@ -228,7 +228,7 @@ _PHASES: dict[str, list[str]] = {
 """The phases each previewed instruction prints, in the order its steps are listed."""
 
 
-def render_plan(name: str, plans: "list[RepoPlan]") -> str:
+def render_plan(name: str, plans: "list[ProjectPlan]") -> str:
     """Render :func:`~otto.project.plan.plan_instruction`'s answer as indented plain text.
 
     A plan is a step list, not a table. ``install`` prints every product's
@@ -236,18 +236,18 @@ def render_plan(name: str, plans: "list[RepoPlan]") -> str:
     :meth:`~otto.host.host.BaseHost.install` really uses, while
     ``install-tools`` keeps each tool's two phases together, as
     :meth:`~otto.host.host.BaseHost.install_dev_tools` does. Gaps close each
-    repo under ``not checked:``, repo-level ones first. A gap that is true of
-    the whole lab arrives under every repo, so each fully rendered gap line
-    prints once, at its first occurrence, and a repo left with none prints no
+    project under ``not checked:``, project-level ones first. A gap that is true of
+    the whole lab arrives under every project, so each fully rendered gap line
+    prints once, at its first occurrence, and a project left with none prints no
     block.
     """
     phases = _PHASES[name]
     width = max(len(phase) for phase in phases)
     seen: set[str] = set()
     out: list[str] = []
-    for repo in plans:
-        out.append(repo.repo)
-        for host in repo.hosts:
+    for project in plans:
+        out.append(project.project)
+        for host in project.hosts:
             out.append(f"  {host.host_id}")
             names = max((len(entry.name) for entry in host.products), default=0)
             steps = (
@@ -266,8 +266,8 @@ def render_plan(name: str, plans: "list[RepoPlan]") -> str:
                         else:
                             label = " " * (width + 2 + names)
                         out.append(f"    {label}  {physical}")
-        gaps = list(repo.gaps) + [
-            f"{host.host_id}: {gap}" for host in repo.hosts for gap in host.gaps
+        gaps = list(project.gaps) + [
+            f"{host.host_id}: {gap}" for host in project.hosts for gap in host.gaps
         ]
         fresh = [gap for gap in dict.fromkeys(gaps) if gap not in seen]
         seen.update(fresh)

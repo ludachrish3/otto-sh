@@ -3,7 +3,7 @@ import time
 from collections import Counter
 
 import otto.config.completion_cache as cc
-from otto.config.repo import Repo
+from otto.config.project import Project
 from tests._fixtures.fake_repo import fake_repo
 from tests._fixtures.labdata import write_lab_json
 from tests._fixtures.sutrepo import make_sut_repo, touch_settings
@@ -12,11 +12,11 @@ from tests._fixtures.sutrepo import make_sut_repo, touch_settings
 def _repos(tmp_path):
     # one repo whose fingerprint sources exist under tmp_path/.otto
     touch_settings(tmp_path)
-    return [fake_repo(sut_dir=tmp_path)]
+    return [fake_repo(root=tmp_path)]
 
 
 def _repo_with_corpus_and_lab(tmp_path):
-    """A real ``Repo`` with nested test files AND a json ``[[lab.sources]]``.
+    """A real ``Project`` with nested test files AND a json ``[[lab.sources]]``.
 
     Built (not a ``SimpleNamespace``) so ``lab_sources`` is compiled the same
     way a real repo's is, and ``tests`` resolves through settings — the shape
@@ -34,20 +34,20 @@ def _repo_with_corpus_and_lab(tmp_path):
         },
     )
     write_lab_json(root / "lab" / "lab.json", [], declare_labs=True)
-    return Repo(sut_dir=root)
+    return Project(root=root)
 
 
 def test_record_and_read_roundtrip(tmp_path, monkeypatch):
     monkeypatch.setattr(cc, "_cache_path", lambda: tmp_path / ".otto" / "completion_cache.json")
-    repos = _repos(tmp_path)
-    cc.record_tunnel_ids(repos, ["tun-abc123def456-161", "tun-def456abc123-53"])
-    assert cc.read_tunnel_ids(repos) == ["tun-abc123def456-161", "tun-def456abc123-53"]
+    projects = _repos(tmp_path)
+    cc.record_tunnel_ids(projects, ["tun-abc123def456-161", "tun-def456abc123-53"])
+    assert cc.read_tunnel_ids(projects) == ["tun-abc123def456-161", "tun-def456abc123-53"]
 
 
 def test_read_expired_returns_none(tmp_path, monkeypatch):
     monkeypatch.setattr(cc, "_cache_path", lambda: tmp_path / ".otto" / "completion_cache.json")
-    repos = _repos(tmp_path)
-    cc.record_tunnel_ids(repos, ["tun-abc123def456-161"])
+    projects = _repos(tmp_path)
+    cc.record_tunnel_ids(projects, ["tun-abc123def456-161"])
     # Capture the frozen "future" timestamp before patching: cc.time is the
     # same module object as this file's `import time` (modules are process-
     # wide singletons), so a lambda that calls time.time() at *call* time
@@ -55,14 +55,14 @@ def test_read_expired_returns_none(tmp_path, monkeypatch):
     # avoids that self-reference while still jumping the clock past the TTL.
     frozen = time.time() + cc.DYNAMIC_TUNNELS_TTL_SECONDS + 1
     monkeypatch.setattr(cc.time, "time", lambda: frozen)
-    assert cc.read_tunnel_ids(repos) is None
+    assert cc.read_tunnel_ids(projects) is None
 
 
 def test_record_and_read_never_hash_a_test_source(tmp_path, monkeypatch):
     """Tunnel ids depend on the lab and inventory, never on the test corpus.
 
     Keying by ``compute_fingerprint`` (the old behavior) would hash every
-    test source under ``repo.tests`` on every ``otto tunnel list``/``remove``
+    test source under ``project.tests`` on every ``otto tunnel list``/``remove``
     — exactly the corpus-proportional cost ordinary commands must not pay
     (spec 2026-09-25-dispatch-startup-cost-design.md §4.2). Counting
     ``hash_file`` calls by path and asserting none falls under the repo's
@@ -70,7 +70,7 @@ def test_record_and_read_never_hash_a_test_source(tmp_path, monkeypatch):
     or not a rebuild ever ran.
     """
     monkeypatch.setattr(cc, "_cache_path", lambda: tmp_path / ".otto" / "completion_cache.json")
-    repo = _repo_with_corpus_and_lab(tmp_path)
+    project = _repo_with_corpus_and_lab(tmp_path)
 
     counts: Counter = Counter()
     real_hash_file = cc.hash_file
@@ -81,10 +81,10 @@ def test_record_and_read_never_hash_a_test_source(tmp_path, monkeypatch):
 
     monkeypatch.setattr(cc, "hash_file", counting)
 
-    cc.record_tunnel_ids([repo], ["tun-abc123def456-161"])
-    assert cc.read_tunnel_ids([repo]) == ["tun-abc123def456-161"]
+    cc.record_tunnel_ids([project], ["tun-abc123def456-161"])
+    assert cc.read_tunnel_ids([project]) == ["tun-abc123def456-161"]
 
-    tests_dir = repo.sut_dir / "tests"
+    tests_dir = project.root / "tests"
     hashed_test_paths = [p for p in counts if tests_dir in p.parents]
     assert not hashed_test_paths, f"tunnel-id keying hashed test sources: {hashed_test_paths}"
 
@@ -100,22 +100,22 @@ def test_editing_a_nested_test_file_does_not_invalidate_cached_tunnel_ids(tmp_pa
     shows a lab edit still does.
     """
     monkeypatch.setattr(cc, "_cache_path", lambda: tmp_path / ".otto" / "completion_cache.json")
-    repo = _repo_with_corpus_and_lab(tmp_path)
+    project = _repo_with_corpus_and_lab(tmp_path)
 
-    cc.record_tunnel_ids([repo], ["tun-abc123def456-161"])
-    nested = repo.sut_dir / "tests" / "sub" / "test_nested.py"
+    cc.record_tunnel_ids([project], ["tun-abc123def456-161"])
+    nested = project.root / "tests" / "sub" / "test_nested.py"
     nested.write_text("def test_y():\n    pass\n\ndef test_z():\n    pass\n")
 
-    assert cc.read_tunnel_ids([repo]) == ["tun-abc123def456-161"]
+    assert cc.read_tunnel_ids([project]) == ["tun-abc123def456-161"]
 
 
 def test_editing_a_lab_file_invalidates_cached_tunnel_ids(tmp_path, monkeypatch):
     """The counterpart to the nested-test-edit test: lab files DO scope tunnel ids."""
     monkeypatch.setattr(cc, "_cache_path", lambda: tmp_path / ".otto" / "completion_cache.json")
-    repo = _repo_with_corpus_and_lab(tmp_path)
+    project = _repo_with_corpus_and_lab(tmp_path)
 
-    cc.record_tunnel_ids([repo], ["tun-abc123def456-161"])
-    lab_json = repo.sut_dir / "lab" / "lab.json"
+    cc.record_tunnel_ids([project], ["tun-abc123def456-161"])
+    lab_json = project.root / "lab" / "lab.json"
     write_lab_json(lab_json, [], declare_labs=True)
     # write_lab_json re-serializes the same (empty) document, so the byte
     # length is identical; force the mtime forward so hash_file's stat triple
@@ -123,4 +123,4 @@ def test_editing_a_lab_file_invalidates_cached_tunnel_ids(tmp_path, monkeypatch)
     st = lab_json.stat()
     os.utime(lab_json, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
 
-    assert cc.read_tunnel_ids([repo]) is None
+    assert cc.read_tunnel_ids([project]) is None

@@ -1,14 +1,14 @@
 """No otto module binds a process-wide getter or a lazily exported function at import time.
 
-Tests fake the process-wide getters (``get_repos``, ``get_lab``,
+Tests fake the process-wide getters (``get_projects``, ``get_lab``,
 ``get_completion_names``, ``get_context``, ...) and the registrars and loaders
 beside them (``register_options``, ``load_lab``, ...) by patching the module
-that DEFINES each one (``otto.declared.get_repos``). That patch reaches every
+that DEFINES each one (``otto.declared.get_projects``). That patch reaches every
 caller that looks the name up when it runs. It does not reach a module that
 bound the name at import, by either spelling:
 
 - ``from otto.config import load_user_settings`` (a package re-export), or
-- ``from otto.declared import get_repos`` (the defining module).
+- ``from otto.declared import get_projects`` (the defining module).
 
 Either one binds the real function once, and the module keeps calling it under
 a patch every other caller sees. This test parses ``src/otto`` and fails on
@@ -17,11 +17,11 @@ both spellings at module level, for two sets of names:
 - each entry of the ``_LAZY_EXPORTS`` tables of ``otto``, ``otto.config`` and
   ``otto.logger``, and of the ``_LAZY_ATTRS`` tables of ``otto.lab``,
   ``otto.context`` and ``otto.bootstrap`` (which re-exports discovery's
-  ``get_env`` from ``otto.config.repo``), that is a function once the table
+  ``get_env`` from ``otto.config.project``), that is a function once the table
   chain is followed to its defining module;
 - ``PROCESS_WIDE_GETTERS``: getters no lazy table exports, because their
   defining module is their public home (``otto.bootstrap``'s own), or is
-  where otto reads them (discovery's, in ``otto.config.repo``), or
+  where otto reads them (discovery's, in ``otto.config.project``), or
   because their public home re-exports them (``get_completion_names``, defined
   in ``otto.registry``, and the composed state's readers, defined in
   ``otto.declared``).
@@ -36,7 +36,7 @@ each such re-export is guarded too (:func:`with_reexports`).
 
 The tables are re-derived from source so this test imports no otto module;
 ``tests/_fixtures/_lazy_exports.py`` does the same derivation at run time, by
-importing the packages. Classes (``Repo``, ``OttoContext``) are not checked:
+importing the packages. Classes (``Project``, ``OttoContext``) are not checked:
 binding a class at import defeats no patch a test makes. Imports under
 ``if TYPE_CHECKING:`` bind nothing at runtime and are skipped, as are function
 bodies and each package's own ``__init__``. A table entry that names a
@@ -79,14 +79,14 @@ GUARDED_ATTRS_PACKAGES = ["otto.lab", "otto.bootstrap", "otto.context"]
 # run-state contracts §3).
 PROCESS_WIDE_GETTERS: dict[str, frozenset[str]] = {
     "otto.bootstrap": frozenset({"bootstrap"}),
-    "otto.config.repo": frozenset({"discover", "discovered_teardown_deadline", "get_env"}),
+    "otto.config.project": frozenset({"discover", "discovered_teardown_deadline", "get_env"}),
     "otto.declared": frozenset(
         {
             "compose",
-            "current_ordered_repos",
-            "current_repos",
-            "get_ordered_repos",
-            "get_repos",
+            "current_ordered_projects",
+            "current_projects",
+            "get_ordered_projects",
+            "get_projects",
             "is_bootstrapped",
             "published_result",
         }
@@ -341,24 +341,24 @@ def test_the_scan_knows_the_names_it_guards():
     assert set(GUARDED_PACKAGES + GUARDED_ATTRS_PACKAGES) <= guarded.keys()
     assert {"load_user_settings", "user_settings_path"} <= guarded["otto.config"]
     assert {"get_context", "options", "get_lab", "register_options"} <= guarded["otto"]
-    assert "Repo" not in guarded["otto.config"]  # a class, not a function
+    assert "Project" not in guarded["otto.config"]  # a class, not a function
     assert "OttoContext" not in guarded["otto"]
     assert "management" not in guarded["otto.logger"]  # names a submodule
     assert {
         "bootstrap",
-        "get_repos",
-        "get_ordered_repos",
+        "get_projects",
+        "get_ordered_projects",
         "get_env",
         "is_bootstrapped",
     } <= guarded["otto.bootstrap"]  # its own one, its three re-exports, and get_env
     assert "discover" not in guarded["otto.bootstrap"]  # read at its owner only
-    assert {"discover", "discovered_teardown_deadline", "get_env"} <= guarded["otto.config.repo"]
+    assert {"discover", "discovered_teardown_deadline", "get_env"} <= guarded["otto.config.project"]
     assert {
         "compose",
-        "current_ordered_repos",
-        "current_repos",
-        "get_ordered_repos",
-        "get_repos",
+        "current_ordered_projects",
+        "current_projects",
+        "get_ordered_projects",
+        "get_projects",
         "is_bootstrapped",
     } <= guarded["otto.declared"]
     assert "get_completion_names" in guarded["otto.registry"]
@@ -371,31 +371,31 @@ def test_the_scan_knows_the_names_it_guards():
     assert "get_context" in guarded["otto.context"]
     assert {"get_context", "open_context"} <= guarded["otto.run_context"]  # followed
     assert "OttoContext" not in guarded["otto.run_context"]  # a class
-    assert "Repo" not in guarded.get("otto.config.repo", frozenset())
+    assert "Project" not in guarded.get("otto.config.project", frozenset())
 
 
 def test_the_scan_flags_only_bindings_made_at_import_time():
     guarded = {
         "otto.config": frozenset({"load_user_settings"}),
-        "otto.declared": frozenset({"get_repos"}),
+        "otto.declared": frozenset({"get_projects"}),
     }
     source = (
         "import typing\n"
         "from typing import TYPE_CHECKING\n"
         "from ..config import load_user_settings\n"  # line 3: flagged, relative package
         "from otto.config import load_user_settings as load\n"  # line 4: flagged, aliased
-        "from ..declared import get_repos\n"  # line 5: flagged, defining module
+        "from ..declared import get_projects\n"  # line 5: flagged, defining module
         "from ..config import Unrelated\n"
         "if TYPE_CHECKING:\n"
         "    from ..config import load_user_settings\n"
         "else:\n"
         "    from ..config import load_user_settings\n"  # line 10: flagged, runs at import
         "if typing.TYPE_CHECKING:\n"
-        "    from ..declared import get_repos\n"
+        "    from ..declared import get_projects\n"
         "def f():\n"
         "    from ..config import load_user_settings\n"
         "async def g():\n"
-        "    from ..declared import get_repos\n"
+        "    from ..declared import get_projects\n"
         "class C:\n"
         "    from ..config import load_user_settings\n"  # line 18: a class body runs at import
     )
@@ -403,7 +403,7 @@ def test_the_scan_flags_only_bindings_made_at_import_time():
     assert found == [
         (3, "otto.config", "load_user_settings"),
         (4, "otto.config", "load_user_settings"),
-        (5, "otto.declared", "get_repos"),
+        (5, "otto.declared", "get_projects"),
         (10, "otto.config", "load_user_settings"),
         (18, "otto.config", "load_user_settings"),
     ]

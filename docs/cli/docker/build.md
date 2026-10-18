@@ -1,9 +1,9 @@
 # otto docker build
 
-Build the container images the selected repos declare, on one lab host.
+Build the container images the selected projects declare, on one lab host.
 
 ```text
-otto docker build [--parent HOST] [--repo NAME] [IMAGE...]
+otto docker build [--parent HOST] [--project NAME] [IMAGE...]
                   [-t/--tag REF]... [--no-cache] [--pull]
                   [--build-arg KEY=VALUE]... [--target STAGE]
 ```
@@ -23,13 +23,13 @@ turns it off.
 | Option | Description |
 | ------ | ----------- |
 | `--parent HOST` | The docker-capable lab host to build on (default: {ref}`Which host <docker-which-host>`) |
-| `--repo NAME` | Restrict to a single repo by name |
+| `--project NAME` | Restrict to a single project by name |
 | `IMAGE...` (argument) | Declared `[[docker.images]]` names to build (default: every declared image) |
 
-`IMAGE` is the `name` of a `[[docker.images]]` entry in a repo's
-`settings.toml`, never a file path. A name no selected repo declares is
-refused; with several repos selected, each builds the subset it declares. A
-repo that declares no images is reported and skipped; if no selected repo
+`IMAGE` is the `name` of a `[[docker.images]]` entry in a project's
+`settings.toml`, never a file path. A name no selected project declares is
+refused; with several projects selected, each builds the subset it declares. A
+project that declares no images is reported and skipped; if no selected project
 declares any, the command refuses.
 
 ## Flags
@@ -77,7 +77,7 @@ image and prints one line:
 repo1/repo1-api: built repo1-api:latest  cbd8571d4b6e  (test3)
 ```
 
-That is `<repo>/<image>: built <references>  <id>  (<host>)`. The references
+That is `<project>/<image>: built <references>  <id>  (<host>)`. The references
 are the ones this build was asked to tag (`<name>:latest`, or the `--tag`
 values), written the way `docker images` on the host lists them; another tag
 the daemon holds on the same image is not printed. The id is the one
@@ -95,12 +95,12 @@ fault:
 - **`--tag` with several images.** One reference cannot name two images, so a
   selection of more than one image with `--tag` is refused. Name the one image
   to tag.
-- **One image name declared twice.** When two selected repos declare the same
+- **One image name declared twice.** When two selected projects declare the same
   `name`, the name docker would see is ambiguous, so the build is refused and
-  both repos are named. Narrow the selection with `--repo`, or rename one
+  both projects are named. Narrow the selection with `--project`, or rename one
   declaration.
 
-Two further refusals concern a single repo's own declarations: two of its
+Two further refusals concern a single project's own declarations: two of its
 images whose names would share one staging directory, and an archive
 `context` that is not a file.
 

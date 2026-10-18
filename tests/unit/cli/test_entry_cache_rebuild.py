@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from otto.config.env import is_otto_env_var
 from tests._fixtures.generated_repo import generate_repo
 
 _ENTRY = [sys.executable, "-c", "from otto.cli.main import entry; entry()"]
@@ -34,11 +35,11 @@ def _run(env, argv=None) -> "subprocess.CompletedProcess[str]":
 
 @pytest.fixture
 def repo_env(tmp_path):
-    repo = generate_repo(tmp_path, files=30, dirs=3)
-    env = {k: v for k, v in os.environ.items() if not k.startswith("OTTO_")}
-    env["OTTO_SUT_DIRS"] = str(repo)
+    project = generate_repo(tmp_path, files=30, dirs=3)
+    env = {k: v for k, v in os.environ.items() if not is_otto_env_var(k)}
+    env["OTTOPATH"] = str(project)
     env["OTTO_HOME"] = str(tmp_path / "home")
-    return repo, env
+    return project, env
 
 
 def _cache_file(env) -> Path:
@@ -76,11 +77,11 @@ def test_ordinary_dispatch_leaves_a_stale_cache_alone(repo_env):
     stale bash TAB (``test_stale_tab_repair.py``); repair for an init-module
     edit is the next root ``--help``.
     """
-    repo, env = repo_env
+    project, env = repo_env
     _run(env, argv=_ROOT_HELP)
     cache = _cache_file(env)
     first = cache.stat().st_mtime_ns
-    top = next((repo / "tests").glob("test_*.py"))
+    top = next((project / "tests").glob("test_*.py"))
     top.write_text(top.read_text() + "\n# edit\n")  # the tests section is now stale
     _run(env)
     assert cache.stat().st_mtime_ns == first, "ordinary dispatch rebuilt the cache"
@@ -113,12 +114,12 @@ def test_root_help_does_not_rebuild_after_a_nested_corpus_edit(repo_env):
     section is refreshed by a stale TAB on ``otto test``'s NAMES, whose
     completer reads that section itself.
     """
-    repo, env = repo_env
+    project, env = repo_env
     _run(env, _ROOT_HELP)
     cache = _cache_file(env)
     first = cache.stat().st_mtime_ns
 
-    edited = next(repo.rglob("sub*/test_*.py"))
+    edited = next(project.rglob("sub*/test_*.py"))
     edited.write_text("def test_x():\n    pass\n\ndef test_added():\n    pass\n")
 
     _run(env, _ROOT_HELP)
@@ -133,17 +134,17 @@ def test_editing_a_top_level_test_file_does_not_rebuild_for_root_help(repo_env):
     move the ``names`` digest: without it, "root help ignores a test edit"
     would be indistinguishable from "root help ignores every edit".
     """
-    repo, env = repo_env
+    project, env = repo_env
     _run(env, _ROOT_HELP)
     cache = _cache_file(env)
     first = cache.stat().st_mtime_ns
 
-    top = repo / "tests" / "test_top0.py"
+    top = project / "tests" / "test_top0.py"
     top.write_text("def test_x():\n    pass\n\ndef test_added():\n    pass\n")
     _run(env, _ROOT_HELP)
     assert cache.stat().st_mtime_ns == first, "a top-level test edit invalidated names"
 
-    init = repo / "pylib" / "genrepo_instructions.py"
+    init = project / "pylib" / "genrepo_instructions.py"
     init.write_text(init.read_text() + "\n# edited\n")
     _run(env, _ROOT_HELP)
     assert cache.stat().st_mtime_ns != first, "an init-module edit did not invalidate names"
@@ -159,10 +160,10 @@ def test_a_rebuild_writes_no_test_table(repo_env):
 
     from otto.config.completion_cache import COLLECTED_TESTS_KEY
 
-    repo_dir, env = repo_env
+    project_root, env = repo_env
     _run(env, argv=_ROOT_HELP)
     namespace = json.loads(_cache_file(env).read_text()).get(COLLECTED_TESTS_KEY, {})
-    assert str(repo_dir) not in namespace
+    assert str(project_root) not in namespace
 
 
 def test_the_collect_child_seeds_a_table_this_process_finds_current(repo_env):
@@ -176,19 +177,19 @@ def test_the_collect_child_seeds_a_table_this_process_finds_current(repo_env):
 
     from otto.config import collected_tests as ct
     from otto.config.completion_cache import COLLECTED_TESTS_KEY, DUMP_TESTS_ENV_VAR
-    from otto.config.repo import Repo
+    from otto.config.project import Project
 
-    repo_dir, env = repo_env
+    project_root, env = repo_env
     _run(env, argv=_ROOT_HELP)  # a cache home for the child to write into
     child = _run({**env, DUMP_TESTS_ENV_VAR: "1"}, argv=[])
     assert child.stdout == ""
-    raw = json.loads(_cache_file(env).read_text())[COLLECTED_TESTS_KEY][str(repo_dir)]
-    repo = Repo(sut_dir=repo_dir)
-    table = ct.table_from_json(repo.sut_dir, raw)
+    raw = json.loads(_cache_file(env).read_text())[COLLECTED_TESTS_KEY][str(project_root)]
+    project = Project(root=project_root)
+    table = ct.table_from_json(project.root, raw)
     assert table is not None
     test_files = sorted(k for k in table.files if Path(k).name != "conftest.py")
-    assert test_files == sorted(str(p) for p in (repo_dir / "tests").rglob("test_*.py"))
-    assert ct.classify(repo, table).is_current
+    assert test_files == sorted(str(p) for p in (project_root / "tests").rglob("test_*.py"))
+    assert ct.classify(project, table).is_current
 
 
 def test_the_collect_child_collects_as_a_run_does(repo_env):
@@ -202,13 +203,13 @@ def test_the_collect_child_collects_as_a_run_does(repo_env):
 
     from otto.config.completion_cache import COLLECTED_TESTS_KEY, DUMP_TESTS_ENV_VAR
 
-    repo_dir, env = repo_env
-    (repo_dir / "pylib" / "genrepo_helpers.py").write_text("GREETING = 'hi'\n")
-    uses_lib = repo_dir / "tests" / "test_uses_lib.py"
+    project_root, env = repo_env
+    (project_root / "pylib" / "genrepo_helpers.py").write_text("GREETING = 'hi'\n")
+    uses_lib = project_root / "tests" / "test_uses_lib.py"
     uses_lib.write_text("from genrepo_helpers import GREETING\n\n\ndef test_greets():\n    pass\n")
     _run(env, argv=_ROOT_HELP)
     _run({**env, DUMP_TESTS_ENV_VAR: "1"}, argv=[])
-    raw = json.loads(_cache_file(env).read_text())[COLLECTED_TESTS_KEY][str(repo_dir)]
+    raw = json.loads(_cache_file(env).read_text())[COLLECTED_TESTS_KEY][str(project_root)]
     record = raw["files"][str(uses_lib)]
     assert record["error"] is None
     assert [name for _classes, name in record["tests"]] == ["test_greets"]
@@ -226,9 +227,9 @@ def test_a_cold_rebuild_never_imports_a_broken_test_file(tmp_path):
 
     from tests._fixtures.paths import PROJECT_ROOT
 
-    env = {k: v for k, v in os.environ.items() if not k.startswith("OTTO_")}
+    env = {k: v for k, v in os.environ.items() if not is_otto_env_var(k)}
     env.update(
-        OTTO_SUT_DIRS=str(PROJECT_ROOT / "tests" / "repo_broken"),
+        OTTOPATH=str(PROJECT_ROOT / "tests" / "repo_broken"),
         OTTO_HOME=str(tmp_path / "home"),
     )
     p = _run(env, argv=_ROOT_HELP)
@@ -251,7 +252,7 @@ def test_a_rebuild_writes_no_bytecode_into_the_tests_tree(repo_env):
 
     from tests._fixtures.generated_repo import argv_writing_test_file_bytecode
 
-    repo, env = repo_env
+    project, env = repo_env
     env = {k: v for k, v in env.items() if k != "PYTHONDONTWRITEBYTECODE"}
     entry = "from otto.cli.main import entry; entry()"
     argv = [*argv_writing_test_file_bytecode(entry), *_ROOT_HELP]
@@ -263,14 +264,14 @@ def test_a_rebuild_writes_no_bytecode_into_the_tests_tree(repo_env):
     root_help()
     cache = _cache_file(env)
     first = cache.stat().st_mtime_ns
-    for pycache in (repo / "tests").rglob("__pycache__"):
+    for pycache in (project / "tests").rglob("__pycache__"):
         shutil.rmtree(pycache)
 
-    init = repo / "pylib" / "genrepo_instructions.py"
+    init = project / "pylib" / "genrepo_instructions.py"
     init.write_text(init.read_text() + "\n# edited\n")
     root_help()  # stale names: rebuilds
     assert cache.stat().st_mtime_ns != first, "the init edit did not rebuild the cache"
-    assert not (repo / "tests" / "__pycache__").exists(), "the rebuild imported a test file"
+    assert not (project / "tests" / "__pycache__").exists(), "the rebuild imported a test file"
     rebuilt = cache.stat().st_mtime_ns
 
     root_help()
@@ -317,7 +318,7 @@ def test_root_help_never_imports_test_files(tmp_path, cacheable):
     extra = 'libs = ["pylib"]\ninit = ["uninit"]\n'
     if not cacheable:
         extra += '\n[inventory]\nbackend = "uncacheable"\n'
-    repo = make_sut_repo(
+    project = make_sut_repo(
         tmp_path / "unrepo",
         name="unrepo",
         version="0.1.0",
@@ -331,8 +332,8 @@ def test_root_help_never_imports_test_files(tmp_path, cacheable):
             ),
         },
     )
-    env = {k: v for k, v in os.environ.items() if not k.startswith("OTTO_")}
-    env["OTTO_SUT_DIRS"] = str(repo)
+    env = {k: v for k, v in os.environ.items() if not is_otto_env_var(k)}
+    env["OTTOPATH"] = str(project)
     env["OTTO_HOME"] = str(tmp_path / "home")
 
     _run(env, argv=_ROOT_HELP)
@@ -366,12 +367,12 @@ def test_a_cold_rebuild_opens_and_lists_nothing_under_the_tests_dirs(repo_env, t
     test file or lists a tests directory. (Stats are not audited; the tests
     site's cost is pinned in the import-budget tests.)
     """
-    repo, env = repo_env
+    project, env = repo_env
     seen_file = tmp_path / "audit.txt"
     argv = [sys.executable, "-c", _AUDITED_ENTRY.format(out=str(seen_file)), *_ROOT_HELP]
     p = subprocess.run(argv, env=env, capture_output=True, text=True, check=False)
     assert p.returncode == 0, p.stderr
     _cache_file(env)  # the control: this root help did rebuild the cache
-    tests_dir = str(repo / "tests")
+    tests_dir = str(project / "tests")
     under = [line for line in seen_file.read_text().splitlines() if tests_dir in line]
     assert under == [], under[:10]

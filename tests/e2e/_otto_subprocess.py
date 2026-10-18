@@ -95,13 +95,13 @@ def _fallback_otto_home() -> Path:
 def otto_subprocess_env(
     *,
     xdir: Path | None = None,
-    sut_dirs: Path | None = REPO_E2E,
+    roots: Path | None = REPO_E2E,
     term: str | None = None,
     extra_env: dict[str, str] | None = None,
 ) -> dict[str, str]:
     """Build the controlled environment for an ``otto`` child process.
 
-    The coverage dance plus the otto keys: ``OTTO_SUT_DIRS`` (omitted when
+    The coverage dance plus the otto keys: ``OTTOPATH`` (omitted when
     *sut_dirs* is None), ``OTTO_XDIR`` (omitted when *xdir* is None), ``TERM``
     (omitted when *term* is None — PTY drivers need one), ``OTTO_HOME`` (see
     below), and the #193 scar:
@@ -124,8 +124,8 @@ def otto_subprocess_env(
     env = coverage_subprocess_env()
     env["PYTEST_ADDOPTS"] = "-p no:tach"
     env["OTTO_HOME"] = str(xdir / "otto-home" if xdir is not None else _fallback_otto_home())
-    if sut_dirs is not None:
-        env["OTTO_SUT_DIRS"] = str(sut_dirs)
+    if roots is not None:
+        env["OTTOPATH"] = str(roots)
     if xdir is not None:
         env["OTTO_XDIR"] = str(xdir)
     if term is not None:
@@ -139,7 +139,7 @@ def run_otto(
     argv: list[str],
     *,
     xdir: Path | None = None,
-    sut_dirs: Path | None = REPO_E2E,
+    roots: Path | None = REPO_E2E,
     lab: str | None = None,
     extra_argv_prefix: list[str] | None = None,
     extra_env: dict[str, str] | None = None,
@@ -160,7 +160,7 @@ def run_otto(
         Path to an existing directory for otto's ``--xdir`` output.  When
         ``None`` the ``OTTO_XDIR`` variable is omitted.
     sut_dirs:
-        Path to the SUT repo root passed as ``OTTO_SUT_DIRS``.  Defaults to
+        Path to the SUT repo root passed as ``OTTOPATH``.  Defaults to
         the dedicated e2e fixture repo :data:`REPO_E2E`; ``None`` omits the
         variable entirely.
     lab:
@@ -190,7 +190,7 @@ def run_otto(
 
     return subprocess.run(
         cmd,
-        env=otto_subprocess_env(xdir=xdir, sut_dirs=sut_dirs, extra_env=extra_env),
+        env=otto_subprocess_env(xdir=xdir, roots=roots, extra_env=extra_env),
         capture_output=True,
         text=True,
         cwd=str(cwd if cwd is not None else PROJECT_ROOT),

@@ -12,7 +12,7 @@ from typing import (
 from .host.host import DEFAULT_COMMAND_TIMEOUT
 
 if TYPE_CHECKING:
-    from .config.repo import Repo
+    from .config.project import Project
     from .host.options import (
         FtpOptions,
         NcOptions,
@@ -60,8 +60,8 @@ def all_hosts(  # noqa: PLR0913 — wide host-dispatch API (mirrors do_for_all_h
     Pass ``include_containers=True`` to yield container hosts as well.
 
     The base set is NOT the whole loaded lab: it is the union of the
-    ``[project]`` universes the run's repos declared (spec §6), re-derived
-    live per walk. When no repo declares ``[project]`` it *is* the whole
+    ``[project]`` universes the run's projects declared (spec §6), re-derived
+    live per walk. When no project declares ``[project]`` it *is* the whole
     loaded lab, so product-less projects see no change. Everything here
     delegates to :meth:`otto.context.OttoContext.all_hosts`, which owns the
     rules and their two loud failures — see it for the empty-fleet and
@@ -356,22 +356,23 @@ def get_hosts_in_play() -> set[str]:
 
 
 _UNKNOWN_QUERY_OWNER = """\
-fleet_of_interest() was bound to repo '{owner}', but none of the repos it was
-given is named '{owner}'.
+fleet_of_interest() was bound to project '{owner}', but none of the projects
+it was given is named '{owner}'.
 
-    repos given: {known}
+    projects given: {known}
 
 Answering with the whole lab would be the silent widening project scoping
-exists to prevent. Pass the repo's name exactly as the repo declares it (owner
-is not normalized), or owner=None for the union of the declaring repos."""
+exists to prevent. Pass the project's name exactly as the project declares it
+(owner is not normalized), or owner=None for the union of the declaring
+projects."""
 """The query's unknown-owner refusal. Not the walk's message: the walk's speaks
-of "this run's resolved repos" and of a fallback, and a query has neither. It
-names what was passed, so a caller can tell a typo from a repo it forgot."""
+of "this run's resolved projects" and of a fallback, and a query has neither. It
+names what was passed, so a caller can tell a typo from a project it forgot."""
 
 
 def fleet_of_interest(
     lab: "Lab",
-    repos: "list[Repo]",
+    projects: "list[Project]",
     *,
     owner: str | None = None,
     exclude_projects: list[str] | None = None,
@@ -383,8 +384,8 @@ def fleet_of_interest(
     The question a reader asks before a run: which of this lab's hosts are the
     project's fleet of interest. The answer is the ids
     :meth:`otto.context.OttoContext.all_hosts` yields with the same flags, for
-    the same lab, repos and ``-E`` set, in the lab's order; with *owner* set,
-    the ids ``ctx.for_repo(owner).all_hosts()`` yields. It is the walk's own
+    the same lab, projects and ``-E`` set, in the lab's order; with *owner* set,
+    the ids ``ctx.for_project(owner).all_hosts()`` yields. It is the walk's own
     computation, not a copy of it: the admissible set comes from
     :func:`otto.config.scope.scoped_ids`, which the walk's base set
     (:meth:`otto.context.OttoContext.admissible_ids`) reads too, and the
@@ -395,29 +396,29 @@ def fleet_of_interest(
     * **An empty declared fleet** is an answer, ``[]``. The walk refuses it,
       because a walk that touches nothing is a silent failure; a query that
       returns an empty list is not silent.
-    * **An unknown owner** is refused even when *repos* is empty. A context
-      that could not reach its repos falls back to the whole lab; a caller
-      that passed *repos* has reached them, so the whole lab would widen.
+    * **An unknown owner** is refused even when *projects* is empty. A context
+      that could not reach its projects falls back to the whole lab; a caller
+      that passed *projects* has reached them, so the whole lab would widen.
     * **The library sentinel lab** (``otto.run_context.LIBRARY_LAB_NAME``) gets no
       special case. A context on it walks its whole lab; this function scopes
       the lab it is given.
 
     Pure: no I/O, no ``bootstrap()``, no lab loading, no read of the active
-    context. The caller passes the repos: usually ``get_repos()``, or a
-    hand-built ``[Repo(sut_dir=...)]``. When repo names are unique their order
-    does not matter; when two repos share a name the last one wins, as in the
+    context. The caller passes the projects: usually ``get_projects()``, or a
+    hand-built ``[Project(root=...)]``. When project names are unique their order
+    does not matter; when two projects share a name the last one wins, as in the
     walk. There is no ``pattern`` parameter: narrowing a list is the caller's
     job.
 
     Args:
         lab: The loaded lab. Its ``hosts`` are read as they stand at the call.
-        repos: The repos whose ``[project]`` declarations scope the lab.
-        owner: A ``Repo.name`` exactly as declared (it is never normalized),
-            for that one repo's fleet. ``None`` (the default) answers the
-            union of the declaring repos, or the whole lab when none declares.
-        exclude_projects: Repo names switched off for the union, compared
+        projects: The projects whose ``[project]`` declarations scope the lab.
+        owner: A ``Project.name`` exactly as declared (it is never normalized),
+            for that one project's fleet. ``None`` (the default) answers the
+            union of the declaring projects, or the whole lab when none declares.
+        exclude_projects: Project names switched off for the union, compared
             PEP 503-normalized, as ``--exclude-projects`` is. Ignored when
-            *owner* is set, as in the walk. A name that matches no repo is
+            *owner* is set, as in the walk. A name that matches no project is
             ignored: validating it is the CLI's job.
         include_containers: Also answer the container hosts the scope admits.
         include_local: Also answer the built-in ``local`` host when the scope
@@ -430,7 +431,7 @@ def fleet_of_interest(
 
     Raises:
         otto.bootstrap.ProjectScopeError: *owner* is not ``None`` and names no
-            repo in *repos*, including when *repos* is empty.
+            project in *projects*, including when *projects* is empty.
 
     >>> import re
     >>> import types
@@ -442,9 +443,9 @@ def fleet_of_interest(
     ...     "gw-1": types.SimpleNamespace(source_lab="bench"),
     ... }
     >>> lab = Lab(name="bench", hosts=hosts)
-    >>> sensors = types.SimpleNamespace(  # only .name/.project_scope/.sut_dir are read
+    >>> sensors = types.SimpleNamespace(  # only .name/.project_scope/.root are read
     ...     name="sensors",
-    ...     sut_dir="/repos/sensors",
+    ...     root="/projects/sensors",
     ...     project_scope=ProjectScopeConfig([re.compile("bench")], [re.compile("sensor-.*")]),
     ... )
     >>> fleet_of_interest(lab, [sensors])
@@ -459,7 +460,7 @@ def fleet_of_interest(
     # The verdicts the walk's context resolves (``scopes_of(ctx)``), with
     # the same ``local`` exclusion, so the two read identical data.
     scopes = resolve_scopes(
-        repos,
+        projects,
         lab.component_names,
         lab.hosts,
         exclude_ids=frozenset({BUILTIN_LOCAL_HOST_ID}),
@@ -467,9 +468,9 @@ def fleet_of_interest(
     if owner is not None and owner not in scopes:
         # Checked here, before ``scoped_ids``: its own refusal stands down over
         # empty scopes, a leniency for a context that could not reach its
-        # repos. This caller handed them over.
+        # projects. This caller handed them over.
         raise ProjectScopeError(
-            "",  # no repo, so no settings.toml to send the reader to
+            "",  # no project, so no settings.toml to send the reader to
             _UNKNOWN_QUERY_OWNER.format(owner=owner, known=", ".join(sorted(scopes)) or "(none)"),
         )
     admissible = scoped_ids(

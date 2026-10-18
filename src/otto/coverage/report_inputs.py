@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..config.repo import Repo
+    from ..config.project import Project
     from .exclusions.rules import ExclusionRule
     from .overrides import OverrideConfig
     from .store.model import Thresholds
@@ -21,9 +21,9 @@ if TYPE_CHECKING:
 class ReportInputs:
     """What ``[coverage]`` says about a report; all-default is the git-less path.
 
-    ``repo_root`` is the first ``[coverage]``-declaring repo's ``sut_dir``
-    (:func:`otto.config.coverage_settings.get_cov_repo`); ``tier_configs`` is
-    that repo's ``[coverage.tiers]``, parsed by
+    ``project_root`` is the first ``[coverage]``-declaring project's ``root``
+    (:func:`otto.config.coverage_settings.get_cov_project`); ``tier_configs`` is
+    that project's ``[coverage.tiers]``, parsed by
     :func:`otto.coverage.tiers.load_tiers`. Both ``None`` selects the legacy
     gcda-merge path in :func:`otto.coverage.reporter.run_coverage_report`;
     the ``--tier`` escape hatch relies on that — it never resolves settings,
@@ -54,7 +54,7 @@ class ReportInputs:
     reaches ticket attribution.
     """
 
-    repo_root: Path | None = None
+    project_root: Path | None = None
     tier_configs: "list[TierConfig] | None" = None
     exclusion_rules: "list[ExclusionRule]" = dataclasses.field(default_factory=list)
     thresholds: "Thresholds | None" = None
@@ -62,11 +62,11 @@ class ReportInputs:
     overrides: "OverrideConfig | None" = None
 
 
-def resolve_report_inputs(repos: "list[Repo]") -> ReportInputs:
-    """Resolve the report inputs from the first repo that declares ``[coverage]``.
+def resolve_report_inputs(projects: "list[Project]") -> ReportInputs:
+    """Resolve the report inputs from the first project that declares ``[coverage]``.
 
-    The same first-repo selection ``otto cov get`` and ``clean`` use
-    (:func:`otto.config.coverage_settings.get_cov_repo`). A tree with no
+    The same first-project selection ``otto cov get`` and ``clean`` use
+    (:func:`otto.config.coverage_settings.get_cov_project`). A tree with no
     ``[coverage]`` table gets ``ReportInputs()`` — the git-less fallback that
     keeps ``otto cov report`` working exactly as before on a tree with no
     ``[coverage]`` settings.
@@ -76,23 +76,23 @@ def resolve_report_inputs(repos: "list[Repo]") -> ReportInputs:
             ``[coverage.exclusions]`` rule.
         otto.coverage.overrides.OverrideConfigError: a malformed override file.
     """
-    from ..config.coverage_settings import get_cov_config, get_cov_repo
+    from ..config.coverage_settings import get_cov_config, get_cov_project
     from .exclusions.rules import load_exclusion_rules
     from .overrides import load_override_config
     from .report_config import load_report_thresholds
     from .tickets import load_ticket_spec
     from .tiers import load_tiers
 
-    cov_repo = get_cov_repo(repos)
-    if cov_repo is None:
+    cov_project = get_cov_project(projects)
+    if cov_project is None:
         return ReportInputs()
-    cov_config = get_cov_config(repos)
+    cov_config = get_cov_config(projects)
     tier_configs = load_tiers(cov_config)
     return ReportInputs(
-        repo_root=cov_repo.sut_dir,
+        project_root=cov_project.root,
         tier_configs=tier_configs,
         exclusion_rules=load_exclusion_rules(cov_config),
         thresholds=load_report_thresholds(cov_config),
         ticket_spec=load_ticket_spec(cov_config),
-        overrides=load_override_config(cov_config, cov_repo.sut_dir, tier_configs),
+        overrides=load_override_config(cov_config, cov_project.root, tier_configs),
     )

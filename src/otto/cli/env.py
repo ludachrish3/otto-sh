@@ -8,7 +8,7 @@ sub-app plus a ``list[str] | None`` Argument is what turns
 installer arguments, and it composes with a ``--backend`` before the ``--``.
 There is no other site in otto to copy this from.
 
-Both verbs are LAB-FREE and act on the DISCOVERED repo set rather than the
+Both verbs are LAB-FREE and act on the DISCOVERED project set rather than the
 active one: an environment is workspace-scoped, so which labs today's command
 happens to load must not change what gets installed into it.
 """
@@ -106,15 +106,15 @@ def show() -> None:
         typer.echo(f"  otto:        {status.meta.otto_version}")
 
     table = Table(box=box.ROUNDED)
-    table.add_column("repo")
+    table.add_column("project")
     table.add_column("distribution")
     table.add_column("installed")
     table.add_column("state")
-    for repo in status.repos:
-        if repo.dist_name is None:
+    for project in status.projects:
+        if project.dist_name is None:
             installed, state = "—", "no pyproject (libs ride sys.path)"
         else:
-            installed = {True: "yes", False: "no", None: "?"}[repo.installed]
-            state = "stale — run `otto env sync`" if repo.stale else "current"
-        table.add_row(repo.name, repo.dist_name or "—", installed, state)
+            installed = {True: "yes", False: "no", None: "?"}[project.installed]
+            state = "stale — run `otto env sync`" if project.stale else "current"
+        table.add_row(project.name, project.dist_name or "—", installed, state)
     console.print(table)

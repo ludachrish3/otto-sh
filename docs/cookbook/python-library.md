@@ -13,11 +13,11 @@ sees otto's real signatures rather than treating `import otto` as untyped.
 `import otto` implements PEP 562 lazy exports (each public name resolves its
 source module only on first attribute access), so a bare import stays cheap even
 in a process that never touches a lab. `import otto.config` is
-side-effect-free (no repo discovery, no user code) but eagerly imports its
+side-effect-free (no project discovery, no user code) but eagerly imports its
 submodules. Nothing under `.otto/settings.toml` `init` is imported just because
 `otto` is on `sys.path` — that happens in {func}`otto.bootstrap.bootstrap`.
 
-The composition root — repo discovery plus importing every configured `init`
+The composition root — project discovery plus importing every configured `init`
 module — is {func}`otto.bootstrap.bootstrap`, and it is idempotent (repeated
 calls return the same cached result). `open_context()` calls it for you
 before loading the lab, so any `@instruction`, `@cli_command()`, or
@@ -45,9 +45,9 @@ the `'otto'` logger — no handlers on the root logger, no logger levels
 touched. Opt in with one of two calls; either is undone with
 {func}`reset <otto.logger.management.reset>`.
 
-A script that works with your repos calls
-{func}`otto.session.install_logging`, the repo-aware opt-in: otto's console
-plus every repo's {ref}`[logging.levels] <logging-levels>` and the host-output
+A script that works with your projects calls
+{func}`otto.session.install_logging`, the project-aware opt-in: otto's console
+plus every project's {ref}`[logging.levels] <logging-levels>` and the host-output
 filter, as the CLI installs them:
 
 ```python
@@ -57,7 +57,7 @@ install_logging(log_level="INFO")
 ```
 
 Underneath it is {func}`install <otto.logger.management.install>`, the raw
-primitive, which knows nothing of repos:
+primitive, which knows nothing of projects:
 
 ```python
 import logging
@@ -145,12 +145,12 @@ same `variant` (`set_variant` before `build_lab`), while containers started in
 the block (`compose_up`) are ingested under the variant you pass.
 
 The project switches follow {doc}`../cli/projects`. Given names, `open_context`
-builds the lab `otto --lab` builds: from the repos' `[[lab.sources]]`, their
+builds the lab `otto --lab` builds: from the projects' `[[lab.sources]]`, their
 merged `[host_preferences]`, the inventory, and the placeholder hosts of their
 declared containers (see {doc}`../configuration/host-sources`). It refuses
 where the CLI refuses, before your block runs:
 {class}`~otto.session.ProjectSelectionError`,
-{class}`~otto.session.RepoLoadError`, {class}`~otto.session.LabBuildError` or
+{class}`~otto.session.ProjectLoadError`, {class}`~otto.session.LabBuildError` or
 {class}`~otto.session.DependencyRefusedError`; then, once the lab is known,
 {class}`~otto.reservations.check.MissingReservationError` or
 {class}`~otto.reservations.check.ReservationBackendError`.
@@ -166,11 +166,11 @@ pass the `Lab` object. It is used as given — no sources, preferences or
 placeholders are added — and the checks still run against it.
 
 What does not refuse is logged as a warning on the `otto.context` logger: the
-load error of a repo that is inactive for this run, and the dependency
+load error of a project that is inactive for this run, and the dependency
 preflight's warnings. Because otto attaches only a `NullHandler` to the
 `'otto'` logger (see [Logging](#logging)), you see them once you configure logging yourself or call
 `otto.session.install_logging`. A refusal carries them too, so they are not lost
-when the block never runs: `RepoLoadError.demoted` and
+when the block never runs: `ProjectLoadError.demoted` and
 `DependencyRefusedError.warnings`.
 
 ## Bring-your-own-CLI: lower-level primitives
@@ -178,11 +178,11 @@ when the block never runs: `RepoLoadError.demoted` and
 `open_context` runs these steps, and each is public, so you can run them
 yourself (the `otto.session` functions are on {doc}`../api/session`):
 
-1. `bootstrap()` discovers the repos and imports their `init` modules.
+1. `bootstrap()` discovers the projects and imports their `init` modules.
 2. {func}`~otto.session.select_projects` validates `include_projects` /
    `exclude_projects`.
-3. {func}`~otto.session.check_repos` refuses if an active repo failed to load, and
-   returns the load errors of inactive repos, which `open_context` logs.
+3. {func}`~otto.session.check_projects` refuses if an active project failed to load, and
+   returns the load errors of inactive projects, which `open_context` logs.
 4. For the field variant, call `otto.context.set_variant("field")` before
    building any context, and keep the binding it returns. The lab build picks each product's
    {ref}`variant <product-variants>` entry, and providers read the variant
@@ -190,7 +190,7 @@ yourself (the `otto.session` functions are on {doc}`../api/session`):
 5. {func}`~otto.session.build_lab` builds the lab, unless you passed a `Lab` object.
    It takes component lab names already split (`["a", "b"]`, not `"a+b"`).
 6. {func}`~otto.reservations.build_reservation_gate` builds the reservation
-   gate from the repos' `[reservations]` (an unbuildable backend refuses here,
+   gate from the projects' `[reservations]` (an unbuildable backend refuses here,
    before any context exists). Skip it, as `-R` does, with
    `skip_reservation_check=True`.
 7. Build an `OttoContext` with that lab and the selection's include / exclude
@@ -202,7 +202,7 @@ yourself (the `otto.session` functions are on {doc}`../api/session`):
    Install the context with `set_context()`, which returns a binding.
 8. {func}`~otto.session.check_dependencies` runs the
    [dependency preflight](../cli/env/index.md#the-dependency-preflight). It needs
-   the installed context, because whether a repo is active depends on the
+   the installed context, because whether a project is active depends on the
    lab's hosts.
 9. `gate.evaluate()` ({meth}`~otto.reservations.check.ReservationGate.evaluate`)
    refuses with `MissingReservationError` when you do not hold what the lab
@@ -226,7 +226,7 @@ from otto.bootstrap import bootstrap
 from otto.context import OttoContext, RunPolicy, reset_context, set_context
 from otto.session import build_lab
 
-lab = build_lab(bootstrap().repos, ["mylab"])
+lab = build_lab(bootstrap().projects, ["mylab"])
 ctx = OttoContext(lab=lab, policy=RunPolicy(dry_run=False))
 token = set_context(ctx)
 try:
@@ -239,16 +239,16 @@ finally:
         reset_context(token)
 ```
 
-Skipping `check_repos` never widens a fleet walk. The context's first fleet
-walk raises {class}`~otto.session.RepoLoadError` for a load error that
-`check_repos` would have refused, and the error from a broken environment
-(such as `OTTO_SUT_DIRS` naming a directory that does not exist) propagates as
+Skipping `check_projects` never widens a fleet walk. The context's first fleet
+walk raises {class}`~otto.session.ProjectLoadError` for a load error that
+`check_projects` would have refused, and the error from a broken environment
+(such as `OTTOPATH` naming a directory that does not exist) propagates as
 raised.
 
 Add the checks you want back in the same order. If you add
 `select_projects`, pass its result into the context as
 `OttoContext(..., include_projects=tuple(selection.include),
-exclude_projects=tuple(selection.exclude))`: `check_dependencies` decides which repos
+exclude_projects=tuple(selection.exclude))`: `check_dependencies` decides which projects
 are active from the context's switches. Use this form when you need
 fine-grained control — for instance, when a framework drives the event loop
 and you cannot use `async with` at the top level.
@@ -307,7 +307,7 @@ from a different event loop while that one is still running raises
 first. Once the loop that opened it has closed, the next use simply reconnects.
 
 `open_context` applies the reservation gate the way `otto --lab …` does: when a
-repo's `[reservations]` configures a backend and you do not hold what the lab
+project's `[reservations]` configures a backend and you do not hold what the lab
 needs, it raises {class}`~otto.reservations.check.MissingReservationError`,
 whose `.report` lists each missing resource and its holders. `holder="name"`
 checks as another user (`--holder`); `skip_reservation_check=True` is the `-R`
@@ -386,7 +386,7 @@ for junit in result.junit_paths:
 - **Names** take the same forms as on the command line: a test
   (`test_login`), a class (`TestDevice`, every test in it), or a class path
   (`TestB::test_plain`); see {doc}`../cli/test/selection`. `run_tests` runs
-  one pytest session per repo with a match, on the matched tests only, and
+  one pytest session per project with a match, on the matched tests only, and
   folds the results into one `SuiteRunResult`. Tests run in collection order
   when `random_order=False`.
 - **A name or a marker expression is required.** Called with neither names
@@ -397,14 +397,14 @@ for junit in result.junit_paths:
   defaults, as the command line would, and a required field raises. An
   instance of a class that isn't registered for `test` raises
   {class}`~otto.params.OptionsRegistrationError`.
-- **Registrations happen in `bootstrap()`.** It imports each repo's init
+- **Registrations happen in `bootstrap()`.** It imports each project's init
   modules, which is where options classes are registered, so call it (or
   `open_context()`, which calls it for you) before `run_tests`.
 - **`bootstrap()` alone skips the CLI's checks.** A script without
   `open_context` gets no project selection (`-I` / `-E`), no bootstrap gate (a
-  repo whose `init` module failed to import does not stop the run; whatever it
+  project whose `init` module failed to import does not stop the run; whatever it
   would have registered is simply missing), no dependency preflight, and no
-  reservation gate. Call {func}`~otto.session.select_projects`, {func}`~otto.session.check_repos` and
+  reservation gate. Call {func}`~otto.session.select_projects`, {func}`~otto.session.check_projects` and
   {func}`~otto.session.check_dependencies` yourself if you want them (see
   [Bring-your-own-CLI](#bring-your-own-cli-lower-level-primitives) for their
   order), or run under `open_context()`.
@@ -496,7 +496,7 @@ result = await asyncio.to_thread(otto.run_tests, ["TestDevice"])
 
 - {func}`~otto.suite.run.run_tests` raises
   {class}`~otto.suite.run.NoTestsMatchedError` (a `ValueError`) when the
-  selection matches nothing at all — no repos, or no repo with a matching
+  selection matches nothing at all — no projects, or no project with a matching
   test/marker.
 - `run_tests` raises
   {class}`~otto.suite.selection.UnknownSelectionError` (also a `ValueError`,
@@ -546,7 +546,7 @@ import asyncio
 from pathlib import Path
 
 import otto
-from otto.bootstrap import get_repos
+from otto.bootstrap import get_projects
 from otto.coverage import collect_coverage, resolve_report_inputs, run_coverage_report
 
 
@@ -567,7 +567,7 @@ async def main():
         # Pass overwrite=True to re-render into a directory that already
         # holds a report (it is cleared first); without it, a non-empty
         # report_dir raises DestinationError.
-        inputs = resolve_report_inputs(get_repos())
+        inputs = resolve_report_inputs(get_projects())
         store = await run_coverage_report(
             [cov_dir], Path("./coverage-run/report"), inputs, overwrite=True
         )
@@ -586,7 +586,7 @@ asyncio.run(main())
 |--------------------|-------------------|---------------------------------------------------------------------------------------------------------|
 | `cov_dir`          | `Path`            | The directory the coverage landed in (the argument you passed).                                         |
 | `product_dirs`     | `dict[tuple[str, str], Path]` | Each contributing `(host id, product)` pair → its staging directory.                         |
-| `captures_written` | `list[Path]`      | The `capture.json` files produced, one per `(host, product)` pair (empty when no `[coverage]` repo resolved a git root). |
+| `captures_written` | `list[Path]`      | The `capture.json` files produced, one per `(host, product)` pair (empty when no `[coverage]` project resolved a git root). |
 
 ### Fails loud — exceptions to handle
 
@@ -594,7 +594,7 @@ Unlike the CLI, `collect_coverage` never swallows. Wrap it if a collection
 failure should not abort your script:
 
 - `otto.coverage.errors.CoverageConfigError` (a `ValueError`) — no `[coverage]`
-  section is configured for any of the resolved repos.
+  section is configured for any of the resolved projects.
 - `otto.coverage.errors.NoCoverageDataError` (a `ValueError`) — no `.gcda` was
   retrieved from any matched product. The message names every
   `host:product:cov_dir` triple it searched, or says that no host carried an
@@ -602,7 +602,7 @@ failure should not abort your script:
 - `ValueError` — the requested tier name is ambiguous or unknown (only
   reachable when `tier=` is a name or `None`; a `TierConfig` object passed
   directly skips resolution).
-- `otto.coverage.capture.gitio.GitUnavailableError` — the SUT checkout is not a
+- `otto.coverage.capture.gitio.GitUnavailableError` — the project root is not inside a
   git repository, so captures cannot be anchored to `base_commit`.
 - `otto.coverage.errors.CoverageDataMismatchError` — the fetched `.gcda` no
   longer matches the current build's `.gcno` notes (the product was rebuilt
@@ -680,7 +680,7 @@ import otto.docker
 
 report = await otto.docker.compose_build("integration", provide={"db": "real"})
 for failed in report.failed:
-    print(failed.repo, failed.image, failed.result.value)
+    print(failed.project, failed.image, failed.result.value)
 
 stack = await otto.docker.deploy("integration", build=False)
 await stack.hosts["api"].run("./run-tests")
@@ -694,7 +694,7 @@ if not torn.ok:
 `build_on(parent="test3", images=["api"])` builds one parent's images without a
 use-case, the way `otto docker build --parent test3 api` does; leave `parent`
 out and the library names it ({ref}`Which host <docker-which-host>`).
-Every input rule is the library's: a missing or tied parent, an unknown repo or
+Every input rule is the library's: a missing or tied parent, an unknown project or
 image name raises {class}`~otto.docker.observe.DockerVerbError` with a `field`.
 
 The observe verbs are the same shape: {func}`~otto.docker.observe.list_containers`,

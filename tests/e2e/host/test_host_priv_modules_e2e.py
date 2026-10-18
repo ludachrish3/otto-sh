@@ -52,7 +52,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("host_priv_e2e")]
 
 def _run_otto(
     *args: str,
-    sut_dirs: Path = REPO1,
+    roots: Path = REPO1,
     lab: str = _LAB,
     xdir: Path | None = None,
     timeout: int = 120,
@@ -68,7 +68,7 @@ def _run_otto(
     return run_otto(
         list(args),
         xdir=xdir,
-        sut_dirs=sut_dirs,
+        roots=roots,
         lab=lab,
         extra_argv_prefix=["-R"],
         timeout=timeout,

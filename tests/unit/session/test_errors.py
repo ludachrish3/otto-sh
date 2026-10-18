@@ -34,11 +34,11 @@ def test_project_selection_error_carries_kind_names_and_suggestion():
 
 def test_repo_load_error_lists_every_fatal_error_and_keeps_the_demotions():
     from otto.bootstrap import BootstrapError
-    from otto.session import RepoLoadError
+    from otto.session import ProjectLoadError
 
     a = BootstrapError("/r/a", "a_init", ImportError("x"))
     b = BootstrapError("/r/b", "b_init", ImportError("y"))
-    err = RepoLoadError([a, b], demoted=[])
+    err = ProjectLoadError([a, b], demoted=[])
     assert err.errors == [a, b]
     assert err.demoted == []
     assert str(a) in str(err)
@@ -62,12 +62,12 @@ def test_dependency_refused_error_names_each_requirement():
     from otto.env.preflight import Unsatisfied
     from otto.session import DependencyRefusedError
 
-    bad = Unsatisfied(repo="acme", requirement="otto-sh[monitor] >= 1", found="none")
+    bad = Unsatisfied(project="acme", requirement="otto-sh[monitor] >= 1", found="none")
     err = DependencyRefusedError([bad], warnings=["w"])
     assert err.unsatisfied == [bad]
     assert err.warnings == ["w"]
     assert str(err) == (
-        "repo 'acme' requires 'otto-sh[monitor] >= 1' — not satisfied in this "
+        "project 'acme' requires 'otto-sh[monitor] >= 1' — not satisfied in this "
         "environment (found: none)"
     )
 
@@ -84,11 +84,11 @@ def test_dependency_refused_error_keeps_one_line_per_requirement():
     from otto.env.preflight import Unsatisfied
     from otto.session import DependencyRefusedError
 
-    first = Unsatisfied(repo="a", requirement="x>=1", found="0.1")
-    second = Unsatisfied(repo="b", requirement="y", found="none")
+    first = Unsatisfied(project="a", requirement="x>=1", found="0.1")
+    second = Unsatisfied(project="b", requirement="y", found="none")
     assert str(DependencyRefusedError([first, second])) == (
-        "repo 'a' requires 'x>=1' — not satisfied in this environment (found: 0.1)\n"
-        "repo 'b' requires 'y' — not satisfied in this environment (found: none)"
+        "project 'a' requires 'x>=1' — not satisfied in this environment (found: 0.1)\n"
+        "project 'b' requires 'y' — not satisfied in this environment (found: none)"
     )
 
 

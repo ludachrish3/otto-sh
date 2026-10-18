@@ -11,9 +11,9 @@ Every tier's `kind` selects how `otto cov report` collects its data:
 |------|---------------|---------|
 | `e2e` | `otto test --cov` / `otto cov get` | `<output_dir>/cov/<host_id>/<product>/capture.json` — not committed, same lifecycle as other run artifacts ({ref}`the run tree <run-tree>`) |
 | `unit` | Nothing otto runs for you — build and run your instrumented unit tests as usual; `otto cov report` harvests `.gcda` from the tier's `harvest_dirs` in the **current build tree** at report time | no capture file |
-| `manual` | `otto cov get --tier <name> --ticket <ref>` | `.otto/coverage/manual/<utc-timestamp>-<ticket-slug>-<board-slug>-<product-slug>.json`, committed to the SUT repo |
+| `manual` | `otto cov get --tier <name> --ticket <ref>` | `.otto/coverage/manual/<utc-timestamp>-<ticket-slug>-<board-slug>-<product-slug>.json`, committed to the project's git repository |
 
-**Only manual captures are committed to the repo** — every capture
+**Only manual captures are committed to the project's git repository** — every capture
 (manual or e2e) is anchored to a `base_commit`.  E2E data comes from
 the output directories of previous otto runs; unit data is swept fresh
 from the build tree every time a report is generated — there is no run
@@ -33,7 +33,7 @@ color = "green"                # CSS color name or "#RRGGBB"; per-kind default i
 [coverage.tiers.unit]
 kind = "unit"
 precedence = 2
-harvest_dirs = ["build"]     # swept for .gcda at report time; relative to the repo root
+harvest_dirs = ["build"]     # swept for .gcda at report time; relative to the project root
 color = "yellow"
 
 [coverage.tiers.unit.products]  # optional: one run per named product view
@@ -57,7 +57,7 @@ Each `[coverage.tiers.<name>]` block:
 | `kind` | One of `e2e`, `unit`, `manual`. Selects the collection machinery — see {ref}`coverage-tier-kinds`. |
 | `precedence` | Integer; lower wins the winner-take-all row coloring when multiple tiers cover the same line. |
 | `color` | Optional CSS named color or `#RRGGBB` hex, validated at settings load. Defaults to a per-`kind` color when omitted (`e2e` = green, `unit` = yellow, `manual` = orange). |
-| `harvest_dirs` | `unit`-kind only: build directories swept for `.gcda` at report time. Relative paths resolve against the repo root (see {doc}`../../configuration/settings`). |
+| `harvest_dirs` | `unit`-kind only: build directories swept for `.gcda` at report time. Relative paths resolve against the project root (see {doc}`../../configuration/settings`). |
 | `products` | `unit`-kind only: a `[coverage.tiers.<name>.products]` sub-table of `<product> = [<dirs>]`. Each named view is swept separately and becomes its own run, tagged with that product; `harvest_dirs` stays the unnamed view. Keys follow {ref}`the product-name rule <run-tree>`. |
 | `max_age` | `manual`-kind only: `"<days>d"` (e.g. `"180d"`); enables the *aging* flag (see {ref}`coverage-validity`). Optional, off by default. |
 
@@ -129,7 +129,7 @@ no path arguments needed for the unit or manual tiers.
 (coverage-validity)=
 ## Staleness and aging
 
-Manual captures are anchored evidence — as the repo moves on, otto must
+Manual captures are anchored evidence — as the project moves on, otto must
 decide whether that evidence still applies.  A tree-wide diff against the
 capture's `base_commit` resolves every file's lines in one pass — renames
 followed, whitespace ignored.  Only when `base_commit` itself cannot be

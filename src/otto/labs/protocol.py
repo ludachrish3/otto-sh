@@ -134,7 +134,7 @@ class HostSummary:
     backend applies the factory's default (``"unix"``) when the entry names
     none — or ``None`` when the backend does not know it. Completion resolves
     it to a host class (``get_os_profile(os_type, data=...).base``, seeing the
-    selected repos' data profiles) WHEN IT RESOLVES, so ``otto host <id> <TAB>``
+    selected projects' data profiles) WHEN IT RESOLVES, so ``otto host <id> <TAB>``
     can offer that class's verbs without building the host; a selector no
     profile layer holds in the completing process resolves to nothing and the
     host keeps the union menu, exactly as one with

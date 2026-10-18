@@ -443,7 +443,7 @@ def tests_unit_repeat(session: nox.Session) -> None:
     Many unit tests mutate process-global state and rely on it being pristine:
     they register into the ``otto.registry.Registry`` singletons (``INSTRUCTIONS``,
     ``LOADER_CLASSES``, ``CLI_COMMANDS``, ``OPTIONS`` …) via ``@instruction`` /
-    ``register_*`` / ``register_options``, import packages/repos from
+    ``register_*`` / ``register_options``, import packages/projects from
     a ``tmp_path``, or ``monkeypatch.delitem`` an ``otto.cli.*`` submodule from
     ``sys.modules``. A test that leaves any of that behind is invisible to a
     single CI pass but breaks the second time it runs in the same process —
@@ -854,7 +854,7 @@ def docs(session: nox.Session) -> None:
         "-o",
         "log_cli=false",
         "src/otto",
-        env={name: None for name in os.environ if name.startswith("OTTO_")},
+        env={name: None for name in os.environ if name.startswith("OTTO_") or name == "OTTOPATH"},
     )
 
 

@@ -5,20 +5,21 @@ import subprocess
 import sys
 from pathlib import Path
 
+from otto.config.env import is_otto_env_var
 from tests._fixtures.generated_repo import generate_repo
 
 _OTTO = Path(sys.executable).with_name("otto")
 
 
-def _env(repo: Path, home: Path) -> dict[str, str]:
+def _env(project: Path, home: Path) -> dict[str, str]:
     # Bytecode writing stays ON, as in a real shell, whatever the parent's
     # environment says: the repair must hold without anyone switching it off.
     env = {
         k: v
         for k, v in os.environ.items()
-        if not k.startswith("OTTO_") and k != "PYTHONDONTWRITEBYTECODE"
+        if not is_otto_env_var(k) and k != "PYTHONDONTWRITEBYTECODE"
     }
-    env.update(OTTO_SUT_DIRS=str(repo), OTTO_HOME=str(home))
+    env.update(OTTOPATH=str(project), OTTO_HOME=str(home))
     return env
 
 
@@ -52,21 +53,21 @@ def _tests_site_outcome(env: dict[str, str]):
     return sc.answer_or_reason(environ)
 
 
-def _table_is_current(repo: Path, home: Path) -> bool:
+def _table_is_current(project: Path, home: Path) -> bool:
     """What the collect child's check would find: nothing the table tracks has moved."""
     from otto.config import collected_tests as ct
-    from otto.config.repo import Repo
+    from otto.config.project import Project
 
     [cache] = home.rglob("completion_cache.json")
-    live = Repo(sut_dir=repo)
-    table = ct.read_tables([live], home=cache.parent).get(str(repo))
+    live = Project(root=project)
+    table = ct.read_tables([live], home=cache.parent).get(str(project))
     return table is not None and ct.classify(live, table).is_current
 
 
-def _arm_bootstrap_sentinel(repo: Path) -> Path:
+def _arm_bootstrap_sentinel(project: Path) -> Path:
     """Make the repo's init module touch a sentinel file when bootstrap imports it.
 
-    Only ``otto.config.repo.discover()``'s registration pass imports init
+    Only ``otto.config.project.discover()``'s registration pass imports init
     modules; the completion names fast path's ``_cached_names_payload``
     reads the cached ``names`` section and never runs any repo code at all.
     So the sentinel reappearing is proof a FULL bootstrap ran, not merely
@@ -76,8 +77,10 @@ def _arm_bootstrap_sentinel(repo: Path) -> Path:
     top-level test file: a later task in this plan makes test files load
     lazily, and bootstrap will keep importing init modules regardless.
     """
-    marker = repo / "bootstrap-ran"
-    (repo / "pylib" / "genrepo_instructions.py").write_text(f"open({str(marker)!r}, 'a').close()\n")
+    marker = project / "bootstrap-ran"
+    (project / "pylib" / "genrepo_instructions.py").write_text(
+        f"open({str(marker)!r}, 'a').close()\n"
+    )
     return marker
 
 
@@ -90,8 +93,8 @@ def test_a_stale_tests_tab_seeds_the_table(tmp_path):
     into the tracked tests dir, or the table it writes has moved on arrival
     (#456).
     """
-    repo = generate_repo(tmp_path, files=12, dirs=3)
-    env = _env(repo, tmp_path / "home")
+    project = generate_repo(tmp_path, files=12, dirs=3)
+    env = _env(project, tmp_path / "home")
     seeded = subprocess.run([str(_OTTO), "--help"], env=env, capture_output=True, check=False)
     assert seeded.returncode == 0, seeded.stderr
 
@@ -106,7 +109,7 @@ def test_a_stale_tests_tab_seeds_the_table(tmp_path):
     warm = _tests_site_outcome(env)
     assert warm.items is not None, f"the stale TAB did not seed the table: {warm.reason}"
     assert warm.refresh is None, "the seed started the check window"
-    assert _table_is_current(repo, tmp_path / "home"), "the table the TAB wrote moved on arrival"
+    assert _table_is_current(project, tmp_path / "home"), "the table the TAB wrote moved on arrival"
 
 
 def test_a_non_stale_handover_does_not_bootstrap(tmp_path):
@@ -115,7 +118,7 @@ def test_a_non_stale_handover_does_not_bootstrap(tmp_path):
     installed ``names`` snapshot alone, never running bootstrap.
 
     ``otto tunnel remove <TAB>`` would NOT prove this: its own completer
-    (``_tunnel_id_completer``) calls ``get_repos()`` unconditionally to list live
+    (``_tunnel_id_completer``) calls ``get_projects()`` unconditionally to list live
     tunnels, so it bootstraps regardless of `cache_stale` — that is a property of
     a LIVE source, not of this task's repair mechanism. ``otto nope <TAB>``
     instead falls back to the top-level command LISTING, which
@@ -123,9 +126,9 @@ def test_a_non_stale_handover_does_not_bootstrap(tmp_path):
     snapshot `entry()`'s fast path installs (see ``_cached_names_payload``), with
     no live completer and so no bootstrap on a cache hit.
     """
-    repo = generate_repo(tmp_path, files=4, dirs=2)
-    marker = _arm_bootstrap_sentinel(repo)
-    env = _env(repo, tmp_path / "home")
+    project = generate_repo(tmp_path, files=4, dirs=2)
+    marker = _arm_bootstrap_sentinel(project)
+    env = _env(project, tmp_path / "home")
     subprocess.run([str(_OTTO), "--help"], env=env, capture_output=True, check=True)
     assert marker.exists(), "the seeding --help call never bootstrapped"
     marker.unlink()
@@ -149,8 +152,8 @@ def test_a_seeding_tab_that_writes_bytecode_stays_current(tmp_path):
     """
     from tests._fixtures.generated_repo import argv_writing_test_file_bytecode
 
-    repo = generate_repo(tmp_path, files=12, dirs=3)
-    env = _env(repo, tmp_path / "home")
+    project = generate_repo(tmp_path, files=12, dirs=3)
+    env = _env(project, tmp_path / "home")
     argv = argv_writing_test_file_bytecode("from otto._shim import main; main()")
     seeded = subprocess.run([*argv, "--help"], env=env, capture_output=True, check=False)
     assert seeded.returncode == 0, seeded.stderr
@@ -163,8 +166,8 @@ def test_a_seeding_tab_that_writes_bytecode_stays_current(tmp_path):
     }
     tab = subprocess.run(argv, env=tab_env, capture_output=True, text=True, check=False)
     assert tab.returncode == 0, tab.stderr
-    assert not list((repo / "tests").rglob("__pycache__")), "the seeding TAB wrote bytecode"
+    assert not list((project / "tests").rglob("__pycache__")), "the seeding TAB wrote bytecode"
 
     outcome = _tests_site_outcome(env)
     assert outcome.items is not None, f"the seeded table was not served: {outcome.reason}"
-    assert _table_is_current(repo, tmp_path / "home"), "the seeded table moved on arrival"
+    assert _table_is_current(project, tmp_path / "home"), "the seeded table moved on arrival"

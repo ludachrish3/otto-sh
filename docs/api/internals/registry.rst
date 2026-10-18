@@ -49,7 +49,7 @@ and the reference can link them. The public names are on :doc:`/api/registry`.
 
 .. autofunction:: otto.registry.refuse_during_test_load
 
-.. autofunction:: otto.registry.get_registering_repo
+.. autofunction:: otto.registry.get_registering_project
 
 .. autofunction:: otto.registry.set_completion_names
 

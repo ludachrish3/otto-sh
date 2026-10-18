@@ -63,7 +63,7 @@ def export(
     prunes the custom types' schemas too.
     """
     # Developer note: custom host classes are already loaded by the time this
-    # runs (the otto package applies repo settings at import), which is why they
+    # runs (the otto package applies project settings at import), which is why they
     # appear without any extra step.
     from rich.markup import escape
 

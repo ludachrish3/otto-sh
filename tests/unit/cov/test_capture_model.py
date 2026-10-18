@@ -117,7 +117,12 @@ def test_parse_info_a_mixed_file_yields_only_the_untagged_branches(tmp_path: Pat
 def test_build_capture_clean(repo: Path, tmp_path: Path) -> None:
     info = _write_info(tmp_path, repo / "f.c")
     cap = build_capture(
-        info_path=info, tier="system", repo_root=repo, board="board1", product="app", labs=["lab1"]
+        info_path=info,
+        tier="system",
+        project_root=repo,
+        board="board1",
+        product="app",
+        labs=["lab1"],
     )
     assert cap.base_commit == head_commit(repo)
     assert cap.dirty_remap is False
@@ -133,7 +138,7 @@ def test_build_capture_dirty_remaps(repo: Path, tmp_path: Path) -> None:
     cap = build_capture(
         info_path=info,
         tier="manual",
-        repo_root=repo,
+        project_root=repo,
         board="b",
         product="app",
         labs=["lab1"],
@@ -153,7 +158,7 @@ def test_build_capture_dirty_whitespace_only_keeps_all_lines(repo: Path, tmp_pat
     cap = build_capture(
         info_path=info,
         tier="manual",
-        repo_root=repo,
+        project_root=repo,
         board="b",
         product="app",
         labs=["lab1"],
@@ -179,11 +184,11 @@ def test_build_capture_nested_sut_dir(repo: Path, tmp_path: Path) -> None:
     _git(repo, tmp_path, "-c", "user.name=t", "-c", "user.email=t@x", "commit", "-qm", "nest")
 
     info = _write_info(tmp_path, nested / "main.c")
-    sut_dir = repo / "nested" / "sut"
+    root = repo / "nested" / "sut"
     cap = build_capture(
         info_path=info,
         tier="system",
-        repo_root=sut_dir,
+        project_root=root,
         board="board1",
         product="app",
         labs=["lab1"],
@@ -202,7 +207,12 @@ def test_untracked_file_skipped(
     info.write_text(INFO.format(src=repo / "f.c") + INFO.format(src=repo / "untracked.c"))
     with caplog.at_level("WARNING"):
         cap = build_capture(
-            info_path=info, tier="system", repo_root=repo, board="b", product="app", labs=["lab1"]
+            info_path=info,
+            tier="system",
+            project_root=repo,
+            board="b",
+            product="app",
+            labs=["lab1"],
         )
     assert "untracked.c" not in cap.files
     assert "f.c" in cap.files
@@ -219,7 +229,7 @@ def test_gitignored_file_skipped(repo: Path, tmp_path: Path) -> None:
     info = tmp_path / "x.info"
     info.write_text(INFO.format(src=repo / "f.c") + INFO.format(src=repo / "gen.c"))
     cap = build_capture(
-        info_path=info, tier="system", repo_root=repo, board="b", product="app", labs=["lab1"]
+        info_path=info, tier="system", project_root=repo, board="b", product="app", labs=["lab1"]
     )
     assert "gen.c" not in cap.files
     assert "f.c" in cap.files
@@ -229,7 +239,7 @@ def test_gitignored_file_skipped(repo: Path, tmp_path: Path) -> None:
 def test_roundtrip_and_strictness(repo: Path, tmp_path: Path) -> None:
     info = _write_info(tmp_path, repo / "f.c")
     cap = build_capture(
-        info_path=info, tier="system", repo_root=repo, board="b", product="app", labs=[]
+        info_path=info, tier="system", project_root=repo, board="b", product="app", labs=[]
     )
     assert cap.files["f.c"].branches[3] == [(0, 0, 4), (0, 1, None)]
     out = tmp_path / "capture.json"
@@ -253,7 +263,7 @@ def test_build_capture_annotates_display_name_and_roundtrips(repo: Path, tmp_pat
     cap = build_capture(
         info_path=info,
         tier="system",
-        repo_root=repo,
+        project_root=repo,
         board="rack2-slot4-id",
         product="app",
         labs=["lab1"],
@@ -269,7 +279,7 @@ def test_capture_display_name_defaults_none_for_old_files(repo: Path, tmp_path: 
     # A capture serialized before the field existed must load with None.
     info = _write_info(tmp_path, repo / "f.c")
     cap = build_capture(
-        info_path=info, tier="system", repo_root=repo, board="b", product="app", labs=["lab1"]
+        info_path=info, tier="system", project_root=repo, board="b", product="app", labs=["lab1"]
     )
     out = tmp_path / "cap.json"
     cap.save(out)
@@ -288,7 +298,7 @@ def test_build_capture_annotates_product_and_roundtrips(repo: Path, tmp_path: Pa
     info = tmp_path / "b.info"
     info.write_text(INFO.format(src=repo / "f.c"))
     cap = build_capture(
-        info_path=info, tier="e2e", repo_root=repo, board="h1", product="app", labs=["lab"]
+        info_path=info, tier="e2e", project_root=repo, board="h1", product="app", labs=["lab"]
     )
     assert cap.product == "app"
     out = tmp_path / "capture.json"

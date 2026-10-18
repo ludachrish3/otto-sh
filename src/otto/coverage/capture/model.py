@@ -189,7 +189,7 @@ def build_capture(  # noqa: PLR0913 — wide capture-construction API, one keywo
     *,
     info_path: Path,
     tier: str,
-    repo_root: Path,
+    project_root: Path,
     board: str,
     product: str,
     labs: list[str],
@@ -208,18 +208,18 @@ def build_capture(  # noqa: PLR0913 — wide capture-construction API, one keywo
         display_name: Host display name to annotate onto the capture;
             ``board`` stays the staging-dir/host-id name.
     """
-    base_commit = gitio.head_commit(repo_root)
-    dirty = gitio.is_dirty(repo_root)
-    repo_root = repo_root.resolve()
+    base_commit = gitio.head_commit(project_root)
+    dirty = gitio.is_dirty(project_root)
+    project_root = project_root.resolve()
 
     files: dict[str, CaptureFileCov] = {}
     for src, (raw_lines, raw_branches) in parse_info(info_path).items():
         src_path = Path(src).resolve()
-        if not src_path.is_relative_to(repo_root):
-            logger.warning("Skipping source outside repo: %s", src)
+        if not src_path.is_relative_to(project_root):
+            logger.warning("Skipping source outside the project root: %s", src)
             continue
-        rel = src_path.relative_to(repo_root)
-        blob = gitio.blob_sha(repo_root, rel)
+        rel = src_path.relative_to(project_root)
+        blob = gitio.blob_sha(project_root, rel)
         if blob is None:
             logger.warning(
                 "Skipping source with no committed version at HEAD (untracked or generated): %s",
@@ -227,7 +227,7 @@ def build_capture(  # noqa: PLR0913 — wide capture-construction API, one keywo
             )
             continue
         if dirty:
-            hunks = parse_u0_hunks(gitio.diff_worktree_file_u0(repo_root, rel))
+            hunks = parse_u0_hunks(gitio.diff_worktree_file_u0(project_root, rel))
             lines, branches = _remap_file(raw_lines, raw_branches, LineRemapper(hunks))
         else:
             lines, branches = raw_lines, raw_branches

@@ -48,10 +48,10 @@ def inventory():
 
 
 def _entries(tech):
-    repo = JsonFileLabRepository(search_paths=[lab_data_dir() / tech])
+    repository = JsonFileLabRepository(search_paths=[lab_data_dir() / tech])
     # The fixture's parsed elements, exactly as the loader sees them: the first
     # host entry of each, paired with the element it belongs to.
-    docs = repo._load_documents()
+    docs = repository._load_documents()
     return {
         el.name: (el.hosts[0], el.to_element())
         for doc in docs

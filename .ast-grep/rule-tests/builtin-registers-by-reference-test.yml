@@ -145,9 +145,9 @@ invalid:
   class ProjectActions: ...
 
 
-  def register_project_instruction_bodies(cls, repo) -> None:
+  def register_project_instruction_bodies(cls, project) -> None:
       for attr, mark in _marked(cls):
-          register_project_instruction_body(cls, attr, mark, repo=repo)
+          register_project_instruction_body(cls, attr, mark, project=project)
 
 
   register_project_instruction_bodies(ProjectActions, None)

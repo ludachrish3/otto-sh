@@ -163,8 +163,8 @@ def test_detect_for_lab_with_coverage_config_passes_pattern_and_containers(monke
     calls = {}
     host = _host("h1", _product("app", True))
 
-    def fake_get_cov_config(repos):
-        assert repos == ["repo"]
+    def fake_get_cov_config(projects):
+        assert projects == ["repo"]
         return {"hosts": "sensor.*"}
 
     def fake_load_hosts_pattern(cov_config):
@@ -191,8 +191,8 @@ def test_detect_for_lab_without_coverage_config_defaults_to_none_pattern(monkeyp
     calls = {}
     host = _host("h2", _product("agent", False))
 
-    def fake_get_cov_config(repos):
-        assert repos == []
+    def fake_get_cov_config(projects):
+        assert projects == []
         return {}
 
     def fake_load_hosts_pattern(cov_config):

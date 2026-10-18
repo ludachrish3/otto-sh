@@ -8,7 +8,7 @@ starting a run.
 
 ## What is unique about `reservation`
 
-- **Lab-free by design.** Identity and backend come from repo settings and
+- **Lab-free by design.** Identity and backend come from project settings and
   root options, never from the lab and never from a host. `whoami` runs with
   no `--lab` at all; `check` is the one subcommand that loads the lab — the
   lab defines the required-resource list — and it does so lazily, through

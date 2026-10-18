@@ -164,7 +164,7 @@ PYPROJECT = '[tool.pytest.ini_options]\nmarkers = ["smoke: quick", "slow: not qu
 
 def make_shim_repo(root: Path) -> Path:
     """Create the differential SUT repo under *root* and return it."""
-    repo = make_sut_repo(
+    project = make_sut_repo(
         root / "shimsut",
         name="shimsut",
         version="0.1.0",
@@ -179,5 +179,5 @@ def make_shim_repo(root: Path) -> Path:
             "docker/compose.yml": "services: {}\n",
         },
     )
-    write_lab_json(repo / "lab" / "lab.json", HOSTS, links=LINKS)
-    return repo
+    write_lab_json(project / "lab" / "lab.json", HOSTS, links=LINKS)
+    return project

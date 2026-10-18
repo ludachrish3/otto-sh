@@ -47,7 +47,7 @@ _LAB = {
 
 
 @pytest.fixture
-def repo(tmp_path):
+def repository(tmp_path):
     (tmp_path / "lab.json").write_text(
         json.dumps(
             {
@@ -84,8 +84,8 @@ def inventory(tmp_path):
     return JsonInventory(p, supplies=["ip", "interfaces"])
 
 
-def test_load_resolves_referenced_entries_and_stamps_provenance(repo, inventory):
-    lab = repo.load_lab("l", inventory=inventory)
+def test_load_resolves_referenced_entries_and_stamps_provenance(repository, inventory):
+    lab = repository.load_lab("l", inventory=inventory)
     dut = lab.hosts["dut"]
     assert dut.ip == "10.0.0.1"
     assert dut.inventory_ref.key == "dut-1"
@@ -94,7 +94,7 @@ def test_load_resolves_referenced_entries_and_stamps_provenance(repo, inventory)
     assert len(lab.links) == 1  # link derivation saw the inventory-supplied interface
 
 
-def test_load_without_inventory_names_file_element_index_and_key(repo):
+def test_load_without_inventory_names_file_element_index_and_key(repository):
     # The lab name is spelled out rather than left to `.*`: the loader's
     # context prefix is file + element + index + LAB, and a pattern that
     # skips over the lab still passes with that half of it deleted.
@@ -105,10 +105,10 @@ def test_load_without_inventory_names_file_element_index_and_key(repo):
             r"key 'dut-1' but no inventory is configured"
         ),
     ):
-        repo.load_lab("l")
+        repository.load_lab("l")
 
 
-def test_unknown_key_is_a_lab_repository_error_with_context(repo, tmp_path):
+def test_unknown_key_is_a_lab_repository_error_with_context(repository, tmp_path):
     empty = tmp_path / "empty.json"
     empty.write_text("{}")
     # Same narrow `supplies` as the real fixture: with the default (every
@@ -122,7 +122,7 @@ def test_unknown_key_is_a_lab_repository_error_with_context(repo, tmp_path):
             r"in inventory 'json:"
         ),
     ):
-        repo.load_lab("l", inventory=JsonInventory(empty, supplies=["ip", "interfaces"]))
+        repository.load_lab("l", inventory=JsonInventory(empty, supplies=["ip", "interfaces"]))
 
 
 def test_an_inventory_owned_field_stated_inline_names_the_entry_that_did_it(tmp_path):
@@ -168,26 +168,26 @@ def test_an_inventory_owned_field_stated_inline_names_the_entry_that_did_it(tmp_
         )
 
 
-def test_summaries_carry_the_inventory_ip_and_skip_unresolvable_entries(repo, inventory):
-    with_inv = {s.id: s for s in repo.list_host_summaries(inventory=inventory)}
+def test_summaries_carry_the_inventory_ip_and_skip_unresolvable_entries(repository, inventory):
+    with_inv = {s.id: s for s in repository.list_host_summaries(inventory=inventory)}
     assert with_inv["dut"].ip == "10.0.0.1"
-    without = {s.id for s in repo.list_host_summaries()}
+    without = {s.id for s in repository.list_host_summaries()}
     assert without == {"plain"}  # best-effort: a referenced entry needs its inventory
 
 
-def test_composite_forwards_inventory(repo, inventory):
-    composite = CompositeLabRepository([LabSource(label="json", repository=repo)])
+def test_composite_forwards_inventory(repository, inventory):
+    composite = CompositeLabRepository([LabSource(label="json", repository=repository)])
     assert composite.load_lab("l", inventory=inventory).hosts["dut"].ip == "10.0.0.1"
     assert {s.id for s in composite.list_host_summaries(inventory=inventory)} == {"dut", "plain"}
     assert {s.id for s in host_summaries(composite, inventory=inventory)} == {"dut", "plain"}
 
 
-def test_config_load_lab_accepts_and_forwards_inventory(repo, inventory):
+def test_config_load_lab_accepts_and_forwards_inventory(repository, inventory):
     from otto.labs.loader import load_lab
 
     lab = load_lab(
         "l",
-        repository=CompositeLabRepository([LabSource(label="json", repository=repo)]),
+        repository=CompositeLabRepository([LabSource(label="json", repository=repository)]),
         inventory=inventory,
     )
     assert lab.hosts["dut"].inventory_ref.key == "dut-1"
@@ -197,7 +197,7 @@ def test_config_load_lab_accepts_and_forwards_inventory(repo, inventory):
     # test_the_examples_backend_resolves_and_skips_like_the_json_one below.
 
 
-def test_the_summaries_fallback_route_forwards_the_inventory_too(repo, inventory):
+def test_the_summaries_fallback_route_forwards_the_inventory_too(repository, inventory):
     """A backend without ``list_host_summaries`` gets its labs loaded — WITH the inventory.
 
     The fast path and the fallback must agree, and only the fast path has a
@@ -209,10 +209,10 @@ def test_the_summaries_fallback_route_forwards_the_inventory_too(repo, inventory
 
     class LoadOnly:  # no list_host_summaries: forces otto.labs.host_summaries' fallback
         def load_lab(self, name, preferences=None, inventory=None):
-            return repo.load_lab(name, preferences=preferences, inventory=inventory)
+            return repository.load_lab(name, preferences=preferences, inventory=inventory)
 
         def list_labs(self):
-            return repo.list_labs()
+            return repository.list_labs()
 
     assert {s.id for s in host_summaries(LoadOnly(), inventory=inventory)} == {"dut", "plain"}
     assert host_summaries(LoadOnly()) == []  # no inventory: the whole lab fails, best-effort

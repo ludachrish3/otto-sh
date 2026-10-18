@@ -32,13 +32,13 @@ Warm was closer to 1 s — about 830 effective round trips, since the client
 absorbs most attribute lookups but not file reads or writes.
 
 That 2,427 was the *pre-fix* framework-import cost, measured on a local-disk
-dev VM (otto 0.9.0, CPython 3.10.20) with no repos discovered at all:
+dev VM (otto 0.9.0, CPython 3.10.20) with no projects discovered at all:
 
 | Measurement | Before | After |
 |---|---|---|
-| `otto --version` syscalls, no repos | 2,427 | 592 |
-| `otto --version` syscalls, 500-file repo | 3,862 | 592 — repo-independent |
-| `otto --version` opens under the repo tree | 553 | 0 |
+| `otto --version` syscalls, no projects | 2,427 | 592 |
+| `otto --version` syscalls, 500-file project | 3,862 | 592 — project-independent |
+| `otto --version` opens under the project tree | 553 | 0 |
 | cache writes per `otto --version` | 1 | 0 |
 
 Applying the cost model above, that syscall drop predicts the deployment's
@@ -108,7 +108,7 @@ the directory's stat, and the test-name cache reads that stat as "a file
 here was added or removed". The first run after upgrading compiles into the
 new location once, and so does the first run after
 [`otto cache clear`](../cli/cache/index.md#clear), which removes the
-directory. Only the sessions are covered: your repos' init modules, which
+directory. Only the sessions are covered: your projects' init modules, which
 otto imports when it starts, before any session, compile into a
 `__pycache__` beside themselves unless you export `PYTHONPYCACHEPREFIX`.
 
@@ -273,11 +273,11 @@ never wall-clock**, for a table of CLI surfaces (`SURFACES` in the script).
 same check under pytest, so it gates in CI too. Most surfaces run a real
 command through the real console entry. The rest run a harness child
 instead: the bare-import surface only imports `otto`, and the `--help`
-surfaces measured without a repo and the two bootstrap surfaces import otto
+surfaces measured without a project and the two bootstrap surfaces import otto
 (the bootstrap ones also run the composition root) and resolve the command
 without rendering help, so they measure only the import-and-dispatch path. Every surface runs in a
-fresh subprocess with every `OTTO_*` variable stripped, a private, empty
-`OTTO_HOME`, and, where the surface needs one, a generated repo shaped like a
+fresh subprocess with every `OTTO_*` variable and `OTTOPATH` stripped, a private, empty
+`OTTO_HOME`, and, where the surface needs one, a generated project shaped like a
 real one, so the count depends on otto and not on the machine's labs.
 
 **The metric.** A file operation is any path syscall: the stat family, opens,
@@ -291,9 +291,9 @@ other path counts, since the harness cannot know which of your mounts are
 remote. Each surface has two counters:
 
 - **`file_ops`** is the whole count.
-- **`workspace`** is the subset under the generated repo and the surface's
+- **`workspace`** is the subset under the generated project and the surface's
   `OTTO_HOME`: what otto itself reads and writes there, plus the import
-  system's probes of the repo's lib directories.
+  system's probes of the project's lib directories.
 
 **Ceilings.** Each counter is gated by a ceiling: a recorded baseline plus
 headroom. The baselines are stored per surface and per Python minor, in
@@ -403,7 +403,7 @@ which is keyed on the files that can register something — including the
 on the test corpus. So a warm `otto --help` costs roughly **O(key set)**, not
 O(corpus). A test-name TAB in bash costs the same whatever the corpus size:
 it answers from the names pytest last collected and stats only a handful of
-paths that decide collection for a whole repo (its pytest configs, its
+paths that decide collection for a whole project (its pytest configs, its
 settings file, the installed packages' directory). Checking every test file
 costs a stat per file, so otto does it where that cost is paid anyway or
 off the keystroke: in `otto test`'s own runs, which import test files
@@ -413,7 +413,7 @@ date; a run never does. The key sets, the digests, the test-names cache and
 when each is rebuilt are described on {doc}`subsystems/completion-cache`.
 
 A cached payload isn't always worth writing, and otto skips it rather than
-paying for it anyway in two cases: no repos were discovered to register
+paying for it anyway in two cases: no projects were discovered to register
 anything from, or the workspace's host inventory can't report a stable
 freshness fingerprint to validate against later. `otto --version` is a
 third, simpler case — it touches neither the cache nor the corpus, because
@@ -423,14 +423,14 @@ invocations that can't use it.
 
 That includes every ordinary command. Previously, every command checked the
 cache after bootstrap, whether it read the cache or not, and imported every
-repo's test files to register suites. On otto's two fixture repos the check
+project's test files to register suites. On otto's two fixture projects the check
 was 431 of `otto host test1 exec whoami`'s path syscalls, and it grew by about
 four syscalls per test file: 239, 2,239 and 8,239 at 0, 500 and 2,000 nested
 test files, which is about 8 s per command at a 1 ms round trip. The test
 files brought in pytest, about 125 of that command's 851 modules. Now an
 ordinary command does no completion-cache I/O whatever the corpus size, and
 loads no test file: only `otto test`'s pytest session imports them. On the import budget's generated
-repo (50 test files, CPython 3.10) the ordinary-dispatch surface went from 584
+project (50 test files, CPython 3.10) the ordinary-dispatch surface went from 584
 to 466 non-stdlib modules, from 118 to 20 stat calls inside the workspace, and
 from 3,256 to 2,641 stat calls in total.
 
@@ -439,7 +439,7 @@ that finds the cache stale pays for it. A rebuild used to stat each nested
 test file about four times and list each directory five times. It then
 walked the corpus once, for a static scan of the test names. Now it does not
 read the corpus at all: test names come only from pytest's collections, so
-between the budget's 50-file and 200-file repos a cold rebuild's workspace
+between the budget's 50-file and 200-file projects a cold rebuild's workspace
 file operations hold within five.
 
 ## When `$HOME` is on NFS
@@ -461,14 +461,14 @@ numbers in place](#what-holds-these-numbers-in-place)): a fresh, empty
 [above](#the-caches-economics-on-a-network-filesystem) — and two `stat`s:
 one confirming that file exists before the open, and one probing for an
 optional user-level `~/.otto/settings.toml`. That probe runs on invocations
-that consult the completion cache, not simply whenever a repo is active —
+that consult the completion cache, not simply whenever a project is active —
 `otto --version` has one active and still touches the home zero times,
 because it [never opens the cache at
 all](#the-caches-economics-on-a-network-filesystem) — whether or not the
 settings file is there, finding out it isn't *is* the stat. All three are
 gated, not just measured: they fall in the import budget's `workspace`
 counter, which covers every path under the surface's `$OTTO_HOME` as well as
-inside the repo (see [What holds these numbers in
+inside the project (see [What holds these numbers in
 place](#what-holds-these-numbers-in-place)). That counter is a ceiling, so it
 bounds the home's touches rather than pinning each one. A cold invocation, with no
 valid cache to validate, cannot use the floor at all and pays the rebuild
@@ -515,11 +515,11 @@ site:
   with a short-lived `.completion_collect.lock`, a plain `O_EXCL` file
   create with staleness-steal — still no lock daemon, just atomic file
   creation instead of a read.
-- **Two otto installations sharing one repo re-collect its tests.** Each
-  repo's table in the test-names cache records the Python, virtualenv and installed packages
+- **Two otto installations sharing one project re-collect its tests.** Each
+  project's table in the test-names cache records the Python, virtualenv and installed packages
   that wrote it, and a table another installation wrote vouches for
   nothing. So two installations (two virtualenvs, or two machines whose
-  local virtualenvs differ) that run against the same repos with the same
+  local virtualenvs differ) that run against the same projects with the same
   `$OTTO_HOME` replace each other's tables, and each one's next run or TAB
   after the other's collects the whole test tree again. Give each
   installation its own `OTTO_HOME` to avoid it.
@@ -537,7 +537,7 @@ site:
 
 None of the above shrinks the one cost that genuinely is NFS's fault:
 nothing removes a workspace's cache directory on its own, and every distinct
-`OTTO_SUT_DIRS` set a machine has ever run against leaves one behind
+`OTTOPATH` set a machine has ever run against leaves one behind
 forever. Inspecting, clearing, and bounding that by age is
 [`otto cache`](../cli/cache/index.md)'s job — see that page for `info`,
 `clear`, `prune`, and the safety argument for why pruning can never touch

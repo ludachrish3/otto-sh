@@ -85,10 +85,10 @@ def _import_all() -> list[str]:
 
 
 def _sut(root: Path) -> Path:
-    repo = root / "sut"
+    project = root / "sut"
     for d in (".otto", "tests", "labs"):
-        (repo / d).mkdir(parents=True)
-    (repo / ".otto" / "settings.toml").write_text(
+        (project / d).mkdir(parents=True)
+    (project / ".otto" / "settings.toml").write_text(
         'name = "smoke"\nversion = "1.0.0"\ntests = ["tests"]\n'
         '[[lab.sources]]\nbackend = "json"\npaths = ["labs"]\n'
     )
@@ -99,16 +99,20 @@ def _sut(root: Path) -> Path:
         "creds": [{"login": "nobody", "password": "unused"}],
     }
     lab = {"labs": {"smoke": {}}, "elements": [{"name": "h", "labs": ["smoke"], "hosts": [host]}]}
-    (repo / "labs" / "lab.json").write_text(json.dumps(lab))
-    (repo / "tests" / "test_smoke.py").write_text(SUITE)
-    return repo
+    (project / "labs" / "lab.json").write_text(json.dumps(lab))
+    (project / "tests" / "test_smoke.py").write_text(SUITE)
+    return project
 
 
-def _cli(root: Path, repo: Path) -> list[str]:
+def _cli(root: Path, project: Path) -> list[str]:
     """Run every CLI check with plugin autoload on and off; return a line per failure."""
     otto_bin = Path(sys.executable).parent / "otto"
-    base = {k: v for k, v in os.environ.items() if not k.startswith(("OTTO_", "PYTEST_", "COV"))}
-    base.update(OTTO_HOME=str(root / "home"), OTTO_SUT_DIRS=str(repo), NO_COLOR="1")
+    base = {
+        k: v
+        for k, v in os.environ.items()
+        if not (k.startswith(("OTTO_", "PYTEST_", "COV")) or k == "OTTOPATH")
+    }
+    base.update(OTTO_HOME=str(root / "home"), OTTOPATH=str(project), NO_COLOR="1")
     failures = []
     for autoload, extra in (("on", {}), ("off", {"PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"})):
         for argv, want, text in CHECKS:

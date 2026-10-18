@@ -143,7 +143,7 @@ def _inject_selector_enums(schema: dict[str, Any], spec_cls: type[HostSpec]) -> 
     """Rewrite the ``valid_*`` menus to a scalar-or-list ``anyOf`` schema, in place.
 
     The schema is generated after init modules load, so the enum includes
-    custom per-repo backends as well as the built-ins — strictly better than the
+    custom per-project backends as well as the built-ins — strictly better than the
     old static ``Literal``. All three axes are filtered to the spec's host
     family via ``_host_family`` (terms through ``TERM_BACKENDS``, transfers
     through ``TRANSFER_BACKENDS``, impairers through ``IMPAIRERS``, each
@@ -505,7 +505,7 @@ class SchemaWrite:
 
 
 def _is_otto_schemas_dir(out: Path) -> bool:
-    """Return True for a repo's ``.otto/schemas``, the directory otto owns outright."""
+    """Return True for a project's ``.otto/schemas``, the directory otto owns outright."""
     resolved = out.resolve()
     return resolved.name == "schemas" and resolved.parent.name == ".otto"
 
@@ -522,7 +522,7 @@ def _carries_otto_stamp(path: Path) -> bool:
 def write_schemas(out: Path, *, builtins_only: bool = False) -> SchemaWrite:
     """Write every document :func:`build_schemas` returns into *out*, then prune orphans.
 
-    An orphan is a ``*.schema.json`` this call did not write. In a repo's
+    An orphan is a ``*.schema.json`` this call did not write. In a project's
     ``.otto/schemas`` — otto-owned — every orphan is deleted, so the doctor's
     remedy for an orphaned schema actually clears it. In any other directory
     only orphans carrying otto's ``x-otto-version`` stamp are deleted: a

@@ -64,15 +64,15 @@ class ImageBuild:
 
 
 @dataclass(frozen=True)
-class RepoBuild:
-    """One repo's build on one host."""
+class ProjectBuild:
+    """One project's build on one host."""
 
-    repo: str
-    """The repo's name."""
+    project: str
+    """The project's name."""
     host: str
     """The lab id of the host it was built on."""
     kind: Literal["built", "no_images"]
-    """``no_images``: the repo declares no ``[[docker.images]]``; nothing ran."""
+    """``no_images``: the project declares no ``[[docker.images]]``; nothing ran."""
     images: "dict[str, ImageBuild]" = field(default_factory=dict)
     """Maps each declared image name to its build."""
 
@@ -81,8 +81,8 @@ class RepoBuild:
 class FailedImage:
     """One image whose build failed."""
 
-    repo: str
-    """The repo that declares the image."""
+    project: str
+    """The project that declares the image."""
     image: str
     """The declared image name."""
     result: "CommandResult"
@@ -97,7 +97,7 @@ class BuildReport:
     :func:`~otto.docker.build_verbs.compose_build`.
     """
 
-    repos: "list[RepoBuild]"
+    projects: "list[ProjectBuild]"
     """In build order."""
     displaced: "list[Displacement]" = field(default_factory=list)
     """Provider fragments the competition excluded (empty for ``build_on``)."""
@@ -106,13 +106,13 @@ class BuildReport:
     def failed(self) -> "list[FailedImage]":
         """Every image whose build is not ok, in build order."""
         return [
-            FailedImage(entry.repo, name, built.result)
-            for entry in self.repos
+            FailedImage(entry.project, name, built.result)
+            for entry in self.projects
             for name, built in entry.images.items()
             if not built.is_ok
         ]
 
     @property
     def ok(self) -> bool:
-        """True when no image failed (a ``no_images`` repo is not a failure)."""
+        """True when no image failed (a ``no_images`` project is not a failure)."""
         return not self.failed

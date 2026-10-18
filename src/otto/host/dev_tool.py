@@ -1,7 +1,7 @@
 """
 Development-tool lifecycle strategy for hosts.
 
-A :class:`DevTool` is a unit of repo-internal tooling deployed to a host —
+A :class:`DevTool` is a unit of project-internal tooling deployed to a host —
 debug probes, trace helpers, board-side scratch utilities. It is the
 :class:`~otto.host.product.Product` shape *deliberately*: same ``ABC``, same
 ``name``/``owner``, same ``stage``/``install``/``uninstall``/``is_installed``,
@@ -16,7 +16,7 @@ and they are never part of ``is_installed()``'s answer — that question is abou
 the software under test. Sharing one list would make cleanup uninstall dev tools
 as products and make a bare debug probe read as an installed product.
 
-Dev tools are customized in repo config or code, never lab data: a
+Dev tools are customized in project config or code, never lab data: a
 ``[[dev_tools]]`` entry in ``.otto/settings.toml`` declares the common cases
 (see :mod:`otto.declared` and :func:`register_dev_tool_kind`), and a
 :func:`register_dev_tool_provider` callback from a ``.otto`` init module
@@ -55,7 +55,7 @@ logger = logging.getLogger(__name__)
 
 
 class DevTool(ABC):
-    """A repo-defined development tool deployed to a host (behavior contract).
+    """A project-defined development tool deployed to a host (behavior contract).
 
     The :class:`~otto.host.product.Product` shape, deliberately: ``name``,
     ``owner``, ``stage``/``install``/``uninstall``/``is_installed``. Dev
@@ -69,9 +69,9 @@ class DevTool(ABC):
     Not a file path: a tool may be multi-file or installed from a package."""
 
     owner: str | None = None
-    """Owning repo's name, stamped at lab ingest from the registering-repo
-    marker (see :func:`otto.registry.registering_repo`). ``None`` = attached
-    outside any repo's init import. Default per-repo actions filter on this."""
+    """Owning project's name, stamped at lab ingest from the registering-project
+    marker (see :func:`otto.registry.registering_project`). ``None`` = attached
+    outside any project's init import. Default per-project actions filter on this."""
 
     kind: str = "code"
     """The declared kind that built this tool (``"shell"``, ``"kmod"``, ...),
@@ -147,13 +147,13 @@ DevToolProvider = Callable[["Host"], Iterable[DevTool] | None]
 """A function that, given a host, returns the dev tools it should carry.
 
 Registered from a ``.otto`` init module via :func:`register_dev_tool_provider`
-and run once per lab-ingested host. All tooling knowledge stays in repo code;
+and run once per lab-ingested host. All tooling knowledge stays in project code;
 lab data never names a dev tool."""
 
 DEV_TOOL_PROVIDERS: "Subscription[DevToolProvider]" = Subscription(
     "dev tool provider", register_hint="otto.host.register_dev_tool_provider()"
 )
-"""The registered dev tool providers, in registration order, each with the repo that registered it.
+"""The registered dev tool providers, in registration order, each with its registering project.
 
 Separate from ``product.PRODUCT_PROVIDERS`` on purpose — each seam owns its
 subscription, so a provider can never attach to the other seam's."""
@@ -163,10 +163,10 @@ def registered_dev_tool_providers() -> list[tuple[DevToolProvider, str | None]]:
     """Return a snapshot of the registered dev tool providers, in registration order.
 
     The twin of :func:`otto.host.product.registered_product_providers`: each item
-    pairs the provider with the name of the repo that registered it. A snapshot
+    pairs the provider with the name of the project that registered it. A snapshot
     list built from the subscription.
     """
-    return [(s.value, s.repo) for s in DEV_TOOL_PROVIDERS.items()]
+    return [(s.value, s.project) for s in DEV_TOOL_PROVIDERS.items()]
 
 
 @registration_boundary
@@ -182,8 +182,8 @@ def register_dev_tool_provider(provider: DevToolProvider) -> None:
     and return the dev tools that host should carry (or ``None``/``[]`` for
     none). Behavior lives in code; lab data stays tooling-agnostic.
 
-    The registering repo is captured **here**, not at ingest: this call runs
-    inside that repo's init import, whereas the provider runs long after,
+    The registering project is captured **here**, not at ingest: this call runs
+    inside that project's init import, whereas the provider runs long after,
     when the marker is gone.
 
     A returned instance must accept ``kind``, ``origin`` and ``owner``
@@ -286,31 +286,33 @@ def apply_dev_tool_providers(host: "Host") -> None:
     (:func:`otto.host.product.defined_twice`). A provider that raises propagates — a
     misconfigured provider fails ingest loudly.
 
-    Each attached dev tool is stamped with :attr:`DevTool.owner` — the repo that
+    Each attached dev tool is stamped with :attr:`DevTool.owner` — the project that
     registered the provider — unless the tool already names an owner, which lets
-    one repo hand a tool to another's ownership deliberately. It is also stamped
+    one project hand a tool to another's ownership deliberately. It is also stamped
     ``kind = "code"`` and ``origin = "provider"``; a tool dropped because its
     name was taken goes to ``host.shadowed_dev_tools`` (see
     :func:`otto.host.product.apply_product_providers`).
 
-    A provider is SKIPPED — not called — when its registering repo's
+    A provider is SKIPPED — not called — when its registering project's
     ``[project]`` declaration does not target ``(host.source_lab, host.id)``
     (spec §5), under the identical rule and the identical carve-outs
     :func:`otto.host.product.apply_product_providers` documents. Gated here in
     its own right, not inherited from that seam: the two registries are
     deliberately separate, so a gate present in one loop and absent from the
-    other would leave a repo free to hang debug tooling on any host it liked.
+    other would leave a project free to hang debug tooling on any host it liked.
     """
-    from ..config.scope import repo_targets  # function-scope: import-light seam
-    from ..declared import scope_for_repo  # at call time: a patch of the owner reaches both seams
+    from ..config.scope import project_targets  # function-scope: import-light seam
+    from ..declared import (
+        scope_for_project,
+    )  # at call time: a patch of the owner reaches both seams
 
     seen = {t.name for t in host.dev_tools}
     for provider, provider_owner in registered_dev_tool_providers():
-        if host.source_lab and not repo_targets(
-            scope_for_repo(provider_owner), host.source_lab, host.id
+        if host.source_lab and not project_targets(
+            scope_for_project(provider_owner), host.source_lab, host.id
         ):
             logger.debug(
-                "dev tool provider: repo %r does not target host %s of lab %r — not run",
+                "dev tool provider: project %r does not target host %s of lab %r — not run",
                 provider_owner,
                 host.id,
                 host.source_lab,

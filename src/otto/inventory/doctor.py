@@ -1,7 +1,7 @@
 """Inventory findings for the ``otto init`` doctor (spec §11, §13).
 
 Pure — takes an inventory and the keys the lab files reference, returns
-strings — so ``otto.init`` stays the one reader of a repo's files.
+strings — so ``otto.init`` stays the one reader of a project's files.
 """
 
 import stat

@@ -64,7 +64,7 @@ def _run_library_script(
     """Run :data:`_SCRIPT` as a plain ``python`` subprocess (no otto binary).
 
     Takes the exact env :func:`tests.e2e._otto_subprocess.run_otto` would build
-    (``OTTO_SUT_DIRS``, subprocess-coverage wiring, the ``-p no:tach`` scar —
+    (``OTTOPATH``, subprocess-coverage wiring, the ``-p no:tach`` scar —
     the script's ``run_tests`` drives ``pytest.main`` in-process, which is the
     #193 shape) but drives ``sys.executable`` against a script file, since this
     is a library-only flow with no CLI entry point involved.
@@ -73,7 +73,7 @@ def _run_library_script(
     script_path.write_text(_SCRIPT)
 
     env = otto_subprocess_env(
-        sut_dirs=REPO_E2E,
+        roots=REPO_E2E,
         extra_env={"OTTO_TEST_OUTPUT_DIR": str(output_dir), **(extra_env or {})},
     )
 

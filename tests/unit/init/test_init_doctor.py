@@ -1,6 +1,6 @@
 """The ``otto init`` doctor checks existing areas via real ingestion code — never rewrites.
 
-Every check runs against :func:`otto.init.check_repo` directly; how the leaf
+Every check runs against :func:`otto.init.check_project` directly; how the leaf
 renders a :class:`~otto.init.DoctorReport` is pinned in
 ``tests/unit/cli/test_init_render.py``.
 """
@@ -17,7 +17,7 @@ from otto.init import (
     InitConfig,
     InitInputError,
     ScaffoldReport,
-    check_repo,
+    check_project,
     detect_areas,
     scaffold,
     scaffold_candidates,
@@ -76,7 +76,7 @@ def test_duplicate_lab_declaration_across_files_of_one_source_fails(tmp_path: Pa
     _scaffold_all(tmp_path)
     lab_dir = _glob_one_source(tmp_path)
     (lab_dir / "lab_more.json").write_text(json.dumps({"labs": {"example_lab": {}}}))
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert not report.ok
     assert "declared in both" in _text(report)
     assert "lab_more.json" in _text(report)
@@ -98,7 +98,7 @@ def test_duplicate_element_across_files_of_one_source_fails(tmp_path: Path) -> N
             }
         )
     )
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert not report.ok
     assert "duplicate element" in _text(report)
     # See test_duplicate_lab_declaration_across_files_of_one_source_fails: a
@@ -129,7 +129,7 @@ def test_two_sources_may_each_declare_the_same_lab(tmp_path: Path) -> None:
             }
         )
     )
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert report.ok, _text(report)
 
 
@@ -152,7 +152,7 @@ def test_a_referenced_hosts_store_password_never_reaches_the_report(tmp_path: Pa
     lab_file.write_text(
         lab_file.read_text().replace('"os_type": "unix"', '"os_type": "unix", "usr": "ghost"')
     )
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert not report.ok
     assert "SECRET_XYZ" not in _text(report)
     assert "usr" in _text(report)  # the finding still names the offending field
@@ -173,7 +173,7 @@ def test_an_old_labs_user_key_reports_the_migration_without_leaking(tmp_path: Pa
     lab_file.write_text(
         lab_file.read_text().replace('"os_type": "unix"', '"os_type": "unix", "user": "ghost"')
     )
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert not report.ok
     assert "user was removed" in _text(report)
     assert "SECRET_XYZ" not in _text(report)
@@ -181,7 +181,7 @@ def test_an_old_labs_user_key_reports_the_migration_without_leaking(tmp_path: Pa
 
 def test_valid_repo_reports_all_ok(tmp_path: Path) -> None:
     _scaffold_all(tmp_path)
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert report.ok, _text(report)
     assert [(v.name, v.state) for v in report.verdicts] == [
         ("settings", "ok"),
@@ -200,7 +200,7 @@ def test_broken_settings_key_fails_with_pydantic_error(tmp_path: Path) -> None:
     settings.write_text(  # sutrepo-exempt: in-place corruption of a product-scaffolded file
         settings.read_text().replace("version =", "verzion =")
     )
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert report.verdict("settings").state == "failed"
     assert "verzion" in _text(report)
 
@@ -214,7 +214,7 @@ def test_invalid_host_field_fails_named(tmp_path: Path) -> None:
     _scaffold_all(tmp_path)
     lab_file = tmp_path / "lab_data" / "lab.json"
     lab_file.write_text(lab_file.read_text().replace('"os_type"', '"os_typo"'))
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert not report.ok
     assert "os_typo" in _text(report)
     assert "element 'example-device' hosts[0]" in _text(report)
@@ -232,7 +232,7 @@ def test_non_dict_host_entry_fails_named(tmp_path: Path) -> None:
     data = json.loads(lab_file.read_text())
     data["elements"][0]["hosts"].append("oops")
     lab_file.write_text(json.dumps(data))
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert not report.ok
     assert "elements[0]" in _text(report)
     assert "hosts.1" in _text(report)
@@ -249,7 +249,7 @@ def test_v1_lab_file_reports_the_migration_hint(tmp_path: Path) -> None:
     _scaffold_all(tmp_path)
     lab_file = tmp_path / "lab_data" / "lab.json"
     lab_file.write_text(json.dumps({"hosts": []}))
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert not report.ok
     assert "'hosts'" in _text(report)
     assert "'elements'" in _text(report)
@@ -266,7 +266,7 @@ def test_warnings_do_not_fail_the_doctor(tmp_path: Path) -> None:
     data = json.loads(lab_file.read_text())
     data["elements"][0]["labs"].append("never_declared")
     lab_file.write_text(json.dumps(data))
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert report.ok, _text(report)
     assert report.warnings
     assert "matches no declared lab" in _text(report)
@@ -281,7 +281,7 @@ def test_invalid_link_entry_fails_named(tmp_path: Path) -> None:
     # LinkSpec requires exactly two endpoints; one endpoint fails validation.
     data["links"].append({"endpoints": [{"host": "example-device"}]})
     lab_file.write_text(json.dumps(data))
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert not report.ok
     assert "links[0]" in _text(report)
 
@@ -293,7 +293,7 @@ def test_valid_link_entry_passes(tmp_path: Path) -> None:
     data = json.loads(lab_file.read_text())
     data["links"].append({"endpoints": [{"host": "example-device"}, {"host": "other-device"}]})
     lab_file.write_text(json.dumps(data))
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert report.ok, _text(report)
 
 
@@ -307,7 +307,7 @@ def test_unknown_top_level_section_fails(tmp_path: Path) -> None:
     data = json.loads(lab_file.read_text())
     data["routes"] = []  # not a known section
     lab_file.write_text(json.dumps(data))
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert not report.ok
     assert "unknown section" in _text(report)
     assert "routes" in _text(report)
@@ -322,7 +322,7 @@ def test_missing_libs_dir_reported(tmp_path: Path) -> None:
     """
     _scaffold_all(tmp_path)
     shutil.rmtree(tmp_path / "pylib")
-    verdict = check_repo(tmp_path).verdict("instructions")
+    verdict = check_project(tmp_path).verdict("instructions")
     assert verdict.state == "failed"
     assert f"libs dir not found: {tmp_path / 'pylib'}" in verdict.problems
 
@@ -363,16 +363,16 @@ def _write_schemas(tmp_path: Path) -> Path:
 
 
 def _schema_problems(tmp_path: Path) -> str:
-    return "\n".join(check_repo(tmp_path).verdict("schemas").problems)
+    return "\n".join(check_project(tmp_path).verdict("schemas").problems)
 
 
 def test_schemas_validate_green_after_scaffold_and_reformat(tmp_path: Path) -> None:
     out = _write_schemas(tmp_path)
-    assert check_repo(tmp_path).verdict("schemas").state == "ok"
+    assert check_project(tmp_path).verdict("schemas").state == "ok"
     # reformat-only change stays green: comparison is structural, not bytes
     lab = out / "lab.schema.json"
     lab.write_text(json.dumps(json.loads(lab.read_text()), indent=4, sort_keys=True))
-    assert check_repo(tmp_path).verdict("schemas").state == "ok"
+    assert check_project(tmp_path).verdict("schemas").state == "ok"
 
 
 def test_schemas_validate_flags_stale_missing_orphaned(tmp_path: Path) -> None:
@@ -382,7 +382,7 @@ def test_schemas_validate_flags_stale_missing_orphaned(tmp_path: Path) -> None:
     (out / "lab.schema.json").write_text(json.dumps(stale))
     (out / "settings.schema.json").unlink()
     (out / "ghost.schema.json").write_text("{}")
-    verdict = check_repo(tmp_path).verdict("schemas")
+    verdict = check_project(tmp_path).verdict("schemas")
     assert verdict.state == "failed"
     problems = "\n".join(verdict.problems)
     assert "lab.schema.json" in problems
@@ -485,7 +485,7 @@ def test_dead_reference_is_a_problem_naming_key_and_label(tmp_path, monkeypatch)
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     _scaffold_all(tmp_path)
     _point_first_host_at(tmp_path, "ghost")
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert not report.ok
     assert "hosts[0]" in _text(report)
     assert "key 'ghost' not found in inventory 'json:" in _text(report)
@@ -496,7 +496,7 @@ def test_referenced_entry_with_no_inventory_is_a_problem_naming_both_files(tmp_p
     _scaffold_all(tmp_path)
     _drop_table(tmp_path, "inventory")
     _drop_table(tmp_path, "creds")  # a lone [creds] would be the other error
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert not report.ok
     assert "no inventory is configured" in _text(report)
     assert "~/.otto/settings.toml" in _text(report)
@@ -508,7 +508,7 @@ def test_orphan_records_warn_and_the_label_is_reported(tmp_path, monkeypatch):
     inv = _set_inventory_records(
         tmp_path, {"device-01.lab.example": {"ip": "10.0.0.1"}, "spare": {"ip": "10.0.0.2"}}
     )
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert report.ok, _text(report)
     assert report.inventory_label == f"json:{inv}"
     assert report.warnings
@@ -519,7 +519,7 @@ def test_world_readable_creds_file_warns(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     _scaffold_all(tmp_path)
     (tmp_path / "lab_data" / "creds.json").chmod(0o644)
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert report.ok, _text(report)
     assert "creds store file" in _text(report)
     assert "0644" in _text(report)
@@ -542,7 +542,7 @@ def test_broken_user_inventory_settings_is_a_problem_not_a_traceback(tmp_path, m
     home.mkdir(parents=True, exist_ok=True)
     user_settings = home / "settings.toml"
     user_settings.write_text("not valid toml [[[")  # sutrepo-exempt: malformed TOML under test
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert not report.ok
     problems = "\n".join(report.verdict("lab").problems)
     assert "inventory:" in problems
@@ -577,7 +577,7 @@ def test_a_null_inventory_key_entry_is_still_validated_when_the_declaration_is_b
     host["inventory"] = None
     host["os_type"] = "not-a-real-os-type"
     lab_file.write_text(json.dumps(doc))
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert not report.ok
     assert "not-a-real-os-type" in _text(report)
     assert "Unknown os_type profile" in _text(report)
@@ -600,7 +600,7 @@ def test_a_referencing_host_is_not_double_reported_when_the_declaration_itself_i
     settings.write_text(  # sutrepo-exempt: breaking the scaffolded [inventory] on purpose
         settings.read_text().replace('path = "lab_data/inventory.json"\n', "")
     )
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert not report.ok
     assert "parse failed: path: Field required" in _text(report)
     assert "no inventory is configured" not in _text(report)
@@ -654,12 +654,12 @@ def test_the_doctor_reports_a_snapshot_it_served_because_the_backend_was_down(
     with NetBoxStub([device(1, "nb1")]) as stub:
         with settings.open("a") as f:  # sutrepo-exempt: declaring [inventory] post-scaffold
             f.write(f'\n[inventory]\nbackend = "netbox"\nurl = "{stub.base}"\ncache_ttl = "24h"\n')
-        primed = check_repo(tmp_path)
+        primed = check_project(tmp_path)
         assert primed.ok, _text(primed)
         assert "unreachable" not in _text(primed), "a live fetch must not report staleness"
     _age_the_snapshot(home, hours=31)
 
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert report.ok, _text(report)  # advisory: staleness never fails the doctor
     assert "unreachable" in _text(report)
     assert "31h old" in _text(report)
@@ -678,7 +678,7 @@ def test_a_file_that_fails_to_list_records_warns_rather_than_crashing(tmp_path, 
     _scaffold_all(tmp_path)
     _make_first_host_inline(tmp_path)
     (tmp_path / "lab_data" / "inventory.json").write_text("{not valid json")
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert report.ok, _text(report)
     assert report.warnings
     assert "could not list records" in _text(report)
@@ -687,7 +687,7 @@ def test_a_file_that_fails_to_list_records_warns_rather_than_crashing(tmp_path, 
 def test_inventory_for_memoises_a_resolved_inventory_per_root(tmp_path, monkeypatch):
     """The SAME cache, asked twice for the same root, returns the SAME object.
 
-    One ``check_repo`` asks ``_inventory_for`` up to three times (the "lab"
+    One ``check_project`` asks ``_inventory_for`` up to three times (the "lab"
     area's own validation, the warnings pass, the labels); without
     memoisation each ask reconstructs the backend. Identity (``is``), not
     just equality, is the proof it was not rebuilt — a fresh
@@ -726,7 +726,7 @@ def test_inventory_for_memoises_a_broken_declaration_too(tmp_path, monkeypatch):
 
 
 def test_one_check_repo_constructs_the_inventory_only_once(tmp_path, monkeypatch):
-    """End-to-end proof of the cache: one ``check_repo`` builds the inventory ONCE.
+    """End-to-end proof of the cache: one ``check_project`` builds the inventory ONCE.
 
     A check asks ``_inventory_for`` up to three times (the "lab" area's own
     validation, the warnings pass, and the labels); this counts the actual
@@ -747,7 +747,7 @@ def test_one_check_repo_constructs_the_inventory_only_once(tmp_path, monkeypatch
         return real(*args, **kwargs)
 
     monkeypatch.setattr(otto_inventory, "build_inventory_from_declarations", _counting)
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert report.ok, _text(report)
     assert len(calls) == 1
 
@@ -756,7 +756,7 @@ def test_orphan_creds_warn_and_the_store_label_is_reported(tmp_path, monkeypatch
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     _scaffold_all(tmp_path)
     _set_creds(tmp_path, {"device-01.lab.example": [{"login": "u", "password": "p"}], "stale": []})
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert report.ok, _text(report)
     assert report.inventory_label == f"json:{tmp_path / 'lab_data' / 'inventory.json'}"
     assert report.creds_label == f"json:{tmp_path / 'lab_data' / 'creds.json'}"
@@ -767,7 +767,7 @@ def test_creds_without_an_inventory_is_a_problem_naming_the_file(tmp_path, monke
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     _scaffold_all(tmp_path)
     _drop_table(tmp_path, "inventory")
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert not report.ok
     assert "[creds] is keyed by inventory key and no [inventory] is declared" in _text(report)
     assert str(tmp_path / ".otto" / "settings.toml") in _text(report)
@@ -789,7 +789,7 @@ def test_a_missing_creds_store_file_warns_rather_than_failing_the_check(tmp_path
     _make_first_host_inline(tmp_path)
     creds = tmp_path / "lab_data" / "creds.json"
     creds.unlink()  # the live [creds] table now points at a missing file
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert report.ok, _text(report)
     assert f"{creds} does not exist" in _text(report)
     assert "CredsError" not in _text(report)
@@ -799,7 +799,7 @@ def test_all_never_scaffolds_the_kmodcov_area(tmp_path: Path) -> None:
     assert "kmodcov" not in scaffold_candidates(tmp_path, all_areas=True)
     _scaffold_all(tmp_path)
     assert not (tmp_path / "third_party").exists()
-    assert check_repo(tmp_path).verdict("kmodcov").state == "absent"
+    assert check_project(tmp_path).verdict("kmodcov").state == "absent"
 
 
 def test_kmodcov_scaffolds_the_area_and_refreshes_it(tmp_path: Path) -> None:
@@ -837,7 +837,7 @@ def test_a_differing_vendored_copy_is_a_warning_not_a_failure(tmp_path: Path) ->
         'match = { id = ".*" }\n'
     )
     (tmp_path / "third_party" / "otto_kmodcov" / "kmodcov.c").write_text("// edited\n")
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert report.ok, _text(report)
     assert report.verdict("kmodcov").state == "ok"
     (warning,) = [w for w in report.warnings if "kmodcov.c" in w]
@@ -851,7 +851,7 @@ def test_a_declared_source_with_no_library_fails_the_kmodcov_area(tmp_path: Path
         settings.read_text() + '\n[[dev_tools]]\nname = "kmodcov-6.8"\nkind = "kmodcov"\n'
         'artifact = "build/otto_kmodcov.ko"\nsource = "vendor/missing"\nmatch = { id = ".*" }\n'
     )
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert not report.ok
     assert report.verdict("kmodcov").state == "failed"
     assert "vendor/missing" in _text(report)
@@ -867,7 +867,7 @@ def test_a_json_source_without_paths_fails_the_lab_area(tmp_path: Path) -> None:
     # Detected even though no lab file exists: a declaration that does not
     # prepare counts as present, so nothing is ever scaffolded beside it.
     assert "lab" in detect_areas(tmp_path)
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert report.verdict("settings").state == "ok"
     lab = report.verdict("lab")
     assert lab.state == "failed"
@@ -881,7 +881,7 @@ def test_a_source_whose_backend_registers_in_an_init_module_is_checked_after_ini
 ) -> None:
     """``otto init`` runs no init module, so such a source is deferred, never failed."""
     _settings(tmp_path, '[[lab.sources]]\nbackend = "cmdb"\nserver = "db"\n')
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert report.verdict("settings").state == "ok"
     assert "acme/cmdb#1 (backend 'cmdb'): checked after init" in report.verdict("lab").detail
 
@@ -892,7 +892,7 @@ def test_a_non_list_libs_or_tests_fails_settings_and_never_raises(
 ) -> None:
     """A scalar where the settings want a list is the settings area's problem, not a KeyError."""
     _settings(tmp_path, line)
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert report.verdict("settings").state == "failed"
 
 
@@ -901,7 +901,7 @@ def test_a_non_string_init_entry_fails_settings_once_and_blocks_instructions(
 ) -> None:
     """``init = [1, 2]`` is one settings problem, not a second "init module 1 not found"."""
     _settings(tmp_path, "init = [1, 2]\n")
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert report.verdict("settings").state == "failed"
     assert report.verdict("instructions") == AreaVerdict(
         "instructions", "blocked", detail="settings did not compile"
@@ -911,7 +911,7 @@ def test_a_non_string_init_entry_fails_settings_once_and_blocks_instructions(
 def test_a_non_list_init_fails_settings_once_and_blocks_instructions(tmp_path: Path) -> None:
     """``init = "mod"`` is the settings area's problem; instructions does not repeat it."""
     _settings(tmp_path, 'init = "acme_instructions"\n')
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert report.verdict("settings").state == "failed"
     assert report.verdict("instructions") == AreaVerdict(
         "instructions", "blocked", detail="settings did not compile"
@@ -924,7 +924,7 @@ def test_an_unreadable_test_file_is_a_problem_never_raises(tmp_path: Path) -> No
     tests_dir = tmp_path / "tests"
     (tests_dir / "test_dangling.py").symlink_to(tmp_path / "nowhere.py")
     (tests_dir / "test_a_dir.py").mkdir()
-    problems = "\n".join(check_repo(tmp_path).verdict("tests").problems)
+    problems = "\n".join(check_project(tmp_path).verdict("tests").problems)
     assert "test_dangling.py" in problems
     assert "test_a_dir.py" in problems
 
@@ -934,7 +934,7 @@ def test_a_lab_file_with_a_utf8_bom_fails_as_the_loader_refuses_it(tmp_path: Pat
     _scaffold_all(tmp_path)
     lab_file = tmp_path / "lab_data" / "lab.json"
     lab_file.write_bytes(b"\xef\xbb\xbf" + lab_file.read_bytes())
-    verdict = check_repo(tmp_path).verdict("lab")
+    verdict = check_project(tmp_path).verdict("lab")
     assert verdict.state == "failed"
     assert str(lab_file) in "\n".join(verdict.problems)
 
@@ -944,7 +944,7 @@ def test_a_typod_os_profile_default_fails_settings_and_registers_nothing(tmp_pat
 
     before = sorted(OS_PROFILES.names())
     _settings(tmp_path, '[os_profiles.acme-os]\nbase = "unix"\nosTyp = "unix"\n')
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert "unknown default field" in "\n".join(report.verdict("settings").problems)
     assert sorted(OS_PROFILES.names()) == before
 
@@ -960,10 +960,10 @@ def test_a_table_over_a_class_whose_module_is_missing_fails_settings(tmp_path: P
         spec=Ref("plugin_hosts_missing:PluginSpec"),
     )
     _settings(tmp_path, '[os_profiles.alpha]\nbase = "plugin-host"\n')
-    settings = check_repo(tmp_path).verdict("settings")
+    settings = check_project(tmp_path).verdict("settings")
     assert settings.state == "failed"
     problems = "\n".join(settings.problems)
-    assert "[os_profiles.alpha] in repo 'acme'" in problems
+    assert "[os_profiles.alpha] in project 'acme'" in problems
     assert f"base 'plugin-host' (host class registered by {__name__})" in problems
     assert "resolution failed: ModuleNotFoundError" in problems
 
@@ -973,7 +973,7 @@ def test_unparsable_settings_fail_once_and_block_lab_and_instructions(tmp_path: 
     (tmp_path / ".otto" / "settings.toml").write_text(  # sutrepo-exempt: malformed TOML under test
         'name = "acme\n'
     )
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     settings = report.verdict("settings")
     assert settings.state == "failed"
     assert len(settings.problems) == 1
@@ -991,7 +991,7 @@ def test_a_settings_file_that_is_not_utf8_fails_settings_and_never_raises(tmp_pa
     (tmp_path / ".otto").mkdir()
     settings = tmp_path / ".otto" / "settings.toml"
     settings.write_bytes(b'name = "\xff"\n')  # sutrepo-exempt: non-UTF-8 settings under test
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert report.verdict("settings").state == "failed"
     assert report.verdict("lab").state == "blocked"
     assert report.verdict("instructions").state == "blocked"
@@ -1002,14 +1002,14 @@ def test_undecodable_lab_and_test_files_are_problems_never_raises(tmp_path: Path
 
     The loader cannot read either one, so each is a problem naming the file —
     not a ``UnicodeDecodeError`` (or, for a NUL byte, ``ast.parse``'s
-    ``ValueError``) out of :func:`check_repo`.
+    ``ValueError``) out of :func:`check_project`.
     """
     _scaffold_all(tmp_path)
     lab_file = tmp_path / "lab_data" / "lab.json"
     lab_file.write_bytes(b'{"labs": "\xff"}')
     (tmp_path / "tests" / "test_bad_bytes.py").write_bytes(b'x = "\xff"\n')
     (tmp_path / "tests" / "test_nul.py").write_bytes(b"x = 1\x00\n")
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert report.verdict("lab").state == "failed"
     assert str(lab_file) in "\n".join(report.verdict("lab").problems)
     tests = "\n".join(report.verdict("tests").problems)
@@ -1020,7 +1020,7 @@ def test_undecodable_lab_and_test_files_are_problems_never_raises(tmp_path: Path
 @pytest.mark.parametrize("init_line", ["", "init = []\n"])
 def test_no_declared_init_is_absent_and_ok(tmp_path: Path, init_line: str) -> None:
     _settings(tmp_path, init_line)
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert report.verdict("instructions") == AreaVerdict(
         "instructions", "absent", detail="no init modules declared"
     )
@@ -1043,7 +1043,7 @@ def test_init_modules_resolve_like_the_loader(
     for rel, text in files.items():
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_text(text)
-    assert check_repo(tmp_path).verdict("instructions").state == "ok"
+    assert check_project(tmp_path).verdict("instructions").state == "ok"
 
 
 def test_an_init_module_on_sys_path_passes(tmp_path: Path, monkeypatch) -> None:
@@ -1052,13 +1052,13 @@ def test_an_init_module_on_sys_path_passes(tmp_path: Path, monkeypatch) -> None:
     (site / "doctor_path_only_xyz.py").write_text("")
     monkeypatch.syspath_prepend(str(site))
     _settings(tmp_path, 'libs = []\ninit = ["doctor_path_only_xyz"]\n')
-    assert check_repo(tmp_path).verdict("instructions").state == "ok"
+    assert check_project(tmp_path).verdict("instructions").state == "ok"
 
 
 def test_a_declared_init_that_resolves_nowhere_fails(tmp_path: Path) -> None:
     _settings(tmp_path, 'libs = ["pylib"]\ninit = ["ghost_xyz"]\n')
     (tmp_path / "pylib").mkdir()
-    verdict = check_repo(tmp_path).verdict("instructions")
+    verdict = check_project(tmp_path).verdict("instructions")
     assert verdict.state == "failed"
     assert "ghost_xyz" in verdict.problems[-1]
     assert str(tmp_path / "pylib") in verdict.problems[-1]
@@ -1066,14 +1066,14 @@ def test_a_declared_init_that_resolves_nowhere_fails(tmp_path: Path) -> None:
 
 def test_check_repo_refuses_a_missing_root(tmp_path: Path) -> None:
     with pytest.raises(InitInputError) as caught:
-        check_repo(tmp_path / "nope")
+        check_project(tmp_path / "nope")
     assert caught.value.field == "root"
 
 
 def test_check_repo_never_prints(tmp_path: Path, capsys) -> None:
     _scaffold_all(tmp_path)
     capsys.readouterr()
-    check_repo(tmp_path)
+    check_project(tmp_path)
     assert capsys.readouterr() == ("", "")
 
 
@@ -1100,7 +1100,7 @@ def test_a_path_under_an_unknown_users_home_fails_its_area_and_never_raises(
     settings, whose message quotes the path.
     """
     _settings(tmp_path, line)
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert report.verdict(area).state == "failed"
     assert named in _text(report)
     detect_areas(tmp_path)
@@ -1116,7 +1116,7 @@ def test_a_kmodcov_source_under_an_unknown_users_home_fails_kmodcov_and_never_ra
         'artifact = "build/otto_kmodcov.ko"\nsource = "~nosuchuser_xyz/kmodcov"\n'
         'match = { id = ".*" }\n',
     )
-    report = check_repo(tmp_path)
+    report = check_project(tmp_path)
     assert report.verdict("kmodcov").state == "failed"
     assert "~nosuchuser_xyz/kmodcov" in "\n".join(report.verdict("kmodcov").problems)
 
@@ -1133,13 +1133,15 @@ def test_the_doctor_and_the_loader_report_the_same_contextual_error(tmp_path: Pa
     data = json.loads(lab_file.read_text())
     data["elements"][0]["hosts"][0].update(valid_terms=["console"])
     lab_file.write_text(json.dumps(data))
-    doctor_lines = [line for line in _text(check_repo(tmp_path)).splitlines() if "hosts[0]" in line]
+    doctor_lines = [
+        line for line in _text(check_project(tmp_path)).splitlines() if "hosts[0]" in line
+    ]
     assert len(doctor_lines) == 1
     # The scaffold's host is inventory-referenced: the loader resolves it against the
     # inventory the doctor resolves it against.
-    repo = JsonFileLabRepository(search_paths=[tmp_path / "lab_data"])
+    repository = JsonFileLabRepository(search_paths=[tmp_path / "lab_data"])
     with pytest.raises(LabRepositoryError) as exc:
-        repo.load_lab(EXAMPLE_LAB_NAME, inventory=_inventory_for(tmp_path))
+        repository.load_lab(EXAMPLE_LAB_NAME, inventory=_inventory_for(tmp_path))
     tail = "term 'console' requires console_options.server"
     assert tail in doctor_lines[0]
     assert tail in str(exc.value)
@@ -1164,7 +1166,7 @@ def test_the_doctor_reports_a_bad_power_table_naming_the_host(tmp_path: Path, ki
         {"type": "command", "on_cmd": 5} if kind == "malformed" else "t-uncopyable"
     )
     lab_file.write_text(json.dumps(data))
-    text = _text(check_repo(tmp_path))
+    text = _text(check_project(tmp_path))
     reason = "parse failed" if kind == "malformed" else "cannot be copied"
     assert any(
         "hosts[0]" in line and "host 'example-device'" in line and reason in line

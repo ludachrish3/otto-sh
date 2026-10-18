@@ -43,7 +43,7 @@ FILES = [
     "otto/__init__.py",
     "otto/errors.py",
     "otto/config/__init__.py",
-    "otto/config/repo.py",
+    "otto/config/project.py",
     "otto/fleet.py",
     "otto/context/__init__.py",
     "otto/contexts/__init__.py",

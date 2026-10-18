@@ -44,7 +44,7 @@ time instead of written as a number in settings:
 `tests/repo5/docker/build.sh` computes the strip count from its own build
 directory's absolute path and passes it as `--build-arg
 GCOV_PREFIX_STRIP`. The strip count depends on where on disk the compiler
-ran, which differs between checkouts of the same repo, so bake it into the
+ran, which differs between checkouts of the same project, so bake it into the
 image at build time rather than writing it in `settings.toml`: it then
 travels with whatever tarball or reference actually gets run.
 

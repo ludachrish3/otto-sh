@@ -30,7 +30,7 @@ def _admit_all_scopes():
     don't have. Individual tests override this with a nested patch to
     exercise real scoping.
     """
-    with patch.object(resolve_mod, "scope_for_repo", return_value=None):
+    with patch.object(resolve_mod, "scope_for_project", return_value=None):
         yield
 
 
@@ -227,10 +227,10 @@ def test_build_facts_hosts_scoped_to_union_of_participating_repos():
     sf_b = SelectedFragment(_repo("b"), _frag())
     sel = Selection(use_case="integration", fragments=[sf_a, sf_b])
     with (
-        patch.object(resolve_mod, "scope_for_repo", side_effect=lambda name: name),
+        patch.object(resolve_mod, "scope_for_project", side_effect=lambda name: name),
         patch.object(
             resolve_mod,
-            "repo_targets",
+            "project_targets",
             side_effect=lambda scope, lab_name, hid: (
                 (scope, hid) in {("a", "test3"), ("b", "test1")}
             ),

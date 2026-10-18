@@ -158,8 +158,8 @@ async def test_run_live_hands_the_server_the_declared_cert_and_key(
     lab, served, tls_pair, monkeypatch
 ):
     cert, key = tls_pair
-    repo = fake_repo("r", monitor_settings=MonitorSettings(tls_cert=cert, tls_key=key))
-    patch_bootstrap(monkeypatch, [repo])
+    project = fake_repo("r", monitor_settings=MonitorSettings(tls_cert=cert, tls_key=key))
+    patch_bootstrap(monkeypatch, [project])
     await run_live(hosts="web1")
     kwargs = served.call_args.kwargs
     assert (kwargs["tls_cert"], kwargs["tls_key"]) == (cert, key)
@@ -232,9 +232,9 @@ async def test_tunnel_discovery_covers_the_whole_lab_not_the_selection(lab):
     assert seen == [whole]
 
 
-def _context_over(repos):
+def _context_over(projects):
     """A real context whose repos are *repos*, from one result handed to it."""
-    return OttoContext(lab=Lab(name="rig"), bootstrap=fake_bootstrap_result(repos))
+    return OttoContext(lab=Lab(name="rig"), bootstrap=fake_bootstrap_result(projects))
 
 
 class TestDrivingRepoScopeGate:
@@ -257,13 +257,13 @@ class TestDrivingRepoScopeGate:
         from otto.config.scope import ProjectScope
 
         return ProjectScope(
-            repo_name=name,
+            project_name=name,
             declared=True,
             config=None,
             applicable_labs=frozenset() if excluded else frozenset({"bench"}),
             universe=frozenset() if excluded else frozenset({"box"}),
             excluded=excluded,
-            sut_dir=f"/repos/{name}",
+            root=f"/repos/{name}",
             loaded_labs=("bench",),
             lab_patterns=(f"{name}-lab",),
             host_patterns=(".*",),
@@ -289,13 +289,13 @@ class TestDrivingRepoScopeGate:
             "app": cls._scope("app", excluded=excluded == "app"),
             "base": cls._scope("base", excluded=excluded == "base"),
         }
-        repos = [
+        projects = [
             fake_repo("app", monitor_settings=MonitorSettings()),
             fake_repo("base", monitor_settings=MonitorSettings()),
         ]
         monkeypatch.setattr("otto.fleet.all_hosts", _all_hosts)
-        patch_bootstrap(monkeypatch, repos)
-        ctx = _context_over(repos)
+        patch_bootstrap(monkeypatch, projects)
+        ctx = _context_over(projects)
         seed_scope_verdicts(ctx, scopes)
         monkeypatch.setattr("otto.run_context.get_context", lambda: ctx)
         return contacted
@@ -328,7 +328,7 @@ class TestDrivingRepoScopeGate:
     async def test_the_driving_repo_is_the_contexts_not_the_composition_roots(
         self, lab, served, monkeypatch
     ):
-        """The gate reads ``ctx.repos``: a composition root listing the repos otherwise is ignored.
+        """The gate reads ``ctx.projects``; a composition root listing repos otherwise is ignored.
 
         The context's first repo is ``app``, whose scope is unusable; the
         composition root lists the healthy ``base`` first. A gate that read
@@ -352,8 +352,8 @@ class TestDrivingRepoScopeGate:
     async def test_an_excluded_dependency_does_not_stop_the_monitor(self, lab, served, monkeypatch):
         """D3's asymmetry, and the mirror that kills a gate pointed at the wrong repo.
 
-        ``ctx.repos[0]`` is the driving project; the walk order's first entry
-        is a dependency (``get_ordered_repos`` is a topological reorder). A gate
+        ``ctx.projects[0]`` is the driving project; the walk order's first entry
+        is a dependency (``get_ordered_projects`` is a topological reorder). A gate
         reading the latter refuses here, where the monitor must simply run.
         """
         contacted = self._world(monkeypatch, excluded="base")
@@ -383,7 +383,7 @@ class TestDrivingRepoScopeGate:
 
     @pytest.mark.asyncio
     async def test_a_context_with_no_repos_is_untouched(self, lab, served, monkeypatch):
-        """A checkout with no ``OTTO_SUT_DIRS``, under a context: no current repo to refuse.
+        """A checkout with no ``OTTOPATH``, under a context: no current repo to refuse.
 
         The context's verdicts are empty and its ``repos`` is ``[]``, so the
         gate must not invent a verdict (nor die indexing an empty list).

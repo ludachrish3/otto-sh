@@ -27,7 +27,7 @@ The order is not incidental; the last step depends on it.
    path that doesn't exist warns and still registers the tier, so its column
    renders empty rather than vanishing.
 3. **E2e captures.** `_load_captures` folds each board's `capture.json`
-   under a strict guard: `capture.base_commit` must equal the repo's `HEAD`,
+   under a strict guard: `capture.base_commit` must equal the checkout's `HEAD`,
    or the report stops with `CoverageDataMismatchError` naming both commits.
    An e2e capture carries no anchor chain — its coordinates *are* that
    commit's line numbers — so a matching tree is the only thing that makes
@@ -39,7 +39,7 @@ The order is not incidental; the last step depends on it.
    the edit.
 4. **Unit harvest.** `_harvest_unit_tiers` lcov-captures each `kind ==
    "unit"` tier's `harvest_dirs` out of the *current* build tree (relative
-   entries resolved against the SUT repo root, not the process CWD — `otto
+   entries resolved against the project root, not the process CWD — `otto
    cov report` may run from anywhere). One run id per **tier**, not per
    directory: `tier_run_id` is created lazily on the first usable dir and
    reused, so a tier with three harvest dirs contributes one run. Counters

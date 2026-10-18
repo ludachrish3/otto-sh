@@ -41,14 +41,14 @@ def test_z_last():
 
 
 def test_no_random_runs_in_collection_order(sut_repo, tmp_path):
-    repo = sut_repo(files={"tests/test_order.py": _ORDERED})
+    project = sut_repo(files={"tests/test_order.py": _ORDERED})
     result = run_tests(
         ["TestB", "TestA", "test_z_last"],
         run_options=RunOptions(random_order=False),
         output_dir=tmp_path / "out",
     )
     assert result.exit_code == 0
-    assert (repo / "tests/order.json").read_text() == '["B2", "B1", "A2", "A1"]'
+    assert (project / "tests/order.json").read_text() == '["B2", "B1", "A2", "A1"]'
 
 
 def test_a_class_name_selects_its_tests(sut_repo, tmp_path):

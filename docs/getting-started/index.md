@@ -36,7 +36,7 @@ place completion setup is described; `otto init` ends with the same steps.
 **This shell.** Export the path of your project (the one [Project setup](#project-setup) creates — do that first if you have none yet), install the script, and source it:
 
 ```bash
-export OTTO_SUT_DIRS=/path/to/your/project
+export OTTOPATH=/path/to/your/project
 otto --install-completion
 source ~/.bash_completions/otto.sh
 ```
@@ -48,7 +48,7 @@ in the shell you are already in. Type `otto ru<Tab>` to check.
 **Future shells.**
 
 - `~/.bashrc`: the installer already added the `source` line, so add only the
-  `export OTTO_SUT_DIRS=...` line.
+  `export OTTOPATH=...` line.
 - `~/.profile` (if your login shell reads it instead of `~/.bashrc`): add both
   the `export` line and `source ~/.bash_completions/otto.sh`.
 
@@ -76,7 +76,7 @@ replaces it, and the rest of the global options.
 {doc}`../cli/init` is the flag reference; {doc}`../configuration/settings`
 explains every key `settings.toml` accepts and the one-time
 {ref}`team-setup-checklist`. Point otto at the project with the
-`export OTTO_SUT_DIRS=…` line it printed — nothing is discovered from the
+`export OTTOPATH=…` line it printed — nothing is discovered from the
 working directory.
 
 The scaffolded `example-device` is a placeholder: its `lab_data/lab.json`

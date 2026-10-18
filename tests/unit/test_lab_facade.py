@@ -76,7 +76,7 @@ _IMPORT_ORDERS = {
 
 @pytest.mark.parametrize("first", sorted(_IMPORT_ORDERS))
 def test_the_old_fleet_spelling_is_gone_in_either_import_order(first):
-    """Importing ``get_lab`` or ``get_repos`` from ``otto.config`` fails, whatever loaded first.
+    """Importing ``get_lab`` or ``get_projects`` from ``otto.config`` fails, whatever loaded first.
 
     A lazy resolver, or a module that binds a name into its parent package when
     it loads, can make an old spelling work only after some other import ran.

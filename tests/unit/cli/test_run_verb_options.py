@@ -39,7 +39,7 @@ class RivalOptions:
 def repo1_cli(monkeypatch, run_cli):
     """``run_cli`` over the real ``tests/repo1``, bootstrapped as ``otto`` would.
 
-    ``OTTO_SUT_DIRS`` points at repo1 and ``bootstrap()`` imports its init
+    ``OTTOPATH`` points at repo1 and ``bootstrap()`` imports its init
     modules, so its instructions and its ``register_options`` calls are the
     ones the command sees. repo1's init package is evicted first (and put back
     after), so a copy another test cached cannot turn the import into a no-op.
@@ -50,7 +50,7 @@ def repo1_cli(monkeypatch, run_cli):
         m: sys.modules.pop(m) for m in list(sys.modules) if m.startswith("repo1_instructions")
     }
     monkeypatch.setattr(sys, "path", list(sys.path))
-    monkeypatch.setenv("OTTO_SUT_DIRS", str(TESTS_ROOT / "repo1"))
+    monkeypatch.setenv("OTTOPATH", str(TESTS_ROOT / "repo1"))
     bs._reset()
     try:
         assert bs.bootstrap().errors == []
@@ -97,14 +97,14 @@ def test_own_options_inheriting_a_registered_base_share_one_flag(run_cli):
     seen = {}
 
     @instruction(options=InstallOptions)
-    async def provision(opts: InstallOptions, repo: RepoOptions) -> None:
-        seen.update(own=(opts.lab_env, opts.debug), repo=repo.lab_env)
+    async def provision(opts: InstallOptions, project: RepoOptions) -> None:
+        seen.update(own=(opts.lab_env, opts.debug), project=project.lab_env)
 
     help_text = run_cli(["run", "provision", "--help"]).output
     assert help_text.count("--lab-env") == 1
     result = run_cli(["run", "provision", "--lab-env", "prod", "--debug"])
     assert result.exit_code == 0, result.output
-    assert seen == {"own": ("prod", True), "repo": "prod"}
+    assert seen == {"own": ("prod", True), "project": "prod"}
 
 
 def test_ctx_options_works_inside_an_instruction(run_cli):
@@ -485,7 +485,7 @@ class TestDryRunBuildsAndShowsOptions:
         register_options(RepoOptions, verbs=["run"])
 
         @instruction(options=InstallOptions)
-        async def provision(opts: InstallOptions, repo: RepoOptions) -> None: ...
+        async def provision(opts: InstallOptions, project: RepoOptions) -> None: ...
 
         dry = run_cli(["run", "provision", "--lab-env", "prod", "--debug"], dry_run=True)
         assert dry.exit_code == 0, dry.output

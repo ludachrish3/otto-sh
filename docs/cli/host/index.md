@@ -31,7 +31,7 @@ otto host <HOST_ID> ls [PATH] [--all]
 otto host --list-hosts
 ```
 
-`otto host` is **not** scoped by any repo's `[project]` declaration: naming a
+`otto host` is **not** scoped by any project's `[project]` declaration: naming a
 host explicitly reaches it wherever it is in the loaded lab, and the "Available
 hosts" listing printed for an unknown id enumerates the whole lab.  Explicit
 targeting beats scoping — see

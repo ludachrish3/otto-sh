@@ -7,7 +7,7 @@ Two things do, and they are the same shape:
 
 - a **product** — a unit of the software under test. Whether the lab is
   installed is a question about products.
-- a **dev tool** — the repo's own tooling that helps test the product: a trace
+- a **dev tool** — the project's own tooling that helps test the product: a trace
   probe, a scratch helper. It is placed and removed on its own schedule and is
   never part of the installed-or-not answer.
 
@@ -40,7 +40,7 @@ string out and otto takes the honest default: no `install` means staging was
 the install, no `check` means otto assumes the product is not installed and
 stages again. Every key is in {doc}`../configuration/declared-products-tools`.
 
-Declaring a product makes the `[project]` table required — the repo has to say
+Declaring a product makes the `[project]` table required — the project has to say
 which labs and hosts it is speaking for. The worked example declares it as
 `lab_patterns = ["busybox"]` and `host_patterns = ["bb.*-qemu"]`, both
 fullmatched regexes, defined in {ref}`project-scope` in
@@ -75,7 +75,7 @@ only what it overrides (`stage`, `install`, `uninstall`, `is_installed`,
 `get_logs`). The entry's other keys are the class's fields — `cov_dir` is the
 one coverage-shaped thing a product declares: the host-side directory its
 instrumented build writes `.gcda` counters into ({doc}`coverage` is the whole
-coverage walkthrough). The class is imported from the repo's `libs` when the
+coverage walkthrough). The class is imported from the project's `libs` when the
 entry is built; it is not listed in `init`. {ref}`class-entries` has the full
 rules, including fields a subclass adds.
 
@@ -108,22 +108,22 @@ them: a host carrying nothing but a debug probe does not read as installed.
 ## What you get for free
 
 With products declared and nothing else written, six commands already work
-against the lab. Each walks every configured repo in dependency order:
+against the lab. Each walks every configured project in dependency order:
 
 | Command | What it does |
 | ------- | ------------ |
-| `otto run install` | Installs every repo's products, dependencies first, stopping at the first failure. |
+| `otto run install` | Installs every project's products, dependencies first, stopping at the first failure. |
 | `otto run uninstall` | Takes the products off, dependents first, best-effort, hauling logs off first. |
-| `otto run cleanup` | Uninstall, plus each repo's dev tools, each host's shared toolchain tools, and the lab's own leftovers (network impairments, otto's tunnels). |
-| `otto run get-logs` | Gathers every repo's product logs, then sweeps each host's debug logs once. |
-| `otto run install-tools` | Installs each repo's dev tools (and, when asked, each host's shared toolchain tools). |
-| `otto run status` | Reports each repo's install state and the lab's, and exits on it. |
+| `otto run cleanup` | Uninstall, plus each project's dev tools, each host's shared toolchain tools, and the lab's own leftovers (network impairments, otto's tunnels). |
+| `otto run get-logs` | Gathers every project's product logs, then sweeps each host's debug logs once. |
+| `otto run install-tools` | Installs each project's dev tools (and, when asked, each host's shared toolchain tools). |
+| `otto run status` | Reports each project's install state and the lab's, and exits on it. |
 
 Two of them are worth trying first.
 
 `otto run status` reads and changes nothing. It exits `0` when every
-[counted](../cli/run/defaults.md#reading-status) repo is installed, `1`
-when every counted repo is uninstalled, and `2` for anything in
+[counted](../cli/run/defaults.md#reading-status) project is installed, `1`
+when every counted project is uninstalled, and `2` for anything in
 between — a *partial* lab, which is what a half-finished install leaves behind.
 
 `otto run install --ensure` converges rather than installs blindly: it reads
@@ -132,7 +132,7 @@ partial lab instead of installing on top of remnants. That is exactly what a
 test marked `@pytest.mark.ensure("installed")` runs before its body.
 
 {doc}`../cli/run/defaults` is the full treatment: every flag, the walk
-order across repos, what `cleanup` does and does not take off the lab, and how
+order across projects, what `cleanup` does and does not take off the lab, and how
 to read `status`.
 
 ## Variants
@@ -143,6 +143,6 @@ one; `otto --field run install` picks the field one. See {ref}`product-variants`
 ## Next
 
 The six commands above are otto's own bodies for six **project instructions**.
-A repo can change what any of them do, and add flags of its own — that is
+A project can change what any of them do, and add flags of its own — that is
 {doc}`customizing-project-instructions`, after the host customizations on the
 next page.

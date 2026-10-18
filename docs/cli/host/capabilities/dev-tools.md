@@ -9,13 +9,13 @@ differently:
 
 | Kind | Declared | Owned by | Installed by |
 |------|----------|----------|--------------|
-| **Dev tool** | in `settings.toml` (`[[dev_tools]]`, {doc}`../../../configuration/declared-products-tools`) or in code, via a provider | the repo that declared/registered it | `install-tools` (on by default) |
-| **Toolchain tool** | in lab data, per host | the host — shared by every repo | `install-tools --toolchain` |
+| **Dev tool** | in `settings.toml` (`[[dev_tools]]`, {doc}`../../../configuration/declared-products-tools`) or in code, via a provider | the project that declared/registered it | `install-tools` (on by default) |
+| **Toolchain tool** | in lab data, per host | the host — shared by every project | `install-tools --toolchain` |
 
 | Method | Behavior |
 |--------|----------|
 | `await host.install_tools(dev=True, toolchain=False)` | Dispatcher over the two below. |
-| `await host.install_dev_tools(owner=None)` | Stage then install each dev tool, in declaration order (first failure wins). `owner` narrows the walk to one repo's tools. |
+| `await host.install_dev_tools(owner=None)` | Stage then install each dev tool, in declaration order (first failure wins). `owner` narrows the walk to one project's tools. |
 | `await host.uninstall_dev_tools(owner=None)` | Remove each dev tool (best-effort, first failure returned), narrowed by `owner`. |
 | `await host.install_toolchain_tools()` | Put each declared tool, rename it to its declared `name`, `chown` it to its declared `user`. |
 | `await host.remove_toolchain_tools()` | Remove each declared tool (best-effort). |

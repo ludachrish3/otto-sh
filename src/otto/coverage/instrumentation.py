@@ -34,7 +34,7 @@ from rich.table import Table
 from .errors import CoverageNotInstrumentedError
 
 if TYPE_CHECKING:
-    from ..config.repo import Repo
+    from ..config.project import Project
     from ..host.product import Product
 
 logger = logging.getLogger(__name__)
@@ -124,7 +124,7 @@ def detect(hosts: Iterable[Any]) -> InstrumentationReport:
     return InstrumentationReport(rows)
 
 
-def detect_for_lab(repos: "list[Repo] | None" = None) -> InstrumentationReport:
+def detect_for_lab(projects: "list[Project] | None" = None) -> InstrumentationReport:
     """Detect over every host the ``[coverage].hosts`` selector matches.
 
     With no ``[coverage]`` table the selector's own default applies: every
@@ -132,18 +132,18 @@ def detect_for_lab(repos: "list[Repo] | None" = None) -> InstrumentationReport:
     a container (spec §13).
     """
     from ..config.coverage_settings import get_cov_config, load_hosts_pattern
-    from ..declared import current_repos
+    from ..declared import current_projects
     from ..fleet import all_hosts
 
-    if repos is None:
+    if projects is None:
         # The composition root: importing it installs the initiator that composes
-        # the run's repos when no run is installed (spec 2026-10-11
+        # the run's projects when no run is installed (spec 2026-10-11
         # placement-and-phases §3.12).
         from .. import bootstrap
 
         del bootstrap
-        repos = current_repos()
-    cov_config = get_cov_config(repos)
+        projects = current_projects()
+    cov_config = get_cov_config(projects)
     pattern = load_hosts_pattern(cov_config)
     return detect(all_hosts(pattern=pattern, include_containers=True))
 

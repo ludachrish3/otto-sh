@@ -17,11 +17,11 @@ See the design notes in ``docs/design/docker_hosts.md`` for the full
 architecture (parent-delegation pattern, hop inheritance, naming scheme).
 
 Every name is exported lazily (PEP 562), including ``AdapterResult`` /
-``register_compose_adapter`` (repo-registered compose adapters, spec §7),
+``register_compose_adapter`` (project-registered compose adapters, spec §7),
 ``deploy`` / ``teardown`` / ``deployed`` / ``UseCaseStack`` (the use-case
 deploy pipeline, spec §8/§11), and ``build_on`` / ``compose_build`` /
 ``DockerVerbError`` with the report types they and ``teardown`` return
-(``BuildReport``, ``RepoBuild``, ``ImageBuild``, ``FailedImage``,
+(``BuildReport``, ``ProjectBuild``, ``ImageBuild``, ``FailedImage``,
 ``HostReport``, ``TeardownReport``), and the read-only observe verbs
 ``list_containers`` / ``list_images`` with their ``ObserveReport``, and the
 one parent rule (``default_docker_parent`` / ``docker_parent``): a caller
@@ -76,7 +76,7 @@ if TYPE_CHECKING:
     from .reports import FailedImage as FailedImage
     from .reports import HostReport as HostReport
     from .reports import ImageBuild as ImageBuild
-    from .reports import RepoBuild as RepoBuild
+    from .reports import ProjectBuild as ProjectBuild
     from .reports import TeardownReport as TeardownReport
 
 # name -> the module that defines it, imported on first access by __getattr__.
@@ -115,7 +115,7 @@ _LAZY_ATTRS: dict[str, str] = {
     "FailedImage": "otto.docker.reports",
     "HostReport": "otto.docker.reports",
     "ImageBuild": "otto.docker.reports",
-    "RepoBuild": "otto.docker.reports",
+    "ProjectBuild": "otto.docker.reports",
     "TeardownReport": "otto.docker.reports",
 }
 
@@ -145,7 +145,7 @@ __all__ = [
     "ImageBuild",
     "LogsTarget",
     "ObserveReport",
-    "RepoBuild",
+    "ProjectBuild",
     "TeardownReport",
     "UseCaseStack",
     "build_images",

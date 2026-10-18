@@ -7,7 +7,7 @@ test assert specific text in the subprocess stdout.
 
 Run it against the unix lab::
 
-    OTTO_SUT_DIRS=<repo1 dir> otto -l unix run run-on-container \\
+    OTTOPATH=<repo1 dir> otto -l unix run run-on-container \\
         --on <element>.repo1.api
 
 The container must already be running when this instruction executes

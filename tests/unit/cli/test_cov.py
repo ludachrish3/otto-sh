@@ -455,14 +455,24 @@ class TestCovReportSuccess:
             [
                 "report",
                 str(cov_tree),
-                "--project-name",
+                "--report-title",
                 "My Project",
                 "--dir",
                 str(cov_tree / "report"),
             ],
         )
         assert result.exit_code == 0
-        assert mock.call_args.kwargs["project_name"] == "My Project"
+        assert mock.call_args.kwargs["report_title"] == "My Project"
+
+    def test_the_old_title_flag_is_refused(self, cov_tree, mock_run_report):
+        mock, _ = mock_run_report
+        result = runner.invoke(
+            cov_app,
+            ["report", str(cov_tree), "--project-name", "X", "--dir", str(cov_tree / "report")],
+        )
+        assert result.exit_code == 2
+        assert "No such option: --project-name" in " ".join(result.output.split())
+        mock.assert_not_called()
 
     def test_report_multiple_output_dirs(self, tmp_path, mock_run_report):
         mock, _ = mock_run_report
@@ -565,14 +575,16 @@ class TestCovReportTicketsJson:
         from otto.coverage.tickets import build_ticket_spec
         from otto.coverage.tiers import TierConfig
 
-        repo_root = tmp_path / "sut"
+        project_root = tmp_path / "sut"
         tiers = [TierConfig(name="system", kind="e2e", precedence=1, color="green")]
         spec = build_ticket_spec(r"[A-Z]{2,10}-[0-9]+", None)
         with patch(
             "otto.coverage.report_inputs.resolve_report_inputs",
-            return_value=ReportInputs(repo_root=repo_root, tier_configs=tiers, ticket_spec=spec),
+            return_value=ReportInputs(
+                project_root=project_root, tier_configs=tiers, ticket_spec=spec
+            ),
         ):
-            yield repo_root
+            yield project_root
 
     def test_no_flag_never_writes_export(self, cov_tree, mock_run_report):
         with patch("otto.coverage.ticket_export.write_ticket_export") as mock_write:
@@ -586,7 +598,7 @@ class TestCovReportTicketsJson:
         self, cov_tree, mock_run_report, mock_resolve_settings
     ):
         _mock, mock_store = mock_run_report
-        repo_root = mock_resolve_settings
+        project_root = mock_resolve_settings
         target = cov_tree / "tickets.json"
         with patch("otto.coverage.ticket_export.write_ticket_export") as mock_write:
             result = runner.invoke(
@@ -596,7 +608,7 @@ class TestCovReportTicketsJson:
                     str(cov_tree),
                     "--tickets-json",
                     str(target),
-                    "--project-name",
+                    "--report-title",
                     "My App",
                     "--dir",
                     str(cov_tree / "report"),
@@ -607,8 +619,8 @@ class TestCovReportTicketsJson:
         args, kwargs = mock_write.call_args
         assert args[0] is mock_store
         assert args[1] == target
-        assert kwargs["repo_root"] == repo_root
-        assert kwargs["project"] == "My App"
+        assert kwargs["project_root"] == project_root
+        assert kwargs["report_title"] == "My App"
         assert isinstance(kwargs["otto_version"], str)
         assert isinstance(kwargs["generated"], str)
 
@@ -688,11 +700,11 @@ class TestCovReportCollectionModel:
         host_dir.mkdir(parents=True)
         (host_dir / "main.gcda").write_bytes(b"\x00")
 
-        repo_root = tmp_path / "sut"
+        project_root = tmp_path / "sut"
         tiers = [TierConfig(name="system", kind="e2e", precedence=1, color="green")]
         with patch(
             "otto.coverage.report_inputs.resolve_report_inputs",
-            return_value=ReportInputs(repo_root=repo_root, tier_configs=tiers),
+            return_value=ReportInputs(project_root=project_root, tier_configs=tiers),
         ):
             result = runner.invoke(
                 cov_app, ["report", str(tmp_path), "--dir", str(tmp_path / "report")]
@@ -700,7 +712,7 @@ class TestCovReportCollectionModel:
 
         assert result.exit_code == 0
         inputs = mock_run_report.call_args.args[2]
-        assert inputs.repo_root == repo_root
+        assert inputs.project_root == project_root
         assert inputs.tier_configs == tiers
         assert mock_run_report.call_args.kwargs["tier_specs"] == [("system", None)]
 
@@ -713,12 +725,14 @@ class TestCovReportCollectionModel:
         host_dir.mkdir(parents=True)
         (host_dir / "main.gcda").write_bytes(b"\x00")
 
-        repo_root = tmp_path / "sut"
+        project_root = tmp_path / "sut"
         tiers = [TierConfig(name="system", kind="e2e", precedence=1, color="green")]
         spec = build_ticket_spec(r"[A-Z]{2,10}-[0-9]+", None)
         with patch(
             "otto.coverage.report_inputs.resolve_report_inputs",
-            return_value=ReportInputs(repo_root=repo_root, tier_configs=tiers, ticket_spec=spec),
+            return_value=ReportInputs(
+                project_root=project_root, tier_configs=tiers, ticket_spec=spec
+            ),
         ):
             result = runner.invoke(
                 cov_app, ["report", str(tmp_path), "--dir", str(tmp_path / "report")]
@@ -764,13 +778,13 @@ class TestCovReportCollectionModel:
         host_dir.mkdir(parents=True)
         (host_dir / "main.gcda").write_bytes(b"\x00")
 
-        repo_root = tmp_path / "sut"
+        project_root = tmp_path / "sut"
         tiers = [TierConfig(name="system", kind="e2e", precedence=1, color="green")]
         rules = [MarkerRule(stat="line", name="MYPROJ_NO_COV")]
         with patch(
             "otto.coverage.report_inputs.resolve_report_inputs",
             return_value=ReportInputs(
-                repo_root=repo_root, tier_configs=tiers, exclusion_rules=rules
+                project_root=project_root, tier_configs=tiers, exclusion_rules=rules
             ),
         ):
             result = runner.invoke(
@@ -807,7 +821,7 @@ class TestCovReportCollectionModel:
 
         assert result.exit_code == 0
         inputs = mock_run_report.call_args.args[2]
-        assert inputs.repo_root is None
+        assert inputs.project_root is None
         assert inputs.tier_configs is None
         assert mock_run_report.call_args.kwargs["tier_specs"] == [
             ("unit", Path("/u.info")),
@@ -816,17 +830,17 @@ class TestCovReportCollectionModel:
 
     def test_no_output_dirs_allowed_for_manual_only_report(self, mock_run_report, tmp_path):
         """output_dirs is optional: a manual-store-only report needs no run dirs."""
-        repo_root = Path("/some/repo")
+        project_root = Path("/some/repo")
         with patch(
             "otto.coverage.report_inputs.resolve_report_inputs",
-            return_value=ReportInputs(repo_root=repo_root),
+            return_value=ReportInputs(project_root=project_root),
         ):
             result = runner.invoke(cov_app, ["report", "--dir", str(tmp_path / "report")])
 
         assert result.exit_code == 0
         args = mock_run_report.call_args.args
         assert args[0] == []  # no cov dirs
-        assert args[2].repo_root == repo_root
+        assert args[2].project_root == project_root
 
 
 # ── report command — collection-model failure modes & empty-report contract ──
@@ -842,15 +856,15 @@ class TestCovReportCollectionModelErrors:
     def test_malformed_manual_capture_exits_1_no_traceback(self, tmp_path):
         """A committed but corrupt manual capture makes load_manual_captures raise
         ValueError; report must exit 1 with the malformed-capture message, no traceback."""
-        repo_root = tmp_path / "sut"
-        manual = repo_root / ".otto" / "coverage" / "manual"
+        project_root = tmp_path / "sut"
+        manual = project_root / ".otto" / "coverage" / "manual"
         manual.mkdir(parents=True)
         (manual / "bad.json").write_text("{nope")
 
         with (
             patch(
                 "otto.coverage.report_inputs.resolve_report_inputs",
-                return_value=ReportInputs(repo_root=repo_root, tier_configs=self._tiers()),
+                return_value=ReportInputs(project_root=project_root, tier_configs=self._tiers()),
             ),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
@@ -863,12 +877,12 @@ class TestCovReportCollectionModelErrors:
     def test_empty_report_exits_1_naming_searched_inputs(self, tmp_path):
         """A store with zero files is a vacuous success; the CI-friendly loud
         fail is restored — exit 1 naming the inputs it searched."""
-        repo_root = tmp_path / "sut"
+        project_root = tmp_path / "sut"
 
         with (
             patch(
                 "otto.coverage.report_inputs.resolve_report_inputs",
-                return_value=ReportInputs(repo_root=repo_root, tier_configs=self._tiers()),
+                return_value=ReportInputs(project_root=project_root, tier_configs=self._tiers()),
             ),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
@@ -890,7 +904,7 @@ class TestCovReportCollectionModelErrors:
         with (
             patch(
                 "otto.coverage.report_inputs.resolve_report_inputs",
-                return_value=ReportInputs(repo_root=not_git, tier_configs=self._tiers()),
+                return_value=ReportInputs(project_root=not_git, tier_configs=self._tiers()),
             ),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
@@ -909,21 +923,21 @@ class TestCovReportCollectionModelErrors:
         file: resolve_report_inputs's real load_override_config call raises
         OverrideConfigError (a ValueError), which report's existing
         `except ValueError` handler must print clean — no traceback."""
-        repo = MagicMock()
-        repo.sut_dir = tmp_path / "sut"
-        repo.sut_dir.mkdir()
-        repo.settings = {
+        project = MagicMock()
+        project.root = tmp_path / "sut"
+        project.root.mkdir()
+        project.settings = {
             "coverage": {
                 "tiers": {"system": {"kind": "e2e", "precedence": 1}},
                 "tickets": {"pattern": r"#(?P<n>[0-9]+)"},
             }
         }
-        overrides_path = repo.sut_dir / ".otto" / "coverage-overrides.toml"
+        overrides_path = project.root / ".otto" / "coverage-overrides.toml"
         overrides_path.parent.mkdir(parents=True)
         overrides_path.write_text("not valid toml {{{")
 
         with (
-            patch("otto.declared.get_repos", return_value=[repo]),
+            patch("otto.declared.get_projects", return_value=[project]),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
             result = runner.invoke(cov_app, ["report", "--dir", str(tmp_path / "report")])

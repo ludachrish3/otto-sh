@@ -68,7 +68,7 @@ def test_emitted_data_format_matches_the_contract(tmp_path):
     an emitter that stops writing the field fails here too.
     """
     payload = build_index_payload(
-        _ticket_store(tmp_path), project_name="P", prefix=tmp_path, stamp="S"
+        _ticket_store(tmp_path), report_title="P", prefix=tmp_path, stamp="S"
     )
     remedy = (
         "A format bump must move ALL THREE together: OTTO_COV_DATA_FORMAT "
@@ -95,14 +95,14 @@ def test_sentinel_ids_match_the_contract():
 
 def test_emitted_ticket_summary_keys_match_the_contract(tmp_path):
     payload = build_index_payload(
-        _ticket_store(tmp_path), project_name="P", prefix=tmp_path, stamp="S"
+        _ticket_store(tmp_path), report_title="P", prefix=tmp_path, stamp="S"
     )
     assert sorted(payload["tickets"][0]) == CONTRACT["ticket_summary_keys"]
 
 
 def test_emitted_ticket_totals_keys_match_the_contract(tmp_path):
     payload = build_index_payload(
-        _ticket_store(tmp_path), project_name="P", prefix=tmp_path, stamp="S"
+        _ticket_store(tmp_path), report_title="P", prefix=tmp_path, stamp="S"
     )
     assert sorted(payload["tickets_totals"]) == CONTRACT["ticket_totals_keys"]
 
@@ -113,7 +113,7 @@ def _emit_ticket_chunk(tmp_path: Path) -> dict:
     emit_chunks(
         _ticket_store(tmp_path),
         out,
-        project_name="P",
+        report_title="P",
         prefix=tmp_path,
         stamp="S",
     )
@@ -141,7 +141,7 @@ def test_emitted_scripts_invoke_the_contract_callback_names(tmp_path):
     emit_chunks(
         _ticket_store(tmp_path),
         out,
-        project_name="P",
+        report_title="P",
         prefix=tmp_path,
         stamp="S",
     )
@@ -200,7 +200,7 @@ def _rich_store(tmp_path: Path) -> CoverageStore:
 
 
 def _rich_index(tmp_path: Path) -> dict:
-    return build_index_payload(_rich_store(tmp_path), project_name="P", prefix=tmp_path, stamp="S")
+    return build_index_payload(_rich_store(tmp_path), report_title="P", prefix=tmp_path, stamp="S")
 
 
 def _rich_file_chunk(tmp_path: Path) -> dict:
@@ -209,7 +209,7 @@ def _rich_file_chunk(tmp_path: Path) -> dict:
     emit_chunks(
         _rich_store(tmp_path),
         out,
-        project_name="P",
+        report_title="P",
         prefix=tmp_path,
         stamp="S",
     )
@@ -290,7 +290,7 @@ def test_emitted_cov_data_layout_matches_the_contract(tmp_path):
     emit_chunks(
         _rich_store(tmp_path),
         out,
-        project_name="P",
+        report_title="P",
         prefix=tmp_path,
         stamp="S",
     )
@@ -344,7 +344,7 @@ def _emit_all(tmp_path: Path) -> Path:
     (tmp_path / "a.c").write_text("int a;\nint b;\n")
     record = next(iter(store.files()))
     record.get_or_create_function("a", start_line=1).hits.add("unit", 1)
-    emit_chunks(store, out, project_name="P", prefix=tmp_path, stamp="S")
+    emit_chunks(store, out, report_title="P", prefix=tmp_path, stamp="S")
     return out
 
 

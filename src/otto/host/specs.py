@@ -110,7 +110,7 @@ def coerce_digit_string(v: object) -> object:
 # otherwise show, ``PydanticUndefined``, is a pydantic-internal SENTINEL VALUE
 # with no documentable target in any inventory, which a nitpicky ``-W`` build
 # then fails on. (``AfterValidator`` has no such field, which is why
-# ``models.settings.RepoPath`` never hit this.) Naming the input type here is
+# ``models.settings.ProjectPath`` never hit this.) Naming the input type here is
 # the same statement pydantic's default makes implicitly — the JSON schema is
 # byte-identical in both validation and serialization mode, and validation
 # behaviour is unchanged — but it renders as ``int | str``, which resolves.
@@ -586,7 +586,7 @@ class HostSpec(OttoModel):
     landing that answers no frame at all."""
 
     # ``products`` is deliberately NOT a spec field: it is user product data,
-    # independent of lab data, attached to hosts by repo logic — the host class
+    # independent of lab data, attached to hosts by project logic — the host class
     # marks it RuntimeOnly, see otto.host.construction.
     power_control: Annotated[
         PowerControlSpec | str | None, _OneFormByShape(), Convert(_build_power)

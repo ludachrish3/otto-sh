@@ -23,12 +23,12 @@ valid:
   from typing import TYPE_CHECKING
 
   if TYPE_CHECKING:
-      from ..config import Repo
+      from ..config import Project
       from ..host.unix_host import UnixHost
       from ..labs.loader import Lab
 
 
-  def _resolve_parent(repo: "Repo", lab: "Lab") -> "UnixHost": ...
+  def _resolve_parent(project: "Project", lab: "Lab") -> "UnixHost": ...
 # Harmless module-scope imports: the names otto.config defines itself, a
 # lazy package's cheap names, and rich's light modules.
 - |
@@ -54,7 +54,7 @@ invalid:
 - |
   from rich.table import Table
 - |
-  from ..config import Repo
+  from ..config import Project
 - |
   from ..lab import EmptySelectionError, get_lab
 - |

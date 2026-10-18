@@ -2,34 +2,34 @@
 # producer-schema 1
 name	otto.bootstrap:BootstrapError	class
 mro	otto.bootstrap:BootstrapError	{otto.errors:OttoError} @builtin:builtins.Exception @builtin:builtins.BaseException
-call	otto.bootstrap:BootstrapError	sync	PK:sut_dir:- PK:source:- PK:cause:-
+call	otto.bootstrap:BootstrapError	sync	PK:root:- PK:source:- PK:cause:-
 abstract	otto.bootstrap:BootstrapError	-
 name	otto.bootstrap:BootstrapResult	class
 mro	otto.bootstrap:BootstrapResult	-
-call	otto.bootstrap:BootstrapResult	sync	PK:env:- PK:repos:- PK:errors:O PK:warnings:O PK:ordered_repos:O
+call	otto.bootstrap:BootstrapResult	sync	PK:env:- PK:projects:- PK:errors:O PK:warnings:O PK:ordered_projects:O
 member	otto.bootstrap:BootstrapResult.__eq__	method	sync	PK:other:-
 member	otto.bootstrap:BootstrapResult.__hash__	method	sync	-
 member	otto.bootstrap:BootstrapResult.env	field
 member	otto.bootstrap:BootstrapResult.errors	field
-member	otto.bootstrap:BootstrapResult.ordered_repos	field
-member	otto.bootstrap:BootstrapResult.repos	field
+member	otto.bootstrap:BootstrapResult.ordered_projects	field
+member	otto.bootstrap:BootstrapResult.projects	field
 member	otto.bootstrap:BootstrapResult.warnings	field
 abstract	otto.bootstrap:BootstrapResult	-
 name	otto.bootstrap:BootstrapWarning	class
 mro	otto.bootstrap:BootstrapWarning	-
-call	otto.bootstrap:BootstrapWarning	sync	PK:sut_dir:- PK:message:-
+call	otto.bootstrap:BootstrapWarning	sync	PK:root:- PK:message:-
 member	otto.bootstrap:BootstrapWarning.__eq__	method	sync	PK:other:-
 member	otto.bootstrap:BootstrapWarning.__hash__	method	sync	-
 member	otto.bootstrap:BootstrapWarning.message	field
-member	otto.bootstrap:BootstrapWarning.sut_dir	field
+member	otto.bootstrap:BootstrapWarning.root	field
 abstract	otto.bootstrap:BootstrapWarning	-
 name	otto.bootstrap:DependencyError	class
 mro	otto.bootstrap:DependencyError	{otto.bootstrap:BootstrapError} {otto.errors:OttoError} @builtin:builtins.Exception @builtin:builtins.BaseException
-call	otto.bootstrap:DependencyError	sync	PK:sut_dir:- PK:message:-
+call	otto.bootstrap:DependencyError	sync	PK:root:- PK:message:-
 abstract	otto.bootstrap:DependencyError	-
 name	otto.bootstrap:ProjectScopeError	class
 mro	otto.bootstrap:ProjectScopeError	{otto.bootstrap:BootstrapError} {otto.errors:OttoError} @builtin:builtins.Exception @builtin:builtins.BaseException
-call	otto.bootstrap:ProjectScopeError	sync	PK:sut_dir:- PK:message:-
+call	otto.bootstrap:ProjectScopeError	sync	PK:root:- PK:message:-
 abstract	otto.bootstrap:ProjectScopeError	-
 name	otto.bootstrap:bootstrap	function
 call	otto.bootstrap:bootstrap	sync	-
@@ -37,10 +37,10 @@ name	otto.bootstrap:get_completion_names	function
 call	otto.bootstrap:get_completion_names	sync	-
 name	otto.bootstrap:get_env	function
 call	otto.bootstrap:get_env	sync	-
-name	otto.bootstrap:get_ordered_repos	function
-call	otto.bootstrap:get_ordered_repos	sync	-
-name	otto.bootstrap:get_repos	function
-call	otto.bootstrap:get_repos	sync	-
+name	otto.bootstrap:get_ordered_projects	function
+call	otto.bootstrap:get_ordered_projects	sync	-
+name	otto.bootstrap:get_projects	function
+call	otto.bootstrap:get_projects	sync	-
 name	otto.bootstrap:invalidate	function
 call	otto.bootstrap:invalidate	sync	-
 name	otto.bootstrap:is_bootstrapped	function
@@ -104,42 +104,42 @@ member	otto.config:MonitorSettings.__hash__	method	sync	-
 member	otto.config:MonitorSettings.tls_cert	field
 member	otto.config:MonitorSettings.tls_key	field
 abstract	otto.config:MonitorSettings	-
-name	otto.config:Repo	class
-mro	otto.config:Repo	-
-call	otto.config:Repo	sync	PK:sut_dir:- PK:settings:O
-member	otto.config:Repo.__eq__	method	sync	PK:other:-
-member	otto.config:Repo.add_libs_to_pythonpath	method	sync	-
-member	otto.config:Repo.creds_settings	property:g--
-member	otto.config:Repo.declared_dependencies	field
-member	otto.config:Repo.declared_dev_tools	field
-member	otto.config:Repo.declared_products	field
-member	otto.config:Repo.dependencies	field
-member	otto.config:Repo.dependencies_summary	method	sync	-
-member	otto.config:Repo.docker_settings	field
-member	otto.config:Repo.env_backend	field
-member	otto.config:Repo.get_instructions_panel	method	sync	-
-member	otto.config:Repo.get_lab_panel	method	sync	-
-member	otto.config:Repo.get_markers_panel	method	sync	PK:markers:-
-member	otto.config:Repo.get_otto_settings_path	method	sync	-
-member	otto.config:Repo.host_preferences	field
-member	otto.config:Repo.import_init_modules	method	sync	-
-member	otto.config:Repo.init	field
-member	otto.config:Repo.inventory_settings	property:g--
-member	otto.config:Repo.lab_sources	field
-member	otto.config:Repo.libs	field
-member	otto.config:Repo.logging_levels	field
-member	otto.config:Repo.monitor_settings	field
-member	otto.config:Repo.name	field
-member	otto.config:Repo.os_profiles	field
-member	otto.config:Repo.parse_settings	method	sync	-
-member	otto.config:Repo.project_scope	field
-member	otto.config:Repo.read_settings	method	sync	-
-member	otto.config:Repo.reservation_settings	property:g--
-member	otto.config:Repo.settings	field
-member	otto.config:Repo.sut_dir	field
-member	otto.config:Repo.tests	field
-member	otto.config:Repo.version	field
-abstract	otto.config:Repo	-
+name	otto.config:Project	class
+mro	otto.config:Project	-
+call	otto.config:Project	sync	PK:root:- PK:settings:O
+member	otto.config:Project.__eq__	method	sync	PK:other:-
+member	otto.config:Project.add_libs_to_pythonpath	method	sync	-
+member	otto.config:Project.creds_settings	property:g--
+member	otto.config:Project.declared_dependencies	field
+member	otto.config:Project.declared_dev_tools	field
+member	otto.config:Project.declared_products	field
+member	otto.config:Project.dependencies	field
+member	otto.config:Project.dependencies_summary	method	sync	-
+member	otto.config:Project.docker_settings	field
+member	otto.config:Project.env_backend	field
+member	otto.config:Project.get_instructions_panel	method	sync	-
+member	otto.config:Project.get_lab_panel	method	sync	-
+member	otto.config:Project.get_markers_panel	method	sync	PK:markers:-
+member	otto.config:Project.get_otto_settings_path	method	sync	-
+member	otto.config:Project.host_preferences	field
+member	otto.config:Project.import_init_modules	method	sync	-
+member	otto.config:Project.init	field
+member	otto.config:Project.inventory_settings	property:g--
+member	otto.config:Project.lab_sources	field
+member	otto.config:Project.libs	field
+member	otto.config:Project.logging_levels	field
+member	otto.config:Project.monitor_settings	field
+member	otto.config:Project.name	field
+member	otto.config:Project.os_profiles	field
+member	otto.config:Project.parse_settings	method	sync	-
+member	otto.config:Project.project_scope	field
+member	otto.config:Project.read_settings	method	sync	-
+member	otto.config:Project.reservation_settings	property:g--
+member	otto.config:Project.root	field
+member	otto.config:Project.settings	field
+member	otto.config:Project.tests	field
+member	otto.config:Project.version	field
+abstract	otto.config:Project	-
 name	otto.config:ResolvedDependency	class
 mro	otto.config:ResolvedDependency	-
 call	otto.config:ResolvedDependency	sync	PK:name:- PK:normalized:- PK:constraint:- PK:required:- PK:status:- PK:provider_version:-
@@ -189,16 +189,16 @@ member	otto.context:OttoContext.cov_decision	field
 member	otto.context:OttoContext.do_for_all_hosts	method	coroutine	PK:method:- VP:args:- KO:pattern:N KO:concurrent:B:true KO:include_containers:B:false KO:include_local:B:false KO:term:N KO:transfer:N KO:ssh_options:N KO:telnet_options:N KO:sftp_options:N KO:scp_options:N KO:ftp_options:N KO:nc_options:N KO:userland_options:N KO:_scope_owner:N VK:kwargs:-
 member	otto.context:OttoContext.dry_run	property:g--
 member	otto.context:OttoContext.exclude_projects	field
-member	otto.context:OttoContext.for_repo	method	sync	PK:repo_name:-
+member	otto.context:OttoContext.for_project	method	sync	PK:name:-
 member	otto.context:OttoContext.get_host	method	sync	PK:host_id:- VK:overrides:-
 member	otto.context:OttoContext.include_projects	field
 member	otto.context:OttoContext.lab	field
 member	otto.context:OttoContext.log_command_output	property:g--
 member	otto.context:OttoContext.options	method	sync	PK:cls:-
-member	otto.context:OttoContext.ordered_repos	property:g--
+member	otto.context:OttoContext.ordered_projects	property:g--
 member	otto.context:OttoContext.output_dir	property:g--
 member	otto.context:OttoContext.policy	field
-member	otto.context:OttoContext.repos	property:g--
+member	otto.context:OttoContext.projects	property:g--
 member	otto.context:OttoContext.run_on_all_hosts	method	coroutine	PK:cmds:- PK:pattern:N PK:concurrent:B:true PK:timeout:F:0x1.e000000000000p+4 KO:_scope_owner:N KO:include_containers:B:false KO:term:N KO:transfer:N KO:ssh_options:N KO:telnet_options:N KO:sftp_options:N KO:scp_options:N KO:ftp_options:N KO:nc_options:N KO:userland_options:N
 member	otto.context:OttoContext.sweep_loop	method	coroutine	PK:loop:- KO:label:- KO:deadline:N
 member	otto.context:OttoContext.verb	field
@@ -207,7 +207,7 @@ member	otto.context:OttoContext.verb_option_source	method	sync	-
 abstract	otto.context:OttoContext	-
 name	otto.context:ProjectContextView	class
 mro	otto.context:ProjectContextView	-
-call	otto.context:ProjectContextView	sync	PK:ctx:- PK:repo_name:-
+call	otto.context:ProjectContextView	sync	PK:ctx:- PK:project_name:-
 member	otto.context:ProjectContextView.all_hosts	method	sync	VP:args:- VK:kwargs:-
 member	otto.context:ProjectContextView.do_for_all_hosts	method	coroutine	PK:method:- VP:args:- KO:with_owner:B:true VK:kwargs:-
 member	otto.context:ProjectContextView.run_on_all_hosts	method	coroutine	VP:args:- VK:kwargs:-
@@ -282,7 +282,7 @@ call	otto.coverage:CoverageNotInstrumentedError	sync	PK:message:- PK:report:N
 abstract	otto.coverage:CoverageNotInstrumentedError	-
 name	otto.coverage:CoverageReporter	class
 mro	otto.coverage:CoverageReporter	-
-call	otto.coverage:CoverageReporter	sync	PK:gcda_dirs:- PK:source_root:- PK:output_dir:- PK:project_name:S:"Coverage\u0020Report" PK:toolchains:N PK:tiers:N PK:source_roots:N KO:collection:N KO:prefix:N KO:thresholds:N KO:ticket_spec:N KO:overrides:N
+call	otto.coverage:CoverageReporter	sync	PK:gcda_dirs:- PK:source_root:- PK:output_dir:- PK:report_title:S:"Coverage\u0020Report" PK:toolchains:N PK:tiers:N PK:source_roots:N KO:collection:N KO:prefix:N KO:thresholds:N KO:ticket_spec:N KO:overrides:N
 member	otto.coverage:CoverageReporter.run	method	coroutine	-
 abstract	otto.coverage:CoverageReporter	-
 name	otto.coverage:CoverageStore	class
@@ -349,12 +349,12 @@ call	otto.coverage:NoCoverageHostsError	sync	@builtin:builtins.ValueError
 abstract	otto.coverage:NoCoverageHostsError	-
 name	otto.coverage:ReportInputs	class
 mro	otto.coverage:ReportInputs	-
-call	otto.coverage:ReportInputs	sync	PK:repo_root:N PK:tier_configs:N PK:exclusion_rules:O PK:thresholds:N PK:ticket_spec:N PK:overrides:N
+call	otto.coverage:ReportInputs	sync	PK:project_root:N PK:tier_configs:N PK:exclusion_rules:O PK:thresholds:N PK:ticket_spec:N PK:overrides:N
 member	otto.coverage:ReportInputs.__eq__	method	sync	PK:other:-
 member	otto.coverage:ReportInputs.__hash__	method	sync	-
 member	otto.coverage:ReportInputs.exclusion_rules	field
 member	otto.coverage:ReportInputs.overrides	field
-member	otto.coverage:ReportInputs.repo_root	field
+member	otto.coverage:ReportInputs.project_root	field
 member	otto.coverage:ReportInputs.thresholds	field
 member	otto.coverage:ReportInputs.ticket_spec	field
 member	otto.coverage:ReportInputs.tier_configs	field
@@ -373,17 +373,17 @@ member	otto.coverage:TierConfig.precedence	field
 member	otto.coverage:TierConfig.products	field
 abstract	otto.coverage:TierConfig	-
 name	otto.coverage:clean_coverage	function
-call	otto.coverage:clean_coverage	coroutine	PK:repos:N KO:host_ids:N
+call	otto.coverage:clean_coverage	coroutine	PK:projects:N KO:host_ids:N
 name	otto.coverage:collect_coverage	function
-call	otto.coverage:collect_coverage	coroutine	PK:cov_dir:- KO:repos:N KO:tier:N KO:ticket:N KO:note:N KO:tester:N KO:display_names:N KO:clean_after_fetch:B:true
+call	otto.coverage:collect_coverage	coroutine	PK:cov_dir:- KO:projects:N KO:tier:N KO:ticket:N KO:note:N KO:tester:N KO:display_names:N KO:clean_after_fetch:B:true
 name	otto.coverage:get_coverage	function
-call	otto.coverage:get_coverage	coroutine	PK:output_dir:N KO:tier:N KO:ticket:N KO:note:N KO:tester_name:N KO:tester_email:N KO:clean:B:false KO:repos:N
+call	otto.coverage:get_coverage	coroutine	PK:output_dir:N KO:tier:N KO:ticket:N KO:note:N KO:tester_name:N KO:tester_email:N KO:clean:B:false KO:projects:N
 name	otto.coverage:resolve_get_tier	function
 call	otto.coverage:resolve_get_tier	sync	PK:tiers:- PK:name:-
 name	otto.coverage:resolve_report_inputs	function
-call	otto.coverage:resolve_report_inputs	sync	PK:repos:-
+call	otto.coverage:resolve_report_inputs	sync	PK:projects:-
 name	otto.coverage:run_coverage_report	function
-call	otto.coverage:run_coverage_report	coroutine	PK:cov_dirs:- PK:output_dir:- PK:inputs:- KO:project_name:S:"Coverage\u0020Report" KO:tier_specs:N KO:prefix:N KO:overwrite:B:false
+call	otto.coverage:run_coverage_report	coroutine	PK:cov_dirs:- PK:output_dir:- PK:inputs:- KO:report_title:S:"Coverage\u0020Report" KO:tier_specs:N KO:prefix:N KO:overwrite:B:false
 name	otto.creds:CompiledCreds	class
 mro	otto.creds:CompiledCreds	-
 call	otto.creds:CompiledCreds	sync	PK:prepared:- PK:anchor_dir:- PK:origin:-
@@ -463,13 +463,13 @@ member	otto.docker:BuildOptions.target	field
 abstract	otto.docker:BuildOptions	-
 name	otto.docker:BuildReport	class
 mro	otto.docker:BuildReport	-
-call	otto.docker:BuildReport	sync	PK:repos:- PK:displaced:O
+call	otto.docker:BuildReport	sync	PK:projects:- PK:displaced:O
 member	otto.docker:BuildReport.__eq__	method	sync	PK:other:-
 member	otto.docker:BuildReport.__hash__	method	sync	-
 member	otto.docker:BuildReport.displaced	field
 member	otto.docker:BuildReport.failed	property:g--
 member	otto.docker:BuildReport.ok	property:g--
-member	otto.docker:BuildReport.repos	field
+member	otto.docker:BuildReport.projects	field
 abstract	otto.docker:BuildReport	-
 name	otto.docker:DockerVerbError	class
 mro	otto.docker:DockerVerbError	{otto.errors:OttoError} @builtin:builtins.ValueError @builtin:builtins.Exception @builtin:builtins.BaseException
@@ -477,11 +477,11 @@ call	otto.docker:DockerVerbError	sync	PK:message:- KO:field:-
 abstract	otto.docker:DockerVerbError	-
 name	otto.docker:FailedImage	class
 mro	otto.docker:FailedImage	-
-call	otto.docker:FailedImage	sync	PK:repo:- PK:image:- PK:result:-
+call	otto.docker:FailedImage	sync	PK:project:- PK:image:- PK:result:-
 member	otto.docker:FailedImage.__eq__	method	sync	PK:other:-
 member	otto.docker:FailedImage.__hash__	method	sync	-
 member	otto.docker:FailedImage.image	field
-member	otto.docker:FailedImage.repo	field
+member	otto.docker:FailedImage.project	field
 member	otto.docker:FailedImage.result	field
 abstract	otto.docker:FailedImage	-
 name	otto.docker:HostOutput	class
@@ -528,16 +528,16 @@ member	otto.docker:ObserveReport.__eq__	method	sync	PK:other:-
 member	otto.docker:ObserveReport.hosts	field
 member	otto.docker:ObserveReport.ok	property:g--
 abstract	otto.docker:ObserveReport	-
-name	otto.docker:RepoBuild	class
-mro	otto.docker:RepoBuild	-
-call	otto.docker:RepoBuild	sync	PK:repo:- PK:host:- PK:kind:- PK:images:O
-member	otto.docker:RepoBuild.__eq__	method	sync	PK:other:-
-member	otto.docker:RepoBuild.__hash__	method	sync	-
-member	otto.docker:RepoBuild.host	field
-member	otto.docker:RepoBuild.images	field
-member	otto.docker:RepoBuild.kind	field
-member	otto.docker:RepoBuild.repo	field
-abstract	otto.docker:RepoBuild	-
+name	otto.docker:ProjectBuild	class
+mro	otto.docker:ProjectBuild	-
+call	otto.docker:ProjectBuild	sync	PK:project:- PK:host:- PK:kind:- PK:images:O
+member	otto.docker:ProjectBuild.__eq__	method	sync	PK:other:-
+member	otto.docker:ProjectBuild.__hash__	method	sync	-
+member	otto.docker:ProjectBuild.host	field
+member	otto.docker:ProjectBuild.images	field
+member	otto.docker:ProjectBuild.kind	field
+member	otto.docker:ProjectBuild.project	field
+abstract	otto.docker:ProjectBuild	-
 name	otto.docker:TeardownReport	class
 mro	otto.docker:TeardownReport	{otto.docker:HostReport}
 call	otto.docker:TeardownReport	sync	PK:hosts:- PK:use_case:-
@@ -560,21 +560,21 @@ member	otto.docker:UseCaseStack.selection	field
 member	otto.docker:UseCaseStack.use_case	field
 abstract	otto.docker:UseCaseStack	-
 name	otto.docker:build_images	function
-call	otto.docker:build_images	coroutine	PK:repo:- PK:parent:- KO:image_names:N KO:options:N
+call	otto.docker:build_images	coroutine	PK:project:- PK:parent:- KO:image_names:N KO:options:N
 name	otto.docker:build_on	function
-call	otto.docker:build_on	coroutine	PK:parent:N KO:repo:N KO:images:N KO:tags:N KO:no_cache:B:false KO:pull:B:false KO:build_args:N KO:target:N
+call	otto.docker:build_on	coroutine	PK:parent:N KO:project:N KO:images:N KO:tags:N KO:no_cache:B:false KO:pull:B:false KO:build_args:N KO:target:N
 name	otto.docker:compose_build	function
 call	otto.docker:compose_build	coroutine	PK:use_case:- KO:parent:N KO:provide:N KO:images:N KO:no_cache:B:false KO:pull:B:false KO:build_args:N
 name	otto.docker:compose_down	function
-call	otto.docker:compose_down	coroutine	PK:repo:- PK:lab:- KO:parent:N KO:project_name:N KO:stop_timeout:I:1
+call	otto.docker:compose_down	coroutine	PK:project:- PK:lab:- KO:parent:N KO:project_name:N KO:stop_timeout:I:1
 name	otto.docker:compose_logs	function
 call	otto.docker:compose_logs	coroutine	PK:use_case:- PK:services:T:[] KO:parent:N KO:provide:N KO:tail:N KO:since:N KO:timestamps:B:false
 name	otto.docker:compose_ps	function
 call	otto.docker:compose_ps	coroutine	PK:use_case:- KO:all:B:false KO:parent:N KO:provide:N
 name	otto.docker:compose_up	function
-call	otto.docker:compose_up	coroutine	PK:repo:- PK:lab:- KO:parent:N KO:project_name:N KO:build:B:false
+call	otto.docker:compose_up	coroutine	PK:project:- PK:lab:- KO:parent:N KO:project_name:N KO:build:B:false
 name	otto.docker:composed	function
-call	otto.docker:composed	asyncgen	PK:repo:- PK:lab:- KO:parent:N KO:project_name:N KO:own:B:false KO:build:B:false
+call	otto.docker:composed	asyncgen	PK:project:- PK:lab:- KO:parent:N KO:project_name:N KO:own:B:false KO:build:B:false
 name	otto.docker:container_logs	function
 call	otto.docker:container_logs	coroutine	PK:container:- KO:parent:N KO:tail:N KO:since:N KO:timestamps:B:false
 name	otto.docker:default_docker_parent	function
@@ -592,7 +592,7 @@ call	otto.docker:follow_logs	coroutine	PK:targets:-
 name	otto.docker:get_container_host	function
 call	otto.docker:get_container_host	sync	PK:host_id:-
 name	otto.docker:get_user_compose_project	function
-call	otto.docker:get_user_compose_project	sync	PK:repo_name:- PK:suffix:N
+call	otto.docker:get_user_compose_project	sync	PK:project_name:- PK:suffix:N
 name	otto.docker:list_containers	function
 call	otto.docker:list_containers	coroutine	PK:parent:N KO:all:B:false
 name	otto.docker:list_images	function
@@ -693,17 +693,17 @@ member	otto.examples.options:DeviceTestOptions.__eq__	method	sync	PK:other:-
 member	otto.examples.options:DeviceTestOptions.check_interfaces	field
 member	otto.examples.options:DeviceTestOptions.firmware	field
 abstract	otto.examples.options:DeviceTestOptions	-
-name	otto.examples.options:RepoOptions	class
-mro	otto.examples.options:RepoOptions	-
-call	otto.examples.options:RepoOptions	sync	VP:args:- VK:kwargs:-
-member	otto.examples.options:RepoOptions.__eq__	method	sync	PK:other:-
-member	otto.examples.options:RepoOptions.device_type	field
-member	otto.examples.options:RepoOptions.lab_env	field
-member	otto.examples.options:RepoOptions.retries	field
-abstract	otto.examples.options:RepoOptions	-
+name	otto.examples.options:ProjectOptions	class
+mro	otto.examples.options:ProjectOptions	-
+call	otto.examples.options:ProjectOptions	sync	VP:args:- VK:kwargs:-
+member	otto.examples.options:ProjectOptions.__eq__	method	sync	PK:other:-
+member	otto.examples.options:ProjectOptions.device_type	field
+member	otto.examples.options:ProjectOptions.lab_env	field
+member	otto.examples.options:ProjectOptions.retries	field
+abstract	otto.examples.options:ProjectOptions	-
 name	otto.examples.reservations:ExampleReservationBackend	class
 mro	otto.examples.reservations:ExampleReservationBackend	{otto.reservations:ReservationBackendBase}
-call	otto.examples.reservations:ExampleReservationBackend	sync	KO:url:N KO:repo_dir:N KO:username:N KO:reservations:N
+call	otto.examples.reservations:ExampleReservationBackend	sync	KO:url:N KO:project_root:N KO:username:N KO:reservations:N
 member	otto.examples.reservations:ExampleReservationBackend.backend_name	method	sync	-
 member	otto.examples.reservations:ExampleReservationBackend.fetch_reservations	method	sync	PK:username:- PK:start:N PK:end:N
 member	otto.examples.reservations:ExampleReservationBackend.holders	method	sync	PK:resource:-
@@ -2334,7 +2334,7 @@ member	otto.host:ProfileContext.__eq__	method	sync	PK:other:-
 member	otto.host:ProfileContext.__hash__	method	sync	-
 member	otto.host:ProfileContext.digest	method	sync	-
 member	otto.host:ProfileContext.empty	classmethod	sync	-
-member	otto.host:ProfileContext.from_repos	classmethod	sync	PK:repos:-
+member	otto.host:ProfileContext.from_projects	classmethod	sync	PK:projects:-
 member	otto.host:ProfileContext.owners	field
 member	otto.host:ProfileContext.profiles	field
 abstract	otto.host:ProfileContext	-
@@ -3082,7 +3082,7 @@ call	otto.host:build_term_backend	sync	PK:name:- PK:ctx:-
 name	otto.host:build_transfer_backend	function
 call	otto.host:build_transfer_backend	sync	PK:name:- PK:ctx:-
 name	otto.host:check_data_profiles	function
-call	otto.host:check_data_profiles	sync	PK:repos:-
+call	otto.host:check_data_profiles	sync	PK:projects:-
 name	otto.host:check_os_profile	function
 call	otto.host:check_os_profile	sync	PK:name:- PK:base:- PK:defaults:N KO:login_prompt:N KO:password_prompt:N
 name	otto.host:create_host_from_dict	function
@@ -3165,7 +3165,7 @@ mro	otto.init:InitConfig	-
 call	otto.init:InitConfig	sync	PK:root:- PK:name:- PK:version:- PK:kmodcov_dir:S:"third_party/otto_kmodcov"
 member	otto.init:InitConfig.__eq__	method	sync	PK:other:-
 member	otto.init:InitConfig.__hash__	method	sync	-
-member	otto.init:InitConfig.for_repo	classmethod	sync	PK:root:- KO:name:S:"" KO:version:S:"0.1.0" KO:kmodcov_dir:S:"third_party/otto_kmodcov"
+member	otto.init:InitConfig.for_project	classmethod	sync	PK:root:- KO:name:S:"" KO:version:S:"0.1.0" KO:kmodcov_dir:S:"third_party/otto_kmodcov"
 member	otto.init:InitConfig.init_module	property:g--
 member	otto.init:InitConfig.kmodcov_dir	field
 member	otto.init:InitConfig.kmodcov_path	property:g--
@@ -3188,8 +3188,8 @@ member	otto.init:ScaffoldReport.notices	field
 member	otto.init:ScaffoldReport.prerequisites	field
 member	otto.init:ScaffoldReport.writes	field
 abstract	otto.init:ScaffoldReport	-
-name	otto.init:check_repo	function
-call	otto.init:check_repo	sync	PK:root:-
+name	otto.init:check_project	function
+call	otto.init:check_project	sync	PK:root:-
 name	otto.init:detect_areas	function
 call	otto.init:detect_areas	sync	PK:root:-
 name	otto.init:scaffold	function
@@ -3352,7 +3352,7 @@ mro	otto.inventory:SupportsStatPaths	-
 member	otto.inventory:SupportsStatPaths.stat_paths	method	sync	-
 requires	otto.inventory:SupportsStatPaths	stat_paths
 name	otto.inventory:build_inventory	function
-call	otto.inventory:build_inventory	sync	PK:repos:- KO:user_settings_path:N
+call	otto.inventory:build_inventory	sync	PK:projects:- KO:user_settings_path:N
 name	otto.inventory:build_inventory_from_declarations	function
 call	otto.inventory:build_inventory_from_declarations	sync	PK:declarations:- KO:user_settings:- KO:user_settings_file:N
 name	otto.inventory:check_supplies	function
@@ -3399,7 +3399,7 @@ call	otto.lab:all_hosts	sync	PK:pattern:N KO:include_containers:B:false KO:inclu
 name	otto.lab:do_for_all_hosts	function
 call	otto.lab:do_for_all_hosts	coroutine	PK:method:- VP:args:- KO:pattern:N KO:concurrent:B:true KO:include_containers:B:false KO:include_local:B:false KO:term:N KO:transfer:N KO:ssh_options:N KO:telnet_options:N KO:sftp_options:N KO:scp_options:N KO:ftp_options:N KO:nc_options:N KO:userland_options:N VK:kwargs:-
 name	otto.lab:fleet_of_interest	function
-call	otto.lab:fleet_of_interest	sync	PK:lab:- PK:repos:- KO:owner:N KO:exclude_projects:N KO:include_containers:B:false KO:include_local:B:false
+call	otto.lab:fleet_of_interest	sync	PK:lab:- PK:projects:- KO:owner:N KO:exclude_projects:N KO:include_containers:B:false KO:include_local:B:false
 name	otto.lab:get_host	function
 call	otto.lab:get_host	sync	PK:host_id:- KO:term:N KO:transfer:N KO:ssh_options:N KO:telnet_options:N KO:sftp_options:N KO:scp_options:N KO:ftp_options:N KO:nc_options:N KO:userland_options:N
 name	otto.lab:get_lab	function
@@ -3462,13 +3462,13 @@ call	otto.labs:LabSourceConstructionError	sync	@builtin:builtins.ValueError
 abstract	otto.labs:LabSourceConstructionError	-
 name	otto.labs:LabSourceEnv	class
 mro	otto.labs:LabSourceEnv	-
-call	otto.labs:LabSourceEnv	sync	PK:repo_dir:- PK:label:- PK:origin:- PK:profiles:-
+call	otto.labs:LabSourceEnv	sync	PK:project_root:- PK:label:- PK:origin:- PK:profiles:-
 member	otto.labs:LabSourceEnv.__eq__	method	sync	PK:other:-
 member	otto.labs:LabSourceEnv.__hash__	method	sync	-
 member	otto.labs:LabSourceEnv.label	field
 member	otto.labs:LabSourceEnv.origin	field
 member	otto.labs:LabSourceEnv.profiles	field
-member	otto.labs:LabSourceEnv.repo_dir	field
+member	otto.labs:LabSourceEnv.project_root	field
 abstract	otto.labs:LabSourceEnv	-
 name	otto.labs:LoginSummary	class
 mro	otto.labs:LoginSummary	-
@@ -3484,7 +3484,7 @@ mro	otto.labs:SupportsHostSummaries	-
 member	otto.labs:SupportsHostSummaries.list_host_summaries	method	sync	PK:inventory:N
 requires	otto.labs:SupportsHostSummaries	list_host_summaries
 name	otto.labs:build_lab_sources	function
-call	otto.labs:build_lab_sources	sync	PK:repos:- KO:profiles:N
+call	otto.labs:build_lab_sources	sync	PK:projects:- KO:profiles:N
 name	otto.labs:host_summaries	function
 call	otto.labs:host_summaries	sync	PK:repository:- PK:inventory:N
 name	otto.labs:list_host_ids	function
@@ -4112,7 +4112,7 @@ input	otto.models:OttoEnvSettings	S:"lab"	optional	N	S:"lab"
 input	otto.models:OttoEnvSettings	S:"log_days"	optional	I:30	S:"log_days"
 input	otto.models:OttoEnvSettings	S:"log_level"	optional	S:"INFO"	S:"log_level"
 input	otto.models:OttoEnvSettings	S:"log_rich"	optional	B:false	S:"log_rich"
-input	otto.models:OttoEnvSettings	S:"sut_dirs"	optional	O	S:"sut_dirs"
+input	otto.models:OttoEnvSettings	S:"ottopath"	optional	O	S:"OTTOPATH"
 input	otto.models:OttoEnvSettings	S:"teardown_deadline"	optional	F:0x1.4000000000000p+3	S:"teardown_deadline"
 input	otto.models:OttoEnvSettings	S:"xdir"	optional	N	S:"xdir"
 member	otto.models:OttoEnvSettings.compose_suffix	field
@@ -4123,7 +4123,7 @@ member	otto.models:OttoEnvSettings.log_days	field
 member	otto.models:OttoEnvSettings.log_level	field
 member	otto.models:OttoEnvSettings.log_rich	field
 member	otto.models:OttoEnvSettings.model_config	attribute
-member	otto.models:OttoEnvSettings.sut_dirs	field
+member	otto.models:OttoEnvSettings.ottopath	field
 member	otto.models:OttoEnvSettings.teardown_deadline	field
 member	otto.models:OttoEnvSettings.xdir	field
 abstract	otto.models:OttoEnvSettings	-
@@ -4613,7 +4613,7 @@ member	otto.monitor:MonitorTarget.snmp	field
 abstract	otto.monitor:MonitorTarget	-
 name	otto.monitor:MonitorTlsError	class
 mro	otto.monitor:MonitorTlsError	{otto.errors:OttoError} @builtin:builtins.Exception @builtin:builtins.BaseException
-call	otto.monitor:MonitorTlsError	sync	PK:message:- KO:setting:- KO:repos:-
+call	otto.monitor:MonitorTlsError	sync	PK:message:- KO:setting:- KO:projects:-
 abstract	otto.monitor:MonitorTlsError	-
 name	otto.monitor:NoMonitorableHostsError	class
 mro	otto.monitor:NoMonitorableHostsError	{otto.errors:OttoError} @builtin:builtins.Exception @builtin:builtins.BaseException
@@ -4632,13 +4632,13 @@ call	otto.monitor:load_review_document	sync	PK:path:-
 name	otto.monitor:monitorable	function
 call	otto.monitor:monitorable	sync	PK:hosts:-
 name	otto.monitor:resolve_monitor_tls	function
-call	otto.monitor:resolve_monitor_tls	sync	PK:repos:-
+call	otto.monitor:resolve_monitor_tls	sync	PK:projects:-
 name	otto.monitor:run_live	function
 call	otto.monitor:run_live	coroutine	KO:hosts:N KO:interval:F:0x1.4000000000000p+2 KO:db:N KO:label:N KO:note:N KO:bind:S:"0.0.0.0" KO:port:I:0
 name	otto.monitor:select_monitor_hosts	function
 call	otto.monitor:select_monitor_hosts	sync	PK:pattern:-
 name	otto.monitor:serve_review	function
-call	otto.monitor:serve_review	coroutine	PK:path:- KO:repos:-
+call	otto.monitor:serve_review	coroutine	PK:path:- KO:projects:-
 name	otto.params:OPTIONS	value
 name	otto.params:OptionVerb	alias
 name	otto.params:OptionsCollisionError	class
@@ -4683,7 +4683,7 @@ member	otto.project:CleanlinessItem.state	field
 abstract	otto.project:CleanlinessItem	-
 name	otto.project:CleanlinessKind	enum
 mro	otto.project:CleanlinessKind	-
-enum	otto.project:CleanlinessKind	REPO	S:"repo"
+enum	otto.project:CleanlinessKind	PROJECT	S:"project"
 enum	otto.project:CleanlinessKind	TOOLCHAIN	S:"toolchain"
 enum	otto.project:CleanlinessKind	IMPAIRMENT	S:"impairment"
 enum	otto.project:CleanlinessKind	TUNNEL	S:"tunnel"
@@ -4748,7 +4748,7 @@ member	otto.project:ProductPlanEntry.plan	field
 abstract	otto.project:ProductPlanEntry	-
 name	otto.project:ProjectActions	class
 mro	otto.project:ProjectActions	-
-call	otto.project:ProjectActions	sync	PK:repo:- PK:ctx:-
+call	otto.project:ProjectActions	sync	PK:project:- PK:ctx:-
 member	otto.project:ProjectActions.cleanup	method	coroutine	PK:opts:-
 member	otto.project:ProjectActions.get_logs	method	coroutine	PK:opts:-
 member	otto.project:ProjectActions.install	method	coroutine	PK:opts:-
@@ -4759,35 +4759,35 @@ member	otto.project:ProjectActions.owns_products	property:g--
 member	otto.project:ProjectActions.status	method	coroutine	PK:opts:-
 member	otto.project:ProjectActions.uninstall	method	coroutine	PK:opts:-
 abstract	otto.project:ProjectActions	-
+name	otto.project:ProjectPlan	class
+mro	otto.project:ProjectPlan	-
+call	otto.project:ProjectPlan	sync	PK:project:- PK:hosts:O PK:gaps:O
+member	otto.project:ProjectPlan.__eq__	method	sync	PK:other:-
+member	otto.project:ProjectPlan.gaps	field
+member	otto.project:ProjectPlan.hosts	field
+member	otto.project:ProjectPlan.project	field
+abstract	otto.project:ProjectPlan	-
+name	otto.project:ProjectScopeSummary	class
+mro	otto.project:ProjectScopeSummary	-
+call	otto.project:ProjectScopeSummary	sync	PK:applicable:- PK:usable:B:true PK:loaded_labs:T:[] PK:applicable_labs:T:[] PK:universe:T:[] PK:host_patterns:T:[] PK:skipped:B:false
+member	otto.project:ProjectScopeSummary.__eq__	method	sync	PK:other:-
+member	otto.project:ProjectScopeSummary.__hash__	method	sync	-
+member	otto.project:ProjectScopeSummary.applicable	field
+member	otto.project:ProjectScopeSummary.applicable_labs	field
+member	otto.project:ProjectScopeSummary.host_patterns	field
+member	otto.project:ProjectScopeSummary.loaded_labs	field
+member	otto.project:ProjectScopeSummary.skipped	field
+member	otto.project:ProjectScopeSummary.universe	field
+member	otto.project:ProjectScopeSummary.usable	field
+abstract	otto.project:ProjectScopeSummary	-
 name	otto.project:ProjectStatus	class
 mro	otto.project:ProjectStatus	-
-call	otto.project:ProjectStatus	sync	PK:overall:- PK:repos:O PK:scoping:O
+call	otto.project:ProjectStatus	sync	PK:overall:- PK:projects:O PK:scoping:O
 member	otto.project:ProjectStatus.__eq__	method	sync	PK:other:-
 member	otto.project:ProjectStatus.overall	field
-member	otto.project:ProjectStatus.repos	field
+member	otto.project:ProjectStatus.projects	field
 member	otto.project:ProjectStatus.scoping	field
 abstract	otto.project:ProjectStatus	-
-name	otto.project:RepoPlan	class
-mro	otto.project:RepoPlan	-
-call	otto.project:RepoPlan	sync	PK:repo:- PK:hosts:O PK:gaps:O
-member	otto.project:RepoPlan.__eq__	method	sync	PK:other:-
-member	otto.project:RepoPlan.gaps	field
-member	otto.project:RepoPlan.hosts	field
-member	otto.project:RepoPlan.repo	field
-abstract	otto.project:RepoPlan	-
-name	otto.project:RepoScope	class
-mro	otto.project:RepoScope	-
-call	otto.project:RepoScope	sync	PK:applicable:- PK:usable:B:true PK:loaded_labs:T:[] PK:applicable_labs:T:[] PK:universe:T:[] PK:host_patterns:T:[] PK:skipped:B:false
-member	otto.project:RepoScope.__eq__	method	sync	PK:other:-
-member	otto.project:RepoScope.__hash__	method	sync	-
-member	otto.project:RepoScope.applicable	field
-member	otto.project:RepoScope.applicable_labs	field
-member	otto.project:RepoScope.host_patterns	field
-member	otto.project:RepoScope.loaded_labs	field
-member	otto.project:RepoScope.skipped	field
-member	otto.project:RepoScope.universe	field
-member	otto.project:RepoScope.usable	field
-abstract	otto.project:RepoScope	-
 name	otto.project:StatusOptions	class
 mro	otto.project:StatusOptions	-
 call	otto.project:StatusOptions	sync	VP:args:- VK:kwargs:-
@@ -4802,7 +4802,7 @@ member	otto.project:UninstallOptions.debug_logs	field
 member	otto.project:UninstallOptions.product_logs	field
 abstract	otto.project:UninstallOptions	-
 name	otto.project:actions_for	function
-call	otto.project:actions_for	sync	PK:repo:- PK:ctx:-
+call	otto.project:actions_for	sync	PK:project:- PK:ctx:-
 name	otto.project:cleanliness	function
 call	otto.project:cleanliness	coroutine	-
 name	otto.project:cleanup	function
@@ -4848,10 +4848,10 @@ member	otto.registry:BackendRegistry.names	method	sync	-
 member	otto.registry:BackendRegistry.origin	method	sync	PK:name:-
 member	otto.registry:BackendRegistry.peek	method	sync	PK:name:-
 member	otto.registry:BackendRegistry.prepare	method	sync	PK:name:- PK:raw:- PK:env:- KO:source:N
+member	otto.registry:BackendRegistry.project	method	sync	PK:name:-
 member	otto.registry:BackendRegistry.raw_items	method	sync	-
 member	otto.registry:BackendRegistry.register	method	sync	PK:name:- PK:entry:- KO:overwrite:B:false
 member	otto.registry:BackendRegistry.register_many	method	sync	PK:entries:- KO:overwrite:B:false
-member	otto.registry:BackendRegistry.repo	method	sync	PK:name:-
 member	otto.registry:BackendRegistry.revision	property:g--
 member	otto.registry:BackendRegistry.unregister	method	sync	PK:name:-
 abstract	otto.registry:BackendRegistry	-
@@ -4937,10 +4937,10 @@ member	otto.registry:Registry.kind	property:g--
 member	otto.registry:Registry.names	method	sync	-
 member	otto.registry:Registry.origin	method	sync	PK:name:-
 member	otto.registry:Registry.peek	method	sync	PK:name:-
+member	otto.registry:Registry.project	method	sync	PK:name:-
 member	otto.registry:Registry.raw_items	method	sync	-
 member	otto.registry:Registry.register	method	sync	PK:name:- PK:entry:- KO:overwrite:B:false
 member	otto.registry:Registry.register_many	method	sync	PK:entries:- KO:overwrite:B:false
-member	otto.registry:Registry.repo	method	sync	PK:name:-
 member	otto.registry:Registry.revision	property:g--
 member	otto.registry:Registry.unregister	method	sync	PK:name:-
 abstract	otto.registry:Registry	-
@@ -4955,15 +4955,15 @@ member	otto.registry:RegistryView.items	method	sync	-
 member	otto.registry:RegistryView.kind	property:g--
 member	otto.registry:RegistryView.names	method	sync	-
 member	otto.registry:RegistryView.origin	method	sync	PK:name:-
-member	otto.registry:RegistryView.repo	method	sync	PK:name:-
+member	otto.registry:RegistryView.project	method	sync	PK:name:-
 member	otto.registry:RegistryView.revision	property:g--
 abstract	otto.registry:RegistryView	-
-name	otto.registry:RequireRepo	class
-mro	otto.registry:RequireRepo	-
-call	otto.registry:RequireRepo	sync	-
-member	otto.registry:RequireRepo.__eq__	method	sync	PK:other:-
-member	otto.registry:RequireRepo.__hash__	method	sync	-
-abstract	otto.registry:RequireRepo	-
+name	otto.registry:RequireProject	class
+mro	otto.registry:RequireProject	-
+call	otto.registry:RequireProject	sync	-
+member	otto.registry:RequireProject.__eq__	method	sync	PK:other:-
+member	otto.registry:RequireProject.__hash__	method	sync	-
+abstract	otto.registry:RequireProject	-
 name	otto.registry:Subscription	class
 mro	otto.registry:Subscription	-
 call	otto.registry:Subscription	sync	PK:kind:- KO:register_hint:-
@@ -4977,8 +4977,8 @@ name	otto.registry:class_backend	function
 call	otto.registry:class_backend	sync	KO:cls:- KO:metadata:-
 name	otto.registry:configured_backend	function
 call	otto.registry:configured_backend	sync	KO:config:- KO:factory:- KO:metadata:-
-name	otto.registry:registering_repo	function
-call	otto.registry:registering_repo	sync	PK:name:-
+name	otto.registry:registering_project	function
+call	otto.registry:registering_project	sync	PK:name:-
 name	otto.reservations:JsonReservationBackend	class
 mro	otto.reservations:JsonReservationBackend	{otto.reservations:ReservationBackendBase}
 call	otto.reservations:JsonReservationBackend	sync	PK:url:N KO:path:- KO:username:N
@@ -5014,7 +5014,7 @@ member	otto.reservations:NoneReservationConfig.model_config	attribute
 abstract	otto.reservations:NoneReservationConfig	-
 name	otto.reservations:NullReservationBackend	class
 mro	otto.reservations:NullReservationBackend	{otto.reservations:ReservationBackendBase}
-call	otto.reservations:NullReservationBackend	sync	KO:url:N KO:repo_dir:N KO:username:N
+call	otto.reservations:NullReservationBackend	sync	KO:url:N KO:project_root:N KO:username:N
 member	otto.reservations:NullReservationBackend.backend_name	method	sync	-
 member	otto.reservations:NullReservationBackend.fetch_reservations	method	sync	PK:username:- PK:start:N PK:end:N
 member	otto.reservations:NullReservationBackend.holders	method	sync	PK:resource:-
@@ -5040,7 +5040,7 @@ member	otto.reservations:ReservationBackend.fetch_reservations	method	sync	PK:us
 requires	otto.reservations:ReservationBackend	backend_name fetch_reservations
 name	otto.reservations:ReservationBackendBase	class
 mro	otto.reservations:ReservationBackendBase	-
-call	otto.reservations:ReservationBackendBase	sync	KO:url:N KO:repo_dir:N KO:username:N
+call	otto.reservations:ReservationBackendBase	sync	KO:url:N KO:project_root:N KO:username:N
 member	otto.reservations:ReservationBackendBase.backend_name	method	sync	-
 member	otto.reservations:ReservationBackendBase.fetch_reservations	method	sync	PK:username:- PK:start:N PK:end:N
 member	otto.reservations:ReservationBackendBase.reservations	property:g--
@@ -5055,11 +5055,11 @@ call	otto.reservations:ReservationConstructionError	sync	@builtin:builtins.Value
 abstract	otto.reservations:ReservationConstructionError	-
 name	otto.reservations:ReservationEnv	class
 mro	otto.reservations:ReservationEnv	-
-call	otto.reservations:ReservationEnv	sync	PK:repo_dir:- PK:username:- PK:origin:- PK:url:-
+call	otto.reservations:ReservationEnv	sync	PK:project_root:- PK:username:- PK:origin:- PK:url:-
 member	otto.reservations:ReservationEnv.__eq__	method	sync	PK:other:-
 member	otto.reservations:ReservationEnv.__hash__	method	sync	-
 member	otto.reservations:ReservationEnv.origin	field
-member	otto.reservations:ReservationEnv.repo_dir	field
+member	otto.reservations:ReservationEnv.project_root	field
 member	otto.reservations:ReservationEnv.url	field
 member	otto.reservations:ReservationEnv.username	field
 abstract	otto.reservations:ReservationEnv	-
@@ -5151,15 +5151,15 @@ call	otto.reservations:active_reservations	sync	PK:backend:-
 name	otto.reservations:announce_expiring	function
 call	otto.reservations:announce_expiring	sync	PK:report:- KO:now:N
 name	otto.reservations:build_backend	function
-call	otto.reservations:build_backend	sync	PK:settings:- PK:repo_dir:- KO:username:N KO:origin:N
+call	otto.reservations:build_backend	sync	PK:settings:- PK:project_root:- KO:username:N KO:origin:N
 name	otto.reservations:build_report	function
 call	otto.reservations:build_report	sync	PK:lab:- PK:username:- PK:backend:- KO:host_ids:N KO:now:N
 name	otto.reservations:build_reservation_gate	function
-call	otto.reservations:build_reservation_gate	sync	PK:repos:- KO:holder:- KO:skip_reservation_check:- KO:cwd_fallback:-
+call	otto.reservations:build_reservation_gate	sync	PK:projects:- KO:holder:- KO:skip_reservation_check:- KO:cwd_fallback:-
 name	otto.reservations:check_reservations	function
 call	otto.reservations:check_reservations	sync	PK:lab:- PK:username:- PK:backend:- KO:host_ids:N
 name	otto.reservations:gate_from_settings	function
-call	otto.reservations:gate_from_settings	sync	PK:settings:- PK:repo_dir:- KO:holder:- KO:skip_reservation_check:-
+call	otto.reservations:gate_from_settings	sync	PK:settings:- PK:project_root:- KO:holder:- KO:skip_reservation_check:-
 name	otto.reservations:is_null_backend	function
 call	otto.reservations:is_null_backend	sync	PK:backend:-
 name	otto.reservations:register_reservation_backend	function
@@ -5246,18 +5246,18 @@ member	otto.result:ShellResult.output	field
 member	otto.result:ShellResult.status	field
 member	otto.result:ShellResult.value	field
 abstract	otto.result:ShellResult	-
-name	otto.session:DemotedRepo	class
-mro	otto.session:DemotedRepo	-
-call	otto.session:DemotedRepo	sync	PK:error:- PK:repo:- PK:project:- PK:reason:- PK:labs:O
-member	otto.session:DemotedRepo.__eq__	method	sync	PK:other:-
-member	otto.session:DemotedRepo.__hash__	method	sync	-
-member	otto.session:DemotedRepo.error	field
-member	otto.session:DemotedRepo.labs	field
-member	otto.session:DemotedRepo.message	property:g--
-member	otto.session:DemotedRepo.project	field
-member	otto.session:DemotedRepo.reason	field
-member	otto.session:DemotedRepo.repo	field
-abstract	otto.session:DemotedRepo	-
+name	otto.session:DemotedProject	class
+mro	otto.session:DemotedProject	-
+call	otto.session:DemotedProject	sync	PK:error:- PK:name:- PK:normalized_name:- PK:reason:- PK:labs:O
+member	otto.session:DemotedProject.__eq__	method	sync	PK:other:-
+member	otto.session:DemotedProject.__hash__	method	sync	-
+member	otto.session:DemotedProject.error	field
+member	otto.session:DemotedProject.labs	field
+member	otto.session:DemotedProject.message	property:g--
+member	otto.session:DemotedProject.name	field
+member	otto.session:DemotedProject.normalized_name	field
+member	otto.session:DemotedProject.reason	field
+abstract	otto.session:DemotedProject	-
 name	otto.session:DependencyRefusedError	class
 mro	otto.session:DependencyRefusedError	{otto.errors:OttoError} @builtin:builtins.Exception @builtin:builtins.BaseException
 call	otto.session:DependencyRefusedError	sync	PK:unsatisfied:- PK:warnings:N
@@ -5274,6 +5274,17 @@ name	otto.session:LoggingLevelsConflictError	class
 mro	otto.session:LoggingLevelsConflictError	{otto.errors:OttoError} @builtin:builtins.ValueError @builtin:builtins.Exception @builtin:builtins.BaseException
 call	otto.session:LoggingLevelsConflictError	sync	@builtin:builtins.ValueError
 abstract	otto.session:LoggingLevelsConflictError	-
+name	otto.session:ProjectCheck	class
+mro	otto.session:ProjectCheck	-
+call	otto.session:ProjectCheck	sync	PK:demoted:O
+member	otto.session:ProjectCheck.__eq__	method	sync	PK:other:-
+member	otto.session:ProjectCheck.__hash__	method	sync	-
+member	otto.session:ProjectCheck.demoted	field
+abstract	otto.session:ProjectCheck	-
+name	otto.session:ProjectLoadError	class
+mro	otto.session:ProjectLoadError	{otto.errors:OttoError} @builtin:builtins.Exception @builtin:builtins.BaseException
+call	otto.session:ProjectLoadError	sync	PK:errors:- PK:demoted:N
+abstract	otto.session:ProjectLoadError	-
 name	otto.session:ProjectSelection	class
 mro	otto.session:ProjectSelection	-
 call	otto.session:ProjectSelection	sync	PK:include:O PK:exclude:O
@@ -5286,35 +5297,24 @@ name	otto.session:ProjectSelectionError	class
 mro	otto.session:ProjectSelectionError	{otto.errors:OttoError} @builtin:builtins.ValueError @builtin:builtins.Exception @builtin:builtins.BaseException
 call	otto.session:ProjectSelectionError	sync	PK:message:- KO:field:- KO:kind:- KO:names:- KO:suggestion:N
 abstract	otto.session:ProjectSelectionError	-
-name	otto.session:RepoCheck	class
-mro	otto.session:RepoCheck	-
-call	otto.session:RepoCheck	sync	PK:demoted:O
-member	otto.session:RepoCheck.__eq__	method	sync	PK:other:-
-member	otto.session:RepoCheck.__hash__	method	sync	-
-member	otto.session:RepoCheck.demoted	field
-abstract	otto.session:RepoCheck	-
-name	otto.session:RepoLoadError	class
-mro	otto.session:RepoLoadError	{otto.errors:OttoError} @builtin:builtins.Exception @builtin:builtins.BaseException
-call	otto.session:RepoLoadError	sync	PK:errors:- PK:demoted:N
-abstract	otto.session:RepoLoadError	-
 name	otto.session:build_lab	function
-call	otto.session:build_lab	sync	PK:repos:- PK:labs:-
+call	otto.session:build_lab	sync	PK:projects:- PK:labs:-
 name	otto.session:check_dependencies	function
 call	otto.session:check_dependencies	sync	PK:ctx:-
 name	otto.session:check_instruction_active	function
 call	otto.session:check_instruction_active	sync	PK:name:- PK:owner:- PK:ctx:-
 name	otto.session:check_project_overlap	function
 call	otto.session:check_project_overlap	sync	PK:include:- PK:exclude:-
-name	otto.session:check_repos	function
-call	otto.session:check_repos	sync	PK:result:- PK:labs:- PK:selection:-
+name	otto.session:check_projects	function
+call	otto.session:check_projects	sync	PK:result:- PK:labs:- PK:selection:-
 name	otto.session:install_logging	function
 call	otto.session:install_logging	sync	KO:log_level:S:"INFO" KO:output_dir:N KO:overrides:N KO:show_time:B:false
 name	otto.session:merge_host_preferences	function
-call	otto.session:merge_host_preferences	sync	PK:repos:-
+call	otto.session:merge_host_preferences	sync	PK:projects:-
 name	otto.session:merge_logging_levels	function
-call	otto.session:merge_logging_levels	sync	PK:repos:-
+call	otto.session:merge_logging_levels	sync	PK:projects:-
 name	otto.session:select_projects	function
-call	otto.session:select_projects	sync	PK:repos:- PK:include:- PK:exclude:-
+call	otto.session:select_projects	sync	PK:projects:- PK:include:- PK:exclude:-
 name	otto.suite:ExpectCollector	class
 mro	otto.suite:ExpectCollector	-
 call	otto.suite:ExpectCollector	sync	PK:logger:N
@@ -5346,7 +5346,7 @@ member	otto.suite:OttoFixturesPlugin.pytest_pyfunc_call	method	sync	PK:pyfuncite
 abstract	otto.suite:OttoFixturesPlugin	-
 name	otto.suite:RunOptions	class
 mro	otto.suite:RunOptions	-
-call	otto.suite:RunOptions	sync	PK:markers:S:"" PK:random_order:B:true PK:seed:N PK:iterations:I:0 PK:duration:I:0 PK:threshold:F:0x1.9000000000000p+6 PK:results:S:"" PK:cov:N PK:cov_dir:N PK:overwrite_cov_dir:B:false PK:cov_clean:B:true PK:cov_report:B:false PK:cov_report_dir:N PK:overwrite_cov_report_dir:B:false PK:project_name:S:"Coverage\u0020Report" PK:cov_tickets_json:N PK:monitor:B:false PK:monitor_interval:F:0x1.4000000000000p+2 PK:monitor_output:N PK:monitor_hosts:N
+call	otto.suite:RunOptions	sync	PK:markers:S:"" PK:random_order:B:true PK:seed:N PK:iterations:I:0 PK:duration:I:0 PK:threshold:F:0x1.9000000000000p+6 PK:results:S:"" PK:cov:N PK:cov_dir:N PK:overwrite_cov_dir:B:false PK:cov_clean:B:true PK:cov_report:B:false PK:cov_report_dir:N PK:overwrite_cov_report_dir:B:false PK:report_title:S:"Coverage\u0020Report" PK:cov_tickets_json:N PK:monitor:B:false PK:monitor_interval:F:0x1.4000000000000p+2 PK:monitor_output:N PK:monitor_hosts:N
 member	otto.suite:RunOptions.__eq__	method	sync	PK:other:-
 member	otto.suite:RunOptions.__hash__	method	sync	-
 member	otto.suite:RunOptions.cov	field
@@ -5364,8 +5364,8 @@ member	otto.suite:RunOptions.monitor_interval	field
 member	otto.suite:RunOptions.monitor_output	field
 member	otto.suite:RunOptions.overwrite_cov_dir	field
 member	otto.suite:RunOptions.overwrite_cov_report_dir	field
-member	otto.suite:RunOptions.project_name	field
 member	otto.suite:RunOptions.random_order	field
+member	otto.suite:RunOptions.report_title	field
 member	otto.suite:RunOptions.results	field
 member	otto.suite:RunOptions.seed	field
 member	otto.suite:RunOptions.threshold	field
@@ -5399,7 +5399,7 @@ call	otto.testing:assert_host_registrable	sync	PK:cls:- KO:spec:N
 name	otto.testing:assert_inventory_conforms	function
 call	otto.testing:assert_inventory_conforms	sync	PK:inventory:- KO:expected_keys:N KO:repository:N KO:lab:N
 name	otto.testing:assert_lab_repository_conforms	function
-call	otto.testing:assert_lab_repository_conforms	sync	PK:repo:- KO:expected_labs:N KO:expect_host_summaries:B:false
+call	otto.testing:assert_lab_repository_conforms	sync	PK:repository:- KO:expected_labs:N KO:expect_host_summaries:B:false
 name	otto.testing:assert_reservation_backend_conforms	function
 call	otto.testing:assert_reservation_backend_conforms	sync	PK:backend:- KO:known_user:N KO:known_resources:N KO:expect_holders:B:false
 name	otto.testing:assert_transfer_backend_conforms	function
@@ -5658,16 +5658,16 @@ member	otto:OttoContext.cov_decision	field
 member	otto:OttoContext.do_for_all_hosts	method	coroutine	PK:method:- VP:args:- KO:pattern:N KO:concurrent:B:true KO:include_containers:B:false KO:include_local:B:false KO:term:N KO:transfer:N KO:ssh_options:N KO:telnet_options:N KO:sftp_options:N KO:scp_options:N KO:ftp_options:N KO:nc_options:N KO:userland_options:N KO:_scope_owner:N VK:kwargs:-
 member	otto:OttoContext.dry_run	property:g--
 member	otto:OttoContext.exclude_projects	field
-member	otto:OttoContext.for_repo	method	sync	PK:repo_name:-
+member	otto:OttoContext.for_project	method	sync	PK:name:-
 member	otto:OttoContext.get_host	method	sync	PK:host_id:- VK:overrides:-
 member	otto:OttoContext.include_projects	field
 member	otto:OttoContext.lab	field
 member	otto:OttoContext.log_command_output	property:g--
 member	otto:OttoContext.options	method	sync	PK:cls:-
-member	otto:OttoContext.ordered_repos	property:g--
+member	otto:OttoContext.ordered_projects	property:g--
 member	otto:OttoContext.output_dir	property:g--
 member	otto:OttoContext.policy	field
-member	otto:OttoContext.repos	property:g--
+member	otto:OttoContext.projects	property:g--
 member	otto:OttoContext.run_on_all_hosts	method	coroutine	PK:cmds:- PK:pattern:N PK:concurrent:B:true PK:timeout:F:0x1.e000000000000p+4 KO:_scope_owner:N KO:include_containers:B:false KO:term:N KO:transfer:N KO:ssh_options:N KO:telnet_options:N KO:sftp_options:N KO:scp_options:N KO:ftp_options:N KO:nc_options:N KO:userland_options:N
 member	otto:OttoContext.sweep_loop	method	coroutine	PK:loop:- KO:label:- KO:deadline:N
 member	otto:OttoContext.verb	field
@@ -5680,7 +5680,7 @@ member	otto:Parsed.model_config	attribute
 abstract	otto:Parsed	-
 name	otto:ProjectActions	class
 mro	otto:ProjectActions	-
-call	otto:ProjectActions	sync	PK:repo:- PK:ctx:-
+call	otto:ProjectActions	sync	PK:project:- PK:ctx:-
 member	otto:ProjectActions.cleanup	method	coroutine	PK:opts:-
 member	otto:ProjectActions.get_logs	method	coroutine	PK:opts:-
 member	otto:ProjectActions.install	method	coroutine	PK:opts:-
@@ -5721,7 +5721,7 @@ member	otto:Results.value	field
 abstract	otto:Results	-
 name	otto:RunOptions	class
 mro	otto:RunOptions	-
-call	otto:RunOptions	sync	PK:markers:S:"" PK:random_order:B:true PK:seed:N PK:iterations:I:0 PK:duration:I:0 PK:threshold:F:0x1.9000000000000p+6 PK:results:S:"" PK:cov:N PK:cov_dir:N PK:overwrite_cov_dir:B:false PK:cov_clean:B:true PK:cov_report:B:false PK:cov_report_dir:N PK:overwrite_cov_report_dir:B:false PK:project_name:S:"Coverage\u0020Report" PK:cov_tickets_json:N PK:monitor:B:false PK:monitor_interval:F:0x1.4000000000000p+2 PK:monitor_output:N PK:monitor_hosts:N
+call	otto:RunOptions	sync	PK:markers:S:"" PK:random_order:B:true PK:seed:N PK:iterations:I:0 PK:duration:I:0 PK:threshold:F:0x1.9000000000000p+6 PK:results:S:"" PK:cov:N PK:cov_dir:N PK:overwrite_cov_dir:B:false PK:cov_clean:B:true PK:cov_report:B:false PK:cov_report_dir:N PK:overwrite_cov_report_dir:B:false PK:report_title:S:"Coverage\u0020Report" PK:cov_tickets_json:N PK:monitor:B:false PK:monitor_interval:F:0x1.4000000000000p+2 PK:monitor_output:N PK:monitor_hosts:N
 member	otto:RunOptions.__eq__	method	sync	PK:other:-
 member	otto:RunOptions.__hash__	method	sync	-
 member	otto:RunOptions.cov	field
@@ -5739,8 +5739,8 @@ member	otto:RunOptions.monitor_interval	field
 member	otto:RunOptions.monitor_output	field
 member	otto:RunOptions.overwrite_cov_dir	field
 member	otto:RunOptions.overwrite_cov_report_dir	field
-member	otto:RunOptions.project_name	field
 member	otto:RunOptions.random_order	field
+member	otto:RunOptions.report_title	field
 member	otto:RunOptions.results	field
 member	otto:RunOptions.seed	field
 member	otto:RunOptions.threshold	field

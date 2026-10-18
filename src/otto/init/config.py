@@ -8,12 +8,12 @@ from .errors import InitInputError
 from .settings_file import existing_settings_name
 
 DEFAULT_KMODCOV_DIR = "third_party/otto_kmodcov"
-"""Where the kmodcov area vendors the otto_kmodcov library, relative to the repo root."""
+"""Where the kmodcov area vendors the otto_kmodcov library, relative to the project root."""
 
 
 @dataclasses.dataclass(frozen=True)
 class InitConfig:
-    """The repo root and the values the settings template is filled with.
+    """The project root and the values the settings template is filled with.
 
     Refuses, with :class:`~otto.init.errors.InitInputError` naming the field:
 
@@ -22,10 +22,10 @@ class InitConfig:
       *root*. ``pathlib`` silently discards *root* when *kmodcov_dir* is
       absolute (``root / "/etc"`` is ``/etc``), a ``../`` value climbs back
       out, and ``"."`` / ``""`` collapse onto *root* itself, which would
-      export the library into the repo root and drop the consumer starter
-      beside the repo. All are refused before any file is written.
+      export the library into the project root and drop the consumer starter
+      beside the project root. All are refused before any file is written.
 
-    Build one with :meth:`for_repo` to get ``otto init``'s defaults.
+    Build one with :meth:`for_project` to get ``otto init``'s defaults.
     """
 
     root: Path
@@ -40,13 +40,13 @@ class InitConfig:
         vendored = self.kmodcov_path.resolve()
         if self.root.resolve() not in vendored.parents:
             raise InitInputError(
-                f"{self.kmodcov_dir!r} must be a relative path strictly inside the repo "
+                f"{self.kmodcov_dir!r} must be a relative path strictly inside the project root "
                 f"({self.root}); it resolves to {vendored}",
                 field="kmodcov_dir",
             )
 
     @classmethod
-    def for_repo(
+    def for_project(
         cls,
         root: Path,
         *,
@@ -74,7 +74,7 @@ class InitConfig:
 
     @property
     def module_base(self) -> str:
-        """``name`` sanitized into a valid module-name base (``my-repo`` -> ``my_repo``)."""
+        """``name`` sanitized into a valid module-name base (``my-project`` -> ``my_project``)."""
         base = re.sub(r"\W", "_", self.name)
         return f"_{base}" if base[:1].isdigit() else base
 

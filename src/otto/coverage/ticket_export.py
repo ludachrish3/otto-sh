@@ -4,7 +4,7 @@ Versioned independently of ``store.json``: the store may be reshaped freely
 for the renderer's benefit, while this file has consumers otto does not
 control. Output is deterministic (tickets sorted by id, files by path,
 ranges ascending, apart from the wall-clock ``generated`` stamp) so it
-diffs cleanly in CI, and every path is repo-relative posix (never the
+diffs cleanly in CI, and every path is project-root-relative posix (never the
 store's internal absolute path) so two machines with different workspace
 roots emit identical ``path`` values for identical coverage, and an
 external consumer can map a path onto its own checkout.
@@ -64,25 +64,32 @@ def group_ranges(lines: list[int]) -> list[list[int]]:
 
 
 def build_ticket_export(
-    store: CoverageStore, *, repo_root: Path, project: str, otto_version: str, generated: str
+    store: CoverageStore,
+    *,
+    project_root: Path,
+    report_title: str,
+    otto_version: str,
+    generated: str,
 ) -> dict[str, Any]:
     """Build the ``tickets.json`` payload from an attributed store.
 
     *store* is a :class:`~otto.coverage.store.model.CoverageStore` that
-    ticket attribution has already run over. *repo_root* is the git
+    ticket attribution has already run over. *project_root* is the git
     repository root every emitted ``path`` is made relative to (posix
     separators). Commit-message ticket attribution
     (``otto.coverage.reporter.CoverageReporter._annotate_tickets``)
-    only ever sets ``LineRecord.ticket`` for files under *repo_root* — every
+    only ever sets ``LineRecord.ticket`` for files under *project_root* — every
     other file is skipped there — so every file this function encounters
-    with any ticket data is guaranteed relative to *repo_root*; a file
+    with any ticket data is guaranteed relative to *project_root*; a file
     outside it is skipped entirely (it can carry no ticket data to report).
+    *report_title* is the report's title; the payload carries it under the
+    key ``"project"``.
 
     Raises:
         ValueError: *store* carries no ticket data at all (``store.tickets``
             is empty) — attribution never ran, because ``[coverage.tickets]``
             was never configured for this report, or the store held no
-            files under *repo_root* to attribute. A git log walk that ran
+            files under *project_root* to attribute. A git log walk that ran
             but matched no ticket pattern no longer lands here: those
             lines are attributed to the synthetic ``(no ticket)`` row (and
             an uncommitted line to ``(uncommitted)``), which populates
@@ -97,13 +104,13 @@ def build_ticket_export(
             "for --tickets-json"
         )
     # The store keys files by resolved absolute path (get_or_create_file
-    # resolves whenever the file exists on disk); resolve repo_root the same
+    # resolves whenever the file exists on disk); resolve project_root the same
     # way before every is_relative_to/relative_to comparison below —
-    # mirrors CoverageReporter._annotate_tickets's identical repo_root.resolve()
-    # ahead of its own is_relative_to check, for the same reason (a repo_root
+    # mirrors CoverageReporter._annotate_tickets's identical project_root.resolve()
+    # ahead of its own is_relative_to check, for the same reason (a project_root
     # reached through a symlink component would otherwise misclassify every
-    # file in it as "outside the repo").
-    resolved_root = repo_root.resolve()
+    # file in it as "outside the project root").
+    resolved_root = project_root.resolve()
     per_ticket: dict[str, dict[str, list[int]]] = {}
     covered_of: dict[str, dict[str, list[int]]] = {}
     # Per-tier counts accumulate in this same single pass over the store.
@@ -115,7 +122,7 @@ def build_ticket_export(
     # of this ticket's lines whose hit in that tier is override-sourced
     # (`tier in line.asserted`).
     asserted_of: dict[str, dict[str, int]] = {}
-    # `totals` (below) is the DEDUPED repo-truth over every attributed line —
+    # `totals` (below) is the DEDUPED project-truth over every attributed line —
     # mirrors spa_data.py's `_build_ticket_summaries` exactly (same gate,
     # same single pass): a line owned by two tickets counts once here,
     # never once per ticket, unlike the per-ticket `owned`/`covered` below
@@ -126,10 +133,10 @@ def build_ticket_export(
     for rec in store.files():
         if not rec.path.is_relative_to(resolved_root):
             # Can carry no ticket data (attribution never sets `.ticket` for
-            # files outside repo_root) — skip rather than let
+            # files outside project_root) — skip rather than let
             # `.relative_to()` below raise for an unrelated file.
             continue
-        # Repo-relative, forward-slash normalized: this export has no
+        # Project-root-relative, forward-slash normalized: this export has no
         # --prefix option (unlike the SPA's display path) and must be
         # portable and machine-independent — an absolute path (even
         # `.as_posix()`-normalized) would still bake in this machine's
@@ -193,7 +200,7 @@ def build_ticket_export(
         "format": TICKET_EXPORT_FORMAT,
         "generated": generated,
         "otto_version": otto_version,
-        "project": project,
+        "project": report_title,
         "traversal": "first-parent",
         "overrides_active": store.overrides_file_active,
         "thresholds": store.thresholds.to_dict(),
@@ -211,14 +218,14 @@ def write_ticket_export(
     store: CoverageStore,
     path: Path,
     *,
-    repo_root: Path,
-    project: str,
+    project_root: Path,
+    report_title: str,
     otto_version: str,
     generated: str,
 ) -> None:
     """Write the ``tickets.json`` payload built from *store* to *path*.
 
-    See :func:`build_ticket_export` for *repo_root*'s role (every emitted
+    See :func:`build_ticket_export` for *project_root*'s role (every emitted
     path is made relative to it).
 
     Raises:
@@ -226,6 +233,10 @@ def write_ticket_export(
             carries no ticket data.
     """
     payload = build_ticket_export(
-        store, repo_root=repo_root, project=project, otto_version=otto_version, generated=generated
+        store,
+        project_root=project_root,
+        report_title=report_title,
+        otto_version=otto_version,
+        generated=generated,
     )
     path.write_text(json.dumps(payload, indent=2, sort_keys=False) + "\n")

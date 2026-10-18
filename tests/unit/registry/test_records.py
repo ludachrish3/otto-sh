@@ -20,7 +20,7 @@ from otto.registry import (
     Justified,
     Ref,
     Registry,
-    RequireRepo,
+    RequireProject,
     resolved,
 )
 from tests._fixtures.paths import PROJECT_ROOT
@@ -345,16 +345,16 @@ def test_capability_is_a_closed_set():
 
 def test_justified_refuses_a_blank_reason():
     with pytest.raises(ValueError, match="reason"):
-        Justified(RequireRepo(), reason="  ")
+        Justified(RequireProject(), reason="  ")
     with pytest.raises(TypeError, match="Capability"):
-        Justified("RequireRepo", reason="r")
+        Justified("RequireProject", reason="r")
 
 
 def test_capabilities_must_be_justified():
     with pytest.raises(TypeError, match="Justified"):
-        _reg(capabilities=[RequireRepo()])
-    r = _reg(capabilities=[Justified(RequireRepo(), reason="r")])
-    assert r.capabilities == [Justified(RequireRepo(), reason="r")]
+        _reg(capabilities=[RequireProject()])
+    r = _reg(capabilities=[Justified(RequireProject(), reason="r")])
+    assert r.capabilities == [Justified(RequireProject(), reason="r")]
 
 
 # --- reads -----------------------------------------------------------------

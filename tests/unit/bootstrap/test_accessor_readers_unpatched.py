@@ -4,14 +4,14 @@ Three readers import an ``otto.bootstrap`` accessor inside a broad ``except``
 (spec ``docs/superpowers/specs/2026-10-06-repo-and-scope-inputs-design.md``
 §2.1). An import that names a home the accessor no longer has raises
 ``ImportError``, the ``except`` swallows it, and the reader quietly answers
-its "nothing to read" default. Two more, ``scope_for_repo`` and the declared
+its "nothing to read" default. Two more, ``scope_for_project`` and the declared
 entries, read the composed-repos catalog ``otto.bootstrap`` publishes into
 ``otto.declared`` (spec 2026-10-11 placement-and-phases §3.5): a root that
 stopped publishing leaves them the same quiet default. The sixth,
-``otto.config.repo.discovered_teardown_deadline``, swallows a failed discovery
+``otto.config.project.discovered_teardown_deadline``, swallows a failed discovery
 and answers ``None``, so the run keeps its 10-second default. Nothing here
 patches an accessor: each test writes a real SUT repo, points
-``OTTO_SUT_DIRS`` at it and asserts the answer only a working read gives.
+``OTTOPATH`` at it and asserts the answer only a working read gives.
 ``tests/unit/test_moved_name_spellings.py`` refuses the old spellings
 statically.
 """
@@ -20,7 +20,7 @@ import logging
 
 import pytest
 
-import otto.config.repo as config_repo
+import otto.config.project as config_repo
 from otto import bootstrap as bs
 from tests._fixtures.fleet import _lab
 from tests._fixtures.sutrepo import make_sut_repo
@@ -38,9 +38,9 @@ def _fresh_bootstrap():
 @pytest.fixture
 def declaring_repo(tmp_path, monkeypatch):
     """One real repo, ``scoped``, whose ``[project]`` admits ``slot1`` of lab ``rig``."""
-    repo = make_sut_repo(tmp_path / "scoped", name="scoped", extra=_DECLARES_SLOT1)
-    monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
-    return repo
+    project = make_sut_repo(tmp_path / "scoped", name="scoped", extra=_DECLARES_SLOT1)
+    monkeypatch.setenv("OTTOPATH", str(project))
+    return project
 
 
 def _rig():
@@ -48,20 +48,20 @@ def _rig():
 
 
 def test_scope_for_repo_reads_the_real_repos(declaring_repo):
-    from otto.declared import scope_for_repo
+    from otto.declared import scope_for_project
 
     bs.bootstrap()
-    scope = scope_for_repo("scoped")
+    scope = scope_for_project("scoped")
     assert scope is not None, "scope_for_repo admitted everything: its accessor import failed"
     assert [p.pattern for p in scope.lab_patterns] == ["rig"]
 
 
 def test_scope_for_repo_composes_through_the_initiator(declaring_repo):
     """Nothing composed yet: the initiator ``otto.bootstrap`` installed composes, then answers."""
-    from otto.declared import scope_for_repo
+    from otto.declared import scope_for_project
 
     assert not bs.is_bootstrapped()
-    scope = scope_for_repo("scoped")
+    scope = scope_for_project("scoped")
     assert scope is not None, "scope_for_repo admitted everything: the initiator never composed"
     assert [p.pattern for p in scope.lab_patterns] == ["rig"]
     assert bs.is_bootstrapped()
@@ -73,10 +73,10 @@ def test_the_teardown_deadline_reads_the_real_environment(declaring_repo, monkey
 
 
 def test_declared_entries_read_the_real_repos(declaring_repo):
-    from otto.declared import surviving_repos
+    from otto.declared import surviving_projects
 
     bs.bootstrap()
-    assert [r.name for r in surviving_repos()] == ["scoped"], (
+    assert [r.name for r in surviving_projects()] == ["scoped"], (
         "declared entries saw no repos: the accessor import failed"
     )
 
@@ -96,8 +96,10 @@ def test_coverage_detection_reads_the_real_repos(tmp_path, monkeypatch, caplog):
     """A ``[coverage].hosts`` selector matching no host warns once: only a read repo has one."""
     from otto.context import OttoContext
 
-    repo = make_sut_repo(tmp_path / "cov", name="cov", extra='[coverage]\nhosts = "no-such-host"')
-    monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
+    project = make_sut_repo(
+        tmp_path / "cov", name="cov", extra='[coverage]\nhosts = "no-such-host"'
+    )
+    monkeypatch.setenv("OTTOPATH", str(project))
     ctx = OttoContext(lab=_rig())
     with caplog.at_level(logging.WARNING, logger="otto.context"):
         assert ctx.cov is False
@@ -112,7 +114,7 @@ def test_the_remote_completion_gate_reads_the_real_repos(declaring_repo, monkeyp
     lab = _rig()
     lab.hosts["slot1"].resources = frozenset({"slot-1"})
     lab.hosts["slot2"].resources = frozenset({"slot-2"})
-    monkeypatch.setattr("otto.session.lab.build_lab", lambda repos, labs: lab)
+    monkeypatch.setattr("otto.session.lab.build_lab", lambda projects, labs: lab)
     chain = rc._ChainParams(host_id="", hop="", term=None, labs=["rig"], holder="carol")
 
     assert rc._reservation_allows(chain) is True  # no [reservations]: the gate is a no-op

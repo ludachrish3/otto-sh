@@ -1,31 +1,31 @@
-"""Per-repo project actions -- one repo's lifecycle, and the seam to override it.
+"""Per-project actions -- one project's lifecycle, and the seam to override it.
 
-A repo gets ONE :class:`ProjectActions` -- otto's default, or the subclass it
-registered from its init module -- constructed per command with that repo's
-:class:`~otto.config.repo.Repo` and a repo-scoped view of the live context
+A project gets ONE :class:`ProjectActions` -- otto's default, or the subclass it
+registered from its init module -- constructed per command with that project's
+:class:`~otto.config.project.Project` and a project-scoped view of the live context
 (:class:`~otto.context.ProjectContextView`). The defaults drive the fleet's
-hosts through the host verbs, scoped to ``owner == repo.name``, so one repo's
-install can never touch another repo's products.
+hosts through the host verbs, scoped to ``owner == project.name``, so one project's
+install can never touch another project's products.
 
 THE OWNER SCOPE IS THE WHOLE POINT of this layer. The host verbs already know
 how to install products; what they cannot know is which of the products a host
-carries belong to the repo whose action is running.
+carries belong to the project whose action is running.
 
 NOT ONE ``owner=`` IS SPELLED BELOW, and that is the design (spec section 7).
 The scope rides the CONTEXT VIEW every action dispatches through:
-``self.ctx`` is ``ctx.for_repo(repo.name)``, which bounds each walk to that
-repo's fleet of interest and supplies ``owner=`` to the host verb itself. An
+``self.ctx`` is ``ctx.for_project(project.name)``, which bounds each walk to that
+project's fleet of interest and supplies ``owner=`` to the host verb itself. An
 argument is forgettable exactly once per new call site -- and a forgotten one
-here is not a crash but a silently WIDER sweep, repo A's uninstall taking repo
+here is not a crash but a silently WIDER sweep, project A's uninstall taking project
 B's products off a host they share. A subclass that dispatches a host verb
 taking no ``owner`` passes ``with_owner=False``.
 
 Two things are deliberately ABSENT from these signatures, both for the same
-reason -- they are host-global, so they belong to no repo and are the
+reason -- they are host-global, so they belong to no project and are the
 orchestrator's to perform once (spec section 5):
 
 * **debug logs** -- ``uninstall`` hard-wires ``get_debug_logs=False`` rather
-  than exposing a flag. N repos each sweeping the same host's debug logs means
+  than exposing a flag. N projects each sweeping the same host's debug logs means
   N transfers, each overwriting the last.
 * **toolchain tools** -- one toolchain per host, shared by every owner;
   ``install_tools`` acts on ``opts.dev`` only; ``opts.toolchain`` is read by
@@ -46,7 +46,7 @@ from ..instruction_catalog import (
     instruction,
 )
 from ..params import OptionsSource, shared_field_values
-from ..registry import get_registering_repo, registration_boundary
+from ..registry import get_registering_project, registration_boundary
 from ..result import Result
 from ..utils import Status
 from .options import (
@@ -61,7 +61,7 @@ from .render import render_status
 from .state import InstallState, combine_install_states
 
 if TYPE_CHECKING:
-    from ..config.repo import Repo
+    from ..config.project import Project
     from ..host.dev_tool import DevTool
     from ..host.host import Host
     from ..host.product import Product
@@ -83,7 +83,7 @@ def _owned(items: "list[_OwnedT]", owner: str) -> "list[_OwnedT]":
     install preview (:mod:`otto.project.plan`) reads attachments through it too.
 
     Nothing here filters on ``None``: an unowned attachment belongs to no
-    repo's actions, so no repo's default touches it.
+    project's actions, so no project's default touches it.
     """
     return [item for item in items if item.owner == owner]
 
@@ -95,9 +95,9 @@ _REQUIRE_PRODUCT_LOGS_CONTRADICTION = (
 )
 """The refusal both project-layer log verbs return for the contradictory flag pair.
 
-One literal, two callers: :meth:`ProjectActions.get_logs` refuses it per repo
+One literal, two callers: :meth:`ProjectActions.get_logs` refuses it per project
 and :func:`otto.project.orchestrator.get_logs` refuses it for the lab (whose
-own refusal is the one that fires in a lab with no repos at all). They are the
+own refusal is the one that fires in a lab with no projects at all). They are the
 same refusal, so they are the same words.
 
 :meth:`otto.host.host.BaseHost.get_logs` refuses the same pair in the same
@@ -108,8 +108,8 @@ three sentences would buy a package cycle.
 
 
 _UNSCOPED_CONTEXT = """\
-ProjectActions for repo '{repo}' was handed a plain OttoContext, which is not a
-repo scope.
+ProjectActions for project '{project}' was handed a plain OttoContext, which is not
+a project scope.
 
 No default below spells owner= any more -- the scope rides the context view --
 so this object would walk the whole ambient union AND call every host verb with
@@ -117,14 +117,14 @@ owner=None, which the host layer reads as EVERY owner's products. Its cleanup()
 would uninstall its neighbours' products and remove their dev tools, on every
 host, reporting success.
 
-Build actions with otto.project.actions_for(repo, ctx). It supplies
-ctx.for_repo(repo.name) -- the view that bounds the fleet and stamps the owner.\
+Build actions with otto.project.actions_for(project, ctx). It supplies
+ctx.for_project(project.name) -- the view that bounds the fleet and stamps the owner.\
 """
 """The refusal :meth:`ProjectActions.__init__` raises for an unscoped context.
 
 REFUSED RATHER THAN DOCUMENTED, and the asymmetry with the pre-view code is the
-reason. ``ProjectActions(repo, ctx)`` was legal and owner-SAFE before the scope
-moved onto the view: the bodies carried ``owner=repo.name`` themselves, so a
+reason. ``ProjectActions(project, ctx)`` was legal and owner-SAFE before the scope
+moved onto the view: the bodies carried ``owner=project.name`` themselves, so a
 hand-built instance narrowed correctly even over a plain context. The same
 spelled code is now destructive, which makes this the one migration hazard that
 cannot be left to a docstring -- it is silent, it is a WIDENING, and it is
@@ -166,9 +166,9 @@ def _options_for(actions: "ProjectActions", name: str, base: Any, caller: str) -
 
     TWO BASE BODIES CALL A THIRD (:meth:`ProjectActions.cleanup` calls
     ``uninstall``, :meth:`~ProjectActions.is_uninstalled` calls ``status``),
-    and either callee may be overridden by a repo with an options class of its
-    own. The call resolves through the MRO to the repo's body, so the instance
-    it receives has to be the repo's class -- a base instance carries none of
+    and either callee may be overridden by a project with an options class of its
+    own. The call resolves through the MRO to the project's body, so the instance
+    it receives has to be the project's class -- a base instance carries none of
     the fields that body declared and raises ``AttributeError`` on the first
     one it reads.
 
@@ -284,33 +284,33 @@ async def _dispatch_uninstall_dev_tools(host: "Host", owner: "str | None" = None
     """Remove *host*'s ``owner``-scoped dev tools through the host's OWN method.
 
     Not ``host.cleanup(...)``: that verb's third step removes the toolchain
-    tools, which one host shares with every owner on it, so a repo calling it
+    tools, which one host shares with every owner on it, so a project calling it
     would take its neighbours' tooling down with its own.
     """
     return await host.uninstall_dev_tools(owner=owner)
 
 
 class ProjectActions:
-    """One repo's lifecycle across the lab; subclass to override any part of it.
+    """One project's lifecycle across the lab; subclass to override any part of it.
 
-    Constructed per command with the repo it acts for and the live context.
+    Constructed per command with the project it acts for and the live context.
     Every default fans out across ``ctx.all_hosts()`` -- the fleet, so the
     built-in ``local`` host and Docker containers are excluded as everywhere
-    else -- and scopes each host verb to this repo's products and dev tools.
+    else -- and scopes each host verb to this project's products and dev tools.
 
     Overriding is ordinary Python: subclass, register it with
-    :func:`register_project_actions` from the repo's init module, and call
+    :func:`register_project_actions` from the project's init module, and call
     ``super()`` for whatever should keep the default behaviour. A subclass may
     freely mix custom sequencing with the per-host verbs (``await
     host.install()`` for chosen hosts) -- nothing here is privileged.
     """
 
-    def __init__(self, repo: "Repo", ctx: "ProjectContextView") -> None:
-        """Bind *repo* and its context view, refusing a context that is not a scope.
+    def __init__(self, project: "Project", ctx: "ProjectContextView") -> None:
+        """Bind *project* and its context view, refusing a context that is not a scope.
 
         Args:
-            repo: The repo these actions act for.
-            ctx: This repo's :class:`~otto.context.ProjectContextView`.
+            project: The project these actions act for.
+            ctx: This project's :class:`~otto.context.ProjectContextView`.
 
         Raises:
             TypeError: *ctx* is a plain :class:`~otto.context.OttoContext`. See
@@ -320,15 +320,15 @@ class ProjectActions:
         from ..run_context import OttoContext  # function-scope: keeps this module import-light
 
         if isinstance(ctx, OttoContext):
-            raise TypeError(_UNSCOPED_CONTEXT.format(repo=repo.name))
+            raise TypeError(_UNSCOPED_CONTEXT.format(project=project.name))
 
-        self.repo = repo
-        """The repo these actions act for; its ``name`` is the owner scope."""
+        self.project = project
+        """The project these actions act for; its ``name`` is the owner scope."""
 
         self.ctx = ctx
-        """This repo's view of the live context -- its bounded fleet and its dispatch.
+        """This project's view of the live context -- its bounded fleet and its dispatch.
 
-        :func:`actions_for` supplies ``ctx.for_repo(repo.name)``, and THAT VIEW
+        :func:`actions_for` supplies ``ctx.for_project(project.name)``, and THAT VIEW
         is what carries the owner scope now that no body below spells
         ``owner=``.
         """
@@ -338,25 +338,25 @@ class ProjectActions:
     ####################
 
     # EVERY DECORATOR BELOW PASSES help=, and it is not the method's docstring
-    # restated. The docstring says what THIS body does -- one repo's products,
-    # on that repo's fleet -- while the published `otto run <name>` walks every
-    # repo and performs the host-global tail no body may (the debug sweep, the
+    # restated. The docstring says what THIS body does -- one project's products,
+    # on that project's fleet -- while the published `otto run <name>` walks every
+    # project and performs the host-global tail no body may (the debug sweep, the
     # toolchain, the impairments, the tunnels). `--help` is read by someone
     # running the lab-wide command, so it is written for that.
 
     @instruction(
         options=InstallOptions,
-        help="Install every repo's products, dependencies first, stopping at the first failure.",
+        help="Install every project's products, dependencies first, stopping at the first failure.",
         walk="forward",
         continue_on_failure=False,
         require_dependencies=True,
         dry_run_preview=True,
     )
     async def install(self, opts: InstallOptions) -> Result:  # noqa: ARG002 — the base body needs no flag; the parameter is the override's, and super() passes it through
-        """Install this repo's products on every fleet host.
+        """Install this project's products on every fleet host.
 
         Hosts proceed in parallel; within a host, products install in
-        declaration order -- which is already repo-dependency order, because
+        declaration order -- which is already project-dependency order, because
         bootstrap imports init modules topologically and providers append in
         registration order.
         """
@@ -364,19 +364,19 @@ class ProjectActions:
 
     @instruction(
         options=UninstallOptions,
-        help="Uninstall every repo in reverse order (best-effort), then sweep debug logs once.",
+        help="Uninstall every project in reverse order (best-effort), then sweep debug logs once.",
         walk="reverse",
         continue_on_failure=True,
         require_dependencies=False,
         dry_run_preview=True,
     )
     async def uninstall(self, opts: UninstallOptions) -> Result:
-        """Uninstall this repo's products on every fleet host.
+        """Uninstall this project's products on every fleet host.
 
         Product logs come off each host BEFORE its teardown, which is the host
         verb's own contract. Debug logs are NOT gathered here and there is no
-        flag to ask for them: they are host-level, belong to no repo, and the
-        orchestrator sweeps them once after every repo has torn down.
+        flag to ask for them: they are host-level, belong to no project, and the
+        orchestrator sweeps them once after every project has torn down.
         """
         return _reduce_results(
             await self.ctx.do_for_all_hosts(
@@ -388,13 +388,13 @@ class ProjectActions:
 
     @instruction(
         options=CleanupOptions,
-        help="Clean the lab: every repo, the debug logs, the toolchain, impairments, tunnels.",
+        help="Clean the lab: every project, the debug logs, the toolchain, impairments, tunnels.",
         walk="reverse",
         continue_on_failure=True,
         require_dependencies=False,
     )
     async def cleanup(self, opts: CleanupOptions) -> Result:
-        """Uninstall this repo's products, then remove its dev tools.
+        """Uninstall this project's products, then remove its dev tools.
 
         Strictly more than :meth:`uninstall`, in that order: products first (a
         dev tool may be what a product's uninstall needs), then the tooling.
@@ -403,9 +403,9 @@ class ProjectActions:
 
         Toolchain tools are NOT removed here. One toolchain serves every owner
         on a host, so removing it is the orchestrator's final host-global step;
-        a repo tearing it down would take its neighbours' tooling with it.
+        a project tearing it down would take its neighbours' tooling with it.
 
-        A REPO'S ``uninstall`` OVERRIDE IS HONOURED, and is handed an instance
+        A PROJECT'S ``uninstall`` OVERRIDE IS HONOURED, and is handed an instance
         of ITS OWN options class -- not the base
         :class:`~otto.project.options.UninstallOptions` built here, which
         carries none of the fields that override declared and would raise
@@ -413,7 +413,7 @@ class ProjectActions:
         rebuilds this instance as the registered body's class, so the shared
         fields (``product_logs`` among them) flow and the override's own take
         their defaults. An override whose class has a field with NO default
-        cannot be built that way and is refused, naming the field: such a repo
+        cannot be built that way and is refused, naming the field: such a project
         overrides ``cleanup`` itself and calls its own ``uninstall`` from
         there.
         """
@@ -432,23 +432,23 @@ class ProjectActions:
     @instruction(
         "get-logs",
         options=GetLogsOptions,
-        help="Gather every repo's product logs (best-effort), then sweep debug logs once.",
+        help="Gather every project's product logs (best-effort), then sweep debug logs once.",
         walk="forward",
         continue_on_failure=True,
         require_dependencies=False,
     )
     async def get_logs(self, opts: GetLogsOptions) -> Result:
-        """Retrieve this repo's product logs from every fleet host.
+        """Retrieve this project's product logs from every fleet host.
 
         There is no debug half, deliberately -- see this module's docstring.
         Zero retrieved logs is success; *require_product_logs* turns an empty
         haul into a failure that names the host that delivered nothing.
 
-        THE REQUIREMENT IS ASKED ONLY OF HOSTS THIS REPO HAS PRODUCTS ON. A
-        repo rarely owns something on every host in the lab -- firmware lives
+        THE REQUIREMENT IS ASKED ONLY OF HOSTS THIS PROJECT HAS PRODUCTS ON. A
+        project rarely owns something on every host in the lab -- firmware lives
         on the embedded target, a service on the servers -- and a bare host
         cannot produce logs for products it does not carry. Demanding a haul
-        from the whole fleet would fail a repo that retrieved everything it
+        from the whole fleet would fail a project that retrieved everything it
         owns, named after a host it never deploys to.
 
         *require_product_logs* when product logs are not gathered is a
@@ -470,11 +470,11 @@ class ProjectActions:
             # symptom.
             return haul
         for host in self.ctx.all_hosts():
-            owned = _owned(host.products, self.repo.name)
+            owned = _owned(host.products, self.project.name)
             if not owned:
                 continue
             # One directory per product, straight from the run-tree contract:
-            # a repo's requirement is met when ANY of its products on this host
+            # a project's requirement is met when ANY of its products on this host
             # delivered something.
             base = layout.run_dir_of(host.log_dest())
             if not any(
@@ -493,14 +493,14 @@ class ProjectActions:
     @instruction(
         "install-tools",
         options=InstallToolsOptions,
-        help="Install every repo's dev tools, then (when asked) the host toolchains.",
+        help="Install every project's dev tools, then (when asked) the host toolchains.",
         walk="forward",
         continue_on_failure=False,
         require_dependencies=True,
         dry_run_preview=True,
     )
     async def install_tools(self, opts: InstallToolsOptions) -> Result:
-        """Install this repo's dev tools on every fleet host.
+        """Install this project's dev tools on every fleet host.
 
         *toolchain* is accepted and does nothing at this layer, which is the
         declared contract rather than an oversight: a host has ONE toolchain,
@@ -522,19 +522,19 @@ class ProjectActions:
 
     @property
     def owns_products(self) -> bool:
-        """Whether any fleet host carries a product owned by this repo.
+        """Whether any fleet host carries a product owned by this project.
 
-        The orchestrator's counted-repo rule reads this: a repo that owns no
+        The orchestrator's counted-project rule reads this: a project that owns no
         products anywhere and registered no actions of its own (a docs-only
-        repo, say) has no install state to contribute and must not drag the
+        project, say) has no install state to contribute and must not drag the
         lab-level aggregate to PARTIAL.
         """
-        return any(_owned(host.products, self.repo.name) for host in self.ctx.all_hosts())
+        return any(_owned(host.products, self.project.name) for host in self.ctx.all_hosts())
 
     @instruction(
         options=StatusOptions,
         help=(
-            "Report each repo's install state, and the lab's: "
+            "Report each project's install state, and the lab's: "
             "exit 0 installed, 1 uninstalled, 2 partial."
         ),
         walk="forward",
@@ -544,7 +544,7 @@ class ProjectActions:
         render=render_status,
     )
     async def status(self, opts: StatusOptions) -> InstallState:  # noqa: ARG002 — --full is the orchestrator's (cleanliness is lab-level); the parameter is the override's
-        """Report this repo's install state across the fleet.
+        """Report this project's install state across the fleet.
 
         COUNTS PRODUCTS, NOT HOSTS. A host-level ``is_installed()`` answers
         False for a host that is clean and for a host that is half-installed
@@ -561,7 +561,7 @@ class ProjectActions:
         installed = 0
         total = 0
         for host in self.ctx.all_hosts():
-            for product in _owned(host.products, self.repo.name):
+            for product in _owned(host.products, self.project.name):
                 total += 1
                 if await product.is_installed(host):
                     installed += 1
@@ -570,40 +570,40 @@ class ProjectActions:
         return InstallState.INSTALLED if installed == total else InstallState.PARTIAL
 
     async def is_uninstalled(self) -> bool:
-        """Whether none of this repo's products is installed anywhere on the fleet.
+        """Whether none of this project's products is installed anywhere on the fleet.
 
         DELIBERATELY UNPAIRED: there is no ``is_installed()`` at this layer.
         False on such a boolean would cover PARTIAL and UNINSTALLED alike,
         which is the exact conflation :meth:`status`' third member exists to
         resolve, and the caller most likely to ask -- a converge -- is the one
         that must tell them apart. Hosts carry the symmetric pair because a
-        host's own answer is per-product; a repo's is an aggregate, and an
+        host's own answer is per-product; a project's is an aggregate, and an
         aggregate is where the middle state appears. Ask :meth:`status` for
         anything except "is there nothing of mine left to find".
 
-        ONE AUTHORITY: a repo whose install state comes from something otto
+        ONE AUTHORITY: a project whose install state comes from something otto
         cannot see overrides ``status`` and nothing else, and this answer
         follows it. The override is handed an instance of ITS OWN options
         class, rebuilt by ``_options_for`` -- see :meth:`cleanup`, which
         reaches its ``uninstall`` the same way and for the same reason. An
         override whose class has a field with no default is refused naming the
-        field; such a repo overrides ``is_uninstalled`` itself.
+        field; such a project overrides ``is_uninstalled`` itself.
         """
         probe = _options_for(self, "status", StatusOptions(), "is_uninstalled")
         return await self.status(probe) is InstallState.UNINSTALLED
 
     async def is_clean(self) -> bool:
-        """Whether none of this repo's products or dev tools remain installed.
+        """Whether none of this project's products or dev tools remain installed.
 
         The matching question to :meth:`cleanup`, asked with the same scope:
-        another repo's leftovers are not this repo's uncleanliness. Toolchain
+        another project's leftovers are not this project's uncleanliness. Toolchain
         tools are host-global and are checked by the orchestrator, not here.
         """
         for host in self.ctx.all_hosts():
-            for product in _owned(host.products, self.repo.name):
+            for product in _owned(host.products, self.project.name):
                 if await product.is_installed(host):
                     return False
-            for tool in _owned(host.dev_tools, self.repo.name):
+            for tool in _owned(host.dev_tools, self.project.name):
                 if await tool.is_installed(host):
                     return False
         return True
@@ -616,7 +616,7 @@ def declare() -> None:
     fills their first-party slot (``FIRST_PARTY_ACTIONS``). It runs when the
     module is imported, and again from any caller that must not rely on that
     import: ``run_instruction`` before its lookup, and ``bootstrap()`` before
-    any repo's init runs, so a table a test emptied is filled again.
+    any project's init runs, so a table a test emptied is filled again.
     Declaring again does nothing.
     """
     declare_first_party_actions(ProjectActions)
@@ -629,23 +629,23 @@ declare()
 def register_project_actions(
     cls: "type[ProjectActions]", *, overwrite: bool = False
 ) -> "type[ProjectActions]":
-    """Register *cls* as the calling repo's actions; usable as a decorator.
+    """Register *cls* as the calling project's actions; usable as a decorator.
 
     Call from an init module listed in ``.otto/settings.toml`` ``[init]`` --
-    that import is what attributes the class to its repo, via the marker
-    ``bootstrap()`` sets around it. A repo registers one actions class:
-    registering again from the SAME repo raises
+    that import is what attributes the class to its project, via the marker
+    ``bootstrap()`` sets around it. A project registers one actions class:
+    registering again from the SAME project raises
     :class:`~otto.registry.DuplicateRegistration` unless *overwrite* is true,
-    and the replacement's bodies replace the old ones whole. Different repos
+    and the replacement's bodies replace the old ones whole. Different projects
     each registering their own class is the intended composition, not a
     collision.
 
     *cls*'s ``@instruction``-marked methods (those declared on *cls* itself)
-    become this repo's project-instruction bodies, in the same
-    :class:`~otto.instruction_catalog.ProjectActionsEntry` -- a repo that overrides
+    become this project's project-instruction bodies, in the same
+    :class:`~otto.instruction_catalog.ProjectActionsEntry` -- a project that overrides
     ``install`` or declares a new project instruction of its own gets both from
     one decorator. The table's own rules apply: a walk shape is fixed by
-    whichever repo declares the name first, and an override of a first-party
+    whichever project declares the name first, and an override of a first-party
     instruction must carry an options class that inherits the first-party one
     -- either raises :exc:`~otto.instruction_catalog.ProjectInstructionError`, and
     nothing is registered.
@@ -653,35 +653,37 @@ def register_project_actions(
     Returns *cls* unchanged so it can be used as a decorator.
 
     Raises:
-        otto.registry.RegistrationRefused: If called outside a repo's init
+        otto.registry.RegistrationRefused: If called outside a project's init
             import (nothing to attribute the class to); a ``ValueError``.
-        otto.registry.DuplicateRegistration: If this repo already registered
+        otto.registry.DuplicateRegistration: If this project already registered
             actions and *overwrite* is false.
         otto.instruction_catalog.ProjectInstructionError: If the bodies break a
             table rule, or two methods of *cls* claim one name.
     """
-    repo = get_registering_repo()
+    project = get_registering_project()
     # otto's own class carries otto's bodies (declared in FIRST_PARTY_ACTIONS);
-    # a repo that registers it unchanged declares none of its own.
-    bodies = () if cls is ProjectActions else _bodies_of(cls, repo)
+    # a project that registers it unchanged declares none of its own.
+    bodies = () if cls is ProjectActions else _bodies_of(cls, project)
     entry = ProjectActionsEntry(cls, bodies)
     # Outside an init import the key is the class name, which the refusal names.
-    PROJECT_ACTIONS.register(repo if repo is not None else cls.__name__, entry, overwrite=overwrite)
+    PROJECT_ACTIONS.register(
+        project if project is not None else cls.__name__, entry, overwrite=overwrite
+    )
     return cls
 
 
-def actions_for(repo: "Repo", ctx: "OttoContext") -> ProjectActions:
-    """Build *repo*'s actions: its registered subclass, else otto's default.
+def actions_for(project: "Project", ctx: "OttoContext") -> ProjectActions:
+    """Build *project*'s actions: its registered subclass, else otto's default.
 
-    A repo that registers nothing gets :class:`ProjectActions` itself, so the
+    A project that registers nothing gets :class:`ProjectActions` itself, so the
     zero-effort case is a working lifecycle rather than an error.
 
-    THE INSTANCE IS HANDED A REPO-SCOPED VIEW, never the plain context. This
-    one line is where a repo's whole lifecycle acquires its fleet of interest
+    THE INSTANCE IS HANDED A PROJECT-SCOPED VIEW, never the plain context. This
+    one line is where a project's whole lifecycle acquires its fleet of interest
     and its owner stamp (spec section 7) -- every walk the returned object
     drives, including every walk a SUBCLASS otto has never seen drives, is
     bound by construction rather than by an argument each of them remembers.
     """
-    entry = PROJECT_ACTIONS.find(repo.name)
+    entry = PROJECT_ACTIONS.find(project.name)
     cls = ProjectActions if entry is None else cast("type[ProjectActions]", entry.cls)
-    return cls(repo=repo, ctx=ctx.for_repo(repo.name))
+    return cls(project=project, ctx=ctx.for_project(project.name))

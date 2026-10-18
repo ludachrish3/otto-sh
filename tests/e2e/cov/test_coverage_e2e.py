@@ -92,7 +92,7 @@ def _run_otto(
     timeout: int,
 ) -> subprocess.CompletedProcess[str]:
     """Run ``otto --lab unix ARGV`` and fail loudly if it exits non-zero."""
-    result = run_otto(argv, xdir=xdir, sut_dirs=REPO1, lab=_LAB, timeout=timeout)
+    result = run_otto(argv, xdir=xdir, roots=REPO1, lab=_LAB, timeout=timeout)
     if result.returncode != 0:
         raise AssertionError(
             f"otto --lab {_LAB} {' '.join(argv)} exited {result.returncode}\n"
@@ -669,7 +669,7 @@ def auto_cov_run(tmp_path_factory):
     result = run_otto(
         ["test", "TestCoverageProduct"],
         xdir=xdir,
-        sut_dirs=REPO1,
+        roots=REPO1,
         lab=_LAB,
         timeout=600,
     )
@@ -770,7 +770,7 @@ def refusal(tmp_path_factory):
     result = run_otto(
         ["test", "--cov", "TestCoverageProduct"],
         xdir=xdir,
-        sut_dirs=REPO1,
+        roots=REPO1,
         lab="embedded",
         timeout=120,
     )
@@ -880,7 +880,7 @@ class TestPollutedBuildTree:
         result = run_otto(
             ["cov", "report", str(legacy_dir), "--dir", str(tmp_path / "report")],
             xdir=xdir,
-            sut_dirs=REPO1,
+            roots=REPO1,
             lab=_LAB,
             timeout=120,
         )

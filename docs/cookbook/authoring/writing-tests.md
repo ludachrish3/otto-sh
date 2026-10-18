@@ -11,12 +11,12 @@ artifact directories and options. For running tests, see
 
 These pages use pytest's words for the parts of a test:
 
-| Term | In an otto repo | pytest docs |
+| Term | In an otto project | pytest docs |
 | --- | --- | --- |
 | test function | a `test_`-prefixed function or method; pytest runs each one as a test | {external+pytest:ref}`Test discovery <test discovery>` |
 | test class | a `Test`-prefixed class that groups test methods; other frameworks call this a suite | [Group tests in a class](https://docs.pytest.org/en/stable/getting-started.html#group-multiple-tests-in-a-class) |
 | test module | a `test_*.py` file | {external+pytest:ref}`Test discovery <test discovery>` |
-| test directory | a directory the repo's `tests` setting lists; pytest collects the test modules in it at any depth | {external+pytest:ref}`Test discovery <test discovery>` |
+| test directory | a directory the project's `tests` setting lists; pytest collects the test modules in it at any depth | {external+pytest:ref}`Test discovery <test discovery>` |
 | `conftest.py` | a file whose fixtures every test in its directory, and below, can use | {external+pytest:ref}`conftest.py <conftest.py>` |
 | fixture | setup and teardown a test requests by naming it as a parameter | {external+pytest:doc}`how-to/fixtures`, {external+pytest:doc}`reference/fixtures` |
 | marker | a `@pytest.mark.NAME` label on a test, class or module; `-m` selects by it | {external+pytest:doc}`how-to/mark` |
@@ -25,10 +25,11 @@ These pages use pytest's words for the parts of a test:
 Tests written with `unittest.TestCase` run too, the way pytest runs them:
 {external+pytest:doc}`how-to/unittest`.
 
-## An example repo
+## An example project
 
-A **repo** is a directory with a `.otto/settings.toml` at its root. The
-examples on this page and the other authoring pages use one repo, `acme`:
+Each [project](../../overview.md#projects-project-roots-and-ottopath) keeps a
+`.otto/settings.toml` at its project root. The examples on this page and the
+other authoring pages use one project, `acme`:
 
 ```text
 acme/
@@ -42,7 +43,7 @@ acme/
     └── test_device.py
 ```
 
-- `tests` lists the repo's test directories.
+- `tests` lists the project's test directories.
 - `libs` directories are put on `sys.path`, so a test imports
   `from acme_instructions import DeviceTestOptions`.
 - `init` names the **init modules**, which otto imports at startup for every
@@ -221,7 +222,7 @@ class TestWidget:
 The marker's arguments are a **path**: steps that run in the written order
 before the test body. Each step does only the work the lab's state needs:
 
-- `installed` runs each repo's `install` unless the lab is already
+- `installed` runs each project's `install` unless the lab is already
   installed; a partly installed lab is uninstalled first, then installed.
 - `uninstalled` runs `uninstall` unless the lab is already fully
   uninstalled.
@@ -238,7 +239,7 @@ function `otto run <verb> --ensure` calls, on the same event loop as the test
 body; a convergence that fails **errors the test with the failing host
 named**, never a skip ({class}`~otto.errors.EnsureStateError`). A misspelled
 step stops the run at collection. What each project instruction does, and how
-a repo customizes it, is {doc}`../../cli/run/defaults`; which of `otto test`'s
+a project customizes it, is {doc}`../../cli/run/defaults`; which of `otto test`'s
 flags reach an install body is in
 [Which flags reach an install body under `otto test`](options-classes.md#which-flags-reach-an-install-body-under-otto-test).
 

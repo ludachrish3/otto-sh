@@ -2,7 +2,7 @@
 
 This directory holds the library's C sources, so a wheel carries them;
 :mod:`otto.kmodcov.library` is otto's side of it: the files an export copies
-into a user's repo, the export and the check of such a copy, and the
+into a user's project, the export and the check of such a copy, and the
 interface number a built ``.ko`` must report.
 
 Every name is exported lazily (PEP 562), the shape every otto package shares.

@@ -7,7 +7,7 @@ satisfied by a column header and ``"inventory" in output`` by the label.
 
 The verbs are driven through the sub-app with typer's ``CliRunner`` (the shape
 ``tests/unit/cli/test_schema_cli.py`` uses for the other settings-only group),
-and the repo they read is a real one on disk: ``OTTO_SUT_DIRS`` points at a
+and the repo they read is a real one on disk: ``OTTOPATH`` points at a
 scaffolded SUT repo and ``OTTO_HOME`` at a tmp dir, so ``build_inventory`` runs
 its real §8 resolution over real files rather than a patched seam. That is what
 makes "no inventory is configured" a reachable state here at all.
@@ -56,7 +56,7 @@ def _scaffold(tmp_path, monkeypatch, *, inventory_toml=""):
     """A real SUT repo at ``tmp_path/repo``, active for this process, with a tmp home."""
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     root = make_sut_repo(tmp_path / "repo", name="inv_repo", extra=inventory_toml)
-    monkeypatch.setenv("OTTO_SUT_DIRS", str(root))
+    monkeypatch.setenv("OTTOPATH", str(root))
     # The root conftest snapshot-restores bootstrap's caches, so invalidating
     # here cannot outlive the test; without it the repo above is invisible.
     bootstrap._reset()
@@ -71,7 +71,7 @@ def _netbox_toml(stub, ttl, *, creds=None):
 
 
 @pytest.fixture
-def repo(tmp_path, monkeypatch):
+def project(tmp_path, monkeypatch):
     """A repo whose ``[inventory]`` names a json file holding ``_RECORDS``."""
     inventory_file = tmp_path / "inventory.json"
     inventory_file.write_text(json.dumps(_RECORDS))
@@ -105,7 +105,7 @@ def _age_the_snapshot(tmp_path, hours):
 # ── lookup ───────────────────────────────────────────────────────────────────
 
 
-def test_lookup_shows_the_record_and_never_a_password(repo):
+def test_lookup_shows_the_record_and_never_a_password(project):
     result = _run(["lookup", "test1"])
     assert result.exit_code == 0, result.output
     assert "key:      test1" in result.output
@@ -119,13 +119,13 @@ def test_lookup_shows_the_record_and_never_a_password(repo):
     assert "A-1" in result.output  # record.extra, rendered opaquely
 
 
-def test_lookup_unknown_key_exits_1_with_the_error(repo):
+def test_lookup_unknown_key_exits_1_with_the_error(project):
     result = _run(["lookup", "zz"])
     assert result.exit_code == 1
     assert "inventory key 'zz' not found in inventory 'json:" in result.output
 
 
-def test_lookup_reports_supplies(repo):
+def test_lookup_reports_supplies(project):
     result = _run(["lookup", "test2"])
     assert result.exit_code == 0, result.output
     assert "supplies:" in result.output
@@ -135,7 +135,7 @@ def test_lookup_reports_supplies(repo):
 # ── list ─────────────────────────────────────────────────────────────────────
 
 
-def test_list_shows_keys_count_and_label(repo):
+def test_list_shows_keys_count_and_label(project):
     result = _run(["list"])
     assert result.exit_code == 0, result.output
     assert "test1" in result.output
@@ -194,7 +194,7 @@ def test_a_broken_inventory_declaration_names_the_settings_file(tmp_path, monkey
 # ── export ───────────────────────────────────────────────────────────────────
 
 
-def test_export_writes_a_stage_1_document_without_creds(repo, tmp_path):
+def test_export_writes_a_stage_1_document_without_creds(project, tmp_path):
     out = tmp_path / "export.json"
     result = _run(["export", str(out)])
     assert result.exit_code == 0, result.output
@@ -206,7 +206,7 @@ def test_export_writes_a_stage_1_document_without_creds(repo, tmp_path):
     assert "hunter2" not in out.read_text()
 
 
-def test_export_refuses_to_overwrite_without_force(repo, tmp_path):
+def test_export_refuses_to_overwrite_without_force(project, tmp_path):
     out = tmp_path / "export.json"
     assert _run(["export", str(out)]).exit_code == 0
     out.write_text('{"sentinel": {"ip": "10.9.9.9"}}')
@@ -224,7 +224,7 @@ def test_export_refuses_to_overwrite_without_force(repo, tmp_path):
     hasattr(os, "geteuid") and os.geteuid() == 0,
     reason="root writes into a mode-0500 directory, so the refusal cannot be provoked",
 )
-def test_export_into_an_unwritable_directory_exits_1_naming_it(repo, tmp_path):
+def test_export_into_an_unwritable_directory_exits_1_naming_it(project, tmp_path):
     """A PermissionError out of `mkstemp` is a traceback; the operator is owed a sentence."""
     locked = tmp_path / "locked"
     locked.mkdir()
@@ -239,7 +239,7 @@ def test_export_into_an_unwritable_directory_exits_1_naming_it(repo, tmp_path):
     assert "Permission denied" in result.output
 
 
-def test_export_below_a_regular_file_exits_1_naming_it(repo, tmp_path):
+def test_export_below_a_regular_file_exits_1_naming_it(project, tmp_path):
     """`<some file>/out.json` — the parent cannot be created because it is a file."""
     blocker = tmp_path / "blocker"
     blocker.write_text("not a directory")
@@ -250,7 +250,7 @@ def test_export_below_a_regular_file_exits_1_naming_it(repo, tmp_path):
     assert "File exists" in result.output
 
 
-def test_export_then_diff_reports_no_differences(repo, tmp_path):
+def test_export_then_diff_reports_no_differences(project, tmp_path):
     out = tmp_path / "export.json"
     assert _run(["export", str(out)]).exit_code == 0
     result = _run(["diff", str(out)])
@@ -274,7 +274,7 @@ def _other_document(tmp_path):
     return other
 
 
-def test_diff_reports_changed_fields_and_missing_keys(repo, tmp_path):
+def test_diff_reports_changed_fields_and_missing_keys(project, tmp_path):
     result = _run(["diff", str(_other_document(tmp_path))])
     assert result.exit_code == 1
     assert "test1" in result.output
@@ -287,7 +287,7 @@ def test_diff_reports_changed_fields_and_missing_keys(repo, tmp_path):
     assert "hunter2" not in result.output
 
 
-def test_diff_distinguishes_an_absent_key_from_an_unstated_field(repo, tmp_path):
+def test_diff_distinguishes_an_absent_key_from_an_unstated_field(project, tmp_path):
     """The two blank cells a bare rendering makes indistinguishable (Task 9 review).
 
     THE ROWS, not just the legend. The legend is built at import time from the
@@ -306,7 +306,7 @@ def test_diff_distinguishes_an_absent_key_from_an_unstated_field(repo, tmp_path)
     assert "'not stated' = the record is there but says nothing about that field" in result.output
 
 
-def test_diff_names_which_side_is_which(repo, tmp_path):
+def test_diff_names_which_side_is_which(project, tmp_path):
     other = _other_document(tmp_path)
     result = _run(["diff", str(other)])
     assert "left:  json:" in result.output
@@ -329,7 +329,7 @@ def test_diff_of_two_files_never_touches_the_inventory(tmp_path, monkeypatch):
     assert "10.0.0.2" in result.output
 
 
-def test_diff_of_a_missing_file_exits_2_not_1(repo, tmp_path):
+def test_diff_of_a_missing_file_exits_2_not_1(project, tmp_path):
     """R28: a typo'd path is "I could not compare", never "the sides differ"."""
     missing = tmp_path / "nope.json"
     result = _run(["diff", str(missing)])
@@ -338,7 +338,7 @@ def test_diff_of_a_missing_file_exits_2_not_1(repo, tmp_path):
     assert "No such file" in result.output
 
 
-def test_diff_of_a_malformed_document_exits_2_naming_the_key(repo, tmp_path):
+def test_diff_of_a_malformed_document_exits_2_naming_the_key(project, tmp_path):
     bad = tmp_path / "bad.json"
     bad.write_text(json.dumps({"test1": {"ip": "10.0.0.1", "shelf": -3}}))
     result = _run(["diff", str(bad)])
@@ -347,7 +347,7 @@ def test_diff_of_a_malformed_document_exits_2_naming_the_key(repo, tmp_path):
     assert "must be >= 0" in result.output
 
 
-def test_diff_of_a_non_utf8_file_exits_2_naming_it(repo, tmp_path):
+def test_diff_of_a_non_utf8_file_exits_2_naming_it(project, tmp_path):
     """A binary file decodes before json ever sees it — a ValueError, not an OSError."""
     binary = tmp_path / "binary.json"
     binary.write_bytes(bytes([0xFF, 0xFE, 0x00, 0x01]))
@@ -360,7 +360,7 @@ def test_diff_of_a_non_utf8_file_exits_2_naming_it(repo, tmp_path):
 # ── refresh ──────────────────────────────────────────────────────────────────
 
 
-def test_refresh_of_an_uncached_inventory_exits_1_saying_why(repo):
+def test_refresh_of_an_uncached_inventory_exits_1_saying_why(project):
     result = _run(["refresh"])
     assert result.exit_code == 1
     assert "is not cached — nothing to refresh" in result.output
@@ -694,7 +694,7 @@ def test_lookup_and_list_name_the_creds_store_when_one_is_configured(tmp_path, m
     assert f"creds:    json:{creds}" in listed.output
 
 
-def test_without_a_creds_store_there_is_no_creds_row(repo):
+def test_without_a_creds_store_there_is_no_creds_row(project):
     looked_up = _run(["lookup", "test1"])
     assert looked_up.exit_code == 0, looked_up.output
     assert "creds:    " not in looked_up.output  # the table's `creds` CELL still lists logins

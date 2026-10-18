@@ -1,7 +1,7 @@
 """The Getting Started example project is a real otto project (spec 2026-08-27 §3, §4 tier 1).
 
 Everything the pages include is a fragment of these files, so they must load
-through the same code every user's project loads through: ``Repo`` parses the
+through the same code every user's project loads through: ``Project`` parses the
 settings, ``load_lab`` builds every lab, and a stray key fails here before it
 can fail for a reader.
 """
@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from otto.config.repo import Repo
+from otto.config.project import Project
 from otto.inventory import InventoryDeclaration, build_inventory_from_declarations
 from otto.labs.loader import load_lab
 from otto.reservations import SupportsResourceHolders
@@ -46,9 +46,9 @@ _ATTRS = [
 
 
 def test_settings_parse_as_a_real_repo() -> None:
-    repo = Repo(sut_dir=EXAMPLE)
-    assert repo.name == "gs"
-    assert [s.backend for s in repo.lab_sources] == ["json"]
+    project = Project(root=EXAMPLE)
+    assert project.name == "gs"
+    assert [s.backend for s in project.lab_sources] == ["json"]
 
 
 @pytest.mark.parametrize("lab", ["unix", "busybox", "embedded", "pyrepl"])
@@ -177,15 +177,15 @@ def twin_inventory():
     # other top-level keys). The `[creds]` table rides along -- the twin's
     # `test1` carries the same proxied cred the inline lab does, layered over
     # the store (spec 2026-09-06 §6.4).
-    repo = Repo(sut_dir=TWIN)
-    assert repo.inventory_settings and repo.creds_settings  # noqa: PT018
+    project = Project(root=TWIN)
+    assert project.inventory_settings and project.creds_settings  # noqa: PT018
     return build_inventory_from_declarations(
         [
             InventoryDeclaration(
                 origin="example",
                 anchor_dir=TWIN,
-                table=dict(repo.inventory_settings),
-                creds_table=dict(repo.creds_settings),
+                table=dict(project.inventory_settings),
+                creds_table=dict(project.creds_settings),
             )
         ],
         user_settings=None,
@@ -222,7 +222,7 @@ def _team_file_backend(username: str = "chris"):
     _import_gs_example()
     from gs_example.reservations import TeamFileBackend
 
-    return TeamFileBackend(repo_dir=EXAMPLE, username=username, path="team-reservations.txt")
+    return TeamFileBackend(project_root=EXAMPLE, username=username, path="team-reservations.txt")
 
 
 def test_the_example_reservation_backend_conforms() -> None:
@@ -255,28 +255,28 @@ def test_the_example_reservation_backend_reports_open_ended_rows() -> None:
 
 
 def test_the_twin_is_a_real_repo_that_shares_the_examples_project_code() -> None:
-    repo = Repo(sut_dir=TWIN)
-    assert repo.init == ["gs_example"]
-    assert [p.name for p in repo.libs] == ["libs"]  # ../getting-started/libs, anchored
-    assert repo.libs[0].resolve() == (TWIN / "../getting-started/libs").resolve()
-    assert repo.creds_settings["backend"] == "json"
+    project = Project(root=TWIN)
+    assert project.init == ["gs_example"]
+    assert [p.name for p in project.libs] == ["libs"]  # ../getting-started/libs, anchored
+    assert project.libs[0].resolve() == (TWIN / "../getting-started/libs").resolve()
+    assert project.creds_settings["backend"] == "json"
 
 
 def test_the_worked_examples_agent_is_a_declared_class_entry() -> None:
     from otto.host.declared_product import DeclaredProduct
 
-    repo = Repo(sut_dir=EXAMPLE)
-    (agent,) = [e for e in repo.declared_products if e.name == "agent"]
+    project = Project(root=EXAMPLE)
+    (agent,) = [e for e in project.declared_products if e.name == "agent"]
     assert agent.cls == "gs_example.products:AgentBinary"
     assert agent.kind is None
     assert agent.params["artifact"] == "build/agent"
     assert agent.params["cov_dir"] == "/var/cov/agent"
-    assert "gs_example.products" not in repo.init
+    assert "gs_example.products" not in project.init
     # The dev tool is data too: a shell entry, with no provider module left in init.
-    (probe,) = [e for e in repo.declared_dev_tools if e.name == "trace-probe"]
+    (probe,) = [e for e in project.declared_dev_tools if e.name == "trace-probe"]
     assert probe.kind == "shell"
     assert probe.cls is None
-    assert "gs_example.dev_tools" not in repo.init
+    assert "gs_example.dev_tools" not in project.init
     _import_gs_example()
     from otto.host.product import PRODUCT_KIND_BUILDER
 
@@ -346,8 +346,8 @@ def test_the_agent_install_passes_the_elements_role(element_metadata, role) -> N
     from otto.result import CommandResult, Results
     from otto.utils import Status
 
-    repo = Repo(sut_dir=EXAMPLE)
-    (entry,) = [e for e in repo.declared_products if e.name == "agent"]
+    project = Project(root=EXAMPLE)
+    (entry,) = [e for e in project.declared_products if e.name == "agent"]
     _import_gs_example()
     ran: list[str] = []
     element = None

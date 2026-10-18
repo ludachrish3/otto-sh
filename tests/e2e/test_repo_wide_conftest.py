@@ -49,12 +49,12 @@ def _make_repo(root: Path) -> None:
 
 
 def test_class_in_subdir_sees_repo_root_fixture(tmp_path: Path) -> None:
-    repo = tmp_path / "confrepo"
-    _make_repo(repo)
+    project = tmp_path / "confrepo"
+    _make_repo(project)
     r = run_otto(
         ["test", "TestConfcut"],
         xdir=tmp_path / "xdir",
-        sut_dirs=repo,
+        roots=project,
         lab="unix",
     )
     assert r.returncode == 0, r.stdout + r.stderr

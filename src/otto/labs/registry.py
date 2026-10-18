@@ -3,7 +3,7 @@
 A backend registers a name, a configuration model and a factory from an
 ``init`` module, and a ``[[lab.sources]]`` entry's ``backend = "<name>"``
 selects it. Otto parses the entry's other keys with the configuration model
-after every repo's init modules have run, then builds the source with the
+after every project's init modules have run, then builds the source with the
 factory. The built-in ``json`` backend is registered by
 :class:`~otto.registry.Ref`, so naming it imports nothing.
 """
@@ -73,7 +73,7 @@ def register_lab_repository(
     *config* is the model that parses a source's options (every key of its
     ``[[lab.sources]]`` entry but ``backend`` and ``name``): otto calls its
     ``model_validate(options, context={"env": env})`` once per source, after
-    every repo's init modules have run, with a :class:`~otto.labs.sources.LabSourceEnv`
+    every project's init modules have run, with a :class:`~otto.labs.sources.LabSourceEnv`
     as *env*. The parsed configuration must be deep-copyable. *factory*
     receives ``Configured(config, env)`` and returns the
     :class:`~otto.labs.protocol.LabRepository`. Either may be a

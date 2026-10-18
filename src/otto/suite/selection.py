@@ -22,7 +22,7 @@ class UnknownSelectionError(OttoError, ValueError):
     """A requested test name matched nothing despite a non-empty test universe.
 
     Raised by :func:`otto.suite.run.run_tests` when at least one requested
-    name matched no test in any repo's whole tree while there *were*
+    name matched no test in any project's whole tree while there *were*
     collected tests to search — i.e. a genuine typo, not an empty selection.
     The message carries the same did-you-mean suggestions the CLI has always
     shown; ``param_hint`` names the CLI parameter the selection came from so
@@ -78,7 +78,7 @@ def unknown_names_message(
     """Say which of *unknown* matched no collected test, each with its did-you-mean.
 
     *known* is every name the collected tests answer to
-    (:func:`otto.config.repo.selectable_names`). *broken* says, one line per
+    (:func:`otto.config.project.selectable_names`). *broken* says, one line per
     file, which files did not collect (a name in one of them is unknown
     until it does). One sentence for a run and for ``--list-tests`` alike.
     """

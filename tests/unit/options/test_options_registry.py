@@ -160,8 +160,8 @@ def test_the_same_name_from_unrelated_classes_names_both_classes_and_repos():
     text = str(err.value)
     assert "otto test" in text
     assert "lab_env" in text
-    assert "repo 'repo_a'" in text
-    assert "repo 'repo_b'" in text
+    assert "project 'repo_a'" in text
+    assert "project 'repo_b'" in text
     assert "Base" in text
     assert "Rival" in text
 

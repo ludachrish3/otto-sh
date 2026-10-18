@@ -2,12 +2,12 @@
 
 ``~/.otto`` (relocatable wholesale via ``OTTO_HOME``) is where otto keeps
 EVERYTHING IT DERIVED AND CAN REBUILD. That is the whole contract, and it is
-the third line of a three-line taxonomy: a repo's ``.otto/`` holds source
+the third line of a three-line taxonomy: a project root's ``.otto/`` holds source
 config, the xdir holds run outputs, this holds derived state. One consequence
 worth stating: anything under here may be deleted at any time, and otto must
 rebuild it without complaint.
 
-The top level is keyed by WORKSPACE -- the normalized ``OTTO_SUT_DIRS`` set --
+The top level is keyed by WORKSPACE -- the normalized ``OTTOPATH`` set --
 rather than flat, so per-workspace reset is one ``rm -rf`` and there is one
 answer to "where do my otto caches live". The key is two parts with two jobs:
 an 8-character hash that makes it CORRECT (distinct workspaces cannot collide,
@@ -23,16 +23,16 @@ again, which is the wart the relocation exists to remove.
 import hashlib
 from pathlib import Path
 
-_EMPTY_SLUG = "no-repos"
-"""Slug for the empty SUT-dir set -- the bare-lab-directory case.
+_EMPTY_SLUG = "no-projects"
+"""Slug for an empty ``OTTOPATH`` -- the bare-lab-directory case.
 
-Legal, not an error: a lab-only user has a workspace, it just has no repos in
+Legal, not an error: a lab-only user has a workspace, it just has no projects in
 it, and giving them one stable home is better than a special case that refuses.
 """
 
 _HASH_CHARS = 8
 _SLUG_CHARS = 40
-"""Cap on the slug half, so a ten-repo workspace cannot produce a directory
+"""Cap on the slug half, so a ten-project workspace cannot produce a directory
 name that breaks ``ls``. The hash carries correctness, so truncating the slug
 costs legibility only."""
 
@@ -77,7 +77,7 @@ def snapshot_cache_dir() -> Path:
     Deliberately NOT under a workspace key, which is the one place this differs
     from :func:`workspace_home`. A snapshot is identified by the inventory's own
     configuration (backend, normalized URL, filter), and §8 gives a process
-    exactly one inventory however many repos it spans, so two workspaces
+    exactly one inventory however many projects it spans, so two workspaces
     pointing at one NetBox SHOULD share one snapshot and one refresh schedule.
     Sharding by workspace would give them one file each, refreshing
     independently and neither ever seeing the other's fetch.
@@ -87,43 +87,47 @@ def snapshot_cache_dir() -> Path:
     return otto_home() / SNAPSHOT_CACHE_DIRNAME
 
 
-def _normalized(sut_dirs: "list[Path]") -> "list[Path]":
-    """Absolute, symlink-resolved, sorted, de-duplicated.
+def _normalized(roots: "list[Path]") -> "list[Path]":
+    """Kept spelling, then the cached :func:`otto.utils.root_key`, sorted, de-duplicated.
 
-    All four matter to the key. Absolute+resolved so the same workspace reached
-    by a relative path or through a symlink is the SAME workspace; sorted so
-    the order the operator happened to type does not shard the home; deduped so
-    a repeated entry cannot key differently from the set it denotes.
+    All four matter to the key. The kept spelling makes a relative or ``~``
+    root absolute, and :func:`~otto.utils.root_key` resolves it, so the same
+    workspace reached by a relative path or through a symlink is the SAME
+    workspace; sorted so the order the operator happened to type does not shard
+    the home; de-duplicated so a repeated root cannot key differently from the
+    set it denotes.
     """
-    return sorted({d.expanduser().resolve() for d in sut_dirs})
+    from ..utils import kept_path_spelling, root_key
+
+    return sorted({Path(root_key(kept_path_spelling(str(d)))) for d in roots})
 
 
-def workspace_key(sut_dirs: "list[Path]") -> str:
-    """Return the ``<hash8>-<slug>`` directory name for *sut_dirs*.
+def workspace_key(roots: "list[Path]") -> str:
+    """Return the ``<hash8>-<slug>`` directory name for *roots*.
 
     The hash is over the resolved paths, one per line -- the newline matters,
     because concatenating them bare would let ``/a/bc`` + ``/d`` and ``/a`` +
     ``/bc/d`` hash alike. The slug is over their basenames only, PEP-503
     normalized through the same ``normalize_name`` the ``-I``/``-E`` switches
-    and inter-repo dependency matching already use, so this repo keeps ONE
+    and inter-project dependency matching already use, so otto keeps ONE
     normalization rule rather than growing a second regex.
     """
     from ..models.dependencies import normalize_name
 
-    resolved = _normalized(sut_dirs)
+    resolved = _normalized(roots)
     digest = hashlib.sha256("\n".join(str(p) for p in resolved).encode()).hexdigest()
     slug = normalize_name("-".join(p.name for p in resolved)) if resolved else _EMPTY_SLUG
     return f"{digest[:_HASH_CHARS]}-{slug[:_SLUG_CHARS]}"
 
 
-def workspace_home(sut_dirs: "list[Path] | None" = None) -> Path:
+def workspace_home(roots: "list[Path] | None" = None) -> Path:
     """Return this workspace's home directory under :func:`otto_home`.
 
-    *sut_dirs* defaults to the live ``OTTO_SUT_DIRS`` reading, so ordinary
+    *roots* defaults to the live ``OTTOPATH`` reading, so ordinary
     callers ask for "this run's workspace home" with no arguments and tests can
     pin a set explicitly. PURE -- never creates.
     """
     from ..models.settings import OttoEnvSettings
 
-    dirs = OttoEnvSettings().sut_dirs if sut_dirs is None else sut_dirs
+    dirs = OttoEnvSettings().ottopath if roots is None else roots
     return otto_home() / workspace_key(dirs)

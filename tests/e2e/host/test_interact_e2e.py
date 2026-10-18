@@ -120,7 +120,7 @@ def login_session(request, tmp_path_factory, leased_test1):
     with InteractiveOttoSession(
         _login_argv(term),
         xdir=xdir,
-        sut_dirs=REPO1_DIR,
+        roots=REPO1_DIR,
     ) as sess:
         banner_seen = sess.expect(
             f"[otto] interactive session with {HOST_NAME} ({term}). Press Ctrl+] to disconnect.".encode(),  # noqa: E501 — long banner string with hostname interpolation
@@ -289,7 +289,7 @@ class TestHostLoginSigwinch:
         with InteractiveOttoSession(
             _login_argv(term),
             xdir=xdir,
-            sut_dirs=REPO1_DIR,
+            roots=REPO1_DIR,
             cols=80,
             rows=24,
         ) as sess:

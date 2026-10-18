@@ -7,7 +7,7 @@ registered for the ``run`` verb, deduplicated by declaring class, and each
 body is handed its own class at dispatch
 (:func:`otto.project.orchestrator.run_project_instruction`).
 :func:`check_project_instruction_options` checks the bodies' options once
-every repo's init has run (bootstrap), so a clash is a startup error.
+every project's init has run (bootstrap), so a clash is a startup error.
 """
 
 import inspect
@@ -20,12 +20,12 @@ if TYPE_CHECKING:
 
 
 def body_origins(entry: ProjectInstruction) -> "list[OptionsOrigin]":
-    """List each body's options class with the repo that declared it, in walk order."""
+    """List each body's options class with the project that declared it, in walk order."""
     # Function-scope: `otto.params` imports typer, and this module stays CLI-free.
     from ..params import OptionsOrigin
 
     return [
-        OptionsOrigin(body.options_cls, body.repo)
+        OptionsOrigin(body.options_cls, body.project)
         for body in entry.bodies
         if body.options_cls is not None
     ]
@@ -41,7 +41,7 @@ def merged_option_params(entry: ProjectInstruction) -> list[inspect.Parameter]:
 def check_project_instruction_options() -> None:
     """Merge every project instruction's body options, refusing a clash.
 
-    Run once every repo has spoken (bootstrap, after the init loop): a repo's
+    Run once every project has spoken (bootstrap, after the init loop): a project's
     override is what ADDS flags to a merged command, so only then is the flag
     set known. Reads the tables and writes nothing, so running it again is
     harmless. The command itself -- whose flags add the ``run`` verb's
@@ -51,7 +51,7 @@ def check_project_instruction_options() -> None:
     Raises:
         otto.params.OptionsCollisionError: Two bodies' options classes declare
             the same field from different classes; the message names both
-            repos.
+            projects.
     """
     for name in PROJECT_INSTRUCTIONS.names():
         merged_option_params(PROJECT_INSTRUCTIONS.get(name))

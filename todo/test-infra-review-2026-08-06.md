@@ -30,7 +30,7 @@ The residual damage is *concentrated*, not diffuse, in five shapes:
    product hang (`todo/hop_nc_transfer_flake.md`), and neither implementation has a test.
 
 2. **Safety nets whose own failure is silent** (§4, §5). The harness re-injects
-   `OTTO_SUT_DIRS` process-wide right after its own ambient strip, invisible to the pin
+   `OTTOPATH` process-wide right after its own ambient strip, invisible to the pin
    that guards the allowlist *(verified)*; the registry-isolation guard's cache key
    (`len(sys.modules)`) is invalidated by its own teardown; the #110 CliRunner shield and
    the coverage-schema pre-init both degrade to no-ops without a symptom.
@@ -66,7 +66,7 @@ One additional finding arrived by an irregular route (§10): the interact-e2e te
 | 1 | Retry mechanism overhaul: record reruns (or gate off in CI), fix the shipped double-run, re-arm per-attempt timeout, re-run fixtures or document why not, add tests for both implementations | §2 | M |
 | 2 | ~~Fix the hop-nc hang the retry shields, then drop `retry(3)` per its todo's own exit criterion~~ **DONE (Wave 2)** — hang root-caused live (unbounded tunnel awaits behind the LISTEN-vs-accept window); todo file deleted per its exit criterion | §2 | M |
 | 3 | ~~Probe-status honesty in chaos oracles: `_bed.py:140`, hygiene bracket, `snapshot_host`~~ **DONE (Wave 3)** — one `check_probe_result` contract behind `run_probe`/`probe_text`/`snapshot_host`; unit-lane falsifiability pins | §3.1 | S |
-| 4 | ~~`OTTO_SUT_DIRS` import-time reinjection: declare or relocate; widen the ambient pin to cover integration conftests~~ **DONE (Wave 4)** — runtime session fixture (the import-time justification was stale); per-tree collection pin + module-scope env-write AST guard | §5.1 | S |
+| 4 | ~~`OTTOPATH` import-time reinjection: declare or relocate; widen the ambient pin to cover integration conftests~~ **DONE (Wave 4)** — runtime session fixture (the import-time justification was stale); per-tree collection pin + module-scope env-write AST guard | §5.1 | S |
 | 5 | The ~13 one-line weak-test fixes: non-empty preconditions (7 sites) + `typer.Exit` exit-code asserts (6 sites) | §4.1–4.3 | S |
 | 6 | Consolidate the 10 `run_otto` copies — closes the live #193 exposure | §7.1 | S |
 | 7 | `wait_for(predicate, timeout)` in `otto/utils.py` + async twin; migrate 26 sites | §7.3 | M |
@@ -366,15 +366,15 @@ anywhere — every live-host candidate fails loud and host-named.
 
 ## 5. Harness internals
 
-### 5.1 `OTTO_SUT_DIRS` re-injected process-wide after the strip *(verified)* — high
+### 5.1 `OTTOPATH` re-injected process-wide after the strip *(verified)* — high
 
 `tests/integration/conftest.py:32` (`ensure_sut_dirs()` →
-`os.environ.setdefault("OTTO_SUT_DIRS", <tests/repo1>)`, at import time, "before any otto
+`os.environ.setdefault("OTTOPATH", <tests/repo1>)`, at import time, "before any otto
 imports" because config reads it at import to build the module-level `_repos` singleton).
-Confirmed live: with an ambient `OTTO_SUT_DIRS=/ambient/leak/path` exported, the root
+Confirmed live: with an ambient `OTTOPATH=/ambient/leak/path` exported, the root
 strip removes it and the integration conftest then sets its own, process-wide, in every
 xdist worker, before any test runs. Consequence: `make coverage`/`nox -s tests_all` run
-the **entire unit tree** with `OTTO_SUT_DIRS` set while `make coverage-unit`/CI
+the **entire unit tree** with `OTTOPATH` set while `make coverage-unit`/CI
 `tests_hostless` run it unset — two lanes, two ambient configurations, invisibly. It is
 exactly the variable the root strip's own comment (`tests/conftest.py:117-134`) names as
 the historical poison; it is deliberately **not** in `AMBIENT_OPT_INS`, so the pin

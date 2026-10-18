@@ -60,14 +60,14 @@ class InteractiveOttoSession:
         xdir: Path,
         cols: int = 80,
         rows: int = 24,
-        sut_dirs: Path | None = None,
+        roots: Path | None = None,
         extra_env: dict[str, str] | None = None,
     ) -> None:
         self._argv = [str(OTTO_BIN), *argv]
         self._xdir = Path(xdir)
         self._cols = cols
         self._rows = rows
-        self._sut_dirs = sut_dirs
+        self._sut_dirs = roots
         self._extra_env = extra_env
         self._master_fd: int | None = None
         self._proc: subprocess.Popen[bytes] | None = None
@@ -88,12 +88,12 @@ class InteractiveOttoSession:
         master_fd, slave_fd = pty.openpty()
         self._set_winsize(slave_fd, self._cols, self._rows)
 
-        # ``sut_dirs=None`` omits ``OTTO_SUT_DIRS`` (this driver has no default
+        # ``sut_dirs=None`` omits ``OTTOPATH`` (this driver has no default
         # SUT repo); TERM is inherited so the child sees the same terminal type
         # the suite runs under (the root conftest pins it to ``dumb``).
         env = otto_subprocess_env(
             xdir=self._xdir,
-            sut_dirs=self._sut_dirs,
+            roots=self._sut_dirs,
             term=os.environ.get("TERM", "xterm"),
             extra_env=self._extra_env,
         )

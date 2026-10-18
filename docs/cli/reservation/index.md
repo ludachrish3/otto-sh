@@ -110,7 +110,7 @@ unrelated to a host id — otto never derives one from the other.)
 
 The required set is computed over the **hosts in play** — every host the run's
 project(s) declare an interest in via `[project] host_patterns`
-({ref}`project-scope`), or the whole lab when no repo declares one.  A project
+({ref}`project-scope`), or the whole lab when no project declares one.  A project
 you switch off with `-E` contributes none of its hosts
 ({ref}`projects-excluded-hosts-leave-play`).  The lab
 level always counts; each host in play adds its element's identifiers and its
@@ -206,7 +206,7 @@ normal `MissingReservationError` path, which does not mention `-R`.
 `"Failed to read reservation file ..."`
 : The JSON backend can't open the file.  Check `path` in
   `[reservations.json]`, file permissions, and that the path is correct
-  relative to the repo root (or absolute).
+  relative to the project root (or absolute).
 
 `"Reservation file ... has unsupported version ..."`
 : The JSON file's `version` field is something other than `1`.  This

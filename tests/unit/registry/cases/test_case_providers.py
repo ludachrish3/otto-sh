@@ -12,7 +12,7 @@ from otto.host.product import (
     register_product_provider,
     registered_product_providers,
 )
-from otto.registry import RegistrationRefused, loading_test_files, registering_repo
+from otto.registry import RegistrationRefused, loading_test_files, registering_project
 
 from .. import conformance
 
@@ -31,7 +31,7 @@ def test_the_wrapper_keeps_order_repo_and_attribution(table, wrapper, reader):
 
     def b(host): ...
 
-    with registering_repo("acme"):
+    with registering_project("acme"):
         wrapper(a)
     wrapper(b)
     assert reader()[-2:] == [(a, "acme"), (b, None)]

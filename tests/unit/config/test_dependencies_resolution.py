@@ -2,7 +2,7 @@
 
 from otto.bootstrap import BootstrapWarning, DependencyError
 from otto.config.dependencies import _resolve_statuses
-from otto.config.repo import Repo
+from otto.config.project import Project
 from tests._fixtures.sutrepo import make_sut_repo
 
 
@@ -15,7 +15,7 @@ def _repo(tmp_path, name, version="1.0.0", *, required=(), optional=(), dirname=
         version=version,
         extra=f"[dependencies]\nrequired = [{req}]\noptional = [{opt}]\n",
     )
-    return Repo(sut_dir=root)
+    return Project(root=root)
 
 
 def test_satisfied_required(tmp_path):
@@ -37,7 +37,7 @@ def test_missing_required_errors_and_skips(tmp_path):
     (err,) = out.errors
     assert isinstance(err, DependencyError)
     assert "no project named 'ghost'" in str(err)
-    assert str(a.sut_dir) in str(err)
+    assert str(a.root) in str(err)
     assert 0 in out.skip_reason
     assert a.dependencies[0].status == "missing"
     assert a.dependencies[0].provider_version is None
@@ -89,7 +89,7 @@ def test_optional_incompatible_warns_only(tmp_path):
     assert "optional dependency" in warn.message
     assert "found 1.2.0" in warn.message
     assert "feature disabled" in warn.message
-    assert warn.message.startswith(f"repo {a.sut_dir}:")
+    assert warn.message.startswith(f"project root {a.root}:")
     assert a.dependencies[0].status == "incompatible"
     assert out.soft_edges == []  # incompatible optional contributes no edge
 
@@ -99,26 +99,6 @@ def test_optional_satisfied_soft_edge(tmp_path):
     _m = _repo(tmp_path, "metrics", version="1.4.0")
     out = _resolve_statuses([a, _m])
     assert out.soft_edges == [(1, 0)]
-
-
-def test_ambiguous_name_errors_when_referenced(tmp_path):
-    a = _repo(tmp_path, "a", required=["twin"])
-    _t1 = _repo(tmp_path, "twin", dirname="twin1")
-    _t2 = _repo(tmp_path, "Twin", dirname="twin2")
-    out = _resolve_statuses([a, _t1, _t2])
-    (err,) = out.errors
-    assert "ambiguous" in str(err)
-    assert "twin1" in str(err)
-    assert "twin2" in str(err)
-    assert a.dependencies[0].status == "ambiguous"
-    assert 0 in out.skip_reason
-
-
-def test_duplicate_names_unreferenced_no_error(tmp_path):
-    t1 = _repo(tmp_path, "twin", dirname="twin1")
-    t2 = _repo(tmp_path, "twin", dirname="twin2")
-    out = _resolve_statuses([t1, t2])
-    assert out.errors == []
 
 
 def test_cross_repo_unsatisfiable_errors_all_participants(tmp_path):

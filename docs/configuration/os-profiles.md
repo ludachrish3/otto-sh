@@ -35,9 +35,9 @@ profile:
 
 1. **Code** — `register_os_profile()` called from an init module listed in
    `settings.toml` ({doc}`../cookbook/extending/custom-host-classes`).
-2. **Data** — an `[os_profiles.<name>]` table in a selected repo's
-   `.otto/settings.toml` (below). When two repos declare the same name, the
-   later repo in `OTTO_SUT_DIRS` wins.
+2. **Data** — an `[os_profiles.<name>]` table in a selected project's
+   `.otto/settings.toml` (below). When two projects declare the same name, the
+   later project in `OTTOPATH` wins.
 3. **The host class's own profile** — the one `register_host_class()` was
    given, or a built-in from the table above.
 
@@ -47,7 +47,7 @@ under it needs its prompts in `console_options`. A code profile wins over a
 data table of the same name whichever is defined first, and a data table
 named after a host class wins over that class's own profile even when the
 class is registered after the table is read. A data table is not a
-registration: it is read for the repos otto runs with, so a data profile
+registration: it is read for the projects otto runs with, so a data profile
 whose `base` is a host class an init module registers works.
 
 ## Data profiles
@@ -87,16 +87,16 @@ With this profile in place, a host entry only needs to name the profile:
 ```
 
 Settings parsing checks a table's shape: a `base` string and default
-values. What it means is checked after every repo's `init` modules have run,
+values. What it means is checked after every project's `init` modules have run,
 so `base` may name a host class one of them registers. An unknown `base` or
-an unknown default field name is that repo's load error, named the way a
-malformed settings file is (`[os_profiles.<name>] in repo '<repo>': ...`).
-Otto treats it as it treats a repo whose `init` module failed to import:
-the repo's `init` modules have already run, so the repo keeps its place in
-the dependency order and its dependents still load, and the other repos keep
-working; a run the broken repo is part of fails loudly, and one it is not
+an unknown default field name is that project's load error, named the way a
+malformed settings file is (`[os_profiles.<name>] in project '<project>': ...`).
+Otto treats it as it treats a project whose `init` module failed to import:
+the project's `init` modules have already run, so the project keeps its place in
+the dependency order and its dependents still load, and the other projects keep
+working; a run the broken project is part of fails loudly, and one it is not
 part of reports the error as a warning, so typos never silently no-op.
-A repo the dependency pass skips never ran its `init` modules, so only its
+A project the dependency pass skips never ran its `init` modules, so only its
 tables' shape is checked: what they mean is not judged.
 `otto init`'s doctor reports the same problems, but it does not run `init` modules,
 so it also reports a table whose `base` is a host class only an `init` module

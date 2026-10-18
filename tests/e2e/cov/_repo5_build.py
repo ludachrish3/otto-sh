@@ -371,7 +371,7 @@ def overlay_lab(tc: Toolchain, root: Path) -> "Path | None":
 def overlay_repo(tc: Toolchain, root: Path) -> "Path | None":
     """A SUT repo under *root* contributing only :func:`overlay_lab`'s lab data.
 
-    Layered over repo5 through ``OTTO_SUT_DIRS`` (``<repo5>:<overlay>``):
+    Layered over repo5 through ``OTTOPATH`` (``<repo5>:<overlay>``):
     ``build_lab_sources`` concatenates every repo's ``[[lab.sources]]`` in that
     order, so this repo's source is read last and its two elements replace
     repo5's. It declares no tests, no project block and no products — it

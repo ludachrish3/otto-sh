@@ -10,15 +10,15 @@ from otto.coverage.store.model import Thresholds
 from tests._fixtures.gitrepo import TmpGitRepo
 
 
-def _repo(cov: dict | None, sut_dir):
-    repo = MagicMock()
-    repo.sut_dir = sut_dir
-    repo.settings = {"coverage": cov} if cov is not None else {}
-    return repo
+def _repo(cov: dict | None, root):
+    project = MagicMock()
+    project.root = root
+    project.settings = {"coverage": cov} if cov is not None else {}
+    return project
 
 
 def test_no_coverage_table_gives_the_git_less_fallback(tmp_path):
-    with patch("otto.config.coverage_settings.get_cov_repo", return_value=None):
+    with patch("otto.config.coverage_settings.get_cov_project", return_value=None):
         inputs = resolve_report_inputs([_repo(None, tmp_path)])
     assert inputs == ReportInputs()
     assert inputs.exclusion_rules == []
@@ -29,9 +29,9 @@ def test_a_coverage_table_resolves_every_input(tmp_path):
     file exists there, so load_override_config returns None without ever
     touching git — only a MagicMock repo (never a real git repo) is needed
     to avoid a real git-log walk."""
-    repo = _repo({"tiers": {"e2e": {"kind": "e2e", "precedence": 1}}}, tmp_path)
-    inputs = resolve_report_inputs([repo])
-    assert inputs.repo_root == tmp_path
+    project = _repo({"tiers": {"e2e": {"kind": "e2e", "precedence": 1}}}, tmp_path)
+    inputs = resolve_report_inputs([project])
+    assert inputs.project_root == tmp_path
     assert inputs.tier_configs is not None
     assert [t.name for t in inputs.tier_configs] == ["e2e"]
     assert inputs.exclusion_rules == []
@@ -90,34 +90,34 @@ async def test_run_coverage_report_creates_a_missing_output_dir(tmp_path, monkey
 
 class TestResolveReportInputsExclusionRules:
     @staticmethod
-    def _repo(coverage_cfg, sut_dir=None):
-        repo = MagicMock()
-        repo.settings = {"coverage": coverage_cfg} if coverage_cfg is not None else {}
-        repo.sut_dir = sut_dir or Path("/sut")
-        return repo
+    def _repo(coverage_cfg, root=None):
+        project = MagicMock()
+        project.settings = {"coverage": coverage_cfg} if coverage_cfg is not None else {}
+        project.root = root or Path("/sut")
+        return project
 
     def test_reads_exclusion_rules_from_settings(self):
-        repo = self._repo(
+        project = self._repo(
             {
                 "tiers": {"system": {"kind": "e2e", "precedence": 1}},
                 "exclusions": {"rules": [{"kind": "marker", "name": "MYPROJ_NO_COV"}]},
             }
         )
-        inputs = resolve_report_inputs([repo])
-        assert inputs.repo_root == repo.sut_dir
+        inputs = resolve_report_inputs([project])
+        assert inputs.project_root == project.root
         assert inputs.tier_configs is not None
         assert [r.name for r in inputs.exclusion_rules] == ["MYPROJ_NO_COV"]
         assert inputs.thresholds == Thresholds()
         assert inputs.ticket_spec is None
 
     def test_no_exclusions_table_yields_no_rules(self):
-        repo = self._repo({"tiers": {"system": {"kind": "e2e", "precedence": 1}}})
-        inputs = resolve_report_inputs([repo])
+        project = self._repo({"tiers": {"system": {"kind": "e2e", "precedence": 1}}})
+        inputs = resolve_report_inputs([project])
         assert inputs.exclusion_rules == []
 
     def test_no_cov_repo_yields_no_rules(self):
         inputs = resolve_report_inputs([])
-        assert inputs.repo_root is None
+        assert inputs.project_root is None
         assert inputs.tier_configs is None
         assert inputs.exclusion_rules == []
         assert inputs.thresholds is None
@@ -126,13 +126,13 @@ class TestResolveReportInputsExclusionRules:
     def test_reads_ticket_spec_from_settings(self):
         """[coverage.tickets] (via load_ticket_spec) reaches resolve_report_inputs's
         return value — the feature-absent None default is exercised above."""
-        repo = self._repo(
+        project = self._repo(
             {
                 "tiers": {"system": {"kind": "e2e", "precedence": 1}},
                 "tickets": {"pattern": r"[A-Z]{2,10}-[0-9]+"},
             }
         )
-        inputs = resolve_report_inputs([repo])
+        inputs = resolve_report_inputs([project])
         assert inputs.ticket_spec is not None
         assert inputs.ticket_spec.extract("fix PROJ-7") == ["PROJ-7"]
 
@@ -144,16 +144,16 @@ class TestResolveReportInputsExclusionRules:
         would make a well-formed [[bench]] entry look like an unknown
         table."""
         sut = TmpGitRepo(tmp_path / "sut")
-        sut_dir = sut.root
+        root = sut.root
         sut.write("f.c", "int a;\n")
         sha = sut.commit("work")
 
-        (sut_dir / ".otto").mkdir()
-        (sut_dir / ".otto" / "coverage-overrides.toml").write_text(
+        (root / ".otto").mkdir()
+        (root / ".otto" / "coverage-overrides.toml").write_text(
             f'[[bench]]\ncommit = "{sha}"\nreason = "manual pass"\n'
         )
 
-        repo = self._repo(
+        project = self._repo(
             {
                 "tiers": {
                     "system": {"kind": "e2e", "precedence": 1},
@@ -161,9 +161,9 @@ class TestResolveReportInputsExclusionRules:
                 },
                 "tickets": {"pattern": "#(?P<n>[0-9]+)"},
             },
-            sut_dir=sut_dir,
+            root=root,
         )
-        inputs = resolve_report_inputs([repo])
+        inputs = resolve_report_inputs([project])
         assert inputs.overrides is not None
         assert [e.key for e in inputs.overrides.asserted] == [f"commit:{sha}"]
         assert inputs.overrides.asserted[0].tier == "bench"

@@ -19,6 +19,7 @@ import sys
 
 import pytest
 
+from otto.config.env import is_otto_env_var
 from tests._fixtures.labdata import write_lab_json
 from tests._fixtures.sutrepo import make_sut_repo
 
@@ -119,7 +120,7 @@ def workspace(tmp_path):
             }
         ],
     )
-    repo = make_sut_repo(
+    project = make_sut_repo(
         tmp_path / "sut",
         name="acme",
         extra=(
@@ -128,8 +129,8 @@ def workspace(tmp_path):
         ),
         files={"lib/acme_tb_init.py": _INIT},
     )
-    env = {k: v for k, v in os.environ.items() if not k.startswith("OTTO_")}
-    env["OTTO_SUT_DIRS"] = str(repo)
+    env = {k: v for k, v in os.environ.items() if not is_otto_env_var(k)}
+    env["OTTOPATH"] = str(project)
     env["OTTO_HOME"] = str(tmp_path / "home")
     env["OTTO_XDIR"] = str(tmp_path / "xdir")
     return tmp_path, env

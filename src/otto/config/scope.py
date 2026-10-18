@@ -3,25 +3,25 @@
 Spec: ``docs/superpowers/specs/2026-08-18-project-lab-host-scoping-design.md`` §5.
 
 Every consumer — ingest gating, fleet iteration, the resolver, the status
-display — answers "does this repo target this host?" by calling
-:func:`repo_targets`. One predicate in one module is what makes those answers
+display — answers "does this project target this host?" by calling
+:func:`project_targets`. One predicate in one module is what makes those answers
 agree *structurally*; a second copy of the ``fullmatch``-both-axes rule would
 drift the moment one of them grew a special case. :func:`resolve_scopes` is
-held to the same rule: it computes the per-repo verdicts by calling the
+held to the same rule: it computes the per-project verdicts by calling the
 predicate, never by re-deriving membership from the patterns.
 
 The resolver is PURE — no I/O, no ``bootstrap()``, no lab loading. It is handed
-the repos, the loaded lab's component names and the loaded hosts, and returns
-verdicts; the caller decides which repo is "current" and when to enforce. That
+the projects, the loaded lab's component names and the loaded hosts, and returns
+verdicts; the caller decides which project is "current" and when to enforce. That
 split is what lets the D3 consequences be *stored* at context creation and
 *raised* only at project-layer entry (§5), so a scoping typo never bricks an
 explicit ``otto host <id> <verb>``.
 
 Layering: a foundation module, so every layer may import it: the host
-layer's ingest gate needs :func:`repo_targets`, and :mod:`otto.declared`
+layer's ingest gate needs :func:`project_targets`, and :mod:`otto.declared`
 reads the declarations through it. It must never import upward. Its runtime
 imports are ``dataclasses``, ``pathlib``, ``re`` and ``otto.errors``, a zero-import leaf,
-plus ``otto.models.dependencies`` inside the functions that normalize a repo
+plus ``otto.models.dependencies`` inside the functions that normalize a project
 name. Importing it also runs ``otto.config``'s ``__init__`` on the way, which
 is lazy bar one eager import, :mod:`otto.config.env` (stdlib only at import),
 so that module loads too. The pydantic spec the config is built from is a
@@ -33,15 +33,17 @@ its subclasses :class:`DependencyError` and :class:`ProjectScopeError`, and
 :class:`BootstrapWarning`. ``ProjectScopeError`` is shared by bootstrap's D2
 refusal and this module's scope checks, so it is defined where both can reach
 it; :mod:`otto.bootstrap` re-exports all four under their public names.
+:class:`DuplicateProjectError`, one more subclass, is deliberately not re-exported:
+callers import it from this module.
 
 So do the runtime settings types (spec 2026-10-11 placement-and-phases §3.6):
-where a repo keeps its settings file (``SETTINGS_FILENAME``,
+where a project keeps its settings file (``SETTINGS_FILENAME``,
 ``TOML_SETTINGS_PATH``), the context suffixes docker reads as an archive
 (:data:`ARCHIVE_SUFFIXES`), and the frozen dataclasses the settings specs build
 (:class:`DockerImage`, :class:`DockerCompose`, :class:`DockerUseCase`,
-:class:`DockerSettings`, :class:`MonitorSettings`). :mod:`otto.config.repo`
-holds them in every repo it loads, and :mod:`otto.models.settings` builds them;
-this module is below both and already loaded wherever the repo loader is, so
+:class:`DockerSettings`, :class:`MonitorSettings`). :mod:`otto.config.project`
+holds them in every project it loads, and :mod:`otto.models.settings` builds them;
+this module is below both and already loaded wherever the project loader is, so
 the loader reads them at module scope (its annotations resolve at runtime) and
 the specs read them inside the functions that build them, and neither loads
 more than it did. The four ``otto.config`` exports (:class:`DockerImage`,
@@ -60,52 +62,76 @@ if TYPE_CHECKING:
     from ..host.host import Host
     from ..models.settings import ProjectScopeSpec
     from ..run_context import OttoContext
-    from .repo import Repo
+    from .project import Project
 
 
 class BootstrapError(OttoError):
     """One user file failed to load during bootstrap registration."""
 
-    def __init__(self, sut_dir: Any, source: str, cause: BaseException) -> None:
-        """Frame *cause* as ``repo <sut_dir>: failed to load <source>``."""
-        super().__init__(f"repo {sut_dir}: failed to load {source}: {cause!r}")
-        self.sut_dir = sut_dir
+    def __init__(self, root: Any, source: str, cause: BaseException) -> None:
+        """Frame *cause* as ``project root <root>: failed to load <source>``."""
+        super().__init__(f"project root {root}: failed to load {source}: {cause!r}")
+        self.root = root
         self.source = source
         self.__cause__ = cause
 
 
 class DependencyError(BootstrapError):
-    """A repo's declared dependencies cannot be satisfied (or a dependency was skipped)."""
+    """A project's declared dependencies cannot be satisfied (or a dependency was skipped)."""
 
-    def __init__(self, sut_dir: Any, message: str) -> None:
-        """Frame *message* as ``repo <sut_dir>: <message>``."""
-        Exception.__init__(self, f"repo {sut_dir}: {message}")
-        self.sut_dir = sut_dir
+    def __init__(self, root: Any, message: str) -> None:
+        """Frame *message* as ``project root <root>: <message>``."""
+        Exception.__init__(self, f"project root {root}: {message}")
+        self.root = root
         self.source = "dependencies"
 
 
 class ProjectScopeError(BootstrapError):
-    """A repo registered providers without declaring the labs it applies to (D2).
+    """A project registered providers without declaring the labs it applies to (D2).
 
-    Unlike its siblings this one is NOT contained: a repo whose providers can
+    Unlike its siblings this one is NOT contained: a project whose providers can
     never reach a host is a configuration mistake with no degraded mode worth
     offering, and the whole point of the check is that it is impossible to
-    ignore. *message* is used verbatim — it already opens with the repo's name,
-    so the ``repo <sut_dir>:`` prefix its siblings add would say it twice.
+    ignore. *message* is used verbatim — it already opens with the project's name,
+    so the ``project root <root>:`` prefix its siblings add would say it twice.
     """
 
-    def __init__(self, sut_dir: Any, message: str) -> None:
-        """Carry *message* unframed; keep *sut_dir* on the exception for callers."""
+    def __init__(self, root: Any, message: str) -> None:
+        """Carry *message* unframed; keep *root* on the exception for callers."""
         Exception.__init__(self, message)
-        self.sut_dir = sut_dir
+        self.root = root
         self.source = "project_scope"
+
+
+class DuplicateProjectError(BootstrapError):
+    """Two or more ``OTTOPATH`` roots hold one project, so none of them loads.
+
+    One is recorded for EACH root that claimed the name, so each is contained
+    like any other per-root load failure: otto never guesses which copy is
+    meant. Each is framed with its own root, as its siblings are, and names
+    the project and every root that claimed it. *name* is the normalized name
+    the roots share.
+    """
+
+    def __init__(self, root: Any, name: str, roots: "list[Path]") -> None:
+        """Frame ``project root <root>: project <name> has N roots in OTTOPATH: …; keep one``."""
+        listed = ", ".join(str(r) for r in roots)
+        Exception.__init__(
+            self,
+            f"project root {root}: project {name!r} has {len(roots)} roots in OTTOPATH: "
+            f"{listed}; keep one",
+        )
+        self.root = root
+        self.name = name
+        self.roots = list(roots)
+        self.source = "OTTOPATH"
 
 
 @dataclasses.dataclass(frozen=True)
 class BootstrapWarning:
     """A non-fatal dependency finding: rendered at startup, never gates dispatch."""
 
-    sut_dir: Any
+    root: Any
     message: str
 
 
@@ -123,11 +149,11 @@ class EmptySelectionError(OttoError, ValueError):
 
     A sibling of :class:`ProjectScopeError` rather than a subclass, and the
     difference is what each one is ABOUT. ``ProjectScopeError`` is a
-    ``BootstrapError``: a repo's ``[project]`` declaration cannot work, the
-    fix is an edit to a ``settings.toml``, and it carries a ``sut_dir`` to
+    ``BootstrapError``: a project's ``[project]`` declaration cannot work, the
+    fix is an edit to a ``settings.toml``, and it carries a ``root`` to
     name the file. This one is a bad *selection at the call* — a ``--hosts``
     regex or a ``pattern=`` argument that picked nothing out of a fleet that
-    is otherwise fine — so there is no repo to blame and no file to point at.
+    is otherwise fine — so there is no project to blame and no file to point at.
     Framing it as a bootstrap failure would send every reader to the wrong
     place. ``ValueError`` is the stdlib root the house convention wants for a
     rejected argument, and it is what the CLI's existing selection errors
@@ -214,7 +240,7 @@ flag they never typed."""
 
 @dataclasses.dataclass(frozen=True)
 class ProjectScopeConfig:
-    """Compiled ``[project]`` declaration for one repo.
+    """Compiled ``[project]`` declaration for one project.
 
     The runtime half of the two-type split the other settings sections use:
     :class:`~otto.models.settings.ProjectScopeSpec` validates the TOML, this
@@ -224,12 +250,12 @@ class ProjectScopeConfig:
     """
 
     lab_patterns: "list[re.Pattern[str]]"
-    """Labs this repo applies to; a lab is applicable when ANY entry fullmatches.
+    """Labs this project applies to; a lab is applicable when ANY entry fullmatches.
 
     An empty list therefore matches no lab at all. That is deliberate: an
     unset ``lab_patterns`` is not "every lab" (D2 — match-all must be written
     out as ``[".*"]``), and the loud complaint about a provider-registering
-    repo that never declared one belongs to the bootstrap check, not here.
+    project that never declared one belongs to the bootstrap check, not here.
     """
 
     host_patterns: "list[re.Pattern[str]]"
@@ -248,7 +274,7 @@ class ProjectScopeConfig:
         )
 
 
-def repo_targets(scope: "ProjectScopeConfig | None", lab_name: str, host_id: str) -> bool:
+def project_targets(scope: "ProjectScopeConfig | None", lab_name: str, host_id: str) -> bool:
     """Report whether *scope* admits the host *host_id* of lab *lab_name*.
 
     Both axes must pass: some ``lab_patterns`` entry fullmatches *lab_name*
@@ -259,24 +285,24 @@ def repo_targets(scope: "ProjectScopeConfig | None", lab_name: str, host_id: str
     that *widens* the fleet is exactly the one no test notices.
 
     Args:
-        scope: The repo's compiled ``[project]`` declaration, or ``None`` when
-            the repo declared no ``[project]`` table. ``None`` admits
-            everything — an undeclared repo scopes nothing out, which is what
+        scope: The project's compiled ``[project]`` declaration, or ``None`` when
+            the project declared no ``[project]`` table. ``None`` admits
+            everything — an undeclared project scopes nothing out, which is what
             the whole-lab fallback (§6) is built on.
         lab_name: A lab *component* name (``a+b`` merges keep both).
         host_id: The host's ``id``.
 
     Returns:
-        True when the repo targets that (lab, host) pair.
+        True when the project targets that (lab, host) pair.
 
     >>> import re
-    >>> from otto.config.scope import ProjectScopeConfig, repo_targets
+    >>> from otto.config.scope import ProjectScopeConfig, project_targets
     >>> scope = ProjectScopeConfig([re.compile("bench")], [re.compile(".*")])
-    >>> repo_targets(scope, "bench", "sensor-1")
+    >>> project_targets(scope, "bench", "sensor-1")
     True
-    >>> repo_targets(scope, "bench-overflow", "sensor-1")
+    >>> project_targets(scope, "bench-overflow", "sensor-1")
     False
-    >>> repo_targets(None, "any-lab", "any-host")
+    >>> project_targets(None, "any-lab", "any-host")
     True
     """
     if scope is None:
@@ -287,7 +313,7 @@ def repo_targets(scope: "ProjectScopeConfig | None", lab_name: str, host_id: str
 def _lab_applies(scope: "ProjectScopeConfig | None", lab_name: str) -> bool:
     """Report whether *scope* applies to the lab *lab_name* (the lab axis alone).
 
-    Private, and called by BOTH :func:`repo_targets` and :func:`resolve_scopes`
+    Private, and called by BOTH :func:`project_targets` and :func:`resolve_scopes`
     — the resolver needs the lab axis without a host to pair it with (a lab can
     be applicable while holding no matching host, which is a distinct verdict),
     and spelling ``any(p.fullmatch(lab_name) ...)`` a second time there would
@@ -301,37 +327,37 @@ def _lab_applies(scope: "ProjectScopeConfig | None", lab_name: str) -> bool:
 
 @dataclasses.dataclass(frozen=True)
 class ProjectScope:
-    """One repo's resolved fleet of interest for one loaded lab (spec §5).
+    """One project's resolved fleet of interest for one loaded lab (spec §5).
 
     A *verdict*, not a live view: :attr:`universe` is the host set as it stood
     at resolution, used for display (``status --full``) and for the D3
-    abort/skip decision. Fleet iteration re-evaluates :func:`repo_targets`
+    abort/skip decision. Fleet iteration re-evaluates :func:`project_targets`
     instead, so a container that joins the lab after resolution is scoped
     correctly rather than frozen out.
 
     The last four fields exist so a verdict can explain ITSELF. D3's errors
     have to say what was loaded, what was declared, and which file to edit; a
-    :func:`require_current_scope` that had to be re-handed the repos and the
+    :func:`require_current_scope` that had to be re-handed the projects and the
     lab to build that sentence would be one more argument every caller could
     get wrong — and the display surface wants the same three facts anyway.
     """
 
-    repo_name: str
-    """The repo this verdict is about (``Repo.name``); the dict key too."""
+    project_name: str
+    """The project this verdict is about (``Project.name``); the dict key too."""
 
     declared: bool
-    """Whether the repo has a ``[project]`` table at all.
+    """Whether the project has a ``[project]`` table at all.
 
     False is NOT "targets nothing" — it is the whole-lab fallback (§6), which
-    is why it is carried separately from :attr:`excluded`. Product-less repos
+    is why it is carried separately from :attr:`excluded`. Product-less projects
     and every pre-``[project]`` project live here.
     """
 
     config: "ProjectScopeConfig | None"
-    """The repo's compiled declaration — what :func:`scoped_ids` re-asks LIVE.
+    """The project's compiled declaration — what :func:`scoped_ids` re-asks LIVE.
 
     Carried on the verdict because the verdict is what a fleet walk is handed,
-    and a walk must re-evaluate :func:`repo_targets` per host rather than read
+    and a walk must re-evaluate :func:`project_targets` per host rather than read
     :attr:`universe` (see the class docstring). Recompiling from
     :attr:`host_patterns` at every walk would work and would also put the
     "unset means undeclared" rule in a second place; the compiled object is
@@ -339,16 +365,16 @@ class ProjectScope:
     """
 
     applicable_labs: frozenset[str]
-    """Loaded lab COMPONENTS this repo applies to (``a+b`` contributes both).
+    """Loaded lab COMPONENTS this project applies to (``a+b`` contributes both).
 
-    An undeclared repo applies to all of them: it scoped nothing out.
+    An undeclared project applies to all of them: it scoped nothing out.
     """
 
     universe: frozenset[str]
-    """Host ids this repo targeted AT RESOLVE TIME — display and abort data only.
+    """Host ids this project targeted AT RESOLVE TIME — display and abort data only.
 
     Fleet walks must NOT iterate this snapshot; they re-evaluate
-    :func:`repo_targets` live so hosts that join after resolution (docker
+    :func:`project_targets` live so hosts that join after resolution (docker
     containers) scope correctly.
     """
 
@@ -360,8 +386,8 @@ class ProjectScope:
     single flag covering both would send half the readers to the wrong one.
     """
 
-    sut_dir: str
-    """The repo's directory — the ``settings.toml`` to edit, and what rides the error."""
+    root: str
+    """Where the ``settings.toml`` to edit lives (the project root), and what rides the error."""
 
     loaded_labs: "tuple[str, ...]"
     """Every loaded component lab, in load order — the "what was loaded" half of D3.
@@ -380,14 +406,14 @@ class ProjectScope:
 
 
 def resolve_scopes(
-    repos: "list[Repo]",
+    projects: "list[Project]",
     component_names: "list[str]",
     hosts: "dict[str, Host]",
     exclude_ids: "frozenset[str]" = frozenset(),
 ) -> "dict[str, ProjectScope]":
-    """Resolve every repo's fleet of interest against one loaded lab.
+    """Resolve every project's fleet of interest against one loaded lab.
 
-    Pure and cheap: it reads exactly three things — each repo's ``name`` and
+    Pure and cheap: it reads exactly three things — each project's ``name`` and
     ``project_scope``, and each host's ``source_lab`` — and returns verdicts.
     Nothing is raised here even when a verdict is fatal (:func:`require_current_scope`
     is where D3 fires), because resolution runs at context creation and the
@@ -403,7 +429,7 @@ def resolve_scopes(
     in. ``include_local`` remains the ambient walks' own knob (§6).
 
     Args:
-        repos: The repos to resolve (bootstrap's set; order is preserved in the
+        projects: The projects to resolve (bootstrap's set; order is preserved in the
             returned mapping, which is keyed by name).
         component_names: The loaded lab's ``component_names`` — the component
             labs, never the composite ``a+b`` display name.
@@ -412,32 +438,32 @@ def resolve_scopes(
             say. Defaults to excluding nothing.
 
     Returns:
-        ``{repo name: ProjectScope}``.
+        ``{project name: ProjectScope}``.
 
     >>> import types
     >>> from otto.config.scope import ProjectScopeConfig, resolve_scopes
     >>> import re
-    >>> repo = types.SimpleNamespace(  # only .name/.project_scope/.sut_dir are read
+    >>> project = types.SimpleNamespace(  # only .name/.project_scope/.root are read
     ...     name="sensors",
-    ...     sut_dir="/repos/sensors",
+    ...     root="/projects/sensors",
     ...     project_scope=ProjectScopeConfig([re.compile("bench")], [re.compile("sensor-.*")]),
     ... )
     >>> hosts = {
     ...     "sensor-1": types.SimpleNamespace(source_lab="bench"),
     ...     "gw-1": types.SimpleNamespace(source_lab="bench"),
     ... }
-    >>> scope = resolve_scopes([repo], ["bench"], hosts)["sensors"]
+    >>> scope = resolve_scopes([project], ["bench"], hosts)["sensors"]
     >>> sorted(scope.universe), scope.excluded
     (['sensor-1'], False)
     """
     scopes: dict[str, ProjectScope] = {}
-    for repo in repos:
-        config = repo.project_scope
+    for project in projects:
+        config = project.project_scope
         applicable = frozenset(name for name in component_names if _lab_applies(config, name))
-        # An undeclared repo's universe is the whole lab BY CONSTRUCTION —
+        # An undeclared project's universe is the whole lab BY CONSTRUCTION —
         # never per-host evaluation. The short-circuit is load-bearing, not an
-        # optimization: repos are routinely VISIBLE without declaring anything
-        # (the integration tree's session fixture leaves OTTO_SUT_DIRS ambient
+        # optimization: projects are routinely VISIBLE without declaring anything
+        # (the integration tree's session fixture leaves OTTOPATH ambient
         # for the rest of its worker), and a world with zero declarations must
         # not demand attributes (``source_lab``) that hosts built before this
         # feature never carried. Only a declaration may raise the bar.
@@ -445,16 +471,16 @@ def resolve_scopes(
             host_id
             for host_id, host in hosts.items()
             if host_id not in exclude_ids
-            and (config is None or repo_targets(config, host.source_lab, host_id))
+            and (config is None or project_targets(config, host.source_lab, host_id))
         )
-        scopes[repo.name] = ProjectScope(
-            repo_name=repo.name,
+        scopes[project.name] = ProjectScope(
+            project_name=project.name,
             declared=config is not None,
             config=config,
             applicable_labs=applicable,
             universe=universe,
             excluded=config is not None and not applicable,
-            sut_dir=str(repo.sut_dir),
+            root=str(project.root),
             loaded_labs=tuple(component_names),
             lab_patterns=() if config is None else tuple(p.pattern for p in config.lab_patterns),
             host_patterns=() if config is None else tuple(p.pattern for p in config.host_patterns),
@@ -463,30 +489,30 @@ def resolve_scopes(
 
 
 _NO_APPLICABLE_LAB = """\
-repo '{name}' declares [project] lab_patterns that match none of the loaded
+project '{name}' declares [project] lab_patterns that match none of the loaded
 labs, so no host in this run belongs to its fleet of interest.
 
     loaded labs:  {loaded}
     lab_patterns: {patterns}
 
-Load a lab this repo applies to (otto -l <lab>), or widen lab_patterns in
-{sut_dir}/.otto/settings.toml.\
+Load a lab this project applies to (otto -l <lab>), or widen lab_patterns in
+{root}/.otto/settings.toml.\
 """
-"""D3's abort for the current repo. Both halves are printed because either one
+"""D3's abort for the current project. Both halves are printed because either one
 alone reads as the other's fault: patterns without the loaded labs looks like a
 typo in the regex, loaded labs without the patterns looks like the wrong -l."""
 
 _EMPTY_UNIVERSE = """\
-repo '{name}' applies to loaded lab(s) {applicable}, but its [project]
+project '{name}' applies to loaded lab(s) {applicable}, but its [project]
 host_patterns match no host there, so every fleet walk it drives would be
 empty.
 
     host_patterns: {patterns}
 
-Widen host_patterns in {sut_dir}/.otto/settings.toml (['.*'] is every host in
-those labs), or load a lab that holds the hosts this repo targets.\
+Widen host_patterns in {root}/.otto/settings.toml (['.*'] is every host in
+those labs), or load a lab that holds the hosts this project targets.\
 """
-"""The other current-repo abort. Named separately from the one above precisely
+"""The other current-project abort. Named separately from the one above precisely
 because the fix differs: the lab was RIGHT here, and telling this user to load
 a different one would send them the wrong way."""
 
@@ -495,7 +521,7 @@ def unusable_scope(scope: "ProjectScope") -> bool:
     """Report whether *scope*'s declared fleet of interest cannot work — D3's one condition.
 
     THE TWIN OF ``_unusable_scope_message``, and it exists for the same
-    reason: two sites act on this verdict — the current repo's abort
+    reason: two sites act on this verdict — the current project's abort
     (:func:`require_current_scope`) and the orchestrator's dependency skip
     (``otto.project.orchestrator._applicable``) — and D3's asymmetry is
     about WHAT THEY DO, never about which condition they read. Spelling the
@@ -504,16 +530,16 @@ def unusable_scope(scope: "ProjectScope") -> bool:
     this function closes: the dependency's own fleet walk raises out of the
     walk, and one project's declaration takes down another project's run.
 
-    ``declared`` is load-bearing. An undeclared repo's universe is empty
+    ``declared`` is load-bearing. An undeclared project's universe is empty
     whenever the LAB is empty, and that is the whole-lab fallback (§6) rather
-    than a failure — refusing there would break every product-less repo and
+    than a failure — refusing there would break every product-less project and
     every pre-``[project]`` project.
 
     Args:
         scope: One resolved verdict.
 
     Returns:
-        True when the repo declared a ``[project]`` scope that admits no host
+        True when the project declared a ``[project]`` scope that admits no host
         — either because no loaded lab applies (:attr:`ProjectScope.excluded`)
         or because its ``host_patterns`` match nothing in the labs that do.
     """
@@ -527,12 +553,12 @@ def _switched(names: "tuple[str, ...]") -> "frozenset[str]":
     contract, and the reason those fields need no ``__post_init__``.
     ``OttoContext`` is a plain dataclass that anyone may construct, so
     "the values are normalized" cannot be a WRITE-time promise — a library
-    caller passing ``("My_Repo",)`` would otherwise have its explicit switch
+    caller passing ``("My_Project",)`` would otherwise have its explicit switch
     silently ignored, which is the failure mode this module exists to refuse.
     Normalizing HERE makes the invariant hold at the only place that reads it.
 
     Shared by :func:`active` and :func:`switched_off` rather than spelled at
-    each, because the two must agree about what "the same repo" means: a
+    each, because the two must agree about what "the same project" means: a
     ``switched_off`` that said False where ``active`` said False-because-excluded
     would attribute the verdict to the wrong cause.
 
@@ -545,18 +571,18 @@ def _switched(names: "tuple[str, ...]") -> "frozenset[str]":
 
 
 def scopes_of(ctx: "OttoContext") -> "dict[str, ProjectScope]":
-    """Return *ctx*'s per-repo scope verdicts, keyed by ``Repo.name``; the one way to read them.
+    """Return *ctx*'s per-project scope verdicts by ``Project.name``; the one way to read them.
 
     Resolved once per context, over the context's one bootstrap result, and
-    cached with any refusal (``otto.session.RepoLoadError`` for a fatal load
+    cached with any refusal (``otto.session.ProjectLoadError`` for a fatal load
     error, or the environment's own failure). Empty for the library sentinel
-    lab and for a run with no SUT directories.
+    lab and for a run with no project roots.
     """
     return ctx._resolve_scopes()  # noqa: SLF001 — the context computes and caches them; this is their one reader
 
 
-def active(repo_name: str, ctx: "OttoContext") -> bool:
-    """Report whether *repo_name* participates in this invocation — THE authority.
+def active(project_name: str, ctx: "OttoContext") -> bool:
+    """Report whether *project_name* participates in this invocation — THE authority.
 
     Every enforcement point (bootstrap-error demotion via
     :func:`inactive_before_lab`'s projection, the orchestrator walks,
@@ -565,16 +591,16 @@ def active(repo_name: str, ctx: "OttoContext") -> bool:
     Pure over ``(ctx.include_projects, ctx.exclude_projects, scopes_of(ctx))``;
     no I/O.
 
-    A missing verdict is active on purpose: it covers a run with no SUT
-    directories (``scopes_of(ctx)`` is empty), the undeclared repo (whole-lab
+    A missing verdict is active on purpose: it covers a run with no project
+    roots (``scopes_of(ctx)`` is empty), the undeclared project (whole-lab
     fallback, scoping spec §6), and the library context's sentinel lab alike
-    — in every case there is no signal that would justify leaving the repo
-    out. A run whose repos cannot be read has no missing verdict to fall back
+    — in every case there is no signal that would justify leaving the project
+    out. A run whose projects cannot be read has no missing verdict to fall back
     on: reading ``scopes_of(ctx)`` raises its refusal, and so does this.
 
     Args:
-        repo_name: The repo's declared ``Repo.name``, spelled exactly as the
-            repo declares it. ``scopes_of(ctx)`` is keyed by that raw name, so a
+        project_name: The project's declared ``Project.name``, spelled exactly as the
+            project declares it. ``scopes_of(ctx)`` is keyed by that raw name, so a
             user-typed variant (different case, ``_`` for ``-``) finds no
             verdict and therefore fails OPEN — resolving ACTIVE. Callers
             holding a user-supplied spelling must map it back to a declared
@@ -582,57 +608,57 @@ def active(repo_name: str, ctx: "OttoContext") -> bool:
         ctx: The runtime context supplying the switches and the lab verdicts.
 
     Raises:
-        otto.session.RepoLoadError: :func:`scopes_of` refused, because a repo failed
+        otto.session.ProjectLoadError: :func:`scopes_of` refused, because a project failed
             to load in a way that stops a run. An environment failure
             propagates the same way, as raised.
     """
     from ..models.dependencies import normalize_name
 
-    name = normalize_name(repo_name)
+    name = normalize_name(project_name)
     if name in _switched(ctx.exclude_projects):
         return False
     if name in _switched(ctx.include_projects):
         return True
-    # RAW name, deliberately: ``scopes_of(ctx)`` is keyed by ``Repo.name`` exactly as
-    # written, so normalizing this key would miss the verdict of every repo whose
+    # RAW name, deliberately: ``scopes_of(ctx)`` is keyed by ``Project.name`` exactly as
+    # written, so normalizing this key would miss the verdict of every project whose
     # name holds an ``_``, a ``.`` or a capital — and a missing verdict resolves
     # ACTIVE, i.e. it would fail OPEN into the silent widening D6 refuses. The
     # switches above normalize because they carry USER-typed names; this does not
     # because it carries a declared one.
-    verdict = scopes_of(ctx).get(repo_name)
+    verdict = scopes_of(ctx).get(project_name)
     if verdict is None:
         return True
     return not unusable_scope(verdict)
 
 
-def switched_off(repo_name: str, ctx: "OttoContext") -> bool:
-    """Report whether *repo_name* was explicitly ``--exclude-projects``'d.
+def switched_off(project_name: str, ctx: "OttoContext") -> bool:
+    """Report whether *project_name* was explicitly ``--exclude-projects``'d.
 
     Attribution only — every message that names the SWITCH as the reason
     reads this, while the combined verdict stays :func:`active`'s alone.
     Normalizes both sides through ``_switched``, the same way
     :func:`active` does, so the two cannot disagree about identity. Unlike
-    :func:`active` this one reads no lab verdict, so *repo_name* may be any
+    :func:`active` this one reads no lab verdict, so *project_name* may be any
     spelling — normalization is the whole comparison.
     """
     from ..models.dependencies import normalize_name
 
-    return normalize_name(repo_name) in _switched(ctx.exclude_projects)
+    return normalize_name(project_name) in _switched(ctx.exclude_projects)
 
 
 def _not_switched_off(
     scopes: "list[ProjectScope]", exclude_projects: "tuple[str, ...]"
 ) -> "list[ProjectScope]":
-    """Drop the verdicts of repos ``--exclude-projects`` switched off, in order.
+    """Drop the verdicts of projects ``--exclude-projects`` switched off, in order.
 
     The fleet-side twin of :func:`switched_off`: it compares through the same
     ``_switched`` normalization, so the fleet and the activation verdict cannot
-    disagree about which repo ``-E My_Repo`` named.
+    disagree about which project ``-E My_Project`` named.
     """
     from ..models.dependencies import normalize_name
 
     switched = _switched(exclude_projects)
-    return [scope for scope in scopes if normalize_name(scope.repo_name) not in switched]
+    return [scope for scope in scopes if normalize_name(scope.project_name) not in switched]
 
 
 def inactive_before_lab(
@@ -643,8 +669,8 @@ def inactive_before_lab(
     The lab-axis projection of :func:`active`.
     Bootstrap-error demotion fires before the lab is built, so it cannot ask
     for a :class:`ProjectScope` verdict; what it CAN know is the ``-l``
-    selection (already split into component names) and the repo's declared
-    ``lab_patterns``. This is deliberately the narrower test: a repo that is
+    selection (already split into component names) and the project's declared
+    ``lab_patterns``. This is deliberately the narrower test: a project that is
     inactive only because it is host-starved is NOT detected here, and its
     bootstrap errors stay fatal (plan deviation 1).
     """
@@ -654,12 +680,12 @@ def inactive_before_lab(
 
 
 def _unusable_scope_message(scope: "ProjectScope") -> str:
-    """Render the D3 message for a repo whose fleet of interest cannot work.
+    """Render the D3 message for a project whose fleet of interest cannot work.
 
     Extracted so the two sites that reach this condition — D3's project-layer
     entry check (:func:`require_current_scope`) and an owner-bound fleet walk
     that admits nothing (:func:`require_nonempty_fleet`) — cannot describe the
-    same repo differently. Which of the two templates applies is the verdict's
+    same project differently. Which of the two templates applies is the verdict's
     own ``excluded`` flag, and that choice is the point: "wrong lab loaded" and
     "no host here matches your host_patterns" have different fixes.
 
@@ -672,26 +698,26 @@ def _unusable_scope_message(scope: "ProjectScope") -> str:
     """
     if scope.excluded:
         return _NO_APPLICABLE_LAB.format(
-            name=scope.repo_name,
+            name=scope.project_name,
             loaded=", ".join(scope.loaded_labs) or "(none)",
             patterns=", ".join(scope.lab_patterns) or "(none)",
-            sut_dir=scope.sut_dir,
+            root=scope.root,
         )
     return _EMPTY_UNIVERSE.format(
-        name=scope.repo_name,
+        name=scope.project_name,
         applicable=", ".join(sorted(scope.applicable_labs)) or "(none)",
         patterns=", ".join(scope.host_patterns) or "(none)",
-        sut_dir=scope.sut_dir,
+        root=scope.root,
     )
 
 
-def require_current_scope(scopes: "dict[str, ProjectScope]", current_repo_name: str) -> None:
-    """Enforce D3 for the CURRENT repo: raise when its fleet of interest is unusable.
+def require_current_scope(scopes: "dict[str, ProjectScope]", current_project_name: str) -> None:
+    """Enforce D3 for the CURRENT project: raise when its fleet of interest is unusable.
 
     Call at project-layer entry (default instructions, a suite's ``ensure``
     marker steps, monitor fleet build) — not at context creation, so explicit
     ``otto host <id> <verb>`` targeting still works when a declaration is
-    wrong. Which repo is current (``bootstrap().repos[0]``, the driving
+    wrong. Which project is current (``bootstrap().projects[0]``, the driving
     project) is the caller's reading; this function is handed the name.
 
     A DEPENDENCY in the same *scopes* mapping is never enforced here: an
@@ -701,8 +727,8 @@ def require_current_scope(scopes: "dict[str, ProjectScope]", current_repo_name: 
 
     Args:
         scopes: The resolver's output.
-        current_repo_name: ``Repo.name`` of the driving project. A name absent
-            from *scopes* returns None: no verdict was resolved for it (a repo
+        current_project_name: ``Project.name`` of the driving project. A name absent
+            from *scopes* returns None: no verdict was resolved for it (a project
             bootstrap skipped, say), and that failure is already reported.
 
     Returns:
@@ -710,11 +736,11 @@ def require_current_scope(scopes: "dict[str, ProjectScope]", current_repo_name: 
 
     Raises:
         ProjectScopeError: The same class bootstrap's D2 check
-            raises; the taxonomy has one "this repo's scope declaration cannot
-            work" error, not one per site. Message names the repo, what was
+            raises; the taxonomy has one "this project's scope declaration cannot
+            work" error, not one per site. Message names the project, what was
             loaded, what was declared, and the file to edit.
     """
-    scope = scopes.get(current_repo_name)
+    scope = scopes.get(current_project_name)
     # The condition is :func:`unusable_scope`'s, never a copy of it — the
     # orchestrator's dependency skip reads the same predicate, and D3's
     # asymmetry is about the RESPONSE (abort here, skip there), not about which
@@ -723,7 +749,7 @@ def require_current_scope(scopes: "dict[str, ProjectScope]", current_repo_name: 
     # empty, which is a lab problem and not this check's to diagnose.
     if scope is None or not unusable_scope(scope):
         return
-    raise ProjectScopeError(scope.sut_dir, _unusable_scope_message(scope))
+    raise ProjectScopeError(scope.root, _unusable_scope_message(scope))
 
 
 def scoped_ids(
@@ -739,30 +765,30 @@ def scoped_ids(
     (:meth:`otto.context.OttoContext.all_hosts` and the module-level
     :func:`otto.fleet.all_hosts` that delegates to it) cannot disagree,
     nor can the pure query :func:`otto.fleet.fleet_of_interest`.
-    Membership is re-derived by calling :func:`repo_targets` against *hosts* as
+    Membership is re-derived by calling :func:`project_targets` against *hosts* as
     they stand at the call, so a docker container registered after the context
     was created is scoped correctly instead of frozen out — which is precisely
     what reading :attr:`ProjectScope.universe` here would do.
 
     Three answers, in this order:
 
-    * **No repo declared** ``[project]`` — every id in *hosts*. The whole-lab
-      fallback (§6): product-less repos and every pre-``[project]`` project
-      keep today's behavior. "No repo declared" is the condition, not "this
-      repo did not": an undeclared repo's own verdict admits everything, so
+    * **No project declared** ``[project]`` — every id in *hosts*. The whole-lab
+      fallback (§6): product-less projects and every pre-``[project]`` project
+      keep today's behavior. "No project declared" is the condition, not "this
+      project did not": an undeclared project's own verdict admits everything, so
       folding it into the union below would silently restore the whole lab the
-      moment a product-less repo shared the run.
-    * *owner* **names a declared repo** — that repo's admission alone. A known
-      repo that declared no ``[project]`` gets the fallback for the same reason
+      moment a product-less project shared the run.
+    * *owner* **names a declared project** — that project's admission alone. A known
+      project that declared no ``[project]`` gets the fallback for the same reason
       as above: its own verdict admits everything. An owner that is not in
       *scopes* AT ALL is a different thing entirely and is REFUSED — see
       Raises.
-    * *owner* **is None** — the union across the DECLARED repos (D7), which is
+    * *owner* **is None** — the union across the DECLARED projects (D7), which is
       the fleet that host-global operations (cleanup, toolchain, debug logs)
-      walk, and the hosts in play the reservation gate requires. A repo
+      walk, and the hosts in play the reservation gate requires. A project
       switched off with ``--exclude-projects`` contributes nothing to it: its
-      hosts leave play unless an active repo also declares them. Excluding
-      every declaring repo leaves NOTHING in play — the whole-lab fallback
+      hosts leave play unless an active project also declares them. Excluding
+      every declaring project leaves NOTHING in play — the whole-lab fallback
       above is for "nothing declared", and answering a request for less with
       the whole lab would be the widening this design refuses.
 
@@ -772,33 +798,33 @@ def scoped_ids(
     — so an admin passing ``include_local=True`` still gets the runner,
     exactly as before. ``local`` stays out of the resolver's stored
     :attr:`ProjectScope.universe` by ``exclude_ids``, which is where the D3
-    abort reads its "this repo's fleet is empty" verdict from.
+    abort reads its "this project's fleet is empty" verdict from.
 
     Args:
         hosts: The lab's live ``{id: host}`` mapping — read at call time.
         scopes: :func:`resolve_scopes`' output for this run.
-        owner: ``Repo.name`` whose universe bounds this walk, or ``None`` for
-            the union. The repo-scoped context view (spec §7,
-            ``ctx.for_repo(repo)``) is what supplies a name; a plain context
+        owner: ``Project.name`` whose universe bounds this walk, or ``None`` for
+            the union. The project-scoped context view (spec §7,
+            ``ctx.for_project(project)``) is what supplies a name; a plain context
             always passes ``None``.
         exclude_projects: The run's ``--exclude-projects`` names, as typed;
             compared normalized, the way :func:`active` compares them. Read by
-            the union only: an owner-bound walk is that repo's own, and a
-            switched-off repo is never walked.
+            the union only: an owner-bound walk is that project's own, and a
+            switched-off project is never walked.
 
     Returns:
         The admissible ids, as a set.
 
     Raises:
-        ProjectScopeError: *owner* names a repo that is not in
+        ProjectScopeError: *owner* names a project that is not in
             *scopes*, while *scopes* holds verdicts. Silently falling back to
-            the whole lab there would turn a caller's typo — or a repo this
+            the whole lab there would turn a caller's typo — or a project this
             run never parsed — into exactly the quiet WIDENING this
             design exists to prevent. An empty *scopes* is not that case: it
-            means the run has no repos to declare anything (the library
-            sentinel lab, or no SUT directories), and every owner is unknown
+            means the run has no projects to declare anything (the library
+            sentinel lab, or no project roots), and every owner is unknown
             for a reason that is not the caller's, so the fallback stands.
-            Repos that could not be read never reach here as an empty
+            Projects that could not be read never reach here as an empty
             *scopes*: :func:`scopes_of` refuses first.
 
     >>> import re
@@ -806,13 +832,13 @@ def scoped_ids(
     >>> from otto.config.scope import ProjectScope, ProjectScopeConfig, scoped_ids
     >>> config = ProjectScopeConfig([re.compile("bench")], [re.compile("sensor-.*")])
     >>> verdict = ProjectScope(
-    ...     repo_name="sensors",
+    ...     project_name="sensors",
     ...     declared=True,
     ...     config=config,
     ...     applicable_labs=frozenset({"bench"}),
     ...     universe=frozenset({"sensor-1"}),
     ...     excluded=False,
-    ...     sut_dir="/repos/sensors",
+    ...     root="/projects/sensors",
     ...     loaded_labs=("bench",),
     ...     lab_patterns=("bench",),
     ...     host_patterns=("sensor-.*",),
@@ -829,10 +855,10 @@ def scoped_ids(
     if owner is not None and scopes and owner not in scopes:
         # Checked BEFORE the fallback below, so an unknown owner is refused
         # whether or not anything declared: the caller asked to be bounded by a
-        # repo that does not exist, and answering "the whole lab" to that is
+        # project that does not exist, and answering "the whole lab" to that is
         # the widening, not a degraded mode.
         raise ProjectScopeError(
-            "",  # no repo, so no settings.toml to send the reader to
+            "",  # no project, so no settings.toml to send the reader to
             _UNKNOWN_OWNER.format(owner=owner, known=", ".join(sorted(scopes)) or "(none)"),
         )
     declared = [scope for scope in scopes.values() if scope.declared]
@@ -848,23 +874,23 @@ def scoped_ids(
     return {
         host_id
         for host_id, host in hosts.items()
-        if any(repo_targets(scope.config, host.source_lab, host_id) for scope in declared)
+        if any(project_targets(scope.config, host.source_lab, host_id) for scope in declared)
     }
 
 
 _UNKNOWN_OWNER = """\
-a fleet walk was bound to repo '{owner}', which is not among this run's
-resolved repos — so no [project] declaration can bound it.
+a fleet walk was bound to project '{owner}', which is not among this run's
+resolved projects — so no [project] declaration can bound it.
 
-    resolved repos: {known}
+    resolved projects: {known}
 
-A walk bound to a repo otto never resolved would fall back to the WHOLE lab,
+A walk bound to a project otto never resolved would fall back to the WHOLE lab,
 which is the silent widening this scoping exists to prevent. Bind the walk to
-one of the repos above, or use the plain context to walk their union."""
+one of the projects above, or use the plain context to walk their union."""
 """Not a user-facing config mistake but a caller one, which is why it names the
-resolved set rather than a file to edit: whoever built the repo-scoped view
+resolved set rather than a file to edit: whoever built the project-scoped view
 passed a name otto does not know, and the resolved names are what tells them
-whether it is a typo or a repo bootstrap skipped."""
+whether it is a typo or a project bootstrap skipped."""
 
 
 _EMPTY_FLEET = """\
@@ -872,13 +898,13 @@ no host in this run belongs to any project's fleet of interest, so every fleet
 walk would be empty.
 
     loaded labs:  {loaded}
-    declared by:  {repos}
+    declared by:  {projects}
 
 Load a lab these projects apply to (otto -l <lab>), or widen [project]
 lab_patterns / host_patterns in their .otto/settings.toml.\
 """
-"""Spec §10 row 5. Deliberately fleet-shaped rather than repo-shaped: the
-per-repo aborts in :func:`require_current_scope` fire for the CURRENT project
+"""Spec §10 row 5. Deliberately fleet-shaped rather than project-shaped: the
+per-project aborts in :func:`require_current_scope` fire for the CURRENT project
 and can name one file, while this one fires when the union came out empty and
 any of the contributing declarations could be the reason."""
 
@@ -888,7 +914,7 @@ no host is in play: every project whose [project] declaration admits a host in
 the loaded labs was switched off for this run (--exclude-projects), so every
 fleet walk would be empty.
 
-    switched off: {repos}
+    switched off: {projects}
 
 Drop --exclude-projects for a project whose hosts this run should reach.\
 """
@@ -904,7 +930,7 @@ def require_nonempty_fleet(
     *,
     exclude_projects: "tuple[str, ...]" = (),
 ) -> None:
-    """Refuse a fleet walk whose base set is empty while some repo declared one (§10 row 5).
+    """Refuse a fleet walk whose base set is empty while some project declared one (§10 row 5).
 
     Call at the fleet surfaces, after :func:`scoped_ids`. The asymmetry with
     the undeclared case is the point: an empty walk under the whole-lab
@@ -915,33 +941,33 @@ def require_nonempty_fleet(
 
     *owner* decides WHICH failure gets reported, and getting that wrong is not
     cosmetic. An owner-bound walk that admits nothing while the union is
-    healthy is ONE repo's problem: the fleet-shaped message below would claim
+    healthy is ONE project's problem: the fleet-shaped message below would claim
     "every fleet walk would be empty" — false, the plain-context walk works —
-    list every declaring repo as a suspect, and point at the FIRST one's
+    list every declaring project as a suspect, and point at the FIRST one's
     ``settings.toml``, sending the reader to edit a file that is not the cause.
-    With *owner* set, the same condition is reported in D3's per-repo framing
-    instead, built from that repo's own verdict.
+    With *owner* set, the same condition is reported in D3's per-project framing
+    instead, built from that project's own verdict.
 
     Args:
         scopes: :func:`resolve_scopes`' output for this run.
         admissible: What :func:`scoped_ids` just returned.
-        owner: The ``Repo.name`` this walk was bound to, or ``None`` for a
+        owner: The ``Project.name`` this walk was bound to, or ``None`` for a
             plain-context union walk. An owner that declared nothing falls
             through to the fleet-shaped message deliberately: its base set was
             the whole lab, so an empty one says the LAB is empty and says
-            nothing about that repo's declaration.
+            nothing about that project's declaration.
         exclude_projects: The same names :func:`scoped_ids` was given, read
             for the plain-context union only. A union emptied by ``-E`` — some
-            switched-off repo would have put a host in play — gets a message
+            switched-off project would have put a host in play — gets a message
             naming the switch, not a declaration that cannot work; otherwise
-            the fleet-shaped message lists the repos still contributing.
+            the fleet-shaped message lists the projects still contributing.
 
     Returns:
         None — always, when there is nothing to refuse.
 
     Raises:
         ProjectScopeError: The base set is empty and at least
-            one repo declared ``[project]``. Same class as D3's per-repo
+            one project declared ``[project]``. Same class as D3's per-project
             aborts: the taxonomy has one "a scope declaration cannot work"
             error, and this is that condition read at a fleet surface.
     """
@@ -953,7 +979,7 @@ def require_nonempty_fleet(
     if owner is not None:
         owned = scopes.get(owner)
         if owned is not None and owned.declared:
-            raise ProjectScopeError(owned.sut_dir, _unusable_scope_message(owned))
+            raise ProjectScopeError(owned.root, _unusable_scope_message(owned))
     # Only the plain-context union reads the switch, as in :func:`scoped_ids`:
     # an UNDECLARED owner fell through to here because its base set was the
     # whole lab, so its empty walk says the lab is empty, whatever -E said.
@@ -962,24 +988,26 @@ def require_nonempty_fleet(
         contributing = _not_switched_off(declared, exclude_projects)
         kept = {id(scope) for scope in contributing}
         switched = [scope for scope in declared if id(scope) not in kept]
-        # The switch is the cause exactly when a switched-off repo would have
+        # The switch is the cause exactly when a switched-off project would have
         # put a host in play: with it, the union could not have been empty.
         # A lab-inactive declarer left behind is not the cause and must not be
         # named as one — that would send the reader to edit its settings.toml.
         if any(scope.universe for scope in switched):
             raise ProjectScopeError(
                 "",  # the cause is a switch on this command line, not a settings.toml
-                _EXCLUDED_FLEET.format(repos=", ".join(scope.repo_name for scope in switched)),
+                _EXCLUDED_FLEET.format(
+                    projects=", ".join(scope.project_name for scope in switched)
+                ),
             )
-        # Switched-off repos that admitted nothing anyway did not empty it;
+        # Switched-off projects that admitted nothing anyway did not empty it;
         # the declarations did, so name them all when none is left standing.
         contributing = contributing or declared
     raise ProjectScopeError(
-        contributing[0].sut_dir,
+        contributing[0].root,
         _EMPTY_FLEET.format(
             loaded=", ".join(contributing[0].loaded_labs) or "(none)",
-            repos=", ".join(
-                f"{scope.repo_name} (lab_patterns: {', '.join(scope.lab_patterns) or '(none)'})"
+            projects=", ".join(
+                f"{scope.project_name} (lab_patterns: {', '.join(scope.lab_patterns) or '(none)'})"
                 for scope in contributing
             ),
         ),
@@ -987,10 +1015,10 @@ def require_nonempty_fleet(
 
 
 # ---------------------------------------------------------------------------
-# Where a repo keeps its settings, and the runtime settings types
+# Where a project keeps its settings, and the runtime settings types
 # ---------------------------------------------------------------------------
 # The frozen dataclasses otto.models.settings' specs build (``to_runtime()``) and
-# otto.config.repo holds.
+# otto.config.project holds.
 # The four otto.config exports (DockerImage, DockerCompose, DockerSettings,
 # MonitorSettings) keep that public path.
 
@@ -1043,7 +1071,7 @@ class DockerCompose:
 
     Authoritative, not a hint: this is the list container hosts are registered
     from, and it is what lets tab-completion synthesize ids without parsing
-    YAML on the completion fast path. The legacy per-repo ``compose_up`` path
+    YAML on the completion fast path. The legacy per-project ``compose_up`` path
     additionally compares it with ``docker compose config --services`` once the
     stack is up and warns on drift; the use-case deploy path registers from the
     declaration alone.
@@ -1067,9 +1095,9 @@ class DockerUseCase:
     """
 
     name: str
-    """Use-case this fragment belongs to; same name across repos = one use-case."""
+    """Use-case this fragment belongs to; same name across projects = one use-case."""
     composes: "tuple[str, ...]"
-    """Handles into this repo's [[docker.composes]]."""
+    """Handles into this project's [[docker.composes]]."""
     provides: "str | None" = None
     """Capability this fragment offers to the provider competition (spec §4)."""
     priority: int = 0
@@ -1082,7 +1110,7 @@ class DockerUseCase:
 
 @dataclasses.dataclass(frozen=True)
 class DockerSettings:
-    """Per-repo docker configuration parsed from `[docker]` in `settings.toml`."""
+    """Per-project docker configuration parsed from `[docker]` in `settings.toml`."""
 
     images: tuple[DockerImage, ...] = ()
     """Images this project knows how to build."""
@@ -1096,7 +1124,7 @@ class DockerSettings:
 
 @dataclasses.dataclass(frozen=True)
 class MonitorSettings:
-    """Per-repo monitor configuration parsed from `[monitor]` in `settings.toml`.
+    """Per-project monitor configuration parsed from `[monitor]` in `settings.toml`.
 
     ``tls_cert``/``tls_key`` point at a PEM certificate/key on the machine that
     runs ``otto monitor`` (conventionally under ``~/.otto/tls/`` — the

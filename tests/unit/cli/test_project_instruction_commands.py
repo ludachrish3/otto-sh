@@ -64,8 +64,8 @@ from otto.project import (
     InstallState,
     InstallToolsOptions,
     ProjectActions,
+    ProjectScopeSummary,
     ProjectStatus,
-    RepoScope,
     UninstallOptions,
     orchestrator,
     register_project_actions,
@@ -74,7 +74,7 @@ from otto.project.commands import (
     check_project_instruction_options,
     merged_option_params,
 )
-from otto.registry import registering_repo
+from otto.registry import registering_project
 from otto.result import Result
 from otto.utils import Status
 from tests._fixtures.bootstrap_seam import (
@@ -161,7 +161,7 @@ def test_the_six_are_derived(registered):
         # No owning repo whoever declared a body: the dispatch gate refuses an
         # instruction whose OWNER is inactive, and a project instruction has a
         # body per repo rather than one owner.
-        assert INSTRUCTIONS.repo(name) is None
+        assert INSTRUCTIONS.project(name) is None
     assert frozenset(SIX) == FIRST_PARTY_INSTRUCTIONS
 
 
@@ -185,7 +185,7 @@ def test_the_registered_set_is_exactly_the_declared_set(registered):
 def test_repo_defining_a_first_party_name_fails_loud_with_migration_message():
     # THE collision policy: fail loud, point at ProjectActions. Kills silent
     # shadowing (the CLI/fixture split-brain the design exists to prevent).
-    with registering_repo("acme"), pytest.raises(ValueError, match="project instruction"):
+    with registering_project("acme"), pytest.raises(ValueError, match="project instruction"):
 
         @instruction()
         async def install() -> None: ...
@@ -197,7 +197,7 @@ def test_the_refusal_beats_the_registry_and_leaves_ottos_entry_intact(registered
     The generic "already registered" error would say nothing about where the
     override belongs.
     """
-    with registering_repo("acme"), pytest.raises(ValueError, match="project instruction"):
+    with registering_project("acme"), pytest.raises(ValueError, match="project instruction"):
 
         @instruction()
         async def cleanup() -> None: ...
@@ -206,7 +206,7 @@ def test_the_refusal_beats_the_registry_and_leaves_ottos_entry_intact(registered
 
 
 def test_repo_instruction_with_novel_name_is_unaffected():
-    with registering_repo("acme"):
+    with registering_project("acme"):
 
         @instruction()
         async def totally_custom() -> None: ...
@@ -251,14 +251,14 @@ def test_bootstrap_declares_the_bodies_before_any_repo_init_and_checks_after(
     def _check_spy() -> None:
         seen.append("<check>")
 
-    repo = make_sut_repo(
+    project = make_sut_repo(
         tmp_path / "acme",
         name="acme",
         extra='libs = ["lib"]\ninit = ["acme_order_init"]\n',
         files={"lib/acme_order_init.py": order_init},
     )
     monkeypatch.setitem(sys.modules, "acme_order_log", types.SimpleNamespace(seen=seen))
-    monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
+    monkeypatch.setenv("OTTOPATH", str(project))
     monkeypatch.setattr("otto.project.actions.declare", _declare_spy)
     monkeypatch.setattr("otto.project.commands.check_project_instruction_options", _check_spy)
     bs._reset()
@@ -295,7 +295,7 @@ def test_a_repos_collision_reaches_the_user_as_a_framed_error_not_a_crash(
     # A MODULE NAME OF ITS OWN: init modules are imported by bare name into the
     # one process-wide sys.modules, so reusing another test's name here would
     # hand this bootstrap that test's already-cached module and import nothing.
-    repo = make_sut_repo(
+    project = make_sut_repo(
         tmp_path / "acme",
         name="acme",
         extra='libs = ["lib"]\ninit = ["acme_collision_init"]\n',
@@ -307,7 +307,7 @@ def test_a_repos_collision_reaches_the_user_as_a_framed_error_not_a_crash(
             )
         },
     )
-    monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
+    monkeypatch.setenv("OTTOPATH", str(project))
     bs._reset()
     try:
         result = bs.bootstrap()  # must NOT raise — that is half the claim
@@ -457,7 +457,7 @@ def test_a_skipped_result_renders_as_success():
 def _state_rows(out: str) -> dict[str, str]:
     """Parse the status table into ``{repo: state}``, one entry per printed row.
 
-    The table is ``repo_name`` then the state, so the FIRST token names the
+    The table is ``project_name`` then the state, so the FIRST token names the
     repo and the rest is its state ("partially installed" is two words).
     """
     rows = {}
@@ -477,7 +477,7 @@ def _state_rows(out: str) -> dict[str, str]:
 async def test_status_exit_code_is_the_answer(monkeypatch, registered, state, code):
     """Scripts branch on the code, so all three are distinct and pinned."""
     monkeypatch.setattr(
-        orchestrator, "status", _Recorder(ProjectStatus(overall=state, repos={"acme": state}))
+        orchestrator, "status", _Recorder(ProjectStatus(overall=state, projects={"acme": state}))
     )
 
     assert (await _run("status")).exit_code == code
@@ -495,7 +495,7 @@ def test_the_status_answer_reaches_the_process_exit_code(monkeypatch, registered
     exit 0.
     """
     monkeypatch.setattr(
-        orchestrator, "status", _Recorder(ProjectStatus(overall=state, repos={"acme": state}))
+        orchestrator, "status", _Recorder(ProjectStatus(overall=state, projects={"acme": state}))
     )
 
     result = dispatch.invoke(run_app, ["status"], async_leaves=True)
@@ -507,7 +507,7 @@ def test_the_status_answer_reaches_the_process_exit_code(monkeypatch, registered
 async def test_status_prints_every_repos_state(monkeypatch, registered, capsys):
     report = ProjectStatus(
         overall=InstallState.PARTIAL,
-        repos={"acme": InstallState.INSTALLED, "widgets": InstallState.UNINSTALLED},
+        projects={"acme": InstallState.INSTALLED, "widgets": InstallState.UNINSTALLED},
     )
     monkeypatch.setattr(orchestrator, "status", _Recorder(report))
 
@@ -539,12 +539,12 @@ def _clean_row(kind, name, state, detail="", error=None):
     return CleanlinessItem(kind=kind, name=name, state=state, detail=detail, error=error)
 
 
-def _wire_status(monkeypatch, overall, repos=None, report=None, scoping=None):
+def _wire_status(monkeypatch, overall, projects=None, report=None, scoping=None):
     """Point both orchestrator questions at doubles; return the cleanliness one."""
     monkeypatch.setattr(
         orchestrator,
         "status",
-        _Recorder(ProjectStatus(overall=overall, repos=repos or {}, scoping=scoping or {})),
+        _Recorder(ProjectStatus(overall=overall, projects=projects or {}, scoping=scoping or {})),
     )
     probe = _Recorder(_report() if report is None else report)
     monkeypatch.setattr(orchestrator, "cleanliness", probe)
@@ -602,7 +602,7 @@ async def test_status_full_leaves_the_exit_code_to_the_install_axis(monkeypatch,
         InstallState.INSTALLED,
         {"acme": InstallState.INSTALLED},
         _report(
-            _clean_row(CleanlinessKind.REPO, "acme", Cleanliness.DIRTY),
+            _clean_row(CleanlinessKind.PROJECT, "acme", Cleanliness.DIRTY),
             _clean_row(CleanlinessKind.TUNNEL, "h0-h1-tcp-5201", Cleanliness.DIRTY),
         ),
     )
@@ -646,8 +646,8 @@ async def test_status_full_prints_a_row_per_thing_and_heads_each_section_once(
         InstallState.INSTALLED,
         {"acme": InstallState.INSTALLED},
         _report(
-            _clean_row(CleanlinessKind.REPO, "acme", Cleanliness.CLEAN),
-            _clean_row(CleanlinessKind.REPO, "widgets", Cleanliness.DIRTY),
+            _clean_row(CleanlinessKind.PROJECT, "acme", Cleanliness.CLEAN),
+            _clean_row(CleanlinessKind.PROJECT, "widgets", Cleanliness.DIRTY),
             _clean_row(CleanlinessKind.TUNNEL, "lab", Cleanliness.CLEAN),
         ),
     )
@@ -774,15 +774,15 @@ async def test_status_prints_a_not_applicable_row_for_the_repo_the_walks_skipped
         _Recorder(
             ProjectStatus(
                 overall=InstallState.INSTALLED,
-                repos={"acme": InstallState.INSTALLED},
+                projects={"acme": InstallState.INSTALLED},
                 scoping={
-                    "acme": RepoScope(
+                    "acme": ProjectScopeSummary(
                         applicable=True,
                         loaded_labs=("bench", "floor"),
                         applicable_labs=("bench",),
                         universe=("h0",),
                     ),
-                    "widgets": RepoScope(
+                    "widgets": ProjectScopeSummary(
                         applicable=False, usable=False, loaded_labs=("bench", "floor")
                     ),
                 },
@@ -814,14 +814,14 @@ async def test_status_prints_a_no_matching_hosts_row_for_the_host_starved_repo(
         InstallState.INSTALLED,
         {"acme": InstallState.INSTALLED},
         scoping={
-            "acme": RepoScope(
+            "acme": ProjectScopeSummary(
                 applicable=True,
                 usable=True,
                 loaded_labs=("bench", "floor"),
                 applicable_labs=("bench",),
                 universe=("h0",),
             ),
-            "widgets": RepoScope(
+            "widgets": ProjectScopeSummary(
                 applicable=True,
                 usable=False,
                 loaded_labs=("bench", "floor"),
@@ -853,13 +853,15 @@ async def test_status_full_lists_each_repos_labs_and_hosts(monkeypatch, register
         InstallState.INSTALLED,
         {"acme": InstallState.INSTALLED},
         scoping={
-            "acme": RepoScope(
+            "acme": ProjectScopeSummary(
                 applicable=True,
                 loaded_labs=("bench", "floor"),
                 applicable_labs=("bench",),
                 universe=("h0", "h1"),
             ),
-            "widgets": RepoScope(applicable=False, usable=False, loaded_labs=("bench", "floor")),
+            "widgets": ProjectScopeSummary(
+                applicable=False, usable=False, loaded_labs=("bench", "floor")
+            ),
         },
     )
 
@@ -923,9 +925,9 @@ async def test_status_full_renders_a_row_per_repo_on_an_undeclared_lab(
 
     from otto.config.scope import resolve_scopes
 
-    repos = [
-        fake_repo("acme", sut_dir="/repos/acme", project_scope=None),
-        fake_repo("widgets", sut_dir="/repos/widgets", project_scope=None),
+    projects = [
+        fake_repo("acme", root="/repos/acme", project_scope=None),
+        fake_repo("widgets", root="/repos/widgets", project_scope=None),
     ]
     hosts = {
         "h0": types.SimpleNamespace(source_lab="bench"),
@@ -934,13 +936,13 @@ async def test_status_full_renders_a_row_per_repo_on_an_undeclared_lab(
     # ``status`` asks ``otto.config.scope.active``, which reads the switch
     # tuples as well as the verdicts. Empty, as the real ``OttoContext``
     # defaults them: this lab is decided by declarations alone.
-    ctx = OttoContext(lab=Lab(name="t"), bootstrap=fake_bootstrap_result(repos))
-    seed_scope_verdicts(ctx, resolve_scopes(repos, ["bench", "floor"], hosts))
-    monkeypatch.setattr(ctx, "for_repo", lambda name: types.SimpleNamespace(_repo=name))
+    ctx = OttoContext(lab=Lab(name="t"), bootstrap=fake_bootstrap_result(projects))
+    seed_scope_verdicts(ctx, resolve_scopes(projects, ["bench", "floor"], hosts))
+    monkeypatch.setattr(ctx, "for_project", lambda name: types.SimpleNamespace(_repo=name))
 
-    monkeypatch.setattr(orchestrator, "_lab", lambda: (ctx, repos))
+    monkeypatch.setattr(orchestrator, "_lab", lambda: (ctx, projects))
     # The scoping rows cover every parsed repo, read from the composition root.
-    patch_bootstrap(monkeypatch, repos)
+    patch_bootstrap(monkeypatch, projects)
     monkeypatch.setattr(orchestrator, "_counts", lambda actions: False)
     monkeypatch.setattr(orchestrator, "cleanliness", _Recorder(_report()))
 
@@ -985,11 +987,11 @@ async def test_status_full_renders_both_rows_for_a_host_starved_repo(
 
     from otto.config.scope import ProjectScopeConfig, resolve_scopes
 
-    repos = [
-        fake_repo("acme", sut_dir="/repos/acme", project_scope=None),
+    projects = [
+        fake_repo("acme", root="/repos/acme", project_scope=None),
         fake_repo(
             "widgets",
-            sut_dir="/repos/widgets",
+            root="/repos/widgets",
             project_scope=ProjectScopeConfig([_re.compile("bench")], [_re.compile("sensor-.*")]),
         ),
     ]
@@ -1000,13 +1002,13 @@ async def test_status_full_renders_both_rows_for_a_host_starved_repo(
     # ``status`` asks ``otto.config.scope.active``, which reads the switch
     # tuples as well as the verdicts. Empty, as the real ``OttoContext``
     # defaults them: this lab is decided by declarations alone.
-    ctx = OttoContext(lab=Lab(name="t"), bootstrap=fake_bootstrap_result(repos))
-    seed_scope_verdicts(ctx, resolve_scopes(repos, ["bench", "floor"], hosts))
-    monkeypatch.setattr(ctx, "for_repo", lambda name: types.SimpleNamespace(_repo=name))
+    ctx = OttoContext(lab=Lab(name="t"), bootstrap=fake_bootstrap_result(projects))
+    seed_scope_verdicts(ctx, resolve_scopes(projects, ["bench", "floor"], hosts))
+    monkeypatch.setattr(ctx, "for_project", lambda name: types.SimpleNamespace(_repo=name))
 
-    monkeypatch.setattr(orchestrator, "_lab", lambda: (ctx, repos))
+    monkeypatch.setattr(orchestrator, "_lab", lambda: (ctx, projects))
     # The scoping rows cover every parsed repo, read from the composition root.
-    patch_bootstrap(monkeypatch, repos)
+    patch_bootstrap(monkeypatch, projects)
     monkeypatch.setattr(orchestrator, "_counts", lambda actions: False)
     monkeypatch.setattr(orchestrator, "cleanliness", _Recorder(_report()))
 
@@ -1032,7 +1034,7 @@ async def test_bare_status_prints_no_fleet_of_interest_section(monkeypatch, regi
         InstallState.INSTALLED,
         {"acme": InstallState.INSTALLED},
         scoping={
-            "acme": RepoScope(
+            "acme": ProjectScopeSummary(
                 applicable=True,
                 loaded_labs=("bench",),
                 applicable_labs=("bench",),
@@ -1078,7 +1080,7 @@ def test_no_panel_when_otto_registered_nothing(monkeypatch):
 def test_list_instructions_shows_the_defaults_with_no_repos_configured(registered):
     from unittest.mock import patch
 
-    with patch("otto.declared.get_repos", return_value=[]):
+    with patch("otto.declared.get_projects", return_value=[]):
         result = runner.invoke(run_app, ["--list-instructions"])
 
     assert result.exit_code == 0, result.output
@@ -1102,7 +1104,7 @@ class _PanelRepo:
 def test_list_instructions_puts_the_defaults_ahead_of_the_repo_panels(registered):
     """The ``otto defaults`` panel is the FIRST column, before every repo's.
 
-    ORDERING NEEDS A REPO TO BE AHEAD OF. With ``get_repos`` patched to ``[]``
+    ORDERING NEEDS A REPO TO BE AHEAD OF. With ``get_projects`` patched to ``[]``
     the panel list has one element, so ``insert(0, …)`` and ``append(…)`` are
     the same program — and "ahead of the repos" is asserted by a test that
     configured no repos. Kills the append, which is the natural edit (the
@@ -1114,8 +1116,8 @@ def test_list_instructions_puts_the_defaults_ahead_of_the_repo_panels(registered
     """
     from unittest.mock import patch
 
-    repos = [_PanelRepo("first-repo 1.0"), _PanelRepo("second-repo 1.0")]
-    with patch("otto.declared.get_repos", return_value=repos):
+    projects = [_PanelRepo("first-repo 1.0"), _PanelRepo("second-repo 1.0")]
+    with patch("otto.declared.get_projects", return_value=projects):
         result = runner.invoke(run_app, ["--list-instructions"])
 
     assert result.exit_code == 0, result.output
@@ -1147,7 +1149,7 @@ class TestMergedFlags:
         class WidgetInstall(InstallOptions):
             variant: Annotated[str, typer.Option(help="Firmware variant.")] = "field"
 
-        with registering_repo("widget"):
+        with registering_project("widget"):
 
             @register_project_actions
             class Widget(ProjectActions):
@@ -1178,7 +1180,7 @@ class TestMergedFlags:
         class BInstall(_Shared, InstallOptions):
             pass
 
-        with registering_repo("a"):
+        with registering_project("a"):
 
             @register_project_actions
             class A(ProjectActions):
@@ -1186,7 +1188,7 @@ class TestMergedFlags:
                 async def install(self, opts: AInstall):
                     return await super().install(opts)
 
-        with registering_repo("b"):
+        with registering_project("b"):
 
             @register_project_actions
             class B(ProjectActions):
@@ -1217,7 +1219,7 @@ class TestMergedFlags:
         class BInstall(InstallOptions):
             lab_env: Annotated[str, typer.Option(help="B's lab environment.")] = "floor"
 
-        with registering_repo("a"):
+        with registering_project("a"):
 
             @register_project_actions
             class A(ProjectActions):
@@ -1225,7 +1227,7 @@ class TestMergedFlags:
                 async def install(self, opts: AInstall):
                     return await super().install(opts)
 
-        with registering_repo("b"):
+        with registering_project("b"):
 
             @register_project_actions
             class B(ProjectActions):
@@ -1239,8 +1241,8 @@ class TestMergedFlags:
         message = str(excinfo.value)
         assert "'install'" in message
         assert "'lab_env'" in message
-        assert "repo 'a'" in message
-        assert "repo 'b'" in message
+        assert "project 'a'" in message
+        assert "project 'b'" in message
         assert "share one base class" in message
 
     def test_a_repo_added_instruction_is_published_under_its_module(self, registered) -> None:
@@ -1250,7 +1252,7 @@ class TestMergedFlags:
         repo's own project instruction has to carry the repo's module or it
         lands in otto's panel.
         """
-        with registering_repo("widget"):
+        with registering_project("widget"):
 
             @register_project_actions
             class Widget(ProjectActions):
@@ -1260,7 +1262,7 @@ class TestMergedFlags:
                     return Result(Status.Success, value=opts.target)
 
         entry = INSTRUCTIONS.get("deploy")
-        assert INSTRUCTIONS.repo("deploy") is None
+        assert INSTRUCTIONS.project("deploy") is None
         assert entry.module == Widget.__module__
         assert "--target" in runner.invoke(run_app, ["deploy", "--help"]).output
 
@@ -1294,7 +1296,7 @@ class TestMergedFlags:
         install = runner.invoke(run_app, ["install", "--help"]).output
         status = runner.invoke(run_app, ["status", "--help"]).output
 
-        assert "every repo" in install
+        assert "every project" in install
         assert "exit 0" in status
 
     def test_a_hand_built_entry_under_a_repo_s_project_name_is_refused(self, registered) -> None:
@@ -1304,7 +1306,7 @@ class TestMergedFlags:
         ``InstructionEntry`` under the same name: the one table check refuses
         it at registration, whatever module either came from.
         """
-        with registering_repo("widget"):
+        with registering_project("widget"):
 
             @register_project_actions
             class Widget(ProjectActions):
@@ -1334,7 +1336,7 @@ class TestMergedFlags:
         anywhere else, the table's clash. Either way otto's command stays.
         """
         entry = InstructionEntry(name="install", module="repo.init", handler=_noop)
-        with registering_repo("repo"), pytest.raises(ValueError, match="ProjectActions"):
+        with registering_project("repo"), pytest.raises(ValueError, match="ProjectActions"):
             STANDALONE_INSTRUCTIONS.register("install", entry)
         with pytest.raises(ProjectInstructionError, match="rename one of them"):
             STANDALONE_INSTRUCTIONS.register("install", entry)
@@ -1441,7 +1443,7 @@ class TestProjectInstructionOwnOptionValidation:
                 if self.minimum < 1:
                     raise ValueError("minimum must be >= 1")
 
-        with registering_repo("guarded"):
+        with registering_project("guarded"):
 
             @register_project_actions
             class Guarded(ProjectActions):
@@ -1455,14 +1457,14 @@ class TestProjectInstructionOwnOptionValidation:
         """Make ``guarded`` a walked repo: undeclared, so it is always kept (§6).
 
         The patch feeds the run's repos, and with them the orchestrator's walk
-        order (``ctx.ordered_repos``).
+        order (``ctx.ordered_projects``).
         ``project_scope=None`` is the documented undeclared shape
         (:func:`otto.config.scope._lab_applies`) -- the whole-lab fallback,
         never a narrowing -- so whatever verdicts the context resolves, this
         repo's walk is never narrowed away.
         """
         patch_bootstrap(
-            monkeypatch, [fake_repo("guarded", project_scope=None, sut_dir="/tmp/guarded")]
+            monkeypatch, [fake_repo("guarded", project_scope=None, root="/tmp/guarded")]
         )
 
     def test_a_bad_own_option_exits_2_on_a_real_run(self, monkeypatch, registered) -> None:
@@ -1499,7 +1501,7 @@ def _wire_widget_lab(monkeypatch, seen: list, names=("widget", "dormant")) -> No
     """
     from otto.context import try_get_context
 
-    with registering_repo("widget"):
+    with registering_project("widget"):
 
         @register_project_actions
         class Widget(ProjectActions):
@@ -1508,8 +1510,8 @@ def _wire_widget_lab(monkeypatch, seen: list, names=("widget", "dormant")) -> No
                 seen.append(try_get_context())
                 return Result(Status.Success)
 
-    repos = [fake_repo(n, project_scope=None, sut_dir=f"/tmp/{n}") for n in names]
-    patch_bootstrap(monkeypatch, repos)
+    projects = [fake_repo(n, project_scope=None, root=f"/tmp/{n}") for n in names]
+    patch_bootstrap(monkeypatch, projects)
 
 
 def _install_skips(caplog) -> list[str]:

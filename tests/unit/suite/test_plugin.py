@@ -20,8 +20,8 @@ pytest_plugins = ["pytester"]
 SUT_DIR = Path("/sut/repo1/tests")
 
 
-def make_plugin(*sut_dirs: Path) -> OttoPlugin:
-    return OttoPlugin(sut_test_dirs=list(sut_dirs))
+def make_plugin(*roots: Path) -> OttoPlugin:
+    return OttoPlugin(project_test_dirs=list(roots))
 
 
 def ignore(plugin: OttoPlugin, path: Path) -> bool | None:

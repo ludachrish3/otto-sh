@@ -52,7 +52,7 @@ def _run(
 
 def _plugin(tests: Path, candidates: list[str] | None, names: list[str] | None) -> OttoPlugin:
     return OttoPlugin(
-        sut_test_dirs=[tests],
+        project_test_dirs=[tests],
         candidates=None if candidates is None else [tests / c for c in candidates],
         names=names,
     )
@@ -178,7 +178,7 @@ def test_candidate_pruning_decides_by_path_alone() -> None:
     """The hook's answers, path by path, with no stat of the path itself."""
     tests = Path("/sut/repo/tests")
     plugin = OttoPlugin(
-        sut_test_dirs=[tests],
+        project_test_dirs=[tests],
         candidates=[tests / "a" / "test_x.py", tests / "conftest.py"],
     )
 
@@ -525,7 +525,7 @@ def test_a_session_missing_a_required_name_stops_before_any_test(
     """
     tests = _tests_dir(pytester, {"test_target.py": _TARGET})
     plugin = OttoPlugin(
-        sut_test_dirs=[tests],
+        project_test_dirs=[tests],
         candidates=[tests / "test_target.py"],
         names=["test_one", "test_nope"],
         must_match=["test_one", "test_nope"],
@@ -545,7 +545,7 @@ def test_a_session_matching_every_required_name_runs(pytester: pytest.Pytester) 
     """A matched required name lets the session run; an unrequired unmatched one doesn't stop it."""
     tests = _tests_dir(pytester, {"test_target.py": _TARGET})
     plugin = OttoPlugin(
-        sut_test_dirs=[tests],
+        project_test_dirs=[tests],
         names=["test_one", "test_elsewhere"],
         must_match=["test_one"],
     )
@@ -732,7 +732,7 @@ def test_the_namespace_walk_never_evaluates_a_global() -> None:
     namespace = types.SimpleNamespace(
         settings=Lazy(), hostile=Hostile, unhashable=Unhashable, helper=helper, os=os
     )
-    plugin = OttoPlugin(sut_test_dirs=[])
+    plugin = OttoPlugin(project_test_dirs=[])
 
     found = plugin._namespace_sources(namespace)
 

@@ -138,7 +138,7 @@ def _run_otto(*args: str, xdir: Path, timeout: int = 300) -> subprocess.Complete
     return run_otto(
         list(args),
         xdir=xdir,
-        sut_dirs=REPO3,
+        roots=REPO3,
         lab="embedded",
         extra_argv_prefix=["-R"],
         timeout=timeout,

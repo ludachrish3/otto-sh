@@ -47,7 +47,7 @@ hopped and direct parents identically.
 
 ## Use-case resolution
 
-A deployment is a **use-case**, not a repo: every active repo contributes
+A deployment is a **use-case**, not a project: every active project contributes
 *fragments* under the same use-case name, and the deploy pipeline resolves
 them before touching anything. Three pure phases, in order — selection (which
 fragments take part, after the provider competition), the parent (the one lab
@@ -60,7 +60,7 @@ description of one.
 The parent has one owner, `observe.default_docker_parent`, and the rule is
 stated once, for users, under "Which host" on {doc}`../../cli/docker/index`.
 Two properties of it matter here. It reads the lab and nothing else, so no
-fragment, repo scope or file order can move it. And every verb calls it (the
+fragment, project scope or file order can move it. And every verb calls it (the
 CLI never computes a default), so `deployment.resolve_use_case`, shared by
 `compose build`, `compose up`, `compose down`, `compose ps` and `compose logs`,
 sees the same host the container-id placeholders below were minted under.
@@ -77,7 +77,7 @@ design rationale is in the docker use-cases design spec
 Two fragments setting the same env key is the one ambiguity that is resolved
 (the later fragment wins) rather than reported: a merged stack's fragments
 routinely share innocuous keys, and refusing on every one of them would make
-cross-repo use-cases unusable.
+cross-project use-cases unusable.
 
 ## The compose boundary
 
@@ -104,8 +104,8 @@ Container host id = `<parent_id>.<usecase>.<service>`, lowercased.
 - **Parent id** is whatever `UnixHost._generateId()` produces (e.g.
   `test3`, or `test3-rack-1` if the lab encodes `board`/`slot`).
 - **Use-case** is the `[[docker.use_cases]]` `name` — the deployment, not
-  the repo, because a use-case is cross-repo by construction. A repo whose
-  fragment is named after the repo keeps its pre-use-case container ids
+  the project, because a use-case is cross-project by construction. A project whose
+  fragment is named after the project keeps its pre-use-case container ids
   literally unchanged.
 - **Service** is the compose service name.
 
@@ -130,21 +130,21 @@ that way:
   dependency the use-case design exists to refuse.
 
 One exception a maintainer will meet in a live `docker ps`: the legacy
-per-repo path — the `compose_up`/`composed` primitives, which stay public
+per-project path — the `compose_up`/`composed` primitives, which stay public
 (spec §11) and which instructions still call — deploys under
-`otto-<repo>-<suffix>`, prefix included. That naming is frozen until the path
+`otto-<project>-<suffix>`, prefix included. That naming is frozen until the path
 is removed; it is not evidence the rule above is broken.
 
-Do **not** read that prefix as telling you whether the repo declares
-use-cases: it says nothing about that. The per-repo path takes its parent from
-the same rule a use-case does (`compose._repo_parent_host`, with `parent=` as
+Do **not** read that prefix as telling you whether the project declares
+use-cases: it says nothing about that. The per-project path takes its parent from
+the same rule a use-case does (`compose._project_parent_host`, with `parent=` as
 the override).
 
 ## Lifecycle and the lab
 
 On every otto invocation, `cli/main.py` calls
-`register_declared_container_hosts(lab, repos)` after loading the
-lab. This walks each repo's `[docker]` settings and registers
+`register_declared_container_hosts(lab, projects)` after loading the
+lab. This walks each project's `[docker]` settings and registers
 **placeholder** `DockerContainerHost` instances in `lab.hosts` with
 `container_id = ""`. Two effects:
 
@@ -157,7 +157,7 @@ lab. This walks each repo's `[docker]` settings and registers
    walk registered, while completion runs off the cached id list
    `config/completion_cache.collect_host_ids` builds without a lab. They must
    mint the same id SHAPE (use-case fragments → `<parent>.<usecase>.<service>`,
-   a composes-only repo → `<parent>.<repo>.<service>`) or completion offers
+   a composes-only project → `<parent>.<project>.<service>`) or completion offers
    ids nothing registers; both take the same branch, and the divergence is
    pinned by `tests/unit/config/test_completion_container_ids.py`.
 2. Operations against a not-yet-up container fail fast, rather than with a

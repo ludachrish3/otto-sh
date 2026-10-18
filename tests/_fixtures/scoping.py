@@ -25,13 +25,13 @@ def verdict(name, *, declared=True, excluded=False, universe=("h0",), lab_patter
     to make a width assertion untriggerable.
     """
     return ProjectScope(
-        repo_name=name,
+        project_name=name,
         declared=declared,
         config=None,
         applicable_labs=frozenset() if excluded else frozenset({"bench"}),
         universe=frozenset() if excluded else frozenset(universe),
         excluded=excluded,
-        sut_dir=f"/repos/{name}",
+        root=f"/repos/{name}",
         loaded_labs=("bench",),
         lab_patterns=(f"{name}-lab",) if lab_patterns is None else tuple(lab_patterns),
         host_patterns=(".*",),

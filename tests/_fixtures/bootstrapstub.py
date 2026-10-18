@@ -3,7 +3,7 @@
 Six modules stubbed ``otto.bootstrap.bootstrap`` independently, each namespace
 carrying only the fields its own test happened to need. That holds until the
 preamble reads a field nobody's stub declares -- which is exactly what happened
-when the dependency preflight began reading ``ordered_repos``: ten tests failed
+when the dependency preflight began reading ``ordered_projects``: ten tests failed
 with ``AttributeError`` inside code none of them were about, in three modules
 whose subject is reservations, output dirs and dispatch. One factory means the
 next field is added once.
@@ -20,7 +20,7 @@ from typing import Any
 
 
 def bootstrap_stub(
-    repos: "Any" = (),
+    projects: "Any" = (),
     *,
     errors: "Any" = (),
     warnings: "Any" = (),
@@ -36,8 +36,8 @@ def bootstrap_stub(
     """
     return SimpleNamespace(
         env=None,
-        repos=list(repos),
+        projects=list(projects),
         errors=list(errors),
         warnings=list(warnings),
-        ordered_repos=[] if ordered is None else list(ordered),
+        ordered_projects=[] if ordered is None else list(ordered),
     )

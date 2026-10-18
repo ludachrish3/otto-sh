@@ -62,7 +62,7 @@ def _s(hid, labs, cap=True, pri=0):
 
 @pytest.fixture
 def repos_two_labs(tmp_path, monkeypatch):
-    from otto.config.repo import discover
+    from otto.config.project import discover
 
     sut = make_sut_repo(
         tmp_path / "sut",
@@ -72,10 +72,10 @@ def repos_two_labs(tmp_path, monkeypatch):
     )
     (sut / "lab").mkdir()
     write_lab_json(sut / "lab" / "lab.json", HOSTS)
-    monkeypatch.setenv("OTTO_SUT_DIRS", str(sut))
+    monkeypatch.setenv("OTTOPATH", str(sut))
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     monkeypatch.delenv("OTTO_LAB", raising=False)
-    return discover().repos
+    return discover().projects
 
 
 def test_the_rule_over_summaries_matches_the_lab_rule():
@@ -139,9 +139,9 @@ def test_the_key_rides_the_names_section_and_read_cache_serves_it(repos_two_labs
 def test_read_cache_rejects_a_malformed_default_parent_map(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     mock_repo = MagicMock()
-    mock_repo.sut_dir = tmp_path / "sut"
-    mock_repo.sut_dir.mkdir()
-    touch_settings(mock_repo.sut_dir)
+    mock_repo.root = tmp_path / "sut"
+    mock_repo.root.mkdir()
+    touch_settings(mock_repo.root)
     mock_repo.init = []
     mock_repo.libs = []
     mock_repo.tests = []
@@ -153,7 +153,7 @@ def test_read_cache_rejects_a_malformed_default_parent_map(tmp_path, monkeypatch
     assert cc.read_cache([mock_repo]) is None
 
 
-def test_schema_is_27():
+def test_schema_is_28():
     from otto import _shim_complete as sc
 
-    assert cc.SCHEMA_VERSION == 27 == sc.SCHEMA
+    assert cc.SCHEMA_VERSION == 28 == sc.SCHEMA

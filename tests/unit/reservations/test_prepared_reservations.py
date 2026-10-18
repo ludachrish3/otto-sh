@@ -30,7 +30,7 @@ class _Backend:
 def test_url_reaches_a_custom_backend_through_the_env(tmp_path):
     register_reservation_backend("spy", config=_Cfg, factory=lambda c: _Backend(c.env))
     backend = build_backend({"backend": "spy", "url": "http://x"}, tmp_path, username="me")
-    assert (backend.env.url, backend.env.username, backend.env.repo_dir) == (
+    assert (backend.env.url, backend.env.username, backend.env.project_root) == (
         "http://x",
         "me",
         tmp_path,

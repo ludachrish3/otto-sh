@@ -21,7 +21,7 @@ from otto.registry import (
     Ref,
     RegistrationRefused,
     Registry,
-    RequireRepo,
+    RequireProject,
     _Op,
     _Step,
 )
@@ -216,21 +216,21 @@ def test_a_ref_that_registers_at_import_is_refused_inside_a_check_and_retried(
 
 def test_require_repo_refuses_register_outside_an_init_import():
     """Mutation: remove CAPABILITIES from REGISTER."""
-    r = _reg(capabilities=[Justified(RequireRepo(), reason="r")])
-    with pytest.raises(RegistrationRefused, match="repo init module"):
+    r = _reg(capabilities=[Justified(RequireProject(), reason="r")])
+    with pytest.raises(RegistrationRefused, match="project init module"):
         r.register("w", Rec(1))
     assert "w" not in r
     assert r.revision == 0
-    with reg.registering_repo("a"):
+    with reg.registering_project("a"):
         r.register("w", Rec(1))
-    assert r.repo("w") == "a"
+    assert r.project("w") == "a"
 
 
 def test_require_repo_never_blocks_unregister_restore_or_publish(monkeypatch, tmp_path):
     """Mutations: add CAPABILITIES to UNREGISTER / RESTORE / PUBLISH (one at a time)."""
     _module(monkeypatch, "require_repo_mod", "VALUE = 4\n", tmp_path)
-    r = _lazy(capabilities=[Justified(RequireRepo(), reason="r")])
-    with reg.registering_repo("a"):
+    r = _lazy(capabilities=[Justified(RequireProject(), reason="r")])
+    with reg.registering_project("a"):
         r.register("w", LazyRec(Ref("require_repo_mod:VALUE")))
         state = r._snapshot()
         r.register("x", LazyRec(2))
@@ -579,7 +579,7 @@ def test_listing_membership_origin_peek_raw_items_and_snapshot_never_import(monk
     r.register("w", LazyRec(Ref("never_imported_mod:X")))
     assert r.names() == ["w"]
     assert "w" in r and len(r) == 1  # noqa: PT018
-    assert r.origin("w") == __name__ and r.repo("w") is None  # noqa: PT018
+    assert r.origin("w") == __name__ and r.project("w") is None  # noqa: PT018
     assert isinstance(r.peek("w").value, Ref)
     assert [name for name, _ in r.raw_items()] == ["w"]
     r._snapshot()

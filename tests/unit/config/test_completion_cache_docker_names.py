@@ -63,7 +63,7 @@ FILES = {
 
 
 def _repos(tmp_path, monkeypatch, *, second=False):
-    from otto.config.repo import discover
+    from otto.config.project import discover
 
     sut = make_sut_repo(tmp_path / "one", name="one", extra=DOCKER, files=FILES)
     dirs = [sut]
@@ -75,75 +75,75 @@ def _repos(tmp_path, monkeypatch, *, second=False):
             files=FILES,
         )
         dirs.append(other)
-    monkeypatch.setenv("OTTO_SUT_DIRS", ":".join(str(d) for d in dirs))
+    monkeypatch.setenv("OTTOPATH", ":".join(str(d) for d in dirs))
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     monkeypatch.delenv("OTTO_LAB", raising=False)
-    return discover().repos
+    return discover().projects
 
 
 def test_image_names_are_sorted_and_deduped_across_repos(tmp_path, monkeypatch):
-    repos = _repos(tmp_path, monkeypatch, second=True)
-    assert cc.collect_docker_image_names(repos) == ["aaa", "api", "ghcr.io/me/db"]
+    projects = _repos(tmp_path, monkeypatch, second=True)
+    assert cc.collect_docker_image_names(projects) == ["aaa", "api", "ghcr.io/me/db"]
 
 
 def test_services_by_use_case_union_the_composes_each_fragment_names(tmp_path, monkeypatch):
-    repos = _repos(tmp_path, monkeypatch)
-    assert cc.collect_docker_services_by_use_case(repos) == {
+    projects = _repos(tmp_path, monkeypatch)
+    assert cc.collect_docker_services_by_use_case(projects) == {
         "integration": ["api", "db", "proxy"],
         "smoke": ["api", "db"],
     }
 
 
 def test_services_by_use_case_merge_the_same_use_case_across_repos(tmp_path, monkeypatch):
-    repos = _repos(tmp_path, monkeypatch, second=True)
-    by_use_case = cc.collect_docker_services_by_use_case(repos)
+    projects = _repos(tmp_path, monkeypatch, second=True)
+    by_use_case = cc.collect_docker_services_by_use_case(projects)
     assert by_use_case["integration"] == ["api", "cache", "db", "proxy"]
     assert by_use_case["smoke"] == ["api", "db"]
     assert set(by_use_case) == {"integration", "smoke", "nightly"}
 
 
 def test_repo_names_are_sorted(tmp_path, monkeypatch):
-    repos = _repos(tmp_path, monkeypatch, second=True)
-    assert cc.collect_repo_names(repos) == ["one", "two"]
+    projects = _repos(tmp_path, monkeypatch, second=True)
+    assert cc.collect_active_project_names(projects) == ["one", "two"]
 
 
 def test_a_repo_without_docker_contributes_nothing(tmp_path, monkeypatch):
-    from otto.config.repo import discover
+    from otto.config.project import discover
 
     sut = make_sut_repo(tmp_path / "plain", name="plain")
-    monkeypatch.setenv("OTTO_SUT_DIRS", str(sut))
+    monkeypatch.setenv("OTTOPATH", str(sut))
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
-    repos = discover().repos
-    assert cc.collect_docker_image_names(repos) == []
-    assert cc.collect_docker_services_by_use_case(repos) == {}
-    assert cc.collect_repo_names(repos) == ["plain"]
+    projects = discover().projects
+    assert cc.collect_docker_image_names(projects) == []
+    assert cc.collect_docker_services_by_use_case(projects) == {}
+    assert cc.collect_active_project_names(projects) == ["plain"]
 
 
 def test_the_names_section_carries_the_three_keys_and_read_cache_serves_them(tmp_path, monkeypatch):
     from otto.cli.main import _completion_collectors
     from otto.config.cache_sections import _collect_names
 
-    repos = _repos(tmp_path, monkeypatch)
-    payload = _collect_names(repos, _completion_collectors())
+    projects = _repos(tmp_path, monkeypatch)
+    payload = _collect_names(projects, _completion_collectors())
     assert payload["docker_images"] == ["api", "ghcr.io/me/db"]
     assert payload["docker_services_by_use_case"]["smoke"] == ["api", "db"]
-    assert payload["repos"] == ["one"]
+    assert payload["active_projects"] == ["one"]
     cc.write_cache(
-        repos,
+        projects,
         payload["instructions"],
         payload["hosts"],
         docker_images=payload["docker_images"],
         docker_services_by_use_case=payload["docker_services_by_use_case"],
-        repos_names=payload["repos"],
+        active_projects=payload["active_projects"],
     )
-    view = cc.read_cache(repos)
+    view = cc.read_cache(projects)
     assert view is not None
     assert view["docker_images"] == ["api", "ghcr.io/me/db"]
     assert view["docker_services_by_use_case"] == payload["docker_services_by_use_case"]
-    assert view["repos"] == ["one"]
+    assert view["active_projects"] == ["one"]
 
 
-def test_schema_is_27():
+def test_schema_is_28():
     from otto import _shim_complete as sc
 
-    assert cc.SCHEMA_VERSION == 27 == sc.SCHEMA
+    assert cc.SCHEMA_VERSION == 28 == sc.SCHEMA

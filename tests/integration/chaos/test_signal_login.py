@@ -47,7 +47,7 @@ def _sigterm_login(chaos_target, tmp_path, *, extra_env: "dict[str, str] | None"
     with InteractiveOttoSession(
         _login_argv(chaos_target),
         xdir=tmp_path,
-        sut_dirs=chaos_target.sut_dir,
+        roots=chaos_target.root,
         extra_env=extra_env,
     ) as sess:
         sess.expect(b"Press Ctrl+] to disconnect", timeout=30)

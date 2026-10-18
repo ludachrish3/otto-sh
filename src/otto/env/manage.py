@@ -31,7 +31,7 @@ from ..version import get_version
 from .backends import BackendUnavailableError
 
 if TYPE_CHECKING:
-    from ..config.repo import Repo
+    from ..config.project import Project
 
 META_FILENAME = ".otto-env.json"
 
@@ -43,7 +43,7 @@ _LIST_DISTS = (
 own interpreter is the only answer that stays true across uv and pip layouts."""
 
 _ATTRIBUTABLE = 2
-"""How many repo names a resolver message must implicate before otto adds its
+"""How many project names a resolver message must implicate before otto adds its
 one attribution line. Below two there is nothing to attribute BETWEEN, and a
 guess would send the operator to edit the wrong pyproject."""
 
@@ -59,11 +59,11 @@ class EnvMeta:
     """The otto version installed into it, for ``env show``'s staleness line."""
 
 
-def env_path(sut_dirs: "list[Path] | None" = None) -> Path:
+def env_path(roots: "list[Path] | None" = None) -> Path:
     """Return this workspace's orchestration venv path. Pure -- never creates."""
     from ..config.home import workspace_home
 
-    return workspace_home(sut_dirs) / "env"
+    return workspace_home(roots) / "env"
 
 
 def meta_path(env: Path) -> Path:
@@ -92,35 +92,35 @@ class EnvExistsError(OttoError, RuntimeError):
     """``env create`` found an environment already built for this workspace."""
 
 
-def _installable(repos: "list[Repo]") -> "tuple[list[Repo], list[Repo]]":
-    """Split discovered repos into (installable, skipped).
+def _installable(projects: "list[Project]") -> "tuple[list[Project], list[Project]]":
+    """Split discovered projects into (installable, skipped).
 
-    Installable means "has a pyproject.toml". A repo without one is not an
+    Installable means "has a pyproject.toml". A project without one is not an
     error and never has been: its ``libs`` ride ``sys.path`` at bootstrap, and
-    that is still correct. Every sample repo but repo4 is in the skipped half,
+    that is still correct. Every sample project but repo4 is in the skipped half,
     so a workspace of them must still build a working env.
     """
-    installable = [r for r in repos if (r.sut_dir / "pyproject.toml").is_file()]
-    skipped = [r for r in repos if r not in installable]
+    installable = [r for r in projects if (r.root / "pyproject.toml").is_file()]
+    skipped = [r for r in projects if r not in installable]
     return installable, skipped
 
 
-def _settings_backend(repos: "list[Repo]") -> "str | None":
-    """Return the ``[env] backend`` the repos agree on, or None if none declares one.
+def _settings_backend(projects: "list[Project]") -> "str | None":
+    """Return the ``[env] backend`` the projects agree on, or None if none declares one.
 
-    A workspace is several repos by definition, so two of them CAN declare
+    A workspace is several projects by definition, so two of them CAN declare
     different installers. Picking one silently would bind the wrong answer
     with no indication it happened; this refuses instead, naming both, the
     same way ``[monitor]`` TLS disagreement is refused in ``otto.monitor.tls``.
     """
-    declaring = [(r.name, r.env_backend) for r in repos if r.env_backend]
+    declaring = [(r.name, r.env_backend) for r in projects if r.env_backend]
     if not declaring:
         return None
     chosen = {value for _, value in declaring}
     if len(chosen) > 1:
         names = ", ".join(sorted(name for name, _ in declaring))
         raise BackendUnavailableError(
-            f"[env] backend disagrees across repos ({names}) — make them identical, "
+            f"[env] backend disagrees across projects ({names}) — make them identical, "
             "declare it in only one settings.toml, or pass --backend for this run"
         )
     return declaring[0][1]
@@ -158,8 +158,8 @@ def _editable_source() -> "Path | None":
     return Path(url2pathname(urlparse(url).path))
 
 
-def _attribute_conflict(repos: "list[Repo]", stderr: str) -> "str | None":
-    """Name the two repos whose installs collided, if the message implicates them.
+def _attribute_conflict(projects: "list[Project]", stderr: str) -> "str | None":
+    """Name the two projects whose installs collided, if the message implicates them.
 
     otto NEVER resolves and never rewrites the resolver's text. This adds ONE
     line, and only when it can actually attribute the failure -- a guess here
@@ -168,14 +168,14 @@ def _attribute_conflict(repos: "list[Repo]", stderr: str) -> "str | None":
 
     ONLY BARE NAMES COUNT -- every path-shaped word is dropped before matching,
     and that is not tidiness. The workspace key is ``<hash>-<slug>`` with the
-    slug built from the repo basenames, so EVERY installer message that echoes
-    the environment path contains every repo in the workspace. Matching the raw
+    slug built from the project roots' basenames, so EVERY installer message that echoes
+    the environment path contains every project in the workspace. Matching the raw
     text therefore attributed an ordinary "setuptools not found" build failure
-    to two repos that had not collided at all. A resolver naming a package in a
+    to two projects that had not collided at all. A resolver naming a package in a
     conflict names it bare; a path is the one place a name means nothing.
     """
     prose = " ".join(w for w in stderr.lower().split() if "/" not in w and "\\" not in w)
-    named = [r.name for r in repos if r.name.lower() in prose]
+    named = [r.name for r in projects if r.name.lower() in prose]
     if len(named) < _ATTRIBUTABLE:
         return None
     return f"the conflicting requirements came from: {', '.join(sorted(named)[:2])}"
@@ -190,8 +190,8 @@ class EnvBuild:
     """What a ``create``/``sync`` run did, for the CLI to present.
 
     Wider than the :class:`EnvMeta` it carries because the skip notice is
-    contractual: a workspace of repos without pyprojects must still build, and
-    the operator has to be told which repos were passed over and why.
+    contractual: a workspace of projects without pyprojects must still build, and
+    the operator has to be told which projects were passed over and why.
     """
 
     env: Path
@@ -200,31 +200,35 @@ class EnvBuild:
     skipped: "list[str]"
 
 
-def _relay(result: "subprocess.CompletedProcess[str]", repos: "list[Repo]", what: str) -> None:
+def _relay(
+    result: "subprocess.CompletedProcess[str]", projects: "list[Project]", what: str
+) -> None:
     """Raise :class:`EnvBuildError` carrying the installer's own text, if it failed.
 
     otto NEVER resolves and never rewrites the resolver's message. At most it
     appends one attribution line, and only when it can actually name the two
-    repos that collided.
+    projects that collided.
     """
     if result.returncode == 0:
         return
     text = (result.stderr or result.stdout or "").rstrip()
-    attribution = _attribute_conflict(repos, text)
+    attribution = _attribute_conflict(projects, text)
     raise EnvBuildError(f"{what} failed:\n{text}" + (f"\n{attribution}" if attribution else ""))
 
 
-def _fill(env: Path, backend: str, repos: "list[Repo]", passthrough: "list[str]") -> "EnvBuild":
-    """Install every installable repo plus otto itself into the venv at *env*."""
+def _fill(
+    env: Path, backend: str, projects: "list[Project]", passthrough: "list[str]"
+) -> "EnvBuild":
+    """Install every installable project plus otto itself into the venv at *env*."""
     from .backends import install
 
-    installable, skipped = _installable(repos)
+    installable, skipped = _installable(projects)
     if installable:
         targets: "list[str]" = []
-        for repo in installable:
-            targets += ["-e", str(repo.sut_dir)]
-        _relay(install(backend, env, targets, passthrough), repos, "installing repos")
-    _relay(install(backend, env, _otto_target(), passthrough), repos, "installing otto")
+        for project in installable:
+            targets += ["-e", str(project.root)]
+        _relay(install(backend, env, targets, passthrough), projects, "installing projects")
+    _relay(install(backend, env, _otto_target(), passthrough), projects, "installing otto")
     meta = EnvMeta(backend=backend, otto_version=get_version())
     write_meta(env, meta)
     return EnvBuild(
@@ -251,7 +255,7 @@ def create_env(
     """
     from .backends import create_venv, select_backend
 
-    repos = _discovered_repos()
+    projects = _discovered_projects()
     env = env_path()
     if env.exists():
         if not force:
@@ -262,10 +266,10 @@ def create_env(
         shutil.rmtree(env)
     recorded = read_meta(env)
     backend = select_backend(
-        backend_flag, _settings_backend(repos), recorded.backend if recorded else None
+        backend_flag, _settings_backend(projects), recorded.backend if recorded else None
     )
-    _relay(create_venv(backend, env), repos, "creating the venv")
-    return _fill(env, backend, repos, passthrough or [])
+    _relay(create_venv(backend, env), projects, "creating the venv")
+    return _fill(env, backend, projects, passthrough or [])
 
 
 def sync_env(
@@ -285,28 +289,28 @@ def sync_env(
     env = env_path()
     if not env.exists():
         return create_env(force=False, backend_flag=backend_flag, passthrough=passthrough)
-    repos = _discovered_repos()
+    projects = _discovered_projects()
     recorded = read_meta(env)
     backend = select_backend(
-        backend_flag, _settings_backend(repos), recorded.backend if recorded else None
+        backend_flag, _settings_backend(projects), recorded.backend if recorded else None
     )
-    return _fill(env, backend, repos, passthrough or [])
+    return _fill(env, backend, projects, passthrough or [])
 
 
-def _discovered_repos() -> "list[Repo]":
-    """Return the DISCOVERED repo set, not the active one.
+def _discovered_projects() -> "list[Project]":
+    """Return the DISCOVERED project set, not the active one.
 
     An environment is workspace-scoped: which labs today's command happens to
     load must not change what gets installed into it.
     """
-    from ..config.repo import discover
+    from ..config.project import discover
 
-    return discover().repos
+    return discover().projects
 
 
 @dataclasses.dataclass(frozen=True)
-class RepoState:
-    """One repo's standing in the environment, as ``env show`` reports it."""
+class ProjectState:
+    """One project's standing in the environment, as ``env show`` reports it."""
 
     name: str
     dist_name: "str | None"
@@ -318,7 +322,7 @@ class RepoState:
 
     stale: bool
     """Its pyproject is newer than the env's metadata -- the env was built
-    before the repo's requirements last changed."""
+    before the project's requirements last changed."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -328,30 +332,30 @@ class EnvStatus:
     env: Path
     exists: bool
     meta: "EnvMeta | None"
-    repos: "list[RepoState]"
+    projects: "list[ProjectState]"
 
 
-def _dist_name(repo: "Repo") -> "str | None":
-    """Return the repo's distribution name from its pyproject, if it has one.
+def _dist_name(project: "Project") -> "str | None":
+    """Return the project's distribution name from its pyproject, if it has one.
 
     Reads through :func:`otto.env.preflight.read_project_table` rather than
     re-opening the file, so this package has ONE answer to "what does this
-    repo's pyproject say" -- including what it does with an unreadable one.
+    project's pyproject say" -- including what it does with an unreadable one.
     Two readers with independently maintained error handling is exactly the
     drift that ends with ``env show`` and the preflight disagreeing about
-    whether a repo is installable.
+    whether a project is installable.
     """
     from .preflight import read_project_table
 
-    project = read_project_table(repo) or {}
-    name = project.get("name")
+    pyproject_table = read_project_table(project) or {}
+    name = pyproject_table.get("name")
     return str(name) if name else None
 
 
 def _installed_dists(env: Path) -> "set[str] | None":
     """Return the normalized distribution names inside *env*, or None if unaskable.
 
-    One subprocess for the whole env rather than one per repo, and None rather
+    One subprocess for the whole env rather than one per project, and None rather
     than an exception when the env's interpreter cannot answer -- ``show`` is
     the DIAGNOSTIC verb, so a half-broken env has to be describable.
     """
@@ -384,32 +388,32 @@ def env_status() -> "EnvStatus":
     so a missing env is a described state, not an error.
     """
     env = env_path()
-    repos = _discovered_repos()
+    projects = _discovered_projects()
     if not env.exists():
-        return EnvStatus(env=env, exists=False, meta=None, repos=[])
+        return EnvStatus(env=env, exists=False, meta=None, projects=[])
 
     meta = read_meta(env)
     present = _installed_dists(env)
     stamp = meta_path(env)
     built_at = stamp.stat().st_mtime if stamp.is_file() else 0.0
 
-    states: "list[RepoState]" = []
-    for repo in repos:
-        dist = _dist_name(repo)
-        pyproject = repo.sut_dir / "pyproject.toml"
+    states: "list[ProjectState]" = []
+    for project in projects:
+        dist = _dist_name(project)
+        pyproject = project.root / "pyproject.toml"
         states.append(
-            RepoState(
-                name=repo.name,
+            ProjectState(
+                name=project.name,
                 dist_name=dist,
                 installed=None if present is None or dist is None else _norm(dist) in present,
                 stale=pyproject.is_file() and pyproject.stat().st_mtime > built_at,
             )
         )
-    return EnvStatus(env=env, exists=True, meta=meta, repos=states)
+    return EnvStatus(env=env, exists=True, meta=meta, projects=states)
 
 
 def _norm(name: str) -> str:
-    """PEP-503 normalization, through the repo's one implementation."""
+    """PEP-503 normalization, through otto's one implementation."""
     from ..models.dependencies import normalize_name
 
     return normalize_name(name)

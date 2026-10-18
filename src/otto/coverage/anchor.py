@@ -39,17 +39,17 @@ class AnchorResolver:
 
     def __init__(
         self,
-        repo_root: Path,
+        project_root: Path,
         base_commit: str,
         *,
         files: dict[str, CaptureFileCov] | None = None,
     ) -> None:
-        self._root = repo_root
+        self._root = project_root
         self._base = base_commit
         self._tree: dict[str, FileDiff] | None = None
         self._fallback_index: dict[str, AnchorResult] | None = None
         try:
-            self._tree = parse_multifile_u0(gitio.diff_tree_u0(repo_root, base_commit))
+            self._tree = parse_multifile_u0(gitio.diff_tree_u0(project_root, base_commit))
         except (gitio.NotAGitRepoError, gitio.GitMissingError):
             # Neither is "this base_commit is gone", and the fallback below
             # runs the SAME gitio calls: it would die anyway, several frames
@@ -58,7 +58,7 @@ class AnchorResolver:
         except gitio.GitCommandFailedError:
             shallow_hint = (
                 " (shallow clone — deepen with `git fetch --unshallow` to recover history)"
-                if gitio.is_shallow(repo_root)
+                if gitio.is_shallow(project_root)
                 else ""
             )
             logger.warning(
@@ -81,7 +81,7 @@ class AnchorResolver:
         if fd is None:
             # Not in the diff: unchanged (or whitespace-only) — but only
             # verifiable if the file actually exists here (a capture from
-            # a different repo names paths the diff never saw).
+            # a different git repository names paths the diff never saw).
             if (self._root / relpath).is_file():
                 return AnchorResult(new_relpath=relpath)
             return AnchorResult(new_relpath=None, verifiable=False)

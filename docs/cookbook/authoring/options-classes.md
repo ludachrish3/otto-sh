@@ -8,12 +8,12 @@ as one typed object.
 
 ## Declaring and registering a class
 
-The easiest route is one decorator in the repo's **init module**, a module
+The easiest route is one decorator in the project's **init module**, a module
 named in the `init` list of `.otto/settings.toml`
 ({doc}`../../configuration/settings`), which otto imports at startup for
-every command. The examples on this page use one repo, `acme`, whose init
+every command. The examples on this page use one project, `acme`, whose init
 module is `pylib/acme_instructions/__init__.py` (the layout is in
-[Writing tests](writing-tests.md#an-example-repo)):
+[Writing tests](writing-tests.md#an-example-project)):
 
 ```python
 # pylib/acme_instructions/__init__.py, the init module
@@ -26,7 +26,7 @@ import otto
 
 
 @otto.options(verbs=["run", "test"])
-class RepoOptions:
+class ProjectOptions:
     device_type: Annotated[
         str, typer.Option(help="Type of device under test (e.g. 'router', 'switch').")
     ] = "router"
@@ -51,7 +51,7 @@ CLI flag named after it, underscores turned into dashes; the
 different flag spelling. A `bool` field becomes an on/off pair of flags.
 `verbs=[...]` names every verb whose flags the class joins:
 
-- `RepoOptions` gives `--device-type`, `--lab-env` and `--retries` to
+- `ProjectOptions` gives `--device-type`, `--lab-env` and `--retries` to
   `otto test` and to every `otto run` command.
 - `DeviceTestOptions` gives `--firmware` and the pair
   `--check-interfaces/--no-check-interfaces` to `otto test` only.
@@ -77,7 +77,7 @@ otto test TestDevice --retries -1
 # error: Invalid value: retries: Input should be greater than or equal to 0
 ```
 
-`RepoOptions` above puts the constraint in the default,
+`ProjectOptions` above puts the constraint in the default,
 `= Field(default=3, ge=0)`. Putting it in the annotation works the same way:
 `retries: Annotated[int, typer.Option(help=...), Field(ge=0)] = 3`.
 
@@ -89,12 +89,12 @@ The fields on this page ship in otto as `otto.examples.options`
 importing them registers nothing, ready to copy:
 
 ```{doctest}
->>> from otto.examples.options import RepoOptions
->>> RepoOptions().retries
+>>> from otto.examples.options import ProjectOptions
+>>> ProjectOptions().retries
 3
 >>> from pydantic import ValidationError
 >>> try:
-...     RepoOptions(retries=-1)
+...     ProjectOptions(retries=-1)
 ... except ValidationError:
 ...     print("rejected")
 rejected
@@ -166,7 +166,7 @@ while `install`'s own class inherits it and keeps `--ensure` to itself.
 
 ### Which flags reach an install body under `otto test`
 
-A test marked `@pytest.mark.ensure("installed")` runs each repo's `install`
+A test marked `@pytest.mark.ensure("installed")` runs each project's `install`
 body before it ([the `ensure` marker](writing-tests.md#declaring-lab-state-the-ensure-marker)).
 Under `otto test` that body builds its options class from `otto test`'s own
 parsed flags, matched by field name, exactly as `otto run install` builds it
@@ -191,7 +191,7 @@ works through the example.
           assert ctx.options(DeviceTestOptions).firmware
   ```
 
-  A repo that wants a shorter name writes a one-line fixture in its
+  A project that wants a shorter name writes a one-line fixture in its
   `conftest.py`:
 
   ```python
@@ -227,9 +227,9 @@ with a message that says which case applies, when:
 ## One flag set per verb
 
 A verb's flags are the union of every class registered for it, in
-registration order: otto's own first, then each repo in dependency order.
-When one run spans several repos, each repo's tests can read any class
-registered for `test`, whichever repo registered it, as long as they can
+registration order: otto's own first, then each project in dependency order.
+When one run spans several projects, each project's tests can read any class
+registered for `test`, whichever project registered it, as long as they can
 import it. Each field is one flag, so two rules decide what happens when two
 classes declare the same field name:
 
@@ -238,9 +238,9 @@ classes declare the same field name:
   same value.
 - **Declared by two unrelated classes, it is an error.** otto raises
   {class}`~otto.params.OptionsCollisionError` naming both classes and the
-  repos that registered them, before any test or instruction runs. Rename one
+  projects that registered them, before any test or instruction runs. Rename one
   field, or move it into a base class both inherit. When the classes come
-  from two repos, that base belongs in a repo both require, or in a library
+  from two projects, that base belongs in a project both require, or in a library
   package.
 
 otto's own flags take part too. For `test` those are `otto test`'s own flags
@@ -252,7 +252,7 @@ otto's own flags take part too. For `test` those are `otto test`'s own flags
 
 Inheritance is optional. Use it when one command's own options class should
 carry the same fields as a registered class. The class below is an
-instruction's own `options=` class: it inherits `RepoOptions`, which is
+instruction's own `options=` class: it inherits `ProjectOptions`, which is
 registered for `run`, so each shared field stays one flag and the instruction
 adds `--debug/--no-debug` of its own.
 
@@ -263,11 +263,11 @@ import typer
 import otto
 from otto.instructions import instruction
 
-from acme_instructions import RepoOptions  # registered for ["run", "test"]
+from acme_instructions import ProjectOptions  # registered for ["run", "test"]
 
 
 @otto.options
-class _DeployOpts(RepoOptions):  # --device-type, --lab-env, --retries: one flag each
+class _DeployOpts(ProjectOptions):  # --device-type, --lab-env, --retries: one flag each
     debug: Annotated[
         bool, typer.Option(help="Deploy debug products instead of field products.")
     ] = False
@@ -277,14 +277,14 @@ class _DeployOpts(RepoOptions):  # --device-type, --lab-env, --retries: one flag
 async def deploy(opts: _DeployOpts): ...
 ```
 
-`otto run deploy --help` shows the repo-wide flags once, plus
+`otto run deploy --help` shows the project-wide flags once, plus
 `--debug/--no-debug`. Without the inheritance, `_DeployOpts` could not declare
-a field of the same name as `RepoOptions`: the two would be unrelated classes
+a field of the same name as `ProjectOptions`: the two would be unrelated classes
 declaring one flag.
 
-`otto.examples.options` bundles all three shapes: a `RepoOptions` for both
+`otto.examples.options` bundles all three shapes: a `ProjectOptions` for both
 verbs, a `DeviceTestOptions` for `test`, and a `DeployInstructionOptions`
-that inherits `RepoOptions`.
+that inherits `ProjectOptions`.
 
 See {doc}`writing-tests` and {doc}`writing-instructions` for the test and
 instruction guides.

@@ -70,7 +70,7 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
-from otto.config.repo import Repo
+from otto.config.project import Project
 from otto.config.scope import DockerCompose, DockerImage, DockerSettings
 from otto.docker.compose import compose_down, compose_up
 from otto.host.daemon import kill_command
@@ -322,12 +322,12 @@ async def test_multihop_relay_and_via(tunnel_lab, reap_tunnels) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _oldos_repo() -> Repo:
-    """A ``Repo`` over ``tests/repo2`` with docker settings replaced wholesale
+def _oldos_repo() -> Project:
+    """A ``Project`` over ``tests/repo2`` with docker settings replaced wholesale
     to point at the oldos fixture -- the existing repo2 compose entry (used by
     ``tests/e2e/docker/``) is never touched or referenced."""
-    repo = Repo(sut_dir=REPO2_DIR)
-    repo.docker_settings = DockerSettings(
+    project = Project(root=REPO2_DIR)
+    project.docker_settings = DockerSettings(
         images=(
             DockerImage(
                 name="repo2-oldos",
@@ -342,7 +342,7 @@ def _oldos_repo() -> Repo:
             ),
         ),
     )
-    return repo
+    return project
 
 
 async def _spawn_container_listener(
@@ -456,9 +456,9 @@ async def test_container_endpoint_oldos(tunnel_lab, reap_tunnels) -> None:
     inside it exercises the ``setsid`` fallback in
     ``otto.host.daemon.launch_command`` rather than ``systemd-run --user``.
     """
-    repo = _oldos_repo()
+    project = _oldos_repo()
     hosts = await compose_up(
-        repo, tunnel_lab, parent=_INGRESS, project_name=OLDOS_COMPOSE_PROJECT, build=True
+        project, tunnel_lab, parent=_INGRESS, project_name=OLDOS_COMPOSE_PROJECT, build=True
     )
     try:
         container = hosts["oldos"]
@@ -496,7 +496,7 @@ async def test_container_endpoint_oldos(tunnel_lab, reap_tunnels) -> None:
         assert report.survivors == [], f"survivors after remove: {report.survivors!r}"
         reap_tunnels.remove(added.tunnel.id)
     finally:
-        await compose_down(repo, tunnel_lab, parent=_INGRESS, project_name=OLDOS_COMPOSE_PROJECT)
+        await compose_down(project, tunnel_lab, parent=_INGRESS, project_name=OLDOS_COMPOSE_PROJECT)
 
 
 # ---------------------------------------------------------------------------
@@ -579,7 +579,7 @@ async def test_foreign_socat_excluded_and_outofband_kill_degrades(tunnel_lab, re
 
 
 def _run_cycle(argv: list[str], sut: Path) -> "subprocess.CompletedProcess[str]":
-    return run_otto(argv, sut_dirs=sut, lab="unix", timeout=180)
+    return run_otto(argv, roots=sut, lab="unix", timeout=180)
 
 
 def _assert_docker_free(proc: "subprocess.CompletedProcess[str]", step: str) -> None:

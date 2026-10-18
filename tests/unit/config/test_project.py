@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from otto.config import DockerSettings, MonitorSettings
-from otto.config.repo import CompiledSettings, Repo
+from otto.config.project import CompiledSettings, Project
 from otto.host.element import Element
 from tests._fixtures.mockrepo import MockRepo
 from tests._fixtures.paths import TESTS_ROOT
@@ -23,12 +23,12 @@ def _write_repo(tmp_path: Path, settings_body: str) -> Path:
     return make_sut_repo(tmp_path, name="tmp_repo", extra=settings_body)
 
 
-def _repo_with_settings(tmp_path: Path, settings_body: str) -> "Repo":
+def _repo_with_settings(tmp_path: Path, settings_body: str) -> "Project":
     """Materialize a minimal SUT repo (named ``p``) and return the parsed Repo.
 
     *settings_body* is TOML appended after the generated ``name``/``version``.
     """
-    return Repo(sut_dir=make_sut_repo(tmp_path, name="p", extra=textwrap.dedent(settings_body)))
+    return Project(root=make_sut_repo(tmp_path, name="p", extra=textwrap.dedent(settings_body)))
 
 
 @pytest.fixture(autouse=False)
@@ -41,13 +41,13 @@ def default_mock_repo():
 
 def test_repo_config_location(default_mock_repo):
 
-    repo_settings_file = mock_repo.sut_dir / ".otto" / "settings.toml"
+    repo_settings_file = mock_repo.root / ".otto" / "settings.toml"
     assert repo_settings_file.exists()
 
 
 def test_repo_settings_tests_sut_dir_variable(default_mock_repo):
 
-    assert mock_repo.tests == [mock_repo.sut_dir / "tests"]
+    assert mock_repo.tests == [mock_repo.root / "tests"]
 
 
 def test_repo_settings_init_sut_dir_variable(default_mock_repo):
@@ -57,7 +57,7 @@ def test_repo_settings_init_sut_dir_variable(default_mock_repo):
 
 def test_bootstrap_registers_repo1_instructions_and_options(monkeypatch):
     """``bootstrap()`` is the granular replacement for the deleted
-    ``Repo.apply_settings()`` / ``apply_repo_settings()``: per repo it adds libs
+    ``Project.apply_settings()`` / ``apply_repo_settings()``: per repo it adds libs
     to ``sys.path`` and imports init modules — which register repo1's
     instructions and its verb-wide options classes into the shared
     ``STANDALONE_INSTRUCTIONS``/``PROJECT_ACTIONS``/``OPTIONS`` registries
@@ -105,7 +105,7 @@ def test_bootstrap_registers_repo1_instructions_and_options(monkeypatch):
     before_instructions = set(INSTRUCTIONS.names())
     before_options = set(OPTIONS.names())
 
-    monkeypatch.setenv("OTTO_SUT_DIRS", str(repo1))
+    monkeypatch.setenv("OTTOPATH", str(repo1))
     bs._reset()
     try:
         result = bs.bootstrap()
@@ -130,7 +130,7 @@ def test_bootstrap_registers_repo1_instructions_and_options(monkeypatch):
 
 def test_logging_levels_parse_and_default_empty(tmp_path):
     """Spec §4.2: ``[logging.levels]`` lands on the Repo; absent means empty."""
-    repo = _repo_with_settings(
+    project = _repo_with_settings(
         tmp_path,
         """
         [logging.levels]
@@ -138,7 +138,7 @@ def test_logging_levels_parse_and_default_empty(tmp_path):
         vendor = "ERROR"
         """,
     )
-    assert repo.logging_levels == {"asyncssh": "DEBUG", "vendor": "ERROR"}
+    assert project.logging_levels == {"asyncssh": "DEBUG", "vendor": "ERROR"}
     bare = _repo_with_settings(tmp_path / "bare", "")
     assert bare.logging_levels == {}
 
@@ -183,7 +183,7 @@ def test_logging_levels_reject_otto_names_and_bad_levels(tmp_path):
 
 def test_logging_levels_accept_the_warn_crit_aliases(tmp_path):
     """Spec §4.2: otto's own short aliases are levels too, and values normalize."""
-    repo = _repo_with_settings(
+    project = _repo_with_settings(
         tmp_path,
         """
         [logging.levels]
@@ -191,14 +191,14 @@ def test_logging_levels_accept_the_warn_crit_aliases(tmp_path):
         other = "CRIT"
         """,
     )
-    assert repo.logging_levels == {"vendor": "WARN", "other": "CRIT"}
+    assert project.logging_levels == {"vendor": "WARN", "other": "CRIT"}
 
 
 # TODO: Test various settings fields and the recording of arbitrary additional data
 
 
 def test_repo_parses_unified_host_preferences(tmp_path):
-    repo = _repo_with_settings(
+    project = _repo_with_settings(
         tmp_path,
         """
         [host_preferences.".*"]
@@ -206,18 +206,18 @@ def test_repo_parses_unified_host_preferences(tmp_path):
         ssh_options = { connect_timeout = 5.0 }
     """,
     )
-    assert repo.host_preferences[".*"]["term"] == ["telnet"]
-    assert repo.host_preferences[".*"]["ssh_options"] == {"connect_timeout": 5.0}
-    assert not hasattr(repo, "host_defaults")
+    assert project.host_preferences[".*"]["term"] == ["telnet"]
+    assert project.host_preferences[".*"]["ssh_options"] == {"connect_timeout": 5.0}
+    assert not hasattr(project, "host_defaults")
 
 
 class TestHostPreferencesParsing:
-    """Tests for unified ``[host_preferences]`` parsing in ``Repo.parse_settings``."""
+    """Tests for unified ``[host_preferences]`` parsing in ``Project.parse_settings``."""
 
     def test_absent_section_yields_empty_dict(self, tmp_path):
         sut = _write_repo(tmp_path, "")
-        repo = Repo(sut_dir=sut)
-        assert repo.host_preferences == {}
+        project = Project(root=sut)
+        assert project.host_preferences == {}
 
     def test_selections_and_option_tables_parsed(self, tmp_path):
         sut = _write_repo(
@@ -231,9 +231,9 @@ class TestHostPreferencesParsing:
             connect_timeout = 5.0
         """),
         )
-        repo = Repo(sut_dir=sut)
-        assert repo.host_preferences[".*"]["term"] == ["telnet"]
-        assert repo.host_preferences[".*"]["ssh_options"] == {
+        project = Project(root=sut)
+        assert project.host_preferences[".*"]["term"] == ["telnet"]
+        assert project.host_preferences[".*"]["ssh_options"] == {
             "port": 2222,
             "connect_timeout": 5.0,
         }
@@ -247,7 +247,7 @@ class TestHostPreferencesParsing:
         """),
         )
         with pytest.raises(ValueError, match=r"\[host_defaults\] was removed"):
-            Repo(sut_dir=sut)
+            Project(root=sut)
 
     def test_unknown_preference_key_raises(self, tmp_path):
         sut = _write_repo(
@@ -258,16 +258,16 @@ class TestHostPreferencesParsing:
         """),
         )
         with pytest.raises(ValueError, match="unknown"):
-            Repo(sut_dir=sut)
+            Project(root=sut)
 
 
 class TestOsProfilesParsing:
-    """Tests for ``[os_profiles]`` parsing in ``Repo.parse_settings``."""
+    """Tests for ``[os_profiles]`` parsing in ``Project.parse_settings``."""
 
     def test_absent_section_yields_empty_dict(self, tmp_path):
         sut = _write_repo(tmp_path, "")
-        repo = Repo(sut_dir=sut)
-        assert repo.os_profiles == {}
+        project = Project(root=sut)
+        assert project.os_profiles == {}
 
     def test_profile_parsed_and_kept_as_data(self, tmp_path):
         from otto.host.os_profile import OS_PROFILES, ProfileContext, build_os_profile
@@ -284,11 +284,11 @@ class TestOsProfilesParsing:
             max_filename_len = 32
         """),
         )
-        repo = Repo(sut_dir=sut)
-        assert "zephyr-3_7" in repo.os_profiles
+        project = Project(root=sut)
+        assert "zephyr-3_7" in project.os_profiles
         # Data, never registered: it resolves through the repos' context.
         assert "zephyr-3_7" not in OS_PROFILES
-        prof = build_os_profile("zephyr-3_7", data=ProfileContext.from_repos([repo]))
+        prof = build_os_profile("zephyr-3_7", data=ProfileContext.from_projects([project]))
         assert prof.base == "embedded"
         assert prof.fields.defaults["os_version"] == "3.7"
         assert prof.fields.defaults["max_filename_len"] == 32
@@ -306,7 +306,7 @@ class TestOsProfilesParsing:
         # pydantic.ValidationError (a ValueError subclass) now fires for the
         # missing required 'base' field; the error location names the field.
         with pytest.raises(ValueError, match=r"os_profiles\.broken\.base"):
-            Repo(sut_dir=sut)
+            Project(root=sut)
 
     def test_invalid_base_raises(self, tmp_path):
         sut = _write_repo(
@@ -320,12 +320,12 @@ class TestOsProfilesParsing:
         # naming the table and the repo.
         from otto.host.os_profile import check_data_profiles
 
-        repo = Repo(sut_dir=sut)
+        project = Project(root=sut)
         with pytest.raises(
             ValueError,
-            match=r"\[os_profiles\.broken\] in repo .*base must name a registered host class",
+            match=r"\[os_profiles\.broken\] in project .*base must name a registered host class",
         ):
-            check_data_profiles([repo])
+            check_data_profiles([project])
 
     def test_unknown_default_field_raises(self, tmp_path):
         sut = _write_repo(
@@ -338,9 +338,9 @@ class TestOsProfilesParsing:
         )
         from otto.host.os_profile import check_data_profiles
 
-        repo = Repo(sut_dir=sut)
+        project = Project(root=sut)
         with pytest.raises(ValueError, match="unknown default field"):
-            check_data_profiles([repo])
+            check_data_profiles([project])
 
 
 class TestOsProfilesIntegration:
@@ -358,16 +358,16 @@ class TestOsProfilesIntegration:
         from otto.host.os_profile import ProfileContext
 
         # Constructing the repo parses settings, keeping the data profiles.
-        repo = MockRepo(tests_root / "repo1")
-        assert {"zephyr-3.7", "zephyr-2.7", "zephyr-4.4"} <= set(repo.os_profiles)
+        project = MockRepo(tests_root / "repo1")
+        assert {"zephyr-3.7", "zephyr-2.7", "zephyr-4.4"} <= set(project.os_profiles)
 
         # Importing the init modules registers the `zephyr-inline` frame the
         # 2.7 profile names — this runs *after* parse, mirroring bootstrap order.
-        pylib = str(repo.sut_dir / "pylib")
+        pylib = str(project.root / "pylib")
         added = pylib not in sys.path
-        repo.add_libs_to_pythonpath()
+        project.add_libs_to_pythonpath()
         try:
-            repo.import_init_modules()
+            project.import_init_modules()
 
             # A host need only declare its identity + filesystem; the profile
             # supplies the rest (the copy-paste this feature eliminates).
@@ -378,7 +378,7 @@ class TestOsProfilesIntegration:
                     "filesystem": "fat-ram",
                 },
                 element=Element("zephyr27_demo"),
-                profiles=ProfileContext.from_repos([repo]),
+                profiles=ProfileContext.from_projects([project]),
             )
         finally:
             if added:
@@ -396,7 +396,7 @@ class TestOsProfilesIntegration:
         assert isinstance(host.filesystem, FatRamFileSystem)
 
 
-@pytest.mark.parametrize("cls", [Repo, CompiledSettings], ids=lambda cls: cls.__name__)
+@pytest.mark.parametrize("cls", [Project, CompiledSettings], ids=lambda cls: cls.__name__)
 def test_settings_field_annotations_resolve_at_runtime(cls):
     """``typing.get_type_hints`` resolves the settings fields of the repo dataclasses.
 

@@ -65,8 +65,8 @@ class TestConflict:
 class TestProjectCompleter:
     def test_offers_discovered_repo_names(self, monkeypatch):
         monkeypatch.setattr(
-            "otto.config.repo.discover",
-            lambda: SimpleNamespace(repos=[fake_repo("repo1"), fake_repo("repo2")]),
+            "otto.config.project.discover",
+            lambda: SimpleNamespace(projects=[fake_repo("repo1"), fake_repo("repo2")]),
         )
         assert _project_completer(None, "repo") == ["repo1", "repo2"]
         assert _project_completer(None, "repo2") == ["repo2"]
@@ -75,7 +75,7 @@ class TestProjectCompleter:
         def _boom():
             raise RuntimeError("half-registered")
 
-        monkeypatch.setattr("otto.config.repo.discover", _boom)
+        monkeypatch.setattr("otto.config.project.discover", _boom)
         assert _project_completer(None, "") == []
 
     def test_completion_never_runs_user_code(self, monkeypatch):
@@ -87,15 +87,15 @@ class TestProjectCompleter:
         the import line to stay put.
         """
         monkeypatch.setattr(
-            "otto.config.repo.discover",
-            lambda: SimpleNamespace(repos=[fake_repo("repo1")]),
+            "otto.config.project.discover",
+            lambda: SimpleNamespace(projects=[fake_repo("repo1")]),
         )
 
         def _forbidden(*args, **kwargs):
             raise AssertionError("completion ran phase 2 (user code)")
 
         monkeypatch.setattr("otto.bootstrap.bootstrap", _forbidden)
-        monkeypatch.setattr("otto.declared.get_repos", _forbidden)
+        monkeypatch.setattr("otto.declared.get_projects", _forbidden)
 
         assert _project_completer(None, "repo") == ["repo1"]
 
@@ -111,7 +111,7 @@ class TestUnknownName:
     """
 
     def test_unknown_name_exits_2_with_a_suggestion(self, monkeypatch, capsys):
-        _install_result(monkeypatch, repos=[fake_repo("repo2")])
+        _install_result(monkeypatch, projects=[fake_repo("repo2")])
         with pytest.raises(typer.Exit) as excinfo:
             validate_project_switches(_fake_ctx(exclude=("repoo2",)))
         assert excinfo.value.exit_code == 2
@@ -119,14 +119,14 @@ class TestUnknownName:
 
     def test_an_unknown_include_name_is_caught_too(self, monkeypatch, capsys):
         """Both switches are validated; -I is not the untested half."""
-        _install_result(monkeypatch, repos=[fake_repo("repo2")])
+        _install_result(monkeypatch, projects=[fake_repo("repo2")])
         with pytest.raises(typer.Exit) as excinfo:
             validate_project_switches(_fake_ctx(include=("ghost",)))
         assert excinfo.value.exit_code == 2
         assert "no project 'ghost'" in capsys.readouterr().out
 
     def test_known_names_pass(self, monkeypatch):
-        _install_result(monkeypatch, repos=[fake_repo("repo2")])
+        _install_result(monkeypatch, projects=[fake_repo("repo2")])
         validate_project_switches(_fake_ctx(exclude=("repo2",)))  # must not raise
 
     def test_a_repo_name_is_normalized_before_comparison(self, monkeypatch):
@@ -135,7 +135,7 @@ class TestUnknownName:
         Parse normalizes the switch value; the repo side has to be normalized
         too or the only spelling the CLI can produce is rejected as unknown.
         """
-        _install_result(monkeypatch, repos=[fake_repo("Repo_2")])
+        _install_result(monkeypatch, projects=[fake_repo("Repo_2")])
         validate_project_switches(_fake_ctx(exclude=("repo-2",)))  # must not raise
 
     def test_no_switches_never_bootstraps(self, monkeypatch):

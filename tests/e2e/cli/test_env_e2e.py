@@ -44,17 +44,17 @@ BUILD_TIMEOUT = 150
 BACKENDS = ("uv", "pip")
 
 
-def _run(argv, *, home, sut_dirs=REPO1, timeout=60):
+def _run(argv, *, home, roots=REPO1, timeout=60):
     """Run otto with OTTO_HOME pinned, so nothing touches the real ~/.otto."""
     return run_otto(
         argv,
         xdir=None,
-        sut_dirs=None,
+        roots=None,
         extra_argv_prefix=["-R"],
         # COLUMNS pins rich's width: a wrapped cell would make the table
         # unreadable to _cell for reasons that have nothing to do with otto.
         extra_env={
-            "OTTO_SUT_DIRS": str(sut_dirs),
+            "OTTOPATH": str(roots),
             "OTTO_HOME": str(home),
             "COLUMNS": "200",
         },
@@ -108,7 +108,7 @@ class TestCreate:
         result = _run(
             ["env", "create", "--backend", backend, "--", "--find-links", str(WHEELS_DIR)],
             home=home,
-            sut_dirs=f"{REPO1}{os.pathsep}{repo4}",
+            roots=f"{REPO1}{os.pathsep}{repo4}",
             timeout=BUILD_TIMEOUT,
         )
         assert result.returncode == 0, result.stdout + result.stderr
@@ -215,7 +215,7 @@ class TestSync:
         without = _run(
             ["env", "create", "--backend", "uv"],
             home=home,
-            sut_dirs=f"{REPO1}{os.pathsep}{repo4}",
+            roots=f"{REPO1}{os.pathsep}{repo4}",
             timeout=BUILD_TIMEOUT,
         )
         assert without.returncode != 0, (
@@ -235,7 +235,7 @@ class TestSync:
                 str(WHEELS_DIR),
             ],
             home=home,
-            sut_dirs=f"{REPO1}{os.pathsep}{repo4}",
+            roots=f"{REPO1}{os.pathsep}{repo4}",
             timeout=BUILD_TIMEOUT,
         )
         assert with_links.returncode == 0, with_links.stdout + with_links.stderr
@@ -264,7 +264,7 @@ class TestWorkspaceWithoutInstallableRepos:
         otto itself goes into it.
         """
         home = tmp_path / "home"
-        result = _run(["env", "create"], home=home, sut_dirs=REPO1, timeout=BUILD_TIMEOUT)
+        result = _run(["env", "create"], home=home, roots=REPO1, timeout=BUILD_TIMEOUT)
         assert result.returncode == 0, result.stderr
 
         env = _the_env(home)
@@ -300,7 +300,7 @@ class TestShow:
         built = _run(
             ["env", "create", "--backend", "uv", "--", "--find-links", str(WHEELS_DIR)],
             home=home,
-            sut_dirs=f"{REPO1}{os.pathsep}{repo4}",
+            roots=f"{REPO1}{os.pathsep}{repo4}",
             timeout=BUILD_TIMEOUT,
         )
         assert built.returncode == 0, built.stdout + built.stderr
@@ -308,7 +308,7 @@ class TestShow:
         shown = _run(
             ["env", "show"],
             home=home,
-            sut_dirs=f"{REPO1}{os.pathsep}{repo4}",
+            roots=f"{REPO1}{os.pathsep}{repo4}",
             timeout=BUILD_TIMEOUT,
         )
         assert shown.returncode == 0, shown.stderr
@@ -336,7 +336,7 @@ class TestShow:
         after = _run(
             ["env", "show"],
             home=home,
-            sut_dirs=f"{REPO1}{os.pathsep}{repo4}",
+            roots=f"{REPO1}{os.pathsep}{repo4}",
             timeout=BUILD_TIMEOUT,
         )
         assert after.returncode == 0, after.stderr
@@ -353,12 +353,12 @@ class TestShow:
         built = _run(
             ["env", "create", "--backend", "uv", "--", "--find-links", str(WHEELS_DIR)],
             home=home,
-            sut_dirs=f"{REPO1}{os.pathsep}{repo4}",
+            roots=f"{REPO1}{os.pathsep}{repo4}",
             timeout=BUILD_TIMEOUT,
         )
         assert built.returncode == 0, built.stdout + built.stderr
 
-        fresh = _run(["env", "show"], home=home, sut_dirs=f"{REPO1}{os.pathsep}{repo4}")
+        fresh = _run(["env", "show"], home=home, roots=f"{REPO1}{os.pathsep}{repo4}")
         assert "stale" not in fresh.stdout, fresh.stdout
 
         # Backdate the env stamp to just BEFORE repo4's pyproject rather than by
@@ -370,6 +370,6 @@ class TestShow:
         older = (repo4 / "pyproject.toml").stat().st_mtime - 1
         os.utime(stamp, (older, older))
 
-        stale = _run(["env", "show"], home=home, sut_dirs=f"{REPO1}{os.pathsep}{repo4}")
+        stale = _run(["env", "show"], home=home, roots=f"{REPO1}{os.pathsep}{repo4}")
         assert "stale" in stale.stdout, stale.stdout
         assert "otto env sync" in stale.stdout, stale.stdout

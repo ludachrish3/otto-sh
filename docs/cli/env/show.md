@@ -11,20 +11,20 @@ $ otto env show
 environment: ~/.otto/134b91c0-repo1-repo4/env
   backend:     uv
   otto:        0.8.6
-╭───────┬───────────────────┬───────────┬───────────────────────────────────╮
-│ repo  │ distribution      │ installed │ state                             │
-├───────┼───────────────────┼───────────┼───────────────────────────────────┤
-│ repo1 │ —                 │ —         │ no pyproject (libs ride sys.path) │
-│ repo4 │ otto-sample-repo4 │ yes       │ current                           │
-╰───────┴───────────────────┴───────────┴───────────────────────────────────╯
+╭─────────┬───────────────────┬───────────┬───────────────────────────────────╮
+│ project │ distribution      │ installed │ state                             │
+├─────────┼───────────────────┼───────────┼───────────────────────────────────┤
+│ repo1   │ —                 │ —         │ no pyproject (libs ride sys.path) │
+│ repo4   │ otto-sample-repo4 │ yes       │ current                           │
+╰─────────┴───────────────────┴───────────┴───────────────────────────────────╯
 ```
 
 | Column | Meaning |
 | ------ | ------- |
-| `repo` | The repo's otto name, from its `settings.toml` |
+| `project` | The project's otto name, from its `settings.toml` |
 | `distribution` | Its `[project] name`, or `—` when it has no `pyproject.toml` |
 | `installed` | Whether that distribution is actually present in the environment |
-| `state` | `current`, `stale`, or why the repo is not installable |
+| `state` | `current`, `stale`, or why the project is not installable |
 
 ## It never fails on a broken environment
 
@@ -40,8 +40,8 @@ way — it says so and names `otto env create --force`.
 
 ## `stale` is an mtime comparison
 
-A repo reads as `stale` when its `pyproject.toml` is newer than the
-environment's metadata file: the environment was built before that repo's
+A project reads as `stale` when its `pyproject.toml` is newer than the
+environment's metadata file: the environment was built before that project's
 requirements last changed.
 
 ```console
@@ -61,6 +61,6 @@ The check runs one query inside the environment's own interpreter, so it
 answers the same way across uv and pip layouts. If the environment's
 interpreter cannot answer, the column reads `?`.
 
-A repo showing `no` after a successful build usually means its install failed
+A project showing `no` after a successful build usually means its install failed
 and the failure was reported at the time — see the resolver output in
 {doc}`index`.

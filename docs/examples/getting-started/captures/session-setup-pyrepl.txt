@@ -1,5 +1,5 @@
 $ otto --lab pyrepl host test1-py exec '1 + 1'
-INFO     fleet of interest: 0 of 2 lab hosts (1 repo(s), 1 excluded)                                
+INFO     fleet of interest: 0 of 2 lab hosts (1 project(s), 1 excluded)                             
 INFO     @test1-py   | command -v python3                                                           
 INFO     @test1-py > | /usr/bin/python3                                                             
 INFO     @test1-py   | python3 -u -i                                                                

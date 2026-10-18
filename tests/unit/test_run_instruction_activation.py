@@ -6,7 +6,7 @@ from otto.context import OttoContext, try_get_context
 from otto.instruction_catalog import STANDALONE_INSTRUCTIONS, InstructionEntry
 from otto.instructions import run_instruction
 from otto.labs.loader import Lab
-from otto.registry import registering_repo
+from otto.registry import registering_project
 from otto.session import InstructionInactiveError
 from tests._fixtures.bootstrap_seam import seed_scope_verdicts
 
@@ -31,7 +31,7 @@ def ran() -> "list[str]":
         calls.append("blink")
         return "blinked"
 
-    with registering_repo("acme"):
+    with registering_project("acme"):
         STANDALONE_INSTRUCTIONS.register(
             "blink", InstructionEntry(name="blink", handler=blink, module="m")
         )

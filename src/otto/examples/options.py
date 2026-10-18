@@ -1,15 +1,15 @@
 """Reference ``@options`` classes (sample).
 
-An options class holds the flags a verb takes. In a repo you declare each
+An options class holds the flags a verb takes. In a project you declare each
 one in an init module (a module named in your ``init`` setting) with
 ``@options(verbs=[...])``, naming the verbs whose flags it joins: here that
-would be ``RepoOptions`` for both ``otto run`` and ``otto test``, and
+would be ``ProjectOptions`` for both ``otto run`` and ``otto test``, and
 ``DeviceTestOptions`` for ``otto test`` only. The classes below use plain
 ``@options``, so importing this module registers nothing. A test reads its
 instance with ``ctx.options(DeviceTestOptions)``; an instruction declares a
 parameter annotated with a registered class and receives the instance.
 ``DeployInstructionOptions`` is an instruction's own ``options=`` class: it
-inherits ``RepoOptions``, so each shared field stays one flag.
+inherits ``ProjectOptions``, so each shared field stays one flag.
 
 ``@options`` (``from otto import options``) is otto's name for pydantic's
 dataclass decorator: decorating a class with it makes the class a pydantic
@@ -18,14 +18,14 @@ library's ``@dataclass``.
 
 Copy this module as a starting point, or import these classes directly:
 
->>> from otto.examples.options import RepoOptions, DeviceTestOptions
->>> RepoOptions().device_type
+>>> from otto.examples.options import ProjectOptions, DeviceTestOptions
+>>> ProjectOptions().device_type
 'router'
 >>> DeviceTestOptions(firmware="2.1").firmware
 '2.1'
 >>> from pydantic import ValidationError
 >>> try:
-...     RepoOptions(retries=-1)
+...     ProjectOptions(retries=-1)
 ... except ValidationError:
 ...     print("rejected")
 rejected
@@ -49,12 +49,12 @@ from pydantic import Field
 
 from otto import options
 
-__all__ = ["DeviceTestOptions", "RepoOptions"]
+__all__ = ["DeviceTestOptions", "ProjectOptions"]
 
 
 @options
-class RepoOptions:
-    """Repo-wide options: register them for ``["run", "test"]``.
+class ProjectOptions:
+    """Project-wide options: register them for ``["run", "test"]``.
 
     Every field becomes a CLI flag on ``otto test`` and on every ``otto run``
     instruction.
@@ -93,8 +93,8 @@ class DeviceTestOptions:
 
 
 @options
-class DeployInstructionOptions(RepoOptions):
-    """Instruction options: inherits the repo-wide flags and adds ``--debug/--no-debug``."""
+class DeployInstructionOptions(ProjectOptions):
+    """Instruction options: inherits the project-wide flags and adds ``--debug/--no-debug``."""
 
     debug: Annotated[
         bool,

@@ -88,5 +88,9 @@ def test_registrable_by_name_and_built_from_its_sub_table(tmp_path):
         username="carol",
     )
     assert isinstance(backend, ExampleReservationBackend)
-    assert (backend.url, backend.repo_dir, backend.username) == ("https://sched", tmp_path, "carol")
+    assert (backend.url, backend.project_root, backend.username) == (
+        "https://sched",
+        tmp_path,
+        "carol",
+    )
     assert [r.resource for r in backend.reservations] == ["rig"]

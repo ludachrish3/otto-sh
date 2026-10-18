@@ -10,14 +10,16 @@ from pathlib import Path
 
 import pytest
 
-from otto.config.repo import Repo
+from otto.config.project import Project
 from otto.labs.sources import prepared_lab_sources
 from tests._fixtures.sutrepo import make_sut_repo
 
 
-def _write_repo(repo_dir: Path, settings_body: str) -> Path:
+def _write_repo(project_root: Path, settings_body: str) -> Path:
     """Materialize a minimal SUT repo at *repo_dir* with *settings_body* appended."""
-    return make_sut_repo(repo_dir, name="tmp_repo", extra=textwrap.dedent(settings_body).strip())
+    return make_sut_repo(
+        project_root, name="tmp_repo", extra=textwrap.dedent(settings_body).strip()
+    )
 
 
 def test_relative_paths_anchor_to_repo_root_not_cwd(tmp_path, monkeypatch):
@@ -37,20 +39,20 @@ def test_relative_paths_anchor_to_repo_root_not_cwd(tmp_path, monkeypatch):
     elsewhere.mkdir()
     monkeypatch.chdir(elsewhere)
 
-    repo = Repo(sut_dir=sut)
+    project = Project(root=sut)
 
-    (lab_source,) = prepared_lab_sources(repo)
+    (lab_source,) = prepared_lab_sources(project)
     assert lab_source.prepared is not None
     assert lab_source.prepared.facts.file_inputs == (sut / "lab_data",)
-    assert repo.libs == [sut / "pylib"]
-    assert repo.tests == [sut / "tests"]
+    assert project.libs == [sut / "pylib"]
+    assert project.tests == [sut / "tests"]
 
 
 def test_absolute_paths_pass_through_unchanged(tmp_path):
     """Pins the documented contract: an absolute path in ``settings.toml`` is unchanged.
 
     This does NOT guard the ``is_absolute()`` early return inside
-    ``anchor_to_repo`` — under POSIX join semantics
+    ``anchor_to_project_root`` — under POSIX join semantics
     ``Path('/a/b') / Path('/tmp/x') == Path('/tmp/x')``, so deleting that
     early return is behavior-identical here (and for the ``~``-rooted case).
     The early return is documentation of intent, not something any test can
@@ -60,31 +62,31 @@ def test_absolute_paths_pass_through_unchanged(tmp_path):
     shared = tmp_path / "shared" / "pylib"
     sut = _write_repo(tmp_path / "repo", f'libs = ["{shared}"]')
 
-    repo = Repo(sut_dir=sut)
+    project = Project(root=sut)
 
-    assert repo.libs == [shared]
+    assert project.libs == [shared]
 
 
 def test_parent_relative_escapes_the_repo_root_unresolved(tmp_path):
     """``..`` works, and the join is NOT ``resolve()``d — symlinks must survive."""
     sut = _write_repo(tmp_path / "repo", 'libs = ["../shared/pylib"]')
 
-    repo = Repo(sut_dir=sut)
+    project = Project(root=sut)
 
-    assert repo.libs == [sut / ".." / "shared" / "pylib"]
+    assert project.libs == [sut / ".." / "shared" / "pylib"]
 
 
 def test_each_repo_anchors_to_its_own_root(tmp_path):
-    """Multi-repo (OTTO_SUT_DIRS): identical text, per-repo resolution."""
+    """Multi-repo (OTTOPATH): identical text, per-repo resolution."""
     a = _write_repo(tmp_path / "a", 'libs = ["pylib"]')
     b = _write_repo(tmp_path / "b", 'libs = ["pylib"]')
 
-    assert Repo(sut_dir=a).libs == [a / "pylib"]
-    assert Repo(sut_dir=b).libs == [b / "pylib"]
+    assert Project(root=a).libs == [a / "pylib"]
+    assert Project(root=b).libs == [b / "pylib"]
 
 
 def test_tilde_path_expands_against_home_not_repo_root(tmp_path, monkeypatch):
-    """Guards the ``~`` branch end-to-end through ``Repo``/``SettingsModel``.
+    """Guards the ``~`` branch end-to-end through ``Project``/``SettingsModel``.
 
     A future edit that drops ``expanduser()``, or moves it to run after the
     ``is_absolute()`` check, would silently stop expanding ``~`` and anchor
@@ -96,10 +98,10 @@ def test_tilde_path_expands_against_home_not_repo_root(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(home))
     sut = _write_repo(tmp_path / "repo", 'libs = ["~/pylib"]')
 
-    repo = Repo(sut_dir=sut)
+    project = Project(root=sut)
 
-    assert repo.libs == [home / "pylib"]
-    assert not str(repo.libs[0]).startswith(str(sut))
+    assert project.libs == [home / "pylib"]
+    assert not str(project.libs[0]).startswith(str(sut))
 
 
 def test_model_without_context_leaves_relative_paths_unchanged():
@@ -129,12 +131,12 @@ def test_docker_paths_anchor_to_repo_root(tmp_path, monkeypatch):
     elsewhere.mkdir()
     monkeypatch.chdir(elsewhere)
 
-    repo = Repo(sut_dir=sut)
+    project = Project(root=sut)
 
-    image = repo.docker_settings.images[0]
+    image = project.docker_settings.images[0]
     assert image.dockerfile == sut / "docker" / "api.Dockerfile"
     assert image.context == sut / "docker"
-    assert repo.docker_settings.composes[0].path == sut / "docker" / "compose.yml"
+    assert project.docker_settings.composes[0].path == sut / "docker" / "compose.yml"
 
 
 def test_monitor_tls_home_convention_survives(tmp_path, monkeypatch):
@@ -152,10 +154,10 @@ def test_monitor_tls_home_convention_survives(tmp_path, monkeypatch):
         """,
     )
 
-    repo = Repo(sut_dir=sut)
+    project = Project(root=sut)
 
-    assert repo.monitor_settings.tls_cert == home / ".otto" / "tls" / "cert.pem"
-    assert repo.monitor_settings.tls_key == home / ".otto" / "tls" / "key.pem"
+    assert project.monitor_settings.tls_cert == home / ".otto" / "tls" / "cert.pem"
+    assert project.monitor_settings.tls_key == home / ".otto" / "tls" / "key.pem"
 
 
 def test_monitor_tls_relative_anchors_to_repo_root(tmp_path, monkeypatch):
@@ -171,19 +173,19 @@ def test_monitor_tls_relative_anchors_to_repo_root(tmp_path, monkeypatch):
     elsewhere.mkdir()
     monkeypatch.chdir(elsewhere)
 
-    repo = Repo(sut_dir=sut)
+    project = Project(root=sut)
 
-    assert repo.monitor_settings.tls_cert == sut / "certs" / "bundle.pem"
-    assert repo.monitor_settings.tls_key is None
+    assert project.monitor_settings.tls_cert == sut / "certs" / "bundle.pem"
+    assert project.monitor_settings.tls_key is None
 
 
 def test_sut_dir_variable_is_no_longer_substituted(tmp_path):
     """``${sut_dir}`` is gone: it survives parsing as a literal path segment."""
     sut = _write_repo(tmp_path / "repo", 'libs = ["${sut_dir}/pylib"]')
 
-    repo = Repo(sut_dir=sut)
+    project = Project(root=sut)
 
-    assert repo.libs == [sut / "${sut_dir}" / "pylib"]
+    assert project.libs == [sut / "${sut_dir}" / "pylib"]
 
 
 def test_anchor_path_direct(tmp_path, monkeypatch):

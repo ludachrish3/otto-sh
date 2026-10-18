@@ -24,7 +24,7 @@ from otto.cli.tunnel import (
     _tunnel_id_completer,
     tunnel_app,
 )
-from otto.config.repo import Repo
+from otto.config.project import Project
 from otto.tunnel import (
     DEFAULT_CARRIER,
     AddedTunnel,
@@ -94,12 +94,12 @@ def test_l2_reachable_sorted_and_stable():
 # ── _hosts_completer wiring ──────────────────────────────────────────────────
 
 
-def _repo_with_hosts(tmp_path: Path, hosts: list[dict]) -> Repo:
+def _repo_with_hosts(tmp_path: Path, hosts: list[dict]) -> Project:
     """A fake Repo whose single lab search path holds *hosts* in lab.json."""
     lab = tmp_path / "lab"
     lab.mkdir(parents=True, exist_ok=True)
     write_lab_json(lab / "lab.json", hosts)
-    return fake_repo(lab_sources=json_lab_sources(tmp_path, [lab]), sut_dir=tmp_path)
+    return fake_repo(lab_sources=json_lab_sources(tmp_path, [lab]), root=tmp_path)
 
 
 _A = {"ip": "10.0.0.1", "element": "a", "creds": [{"login": "u", "password": "p"}]}
@@ -108,20 +108,20 @@ _C = {"ip": "192.168.5.5", "element": "c", "creds": [{"login": "u", "password": 
 
 
 def test_hosts_completer_narrows_to_l2_neighbors_after_comma(tmp_path):
-    repo = _repo_with_hosts(tmp_path, [_A, _B, _C])
+    project = _repo_with_hosts(tmp_path, [_A, _B, _C])
     with (
         patch("otto.registry.get_completion_names", return_value=None),
-        patch("otto.declared.get_repos", return_value=[repo]),
+        patch("otto.declared.get_projects", return_value=[project]),
     ):
         result = _hosts_completer(None, "a,")
     assert result == ["a,b"]  # c is on a different /24; a is already typed
 
 
 def test_hosts_completer_falls_back_to_full_list_on_narrowing_error(tmp_path):
-    repo = _repo_with_hosts(tmp_path, [_A, _B, _C])
+    project = _repo_with_hosts(tmp_path, [_A, _B, _C])
     with (
         patch("otto.registry.get_completion_names", return_value=None),
-        patch("otto.declared.get_repos", return_value=[repo]),
+        patch("otto.declared.get_projects", return_value=[project]),
         patch("otto.cli.tunnel._ip_by_host", side_effect=RuntimeError("boom")),
     ):
         result = _hosts_completer(None, "a,")
@@ -129,10 +129,10 @@ def test_hosts_completer_falls_back_to_full_list_on_narrowing_error(tmp_path):
 
 
 def test_hosts_completer_no_comma_yet_is_unaffected(tmp_path):
-    repo = _repo_with_hosts(tmp_path, [_A, _B, _C])
+    project = _repo_with_hosts(tmp_path, [_A, _B, _C])
     with (
         patch("otto.registry.get_completion_names", return_value=None),
-        patch("otto.declared.get_repos", return_value=[repo]),
+        patch("otto.declared.get_projects", return_value=[project]),
     ):
         result = _hosts_completer(None, "a")
     assert result == ["a"]  # no comma yet: narrowing never engages
@@ -149,13 +149,13 @@ def _ctx_with_labs(lab_names) -> SimpleNamespace:
 
 def test_hosts_completer_live_scan_filters_by_selected_lab(tmp_path):
     """Cache miss + lab selected: only that lab's hosts (plus builtins) offered."""
-    repo = _repo_with_hosts(
+    project = _repo_with_hosts(
         tmp_path,
         [dict(_A, labs=["unix"]), dict(_B, labs=["unix_alt"]), dict(_C, labs=["unix_alt"])],
     )
     with (
         patch("otto.registry.get_completion_names", return_value=None),
-        patch("otto.declared.get_repos", return_value=[repo]),
+        patch("otto.declared.get_projects", return_value=[project]),
     ):
         result = _hosts_completer(_ctx_with_labs(["unix"]), "")
     assert result == ["a", "local"]  # b/c (unix_alt) excluded; builtin local kept
@@ -169,17 +169,17 @@ def test_hosts_completer_cached_hosts_filtered_by_selected_lab():
     }
     with (
         patch("otto.registry.get_completion_names", return_value=fake_cache),
-        patch("otto.declared.get_repos", return_value=[]),
+        patch("otto.declared.get_projects", return_value=[]),
     ):
         result = _hosts_completer(_ctx_with_labs(["unix_alt"]), "")
     assert result == ["b", "c", "local"]
 
 
 def test_hosts_completer_no_lab_selected_keeps_full_fleet(tmp_path):
-    repo = _repo_with_hosts(tmp_path, [dict(_A, labs=["unix"]), dict(_B, labs=["unix_alt"])])
+    project = _repo_with_hosts(tmp_path, [dict(_A, labs=["unix"]), dict(_B, labs=["unix_alt"])])
     with (
         patch("otto.registry.get_completion_names", return_value=None),
-        patch("otto.declared.get_repos", return_value=[repo]),
+        patch("otto.declared.get_projects", return_value=[project]),
     ):
         result = _hosts_completer(_ctx_with_labs(None), "")
     assert result == ["a", "b", "local"]
@@ -187,13 +187,13 @@ def test_hosts_completer_no_lab_selected_keeps_full_fleet(tmp_path):
 
 def test_hosts_completer_l2_narrowing_respects_lab_scope(tmp_path):
     """A /24 neighbor outside the selected lab must not be offered after a comma."""
-    repo = _repo_with_hosts(
+    project = _repo_with_hosts(
         tmp_path,
         [dict(_A, labs=["unix"]), dict(_B, labs=["unix_alt"])],  # a+b share 10.0.0.0/24
     )
     with (
         patch("otto.registry.get_completion_names", return_value=None),
-        patch("otto.declared.get_repos", return_value=[repo]),
+        patch("otto.declared.get_projects", return_value=[project]),
     ):
         result = _hosts_completer(_ctx_with_labs(["unix"]), "a,")
     assert result == ["a,local"]  # b is L2-reachable but in another lab
@@ -206,7 +206,7 @@ def test_tunnel_id_completer_filters_prefix_and_sorts():
     """Only ids sharing the incomplete prefix survive, and the result is
     sorted even though ``read_tunnel_ids`` hands back an unsorted list."""
     with (
-        patch("otto.declared.get_repos", return_value=[]),
+        patch("otto.declared.get_projects", return_value=[]),
         patch(
             "otto.cli.tunnel.read_tunnel_ids",
             return_value=["tun-b-161", "tun-a-2000", "tun-a-161"],
@@ -218,7 +218,7 @@ def test_tunnel_id_completer_filters_prefix_and_sorts():
 
 def test_tunnel_id_completer_none_result_returns_empty():
     with (
-        patch("otto.declared.get_repos", return_value=[]),
+        patch("otto.declared.get_projects", return_value=[]),
         patch("otto.cli.tunnel.read_tunnel_ids", return_value=None),
     ):
         result = _tunnel_id_completer(None, "")
@@ -228,7 +228,7 @@ def test_tunnel_id_completer_none_result_returns_empty():
 def test_tunnel_id_completer_raising_returns_empty():
     """Completion never crashes the shell: a lookup failure yields ``[]``."""
     with (
-        patch("otto.declared.get_repos", return_value=[]),
+        patch("otto.declared.get_projects", return_value=[]),
         patch("otto.cli.tunnel.read_tunnel_ids", side_effect=RuntimeError("boom")),
     ):
         result = _tunnel_id_completer(None, "")
@@ -409,7 +409,7 @@ def test_list_renders_rich_table_with_column_headers():
     discovery = TunnelDiscovery(tunnels=[_discovered(_direct_tunnel())], unreachable=[])
     with (
         patch("otto.fleet.get_lab", return_value=object()),
-        patch("otto.declared.get_repos", return_value=[]),
+        patch("otto.declared.get_projects", return_value=[]),
         patch("otto.cli.tunnel.discover_tunnels", AsyncMock(return_value=discovery)),
         patch("otto.cli.tunnel.record_tunnel_ids"),
     ):
@@ -425,13 +425,13 @@ def test_list_renders_one_row_per_tunnel_with_all_columns(monkeypatch):
     discovery = TunnelDiscovery(tunnels=[discovered], unreachable=[])
     recorded = {}
 
-    def _record(repos, ids):
-        recorded["repos"] = repos
+    def _record(projects, ids):
+        recorded["repos"] = projects
         recorded["ids"] = ids
 
     with (
         patch("otto.fleet.get_lab", return_value=object()),
-        patch("otto.declared.get_repos", return_value=["repo-sentinel"]),
+        patch("otto.declared.get_projects", return_value=["repo-sentinel"]),
         patch("otto.cli.tunnel.discover_tunnels", AsyncMock(return_value=discovery)),
         patch("otto.cli.tunnel.record_tunnel_ids", side_effect=_record),
     ):
@@ -460,7 +460,7 @@ def test_list_relay_tunnel_shows_via_hosts():
     discovery = TunnelDiscovery(tunnels=[_discovered(tunnel)], unreachable=[])
     with (
         patch("otto.fleet.get_lab", return_value=object()),
-        patch("otto.declared.get_repos", return_value=[]),
+        patch("otto.declared.get_projects", return_value=[]),
         patch("otto.cli.tunnel.discover_tunnels", AsyncMock(return_value=discovery)),
         patch("otto.cli.tunnel.record_tunnel_ids"),
     ):
@@ -479,7 +479,7 @@ def test_list_dest_renders_arrow():
     discovery = TunnelDiscovery(tunnels=[_discovered(tunnel)], unreachable=[])
     with (
         patch("otto.fleet.get_lab", return_value=object()),
-        patch("otto.declared.get_repos", return_value=[]),
+        patch("otto.declared.get_projects", return_value=[]),
         patch("otto.cli.tunnel.discover_tunnels", AsyncMock(return_value=discovery)),
         patch("otto.cli.tunnel.record_tunnel_ids"),
     ):
@@ -493,7 +493,7 @@ def test_list_direct_tunnel_shows_dash_for_via():
     discovery = TunnelDiscovery(tunnels=[_discovered(tunnel)], unreachable=[])
     with (
         patch("otto.fleet.get_lab", return_value=object()),
-        patch("otto.declared.get_repos", return_value=[]),
+        patch("otto.declared.get_projects", return_value=[]),
         patch("otto.cli.tunnel.discover_tunnels", AsyncMock(return_value=discovery)),
         patch("otto.cli.tunnel.record_tunnel_ids"),
     ):
@@ -508,7 +508,7 @@ def test_list_unreachable_hosts_produce_yellow_partial_scan_line():
     discovery = TunnelDiscovery(tunnels=[], unreachable=["test9", "test8"])
     with (
         patch("otto.fleet.get_lab", return_value=object()),
-        patch("otto.declared.get_repos", return_value=[]),
+        patch("otto.declared.get_projects", return_value=[]),
         patch("otto.cli.tunnel.discover_tunnels", AsyncMock(return_value=discovery)),
         patch("otto.cli.tunnel.record_tunnel_ids"),
     ):
@@ -526,7 +526,7 @@ def test_list_degraded_tunnel_shows_present_over_expected():
     discovery = TunnelDiscovery(tunnels=[discovered], unreachable=[])
     with (
         patch("otto.fleet.get_lab", return_value=object()),
-        patch("otto.declared.get_repos", return_value=[]),
+        patch("otto.declared.get_projects", return_value=[]),
         patch("otto.cli.tunnel.discover_tunnels", AsyncMock(return_value=discovery)),
         patch("otto.cli.tunnel.record_tunnel_ids"),
     ):
@@ -543,7 +543,7 @@ def test_list_uncertain_tunnel_appends_question_mark():
     discovery = TunnelDiscovery(tunnels=[discovered], unreachable=["test1"])
     with (
         patch("otto.fleet.get_lab", return_value=object()),
-        patch("otto.declared.get_repos", return_value=[]),
+        patch("otto.declared.get_projects", return_value=[]),
         patch("otto.cli.tunnel.discover_tunnels", AsyncMock(return_value=discovery)),
         patch("otto.cli.tunnel.record_tunnel_ids"),
     ):
@@ -571,7 +571,7 @@ def test_remove_prints_removed_ids():
         patch("otto.fleet.get_lab", return_value=object()),
         patch("otto.cli.tunnel.remove_tunnel", AsyncMock(return_value=report)),
         patch("otto.cli.tunnel.record_tunnel_ids") as mock_record,
-        patch("otto.declared.get_repos", return_value=["repo-sentinel"]),
+        patch("otto.declared.get_projects", return_value=["repo-sentinel"]),
     ):
         result = runner.invoke(tunnel_app, ["remove", "tun-abc-161"])
     assert result.exit_code == 0, result.output
@@ -589,7 +589,7 @@ def test_remove_prints_multiple_removed_ids_comma_joined_no_brackets():
         patch("otto.fleet.get_lab", return_value=object()),
         patch("otto.cli.tunnel.remove_all_tunnels", AsyncMock(return_value=report)),
         patch("otto.cli.tunnel.record_tunnel_ids"),
-        patch("otto.declared.get_repos", return_value=[]),
+        patch("otto.declared.get_projects", return_value=[]),
     ):
         result = runner.invoke(tunnel_app, ["remove", "--all", "--yes"])
     assert result.exit_code == 0, result.output
@@ -606,7 +606,7 @@ def test_remove_unreachable_multiple_renders_comma_joined_no_brackets():
         patch("otto.fleet.get_lab", return_value=object()),
         patch("otto.cli.tunnel.remove_tunnel", AsyncMock(return_value=report)),
         patch("otto.cli.tunnel.record_tunnel_ids"),
-        patch("otto.declared.get_repos", return_value=[]),
+        patch("otto.declared.get_projects", return_value=[]),
     ):
         result = runner.invoke(tunnel_app, ["remove", "tun-abc-161"])
     assert result.exit_code == 1, result.output
@@ -626,7 +626,7 @@ def test_remove_survivors_render_red_and_exit_1():
         patch("otto.fleet.get_lab", return_value=object()),
         patch("otto.cli.tunnel.remove_tunnel", AsyncMock(return_value=report)),
         patch("otto.cli.tunnel.record_tunnel_ids"),
-        patch("otto.declared.get_repos", return_value=[]),
+        patch("otto.declared.get_projects", return_value=[]),
     ):
         result = runner.invoke(tunnel_app, ["remove", "tun-abc-161"])
     assert result.exit_code == 1, result.output
@@ -642,7 +642,7 @@ def test_remove_unreachable_renders_yellow_and_exits_1():
         patch("otto.fleet.get_lab", return_value=object()),
         patch("otto.cli.tunnel.remove_tunnel", AsyncMock(return_value=report)),
         patch("otto.cli.tunnel.record_tunnel_ids"),
-        patch("otto.declared.get_repos", return_value=[]),
+        patch("otto.declared.get_projects", return_value=[]),
     ):
         result = runner.invoke(tunnel_app, ["remove", "tun-abc-161"])
     assert result.exit_code == 1, result.output
@@ -655,7 +655,7 @@ def test_remove_all_without_yes_prompts():
         patch("otto.fleet.get_lab", return_value=object()),
         patch("otto.cli.tunnel.remove_all_tunnels", AsyncMock(return_value=report)) as mock_remove,
         patch("otto.cli.tunnel.record_tunnel_ids"),
-        patch("otto.declared.get_repos", return_value=[]),
+        patch("otto.declared.get_projects", return_value=[]),
     ):
         result = runner.invoke(tunnel_app, ["remove", "--all"], input="n\n")
     assert result.exit_code == 1, result.output
@@ -673,7 +673,7 @@ def test_remove_all_with_yes_skips_prompt():
         patch("otto.fleet.get_lab", return_value=object()),
         patch("otto.cli.tunnel.remove_all_tunnels", AsyncMock(return_value=report)) as mock_remove,
         patch("otto.cli.tunnel.record_tunnel_ids"),
-        patch("otto.declared.get_repos", return_value=[]),
+        patch("otto.declared.get_projects", return_value=[]),
     ):
         result = runner.invoke(tunnel_app, ["remove", "--all", "--yes"])
     assert result.exit_code == 0, result.output
@@ -708,7 +708,7 @@ def test_list_dry_run_says_nothing_was_scanned_and_leaves_the_cache_alone():
     with (
         active_context(dry_run=True),
         patch("otto.fleet.get_lab", return_value=object()),
-        patch("otto.declared.get_repos", return_value=["repo-sentinel"]),
+        patch("otto.declared.get_projects", return_value=["repo-sentinel"]),
         patch("otto.cli.tunnel.discover_tunnels", AsyncMock(return_value=discovery)),
         patch("otto.cli.tunnel.record_tunnel_ids") as mock_record,
     ):
@@ -727,7 +727,7 @@ def test_list_of_a_genuinely_empty_lab_still_prints_nothing_and_records():
     discovery = TunnelDiscovery(tunnels=[], unreachable=[])
     with (
         patch("otto.fleet.get_lab", return_value=object()),
-        patch("otto.declared.get_repos", return_value=["repo-sentinel"]),
+        patch("otto.declared.get_projects", return_value=["repo-sentinel"]),
         patch("otto.cli.tunnel.discover_tunnels", AsyncMock(return_value=discovery)),
         patch("otto.cli.tunnel.record_tunnel_ids") as mock_record,
     ):
@@ -782,7 +782,7 @@ def test_remove_dry_run_prints_the_plan_and_never_removed_none_found():
         active_context(dry_run=True),
         patch("otto.fleet.get_lab", return_value=object()),
         patch("otto.cli.tunnel.remove_all_tunnels", AsyncMock(return_value=report)),
-        patch("otto.declared.get_repos", return_value=["repo-sentinel"]),
+        patch("otto.declared.get_projects", return_value=["repo-sentinel"]),
         patch("otto.cli.tunnel.record_tunnel_ids") as mock_record,
     ):
         result = runner.invoke(tunnel_app, ["remove", "--all", "--yes"])
@@ -806,7 +806,7 @@ def test_remove_dry_run_by_id_headers_with_the_id():
         active_context(dry_run=True),
         patch("otto.fleet.get_lab", return_value=object()),
         patch("otto.cli.tunnel.remove_tunnel", AsyncMock(return_value=report)),
-        patch("otto.declared.get_repos", return_value=[]),
+        patch("otto.declared.get_projects", return_value=[]),
         patch("otto.cli.tunnel.record_tunnel_ids"),
     ):
         result = runner.invoke(tunnel_app, ["remove", "tun-abc-161"])
@@ -828,7 +828,7 @@ def test_a_plan_row_is_printed_verbatim_without_markup_or_wrapping():
         active_context(dry_run=True),
         patch("otto.fleet.get_lab", return_value=object()),
         patch("otto.cli.tunnel.remove_all_tunnels", AsyncMock(return_value=report)),
-        patch("otto.declared.get_repos", return_value=[]),
+        patch("otto.declared.get_projects", return_value=[]),
         patch("otto.cli.tunnel.record_tunnel_ids"),
     ):
         result = runner.invoke(tunnel_app, ["remove", "--all", "--yes"])

@@ -8,7 +8,7 @@ instruction such as `install` is customized instead — see
 
 `otto init --instructions` (or `--all`) scaffolds `pylib/<name>_instructions/`
 with one `smoke` instruction, so `otto --lab example_lab run smoke` works as
-soon as `OTTO_SUT_DIRS` points at the repo. Running an instruction needs a
+soon as `OTTOPATH` lists the project root. Running an instruction needs a
 lab (`--lab` or `OTTO_LAB`); `otto run --list-instructions` does not. This
 page hand-writes a more realistic one.
 

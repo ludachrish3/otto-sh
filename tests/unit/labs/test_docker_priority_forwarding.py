@@ -78,8 +78,8 @@ def test_fallback_summaries_over_a_loaded_lab_carry_the_rank(json_repo):
 
 def test_example_backend_summaries_carry_the_rank():
     elements = [{"name": h["element"], "hosts": [_bare(h)]} for h in _HOSTS]
-    repo = ExampleLabRepository(labs={"e": elements}, resources={})
-    assert _priorities(repo.list_host_summaries()) == _EXPECTED
+    repository = ExampleLabRepository(labs={"e": elements}, resources={})
+    assert _priorities(repository.list_host_summaries()) == _EXPECTED
 
 
 def test_host_identity_carries_the_rank():

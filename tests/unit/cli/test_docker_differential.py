@@ -19,7 +19,7 @@ from otto.docker.resolve import Selection, UseCaseResolutionError
 from tests._fixtures.dispatch import DispatchRunner
 from tests.unit.cli.conftest import _flat
 
-_EMPTY_BUILD = BuildReport(repos=[])
+_EMPTY_BUILD = BuildReport(projects=[])
 _EMPTY_DOWN = TeardownReport(hosts={}, use_case="integration")
 # A stack with no participating fragment. This deliberately drives
 # `_print_stack_report`'s defensive "registered no container on any host"
@@ -40,7 +40,7 @@ ROWS = [
         "otto.docker.build_verbs.build_on",
         ("test3",),
         {
-            "repo": None,
+            "project": None,
             "images": None,
             "tags": None,
             "no_cache": False,
@@ -51,11 +51,11 @@ ROWS = [
         _EMPTY_BUILD,
     ),
     (
-        ["build", "--parent", "test3", "--repo", "r1", "api", "db"],
+        ["build", "--parent", "test3", "--project", "r1", "api", "db"],
         "otto.docker.build_verbs.build_on",
         ("test3",),
         {
-            "repo": "r1",
+            "project": "r1",
             "images": ["api", "db"],
             "tags": None,
             "no_cache": False,
@@ -272,19 +272,19 @@ REFUSALS = [
         "--parent",
     ),
     (
-        ["build", "--parent", "t", "--repo", "zz"],
+        ["build", "--parent", "t", "--project", "zz"],
         "otto.docker.build_verbs.build_on",
         DockerVerbError(
-            "repo 'zz' is not a loaded repo with a [docker] section; docker repos: ['r1']",
-            field="repo",
+            "project 'zz' is not a loaded project with a [docker] section; docker projects: ['r1']",
+            field="project",
         ),
-        "--repo",
+        "--project",
     ),
     (
         ["build", "--parent", "t", "apo"],
         "otto.docker.build_verbs.build_on",
         DockerVerbError(
-            "no selected repo declares an image named 'apo'; declared: ['api']", field="images"
+            "no selected project declares an image named 'apo'; declared: ['api']", field="images"
         ),
         "IMAGE",
     ),
@@ -292,7 +292,7 @@ REFUSALS = [
         ["compose", "build", "integration", "apo"],
         "otto.docker.build_verbs.compose_build",
         DockerVerbError(
-            "no selected repo declares an image named 'apo'; declared: ['api']", field="images"
+            "no selected project declares an image named 'apo'; declared: ['api']", field="images"
         ),
         "IMAGE",
     ),

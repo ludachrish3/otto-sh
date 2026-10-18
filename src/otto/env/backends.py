@@ -7,7 +7,7 @@ dependency of its own.
 
 Selection is FLAG > SETTINGS > RECORDED > AUTO-DETECT, and each step exists for
 a different reason: the flag is this invocation's decision, the settings key is
-the repo's standing decision, the recorded value keeps an existing env
+the project's standing decision, the recorded value keeps an existing env
 self-consistent (switching backends under an existing env is a
 ``create --force`` matter, not a silent migration), and auto-detect is what
 happens when nobody has said anything.

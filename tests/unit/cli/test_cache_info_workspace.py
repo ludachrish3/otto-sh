@@ -2,7 +2,7 @@
 
 The read side of completion's outlet (``otto.labs.drops``). Driven through
 ``cache_app`` with ``CliRunner`` like the rest of ``test_cache_cli.py``, but
-against a REAL parsed repo under ``OTTO_SUT_DIRS`` — the block runs
+against a REAL parsed repo under ``OTTOPATH`` — the block runs
 discovery, reads the workspace's ``names`` entry and describes the inventory
 as completion resolves it, so a stand-in would test nothing.
 """
@@ -14,7 +14,7 @@ from types import SimpleNamespace
 from typer.testing import CliRunner
 
 import otto.config.completion_cache as cc
-import otto.config.repo as config_repo
+import otto.config.project as config_repo
 from tests._fixtures.labdata import write_lab_json
 from tests._fixtures.sutrepo import make_sut_repo
 
@@ -51,43 +51,43 @@ def _workspace(tmp_path, monkeypatch, *, references: list[str], settings: str = 
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("OTTO_HOME", str(home))
-    repo = make_sut_repo(tmp_path / "invsut", name="invsut", extra=settings)
-    (repo / "inventory.json").write_text(json.dumps({"dut-1": {"ip": "10.0.0.1"}}))
+    project = make_sut_repo(tmp_path / "invsut", name="invsut", extra=settings)
+    (project / "inventory.json").write_text(json.dumps({"dut-1": {"ip": "10.0.0.1"}}))
     write_lab_json(
-        repo / "lab" / "lab.json",
+        project / "lab" / "lab.json",
         [{"ip": "10.0.0.9", "element": "plain", "creds": _CREDS, "labs": ["site"]}],
         declare_labs=True,
     )
     write_lab_json(
-        repo / "hosts.json",
+        project / "hosts.json",
         [
             {"inventory": key, "element": f"dut{i}", "creds": _CREDS, "labs": ["site"]}
             for i, key in enumerate(references, start=1)
         ],
         declare_labs=False,
     )
-    monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
-    return repo
+    monkeypatch.setenv("OTTOPATH", str(project))
+    return project
 
 
 def _seed_cache() -> None:
     """Write the names entry the way the slow path does, from the real collectors."""
-    from otto.config.repo import discover
+    from otto.config.project import discover
 
-    repos = discover().repos
-    assert repos, "discovery found no repo under OTTO_SUT_DIRS"
+    projects = discover().projects
+    assert projects, "discovery found no repo under OTTOPATH"
     cc.write_cache(
-        repos,
+        projects,
         instructions=[],
-        hosts=cc.collect_host_ids(repos),
-        host_drops=cc.collect_host_drops(repos),
+        hosts=cc.collect_host_ids(projects),
+        host_drops=cc.collect_host_drops(projects),
     )
 
 
 def test_info_explains_the_workspace_hosts_and_what_was_dropped(tmp_path, monkeypatch):
     from otto.cli.cache import cache_app
 
-    repo = _workspace(tmp_path, monkeypatch, references=["dut-1", "ghost"])
+    project = _workspace(tmp_path, monkeypatch, references=["dut-1", "ghost"])
     _seed_cache()
 
     result = runner.invoke(cache_app, ["info"])
@@ -98,10 +98,12 @@ def test_info_explains_the_workspace_hosts_and_what_was_dropped(tmp_path, monkey
     assert "completion names: fresh" in out
     assert "inventory: json:" in out
     assert "BROKEN" not in out
-    assert f"lab files (invsut/local): {repo / 'lab' / 'lab.json'}, {repo / 'hosts.json'}" in out
+    assert (
+        f"lab files (invsut/local): {project / 'lab' / 'lab.json'}, {project / 'hosts.json'}" in out
+    )
     assert "hosts offered: 3 — dut1 local plain" in out  # `local` is the builtin host
     assert "dropped: 1 — not offered, and why:" in out
-    assert f"[invsut] {repo / 'hosts.json'}: element 'dut2' hosts[0]: " in out
+    assert f"[invsut] {project / 'hosts.json'}: element 'dut2' hosts[0]: " in out
     assert "ghost" in out
 
 
@@ -176,7 +178,7 @@ def test_info_stays_home_wide_without_a_workspace(tmp_path, monkeypatch):
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("OTTO_HOME", str(home))
-    monkeypatch.delenv("OTTO_SUT_DIRS", raising=False)
+    monkeypatch.delenv("OTTOPATH", raising=False)
 
     result = runner.invoke(cache_app, ["info"])
 
@@ -196,9 +198,12 @@ def test_info_reports_the_shim_standing(tmp_path, monkeypatch):
     from otto.config import completion_cache as cc
     from otto.config.completion_tree import build_shim_payload
 
-    repos = config_repo.discover().repos
+    projects = config_repo.discover().projects
     cc.write_cache(
-        repos, [], [], shim=build_shim_payload(repos, app=app, pending_key=PENDING_SUBCMD_ARGS_KEY)
+        projects,
+        [],
+        [],
+        shim=build_shim_payload(projects, app=app, pending_key=PENDING_SUBCMD_ARGS_KEY),
     )
     out = runner.invoke(cache_app, ["info"]).output
     assert "  shim: served (validated now)" in out
@@ -217,26 +222,29 @@ def _tests_workspace(tmp_path, monkeypatch):
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("OTTO_HOME", str(home))
-    repo = make_sut_repo(
+    project = make_sut_repo(
         tmp_path / "tsut",
         name="tsut",
         tests=["tests"],
         files={"tests/test_a.py": "def test_a():\n    pass\n"},
     )
-    monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
+    monkeypatch.setenv("OTTOPATH", str(project))
     bs.invalidate()
-    repos = config_repo.discover().repos
+    projects = config_repo.discover().projects
     cc.write_cache(
-        repos, [], [], shim=build_shim_payload(repos, app=app, pending_key=PENDING_SUBCMD_ARGS_KEY)
+        projects,
+        [],
+        [],
+        shim=build_shim_payload(projects, app=app, pending_key=PENDING_SUBCMD_ARGS_KEY),
     )
-    return repo, repos
+    return project, projects
 
 
 def _write_table(repo_obj) -> None:
     """The table a whole-tree collection of the repo writes: ``test_a`` in ``tests/test_a.py``."""
     from otto.config import collected_tests as ct
 
-    tests = repo_obj.sut_dir / "tests"
+    tests = repo_obj.root / "tests"
     st = (tests / "test_a.py").stat()
     record = ct.FileRecord(
         stat=[st.st_mtime_ns, st.st_size], tests=[ct.RecordedTest(classes=[], name="test_a")]
@@ -262,9 +270,9 @@ def test_info_reports_what_the_next_test_name_tab_does(tmp_path, monkeypatch):
     from otto import _shim_complete as sc
     from otto.cli.cache import cache_app
 
-    repo, [repo_obj] = _tests_workspace(tmp_path, monkeypatch)
+    project, [repo_obj] = _tests_workspace(tmp_path, monkeypatch)
     out = runner.invoke(cache_app, ["info"]).output
-    assert f"  test names: handing over — no test-names cache for {repo_obj.sut_dir}" in out
+    assert f"  test names: handing over — no test-names cache for {repo_obj.root}" in out
 
     _write_table(repo_obj)
     out = runner.invoke(cache_app, ["info"]).output
@@ -275,7 +283,7 @@ def test_info_reports_what_the_next_test_name_tab_does(tmp_path, monkeypatch):
     marker = cc._cache_path().parent / sc.MARKER_FILENAMES["tests"]
     then = time.time() - sc.CHECK_WINDOW_SECONDS - 100
     os.utime(marker, (then, then))
-    (repo / "tests" / "test_a.py").write_text("def test_b():\n    pass\n")
+    (project / "tests" / "test_a.py").write_text("def test_b():\n    pass\n")
     out = runner.invoke(cache_app, ["info"]).output
     assert re.search(
         r"  test names: served \(1 name; last checked \d+s ago, a check is due\)", out
@@ -323,13 +331,13 @@ def test_info_reports_the_collect_child(tmp_path, monkeypatch):
 
 def test_info_reports_what_the_docker_cache_still_vouches_for(tmp_path, monkeypatch):
     from otto.cli.cache import cache_app
-    from otto.config.repo import discover
+    from otto.config.project import discover
 
     _workspace(tmp_path, monkeypatch, references=["dut-1"])
     _seed_cache()
-    repos = discover().repos
-    cc.record_docker_images(repos, "test3", refs=["a:1"], ids=["i"])
-    cc.record_docker_containers(repos, "alt2", names=["c"], ids=["x"])
+    projects = discover().projects
+    cc.record_docker_images(projects, "test3", refs=["a:1"], ids=["i"])
+    cc.record_docker_containers(projects, "alt2", names=["c"], ids=["x"])
     result = runner.invoke(cache_app, ["info"])
     assert result.exit_code == 0, result.output
     assert "  docker observed: images on test3; containers on alt2" in result.output
@@ -348,15 +356,15 @@ def test_info_says_nothing_observed_on_a_cold_docker_cache(tmp_path, monkeypatch
 def test_info_drops_an_expired_sub_entry_and_lists_hosts_sorted(tmp_path, monkeypatch):
     """Containers last 15 minutes and images a day: sixteen minutes on, only the images stand."""
     from otto.cli.cache import cache_app
-    from otto.config.repo import discover
+    from otto.config.project import discover
 
     _workspace(tmp_path, monkeypatch, references=["dut-1"])
     _seed_cache()
-    repos = discover().repos
-    cc.record_docker_images(repos, "zulu", refs=["a:1"], ids=["i"])
-    cc.record_docker_images(repos, "alpha", refs=["b:1"], ids=["j"])
-    cc.record_docker_containers(repos, "zulu", names=["c"], ids=["x"])
-    cc.record_docker_containers(repos, "mike", names=["d"], ids=["y"])
+    projects = discover().projects
+    cc.record_docker_images(projects, "zulu", refs=["a:1"], ids=["i"])
+    cc.record_docker_images(projects, "alpha", refs=["b:1"], ids=["j"])
+    cc.record_docker_containers(projects, "zulu", names=["c"], ids=["x"])
+    cc.record_docker_containers(projects, "mike", names=["d"], ids=["y"])
     before = runner.invoke(cache_app, ["info"]).output
     assert "  docker observed: images on alpha, zulu; containers on mike, zulu" in before
 

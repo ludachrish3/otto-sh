@@ -2,7 +2,7 @@
 
 Three tables are written. :data:`STANDALONE_INSTRUCTIONS` holds what
 ``@instruction()`` registers on a plain async function,
-:data:`PROJECT_ACTIONS` holds one :class:`ProjectActionsEntry` per repo: its
+:data:`PROJECT_ACTIONS` holds one :class:`ProjectActionsEntry` per project: its
 ``ProjectActions`` subclass with the bodies its marked methods declare, and
 :data:`FIRST_PARTY_ACTIONS` holds otto's own class and its six bodies, which
 :mod:`otto.project.actions` declares (:func:`declare_first_party_actions`).
@@ -14,7 +14,7 @@ inconsistent, so a derived view is never asked to reconcile anything.
 
 The catalog is data and rules only. At run time it imports :mod:`otto.errors`
 and :mod:`otto.registry` and nothing else, so it sits in the foundation layer
-and every layer reads it: ``Repo``'s instruction panel, the completion cache,
+and every layer reads it: ``Project``'s instruction panel, the completion cache,
 the project layer and the CLI see the registered set without loading the CLI
 stack or the run machinery. Running an instruction is
 :mod:`otto.instructions`' work, and that module serves :func:`instruction` at
@@ -34,9 +34,9 @@ from .registry import (
     Proposed,
     Registry,
     RegistryView,
-    RequireRepo,
+    RequireProject,
     _registering_for_otto,
-    get_registering_repo,
+    get_registering_project,
     registration_boundary,
 )
 
@@ -56,10 +56,10 @@ class InstructionEntry:
     instruction named with ``options=``. ``help`` is an explicit ``help=``;
     ``None`` lets the command take the handler's docstring.
 
-    The repo that owns an instruction is not a field: it is
-    ``INSTRUCTIONS.repo(name)``, the repo whose init import registered it
+    The project that owns an instruction is not a field: it is
+    ``INSTRUCTIONS.project(name)``, the project whose init import registered it
     (``None`` for otto's own, and for every project instruction, whose bodies
-    each belong to a repo of their own).
+    each belong to a project of their own).
     """
 
     name: str
@@ -81,8 +81,8 @@ FIRST_PARTY_INSTRUCTIONS: frozenset[str] = frozenset(
 )
 """Names otto's default instructions claim (see :mod:`otto.project.actions`).
 
-A repo instruction may not take one -- :data:`STANDALONE_INSTRUCTIONS`
-refuses it while a repo's init modules are being imported. The sanctioned
+A project instruction may not take one -- :data:`STANDALONE_INSTRUCTIONS`
+refuses it while a project's init modules are being imported. The sanctioned
 override is a :class:`~otto.project.actions.ProjectActions` subclass, which
 keeps ``otto run install`` and an ``ensure("installed")`` marker on one code
 path.
@@ -159,8 +159,8 @@ class ProjectInstructionBody:
     options_cls: "type[DataclassInstance] | None"
     """The options class the method takes, or ``None``."""
 
-    repo: str | None
-    """The repo whose actions declare the body; ``None`` for otto's own."""
+    project: str | None
+    """The project whose actions declare the body; ``None`` for otto's own."""
 
     help: str | None
     """The summary the published command shows, if this body fixes the spec."""
@@ -174,7 +174,7 @@ class ProjectInstructionBody:
 
 @dataclasses.dataclass(frozen=True)
 class ProjectActionsEntry:
-    """One repo's actions: its ``ProjectActions`` subclass and the bodies it declares."""
+    """One project's actions: its ``ProjectActions`` subclass and the bodies it declares."""
 
     cls: type
     """The registered ``ProjectActions`` subclass."""
@@ -185,7 +185,7 @@ class ProjectActionsEntry:
 
 @dataclasses.dataclass(frozen=True)
 class ProjectInstruction:
-    """A spec plus every declared body, otto's first, then the repos' in registration order."""
+    """A spec plus every declared body, otto's first, then the projects' in registration order."""
 
     spec: ProjectInstructionSpec
     bodies: "tuple[ProjectInstructionBody, ...]"
@@ -200,9 +200,9 @@ class ProjectInstruction:
 
     @property
     def first_party_options(self) -> "type[DataclassInstance] | None":
-        """Return the options class of otto's own body (``repo is None``), if any."""
+        """Return the options class of otto's own body (``project is None``), if any."""
         for body in self.bodies:
-            if body.repo is None:
+            if body.project is None:
                 return body.options_cls
         return None
 
@@ -236,12 +236,12 @@ def options_parameter(func: "Callable[..., Any]", opts_cls: type | None) -> str 
     )
 
 
-def _who(repo: str | None) -> str:
-    return "otto" if repo is None else f"repo {repo!r}"
+def _who(project: str | None) -> str:
+    return "otto" if project is None else f"project {project!r}"
 
 
-def _bodies_of(cls: type, repo: str | None) -> "tuple[ProjectInstructionBody, ...]":
-    """Build one body per ``@instruction``-marked method declared ON *cls*, as *repo*'s.
+def _bodies_of(cls: type, project: str | None) -> "tuple[ProjectInstructionBody, ...]":
+    """Build one body per ``@instruction``-marked method declared ON *cls*, as *project*'s.
 
     Reads only ``vars(cls)`` and each method's mark, never a table.
     ``vars(cls)``, not ``dir()``: an inherited, undecorated method is the
@@ -274,7 +274,7 @@ def _bodies_of(cls: type, repo: str | None) -> "tuple[ProjectInstructionBody, ..
                 owner_class=cls,
                 method_name=attr,
                 options_cls=mark.options_cls,
-                repo=repo,
+                project=project,
                 help=mark.help,
                 shape=FrozenMap(mark.shape),
             )
@@ -287,7 +287,7 @@ def _effective_spec(first: ProjectInstructionBody) -> ProjectInstructionSpec:
     return ProjectInstructionSpec(
         name=first.name,
         module=first.owner_class.__module__,
-        declared_by=first.repo,
+        declared_by=first.project,
         help=first.help,
         **first.shape,  # ty: ignore[invalid-argument-type]
     )
@@ -328,7 +328,7 @@ def _check_tables(
     names the standalone instruction's owner: while a standalone instruction
     is registered, the clashing one is that registration (committed
     standalone and project instructions never share a name), so its owner is
-    the repo whose init import is running; while project actions are
+    the project whose init import is running; while project actions are
     registered, it is a committed entry, whose owner the table recorded.
     """
     first: dict[str, ProjectInstructionBody] = {}
@@ -337,15 +337,15 @@ def _check_tables(
     for body in _declared_bodies(first_party, actions):
         name = body.name
         earlier = seen.get((body.owner_class, name))
-        if earlier is not None and earlier.repo != body.repo:
+        if earlier is not None and earlier.project != body.project:
             raise ProjectInstructionError(
-                f"{_who(body.repo)} registers class {body.owner_class.__name__}, which "
-                f"{_who(earlier.repo)} already registered -- each repo registers its own "
+                f"{_who(body.project)} registers class {body.owner_class.__name__}, which "
+                f"{_who(earlier.project)} already registered -- each project registers its own "
                 "ProjectActions subclass"
             )
         if earlier is not None:
             raise ProjectInstructionError(
-                f"{_who(body.repo)} declares project instruction {name!r} twice on "
+                f"{_who(body.project)} declares project instruction {name!r} twice on "
                 f"{body.owner_class.__name__} -- a class has at most one body per name"
             )
         seen[(body.owner_class, name)] = body
@@ -355,11 +355,11 @@ def _check_tables(
             current = getattr(effective, keyword)
             if current is not value and current != value:
                 raise ProjectInstructionError(
-                    f"project instruction {name!r} was declared by {_who(fixed.repo)} "
-                    f"with {keyword}={current!r}; {_who(body.repo)} may not restate it as "
+                    f"project instruction {name!r} was declared by {_who(fixed.project)} "
+                    f"with {keyword}={current!r}; {_who(body.project)} may not restate it as "
                     f"{value!r} -- the first declaration fixes the walk shape"
                 )
-        base = fixed.options_cls if fixed.repo is None else None
+        base = fixed.options_cls if fixed.project is None else None
         if (
             base is not None
             and body is not fixed
@@ -367,19 +367,21 @@ def _check_tables(
         ):
             shown = "no options class" if body.options_cls is None else body.options_cls.__name__
             raise ProjectInstructionError(
-                f"{_who(body.repo)} overrides first-party instruction {name!r} with {shown}; "
+                f"{_who(body.project)} overrides first-party instruction {name!r} with {shown}; "
                 f"its options class must inherit otto.project.{base.__name__} so the "
                 f"first-party flags stay on the command and super() can read them"
             )
     for name in sorted((set(first) | FIRST_PARTY_INSTRUCTIONS) & set(standalone)):
         body = first.get(name)
         owner = (
-            get_registering_repo() if registering_standalone else STANDALONE_INSTRUCTIONS.repo(name)
+            get_registering_project()
+            if registering_standalone
+            else STANDALONE_INSTRUCTIONS.project(name)
         )
         declared = (
             "one of otto's first-party instructions"
             if body is None
-            else f"declared by {_who(body.repo)} on {body.owner_class.__name__}"
+            else f"declared by {_who(body.project)} on {body.owner_class.__name__}"
         )
         raise ProjectInstructionError(
             f"project instruction {name!r} ({declared}) and a standalone instruction "
@@ -420,23 +422,23 @@ def _check_standalone(
             f"standalone instruction {name!r}: the entry is named {entry.name!r}; "
             "an instruction is registered under its own name"
         )
-    # A repo may not claim a project instruction's name. Overriding lab
+    # A project may not claim a project instruction's name. Overriding lab
     # behaviour happens in ProjectActions -- which `otto run install` AND an
     # ensure("installed") marker both route through -- so shadowing the
     # instruction would move only the CLI half and let the two answer
-    # differently. Keyed on the registering-repo marker, never on the name
-    # alone: otto's own registrations run outside any repo's init import.
+    # differently. Keyed on the registering-project marker, never on the name
+    # alone: otto's own registrations run outside any project's init import.
     # FIRST_PARTY_INSTRUCTIONS is tested first, so the guard answers for the
     # six whether or not FIRST_PARTY_ACTIONS has been filled yet.
-    repo = get_registering_repo()
+    project = get_registering_project()
     first_party = _current_first_party()
     actions = _current_actions()
-    if repo is not None and (
+    if project is not None and (
         name in FIRST_PARTY_INSTRUCTIONS
         or any(b.name == name for b in _declared_bodies(first_party, actions))
     ):
         raise ValueError(
-            f"repo {repo!r} defines instruction {name!r}, which is a "
+            f"project {project!r} defines instruction {name!r}, which is a "
             "project instruction. Override lab behavior by declaring the method on a "
             "ProjectActions subclass instead (see docs/cli/run/defaults.md), "
             "or rename the instruction."
@@ -447,7 +449,7 @@ def _check_standalone(
 def _check_project_actions(
     name: str, entry: ProjectActionsEntry, proposed: Proposed[ProjectActionsEntry]
 ) -> None:
-    """``PROJECT_ACTIONS``' validate: the key is the registering repo; the bodies are its own.
+    """``PROJECT_ACTIONS``' validate: the key is the registering project; the bodies are its own.
 
     The class must inherit otto's own ``ProjectActions``, the class
     :data:`FIRST_PARTY_ACTIONS` holds; while that table is empty, nothing
@@ -456,20 +458,20 @@ def _check_project_actions(
     base = _first_party_class()
     if base is None or not (isinstance(entry.cls, type) and issubclass(entry.cls, base)):
         raise TypeError(
-            f"project actions for repo {name!r}: {entry.cls!r} is not a ProjectActions subclass"
+            f"project actions for project {name!r}: {entry.cls!r} is not a ProjectActions subclass"
         )
-    repo = get_registering_repo()
-    if name != repo:
+    project = get_registering_project()
+    if name != project:
         raise ValueError(
-            f"project actions are keyed by the repo that registers them: {_who(repo)} may not "
-            f"register actions for repo {name!r}"
+            f"project actions are keyed by the project that registers them: {_who(project)} "
+            f"may not register actions for project {name!r}"
         )
     for body in entry.bodies:
-        if body.owner_class is not entry.cls or body.repo != name:
+        if body.owner_class is not entry.cls or body.project != name:
             raise ValueError(
-                f"project actions for repo {name!r}: the body for {body.name!r} belongs to "
-                f"{body.owner_class.__name__} of {_who(body.repo)}, not to "
-                f"{entry.cls.__name__} of repo {name!r}"
+                f"project actions for project {name!r}: the body for {body.name!r} belongs to "
+                f"{body.owner_class.__name__} of {_who(body.project)}, not to "
+                f"{entry.cls.__name__} of project {name!r}"
             )
     _check_tables(
         _current_first_party(), proposed, _current_standalone(), registering_standalone=False
@@ -481,13 +483,13 @@ def _check_first_party_actions(
 ) -> None:
     """``FIRST_PARTY_ACTIONS``' validate: otto's one row, keyed ``"otto"``, declaring the six.
 
-    The row is otto's, never a repo's: its writer resets the registering-repo
-    marker, so a write made under a repo's marker went around it.
+    The row is otto's, never a project's: its writer resets the registering-project
+    marker, so a write made under a project's marker went around it.
     """
-    repo = get_registering_repo()
-    if repo is not None:
+    project = get_registering_project()
+    if project is not None:
         raise ValueError(
-            f"first-party actions are otto's, but {_who(repo)} is registering them; "
+            f"first-party actions are otto's, but {_who(project)} is registering them; "
             "otto.project.actions declares them (declare())"
         )
     if name != FIRST_PARTY_KEY:
@@ -498,10 +500,10 @@ def _check_first_party_actions(
     if not isinstance(entry.cls, type):
         raise TypeError(f"first-party actions: {entry.cls!r} is not a class")
     for body in entry.bodies:
-        if body.owner_class is not entry.cls or body.repo is not None:
+        if body.owner_class is not entry.cls or body.project is not None:
             raise ValueError(
                 f"first-party actions: the body for {body.name!r} belongs to "
-                f"{body.owner_class.__name__} of {_who(body.repo)}, not to otto's "
+                f"{body.owner_class.__name__} of {_who(body.project)}, not to otto's "
                 f"{entry.cls.__name__}"
             )
     declared = {body.name for body in entry.bodies}
@@ -527,10 +529,10 @@ PROJECT_ACTIONS: Registry[ProjectActionsEntry] = Registry(
     register_hint="otto.register_project_actions()",
     validate=_check_project_actions,
     capabilities=[
-        Justified(RequireRepo(), reason="one actions class per repo; the repo is the key"),
+        Justified(RequireProject(), reason="one actions class per project; the project is the key"),
     ],
 )
-"""Each repo's :class:`~otto.instruction_catalog.ProjectActionsEntry`, keyed by repo name."""
+"""Each project's :class:`~otto.instruction_catalog.ProjectActionsEntry`, keyed by project name."""
 
 FIRST_PARTY_KEY = "otto"
 """The one key of :data:`FIRST_PARTY_ACTIONS`."""
@@ -551,7 +553,7 @@ it again for a caller that must not rely on the import, such as
 variable: filling it moves its revision, so :data:`PROJECT_INSTRUCTIONS` and
 :data:`INSTRUCTIONS` derive the six on their next read, however early they
 were first read. Before it is filled, the six names are still refused to a
-standalone instruction (:data:`FIRST_PARTY_INSTRUCTIONS`), and no repo's
+standalone instruction (:data:`FIRST_PARTY_INSTRUCTIONS`), and no project's
 actions class qualifies, because none can inherit the class yet."""
 
 
@@ -563,13 +565,13 @@ def declare_first_party_actions(cls: type) -> None:
     ``tests/unit/test_slot_installers.py`` fails on any other caller. Declaring
     the class already declared does nothing and moves no revision; the write
     goes through the table's transactional ``register``, so a refused class
-    leaves the table as it was. The row is otto's, outside any repo, even
-    when a repo's init import is what first imported the installer.
+    leaves the table as it was. The row is otto's, outside any project, even
+    when a project's init import is what first imported the installer.
 
     Raises:
         otto.registry.DuplicateRegistration: A different class is already declared.
         TypeError: *cls* is not a class.
-        ValueError: A body *cls* marks belongs to another class or to a repo.
+        ValueError: A body *cls* marks belongs to another class or to a project.
         ProjectInstructionError: *cls* does not mark exactly the six first-party
             names, or its bodies break a table rule.
     """
@@ -593,7 +595,7 @@ def _derive_project_instructions() -> "Iterator[Derived[ProjectInstruction]]":
             name,
             ProjectInstruction(_effective_spec(fixed), tuple(bodies[name])),
             origin=fixed.owner_class.__module__,
-            repo=None,
+            project=None,
         )
 
 
@@ -603,7 +605,7 @@ PROJECT_INSTRUCTIONS: RegistryView[ProjectInstruction] = RegistryView(
     sources=[FIRST_PARTY_ACTIONS, PROJECT_ACTIONS],
     derive=_derive_project_instructions,
 )
-"""The project instructions by name, derived from otto's bodies and then each repo's.
+"""The project instructions by name, derived from otto's bodies and then each project's.
 
 Each name's spec is fixed by its first declarer (otto's for the six)."""
 
@@ -614,14 +616,14 @@ def _derive_instructions() -> "Iterator[Derived[InstructionEntry]]":
             name,
             InstructionEntry(name=name, module=project.spec.module, project=project),
             origin=PROJECT_INSTRUCTIONS.origin(name),
-            repo=None,
+            project=None,
         )
     for name, entry in STANDALONE_INSTRUCTIONS.raw_items():
         yield Derived(
             name,
             entry,
             origin=STANDALONE_INSTRUCTIONS.origin(name),
-            repo=STANDALONE_INSTRUCTIONS.repo(name),
+            project=STANDALONE_INSTRUCTIONS.project(name),
         )
 
 
@@ -633,7 +635,7 @@ INSTRUCTIONS: RegistryView[InstructionEntry] = RegistryView(
 )
 """Every ``otto run`` command by name: the project instructions, then the standalone ones.
 
-``INSTRUCTIONS.repo(name)`` is the repo that owns an instruction: the repo
+``INSTRUCTIONS.project(name)`` is the project that owns an instruction: the project
 whose init import registered a standalone one, ``None`` for otto's own and
 for every project instruction."""
 
@@ -645,7 +647,7 @@ P = ParamSpec("P")
 # instruction keeps its signature at every call site instead of decaying to
 # ``Any`` -- which is what ty's ``dynamic-function-decorator-return`` reports.
 # Its RETURN stays ``Any`` on purpose: the leaf-invoke bridge renders whatever a
-# handler hands back, and first-party and repo instructions between them already
+# handler hands back, and first-party and project instructions between them already
 # return ``CommandResult``, ``Result``, ``None`` and bare payloads. The narrower
 # ``CommandResult`` this used to claim was never true and never checked, because
 # the outer ``Callable[..., Any]`` erased it before anything could look.
@@ -722,7 +724,7 @@ def instruction(
     Usage with an options dataclass::
 
         @dataclass
-        class _Opts(RepoOptions):
+        class _Opts(ProjectOptions):
             debug: Annotated[bool, typer.Option()] = False
 
 
@@ -739,12 +741,12 @@ def instruction(
 
     The *same* dataclass may be inherited by a suite's inner ``Options``
     class, giving both ``otto test`` and ``otto run`` subcommands a
-    uniform set of repo-wide flags.
+    uniform set of project-wide flags.
 
     ON A ``ProjectActions`` METHOD (first parameter ``self``) this registers
     nothing: it stamps a :class:`~otto.instruction_catalog.ProjectInstructionMark`
     on the function and hands it back. ``register_project_actions`` reads the
-    marks into its repo's :class:`~otto.instruction_catalog.ProjectActionsEntry`, and
+    marks into its project's :class:`~otto.instruction_catalog.ProjectActionsEntry`, and
     :data:`~otto.instruction_catalog.INSTRUCTIONS` derives one merged command per name. The six
     walk-shape keywords (``walk``,
     ``continue_on_failure``, ``require_dependencies``, ``dry_run_preview``,
@@ -812,7 +814,7 @@ def instruction(
                 )
             # An explicit help= wins over the docstring, and the six use it:
             # a project instruction's METHOD docstring describes what ONE
-            # repo's body does, while the published command walks every repo,
+            # project's body does, while the published command walks every project,
             # so the summary a user reads in `--help` is not the summary the
             # body's author is writing. The docstring is left untouched -- it
             # is still what a reader of the class sees.
@@ -841,7 +843,7 @@ def instruction(
         # leaf-invoke wrapper's coroutine bridge (cli/invoke._wrap_invoke).
         #
         # A missing options parameter is still refused here -- at decoration,
-        # not at the first `otto run`. A repo claiming a project instruction's
+        # not at the first `otto run`. A project claiming a project instruction's
         # name is refused by the table itself (STANDALONE_INSTRUCTIONS'
         # validate), so a direct register() meets the same refusal.
         options_parameter(func, options)

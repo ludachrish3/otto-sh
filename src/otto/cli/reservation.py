@@ -3,7 +3,7 @@
 Subcommands:
 
 - ``otto reservation whoami`` — show the resolved identity and backend. Needs
-  no lab: identity and backend come from repo settings + root options.
+  no lab: identity and backend come from project settings + root options.
 - ``otto --lab LAB reservation check`` — run the reservation check and print a
   human-readable report. Useful as a pre-flight before a long ``otto test``.
   Loads the lab (which defines the required resources) lazily; never contacts
@@ -54,7 +54,7 @@ def _reservation_gate(ctx: typer.Context) -> ReservationGate | None:
 
     Commands that already went through ``ensure_lab_context`` find the gate in
     ``ctx.meta``; the lab-free path (``whoami`` without ``--lab``) builds it
-    here from repo settings + root options — identity and backend never depend
+    here from project settings + root options — identity and backend never depend
     on the lab.
     """
     res = ctx.meta.get("otto_reservation")
@@ -68,15 +68,15 @@ def _reservation_gate(ctx: typer.Context) -> ReservationGate | None:
         return None
 
     # The composition root: importing it installs the initiator that composes
-    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    # the projects this reads (spec 2026-10-11 placement-and-phases §3.12).
     from .. import bootstrap
 
     del bootstrap
-    from ..declared import get_repos
+    from ..declared import get_projects
 
     try:
         gate = build_reservation_gate(
-            get_repos(),
+            get_projects(),
             holder=opts.holder,
             skip_reservation_check=opts.skip_reservation_check,
             cwd_fallback=Path.cwd(),

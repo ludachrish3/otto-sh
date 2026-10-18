@@ -13,16 +13,16 @@ Resolution order, stated once and consulted by every enforcement point:
 
 - An explicit `--exclude-projects` wins over everything; then
   `--include-projects`; a name in both is a usage error.
-- Otherwise, if the repo declared a `[project]` table, its `lab_patterns` and
-  `host_patterns` are matched against the loaded labs. A repo no loaded lab
+- Otherwise, if the project declared a `[project]` table, its `lab_patterns` and
+  `host_patterns` are matched against the loaded labs. A project no loaded lab
   applies to — or one whose `host_patterns` match no host in the labs that do —
   is inactive. See {ref}`project-scope` in {doc}`../configuration/lab-config`
   for that schema.
-- Otherwise the repo is active. **A repo that declared no `[project]` table is
-  always active**, so a single-repo workspace is unaffected and activation is
+- Otherwise the project is active. **A project that declared no `[project]` table is
+  always active**, so a single-project workspace is unaffected and activation is
   opt-in.
 
-With no lab loaded there is no inference to make and every repo is active.
+With no lab loaded there is no inference to make and every project is active.
 
 ## The switches
 
@@ -33,16 +33,16 @@ With no lab loaded there is no inference to make and every repo is active.
 
 Both are root options, so they go **before** the subcommand. Both repeat, and
 each occurrence also splits on commas: `-E a,b` and `-E a -E b` are the same
-selection. **Only** the comma separates — unlike `OTTO_SUT_DIRS`, which
+selection. **Only** the comma separates — unlike `OTTOPATH`, which
 splits only on the OS path separator.
 Segments are stripped, and an empty one is dropped rather than refused, so a
 trailing comma or a shell-built `-E "$NAMES"` is harmless.
 
-Names are matched against the discovered repos' `name` fields the way project
+Names are matched against the discovered projects' `name` fields the way project
 dependencies are: PEP 503-normalized, so case and `_`/`-`/`.` punctuation do
 not matter. `-I radio_FW` finds `radio-fw`.
 
-A name that matches no discovered repo is a usage error, not a silent no-op:
+A name that matches no discovered project is a usage error, not a silent no-op:
 
 ```console
 $ otto --lab radio -E radio-fww run flash-radio
@@ -63,23 +63,23 @@ Try 'otto -h' for help.
 
 Both exit **2**: they are things you typed, not things the lab decided.
 
-Tab completion offers the discovered repo names. It is fed by discovery alone —
+Tab completion offers the discovered project names. It is fed by discovery alone —
 never by a full bootstrap — so `otto -I <TAB>` cannot be slowed or hung by
-another repo's `init` module.
+another project's `init` module.
 
 ## What enforcement looks like
 
 Activation shows up at exactly four surfaces, and each says which axis
 decided.
 
-### Fleet walks skip the repo, out loud
+### Fleet walks skip the project, out loud
 
 The project verbs (`install`, `uninstall`, `status`, and the rest) walk the
-active repos and log a line for each one they left out. Switched off:
+active projects and log a line for each one they left out. Switched off:
 
 ```console
 $ otto --lab radio -E radio-fw run status
-WARN     repo 'radio-fw' switched off for this run (--exclude-projects radio-fw)
+WARN     project 'radio-fw' switched off for this run (--exclude-projects radio-fw)
          — skipping it for status
 ```
 
@@ -95,15 +95,15 @@ lab is uninstalled
 (projects-excluded-hosts-leave-play)=
 ### Its hosts leave play
 
-The hosts a switched-off repo declares in `[project] host_patterns` are no
+The hosts a switched-off project declares in `[project] host_patterns` are no
 longer in play for the run. No host-wide walk reaches them (cleanup,
 toolchain, debug logs, `otto monitor`, coverage collection), and the
 reservation gate, including its shell-completion check, no longer requires
 their resources, so `-E fleet-tools` is also how you run without holding the
-fleet-tools rig. A host that an active repo also declares stays in play.
+fleet-tools rig. A host that an active project also declares stays in play.
 
-Switching off *every* repo that declares a fleet leaves no host in play. It
-never falls back to the whole lab, which is reserved for runs where no repo
+Switching off *every* project that declares a fleet leaves no host in play. It
+never falls back to the whole lab, which is reserved for runs where no project
 declares `[project]` at all. A host-wide walk then refuses, naming the switch
 rather than your `host_patterns`:
 
@@ -122,41 +122,41 @@ play, it requires only the lab's own resources.
 
 ### Instruction dispatch refuses, and tells you how to undo it
 
-An instruction belongs to the repo that registered it. Ask for one whose owner
+An instruction belongs to the project that registered it. Ask for one whose owner
 is inactive and otto refuses **before the body runs**, naming the axis and
 handing you a runnable fix:
 
 ```console
 $ otto --lab bench run flash-radio
-'flash-radio' belongs to repo 'radio-fw', which is inactive for the loaded lab(s) [bench] (lab_patterns: radio)
+'flash-radio' belongs to project 'radio-fw', which is inactive for the loaded lab(s) [bench] (lab_patterns: radio)
   activate it: -l radio    or: -I radio-fw
 ```
 
 ```console
 $ otto --lab radio -E radio-fw run flash-radio
-'flash-radio' belongs to repo 'radio-fw', which was switched off for this run (--exclude-projects radio-fw)
+'flash-radio' belongs to project 'radio-fw', which was switched off for this run (--exclude-projects radio-fw)
   activate it: remove --exclude-projects radio-fw    or: -I radio-fw
 ```
 
 Both exit **1**. The hint is printed unwrapped whatever your terminal width,
 so it can be pasted as-is.
 
-A third shape appears when the labs match but the hosts do not — the repo's
+A third shape appears when the labs match but the hosts do not — the project's
 `host_patterns` select nothing in the loaded labs — and it names the patterns
 rather than the labs.
 
 First-party instructions (`status`, `install`, and the rest of the built-ins)
-have no owning repo and are never refused.
+have no owning project and are never refused.
 
-### A broken repo you are not using is a warning, not a failure
+### A broken project you are not using is a warning, not a failure
 
-If a repo whose `init` module fails to import is inactive, the failure demotes
+If a project whose `init` module fails to import is inactive, the failure demotes
 to one line and the run continues:
 
 ```console
 $ otto --lab bench --show-lab
-warning: repo /work/radio-fw: failed to load radio_fw: ModuleNotFoundError("No module named 'does_not_exist_anywhere'")
-warning: repo 'radio-fw' failed to load, but is inactive for this run (not applicable to lab(s) [bench]) — continuing without it
+warning: project root /work/radio-fw: failed to load radio_fw: ModuleNotFoundError("No module named 'does_not_exist_anywhere'")
+warning: project 'radio-fw' failed to load, but is inactive for this run (not applicable to lab(s) [bench]) — continuing without it
 Lab(
     name='bench',
     ...
@@ -166,22 +166,22 @@ Load a lab it *is* part of and the same breakage is fatal again:
 
 ```console
 $ otto --lab radio --show-lab
-warning: repo /work/radio-fw: failed to load radio_fw: ModuleNotFoundError("No module named 'does_not_exist_anywhere'")
-Cannot run commands while a repo fails to load (see warnings above).
+warning: project root /work/radio-fw: failed to load radio_fw: ModuleNotFoundError("No module named 'does_not_exist_anywhere'")
+Cannot run commands while a project fails to load (see warnings above).
 ```
 
-**A repo you `-I` stays fatal when it is broken.**
+**A project you `-I` stays fatal when it is broken.**
 
 ```{note}
 This gate demotes on the **lab axis only** — the explicit switches plus
-`lab_patterns` — because it runs before the lab is built. A repo that would
+`lab_patterns` — because it runs before the lab is built. A project that would
 have been inactive only because its `host_patterns` match no host in the lab
 is not yet known to be inactive here, so its import error is still fatal.
 ```
 
 ## Dependencies of a project you switched off
 
-A repo can declare `[dependencies]` on other repos (see
+A project can declare `[dependencies]` on other projects (see
 {doc}`../configuration/settings`). Dropping a provider that something else
 requires is a real decision, and otto splits it by *which axis* dropped it.
 
@@ -192,7 +192,7 @@ fixes:
 
 ```console
 $ otto --lab bench run install
-error: repo 'radio-app' requires 'radio-fw', but radio-fw is not applicable to
+error: project 'radio-app' requires 'radio-fw', but radio-fw is not applicable to
 the loaded lab(s) [bench] (lab_patterns: radio). Load a lab radio-fw applies to,
 or pass --exclude-projects=radio-fw to declare it handled externally.
 ```
@@ -202,9 +202,9 @@ or pass --exclude-projects=radio-fw to declare it handled externally.
 
 ```console
 $ otto --lab radio -E radio-fw run install
-WARN     repo 'radio-fw' switched off for this run (--exclude-projects radio-fw)
+WARN     project 'radio-fw' switched off for this run (--exclude-projects radio-fw)
          — skipping it for install
-WARN     repo 'radio-app' requires 'radio-fw', which was switched off
+WARN     project 'radio-app' requires 'radio-fw', which was switched off
          (--exclude-projects radio-fw) — proceeding as though radio-fw is
          handled externally
 ```
@@ -217,27 +217,27 @@ unsatisfied and names the axis that dropped it.
 
 ## Edge notes
 
-**Excluding the repo you are standing in is allowed.** `-E` of the driving repo
+**Excluding the project you are standing in is allowed.** `-E` of the driving project
 is not special-cased: the lab still loads from it, and the walks simply skip it.
 
 ```console
 $ otto --lab bench -E fleet-tools run status
-WARN     repo 'fleet-tools' switched off for this run (--exclude-projects
+WARN     project 'fleet-tools' switched off for this run (--exclude-projects
          fleet-tools) — skipping it for status
 ```
 
-**`-I` does not invent a fleet.** Forcing a repo active whose `host_patterns`
+**`-I` does not invent a fleet.** Forcing a project active whose `host_patterns`
 match no host in the loaded labs makes its own fleet walk fail loudly rather
 than quietly doing nothing:
 
 ```console
 $ otto --lab radio -I radio-fw run install
-error: repo 'radio-fw' applies to loaded lab(s) radio, but its [project]
+error: project 'radio-fw' applies to loaded lab(s) radio, but its [project]
 host_patterns match no host there, so every fleet walk it drives would be
 empty.
     host_patterns: nosuchhost
 Widen host_patterns in /work/radio-fw/.otto/settings.toml (['.*'] is every
-host in those labs), or load a lab that holds the hosts this repo targets.
+host in those labs), or load a lab that holds the hosts this project targets.
 ```
 
 **Help and completion always list every instruction.** Activation is decided

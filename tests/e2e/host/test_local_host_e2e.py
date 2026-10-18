@@ -40,7 +40,7 @@ def test_local_run_echo(tmp_path: Path) -> None:
     r = run_otto(
         ["host", "local", "exec", "echo hello-e2e"],
         xdir=tmp_path,
-        sut_dirs=REPO_E2E,
+        roots=REPO_E2E,
         lab="unix",
     )
     assert r.returncode == 0, r.stderr
@@ -65,7 +65,7 @@ def test_local_put_get_roundtrip(tmp_path: Path) -> None:
     put = run_otto(
         ["host", "local", "put", str(src), str(dest_dir)],
         xdir=tmp_path,
-        sut_dirs=REPO_E2E,
+        roots=REPO_E2E,
         lab="unix",
     )
     assert put.returncode == 0, put.stderr
@@ -79,7 +79,7 @@ def test_local_put_get_roundtrip(tmp_path: Path) -> None:
     get = run_otto(
         ["host", "local", "get", str(dest_file), str(back_dir)],
         xdir=tmp_path,
-        sut_dirs=REPO_E2E,
+        roots=REPO_E2E,
         lab="unix",
     )
     assert get.returncode == 0, get.stderr
@@ -104,7 +104,7 @@ def test_local_login_exits_cleanly(tmp_path: Path) -> None:
     r = run_otto(
         ["host", "local", "login"],
         xdir=tmp_path,
-        sut_dirs=REPO_E2E,
+        roots=REPO_E2E,
         lab="unix",
     )
     combined = r.stdout + r.stderr
@@ -127,7 +127,7 @@ def test_local_exists_creates_no_output_dir(tmp_path: Path) -> None:
     r = run_otto(
         ["host", "local", "exists", str(tmp_path)],
         xdir=tmp_path,
-        sut_dirs=REPO_E2E,
+        roots=REPO_E2E,
         lab="unix",
     )
     assert r.returncode == 0, r.stderr

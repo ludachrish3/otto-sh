@@ -1,7 +1,7 @@
 """Customizing the defaults: a flag of our own on ``otto run install``.
 
 ``install`` is a project instruction — one name, one walk shape, and one body
-per repo. This repo overrides the body, and its options class inherits the
+per project. This project overrides the body, and its options class inherits the
 first-party ``InstallOptions``, so ``--ensure`` and ``--recover-partial`` stay
 on the command and ``--variant`` joins them.
 
@@ -28,7 +28,7 @@ from otto.result import Result
 # `@pytest.mark.ensure("installed")` test converges through.
 @options(verbs=["run", "test"])
 class BedVariant:
-    """The one flag this repo adds, shared by ``otto run`` and ``otto test``."""
+    """The one flag this project adds, shared by ``otto run`` and ``otto test``."""
 
     variant: Annotated[str, typer.Option(help="Agent build variant to install.")] = "field"
 
@@ -37,12 +37,12 @@ class BedVariant:
 # command of both verbs.
 @options
 class BedInstall(BedVariant, InstallOptions):  # inherits --ensure / --recover-partial
-    """``otto run install``'s flags, plus the one this repo adds."""
+    """``otto run install``'s flags, plus the one this project adds."""
 
 
 @register_project_actions
 class BedActions(ProjectActions):
-    """This repo's lab lifecycle: otto's defaults, plus the variant we pin."""
+    """This project's lab lifecycle: otto's defaults, plus the variant we pin."""
 
     @instruction(options=BedInstall)
     async def install(self, opts: BedInstall) -> Result:

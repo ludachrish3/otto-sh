@@ -51,7 +51,7 @@ invalid:
   elif backend_name == "json":
       ...
 - |
-  if any(src.backend != "json" for src in getattr(repo, "lab_sources", [])):
+  if any(src.backend != "json" for src in getattr(project, "lab_sources", [])):
       ...
 - |
   for source in sources:

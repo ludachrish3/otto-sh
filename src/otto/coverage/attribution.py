@@ -10,7 +10,7 @@ silently dropped — see ``_expand_historical_paths``), then a single
 ``-p`` patch walk restricted to that *expanded* path set replays every
 hunk backward from HEAD. Measured on otto-sh (740 first-parent commits,
 189 covered files): 3,519 filesystem operations against 12,519 for an
-unrestricted whole-repo walk and ~37,233 for ``git blame`` — a pathspec
+unrestricted whole-repository walk and ~37,233 for ``git blame`` — a pathspec
 restricted to only the *current* file names (no discovery pass) is
 cheaper still, but is correctness-broken rather than merely slower (spec
 §3.1's correction).
@@ -123,7 +123,7 @@ separately — indistinguishable from a genuine sentinel-owned line. See
 
 
 def _apply_worktree_overlay(
-    repo_root: Path, frontier: dict[str, dict[int, int]], attributed: dict[str, dict[int, str]]
+    project_root: Path, frontier: dict[str, dict[int, int]], attributed: dict[str, dict[int, str]]
 ) -> None:
     """Claim uncommitted lines and rebase the rest into HEAD coordinates.
 
@@ -134,7 +134,7 @@ def _apply_worktree_overlay(
     **One** diff for every file, never one per file: this module is pinned at
     O(1) git subprocesses by ``test_git_spawn_budget.py``.
     """
-    diff_text = gitio.diff_worktree_u0(repo_root, list(frontier))
+    diff_text = gitio.diff_worktree_u0(project_root, list(frontier))
     if not diff_text.strip():
         return
     parsed = parse_commit_diff(diff_text)
@@ -173,7 +173,9 @@ def parse_rename_records(block: str) -> dict[str, str]:
     return renames
 
 
-def _expand_historical_paths(repo_root: Path, covered: set[str], *, first_parent: bool) -> set[str]:
+def _expand_historical_paths(
+    project_root: Path, covered: set[str], *, first_parent: bool
+) -> set[str]:
     """Expand *covered* HEAD paths to every historical name they were ever known by.
 
     This is the discovery pass that lets the patch walk stay pathspec-
@@ -200,7 +202,7 @@ def _expand_historical_paths(repo_root: Path, covered: set[str], *, first_parent
     """
     historical = set(covered)
     current = {p: p for p in covered}
-    for block in gitio.name_status_walk_u0(repo_root, first_parent=first_parent):
+    for block in gitio.name_status_walk_u0(project_root, first_parent=first_parent):
         renames = parse_rename_records(block)
         if not renames:
             continue
@@ -213,7 +215,7 @@ def _expand_historical_paths(repo_root: Path, covered: set[str], *, first_parent
 
 
 def _fetch_walk(
-    repo_root: Path, line_counts: dict[str, int], *, first_parent: bool
+    project_root: Path, line_counts: dict[str, int], *, first_parent: bool
 ) -> list[gitio.CommitDiff]:
     """Fetch the log walk backing both public entry points.
 
@@ -221,8 +223,8 @@ def _fetch_walk(
     (``_expand_historical_paths``) first finds every historical name
     any covered file was ever known by, and the ``-p`` patch walk is then
     restricted to that **expanded** set rather than to ``.`` — smaller
-    payload and fewer filesystem operations than walking the whole repo,
-    bounded by covered-file churn instead of total repo churn, while still
+    payload and fewer filesystem operations than walking the whole git repository,
+    bounded by covered-file churn instead of total repository churn, while still
     matching the ``git blame`` oracle on renames (spec §3.1). This is still
     a fixed number of subprocesses regardless of file count — one more for
     discovery, plus :func:`~otto.coverage.capture.gitio.log_walk_u0`'s own
@@ -232,12 +234,12 @@ def _fetch_walk(
     covered = {p for p, n in line_counts.items() if n > 0}
     if not covered:
         return []
-    historical = _expand_historical_paths(repo_root, covered, first_parent=first_parent)
-    return gitio.log_walk_u0(repo_root, sorted(historical), first_parent=first_parent)
+    historical = _expand_historical_paths(project_root, covered, first_parent=first_parent)
+    return gitio.log_walk_u0(project_root, sorted(historical), first_parent=first_parent)
 
 
 def attribute_lines(
-    repo_root: Path,
+    project_root: Path,
     line_counts: dict[str, int],
     *,
     first_parent: bool = True,
@@ -245,7 +247,7 @@ def attribute_lines(
 ) -> dict[str, dict[int, str]]:
     """Map each file's line numbers to the sha of the commit that last touched it.
 
-    *line_counts* is ``{repo-relative posix path: line count at HEAD}``.
+    *line_counts* is ``{project-root-relative posix path: line count at HEAD}``.
     Pass *walk* to reuse an already-fetched log walk instead of spawning a
     second one.
     """
@@ -256,7 +258,7 @@ def attribute_lines(
     frontier: dict[str, dict[int, int]] = {
         p: {n: n for n in range(1, count + 1)} for p, count in line_counts.items() if count > 0
     }
-    _apply_worktree_overlay(repo_root, frontier, attributed)
+    _apply_worktree_overlay(project_root, frontier, attributed)
     frontier = {p: live for p, live in frontier.items() if live}
     if not frontier:
         return attributed
@@ -266,7 +268,7 @@ def attribute_lines(
     head_of = {p: p for p in frontier}
 
     if walk is None:
-        walk = _fetch_walk(repo_root, line_counts, first_parent=first_parent)
+        walk = _fetch_walk(project_root, line_counts, first_parent=first_parent)
 
     for commit in walk:
         if not frontier:
@@ -329,7 +331,7 @@ def _extract_real_tickets(spec: TicketSpec, message: str, sha: str) -> list[str]
 # DEBT(no-tuple-return): three unrelated maps in one return.
 # ast-grep-ignore: no-tuple-return
 def attribute_tickets(
-    repo_root: Path,
+    project_root: Path,
     line_counts: dict[str, int],
     spec: TicketSpec,
     *,
@@ -370,8 +372,8 @@ def attribute_tickets(
     """
     # One walk, shared by both passes — a second call would double this
     # module's git subprocess count for no benefit.
-    walk = _fetch_walk(repo_root, line_counts, first_parent=first_parent)
-    by_sha = attribute_lines(repo_root, line_counts, first_parent=first_parent, walk=walk)
+    walk = _fetch_walk(project_root, line_counts, first_parent=first_parent)
+    by_sha = attribute_lines(project_root, line_counts, first_parent=first_parent, walk=walk)
 
     # Break-glass reattribution (overrides spec §3): a listed commit's ids
     # replace message extraction entirely, at this single site, so every

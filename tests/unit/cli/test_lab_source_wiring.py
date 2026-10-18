@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from otto.config.repo import Repo
+from otto.config.project import Project
 from otto.labs import (
     CompositeLabRepository,
     JsonFileLabRepository,
@@ -35,11 +35,11 @@ def _host(element: str, ip: str) -> dict:
     }
 
 
-def _repo(root: Path, name: str, sources_toml: str, labfiles: dict[str, list[dict]]) -> Repo:
+def _repo(root: Path, name: str, sources_toml: str, labfiles: dict[str, list[dict]]) -> Project:
     sut = make_sut_repo(root, name=name, extra=sources_toml)
     for rel, hosts in labfiles.items():
         _lab_json(root / rel, hosts)
-    return Repo(sut)
+    return Project(sut)
 
 
 def test_single_json_source_still_goes_through_the_composite(tmp_path: Path) -> None:
@@ -50,13 +50,13 @@ def test_single_json_source_still_goes_through_the_composite(tmp_path: Path) -> 
     silently exempted the commonest setup of all (one repo, one json source)
     from both. The wrapped backend is still the registry's, unchanged.
     """
-    repo = _repo(
+    project = _repo(
         tmp_path / "r1",
         "r1",
         '[[lab.sources]]\nbackend = "json"\npaths = ["lab"]\n',
         {"lab/lab.json": [_host("alt1", "10.0.0.1")]},
     )
-    repository = build_lab_sources([repo])
+    repository = build_lab_sources([project])
     assert isinstance(repository, CompositeLabRepository)
     assert [s.label for s in repository.sources] == ["r1/json#1"]
     assert isinstance(repository.sources[0].repository, JsonFileLabRepository)
@@ -71,7 +71,7 @@ def test_one_source_gets_the_declared_but_memberless_rule(tmp_path: Path) -> Non
     declaration and no members, and nothing above it objected); through the
     composite it is the loud definition mistake spec §9 requires.
     """
-    repo = _repo(
+    project = _repo(
         tmp_path / "r1",
         "r1",
         '[[lab.sources]]\nbackend = "json"\npaths = ["lab"]\n',
@@ -83,7 +83,7 @@ def test_one_source_gets_the_declared_but_memberless_rule(tmp_path: Path) -> Non
     lab_file.write_text(json.dumps(doc))
 
     with pytest.raises(LabRepositoryError, match=r"declared.*no element"):
-        build_lab_sources([repo]).load_lab("ghost")
+        build_lab_sources([project]).load_lab("ghost")
 
 
 def test_two_repos_all_sources_live(tmp_path: Path) -> None:
@@ -137,8 +137,8 @@ def test_custom_backend_source_options_inline(tmp_path: Path) -> None:
     from otto.models.base import OttoModel
 
     class DictRepo:
-        def __init__(self, repo_dir, names):
-            self.repo_dir = repo_dir
+        def __init__(self, project_root, names):
+            self.project_root = project_root
             self._names = names
 
         def load_lab(self, name, preferences=None, inventory=None):
@@ -155,21 +155,21 @@ def test_custom_backend_source_options_inline(tmp_path: Path) -> None:
     register_lab_repository(
         "dict-wiring-test",
         config=DictConfig,
-        factory=lambda c: DictRepo(c.env.repo_dir, c.config.names),
+        factory=lambda c: DictRepo(c.env.project_root, c.config.names),
     )
     try:
-        repo = _repo(
+        project = _repo(
             tmp_path / "r1",
             "r1",
             '[[lab.sources]]\nbackend = "dict-wiring-test"\nnames = ["from-custom"]\n',
             {},
         )
-        repository = build_lab_sources([repo])
+        repository = build_lab_sources([project])
         # The composite wraps it (R15); the CONSTRUCTED backend is what the
         # registered factory built from the entry's parsed options.
         built = repository.sources[0].repository
         assert isinstance(built, DictRepo)
-        assert built.repo_dir == repo.sut_dir
+        assert built.project_root == project.root
         assert repository.list_labs() == ["from-custom"]
     finally:
         LAB_REPOSITORIES.unregister("dict-wiring-test")
@@ -194,7 +194,7 @@ def test_reregistering_json_takes_effect(tmp_path: Path) -> None:
         def list_labs(self):
             return []
 
-    repo = _repo(
+    project = _repo(
         tmp_path / "r1",
         "r1",
         '[[lab.sources]]\nbackend = "json"\npaths = ["lab"]\n',
@@ -207,21 +207,21 @@ def test_reregistering_json_takes_effect(tmp_path: Path) -> None:
         factory=lambda c: ReplacementJsonRepo(search_paths=list(c.config.paths)),
         overwrite=True,
     )
-    repository = build_lab_sources([repo])
+    repository = build_lab_sources([project])
     built = repository.sources[0].repository  # the composite wraps it (R15)
     assert isinstance(built, ReplacementJsonRepo)
-    assert built.search_paths == [repo.sut_dir / "lab"]
+    assert built.search_paths == [project.root / "lab"]
 
 
 def test_unknown_backend_raises(tmp_path: Path) -> None:
-    repo = _repo(tmp_path / "r1", "r1", '[[lab.sources]]\nbackend = "nope"\n', {})
+    project = _repo(tmp_path / "r1", "r1", '[[lab.sources]]\nbackend = "nope"\n', {})
     with pytest.raises(LabRepositoryError, match="Unknown lab repository backend"):
-        build_lab_sources([repo])
+        build_lab_sources([project])
 
 
 def test_no_sources_anywhere_fails_loud_on_demand(tmp_path: Path) -> None:
-    repo = Repo(make_sut_repo(tmp_path / "bare", name="bare"))
-    repository = build_lab_sources([repo])
+    project = Project(make_sut_repo(tmp_path / "bare", name="bare"))
+    repository = build_lab_sources([project])
     assert repository.list_labs() == []
     with pytest.raises(LabNotFoundError, match=r"\[\[lab\.sources\]\]"):
         repository.load_lab("anything")

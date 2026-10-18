@@ -6,12 +6,12 @@ import textwrap
 import pytest
 from pydantic import ValidationError
 
-from otto.config.repo import Repo
+from otto.config.project import Project
 from otto.config.scope import (
     ProjectScopeConfig,
     active,
     inactive_before_lab,
-    repo_targets,
+    project_targets,
     scopes_of,
     switched_off,
 )
@@ -32,40 +32,40 @@ def _cfg(labs, hosts=(".*",)):
 
 def test_fullmatch_not_search_on_lab_names():
     # `bench` must NOT match `bench-overflow` — fullmatch, not substring (D6).
-    assert repo_targets(_cfg(["bench"]), "bench", "h1")
-    assert not repo_targets(_cfg(["bench"]), "bench-overflow", "h1")
+    assert project_targets(_cfg(["bench"]), "bench", "h1")
+    assert not project_targets(_cfg(["bench"]), "bench-overflow", "h1")
 
 
 def test_fullmatch_not_search_on_host_ids():
     cfg = _cfg([".*"], hosts=["host-1"])
-    assert repo_targets(cfg, "lab", "host-1")
-    assert not repo_targets(cfg, "lab", "host-10")
+    assert project_targets(cfg, "lab", "host-1")
+    assert not project_targets(cfg, "lab", "host-10")
 
 
 def test_host_patterns_or_together():
     cfg = _cfg([".*"], hosts=["sensor-.*", r"gw-\d+"])
-    assert repo_targets(cfg, "lab", "sensor-3")
-    assert repo_targets(cfg, "lab", "gw-7")
-    assert not repo_targets(cfg, "lab", "camera-1")
+    assert project_targets(cfg, "lab", "sensor-3")
+    assert project_targets(cfg, "lab", "gw-7")
+    assert not project_targets(cfg, "lab", "camera-1")
 
 
 def test_both_axes_must_pass():
     cfg = _cfg(["tech-.*"], hosts=["sensor-.*"])
-    assert repo_targets(cfg, "tech-1", "sensor-1")
-    assert not repo_targets(cfg, "other", "sensor-1")  # lab fails
-    assert not repo_targets(cfg, "tech-1", "gw-1")  # host fails
+    assert project_targets(cfg, "tech-1", "sensor-1")
+    assert not project_targets(cfg, "other", "sensor-1")  # lab fails
+    assert not project_targets(cfg, "tech-1", "gw-1")  # host fails
 
 
 def test_none_scope_targets_everything():
     # An undeclared repo scopes nothing out (fallback feeds off this).
-    assert repo_targets(None, "any-lab", "any-host")
+    assert project_targets(None, "any-lab", "any-host")
 
 
 def test_no_lab_patterns_targets_nothing():
     # `[project]` with only host_patterns admits no lab: an empty pattern list
     # cannot fullmatch anything. D2's bootstrap check is what turns that into a
     # loud error; the predicate itself stays total and silent.
-    assert not repo_targets(_cfg([], hosts=[".*"]), "any-lab", "any-host")
+    assert not project_targets(_cfg([], hosts=[".*"]), "any-lab", "any-host")
 
 
 def test_from_spec_compiles_both_axes():
@@ -75,8 +75,8 @@ def test_from_spec_compiles_both_axes():
         {"lab_patterns": ["tech-.*"], "host_patterns": [r"gw-\d+"]}
     )
     cfg = ProjectScopeConfig.from_spec(spec)
-    assert repo_targets(cfg, "tech-1", "gw-2")
-    assert not repo_targets(cfg, "tech-1", "gw-x")
+    assert project_targets(cfg, "tech-1", "gw-2")
+    assert not project_targets(cfg, "tech-1", "gw-x")
 
 
 def test_from_spec_none_lab_patterns_compiles_to_empty():
@@ -86,12 +86,12 @@ def test_from_spec_none_lab_patterns_compiles_to_empty():
     spec = ProjectScopeSpec.model_validate({})
     cfg = ProjectScopeConfig.from_spec(spec)
     assert cfg.lab_patterns == []
-    assert not repo_targets(cfg, "any-lab", "any-host")
+    assert not project_targets(cfg, "any-lab", "any-host")
 
 
 def _repo(tmp_path, settings_body=""):
     sut = make_sut_repo(tmp_path / "repo", name="tmp_repo", extra=textwrap.dedent(settings_body))
-    return Repo(sut_dir=sut)
+    return Project(root=sut)
 
 
 def test_repo_without_project_block_has_no_scope(tmp_path):
@@ -100,7 +100,7 @@ def test_repo_without_project_block_has_no_scope(tmp_path):
 
 
 def test_repo_project_block_compiles_into_scope(tmp_path):
-    repo = _repo(
+    project = _repo(
         tmp_path,
         """
         [project]
@@ -109,14 +109,14 @@ def test_repo_project_block_compiles_into_scope(tmp_path):
         """,
     )
 
-    assert repo.project_scope is not None
-    assert repo_targets(repo.project_scope, "tech-1", "gw-7")
-    assert not repo_targets(repo.project_scope, "tech-1", "camera-1")
-    assert not repo_targets(repo.project_scope, "bench", "gw-7")
+    assert project.project_scope is not None
+    assert project_targets(project.project_scope, "tech-1", "gw-7")
+    assert not project_targets(project.project_scope, "tech-1", "camera-1")
+    assert not project_targets(project.project_scope, "bench", "gw-7")
 
 
 def test_repo_project_block_defaults_host_patterns_to_all(tmp_path):
-    repo = _repo(
+    project = _repo(
         tmp_path,
         """
         [project]
@@ -124,9 +124,9 @@ def test_repo_project_block_defaults_host_patterns_to_all(tmp_path):
         """,
     )
 
-    assert repo.project_scope is not None
-    assert repo_targets(repo.project_scope, "bench", "anything-at-all")
-    assert not repo_targets(repo.project_scope, "bench-overflow", "anything-at-all")
+    assert project.project_scope is not None
+    assert project_targets(project.project_scope, "bench", "anything-at-all")
+    assert not project_targets(project.project_scope, "bench-overflow", "anything-at-all")
 
 
 BAD_LAB_PATTERN = """
@@ -155,7 +155,7 @@ def test_repo_invalid_pattern_fails_the_parse(tmp_path, monkeypatch):
     sut = make_sut_repo(
         tmp_path / "sensor-fleet-repo", name="sensors", extra=textwrap.dedent(BAD_LAB_PATTERN)
     )
-    monkeypatch.setenv("OTTO_SUT_DIRS", str(sut))
+    monkeypatch.setenv("OTTOPATH", str(sut))
     bs.invalidate()  # a prior test's cached discovery would answer instead
     (surfaced,) = bs.bootstrap().errors  # what `otto <anything>` prints at startup
     assert "sensor-fleet-repo" in str(surfaced)
@@ -178,7 +178,7 @@ def _toml_list(patterns):
 
 
 def _project_repo(tmp_path, name, *, labs=None, hosts=None):
-    """A real ``Repo`` whose ``[project]`` block declares *labs* / *hosts*."""
+    """A real ``Project`` whose ``[project]`` block declares *labs* / *hosts*."""
     body = ""
     if labs is not None or hosts is not None:
         lines = ["[project]"]
@@ -188,7 +188,7 @@ def _project_repo(tmp_path, name, *, labs=None, hosts=None):
             lines.append(f"host_patterns = {_toml_list(hosts)}")
         body = "\n".join(lines)
     sut = make_sut_repo(tmp_path / name, name=name, extra=body)
-    return Repo(sut_dir=sut)
+    return Project(root=sut)
 
 
 def _fleet(*pairs):
@@ -213,12 +213,12 @@ def _fleet(*pairs):
 def test_declared_and_matching_labs_scopes_to_the_matching_subset(tmp_path):
     from otto.config.scope import resolve_scopes
 
-    repo = _project_repo(tmp_path, "sensors", labs=["tech-.*"])
+    project = _project_repo(tmp_path, "sensors", labs=["tech-.*"])
     hosts = _fleet(("gw-1", "tech-1"), ("sensor-1", "bench"))
 
-    scope = resolve_scopes([repo], ["tech-1", "bench"], hosts)["sensors"]
+    scope = resolve_scopes([project], ["tech-1", "bench"], hosts)["sensors"]
 
-    assert scope.repo_name == "sensors"
+    assert scope.project_name == "sensors"
     assert scope.declared is True
     assert scope.excluded is False
     assert scope.applicable_labs == frozenset({"tech-1"})
@@ -229,9 +229,9 @@ def test_declared_zero_applicable_labs_is_excluded(tmp_path):
     # D3's dependency-exclusion / current-abort condition, as a flag.
     from otto.config.scope import resolve_scopes
 
-    repo = _project_repo(tmp_path, "sensors", labs=["sensor-fleet"])
+    project = _project_repo(tmp_path, "sensors", labs=["sensor-fleet"])
 
-    scope = resolve_scopes([repo], ["bench"], _fleet(("sensor-1", "bench")))["sensors"]
+    scope = resolve_scopes([project], ["bench"], _fleet(("sensor-1", "bench")))["sensors"]
 
     assert scope.excluded is True
     assert scope.applicable_labs == frozenset()
@@ -245,9 +245,9 @@ def test_declared_labs_with_zero_matching_hosts_is_not_excluded(tmp_path):
     # the lab was right and the host pattern was wrong.
     from otto.config.scope import resolve_scopes
 
-    repo = _project_repo(tmp_path, "sensors", labs=["bench"], hosts=[r"gw-\d+"])
+    project = _project_repo(tmp_path, "sensors", labs=["bench"], hosts=[r"gw-\d+"])
 
-    scope = resolve_scopes([repo], ["bench"], _fleet(("sensor-1", "bench")))["sensors"]
+    scope = resolve_scopes([project], ["bench"], _fleet(("sensor-1", "bench")))["sensors"]
 
     assert scope.excluded is False
     assert scope.applicable_labs == frozenset({"bench"})
@@ -259,10 +259,10 @@ def test_undeclared_repo_feeds_the_whole_lab_fallback(tmp_path):
     # universe is every loaded host — that set is what the fallback iterates.
     from otto.config.scope import resolve_scopes
 
-    repo = _project_repo(tmp_path, "plain")
+    project = _project_repo(tmp_path, "plain")
     hosts = _fleet(("gw-1", "tech-1"), ("sensor-1", "bench"))
 
-    scope = resolve_scopes([repo], ["tech-1", "bench"], hosts)["plain"]
+    scope = resolve_scopes([project], ["tech-1", "bench"], hosts)["plain"]
 
     assert scope.declared is False
     assert scope.excluded is False
@@ -276,10 +276,10 @@ def test_partial_match_in_a_two_lab_combo_keeps_only_the_matching_component(tmp_
     # from `b` stays out even though `host_patterns` would admit it.
     from otto.config.scope import resolve_scopes
 
-    repo = _project_repo(tmp_path, "sensors", labs=["a"], hosts=[".*"])
+    project = _project_repo(tmp_path, "sensors", labs=["a"], hosts=[".*"])
     hosts = _fleet(("h-a", "a"), ("h-b", "b"))
 
-    scope = resolve_scopes([repo], ["a", "b"], hosts)["sensors"]
+    scope = resolve_scopes([project], ["a", "b"], hosts)["sensors"]
 
     assert scope.applicable_labs == frozenset({"a"})
     assert scope.universe == frozenset({"h-a"})
@@ -302,16 +302,16 @@ def test_exclude_ids_removes_a_host_the_patterns_admit(tmp_path):
     from otto.config.scope import resolve_scopes
     from otto.host.builtin_hosts import BUILTIN_LOCAL_HOST_ID, make_builtin_local_host
 
-    repo = _project_repo(tmp_path, "sensors", labs=["bench"], hosts=[".*"])
+    project = _project_repo(tmp_path, "sensors", labs=["bench"], hosts=[".*"])
     local = make_builtin_local_host()
     local.source_lab = "bench"
     hosts = {**_fleet(("sensor-1", "bench")), local.id: local}
 
-    admitted = resolve_scopes([repo], ["bench"], hosts)["sensors"]
+    admitted = resolve_scopes([project], ["bench"], hosts)["sensors"]
     assert BUILTIN_LOCAL_HOST_ID in admitted.universe
 
     scoped = resolve_scopes(
-        [repo], ["bench"], hosts, exclude_ids=frozenset({BUILTIN_LOCAL_HOST_ID})
+        [project], ["bench"], hosts, exclude_ids=frozenset({BUILTIN_LOCAL_HOST_ID})
     )["sensors"]
     assert scoped.universe == frozenset({"sensor-1"})
 
@@ -320,8 +320,8 @@ def test_excluded_current_repo_aborts_naming_loaded_labs_and_its_patterns(tmp_pa
     from otto.bootstrap import ProjectScopeError
     from otto.config.scope import require_current_scope, resolve_scopes
 
-    repo = _project_repo(tmp_path, "sensors", labs=["sensor-fleet", "tech-.*"])
-    scopes = resolve_scopes([repo], ["bench", "lab-2"], _fleet(("sensor-1", "bench")))
+    project = _project_repo(tmp_path, "sensors", labs=["sensor-fleet", "tech-.*"])
+    scopes = resolve_scopes([project], ["bench", "lab-2"], _fleet(("sensor-1", "bench")))
 
     with pytest.raises(ProjectScopeError) as excinfo:
         require_current_scope(scopes, "sensors")
@@ -339,8 +339,8 @@ def test_current_repo_with_empty_universe_aborts_naming_the_host_patterns(tmp_pa
     from otto.bootstrap import ProjectScopeError
     from otto.config.scope import require_current_scope, resolve_scopes
 
-    repo = _project_repo(tmp_path, "sensors", labs=["bench"], hosts=[r"gw-\d+", "cam-.*"])
-    scopes = resolve_scopes([repo], ["bench"], _fleet(("sensor-1", "bench")))
+    project = _project_repo(tmp_path, "sensors", labs=["bench"], hosts=[r"gw-\d+", "cam-.*"])
+    scopes = resolve_scopes([project], ["bench"], _fleet(("sensor-1", "bench")))
 
     with pytest.raises(ProjectScopeError) as excinfo:
         require_current_scope(scopes, "sensors")
@@ -355,8 +355,8 @@ def test_current_repo_with_empty_universe_aborts_naming_the_host_patterns(tmp_pa
 def test_healthy_current_repo_returns_none(tmp_path):
     from otto.config.scope import require_current_scope, resolve_scopes
 
-    repo = _project_repo(tmp_path, "sensors", labs=["bench"], hosts=["sensor-.*"])
-    scopes = resolve_scopes([repo], ["bench"], _fleet(("sensor-1", "bench")))
+    project = _project_repo(tmp_path, "sensors", labs=["bench"], hosts=["sensor-.*"])
+    scopes = resolve_scopes([project], ["bench"], _fleet(("sensor-1", "bench")))
 
     assert require_current_scope(scopes, "sensors") is None
 
@@ -368,8 +368,8 @@ def test_undeclared_current_repo_never_aborts_even_with_an_empty_fleet(tmp_path)
     # exactly as it did before `[project]` existed.
     from otto.config.scope import require_current_scope, resolve_scopes
 
-    repo = _project_repo(tmp_path, "plain")
-    scopes = resolve_scopes([repo], ["bench"], {})
+    project = _project_repo(tmp_path, "plain")
+    scopes = resolve_scopes([project], ["bench"], {})
 
     assert scopes["plain"].universe == frozenset()
     assert require_current_scope(scopes, "plain") is None
@@ -419,8 +419,8 @@ def test_the_abort_and_the_skip_read_one_predicate(
     from otto.bootstrap import ProjectScopeError
     from otto.config.scope import require_current_scope, resolve_scopes, unusable_scope
 
-    repo = _project_repo(tmp_path, name, **declaration)
-    scopes = resolve_scopes([repo], ["bench"], _fleet(*lab_hosts))
+    project = _project_repo(tmp_path, name, **declaration)
+    scopes = resolve_scopes([project], ["bench"], _fleet(*lab_hosts))
 
     aborted = False
     try:
@@ -546,7 +546,7 @@ class TestInactiveImpliesAttributable:
     is sound only because of an invariant spanning the two functions: ``active``
     reaches False either through the ``_switched(exclude)`` test (which IS
     ``switched_off``'s body) or through ``unusable_scope(verdict)``, which it
-    can only reach after ``scopes_of(ctx).get(repo_name)`` returned a verdict. So
+    can only reach after ``scopes_of(ctx).get(project_name)`` returned a verdict. So
     "inactive and not switched off" implies "a verdict is present under that
     exact key".
 

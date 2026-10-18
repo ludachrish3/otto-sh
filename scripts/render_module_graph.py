@@ -44,7 +44,7 @@ LAYER_GUIDE: "dict[str, list[str]]" = {
     "root": [
         (
             "The composition root, `otto.bootstrap`, and the library entry points that can "
-            "compose the repos with no run in hand: the test suite, coverage, the repo-aware "
+            "compose the projects with no run in hand: the test suite, coverage, the project-aware "
             "logging install."
         ),
         "Importing `otto.bootstrap` fills `otto.declared`'s initiator.",
@@ -58,7 +58,7 @@ LAYER_GUIDE: "dict[str, list[str]]" = {
         "`set_context` fills the active-run slot in `otto.invocation`.",
     ],
     "composition": [
-        "Settings, `Repo` and discovery, the completion cache, the project environments.",
+        "Settings, `Project` and discovery, the completion cache, the project environments.",
         "—",
     ],
     "sources": [
@@ -80,7 +80,7 @@ LAYER_GUIDE: "dict[str, list[str]]" = {
     "foundation": [
         "Leaf definitions every layer reads, and the slots filled from above.",
         (
-            "Holds the slots: the initiator and the composed repos (`otto.declared`), the "
+            "Holds the slots: the initiator and the composed projects (`otto.declared`), the "
             "active run and its policy (`otto.invocation`), the first-party actions "
             "(`otto.instruction_catalog`)."
         ),

@@ -27,7 +27,7 @@ def _apply(store, tmp_path, entries, per_line_sha, ticket_commits=None):
     apply_asserted_entries(
         store,
         entries,
-        repo_root=tmp_path,
+        project_root=tmp_path,
         per_line_sha=per_line_sha,
         ticket_commits=ticket_commits or {},
         fp_index=FP_INDEX,

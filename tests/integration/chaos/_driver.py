@@ -38,7 +38,7 @@ def _otto_env(
     """
     return otto_subprocess_env(
         xdir=xdir,
-        sut_dirs=target.sut_dir,
+        roots=target.root,
         term=os.environ.get("TERM", "xterm-256color"),
         extra_env=extra_env,
     )

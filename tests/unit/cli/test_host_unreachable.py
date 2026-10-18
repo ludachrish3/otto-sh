@@ -21,12 +21,12 @@ def _closed_port() -> int:
 
 def test_a_refused_ssh_connection_prints_one_line_naming_the_host(tmp_path):
     port = _closed_port()
-    repo = generate_repo(tmp_path / "repo", files=1, dirs=1, realistic=True, ssh_lab_port=port)
+    project = generate_repo(tmp_path / "repo", files=1, dirs=1, realistic=True, ssh_lab_port=port)
 
     result = run_otto(
         ["host", BUDGET_SSH_HOST, "exec", "true"],
         xdir=tmp_path,
-        sut_dirs=repo,
+        roots=project,
         lab="unix",  # the JSON lab `generate_repo` writes; its second source holds the host
         extra_env={"COLUMNS": "200"},  # so rich cannot fold the one line in two
     )

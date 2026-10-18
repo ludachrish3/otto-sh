@@ -117,27 +117,27 @@ LAYOUTS = {
 @pytest.mark.asyncio
 @pytest.mark.parametrize("layout", sorted(LAYOUTS), ids=str)
 async def test_compose_build_and_deploy_land_on_one_parent(layout, tmp_path):
-    repos, hosts, kw = LAYOUTS[layout](tmp_path)
+    projects, hosts, kw = LAYOUTS[layout](tmp_path)
     lab = _lab(*hosts)
     built: list[tuple[str, str]] = []
 
-    async def _spy(repo, parent, *, image_names=None, options=None):
-        built.append((repo.name, parent.id))
+    async def _spy(project, parent, *, image_names=None, options=None):
+        built.append((project.name, parent.id))
         return {}
 
     with (
-        _install(lab, repos),
+        _install(lab, projects),
         patch.object(verbs_mod, "build_images", AsyncMock(side_effect=_spy)),
     ):
         await compose_build("integration", **kw)
     deployed_on: set[tuple[str, str]] = set()
 
-    async def _deploy_spy(repo, parent, **_kw):
-        deployed_on.add((repo.name, parent.id))
+    async def _deploy_spy(project, parent, **_kw):
+        deployed_on.add((project.name, parent.id))
         return {}
 
     with (
-        _install(lab, repos),
+        _install(lab, projects),
         patch.object(deploy_mod, "build_images", AsyncMock(side_effect=_deploy_spy)),
     ):
         await deploy("integration", build=True, **kw)

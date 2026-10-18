@@ -148,13 +148,13 @@ def _staged_env_text(host: UnixHost) -> str:
 
 
 @contextmanager
-def _install(lab, repos, ordered=None):
+def _install(lab, projects, ordered=None):
     """Install a run on *lab* and patch the composition root for the block.
 
     The deployment reads its lab off the active run and the run's repos from
     the context, which composes them through the patched root.
     """
-    result = fake_bootstrap_result(repos, ordered=ordered or None)
+    result = fake_bootstrap_result(projects, ordered=ordered or None)
     with (
         active_context(lab),
         patch("otto.bootstrap.bootstrap", return_value=result),
@@ -175,7 +175,7 @@ def _split_by_repo(by_repo: "dict[str, str]"):
     def _place(selection, _parent):
         placed: dict = {}
         for sf in selection.fragments:
-            placed.setdefault(by_repo[sf.repo.name], []).append(sf)
+            placed.setdefault(by_repo[sf.project.name], []).append(sf)
         return placed
 
     with patch.object(deploy_mod, "place", side_effect=_place):
@@ -185,7 +185,7 @@ def _split_by_repo(by_repo: "dict[str, str]"):
 @pytest.fixture(autouse=True)
 def _admit_all_scopes():
     """No `[project]` scope narrows anything — the idiom from test_resolve_place.py."""
-    with patch.object(resolve_mod, "scope_for_repo", return_value=None):
+    with patch.object(resolve_mod, "scope_for_project", return_value=None):
         yield
 
 
@@ -200,9 +200,9 @@ def _no_container_id_backoff():
 def single(tmp_path):
     """One repo, one fragment, one docker-capable host, wired up."""
     compose = _compose_file(tmp_path, "core")
-    repo = _repo("a", _frag(env={"EDGE_ADDR": "${otto:parent.addr}"}), composes=[compose])
+    project = _repo("a", _frag(env={"EDGE_ADDR": "${otto:parent.addr}"}), composes=[compose])
     host = _wire(_host("test3", "10.10.200.13"))
-    return SimpleNamespace(repo=repo, host=host, lab=_lab(host), compose=compose)
+    return SimpleNamespace(project=project, host=host, lab=_lab(host), compose=compose)
 
 
 # ---------------------------------------------------------------------------
@@ -213,7 +213,7 @@ def single(tmp_path):
 @pytest.mark.asyncio
 async def test_deploy_single_repo_merged_command(single, monkeypatch):
     monkeypatch.setenv("OTTO_COMPOSE_SUFFIX", "u")
-    with _install(single.lab, [single.repo]):
+    with _install(single.lab, [single.project]):
         stack = await deploy("integration", parent="test3")
 
     cmd = _up_command(single.host)
@@ -235,7 +235,7 @@ async def test_deploy_single_repo_merged_command(single, monkeypatch):
 async def test_container_hosts_are_registered_under_the_use_case(single, monkeypatch):
     """Spec §9: host id is ``<parent>.<usecase>.<service>``, not the repo name."""
     monkeypatch.setenv("OTTO_COMPOSE_SUFFIX", "u")
-    with _install(single.lab, [single.repo]):
+    with _install(single.lab, [single.project]):
         stack = await deploy("integration", parent="test3")
 
     assert stack.hosts["api"].id == "test3.integration.api"
@@ -248,11 +248,11 @@ async def test_registered_container_carries_its_declared_user(tmp_path, monkeypa
     services came from — an undeclared service is left unset."""
     monkeypatch.setenv("OTTO_COMPOSE_SUFFIX", "u")
     compose = _compose_file(tmp_path, "core", services=("api", "db"), users=(("db", "postgres"),))
-    repo = _repo("a", _frag(), composes=[compose])
+    project = _repo("a", _frag(), composes=[compose])
     host = _wire(_host("test3", "10.10.200.13"))
     lab = _lab(host)
 
-    with _install(lab, [repo]):
+    with _install(lab, [project]):
         stack = await deploy("integration", parent="test3")
 
     assert stack.hosts["db"].user == "postgres"
@@ -288,7 +288,7 @@ async def test_conflicting_declared_users_across_fragments_refuse(tmp_path, monk
 @pytest.mark.asyncio
 async def test_project_name_overrides_the_per_host_derivation(single, monkeypatch):
     monkeypatch.setenv("OTTO_COMPOSE_SUFFIX", "u")
-    with _install(single.lab, [single.repo]):
+    with _install(single.lab, [single.project]):
         stack = await deploy("integration", parent="test3", project_name="pinned")
 
     assert stack.projects == {"test3": "pinned"}
@@ -346,10 +346,10 @@ async def test_every_staged_compose_file_gets_its_own_f_flag(tmp_path):
 @pytest.mark.asyncio
 async def test_services_narrowing_appends_only_the_named_services(tmp_path):
     compose = _compose_file(tmp_path, "core", services=("api", "db"))
-    repo = _repo("a", _frag(), composes=[compose])
+    project = _repo("a", _frag(), composes=[compose])
     host = _wire(_host("test3", "10.10.200.13"))
     lab = _lab(host)
-    with _install(lab, [repo]):
+    with _install(lab, [project]):
         stack = await deploy("integration", parent="test3", services=["api"])
 
     assert _up_command(host).endswith("up -d --remove-orphans api")
@@ -359,11 +359,11 @@ async def test_services_narrowing_appends_only_the_named_services(tmp_path):
 @pytest.mark.asyncio
 async def test_unknown_service_is_refused(tmp_path):
     compose = _compose_file(tmp_path, "core", services=("api",))
-    repo = _repo("a", _frag(), composes=[compose])
+    project = _repo("a", _frag(), composes=[compose])
     host = _wire(_host("test3", "10.10.200.13"))
     lab = _lab(host)
     with (
-        _install(lab, [repo]),
+        _install(lab, [project]),
         pytest.raises(UseCaseResolutionError, match="no participating fragment declares"),
     ):
         await deploy("integration", parent="test3", services=["nope"])
@@ -432,14 +432,14 @@ async def test_skipped_host_log_names_the_use_case(tmp_path, caplog):
 @pytest.mark.asyncio
 async def test_adapter_env_beats_static_and_caller_beats_adapter(tmp_path):
     compose = _compose_file(tmp_path, "core")
-    repo = _repo("a", _frag(env={"K": "static", "S": "static"}), composes=[compose])
+    project = _repo("a", _frag(env={"K": "static", "S": "static"}), composes=[compose])
     host = _wire(_host("test3", "10.10.200.13"))
     lab = _lab(host)
 
     def _adapter(_facts):
         return AdapterResult(env={"K": "adapter", "A": "adapter"})
 
-    with _install(lab, [repo]), patch.object(deploy_mod, "adapter_for", return_value=_adapter):
+    with _install(lab, [project]), patch.object(deploy_mod, "adapter_for", return_value=_adapter):
         stack = await deploy("integration", parent="test3", env={"K": "caller"})
 
     text = _staged_env_text(host)
@@ -454,14 +454,14 @@ async def test_env_files_layer_between_adapter_and_caller_env(tmp_path):
     env_file = tmp_path / "extra.env"
     env_file.write_text("# a comment\n\nK=from_file\nF=from_file\n")
     compose = _compose_file(tmp_path, "core")
-    repo = _repo("a", _frag(env={"K": "static"}), composes=[compose])
+    project = _repo("a", _frag(env={"K": "static"}), composes=[compose])
     host = _wire(_host("test3", "10.10.200.13"))
     lab = _lab(host)
 
     def _adapter(_facts):
         return AdapterResult(env={"K": "adapter"})
 
-    with _install(lab, [repo]), patch.object(deploy_mod, "adapter_for", return_value=_adapter):
+    with _install(lab, [project]), patch.object(deploy_mod, "adapter_for", return_value=_adapter):
         stack = await deploy("integration", parent="test3", env_files=[env_file])
 
     assert stack.env["K"] == "from_file"
@@ -472,12 +472,12 @@ async def test_env_files_layer_between_adapter_and_caller_env(tmp_path):
 async def test_pass_env_miss_is_warned_not_fatal(tmp_path, caplog, monkeypatch):
     monkeypatch.delenv("OTTO_T11_ABSENT", raising=False)
     compose = _compose_file(tmp_path, "core")
-    repo = _repo("a", _frag(pass_env=("OTTO_T11_ABSENT",)), composes=[compose])
+    project = _repo("a", _frag(pass_env=("OTTO_T11_ABSENT",)), composes=[compose])
     host = _wire(_host("test3", "10.10.200.13"))
     lab = _lab(host)
     with (
         caplog.at_level(logging.WARNING, logger="otto.docker.deploy"),
-        _install(lab, [repo]),
+        _install(lab, [project]),
     ):
         await deploy("integration", parent="test3")
 
@@ -487,11 +487,11 @@ async def test_pass_env_miss_is_warned_not_fatal(tmp_path, caplog, monkeypatch):
 @pytest.mark.asyncio
 async def test_newline_in_an_env_value_is_refused(tmp_path):
     compose = _compose_file(tmp_path, "core")
-    repo = _repo("a", _frag(), composes=[compose])
+    project = _repo("a", _frag(), composes=[compose])
     host = _wire(_host("test3", "10.10.200.13"))
     lab = _lab(host)
     with (
-        _install(lab, [repo]),
+        _install(lab, [project]),
         pytest.raises(UseCaseResolutionError, match="cannot be written to an env file"),
     ):
         await deploy("integration", parent="test3", env={"K": "line1\nline2"})
@@ -515,9 +515,9 @@ async def test_adapter_facts_carry_only_its_own_repos_handles(tmp_path):
     lab = _lab(host)
     seen: dict[str, list[str]] = {}
 
-    def _adapter_for(repo_name, _use_case):
+    def _adapter_for(project_name, _use_case):
         def _adapter(facts):
-            seen[repo_name] = sorted(facts["files"])
+            seen[project_name] = sorted(facts["files"])
             return AdapterResult()
 
         return _adapter
@@ -531,7 +531,7 @@ async def test_adapter_facts_carry_only_its_own_repos_handles(tmp_path):
 @pytest.mark.asyncio
 async def test_adapter_file_override_is_what_gets_staged(tmp_path):
     compose = _compose_file(tmp_path, "core")
-    repo = _repo("a", _frag(), composes=[compose])
+    project = _repo("a", _frag(), composes=[compose])
     host = _wire(_host("test3", "10.10.200.13"))
     lab = _lab(host)
     rendered = "services:\n  api:\n    image: rendered\n"
@@ -539,7 +539,7 @@ async def test_adapter_file_override_is_what_gets_staged(tmp_path):
     def _adapter(_facts):
         return AdapterResult(files={"core": rendered})
 
-    with _install(lab, [repo]), patch.object(deploy_mod, "adapter_for", return_value=_adapter):
+    with _install(lab, [project]), patch.object(deploy_mod, "adapter_for", return_value=_adapter):
         await deploy("integration", parent="test3")
 
     assert ("core.yml", rendered) in [
@@ -551,14 +551,14 @@ async def test_adapter_file_override_is_what_gets_staged(tmp_path):
 @pytest.mark.asyncio
 async def test_adapter_extra_files_reach_staging(tmp_path):
     compose = _compose_file(tmp_path, "core")
-    repo = _repo("a", _frag(), composes=[compose])
+    project = _repo("a", _frag(), composes=[compose])
     host = _wire(_host("test3", "10.10.200.13"))
     lab = _lab(host)
 
     def _adapter(_facts):
         return AdapterResult(extra_files={"gen.env": "G=1\n"})
 
-    with _install(lab, [repo]), patch.object(deploy_mod, "adapter_for", return_value=_adapter):
+    with _install(lab, [project]), patch.object(deploy_mod, "adapter_for", return_value=_adapter):
         await deploy("integration", parent="test3")
 
     assert "gen.env" in [name for name, _d, _c in host.staged]  # type: ignore[attr-defined]
@@ -573,7 +573,7 @@ async def test_adapter_extra_files_reach_staging(tmp_path):
 async def test_on_that_names_no_host_is_refused(single):
     """A parent the lab lacks is the rule's refusal, before any device touch."""
     with (
-        _install(single.lab, [single.repo]),
+        _install(single.lab, [single.project]),
         pytest.raises(DockerVerbError, match="'ghost' is not a docker-capable unix host") as e,
     ):
         await deploy("integration", parent="ghost")
@@ -585,7 +585,7 @@ async def test_on_that_names_no_host_is_refused(single):
 @pytest.mark.asyncio
 async def test_teardown_on_that_names_no_host_is_refused(single):
     with (
-        _install(single.lab, [single.repo]),
+        _install(single.lab, [single.project]),
         pytest.raises(DockerVerbError, match="'ghost' is not a docker-capable unix host"),
     ):
         await teardown("integration", parent="ghost")
@@ -594,10 +594,10 @@ async def test_teardown_on_that_names_no_host_is_refused(single):
 @pytest.mark.asyncio
 async def test_a_tied_lab_refuses_a_bare_deploy_naming_the_tie(tmp_path):
     """No parent named and two hosts at priority 0: the rule refuses, nothing is touched."""
-    repo = _repo("a", _frag(), composes=[_compose_file(tmp_path, "core")])
+    project = _repo("a", _frag(), composes=[_compose_file(tmp_path, "core")])
     one, two = _wire(_host("test1", "10.10.200.11")), _wire(_host("test3", "10.10.200.13"))
     with (
-        _install(_lab(one, two), [repo]),
+        _install(_lab(one, two), [project]),
         pytest.raises(
             DockerVerbError, match=r"2 docker-capable hosts at priority 0 \(test1, test3\)"
         ),
@@ -631,7 +631,7 @@ async def test_every_fragment_lands_on_the_ranked_parent(tmp_path, monkeypatch):
 
 def test_resolve_use_case_carries_the_one_parent(single):
     """`.parent` is the host the rule (or `parent=`) picked; `.placed` has its id alone."""
-    with _install(single.lab, [single.repo]):
+    with _install(single.lab, [single.project]):
         resolution = deploy_mod.resolve_use_case("integration", parent=None, provide=None)
 
     assert resolution.parent is single.host
@@ -647,7 +647,7 @@ def test_resolve_use_case_carries_the_one_parent(single):
 async def test_rollback_on_registration_failure(single):
     """No container id resolves anywhere -> registration raises -> we tear down."""
     _wire(single.host, cid="")
-    with _install(single.lab, [single.repo]), pytest.raises(HostCommandError):
+    with _install(single.lab, [single.project]), pytest.raises(HostCommandError):
         await deploy("integration", parent="test3")
 
     downs = [c for c in single.host.commands if " down " in c]  # type: ignore[attr-defined]
@@ -659,7 +659,7 @@ async def test_rollback_on_registration_failure(single):
 async def test_shared_stack_not_rolled_back(single):
     """The stack was already up: it is someone else's, so failure must not down it."""
     _wire(single.host, already_up=True, cid="")
-    with _install(single.lab, [single.repo]), pytest.raises(HostCommandError):
+    with _install(single.lab, [single.project]), pytest.raises(HostCommandError):
         await deploy("integration", parent="test3")
 
     assert not [c for c in single.host.commands if " down " in c]  # type: ignore[attr-defined]
@@ -706,7 +706,7 @@ async def test_failed_up_command_raises_and_rolls_back(single):
 
     single.host.exec = AsyncMock(side_effect=_exec)
     with (
-        _install(single.lab, [single.repo]),
+        _install(single.lab, [single.project]),
         pytest.raises(HostCommandError, match="port already allocated"),
     ):
         await deploy("integration", parent="test3")
@@ -737,8 +737,8 @@ async def test_build_runs_once_per_repo_in_dependency_order(tmp_path):
     lab = _lab(host)
     built: list[str] = []
 
-    async def _build(repo, _parent, **_kw):
-        built.append(repo.name)
+    async def _build(project, _parent, **_kw):
+        built.append(project.name)
         return {}
 
     with (
@@ -757,10 +757,10 @@ async def test_up_without_build_runs_no_build_even_when_images_are_declared(tmp_
     The repo DECLARES an image: without one, nothing would build under either
     default and the test could not fail.
     """
-    repo = _repo("a", _frag(), composes=[_compose_file(tmp_path, "core")], images=("img",))
+    project = _repo("a", _frag(), composes=[_compose_file(tmp_path, "core")], images=("img",))
     host = _wire(_host("test3", "10.10.200.13"))
     with (
-        _install(_lab(host), [repo]),
+        _install(_lab(host), [project]),
         patch.object(deploy_mod, "build_images", AsyncMock(return_value={})) as builder,
     ):
         await deploy("integration", parent="test3")
@@ -770,10 +770,10 @@ async def test_up_without_build_runs_no_build_even_when_images_are_declared(tmp_
 
 @pytest.mark.asyncio
 async def test_build_true_builds_before_up(tmp_path):
-    repo = _repo("a", _frag(), composes=[_compose_file(tmp_path, "core")], images=("img",))
+    project = _repo("a", _frag(), composes=[_compose_file(tmp_path, "core")], images=("img",))
     host = _wire(_host("test3", "10.10.200.13"))
     with (
-        _install(_lab(host), [repo]),
+        _install(_lab(host), [project]),
         patch.object(deploy_mod, "build_images", AsyncMock(return_value={})) as builder,
     ):
         await deploy("integration", parent="test3", build=True)
@@ -814,7 +814,7 @@ def test_up_command_quotes_a_pull_policy_it_does_not_validate():
 
 @pytest.mark.asyncio
 async def test_deploy_threads_the_flags_into_the_up_command(single):
-    with _install(single.lab, [single.repo]):
+    with _install(single.lab, [single.project]):
         await deploy("integration", parent="test3", force_recreate=True, pull="missing")
 
     assert _up_command(single.host).endswith(
@@ -824,7 +824,7 @@ async def test_deploy_threads_the_flags_into_the_up_command(single):
 
 @pytest.mark.asyncio
 async def test_deployed_forwards_the_flags_to_deploy(single):
-    with _install(single.lab, [single.repo]):
+    with _install(single.lab, [single.project]):
         async with deployed(
             "integration", parent="test3", force_recreate=True, pull="never", own=True
         ):
@@ -835,10 +835,10 @@ async def test_deployed_forwards_the_flags_to_deploy(single):
 
 @pytest.mark.asyncio
 async def test_deployed_forwards_build_to_deploy(tmp_path):
-    repo = _repo("a", _frag(), composes=[_compose_file(tmp_path, "core")], images=("img",))
+    project = _repo("a", _frag(), composes=[_compose_file(tmp_path, "core")], images=("img",))
     host = _wire(_host("test3", "10.10.200.13"))
     with (
-        _install(_lab(host), [repo]),
+        _install(_lab(host), [project]),
         patch.object(deploy_mod, "build_images", AsyncMock(return_value={})) as builder,
     ):
         async with deployed("integration", parent="test3", build=True, own=True):
@@ -849,7 +849,7 @@ async def test_deployed_forwards_build_to_deploy(tmp_path):
 
 @pytest.mark.asyncio
 async def test_a_failed_build_stops_before_up(tmp_path):
-    repo = _repo(
+    project = _repo(
         "a",
         _frag(),
         composes=[_compose_file(tmp_path, "core")],
@@ -858,7 +858,7 @@ async def test_a_failed_build_stops_before_up(tmp_path):
     host = _wire(_host("test3", "10.10.200.13"))
     lab = _lab(host)
     with (
-        _install(lab, [repo]),
+        _install(lab, [project]),
         patch.object(
             deploy_mod,
             "build_images",
@@ -881,7 +881,7 @@ async def test_a_failed_build_stops_before_up(tmp_path):
 @pytest.mark.asyncio
 async def test_dry_run_declines_naming_use_case(single):
     with (
-        _install(single.lab, [single.repo]),
+        _install(single.lab, [single.project]),
         patch.object(deploy_mod, "is_dry_run", return_value=True),
         pytest.raises(CommandNotRunError) as excinfo,
     ):
@@ -898,7 +898,7 @@ async def test_dry_run_declines_naming_use_case(single):
 async def test_dry_run_still_refuses_an_unresolvable_use_case(single):
     """The pure refusals fire identically either way — they settle from config."""
     with (
-        _install(single.lab, [single.repo]),
+        _install(single.lab, [single.project]),
         patch.object(deploy_mod, "is_dry_run", return_value=True),
         pytest.raises(UseCaseResolutionError),
     ):
@@ -908,7 +908,7 @@ async def test_dry_run_still_refuses_an_unresolvable_use_case(single):
 @pytest.mark.asyncio
 async def test_teardown_dry_run_declines(single):
     with (
-        _install(single.lab, [single.repo]),
+        _install(single.lab, [single.project]),
         patch.object(deploy_mod, "is_dry_run", return_value=True),
         pytest.raises(CommandNotRunError, match="integration"),
     ):
@@ -920,7 +920,7 @@ async def test_teardown_dry_run_declines(single):
 @pytest.mark.asyncio
 async def test_deployed_dry_run_declines(single):
     with (
-        _install(single.lab, [single.repo]),
+        _install(single.lab, [single.project]),
         patch.object(deploy_mod, "is_dry_run", return_value=True),
         pytest.raises(CommandNotRunError, match="integration"),
     ):
@@ -936,7 +936,7 @@ async def test_deployed_dry_run_declines(single):
 @pytest.mark.asyncio
 async def test_full_teardown_downs_by_project_and_unregisters(single, monkeypatch):
     monkeypatch.setenv("OTTO_COMPOSE_SUFFIX", "u")
-    with _install(single.lab, [single.repo]):
+    with _install(single.lab, [single.project]):
         await deploy("integration", parent="test3")
         assert "test3.integration.api" in single.lab.hosts
         single.host.commands.clear()
@@ -952,10 +952,10 @@ async def test_full_teardown_downs_by_project_and_unregisters(single, monkeypatc
 async def test_partial_teardown_stops_and_removes_only_named_services(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_COMPOSE_SUFFIX", "u")
     compose = _compose_file(tmp_path, "core", services=("api", "db"))
-    repo = _repo("a", _frag(), composes=[compose])
+    project = _repo("a", _frag(), composes=[compose])
     host = _wire(_host("test3", "10.10.200.13"))
     lab = _lab(host)
-    with _install(lab, [repo]):
+    with _install(lab, [project]):
         await deploy("integration", parent="test3")
         host.commands.clear()
         await teardown("integration", parent="test3", services=["api"], stop_timeout=5)
@@ -970,7 +970,7 @@ async def test_partial_teardown_stops_and_removes_only_named_services(tmp_path, 
 @pytest.mark.asyncio
 async def test_teardown_unknown_service_is_refused(single):
     with (
-        _install(single.lab, [single.repo]),
+        _install(single.lab, [single.project]),
         pytest.raises(UseCaseResolutionError, match="no participating fragment declares"),
     ):
         await teardown("integration", parent="test3", services=["nope"])
@@ -983,7 +983,7 @@ async def test_teardown_unknown_service_is_refused(single):
 async def test_deployed_own_false_shares(single):
     """Already up on entry -> someone else's stack -> exiting must not down it."""
     _wire(single.host, already_up=True)
-    with _install(single.lab, [single.repo]):
+    with _install(single.lab, [single.project]):
         async with deployed("integration", parent="test3") as stack:
             assert list(stack.hosts) == ["api"]
 
@@ -999,7 +999,7 @@ async def test_deployed_own_true_tears_down_through_compensate(single):
         seen.append(what)
         return await coro
 
-    with _install(single.lab, [single.repo]), patch("otto.lifecycle.compensate", _compensate):
+    with _install(single.lab, [single.project]), patch("otto.lifecycle.compensate", _compensate):
         async with deployed("integration", parent="test3", own=True):
             pass
 
@@ -1010,7 +1010,7 @@ async def test_deployed_own_true_tears_down_through_compensate(single):
 
 @pytest.mark.asyncio
 async def test_deployed_not_up_beforehand_tears_down_on_exit(single):
-    with _install(single.lab, [single.repo]):
+    with _install(single.lab, [single.project]):
         async with deployed("integration", parent="test3"):
             pass
 
@@ -1028,7 +1028,7 @@ async def test_deployed_refuses_an_unknown_probe_answer(single):
         return _ok()
 
     single.host.exec = AsyncMock(side_effect=_exec)
-    with _install(single.lab, [single.repo]), pytest.raises(HostCommandError, match="own=True"):
+    with _install(single.lab, [single.project]), pytest.raises(HostCommandError, match="own=True"):
         async with deployed("integration", parent="test3"):
             pass
 
@@ -1042,7 +1042,7 @@ async def test_deployed_refuses_an_unknown_probe_answer(single):
 async def test_a_non_docker_capable_parent_is_refused(single):
     single.host.docker_capable = False
     with (
-        _install(single.lab, [single.repo]),
+        _install(single.lab, [single.project]),
         pytest.raises(DockerVerbError, match="'test3' is not a docker-capable unix host"),
     ):
         await deploy("integration", parent="test3")
@@ -1058,7 +1058,7 @@ async def test_a_non_docker_capable_parent_is_refused_even_with_nothing_to_do(si
     """
     single.host.docker_capable = False
     with (
-        _install(single.lab, [single.repo]),
+        _install(single.lab, [single.project]),
         pytest.raises(DockerVerbError, match="'test3' is not a docker-capable unix host"),
     ):
         await deploy("integration", parent="test3", services=[])
@@ -1068,7 +1068,7 @@ async def test_a_non_docker_capable_parent_is_refused_even_with_nothing_to_do(si
 
 @pytest.mark.asyncio
 async def test_an_empty_services_list_deploys_nothing(single):
-    with _install(single.lab, [single.repo]):
+    with _install(single.lab, [single.project]):
         stack = await deploy("integration", parent="test3", services=[])
 
     assert stack.hosts == {}
@@ -1078,12 +1078,12 @@ async def test_an_empty_services_list_deploys_nothing(single):
 
 @pytest.mark.asyncio
 async def test_an_unknown_compose_handle_is_refused(tmp_path):
-    repo = _repo("a", _frag(composes=("ghost",)), composes=[_compose_file(tmp_path, "core")])
+    project = _repo("a", _frag(composes=("ghost",)), composes=[_compose_file(tmp_path, "core")])
     host = _wire(_host("test3", "10.10.200.13"))
     lab = _lab(host)
     with (
-        _install(lab, [repo]),
-        pytest.raises(UseCaseResolutionError, match="which the repo does not define"),
+        _install(lab, [project]),
+        pytest.raises(UseCaseResolutionError, match="which the project does not define"),
     ):
         await deploy("integration", parent="test3")
 
@@ -1118,8 +1118,8 @@ async def test_colliding_adapter_extra_files_are_warned_about(tmp_path, caplog):
     host = _wire(_host("test3", "10.10.200.13"))
     lab = _lab(host)
 
-    def _adapter_for(repo_name, _use_case):
-        return lambda _facts: AdapterResult(extra_files={"gen.env": f"OWNER={repo_name}\n"})
+    def _adapter_for(project_name, _use_case):
+        return lambda _facts: AdapterResult(extra_files={"gen.env": f"OWNER={project_name}\n"})
 
     with (
         caplog.at_level(logging.WARNING, logger="otto.docker.deployment"),
@@ -1158,7 +1158,7 @@ async def test_displacements_are_logged_without_claiming_the_loser_ranked_lower(
     ):
         stack = await deploy("integration", parent="test3", provide={"edge": "b"})
 
-    assert [sf.repo.name for sf in stack.selection.fragments] == ["b"]
+    assert [sf.project.name for sf in stack.selection.fragments] == ["b"]
     assert "goes to b (priority 5)" in caplog.text
     assert "a (priority 10) stands down" in caplog.text
     assert "a (priority 1) stands down" in caplog.text
@@ -1170,10 +1170,10 @@ async def test_full_teardown_never_reads_a_compose_file(tmp_path, monkeypatch):
     """Teardown by label survives a compose file that has since been deleted."""
     monkeypatch.setenv("OTTO_COMPOSE_SUFFIX", "u")
     compose = _compose_file(tmp_path, "core")
-    repo = _repo("a", _frag(), composes=[compose])
+    project = _repo("a", _frag(), composes=[compose])
     host = _wire(_host("test3", "10.10.200.13"))
     lab = _lab(host)
-    with _install(lab, [repo]):
+    with _install(lab, [project]):
         await deploy("integration", parent="test3")
         compose.path.unlink()
         host.commands.clear()
@@ -1191,11 +1191,11 @@ async def test_a_malformed_env_file_line_is_refused(tmp_path):
     """A line with no `=` means "inherit from the shell" to docker; pass_env owns that."""
     env_file = tmp_path / "bad.env"
     env_file.write_text("# fine\nJUST_A_NAME\n")
-    repo = _repo("a", _frag(), composes=[_compose_file(tmp_path, "core")])
+    project = _repo("a", _frag(), composes=[_compose_file(tmp_path, "core")])
     host = _wire(_host("test3", "10.10.200.13"))
     lab = _lab(host)
     with (
-        _install(lab, [repo]),
+        _install(lab, [project]),
         pytest.raises(UseCaseResolutionError, match="is not a K=V assignment"),
     ):
         await deploy("integration", parent="test3", env_files=[env_file])
@@ -1207,7 +1207,7 @@ async def test_a_rollback_that_itself_fails_is_reported_and_never_masks(single, 
     _wire(single.host, cid="")  # registration will fail -> rollback runs
     with (
         caplog.at_level(logging.ERROR, logger="otto.docker.deployment"),
-        _install(single.lab, [single.repo]),
+        _install(single.lab, [single.project]),
         patch.object(
             deploy_mod,
             "compose_down_project",
@@ -1248,7 +1248,7 @@ async def test_partial_teardown_skips_a_host_with_none_of_the_named_services(tmp
 @pytest.mark.asyncio
 async def test_partial_teardown_reports_a_failed_stop_and_still_removes(tmp_path, caplog):
     compose = _compose_file(tmp_path, "core", services=("api",))
-    repo = _repo("a", _frag(), composes=[compose])
+    project = _repo("a", _frag(), composes=[compose])
     host = _wire(_host("test3", "10.10.200.13"))
     lab = _lab(host)
 
@@ -1261,7 +1261,7 @@ async def test_partial_teardown_reports_a_failed_stop_and_still_removes(tmp_path
     host.exec = AsyncMock(side_effect=_exec)
     with (
         caplog.at_level(logging.ERROR, logger="otto.docker.deployment"),
-        _install(lab, [repo]),
+        _install(lab, [project]),
     ):
         await teardown("integration", parent="test3", services=["api"])
 
@@ -1282,10 +1282,10 @@ async def test_partial_teardown_unregisters_a_mixed_case_service(tmp_path, monke
     compose = _compose_file(
         tmp_path, "core", services=("MyApi",), text="services:\n  MyApi:\n    image: x\n"
     )
-    repo = _repo("a", _frag(), composes=[compose])
+    project = _repo("a", _frag(), composes=[compose])
     host = _wire(_host("test3", "10.10.200.13"))
     lab = _lab(host)
-    with _install(lab, [repo]):
+    with _install(lab, [project]):
         stack = await deploy("integration", parent="test3")
         assert stack.hosts["MyApi"].id == "test3.integration.myapi"
         assert "test3.integration.myapi" in lab.hosts
@@ -1298,10 +1298,10 @@ async def test_partial_teardown_unregisters_a_mixed_case_service(tmp_path, monke
 async def test_one_repos_two_fragments_sharing_a_handle_stage_it_once(tmp_path):
     """The `_units` dedupe: one -f per handle, however many fragments name it."""
     compose = _compose_file(tmp_path, "core")
-    repo = _repo("a", _frag(), _frag(), composes=[compose])
+    project = _repo("a", _frag(), _frag(), composes=[compose])
     host = _wire(_host("test3", "10.10.200.13"))
     lab = _lab(host)
-    with _install(lab, [repo]):
+    with _install(lab, [project]):
         await deploy("integration", parent="test3")
 
     assert _up_command(host).count(" -f ") == 1
@@ -1311,12 +1311,12 @@ async def test_one_repos_two_fragments_sharing_a_handle_stage_it_once(tmp_path):
 async def test_a_fragment_naming_one_handle_twice_is_not_a_collision(tmp_path, caplog):
     """Same fragment, same handle: nothing collides, so nothing may be warned about."""
     compose = _compose_file(tmp_path, "core")
-    repo = _repo("a", _frag(composes=("core", "core")), composes=[compose])
+    project = _repo("a", _frag(composes=("core", "core")), composes=[compose])
     host = _wire(_host("test3", "10.10.200.13"))
     lab = _lab(host)
     with (
         caplog.at_level(logging.WARNING, logger="otto.docker.deployment"),
-        _install(lab, [repo]),
+        _install(lab, [project]),
     ):
         stack = await deploy("integration", parent="test3")
 
@@ -1327,11 +1327,11 @@ async def test_a_fragment_naming_one_handle_twice_is_not_a_collision(tmp_path, c
 @pytest.mark.asyncio
 async def test_a_successful_build_does_not_stop_the_deployment(tmp_path):
     """The ok-result loop-back in _build_for: a green build proceeds to `up`."""
-    repo = _repo("a", _frag(), composes=[_compose_file(tmp_path, "core")], images=("img",))
+    project = _repo("a", _frag(), composes=[_compose_file(tmp_path, "core")], images=("img",))
     host = _wire(_host("test3", "10.10.200.13"))
     lab = _lab(host)
     with (
-        _install(lab, [repo]),
+        _install(lab, [project]),
         patch.object(
             deploy_mod,
             "build_images",
@@ -1368,8 +1368,8 @@ async def test_builds_skip_a_repo_whose_services_were_all_narrowed_away(tmp_path
     lab = _lab(host)
     built: list[str] = []
 
-    async def _build(repo, _parent, **_kw):
-        built.append(repo.name)
+    async def _build(project, _parent, **_kw):
+        built.append(project.name)
         return {}
 
     with (
@@ -1403,7 +1403,7 @@ async def test_a_collision_warns_once_whether_or_not_services_is_passed(tmp_path
 async def test_an_env_key_with_a_leading_dash_is_refused(single):
     """M10: the same mapping is spliced into `env K=V ...`, where `-i` wipes it."""
     with (
-        _install(single.lab, [single.repo]),
+        _install(single.lab, [single.project]),
         pytest.raises(UseCaseResolutionError, match="WIPES the environment"),
     ):
         await deploy("integration", parent="test3", env={"-i": "x"})
@@ -1469,7 +1469,7 @@ async def test_dry_run_plan_shows_the_exact_compose_command(single, monkeypatch)
     """
     monkeypatch.setenv("OTTO_COMPOSE_SUFFIX", "u")
     with (
-        _install(single.lab, [single.repo]),
+        _install(single.lab, [single.project]),
         patch.object(deploy_mod, "is_dry_run", return_value=True),
         pytest.raises(CommandNotRunError) as excinfo,
     ):
@@ -1496,7 +1496,7 @@ async def test_dry_run_preview_carries_the_up_flags(single):
     `docker build` may appear in the plan.
     """
     with (
-        _install(single.lab, [single.repo]),
+        _install(single.lab, [single.project]),
         patch.object(deploy_mod, "is_dry_run", return_value=True),
         pytest.raises(CommandNotRunError) as excinfo,
     ):
@@ -1519,7 +1519,7 @@ async def test_dry_run_declines_below_the_adapter_so_its_content_is_in_the_comma
         return AdapterResult(env={"FROM_ADAPTER": "yes"})
 
     with (
-        _install(single.lab, [single.repo]),
+        _install(single.lab, [single.project]),
         patch.object(deploy_mod, "adapter_for", return_value=_adapter),
         patch.object(deploy_mod, "is_dry_run", return_value=True),
         pytest.raises(CommandNotRunError) as excinfo,
@@ -1538,10 +1538,10 @@ async def test_dry_run_command_is_narrowed_by_services(tmp_path):
         services=("api", "db"),
         text="services:\n  api:\n    image: alpine\n  db:\n    image: alpine\n",
     )
-    repo = _repo("a", _frag(), composes=[compose])
+    project = _repo("a", _frag(), composes=[compose])
     host = _wire(_host("test3", "10.10.200.13"))
     with (
-        _install(_lab(host), [repo]),
+        _install(_lab(host), [project]),
         patch.object(deploy_mod, "is_dry_run", return_value=True),
         pytest.raises(CommandNotRunError) as excinfo,
     ):
@@ -1575,7 +1575,7 @@ async def test_dry_run_deploy_touches_no_device_before_it_declines(single):
     objects so a zero cannot come from a call that never reached the parent.
     """
     with (
-        _install(single.lab, [single.repo]),
+        _install(single.lab, [single.project]),
         patch.object(deploy_mod, "is_dry_run", return_value=True),
         pytest.raises(CommandNotRunError),
     ):
@@ -1589,7 +1589,7 @@ async def test_dry_run_deploy_touches_no_device_before_it_declines(single):
     # POSITIVE CONTROL, same objects, dry run off: the deploy runs to
     # completion and drives the parent, so the zeros above are the decline
     # talking and not a call that fell over somewhere harmless.
-    with _install(single.lab, [single.repo]):
+    with _install(single.lab, [single.project]):
         await deploy("integration", parent="test3")
     assert single.host.exec.await_count > 0
     assert single.host.put.await_count > 0
@@ -1609,7 +1609,7 @@ async def test_teardown_and_deployed_dry_runs_carry_the_same_plan(single, verb):
 
     call = _call_teardown if verb == "teardown" else _call_deployed
     with (
-        _install(single.lab, [single.repo]),
+        _install(single.lab, [single.project]),
         patch.object(deploy_mod, "is_dry_run", return_value=True),
         pytest.raises(CommandNotRunError) as excinfo,
     ):
@@ -1632,7 +1632,7 @@ async def test_teardown_and_deployed_dry_runs_carry_the_same_plan(single, verb):
 
 @pytest.mark.asyncio
 async def test_full_teardown_returns_one_down_result_per_host(single):
-    with _install(single.lab, [single.repo]):
+    with _install(single.lab, [single.project]):
         report = await teardown("integration")
     assert isinstance(report, TeardownReport)
     assert report.use_case == "integration"
@@ -1644,7 +1644,7 @@ async def test_full_teardown_returns_one_down_result_per_host(single):
 
 @pytest.mark.asyncio
 async def test_full_teardown_reports_a_failed_down_and_still_unregisters(single):
-    with _install(single.lab, [single.repo]):
+    with _install(single.lab, [single.project]):
         await deploy("integration", parent="test3")
     assert "test3.integration.api" in single.lab.hosts
 
@@ -1654,7 +1654,7 @@ async def test_full_teardown_reports_a_failed_down_and_still_unregisters(single)
         return _ok(command=cmd)
 
     single.host.exec = AsyncMock(side_effect=_exec)
-    with _install(single.lab, [single.repo]):
+    with _install(single.lab, [single.project]):
         report = await teardown("integration")
     assert not report.ok
     (result,) = report.failed[single.host.id]
@@ -1665,10 +1665,12 @@ async def test_full_teardown_reports_a_failed_down_and_still_unregisters(single)
 
 @pytest.mark.asyncio
 async def test_partial_teardown_reports_stop_and_rm_per_acting_host(tmp_path):
-    repo = _repo("a", _frag(), composes=[_compose_file(tmp_path, "core", services=("api", "db"))])
+    project = _repo(
+        "a", _frag(), composes=[_compose_file(tmp_path, "core", services=("api", "db"))]
+    )
     host = _wire(_host("test3", "10.10.200.13"))
     lab = _lab(host)
-    with _install(lab, [repo]):
+    with _install(lab, [project]):
         report = await teardown("integration", services=["api"], parent="test3")
     stop, rm = report.hosts["test3"]
     assert stop.command.endswith("stop -t 1 api")
@@ -1694,7 +1696,7 @@ async def test_partial_teardown_skips_a_host_that_carries_none_of_the_services(t
 
 @pytest.mark.asyncio
 async def test_partial_teardown_reports_a_failed_stop_in_the_report(tmp_path):
-    repo = _repo("a", _frag(), composes=[_compose_file(tmp_path, "core", services=("api",))])
+    project = _repo("a", _frag(), composes=[_compose_file(tmp_path, "core", services=("api",))])
     host = _wire(_host("test3", "10.10.200.13"))
 
     async def _exec(cmd, *_a, **_kw):
@@ -1704,7 +1706,7 @@ async def test_partial_teardown_reports_a_failed_stop_in_the_report(tmp_path):
 
     host.exec = AsyncMock(side_effect=_exec)
     lab = _lab(host)
-    with _install(lab, [repo]):
+    with _install(lab, [project]):
         report = await teardown("integration", services=["api"], parent="test3")
     assert not report.ok
     assert [r.value for r in report.failed["test3"]] == ["no such container"]
@@ -1722,7 +1724,7 @@ async def test_deployed_raises_when_its_teardown_fails(single):
 
     single.host.exec = AsyncMock(side_effect=_exec)
     with (
-        _install(single.lab, [single.repo]),
+        _install(single.lab, [single.project]),
         patch.object(deploy_mod, "build_images", AsyncMock(return_value={})),
         pytest.raises(
             HostCommandError,
@@ -1747,7 +1749,7 @@ async def test_deployed_body_exception_wins_over_a_failed_teardown(single, caplo
 
     single.host.exec = AsyncMock(side_effect=_exec)
     with (
-        _install(single.lab, [single.repo]),
+        _install(single.lab, [single.project]),
         patch.object(deploy_mod, "build_images", AsyncMock(return_value={})),
         caplog.at_level(logging.ERROR),
         pytest.raises(ValueError, match="body failed"),

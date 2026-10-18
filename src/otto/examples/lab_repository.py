@@ -3,7 +3,7 @@
 A teaching/reference host-source backend: it holds a mapping of lab name to a
 list of element dicts, each grouping its own host dicts, and builds real hosts
 via :func:`otto.host.factory.create_host_from_dict`. It needs no files or
-network, so it runs inside doctests and the conformance suite, and SUT authors
+network, so it runs inside doctests and the conformance suite, and project authors
 can copy it as a starting point.
 
 Register it from an ``init`` module, with the model that parses a source's
@@ -24,17 +24,17 @@ option the config model parses; this sample's are both optional)::
 Direct usage:
 
 >>> from otto.examples.lab_repository import ExampleLabRepository
->>> repo = ExampleLabRepository()
->>> repo.list_labs()
+>>> repository = ExampleLabRepository()
+>>> repository.list_labs()
 ['east', 'west']
->>> lab = repo.load_lab("east")
+>>> lab = repository.load_lab("east")
 >>> lab.name
 'east'
 >>> len(lab.hosts)
 1
 >>> sorted(lab.resources)
 ['router1']
->>> [s.id for s in repo.list_host_summaries()]
+>>> [s.id for s in repository.list_host_summaries()]
 ['router1', 'router2']
 """
 
@@ -124,10 +124,10 @@ class ExampleLabRepository:
         are separately reservable stamps those on the hosts it builds.
         Defaults to the demo dataset's own table.
     profiles : ProfileContext | None
-        The repo data profiles a host's ``os_type`` may name — what the
+        The project data profiles a host's ``os_type`` may name — what the
         factory hands a source as ``env.profiles``. Every call that resolves
         an ``os_type`` passes them on (``profiles=``), so a host may select an
-        ``[os_profiles]`` table any selected repo declares. Defaults to none.
+        ``[os_profiles]`` table any selected project declares. Defaults to none.
     """
 
     def __init__(
@@ -273,9 +273,9 @@ def example_lab_source(
 ) -> ExampleLabRepository:
     """Build an :class:`ExampleLabRepository` from a source's parsed options.
 
-    ``c.env`` carries the declaring repo's root (``repo_dir``), the source's
+    ``c.env`` carries the declaring project's root (``project_root``), the source's
     ``label`` and its ``origin``, which this in-memory sample needs none of
-    (it reads no file), and the selected repos' data ``profiles``, which it
+    (it reads no file), and the selected projects' data ``profiles``, which it
     keeps: a host's ``os_type`` may name an ``[os_profiles]`` table.
     """
     resources = c.config.resources

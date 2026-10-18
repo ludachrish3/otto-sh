@@ -50,7 +50,7 @@ from otto.project import (
     InstallToolsOptions,
     UninstallOptions,
 )
-from otto.registry import registering_repo
+from otto.registry import registering_project
 from otto.result import CommandResult, Result
 from otto.utils import Status
 from tests._fixtures.bootstrap_seam import patch_bootstrap
@@ -150,11 +150,11 @@ class _RecordingProduct(Product):
         return False
 
 
-def _wire_lab(monkeypatch, tmp_path, repo_names, hosts, *, declarations=None):
+def _wire_lab(monkeypatch, tmp_path, project_names, hosts, *, declarations=None):
     """Install a REAL context over *hosts* and point the orchestrator at *repo_names*.
 
     ``repo_names`` is bootstrap's resolved order (dependencies first), which is
-    what ``get_ordered_repos`` hands back and what the teardown walks reversed.
+    what ``get_ordered_projects`` hands back and what the teardown walks reversed.
     The context is set rather than patched in, so the walks run through the real
     ``all_hosts``/``do_for_all_hosts`` pair; the root conftest's
     ``_reset_otto_context`` restores the ContextVar afterwards. ``output_dir``
@@ -168,8 +168,8 @@ def _wire_lab(monkeypatch, tmp_path, repo_names, hosts, *, declarations=None):
 
     Both lists reach otto through one patched ``bootstrap()``
     (:func:`~tests._fixtures.bootstrap_seam.patch_bootstrap`), the one seam
-    ``get_repos``, ``get_ordered_repos`` and the context's scopes all read.
-    ``get_repos`` answers with the LAST name of the walk order
+    ``get_projects``, ``get_ordered_projects`` and the context's scopes all read.
+    ``get_projects`` answers with the LAST name of the walk order
     first: bootstrap's own order heads with the DRIVING repo, which is where a
     dependent sits, while the walk order heads with a dependency. D3 reads the
     first of the former, so a lab wired with one list for both cannot tell a
@@ -189,14 +189,14 @@ def _wire_lab(monkeypatch, tmp_path, repo_names, hosts, *, declarations=None):
         lab.add_host(host)
     set_context(OttoContext(lab=lab, policy=RunPolicy(output_dir=tmp_path)))
     ordered = [
-        fake_repo(name, project_scope=(declarations or {}).get(name), sut_dir=tmp_path / name)
-        for name in repo_names
+        fake_repo(name, project_scope=(declarations or {}).get(name), root=tmp_path / name)
+        for name in project_names
     ]
-    driving = repo_names[-1] if repo_names else None
+    driving = project_names[-1] if project_names else None
     patch_bootstrap(
         monkeypatch,
-        [repo for repo in ordered if repo.name == driving]
-        + [repo for repo in ordered if repo.name != driving],
+        [project for project in ordered if project.name == driving]
+        + [project for project in ordered if project.name != driving],
         ordered=ordered,
     )
 
@@ -290,9 +290,9 @@ async def test_two_repos_stamped_at_ingest_tear_down_in_reverse_dependency_order
     # dropped anywhere on the path (each repo would tear down the other's
     # product), a forward teardown order, and a per-repo debug sweep.
     events = []
-    with registering_repo("base"):
+    with registering_project("base"):
         register_product_provider(lambda host: [_RecordingProduct(f"base-lib@{host.id}", events)])
-    with registering_repo("app"):
+    with registering_project("app"):
         register_product_provider(lambda host: [_RecordingProduct(f"app-svc@{host.id}", events)])
 
     hosts = [_JournaldHost("h1", events), _FleetHost("h2", events)]
@@ -346,9 +346,9 @@ def _declared(*patterns):
 def _starved_lab(monkeypatch, tmp_path, events):
     """A two-repo lab whose dependency ``base`` applies to the lab and targets no host in it."""
     hosts = [_JournaldHost("h1", events)]
-    with registering_repo("base"):
+    with registering_project("base"):
         register_product_provider(lambda host: [_RecordingProduct(f"base-lib@{host.id}", events)])
-    with registering_repo("app"):
+    with registering_project("app"):
         register_product_provider(lambda host: [_RecordingProduct(f"app-svc@{host.id}", events)])
     for host in hosts:
         apply_product_providers(host)
@@ -377,7 +377,7 @@ async def test_the_starved_dependencys_own_view_really_does_refuse(monkeypatch, 
     _starved_lab(monkeypatch, tmp_path, [])
 
     with pytest.raises(ProjectScopeError) as excinfo:
-        list(get_context().for_repo("base").all_hosts())
+        list(get_context().for_project("base").all_hosts())
 
     assert "nothing-.*" in " ".join(str(excinfo.value).split())
 
@@ -398,7 +398,7 @@ async def test_status_reports_a_starved_dependency_rather_than_raising_out_of_it
 
     report = await project.status()
 
-    assert "base" not in report.repos
+    assert "base" not in report.projects
     assert report.scoping["base"].usable is False
     assert report.scoping["base"].applicable is True  # its LABS were never the problem
     assert report.scoping["base"].universe == ()

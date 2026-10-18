@@ -463,7 +463,7 @@ export function RunsPage({ index }: RunsPageProps) {
 
   return (
     <AppShell
-      crumbs={[{ label: index.project_name, href: "#/coverage" }, { label: "runs" }]}
+      crumbs={[{ label: index.report_title, href: "#/coverage" }, { label: "runs" }]}
       title="Runs & contexts"
       meta={
         <>
@@ -472,15 +472,15 @@ export function RunsPage({ index }: RunsPageProps) {
         </>
       }
       stats={{
-        // This card is the repo-wide root rollup, same as DirectoryPage's
+        // This card is the project-wide root rollup, same as DirectoryPage's
         // root — it must narrow/suffix under `hideAsserted` exactly like
-        // that page does, or the two silently disagree about "whole repo"
+        // that page does, or the two silently disagree about "whole project"
         // coverage while the toggle is on.
         scope: withHideAssertedSuffix(
           scope ? `focused: ${scope.label}` : "all contexts",
           hideAsserted,
         ),
-        title: "Coverage — whole repo",
+        title: "Coverage — whole project",
         rows: scope
           ? focusedTreeRow(index, index.tree.stats, scope)
           : tierRows(index, index.tree.stats, hideAsserted),

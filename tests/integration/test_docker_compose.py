@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
-from otto.config.repo import Repo
+from otto.config.project import Project
 from otto.config.scope import DockerCompose
 from otto.docker import build_images, compose_down, compose_up, composed
 from otto.docker.compose import get_user_compose_project
@@ -68,7 +68,7 @@ async def parent(test3_lease):
 
 @pytest.fixture
 def repo1():
-    return Repo(sut_dir=REPO1_DIR)
+    return Project(root=REPO1_DIR)
 
 
 @pytest_asyncio.fixture

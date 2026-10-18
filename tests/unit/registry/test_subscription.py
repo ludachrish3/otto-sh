@@ -44,9 +44,12 @@ def test_cancel_twice_removes_exactly_one_occurrence():
 def test_origin_and_repo_are_recorded_per_occurrence():
     sub = _sub()
     _from_module("pkg_a.init", sub.subscribe, len)
-    with reg.registering_repo("b"):
+    with reg.registering_project("b"):
         _from_module("pkg_b.init", sub.subscribe, len)
-    assert [(s.origin, s.repo) for s in sub.items()] == [("pkg_a.init", None), ("pkg_b.init", "b")]
+    assert [(s.origin, s.project) for s in sub.items()] == [
+        ("pkg_a.init", None),
+        ("pkg_b.init", "b"),
+    ]
 
 
 def test_the_refusal_applies():
@@ -62,7 +65,7 @@ def test_the_refusal_applies():
 def test_snapshot_and_restore_reinstall_occurrences_exactly():
     sub = _sub()
     _from_module("pkg_a.init", sub.subscribe, len)
-    with reg.registering_repo("b"):
+    with reg.registering_project("b"):
         _from_module("pkg_b.init", sub.subscribe, abs)
     before = sub.items()
     state = sub._snapshot()

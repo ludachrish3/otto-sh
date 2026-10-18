@@ -73,10 +73,10 @@ def test_a_link_authored_against_the_raw_id_fails_loudly(tmp_path, carded_profil
         ],
         [{"endpoints": [{"host": "dut"}, {"host": "srv"}]}],
     )
-    repo = JsonFileLabRepository(search_paths=[tmp_path])
+    repository = JsonFileLabRepository(search_paths=[tmp_path])
 
     with pytest.raises(LabRepositoryError) as excinfo:
-        repo.load_lab("e")
+        repository.load_lab("e")
 
     message = str(excinfo.value)
     assert "unknown host 'dut'" in message
@@ -104,9 +104,9 @@ def test_a_record_naming_an_unregistered_profile_is_skipped_not_fatal(tmp_path):
         ],
         [{"endpoints": [{"host": "fine"}, {"host": "srv"}]}],
     )
-    repo = JsonFileLabRepository(search_paths=[tmp_path])
+    repository = JsonFileLabRepository(search_paths=[tmp_path])
 
-    lab = repo.load_lab("e")
+    lab = repository.load_lab("e")
 
     assert sorted(x.id for x in lab.links) == ["fine--srv"]
 
@@ -133,9 +133,9 @@ def test_a_lab_declaring_a_link_by_the_advertised_id_loads(tmp_path, carded_prof
         ],
         [{"endpoints": [{"host": "dut-lc-2"}, {"host": "srv"}]}],
     )
-    repo = JsonFileLabRepository(search_paths=[tmp_path])
+    repository = JsonFileLabRepository(search_paths=[tmp_path])
 
-    lab = repo.load_lab("e")
+    lab = repository.load_lab("e")
 
     assert "dut-lc-2" in lab.hosts, "positive control: the profile shapes the host id"
     (link,) = [x for x in lab.links if x.id == "dut-lc-2--srv"]

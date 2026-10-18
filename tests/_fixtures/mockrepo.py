@@ -1,5 +1,5 @@
-from otto.config.repo import Repo
+from otto.config.project import Project
 
 
-class MockRepo(Repo):
+class MockRepo(Project):
     pass

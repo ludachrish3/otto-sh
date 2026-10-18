@@ -1,7 +1,7 @@
-"""Repo settings loading, parsing, and test-collection helpers for SUT repositories.
+"""Project settings loading, parsing, and test-collection helpers for projects.
 
 Its last section is discovery, phase 1 of composition: the environment and every
-repo's settings parsed, cached until :func:`clear_discovery` (spec 2026-10-11
+project's settings parsed, cached until :func:`clear_discovery` (spec 2026-10-11
 placement-and-phases §3.9).
 """
 
@@ -23,6 +23,7 @@ from .scope import (
     TOML_SETTINGS_PATH,
     BootstrapError,
     DockerSettings,
+    DuplicateProjectError,
     MonitorSettings,
     ProjectScopeConfig,
 )
@@ -118,22 +119,22 @@ PYTEST_CONFIG_NAMES: tuple[str, ...] = (
 )
 
 
-def pytest_config_paths(sut_dir: Path) -> list[Path]:
-    """Every file pytest may read its config from in *sut_dir*, existing or not.
+def pytest_config_paths(root: Path) -> list[Path]:
+    """Every file pytest may read its config from in *root*, existing or not.
 
     Non-existent paths are included on purpose: a test table stores a
     ``None`` stat for each, which is what lets it see someone ADD a
     ``pytest.ini``.
     """
-    return [sut_dir / name for name in PYTEST_CONFIG_NAMES]
+    return [root / name for name in PYTEST_CONFIG_NAMES]
 
 
 @dataclass(frozen=True)
 class CompiledSettings:
-    """Every value :meth:`Repo.parse_settings` assigns, compiled from one settings document.
+    """Every value :meth:`Project.parse_settings` assigns, compiled from one settings document.
 
     Produced by :func:`compile_settings`, which registers nothing: the OS
-    profiles travel as validated specs, and only ``Repo.parse_settings``
+    profiles travel as validated specs, and only ``Project.parse_settings``
     registers them.
     """
 
@@ -155,13 +156,13 @@ class CompiledSettings:
     declared_dev_tools: list["DeclaredEntry"]
 
 
-def compile_settings(data: dict[str, Any], sut_dir: Path) -> CompiledSettings:
+def compile_settings(data: dict[str, Any], root: Path) -> CompiledSettings:
     """Validate and compile one parsed ``.otto/settings.toml`` exactly as the loader does.
 
     Pure: reads no file of its own, registers nothing. The loader
-    (:meth:`Repo.parse_settings`) and ``otto init``'s doctor
-    (:func:`validate_settings`) both call it, so a repo the doctor passes is
-    a repo that loads.
+    (:meth:`Project.parse_settings`) and ``otto init``'s doctor
+    (:func:`validate_settings`) both call it, so a project the doctor passes is
+    a project that loads.
 
     Raises:
         pydantic_core.ValidationError: the document does not match ``SettingsModel``.
@@ -173,14 +174,14 @@ def compile_settings(data: dict[str, Any], sut_dir: Path) -> CompiledSettings:
             base and defaults after init
             (:func:`otto.host.os_profile.check_data_profiles`).
     """
-    # Function-local: the settings parsers load only when a repo's settings
+    # Function-local: the settings parsers load only when a project's settings
     # are read.
     from ..labs.sources import compile_lab_sources
     from ..models.dependencies import parse_dependency_entry
     from ..models.settings import SettingsModel
 
-    model = SettingsModel.model_validate(data, context={"sut_dir": sut_dir})
-    lab_sources = compile_lab_sources(model.lab, repo_name=model.name, sut_dir=sut_dir)
+    model = SettingsModel.model_validate(data, context={"root": root})
+    lab_sources = compile_lab_sources(model.lab, project_name=model.name, root=root)
     # Compiled here, at parse, so an unusable regex is a settings error rather
     # than a fleet walk that silently matches nothing later on.
     project_scope = ProjectScopeConfig.from_spec(model.project) if model.project else None
@@ -208,12 +209,10 @@ def compile_settings(data: dict[str, Any], sut_dir: Path) -> CompiledSettings:
         monitor_settings=model.monitor.to_runtime(),
         env_backend=model.env.backend,
         declared_products=[
-            e.to_runtime(owner=model.name, base_dir=sut_dir, seam="products")
-            for e in model.products
+            e.to_runtime(owner=model.name, base_dir=root, seam="products") for e in model.products
         ],
         declared_dev_tools=[
-            e.to_runtime(owner=model.name, base_dir=sut_dir, seam="dev_tools")
-            for e in model.dev_tools
+            e.to_runtime(owner=model.name, base_dir=root, seam="dev_tools") for e in model.dev_tools
         ],
     )
 
@@ -232,7 +231,7 @@ def validate_settings(root: Path) -> list[str]:
 
     from ..models.base import compact_validation_error
 
-    # Absolute, as ``Repo.__post_init__`` makes it, so anchored paths and the
+    # Absolute, as ``Project.__post_init__`` makes it, so anchored paths and the
     # file named in the problem line match what the loader sees.
     root = root.absolute()
     import tomli
@@ -291,22 +290,22 @@ def find_init_module(name: str, libs: list[Path]) -> "ModuleSpec | None":
 
 
 @dataclass
-class Repo:
-    """Runtime representation of a single SUT (system-under-test) repository.
+class Project:
+    """Runtime representation of a single project, loaded from its project root.
 
     Parsed from ``.otto/settings.toml`` at construction time (via
     ``__post_init__``).  Holds the resolved paths for lab data, test
     directories, and init modules, plus Docker and OS-profile settings
-    contributed by that repo.  Multiple ``Repo`` instances are managed by
-    the config package when ``OTTO_SUT_DIRS`` lists more than one
+    contributed by that project.  Multiple ``Project`` instances are managed by
+    the config package when ``OTTOPATH`` lists more than one
     directory.
     """
 
-    sut_dir: Path
-    """SUT directory from which the settings came."""
+    root: Path
+    """The project root the settings came from."""
 
     name: str = field(init=False)
-    """Product/repo name"""
+    """Product/project name"""
 
     version: "otto.config.version.Version" = field(init=False)
     """Product version"""
@@ -316,18 +315,18 @@ class Repo:
 
     Built by :func:`otto.labs.sources.compile_lab_sources` at parse, which
     checks only each entry's envelope (its backend name and a unique label).
-    A source's own options are parsed when it is prepared, after every repo's
+    A source's own options are parsed when it is prepared, after every project's
     init modules have run (:func:`otto.labs.sources.prepared_lab_sources`),
     because its backend may be registered by any of them. The single input to
     the process-wide ``build_lab_sources`` construction seam and to the
     completion cache writer's lab key paths."""
 
     project_scope: ProjectScopeConfig | None = field(default=None, init=False)
-    """Compiled ``[project]`` declaration — the labs and hosts this repo targets.
+    """Compiled ``[project]`` declaration — the labs and hosts this project targets.
 
-    ``None`` when the repo declares no ``[project]`` table, which every
-    consumer reads through :func:`otto.config.scope.repo_targets` as "targets
-    everything"; that is what the whole-lab fallback for product-less repos is
+    ``None`` when the project declares no ``[project]`` table, which every
+    consumer reads through :func:`otto.config.scope.project_targets` as "targets
+    everything"; that is what the whole-lab fallback for product-less projects is
     built on. Membership is never re-derived from this by hand — the predicate
     is the only reader of the patterns."""
 
@@ -356,10 +355,10 @@ class Repo:
     dependencies: list["ResolvedDependency"] = field(default_factory=list, init=False)
     """Per-dependency resolution outcome; populated by bootstrap's dependency pass.
 
-    This list is the runtime query surface: ``bootstrap().repos`` gives global
-    name→version, this gives the structured per-repo view. Statuses reflect
+    This list is the runtime query surface: ``bootstrap().projects`` gives global
+    name→version, this gives the structured per-project view. Statuses reflect
     the *discovered* set only, not registration success: a ``"satisfied"``
-    optional dependency whose provider repo was itself skipped (unsatisfied
+    optional dependency whose provider project was itself skipped (unsatisfied
     required deps of its own, or a dependency cycle) still shows
     ``"satisfied"`` here — that gap surfaces separately as a startup
     ``BootstrapWarning``, not as a status change."""
@@ -379,23 +378,23 @@ class Repo:
         default_factory=dict,
         init=False,
     )
-    """This repo's ``[os_profiles]`` tables as parsed, keyed by profile name.
+    """This project's ``[os_profiles]`` tables as parsed, keyed by profile name.
 
     Data, never registered: a :class:`~otto.host.os_profile.ProfileContext`
-    built from the selected repos carries them to every reader that resolves
+    built from the selected projects carries them to every reader that resolves
     an ``os_type``, and :func:`~otto.host.os_profile.check_data_profiles`
     checks them once every init module has run. See
     :doc:`/configuration/os-profiles`."""
 
     logging_levels: dict[str, str] = field(default_factory=dict[str, str], init=False)
-    """This repo's ``[logging.levels]`` table: logger name → the minimum level
+    """This project's ``[logging.levels]`` table: logger name → the minimum level
     that ENTERS otto's funnel, overriding or extending
     :data:`otto.logger.management.DEFAULT_LIBRARY_LEVELS`. There is no capture
     list — otto configures the root logger, so every logger is captured; this
-    only quiets or un-quiets. Merged across repos by ``otto.cli.invoke``."""
+    only quiets or un-quiets. Merged across projects by ``otto.cli.invoke``."""
 
     settings: dict[str, Any] = field(default_factory=dict[str, Any])
-    """Repo settings dict as parsed from the `settings.toml` file"""
+    """Project settings dict as parsed from the `settings.toml` file"""
 
     docker_settings: DockerSettings = field(
         default_factory=DockerSettings,
@@ -412,22 +411,22 @@ class Repo:
     """Parsed `[monitor]` table — optional TLS cert/key for the dashboard server."""
 
     env_backend: "str | None" = field(default=None, init=False)
-    """Parsed `[env] backend` — this repo's standing choice of installer for the
+    """Parsed `[env] backend` — this project's standing choice of installer for the
     orchestration venv, or None to auto-detect. Read through the validated model
     rather than the raw settings dict, so ``EnvSettingsSpec`` stays the one place
     the key is spelled."""
 
     def __post_init__(self) -> None:
         # ``anchor_path`` needs an absolute root to anchor relative settings
-        # paths against, so ``sut_dir`` is made absolute here, before
+        # paths against, so ``root`` is made absolute here, before
         # ``parse_settings`` runs. Deliberately ``.absolute()``, not
         # ``.resolve()``: this must not collapse symlinks or ``..`` (see
-        # ``anchor_to_repo``).
-        self.sut_dir = self.sut_dir.absolute()
+        # ``anchor_to_project_root``).
+        self.root = self.root.absolute()
         self.parse_settings()
 
     def get_lab_panel(self) -> "Panel":
-        """Build a Rich panel listing all lab names available from this repo's host source."""
+        """Build a Rich panel listing all lab names available from this project's host source."""
         from rich.panel import Panel
         from rich.text import Text
 
@@ -462,7 +461,7 @@ class Repo:
 
         Reads :attr:`dependencies` (populated by bootstrap's resolution pass),
         so statuses reflect the discovered set, not registration success.
-        Rendered as a panel subtitle — dep-free repos keep their panels
+        Rendered as a panel subtitle — dep-free projects keep their panels
         byte-identical.
         """
         from rich.text import Text
@@ -484,14 +483,14 @@ class Repo:
         return Text(" · ").join(parts)
 
     def get_instructions_panel(self) -> "Panel":
-        """Build a Rich panel listing all instructions contributed by this repo.
+        """Build a Rich panel listing all instructions contributed by this project.
 
-        Instructions are attributed to this repo by matching each registered
+        Instructions are attributed to this project by matching each registered
         instruction's module against the module prefixes in :attr:`init`.
         """
         from rich.text import Text
 
-        from ..instruction_catalog import INSTRUCTIONS  # lazy import — keeps repo import-light
+        from ..instruction_catalog import INSTRUCTIONS  # lazy import — keeps project import-light
 
         instruction_names: list[str] = [
             entry.name
@@ -518,7 +517,7 @@ class Repo:
         )
 
     def get_markers_panel(self, markers: list[str]) -> "Panel":
-        """Rich panel listing *markers*, the markers pytest knows in this repo's tests."""
+        """Rich panel listing *markers*, the markers pytest knows in this project's tests."""
         from rich.text import Text
 
         lines = [f"• {m}" for m in markers]
@@ -540,10 +539,10 @@ class Repo:
         FileNotFoundError
             If the TOML file is not found.
         """
-        otto_settings_path = self.sut_dir / TOML_SETTINGS_PATH
+        otto_settings_path = self.root / TOML_SETTINGS_PATH
         if not otto_settings_path.exists():
             raise FileNotFoundError(
-                f"The SUT repo {self.sut_dir} does not have the required TOML file, {TOML_SETTINGS_PATH}"  # noqa: E501 — long error message f-string
+                f"The project root {self.root} does not have the required TOML file, {TOML_SETTINGS_PATH}"  # noqa: E501 — long error message f-string
             ) from None
 
         return otto_settings_path
@@ -551,20 +550,20 @@ class Repo:
     def read_settings(
         self,
     ) -> str:
-        """Read and return the raw text of this repo's ``.otto/settings.toml`` file."""
+        """Read and return the raw text of this project's ``.otto/settings.toml`` file."""
         otto_settings_path = self.get_otto_settings_path()
 
         with otto_settings_path.open(encoding="utf-8") as otto_settings_file:
             return otto_settings_file.read()
 
     def parse_settings(self) -> None:
-        """Parse + validate the repo's ``.otto/settings.toml`` via :func:`compile_settings`."""
+        """Parse + validate the project's ``.otto/settings.toml`` via :func:`compile_settings`."""
         import tomli
 
         settings_text = self.read_settings()
         self.settings = tomli.loads(settings_text)  # raw — coverage/reservation read it
 
-        compiled = compile_settings(self.settings, self.sut_dir)
+        compiled = compile_settings(self.settings, self.root)
 
         self.name = compiled.name
         self.version = compiled.version
@@ -631,25 +630,25 @@ class Repo:
             importlib.import_module(mod)
 
 
-def get_repos(
-    repos: list[Path],
-) -> list[Repo]:
-    """Create `Repo` objects from the list of provided repo paths.
+def load_projects(
+    roots: list[Path],
+) -> list[Project]:
+    """Create `Project` objects from the list of provided project roots.
 
     Parameters
     ----------
-    repos : List of paths to repos under test.
+    roots : List of project roots, one per project.
 
     Returns
     -------
-        List of `Repo` objects
+        List of `Project` objects
 
     Raises
     ------
     FileNotFoundError
-        If a repo's settings TOML file is not found.
+        If a project's settings TOML file is not found.
     """
-    return [Repo(sut_dir=repo) for repo in repos]
+    return [Project(root=root) for root in roots]
 
 
 # ── Discovery (phase 1 of composition) ─────────────────────────────────────────
@@ -661,7 +660,7 @@ def get_repos(
 
 @dataclass(frozen=True)
 class DiscoveryResult:
-    """Everything phase 1 produced: environment, repos, contained errors.
+    """Everything phase 1 produced: environment, projects, contained errors.
 
     Separate from :class:`~otto.declared.BootstrapResult` rather than reused:
     ``warnings`` comes from the dependency pass, which runs inside
@@ -670,7 +669,7 @@ class DiscoveryResult:
     """
 
     env: "OttoEnvSettings"
-    repos: list[Repo]
+    projects: list[Project]
     errors: list[BootstrapError] = field(default_factory=list)
 
 
@@ -685,15 +684,33 @@ _discovery = _Discovery()
 """Written only by :func:`discover` and :func:`clear_discovery`."""
 
 
-def discover() -> DiscoveryResult:
-    """Phase 1: env + repo discovery (settings parse only — no user code). Cached.
+def _duplicate_root_errors(projects: "list[Project]") -> "list[DuplicateProjectError]":
+    """One error per root of every normalized name that two or more parsed roots share."""
+    from ..models.dependencies import normalize_name
 
-    Per-repo config-data failures (unreadable or malformed ``settings.toml``)
-    get the same containment as phase-2 user-code failures: the repo is
+    by_name: dict[str, list[Project]] = {}
+    for project in projects:
+        by_name.setdefault(normalize_name(project.name), []).append(project)
+    return [
+        DuplicateProjectError(project.root, name, [p.root for p in group])
+        for name, group in by_name.items()
+        if len(group) > 1
+        for project in group
+    ]
+
+
+def discover() -> DiscoveryResult:
+    """Phase 1: env + project discovery (settings parse only — no user code). Cached.
+
+    Per-project config-data failures (unreadable or malformed ``settings.toml``)
+    get the same containment as phase-2 user-code failures: the project is
     skipped and a framed :class:`~otto.config.scope.BootstrapError` is
     recorded, surfacing via ``bootstrap().errors`` (help degrades, real
-    dispatch fails loud). Env-level failures (bad ``OTTO_SUT_DIRS`` / OTTO_*
+    dispatch fails loud). Env-level failures (bad ``OTTOPATH`` / OTTO_*
     values) still raise — with no environment there is nothing to degrade to.
+    Two parsed roots whose names normalize alike are both refused with a
+    :class:`~otto.config.scope.DuplicateProjectError`, before the result is
+    cached.
 
     The errors ride the cached result itself: recomputing discovery (after
     :func:`clear_discovery`) necessarily recomputes them, so a stale error
@@ -703,16 +720,21 @@ def discover() -> DiscoveryResult:
         from .env import load_otto_env
 
         env = load_otto_env()
-        repos: list[Repo] = []
+        projects: list[Project] = []
         errors: list[BootstrapError] = []
-        for sut_dir in env.sut_dirs:
+        for root in env.ottopath:
             try:
-                repos.append(Repo(sut_dir=sut_dir))
+                projects.append(Project(root=root))
             except BaseException as e:  # noqa: PERF203 — containment seam: per-item resilience, ANY config-data failure becomes a framed error
                 if not is_containable(e):
                     raise
-                errors.append(BootstrapError(sut_dir, str(TOML_SETTINGS_PATH), e))
-        _discovery.result = DiscoveryResult(env=env, repos=repos, errors=errors)
+                errors.append(BootstrapError(root, str(TOML_SETTINGS_PATH), e))
+        duplicates = _duplicate_root_errors(projects)
+        if duplicates:
+            refused = {str(e.root) for e in duplicates}
+            projects = [p for p in projects if str(p.root) not in refused]
+            errors.extend(duplicates)
+        _discovery.result = DiscoveryResult(env=env, projects=projects, errors=errors)
     return _discovery.result
 
 

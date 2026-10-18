@@ -291,7 +291,7 @@ def test_caching_disabled_is_inert(tmp_path, monkeypatch):
     """With ``_cache_path`` -> None every entry point no-ops.
 
     DEFENSIVE, not reachable: the cache moved to the workspace home, which
-    is derived from ``OTTO_SUT_DIRS`` alone, so ``_cache_path`` no longer
+    is derived from ``OTTOPATH`` alone, so ``_cache_path`` no longer
     has a "caching disabled" case and nothing in production returns None.
     The None is forced here because the branch still exists and the callers
     below still guard on it -- if that guard is ever removed, this is the

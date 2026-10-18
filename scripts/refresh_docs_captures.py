@@ -117,7 +117,7 @@ class RunContext:
     def project_dir(self, cap: Capture) -> Path:
         """Return the scratch-dir copy of ``cap.project``, copying it there on first use.
 
-        A capture must never point ``OTTO_SUT_DIRS`` (or any printed path) at
+        A capture must never point ``OTTOPATH`` (or any printed path) at
         ``examples_root`` directly: that path is under this checkout, and its
         length varies by worktree, which shifts exactly where Rich wraps a
         long log line -- baking a checkout-specific wrap point into the
@@ -183,7 +183,9 @@ class RunContext:
         # variable, pin width and colour, then point at the example project.
         # The width matches termynal's: 100 columns is the widest text the
         # docs content column shows without scrolling in a 1440px window.
-        env = {k: v for k, v in os.environ.items() if not k.startswith("OTTO_")}
+        env = {
+            k: v for k, v in os.environ.items() if not (k.startswith("OTTO_") or k == "OTTOPATH")
+        }
         home = self.tmp / "home"
         home.mkdir(parents=True, exist_ok=True)
         env.update(
@@ -196,7 +198,7 @@ class RunContext:
         )
         (self.tmp / "xdir").mkdir(parents=True, exist_ok=True)
         if cap.project:
-            env["OTTO_SUT_DIRS"] = str(self.project_dir(cap))
+            env["OTTOPATH"] = str(self.project_dir(cap))
         return env
 
 

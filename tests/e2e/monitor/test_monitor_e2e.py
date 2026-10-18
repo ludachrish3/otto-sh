@@ -62,7 +62,7 @@ def _start_monitor(
     *,
     lab: str = "unix",
     xdir: Path,
-    sut_dirs: Path = REPO1,
+    roots: Path = REPO1,
     extra_env: dict[str, str] | None = None,
 ) -> subprocess.Popen[str]:
     """Start ``otto --lab <lab> monitor <argv>`` as a non-blocking Popen.
@@ -77,7 +77,7 @@ def _start_monitor(
     cmd: list[str] = [str(OTTO_BIN), "--lab", lab, "monitor", *argv]
     return subprocess.Popen(
         cmd,
-        env=otto_subprocess_env(xdir=xdir, sut_dirs=sut_dirs, extra_env=extra_env),
+        env=otto_subprocess_env(xdir=xdir, roots=roots, extra_env=extra_env),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,

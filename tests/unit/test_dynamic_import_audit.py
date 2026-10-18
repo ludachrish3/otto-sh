@@ -92,7 +92,7 @@ COMPUTED_SITES: list[tuple[str, str, str]] = [
     ("otto/cli/registry.py", "collect_cli_commands", CLI_COMMAND_TABLE),
     ("otto/cli/registry.py", "resolve_spec_command", CLI_COMMAND_TABLE),
     ("otto/config/__init__.py", "__getattr__", FACADE_RESOLVER),
-    ("otto/config/repo.py", "Repo.import_init_modules", USER_SUPPLIED),
+    ("otto/config/project.py", "Project.import_init_modules", USER_SUPPLIED),
     ("otto/context.py", "__getattr__", FACADE_RESOLVER),
     ("otto/coverage/__init__.py", "__getattr__", FACADE_RESOLVER),
     ("otto/coverage/fetcher/__init__.py", "__getattr__", FACADE_RESOLVER),
@@ -727,7 +727,7 @@ def test_the_extractor_reads_every_string_shape(tmp_path: Path) -> None:
     loaders = [site for site in found.literals if site.kind == "cli-loader"]
     assert {class_of(site) for site in loaders} == {REGISTRY_BUILTIN}
     assert owner_of(module_of("otto/env/manage.py"), ["otto.config"]) == "otto.env"
-    assert owner_of("otto.config.repo", ["otto.config", "otto.config.scope"]) == "otto.config"
+    assert owner_of("otto.config.project", ["otto.config", "otto.config.scope"]) == "otto.config"
 
 
 def test_no_import_spelling_escapes_the_audit() -> None:
@@ -1022,7 +1022,7 @@ STRING_EDGES: list[tuple[str, str, str]] = [
     ("otto/__init__.py", "otto.suite.run:RunOptions", FACADE_BINDING),
     ("otto/__init__.py", "otto.utils:Status", FACADE_BINDING),
     # The composition root's lazy re-export of discovery's public name, from its owner.
-    ("otto/bootstrap.py", "otto.config.repo:get_env", FACADE_BINDING),
+    ("otto/bootstrap.py", "otto.config.project:get_env", FACADE_BINDING),
     # The run context's facade: the invocation leaf's four names and its home's ten.
     ("otto/context.py", "otto.invocation:ContextBinding", FACADE_BINDING),
     ("otto/context.py", "otto.invocation:HostResolver", FACADE_BINDING),
@@ -1113,16 +1113,16 @@ STRING_EDGES: list[tuple[str, str, str]] = [
     ("otto/session/__init__.py", "otto.session.errors:LabBuildError", FACADE_BINDING),
     ("otto/session/__init__.py", "otto.session.errors:LoggingLevelsConflictError", FACADE_BINDING),
     ("otto/session/__init__.py", "otto.session.errors:ProjectSelectionError", FACADE_BINDING),
-    ("otto/session/__init__.py", "otto.session.errors:RepoLoadError", FACADE_BINDING),
+    ("otto/session/__init__.py", "otto.session.errors:ProjectLoadError", FACADE_BINDING),
     ("otto/session/__init__.py", "otto.session.lab:build_lab", FACADE_BINDING),
     ("otto/session/__init__.py", "otto.session.lab:merge_host_preferences", FACADE_BINDING),
     ("otto/session/__init__.py", "otto.session.logs:install_logging", FACADE_BINDING),
     ("otto/session/__init__.py", "otto.session.logs:merge_logging_levels", FACADE_BINDING),
-    ("otto/session/__init__.py", "otto.session.projects:DemotedRepo", FACADE_BINDING),
+    ("otto/session/__init__.py", "otto.session.projects:DemotedProject", FACADE_BINDING),
     ("otto/session/__init__.py", "otto.session.projects:ProjectSelection", FACADE_BINDING),
-    ("otto/session/__init__.py", "otto.session.projects:RepoCheck", FACADE_BINDING),
+    ("otto/session/__init__.py", "otto.session.projects:ProjectCheck", FACADE_BINDING),
     ("otto/session/__init__.py", "otto.session.projects:check_project_overlap", FACADE_BINDING),
-    ("otto/session/__init__.py", "otto.session.projects:check_repos", FACADE_BINDING),
+    ("otto/session/__init__.py", "otto.session.projects:check_projects", FACADE_BINDING),
     ("otto/session/__init__.py", "otto.session.projects:select_projects", FACADE_BINDING),
 ]
 

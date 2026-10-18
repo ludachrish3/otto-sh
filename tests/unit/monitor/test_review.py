@@ -47,7 +47,7 @@ async def test_serve_review_resolves_tls_from_the_given_repos_before_serving(tmp
         patch("otto.monitor.server.MonitorServer") as server_cls,
         pytest.raises(MonitorTlsError),
     ):
-        await serve_review(src, repos=[bad])
+        await serve_review(src, projects=[bad])
     server_cls.assert_not_called()
 
 
@@ -59,7 +59,7 @@ async def test_serve_review_serves_a_db_with_its_archive_path(tmp_path):
         patch("otto.monitor.review.load_review_document", return_value=MagicMock()),
         patch("otto.monitor.server.MonitorServer", return_value=server) as server_cls,
     ):
-        await serve_review(src, repos=[])
+        await serve_review(src, projects=[])
     kwargs = server_cls.call_args.kwargs
     assert (kwargs["mode"], kwargs["source_name"], kwargs["archive_path"]) == (
         "review",
@@ -76,7 +76,7 @@ async def test_serve_review_keeps_a_json_source_read_only(tmp_path):
     src.write_text('{"format": 1, "sessions": []}')
     server = MagicMock(serve=AsyncMock())
     with patch("otto.monitor.server.MonitorServer", return_value=server) as server_cls:
-        await serve_review(src, repos=[])
+        await serve_review(src, projects=[])
     assert server_cls.call_args.kwargs["archive_path"] is None
 
 
@@ -85,9 +85,9 @@ async def test_serve_review_hands_the_server_the_declared_cert_and_key(tmp_path,
     cert, key = tls_pair
     src = tmp_path / "x.json"
     src.write_text('{"format": 1, "sessions": []}')
-    repo = fake_repo("r", monitor_settings=MonitorSettings(tls_cert=cert, tls_key=key))
+    project = fake_repo("r", monitor_settings=MonitorSettings(tls_cert=cert, tls_key=key))
     server = MagicMock(serve=AsyncMock())
     with patch("otto.monitor.server.MonitorServer", return_value=server) as server_cls:
-        await serve_review(src, repos=[repo])
+        await serve_review(src, projects=[project])
     kwargs = server_cls.call_args.kwargs
     assert (kwargs["tls_cert"], kwargs["tls_key"]) == (cert, key)

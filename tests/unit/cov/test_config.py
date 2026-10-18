@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from otto.config.coverage_settings import get_cov_config, get_cov_repo, has_cov_config
+from otto.config.coverage_settings import get_cov_config, get_cov_project, has_cov_config
 from otto.coverage.config import (
     DestinationError,
     DestinationErrorKind,
@@ -82,17 +82,17 @@ class TestGetCovRepo:
     """First repo carrying a non-empty ``[coverage]`` section wins."""
 
     def test_no_repos_returns_none(self) -> None:
-        assert get_cov_repo([]) is None
+        assert get_cov_project([]) is None
 
     def test_no_repo_has_coverage_returns_none(self) -> None:
-        repo = MagicMock()
-        repo.settings = {}
-        assert get_cov_repo([repo]) is None
+        project = MagicMock()
+        project.settings = {}
+        assert get_cov_project([project]) is None
 
     def test_repo_with_coverage_section_found(self) -> None:
-        repo = MagicMock()
-        repo.settings = {"coverage": {"hosts": "/remote"}}
-        assert get_cov_repo([repo]) is repo
+        project = MagicMock()
+        project.settings = {"coverage": {"hosts": "/remote"}}
+        assert get_cov_project([project]) is project
 
     def test_first_matching_repo_wins(self) -> None:
         unconfigured = MagicMock()
@@ -101,14 +101,14 @@ class TestGetCovRepo:
         configured.settings = {"coverage": {"hosts": "zephyr37-llext"}}
         also_configured = MagicMock()
         also_configured.settings = {"coverage": {"hosts": "other"}}
-        assert get_cov_repo([unconfigured, configured, also_configured]) is configured
+        assert get_cov_project([unconfigured, configured, also_configured]) is configured
 
     def test_empty_coverage_section_does_not_match(self) -> None:
         """A ``[coverage]`` table present but with none of the recognized keys
         set is treated the same as no section at all."""
-        repo = MagicMock()
-        repo.settings = {"coverage": {}}
-        assert get_cov_repo([repo]) is None
+        project = MagicMock()
+        project.settings = {"coverage": {}}
+        assert get_cov_project([project]) is None
 
 
 class TestGetCovConfig:
@@ -118,15 +118,15 @@ class TestGetCovConfig:
         assert get_cov_config([]) == {}
 
     def test_no_matching_repo_returns_empty_dict(self) -> None:
-        repo = MagicMock()
-        repo.settings = {}
-        assert get_cov_config([repo]) == {}
+        project = MagicMock()
+        project.settings = {}
+        assert get_cov_config([project]) == {}
 
     def test_returns_matching_repo_coverage_dict(self) -> None:
         cov = {"embedded": {}, "hosts": "zephyr37-llext"}
-        repo = MagicMock()
-        repo.settings = {"coverage": cov}
-        assert get_cov_config([repo]) is cov
+        project = MagicMock()
+        project.settings = {"coverage": cov}
+        assert get_cov_config([project]) is cov
 
 
 class TestPrepareDestination:

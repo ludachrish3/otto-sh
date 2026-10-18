@@ -17,12 +17,12 @@ def sanitize_node_name(name: str) -> str:
 
 @dataclasses.dataclass(frozen=True)
 class ArtifactLayout:
-    """Maps a test to its artifact directories under one run (or one repo's part of it).
+    """Maps a test to its artifact directories under one run (or one project's part of it).
 
-    ``root`` is the run's output directory, or ``<output dir>/<repo name>``
-    when more than one repo takes part in the run (built once per pytest
+    ``root`` is the run's output directory, or ``<output dir>/<project name>``
+    when more than one project takes part in the run (built once per pytest
     session in :mod:`otto.suite.run`). ``test_roots`` are that session's test
-    directories (a repo's ``Repo.tests``); they disambiguate two modules that
+    directories (a project's ``Project.tests``); they disambiguate two modules that
     share a basename in different packaged test directories — see
     :meth:`module_dir`. Neither method below creates a directory — the
     ``module_dir``/``test_dir`` fixtures do that, on request, like pytest's
@@ -37,7 +37,7 @@ class ArtifactLayout:
 
         The module's test root is the DEEPEST directory in ``test_roots``
         that actually contains it — deepest so a root nested inside another
-        (an unusual but legal ``Repo.tests`` shape) wins over its ancestor.
+        (an unusual but legal ``Project.tests`` shape) wins over its ancestor.
         A module directly in that root keeps the flat ``<root>/<stem>``
         shape unchanged; one two-or-more levels down (``tests/a/b/test_x.py``
         under root ``tests``) becomes ``<root>/a/b/test_x``, which is what

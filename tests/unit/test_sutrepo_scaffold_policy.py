@@ -2,7 +2,7 @@
 (review §7.5).
 
 The defect class: the ``mkdir(.otto)`` → ``write settings.toml literal`` →
-``Repo(sut_dir=…)`` dance was re-typed across the suite, so every new
+``Project(sut_dir=…)`` dance was re-typed across the suite, so every new
 settings field means dozens of edits and the copies drift (the triplicated
 ``_repo(...)`` grew three diverging dependency-section renderers).  The
 scaffold must be ONE builder — ``tests/_fixtures/sutrepo.py::make_sut_repo``

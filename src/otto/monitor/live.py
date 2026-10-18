@@ -2,7 +2,7 @@
 
 Its own tach module: the monitor engine (``otto.monitor``) reads no ambient
 lab state and has tunnel discovery injected; this layer is where the active
-lab, the repos, the driving repo's scope and full-lab tunnel discovery are
+lab, the projects, the driving project's scope and full-lab tunnel discovery are
 read, and handed to the engine.
 """
 
@@ -63,19 +63,19 @@ def select_monitor_hosts(pattern: "str | re.Pattern[str] | None") -> "list[Remot
     return selected
 
 
-def _enforce_driving_repo_scope() -> None:
-    """Raise when the DRIVING repo's own fleet declaration cannot work (D3, spec §5).
+def _enforce_driving_project_scope() -> None:
+    """Raise when the DRIVING project's own fleet declaration cannot work (D3, spec §5).
 
     Spec §5 names the monitor fleet build as one of D3's project-layer entries,
     alongside the default instructions and a suite's ``ensure`` marker steps,
-    and this is that entry. A single-repo world fails loud without it — the union comes
+    and this is that entry. A single-project world fails loud without it — the union comes
     out empty and ``require_nonempty_fleet`` refuses at the walk — but a lab
     where a DEPENDENCY admits hosts has a healthy union, so the driving
     project's own "this lab is not my world" verdict would go unread and the
     dashboard would quietly monitor the dependency's machines.
 
-    THE DRIVING REPO IS ``ctx.repos[0]`` -- the first ``OTTO_SUT_DIRS``
-    entry -- and NOT the head of ``ctx.ordered_repos``, which is a
+    THE DRIVING PROJECT IS ``ctx.projects[0]`` -- the first ``OTTOPATH``
+    entry -- and NOT the head of ``ctx.ordered_projects``, which is a
     topological reorder whose first element is a dependency. Gating on that one
     would let a dependency's declaration veto this project's run, which is
     exactly the asymmetry D3 exists to prevent (see
@@ -84,17 +84,17 @@ def _enforce_driving_repo_scope() -> None:
     THE ONLY WORLD THE GUARD SKIPS IS THE ONE WITH NO CONTEXT. A library caller
     that installed no context has nothing to enforce D3 against, so
     ``get_context()``'s ``RuntimeError`` returns quietly. Everything else is
-    read unguarded, the verdicts first: a repo that failed to load refuses
-    through :func:`~otto.config.scope.scopes_of`, whichever repo broke,
-    rather than skipping the check. A checkout with no ``OTTO_SUT_DIRS`` needs
-    no guard at all: the context's :attr:`~otto.context.OttoContext.repos` is
-    ``[]`` there, so there is no current repo to enforce.
+    read unguarded, the verdicts first: a project that failed to load refuses
+    through :func:`~otto.config.scope.scopes_of`, whichever project broke,
+    rather than skipping the check. A checkout with no ``OTTOPATH`` needs
+    no guard at all: the context's :attr:`~otto.context.OttoContext.projects` is
+    ``[]`` there, so there is no current project to enforce.
 
     Raises:
-        otto.bootstrap.ProjectScopeError: The driving repo declared a
+        otto.bootstrap.ProjectScopeError: The driving project declared a
             ``[project]`` scope that admits no host here. The CLI frames it
             like the leaf's other refusals -- one line, no traceback.
-        otto.session.RepoLoadError: A repo failed to load in a way that stops
+        otto.session.ProjectLoadError: A project failed to load in a way that stops
             a run, so the verdicts cannot be known.
     """
     from ..config.scope import require_current_scope, scopes_of
@@ -105,10 +105,10 @@ def _enforce_driving_repo_scope() -> None:
     except RuntimeError:  # no context: a library lab, nothing to enforce D3 against
         logger.debug("monitor: no active context; not enforcing D3")
         return
-    scopes = scopes_of(ctx)  # a refusal propagates, whichever repo broke
-    repos = ctx.repos
-    if repos:
-        require_current_scope(scopes, repos[0].name)
+    scopes = scopes_of(ctx)  # a refusal propagates, whichever project broke
+    projects = ctx.projects
+    if projects:
+        require_current_scope(scopes, projects[0].name)
 
 
 async def run_live(
@@ -124,17 +124,17 @@ async def run_live(
     """Collect from the active lab's hosts and serve the live dashboard until stopped.
 
     Every refusal comes before any file exists: the interval, the driving
-    repo's scope, the selection, then the declared TLS. Only then is the
+    project's scope, the selection, then the declared TLS. Only then is the
     ``db`` archive created.
 
     Raises:
         MonitorInputError: *interval* below the floor, or a bad *hosts* regex.
-        ProjectScopeError: the driving repo's scope admits no host here.
+        ProjectScopeError: the driving project's scope admits no host here.
         EmptySelectionError: *hosts* matched nothing.
         NoMonitorableHostsError: nothing selected can be sampled.
-        MonitorTlsError: the repos' declared TLS cannot be served.
+        MonitorTlsError: the projects' declared TLS cannot be served.
     """
-    from ..declared import current_repos
+    from ..declared import current_projects
     from ..fleet import get_lab
     from ..tunnel.records import discover_tunnel_records
     from .server import MonitorServer
@@ -145,9 +145,9 @@ async def run_live(
         validate_interval(interval)
     except ValueError as exc:
         raise MonitorInputError(str(exc), field="interval") from exc
-    _enforce_driving_repo_scope()
+    _enforce_driving_project_scope()
     selected = select_monitor_hosts(hosts)
-    tls = resolve_monitor_tls(current_repos())
+    tls = resolve_monitor_tls(current_projects())
     active_lab = get_lab()
     session = MonitorSession.build(
         selected,

@@ -1,7 +1,7 @@
 # Host sources
 
 Otto builds its lab — the set of hosts a command can touch — from an ordered
-list of **host sources**. Each repo declares its own list as `[[lab.sources]]`
+list of **host sources**. Each project declares its own list as `[[lab.sources]]`
 entries in `.otto/settings.toml`: the built-in `json` backend reading
 `lab.json` files, a CMDB or inventory API you plug in by implementing one
 small interface, or several of them at once. Otto reads every declared source
@@ -39,18 +39,18 @@ Every entry takes two otto-owned keys:
 
 `name`
 : Optional label for the source. The label otto prints in warnings and errors
-  is always `<repo-name>/<name>`, repo-qualified so two repos may each call a
+  is always `<project-name>/<name>`, project-qualified so two projects may each call a
   source `"global"`. Omit it and the label defaults to `<backend>#<ordinal>`
-  (1-based position in *that repo's* list), e.g. `my_project/json#1`. Two
-  entries in one repo may not share an explicit `name`.
+  (1-based position in *that project's* list), e.g. `my_project/json#1`. Two
+  entries in one project may not share an explicit `name`.
 
 Every remaining key belongs to the backend the entry selected. Settings
 parse checks only `backend` and `name`; the backend's own keys are parsed when
-otto prepares the source, after every repo's `init` modules have run, so a
-backend registered by any repo can serve an entry in any repo. A json source's
+otto prepares the source, after every project's `init` modules have run, so a
+backend registered by any project can serve an entry in any project. A json source's
 `paths` (missing, empty, or `""`) fails there, naming the settings file.
 
-A repo with no `[lab]` table declares no sources — normal for a repo that
+A project with no `[lab]` table declares no sources — normal for a project that
 ships only libs and tests. The table itself may hold nothing but `sources`.
 
 Sources are not the host **inventory**, and the two never overlap. Sources
@@ -78,8 +78,8 @@ The files from all of a source's entries are combined into that one source
 ({ref}`one-source-several-files`).
 
 Entries resolve like every other settings path: `~` expands, a relative path
-anchors to the **repo root** (never the directory you ran `otto` from), and an
-absolute path is used as written — so a file shared outside the repo is simply
+anchors to the **project root** (never the directory you ran `otto` from), and an
+absolute path is used as written — so a file shared outside the project root is simply
 an absolute entry:
 
 ```toml
@@ -261,12 +261,12 @@ Overriding is per-lab and has nothing to do with combining labs: `--lab a+b`
 still merges two *different* labs by otto's cross-lab rules (see
 {doc}`lab-config`), after each lab has been assembled from the sources.
 
-### Layering a repo over a global source
+### Layering a project over a global source
 
 A common layout keeps physical devices in a global source — a database or a
 globally shared file — and the VMs and QEMU guests a project deploys, re-images
-and reconfigures in the project's own repo. Declare the global source first and
-the repo-owned one after it:
+and reconfigures in the project's own source. Declare the global source first and
+the project-owned one after it:
 
 ```toml
 [[lab.sources]]
@@ -281,25 +281,25 @@ paths = ["lab"]              # json-specific; directories, .json files, or globs
 ```
 
 The same layering is how you **try a data change before it lands in the global
-database**: paste the element into the repo's json source with your edit
+database**: paste the element into the project's json source with your edit
 applied, run against it, and the override warning tells you — and anyone
 reading the log afterwards — that a local element beat the global one. Because
 the override is whole-element, paste the *whole* element — its `labs`
 patterns and every one of its host entries: what you leave out is dropped, not
 inherited from the source below.
 
-### Multiple repos
+### Multiple projects
 
-With several repos on `OTTO_SUT_DIRS`, the process-wide list is every repo's
-list concatenated in `OTTO_SUT_DIRS` order, and all of it is live. A later
-repo's source overrides an earlier repo's on a colliding element, with the same
-warning, its labels repo-qualified.
+With several projects on `OTTOPATH`, the process-wide list is every project's
+list concatenated in `OTTOPATH` order, and all of it is live. A later
+project's source overrides an earlier project's on a colliding element, with the same
+warning, its labels project-qualified.
 
-If *no* repo declares a source, otto still starts and lab-free commands still
+If *no* project declares a source, otto still starts and lab-free commands still
 work; the failure arrives where a lab is actually demanded:
 
 ```text
-LabNotFoundError: Lab 'site' cannot be loaded: no repo declares a [[lab.sources]] entry in .otto/settings.toml
+LabNotFoundError: Lab 'site' cannot be loaded: no project declares a [[lab.sources]] entry in .otto/settings.toml
 ```
 
 ## Credentials and login proxies
@@ -500,8 +500,8 @@ url = "https://cmdb.example.com"
 Otto parses every key other than `backend` and `name` with `CmdbConfig`, so an
 unknown key or a bad value fails naming the field and the settings file, then
 hands the parsed configuration to `cmdb_source`. The model's validator anchors
-a relative path in your options at the declaring repo's root, and the
-factory's `c.env.profiles` holds the selected repos' `[os_profiles]` tables,
+a relative path in your options at the declaring project's root, and the
+factory's `c.env.profiles` holds the selected projects' `[os_profiles]` tables,
 which a backend passes as `profiles=` to the host helpers it calls. Two entries
 may name the same backend with different options (two databases, two files) —
 each is prepared and built separately. Naming an unregistered backend raises
@@ -509,8 +509,8 @@ each is prepared and built separately. Naming an unregistered backend raises
 [`LabRepositoryError`](../api/labs.rst)), listing the registered names.
 
 ```{note}
-Otto prepares sources only after every repo's `init` modules have run, so the
-name is registered by the time a source is prepared, whichever repo
+Otto prepares sources only after every project's `init` modules have run, so the
+name is registered by the time a source is prepared, whichever project
 registers it. Loading a lab from inside an `init` module is refused.
 ```
 
@@ -528,7 +528,7 @@ registry machinery behind this and every other seam otto can be extended at.
 `"element 'X' in lab 'Y': A overrides B"` / `"labs entry 'Y': A overrides B"`
 : Sources `A` and `B` both carry element `X` (or both declare lab `Y`), and
   `A` — the later entry — won it whole. Expected when you are deliberately
-  layering a repo source over a global one. A *surprise* means two sources own
+  layering a project source over a global one. A *surprise* means two sources own
   the same element: drop it from one of them, or reorder the entries so the one
   you want wins last.
 
@@ -562,10 +562,10 @@ registry machinery behind this and every other seam otto can be extended at.
   `list_labs()` and `load_lab()` disagree; check the name against
   `otto --list-labs`.
 
-`LabNotFoundError: Lab '...' cannot be loaded: no repo declares a [[lab.sources]] entry`
-: No repo on `OTTO_SUT_DIRS` declares any source at all. Add an entry (`otto
-  init` scaffolds one) — and if you expected a repo to provide it, check
-  startup output: a repo whose `settings.toml` fails to parse is skipped with
+`LabNotFoundError: Lab '...' cannot be loaded: no project declares a [[lab.sources]] entry`
+: No project on `OTTOPATH` declares any source at all. Add an entry (`otto
+  init` scaffolds one) — and if you expected a project to provide it, check
+  startup output: a project whose `settings.toml` fails to parse is skipped with
   a framed error, and only the commands that need it fail.
 
 `ValueError: ... was removed` at startup
@@ -573,7 +573,7 @@ registry machinery behind this and every other seam otto can be extended at.
   `labs = [...]`, `[lab] backend` and the long-dead `lab_data_type` key are
   parse errors that name their replacement; a leftover `[lab.<backend>]` kwarg
   sub-table is refused too, since the `[lab]` table takes nothing but
-  `sources`. The repo is skipped with a framed startup error, so the commands
+  `sources`. The project is skipped with a framed startup error, so the commands
   that need its hosts fail loud. [Declaring sources](#declaring-sources) above
   has the full shape.
 
@@ -587,5 +587,5 @@ A host `otto --list-hosts` shows does not complete on TAB
   inventory key that does not exist and a lab file that did not parse each show
   as a drop naming the entry; an `[inventory]` table that fails to build — one
   without a `path`, say — shows on the `inventory` line as `BROKEN`, naming the
-  settings file and the error, and empties completion for every repo until it
+  settings file and the error, and empties completion for every project until it
   is fixed.

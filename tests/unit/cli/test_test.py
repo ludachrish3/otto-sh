@@ -420,10 +420,10 @@ class TestInRunReportGeneration:
     @pytest.fixture
     def sut_repo(self, tmp_path):
         """A real tmp_path git repo standing in for the SUT checkout."""
-        repo = TmpGitRepo(tmp_path / "sut")
-        repo.write("f.c", "int a;\nint b;\n")
-        repo.commit("init")
-        return repo.root
+        project = TmpGitRepo(tmp_path / "sut")
+        project.write("f.c", "int a;\nint b;\n")
+        project.commit("init")
+        return project.root
 
     def test_in_run_report_uses_configured_tiers(self, tmp_path, sut_repo, monkeypatch):
         """``otto test --cov-report`` must render via the collection-model path,
@@ -450,17 +450,17 @@ class TestInRunReportGeneration:
                 "manual": {"kind": "manual", "precedence": 3},
             }
         }
-        repo = MagicMock()
-        repo.sut_dir = sut_repo
-        repo.name = "repo"
-        repo.settings = {"coverage": cov_config}
+        project = MagicMock()
+        project.root = sut_repo
+        project.name = "repo"
+        project.settings = {"coverage": cov_config}
 
         opts = RunOptions(
             cov_report=True,
             cov_dir=cov_dir,
             cov_report_dir=report_dir,
         )
-        asyncio.run(_post_run_coverage([repo], tmp_path / "log", opts))
+        asyncio.run(_post_run_coverage([project], tmp_path / "log", opts))
 
         store_json = json.loads((report_dir / "store.json").read_text())
         assert store_json["tier_order"] == ["unit", "system", "manual"]
@@ -537,17 +537,17 @@ class TestCovReportOption:
         assert ctx_obj["cov_report_dir"] == target.resolve()
         assert list(target.iterdir()) == []
 
-    def test_project_name_recorded(self, capture_cov):
+    def test_report_title_recorded(self, capture_cov):
         exit_code, ctx_obj, output = capture_cov(
-            ["--cov-report", "--project-name", "My App"],
+            ["--cov-report", "--report-title", "My App"],
         )
         assert exit_code == 0, f"output={output!r}"
-        assert ctx_obj["project_name"] == "My App"
+        assert ctx_obj["report_title"] == "My App"
 
-    def test_project_name_default(self, capture_cov):
+    def test_report_title_default(self, capture_cov):
         exit_code, ctx_obj, output = capture_cov([])
         assert exit_code == 0, f"output={output!r}"
-        assert ctx_obj["project_name"] == "Coverage Report"
+        assert ctx_obj["report_title"] == "Coverage Report"
 
     def test_cov_report_dir_pointing_at_file_fails(self, capture_cov, tmp_path):
         target = tmp_path / "not_a_dir"
@@ -607,9 +607,9 @@ class TestCovTicketsJsonOption:
         """[coverage] configured but with no [coverage.tickets] sub-table is
         the same knowable-up-front misconfiguration as no [coverage] at
         all."""
-        repo = MagicMock()
-        repo.settings = {"coverage": {"tiers": {"system": {"kind": "e2e", "precedence": 1}}}}
-        patch_bootstrap(monkeypatch, [repo])
+        project = MagicMock()
+        project.settings = {"coverage": {"tiers": {"system": {"kind": "e2e", "precedence": 1}}}}
+        patch_bootstrap(monkeypatch, [project])
         target = tmp_path / "tickets.json"
         exit_code, ctx_obj, output = capture_cov(["--cov-tickets-json", str(target)])
         assert exit_code != 0

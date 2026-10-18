@@ -4,13 +4,13 @@ Tab completion invokes ``otto`` just far enough to walk the Typer command
 tree. The expensive step during that walk is not parsing CLI args — it's the
 user code that populates dynamic subcommands:
 
-- bootstrap imports every repo's ``init`` modules so ``@instruction()``
+- bootstrap imports every project's ``init`` modules so ``@instruction()``
   decorators can register into ``INSTRUCTIONS``, and options classes register
   for the ``run`` and ``test`` verbs.
 
 That executes arbitrary user code. Test files are never imported for
 completion's cache: test names come only from pytest's collections, which
-write each repo's per-file table (:mod:`otto.config.collected_tests`) apart
+write each project's per-file table (:mod:`otto.config.collected_tests`) apart
 from any rebuild.
 
 For completion all we actually need is the *names* those decorators would
@@ -29,7 +29,7 @@ Cache location
 --------------
 
 ``<workspace home>/completion_cache.json`` -- see :mod:`otto.config.home`.
-The workspace home is keyed by the normalized ``OTTO_SUT_DIRS`` set under
+The workspace home is keyed by the normalized ``OTTOPATH`` set under
 ``~/.otto`` (relocatable with ``OTTO_HOME``), so caching needs no ``OTTO_XDIR``
 and one workspace has exactly one cache however many directories otto is
 invoked from.
@@ -43,7 +43,7 @@ their key sets. Each section carries its OWN stat-digest, the wall-clock time
 it was generated, and a taint flag::
 
     {
-        "schema": 23,
+        "schema": 28,
         "sections": {
             "names": {
                 "fingerprint": "<sha256 hex>",
@@ -53,12 +53,12 @@ it was generated, and a taint flag::
                     "instructions": [{"name": "install", "options": [...]}, ...],
                     "hosts": ["test1", "test2", ...],
                     "hosts_by_lab": {"unix": ["test1", "test2"], ...},
-                    "host_drops": [{"repo": "sut", "where": "...", "reason": "..."}],
+                    "host_drops": [{"project": "sut", "where": "...", "reason": "..."}],
                     "docker_hosts": ["test1", ...],
                     "docker_use_cases": ["integration", ...],
                     "docker_images": ["api", ...],
                     "docker_services_by_use_case": {"integration": ["api", "db"], ...},
-                    "repos": ["sut", ...],
+                    "active_projects": ["sut", ...],
                     "term_backends": ["ssh", "telnet", ...],
                     "transfer_backends": [
                         {"name": "scp", "host_families": ["unix"]}, ...
@@ -80,7 +80,7 @@ dict built by ``serialize_options``; a third-party GROUP entry under
 ``commands`` also carries recursive ``"commands"`` child metadata, and a
 flattening single-command app carries ``"options"`` instead (both keys
 omitted when empty). A tainted section — written while bootstrap reported
-errors — is stored but never served, so a broken repo forces the full load
+errors — is stored but never served, so a broken project forces the full load
 instead of silently serving partial names forever (the broken file's stats
 are stable until edited, so no digest would ever move). A file from an older
 schema keeps only its reserved ``__*__`` namespaces on the first new write:
@@ -91,7 +91,7 @@ Collected test-name namespace
 -----------------------------
 
 Alongside the sections, the reserved key ``"__collected_tests__"`` holds each
-repo's per-file test table, keyed by its ``sut_dir``
+project's per-file test table, keyed by its ``root``
 (:mod:`otto.config.collected_tests` documents the shape). Only a pytest
 collection writes it — a run, a listing, or the collect child a test-name
 TAB starts — never the rebuild, which runs no collection. Keeping it in its
@@ -104,7 +104,7 @@ Digests
 
 Each section's digest (:mod:`otto.config.cache_sections`) is a sha256 over
 ``(path, mtime_ns, size)`` triples for every file in its key set
-(:func:`hash_file`): each SUT's ``settings.toml``, every ``.py`` file under
+(:func:`hash_file`): each project's ``settings.toml``, every ``.py`` file under
 any ``init`` module, and the lab key paths: the files each prepared lab
 source says it reads, plus the directories their enumeration entered. The
 writer computes the lab key paths and stores them with the entry; a reader
@@ -119,7 +119,7 @@ A *constant* digest is the failure mode worth knowing about. A lab source
 that is not file-backed (or whose backend is not registered, or whose
 options do not prepare), or a configured ``[reservations]`` backend, keeps
 its data somewhere no stat can see — so edits to it never move the digest.
-When any repo has one, the writer stores the short TTL
+When any project has one, the writer stores the short TTL
 (``UNFINGERPRINTED_CACHE_TTL_SECONDS``) with the entry rather than the usual
 day; it is the only staleness bound available without querying the backend
 on the completion fast path.
@@ -150,7 +150,7 @@ if TYPE_CHECKING:
     from ..labs.drops import HostDrop
     from ..labs.protocol import HostSummary
     from .cache_sections import Section
-    from .repo import Repo
+    from .project import Project
 
 
 COMPLETION_ENV_VAR = "_OTTO_COMPLETE"
@@ -172,7 +172,7 @@ CACHE_FILENAME = "completion_cache.json"
 #      `.get("docker_use_cases", [])`, so a surviving v13 entry would validate
 #      as an empty list, `_use_case_completer`'s `isinstance(..., list)` guard
 #      would take the CACHE branch, and every tab-complete would offer nothing
-#      instead of falling back to a live scan of the repos.
+#      instead of falling back to a live scan of the projects.
 # v15: sections layout — the top-level fingerprint key is GONE. Entries live
 #      under {"schema": N, "sections": {name: {fingerprint, generated_at,
 #      tainted, payload}}} with a PER-SECTION digest, so a names-only reader
@@ -185,15 +185,15 @@ CACHE_FILENAME = "completion_cache.json"
 #      misattributed @cli_command-decorated third-party leaves to
 #      otto.cli.registry (the decorator's frame) and the built-in filter
 #      dropped them from the "commands" payload. The section's digest keys on
-#      the REPO's files, not on otto's code, so without the bump a surviving
+#      the PROJECT's files, not on otto's code, so without the bump a surviving
 #      v15 entry would keep serving a root help missing those commands for up
 #      to the full TTL after the fixed otto ships.
-# v17: layout unchanged — CONTENT again. v16 writers enumerated each repo's
+# v17: layout unchanged — CONTENT again. v16 writers enumerated each project's
 #      hosts against its OWN [inventory] (else the user file) instead of the
 #      process inventory dispatch resolves, so a workspace declaring the
-#      inventory in one repo and referencing it from another cached a hosts
+#      inventory in one project and referencing it from another cached a hosts
 #      payload missing every referenced host. Same reasoning as v16: the
-#      digest keys on the repo's files, so without the bump that entry keeps
+#      digest keys on the project's files, so without the bump that entry keeps
 #      serving the missing hosts for up to the TTL after the fix ships.
 # v18: the ``shim`` section — the self-describing entry the console-script
 #      shim answers a bash TAB from, keyed on ``names`` U ``tests``, written
@@ -203,14 +203,14 @@ CACHE_FILENAME = "completion_cache.json"
 #      back to a live corpus scan for a full TTL, because the section would
 #      validate but its payload lacks the key the fast path now reads); the
 #      marker floor now mixes in otto's OWN ``otto.suite.markers.OTTO_MARKERS``
-#      alongside the repo-scanned ones, which the repo-file digest cannot see
+#      alongside the project-scanned ones, which the project-file digest cannot see
 #      (a future addition there needs a bump of its own); and the three
 #      ``names`` keys ``host_classes_by_id``, ``projects`` and ``links``.
 # v19: layout unchanged — CONTENT. Host identity changed under spec
 #      2026-09-05 element-object: positional handles (``dut1`` for the first
 #      host of element ``dut``) are gone from the ``host_ids`` payload, and an
 #      element's ``id`` no longer appears in a host id. The digest keys on the
-#      repo's lab files, which did not change, so without the bump a warm v18
+#      project's lab files, which did not change, so without the bump a warm v18
 #      entry would keep offering handles that no longer dispatch and ids that
 #      no host reports, for up to the full TTL after the fix ships.
 # v20: names key logins_by_host — the per-host login map ``otto host <id>
@@ -227,13 +227,13 @@ CACHE_FILENAME = "completion_cache.json"
 #      floors: a test-name TAB answers from the per-file tables pytest's
 #      collections write (``__collected_tests__``). ``shim`` is derived from
 #      ``names`` alone, its payload drops ``tests_digest`` and ``keys`` becomes
-#      the one ``names`` key list, and it gains ``tables`` (the repos whose
+#      the one ``names`` key list, and it gains ``tables`` (the projects whose
 #      tables a tests site reads). A v22 shim would read a digest-keyed
 #      name blob no writer updates any more.
 # v24: the root group gains ``--list-products`` / ``--list-tools``; a warm cache
 #      learns them on the next rebuild.
 # v25: the names payload gains docker_images, docker_services_by_use_case and
-#      repos (#570).
+#      projects (#570).
 # v26: the names payload gains docker_default_parent_by_lab — the parent each
 #      lab's docker verbs default to, by the one rule — and the container ids
 #      are synthesized under that parent only, not under every docker-capable
@@ -242,7 +242,11 @@ CACHE_FILENAME = "completion_cache.json"
 #      the writer computes from the prepared lab sources; a warm reader takes
 #      both from the entry and never prepares a source or globs. A v26 entry
 #      stores neither.
-SCHEMA_VERSION = 27
+# v28: the names payload's active-project list is keyed ``active_projects``
+#      and each ``host_drops`` entry names its ``project``; both keys were
+#      spelled with the old word for a project before. A v27 entry carries
+#      the old keys.
+SCHEMA_VERSION = 28
 
 # A conftest holds no test of its own, but pytest loads it before collecting
 # anything under its directory, so the per-file tables watch every one.
@@ -253,7 +257,7 @@ CONFTEST_FILENAME = "conftest.py"
 # move any tracked file's mtime still eventually refresh.
 CACHE_TTL_SECONDS = 24 * 60 * 60
 
-# The TTL that applies when a repo's completion data comes from somewhere the
+# The TTL that applies when a project's completion data comes from somewhere the
 # fingerprint cannot stat: a [lab] host source that is not file-backed (or
 # whose backend is not registered), or any [reservations]
 # backend (the built-in json one supplies no usernames, so that field is
@@ -271,8 +275,8 @@ UNFINGERPRINTED_CACHE_TTL_SECONDS = 5 * 60
 
 # --- Collected (pytest-accurate) test names, for NAMES completion -----------
 #
-# The reserved ``__collected_tests__`` namespace holds each repo's per-file
-# table (``otto.config.collected_tests``), keyed by the repo's ``sut_dir``:
+# The reserved ``__collected_tests__`` namespace holds each project's per-file
+# table (``otto.config.collected_tests``), keyed by the project's ``root``:
 # what pytest collected from every test file, validated by one stat per path.
 # Only a pytest collection writes it (a run, a listing, the collect child a
 # completer spawns); the cache rebuild never does, and never runs a collection.
@@ -295,7 +299,7 @@ COLLECT_TIMEOUT_SECONDS = 15
 _COLLECT_KILL_GRACE_SECONDS = 2
 
 # After a failed / timed-out collect child, no TAB waits on or spawns another
-# for this long. Keeps a repo that can't collect within the timeout from
+# for this long. Keeps a project that can't collect within the timeout from
 # costing a slow TAB on *every* keystroke — at most one per cooldown window.
 COLLECT_COOLDOWN_SECONDS = 60
 COLLECT_COOLDOWN_FILENAME = ".completion_collect.failed"
@@ -335,15 +339,15 @@ def _cache_path() -> Path | None:
     """Return the cache file path.
 
     The workspace home (:mod:`otto.config.home`) is a stable per-user location
-    derived from the SUT-dir set alone, so this no longer depends on
+    derived from the project-root set alone, so this no longer depends on
     ``OTTO_XDIR`` and no longer has a "caching disabled" case. That is a
     behaviour change, not just a move: an operator who never set an xdir used
     to get the slow path on every invocation, silently.
 
     It also DEDUPLICATES. The cache's content was always a pure function of the
-    workspace -- the section digests hash each repo's settings, init modules
+    workspace -- the section digests hash each project's settings, init modules
     and lab files and nothing else -- so the xdir was a storage location, never
-    a semantic key, and invoking otto from N directories against the same repos
+    a semantic key, and invoking otto from N directories against the same projects
     used to maintain N byte-identical caches.
 
     The return type stays ``Path | None`` because callers and the remote cache
@@ -377,8 +381,8 @@ def clear_cache() -> bool:
         return True
 
 
-def resolved_init_paths(repo: "Repo") -> list[Path]:
-    """Every ``.py`` file one of *repo*'s ``init`` names resolves to under ``libs``.
+def resolved_init_paths(project: "Project") -> list[Path]:
+    """Every ``.py`` file one of *project*'s ``init`` names resolves to under ``libs``.
 
     THE enumeration of the init trees: the ``names`` section's key set
     (:mod:`otto.config.cache_sections`) hashes exactly this list, and
@@ -390,14 +394,14 @@ def resolved_init_paths(repo: "Repo") -> list[Path]:
     ``libs`` entries and every match counts.
 
     Direct attribute access on ``init``/``libs``, deliberately: this is the
-    DIGEST path, and a malformed repo double missing a pinned attribute must
+    DIGEST path, and a malformed project double missing a pinned attribute must
     fail by name, not silently hash "nothing declared". The TTL path keeps
     its own ``getattr`` tolerance — see :func:`_has_unresolved_init_module`.
     """
     found: list[Path] = []
-    for init_mod in repo.init:
+    for init_mod in project.init:
         mod_base = init_mod.split(".")[0]
-        for lib in repo.libs:
+        for lib in project.libs:
             mod_dir = lib / mod_base
             mod_file = lib / f"{mod_base}.py"
             if mod_dir.is_dir():
@@ -407,8 +411,8 @@ def resolved_init_paths(repo: "Repo") -> list[Path]:
     return found
 
 
-def unresolved_init_modules(repo: "Repo") -> list[str]:
-    """*repo*'s ``init`` names that resolve under none of ``libs``, in declaration order.
+def unresolved_init_modules(project: "Project") -> list[str]:
+    """*project*'s ``init`` names that resolve under none of ``libs``, in declaration order.
 
     The complement of :func:`resolved_init_paths`, sharing its resolution
     rule and its direct-access rationale. Each name contributes the literal
@@ -418,22 +422,22 @@ def unresolved_init_modules(repo: "Repo") -> list[str]:
     also shortens the TTL (:func:`_has_unresolved_init_module`).
     """
     unresolved: list[str] = []
-    for init_mod in repo.init:
+    for init_mod in project.init:
         mod_base = init_mod.split(".")[0]
         resolved = any(
-            (lib / mod_base).is_dir() or (lib / f"{mod_base}.py").is_file() for lib in repo.libs
+            (lib / mod_base).is_dir() or (lib / f"{mod_base}.py").is_file() for lib in project.libs
         )
         if not resolved:
             unresolved.append(init_mod)
     return unresolved
 
 
-def _has_unresolved_init_module(repo: "Repo") -> bool:
-    """Whether any of *repo*'s ``init`` names fails to resolve under its ``libs``.
+def _has_unresolved_init_module(project: "Project") -> bool:
+    """Whether any of *project*'s ``init`` names fails to resolve under its ``libs``.
 
     The yes/no view of :func:`unresolved_init_modules`' resolution rule, for
     the TTL decision: an unresolvable init module's digest contribution is a
-    constant, so the short TTL is the only staleness bound such a repo has.
+    constant, so the short TTL is the only staleness bound such a project has.
 
     NOT a delegation, although the rule is the same: this is the TTL path,
     where ``getattr(..., [])`` tolerance is load-bearing — a test double
@@ -445,8 +449,8 @@ def _has_unresolved_init_module(repo: "Repo") -> bool:
     write asks for the TTL class twice (the shim payload, then each stored
     entry), and inside the rebuild's scope the second ask is free.
     """
-    libs = getattr(repo, "libs", [])
-    for init_mod in getattr(repo, "init", []):
+    libs = getattr(project, "libs", [])
+    for init_mod in getattr(project, "init", []):
         mod_base = init_mod.split(".")[0]
         resolved = any(_is_dir(lib / mod_base) or _is_file(lib / f"{mod_base}.py") for lib in libs)
         if not resolved:
@@ -464,19 +468,19 @@ def _is_file(path: Path) -> bool:
     return st is not None and stat_module.S_ISREG(st.st_mode)
 
 
-def _profiles(repos: "Sequence[Repo]") -> "ProfileContext":
-    """Return the repo data profiles of *repos*, which every host read of one pass resolves through.
+def _profiles(projects: "Sequence[Project]") -> "ProfileContext":
+    """Return the data profiles of *projects*, which every host read of one pass resolves through.
 
-    Computed once per collector over the WHOLE repo list, so a host of one
-    repo may select a table another selected repo declares.
+    Computed once per collector over the WHOLE project list, so a host of one
+    project may select a table another selected project declares.
     """
     from ..host.os_profile import ProfileContext
 
-    return ProfileContext.from_repos(repos)
+    return ProfileContext.from_projects(projects)
 
 
-def _has_unfingerprinted_source(repos: list["Repo"]) -> bool:
-    """Report whether any repo's completion data comes from outside the digest.
+def _has_unfingerprinted_source(projects: list["Project"]) -> bool:
+    """Report whether any project's completion data comes from outside the digest.
 
     For the cache WRITER only, after init: it prepares the lab sources, and
     the writer stores the answer with the entry as its TTL class
@@ -497,20 +501,20 @@ def _has_unfingerprinted_source(repos: list["Repo"]) -> bool:
       above have, from a source that is not a backend choice at all.
 
     Switching either backend rewrites ``settings.toml``, whose mtime IS in the
-    digest, so a repo can never inherit a cache entry written under a
+    digest, so a project can never inherit a cache entry written under a
     different backend choice. That invariant is what makes an entry-wide (not
-    per-repo) TTL correct.
+    per-project) TTL correct.
     """
     from ..labs.errors import LabRepositoryError
     from ..labs.sources import prepared_lab_sources
 
-    profiles = _profiles(repos)
-    for repo in repos:
+    profiles = _profiles(projects)
+    for project in projects:
         try:
-            # A repo double with no `lab_sources` declares no source.
+            # A project double with no `lab_sources` declares no source.
             states = (
-                prepared_lab_sources(repo, profiles=profiles)
-                if getattr(repo, "lab_sources", None)
+                prepared_lab_sources(project, profiles=profiles)
+                if getattr(project, "lab_sources", None)
                 else []
             )
         except LabRepositoryError:
@@ -519,18 +523,18 @@ def _has_unfingerprinted_source(repos: list["Repo"]) -> bool:
             return True
         # `isinstance(..., dict)`: a test double's auto-attribute is truthy but
         # is not settings.
-        reservations = getattr(repo, "reservation_settings", None)
+        reservations = getattr(project, "reservation_settings", None)
         if isinstance(reservations, dict) and reservations:
             return True
-        if _has_unresolved_init_module(repo):
+        if _has_unresolved_init_module(project):
             return True
     return False
 
 
-def _cache_ttl_seconds(repos: list["Repo"]) -> int:
-    """Effective completion-cache TTL for *repos*: the TTL class the writer stores.
+def _cache_ttl_seconds(projects: list["Project"]) -> int:
+    """Effective completion-cache TTL for *projects*: the TTL class the writer stores.
 
-    Shortened when any repo's completion data comes from a source the
+    Shortened when any project's completion data comes from a source the
     fingerprint cannot see — see :data:`UNFINGERPRINTED_CACHE_TTL_SECONDS`.
     Writer-only: a reader uses the class stored with the entry.
 
@@ -538,25 +542,25 @@ def _cache_ttl_seconds(repos: list["Repo"]) -> int:
     TTL (:data:`CACHE_TTL_SECONDS`): each validates itself by one ``stat`` per
     path it tracks (:mod:`otto.config.collected_tests`).
     """
-    if _has_unfingerprinted_source(repos):
+    if _has_unfingerprinted_source(projects):
         return UNFINGERPRINTED_CACHE_TTL_SECONDS
     return CACHE_TTL_SECONDS
 
 
-def ancestor_conftests(test_dir: Path, sut_dir: Path) -> list[Path]:
-    """Return the ``conftest.py`` paths ABOVE *test_dir*, up to and including *sut_dir*'s own.
+def ancestor_conftests(test_dir: Path, root: Path) -> list[Path]:
+    """Return the ``conftest.py`` paths ABOVE *test_dir*, up to and including *root*'s own.
 
     They count because pytest is run with the tests dirs as arguments and the
-    SUT as rootdir, so a conftest anywhere between them is loaded, and a
+    project root as rootdir, so a conftest anywhere between them is loaded, and a
     ``pytest_generate_tests`` there parametrizes what gets collected. Returned
     whether or not they exist: a watcher that stats a missing one sees it
-    appear. A *test_dir* outside *sut_dir* has none.
+    appear. A *test_dir* outside *root* has none.
     """
     found: list[Path] = []
     for ancestor in test_dir.parents:
-        if ancestor == sut_dir or sut_dir in ancestor.parents:
+        if ancestor == root or root in ancestor.parents:
             found.append(ancestor / CONFTEST_FILENAME)
-        if ancestor == sut_dir:
+        if ancestor == root:
             break
     return found
 
@@ -584,7 +588,7 @@ def _lab_paths_digest(paths: "list[Path]") -> str:
     return h.hexdigest()
 
 
-def _tunnel_scope_key(repos: list["Repo"]) -> str:
+def _tunnel_scope_key(projects: list["Project"]) -> str:
     """Sha256 of what a tunnel id depends on besides the lab files: settings and inventory.
 
     Tunnel ids are discovered by process/argv inspection against the live
@@ -600,16 +604,16 @@ def _tunnel_scope_key(repos: list["Repo"]) -> str:
     preparation.
     """
     h = hashlib.sha256()
-    for repo in sorted(repos, key=lambda r: str(r.sut_dir)):
-        hash_file(h, repo.sut_dir / ".otto" / "settings.toml")
-        sources = getattr(repo, "lab_sources", None) or []
+    for project in sorted(projects, key=lambda r: str(r.root)):
+        hash_file(h, project.root / ".otto" / "settings.toml")
+        sources = getattr(project, "lab_sources", None) or []
         if sources:
             from ..labs.registry import LAB_REPOSITORIES
 
             for source in sources:
                 if source.backend not in LAB_REPOSITORIES:
                     h.update(f"unknown:{source.label}\n".encode())
-    h.update(f"inventory:{_inventory_fingerprint(repos).text}\n".encode())
+    h.update(f"inventory:{_inventory_fingerprint(projects).text}\n".encode())
     return h.hexdigest()
 
 
@@ -624,7 +628,7 @@ class _InventoryDigest:
     """``False`` when *text* is a one-shot value no later read can ever match."""
 
 
-def _inventory_fingerprint(repos: list["Repo"]) -> "_InventoryDigest":
+def _inventory_fingerprint(projects: list["Project"]) -> "_InventoryDigest":
     """Return the process inventory's freshness signal (spec 2026-08-28 host-inventory §11).
 
     ``none`` without an inventory; the backend's ``fingerprint()`` (file
@@ -657,7 +661,7 @@ def _inventory_fingerprint(repos: list["Repo"]) -> "_InventoryDigest":
     from ..inventory.config import build_inventory
 
     try:
-        inventory = build_inventory(repos)
+        inventory = build_inventory(projects)
         if inventory is None:
             return _InventoryDigest(text="none", cacheable=True)
         fp = inventory.fingerprint()
@@ -668,7 +672,7 @@ def _inventory_fingerprint(repos: list["Repo"]) -> "_InventoryDigest":
     return _InventoryDigest(text=fp, cacheable=True)
 
 
-def _fingerprint_is_ephemeral(repos: list["Repo"]) -> bool:
+def _fingerprint_is_ephemeral(projects: list["Project"]) -> bool:
     """Whether an entry written NOW could never be RELIABLY read back (spec §11).
 
     Two cases, both from :func:`_inventory_fingerprint`: an inventory that
@@ -689,18 +693,18 @@ def _fingerprint_is_ephemeral(repos: list["Repo"]) -> bool:
     backend's own ``fingerprint()`` — which the digest was going to call
     anyway.
     """
-    return not _inventory_fingerprint(repos).cacheable
+    return not _inventory_fingerprint(projects).cacheable
 
 
-def inventory_digest_text(repos: list["Repo"]) -> str:
+def inventory_digest_text(projects: list["Project"]) -> str:
     """Return the inventory's digest line — the public seam for the section registry.
 
     Every section digest ends with this text
     (:mod:`otto.config.cache_sections`): the process has exactly ONE
-    inventory, resolved across every active repo plus the user file, and a
+    inventory, resolved across every active project plus the user file, and a
     change in that resolution must invalidate what was cached under it.
     """
-    return _inventory_fingerprint(repos).text
+    return _inventory_fingerprint(projects).text
 
 
 # ---------------------------------------------------------------------------
@@ -884,7 +888,7 @@ def _section_payload_if_fresh(
 
 
 def read_sections(
-    repos: list["Repo"],
+    projects: list["Project"],
     names: "Collection[str]",
     *,
     digests: dict[str, str] | None = None,
@@ -926,7 +930,7 @@ def read_sections(
     # Resolve names FIRST: an unknown section is a caller bug and must raise
     # even when the cache file is absent, not read as a miss.
     chosen = [section_by_name(name) for name in names]
-    if not repos:
+    if not projects:
         return None
     cache_path = _cache_path()
     if cache_path is None or not cache_path.is_file():
@@ -942,7 +946,7 @@ def read_sections(
         return None
 
     try:
-        fresh = section_digests(repos, chosen, known=digests, stored=stored)
+        fresh = section_digests(projects, chosen, known=digests, stored=stored)
     except _StoredKeysMissingError:
         return None
     if digests is not None:
@@ -963,7 +967,7 @@ def read_sections(
 
 
 def read_cache(
-    repos: list["Repo"],
+    loaded_projects: list["Project"],
     *,
     digests: dict[str, str] | None = None,
     require: "Collection[str]" = (),
@@ -972,8 +976,8 @@ def read_cache(
 
     Valid iff the ``names`` section validates — present, untainted, its digest
     matching, inside the TTL (:func:`read_sections`). ``None`` also covers:
-    empty repos (would produce the empty-tree digests any shell without
-    ``OTTO_SUT_DIRS`` computes, poisoning the cache for other shells), cache
+    empty projects (would produce the empty-tree digests any shell without
+    ``OTTOPATH`` computes, poisoning the cache for other shells), cache
     file missing or corrupt, and schema mismatch. In every case the caller
     should fall back to the slow path.
 
@@ -986,7 +990,7 @@ def read_cache(
 
     On success returns one flat dict with ``instructions``, ``test_options``,
     ``hosts``, ``hosts_by_lab``, ``docker_hosts``, ``docker_use_cases``,
-    ``docker_images``, ``docker_services_by_use_case``, ``repos``,
+    ``docker_images``, ``docker_services_by_use_case``, ``active_projects``,
     ``term_backends``, ``transfer_backends``, ``usernames``, ``commands``,
     ``labs``, ``host_classes_by_id``, ``projects``, ``links``,
     ``logins_by_host`` and ``docker_default_parent_by_lab`` keys.
@@ -997,7 +1001,7 @@ def read_cache(
     for reuse by a subsequent :func:`write_cache` — see
     :func:`read_sections`.
     """
-    payloads = read_sections(repos, ["names", *require], digests=digests)
+    payloads = read_sections(loaded_projects, ["names", *require], digests=digests)
     if payloads is None:
         return None
     merged = payloads["names"]
@@ -1010,7 +1014,7 @@ def read_cache(
     docker_use_cases = merged.get("docker_use_cases", [])
     docker_images = merged.get("docker_images", [])
     docker_services_by_use_case = merged.get("docker_services_by_use_case", {})
-    repo_names = merged.get("repos", [])
+    active_projects = merged.get("active_projects", [])
     term_backends = merged.get("term_backends", [])
     transfer_backends = merged.get("transfer_backends", [])
     usernames = merged.get("usernames", [])
@@ -1031,7 +1035,7 @@ def read_cache(
         or not isinstance(docker_use_cases, list)
         or not isinstance(docker_images, list)
         or not isinstance(docker_services_by_use_case, dict)
-        or not isinstance(repo_names, list)
+        or not isinstance(active_projects, list)
         or not isinstance(term_backends, list)
         or not isinstance(transfer_backends, list)
         or not isinstance(usernames, list)
@@ -1055,7 +1059,7 @@ def read_cache(
         "docker_use_cases": docker_use_cases,
         "docker_images": docker_images,
         "docker_services_by_use_case": docker_services_by_use_case,
-        "repos": repo_names,
+        "active_projects": active_projects,
         "term_backends": term_backends,
         "transfer_backends": transfer_backends,
         "usernames": usernames,
@@ -1070,16 +1074,16 @@ def read_cache(
 
 
 def cache_rebuild_is_worthwhile(
-    repos: list["Repo"], *, digests: dict[str, str] | None = None
+    projects: list["Project"], *, digests: dict[str, str] | None = None
 ) -> bool:
     """Whether collecting and writing a fresh entry would do any good.
 
-    False when write_cache would drop the result (empty repos, no cache
+    False when write_cache would drop the result (empty projects, no cache
     path, ephemeral fingerprint) or when every on-disk section is already
     valid — in every False case the caller should skip the collect, which
-    runs the repos' init modules and enumerates their hosts. ``not repos`` is
+    runs the projects' init modules and enumerates their hosts. ``not projects`` is
     checked FIRST: the ephemeral probe resolves the process inventory, which
-    may be a networked backend, and an empty-repos caller must not pay that
+    may be a networked backend, and an empty-projects caller must not pay that
     for an answer that is always
     False.
 
@@ -1094,23 +1098,23 @@ def cache_rebuild_is_worthwhile(
     file, since the digest it needs is computed in the same
     :func:`read_sections` call as the ``names`` check above.
     """
-    return cache_is_writable(repos) and cache_is_stale(repos, digests=digests)
+    return cache_is_writable(projects) and cache_is_stale(projects, digests=digests)
 
 
-def cache_is_writable(repos: list["Repo"]) -> bool:
-    """Whether :func:`write_cache` would keep an entry for *repos* at all.
+def cache_is_writable(projects: list["Project"]) -> bool:
+    """Whether :func:`write_cache` would keep an entry for *projects* at all.
 
     The cheap half of :func:`cache_rebuild_is_worthwhile`: no key-set stats,
     so a caller can ask it before paying for anything a rebuild needs. False
-    with no repos, no cache path, or an inventory whose fingerprint is
-    ephemeral; ``not repos`` first, for the reason
+    with no projects, no cache path, or an inventory whose fingerprint is
+    ephemeral; ``not projects`` first, for the reason
     :func:`cache_rebuild_is_worthwhile` gives.
     """
-    return bool(repos) and _cache_path() is not None and not _fingerprint_is_ephemeral(repos)
+    return bool(projects) and _cache_path() is not None and not _fingerprint_is_ephemeral(projects)
 
 
-def cache_is_stale(repos: list["Repo"], *, digests: dict[str, str] | None = None) -> bool:
-    """Whether any on-disk section, ``shim`` included, fails to validate for *repos*.
+def cache_is_stale(projects: list["Project"], *, digests: dict[str, str] | None = None) -> bool:
+    """Whether any on-disk section, ``shim`` included, fails to validate for *projects*.
 
     The key-set half of :func:`cache_rebuild_is_worthwhile`, for a caller that
     has already established :func:`cache_is_writable`. *digests* is filled as
@@ -1118,11 +1122,11 @@ def cache_is_stale(repos: list["Repo"], *, digests: dict[str, str] | None = None
     """
     from .cache_sections import SHIM_SECTION
 
-    return read_cache(repos, digests=digests, require=(SHIM_SECTION,)) is None
+    return read_cache(projects, digests=digests, require=(SHIM_SECTION,)) is None
 
 
 def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by design
-    repos: list["Repo"],
+    loaded_projects: list["Project"],
     instructions: list[dict[str, Any]],
     hosts: list[str],
     *,
@@ -1131,7 +1135,7 @@ def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by de
     docker_use_cases: list[str] | None = None,
     docker_images: list[str] | None = None,
     docker_services_by_use_case: dict[str, list[str]] | None = None,
-    repos_names: list[str] | None = None,
+    active_projects: list[str] | None = None,
     term_backends: list[str] | None = None,
     transfer_backends: list[dict[str, Any]] | None = None,
     usernames: list[str] | None = None,
@@ -1163,8 +1167,8 @@ def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by de
     miss and re-collects — pass ``shim=`` or write it through
     :func:`otto.config.cache_sections.write_section`.
 
-    Skipped silently when repos is empty — an empty-repo digest is what any
-    shell without ``OTTO_SUT_DIRS`` would also compute, and that would
+    Skipped silently when projects is empty — an empty-project digest is what any
+    shell without ``OTTOPATH`` would also compute, and that would
     wrongly override a real entry's meaning. Also skipped when the process
     inventory cannot report freshness — see
     :func:`_fingerprint_is_ephemeral`; this is the write with the largest
@@ -1194,7 +1198,7 @@ def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by de
             "docker_use_cases": docker_use_cases or [],
             "docker_images": docker_images or [],
             "docker_services_by_use_case": docker_services_by_use_case or {},
-            "repos": repos_names or [],
+            "active_projects": active_projects or [],
             "term_backends": term_backends or [],
             "transfer_backends": transfer_backends or [],
             "usernames": usernames or [],
@@ -1210,7 +1214,7 @@ def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by de
     if shim is not None:
         payloads["shim"] = shim
     write_sections(
-        repos,
+        loaded_projects,
         payloads,
         tainted=tainted,
         digests=digests,
@@ -1248,7 +1252,7 @@ def _tainted_entry_is_already_current(
 
 
 def write_sections(
-    repos: list["Repo"],
+    projects: list["Project"],
     payloads: dict[str, dict[str, Any]],
     *,
     tainted: bool = False,
@@ -1257,7 +1261,7 @@ def write_sections(
     """Write (or update) the named sections' payloads in ONE atomic file update.
 
     ``KeyError`` for a payload keyed on an unregistered section name, raised
-    before any I/O. Skipped silently for empty repos and for an ephemeral
+    before any I/O. Skipped silently for empty projects and for an ephemeral
     inventory digest, for the reasons :func:`write_cache` documents — this
     is the single writer under both it and
     :func:`otto.config.cache_sections.write_section`.
@@ -1295,7 +1299,7 @@ def write_sections(
     )
 
     chosen = [section_by_name(name) for name in payloads]
-    if not repos or _fingerprint_is_ephemeral(repos):
+    if not projects or _fingerprint_is_ephemeral(projects):
         return
 
     cache_path = _cache_path()
@@ -1326,7 +1330,7 @@ def write_sections(
     )
     lab_keyed = [section for section in SECTIONS if section.lab_keyed]
     lab = (
-        [str(path) for path in lab_key_paths(repos)]
+        [str(path) for path in lab_key_paths(projects)]
         if any(needs_lab_keys(section) for section in chosen)
         else []
     )
@@ -1344,11 +1348,11 @@ def write_sections(
             if section.derived_from:
                 trusted.pop(section.name, None)
     keys = {section.name: {"lab_key_paths": lab} for section in lab_keyed}
-    fresh = section_digests(repos, chosen, known=trusted, stored=keys)
+    fresh = section_digests(projects, chosen, known=trusted, stored=keys)
     if tainted and _tainted_entry_is_already_current(sections_map, chosen, fresh):
         return
     now = int(time.time())
-    ttl = _cache_ttl_seconds(repos)
+    ttl = _cache_ttl_seconds(projects)
     for section in chosen:
         entry: dict[str, Any] = {
             "fingerprint": fresh[section.name],
@@ -1417,7 +1421,7 @@ def collect_backend_names() -> dict[str, Any]:
     """Snapshot the registered term + transfer backend names for completion.
 
     Call after :func:`otto.bootstrap.bootstrap` (or ``import_init_modules``) so
-    custom per-repo backends are present. Built-ins are always present
+    custom per-project backends are present. Built-ins are always present
     (registered at module import). Each transfer backend carries its
     ``host_families`` so the completer can filter by family (e.g. unix-only
     for ``otto host --transfer``).
@@ -1434,10 +1438,10 @@ def collect_backend_names() -> dict[str, Any]:
     }
 
 
-def collect_reservation_usernames(repos: list["Repo"]) -> list[str]:
+def collect_reservation_usernames(projects: list["Project"]) -> list[str]:
     """Best-effort usernames for ``--holder`` completion (cached).
 
-    Builds the selected reservation backend (first repo with a
+    Builds the selected reservation backend (first project with a
     ``[reservations]`` section) and, when it implements
     :class:`~otto.reservations.protocol.SupportsUsernameCompletion`, returns
     ``list_usernames()`` sorted. Runs on the slow path; any failure (no backend
@@ -1447,12 +1451,12 @@ def collect_reservation_usernames(repos: list["Repo"]) -> list[str]:
     from ..reservations.factory import build_backend
     from ..reservations.protocol import SupportsUsernameCompletion
 
-    for repo in repos:
-        settings = getattr(repo, "reservation_settings", None)
+    for project in projects:
+        settings = getattr(project, "reservation_settings", None)
         if not settings:
             continue
         try:
-            backend = build_backend(settings, repo.sut_dir)
+            backend = build_backend(settings, project.root)
             if isinstance(backend, SupportsUsernameCompletion):
                 return sorted(backend.list_usernames())
         except Exception:  # noqa: BLE001 — completion fallback, best-effort username list; return empty on any error
@@ -1489,8 +1493,8 @@ def _host_summary_deadline() -> float:
 
 
 @dataclass(frozen=True)
-class RepoEnumeration:
-    """What one repo's host enumeration produced: the summaries, and what it left out.
+class ProjectEnumeration:
+    """What one project's host enumeration produced: the summaries, and what it left out.
 
     ``drops`` is the outlet (:mod:`otto.labs.drops`): every entry, file, lab
     or source the best-effort enumeration skipped, with the reason, plus the
@@ -1503,7 +1507,9 @@ class RepoEnumeration:
     drops: list["HostDrop"] = field(default_factory=list)
 
 
-def _bounded(work: "Callable[[threading.Event], RepoEnumeration]", repo: "Repo") -> RepoEnumeration:
+def _bounded(
+    work: "Callable[[threading.Event], ProjectEnumeration]", project: "Project"
+) -> ProjectEnumeration:
     """Run *work*, giving up after :func:`_host_summary_deadline`.
 
     A daemon thread, so a backend still blocked at process exit cannot keep
@@ -1524,7 +1530,7 @@ def _bounded(work: "Callable[[threading.Event], RepoEnumeration]", repo: "Repo")
     from ..labs.drops import HostDrop
 
     deadline = _host_summary_deadline()
-    box: list[RepoEnumeration] = []
+    box: list[ProjectEnumeration] = []
     abandoned = threading.Event()
 
     def _run() -> None:
@@ -1540,21 +1546,21 @@ def _bounded(work: "Callable[[threading.Event], RepoEnumeration]", repo: "Repo")
             f"host source did not answer within {deadline}s — offering no hosts for it. "
             f"Raise {HOST_SUMMARY_DEADLINE_ENV_VAR} if it is merely slow."
         )
-        logging.getLogger(__name__).warning(rf"\[completion] {repo.sut_dir}: {reason}")
-        return RepoEnumeration(drops=[HostDrop(where=str(repo.sut_dir), reason=reason)])
-    # `or RepoEnumeration()` rather than `box[0]`: a work() returning None
+        logging.getLogger(__name__).warning(rf"\[completion] {project.root}: {reason}")
+        return ProjectEnumeration(drops=[HostDrop(where=str(project.root), reason=reason)])
+    # `or ProjectEnumeration()` rather than `box[0]`: a work() returning None
     # would otherwise hand every caller a None to read attributes off.
-    return (box[0] if box else None) or RepoEnumeration()
+    return (box[0] if box else None) or ProjectEnumeration()
 
 
 @dataclass(frozen=True)
 class InventoryResolution:
     """The process inventory as the host enumeration joins against it (spec 2026-08-28 §8).
 
-    ``inventory`` is what ``build_inventory`` returned over EVERY active repo
+    ``inventory`` is what ``build_inventory`` returned over EVERY active project
     plus the user file — the resolution dispatch runs — or ``None`` when
     nothing declares one. ``error`` is set instead when that resolution
-    RAISED (a broken declaration): every repo then enumerates as empty,
+    RAISED (a broken declaration): every project then enumerates as empty,
     because a broken declaration fails every lab load at dispatch too, and
     an id that cannot dispatch is worse offered than withheld.
     """
@@ -1574,27 +1580,27 @@ class InventoryResolution:
         return getattr(self.inventory, "label", type(self.inventory).__name__)
 
 
-def resolve_process_inventory(repos: "Sequence[Repo]") -> InventoryResolution:
-    """Resolve the ONE inventory every repo's host enumeration joins against.
+def resolve_process_inventory(projects: "Sequence[Project]") -> InventoryResolution:
+    """Resolve the ONE inventory every project's host enumeration joins against.
 
-    ``build_inventory(repos)`` over the whole active set — the same call, over
-    the same repos, that :func:`otto.context.open_context` and the invoke
-    preamble make for dispatch — never per repo. Until 2026-09-03 each repo
-    was enumerated against ``build_inventory([repo])``: its OWN declaration,
-    else the user file. A workspace whose ``[inventory]`` lives in one repo
+    ``build_inventory(projects)`` over the whole active set — the same call, over
+    the same projects, that :func:`otto.context.open_context` and the invoke
+    preamble make for dispatch — never per project. Until 2026-09-03 each project
+    was enumerated against ``build_inventory([project])``: its OWN declaration,
+    else the user file. A workspace whose ``[inventory]`` lives in one project
     and whose referencing hosts live in another therefore dispatched those
     hosts (``--list-hosts`` showed them) while completion never offered them,
     and cached that answer for a day. Spec §8 is one resolution per process,
-    first hit across the active repos; this is the completion side of it.
+    first hit across the active projects; this is the completion side of it.
 
     Never raises: a broken declaration is logged ONCE here and recorded on the
-    result, so :func:`repo_host_summaries` answers empty for every repo without
+    result, so :func:`project_host_summaries` answers empty for every project without
     each of them repeating the warning.
     """
     from ..inventory.config import build_inventory
 
     try:
-        return InventoryResolution(inventory=build_inventory(list(repos)))
+        return InventoryResolution(inventory=build_inventory(list(projects)))
     except Exception as e:  # noqa: BLE001 — completion never crashes the shell
         logging.getLogger(__name__).warning(
             rf"\[completion] the host inventory could not be resolved, so no host "
@@ -1603,30 +1609,30 @@ def resolve_process_inventory(repos: "Sequence[Repo]") -> InventoryResolution:
         return InventoryResolution(error=f"{type(e).__name__}: {e}")
 
 
-def repo_host_summaries(
-    repo: "Repo", resolution: InventoryResolution, *, profiles: "ProfileContext"
+def project_host_summaries(
+    project: "Project", resolution: InventoryResolution, *, profiles: "ProfileContext"
 ) -> list["HostSummary"]:
-    """Every host *repo*'s configured host source knows — best-effort.
+    """Every host *project*'s configured host source knows — best-effort.
 
     *resolution* is the process inventory from :func:`resolve_process_inventory`
-    over the WHOLE active repo list, resolved by the caller once per pass and
-    handed to every repo: a referenced entry joins against the same inventory
-    it dispatches through, whichever repo declared it. A failed resolution
-    answers empty here for every repo, warned once where it failed.
-    *profiles* is likewise the data profiles of the whole repo list
-    (:meth:`~otto.host.os_profile.ProfileContext.from_repos`), so a host may
-    select another selected repo's table.
+    over the WHOLE active project list, resolved by the caller once per pass and
+    handed to every project: a referenced entry joins against the same inventory
+    it dispatches through, whichever project declared it. A failed resolution
+    answers empty here for every project, warned once where it failed.
+    *profiles* is likewise the data profiles of the whole project list
+    (:meth:`~otto.host.os_profile.ProfileContext.from_projects`), so a host may
+    select another selected project's table.
 
-    Goes through the repo's own ``[[lab.sources]]`` backends rather than
+    Goes through the project's own ``[[lab.sources]]`` backends rather than
     reading its ``lab.json`` files directly, so a project with a custom host
     source gets completion from it (previously a custom backend contributed
     nothing here — completion only ever saw ``lab.json``).
 
-    Scoped PER REPO: each repo contributes the hosts of its own sources, and
-    the container ids synthesized below pair a repo's ``[docker]`` composes
-    with its own docker-capable parents. Dispatch composes the SAME per-repo
+    Scoped PER PROJECT: each project contributes the hosts of its own sources, and
+    the container ids synthesized below pair a project's ``[docker]`` composes
+    with its own docker-capable parents. Dispatch composes the SAME per-project
     source lists into one backend (``build_lab_sources``), so the two agree on
-    which sources exist; they differ only in that completion keeps each repo's
+    which sources exist; they differ only in that completion keeps each project's
     hosts separate where dispatch merges them (later sources overriding
     earlier ones).
 
@@ -1640,15 +1646,15 @@ def repo_host_summaries(
     """
     if resolution.error is not None:
         return []
-    return _repo_enumeration(repo, resolution, profiles).summaries
+    return _project_enumeration(project, resolution, profiles).summaries
 
 
-def repo_host_drops(
-    repo: "Repo", resolution: InventoryResolution, *, profiles: "ProfileContext"
+def project_host_drops(
+    project: "Project", resolution: InventoryResolution, *, profiles: "ProfileContext"
 ) -> list["HostDrop"]:
-    """Return what *repo*'s enumeration left OUT, with reasons — the outlet's read side.
+    """Return what *project*'s enumeration left OUT, with reasons — the outlet's read side.
 
-    The same memoized enumeration :func:`repo_host_summaries` reads, so
+    The same memoized enumeration :func:`project_host_summaries` reads, so
     asking costs nothing extra. A failed inventory resolution is NOT a drop:
     nothing is enumerated, and — its digest being ephemeral — nothing is
     written that ``otto cache info`` could read a drop from. That case is
@@ -1656,41 +1662,41 @@ def repo_host_drops(
     """
     if resolution.error is not None:
         return []
-    return list(_repo_enumeration(repo, resolution, profiles).drops)
+    return list(_project_enumeration(project, resolution, profiles).drops)
 
 
-def _repo_enumeration(
-    repo: "Repo", resolution: InventoryResolution, profiles: "ProfileContext"
-) -> RepoEnumeration:
-    key = f"{getattr(repo, 'sut_dir', repo)}|{resolution.label}|{profiles.digest()}"
+def _project_enumeration(
+    project: "Project", resolution: InventoryResolution, profiles: "ProfileContext"
+) -> ProjectEnumeration:
+    key = f"{getattr(project, 'root', project)}|{resolution.label}|{profiles.digest()}"
     cached = _SUMMARY_MEMO.get(key)
     if cached is None:
         cached = _bounded(
             lambda abandoned: _enumerate_host_summaries(
-                repo, resolution.inventory, profiles, abandoned
+                project, resolution.inventory, profiles, abandoned
             ),
-            repo,
+            project,
         )
         _SUMMARY_MEMO[key] = cached
     return cached
 
 
-#: Per-process memo, keyed by SUT dir, the inventory's label and the data
-#: profiles' digest (another repo selection may resolve a host differently). Three
-#: collectors enumerate the same repo on one cache-write pass; without this a
+#: Per-process memo, keyed by project root, the inventory's label and the data
+#: profiles' digest (another project selection may resolve a host differently). Three
+#: collectors enumerate the same project on one cache-write pass; without this a
 #: stalled backend cost three deadlines and — worse — could time out for one
 #: collector and not another, writing a cache where `otto host <TAB>` is full
 #: and `otto docker --parent <TAB>` is empty. Process-lifetime only, like the cache
 #: itself; nothing invalidates it because nothing lives long enough to need to.
-_SUMMARY_MEMO: dict[str, RepoEnumeration] = {}
+_SUMMARY_MEMO: dict[str, ProjectEnumeration] = {}
 
 
 def _enumerate_host_summaries(
-    repo: "Repo",
+    project: "Project",
     inventory: "Inventory | None",
     profiles: "ProfileContext",
     abandoned: "threading.Event | None" = None,
-) -> RepoEnumeration:
+) -> ProjectEnumeration:
     from ..labs.drops import HostDrop, collecting_drops
     from ..labs.sources import build_lab_sources
     from ..labs.summaries import host_summaries
@@ -1699,42 +1705,42 @@ def _enumerate_host_summaries(
     # on a worker), so every skip the backends record lands in this list.
     with collecting_drops() as drops:
         try:
-            repository = build_lab_sources([repo], profiles=profiles)
+            repository = build_lab_sources([project], profiles=profiles)
             summaries = host_summaries(repository, inventory=inventory)
         except Exception as e:  # noqa: BLE001 — completion never crashes the shell
             if abandoned is None or not abandoned.is_set():
                 logging.getLogger(__name__).warning(
-                    rf"\[completion] could not enumerate hosts for {repo.sut_dir}: {e}"
+                    rf"\[completion] could not enumerate hosts for {project.root}: {e}"
                 )
-            drops.append(HostDrop(where=str(repo.sut_dir), reason=f"host source failed: {e}"))
+            drops.append(HostDrop(where=str(project.root), reason=f"host source failed: {e}"))
             summaries = []
     # One enumeration loads the documents more than once (labs, then
     # summaries), so a malformed file is recorded once per load; the outlet
     # reports each drop once. dict.fromkeys keeps first-seen order.
-    return RepoEnumeration(summaries=summaries, drops=list(dict.fromkeys(drops)))
+    return ProjectEnumeration(summaries=summaries, drops=list(dict.fromkeys(drops)))
 
 
-def collect_host_drops(repos: list["Repo"]) -> list[dict[str, str]]:
-    """Everything the host enumeration left out, per repo — the ``names`` payload's ``host_drops``.
+def collect_host_drops(projects: list["Project"]) -> list[dict[str, str]]:
+    """Everything host enumeration left out, per project: the ``names`` payload's ``host_drops``.
 
-    ``[{"repo", "where", "reason"}, ...]``, JSON-shaped for the cache. Read
+    ``[{"project", "where", "reason"}, ...]``, JSON-shaped for the cache. Read
     back by ``otto cache info``, which is the outlet: a TAB stays silent by
     contract, and this is where its silence gets explained. Enumerates
     nothing of its own — it reads the same memo the id collectors filled.
     """
-    resolution = resolve_process_inventory(repos)
-    profiles = _profiles(repos)
+    resolution = resolve_process_inventory(projects)
+    profiles = _profiles(projects)
     out: list[dict[str, str]] = []
-    for repo in repos:
-        label = getattr(repo, "name", None) or str(repo.sut_dir)
+    for project in projects:
+        label = getattr(project, "name", None) or str(project.root)
         out.extend(
-            {"repo": str(label), "where": drop.where, "reason": drop.reason}
-            for drop in repo_host_drops(repo, resolution, profiles=profiles)
+            {"project": str(label), "where": drop.where, "reason": drop.reason}
+            for drop in project_host_drops(project, resolution, profiles=profiles)
         )
     return out
 
 
-def collect_docker_capable_host_ids(repos: list["Repo"]) -> list[str]:
+def collect_docker_capable_host_ids(projects: list["Project"]) -> list[str]:
     """Enumerate host IDs that can host containers (``docker_capable``).
 
     Used as the completion source for ``otto docker --parent <TAB>`` and any
@@ -1748,52 +1754,52 @@ def collect_docker_capable_host_ids(repos: list["Repo"]) -> list[str]:
     now agree.
     """
     ids: set[str] = set()
-    resolution = resolve_process_inventory(repos)
-    profiles = _profiles(repos)
-    for repo in repos:
-        for summary in repo_host_summaries(repo, resolution, profiles=profiles):
+    resolution = resolve_process_inventory(projects)
+    profiles = _profiles(projects)
+    for project in projects:
+        for summary in project_host_summaries(project, resolution, profiles=profiles):
             if summary.docker_capable:
                 ids.add(summary.id)
     return sorted(ids)
 
 
-def collect_docker_use_case_names(repos: list["Repo"]) -> list[str]:
-    """Enumerate every ``[[docker.use_cases]]`` name the active repos declare.
+def collect_docker_use_case_names(projects: list["Project"]) -> list[str]:
+    """Enumerate every ``[[docker.use_cases]]`` name the active projects declare.
 
     The completion source for ``otto docker compose build|up|down <TAB>``. Read
     straight off parsed settings — no lab, no host source, no
     :func:`otto.bootstrap.bootstrap` call — so it is safe in the completion
     fast path, the same property :func:`collect_docker_capable_host_ids` has.
 
-    Deduped across repos on purpose: one use-case name shared by three repos is
+    Deduped across projects on purpose: one use-case name shared by three projects is
     ONE use-case (that sharing is the whole mechanism, spec §3.1), not three
     completions of the same word.
     """
-    return sorted({uc.name for repo in repos for uc in repo.docker_settings.use_cases})
+    return sorted({uc.name for project in projects for uc in project.docker_settings.use_cases})
 
 
-def collect_docker_image_names(repos: list["Repo"]) -> list[str]:
-    """Every ``[[docker.images]]`` name the active repos declare, sorted, each once.
+def collect_docker_image_names(projects: list["Project"]) -> list[str]:
+    """Every ``[[docker.images]]`` name the active projects declare, sorted, each once.
 
     The completion source for ``build IMAGE…`` / ``compose build USE_CASE IMAGE…``.
     Parsed settings only — no lab, no bootstrap — like the use-case names.
     """
-    return sorted({image.name for repo in repos for image in repo.docker_settings.images})
+    return sorted({image.name for project in projects for image in project.docker_settings.images})
 
 
-def collect_docker_services_by_use_case(repos: list["Repo"]) -> dict[str, list[str]]:
+def collect_docker_services_by_use_case(projects: list["Project"]) -> dict[str, list[str]]:
     """Each declared use-case to the sorted union of services its composes declare.
 
     The completion source for ``SERVICE…`` once a ``USE_CASE`` is on the line.
-    A use-case shared by several repos is one use-case (parent spec §3.1),
+    A use-case shared by several projects is one use-case (parent spec §3.1),
     so its services are the union across them. A fragment naming a compose
-    handle its repo does not declare never reaches here — settings parsing
+    handle its project does not declare never reaches here — settings parsing
     refuses it (``DockerSettingsSpec``) — so the ``None`` branch below is
     purely defensive.
     """
     services: dict[str, set[str]] = {}
-    for repo in repos:
-        docker = repo.docker_settings
+    for project in projects:
+        docker = project.docker_settings
         by_handle = {c.name: c for c in docker.composes if c.name}
         for use_case in docker.use_cases:
             bucket = services.setdefault(use_case.name, set())
@@ -1804,28 +1810,28 @@ def collect_docker_services_by_use_case(repos: list["Repo"]) -> dict[str, list[s
     return {name: sorted(found) for name, found in sorted(services.items())}
 
 
-def collect_repo_names(repos: list["Repo"]) -> list[str]:
-    """Every active repo's name, sorted: the completion source for ``--repo``."""
-    return sorted(repo.name for repo in repos)
+def collect_active_project_names(projects: list["Project"]) -> list[str]:
+    """Every active project's name, sorted: the completion source for ``--project``."""
+    return sorted(project.name for project in projects)
 
 
-def _declared_container_ids(repo: "Repo", parents: list[str]) -> list[str]:
-    """Return the container host ids *repo*'s ``[docker]`` settings declare under each of *parents*.
+def _declared_container_ids(project: "Project", parents: list[str]) -> list[str]:
+    """Return the container host ids *project*'s ``[docker]`` settings declare under *parents*.
 
     Shared by :func:`collect_host_ids` and :func:`collect_host_ids_by_lab`, so the
     warm lab-scoped answer and the live one cannot drift.
     """
-    docker = getattr(repo, "docker_settings", None)
+    docker = getattr(project, "docker_settings", None)
     if docker is None or not docker.composes:
         return []
     # Mirror `register_declared_container_hosts`' branch, id shape for id
-    # shape: a repo declaring `[[docker.use_cases]]` registers
+    # shape: a project declaring `[[docker.use_cases]]` registers
     # `<parent>.<usecase>.<service>` placeholders (spec §9) and takes the
     # use-case branch INSTEAD OF the legacy composes walk, never both.
-    # Synthesizing `<parent>.<repo>.<service>` here regardless made
+    # Synthesizing `<parent>.<project>.<service>` here regardless made
     # completion offer an id nothing registers whenever a use-case is not
-    # named after its repo — the exact id the user needs never completes,
-    # while `--list-hosts` shows it. (The sample repos name their
+    # named after its project — the exact id the user needs never completes,
+    # while `--list-hosts` shows it. (The sample projects name their
     # use-cases after themselves, which is why the divergence hid.)
     #
     # *parents* is the lab's default parent by the one rule (at most one), and
@@ -1852,7 +1858,7 @@ def _declared_container_ids(repo: "Repo", parents: list[str]) -> list[str]:
     else:
         for compose in docker.composes:
             for service in compose.services:
-                middles_for.setdefault(service, set()).add(repo.name)
+                middles_for.setdefault(service, set()).add(project.name)
 
     return [
         f"{parent}.{middle}.{service}".lower()
@@ -1881,13 +1887,13 @@ def default_parent_from_summaries(summaries: "list[HostSummary]") -> "str | None
 
 
 def _summaries_by_lab(
-    repos: list["Repo"], resolution: InventoryResolution, profiles: "ProfileContext"
+    projects: list["Project"], resolution: InventoryResolution, profiles: "ProfileContext"
 ) -> "dict[str, list[HostSummary]]":
-    """Every enumerable host summary grouped by lab, a host once however many repos list it."""
+    """Every enumerable host summary grouped by lab, a host once however many projects list it."""
     by_lab: dict[str, list[HostSummary]] = {}
     seen: set[str] = set()
-    for repo in repos:
-        for summary in repo_host_summaries(repo, resolution, profiles=profiles):
+    for project in projects:
+        for summary in project_host_summaries(project, resolution, profiles=profiles):
             if summary.id in seen:
                 continue
             seen.add(summary.id)
@@ -1897,31 +1903,33 @@ def _summaries_by_lab(
 
 
 def _default_parents_by_lab(
-    repos: list["Repo"], resolution: InventoryResolution, profiles: "ProfileContext"
+    projects: list["Project"], resolution: InventoryResolution, profiles: "ProfileContext"
 ) -> dict[str, str]:
     """Each lab to its default docker parent; a lab the rule refuses is absent."""
     out: dict[str, str] = {}
-    for lab, summaries in sorted(_summaries_by_lab(repos, resolution, profiles).items()):
+    for lab, summaries in sorted(_summaries_by_lab(projects, resolution, profiles).items()):
         parent = default_parent_from_summaries(summaries)
         if parent is not None:
             out[lab] = parent
     return out
 
 
-def collect_docker_default_parent_by_lab(repos: list["Repo"]) -> dict[str, str]:
+def collect_docker_default_parent_by_lab(projects: list["Project"]) -> dict[str, str]:
     """Each lab to the parent the docker verbs default to; a lab the rule refuses is absent."""
-    return _default_parents_by_lab(repos, resolve_process_inventory(repos), _profiles(repos))
+    return _default_parents_by_lab(
+        projects, resolve_process_inventory(projects), _profiles(projects)
+    )
 
 
-def collect_host_ids(repos: list["Repo"], lab_names: list[str] | None = None) -> list[str]:
+def collect_host_ids(projects: list["Project"], lab_names: list[str] | None = None) -> list[str]:
     """Enumerate every host ID reachable via the configured lab search paths.
 
-    Enumerates each repo's configured host source (see
-    :func:`repo_host_summaries`), whose ids are resolved through the same
+    Enumerates each project's configured host source (see
+    :func:`project_host_summaries`), whose ids are resolved through the same
     validation the host factory applies, so the resulting IDs match what
     ``get_host`` will look up at runtime. Also
     synthesizes container host IDs of the form ``<parent>.<project>.<service>``
-    from each repo's ``[docker]`` settings so declared container hosts
+    from each project's ``[docker]`` settings so declared container hosts
     are tab-completable before they're actually brought up — under each lab's
     default docker parent only, so a lab the rule refuses offers none.
 
@@ -1944,30 +1952,30 @@ def collect_host_ids(repos: list["Repo"], lab_names: list[str] | None = None) ->
     wanted = set(lab_names) if lab_names is not None else None
 
     # Seed with the built-in hosts otto injects into every lab (e.g. `local`) so
-    # they are tab-completable in every repo, mirroring load_lab's injection.
+    # they are tab-completable in every project, mirroring load_lab's injection.
     ids: set[str] = set(builtin_host_ids())
-    resolution = resolve_process_inventory(repos)
-    profiles = _profiles(repos)
-    for repo in repos:
-        for summary in repo_host_summaries(repo, resolution, profiles=profiles):
+    resolution = resolve_process_inventory(projects)
+    profiles = _profiles(projects)
+    for project in projects:
+        for summary in project_host_summaries(project, resolution, profiles=profiles):
             # Lab filter: keep only hosts tagged with a requested lab.
             if wanted is not None and wanted.isdisjoint(summary.labs):
                 continue
             ids.add(summary.id)
 
     # Container ids sit under each in-scope lab's default parent only: the
-    # lab's hosts are pooled across repos, as the lab itself is, and the one
+    # lab's hosts are pooled across projects, as the lab itself is, and the one
     # rule picks (or refuses) its parent.
     parents = sorted(
         {
             parent
-            for lab, parent in _default_parents_by_lab(repos, resolution, profiles).items()
+            for lab, parent in _default_parents_by_lab(projects, resolution, profiles).items()
             if wanted is None or lab in wanted
         }
     )
     if parents:
-        for repo in repos:
-            ids.update(_declared_container_ids(repo, parents))
+        for project in projects:
+            ids.update(_declared_container_ids(project, parents))
 
     return sorted(ids)
 
@@ -1990,7 +1998,7 @@ def _read_lab_links(lab_file: Path) -> list[dict[str, Any]]:
 
 
 def collect_link_ids(
-    repos: list["Repo"], *, loaded_ids: "Collection[str] | None" = None
+    projects: list["Project"], *, loaded_ids: "Collection[str] | None" = None
 ) -> list[str]:
     """Enumerate DECLARED static link ids/names for ``otto link`` completion.
 
@@ -2005,7 +2013,7 @@ def collect_link_ids(
     is offered only if an endpoint is in it — the SAME rule, through the same
     :func:`~otto.link.derive.raw_endpoint_host_ids` helper,
     :func:`~otto.link.derive.resolve_declared_links` applies when deciding
-    which links a lab loads. Without it a repo's every lab file contributes,
+    which links a lab loads. Without it a project's every lab file contributes,
     and under ``-l <lab>`` completion offers links ``find_link`` will refuse.
 
     IMPLICIT links are deliberately NOT offered, though ``find_link`` accepts
@@ -2024,18 +2032,18 @@ def collect_link_ids(
     """
     return sorted(
         link_id
-        for link_id, hosts in _declared_links(repos)
+        for link_id, hosts in _declared_links(projects)
         if loaded_ids is None or any(h in loaded_ids for h in hosts)
     )
 
 
-def _declared_links(repos: list["Repo"]) -> list[tuple[str, list[str]]]:
+def _declared_links(projects: list["Project"]) -> list[tuple[str, list[str]]]:
     """``(link id, endpoint host ids)`` per declared static link, first-seen order.
 
     One entry per id: an id declared twice (two sources, two entries) keeps the
     endpoint hosts of EVERY declaration, so a reader's "any endpoint in the lab"
     test equals the per-entry filter (an id passes if any declaration passes).
-    Reads the files of every prepared, known source; a repo whose sources fail
+    Reads the files of every prepared, known source; a project whose sources fail
     to prepare contributes none (the host enumeration reports it).
     """
     from ..labs.errors import LabRepositoryError
@@ -2044,10 +2052,10 @@ def _declared_links(repos: list["Repo"]) -> list[tuple[str, list[str]]]:
     from ..link.model import LinkEndpoint, make_static_link_id
 
     lab_files: list[Path] = []
-    profiles = _profiles(repos)
-    for repo in repos:
+    profiles = _profiles(projects)
+    for project in projects:
         try:
-            states = prepared_lab_sources(repo, profiles=profiles)
+            states = prepared_lab_sources(project, profiles=profiles)
         except LabRepositoryError:
             continue
         lab_files.extend(f for state in states if state.is_known() for f in state.lab_files())
@@ -2071,7 +2079,7 @@ def _declared_links(repos: list["Repo"]) -> list[tuple[str, list[str]]]:
     return list(out.items())
 
 
-def collect_links(repos: list["Repo"]) -> list[dict[str, Any]]:
+def collect_links(projects: list["Project"]) -> list[dict[str, Any]]:
     """Return declared static links with their endpoint host ids, for lab-scoped cache completion.
 
     The same enumeration :func:`collect_link_ids` filters live; storing the
@@ -2080,14 +2088,14 @@ def collect_links(repos: list["Repo"]) -> list[dict[str, Any]]:
     """
     # `_declared_links` merges the endpoints of an id declared twice, so the reader's
     # "any endpoint in the selected lab" test equals collect_link_ids' per-entry filter.
-    return [{"id": link_id, "hosts": hosts} for link_id, hosts in sorted(_declared_links(repos))]
+    return [{"id": link_id, "hosts": hosts} for link_id, hosts in sorted(_declared_links(projects))]
 
 
-def collect_lab_names(repos: list["Repo"]) -> list[str]:
-    """Enumerate every lab name each repo's host source can provide.
+def collect_lab_names(projects: list["Project"]) -> list[str]:
+    """Enumerate every lab name each project's host source can provide.
 
     A lab is a *declared name* (a ``labs`` table entry, spec §2.1), not a
-    directory and not a tag on hosts, so the names come from every repo's
+    directory and not a tag on hosts, so the names come from every project's
     configured backend via the required
     :meth:`~otto.labs.protocol.LabRepository.list_labs` — not from reading
     ``lab.json``, which would leave a custom host source with no ``--lab``
@@ -2101,19 +2109,19 @@ def collect_lab_names(repos: list["Repo"]) -> list[str]:
     from ..labs.sources import build_lab_sources
 
     names: set[str] = set()
-    profiles = _profiles(repos)
-    for repo in repos:
+    profiles = _profiles(projects)
+    for project in projects:
         try:
-            repository = build_lab_sources([repo], profiles=profiles)
+            repository = build_lab_sources([project], profiles=profiles)
             names.update(repository.list_labs())
-        except Exception as e:  # noqa: BLE001, PERF203 — per-repo resilience: one bad backend must not deny the rest
+        except Exception as e:  # noqa: BLE001, PERF203 — per-project resilience: one bad backend must not deny the rest
             logging.getLogger(__name__).warning(
-                rf"\[completion] could not list labs for {repo.sut_dir}: {e}"
+                rf"\[completion] could not list labs for {project.root}: {e}"
             )
     return sorted(names)
 
 
-def collect_host_ids_by_lab(repos: list["Repo"]) -> dict[str, list[str]]:
+def collect_host_ids_by_lab(projects: list["Project"]) -> dict[str, list[str]]:
     """Map each lab name to its host IDs and declared container ids.
 
     Membership plus the container ids under the lab's default docker parent —
@@ -2137,32 +2145,32 @@ def collect_host_ids_by_lab(repos: list["Repo"]) -> dict[str, list[str]]:
     builtins = set(builtin_host_ids())
     # Seed every known lab so one whose hosts all fail to enumerate still gets
     # an (empty) bucket, keeping this shape identical to the per-lab form.
-    by_lab: dict[str, set[str]] = {lab: set() for lab in collect_lab_names(repos)}
-    resolution = resolve_process_inventory(repos)
-    profiles = _profiles(repos)
-    for repo in repos:
-        for summary in repo_host_summaries(repo, resolution, profiles=profiles):
+    by_lab: dict[str, set[str]] = {lab: set() for lab in collect_lab_names(projects)}
+    resolution = resolve_process_inventory(projects)
+    profiles = _profiles(projects)
+    for project in projects:
+        for summary in project_host_summaries(project, resolution, profiles=profiles):
             if summary.id in builtins:
                 continue
             for lab in summary.labs:
                 by_lab.setdefault(lab, set()).add(summary.id)
     # The declared container ids belong to the lab whose default parent they sit
     # under, exactly as `collect_host_ids(lab_names=...)` scopes them.
-    for lab, parent in _default_parents_by_lab(repos, resolution, profiles).items():
-        for repo in repos:
-            by_lab.setdefault(lab, set()).update(_declared_container_ids(repo, [parent]))
+    for lab, parent in _default_parents_by_lab(projects, resolution, profiles).items():
+        for project in projects:
+            by_lab.setdefault(lab, set()).update(_declared_container_ids(project, [parent]))
 
     return {lab: sorted(ids) for lab, ids in by_lab.items()}
 
 
-def collect_host_classes_by_id(repos: list["Repo"]) -> dict[str, str]:
+def collect_host_classes_by_id(projects: list["Project"]) -> dict[str, str]:
     """Map every enumerable host id to its registered host-class name.
 
     ``otto host <id> <TAB>`` scopes the verb menu to the host's class. On the
     dispatch path that class comes from building the host; completion must
     not build hosts, so the class is derived here from the summary's
     ``os_type`` through the same profile lookup the factory uses
-    (``get_os_profile(os_type, data=...).base``, seeing every selected repo's
+    (``get_os_profile(os_type, data=...).base``, seeing every selected project's
     data profiles), data-only. A host whose backend does not report an
     ``os_type``, or whose profile no layer resolves in THIS process, is
     omitted rather than guessed — the completer then offers the
@@ -2171,22 +2179,22 @@ def collect_host_classes_by_id(repos: list["Repo"]) -> dict[str, str]:
     from ..host.os_profile import get_os_profile
 
     classes: dict[str, str] = {}
-    resolution = resolve_process_inventory(repos)
-    profiles = _profiles(repos)
-    for repo in repos:
-        for summary in repo_host_summaries(repo, resolution, profiles=profiles):
+    resolution = resolve_process_inventory(projects)
+    profiles = _profiles(projects)
+    for project in projects:
+        for summary in project_host_summaries(project, resolution, profiles=profiles):
             if summary.os_type is None:
                 continue
             try:
                 profile = get_os_profile(summary.os_type, data=profiles)
-            except ValueError:  # a repo table that fails its check resolves no class
+            except ValueError:  # a project table that fails its check resolves no class
                 continue
             if profile is not None:
                 classes[summary.id] = profile.base  # the registered class NAME
     return dict(sorted(classes.items()))
 
 
-def collect_logins_by_host(repos: list["Repo"]) -> dict[str, list[dict[str, Any]]]:
+def collect_logins_by_host(projects: list["Project"]) -> dict[str, list[dict[str, Any]]]:
     """Map every enumerable host id to its login identities, data-only.
 
     ``otto host <id> <verb> --user <TAB>`` reads this map: each entry is
@@ -2197,10 +2205,10 @@ def collect_logins_by_host(repos: list["Repo"]) -> dict[str, list[dict[str, Any]
     the live completer agree without re-sorting.
     """
     by_host: dict[str, list[dict[str, Any]]] = {}
-    resolution = resolve_process_inventory(repos)
-    profiles = _profiles(repos)
-    for repo in repos:
-        for summary in repo_host_summaries(repo, resolution, profiles=profiles):
+    resolution = resolve_process_inventory(projects)
+    profiles = _profiles(projects)
+    for project in projects:
+        for summary in project_host_summaries(project, resolution, profiles=profiles):
             if not summary.logins:
                 continue
             by_host[summary.id] = sorted(
@@ -2213,15 +2221,15 @@ def collect_logins_by_host(repos: list["Repo"]) -> dict[str, list[dict[str, Any]
     return dict(sorted(by_host.items()))
 
 
-def collect_project_names(repos: list["Repo"]) -> list[str]:
-    """Return the discovered repo names, in discovery order — what ``-I``/``-E`` complete.
+def collect_project_names(projects: list["Project"]) -> list[str]:
+    """Return the discovered project names, in discovery order — what ``-I``/``-E`` complete.
 
-    *repos* is every repo phase 1 discovered: :func:`otto.config.repo.discover`'s
-    ``repos``, which a bootstrap result carries unchanged, never the init-ordered
+    *projects* is every project phase 1 discovered: :func:`otto.config.project.discover`'s
+    ``projects``, which a bootstrap result carries unchanged, never the init-ordered
     subset. ``otto.cli.main._project_completer`` reads the same discovered list,
     so the warm and cold answers cannot differ.
     """
-    return [repo.name for repo in repos]
+    return [project.name for project in projects]
 
 
 # ---------------------------------------------------------------------------
@@ -2363,13 +2371,14 @@ def _collect_child_command(home: Path) -> _ChildCommand | None:
     The *venv* ``otto`` binary (so ``entry`` runs, unlike ``python -m otto``)
     with the completion variables stripped, so the child collects instead of
     answering another completion. It starts in *home*, the workspace home
-    (created here), never in the shell's cwd, whatever a repo holds: its
-    ``OTTO_*`` paths are made absolute against this process's cwd first.
+    (created here), never in the shell's cwd, whatever a project holds: its path
+    variables are given the kept spelling (``~`` expanded, a relative entry
+    joined to this process's cwd) and ``OTTOPATH``'s repeats collapsed first.
     """
     import sys
 
-    from ..utils import _PATH_LIST_SEP
-    from .env import HOME_ENV_VAR, SUT_DIRS_ENV_VAR, XDIR_ENV_VAR
+    from ..utils import _PATH_LIST_SEP, collapse_path_list, kept_path_spelling
+    from .env import HOME_ENV_VAR, OTTOPATH_ENV_VAR, XDIR_ENV_VAR
 
     otto_bin = Path(sys.executable).parent / "otto"
     if not otto_bin.exists():
@@ -2377,11 +2386,13 @@ def _collect_child_command(home: Path) -> _ChildCommand | None:
     env = dict(os.environ)
     for var in (COMPLETION_ENV_VAR, "COMP_WORDS", "COMP_CWORD"):
         env.pop(var, None)
-    for var in (SUT_DIRS_ENV_VAR, XDIR_ENV_VAR, HOME_ENV_VAR):
+    for var in (OTTOPATH_ENV_VAR, XDIR_ENV_VAR, HOME_ENV_VAR):
         if env.get(var):
             # os.path, not pathlib: the console-script shim (stdlib only, no
             # pathlib) builds the same environment and must agree byte for byte.
-            paths = [os.path.abspath(p) for p in _PATH_LIST_SEP.split(env[var]) if p]  # noqa: PTH100
+            paths = [kept_path_spelling(p) for p in _PATH_LIST_SEP.split(env[var]) if p]
+            if var == OTTOPATH_ENV_VAR:
+                paths = collapse_path_list(paths)
             env[var] = os.pathsep.join(paths)
     env[DUMP_TESTS_ENV_VAR] = "1"
     owner = f"{os.getpid()}-{time.monotonic_ns()}"
@@ -2543,7 +2554,7 @@ expires on its own short TTL either way."""
 DYNAMIC_TUNNELS_TTL_SECONDS = 120  # tunnel state is volatile; short TTL (spec §11.2)
 
 
-def record_tunnel_ids(repos: list["Repo"], ids: list[str]) -> None:
+def record_tunnel_ids(projects: list["Project"], ids: list[str]) -> None:
     """Cache the freshly-discovered tunnel ids for ``remove <id>`` completion.
 
     Keyed by :func:`_tunnel_scope_key` (settings and inventory): tunnel ids
@@ -2556,7 +2567,7 @@ def record_tunnel_ids(repos: list["Repo"], ids: list[str]) -> None:
     """
     from .cache_sections import lab_key_paths
 
-    if not repos or _fingerprint_is_ephemeral(repos):
+    if not projects or _fingerprint_is_ephemeral(projects):
         return
     cache_path = _cache_path()
     if cache_path is None:
@@ -2573,8 +2584,8 @@ def record_tunnel_ids(repos: list["Repo"], ids: list[str]) -> None:
     namespace = existing.get(DYNAMIC_TUNNELS_KEY)
     if not isinstance(namespace, dict):
         namespace = {}
-    lab = lab_key_paths(repos)
-    namespace[_tunnel_scope_key(repos)] = {
+    lab = lab_key_paths(projects)
+    namespace[_tunnel_scope_key(projects)] = {
         "schema_version": DYNAMIC_TUNNELS_SCHEMA_VERSION,
         "generated_at": int(time.time()),
         "lab_key_paths": [str(path) for path in lab],
@@ -2585,7 +2596,7 @@ def record_tunnel_ids(repos: list["Repo"], ids: list[str]) -> None:
     _atomic_write_json(cache_path, existing)
 
 
-def read_tunnel_ids(repos: list["Repo"]) -> list[str] | None:
+def read_tunnel_ids(projects: list["Project"]) -> list[str] | None:
     """Fresh cached tunnel ids, or ``None`` (cold / expired / malformed / a lab file moved).
 
     Keyed by :func:`_tunnel_scope_key` — see :func:`record_tunnel_ids`. The
@@ -2595,7 +2606,7 @@ def read_tunnel_ids(repos: list["Repo"]) -> list[str] | None:
     """
     from .cache_sections import stored_lab_key_paths
 
-    if not repos:
+    if not projects:
         return None
     cache_path = _cache_path()
     if cache_path is None or not cache_path.is_file():
@@ -2605,7 +2616,7 @@ def read_tunnel_ids(repos: list["Repo"]) -> list[str] | None:
     except (OSError, json.JSONDecodeError):
         return None
     namespace = data.get(DYNAMIC_TUNNELS_KEY) if isinstance(data, dict) else None
-    entry = namespace.get(_tunnel_scope_key(repos)) if isinstance(namespace, dict) else None
+    entry = namespace.get(_tunnel_scope_key(projects)) if isinstance(namespace, dict) else None
     if not isinstance(entry, dict) or entry.get("schema_version") != DYNAMIC_TUNNELS_SCHEMA_VERSION:
         return None
     lab = stored_lab_key_paths(entry)
@@ -2655,10 +2666,10 @@ _EMPTY_OBSERVED = ObservedDockerState([], [], [], [])
 
 
 def _record_docker_sub_entry(
-    repos: list["Repo"], host_id: str, kind: str, payload: dict[str, list[str]]
+    projects: list["Project"], host_id: str, kind: str, payload: dict[str, list[str]]
 ) -> None:
     """Replace *host_id*'s *kind* sub-entry (``"images"`` / ``"containers"``) whole."""
-    if not repos or _fingerprint_is_ephemeral(repos):
+    if not projects or _fingerprint_is_ephemeral(projects):
         return
     cache_path = _cache_path()
     if cache_path is None:
@@ -2694,22 +2705,22 @@ def _record_docker_sub_entry(
 
 
 def record_docker_images(
-    repos: list["Repo"], host_id: str, *, refs: list[str], ids: list[str]
+    projects: list["Project"], host_id: str, *, refs: list[str], ids: list[str]
 ) -> None:
     """Record the image references and ids a verb just saw on *host_id*."""
-    _record_docker_sub_entry(repos, host_id, "images", {"refs": refs, "ids": ids})
+    _record_docker_sub_entry(projects, host_id, "images", {"refs": refs, "ids": ids})
 
 
 def record_docker_containers(
-    repos: list["Repo"], host_id: str, *, names: list[str], ids: list[str]
+    projects: list["Project"], host_id: str, *, names: list[str], ids: list[str]
 ) -> None:
     """Record the container names and ids a verb just saw on *host_id*."""
-    _record_docker_sub_entry(repos, host_id, "containers", {"names": names, "ids": ids})
+    _record_docker_sub_entry(projects, host_id, "containers", {"names": names, "ids": ids})
 
 
-def _load_docker_observed_hosts(repos: list["Repo"]) -> dict[str, Any]:
+def _load_docker_observed_hosts(projects: list["Project"]) -> dict[str, Any]:
     """Return the ``hosts`` map of a well-formed namespace, else ``{}``; never raises."""
-    if not repos:
+    if not projects:
         return {}
     cache_path = _cache_path()
     if cache_path is None or not cache_path.is_file():
@@ -2759,20 +2770,20 @@ def _observed_state(host_entry: Any, now: float) -> ObservedDockerState:
 
 
 def read_docker_observed(
-    repos: list["Repo"], host_id: str, *, now: float | None = None
+    projects: list["Project"], host_id: str, *, now: float | None = None
 ) -> ObservedDockerState:
     """Return what the cache still vouches for on *host_id*, each sub-entry inside its own TTL.
 
     Empty lists for a cold host, an expired sub-entry, a malformed entry or
     another schema — a TAB path, so it never raises and never writes.
     """
-    hosts = _load_docker_observed_hosts(repos)
+    hosts = _load_docker_observed_hosts(projects)
     return _observed_state(hosts.get(host_id), time.time() if now is None else now)
 
 
-def read_docker_observed_hosts(repos: list["Repo"], *, now: float | None = None) -> list[str]:
+def read_docker_observed_hosts(projects: list["Project"], *, now: float | None = None) -> list[str]:
     """Sorted host ids with at least one NON-EMPTY sub-entry still inside its TTL."""
-    hosts = _load_docker_observed_hosts(repos)
+    hosts = _load_docker_observed_hosts(projects)
     stamp = time.time() if now is None else now
     return sorted(
         h for h, entry in hosts.items() if _observed_state(entry, stamp) != _EMPTY_OBSERVED
@@ -2801,8 +2812,8 @@ class SectionStatus:
     payload: dict[str, Any] | None = None
 
 
-def inspect_section(repos: list["Repo"], name: str) -> SectionStatus:
-    """Return section *name*'s standing for *repos*, judged as :func:`read_sections` judges it.
+def inspect_section(projects: list["Project"], name: str) -> SectionStatus:
+    """Return section *name*'s standing for *projects*, judged as :func:`read_sections` judges it.
 
     Same file, same schema check, same order of tests — taint, then TTL, then
     digest — against the same stored lab key paths and TTL class, but a
@@ -2819,7 +2830,7 @@ def inspect_section(repos: list["Repo"], name: str) -> SectionStatus:
 
     section = section_by_name(name)
     cache_path = _cache_path()
-    if not repos or cache_path is None or not cache_path.is_file():
+    if not projects or cache_path is None or not cache_path.is_file():
         return SectionStatus(state="missing")
     try:
         data = json.loads(cache_path.read_text())
@@ -2839,7 +2850,7 @@ def inspect_section(repos: list["Repo"], name: str) -> SectionStatus:
     if ttl is None:
         return SectionStatus(state="unreadable", generated_at=generated_at, payload=payload)
     try:
-        digest = section_digests(repos, [section], stored=stored)[name]
+        digest = section_digests(projects, [section], stored=stored)[name]
     except _StoredKeysMissingError:
         return SectionStatus(state="unreadable", generated_at=generated_at, payload=payload)
     if entry.get("tainted"):
@@ -2871,7 +2882,7 @@ class InventoryDescription:
     blocker: str | None = None
 
 
-def describe_inventory(repos: list["Repo"]) -> InventoryDescription:
+def describe_inventory(projects: list["Project"]) -> InventoryDescription:
     """Return the process inventory for ``otto cache info``, resolved as completion resolves it.
 
     :func:`resolve_process_inventory` without the warning — this line IS the
@@ -2882,7 +2893,7 @@ def describe_inventory(repos: list["Repo"]) -> InventoryDescription:
     from ..inventory.config import build_inventory
 
     try:
-        inventory = build_inventory(list(repos))
+        inventory = build_inventory(list(projects))
         if inventory is None:
             return InventoryDescription(text="none declared")
         label = getattr(inventory, "label", type(inventory).__name__)

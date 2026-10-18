@@ -231,7 +231,7 @@ def test_help_surface_does_not_load_host():
 # equals itself, and would follow a typo straight into green.
 _PUBLIC_CALLABLES = {
     "load_otto_env": ("otto.config.env", "load_otto_env"),
-    "Repo": ("otto.config.repo", "Repo"),
+    "Project": ("otto.config.project", "Project"),
     "DockerCompose": ("otto.config.scope", "DockerCompose"),
     "DockerImage": ("otto.config.scope", "DockerImage"),
     "DockerSettings": ("otto.config.scope", "DockerSettings"),
@@ -272,8 +272,8 @@ def test_config_public_names_resolve_to_the_right_object():
 _MOVED_OUT = {
     "get_completion_names": "otto.bootstrap",
     "get_env": "otto.bootstrap",
-    "get_ordered_repos": "otto.bootstrap",
-    "get_repos": "otto.bootstrap",
+    "get_ordered_projects": "otto.bootstrap",
+    "get_projects": "otto.bootstrap",
     "is_bootstrapped": "otto.bootstrap",
     "all_hosts": "otto.lab",
     "do_for_all_hosts": "otto.lab",
@@ -303,7 +303,7 @@ missing = [
     name
     for name in (
         "load_otto_env", "load_user_settings", "user_settings_path",
-        "ResolvedDependency", "Repo", "Version",
+        "ResolvedDependency", "Project", "Version",
     )
     if name not in namespace
 ]

@@ -9,8 +9,8 @@ from otto.host.host import BaseHost
 from otto.host.product import ProductPlan
 from otto.project.actions import ProjectActions, register_project_actions
 from otto.project.options import InstallOptions
-from otto.project.plan import HostPlan, ProductPlanEntry, RepoPlan, plan_instruction
-from otto.registry import registering_repo
+from otto.project.plan import HostPlan, ProductPlanEntry, ProjectPlan, plan_instruction
+from otto.registry import registering_project
 from otto.result import Result
 from otto.utils import Status
 from tests._fixtures.bootstrap_seam import seed_scope_verdicts
@@ -49,7 +49,7 @@ class _Overriding(_Host):
 class _Ctx:
     """OttoContext double: the lab's hosts, the repos and the repo view seam the walk uses."""
 
-    for_repo = OttoContext.for_repo
+    for_project = OttoContext.for_project
     _resolve_scopes = OttoContext._resolve_scopes  # what scopes_of(ctx) reads; seeded below
 
     def __init__(self, hosts, fleets=None, exclude_projects=()):
@@ -68,10 +68,10 @@ class _Ctx:
         return iter(self.hosts)
 
 
-def _wire(monkeypatch, repo_names, ctx):
-    ordered = [fake_repo(n) for n in repo_names]
-    ctx.repos = ordered
-    ctx.ordered_repos = ordered
+def _wire(monkeypatch, project_names, ctx):
+    ordered = [fake_repo(n) for n in project_names]
+    ctx.projects = ordered
+    ctx.ordered_projects = ordered
     monkeypatch.setattr("otto.run_context.get_context", lambda: ctx)
     return ordered
 
@@ -88,7 +88,7 @@ def test_install_lists_every_owned_product_in_declaration_order_and_lifts_its_ga
     _wire(monkeypatch, ["r1"], ctx)
     plans = plan_instruction("install", ctx, {})
     assert plans == [
-        RepoPlan(
+        ProjectPlan(
             "r1",
             [
                 HostPlan(
@@ -108,7 +108,7 @@ def test_install_lists_every_owned_product_in_declaration_order_and_lifts_its_ga
 def test_uninstall_walks_repos_in_reverse(monkeypatch):
     ctx = _Ctx([_Host("h1")])
     _wire(monkeypatch, ["r1", "r2"], ctx)
-    assert [p.repo for p in plan_instruction("uninstall", ctx, {})] == ["r2", "r1"]
+    assert [p.project for p in plan_instruction("uninstall", ctx, {})] == ["r2", "r1"]
 
 
 def test_install_tools_lists_dev_tools_not_products(monkeypatch):
@@ -116,14 +116,14 @@ def test_install_tools_lists_dev_tools_not_products(monkeypatch):
     product = _Planned("agent", "r1", _plan(install=["sh a"]))
     ctx = _Ctx([_Host("h1", products=[product], dev_tools=[tool])])
     _wire(monkeypatch, ["r1"], ctx)
-    [repo] = plan_instruction("install-tools", ctx, {})
-    assert [e.name for e in repo.hosts[0].products] == ["helper"]
+    [project] = plan_instruction("install-tools", ctx, {})
+    assert [e.name for e in project.hosts[0].products] == ["helper"]
 
 
 def _override_gap(cls):
     return [
         (
-            f"repo `r1`: `{cls.__module__}.{cls.__qualname__}.install` replaces the default "
+            f"project `r1`: `{cls.__module__}.{cls.__qualname__}.install` replaces the default "
             "install; its steps are not previewed"
         )
     ]
@@ -132,7 +132,7 @@ def _override_gap(cls):
 def test_an_overriding_repo_body_is_a_gap_not_a_guess(monkeypatch):
     from otto.cli.run import instruction
 
-    with registering_repo("r1"):
+    with registering_project("r1"):
 
         @register_project_actions
         class _Mine(ProjectActions):
@@ -143,9 +143,9 @@ def test_an_overriding_repo_body_is_a_gap_not_a_guess(monkeypatch):
     product = _Planned("agent", "r1", _plan(install=["sh a"]))
     ctx = _Ctx([_Host("h1", [product])])
     _wire(monkeypatch, ["r1"], ctx)
-    [repo] = plan_instruction("install", ctx, {})
-    assert repo.hosts == [HostPlan("h1", [], [])]
-    assert repo.gaps == _override_gap(_Mine)
+    [project] = plan_instruction("install", ctx, {})
+    assert project.hosts == [HostPlan("h1", [], [])]
+    assert project.gaps == _override_gap(_Mine)
 
 
 def test_an_unmarked_override_is_a_gap_too(monkeypatch):
@@ -155,22 +155,22 @@ def test_an_unmarked_override_is_a_gap_too(monkeypatch):
         async def install(self, opts):  # pragma: no cover
             return Result(Status.Success)
 
-    with registering_repo("r1"):
+    with registering_project("r1"):
         register_project_actions(_Unmarked, overwrite=True)
     product = _Planned("agent", "r1", _plan(install=["sh a"]))
     ctx = _Ctx([_Host("h1", [product])])
     _wire(monkeypatch, ["r1"], ctx)
-    [repo] = plan_instruction("install", ctx, {})
-    assert repo.hosts == [HostPlan("h1", [], [])]
-    assert repo.gaps == _override_gap(_Unmarked)
+    [project] = plan_instruction("install", ctx, {})
+    assert project.hosts == [HostPlan("h1", [], [])]
+    assert project.gaps == _override_gap(_Unmarked)
 
 
 def test_an_overriding_host_class_is_a_gap_on_that_host(monkeypatch):
     product = _Planned("agent", "r1", _plan(install=["sh a"]))
     ctx = _Ctx([_Overriding("h1", [product]), _Host("h2", [product])])
     _wire(monkeypatch, ["r1"], ctx)
-    [repo] = plan_instruction("install", ctx, {})
-    assert repo.hosts[0] == HostPlan(
+    [project] = plan_instruction("install", ctx, {})
+    assert project.hosts[0] == HostPlan(
         "h1",
         [],
         [
@@ -180,7 +180,7 @@ def test_an_overriding_host_class_is_a_gap_on_that_host(monkeypatch):
             )
         ],
     )
-    assert [e.name for e in repo.hosts[1].products] == ["agent"]
+    assert [e.name for e in project.hosts[1].products] == ["agent"]
 
 
 _ENSURE_RECOVER = (
@@ -204,8 +204,8 @@ def test_ensure_is_a_repo_gap_on_every_repo(monkeypatch):
 def test_ensure_without_recover_partial_installs_over_a_partial_lab(monkeypatch):
     ctx = _Ctx([_Host("h1")])
     _wire(monkeypatch, ["r1"], ctx)
-    [repo] = plan_instruction("install", ctx, {"ensure": True, "recover_partial": False})
-    assert repo.gaps == [_ENSURE_OVER_PARTIAL]
+    [project] = plan_instruction("install", ctx, {"ensure": True, "recover_partial": False})
+    assert project.gaps == [_ENSURE_OVER_PARTIAL]
 
 
 def test_ensure_covers_a_repo_whose_body_is_overridden(monkeypatch):
@@ -213,24 +213,24 @@ def test_ensure_covers_a_repo_whose_body_is_overridden(monkeypatch):
         async def install(self, opts):  # pragma: no cover
             return Result(Status.Success)
 
-    with registering_repo("r1"):
+    with registering_project("r1"):
         register_project_actions(_Unmarked, overwrite=True)
     ctx = _Ctx([_Host("h1")])
     _wire(monkeypatch, ["r1"], ctx)
-    [repo] = plan_instruction("install", ctx, {"ensure": True})
-    assert repo.gaps == [_ENSURE_RECOVER, *_override_gap(_Unmarked)]
+    [project] = plan_instruction("install", ctx, {"ensure": True})
+    assert project.gaps == [_ENSURE_RECOVER, *_override_gap(_Unmarked)]
 
 
 def test_uninstall_log_flags_are_host_gaps(monkeypatch):
     ctx = _Ctx([_Host("h1", globs=["/var/log/*.log"])])
     _wire(monkeypatch, ["r1"], ctx)
-    [repo] = plan_instruction("uninstall", ctx, {"product_logs": True, "debug_logs": True})
-    assert repo.hosts[0].gaps == [
+    [project] = plan_instruction("uninstall", ctx, {"product_logs": True, "debug_logs": True})
+    assert project.hosts[0].gaps == [
         (
             "product logs: each product's get_logs files and its debug_log_globs are collected "
             "before anything is removed"
         ),
-        "debug logs: /var/log/*.log are swept once after every repo",
+        "debug logs: /var/log/*.log are swept once after every project",
     ]
     [quiet] = plan_instruction("uninstall", ctx, {"product_logs": False, "debug_logs": False})
     assert quiet.hosts[0].gaps == []
@@ -244,8 +244,8 @@ def test_an_instruction_without_a_preview_is_refused_by_name():
 def test_debug_log_gap_with_no_globs_says_nothing_is_swept(monkeypatch):
     ctx = _Ctx([_Host("h1")])
     _wire(monkeypatch, ["r1"], ctx)
-    [repo] = plan_instruction("uninstall", ctx, {"product_logs": False, "debug_logs": True})
-    assert repo.hosts[0].gaps == ["debug logs: no globs declared; nothing is swept"]
+    [project] = plan_instruction("uninstall", ctx, {"product_logs": False, "debug_logs": True})
+    assert project.hosts[0].gaps == ["debug logs: no globs declared; nothing is swept"]
 
 
 def test_a_host_override_does_not_claim_the_default_log_haul(monkeypatch):
@@ -255,10 +255,10 @@ def test_a_host_override_does_not_claim_the_default_log_haul(monkeypatch):
 
     ctx = _Ctx([_OverridingUninstall("h1", globs=["/g"])])
     _wire(monkeypatch, ["r1"], ctx)
-    [repo] = plan_instruction("uninstall", ctx, {"product_logs": True, "debug_logs": True})
-    [gap_override, gap_debug] = repo.hosts[0].gaps
+    [project] = plan_instruction("uninstall", ctx, {"product_logs": True, "debug_logs": True})
+    [gap_override, gap_debug] = project.hosts[0].gaps
     assert "replaces the default" in gap_override
-    assert gap_debug == "debug logs: /g are swept once after every repo"
+    assert gap_debug == "debug logs: /g are swept once after every project"
 
 
 def test_the_debug_sweep_is_named_even_for_an_overridden_repo(monkeypatch):
@@ -266,20 +266,20 @@ def test_the_debug_sweep_is_named_even_for_an_overridden_repo(monkeypatch):
         async def uninstall(self, opts):  # pragma: no cover
             return Result(Status.Success)
 
-    with registering_repo("r1"):
+    with registering_project("r1"):
         register_project_actions(_Unmarked, overwrite=True)
     ctx = _Ctx([_Host("h1", globs=["/g"])])
     _wire(monkeypatch, ["r1"], ctx)
-    [repo] = plan_instruction("uninstall", ctx, {"product_logs": True, "debug_logs": True})
-    assert repo.hosts[0].gaps == ["debug logs: /g are swept once after every repo"]
+    [project] = plan_instruction("uninstall", ctx, {"product_logs": True, "debug_logs": True})
+    assert project.hosts[0].gaps == ["debug logs: /g are swept once after every project"]
 
 
 def test_install_tools_without_dev_lists_hosts_but_no_tools(monkeypatch):
     tool = _Planned("helper", "r1", _plan(install=["sudo insmod helper.ko"]))
     ctx = _Ctx([_Host("h1", dev_tools=[tool])])
     _wire(monkeypatch, ["r1"], ctx)
-    [repo] = plan_instruction("install-tools", ctx, {"dev": False})
-    assert repo.hosts == [HostPlan("h1", [], [])]
+    [project] = plan_instruction("install-tools", ctx, {"dev": False})
+    assert project.hosts == [HostPlan("h1", [], [])]
 
 
 def test_install_tools_toolchain_is_a_host_gap(monkeypatch):
@@ -287,11 +287,12 @@ def test_install_tools_toolchain_is_a_host_gap(monkeypatch):
     ctx = _Ctx([_Host("h1", dev_tools=[tool])])
     _wire(monkeypatch, ["r1"], ctx)
     gap = (
-        "toolchain tools: installed on this host once after every repo (--toolchain); not previewed"
+        "toolchain tools: installed on this host once after every project (--toolchain); "
+        "not previewed"
     )
-    [repo] = plan_instruction("install-tools", ctx, {"toolchain": True})
-    assert repo.hosts[0].gaps == [gap]
-    assert [e.name for e in repo.hosts[0].products] == ["helper"]
+    [project] = plan_instruction("install-tools", ctx, {"toolchain": True})
+    assert project.hosts[0].gaps == [gap]
+    assert [e.name for e in project.hosts[0].products] == ["helper"]
     [quiet] = plan_instruction("install-tools", ctx, {})
     assert quiet.hosts[0].gaps == []
 
@@ -320,8 +321,10 @@ def test_every_dispatched_host_method_override_is_a_gap(monkeypatch, instruction
     host_cls = type("_Replacing", (_Host,), {method: _replacement})
     ctx = _Ctx([host_cls("h1", [_Planned("agent", "r1", _plan(install=["sh a"]))])])
     _wire(monkeypatch, ["r1"], ctx)
-    [repo] = plan_instruction(instruction_name, ctx, {"product_logs": False, "debug_logs": False})
-    assert repo.hosts == [
+    [project] = plan_instruction(
+        instruction_name, ctx, {"product_logs": False, "debug_logs": False}
+    )
+    assert project.hosts == [
         HostPlan(
             "h1",
             [],
@@ -342,15 +345,15 @@ def test_a_host_overriding_stage_and_install_names_stage_first(monkeypatch):
     host_cls = type("_Both", (_Host,), {"stage": _replacement, "install": _replacement})
     ctx = _Ctx([host_cls("h1")])
     _wire(monkeypatch, ["r1"], ctx)
-    [repo] = plan_instruction("install", ctx, {})
-    [gap] = repo.hosts[0].gaps
+    [project] = plan_instruction("install", ctx, {})
+    [gap] = project.hosts[0].gaps
     assert gap.startswith(f"`{host_cls.__module__}.{host_cls.__qualname__}.stage`")
 
 
 def test_install_tools_walks_repos_forward(monkeypatch):
     ctx = _Ctx([_Host("h1")])
     _wire(monkeypatch, ["r1", "r2"], ctx)
-    assert [p.repo for p in plan_instruction("install-tools", ctx, {})] == ["r1", "r2"]
+    assert [p.project for p in plan_instruction("install-tools", ctx, {})] == ["r1", "r2"]
 
 
 def test_a_switched_off_repo_is_skipped_without_a_warning(monkeypatch, caplog):
@@ -358,7 +361,7 @@ def test_a_switched_off_repo_is_skipped_without_a_warning(monkeypatch, caplog):
     _wire(monkeypatch, ["r1", "r2"], ctx)
     with caplog.at_level("WARNING"):
         plans = plan_instruction("install", ctx, {})
-    assert [p.repo for p in plans] == ["r1"]
+    assert [p.project for p in plans] == ["r1"]
     assert not [r for r in caplog.records if "switched off" in r.getMessage()]
 
 
@@ -369,8 +372,8 @@ def test_no_dev_does_not_name_a_host_override_that_will_not_run(monkeypatch):
     host_cls = type("_ReplacingTools", (_Host,), {"install_dev_tools": _replacement})
     ctx = _Ctx([host_cls("h1")])
     _wire(monkeypatch, ["r1"], ctx)
-    [repo] = plan_instruction("install-tools", ctx, {"dev": False})
-    assert repo.hosts == [HostPlan("h1", [], [])]
+    [project] = plan_instruction("install-tools", ctx, {"dev": False})
+    assert project.hosts == [HostPlan("h1", [], [])]
 
 
 def test_the_previewable_names_are_exactly_the_ones_the_planner_walks():

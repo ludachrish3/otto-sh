@@ -54,8 +54,8 @@ from otto.lab import Lab
 async def main():
     async with open_context(lab=Lab(name="pin")) as ctx:
         return [
-            [r.name for r in ctx.repos],
-            [r.name for r in ctx.ordered_repos],
+            [r.name for r in ctx.projects],
+            [r.name for r in ctx.ordered_projects],
             ctx.policy.teardown_deadline,
         ]
 
@@ -67,7 +67,7 @@ import json
 from otto.context import get_context
 from otto.testing.conformance_host import _dry_run
 with _dry_run():
-    print(json.dumps([r.name for r in get_context().repos]))
+    print(json.dumps([r.name for r in get_context().projects]))
 """
 
 _ROOT_RUN_TESTS = """
@@ -87,9 +87,9 @@ import json
 {spelling}
 from otto.lab import Lab
 ctx = OttoContext(lab=Lab(name="pin"))
-first = [r.name for r in ctx.repos]
-again = [r.name for r in ctx.repos]
-ordered = [r.name for r in ctx.ordered_repos]
+first = [r.name for r in ctx.projects]
+again = [r.name for r in ctx.projects]
+ordered = [r.name for r in ctx.ordered_projects]
 print(json.dumps([first, again, ordered]))
 """
 
@@ -101,7 +101,7 @@ ctx = OttoContext(lab=Lab(name="pin"))
 raised = []
 for _ in range(2):
     try:
-        ctx.repos
+        ctx.projects
     except Exception as exc:
         raised.append(exc)
 print(json.dumps([type(raised[0]).__name__, len(raised), raised[0] is raised[1]]))
@@ -112,8 +112,8 @@ import json
 from otto.bootstrap import BootstrapResult
 from otto.context import OttoContext
 from otto.lab import Lab
-ctx = OttoContext(lab=Lab(name="pin"), bootstrap=BootstrapResult(env=None, repos=[]))
-print(json.dumps([ctx.repos, ctx.ordered_repos]))
+ctx = OttoContext(lab=Lab(name="pin"), bootstrap=BootstrapResult(env=None, projects=[]))
+print(json.dumps([ctx.projects, ctx.ordered_projects]))
 """
 
 _LOGGING = """
@@ -126,15 +126,15 @@ print(json.dumps([{init!r} in sys.modules]))
 _DISCOVERY = """
 import json, sys
 from otto import bootstrap
-dirs = [d.name for d in bootstrap.get_env().sut_dirs]
+dirs = [d.name for d in bootstrap.get_env().ottopath]
 print(json.dumps([dirs, bootstrap.is_bootstrapped(), {init!r} in sys.modules]))
 """
 
 _NO_ROOT_READ = """
 import json
-from otto.declared import get_repos
+from otto.declared import get_projects
 try:
-    get_repos()
+    get_projects()
 except Exception as exc:
     print(json.dumps([type(exc).__name__, str(exc)]))
 else:
@@ -275,7 +275,7 @@ def test_a_read_below_the_root_with_no_root_loaded_refuses_and_names_the_routes(
     assert run_fresh(tmp_path, _NO_ROOT_READ + _ARM) == [
         "RuntimeError",
         (
-            "Nothing composed otto's repos, and no composition root is loaded to compose "
+            "Nothing composed otto's projects, and no composition root is loaded to compose "
             "them: call otto.bootstrap.bootstrap(), or open a run with "
             "otto.open_context(...)."
         ),

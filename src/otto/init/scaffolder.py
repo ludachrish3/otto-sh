@@ -20,13 +20,13 @@ from .write_policy import FileWrite
 _OPT_IN = {"kmodcov"}
 """Areas only their own request scaffolds.
 
-A kernel-module coverage library is not for every repo."""
+A kernel-module coverage library is not for every project."""
 
 _REFRESHABLE = {"schemas", "kmodcov"}
 """Otto-owned areas an explicit request refreshes even when present."""
 
 _NEEDS = {"tests": ["instructions"]}
-"""The example tests import ``RepoOptions`` from the init module the instructions area writes."""
+"""The example tests import ``ProjectOptions`` from the init module the instructions area writes."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -49,9 +49,9 @@ def _check_names(areas: list[str]) -> None:
 
 
 def _instructions_offered(root: Path) -> bool:
-    """Offer instructions unless the settings declare no ``init``: a repo may have no init modules.
+    """Offer instructions unless the settings declare no ``init``: a project may lack init modules.
 
-    A repo with no settings file gets them from the template, which declares
+    A project with no settings file gets them from the template, which declares
     the init module.
     """
     return not settings_path(root).is_file() or bool(declared_init(root))
@@ -65,7 +65,7 @@ def scaffold_candidates(
     A requested area is a candidate when missing; ``schemas`` and ``kmodcov``
     also when present (they refresh). ``all_areas`` adds every other missing
     area except the opt-in ``kmodcov``, and except instructions when the
-    settings declare no ``init`` (a repo with no init modules is legitimate).
+    settings declare no ``init`` (a project with no init modules is legitimate).
 
     Raises:
         InitInputError: a requested name is not an area (``field="areas"``).
@@ -105,9 +105,9 @@ def _prerequisites(areas: list[str], present: set[str]) -> list[str]:
 def scaffold_prerequisites(root: Path, areas: list[str]) -> list[str]:
     """Return the missing areas *areas* cannot be written without, not already in *areas*.
 
-    Settings for any area (it is the repo marker); instructions for tests
-    (they import ``RepoOptions`` from it) and for settings written from the
-    template, which declares the init module — without it the repo cannot
+    Settings for any area (it is the project marker); instructions for tests
+    (they import ``ProjectOptions`` from it) and for settings written from the
+    template, which declares the init module — without it the project cannot
     load, since the loader imports every declared init module.
 
     Raises:
@@ -120,7 +120,7 @@ def scaffold_prerequisites(root: Path, areas: list[str]) -> list[str]:
 def _prerequisite_notice(name: str, areas: list[str]) -> str:
     """Say why prerequisite *name* is being scaffolded."""
     if name == "settings":
-        return "settings.toml is the repo marker — scaffolding it first."
+        return "settings.toml is the project marker — scaffolding it first."
     if name == "instructions" and name not in _requested_needs(areas):
         return (
             "the instructions area holds the init module the new settings.toml declares "
@@ -155,8 +155,8 @@ def scaffold(config: InitConfig, areas: list[str]) -> ScaffoldReport:
         # module the tests import from and exactly what that module must hold.
         module = tests_init_module(root, config)
         notices.append(
-            f"the example tests import RepoOptions from {module}: make sure {module} "
-            'declares @otto.options(verbs=["run", "test"]) class RepoOptions with a '
+            f"the example tests import ProjectOptions from {module}: make sure {module} "
+            'declares @otto.options(verbs=["run", "test"]) class ProjectOptions with a '
             "`message: str` field (the instructions area otto scaffolds does)."
         )
     return ScaffoldReport(ordered, prerequisites, writes, notices)

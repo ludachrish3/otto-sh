@@ -8,7 +8,7 @@ explicit passing (OttoContext methods, open_context) is first-class.
 
 The public path is the facade :mod:`otto.context`; otto's own code imports
 from here. This module sits in the run layer, below the composition root:
-it composes the run's repos through :func:`otto.declared.compose` and never
+it composes the run's projects through :func:`otto.declared.compose` and never
 imports the root itself; see :mod:`otto.context` for the routes around the
 facade (spec 2026-10-11 placement-and-phases §3.9, §3.12).
 """
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
     from _typeshed import DataclassInstance
 
-    from .config.repo import Repo
+    from .config.project import Project
     from .config.scope import ProjectScope
     from .declared import BootstrapResult
     from .host.options import (
@@ -356,7 +356,7 @@ class OttoContext:
     stores it here.
     """
     include_projects: tuple[str, ...] = ()
-    """Repo names forced ACTIVE this invocation (``-I``), PEP-503-normalized ON READ.
+    """Project names forced ACTIVE this invocation (``-I``), PEP-503-normalized ON READ.
 
     Populated from the root CLI callback via ``RootOptions``; empty for
     library contexts. Read only through :func:`otto.config.scope.active` —
@@ -368,18 +368,18 @@ class OttoContext:
     :func:`otto.config.scope.active` normalizes both the stored values and the
     queried name before comparing. The invariant is therefore enforced where it
     is read rather than merely asked for here — a docstring-only version would
-    let ``exclude_projects=("My_Repo",)`` be silently ignored, which is an
+    let ``exclude_projects=("My_Project",)`` be silently ignored, which is an
     explicit switch failing OPEN.
     """
 
     exclude_projects: tuple[str, ...] = ()
-    """Repo names forced INACTIVE this invocation (``-E``), PEP-503-normalized ON READ.
+    """Project names forced INACTIVE this invocation (``-E``), PEP-503-normalized ON READ.
 
     Same write/read contract as :attr:`include_projects`. Read by
     :func:`otto.config.scope.active` for the verdict, by
     :func:`otto.config.scope.switched_off` for attribution, and on the fleet
     side by :meth:`otto.context.OttoContext.admissible_ids` (through
-    :func:`otto.config.scope.scoped_ids`), which leaves a switched-off repo's
+    :func:`otto.config.scope.scoped_ids`), which leaves a switched-off project's
     hosts out of play.
     """
 
@@ -424,7 +424,7 @@ class OttoContext:
     _scope_verdicts: "dict[str, ProjectScope] | None" = field(
         default=None, init=False, repr=False, compare=False
     )
-    """The repos' scope verdicts, once resolved."""
+    """The projects' scope verdicts, once resolved."""
 
     def __init__(
         self,
@@ -447,7 +447,7 @@ class OttoContext:
         a hand-built context dry, pass ``policy=RunPolicy(dry_run=True)``.
         *bootstrap* is the composition root's result this run already holds
         (the CLI and ``open_context`` pass theirs); without it, the first read
-        of :attr:`repos`, :attr:`ordered_repos` or the scope verdicts reads
+        of :attr:`projects`, :attr:`ordered_projects` or the scope verdicts reads
         :func:`otto.declared.compose` once, and its outcome, a refusal
         included, is kept for the context's life. See :mod:`otto.context` for
         the routes around the facade, on which that read refuses.
@@ -604,17 +604,17 @@ class OttoContext:
         Never raises for a misconfiguration. A caller that only asked a
         question must not die of it, so a broken ``[coverage].hosts`` selector
         is one warning and ``False``, exactly as it is for an auto
-        ``otto test``. So is a repo that fails to load: the walk that finds the
-        coverage hosts refuses with :class:`otto.session.RepoLoadError`, and
+        ``otto test``. So is a project that fails to load: the walk that finds the
+        coverage hosts refuses with :class:`otto.session.ProjectLoadError`, and
         turning coverage off is the narrowing direction, never a widening. The
-        sentinel library lab and unreachable repos have no coverage
+        sentinel library lab and unreachable projects have no coverage
         configuration to find and answer ``False`` quietly.
         """
         if self.lab.name == LIBRARY_LAB_NAME:
             return False
         try:
-            repos = self.repos
-        except Exception as exc:  # noqa: BLE001 — no repos reachable ⇒ no [coverage] ⇒ off
+            projects = self.projects
+        except Exception as exc:  # noqa: BLE001 — no projects reachable ⇒ no [coverage] ⇒ off
             logger.debug(f"otto: coverage detection unavailable ({exc!r}); ctx.cov is False")
             return False
         from .config.coverage_settings import (
@@ -623,15 +623,20 @@ class OttoContext:
             load_hosts_pattern,
         )
         from .config.scope import EmptySelectionError, ProjectScopeError
-        from .session.errors import RepoLoadError
+        from .session.errors import ProjectLoadError
 
-        cov_config = get_cov_config(repos)
+        cov_config = get_cov_config(projects)
         if not cov_config:
             return False
         try:
             pattern = load_hosts_pattern(cov_config)
             hosts = list(self.all_hosts(pattern=pattern, include_containers=True))
-        except (EmptySelectionError, CoverageConfigError, ProjectScopeError, RepoLoadError) as exc:
+        except (
+            EmptySelectionError,
+            CoverageConfigError,
+            ProjectScopeError,
+            ProjectLoadError,
+        ) as exc:
             from rich.markup import escape as escape_markup
 
             # escape_markup: the message quotes a literal bracket ("[coverage].hosts",
@@ -700,7 +705,7 @@ class OttoContext:
         return await sweep_unheld(loop, label=label, deadline=deadline)
 
     def _bootstrap_snapshot(self) -> "BootstrapResult":
-        """Return the one result this context reads its repos and load errors from.
+        """Return the one result this context reads its projects and load errors from.
 
         Read on first use when the constructor was given none; a refusal is
         cached and re-raised on every later read.
@@ -718,72 +723,72 @@ class OttoContext:
         return self._bootstrap_result
 
     @property
-    def repos(self) -> "list[Repo]":
-        """Every repo this run parsed, a dependency-skipped one included.
+    def projects(self) -> "list[Project]":
+        """Every project this run parsed, a dependency-skipped one included.
 
         A fresh list on every read: changing it changes nothing here. A list
-        of repos is not deeply immutable; what is promised is the membership
-        and the order. With no SUT directories it is empty ("known empty").
+        of projects is not deeply immutable; what is promised is the membership
+        and the order. With no project roots it is empty ("known empty").
 
         Raises:
-            Exception: whatever discovery raised, when the repos cannot be
+            Exception: whatever discovery raised, when the projects cannot be
                 read ("unavailable"); the same exception on every read.
         """
-        return list(self._bootstrap_snapshot().repos)
+        return list(self._bootstrap_snapshot().projects)
 
     @property
-    def ordered_repos(self) -> "list[Repo]":
-        """The repos a fleet-wide walk visits, in dependency order, skipped repos absent.
+    def ordered_projects(self) -> "list[Project]":
+        """The projects a fleet-wide walk visits, in dependency order, skipped projects absent.
 
-        A fresh list on every read, from the same result as :attr:`repos`.
+        A fresh list on every read, from the same result as :attr:`projects`.
         """
-        return list(self._bootstrap_snapshot().ordered_repos)
+        return list(self._bootstrap_snapshot().ordered_projects)
 
     def _resolve_scopes(self) -> "dict[str, ProjectScope]":
-        """Resolve the per-repo scope verdicts once and cache them; read them with ``scopes_of``.
+        """Resolve the per-project scope verdicts once and cache them; read them with ``scopes_of``.
 
-        Each repo's resolved fleet of interest for this run, keyed by
-        ``Repo.name``. Display and abort data: ``status --full`` renders it
+        Each project's resolved fleet of interest for this run, keyed by
+        ``Project.name``. Display and abort data: ``status --full`` renders it
         and :func:`~otto.config.scope.require_current_scope` refuses on it.
         Fleet iteration does NOT read the stored
         :attr:`~otto.config.scope.ProjectScope.universe`; it re-asks
-        :func:`~otto.config.scope.repo_targets` per host through
+        :func:`~otto.config.scope.project_targets` per host through
         :func:`~otto.config.scope.scoped_ids`, so a container registered after
         the verdicts were first resolved is still scoped correctly.
 
         Lazy, not computed at construction, because resolving them needs the
-        repos, which come from :attr:`repos`'s one bootstrap result. A context
+        projects, which come from :attr:`projects`'s one bootstrap result. A context
         is built in plenty of places that never walk a fleet (library
         FD-model callers, the ``LIBRARY_LAB_NAME`` sentinel session, unit
         tests holding a hand-built ``Lab``), and making every one of them pay
         for, or fail on, a composition root it never asked for would be the
         wrong trade.
 
-        The verdicts cover every repo whose settings parsed, a repo the
-        dependency pass skipped included: a skip changes what a repo
+        The verdicts cover every project whose settings parsed, a project the
+        dependency pass skipped included: a skip changes what a project
         registers, never what it declared, so it cannot make a declaration
         vanish and widen the walk. Two worlds answer an empty mapping, which
         feeds the whole-lab fallback: the ``LIBRARY_LAB_NAME`` sentinel lab,
-        and a run with no SUT directories at all (no repos, so nothing
+        and a run with no project roots at all (no projects, so nothing
         declared and nothing to narrow).
 
-        A walk never widens because the repos could not be read:
+        A walk never widens because the projects could not be read:
 
-        * a load error that :func:`otto.session.check_repos` would treat as
+        * a load error that :func:`otto.session.check_projects` would treat as
           fatal (an unparseable ``settings.toml``, or any error of an active
-          repo) raises :class:`otto.session.RepoLoadError`, decided by the
+          project) raises :class:`otto.session.ProjectLoadError`, decided by the
           same classifier, so a hand-built context that never ran
-          ``check_repos`` refuses where the CLI would have. A switched-off or
-          lab-inactive repo's error only demotes it, and its declaration
+          ``check_projects`` refuses where the CLI would have. A switched-off or
+          lab-inactive project's error only demotes it, and its declaration
           still counts;
-        * an environment failure (``OTTO_SUT_DIRS`` naming a directory that
+        * an environment failure (``OTTOPATH`` naming a directory that
           does not exist) propagates as raised.
 
         A refusal is cached: every later read re-raises the same exception
         without running the classifier or ``bootstrap()`` again.
 
         Raises:
-            otto.session.RepoLoadError: A load error that stops a run.
+            otto.session.ProjectLoadError: A load error that stops a run.
         """
         if self._scopes_refusal is not None:
             raise self._scopes_refusal
@@ -799,10 +804,10 @@ class OttoContext:
         return self._scope_verdicts
 
     def _resolve_verdicts(self) -> "dict[str, ProjectScope]":
-        """Resolve every parsed repo's verdict, after refusing a load error that is fatal here."""
+        """Refuse any load error that is fatal here, then resolve each parsed project's verdict."""
         from .config.scope import _not_switched_off, resolve_scopes
         from .host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
-        from .session.errors import RepoLoadError
+        from .session.errors import ProjectLoadError
         from .session.projects import classify_load_errors
 
         result = self._bootstrap_snapshot()
@@ -813,9 +818,9 @@ class OttoContext:
             exclude=list(self.exclude_projects),
         )
         if verdicts.fatal:
-            raise RepoLoadError(verdicts.fatal, verdicts.demoted)
+            raise ProjectLoadError(verdicts.fatal, verdicts.demoted)
         scopes = resolve_scopes(
-            result.repos,  # every parsed repo: a dependency skip never hides a declaration
+            result.projects,  # every parsed project: a dependency skip never hides a declaration
             self.lab.component_names,
             self.lab.hosts,
             # `local` is the runner, never fleet — and its `source_lab` is
@@ -829,14 +834,14 @@ class OttoContext:
             # Once per context, and only when something actually narrowed: the
             # fallback is not news, and a line printed on every run is a line
             # nobody reads on the run that mattered.
-            # A repo switched off with -E puts no host in play, so its
+            # A project switched off with -E puts no host in play, so its
             # universe is not counted (``scoped_ids`` drops it the same way).
             active = _not_switched_off(declared, self.exclude_projects)
             union = frozenset().union(*(scope.universe for scope in active))
             excluded = sum(1 for scope in scopes.values() if scope.excluded)
             logger.info(
                 f"fleet of interest: {len(union)} of {len(self.lab.hosts)} lab hosts "
-                f"({len(scopes)} repo(s), {excluded} excluded)"
+                f"({len(scopes)} project(s), {excluded} excluded)"
             )
         return scopes
 
@@ -850,7 +855,7 @@ class OttoContext:
 
         Public since spec 2026-08-28 three-level-reservations §5: the
         reservation gate reads the same set every fleet walk starts from — one
-        definition, two readers. A repo in :attr:`exclude_projects` contributes
+        definition, two readers. A project in :attr:`exclude_projects` contributes
         no host to it, so ``-E`` narrows both readers at once.
 
         ``require_nonempty=False`` is the RESERVATION readers' spelling —
@@ -869,8 +874,8 @@ class OttoContext:
         this scoping exists to prevent.
 
         Args:
-            owner: ``Repo.name`` whose universe bounds the walk, or ``None``
-                (the default) for the union across declaring repos.
+            owner: ``Project.name`` whose universe bounds the walk, or ``None``
+                (the default) for the union across declaring projects.
             require_nonempty: Refuse an empty base set (the default, for every
                 fleet walk). ``False`` returns it as the answer it is.
 
@@ -880,12 +885,12 @@ class OttoContext:
 
         Raises:
             otto.bootstrap.ProjectScopeError: Nothing is admissible while some
-                repo declared a ``[project]`` scope (spec §10 row 5) — framed
-                against *owner* when the walk was bound to one, so a repo whose
+                project declared a ``[project]`` scope (spec §10 row 5) — framed
+                against *owner* when the walk was bound to one, so a project whose
                 own fleet is empty is not reported as the whole fleet's;
                 suppressed by ``require_nonempty=False``. Also when *owner*
-                names a repo this run never resolved, which no flag suppresses.
-            otto.session.RepoLoadError: The scope verdicts refused: a repo failed
+                names a project this run never resolved, which no flag suppresses.
+            otto.session.ProjectLoadError: The scope verdicts refused: a project failed
                 to load in a way that stops a run. No flag suppresses it.
         """
         from .config.scope import require_nonempty_fleet, scoped_ids
@@ -912,8 +917,8 @@ class OttoContext:
         """Yield this run's fleet of interest, optionally narrowed by *pattern*.
 
         The base set is the ambient project universe (spec §6) — the hosts some
-        repo's ``[project]`` declaration admits, re-derived live — and *not*
-        the whole loaded lab. When no repo declares ``[project]``, that IS the
+        project's ``[project]`` declaration admits, re-derived live — and *not*
+        the whole loaded lab. When no project declares ``[project]``, that IS the
         whole loaded lab, so product-less projects are untouched.
 
         *pattern* selects a SUBSET of that base set with ``re.fullmatch``, never
@@ -947,8 +952,8 @@ class OttoContext:
             include_containers: Also yield
                 :class:`~otto.host.docker_host.DockerContainerHost` entries.
             include_local: Also yield the built-in ``local`` host.
-            _scope_owner: Internal. ``Repo.name`` whose universe bounds this
-                walk; the repo-scoped context view supplies it, and a plain
+            _scope_owner: Internal. ``Project.name`` whose universe bounds this
+                walk; the project-scoped context view supplies it, and a plain
                 context leaves it ``None`` for the union. Underscored because
                 it is a seam between context objects, not a call-site knob —
                 which host set a walk gets must come from WHICH OBJECT the call
@@ -969,7 +974,7 @@ class OttoContext:
                 hosts ``include_containers``/``include_local`` hold out of the
                 walk. The instance's ``excluded_by`` tells the two apart.
             otto.bootstrap.ProjectScopeError: The base set is empty while some
-                repo declared a ``[project]`` scope.
+                project declared a ``[project]`` scope.
         """
         from .config.scope import EmptySelectionError
         from .host.builtin_hosts import _flag_holding_out
@@ -982,7 +987,7 @@ class OttoContext:
             # `and selected`: with an EMPTY base set the pattern is not what
             # went wrong, and blaming it would send the reader to fix a regex
             # over a lab that holds nothing to select. That case is already
-            # spoken for — loudly by `admissible_ids` when a repo declared a
+            # spoken for — loudly by `admissible_ids` when a project declared a
             # scope, and deliberately silently otherwise, which is the
             # long-standing "an empty lab yields an empty walk" behavior every
             # lab-less CLI path (e.g. `otto cov get` reaching its own
@@ -1141,56 +1146,56 @@ class OttoContext:
             userland_options=userland_options,
         )
 
-    def for_repo(self, repo_name: str) -> "ProjectContextView":
-        """Return this same context seen from *repo_name*'s side (spec §7).
+    def for_project(self, name: str) -> "ProjectContextView":
+        """Return this same context seen from *name*'s side (spec §7).
 
         A facade, not a copy — see :class:`ProjectContextView`. Cheap enough to
         build per call; :func:`otto.project.actions.actions_for` builds one for
         every ``ProjectActions`` it constructs.
 
         Args:
-            repo_name: ``Repo.name``. Not validated here: a name this run never
+            name: ``Project.name``. Not validated here: a name this run never
                 resolved is refused by the first walk that goes through the
                 view (:func:`otto.config.scope.scoped_ids`), where the resolved
                 set is known and the message can list it. Validating at
                 construction would make a view unbuildable in the contexts that
                 legitimately have no scopes at all — a library context, a run
-                with no SUT directories — which are exactly the ones that walk
+                with no project roots — which are exactly the ones that walk
                 the whole lab by design. A bootstrap that cannot be read is not
                 one of them: it refuses at the view's first walk instead.
 
         Returns:
-            The repo-scoped view.
+            The project-scoped view.
         """
-        return ProjectContextView(self, repo_name)
+        return ProjectContextView(self, name)
 
 
 _OWNER_MISMATCH = """\
-a fleet walk through repo '{repo}'s context view was passed owner={passed!r}.
+a fleet walk through project '{project}'s context view was passed owner={passed!r}.
 
-A repo-scoped view supplies owner='{repo}' itself. Naming a different one asks
-a repo-scoped object to act for another repo, which is the cross-repo bleed the
-view exists to prevent -- and rewriting it to '{repo}' silently, as the safe
+A project-scoped view supplies owner='{project}' itself. Naming a different one asks
+a project-scoped object to act for another project, which is the cross-project bleed the
+view exists to prevent -- and rewriting it to '{project}' silently, as the safe
 direction invites, would leave the caller believing they had acted on
 {passed!r} while a healthy-looking results mapping said nothing.
 
 Drop the owner= and let the view supply it, walk through the plain context if
 the sweep really is host-global, or pass with_owner=False for a host verb that
 takes no owner at all."""
-"""The view's refusal for a walk that names an owner other than its own repo.
+"""The view's refusal for a walk that names an owner other than its own project.
 
-Narrow by design: an owner EQUAL to the view's repo is redundant, not wrong,
+Narrow by design: an owner EQUAL to the view's project is redundant, not wrong,
 and passes through -- ``super().install()`` from a subclass that still spells
 the old argument must keep working. What is refused is the disagreement.
 """
 
 
 class ProjectContextView:
-    """One repo's face on the live context: its fleet, and its owner stamp (spec §7).
+    """One project's face on the live context: its fleet, and its owner stamp (spec §7).
 
-    Returned by :meth:`OttoContext.for_repo` and handed to every
+    Returned by :meth:`OttoContext.for_project` and handed to every
     :class:`~otto.project.actions.ProjectActions` by
-    :func:`~otto.project.actions.actions_for`, so a repo's ``install()`` reads
+    :func:`~otto.project.actions.actions_for`, so a project's ``install()`` reads
     ``self.ctx.do_for_all_hosts(_dispatch_install)`` — no ``owner=``, no
     universe plumbing.
 
@@ -1199,7 +1204,7 @@ class ProjectContextView:
     properties of the OBJECT the call goes through, never of arguments each
     call site has to remember. An argument is forgettable exactly once per new
     call site, and the failure mode of forgetting it is a walk that silently
-    reaches further than it should: repo A's uninstall taking repo B's products
+    reaches further than it should: project A's uninstall taking project B's products
     off a host they share. Through this view that mistake is unspellable.
 
     A FACADE OVER THE SAME CONTEXT, not a copy. Everything else —
@@ -1209,7 +1214,7 @@ class ProjectContextView:
     event loop it connects on, and that loop's cleanup closes it.
 
     ``get_host`` is deliberately NOT narrowed (§6): explicit targeting beats
-    scoping, and a repo naming a jump host it does not own must still reach it.
+    scoping, and a project naming a jump host it does not own must still reach it.
 
     Owner-less host verbs stay dispatchable through
     :meth:`do_for_all_hosts` by passing ``with_owner=False``. That opt-out is
@@ -1222,12 +1227,12 @@ class ProjectContextView:
     mapping like any other host failure.
     """
 
-    def __init__(self, ctx: "OttoContext", repo_name: str) -> None:
+    def __init__(self, ctx: "OttoContext", project_name: str) -> None:
         self._ctx = ctx
         """The live context every unbound attribute is read from."""
 
-        self._repo_name = repo_name
-        """The repo this view acts for — the walk's bound universe and its owner stamp."""
+        self._project_name = project_name
+        """The project this view acts for — the walk's bound universe and its owner stamp."""
 
     def __getattr__(self, name: str) -> Any:
         """Delegate anything this view does not override to the live context.
@@ -1239,7 +1244,7 @@ class ProjectContextView:
         return getattr(self._ctx, name)
 
     def all_hosts(self, *args: Any, **kwargs: Any) -> "Iterator[RemoteHost]":
-        """Yield this repo's fleet of interest — :meth:`OttoContext.all_hosts`, bound.
+        """Yield this project's fleet of interest — :meth:`OttoContext.all_hosts`, bound.
 
         Every argument is forwarded unchanged; only the base set differs.
         Overriding this surface separately from :meth:`do_for_all_hosts` is
@@ -1247,7 +1252,7 @@ class ProjectContextView:
         read the iteration surface directly, and a view that bound only its
         dispatch seam would answer those about the whole union.
         """
-        return self._ctx.all_hosts(*args, _scope_owner=self._repo_name, **kwargs)
+        return self._ctx.all_hosts(*args, _scope_owner=self._project_name, **kwargs)
 
     async def do_for_all_hosts(
         self,
@@ -1256,17 +1261,17 @@ class ProjectContextView:
         with_owner: bool = True,
         **kwargs: Any,
     ) -> "dict[str, T | BaseException]":
-        """Call *method* on this repo's fleet, with ``owner=`` supplied for it.
+        """Call *method* on this project's fleet, with ``owner=`` supplied for it.
 
         Args:
             method: The dispatch helper, called as ``method(host, ...)``.
             *args: Positional arguments forwarded to *method*.
-            with_owner: Whether to supply ``owner=<repo>`` to *method*. Pass
+            with_owner: Whether to supply ``owner=<project>`` to *method*. Pass
                 ``False`` for a host verb that takes no owner — see the class
                 docstring for why this is a flag and not a signature check.
             **kwargs: Forwarded to :meth:`OttoContext.do_for_all_hosts`, which
                 splits its own walk knobs out and hands the rest to *method*.
-                An ``owner`` here must equal this view's repo; see Raises.
+                An ``owner`` here must equal this view's project; see Raises.
 
         Returns:
             ``{host_id: result | exception}``, exactly as the context's own
@@ -1274,34 +1279,34 @@ class ProjectContextView:
 
         Raises:
             otto.bootstrap.ProjectScopeError: *kwargs* names an ``owner`` other
-                than this view's repo. Raised BEFORE the walk, because it is
+                than this view's project. Raised BEFORE the walk, because it is
                 the caller's mistake and not a host's — nothing is contacted,
                 and it never lands in the results mapping as a per-host value.
         """
         if with_owner:
-            if "owner" in kwargs and kwargs["owner"] != self._repo_name:
+            if "owner" in kwargs and kwargs["owner"] != self._project_name:
                 from .config.scope import ProjectScopeError  # function-scope: import-light
 
                 raise ProjectScopeError(
                     "",  # a caller mistake, so there is no settings.toml to send them to
-                    _OWNER_MISMATCH.format(repo=self._repo_name, passed=kwargs["owner"]),
+                    _OWNER_MISMATCH.format(project=self._project_name, passed=kwargs["owner"]),
                 )
-            kwargs["owner"] = self._repo_name
+            kwargs["owner"] = self._project_name
         return await self._ctx.do_for_all_hosts(
-            method, *args, _scope_owner=self._repo_name, **kwargs
+            method, *args, _scope_owner=self._project_name, **kwargs
         )
 
     async def run_on_all_hosts(
         self, *args: Any, **kwargs: Any
     ) -> "dict[str, Results | BaseException]":
-        """Run commands on this repo's fleet — :meth:`OttoContext.run_on_all_hosts`, bound.
+        """Run commands on this project's fleet — :meth:`OttoContext.run_on_all_hosts`, bound.
 
         Bound rather than delegated, because delegation would leave one
         unscoped fleet walk reachable on an object whose whole purpose is to
         bound them — and it is the surface a subclass reaches for when no host
         verb fits. No owner is stamped: ``host.run`` takes none.
         """
-        return await self._ctx.run_on_all_hosts(*args, _scope_owner=self._repo_name, **kwargs)
+        return await self._ctx.run_on_all_hosts(*args, _scope_owner=self._project_name, **kwargs)
 
 
 def prepared_policy(
@@ -1338,7 +1343,7 @@ def fill_teardown_deadline(policy: "RunPolicy") -> None:
     installed, and the library ``run_tests`` before it installs its sentinel
     context.
     """
-    from .config.repo import discovered_teardown_deadline  # function-scope: discovery's owner
+    from .config.project import discovered_teardown_deadline  # function-scope: discovery's owner
 
     discovered = discovered_teardown_deadline()
     if discovered is not None:
@@ -1361,16 +1366,16 @@ async def open_context(
 
     The same decisions in the same order as the CLI preamble, from
     :mod:`otto.session`: the project switches are validated
-    (:func:`~otto.session.select_projects`); a broken ACTIVE repo refuses
-    the run (:func:`~otto.session.check_repos`), and an inactive repo's load
-    error is logged as a warning; the lab is built from the repos'
+    (:func:`~otto.session.select_projects`); a broken ACTIVE project refuses
+    the run (:func:`~otto.session.check_projects`), and an inactive project's load
+    error is logged as a warning; the lab is built from the projects'
     ``[[lab.sources]]``, ``[host_preferences]``, inventory and declared
     containers (:func:`~otto.session.build_lab`), or a
     :class:`~otto.labs.loader.Lab` you pass is used as given; once the context
-    is installed, an active repo's unmet Python requirement refuses
+    is installed, an active project's unmet Python requirement refuses
     (:func:`~otto.session.check_dependencies`); last, the reservation gate
     runs (:meth:`~otto.reservations.check.ReservationGate.evaluate`, built by
-    :func:`~otto.reservations.build_reservation_gate` from the repos'
+    :func:`~otto.reservations.build_reservation_gate` from the projects'
     ``[reservations]``), so a lab whose resources you do not hold refuses.
 
     *variant* mirrors ``otto --field/--debug``: it is installed on the run's
@@ -1410,12 +1415,12 @@ async def open_context(
             ``"field"`` (raised before anything else runs).
         otto.session.ProjectSelectionError: an unknown project name, or one
             in both lists.
-        otto.session.RepoLoadError: an active repo failed to load.
+        otto.session.ProjectLoadError: an active project failed to load.
         otto.session.LabBuildError: no lab, an unknown lab, a bad lab source,
             or a broken inventory declaration.
         otto.labs.errors.LabRepositoryError: lab data that fails only at
             load time (malformed lab data, composite conflicts).
-        otto.session.DependencyRefusedError: an active repo's Python
+        otto.session.DependencyRefusedError: an active project's Python
             requirement is not met.
         ValueError: a misconfigured ``[reservations]`` table (no
             ``[reservations.json] path``, an unknown backend name), raised by
@@ -1424,7 +1429,7 @@ async def open_context(
             you do not hold; its ``.report`` lists each one and its holders.
         otto.reservations.check.ReservationBackendError: the configured backend
             cannot be built or queried.
-        RuntimeError: nothing composed the repos and no composition root
+        RuntimeError: nothing composed the projects and no composition root
             is loaded (see :mod:`otto.context` for the routes around the
             facade). Raised before a context is installed or yielded.
         RuntimeError: entered from inside a host's close while its loop is
@@ -1445,11 +1450,20 @@ async def open_context(
         from .labs.loader import Lab, split_lab_names
         from .session.dependencies import check_dependencies
         from .session.lab import build_lab
-        from .session.projects import check_repos, select_projects
+        from .session.projects import (
+            check_projects,
+            refused_names,
+            select_projects_with_refused,
+        )
 
         result = compose()  # the composition root's, through its initiator; idempotent
         fill_teardown_deadline(policy)  # after discovery; bounds the closing sweep on exit
-        selection = select_projects(result.repos, include_projects or [], exclude_projects or [])
+        selection = select_projects_with_refused(
+            result.projects,
+            include_projects or [],
+            exclude_projects or [],
+            refused=refused_names(result.errors),
+        )
         if isinstance(lab, Lab):
             labs = list(lab.component_names)
         elif isinstance(lab, str):
@@ -1457,11 +1471,11 @@ async def open_context(
         else:
             # Each item splits on `+`, as each repeated `--lab` value does.
             labs = [name for item in lab for name in split_lab_names(item)]
-        for demoted in check_repos(result, labs, selection).demoted:
+        for demoted in check_projects(result, labs, selection).demoted:
             logger.warning("%s", demoted.message)
         # A `Lab` object is used as given: `build_lab` (and the `otto.inventory`
         # import it makes, ~77 modules) never runs for it.
-        resolved_lab = lab if isinstance(lab, Lab) else build_lab(result.repos, labs)
+        resolved_lab = lab if isinstance(lab, Lab) else build_lab(result.projects, labs)
         # As the CLI does: the gate is built after the lab and before the
         # context, so an unbuildable backend refuses with nothing to undo.
         from pathlib import Path
@@ -1469,7 +1483,7 @@ async def open_context(
         from .reservations.factory import build_reservation_gate
 
         gate = build_reservation_gate(
-            result.repos,
+            result.projects,
             holder=holder,
             skip_reservation_check=skip_reservation_check,
             cwd_fallback=Path.cwd(),

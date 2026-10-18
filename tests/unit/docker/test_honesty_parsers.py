@@ -18,7 +18,7 @@ import pytest
 from otto.cli import docker as docker_cli
 from otto.console import CONSOLE
 from otto.docker.deployment import _refuse_failed_up
-from otto.docker.reports import BuildReport, ImageBuild, RepoBuild
+from otto.docker.reports import BuildReport, ImageBuild, ProjectBuild
 from otto.host.errors import HostCommandError
 from otto.host.host import BaseHost
 from otto.logger import management
@@ -57,7 +57,7 @@ def _built(refs: "list[str]", image_id: str = "cbd8571d4b6e") -> BuildReport:
     image = ImageBuild(
         "repo1-api", refs, image_id, CommandResult(Status.Success, value="built", retcode=0)
     )
-    return BuildReport(repos=[RepoBuild("repo1", "test3", "built", {"repo1-api": image})])
+    return BuildReport(projects=[ProjectBuild("repo1", "test3", "built", {"repo1-api": image})])
 
 
 def test_parse_built_line_reads_the_line_the_report_renders(capsys):

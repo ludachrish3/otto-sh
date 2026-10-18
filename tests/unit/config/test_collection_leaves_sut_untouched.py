@@ -16,6 +16,7 @@ from pathlib import Path
 from _pytest.assertion.rewrite import PYC_TAIL
 
 from otto.config.completion_cache import COLLECTED_TESTS_KEY, DUMP_TESTS_ENV_VAR
+from otto.config.env import is_otto_env_var
 from tests._fixtures.generated_repo import generate_repo
 
 _CHILD = """
@@ -34,7 +35,7 @@ sys.dont_write_bytecode = True
 
 import otto.suite.run as run
 
-real_outside_the_repo = run._outside_the_repo
+real_outside_the_repo = run._outside_the_project_root
 
 
 @contextlib.contextmanager
@@ -49,7 +50,7 @@ def writing_bytecode(**kwargs):
             sys.dont_write_bytecode = True
 
 
-run._outside_the_repo = writing_bytecode
+run._outside_the_project_root = writing_bytecode
 sys.argv = ["otto"]
 from otto.cli.main import entry
 
@@ -62,19 +63,19 @@ def _files(root: Path) -> list[str]:
 
 
 def test_the_tab_time_collection_leaves_the_sut_file_set_unchanged(tmp_path):
-    repo = generate_repo(tmp_path, files=4, dirs=2)
-    assert not list(repo.rglob("pytest.ini")), "the repo must have no pytest config of its own"
-    before = _files(repo)
+    project = generate_repo(tmp_path, files=4, dirs=2)
+    assert not list(project.rglob("pytest.ini")), "the repo must have no pytest config of its own"
+    before = _files(project)
     env = {
         k: v
         for k, v in os.environ.items()
-        if not k.startswith("OTTO_") and k != "PYTHONDONTWRITEBYTECODE"
+        if not is_otto_env_var(k) and k != "PYTHONDONTWRITEBYTECODE"
     }
-    env.update(OTTO_SUT_DIRS=str(repo), OTTO_HOME=str(tmp_path / "home"))
+    env.update(OTTOPATH=str(project), OTTO_HOME=str(tmp_path / "home"))
     env[DUMP_TESTS_ENV_VAR] = "1"
 
     child = subprocess.run(
-        [sys.executable, "-c", _CHILD, str(repo)],
+        [sys.executable, "-c", _CHILD, str(project)],
         env=env,
         capture_output=True,
         text=True,
@@ -85,9 +86,9 @@ def test_the_tab_time_collection_leaves_the_sut_file_set_unchanged(tmp_path):
     assert child.returncode == 0, child.stderr
     assert child.stdout == ""
     [cache] = (tmp_path / "home").rglob("completion_cache.json")
-    table = json.loads(cache.read_text())[COLLECTED_TESTS_KEY][str(repo)]
+    table = json.loads(cache.read_text())[COLLECTED_TESTS_KEY][str(project)]
     names = {name for record in table["files"].values() for _classes, name in record["tests"]}
     assert "test_x" in names, "the child collected nothing, so it proves nothing"
-    assert _files(repo) == before
+    assert _files(project) == before
     [pycache] = (tmp_path / "home").glob("*/pycache")
     assert list(pycache.rglob(f"*{PYC_TAIL}")), "the collection wrote its bytecode, under OTTO_HOME"

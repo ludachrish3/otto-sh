@@ -1,7 +1,7 @@
 (coverage-tickets)=
 # Per-ticket coverage
 
-Otto can answer, for every ticket named in the repo's commit history, how
+Otto can answer, for every ticket named in the project's commit history, how
 much of the code it wrote is covered and exactly which lines still aren't —
 the report's tickets page, a per-line gutter chip on the file page, and the
 `tickets.json` export ({ref}`coverage-tickets-json`) all read from the same
@@ -26,7 +26,7 @@ that first wrote it. Design notes:
 ```toml
 [coverage.tickets]
 pattern = "#(?P<num>[0-9]+)"
-url = "https://github.com/org/repo/issues/{num}"
+url = "https://github.com/acme/widget/issues/{num}"
 ```
 
 | Field | Meaning |
@@ -60,7 +60,7 @@ committed yet, and **`(no ticket)`** for lines whose owning commit matched
 (coverage-tickets-overlap)=
 ## Overlapping tickets
 
-**A ticket's owned lines are not a partition of the repo.** Because a
+**A ticket's owned lines are not a partition of the project.** Because a
 commit naming several ticket ids attributes its lines to all of them, two
 tickets can — and in practice regularly do — both claim the same line. The
 tickets page states this under its table: rows overlap and do not sum to
@@ -83,13 +83,13 @@ report change.
 
 The file is a hand-edited, commented TOML record, reviewed like any other
 change. Default location is `.otto/coverage-overrides.toml`, next to
-`settings.toml`, versioned with the SUT repo. Point at a different path
+`settings.toml`, versioned with the project. Point at a different path
 with:
 
 ```toml
 # settings.toml
 [coverage.overrides]
-file = "somewhere-else/coverage-overrides.toml"   # relative to the repo root
+file = "somewhere-else/coverage-overrides.toml"   # relative to the project root
 ```
 
 An explicitly configured path that doesn't exist is a load error, not a
@@ -136,7 +136,7 @@ Every rule below fails the load with a named error:
 - Each asserted entry has **exactly one** of `ticket` / `commit`, and a
   non-empty `reason`.
 - `ticket` entries require `as_of`; `commit` entries must not carry one.
-- Every sha (`commit`, `as_of`) must resolve in the SUT repo. Abbreviated
+- Every sha (`commit`, `as_of`) must resolve in the project's git repository. Abbreviated
   shas are accepted if unambiguous.
 - A ticket entry's id must appear in at least one commit at or before its
   `as_of`. Owning zero *current* lines is legal — that's full aging (below),
@@ -295,7 +295,7 @@ whether a declared entry still contributes a mark (see
   data at the same `generated` stamp produce byte-identical files, so a
   diff between two regenerations (the timestamp aside) is exactly the
   coverage delta.
-- **Every `path` is repo-relative POSIX**, never the internal store's
+- **Every `path` is project-relative POSIX**, never the internal store's
   absolute, machine-specific path — two CI runners with different
   checkout locations emit identical bytes for identical coverage, and an
   external consumer can map a path onto its own checkout without knowing

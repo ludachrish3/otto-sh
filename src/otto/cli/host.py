@@ -42,7 +42,7 @@ def _term_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: 
     """Completion source for ``--term``: registered term backends.
 
     Prefers the completion-cache snapshot (populated by the slow path so custom
-    per-repo backends complete without re-running user code);
+    per-project backends complete without re-running user code);
     falls back to the live registry, where otto's built-ins are always present.
     """
     from ..registry import get_completion_names
@@ -104,7 +104,7 @@ def _resolve_host(host_id: str) -> "UnixHost":
         # The lab's mapping directly, NOT `all_hosts`: this listing enumerates
         # what `otto host <id>` can ADDRESS, and explicit targeting is
         # deliberately unscoped by the project-universe design — so a host
-        # outside every repo's fleet of interest must still be offered here,
+        # outside every project's fleet of interest must still be offered here,
         # exactly as `get_host` would still resolve it. Going through the fleet
         # generator would also make this error path raise its own error when
         # the universe came out empty, replacing "No host with ID x" with a

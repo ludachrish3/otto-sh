@@ -35,37 +35,37 @@ def _mk_repo(tmp_path: Path):
     return sut.root, sut.git
 
 
-def _seed_lines(repo: Path, rel: str, linenos: list[int]) -> None:
+def _seed_lines(project: Path, rel: str, linenos: list[int]) -> None:
     """Materialize *linenos* in the store, uncovered, via a 0-hit capture."""
     cap = Capture(
         tier="seed",
         product="app",
-        base_commit=head_commit(repo),
+        base_commit=head_commit(project),
         captured_at="2026-07-01T00:00:00Z",
         board="b1",
         files={
-            rel: CaptureFileCov(blob=blob_sha(repo, Path(rel)), lines=dict.fromkeys(linenos, 0))
+            rel: CaptureFileCov(blob=blob_sha(project, Path(rel)), lines=dict.fromkeys(linenos, 0))
         },
     )
-    write_manual_capture(cap, repo)
+    write_manual_capture(cap, project)
 
 
-def _overrides(repo: Path, text: str) -> None:
-    path = repo / DEFAULT_OVERRIDES_RELPATH
+def _overrides(project: Path, text: str) -> None:
+    path = project / DEFAULT_OVERRIDES_RELPATH
     path.parent.mkdir(exist_ok=True)
     path.write_text(text)
 
 
-async def _report(repo: Path, out: Path):
+async def _report(project: Path, out: Path):
     tier_configs = load_tiers(COV)
     return await run_coverage_report(
         [],
         out,
         ReportInputs(
-            repo_root=repo,
+            project_root=project,
             tier_configs=tier_configs,
             ticket_spec=SPEC,
-            overrides=load_override_config(COV, repo, tier_configs),
+            overrides=load_override_config(COV, project, tier_configs),
         ),
     )
 
@@ -77,14 +77,14 @@ def _file_rec(store, name: str):
 
 @pytest.mark.asyncio
 async def test_asserted_lines_count_in_their_tier_and_carry_provenance(tmp_path):
-    repo, git = _mk_repo(tmp_path)
-    (repo / "a.c").write_text("l1\nl2\nl3\n")
+    project, git = _mk_repo(tmp_path)
+    (project / "a.c").write_text("l1\nl2\nl3\n")
     git("add", "-A")
     git("commit", "-qm", "work #1")
-    sha = head_commit(repo)
-    _seed_lines(repo, "a.c", [1, 2, 3])
-    _overrides(repo, f'[[bench]]\nticket = "#1"\nas_of = "{sha}"\nreason = "legacy pass"\n')
-    store = await _report(repo, tmp_path / "r")
+    sha = head_commit(project)
+    _seed_lines(project, "a.c", [1, 2, 3])
+    _overrides(project, f'[[bench]]\nticket = "#1"\nas_of = "{sha}"\nreason = "legacy pass"\n')
+    store = await _report(project, tmp_path / "r")
     rec = _file_rec(store, "a.c")
     for n in (1, 2, 3):
         assert rec.lines[n].hits.for_tier("bench") == 1
@@ -96,16 +96,16 @@ async def test_asserted_lines_count_in_their_tier_and_carry_provenance(tmp_path)
 
 @pytest.mark.asyncio
 async def test_commit_after_as_of_under_same_ticket_stays_uncovered(tmp_path):
-    repo, git = _mk_repo(tmp_path)
-    (repo / "a.c").write_text("l1\nl2\n")
+    project, git = _mk_repo(tmp_path)
+    (project / "a.c").write_text("l1\nl2\n")
     git("add", "-A")
     git("commit", "-qm", "work #1")
-    as_of = head_commit(repo)
-    (repo / "a.c").write_text("l1\nl2\nl3\n")
+    as_of = head_commit(project)
+    (project / "a.c").write_text("l1\nl2\nl3\n")
     git("commit", "-aqm", "more work #1")
-    _seed_lines(repo, "a.c", [1, 2, 3])
-    _overrides(repo, f'[[bench]]\nticket = "#1"\nas_of = "{as_of}"\nreason = "r"\n')
-    store = await _report(repo, tmp_path / "r")
+    _seed_lines(project, "a.c", [1, 2, 3])
+    _overrides(project, f'[[bench]]\nticket = "#1"\nas_of = "{as_of}"\nreason = "r"\n')
+    store = await _report(project, tmp_path / "r")
     rec = _file_rec(store, "a.c")
     assert rec.lines[1].asserted == {"bench": [0]}
     assert rec.lines[2].asserted == {"bench": [0]}
@@ -115,16 +115,16 @@ async def test_commit_after_as_of_under_same_ticket_stays_uncovered(tmp_path):
 
 @pytest.mark.asyncio
 async def test_rewritten_line_drops_out_whitespace_edit_survives(tmp_path):
-    repo, git = _mk_repo(tmp_path)
-    (repo / "a.c").write_text("l1\nl2\n")
+    project, git = _mk_repo(tmp_path)
+    (project / "a.c").write_text("l1\nl2\n")
     git("add", "-A")
     git("commit", "-qm", "work #1")
-    as_of = head_commit(repo)
-    (repo / "a.c").write_text("REWRITTEN\n    l2\n")  # l1 rewritten, l2 reindented
+    as_of = head_commit(project)
+    (project / "a.c").write_text("REWRITTEN\n    l2\n")  # l1 rewritten, l2 reindented
     git("commit", "-aqm", "later edit, no ticket")
-    _seed_lines(repo, "a.c", [1, 2])
-    _overrides(repo, f'[[bench]]\nticket = "#1"\nas_of = "{as_of}"\nreason = "r"\n')
-    store = await _report(repo, tmp_path / "r")
+    _seed_lines(project, "a.c", [1, 2])
+    _overrides(project, f'[[bench]]\nticket = "#1"\nas_of = "{as_of}"\nreason = "r"\n')
+    store = await _report(project, tmp_path / "r")
     rec = _file_rec(store, "a.c")
     assert rec.lines[1].asserted == {}  # superseded — aged out by content
     assert rec.lines[2].asserted == {"bench": [0]}  # -w: whitespace never re-attributes
@@ -132,14 +132,16 @@ async def test_rewritten_line_drops_out_whitespace_edit_survives(tmp_path):
 
 @pytest.mark.asyncio
 async def test_reattribution_reaches_store_tickets(tmp_path):
-    repo, git = _mk_repo(tmp_path)
-    (repo / "a.c").write_text("l1\n")
+    project, git = _mk_repo(tmp_path)
+    (project / "a.c").write_text("l1\n")
     git("add", "-A")
     git("commit", "-qm", "fix #1")
-    sha = head_commit(repo)
-    _seed_lines(repo, "a.c", [1])
-    _overrides(repo, f'[[reattribute]]\ncommit = "{sha}"\ntickets = ["#9"]\nreason = "wrong id"\n')
-    store = await _report(repo, tmp_path / "r")
+    sha = head_commit(project)
+    _seed_lines(project, "a.c", [1])
+    _overrides(
+        project, f'[[reattribute]]\ncommit = "{sha}"\ntickets = ["#9"]\nreason = "wrong id"\n'
+    )
+    store = await _report(project, tmp_path / "r")
     rec = _file_rec(store, "a.c")
     assert rec.lines[1].ticket == ["#9"]
     assert "#9" in store.tickets
@@ -148,24 +150,24 @@ async def test_reattribution_reaches_store_tickets(tmp_path):
 
 @pytest.mark.asyncio
 async def test_real_manual_run_clears_the_asserted_mark(tmp_path):
-    repo, git = _mk_repo(tmp_path)
-    (repo / "a.c").write_text("l1\nl2\n")
+    project, git = _mk_repo(tmp_path)
+    (project / "a.c").write_text("l1\nl2\n")
     git("add", "-A")
     git("commit", "-qm", "work #1")
-    sha = head_commit(repo)
-    _seed_lines(repo, "a.c", [1, 2])
+    sha = head_commit(project)
+    _seed_lines(project, "a.c", [1, 2])
     # A real bench-tier capture proves line 1.
     cap = Capture(
         tier="bench",
         product="app",
-        base_commit=head_commit(repo),
+        base_commit=head_commit(project),
         captured_at="2026-07-02T00:00:00Z",
         board="b1",
-        files={"a.c": CaptureFileCov(blob=blob_sha(repo, Path("a.c")), lines={1: 3})},
+        files={"a.c": CaptureFileCov(blob=blob_sha(project, Path("a.c")), lines={1: 3})},
     )
-    write_manual_capture(cap, repo)
-    _overrides(repo, f'[[bench]]\nticket = "#1"\nas_of = "{sha}"\nreason = "r"\n')
-    store = await _report(repo, tmp_path / "r")
+    write_manual_capture(cap, project)
+    _overrides(project, f'[[bench]]\nticket = "#1"\nas_of = "{sha}"\nreason = "r"\n')
+    store = await _report(project, tmp_path / "r")
     rec = _file_rec(store, "a.c")
     assert rec.lines[1].hits.for_tier("bench") == 3  # the real run's count, untouched
     assert rec.lines[1].asserted == {}  # proven — no mark
@@ -174,16 +176,16 @@ async def test_real_manual_run_clears_the_asserted_mark(tmp_path):
 
 @pytest.mark.asyncio
 async def test_absent_file_and_key_is_identical(tmp_path):
-    repo, git = _mk_repo(tmp_path)
-    (repo / "a.c").write_text("l1\n")
+    project, git = _mk_repo(tmp_path)
+    (project / "a.c").write_text("l1\n")
     git("add", "-A")
     git("commit", "-qm", "work #1")
-    _seed_lines(repo, "a.c", [1])
-    s1 = await _report(repo, tmp_path / "r1")  # no override file exists
+    _seed_lines(project, "a.c", [1])
+    s1 = await _report(project, tmp_path / "r1")  # no override file exists
     s2 = await run_coverage_report(  # overrides never resolved at all
         [],
         tmp_path / "r2",
-        ReportInputs(repo_root=repo, tier_configs=load_tiers(COV), ticket_spec=SPEC),
+        ReportInputs(project_root=project, tier_configs=load_tiers(COV), ticket_spec=SPEC),
     )
     d1 = json.loads((tmp_path / "r1" / "store.json").read_text())
     d2 = json.loads((tmp_path / "r2" / "store.json").read_text())
@@ -202,26 +204,28 @@ async def test_overrides_active_true_for_reattribute_only_file_false_with_none(t
     reattribution never appends an `OverrideRecord`). No file at all must
     still read false.
     """
-    repo, git = _mk_repo(tmp_path)
-    (repo / "a.c").write_text("l1\n")
+    project, git = _mk_repo(tmp_path)
+    (project / "a.c").write_text("l1\n")
     git("add", "-A")
     git("commit", "-qm", "fix #1")
-    sha = head_commit(repo)
-    _seed_lines(repo, "a.c", [1])
-    _overrides(repo, f'[[reattribute]]\ncommit = "{sha}"\ntickets = ["#9"]\nreason = "wrong id"\n')
-    store = await _report(repo, tmp_path / "r")
+    sha = head_commit(project)
+    _seed_lines(project, "a.c", [1])
+    _overrides(
+        project, f'[[reattribute]]\ncommit = "{sha}"\ntickets = ["#9"]\nreason = "wrong id"\n'
+    )
+    store = await _report(project, tmp_path / "r")
     assert store.overrides == []  # no asserted entries — the old, wrong proxy would read False
     payload = build_ticket_export(
-        store, repo_root=repo, project="p", otto_version="0", generated="g"
+        store, project_root=project, report_title="p", otto_version="0", generated="g"
     )
     assert payload["overrides_active"] is True
 
     # No override file at all: both the flag and the export read false.
-    (repo / DEFAULT_OVERRIDES_RELPATH).unlink()
-    store2 = await _report(repo, tmp_path / "r2")
+    (project / DEFAULT_OVERRIDES_RELPATH).unlink()
+    store2 = await _report(project, tmp_path / "r2")
     assert store2.overrides_file_active is False
     payload2 = build_ticket_export(
-        store2, repo_root=repo, project="p", otto_version="0", generated="g"
+        store2, project_root=project, report_title="p", otto_version="0", generated="g"
     )
     assert payload2["overrides_active"] is False
 
@@ -237,19 +241,21 @@ async def test_reattribute_only_file_never_spawns_the_first_parent_walk(tmp_path
     """
     from otto.coverage.capture import gitio
 
-    repo, git = _mk_repo(tmp_path)
-    (repo / "a.c").write_text("l1\n")
+    project, git = _mk_repo(tmp_path)
+    (project / "a.c").write_text("l1\n")
     git("add", "-A")
     git("commit", "-qm", "fix #1")
-    sha = head_commit(repo)
-    _seed_lines(repo, "a.c", [1])
-    _overrides(repo, f'[[reattribute]]\ncommit = "{sha}"\ntickets = ["#9"]\nreason = "wrong id"\n')
+    sha = head_commit(project)
+    _seed_lines(project, "a.c", [1])
+    _overrides(
+        project, f'[[reattribute]]\ncommit = "{sha}"\ntickets = ["#9"]\nreason = "wrong id"\n'
+    )
 
     def _boom(*_a, **_kw):
         raise AssertionError("rev_list_first_parent must not be called for a reattribute-only file")
 
     monkeypatch.setattr(gitio, "rev_list_first_parent", _boom)
-    store = await _report(repo, tmp_path / "r")
+    store = await _report(project, tmp_path / "r")
     assert store.overrides_file_active is True
     assert store.overrides == []
 
@@ -267,19 +273,19 @@ async def test_fully_aged_ticket_entry_is_inert_not_fatal(tmp_path, caplog):
     owners), so the ticket is still found (as_of resolves fine) and the
     empty *current* line set falls through to the existing aged-out path.
     """
-    repo, git = _mk_repo(tmp_path)
-    (repo / "a.c").write_text("l1\n")
+    project, git = _mk_repo(tmp_path)
+    (project / "a.c").write_text("l1\n")
     git("add", "-A")
     git("commit", "-qm", "work #1")
-    as_of = head_commit(repo)
+    as_of = head_commit(project)
     # Later no-ticket commit rewrites EVERY line ticket #1 touched, so #1
     # no longer owns any current line — full aging by content (spec §3).
-    (repo / "a.c").write_text("REWRITTEN\n")
+    (project / "a.c").write_text("REWRITTEN\n")
     git("commit", "-aqm", "later rewrite, no ticket")
-    _seed_lines(repo, "a.c", [1])
-    _overrides(repo, f'[[bench]]\nticket = "#1"\nas_of = "{as_of}"\nreason = "legacy"\n')
+    _seed_lines(project, "a.c", [1])
+    _overrides(project, f'[[bench]]\nticket = "#1"\nas_of = "{as_of}"\nreason = "legacy"\n')
     with caplog.at_level(logging.INFO, logger="otto.coverage.overrides"):
-        store = await _report(repo, tmp_path / "r")
+        store = await _report(project, tmp_path / "r")
     assert store is not None
     assert "fully aged out" in caplog.text
     assert "ticket:#1" in caplog.text
@@ -291,22 +297,22 @@ async def test_fully_aged_ticket_entry_is_inert_not_fatal(tmp_path, caplog):
 
 @pytest.mark.asyncio
 async def test_prune_signal_reaches_the_report_log(tmp_path, caplog):
-    repo, git = _mk_repo(tmp_path)
-    (repo / "a.c").write_text("l1\n")
+    project, git = _mk_repo(tmp_path)
+    (project / "a.c").write_text("l1\n")
     git("add", "-A")
     git("commit", "-qm", "work #1")
-    sha = head_commit(repo)
+    sha = head_commit(project)
     cap = Capture(
         tier="bench",
         product="app",
-        base_commit=head_commit(repo),
+        base_commit=head_commit(project),
         captured_at="2026-07-02T00:00:00Z",
         board="b1",
-        files={"a.c": CaptureFileCov(blob=blob_sha(repo, Path("a.c")), lines={1: 1})},
+        files={"a.c": CaptureFileCov(blob=blob_sha(project, Path("a.c")), lines={1: 1})},
     )
-    write_manual_capture(cap, repo)
-    _overrides(repo, f'[[bench]]\ncommit = "{sha}"\nreason = "old pass"\n')
+    write_manual_capture(cap, project)
+    _overrides(project, f'[[bench]]\ncommit = "{sha}"\nreason = "old pass"\n')
     with caplog.at_level(logging.INFO, logger="otto.coverage.overrides"):
-        await _report(repo, tmp_path / "r")
+        await _report(project, tmp_path / "r")
     assert "fully covered" in caplog.text
     assert "old pass" in caplog.text

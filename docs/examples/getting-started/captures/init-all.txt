@@ -37,7 +37,7 @@ creds:     json:/tmp/otto-gs/acme/lab_data/creds.json
 │                                                                            │
 │  1. Activate otto in this shell:                                           │
 │                                                                            │
-│          export OTTO_SUT_DIRS=/tmp/otto-gs/acme                            │
+│          export OTTOPATH=/tmp/otto-gs/acme                                 │
 │          otto --install-completion                                         │
 │          source ~/.bash_completions/otto.sh                                │
 │                                                                            │
@@ -47,12 +47,12 @@ creds:     json:/tmp/otto-gs/acme/lab_data/creds.json
 │        `otto --install-completion` already added the `source` line to      │
 │        ~/.bashrc, so completion needs nothing more there. Add only:        │
 │                                                                            │
-│          export OTTO_SUT_DIRS=/tmp/otto-gs/acme                            │
+│          export OTTOPATH=/tmp/otto-gs/acme                                 │
 │                                                                            │
 │     ~/.profile  (if your login shell reads it instead of ~/.bashrc)        │
 │        Add both lines yourself:                                            │
 │                                                                            │
-│          export OTTO_SUT_DIRS=/tmp/otto-gs/acme                            │
+│          export OTTOPATH=/tmp/otto-gs/acme                                 │
 │          source ~/.bash_completions/otto.sh                                │
 │                                                                            │
 │        Never put `otto --install-completion` itself in a startup file: it  │

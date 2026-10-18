@@ -315,12 +315,12 @@ def apply_ssh_debug_level() -> None:
     via :func:`otto.logger.management.apply_library_levels`, which remembers
     the override on its state — a later ``install_console`` re-applies it
     rather than reverting to the WARNING default. This runs on every connect
-    (inside :func:`ssh_connect`), which is AFTER the CLI applies a repo's
+    (inside :func:`ssh_connect`), which is AFTER the CLI applies a project's
     ``[logging.levels]`` once at startup, so from the first connect on a
-    valid ``OTTO_SSH_DEBUG`` overrides a repo's ``asyncssh`` entry for the
+    valid ``OTTO_SSH_DEBUG`` overrides a project's ``asyncssh`` entry for the
     rest of the process — by design: an explicit per-invocation opt-in to a
     trace beats a standing noise-floor entry. Unset ``OTTO_SSH_DEBUG`` to get
-    the repo's floor back. A value outside 1..3 is reported and ignored
+    the project's floor back. A value outside 1..3 is reported and ignored
     rather than turned into a ValueError on every connect, and lifts nothing.
     """
     raw = os.environ.get(SSH_DEBUG_ENV_VAR)

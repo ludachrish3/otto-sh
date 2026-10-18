@@ -14,7 +14,7 @@ Implementers
 Third-party backends implement the :class:`ReservationBackend` protocol, register under
 a bare name with a config model and a factory
 (``register_reservation_backend("my-team-jira", config=..., factory=...)``) from an
-``init`` module, and are selected in the repo's ``.otto/settings.toml``:
+``init`` module, and are selected in the project's ``.otto/settings.toml``:
 
 .. code-block:: toml
 
@@ -29,7 +29,7 @@ The backend's config model parses the ``[reservations.<name>]`` sub-table,
 and its factory builds the backend from a
 :class:`~otto.registry.Configured`: the parsed sub-table as ``config``, and a
 :class:`~otto.reservations.ReservationEnv` as ``env`` carrying ``url`` (the
-``[reservations]`` table's ``url``, or ``None``), ``repo_dir``,
+``[reservations]`` table's ``url``, or ``None``), ``project_root``,
 ``username`` and ``origin``.  ``url`` is optional on both sides: a factory
 may pass ``env.url`` on, or the backend may hardcode its own endpoint —
 whichever fits the deployment.

@@ -54,7 +54,7 @@ lifecycle bridge awaited. A returned `Result` supplies its own `exit_code`.
 ({doc}`../cookbook/extending/extending-cli`).
 
 The front door looks like this — and every terminal block in these docs is
-**captured from the real CLI at build time** (a scaffolded demo repo, real
+**captured from the real CLI at build time** (a scaffolded demo project, real
 `--help` output, real completion candidates), so what you see here is what
 the current code does:
 
@@ -67,12 +67,12 @@ the current code does:
 {func}`otto.bootstrap.bootstrap` replaces what used to be import-time side
 effects with an explicit composition root:
 
-- **Phase 1 — discovery.** Parse the `OTTO_*` environment variables and every
-  repo's `.otto/settings.toml` into an `OttoEnvSettings` plus a list of
-  `Repo` objects. *No user code runs.* Environment-level failures raise —
-  nothing can degrade gracefully if `OTTO_SUT_DIRS` itself is broken — but a
-  single repo's malformed settings file is framed and skipped.
-- **Phase 2 — registration.** Add each repo's `libs` to `sys.path` and import
+- **Phase 1 — discovery.** Parse `OTTOPATH`, the `OTTO_*` environment variables and every
+  project's `.otto/settings.toml` into an `OttoEnvSettings` plus a list of
+  `Project` objects. *No user code runs.* Environment-level failures raise —
+  nothing can degrade gracefully if `OTTOPATH` itself is broken — but a
+  single project's malformed settings file is framed and skipped.
+- **Phase 2 — registration.** Add each project's `libs` to `sys.path` and import
   its `init` modules. Every user-module exec is wrapped: one broken file
   becomes a framed {class}`~otto.bootstrap.BootstrapError` in the returned
   {class}`~otto.bootstrap.BootstrapResult` instead of a traceback that bricks
@@ -113,7 +113,7 @@ it from an init module instead. How the refusal works, including why otto's
 own modules may still register when a test file imports them, is in
 {doc}`subsystems/registries`.
 
-pytest collects each directory a repo lists under `tests` the way it always
+pytest collects each directory a project lists under `tests` the way it always
 does, recursing into subdirectories and loading their conftests; otto adds no
 rule of its own about depth.
 
@@ -420,7 +420,7 @@ the same {doc}`otto.session <../api/session>` functions in the CLI preamble's
 order:
 
 1. `bootstrap()` (lazily, idempotently);
-2. validate the project switches, and refuse if an active repo failed to load;
+2. validate the project switches, and refuse if an active project failed to load;
 3. build the lab, or take a `Lab` object as given;
 4. build the reservation gate, install the context, then run the dependency
    preflight and the gate;

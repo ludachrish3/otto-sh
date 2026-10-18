@@ -275,3 +275,12 @@ def test_a_restated_verb_shows_the_help_of_the_verb_it_overrides():
 
     assert verb_help(DockerContainerHost, "exec") == verb_help(BaseHost, "exec")
     assert verb_help(BaseHost, "exec")
+
+
+def test_the_root_help_names_ottopath_and_no_comma_rule():
+    from otto.cli.main import DESCRIPTION
+
+    assert "OTTOPATH" in DESCRIPTION
+    assert "project root" in DESCRIPTION
+    assert "`,`" not in DESCRIPTION
+    assert "repo" not in DESCRIPTION

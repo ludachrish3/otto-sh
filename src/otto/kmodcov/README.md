@@ -17,7 +17,7 @@ Every kernel-facing call goes through a `KMODCOV_` name whose default
 consumers must be built by the same compiler family, and for gcc by the
 same major.
 
-This directory reaches a user's repo one of two ways: `otto init --kmodcov`
+This directory reaches a user's project one of two ways: `otto init --kmodcov`
 vendors it (default `third_party/otto_kmodcov`) alongside a commented
 `[[dev_tools]]` entry and a consumer starter, or `otto cov kmodcov export
 <dir>` vendors just the sources with none of the rest of that scaffolding.
@@ -77,6 +77,6 @@ A worked consumer following these three steps lives at
 queue driven from a control file of its own, built in place by
 `tests/repo5/kmod/build.sh`
 against the library this directory's own `build.sh` builds out of tree. It
-lives in the SUT repo rather than here because otto's coverage capture
-anchors every measured file to a committed git blob under the repo that
+lives in the project rather than here because otto's coverage capture
+anchors every measured file to a committed git blob under the project root that
 declares the `[[products]]` entry.

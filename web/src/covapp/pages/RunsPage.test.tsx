@@ -98,7 +98,7 @@ const CONTRIB: IndexPayload["run_contrib"] = {
 
 function buildIndex(overrides: Partial<IndexPayload> = {}): IndexPayload {
   return makeIndex({
-    project_name: "acme-fw",
+    report_title: "acme-fw",
     tier_order: ["system", "unit", "manual"],
     tier_labels: { system: "System (e2e)", unit: "Unit", manual: "Manual" },
     tier_colors: { system: "green", unit: "blue", manual: "orange" },
@@ -158,11 +158,11 @@ describe("RunsPage", () => {
     expect(screen.getByTestId("page-meta").textContent ?? "").toContain("· 1 hosts");
   });
 
-  it("renders the whole-repo stats card, same rows as the directory root", () => {
+  it("renders the whole-project stats card, same rows as the directory root", () => {
     const index = buildIndex();
     renderPage(index);
     const card = screen.getByTestId("stats-card");
-    expect(card.textContent).toContain("Coverage — whole repo");
+    expect(card.textContent).toContain("Coverage — whole project");
     expect(card.textContent).toContain("all contexts");
     expect(screen.getByTestId("stats-row-all")).toBeTruthy();
   });
@@ -336,7 +336,7 @@ describe("RunsPage", () => {
       expect(screen.queryByTestId("stats-row-all")).toBeNull();
     });
 
-    it("the chip's ✕ clears focus, restoring the whole-repo stats card and a 'Focus cleared' toast", () => {
+    it("the chip's ✕ clears focus, restoring the whole-project stats card and a 'Focus cleared' toast", () => {
       const index = buildIndex();
       window.__OTTO_COV__ = index;
       renderPage(index);
@@ -491,7 +491,7 @@ describe("RunsPage", () => {
   });
 });
 
-// Task 11 fix round (review I1): the "Coverage — whole repo" card is the
+// Task 11 fix round (review I1): the "Coverage — whole project" card is the
 // SAME root rollup DirectoryPage's `segments: []` card reads (both from
 // `index.tree.stats`) — it must narrow/suffix under `hideAsserted` exactly
 // like that page does, or the two silently disagree while the toggle is on.

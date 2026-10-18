@@ -216,7 +216,7 @@ for _var in ("FORCE_COLOR", "CLICOLOR_FORCE", "PY_COLORS", "CLICOLOR"):
     os.environ.pop(_var, None)
 
 # Hermetic otto env: ambient otto configuration must never leak into the
-# suite. A developer shell with OTTO_SUT_DIRS exported (e.g. pointing at
+# suite. A developer shell with OTTOPATH exported (e.g. pointing at
 # another checkout's tests/repo1) makes every ambient-env bootstrap() in a
 # CLI test load that repo's init modules under foreign file paths, where they
 # once collided with the real tests/repo1 imports in test_repo.py's bootstrap
@@ -233,9 +233,12 @@ for _var in ("FORCE_COLOR", "CLICOLOR_FORCE", "PY_COLORS", "CLICOLOR"):
 # through: the copy agreed with itself while the strip was missing an entry,
 # so nightly's `OTTO_CHAOS_DOCKER=loopback` job silently ran against the bed
 # host instead. Pinned by tests/unit/test_env_hermeticity.py.
+# Importing otto.config.env first is safe: it reads no environment at import
+# time and loads nothing that does, so nothing has seen a variable yet.
+from otto.config.env import is_otto_env_var
 from tests._ambient_env import AMBIENT_OPT_INS, ambient
 
-for _var in [k for k in os.environ if k.startswith("OTTO_") and k not in AMBIENT_OPT_INS]:
+for _var in [k for k in os.environ if is_otto_env_var(k) and k not in AMBIENT_OPT_INS]:
     os.environ.pop(_var, None)
 
 import asyncio
@@ -1279,15 +1282,15 @@ def _restore_otto_logger_state():
 def _restore_composition_state():
     """Snapshot-restore the composition state at each of its owners, importing neither.
 
-    Two owners hold it. ``otto.config.repo`` caches discovery on one record,
+    Two owners hold it. ``otto.config.project`` caches discovery on one record,
     ``_discovery``; discovery errors ride the cached
-    :class:`~otto.config.repo.DiscoveryResult` itself (the old append-only
+    :class:`~otto.config.project.DiscoveryResult` itself (the old append-only
     ``_discovery_errors`` global is gone). ``otto.declared`` holds the
     composed state: the complete and in-progress results the root publishes
     and the initiator slot the root fills when it is imported, on one record,
     ``_composition`` (spec 2026-10-11 placement-and-phases §3.5, §3.9,
     §3.13). So one test that drives the
-    CLI with ``OTTO_SUT_DIRS`` pointing at a scratch repo —
+    CLI with ``OTTOPATH`` pointing at a scratch repo —
     ``test_init_prompts``'s epilogue tests do exactly that — records a framed
     "no .otto/settings.toml" error that outlives the ``monkeypatch.setenv``
     restoring the var. Every later test on that worker then trips
@@ -1341,7 +1344,7 @@ def _restore_composition_state():
 
     bootstrap = sys.modules.get("otto.bootstrap")
     declared = sys.modules.get("otto.declared")
-    config_repo = sys.modules.get("otto.config.repo")
+    config_repo = sys.modules.get("otto.config.project")
     # Read unconditionally on a loaded owner: a renamed cache or record fails
     # here, at setup (AttributeError). The teardown's assignment alone would
     # silently mint new attributes, so this read is the guard (fable's
@@ -1354,7 +1357,7 @@ def _restore_composition_state():
     otto_registry._COMPLETION_SNAPSHOT.names = saved_names
     bootstrap = sys.modules.get("otto.bootstrap")
     declared = sys.modules.get("otto.declared")
-    config_repo = sys.modules.get("otto.config.repo")
+    config_repo = sys.modules.get("otto.config.project")
     left_initiate = None if bootstrap is None else bootstrap._initiate
     if config_repo is not None:
         config_repo._discovery = (
@@ -2352,7 +2355,7 @@ def _clirunner_live_log_capture_guard():
 def _isolate_sys_path():
     """Snapshot ``sys.path`` before each test; restore it in place after.
 
-    ``Repo.add_libs_to_pythonpath()`` appends each repo's ``libs`` dirs to
+    ``Project.add_libs_to_pythonpath()`` appends each repo's ``libs`` dirs to
     ``sys.path`` with no cleanup of its own — a one-shot, startup-time call in
     production, fine there. In-process tests trigger it from several trees:
     ``bootstrap()`` registration (``tests/unit/bootstrap``,
@@ -2517,7 +2520,7 @@ def _restore_tables(
     ``importlib.import_module`` of it is a no-op and never re-runs the
     registration — leaving the module imported but its entry gone. A downstream
     test that relies on re-import to re-register (e.g.
-    ``Repo.import_init_modules`` mirroring bootstrap order) then fails with
+    ``Project.import_init_modules`` mirroring bootstrap order) then fails with
     ``... is not a registered frame``. This surfaces only single-process
     (``-n0``); ``-n auto`` scatters the importer and the victim across workers.
 

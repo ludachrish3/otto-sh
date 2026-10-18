@@ -7,15 +7,15 @@ impairments, otto tunnels. A lab can be fully INSTALLED and filthy, or fully
 UNINSTALLED and still wearing a tunnel, which is why neither axis is derived
 from the other.
 
-Deliberately free of otto imports: every layer above — per-repo actions, the
+Deliberately free of otto imports: every layer above — per-project actions, the
 orchestrator, instructions, fixtures — reads this vocabulary, and a leaf with no
 edges can be imported from any of them without a cycle to hold apart.
 
 >>> from otto.project.state import InstallState, ProjectStatus
->>> status = ProjectStatus(overall=InstallState.PARTIAL, repos={"app": InstallState.PARTIAL})
+>>> status = ProjectStatus(overall=InstallState.PARTIAL, projects={"app": InstallState.PARTIAL})
 >>> status.overall
 <InstallState.PARTIAL: 'partial'>
->>> ProjectStatus(overall=InstallState.UNINSTALLED).repos
+>>> ProjectStatus(overall=InstallState.UNINSTALLED).projects
 {}
 """
 
@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 
 
 class InstallState(enum.Enum):
-    """Tri-state install answer for one repo or for the lab as a whole.
+    """Tri-state install answer for one project or for the lab as a whole.
 
     THE MIDDLE MEMBER IS WHY THIS IS NOT A BOOLEAN. A half-installed lab and a
     clean one are the same answer to ``is_installed()`` -- False -- and acting
@@ -39,8 +39,8 @@ class InstallState(enum.Enum):
 
 
 @dataclass(frozen=True)
-class RepoScope:
-    """What per-project scoping decided about one repo, in display terms.
+class ProjectScopeSummary:
+    """What per-project scoping decided about one project, in display terms.
 
     The rendering projection of :class:`otto.config.scope.ProjectScope` --
     sorted, stringly, and without the compiled patterns -- so that a status
@@ -51,33 +51,33 @@ class RepoScope:
     display type, reachable only from a finished report, is one no walk can
     pick it up from by accident.
 
-    >>> from otto.project.state import RepoScope
-    >>> RepoScope(applicable=False, loaded_labs=("bench", "floor")).universe
+    >>> from otto.project.state import ProjectScopeSummary
+    >>> ProjectScopeSummary(applicable=False, loaded_labs=("bench", "floor")).universe
     ()
     """
 
     applicable: bool
-    """Whether any loaded lab applies to this repo.
+    """Whether any loaded lab applies to this project.
 
-    False is D3's exclusion -- the repo DECLARED labs and none of them was
+    False is D3's exclusion -- the project DECLARED labs and none of them was
     loaded -- which is why it is reported rather than implied by an empty
-    :attr:`applicable_labs`. An undeclared repo applies to everything (the
+    :attr:`applicable_labs`. An undeclared project applies to everything (the
     whole-lab fallback), so silence and exclusion must not render alike.
     """
 
     usable: bool = True
-    """Whether this run's walks acted on the repo at all -- D3's skip, either way.
+    """Whether this run's walks acted on the project at all -- D3's skip, either way.
 
     NOT a synonym for :attr:`applicable`, and the pair is what makes the two
-    skipped rows tellable apart. A repo can apply to a loaded lab and still be
+    skipped rows tellable apart. A project can apply to a loaded lab and still be
     left out, because its ``host_patterns`` match no host there; its fleet is
-    as empty as an excluded repo's, but its ``-l`` and its ``lab_patterns`` are
+    as empty as an excluded project's, but its ``-l`` and its ``lab_patterns`` are
     right and a row blaming the labs would send the reader to change them. So
     ``applicable and not usable`` is exactly the host-starved case, and
     ``not applicable`` is exactly the excluded one.
 
     Computed once, from :func:`~otto.config.scope.unusable_scope` -- the same
-    predicate the walks skip on and the current repo aborts on -- rather than
+    predicate the walks skip on and the current project aborts on -- rather than
     re-derived here from the other fields, which would put D3's condition in a
     third place.
     """
@@ -85,39 +85,39 @@ class RepoScope:
     loaded_labs: "tuple[str, ...]" = ()
     """Every lab this run loaded, in load order -- the "not applicable to WHAT" half.
 
-    Carried even when the repo is applicable, because the row that needs it
+    Carried even when the project is applicable, because the row that needs it
     most is the one that has nothing else to say: "not applicable" without the
     labs reads as a bug in otto rather than as the wrong ``-l``.
     """
 
     applicable_labs: "tuple[str, ...]" = ()
-    """The loaded labs this repo does apply to, sorted (empty when it applies to none)."""
+    """The loaded labs this project does apply to, sorted (empty when it applies to none)."""
 
     universe: "tuple[str, ...]" = ()
-    """Host ids the repo targeted AT RESOLVE TIME, sorted -- display only.
+    """Host ids the project targeted AT RESOLVE TIME, sorted -- display only.
 
     A snapshot, never a walk list: fleet iteration re-derives membership per
     host so a container that joins after resolution is scoped correctly. It is
     here because ``status --full`` is where an operator asks "which hosts does
-    this repo even mean", and answering that from anything else would mean a
+    this project even mean", and answering that from anything else would mean a
     second membership rule.
     """
 
     host_patterns: "tuple[str, ...]" = ()
     """The declared ``host_patterns``, as written (empty when undeclared).
 
-    Carried for the row that has nothing else to say: a repo left out because
+    Carried for the row that has nothing else to say: a project left out because
     its patterns matched no host is unactionable without the patterns that
-    did not match, exactly as an excluded repo's row is unactionable without
+    did not match, exactly as an excluded project's row is unactionable without
     the loaded labs.
     """
 
     skipped: bool = False
-    """Whether the dependency pass left this repo out of the run, so no walk acted on it.
+    """Whether the dependency pass left this project out of the run, so no walk acted on it.
 
-    The repo parsed, so its declaration still counts toward the fleet of
-    interest, but it registered nothing. Derived by the orchestrator: the repo
-    is among the parsed repos and absent from the walk order. Its row is shown
+    The project parsed, so its declaration still counts toward the fleet of
+    interest, but it registered nothing. Derived by the orchestrator: the project
+    is among the parsed projects and absent from the walk order. Its row is shown
     so that a declaration narrowing the fleet is never invisible in the display
     that explains the fleet.
     """
@@ -125,39 +125,39 @@ class RepoScope:
 
 @dataclass
 class ProjectStatus:
-    """Lab-level aggregate plus the per-repo detail behind it.
+    """Lab-level aggregate plus the per-project detail behind it.
 
     Both halves are reported because they answer different questions: the
-    aggregate decides whether a fixture converges, while the per-repo map says
-    WHICH repo is the odd one out. A repo that is not counted (see the
-    orchestrator's counted-repo rule) is absent from :attr:`repos` entirely
+    aggregate decides whether a fixture converges, while the per-project map says
+    WHICH project is the odd one out. A project that is not counted (see the
+    orchestrator's counted-project rule) is absent from :attr:`projects` entirely
     rather than present with a made-up state.
     """
 
     overall: InstallState
-    """The lab's answer across every counted repo."""
+    """The lab's answer across every counted project."""
 
-    repos: "dict[str, InstallState]" = field(default_factory=dict)
-    """Per-repo state, keyed by repo name; counted and applicable repos only."""
+    projects: "dict[str, InstallState]" = field(default_factory=dict)
+    """Per-project state, keyed by project name; counted and applicable projects only."""
 
-    scoping: "dict[str, RepoScope]" = field(default_factory=dict)
-    """Per-repo scoping verdict, keyed by repo name, in ``OTTO_SUT_DIRS`` order.
+    scoping: "dict[str, ProjectScopeSummary]" = field(default_factory=dict)
+    """Per-project scoping verdict, keyed by project name, in ``OTTOPATH`` order.
 
-    A SEPARATE MAPPING FROM :attr:`repos`, not a richer value in it, because a
-    repo this run does not apply to has no install state at all -- otto never
+    A SEPARATE MAPPING FROM :attr:`projects`, not a richer value in it, because a
+    project this run does not apply to has no install state at all -- otto never
     asked it, and asking would have contacted hosts outside its fleet of
     interest. Folding the two would force either a fabricated state or an
     ``InstallState | None`` that every existing reader would have to learn.
 
-    Every parsed repo has a row, a repo the dependency pass skipped included
-    (marked :attr:`RepoScope.skipped`), because a skipped repo's declaration
+    Every parsed project has a row, a project the dependency pass skipped included
+    (marked :attr:`ProjectScopeSummary.skipped`), because a skipped project's declaration
     still narrows the fleet.
 
     Empty ONLY when nothing was resolved -- a library context, a run with no
-    SUT directories. Not the whole-lab fallback, which is a different thing and does
-    populate this: an undeclared repo still gets a verdict (it applies to every
-    loaded lab and targets every host), so a lab where no repo declared
-    ``[project]`` reports a row per repo rather than nothing at all.
+    project roots. Not the whole-lab fallback, which is a different thing and does
+    populate this: an undeclared project still gets a verdict (it applies to every
+    loaded lab and targets every host), so a lab where no project declared
+    ``[project]`` reports a row per project rather than nothing at all.
     """
 
 
@@ -186,8 +186,8 @@ class CleanlinessKind(enum.Enum):
     it.
     """
 
-    REPO = "repo"
-    """One repo's own products and dev tools (``ProjectActions.is_clean``)."""
+    PROJECT = "project"
+    """One project's own products and dev tools (``ProjectActions.is_clean``)."""
 
     TOOLCHAIN = "toolchain"
     """One host's toolchain tools — host-global, so named by host id."""
@@ -207,7 +207,7 @@ class CleanlinessItem:
     """Which cleanup step this row answers for."""
 
     name: str
-    """Repo name, host id, link id, or tunnel id — whatever the row is about."""
+    """Project name, host id, link id, or tunnel id — whatever the row is about."""
 
     state: Cleanliness
     """What was learned. UNKNOWN means nobody managed to look."""
@@ -256,7 +256,7 @@ class CleanlinessReport:
     """Every cleanliness row the lab surrendered, in ``cleanup``'s own order.
 
     Rows are grouped by :attr:`CleanlinessItem.kind` and the groups run in the
-    order ``cleanup`` performs them — repos, toolchain tools, impairments,
+    order ``cleanup`` performs them — projects, toolchain tools, impairments,
     tunnels — so a renderer can print a section heading on the row where the
     kind changes without sorting anything first.
     """
@@ -287,15 +287,15 @@ class CleanlinessReport:
 
 
 def combine_install_states(results: "dict[str, InstallState]") -> InstallState:
-    """Fold each counted repo's state into the lab's: the ``status`` combiner.
+    """Fold each counted project's state into the lab's: the ``status`` combiner.
 
-    Zero counted repos is UNINSTALLED, not a vacuous INSTALLED. All INSTALLED
+    Zero counted projects is UNINSTALLED, not a vacuous INSTALLED. All INSTALLED
     is INSTALLED, all UNINSTALLED is UNINSTALLED, anything mixed -- or any
     PARTIAL -- is PARTIAL.
 
     THE CHECK ORDER IS LOAD-BEARING: ``all()`` is vacuously true over an empty
     sequence, so whichever of the two ``all()`` arms is asked first is the
-    answer for a lab with no counted repos. UNINSTALLED first IS the zero-repo
+    answer for a lab with no counted projects. UNINSTALLED first IS the zero-project
     rule -- swapping the arms leaves every other case unchanged and silently
     reports an empty lab as fully installed.
     """

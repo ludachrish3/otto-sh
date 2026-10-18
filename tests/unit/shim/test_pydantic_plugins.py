@@ -18,6 +18,8 @@ from pathlib import Path
 
 import pytest
 
+from otto.config.env import is_otto_env_var
+
 VAR = "PYDANTIC_DISABLE_PLUGINS"
 
 # Records the variable's value each time pydantic asks for its plugins, which
@@ -44,7 +46,7 @@ with open(os.environ["SPY_RESULT"], "w") as fh:
 
 
 def _clean_env(tmp_path: Path) -> dict[str, str]:
-    env = {k: v for k, v in os.environ.items() if not k.startswith("OTTO_") and k != VAR}
+    env = {k: v for k, v in os.environ.items() if not is_otto_env_var(k) and k != VAR}
     env["OTTO_HOME"] = str(tmp_path / "home")
     env["SPY_RESULT"] = str(tmp_path / "seen.json")
     return env

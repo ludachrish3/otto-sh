@@ -1,8 +1,8 @@
-"""Cross-repo composition: ordered walks, one debug sweep, and the converge layer.
+"""Cross-project composition: ordered walks, one debug sweep, and the converge layer.
 
-Where :mod:`otto.project.actions` is what ONE repo does to the fleet, this is
-what the LAB does: the same verbs, composed across every configured repo in
-dependency order, plus the host-global steps that belong to no repo at all.
+Where :mod:`otto.project.actions` is what ONE project does to the fleet, this is
+what the LAB does: the same verbs, composed across every configured project in
+dependency order, plus the host-global steps that belong to no project at all.
 
 Module-level async functions over the ambient context (the
 ``otto.lab.all_hosts`` idiom), so an instruction, a suite, or a pytest
@@ -14,10 +14,10 @@ THREE RULES DECIDE EVERY WALK BELOW, AND THE FIRST TWO ARE THE INSTRUCTION
 TABLE'S -- :data:`otto.instruction_catalog.PROJECT_INSTRUCTIONS` holds one spec per
 name (``walk``, ``continue_on_failure``, ``require_dependencies``,
 ``combine_results``, ``render``), fixed by whoever declared the name first, so
-a repo that adds a project instruction gets the same machinery otto's six use.
+a project that adds a project instruction gets the same machinery otto's six use.
 
 * **Direction.** A ``forward`` walk takes dependencies first
-  (:attr:`~otto.context.OttoContext.ordered_repos`' own order); ``reverse``
+  (:attr:`~otto.context.OttoContext.ordered_projects`' own order); ``reverse``
   takes dependents first, because a dependent must come down before the thing
   it depends on. The order is READ, never rewritten -- the walk reverses a
   COPY of the list it is handed; an in-place ``.reverse()`` on a caller's list
@@ -25,20 +25,20 @@ a repo that adds a project instruction gets the same machinery otto's six use.
 * **Failure.** Building is fail-fast: installing a dependent on top of a
   dependency that is known to be missing produces a lab nobody can reason
   about. Tearing down and gathering logs are best-effort
-  (``continue_on_failure``): every repo is attempted, and the first failure is
-  what returns. A repo that will not go must not strand the ones after it.
+  (``continue_on_failure``): every project is attempted, and the first failure is
+  what returns. A project that will not go must not strand the ones after it.
 * **Host-global steps are the orchestrator's alone.** Debug logs and toolchain
-  tools belong to a host, not to a repo (spec section 5), so the per-repo
+  tools belong to a host, not to a project (spec section 5), so the per-project
   actions refuse to touch them and this layer performs each ONCE across the
   fleet: the debug sweep AFTER teardown -- teardown-time activity is what those
   logs exist to capture -- and the toolchain steps at the far end, where one
-  toolchain shared by every owner can be placed or removed without a repo
+  toolchain shared by every owner can be placed or removed without a project
   taking its neighbours' tooling with it. Netem impairments and otto tunnels
   join them in :func:`cleanup` for the same reason, one step further out: they
-  belong to the LAB rather than to any host, and no repo's products or dev
+  belong to the LAB rather than to any host, and no project's products or dev
   tools put them there.
 
-The orchestrator itself is not overrideable in v1 (recorded decision): a repo
+The orchestrator itself is not overrideable in v1 (recorded decision): a project
 customizes by registering its own :class:`~otto.project.actions.ProjectActions`.
 """
 
@@ -72,15 +72,15 @@ from .state import (
     CleanlinessKind,
     CleanlinessReport,
     InstallState,
+    ProjectScopeSummary,
     ProjectStatus,
-    RepoScope,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterable
 
     from ..config.dependencies import ResolvedDependency
-    from ..config.repo import Repo
+    from ..config.project import Project
     from ..config.scope import ProjectScope
     from ..host.host import Host
     from ..instruction_catalog import ProjectInstructionBody
@@ -103,7 +103,7 @@ def _literal(message: str) -> str:
     "not applicable to the loaded lab(s) [bench, floor]" arrives as "not
     applicable to the loaded lab(s)", with the one fact the reader needed gone
     and nothing to suggest anything is missing. Every message this module logs
-    interpolates a lab list, a pattern list or a repo name, so none of them can
+    interpolates a lab list, a pattern list or a project name, so none of them can
     be assumed bracket-free.
 
     ESCAPING AT THE SOURCE IS THE ONLY FIX THAT REACHES THE FILES.
@@ -130,7 +130,7 @@ def _literal(message: str) -> str:
 
 
 class InactiveRequiredDependencyError(OttoError):
-    """A kept repo requires a provider the LABS switched off (activation spec section 4).
+    """A kept project requires a provider the LABS switched off (activation spec section 4).
 
     Raised BEFORE any walk: the labs say the provider cannot be here while the
     dependent says it must be handled, which is a contradictory configuration
@@ -153,8 +153,8 @@ class InactiveRequiredDependencyError(OttoError):
     """
 
 
-def _lab() -> "tuple[OttoContext, list[Repo]]":
-    """Return the active context and the repos to walk, dependencies first -- D3 enforced.
+def _lab() -> "tuple[OttoContext, list[Project]]":
+    """Return the active context and the projects to walk, dependencies first -- D3 enforced.
 
     The context is imported HERE rather than at module scope, matching the
     package's circular-import idiom (:mod:`otto.config` and :mod:`otto.context`
@@ -165,7 +165,7 @@ def _lab() -> "tuple[OttoContext, list[Repo]]":
     and "first" is the whole requirement: the refusal has to land before any
     device is contacted. One seam rather than a line repeated down the module
     means a verb added later cannot forget it, and the two facts the gate needs
-    -- the live context and the driving repo -- are exactly what this helper
+    -- the live context and the driving project -- are exactly what this helper
     already goes and gets. The verbs that never reach it directly
     (:func:`is_uninstalled`, the three ``ensure_*``, and ``install --ensure``)
     are gated by the verb they delegate to, before that delegate does anything
@@ -175,45 +175,45 @@ def _lab() -> "tuple[OttoContext, list[Repo]]":
 
     ctx = get_context()
     _enforce_current_scope(ctx)
-    return ctx, ctx.ordered_repos
+    return ctx, ctx.ordered_projects
 
 
 def _enforce_current_scope(ctx: "OttoContext") -> None:
-    """Raise when the DRIVING repo's own fleet declaration cannot work (D3's abort).
+    """Raise when the DRIVING project's own fleet declaration cannot work (D3's abort).
 
-    THE DRIVING REPO IS ``ctx.repos[0]`` -- the first ``OTTO_SUT_DIRS``
-    entry, the project whose run this is -- and NOT the first repo of the walk
-    order this module iterates. Those are two different repos in any lab with a
-    dependency: :attr:`~otto.context.OttoContext.ordered_repos` is a topological
+    THE DRIVING PROJECT IS ``ctx.projects[0]`` -- the first ``OTTOPATH``
+    entry, the project whose run this is -- and NOT the first project of the walk
+    order this module iterates. Those are two different projects in any lab with a
+    dependency: :attr:`~otto.context.OttoContext.ordered_projects` is a topological
     reorder, dependencies first, so its head is the thing being depended ON.
     Gating on that one would abort a healthy project's run over a dependency's
     declaration, which is precisely the veto D3's asymmetry exists to prevent.
 
     The message is :func:`~otto.config.scope.require_current_scope`'s own: it
-    holds the verdict, and one place rendering "this repo's scope cannot work"
+    holds the verdict, and one place rendering "this project's scope cannot work"
     is what keeps the CLI's wording, bootstrap's D2 refusal and this one
     identical.
 
-    A run with no repos at all has no current repo to enforce, and that is
+    A run with no projects at all has no current project to enforce, and that is
     legal -- ``otto run`` in a bare lab directory -- so the lookup is guarded
     rather than indexed.
     """
     from ..config.scope import require_current_scope, scopes_of
 
-    repos = ctx.repos
-    if repos:
-        require_current_scope(scopes_of(ctx), repos[0].name)
+    projects = ctx.projects
+    if projects:
+        require_current_scope(scopes_of(ctx), projects[0].name)
 
 
 def _skip_message(scope: "ProjectScope", verb: str) -> str:
-    """Render WHY a repo is being left out of *verb*'s walk, per condition.
+    """Render WHY a project is being left out of *verb*'s walk, per condition.
 
     TWO CONDITIONS, TWO TEXTS, each reachable only under its own -- the same
     split ``otto.config.scope._unusable_scope_message`` makes for the
     abort, and for the same reason: "no loaded lab applies to you" and "no host
     in the labs that do apply matches your host_patterns" have different fixes,
     and one text covering both sends half its readers to edit the wrong line.
-    The excluded repo's reader needs the loaded labs beside the declared
+    The excluded project's reader needs the loaded labs beside the declared
     ``lab_patterns``; the host-starved one's needs the ``host_patterns``,
     because its ``-l`` and its ``lab_patterns`` are already right and saying
     otherwise would send it to change them.
@@ -222,20 +222,20 @@ def _skip_message(scope: "ProjectScope", verb: str) -> str:
         scope: The verdict being skipped -- unusable by
             :func:`~otto.config.scope.unusable_scope`.
         verb: What is being skipped, so the reader knows which operation left
-            the repo out.
+            the project out.
 
     Returns:
         The WARNING line, ready to log.
     """
     if scope.excluded:
         return (
-            f"repo {scope.repo_name!r} is not applicable to the loaded lab(s) "
+            f"project {scope.project_name!r} is not applicable to the loaded lab(s) "
             f"[{', '.join(scope.loaded_labs) or '(none)'}] "
             f"(lab_patterns: {', '.join(scope.lab_patterns) or '(none)'}) "
             f"— skipping it for {verb}"
         )
     return (
-        f"repo {scope.repo_name!r} applies to lab(s) "
+        f"project {scope.project_name!r} applies to lab(s) "
         f"[{', '.join(sorted(scope.applicable_labs)) or '(none)'}] but its [project] "
         f"host_patterns ({', '.join(scope.host_patterns) or '(none)'}) match no host there "
         f"— skipping it for {verb}"
@@ -244,15 +244,15 @@ def _skip_message(scope: "ProjectScope", verb: str) -> str:
 
 def _applicable(
     ctx: "OttoContext",
-    repos: "Iterable[Repo]",
+    projects: "Iterable[Project]",
     verb: str,
     *,
     require_dependencies: bool,
     announce: bool = True,
-) -> "list[Repo]":
-    """Return the repos this run applies to, announcing every one it drops (D3's skip).
+) -> "list[Project]":
+    """Return the projects this run applies to, announcing every one it drops (D3's skip).
 
-    THE DEPENDENCY HALF OF D3. A repo whose declaration admits no host in this
+    THE DEPENDENCY HALF OF D3. A project whose declaration admits no host in this
     run has nothing here to act on, so every walk below leaves it out -- and
     says so, once, at WARNING. Loud is the requirement, not merely correct: a
     lab silently missing one project's products looks exactly like a lab where
@@ -260,37 +260,37 @@ def _applicable(
     suspect a settings file.
 
     Skipping is also what keeps the walk WORKING rather than merely quiet. Such
-    a repo's own fleet walk is refused by
+    a project's own fleet walk is refused by
     :func:`~otto.config.scope.require_nonempty_fleet` -- its base set is empty
     by construction -- so asking it to install, or merely to answer
     ``is_clean``, raises rather than returning, and one inapplicable dependency
     would take down every verb of the project that depends on it. That is why
     the condition is :func:`~otto.config.scope.unusable_scope`'s WHOLE
-    condition and not just ``excluded``: a repo whose ``lab_patterns`` match a
+    condition and not just ``excluded``: a project whose ``lab_patterns`` match a
     loaded lab while its ``host_patterns`` match no host there is admitted by
     the narrower test, raises out of its own walk, and takes the run with it --
     including ``cleanup``, whose every-step-runs contract then strands the
     debug sweep, the toolchain removal and the tunnel reap.
 
-    An UNDECLARED repo is never dropped: no declaration is the whole-lab
+    An UNDECLARED project is never dropped: no declaration is the whole-lab
     fallback (§6), not an exclusion, and confusing the two would silently
-    remove every product-less repo from the walks it has always been in.
+    remove every product-less project from the walks it has always been in.
 
     THE SWITCH AXIS RIDES ON TOP OF ALL OF THAT, and it does not get its own
     condition here. :func:`~otto.config.scope.active` is the whole verdict --
     exclude switch, then include switch, then the lab inference above, then
     default-on -- because every enforcement point in otto (bootstrap-error
     demotion, instruction dispatch, these walks) has to agree about which
-    repos this invocation deals with, and a second copy of the order spelled
+    projects this invocation deals with, and a second copy of the order spelled
     at one of them is a copy that drifts. What is decided HERE is only what to
     SAY: :func:`~otto.config.scope.switched_off` attributes the drop to the
     operator's own flag, because the D3 wording would send someone who typed
     ``-E`` off to fix a settings file that is perfectly correct. The reverse
     matters too -- a lab-inferred skip must NOT claim a switch nobody typed.
 
-    THE DEPENDENCY PASS RUNS OVER THE KEPT REPOS, not the dropped ones, and
-    that is the point of it: a dropped repo's own dependencies are nobody's
-    problem this run, while a KEPT repo whose provider just went away is about
+    THE DEPENDENCY PASS RUNS OVER THE KEPT PROJECTS, not the dropped ones, and
+    that is the point of it: a dropped project's own dependencies are nobody's
+    problem this run, while a KEPT project whose provider just went away is about
     to be built on top of something that is not there. Three bits decide what
     happens -- whether the dependency is ``required``, whether the provider
     left by switch or by lab verdict, and whether this walk BUILDS:
@@ -329,9 +329,9 @@ def _applicable(
 
     Args:
         ctx: The live context, for its resolved verdicts and its switches.
-        repos: The repos about to be walked, in walk order.
+        projects: The projects about to be walked, in walk order.
         verb: What is being skipped, named in the log line so the reader knows
-            which operation left the repo out.
+            which operation left the project out.
         require_dependencies: Whether this walk REQUIRES ITS DEPENDENCIES --
             which is to say, whether it builds onto the lab. True only for
             ``install`` and ``install-tools``; see above for why a teardown or
@@ -342,49 +342,49 @@ def _applicable(
             dispatch; the refusal still raises either way.
 
     Returns:
-        The repos to walk, in the order they arrived.
+        The projects to walk, in the order they arrived.
 
     Raises:
         InactiveRequiredDependencyError: *require_dependencies* and a kept
-            repo requires a provider this run dropped on the LAB axis. See
+            project requires a provider this run dropped on the LAB axis. See
             that class for why the switch shape warns instead.
     """
     from ..config.scope import active, scopes_of, switched_off
     from ..models.dependencies import normalize_name
 
-    keep: "list[Repo]" = []
-    dropped: "dict[str, Repo]" = {}
-    for repo in repos:
-        if active(repo.name, ctx):
-            keep.append(repo)
+    keep: "list[Project]" = []
+    dropped: "dict[str, Project]" = {}
+    for project in projects:
+        if active(project.name, ctx):
+            keep.append(project)
             continue
         # Keyed by the NORMALIZED name because that is what a dependency
         # declaration is matched on; ``active`` above was asked with the raw
-        # ``Repo.name``, which is how ``scopes_of(ctx)`` is keyed. Two spellings,
+        # ``Project.name``, which is how ``scopes_of(ctx)`` is keyed. Two spellings,
         # two lookups, each with the one its own mapping uses.
-        dropped[normalize_name(repo.name)] = repo
+        dropped[normalize_name(project.name)] = project
         if not announce:
             continue
-        if switched_off(repo.name, ctx):
+        if switched_off(project.name, ctx):
             logger.warning(
                 _literal(
-                    f"repo {repo.name!r} switched off for this run "
-                    f"(--exclude-projects {normalize_name(repo.name)}) — skipping it for {verb}"
+                    f"project {project.name!r} switched off for this run "
+                    f"(--exclude-projects {normalize_name(project.name)}) — skipping it for {verb}"
                 )
             )
         else:
             # Not switched off and not active leaves exactly one cause, so the
             # verdict is present: ``active`` resolves True for a missing one.
-            logger.warning(_literal(_skip_message(scopes_of(ctx)[repo.name], verb)))
+            logger.warning(_literal(_skip_message(scopes_of(ctx)[project.name], verb)))
 
-    for repo in keep:
-        for dep in repo.dependencies:
+    for project in keep:
+        for dep in project.dependencies:
             provider = dropped.get(dep.normalized)
             if provider is None:
                 continue
             _announce_dropped_provider(
                 ctx,
-                repo,
+                project,
                 provider,
                 dep,
                 verb,
@@ -396,15 +396,15 @@ def _applicable(
 
 def _announce_dropped_provider(
     ctx: "OttoContext",
-    repo: "Repo",
-    provider: "Repo",
+    project: "Project",
+    provider: "Project",
     dep: "ResolvedDependency",
     verb: str,
     *,
     require_dependencies: bool,
     announce: bool = True,
 ) -> None:
-    """Say what a kept *repo* losing *provider* means -- or refuse the run over it.
+    """Say what a kept *project* losing *provider* means -- or refuse the run over it.
 
     Split out of :func:`_applicable` so the arms read as arms of one decision
     rather than as nesting inside two loops; which arm applies, and why
@@ -415,9 +415,9 @@ def _announce_dropped_provider(
 
     Args:
         ctx: The live context, for its switches and verdicts.
-        repo: The kept repo whose declaration names *provider*.
-        provider: The dropped repo, as this run resolved it.
-        dep: *repo*'s resolved entry for it -- ``required`` is the bit that
+        project: The kept project whose declaration names *provider*.
+        provider: The dropped project, as this run resolved it.
+        dep: *project*'s resolved entry for it -- ``required`` is the bit that
             decides refuse-versus-note.
         verb: The walk being performed, named in the survivable arm so the
             reader knows which operation decided to carry on.
@@ -438,7 +438,7 @@ def _announce_dropped_provider(
             return
         logger.warning(
             _literal(
-                f"repo {repo.name!r} requires {provider.name!r}, which was "
+                f"project {project.name!r} requires {provider.name!r}, which was "
                 f"switched off (--exclude-projects {dep.normalized}) — "
                 f"proceeding as though {provider.name} is handled externally"
             )
@@ -452,16 +452,16 @@ def _announce_dropped_provider(
                 return
             logger.warning(
                 _literal(
-                    f"repo {repo.name!r} requires {provider.name!r}, which is not "
+                    f"project {project.name!r} requires {provider.name!r}, which is not "
                     f"applicable to the loaded lab(s) [{labs}] — continuing, because "
-                    f"{verb} does not build {repo.name} on top of it. A build-up verb "
+                    f"{verb} does not build {project.name} on top of it. A build-up verb "
                     f"will refuse until a lab {provider.name} applies to is loaded, or "
                     f"--exclude-projects={dep.normalized} declares it handled externally."
                 )
             )
             return
         raise InactiveRequiredDependencyError(
-            f"repo {repo.name!r} requires {provider.name!r}, but "
+            f"project {project.name!r} requires {provider.name!r}, but "
             f"{provider.name} is not applicable to the loaded lab(s) "
             f"[{labs}] "
             f"(lab_patterns: {', '.join(scope.lab_patterns) or '(none)'}). "
@@ -478,13 +478,13 @@ def _announce_dropped_provider(
     )
     logger.warning(
         _literal(
-            f"repo {repo.name!r}: optional dependency {provider.name!r} "
+            f"project {project.name!r}: optional dependency {provider.name!r} "
             f"not satisfied for this run — {provider.name} is inactive ({reason})"
         )
     )
 
 
-def _scope_row(scope: "ProjectScope", *, skipped: bool) -> RepoScope:
+def _scope_row(scope: "ProjectScope", *, skipped: bool) -> ProjectScopeSummary:
     """Project one resolved verdict into the row :func:`status` reports it as.
 
     Sorted here rather than at the renderer because two surfaces already print
@@ -493,11 +493,11 @@ def _scope_row(scope: "ProjectScope", *, skipped: bool) -> RepoScope:
     changed or only the ordering did.
 
     *skipped* is the caller's: the verdict cannot know it, because a
-    dependency skip changes what a repo registers and never what it declared.
+    dependency skip changes what a project registers and never what it declared.
     """
     from ..config.scope import unusable_scope
 
-    return RepoScope(
+    return ProjectScopeSummary(
         applicable=not scope.excluded,
         usable=not unusable_scope(scope),
         loaded_labs=tuple(scope.loaded_labs),
@@ -572,83 +572,83 @@ def _source(opts: Any, default_cls: type) -> OptionsSource:
 
 
 def _walk_order(
-    name: str, ctx: "OttoContext", repos: "Iterable[Repo]", *, announce: bool = True
-) -> "list[tuple[Repo, ProjectActions, ProjectInstructionBody]]":
-    """Return the ordered (repo, actions, body) triples a walk of *name* visits.
+    name: str, ctx: "OttoContext", projects: "Iterable[Project]", *, announce: bool = True
+) -> "list[tuple[Project, ProjectActions, ProjectInstructionBody]]":
+    """Return the ordered (project, actions, body) triples a walk of *name* visits.
 
     THE ONE WALK: :func:`_run_bodies` (a real run) and
-    :func:`project_instruction_body_options` (the per-repo options build) both
-    resolve their repos through this -- same order (copied before
-    ``spec.walk == "reverse"`` reverses it, since ``repos`` may be the
+    :func:`project_instruction_body_options` (the per-project options build) both
+    resolve their projects through this -- same order (copied before
+    ``spec.walk == "reverse"`` reverses it, since ``projects`` may be the
     caller's own list, and an in-place ``.reverse()`` would leave that caller
-    walking backwards), same applicability filter (:func:`_applicable`, so a repo no
+    walking backwards), same applicability filter (:func:`_applicable`, so a project no
     loaded lab applies to is silently skipped, not reported as an absence),
-    and the same body resolved per repo (:func:`actions_for` +
-    ``entry.body_for``) -- so a bad value raises from the identical repo, in
+    and the same body resolved per project (:func:`actions_for` +
+    ``entry.body_for``) -- so a bad value raises from the identical project, in
     the identical position, whichever caller is walking.
 
     ``require_dependencies`` is threaded straight to :func:`_applicable` and is
     the ONE thing that can make this raise rather than return: a walk that
-    requires its dependencies refuses a kept repo whose required provider the
+    requires its dependencies refuses a kept project whose required provider the
     labs dropped. *announce* is threaded there too: False keeps a walk that
     precedes the acting one from logging each skip a second time.
     """
     entry = PROJECT_INSTRUCTIONS.get(name)
     spec = entry.spec
-    ordered = list(repos)
+    ordered = list(projects)
     if spec.walk == "reverse":
         ordered.reverse()
-    triples: "list[tuple[Repo, ProjectActions, ProjectInstructionBody]]" = []
+    triples: "list[tuple[Project, ProjectActions, ProjectInstructionBody]]" = []
     kept = _applicable(
         ctx, ordered, name, require_dependencies=spec.require_dependencies, announce=announce
     )
-    for repo in kept:
-        actions = actions_for(repo, ctx)
+    for project in kept:
+        actions = actions_for(project, ctx)
         body = entry.body_for(type(actions))
         # Unreachable: every registered actions class descends from
         # ProjectActions, whose own bodies are in the table, so the MRO walk
         # body_for performs always finds one.
         if body is None:  # pragma: no cover
             continue
-        triples.append((repo, actions, body))
+        triples.append((project, actions, body))
     return triples
 
 
 async def _run_bodies(
-    name: str, ctx: "OttoContext", repos: "Iterable[Repo]", source: OptionsSource
+    name: str, ctx: "OttoContext", projects: "Iterable[Project]", source: OptionsSource
 ) -> "dict[str, Any]":
-    """Run every applicable repo's body for *name* in the spec's walk order.
+    """Run every applicable project's body for *name* in the spec's walk order.
 
     Each body is built ITS OWN options class from *source* -- the subset of
     the CLI's kwargs it declares, or the fields it shares with a suite's
-    options by declaring class -- so a repo never sees a neighbour's flags.
+    options by declaring class -- so a project never sees a neighbour's flags.
     ``continue_on_failure`` False stops after the first failing Result; True
-    attempts every repo. The dict preserves walk order for the combiner.
+    attempts every project. The dict preserves walk order for the combiner.
     """
     spec = PROJECT_INSTRUCTIONS.get(name).spec
     results: "dict[str, Any]" = {}
-    for repo, actions, body in _walk_order(name, ctx, repos):
+    for project, actions, body in _walk_order(name, ctx, projects):
         method = getattr(actions, body.method_name)
         if body.options_cls is None:
             result = await method()
         else:
             result = await method(source.build(body.options_cls))
-        results[repo.name] = result
+        results[project.name] = result
         if isinstance(result, Result) and not result.is_ok and not spec.continue_on_failure:
             break
     return results
 
 
 def _combine(name: str, results: "dict[str, Any]") -> Any:
-    """Apply the spec's combiner, or the default: first failure, repo name stamped in.
+    """Apply the spec's combiner, or the default: first failure, project name stamped in.
 
-    The repo name is baked into the message because the
+    The project name is baked into the message because the
     :class:`~otto.result.Result` cannot carry it, and "install failed" without
-    a repo name is not actionable in a multi-repo lab.
+    a project name is not actionable in a multi-project lab.
 
     THE DEFAULT ARM ONLY JUDGES A :class:`~otto.result.Result`, which is the
     same test ``_run_bodies`` applies to decide whether to stop. A body
-    that answers something else -- an install STATE, a count, a row a repo's
+    that answers something else -- an install STATE, a count, a row a project's
     own combiner folds -- has no ``is_ok`` to read, and a combiner is exactly
     what a spec declares when its bodies answer in another vocabulary. Reading
     the attribute anyway would turn "this instruction returns something else"
@@ -658,35 +658,37 @@ def _combine(name: str, results: "dict[str, Any]") -> Any:
     spec = PROJECT_INSTRUCTIONS.get(name).spec
     if spec.combine_results is not None:
         return spec.combine_results(results)
-    for repo_name, result in results.items():
+    for project_name, result in results.items():
         if isinstance(result, Result) and not result.is_ok:
-            return Result(result.status, msg=f"{name} failed in repo {repo_name!r}: {result.msg}")
+            return Result(
+                result.status, msg=f"{name} failed in project {project_name!r}: {result.msg}"
+            )
     return Result(Status.Success)
 
 
 async def _walk(
-    name: str, ctx: "OttoContext", repos: "Iterable[Repo]", source: OptionsSource
+    name: str, ctx: "OttoContext", projects: "Iterable[Project]", source: OptionsSource
 ) -> Any:
     """Run and combine: the shape every project instruction's walk shares.
 
     ``Any``, not ``Result``: the value is whatever the spec's ``combine_results``
     returns -- :func:`~otto.project.state.combine_install_states` hands back an
-    :class:`~otto.project.state.InstallState`, and a repo's own combiner may
+    :class:`~otto.project.state.InstallState`, and a project's own combiner may
     hand back anything its ``render`` knows how to print. Only the DEFAULT
     combiner answers in Results.
     """
-    return _combine(name, await _run_bodies(name, ctx, repos, source))
+    return _combine(name, await _run_bodies(name, ctx, projects, source))
 
 
 def project_instruction_body_options(
     name: str, ctx: "OttoContext", kwargs: "dict[str, Any]", *, announce: bool = True
 ) -> "list[Any]":
-    """Build every applicable repo's own options instance for *name*, in walk order.
+    """Build every applicable project's own options instance for *name*, in walk order.
 
-    The per-repo HALF of what a real run's ``_run_bodies`` builds -- both walk
-    the SAME ``_walk_order`` (same repos, same order, same body resolved per
-    repo), so a bad value raises the identical exception a real run's first
-    applicable repo would raise, before any device is touched. Two repos that
+    The per-project HALF of what a real run's ``_run_bodies`` builds -- both walk
+    the SAME ``_walk_order`` (same projects, same order, same body resolved per
+    project), so a bad value raises the identical exception a real run's first
+    applicable project would raise, before any device is touched. Two projects that
     never overrode a body's own class share ONE class and so contribute ONE
     instance, matching ``otto.instructions.bind_handler_kwargs``'s
     own-class-once rule for a standalone instruction.
@@ -701,7 +703,7 @@ def project_instruction_body_options(
     class again on the real path, but that class is one of the bodies walked
     here too, so this already validates it.
 
-    *announce* is False when a real run's walk follows, so each skipped repo
+    *announce* is False when a real run's walk follows, so each skipped project
     and dependency note is logged once, by the walk that acts; a dry run's
     walk is the only one and announces.
 
@@ -713,7 +715,7 @@ def project_instruction_body_options(
     source = OptionsSource.from_kwargs(kwargs)
     seen: set[type] = set()
     instances: list[Any] = []
-    for _repo, _actions, body in _walk_order(name, ctx, ctx.ordered_repos, announce=announce):
+    for _project, _actions, body in _walk_order(name, ctx, ctx.ordered_projects, announce=announce):
         if body.options_cls is None or body.options_cls in seen:
             continue
         seen.add(body.options_cls)
@@ -921,7 +923,7 @@ async def _remove_tunnels(ctx: "OttoContext") -> Result:
 
 
 async def install(opts: "InstallOptions | OptionsSource | None" = None) -> Result:
-    """Install every repo's products, dependencies first, stopping at the first failure.
+    """Install every project's products, dependencies first, stopping at the first failure.
 
     With ``ensure``, this is :func:`ensure_installed` instead: the lab's
     current state is consulted and only the missing work is done (that is what
@@ -943,43 +945,43 @@ async def _install(source: OptionsSource) -> Result:
     that finished by calling ``install`` again would read that same True and
     converge forever.
     """
-    ctx, repos = _lab()
-    return await _walk("install", ctx, repos, source)
+    ctx, projects = _lab()
+    return await _walk("install", ctx, projects, source)
 
 
 async def uninstall(opts: "UninstallOptions | OptionsSource | None" = None) -> Result:
-    """Uninstall every repo in reverse order (best-effort), then sweep debug logs once.
+    """Uninstall every project in reverse order (best-effort), then sweep debug logs once.
 
-    Product logs come off inside each repo's own uninstall, before that repo's
+    Product logs come off inside each project's own uninstall, before that project's
     teardown. The host-level debug sweep is this layer's, and runs after EVERY
-    repo has torn down: those logs belong to no repo, teardown-time activity is
-    what they exist to capture, and N repos each sweeping the same host would
+    project has torn down: those logs belong to no project, teardown-time activity is
+    what they exist to capture, and N projects each sweeping the same host would
     mean N transfers with each overwriting the last.
     """
     source = _source(opts, UninstallOptions)
     base = source.build(UninstallOptions)
-    ctx, repos = _lab()
-    torn = await _walk("uninstall", ctx, repos, source)
+    ctx, projects = _lab()
+    torn = await _walk("uninstall", ctx, projects, source)
     if not base.debug_logs:
         return torn
     return _first(torn, await _sweep_debug_logs(ctx))
 
 
 async def cleanup(opts: "CleanupOptions | OptionsSource | None" = None) -> Result:
-    """Clean the lab: every repo, the debug logs, the toolchain, impairments, tunnels.
+    """Clean the lab: every project, the debug logs, the toolchain, impairments, tunnels.
 
-    Strictly more than :func:`uninstall`: each repo also removes its own dev
+    Strictly more than :func:`uninstall`: each project also removes its own dev
     tools, the host-global toolchain tools come off, and the lab's own
     infrastructure -- netem impairments and otto tunnels -- comes down with
     them. The last three steps are here and nowhere else: one toolchain serves
-    every owner on a host, and an impairment or a tunnel belongs to no repo at
-    all, so a repo performing any of them would act for its neighbours.
+    every owner on a host, and an impairment or a tunnel belongs to no project at
+    all, so a project performing any of them would act for its neighbours.
 
     ORDERING, AND THE LAST STEP IS THE ONE THAT MATTERS. The debug sweep is
     taken before the toolchain goes, so no log retrieval depends on tooling
     this step is deleting. **The tunnel reap is last of all, because a tunnel
     can BE the access path to a host**: reaping it earlier severs the
-    connection the repo walk, the log sweep and the toolchain removal still
+    connection the project walk, the log sweep and the toolchain removal still
     need. Resetting impairments sits immediately before it for the mirrored
     reason -- clearing delay and loss off a link only improves the path
     everything above ran over, so it can afford to wait until they are done.
@@ -998,8 +1000,8 @@ async def cleanup(opts: "CleanupOptions | OptionsSource | None" = None) -> Resul
     """
     source = _source(opts, CleanupOptions)
     base = source.build(CleanupOptions)
-    ctx, repos = _lab()
-    cleaned = await _walk("cleanup", ctx, repos, source)
+    ctx, projects = _lab()
+    cleaned = await _walk("cleanup", ctx, projects, source)
     swept = await _sweep_debug_logs(ctx) if base.debug_logs else Result(Status.Success)
     removed = _reduce_results(await ctx.do_for_all_hosts(_dispatch_remove_toolchain_tools))
     repaired = await _reset_impairments(ctx) if base.reset_impairments else Result(Status.Success)
@@ -1013,15 +1015,15 @@ async def cleanup(opts: "CleanupOptions | OptionsSource | None" = None) -> Resul
 
 
 async def get_logs(opts: "GetLogsOptions | OptionsSource | None" = None) -> Result:
-    """Gather every repo's product logs (best-effort), then sweep debug logs once.
+    """Gather every project's product logs (best-effort), then sweep debug logs once.
 
-    Walk order is immaterial here, so it is the natural one. Each repo hauls
+    Walk order is immaterial here, so it is the natural one. Each project hauls
     its own products' logs -- those are owner-scoped -- while the single debug
     sweep is host-level and this layer's, exactly as in :func:`uninstall`.
 
     ``require_product_logs`` with ``product_logs=False`` is a contradiction and
-    is refused up front. The per-repo actions refuse it too, but that refusal
-    never fires in a lab with no repos, and a requirement that is parsed but
+    is refused up front. The per-project actions refuse it too, but that refusal
+    never fires in a lab with no projects, and a requirement that is parsed but
     unenforceable would report success having promised logs nobody went looking
     for.
     """
@@ -1029,8 +1031,8 @@ async def get_logs(opts: "GetLogsOptions | OptionsSource | None" = None) -> Resu
     base = source.build(GetLogsOptions)
     if base.require_product_logs and not base.product_logs:
         return Result(Status.Error, msg=_REQUIRE_PRODUCT_LOGS_CONTRADICTION)
-    ctx, repos = _lab()
-    hauled = await _walk("get-logs", ctx, repos, source)
+    ctx, projects = _lab()
+    hauled = await _walk("get-logs", ctx, projects, source)
     if not base.debug_logs:
         return hauled
     return _first(hauled, await _sweep_debug_logs(ctx))
@@ -1042,7 +1044,7 @@ async def get_logs(opts: "GetLogsOptions | OptionsSource | None" = None) -> Resu
 
 
 async def install_tools(opts: "InstallToolsOptions | OptionsSource | None" = None) -> Result:
-    """Install every repo's dev tools, then (when asked) the host toolchains.
+    """Install every project's dev tools, then (when asked) the host toolchains.
 
     Fail-fast like :func:`install`, and in the same order as the host verb it
     composes: dev tools first, then the toolchain sweep, which is skipped
@@ -1056,8 +1058,8 @@ async def install_tools(opts: "InstallToolsOptions | OptionsSource | None" = Non
     """
     source = _source(opts, InstallToolsOptions)
     base = source.build(InstallToolsOptions)
-    ctx, repos = _lab()
-    installed = await _walk("install-tools", ctx, repos, source)
+    ctx, projects = _lab()
+    installed = await _walk("install-tools", ctx, projects, source)
     if not installed.is_ok or not base.toolchain:
         return installed
     return _reduce_results(await ctx.do_for_all_hosts(_dispatch_install_toolchain_tools))
@@ -1069,45 +1071,45 @@ async def install_tools(opts: "InstallToolsOptions | OptionsSource | None" = Non
 
 
 def _counts(actions: ProjectActions) -> bool:
-    """Whether *actions*' repo contributes to the lab-level install state.
+    """Whether *actions*' project contributes to the lab-level install state.
 
-    A repo that owns no products anywhere AND registered no actions of its own
-    (a docs-only repo, say) has no install state to contribute; counting it
-    would drag every aggregate to PARTIAL forever. A repo with a registered
+    A project that owns no products anywhere AND registered no actions of its own
+    (a docs-only project, say) has no install state to contribute; counting it
+    would drag every aggregate to PARTIAL forever. A project with a registered
     subclass is always counted -- it opted into having an opinion, and its
     ``status()`` may well be computed from something otto cannot see.
     """
-    return actions.owns_products or actions.repo.name in PROJECT_ACTIONS
+    return actions.owns_products or actions.project.name in PROJECT_ACTIONS
 
 
 async def status(opts: "StatusOptions | OptionsSource | None" = None) -> ProjectStatus:
-    """Report each counted repo's install state, the lab aggregate, and who was left out.
+    """Report each counted project's install state, the lab aggregate, and who was left out.
 
-    A repo the counted-repo rule excludes is absent from
-    :attr:`~otto.project.state.ProjectStatus.repos` entirely rather than
+    A project the counted-project rule excludes is absent from
+    :attr:`~otto.project.state.ProjectStatus.projects` entirely rather than
     present with a made-up state.
 
-    A repo WHOSE DECLARATION ADMITS NO HOST HERE -- no loaded lab applies to
+    A project WHOSE DECLARATION ADMITS NO HOST HERE -- no loaded lab applies to
     it, or none of the hosts in the labs that do match its ``host_patterns`` --
     is left out for a different reason and reported differently. It is never
     asked: ``status()`` reaches the fleet, and its fleet is empty by
     declaration, so it has no state to fold, and
-    folding one in would drag a lab of applicable repos to PARTIAL and send
-    :func:`ensure_installed` into a teardown over a repo it cannot install.
-    But dropping it silently would leave an operator with a repo that simply
+    folding one in would drag a lab of applicable projects to PARTIAL and send
+    :func:`ensure_installed` into a teardown over a project it cannot install.
+    But dropping it silently would leave an operator with a project that simply
     vanished from the report meant to explain the lab, so
-    :attr:`~otto.project.state.ProjectStatus.scoping` carries every repo's
+    :attr:`~otto.project.state.ProjectStatus.scoping` carries every project's
     verdict and the renderer prints "not applicable" beside it. Every parsed
-    repo's, in fact: a repo the dependency pass skipped is never asked either,
+    project's, in fact: a project the dependency pass skipped is never asked either,
     but its declaration still narrows the fleet, so its verdict is carried
-    marked :attr:`~otto.project.state.RepoScope.skipped`. No warning is
+    marked :attr:`~otto.project.state.ProjectScopeSummary.skipped`. No warning is
     logged for that case, unlike the acting walks: the answer IS the display.
 
-    A SWITCHED-OFF repo is left out by the same predicate and DOES get a line,
+    A SWITCHED-OFF project is left out by the same predicate and DOES get a line,
     and the asymmetry is deliberate rather than an oversight. Every reason a
-    lab verdict can leave a repo out is already printed in the scoping rows
+    lab verdict can leave a project out is already printed in the scoping rows
     beside it; nothing anywhere in this report records that ``-I``/``-E`` was
-    typed at all, so without the line the repo is simply gone from a display
+    typed at all, so without the line the project is simply gone from a display
     whose whole job is to account for the lab. Warning on both axes instead
     would put a line in front of every operator whose lab merely does not
     include some project, which is the ordinary case and not news.
@@ -1118,37 +1120,38 @@ async def status(opts: "StatusOptions | OptionsSource | None" = None) -> Project
     source = _source(opts, StatusOptions)
     # THE TABLE'S OWN BODY AND COMBINER, exactly as :func:`_run_bodies` and
     # :func:`_combine` use them. This walk is hand-written rather than theirs --
-    # the counted-repo rule and the scoping rows are status' alone -- but a
-    # repo that overrode ``status`` must be dispatched and folded the same way
+    # the counted-project rule and the scoping rows are status' alone -- but a
+    # project that overrode ``status`` must be dispatched and folded the same way
     # here as everywhere else, and a hard-coded method name plus a direct call
     # to the combiner is the second copy that drifts from the spec.
     entry = PROJECT_INSTRUCTIONS.get("status")
-    ctx, repos = _lab()
-    # Every verdict, in OTTO_SUT_DIRS order, and not only the walked repos': a
-    # repo the dependency pass skipped still declared its fleet, and a
+    ctx, projects = _lab()
+    # Every verdict, in OTTOPATH order, and not only the walked projects': a
+    # project the dependency pass skipped still declared its fleet, and a
     # declaration that narrows the walk must not be missing from the display
-    # that explains it. Actions and the install state walk only `repos`.
-    walked = {repo.name for repo in repos}
-    scoping: "dict[str, RepoScope]" = {}
-    for repo in ctx.repos:
-        scope = scopes_of(ctx).get(repo.name)
+    # that explains it. Actions and the install state walk only `projects`.
+    walked = {project.name for project in projects}
+    scoping: "dict[str, ProjectScopeSummary]" = {}
+    for project in ctx.projects:
+        scope = scopes_of(ctx).get(project.name)
         if scope is not None:
-            scoping[repo.name] = _scope_row(scope, skipped=repo.name not in walked)
+            scoping[project.name] = _scope_row(scope, skipped=project.name not in walked)
     states: "dict[str, InstallState]" = {}
-    for repo in repos:
-        # The walks' own predicate, not a copy of its condition: a repo they
+    for project in projects:
+        # The walks' own predicate, not a copy of its condition: a project they
         # leave out has no state to fold, and asking it for one reaches a fleet
         # that is empty by declaration -- which raises, out of a READING verb.
-        if not active(repo.name, ctx):
-            if switched_off(repo.name, ctx):
+        if not active(project.name, ctx):
+            if switched_off(project.name, ctx):
                 logger.warning(
                     _literal(
-                        f"repo {repo.name!r} switched off for this run "
-                        f"(--exclude-projects {normalize_name(repo.name)}) — skipping it for status"
+                        f"project {project.name!r} switched off for this run "
+                        f"(--exclude-projects {normalize_name(project.name)}) "
+                        "— skipping it for status"
                     )
                 )
             continue
-        actions = actions_for(repo, ctx)
+        actions = actions_for(project, ctx)
         if _counts(actions):
             body = entry.body_for(type(actions))
             # Unreachable for the same reason as in _run_bodies: otto's own
@@ -1156,12 +1159,12 @@ async def status(opts: "StatusOptions | OptionsSource | None" = None) -> Project
             if body is None or body.options_cls is None:  # pragma: no cover
                 continue
             method = getattr(actions, body.method_name)
-            states[repo.name] = await method(source.build(body.options_cls))
-    return ProjectStatus(overall=_combine("status", states), repos=states, scoping=scoping)
+            states[project.name] = await method(source.build(body.options_cls))
+    return ProjectStatus(overall=_combine("status", states), projects=states, scoping=scoping)
 
 
 async def is_uninstalled() -> bool:
-    """Whether the lab aggregate is UNINSTALLED -- no counted repo has a product on.
+    """Whether the lab aggregate is UNINSTALLED -- no counted project has a product on.
 
     DELIBERATELY UNPAIRED: there is no lab-level ``is_installed()``, and adding
     one is the change to refuse. False on such a boolean would mean PARTIAL and
@@ -1250,25 +1253,27 @@ def _verdict(items: "Iterable[CleanlinessItem]") -> bool:
     return True
 
 
-async def _repo_items(ctx: "OttoContext", repos: "Iterable[Repo]") -> "list[CleanlinessItem]":
-    """One row per repo, from that repo's OWN ``is_clean`` -- products and dev tools.
+async def _project_items(
+    ctx: "OttoContext", projects: "Iterable[Project]"
+) -> "list[CleanlinessItem]":
+    """One row per project, from that project's OWN ``is_clean`` -- products and dev tools.
 
-    EVERY repo is asked, not only the counted ones. The counted-repo rule
-    exists to keep an opinionless repo from dragging an install AGGREGATE, and
-    a repo with nothing installed answers clean here for free -- while skipping
-    it would miss the dev tools of a tooling repo that owns no products at all
+    EVERY project is asked, not only the counted ones. The counted-project rule
+    exists to keep an opinionless project from dragging an install AGGREGATE, and
+    a project with nothing installed answers clean here for free -- while skipping
+    it would miss the dev tools of a tooling project that owns no products at all
     (``owns_products`` cannot see tools).
 
-    A repo whose probe RAISES becomes an unreadable row rather than taking the
+    A project whose probe RAISES becomes an unreadable row rather than taking the
     whole report down with it. :func:`is_clean` keeps a loop of its own over
     the same method instead of reusing this one, and that is not a second copy
     of anything: both call :meth:`~otto.project.actions.ProjectActions.is_clean`,
-    the single authority on what one repo's leftovers are. What differs is only
-    the walk -- the boolean stops at the first dirty repo, because the repos
+    the single authority on what one project's leftovers are. What differs is only
+    the walk -- the boolean stops at the first dirty project, because the projects
     after it cannot change the answer and probing them is device work for
     nothing, while a report has to ask them all to have anything to show.
 
-    "EVERY REPO" STILL MEANS EVERY APPLICABLE REPO. A repo no loaded lab
+    "EVERY PROJECT" STILL MEANS EVERY APPLICABLE PROJECT. A project no loaded lab
     applies to gets no row rather than an unreadable one: its probe cannot
     answer -- an empty fleet is refused, not walked -- and an UNKNOWN row is
     for a fact nobody could read, not for a question that was never this run's
@@ -1278,15 +1283,17 @@ async def _repo_items(ctx: "OttoContext", repos: "Iterable[Repo]") -> "list[Clea
     # A REPORT NEVER REFUSES: `require_dependencies=False` keeps a
     # contradictory required dependency a WARNING, so the row survives to be
     # printed.
-    for repo in _applicable(ctx, repos, "cleanliness", require_dependencies=False):
+    for project in _applicable(ctx, projects, "cleanliness", require_dependencies=False):
         try:
-            clean = await actions_for(repo, ctx).is_clean()
+            clean = await actions_for(project, ctx).is_clean()
         except Exception as exc:  # noqa: BLE001,PERF203 — a display marks what it could not learn; is_clean is the surface that refuses to answer
             items.append(
-                _unreadable(CleanlinessKind.REPO, repo.name, exc, f"the repo probe failed: {exc!r}")
+                _unreadable(
+                    CleanlinessKind.PROJECT, project.name, exc, f"the project probe failed: {exc!r}"
+                )
             )
         else:
-            items.append(_row(CleanlinessKind.REPO, repo.name, clean))
+            items.append(_row(CleanlinessKind.PROJECT, project.name, clean))
     return items
 
 
@@ -1294,7 +1301,7 @@ async def _toolchain_items(ctx: "OttoContext") -> "list[CleanlinessItem]":
     """One row per fleet host, on whether the toolchain tools :func:`cleanup` removes are gone.
 
     Host-global, which is why this is the orchestrator's question and no
-    repo's: one toolchain serves every owner on a host.
+    project's: one toolchain serves every owner on a host.
     :meth:`~otto.context.OttoContext.do_for_all_hosts` captures a host's
     refusal as a VALUE, so a dry run's decline or a dead transport arrives here
     as an entry to file rather than as a raise to catch.
@@ -1492,19 +1499,19 @@ async def cleanliness() -> CleanlinessReport:
     twelve facts it does have behind the one it does not.
 
     Every row is something ``cleanup`` acts on, in ``cleanup``'s own order:
-    each repo's products and dev tools, each host's toolchain tools, each
+    each project's products and dev tools, each host's toolchain tools, each
     impairable link's netem, then the tunnels. Nothing short-circuits -- a
-    dirty first repo does not stop the scan, because "which of them" is the
+    dirty first project does not stop the scan, because "which of them" is the
     whole question a report is asked.
 
     No converge consults this, and neither does ``otto run status`` unless
     ``--full`` is passed: it is device work (a link read per link, a process
     scan per host) that the install answer does not need.
     """
-    ctx, repos = _lab()
+    ctx, projects = _lab()
     return CleanlinessReport(
         items=[
-            *await _repo_items(ctx, repos),
+            *await _project_items(ctx, projects),
             *await _toolchain_items(ctx),
             *await _impairment_items(ctx),
             *await _tunnel_items(ctx),
@@ -1515,10 +1522,10 @@ async def cleanliness() -> CleanlinessReport:
 async def is_clean() -> bool:
     """Whether nothing :func:`cleanup` removes is left in the lab.
 
-    EVERY APPLICABLE repo is asked, not only the counted ones -- see
-    ``_repo_items`` for why, for why a repo this run does not apply to is
-    asked nothing at all, and for why the repo walk here stops at the first
-    dirty repo where the report's does not.
+    EVERY APPLICABLE project is asked, not only the counted ones -- see
+    ``_project_items`` for why, for why a project this run does not apply to is
+    asked nothing at all, and for why the project walk here stops at the first
+    dirty project where the report's does not.
 
     THE QUESTION MATCHES THE VERB, step for step: products and dev tools, the
     hosts' toolchain tools, then the lab's own impairments and tunnels, in
@@ -1539,12 +1546,12 @@ async def is_clean() -> bool:
     device work whose only purpose would be to strengthen a verdict already
     unavailable, and this is the cheap path a converge takes before every test.
     """
-    ctx, repos = _lab()
+    ctx, projects = _lab()
     # Read-only: `require_dependencies=False`. A converge asks this BEFORE
     # deciding to install, and a refusal here would pre-empt the decision it
     # informs.
-    for repo in _applicable(ctx, repos, "is_clean", require_dependencies=False):
-        if not await actions_for(repo, ctx).is_clean():
+    for project in _applicable(ctx, projects, "is_clean", require_dependencies=False):
+        if not await actions_for(project, ctx).is_clean():
             return False
     return (
         _verdict(await _toolchain_items(ctx))
@@ -1574,7 +1581,7 @@ async def ensure_installed(opts: "InstallOptions | OptionsSource | None" = None)
     THE SOURCE IS PASSED ON RATHER THAN UNPACKED, to ``status``, to the
     recovery ``uninstall`` and to the install itself: each of those builds the
     options class IT needs from the one set of flags the operator typed, so a
-    repo that declared a field on its own install options still sees it here.
+    project that declared a field on its own install options still sees it here.
     """
     source = _source(opts, InstallOptions)
     state = (await status(source)).overall
@@ -1644,7 +1651,7 @@ async def run_project_instruction(name: str, kwargs: "dict[str, Any]") -> Any:
 
     The six first-party names route through their public function, which
     carries the lab-wide tail (debug sweep, toolchain, impairments, tunnels)
-    no repo body may perform; every other project instruction is a plain
+    no project body may perform; every other project instruction is a plain
     walk. ``render``, when the spec sets one, turns the combined value into
     what the leaf prints and exits on.
     """
@@ -1654,8 +1661,8 @@ async def run_project_instruction(name: str, kwargs: "dict[str, Any]") -> Any:
         entry_fn: "Callable[[OptionsSource], Awaitable[Any]]" = globals()[fn_name]
         combined = await entry_fn(source)
     else:
-        ctx, repos = _lab()
-        combined = await _walk(name, ctx, repos, source)
+        ctx, projects = _lab()
+        combined = await _walk(name, ctx, projects, source)
     spec = PROJECT_INSTRUCTIONS.get(name).spec
     if spec.render is None:
         return combined

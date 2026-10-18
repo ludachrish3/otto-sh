@@ -15,7 +15,7 @@ product into pydantic and diverge from the sibling host strategies
 Concrete subclasses pick their own data representation (``@dataclass`` or an
 ``OttoModel``).
 
-Products are customized in repo config or code, never lab data: a
+Products are customized in project config or code, never lab data: a
 ``[[products]]`` entry in ``.otto/settings.toml`` declares the common cases
 (see :mod:`otto.declared` and :func:`register_product_kind`), and a
 :func:`register_product_provider` callback from a ``.otto`` init module
@@ -306,9 +306,9 @@ class Product(ABC):
     a single path segment, never ``debug``."""
 
     owner: str | None = None
-    """Owning repo's name, stamped at lab ingest from the registering-repo
-    marker (see :func:`otto.registry.registering_repo`). ``None`` = attached
-    outside any repo's init import. Default per-repo actions filter on this."""
+    """Owning project's name, stamped at lab ingest from the registering-project
+    marker (see :func:`otto.registry.registering_project`). ``None`` = attached
+    outside any project's init import. Default per-project actions filter on this."""
 
     cov_dir: str | None = None
     """Host-side directory this product writes its coverage counters under —
@@ -685,23 +685,23 @@ ProductProvider = Callable[["Host"], Iterable[Product] | None]
 """A function that, given a host, returns the products it should carry.
 
 Registered from a ``.otto`` init module via :func:`register_product_provider`
-and run once per lab-ingested host. All product knowledge stays in product-repo
+and run once per lab-ingested host. All product knowledge stays in project
 code; lab data never names a product."""
 
 PRODUCT_PROVIDERS: "Subscription[ProductProvider]" = Subscription(
     "product provider", register_hint="otto.host.register_product_provider()"
 )
-"""The registered product providers in registration order, each with its registering repo."""
+"""The registered product providers in registration order, each with its registering project."""
 
 
 def registered_product_providers() -> list[tuple[ProductProvider, str | None]]:
     """Return a snapshot of the registered product providers, in registration order.
 
-    Each item pairs the provider with the name of the repo that registered it
-    (``None`` for a registration made outside any repo's init import). A
+    Each item pairs the provider with the name of the project that registered it
+    (``None`` for a registration made outside any project's init import). A
     snapshot list built from the subscription.
     """
-    return [(s.value, s.repo) for s in PRODUCT_PROVIDERS.items()]
+    return [(s.value, s.project) for s in PRODUCT_PROVIDERS.items()]
 
 
 @registration_boundary
@@ -717,8 +717,8 @@ def register_product_provider(provider: ProductProvider) -> None:
     and return the products that host should carry (or ``None``/``[]`` for
     none). Behavior lives in code; lab data stays product-agnostic.
 
-    The registering repo is captured **here**, not at ingest: this call runs
-    inside that repo's init import, whereas the provider runs long after,
+    The registering project is captured **here**, not at ingest: this call runs
+    inside that project's init import, whereas the provider runs long after,
     when the marker is gone.
 
     A returned instance must accept ``kind``, ``origin`` and ``owner``
@@ -807,8 +807,8 @@ def defined_twice(
 ) -> str:
     """Return the one-definition refusal: a name a declared entry holds, a provider returns too.
 
-    Names both sites — the entry by seam, name and declaring repo; the provider
-    by ``module:qualname`` and registering repo — and says what to do instead.
+    Names both sites — the entry by seam, name and declaring project; the provider
+    by ``module:qualname`` and registering project — and says what to do instead.
     Shared by both seams so the sentence is written once.
     """
     where = (
@@ -816,9 +816,9 @@ def defined_twice(
         f"{getattr(provider, '__qualname__', repr(provider))}"
     )
     noun = "dev tool" if seam == "dev_tools" else "product"
-    registered = f"repo {provider_owner}" if provider_owner else "registered outside any repo"
+    registered = f"project {provider_owner}" if provider_owner else "registered outside any project"
     return (
-        f"[[{seam}]] {holder.name!r} (repo {holder.owner}) is also defined by provider "
+        f"[[{seam}]] {holder.name!r} (project {holder.owner}) is also defined by provider "
         f"{where} ({registered}) — a {noun} is defined in data OR in code; to give "
         'a declared entry custom behaviour, set `class = "pkg.mod:Class"` on it'
     )
@@ -837,20 +837,20 @@ def apply_product_providers(host: "Host") -> None:
     provider that raises propagates — a misconfigured provider fails ingest
     loudly.
 
-    Each attached product is stamped with :attr:`Product.owner` — the repo that
+    Each attached product is stamped with :attr:`Product.owner` — the project that
     registered the provider — unless the product already names an owner, which
-    lets one repo hand a product to another's ownership deliberately. It is
+    lets one project hand a product to another's ownership deliberately. It is
     also stamped ``kind = "code"`` and ``origin = "provider"``. A product
     dropped because its name was taken is appended, with the host's id, to
     ``host.shadowed_products`` (stamped the same way) so the listing can say so.
 
-    A provider is SKIPPED — not called — when its registering repo's
+    A provider is SKIPPED — not called — when its registering project's
     ``[project]`` declaration does not target ``(host.source_lab, host.id)``
     (spec §5). This is the admission half of scoping: the fleet walks bound
-    which hosts a repo may reach, and without this a repo declared for one lab
+    which hosts a project may reach, and without this a project declared for one lab
     still hangs its products on every host of every other lab the run happens
     to load. Skipping before the call rather than filtering the return is the
-    point — a provider that ran has already been handed a machine its repo
+    point — a provider that ran has already been handed a machine its project
     never declared, and providers inspect hosts and keep their own state.
 
     Two carve-outs admit, both because a gate that cannot compute a narrowing
@@ -859,18 +859,20 @@ def apply_product_providers(host: "Host") -> None:
     :func:`~otto.host.factory.create_host_from_dict` use, container hosts, the
     built-in ``local`` — predate scoping and behave exactly as before. And an
     owner whose declaration cannot be resolved admits, which
-    :func:`~otto.declared.scope_for_repo` decides and documents.
+    :func:`~otto.declared.scope_for_project` decides and documents.
     """
-    from ..config.scope import repo_targets  # function-scope: import-light seam
-    from ..declared import scope_for_repo  # at call time: a patch of the owner reaches both seams
+    from ..config.scope import project_targets  # function-scope: import-light seam
+    from ..declared import (
+        scope_for_project,
+    )  # at call time: a patch of the owner reaches both seams
 
     seen = {p.name for p in host.products}
     for provider, provider_owner in registered_product_providers():
-        if host.source_lab and not repo_targets(
-            scope_for_repo(provider_owner), host.source_lab, host.id
+        if host.source_lab and not project_targets(
+            scope_for_project(provider_owner), host.source_lab, host.id
         ):
             logger.debug(
-                "product provider: repo %r does not target host %s of lab %r — not run",
+                "product provider: project %r does not target host %s of lab %r — not run",
                 provider_owner,
                 host.id,
                 host.source_lab,

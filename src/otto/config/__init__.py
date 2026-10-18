@@ -1,16 +1,16 @@
-"""Parsing otto's inputs: repo settings, versions, user settings and the environment.
+"""Parsing otto's inputs: project settings, versions, user settings and the environment.
 
 ``otto.config`` parses, discovery included, and ``otto.bootstrap`` composes; the
-composed-repos accessors are in :mod:`otto.declared` (spec 2026-10-06
-repo-and-scope-inputs, S-3; spec 2026-10-11 placement-and-phases §3.9). The lab and
-fleet API is :mod:`otto.lab`.
+composed-projects accessors are in :mod:`otto.declared` (spec
+``docs/superpowers/specs/2026-10-06-repo-and-scope-inputs-design.md`` S-3; spec
+2026-10-11 placement-and-phases §3.9). The lab and fleet API is :mod:`otto.lab`.
 """
 
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .dependencies import ResolvedDependency as ResolvedDependency
-    from .repo import Repo as Repo
+    from .project import Project as Project
     from .scope import DockerCompose as DockerCompose
     from .scope import DockerImage as DockerImage
     from .scope import DockerSettings as DockerSettings
@@ -34,7 +34,7 @@ __all__ = [
     "DockerImage",
     "DockerSettings",
     "MonitorSettings",
-    "Repo",
+    "Project",
     "ResolvedDependency",
     "Version",
     "load_otto_env",
@@ -50,20 +50,20 @@ __all__ = [
 # otto.models.settings (and .color/.dependencies/.inventory/.home) on every CLI
 # surface and broke ten import-budget caps at once.
 #
-# The .repo / .version names are lazy because .repo parses settings.toml: it
+# The .project / .version names are lazy because .project parses settings.toml: it
 # brings the TOML parser, .scope, .version and .corpus_snapshot, and the
 # command tree imports this package to build every `--help`, which reads no
-# repo. MEASURED: eager, they were 200 of `otto --help`'s 1379 file operations.
+# project. MEASURED: eager, they were 200 of `otto --help`'s 1379 file operations.
 # The settings types (Docker*, MonitorSettings) live in the foundation module
-# otto.config.scope, which the repo loader and the settings specs both read
+# otto.config.scope, which the project loader and the settings specs both read
 # (spec 2026-10-11 placement-and-phases §3.6); importing one loads that module
-# alone, not the repo loader.
+# alone, not the project loader.
 _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "DockerCompose": ("otto.config.scope", "DockerCompose"),
     "DockerImage": ("otto.config.scope", "DockerImage"),
     "DockerSettings": ("otto.config.scope", "DockerSettings"),
     "MonitorSettings": ("otto.config.scope", "MonitorSettings"),
-    "Repo": ("otto.config.repo", "Repo"),
+    "Project": ("otto.config.project", "Project"),
     "Version": ("otto.config.version", "Version"),
     "ResolvedDependency": ("otto.config.dependencies", "ResolvedDependency"),
     "load_user_settings": ("otto.config.user_settings", "load_user_settings"),

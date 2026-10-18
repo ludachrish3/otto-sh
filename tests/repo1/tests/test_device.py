@@ -26,11 +26,11 @@ class TestDevice:
 
     async def test_device_reachable(self, ctx) -> None:
         """Verify the device responds to basic connectivity checks."""
-        repo = ctx.options(RepoOptions)
+        project = ctx.options(RepoOptions)
         logger.info(
             f"[bold]Checking reachability[/bold] — "
-            f"device_type={repo.device_type!r}  "
-            f"lab_env={repo.lab_env!r}",
+            f"device_type={project.device_type!r}  "
+            f"lab_env={project.lab_env!r}",
             extra={"markup": True},
         )
         # Placeholder: replace with real host connectivity check

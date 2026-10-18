@@ -6,7 +6,7 @@ whole test: every module the worker imports for the first time while the prefix
 is gone and writing is on writes a ``__pycache__`` beside its source — under
 ``src/otto`` for otto's own lazy imports, which fails the suite's session guard
 (``tests/conftest.py``). Writing is on only inside
-:func:`otto.suite.run._outside_the_repo`, where the session's own prefix is set.
+:func:`otto.suite.run._outside_the_project_root`, where the session's own prefix is set.
 
 Both tests import a module from a throwaway package on ``sys.path`` for the
 first time, which is exactly the hostile condition: a first import under the
@@ -58,7 +58,7 @@ def test_an_import_inside_a_session_writes_under_the_sessions_prefix(
 ):
     home = tmp_path / "home"
 
-    with run._outside_the_repo(collect_only=True, home=home):
+    with run._outside_the_project_root(collect_only=True, home=home):
         assert sys.dont_write_bytecode is False, "a session writes, as in a real shell"
         pkg = fresh_module("inside")
         prefix = Path(sys.pycache_prefix or "")

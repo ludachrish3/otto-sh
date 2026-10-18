@@ -18,7 +18,7 @@ from otto.instruction_catalog import (
 )
 from otto.instructions import instruction
 from otto.project import ProjectActions, register_project_actions
-from otto.registry import registering_repo, registration_boundary
+from otto.registry import registering_project, registration_boundary
 from tests.unit.registry import conformance
 
 COVERS = [
@@ -135,7 +135,7 @@ def test_first_party_actions_raw_case():
 
 def test_project_actions_wrapper_case():
     cls = _actions_class(20, "__c-body")
-    with registering_repo(_REPO):
+    with registering_project(_REPO):
         conformance.assert_wrapper_matches_raw(
             PROJECT_ACTIONS,
             via_wrapper=functools.partial(register_project_actions, cls),
@@ -143,7 +143,7 @@ def test_project_actions_wrapper_case():
         )
         register_project_actions(cls)
         (body,) = PROJECT_ACTIONS.get(_REPO).bodies
-        assert (body.name, body.owner_class, body.repo) == ("__c-body", cls, _REPO)
+        assert (body.name, body.owner_class, body.project) == ("__c-body", cls, _REPO)
 
 
 def test_project_actions_refuse_a_registration_outside_a_repo():
@@ -159,7 +159,7 @@ def test_the_instructions_view_case():
         STANDALONE_INSTRUCTIONS.register(name, _standalone(name, 4))
 
     def clash() -> None:
-        with registering_repo(_REPO):
+        with registering_project(_REPO):
             STANDALONE_INSTRUCTIONS.register("install", _standalone("install", 5))
 
     conformance.assert_view(
@@ -172,7 +172,7 @@ def test_the_instructions_view_case():
 
 def test_the_project_instructions_view_case():
     def contribute(name: str) -> None:
-        with registering_repo(_REPO):
+        with registering_project(_REPO):
             register_project_actions(_actions_class(30, name))
 
     def clash() -> None:
@@ -180,7 +180,7 @@ def test_the_project_instructions_view_case():
         @instruction(name="__v_one", walk="reverse")
         async def run(self) -> None: ...
 
-        with registering_repo("case-clash"):
+        with registering_project("case-clash"):
             register_project_actions(type("CaseClash", (ProjectActions,), {"v_one": run}))
 
     conformance.assert_view(

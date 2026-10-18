@@ -16,7 +16,7 @@ import sys
 import textwrap
 from pathlib import Path
 
-from otto.env.preflight import Unsatisfied, check_repo, preflight, read_project_table
+from otto.env.preflight import Unsatisfied, check_project, preflight, read_project_table
 from tests._fixtures.fake_repo import fake_repo
 
 
@@ -32,7 +32,7 @@ def _install(site: Path, name: str, version: str, requires: "list[str] | None" =
 def _repo(tmp_path: Path, name: str, deps: "list[str] | None", *, dynamic: bool = False):
     """A stand-in repo with a pyproject.
 
-    Deliberately NOT a real ``Repo``: the evaluator reads only ``.name`` and
+    Deliberately NOT a real ``Project``: the evaluator reads only ``.name`` and
     ``.sut_dir``, and pinning that here is what keeps it free of
     ``otto.config`` -- and therefore safe to call from anywhere.
     """
@@ -56,43 +56,43 @@ def _repo(tmp_path: Path, name: str, deps: "list[str] | None", *, dynamic: bool 
             {body}
             """)
     )
-    repo = fake_repo(name, sut_dir=root)
-    project = read_project_table(repo)
-    assert project is not None, "fixture wrote a pyproject the evaluator cannot read"
+    project = fake_repo(name, root=root)
+    pyproject_table = read_project_table(project)
+    assert pyproject_table is not None, "fixture wrote a pyproject the evaluator cannot read"
     if not dynamic:
-        assert project.get("dependencies", []) == list(deps or [])
-    return repo
+        assert pyproject_table.get("dependencies", []) == list(deps or [])
+    return project
 
 
 class TestSatisfaction:
     def test_a_satisfied_requirement_is_silent(self, tmp_path):
         site = tmp_path / "site"
         _install(site, "beetroot", "1.2.0")
-        repo = _repo(tmp_path, "repo4", ["beetroot >= 0.1"])
-        assert check_repo(repo, site_dirs=[site]) == []
+        project = _repo(tmp_path, "repo4", ["beetroot >= 0.1"])
+        assert check_project(project, site_dirs=[site]) == []
 
     def test_an_absent_package_reports_found_none(self, tmp_path):
         site = tmp_path / "site"
         site.mkdir()
-        repo = _repo(tmp_path, "repo4", ["beetroot >= 0.1"])
-        assert check_repo(repo, site_dirs=[site]) == [
-            Unsatisfied(repo="repo4", requirement="beetroot >= 0.1", found="none")
+        project = _repo(tmp_path, "repo4", ["beetroot >= 0.1"])
+        assert check_project(project, site_dirs=[site]) == [
+            Unsatisfied(project="repo4", requirement="beetroot >= 0.1", found="none")
         ]
 
     def test_a_too_old_package_reports_the_version_it_found(self, tmp_path):
         """``found: none`` vs ``found: 2.12`` is the whole diagnostic value."""
         site = tmp_path / "site"
         _install(site, "paramiko", "2.12.0")
-        repo = _repo(tmp_path, "repo4", ["paramiko >= 3"])
-        [bad] = check_repo(repo, site_dirs=[site])
+        project = _repo(tmp_path, "repo4", ["paramiko >= 3"])
+        [bad] = check_project(project, site_dirs=[site])
         assert bad.found == "2.12.0"
 
     def test_a_repo_with_no_pyproject_is_vacuously_satisfied(self, tmp_path):
         """repo1-repo3 are this shape, and they must keep working untouched."""
         root = tmp_path / "repo1"
         root.mkdir()
-        repo = fake_repo("repo1", sut_dir=root)
-        assert check_repo(repo, site_dirs=[tmp_path / "site"]) == []
+        project = fake_repo("repo1", root=root)
+        assert check_project(project, site_dirs=[tmp_path / "site"]) == []
 
     def test_an_unreadable_pyproject_is_vacuously_satisfied(self, tmp_path):
         """The preflight is a gate on DEPENDENCIES, not a second config parser.
@@ -104,8 +104,8 @@ class TestSatisfaction:
         root = tmp_path / "repo4"
         root.mkdir()
         (root / "pyproject.toml").write_text("[project\nname = ")
-        repo = fake_repo("repo4", sut_dir=root)
-        assert check_repo(repo, site_dirs=[tmp_path / "site"]) == []
+        project = fake_repo("repo4", root=root)
+        assert check_project(project, site_dirs=[tmp_path / "site"]) == []
 
     def test_an_unparseable_installed_version_is_not_judged(self, tmp_path):
         """A preflight that CRASHES is worse than one that stays quiet.
@@ -116,8 +116,8 @@ class TestSatisfaction:
         """
         site = tmp_path / "site"
         _install(site, "beetroot", "not-a-version")
-        repo = _repo(tmp_path, "repo4", ["beetroot >= 0.1"])
-        assert check_repo(repo, site_dirs=[site]) == []
+        project = _repo(tmp_path, "repo4", ["beetroot >= 0.1"])
+        assert check_project(project, site_dirs=[site]) == []
 
     def test_an_unjudgeable_version_never_reaches_the_specifier(self, tmp_path, monkeypatch):
         """The parse must be OURS, not a side effect of how packaging complains.
@@ -143,8 +143,8 @@ class TestSatisfaction:
         monkeypatch.setattr(SpecifierSet, "contains", spy)
         site = tmp_path / "site"
         _install(site, "beetroot", "not-a-version")
-        repo = _repo(tmp_path, "repo4", ["beetroot >= 0.1"])
-        assert check_repo(repo, site_dirs=[site]) == []
+        project = _repo(tmp_path, "repo4", ["beetroot >= 0.1"])
+        assert check_project(project, site_dirs=[site]) == []
         assert asked == [], f"the unjudgeable version was compared anyway: {asked}"
 
     def test_a_judgeable_version_does_reach_the_specifier(self, tmp_path, monkeypatch):
@@ -163,8 +163,8 @@ class TestSatisfaction:
         monkeypatch.setattr(SpecifierSet, "contains", spy)
         site = tmp_path / "site"
         _install(site, "beetroot", "0.2")
-        repo = _repo(tmp_path, "repo4", ["beetroot >= 0.1"])
-        assert check_repo(repo, site_dirs=[site]) == []
+        project = _repo(tmp_path, "repo4", ["beetroot >= 0.1"])
+        assert check_project(project, site_dirs=[site]) == []
         assert [str(item) for item in asked] == ["0.2"]
 
     def test_an_unparseable_requirement_is_skipped(self, tmp_path):
@@ -172,22 +172,22 @@ class TestSatisfaction:
         and it does so better than a gate that only knows the string failed."""
         site = tmp_path / "site"
         site.mkdir()
-        repo = _repo(tmp_path, "repo4", ["!!! not a requirement"])
-        assert check_repo(repo, site_dirs=[site]) == []
+        project = _repo(tmp_path, "repo4", ["!!! not a requirement"])
+        assert check_project(project, site_dirs=[site]) == []
 
 
 class TestMarkers:
     def test_a_marker_that_excludes_this_interpreter_is_not_checked(self, tmp_path):
         site = tmp_path / "site"
         site.mkdir()
-        repo = _repo(tmp_path, "repo4", ['beetroot >= 0.1; sys_platform == "nonesuch"'])
-        assert check_repo(repo, site_dirs=[site]) == []
+        project = _repo(tmp_path, "repo4", ['beetroot >= 0.1; sys_platform == "nonesuch"'])
+        assert check_project(project, site_dirs=[site]) == []
 
     def test_a_marker_that_includes_this_interpreter_is_checked(self, tmp_path):
         site = tmp_path / "site"
         site.mkdir()
-        repo = _repo(tmp_path, "repo4", ['beetroot >= 0.1; python_version >= "3.0"'])
-        assert len(check_repo(repo, site_dirs=[site])) == 1
+        project = _repo(tmp_path, "repo4", ['beetroot >= 0.1; python_version >= "3.0"'])
+        assert len(check_project(project, site_dirs=[site])) == 1
 
 
 class TestExtrasAndTransitives:
@@ -206,15 +206,15 @@ class TestExtrasAndTransitives:
             "1.0.0",
             requires=['labjack-driver >= 1; extra == "labjack"'],
         )
-        repo = _repo(tmp_path, "repo4", ["beetroot[labjack] >= 0.1"])
-        assert check_repo(repo, site_dirs=[site]) == []
+        project = _repo(tmp_path, "repo4", ["beetroot[labjack] >= 0.1"])
+        assert check_project(project, site_dirs=[site]) == []
 
     def test_transitive_requirements_are_not_followed(self, tmp_path):
         """Transitive consistency is the installer's promise, not otto's."""
         site = tmp_path / "site"
         _install(site, "beetroot", "1.0.0", requires=["nonexistent-thing >= 9"])
-        repo = _repo(tmp_path, "repo4", ["beetroot >= 0.1"])
-        assert check_repo(repo, site_dirs=[site]) == []
+        project = _repo(tmp_path, "repo4", ["beetroot >= 0.1"])
+        assert check_project(project, site_dirs=[site]) == []
 
 
 class TestDynamicDependencies:
@@ -223,8 +223,8 @@ class TestDynamicDependencies:
         answer for a dynamic pyproject."""
         site = tmp_path / "site"
         _install(site, "repo4", "0.1.0", requires=["beetroot >= 0.1"])
-        repo = _repo(tmp_path, "repo4", None, dynamic=True)
-        [bad] = check_repo(repo, site_dirs=[site])
+        project = _repo(tmp_path, "repo4", None, dynamic=True)
+        [bad] = check_project(project, site_dirs=[site])
         assert bad.requirement.startswith("beetroot")
 
     def test_installed_metadata_beats_the_pyproject_it_disagrees_with(self, tmp_path):
@@ -234,14 +234,14 @@ class TestDynamicDependencies:
         site = tmp_path / "site"
         _install(site, "repo4", "0.1.0", requires=["beetroot >= 0.1"])
         _install(site, "beetroot", "1.0.0")
-        repo = _repo(tmp_path, "repo4", ["nowhere-at-all >= 9"])
-        assert check_repo(repo, site_dirs=[site]) == []
+        project = _repo(tmp_path, "repo4", ["nowhere-at-all >= 9"])
+        assert check_project(project, site_dirs=[site]) == []
 
     def test_dynamic_and_not_installed_warns_and_checks_nothing(self, tmp_path):
         site = tmp_path / "site"
         site.mkdir()
-        repo = _repo(tmp_path, "repo4", None, dynamic=True)
-        result = preflight([repo], site_dirs=[site])
+        project = _repo(tmp_path, "repo4", None, dynamic=True)
+        result = preflight([project], site_dirs=[site])
         assert result.unsatisfied == []
         assert any("dynamic" in w and "repo4" in w for w in result.warnings)
 
@@ -250,8 +250,8 @@ class TestDynamicDependencies:
         that answered must not produce one."""
         site = tmp_path / "site"
         site.mkdir()
-        repo = _repo(tmp_path, "repo4", ["beetroot >= 0.1"])
-        result = preflight([repo], site_dirs=[site])
+        project = _repo(tmp_path, "repo4", ["beetroot >= 0.1"])
+        result = preflight([project], site_dirs=[site])
         assert len(result.unsatisfied) == 1
         assert result.warnings == []
 

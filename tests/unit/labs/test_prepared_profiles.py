@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from otto.config.repo import Repo
+from otto.config.project import Project
 from otto.labs import build_lab_sources
 from otto.labs.registry import LAB_REPOSITORIES
 from otto.models.settings import OsProfileSpec
@@ -12,16 +12,16 @@ from tests._fixtures.labdata import json_lab_sources, write_lab_json
 _CREDS = [{"login": "u", "password": "p"}]
 
 
-def _profile_repo(tmp_path: Path) -> Repo:
+def _profile_repo(tmp_path: Path) -> Project:
     """Repo A: declares the ``alpha`` data profile and no lab source."""
     return fake_repo(
         "repo-a",
-        sut_dir=tmp_path / "a",
+        root=tmp_path / "a",
         os_profiles={"alpha": OsProfileSpec.model_validate({"base": "unix", "has_bash": False})},
     )
 
 
-def _host_repo(tmp_path: Path) -> Repo:
+def _host_repo(tmp_path: Path) -> Project:
     """Repo B: one json lab whose host selects ``os_type: alpha``."""
     lab = tmp_path / "b" / "lab"
     write_lab_json(
@@ -29,7 +29,7 @@ def _host_repo(tmp_path: Path) -> Repo:
         [{"ip": "10.0.0.7", "element": "b1", "labs": ["e"], "creds": _CREDS, "os_type": "alpha"}],
     )
     return fake_repo(
-        "repo-b", lab_sources=json_lab_sources(tmp_path / "b", [lab]), sut_dir=tmp_path / "b"
+        "repo-b", lab_sources=json_lab_sources(tmp_path / "b", [lab]), root=tmp_path / "b"
     )
 
 
@@ -51,7 +51,7 @@ def test_a_build_for_the_repo_alone_does_not_displace_the_selection_s_preparatio
     from otto.labs.sources import prepared_lab_sources
 
     a, b = _profile_repo(tmp_path), _host_repo(tmp_path)
-    selection = ProfileContext.from_repos([a, b])
+    selection = ProfileContext.from_projects([a, b])
     (first,) = prepared_lab_sources(b, profiles=selection)
     prepared_lab_sources(b)  # the repo alone, as Repo.get_lab_panel builds it
     (again,) = prepared_lab_sources(b, profiles=selection)

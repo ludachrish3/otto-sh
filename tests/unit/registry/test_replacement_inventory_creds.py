@@ -80,21 +80,21 @@ def test_a_replaced_inventory_backend_is_what_build_inventory_builds(tmp_path, n
     register_inventory_backend(
         name, config=_Config, factory=lambda c: spy, snapshot_cache=snapshot, overwrite=True
     )
-    repo = fake_repo("r", sut_dir=tmp_path, settings={"inventory": table})
-    assert build_inventory([repo]) is spy
+    project = fake_repo("r", root=tmp_path, settings={"inventory": table})
+    assert build_inventory([project]) is spy
 
 
 def test_a_replaced_creds_store_is_what_build_inventory_overlays(tmp_path):
     store = _SpyStore()
     register_creds_backend("json", config=_Config, factory=lambda c: store, overwrite=True)
-    repo = fake_repo(
+    project = fake_repo(
         "r",
-        sut_dir=tmp_path,
+        root=tmp_path,
         settings={
             "inventory": {"backend": "json", "path": "inv.json"},
             "creds": {"backend": "json", "path": "creds.json"},
         },
     )
-    inventory = build_inventory([repo])
+    inventory = build_inventory([project])
     assert isinstance(inventory, CredsOverlay)
     assert inventory.store is store

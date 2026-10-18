@@ -28,7 +28,7 @@ from otto.project import (
     orchestrator,
     register_project_actions,
 )
-from otto.registry import registering_repo
+from otto.registry import registering_project
 from otto.result import Result
 from otto.utils import Status
 from tests._fixtures.bootstrap_seam import seed_scope_verdicts
@@ -55,13 +55,13 @@ class SuiteOpts(RepoBase):
 class _FakeCtx:
     """OttoContext double — copied from test_orchestrator.py's ``_FakeCtx``.
 
-    Only the two seams the orchestrator uses: ``for_repo`` (the real wrapper,
+    Only the two seams the orchestrator uses: ``for_project`` (the real wrapper,
     borrowed rather than reimplemented) and empty seeded scope verdicts read
     through the real ``_resolve_scopes`` (the whole-lab fallback, the shape
     this single-repo lab runs under).
     """
 
-    for_repo = OttoContext.for_repo
+    for_project = OttoContext.for_project
     _resolve_scopes = OttoContext._resolve_scopes
 
     def __init__(self, hosts):
@@ -83,7 +83,7 @@ class _FakeCtx:
         return out
 
 
-def _wire_lab(monkeypatch, repo_names, ctx):
+def _wire_lab(monkeypatch, project_names, ctx):
     """Point the orchestrator's context lookup at *ctx*, carrying *repo_names*.
 
     Copied from test_orchestrator.py's ``_wire_lab`` (single-repo shape).
@@ -91,9 +91,9 @@ def _wire_lab(monkeypatch, repo_names, ctx):
     truthy-but-empty ``inventory_settings`` reads as a broken ``[inventory]``
     declaration.
     """
-    ordered = [fake_repo(name) for name in repo_names]
-    ctx.repos = ordered
-    ctx.ordered_repos = ordered
+    ordered = [fake_repo(name) for name in project_names]
+    ctx.projects = ordered
+    ctx.ordered_projects = ordered
     monkeypatch.setattr("otto.run_context.get_context", lambda: ctx)
     return ordered
 
@@ -116,7 +116,7 @@ def widget_lab(monkeypatch, one_repo_lab):
     """One repo 'widget' whose install records the options it was handed."""
     seen: list = []
 
-    with registering_repo("widget"):
+    with registering_project("widget"):
 
         @register_project_actions
         class Widget(ProjectActions):
@@ -129,7 +129,9 @@ def widget_lab(monkeypatch, one_repo_lab):
 
     async def uninstalled(source):
         return ProjectStatus(
-            overall=InstallState.UNINSTALLED, repos={"widget": InstallState.UNINSTALLED}, scoping={}
+            overall=InstallState.UNINSTALLED,
+            projects={"widget": InstallState.UNINSTALLED},
+            scoping={},
         )
 
     monkeypatch.setattr(orchestrator, "status", uninstalled)

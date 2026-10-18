@@ -325,9 +325,9 @@ def test_warm_tab_is_answered_without_the_cli_or_config_packages(tmp_path):
     """The whole point: the second TAB loads otto, otto._shim, otto._shim_complete, nothing else."""
     from tests._fixtures.shim_repo import make_shim_repo
 
-    repo = make_shim_repo(tmp_path)
+    project = make_shim_repo(tmp_path)
     env = {
-        "OTTO_SUT_DIRS": str(repo),
+        "OTTOPATH": str(project),
         "OTTO_HOME": str(tmp_path / "home"),
         "COMP_WORDS": "otto host ",
         "COMP_CWORD": "2",
@@ -504,9 +504,9 @@ def test_a_stale_handover_reaches_entry_as_cache_stale(monkeypatch):
 def test_a_non_bash_shell_takes_the_full_path(tmp_path):
     from tests._fixtures.shim_repo import make_shim_repo
 
-    repo = make_shim_repo(tmp_path)
+    project = make_shim_repo(tmp_path)
     env = {
-        "OTTO_SUT_DIRS": str(repo),
+        "OTTOPATH": str(project),
         "OTTO_HOME": str(tmp_path / "home"),
         "_TYPER_COMPLETE_ARGS": "otto host ",
         "COMP_WORDS": "otto host ",

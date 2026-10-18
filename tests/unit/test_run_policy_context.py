@@ -190,7 +190,7 @@ def test_a_cli_context_built_without_the_root_callback_takes_the_root_options_va
     from otto.cli.invoke import ensure_lab_context
     from tests._fixtures.rootoptions import make_root_options
 
-    _without_the_root_callback(monkeypatch, lambda repos, labs: Lab(name="rig"))
+    _without_the_root_callback(monkeypatch, lambda projects, labs: Lab(name="rig"))
     with typer.Context(TyperGroup(name="otto")) as ctx:
         ctx.meta["_otto_root_options"] = make_root_options(labs=["rig"], field=True, dry_run=True)
         built = ensure_lab_context(ctx)
@@ -207,8 +207,8 @@ def test_a_cli_context_built_without_the_root_callback_takes_the_discovered_dead
     from otto.cli.invoke import ensure_lab_context
     from tests._fixtures.rootoptions import make_root_options
 
-    _without_the_root_callback(monkeypatch, lambda repos, labs: Lab(name="rig"))
-    monkeypatch.setattr("otto.config.repo.discovered_teardown_deadline", lambda: 60.0)
+    _without_the_root_callback(monkeypatch, lambda projects, labs: Lab(name="rig"))
+    monkeypatch.setattr("otto.config.project.discovered_teardown_deadline", lambda: 60.0)
     with typer.Context(TyperGroup(name="otto")) as ctx:
         ctx.meta["_otto_root_options"] = make_root_options(labs=["rig"])
         built = ensure_lab_context(ctx)
@@ -227,7 +227,7 @@ def test_without_the_root_callback_the_lab_build_sees_the_policy_the_context_car
 
     seen: list[RunPolicy | None] = []
 
-    def build_lab(repos, labs):
+    def build_lab(projects, labs):
         seen.append(installed_policy())
         return Lab(name="rig")
 

@@ -1887,13 +1887,14 @@ doctest-src:
 # by tests/unit/test_lane_invariants.py.
 #
 # HERMETIC, like the suite: collecting src/otto never loads tests/conftest.py,
-# so its OTTO_* strip does not run here, and a shell that sourced project_env
-# hands the doctests OTTO_SUT_DIRS. No doctest reads a harness opt-in, so every
-# OTTO_* variable goes. `log_cli=false` because pytest's live-log handler
-# re-installs its own capture stream over doctest's on every record: an example
-# that logs at INFO loses the rest of its output ("Got nothing"). Both pinned
+# so its strip (every OTTO_* variable and OTTOPATH) does not run here, and a
+# shell that sourced project_env hands the doctests OTTOPATH. No doctest reads a
+# harness opt-in, so every OTTO_* variable and OTTOPATH go. `log_cli=false`
+# because pytest's live-log handler re-installs its own capture stream over
+# doctest's on every record: an example that logs at INFO loses the rest of its
+# output ("Got nothing"). Both pinned
 # by tests/unit/test_doctest_lane_hermeticity.py, as is the nox `docs` twin.
-	@env $(foreach v,$(filter OTTO_%,$(.VARIABLES)),-u $(v)) uv run pytest -p no:cacheprovider -o addopts="--doctest-modules -p no:tach" -o log_cli=false src/otto
+	@env $(foreach v,$(filter OTTO_% OTTOPATH,$(.VARIABLES)),-u $(v)) uv run pytest -p no:cacheprovider -o addopts="--doctest-modules -p no:tach" -o log_cli=false src/otto
 
 docs-captures: ## (Docs) Refresh EVERY Getting Started capture, bed included (needs the lab VMs)
 	@$(SAY) "getting-started captures: full refresh (bed)"

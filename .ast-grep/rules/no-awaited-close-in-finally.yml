@@ -14,7 +14,7 @@ note: >
   t0 = 9, rule-measured on the pristine tree — the plan's read-count said
   1 (unix_host.py's interactive telnet close) and missed eight: cli/expose
   (post-verb host close), cli/monitor and suite/plugin (collector close),
-  config/repo, coverage/capture/produce and coverage/reporter (LocalHost
+  config/project, coverage/capture/produce and coverage/reporter (LocalHost
   close — which delegates to close_all() and CAN raise), host/host
   (app-shell session close), host/remote_host (transport chain). The
   2026-08-07 triage wrapped eight — each reports over an

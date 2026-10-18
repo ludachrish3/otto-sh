@@ -1,4 +1,4 @@
-"""``otto init`` — scaffold a new otto repo, or check an existing one.
+"""``otto init`` — scaffold a new otto project, or check an existing one.
 
 The doctor and the scaffolder are the :mod:`otto.init` library; this leaf
 parses the flags, asks its questions before anything is written, renders the
@@ -75,7 +75,10 @@ async def init_command(
     ] = False,
     kmodcov_dir: Annotated[
         str,
-        typer.Option("--kmodcov-dir", help="Where --kmodcov vendors the library (repo-relative)."),
+        typer.Option(
+            "--kmodcov-dir",
+            help="Where --kmodcov vendors the library (relative to the project root).",
+        ),
     ] = "third_party/otto_kmodcov",
     name: Annotated[
         str,
@@ -85,17 +88,17 @@ async def init_command(
         str, typer.Option("--version", help="Product version for settings.toml.")
     ] = "0.1.0",
     path: Annotated[
-        Path, typer.Option("--path", file_okay=False, help="Repo root to operate on.")
+        Path, typer.Option("--path", file_okay=False, help="Project root to operate on.")
     ] = Path(),
 ) -> None:
-    """Scaffold a new otto repo, or validate an existing one's setup.
+    """Scaffold a new otto project, or validate an existing one's setup.
 
     Registered as a bare-function loader (``"otto.cli.init:init_command"``);
     as a plain ``async def`` it runs under the full command lifecycle via the
     leaf-invoke wrapper's coroutine bridge (``cli/invoke._wrap_invoke``) —
     registration is the only opt-in.
     """
-    from ..init.doctor import check_repo
+    from ..init.doctor import check_project
     from ..init.errors import InitInputError
     from ..init.scaffolder import scaffold, scaffold_candidates
     from .invoke import usage_error_from
@@ -121,7 +124,7 @@ async def init_command(
             answers = _ask(config, candidates, name_given=bool(name))
             config, candidates = answers.config, answers.areas
         report = scaffold(config, candidates)
-        doctor = check_repo(config.root)
+        doctor = check_project(config.root)
     except InitInputError as e:
         raise usage_error_from(e, flags=_FLAGS) from e
     _print_report(report, config.root)
@@ -130,7 +133,7 @@ async def init_command(
 
     console = get_console()
     steps = next_steps_panel(
-        config.root, sut_dirs=os.environ.get(_sut_dirs_var(), ""), width=console.width
+        config.root, roots=os.environ.get(_ottopath_var(), ""), width=console.width
     )
     console.print(steps.renderable, soft_wrap=steps.soft_wrap)
     if not doctor.ok:
@@ -140,7 +143,7 @@ async def init_command(
 def _config(path: Path, **kwargs: str) -> "InitConfig":
     from ..init.config import InitConfig
 
-    return InitConfig.for_repo(path, **kwargs)
+    return InitConfig.for_project(path, **kwargs)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -247,17 +250,23 @@ _COMMAND_INDENT = 8
 """How far the copyable commands are indented under their heading."""
 
 
-def _sut_dirs_var() -> str:
-    from ..config.env import SUT_DIRS_ENV_VAR
+def _ottopath_var() -> str:
+    from ..config.env import OTTOPATH_ENV_VAR
 
-    return SUT_DIRS_ENV_VAR
+    return OTTOPATH_ENV_VAR
 
 
-def _already_active(root: Path, sut_dirs: str) -> bool:
-    """Return True when *sut_dirs* (an ``OTTO_SUT_DIRS`` value) already names *root*."""
-    from ..utils import split_path_list
+def _already_active(root: Path, roots: str) -> bool:
+    """Return True when *roots* (an ``OTTOPATH`` value) already names *root*.
 
-    return any(entry.resolve() == root for entry in split_path_list(sut_dirs))
+    Reads the value exactly as the loader does (:func:`~otto.utils.ottopath_entries`:
+    ``~`` expanded, a relative entry joined to the cwd) and compares by
+    :func:`~otto.utils.root_key`, so ``~/proj`` names ``$HOME/proj`` here too.
+    """
+    from ..utils import ottopath_entries, root_key
+
+    key = root_key(str(root))
+    return any(root_key(entry) == key for entry in ottopath_entries(roots))
 
 
 @dataclasses.dataclass(frozen=True)
@@ -283,10 +292,10 @@ class NextSteps:
     soft_wrap: bool
 
 
-def _next_steps_lines(root: Path, sut_dirs: str) -> list[_Line]:
+def _next_steps_lines(root: Path, roots: str) -> list[_Line]:
     from ..init.templates import EXAMPLE_LAB_NAME
 
-    export = [] if _already_active(root, sut_dirs) else [f"export {_sut_dirs_var()}={root}"]
+    export = [] if _already_active(root, roots) else [f"export {_ottopath_var()}={root}"]
     source = f"source {_COMPLETION_SCRIPT}"
     blank = _Line()
 
@@ -340,14 +349,14 @@ def _next_steps_lines(root: Path, sut_dirs: str) -> list[_Line]:
     ]
 
 
-def next_steps_panel(root: Path, *, sut_dirs: str, width: int) -> NextSteps:
+def next_steps_panel(root: Path, *, roots: str, width: int) -> NextSteps:
     """Build the Next steps block ``otto init`` prints last, for a *width*-column console.
 
     typer's bash installer writes ``~/.bash_completions/otto.sh`` and appends
     ``source '<that path>'`` to ``~/.bashrc`` once, so only the current shell
     needs a manual ``source``; it also rewrites ``~/.bashrc`` every time it
     runs, so it must never go in a startup file. The ``export`` lines are
-    omitted when *sut_dirs* already names *root*.
+    omitted when *roots* already names *root*.
 
     Boxed when every command fits inside the box. Otherwise the same lines
     print unboxed under a rule, soft-wrapped: rich folds or crops a line that
@@ -360,7 +369,7 @@ def next_steps_panel(root: Path, *, sut_dirs: str, width: int) -> NextSteps:
     from rich.rule import Rule
     from rich.text import Text
 
-    lines = _next_steps_lines(root, sut_dirs)
+    lines = _next_steps_lines(root, roots)
     widest = max(len(line.text) for line in lines if line.command)
     if widest + _COMMAND_INDENT + _BOX_OVERHEAD <= width:
         body = [

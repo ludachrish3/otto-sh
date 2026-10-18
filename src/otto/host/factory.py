@@ -85,7 +85,7 @@ def _merge_host_dict(
 
 
 def _data(profiles: ProfileContext | None) -> ProfileContext:
-    """Return the repo data a resolution sees: *profiles*, or none."""
+    """Return the project data a resolution sees: *profiles*, or none."""
     return profiles if profiles is not None else ProfileContext.empty()
 
 
@@ -220,7 +220,7 @@ def host_identity(
 
     *element* is the host's element, the same object
     :func:`create_host_from_dict` takes — its name is the id's first part.
-    *profiles* is the repo data the ``os_type`` resolves through, as there.
+    *profiles* is the project data the ``os_type`` resolves through, as there.
 
     It runs the factory's pipeline in no-preference mode: structural, then
     contextual, validation, with preferences unknown. No-preference mode
@@ -286,10 +286,10 @@ def create_host_from_dict(
     inventory record — a LOADER argument like ``element``; the host spec's own
     ``inventory`` field is the key and never reaches the factory.
 
-    ``profiles`` is the repo data profiles of the selected repos
+    ``profiles`` is the project data profiles of the selected projects
     (:class:`~otto.host.os_profile.ProfileContext`); ``os_type`` resolves
     through the code profiles, then them, then the host classes and built-ins
-    (:func:`~otto.host.os_profile.resolve_os_profile`). Omitted, no repo data
+    (:func:`~otto.host.os_profile.resolve_os_profile`). Omitted, no project data
     is seen. The host keeps the fields of the profile it was built from, so
     its console prompts come from that profile, across a connection rebuild
     and a copy too.
@@ -395,7 +395,7 @@ def validate_host_dict(
 ) -> None:
     """Validate a host dict without constructing the host.
 
-    ``os_type`` must name a profile some layer resolves (repo data only through
+    ``os_type`` must name a profile some layer resolves (project data only through
     *profiles*, as in :func:`create_host_from_dict`); the profile's base spec
     validates the merged dict (``extra='forbid'``, required fields, typed
     coercion, family-specific field validators for ``command_frame`` /

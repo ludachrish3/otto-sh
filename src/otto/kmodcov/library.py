@@ -2,7 +2,7 @@
 
 The library's C sources sit beside this module in the ``otto.kmodcov`` package,
 so a wheel carries them: ``otto cov kmodcov export`` copies
-:data:`SHIPPED_FILES` into a user's repo (vendored and committed there; the
+:data:`SHIPPED_FILES` into a user's project (vendored and committed there; the
 user's build system builds the ``.ko``), and ``check`` compares such a copy
 with what is shipped here.
 
@@ -127,8 +127,8 @@ class CheckResult:
 def export_tree(dest: Path) -> ExportResult:
     """Write the shipped library into *dest*, overwriting; the version header names this otto.
 
-    Never refuses: the copy is committed in the user's repo, so their own diff
-    is the review of what a re-export changed. :data:`LOCAL_HEADER` is never
+    Never refuses: the copy is committed in the user's git repository, so their own
+    diff is the review of what a re-export changed. :data:`LOCAL_HEADER` is never
     touched.
     """
     from ..version import get_version

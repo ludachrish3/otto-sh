@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 from otto.config import completion_cache as cc
 from otto.config.completion_cache import collect_logins_by_host
-from otto.config.repo import Repo
+from otto.config.project import Project
 from tests._fixtures.fake_repo import fake_repo
 from tests._fixtures.labdata import json_lab_sources, write_lab_json
 from tests._fixtures.sutrepo import touch_settings
@@ -19,16 +19,16 @@ _CREDS = [
 ]
 
 
-def _repo(tmp_path: Path, hosts: list[dict]) -> Repo:
+def _repo(tmp_path: Path, hosts: list[dict]) -> Project:
     lab = tmp_path / "lab"
     lab.mkdir()
     write_lab_json(lab / "lab.json", hosts)
-    return fake_repo(lab_sources=json_lab_sources(tmp_path, [lab]), sut_dir=tmp_path)
+    return fake_repo(lab_sources=json_lab_sources(tmp_path, [lab]), root=tmp_path)
 
 
 def test_maps_ids_to_login_entries_sorted_by_login(tmp_path):
-    repo = _repo(tmp_path, [{"ip": "1.1.1.1", "element": "u1", "labs": ["e"], "creds": _CREDS}])
-    assert collect_logins_by_host([repo]) == {
+    project = _repo(tmp_path, [{"ip": "1.1.1.1", "element": "u1", "labs": ["e"], "creds": _CREDS}])
+    assert collect_logins_by_host([project]) == {
         "u1": [
             {"login": "root", "protocols": [], "proxy": True},
             {"login": "tel", "protocols": ["telnet"], "proxy": False},
@@ -38,23 +38,23 @@ def test_maps_ids_to_login_entries_sorted_by_login(tmp_path):
 
 
 def test_the_map_is_record_driven_whatever_the_family(tmp_path):
-    repo = _repo(
+    project = _repo(
         tmp_path,
         [{"ip": "1.1.1.1", "element": "z1", "labs": ["e"], "creds": _CREDS, "os_type": "zephyr"}],
     )
     # A zephyr record still declares creds, so z1 IS present — refusing `--user`
     # on that family is the marker's job (spec §3.3), not the collector's.
-    assert set(collect_logins_by_host([repo])) == {"z1"}
+    assert set(collect_logins_by_host([project])) == {"z1"}
 
 
 def test_a_host_whose_summary_has_no_logins_is_omitted(monkeypatch):
     from otto.labs import HostSummary
 
-    monkeypatch.setattr(cc, "resolve_process_inventory", lambda repos: object())
+    monkeypatch.setattr(cc, "resolve_process_inventory", lambda projects: object())
     monkeypatch.setattr(
         cc,
-        "repo_host_summaries",
-        lambda repo, resolution, *, profiles: [
+        "project_host_summaries",
+        lambda project, resolution, *, profiles: [
             HostSummary(id="bare"),
             HostSummary(id="u1", logins=[]),
         ],
@@ -69,9 +69,9 @@ def test_empty_without_repos():
 def test_write_and_read_round_trip_and_no_password_is_written(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     mock_repo = MagicMock()
-    mock_repo.sut_dir = tmp_path / "sut"
-    mock_repo.sut_dir.mkdir()
-    touch_settings(mock_repo.sut_dir)
+    mock_repo.root = tmp_path / "sut"
+    mock_repo.root.mkdir()
+    touch_settings(mock_repo.root)
     mock_repo.init = []
     mock_repo.libs = []
     mock_repo.tests = []
@@ -84,15 +84,15 @@ def test_write_and_read_round_trip_and_no_password_is_written(tmp_path, monkeypa
     raw = cc._cache_path().read_text()
     assert "hunter2" not in raw
     assert "toor" not in raw
-    assert json.loads(raw)["schema"] == cc.SCHEMA_VERSION == 27
+    assert json.loads(raw)["schema"] == cc.SCHEMA_VERSION == 28
 
 
 def test_read_cache_rejects_a_malformed_login_map(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     mock_repo = MagicMock()
-    mock_repo.sut_dir = tmp_path / "sut"
-    mock_repo.sut_dir.mkdir()
-    touch_settings(mock_repo.sut_dir)
+    mock_repo.root = tmp_path / "sut"
+    mock_repo.root.mkdir()
+    touch_settings(mock_repo.root)
     mock_repo.init = []
     mock_repo.libs = []
     mock_repo.tests = []

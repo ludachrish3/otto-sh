@@ -1,7 +1,7 @@
 """A fleet walk never widens silently (spec 4 §4; its §8 walk-contract table).
 
-Real SUT trees under ``OTTO_SUT_DIRS`` and a real bootstrap, on hand-built
-contexts that never ran ``check_repos``: the case the CLI's own gate does not
+Real SUT trees under ``OTTOPATH`` and a real bootstrap, on hand-built
+contexts that never ran ``check_projects``: the case the CLI's own gate does not
 cover. Each test names its row.
 """
 
@@ -13,10 +13,11 @@ import pytest
 
 from otto import bootstrap as bs
 from otto.bootstrap import BootstrapError, DependencyError, ProjectScopeError
+from otto.config.env import is_otto_env_var
 from otto.config.scope import resolve_scopes, scopes_of
 from otto.host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
 from otto.run_context import LIBRARY_LAB_NAME, OttoContext, set_context
-from otto.session.errors import RepoLoadError
+from otto.session.errors import ProjectLoadError
 from tests._fixtures.bootstrap_seam import patch_bootstrap
 from tests._fixtures.fleet import _lab
 from tests._fixtures.sutrepo import make_sut_repo
@@ -49,7 +50,7 @@ def _unparseable(tmp_path, name="broken"):
 
 
 def _use(monkeypatch, *dirs):
-    monkeypatch.setenv("OTTO_SUT_DIRS", os.pathsep.join(str(d) for d in dirs))
+    monkeypatch.setenv("OTTOPATH", os.pathsep.join(str(d) for d in dirs))
 
 
 def _rig():
@@ -69,14 +70,14 @@ def test_row1_an_unreadable_environment_raises_instead_of_walking_the_lab(tmp_pa
 def test_row2_an_unparseable_settings_file_refuses(tmp_path, monkeypatch):
     broken = _unparseable(tmp_path)
     _use(monkeypatch, _write(tmp_path, "good", labs="rig"), broken)
-    with pytest.raises(RepoLoadError) as raised:
+    with pytest.raises(ProjectLoadError) as raised:
         _walk(OttoContext(lab=_rig()))
-    assert [Path(e.sut_dir).resolve() for e in raised.value.errors] == [broken.resolve()]
+    assert [Path(e.root).resolve() for e in raised.value.errors] == [broken.resolve()]
 
 
 def test_row3_an_active_dependency_skipped_declarer_refuses(tmp_path, monkeypatch):
     _use(monkeypatch, _write(tmp_path, "b", labs="rig", required=["ghost"]))
-    with pytest.raises(RepoLoadError) as raised:
+    with pytest.raises(ProjectLoadError) as raised:
         _walk(OttoContext(lab=_rig()))
     assert all(isinstance(e, DependencyError) for e in raised.value.errors)
 
@@ -91,7 +92,7 @@ def test_row4_a_switched_off_skipped_declarer_keeps_its_declaration(tmp_path, mo
 
 def test_row5_an_active_repo_whose_init_failed_refuses(tmp_path, monkeypatch):
     _use(monkeypatch, _write(tmp_path, "b", labs="rig", init_fails=True))
-    with pytest.raises(RepoLoadError):
+    with pytest.raises(ProjectLoadError):
         _walk(OttoContext(lab=_rig()))
 
 
@@ -133,7 +134,7 @@ def test_row9_a_refusal_is_cached(tmp_path, monkeypatch):
     monkeypatch.setattr("otto.bootstrap.bootstrap", lambda: calls.append(1) or result)
     ctx = OttoContext(lab=_rig())
     for _ in range(2):
-        with pytest.raises(RepoLoadError):
+        with pytest.raises(ProjectLoadError):
             scopes_of(ctx)  # the read is the act under test
     assert calls == [1]
 
@@ -160,8 +161,8 @@ def test_row11_remote_completion_meets_the_refusal(tmp_path, monkeypatch):
     from otto.cli import remote_completion as rc
 
     _use(monkeypatch, _write(tmp_path, "good", labs="rig"), _unparseable(tmp_path))
-    monkeypatch.setattr("otto.session.lab.build_lab", lambda repos, labs: _rig())
-    with pytest.raises(RepoLoadError):  # remote_path_completer's catch-all turns it into []
+    monkeypatch.setattr("otto.session.lab.build_lab", lambda projects, labs: _rig())
+    with pytest.raises(ProjectLoadError):  # remote_path_completer's catch-all turns it into []
         rc._required_for(_chain())
 
 
@@ -169,9 +170,9 @@ def test_row12_remote_completion_carries_include_projects(tmp_path, monkeypatch)
     from otto.cli import remote_completion as rc
 
     _use(monkeypatch, _write(tmp_path, "a"), _write(tmp_path, "b", labs="other", init_fails=True))
-    monkeypatch.setattr("otto.session.lab.build_lab", lambda repos, labs: _rig())
+    monkeypatch.setattr("otto.session.lab.build_lab", lambda projects, labs: _rig())
     rc._required_for(_chain())  # lab-inactive: demoted, no refusal
-    with pytest.raises(RepoLoadError):
+    with pytest.raises(ProjectLoadError):
         rc._required_for(_chain(include_projects=["b"]))
 
 
@@ -188,23 +189,23 @@ def test_row13_completion_without_a_reservation_gate_reads_no_scope(tmp_path, mo
 
 
 def test_row14_the_monitors_d3_check_lets_the_refusal_through(tmp_path, monkeypatch):
-    from otto.monitor.live import _enforce_driving_repo_scope
+    from otto.monitor.live import _enforce_driving_project_scope
 
     _use(monkeypatch, _write(tmp_path, "good", labs="rig"), _unparseable(tmp_path))
     set_context(OttoContext(lab=_rig()))
-    with pytest.raises(RepoLoadError):
-        _enforce_driving_repo_scope()
+    with pytest.raises(ProjectLoadError):
+        _enforce_driving_project_scope()
 
 
 def test_row15_a_lab_name_is_never_normalised(tmp_path, monkeypatch):
     _use(monkeypatch, _write(tmp_path, "bench", labs="Bench_A", init_fails=True))
-    with pytest.raises(RepoLoadError):
+    with pytest.raises(ProjectLoadError):
         _walk(OttoContext(lab=_lab(("slot1", "Bench_A"))))
 
 
 @pytest.mark.parametrize("exclude", [(), ("first",)])
 def test_row16_d3_sees_a_skipped_first_repo(tmp_path, monkeypatch, exclude):
-    from otto.monitor.live import _enforce_driving_repo_scope
+    from otto.monitor.live import _enforce_driving_project_scope
     from otto.project.orchestrator import _enforce_current_scope
 
     first = _write(tmp_path, "first", labs="other", required=["ghost"])
@@ -214,7 +215,7 @@ def test_row16_d3_sees_a_skipped_first_repo(tmp_path, monkeypatch, exclude):
     with pytest.raises(ProjectScopeError):
         _enforce_current_scope(ctx)
     with pytest.raises(ProjectScopeError):
-        _enforce_driving_repo_scope()
+        _enforce_driving_project_scope()
 
 
 @pytest.mark.asyncio
@@ -231,14 +232,14 @@ async def test_row17_status_full_shows_a_skipped_declarers_verdict(tmp_path, mon
 
 
 def test_row18_no_environment_at_all_walks_the_whole_lab(monkeypatch):
-    from otto.monitor.live import _enforce_driving_repo_scope
+    from otto.monitor.live import _enforce_driving_project_scope
 
-    for key in [k for k in os.environ if k.startswith("OTTO_")]:
+    for key in [k for k in os.environ if is_otto_env_var(k)]:
         monkeypatch.delenv(key)
     ctx = OttoContext(lab=_rig())
     assert _walk(ctx) == ["slot1", "slot2"]
     set_context(ctx)
-    _enforce_driving_repo_scope()  # returns quietly
+    _enforce_driving_project_scope()  # returns quietly
 
 
 def test_row19_a_healthy_tree_resolves_the_verdicts_it_always_did(tmp_path, monkeypatch):
@@ -247,7 +248,7 @@ def test_row19_a_healthy_tree_resolves_the_verdicts_it_always_did(tmp_path, monk
     _use(monkeypatch, b, a)
     lab = _rig()
     expected = resolve_scopes(
-        bs.bootstrap().ordered_repos,
+        bs.bootstrap().ordered_projects,
         lab.component_names,
         lab.hosts,
         exclude_ids=frozenset({BUILTIN_LOCAL_HOST_ID}),

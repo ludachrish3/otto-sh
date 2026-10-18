@@ -63,12 +63,12 @@ def install(lab):
     """Install a run on the lab and patch the root; takes the repo list (dependency order)."""
 
     @contextmanager
-    def _install(repos, ordered=None):
+    def _install(projects, ordered=None):
         with (
             active_context(lab),
             patch(
                 "otto.bootstrap.bootstrap",
-                return_value=fake_bootstrap_result(repos, ordered=ordered or None),
+                return_value=fake_bootstrap_result(projects, ordered=ordered or None),
             ),
         ):
             yield
@@ -81,11 +81,11 @@ def builds():
     """Fake build_images recording (repo name, host id, image_names, options) per call."""
     calls = []
 
-    async def _build_images(repo, parent, *, image_names=None, options=None):
+    async def _build_images(project, parent, *, image_names=None, options=None):
         calls.append(
-            (repo.name, parent.id, None if image_names is None else list(image_names), options)
+            (project.name, parent.id, None if image_names is None else list(image_names), options)
         )
-        names = [i.name for i in repo.docker_settings.images]
+        names = [i.name for i in project.docker_settings.images]
         wanted = names if image_names is None else [n for n in names if n in set(image_names)]
         return {n: ImageBuild(n, [f"{n}:latest"], "abc123abc123", _ok()) for n in wanted}
 
@@ -95,61 +95,61 @@ def builds():
 
 @pytest.mark.asyncio
 async def test_two_selected_repos_declaring_one_image_name_are_refused(install, builds):
-    repos = [_repo("a", images=("api",)), _repo("b", images=("api", "db"))]
-    with install(repos), pytest.raises(DockerVerbError) as excinfo:
+    projects = [_repo("a", images=("api",)), _repo("b", images=("api", "db"))]
+    with install(projects), pytest.raises(DockerVerbError) as excinfo:
         await build_on("test3")
     message = str(excinfo.value)
     assert excinfo.value.field == "images"
     assert "'api'" in message
     assert "a" in message
     assert "b" in message
-    assert "--repo" not in message, "the library names the parameter, the CLI spells the flag"
+    assert "--project" not in message, "the library names the parameter, the CLI spells the flag"
     assert builds == []
 
 
 @pytest.mark.asyncio
 async def test_narrowing_to_one_repo_lifts_the_refusal(install, builds):
-    repos = [_repo("a", images=("api",)), _repo("b", images=("api",))]
-    with install(repos):
-        await build_on("test3", repo="a")
+    projects = [_repo("a", images=("api",)), _repo("b", images=("api",))]
+    with install(projects):
+        await build_on("test3", project="a")
     assert [call[0] for call in builds] == ["a"]
 
 
 @pytest.mark.asyncio
 async def test_a_clash_outside_the_selected_images_is_not_this_builds_problem(install, builds):
-    repos = [_repo("a", images=("api", "x")), _repo("b", images=("api", "y"))]
-    with install(repos):
+    projects = [_repo("a", images=("api", "x")), _repo("b", images=("api", "y"))]
+    with install(projects):
         await build_on("test3", images=["x", "y"])
     assert len(builds) == 2
 
 
 @pytest.mark.asyncio
 async def test_two_images_of_one_repo_sharing_a_staging_key_are_refused(install, builds):
-    repos = [_repo("a", images=("team/api", "team_api"))]
-    with install(repos), pytest.raises(DockerVerbError) as excinfo:
+    projects = [_repo("a", images=("team/api", "team_api"))]
+    with install(projects), pytest.raises(DockerVerbError) as excinfo:
         await build_on("test3")
     message = str(excinfo.value)
     assert excinfo.value.field == "images"
     assert "'team/api'" in message
     assert "'team_api'" in message
-    assert "of repo 'a'" in message
+    assert "of project 'a'" in message
     assert "staging directory key 'team_api'" in message
-    assert "--repo" not in message
+    assert "--project" not in message
     assert builds == []
 
 
 @pytest.mark.asyncio
 async def test_narrowing_the_selection_lifts_a_staging_key_refusal(install, builds):
-    repos = [_repo("a", images=("team/api", "team_api"))]
-    with install(repos):
+    projects = [_repo("a", images=("team/api", "team_api"))]
+    with install(projects):
         await build_on("test3", images=["team/api"])
     assert [call[0] for call in builds] == ["a"]
 
 
 @pytest.mark.asyncio
 async def test_two_repos_may_declare_names_that_share_a_staging_key(install, builds):
-    repos = [_repo("a", images=("team/api",)), _repo("b", images=("team_api",))]
-    with install(repos):
+    projects = [_repo("a", images=("team/api",)), _repo("b", images=("team_api",))]
+    with install(projects):
         await build_on("test3")
     assert [call[0] for call in builds] == ["a", "b"]
 
@@ -162,11 +162,11 @@ async def test_a_dry_run_names_the_exact_docker_build_per_image(install, builds,
     df = tmp_path / "Dockerfile"
     df.write_text("FROM alpine\n")
     image = DockerImage(name="api", dockerfile=df, context=tmp_path)
-    repo = fake_repo(
+    project = fake_repo(
         "a", docker_settings=SimpleNamespace(images=(image,), composes=("core",), use_cases=())
     )
     with (
-        install([repo]),
+        install([project]),
         active_context(lab, dry_run=True),  # the inner run: on the same lab
         pytest.raises(CommandNotRunError) as excinfo,
     ):
@@ -184,7 +184,7 @@ async def test_builds_every_docker_repo_on_the_named_host_in_dependency_order(in
     with install([a, b], ordered=[b, a]):
         report = await build_on("test3")
     assert isinstance(report, BuildReport)
-    assert [(rb.repo, rb.host, rb.kind) for rb in report.repos] == [
+    assert [(rb.project, rb.host, rb.kind) for rb in report.projects] == [
         ("b", "test3", "built"),
         ("a", "test3", "built"),
     ]
@@ -225,14 +225,16 @@ async def test_a_host_outside_the_lab_or_not_docker_capable_is_refused(install, 
 async def test_repo_narrows_and_an_unknown_repo_is_refused(install, builds):
     a, b = _repo("a", images=("api",)), _repo("b", images=("db",))
     with install([a, b]):
-        report = await build_on("test3", repo="b")
-    assert [rb.repo for rb in report.repos] == ["b"]
+        report = await build_on("test3", project="b")
+    assert [rb.project for rb in report.projects] == ["b"]
     with (
         install([a, b]),
-        pytest.raises(DockerVerbError, match=r"repo 'c' is not a loaded repo.*\['a', 'b'\]") as e,
+        pytest.raises(
+            DockerVerbError, match=r"project 'c' is not a loaded project.*\['a', 'b'\]"
+        ) as e,
     ):
-        await build_on("test3", repo="c")
-    assert e.value.field == "repo"
+        await build_on("test3", project="c")
+    assert e.value.field == "project"
 
 
 @pytest.mark.asyncio
@@ -241,7 +243,7 @@ async def test_each_repo_builds_the_subset_of_images_it_declares(install, builds
     with install([a, b]):
         report = await build_on("test3", images=["api", "db"])
     assert [(c[0], c[2]) for c in builds] == [("a", ["api"]), ("b", ["db"])]
-    assert [sorted(rb.images) for rb in report.repos] == [["api"], ["db"]]
+    assert [sorted(rb.images) for rb in report.projects] == [["api"], ["db"]]
 
 
 @pytest.mark.asyncio
@@ -250,7 +252,7 @@ async def test_a_repo_with_none_of_the_requested_images_is_left_out(install, bui
     a, b = _repo("a", images=("api",)), _repo("b", images=("db",))
     with install([a, b]):
         report = await build_on("test3", images=["api"])
-    assert [rb.repo for rb in report.repos] == ["a"]
+    assert [rb.project for rb in report.projects] == ["a"]
 
     with (
         install([a, b]),
@@ -286,7 +288,7 @@ async def test_a_repo_declaring_no_images_is_a_no_images_entry(install, builds):
     a, b = _repo("a", images=("api",)), _repo("b")
     with install([a, b]):
         report = await build_on("test3")
-    assert [(rb.repo, rb.kind) for rb in report.repos] == [("a", "built"), ("b", "no_images")]
+    assert [(rb.project, rb.kind) for rb in report.projects] == [("a", "built"), ("b", "no_images")]
     assert [c[0] for c in builds] == ["a"]
     assert report.ok
 
@@ -304,7 +306,7 @@ async def test_nothing_to_build_is_refused_before_any_host_is_touched(install, b
 
 @pytest.mark.asyncio
 async def test_a_failed_image_makes_the_report_not_ok(install):
-    async def _build_images(repo, parent, *, image_names=None, options=None):
+    async def _build_images(project, parent, *, image_names=None, options=None):
         return {"api": ImageBuild("api", [], None, _fail("syntax error"))}
 
     with (
@@ -313,7 +315,7 @@ async def test_a_failed_image_makes_the_report_not_ok(install):
     ):
         report = await build_on("test3")
     assert not report.ok
-    assert [(f.repo, f.image) for f in report.failed] == [("a", "api")]
+    assert [(f.project, f.image) for f in report.failed] == [("a", "api")]
     assert "syntax error" in report.failed[0].result.value
 
 
@@ -350,8 +352,8 @@ def _resolved(lab, placed, *, displaced=(), order=None):
     """
     frags = [sf for sfs in placed.values() for sf in sfs]
     selection = Selection("integration", frags, displaced=list(displaced))
-    repos = {sf.repo.name: sf.repo for sf in frags}
-    order_map = order or {name: i for i, name in enumerate(repos)}
+    projects = {sf.project.name: sf.project for sf in frags}
+    order_map = order or {name: i for i, name in enumerate(projects)}
     parent = lab.hosts[next(iter(placed))]
     return patch.object(
         deploy_mod,
@@ -370,7 +372,7 @@ async def test_compose_build_builds_the_winners_per_host_in_dependency_order(lab
     }
     with _resolved(lab, placed):
         report = await compose_build("integration")
-    assert [(rb.repo, rb.host) for rb in report.repos] == [
+    assert [(rb.project, rb.host) for rb in report.projects] == [
         ("b", "alt2"),
         ("a", "test3"),
     ]  # hosts sorted
@@ -429,7 +431,7 @@ async def test_a_winner_without_images_is_a_no_images_entry_and_the_other_host_b
     }
     with _resolved(lab, placed):
         report = await compose_build("integration")
-    assert [(rb.repo, rb.host, rb.kind) for rb in report.repos] == [
+    assert [(rb.project, rb.host, rb.kind) for rb in report.projects] == [
         ("b", "alt2", "no_images"),
         ("a", "test3", "built"),
     ]
@@ -485,8 +487,8 @@ async def test_compose_build_dry_run_names_the_displacements(lab, builds):
 
 @pytest.mark.asyncio
 async def test_build_on_hands_the_flags_to_every_build(install, builds):
-    repos = [_repo("a", images=("api",))]
-    with install(repos):
+    projects = [_repo("a", images=("api",))]
+    with install(projects):
         await build_on(
             "test3",
             tags=["api:1.4"],
@@ -503,8 +505,8 @@ async def test_build_on_hands_the_flags_to_every_build(install, builds):
 
 @pytest.mark.asyncio
 async def test_a_tag_with_two_selected_images_is_refused_before_anything_runs(install, builds):
-    repos = [_repo("a", images=("api", "db"))]
-    with install(repos), pytest.raises(DockerVerbError) as excinfo:
+    projects = [_repo("a", images=("api", "db"))]
+    with install(projects), pytest.raises(DockerVerbError) as excinfo:
         await build_on("test3", tags=["x:1"])
     assert excinfo.value.field == "tag"
     assert "api" in str(excinfo.value)
@@ -514,8 +516,8 @@ async def test_a_tag_with_two_selected_images_is_refused_before_anything_runs(in
 
 @pytest.mark.asyncio
 async def test_a_tag_with_one_image_named_is_fine(install, builds):
-    repos = [_repo("a", images=("api", "db"))]
-    with install(repos):
+    projects = [_repo("a", images=("api", "db"))]
+    with install(projects):
         await build_on("test3", images=["api"], tags=["x:1"])
     assert builds[0][2] == ["api"]
 
@@ -532,10 +534,10 @@ async def test_compose_build_hands_the_flags_to_every_build(lab, builds):
 @pytest.mark.asyncio
 async def test_a_missing_archive_context_is_refused_before_any_host_is_touched(install, builds):
     missing = SimpleNamespace(name="api", is_archive=True, context=Path("/nonexistent/ctx.tar"))
-    repo = fake_repo(
+    project = fake_repo(
         "a", docker_settings=SimpleNamespace(images=(missing,), composes=(), use_cases=())
     )
-    with install([repo]), pytest.raises(DockerVerbError, match=r"/nonexistent/ctx\.tar") as e:
+    with install([project]), pytest.raises(DockerVerbError, match=r"/nonexistent/ctx\.tar") as e:
         await build_on("test3")
     assert "is not a file" in str(e.value)
     assert e.value.field == "images"

@@ -16,7 +16,7 @@ writes a capture that is **not** committed anywhere — it lives in the
 output directory, the same as a run's other artifacts.  Selecting a
 `manual`-kind tier switches the command into manual-capture mode: it
 requires `--ticket`, annotates tester identity onto the capture, and
-additionally copies the capture into the repo's committed store at
+additionally copies the capture into the project's committed store at
 `.otto/coverage/manual/`:
 
 ```bash
@@ -57,13 +57,13 @@ zephyr37-llext/cov_ext: counters cleared
 `e2e`-kind tier has no effect.
 
 Retrieval requires a git repository — resolving `base_commit` and, for
-a dirty tree, the offset remap both need it.  Outside a git repo,
+a dirty tree, the offset remap both need it.  Outside a git repository,
 `otto cov get` refuses with a clean error; `otto cov report`'s
 `--tier NAME=PATH` escape hatch remains available for git-less flows
-(see {ref}`coverage-tier-name-path`).  The SUT directory does not have
-to be the repository root: a SUT checked out as a subdirectory of a
+(see {ref}`coverage-tier-name-path`).  The project root does not have
+to be the repository root: a project root checked out as a subdirectory of a
 larger repository (a monorepo layout) anchors its captures against the
-enclosing repo — its `HEAD` is the `base_commit`, and its working-tree
+enclosing repository — its `HEAD` is the `base_commit`, and its working-tree
 state decides dirtiness.
 
 ## Refusals
@@ -78,7 +78,7 @@ touched:
 3. a `manual`-kind `--tier` with no `--ticket`
 4. nothing instrumented anywhere — the command refuses with every product's
    verdict
-5. the SUT is not a git checkout
+5. the project root is not a git checkout
 6. no `--output` and no destination set for this invocation
 
 After that, hosts are touched: collection can still fail if it produced no

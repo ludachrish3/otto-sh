@@ -1,5 +1,5 @@
 $ otto --lab unix host test1 probe
-INFO     fleet of interest: 0 of 4 lab hosts (1 repo(s), 1 excluded)                                
+INFO     fleet of interest: 0 of 4 lab hosts (1 project(s), 1 excluded)                             
 INFO     @test1   | export APP_ENV=lab                                                              
 INFO     @test1   | export APP_ENV=lab                                                              
 INFO     @test1   | python3 -u -i                                                                   
@@ -76,6 +76,9 @@ device issues no probe at all:
 │          │          │      │           │           │             │ opened                        │
 │ telnet   │ term     │ 23   │ supported │ login     │ controller  │ login 'vagrant': session      │
 │          │          │      │           │           │             │ opened                        │
+│ telnet   │ term     │ 4001 │ listening │ inventory │ session:ssh │ listening on :4001, owner     │
+│          │          │      │           │           │             │ ser2net; not tried: telnet    │
+│          │          │      │           │           │             │ already supported on :23      │
 │ ftp      │ transfer │ 21   │ supported │ login     │ controller  │ login 'vagrant': 230 logged   │
 │          │          │      │           │           │             │ in                            │
 │ nc       │ transfer │ 22   │ supported │ userland  │ session:ssh │ nc applet present             │
@@ -86,7 +89,7 @@ device issues no probe at all:
 │          │          │      │           │           │             │ (inventory: ss, elevated)     │
 ╰──────────┴──────────┴──────┴───────────┴───────────┴─────────────┴───────────────────────────────╯
 not applicable to this family: console, tftp
-7 loopback-only listeners not shown
+8 loopback-only listeners not shown
 other listeners: 68/udp systemd-network, 546/udp systemd-network
                               drift                               
 ╭──────────┬──────────┬────────────────────────┬─────────────────╮

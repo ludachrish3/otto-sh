@@ -1,6 +1,6 @@
 """The user-level ``~/.otto/settings.toml`` (spec 2026-08-28 host-inventory §8).
 
-otto had only per-repo settings; a machine inventory is a per-user fact, so
+otto had only per-project settings; a machine inventory is a per-user fact, so
 this file lives under ``otto.config.home.otto_home()`` (``OTTO_HOME``
 relocates it; that module is not autodoc'd, hence the literal). Read once at
 bootstrap by

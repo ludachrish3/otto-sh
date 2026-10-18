@@ -1,7 +1,7 @@
 """
 The built-in ``kmod`` DEV-TOOL kind, and its ``kmodcov`` subtype.
 
-A kernel module a repo places on a host as tooling rather than as software
+A kernel module a project places on a host as tooling rather than as software
 under test: a tracer, a test driver, or — the subtype — the otto_kmodcov
 coverage library. The kernel's module loader drives the verbs, exactly as
 for the ``kmod`` PRODUCT kind (:mod:`otto.host.kmod_kind`): ``install`` is

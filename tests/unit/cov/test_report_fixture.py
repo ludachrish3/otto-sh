@@ -40,7 +40,7 @@ def test_fixture_report_renders(tmp_path, hermetic_covapp_bundle):
     assert (report_dir / "dist" / "covapp.js").exists()
 
     payload = _index_payload(report_dir)
-    assert payload["project_name"] == "otto example product"
+    assert payload["report_title"] == "otto example product"
     assert payload["tier_order"] == ["system", "unit", "manual", "bench"]
 
     # product/main.c, product/utils.c, lib/ring.c — one chunk per file.

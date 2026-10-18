@@ -33,8 +33,8 @@ export function fmtCount(n: number): string {
  * Without this, a legal file/dir name containing `%`/`#`/other reserved
  * characters round-trips into a `URIError` at render time (no error
  * boundary catches it — the whole app white-screens). */
-export function crumbsFor(projectName: string, segments: string[]): Crumb[] {
-  const crumbs: Crumb[] = [{ label: projectName, href: "#/coverage" }];
+export function crumbsFor(reportTitle: string, segments: string[]): Crumb[] {
+  const crumbs: Crumb[] = [{ label: reportTitle, href: "#/coverage" }];
   let acc = "";
   for (const segment of segments) {
     acc += `/${encodeURIComponent(segment)}`;

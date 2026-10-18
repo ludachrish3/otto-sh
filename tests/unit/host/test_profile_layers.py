@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from otto.config.repo import Repo
+from otto.config.project import Project
 from otto.host.element import Element
 from otto.host.factory import create_host_from_dict
 from otto.host.os_profile import (
@@ -110,37 +110,39 @@ def test_spec_is_keyword_only():
 # --- repo data tables, checked after init -------------------------------------
 
 
-def _repo(tmp_path: Path, name: str, body: str) -> Repo:
+def _repo(tmp_path: Path, name: str, body: str) -> Project:
     """A real repo named *name* under *tmp_path* whose settings append *body*."""
-    return Repo(sut_dir=make_sut_repo(tmp_path / name, name=name, extra=textwrap.dedent(body)))
+    return Project(root=make_sut_repo(tmp_path / name, name=name, extra=textwrap.dedent(body)))
 
 
 def test_check_data_profiles_names_the_repo_and_table_for_an_unknown_base(tmp_path):
-    repo = _repo(tmp_path, "repo-a", '[os_profiles.broken]\nbase = "windows"\n')
-    with pytest.raises(ValueError, match=r"\[os_profiles\.broken\] in repo 'repo-a': .*base must"):
-        check_data_profiles([repo])
+    project = _repo(tmp_path, "repo-a", '[os_profiles.broken]\nbase = "windows"\n')
+    with pytest.raises(
+        ValueError, match=r"\[os_profiles\.broken\] in project 'repo-a': .*base must"
+    ):
+        check_data_profiles([project])
 
 
 def test_check_data_profiles_names_the_repo_and_table_for_an_unknown_defaults_key(tmp_path):
-    repo = _repo(tmp_path, "repo-a", '[os_profiles.broken]\nbase = "unix"\nosTyp = "unix"\n')
+    project = _repo(tmp_path, "repo-a", '[os_profiles.broken]\nbase = "unix"\nosTyp = "unix"\n')
     with pytest.raises(
-        ValueError, match=r"\[os_profiles\.broken\] in repo 'repo-a': .*unknown default field"
+        ValueError, match=r"\[os_profiles\.broken\] in project 'repo-a': .*unknown default field"
     ):
-        check_data_profiles([repo])
+        check_data_profiles([project])
 
 
 def test_check_data_profiles_twice_is_idempotent(tmp_path):
-    repo = _repo(tmp_path, "repo-a", '[os_profiles.fine]\nbase = "unix"\nhas_bash = false\n')
+    project = _repo(tmp_path, "repo-a", '[os_profiles.fine]\nbase = "unix"\nhas_bash = false\n')
     revisions = (HOST_CLASSES.revision, OS_PROFILES.revision)
-    check_data_profiles([repo])
-    check_data_profiles([repo])
+    check_data_profiles([project])
+    check_data_profiles([project])
     assert (HOST_CLASSES.revision, OS_PROFILES.revision) == revisions
     assert "fine" not in OS_PROFILES
 
 
 def test_a_data_profile_over_a_custom_host_class_resolves(tmp_path):
     # Parsed BEFORE the class is registered, as settings are parsed before init.
-    repo = _repo(
+    project = _repo(
         tmp_path, "repo-a", '[os_profiles.mine-v1]\nbase = "custom-late"\nhas_bash = false\n'
     )
 
@@ -148,25 +150,25 @@ def test_a_data_profile_over_a_custom_host_class_resolves(tmp_path):
         pass
 
     register_host_class("custom-late", CustomLate)  # the init import
-    check_data_profiles([repo])
-    profile = resolve_os_profile("mine-v1", data=ProfileContext.from_repos([repo]))
+    check_data_profiles([project])
+    profile = resolve_os_profile("mine-v1", data=ProfileContext.from_projects([project]))
     assert profile.base == "custom-late"
     assert dict(profile.fields.defaults) == {"has_bash": False}
 
 
 def test_the_resolver_checks_a_data_profile_it_selects():
     data = _data(bad=OsProfile("bad", "unix", ProfileFields(FrozenMap({"osTyp": "unix"}))))
-    with pytest.raises(ValueError, match=r"\[os_profiles\.bad\] in repo 'repo-a'"):
+    with pytest.raises(ValueError, match=r"\[os_profiles\.bad\] in project 'repo-a'"):
         resolve_os_profile("bad", data=data)
 
 
 def test_the_later_repo_wins_a_same_named_table(tmp_path):
     a = _repo(tmp_path, "repo-a", '[os_profiles.x]\nbase = "unix"\nhas_bash = true\n')
     b = _repo(tmp_path, "repo-b", '[os_profiles.x]\nbase = "unix"\nhas_bash = false\n')
-    context = ProfileContext.from_repos([a, b])
+    context = ProfileContext.from_projects([a, b])
     assert dict(context.profiles["x"].fields.defaults) == {"has_bash": False}
     assert context.owners["x"] == "repo-b"
-    assert dict(ProfileContext.from_repos([b, a]).profiles["x"].fields.defaults) == {
+    assert dict(ProfileContext.from_projects([b, a]).profiles["x"].fields.defaults) == {
         "has_bash": True
     }
 
@@ -333,7 +335,7 @@ def test_settings_parse_does_not_import_os_profile(tmp_path):
         import sys
         import tomli
         from pathlib import Path
-        from otto.config.repo import compile_settings
+        from otto.config.project import compile_settings
         root = Path({str(sut)!r})
         data = tomli.loads((root / ".otto" / "settings.toml").read_text())
         compiled = compile_settings(data, root)

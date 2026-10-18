@@ -1,6 +1,6 @@
 # Extension points
 
-Downstream repos extend otto from **init modules** — ordinary Python modules
+Downstream projects extend otto from **init modules** — ordinary Python modules
 named in the `init` list of `.otto/settings.toml`, imported during bootstrap
 phase 2 ({doc}`../lifecycle`). Registration is import-time and side-effect
 based: an init module calls `register_*` functions (or applies decorators),
@@ -40,14 +40,14 @@ inside `otto test`'s pytest session, so they may register nothing
 | a link impairer | `register_impairer` | {doc}`../../cookbook/network-api` |
 | a tunnel carrier | `register_carrier` | {doc}`../../cookbook/network-api` |
 | a compose adapter (per docker use case) | `register_compose_adapter` | {doc}`../../cli/docker/use-cases` |
-| a repo's `ProjectActions` (project instructions) | `register_project_actions` | {doc}`../../cookbook/authoring/writing-instructions` |
+| a project's `ProjectActions` (project instructions) | `register_project_actions` | {doc}`../../cookbook/authoring/writing-instructions` |
 | per-host monitor parsers | `register_host_parsers` | {doc}`../../cookbook/extending/custom-parsers` |
 | project-level monitor parsers | `register_parsers` | {doc}`../../cookbook/extending/custom-parsers` |
 | SNMP metric descriptors | `register_snmp_metric` | {doc}`../../cookbook/extending/custom-parsers` |
 
-Tests are not a seam either: they are plain pytest files in the repo's test
+Tests are not a seam either: they are plain pytest files in the project's test
 directories, found by pytest and run by `otto test`
-({doc}`../../cookbook/authoring/writing-tests`). A repo-wide options class
+({doc}`../../cookbook/authoring/writing-tests`). A project-wide options class
 registered for both `run` and `test` is the standard way to give a whole
 project consistent CLI flags ({doc}`../../cookbook/authoring/options-classes`).
 

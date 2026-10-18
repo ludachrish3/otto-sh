@@ -256,7 +256,7 @@ const INDEX_PAYLOAD_KEYS: Record<keyof IndexPayload, true> = {
   stamp: true,
   generated_at: true,
   otto_version: true,
-  project_name: true,
+  report_title: true,
   tier_order: true,
   tier_labels: true,
   tier_colors: true,

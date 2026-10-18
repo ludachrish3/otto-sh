@@ -1,7 +1,7 @@
 """Repo panel dependency-status subtitle (dependencies_summary)."""
 
 from otto.config.dependencies import resolve_dependencies
-from otto.config.repo import Repo
+from otto.config.project import Project
 from tests._fixtures.sutrepo import make_sut_repo
 
 
@@ -14,14 +14,14 @@ def _repo(tmp_path, name, version="1.0.0", *, required=(), optional=()):
         version=version,
         extra=f"[dependencies]\nrequired = [{req}]\noptional = [{opt}]\n",
     )
-    return Repo(sut_dir=root)
+    return Project(root=root)
 
 
 def test_no_dependencies_no_summary_and_no_subtitle(tmp_path):
-    repo = _repo(tmp_path, "solo")
-    resolve_dependencies([repo])
-    assert repo.dependencies_summary() is None
-    assert repo.get_lab_panel().subtitle is None
+    project = _repo(tmp_path, "solo")
+    resolve_dependencies([project])
+    assert project.dependencies_summary() is None
+    assert project.get_lab_panel().subtitle is None
 
 
 def test_summary_shows_each_status_shape(tmp_path):

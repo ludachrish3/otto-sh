@@ -1,9 +1,11 @@
 # otto test
 
-`otto test` runs your repos' pytest tests, chosen by name or by marker
-expression. A **repo** is a directory with a `.otto/settings.toml` at its
-root, and its **test directories** are the ones that file's `tests` setting
-lists ({doc}`../../configuration/settings`). pytest collects them as it
+`otto test` runs your projects' pytest tests, chosen by name or by marker
+expression. Each
+[project](../../overview.md#projects-project-roots-and-ottopath)
+keeps a `.otto/settings.toml` at its project root, and its **test
+directories** are the ones that file's `tests` setting lists
+({doc}`../../configuration/settings`). pytest collects them as it
 always does: by default every `test_*.py` file in them, with its
 `Test`-prefixed classes and `test_`-prefixed functions. Writing those tests
 is {doc}`../../cookbook/authoring/writing-tests`.
@@ -28,7 +30,7 @@ otto test --list-markers
 - **`NAMES`** are tests to run, any number of them: a test name
   (`test_reboot`), a class name (`TestDevice`, every test in it) or both
   (`TestDevice::test_reboot`). Each name is looked up in every configured
-  repo. {doc}`selection` has the forms and how they match.
+  project. {doc}`selection` has the forms and how they match.
 - **A run needs a name or `-m`.** With neither, `otto test` exits 2 with
   `otto test needs at least one test name or -m EXPR`. `-m` alone selects by
   marker; with names, it narrows the named tests.
@@ -59,7 +61,7 @@ command line adds:
 
 - **the lab:** `otto --lab NAME test ...` picks the lab whose hosts the
   tests reach ([Global options](../index.md#global-options));
-- **options:** the flags of every options class a repo registers for `test`
+- **options:** the flags of every options class a project registers for `test`
   ([Options](#options));
 - **repeating:** `--iterations`, `--duration` and `--threshold`
   ([Repeating a test](#repeating-a-test));
@@ -79,7 +81,7 @@ otto --lab my_lab test -m "not integration"           # by marker expression
 otto --lab my_lab test TestDevice -m slow             # TestDevice's tests marked slow
 otto test --list-tests                                # every test, grouped
 otto test --list-tests --markers slow TestDevice      # what that selection would run
-otto test --list-markers                              # the markers pytest knows, per repo
+otto test --list-markers                              # the markers pytest knows, per project
 otto --lab my_lab -n test TestDevice                  # dry run: what would run, nothing runs
 ```
 
@@ -92,8 +94,8 @@ in the Cookbook.
 
 | Option | Default | Description |
 | ------ | ------- | ----------- |
-| `--list-tests` | | List what the names and `--markers` select, grouped by repo, module and class, and exit |
-| `--list-markers` | | List each repo's markers, as pytest knows them, then otto's built-in markers, and exit |
+| `--list-tests` | | List what the names and `--markers` select, grouped by project, module and class, and exit |
+| `--list-markers` | | List each project's markers, as pytest knows them, then otto's built-in markers, and exit |
 | `--markers, -m EXPR` | `""` | Pytest marker expression (e.g. `"not integration"`). Narrows the named tests, or selects on its own when no name is given |
 | `--random / --no-random` | on | Shuffle test order (pytest-randomly); the seed is logged at session start. `--no-random` runs tests in collection order |
 | `--seed N` | drawn | Fix the random-order seed to reproduce a previous run's order (implies `--random`; refused with `--no-random`) |
@@ -108,7 +110,7 @@ in the Cookbook.
 | `--cov-report, -r` | off | Generate an HTML coverage report after the run (implies `--cov`) |
 | `--cov-report-dir PATH` | `<run dir>/cov_report` | Override HTML report destination (implies `--cov-report`) |
 | `--overwrite-cov-report-dir` | off | Allow `--cov-report-dir` to clear an existing non-empty dir |
-| `--project-name NAME` | `Coverage Report` | Title shown in the HTML report header (with `--cov-report`) |
+| `--report-title NAME` | `Coverage Report` | Title shown in the HTML report header (with `--cov-report`) |
 | `--cov-tickets-json PATH` | not written | Also write a per-ticket coverage summary after the run (implies `--cov-report`; see {ref}`coverage-tickets-json`) |
 | `--monitor / --no-monitor` | off | Collect host performance metrics for the entire run |
 | `--monitor-interval SECONDS` | `5.0` | Sampling interval for `--monitor` (minimum 1.0) |
@@ -118,7 +120,7 @@ in the Cookbook.
 The implications in this table are the library's:
 {class}`~otto.suite.run.RunOptions` applies them for `otto.run_tests` too.
 
-`otto test` also takes the flags of every options class a repo registers for
+`otto test` also takes the flags of every options class a project registers for
 the `test` verb, and `otto test --help` lists them with the rest. A test
 reads their values with
 [`ctx.options(Cls)`](../../cookbook/authoring/writing-tests.md#what-every-test-gets); see
@@ -128,7 +130,7 @@ class's validation stops the run with exit code 2 before any test runs.
 ### Listing tests
 
 `--list-tests` runs pytest's collection and prints what
-the names and `--markers` select, grouped by repo, module and class. Each
+the names and `--markers` select, grouped by project, module and class. Each
 parametrization is listed:
 
 ```text
@@ -162,7 +164,7 @@ $ otto --lab unix -n test -m integration TestDevice
 dry run: no command body was run and no device was contacted
   would run: otto test TestDevice --markers integration
   options:
-    RepoOptions: device_type='router', lab_env='staging'
+    ProjectOptions: device_type='router', lab_env='staging'
     DeviceTestOptions: firmware='latest', check_interfaces=True
   lab: unix (7 hosts)
 dry run: pytest collected these tests; nothing ran
@@ -232,21 +234,21 @@ hand out mirror each test's pytest ID:
     └── test_ports/              module_dir for tests/switch/test_ports.py
 ```
 
-- **A module's directory** is its path under the repo's test directory,
+- **A module's directory** is its path under the project's test directory,
   without `.py`: `tests/test_router.py` gives `test_router/`, and
   `tests/switch/test_ports.py` gives `switch/test_ports/`.
 - **A test's directory** is inside its module's, under its class if it has
   one. Parametrized names are made filesystem-safe: `test_up[eth0]` becomes
   `test_up_eth0_`.
-- **With more than one repo configured** (each with a test directory), each
-  repo's directories go under a directory named after the repo,
-  `<run dir>/<repo>/test_router/...`, whichever repos the names turn out to
-  match. A single-repo setup keeps the shorter layout.
+- **With more than one project configured** (each with a test directory), each
+  project's directories go under a directory named after the project,
+  `<run dir>/<project>/test_router/...`, whichever projects the names turn out to
+  match. A single-project setup keeps the shorter layout.
 - **The JUnit file** is `<run dir>/junit.xml`, or `--results PATH`. With
-  several repos, each repo runs its own pytest session and writes its own
-  file, so none overwrites another: `junit_<repo>.xml`, and an explicit
-  `--results PATH` gets `_<repo>` appended to its stem (`--results
-  custom.xml` becomes `custom_repoA.xml`, `custom_repoB.xml`, ...). A repo
+  several projects, each project runs its own pytest session and writes its own
+  file, so none overwrites another: `junit_<project>.xml`, and an explicit
+  `--results PATH` gets `_<project>` appended to its stem (`--results
+  custom.xml` becomes `custom_repoA.xml`, `custom_repoB.xml`, ...). A project
   with no selected test leaves no file.
 - **Directories are created when a test first asks for them,** like pytest's
   `tmp_path`. A test that never names `module_dir` or `test_dir` leaves
@@ -317,7 +319,7 @@ A single test can also start and stop a monitor of its own through the
 ## Markers
 
 `-m EXPR` selects by marker ({doc}`selection`). Declare your own markers,
-such as `integration` or `slow`, in the repo's `pyproject.toml`, where pytest
+such as `integration` or `slow`, in the project's `pyproject.toml`, where pytest
 reads them:
 
 ```toml
@@ -328,14 +330,14 @@ markers = [
 ]
 ```
 
-`otto test --list-markers` prints one panel per repo and then one for otto.
-A repo's panel lists every marker pytest knew when it last collected the
-repo's tests: the ones a pytest config declares, the ones pytest itself, a
+`otto test --list-markers` prints one panel per project and then one for otto.
+A project's panel lists every marker pytest knew when it last collected the
+project's tests: the ones a pytest config declares, the ones pytest itself, a
 plugin or a conftest registers (such as `asyncio`), and the ones a test
-applies. When a repo's test-name cache must be collected whole (the first
+applies. When a project's test-name cache must be collected whole (the first
 time, for instance; see [What the cache can't follow](selection.md#what-the-cache-cant-follow)),
 `--list-markers` collects it first. otto's panel lists the markers otto itself adds, `ensure` and `retry`, which the
-repo panels leave out.
+project panels leave out.
 
 pytest, otto and the plugins otto runs with provide these markers in every
 run:

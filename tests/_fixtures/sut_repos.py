@@ -25,7 +25,7 @@ def repo_double(
     tmp_path: Path,
     *,
     name: str = "repo",
-    sut_dir: "Path | None" = None,
+    root: "Path | None" = None,
     tests: "list[Path] | None" = None,
     settings: "dict | None" = None,
 ) -> MagicMock:
@@ -38,20 +38,20 @@ def repo_double(
     that collected and found every name, so the run takes its exit code as
     the verdict.
     """
-    repo = MagicMock()
-    repo.name = name
-    repo.sut_dir = sut_dir if sut_dir is not None else tmp_path
-    repo.tests = tests if tests is not None else [tmp_path / "tests"]
-    for test_dir in repo.tests:
+    project = MagicMock()
+    project.name = name
+    project.root = root if root is not None else tmp_path
+    project.tests = tests if tests is not None else [tmp_path / "tests"]
+    for test_dir in project.tests:
         test_dir.mkdir(parents=True, exist_ok=True)
         (test_dir / "t.py").write_text(f"def {DOUBLE_TEST_NAME}():\n    pass\n")
     # A real Repo always has settings; the coverage decision reads them.
-    repo.settings = settings if settings is not None else {}
-    repo.inventory_settings = {}
+    project.settings = settings if settings is not None else {}
+    project.inventory_settings = {}
     # No [project] table, as a real Repo without one: a context whose repos
     # are this double resolves the whole-lab fallback, not a Mock's scope.
-    repo.project_scope = None
-    return repo
+    project.project_scope = None
+    return project
 
 
 def collected(plugins: "list[object] | tuple[object, ...]") -> None:
@@ -83,9 +83,9 @@ def pytest_main_returning(rc: int = pytest.ExitCode.OK) -> "Callable[..., int]":
 def one_repo_double(tmp_path, monkeypatch) -> MagicMock:
     """Make a :func:`repo_double` the lab's only repo; return it."""
 
-    repo = repo_double(tmp_path)
-    patch_bootstrap(monkeypatch, [repo])
-    return repo
+    project = repo_double(tmp_path)
+    patch_bootstrap(monkeypatch, [project])
+    return project
 
 
 @pytest.fixture
@@ -112,13 +112,13 @@ def _generated_modules_evicted(tmp_path, monkeypatch):
             del sys.modules[name]
 
 
-def _wire_repos(monkeypatch, sut_dirs):
-    """Make the composition root answer real ``Repo`` objects for *sut_dirs*."""
-    from otto.config.repo import Repo
+def _wire_repos(monkeypatch, roots):
+    """Make the composition root answer real ``Project`` objects for *sut_dirs*."""
+    from otto.config.project import Project
 
-    repos = [Repo(sut_dir=d) for d in sut_dirs]
-    patch_bootstrap(monkeypatch, repos)
-    return repos
+    projects = [Project(root=d) for d in roots]
+    patch_bootstrap(monkeypatch, projects)
+    return projects
 
 
 @pytest.fixture

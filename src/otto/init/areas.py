@@ -1,10 +1,10 @@
-"""The areas of an otto repo, and how ``otto init`` tells which are present.
+"""The areas of an otto project, and how ``otto init`` tells which are present.
 
-An *area* is one unit of repo setup the doctor checks and the scaffolder
+An *area* is one unit of project setup the doctor checks and the scaffolder
 writes: ``settings``, ``schemas``, ``lab``, ``tests``, ``instructions`` and
 ``kmodcov``, in that order (:data:`AREA_NAMES`). Detection only asks "is
 this area here?" — whether it is any good is the doctor's question
-(:func:`otto.init.doctor.check_repo`). Scaffolding writes one area's files
+(:func:`otto.init.doctor.check_project`). Scaffolding writes one area's files
 through :func:`~otto.init.write_policy.write_file` (:func:`scaffold_area`);
 which areas a run writes is :mod:`otto.init.scaffolder`'s question.
 """
@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 
 
 def _lab_states(root: Path) -> "list[LabSourceState] | None":
-    """Return this repo's lab sources, each prepared against the backends registered now.
+    """Return this project's lab sources, each prepared against the backends registered now.
 
     ``None`` when there is no readable ``settings.toml``. Settings that parse
     but declare no ``[lab]`` table declare no source. ``otto init`` runs no
@@ -66,8 +66,8 @@ def _lab_states(root: Path) -> "list[LabSourceState] | None":
     # the envelope check, the label check and a source's preparation.
     pending = compile_lab_sources(
         LabConfigSpec.model_validate(lab),
-        repo_name=str(data.get("name") or root.name),
-        sut_dir=root,
+        project_name=str(data.get("name") or root.name),
+        root=root,
     )
     # No data profiles: these states are asked which files they read, and no
     # source is built from them, so no host resolves an os_type here.
@@ -75,13 +75,13 @@ def _lab_states(root: Path) -> "list[LabSourceState] | None":
 
 
 def lab_file_groups(root: Path) -> list[list[Path]]:
-    """Every lab file this repo's file-backed ``[[lab.sources]]`` entries name, ONE LIST PER SOURCE.
+    """Every lab file the project's file-backed ``[[lab.sources]]`` name, ONE LIST PER SOURCE.
 
-    THE single reader of a repo's host-data declaration inside ``otto init``:
+    THE single reader of a project's host-data declaration inside ``otto init``:
     detection and validation both go through it (via :func:`lab_files`), so
     the doctor can never disagree with the runtime — or with itself — about
-    which files hold this repo's hosts. Checks the entries with the SAME
-    :func:`otto.labs.sources.compile_lab_sources` ``Repo.parse_settings``
+    which files hold this project's hosts. Checks the entries with the SAME
+    :func:`otto.labs.sources.compile_lab_sources` ``Project.parse_settings``
     uses, prepares each one whose backend is registered, then asks each
     file-backed source for its files (a directory entry contributes its
     ``lab.json``; a ``.json`` entry IS the file; a glob contributes every
@@ -95,7 +95,7 @@ def lab_file_groups(root: Path) -> list[list[Path]]:
     :func:`lab_files`.
 
     Falls back to the conventional ``lab_data/lab.json`` only when there is no
-    readable ``settings.toml`` at all — init must work on a repo it has not
+    readable ``settings.toml`` at all — init must work on a project it has not
     scaffolded yet. Settings that parse but declare no ``[lab]`` table declare
     no host data, so they yield no files. A ``[lab]`` table whose sources do
     not check or prepare raises that ``ValueError``: the doctor reports it
@@ -125,9 +125,9 @@ def deferred_lab_sources(root: Path) -> list[str]:
 
 
 def lab_files(root: Path) -> list[Path]:
-    """Every lab file this repo's json sources name, flattened in source order.
+    """Every lab file this project's json sources name, flattened in source order.
 
-    The "does this repo have host data, and where" view, for detection and for
+    The "does this project have host data, and where" view, for detection and for
     any caller that does not care which source a file came from. See
     :func:`lab_file_groups` for the per-source view the duplicate rules need,
     and for the ``ValueError`` both raise when the lab sources do not prepare.
@@ -150,7 +150,7 @@ def _is_module_name(name: str) -> bool:
 
     Anything else could not be imported, and joined onto a path piece by
     piece (``"../x"`` splits into ``["", "", "/x"]``) it could land outside
-    the repo.
+    the project.
     """
     return all(part.isidentifier() for part in name.split("."))
 
@@ -166,7 +166,7 @@ def _first_declared_module(root: Path) -> str | None:
 
 
 def tests_init_module(root: Path, config: InitConfig) -> str:
-    """The init module the example tests import ``RepoOptions`` from.
+    """The init module the example tests import ``ProjectOptions`` from.
 
     The first declared init module — it is imported at startup and is the one
     a found instructions area holds — else the module the scaffold writes.
@@ -217,7 +217,7 @@ def _detect_tests(root: Path) -> bool:
 
 def _detect_instructions(root: Path) -> bool:
     """Report the area present when ``init`` is declared and at least one entry resolves."""
-    from ..config.repo import find_init_module
+    from ..config.project import find_init_module
 
     modules = declared_init(root) or []
     libs = instruction_libs(root)
@@ -330,7 +330,7 @@ def _scaffold_lab(config: InitConfig, areas: list[str]) -> AreaWrite:  # noqa: A
 
 
 def _scaffold_tests(config: InitConfig, areas: list[str]) -> AreaWrite:  # noqa: ARG001 — uniform signature
-    """Write the example tests; they import ``RepoOptions`` from :func:`tests_init_module`."""
+    """Write the example tests; they import ``ProjectOptions`` from :func:`tests_init_module`."""
     tests_dir = config.root / "tests"
     example = TEST_EXAMPLE_TEMPLATE.format(init_module=tests_init_module(config.root, config))
     return AreaWrite(
@@ -355,7 +355,7 @@ def _scaffold_instructions(config: InitConfig, areas: list[str]) -> AreaWrite:  
     notice says which lines to set — ``libs`` too, when the settings name
     none, or the doctor would not find the module under ``pylib``.
     """
-    from ..config.repo import find_init_module
+    from ..config.project import find_init_module
 
     root = config.root
     declared = _first_declared_module(root)

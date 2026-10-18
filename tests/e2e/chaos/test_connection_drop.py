@@ -211,7 +211,7 @@ paths = ["{tech_dir}"]
     )
     test2_cred = test2["creds"][0]
     return ChaosTarget(
-        sut_dir=sut,
+        root=sut,
         lab="chaosdrop",
         host_id="test2",
         ssh_host=test2["interfaces"]["eth2"]["ip"],

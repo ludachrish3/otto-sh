@@ -49,17 +49,13 @@ def _abandon_a_shell() -> None:
 
 def test_logout_resets_an_abandoned_shell(tmp_path: Path):
     _abandon_a_shell()
-    with InteractiveOttoSession(
-        _argv("logout"), xdir=tmp_path / "xdir", sut_dirs=REPO1_DIR
-    ) as sess:
+    with InteractiveOttoSession(_argv("logout"), xdir=tmp_path / "xdir", roots=REPO1_DIR) as sess:
         sess.expect(b"reset: login prompt restored", timeout=60)
         assert sess.wait(timeout=20) == 0
 
 
 def test_logout_on_a_line_already_at_login_says_so(tmp_path: Path):
-    with InteractiveOttoSession(
-        _argv("logout"), xdir=tmp_path / "xdir", sut_dirs=REPO1_DIR
-    ) as sess:
+    with InteractiveOttoSession(_argv("logout"), xdir=tmp_path / "xdir", roots=REPO1_DIR) as sess:
         sess.expect(b"already at login prompt", timeout=60)
         assert sess.wait(timeout=20) == 0
 
@@ -67,7 +63,7 @@ def test_logout_on_a_line_already_at_login_says_so(tmp_path: Path):
 def test_login_force_resets_then_bridges(tmp_path: Path):
     _abandon_a_shell()
     argv = _argv("login", "--force")
-    with InteractiveOttoSession(argv, xdir=tmp_path / "xdir", sut_dirs=REPO1_DIR) as sess:
+    with InteractiveOttoSession(argv, xdir=tmp_path / "xdir", roots=REPO1_DIR) as sess:
         sess.expect(b"reset: login prompt restored", timeout=60)
         sess.expect(b"(console). Press Ctrl+] to disconnect", timeout=60)
         sess.drain(0.5)
@@ -81,13 +77,11 @@ def test_login_force_resets_then_bridges(tmp_path: Path):
 
 def test_login_without_force_fails_loud_on_an_abandoned_shell(tmp_path: Path):
     _abandon_a_shell()
-    with InteractiveOttoSession(_argv("login"), xdir=tmp_path / "xdir", sut_dirs=REPO1_DIR) as sess:
+    with InteractiveOttoSession(_argv("login"), xdir=tmp_path / "xdir", roots=REPO1_DIR) as sess:
         sess.expect(b"already logged in", timeout=60)
         assert sess.wait(timeout=20) != 0
     # The abandoned shell is still there: the test2_console fixture fails
     # this test unless it is reset, so reset it the way the error says to.
-    with InteractiveOttoSession(
-        _argv("logout"), xdir=tmp_path / "xdir2", sut_dirs=REPO1_DIR
-    ) as sess:
+    with InteractiveOttoSession(_argv("logout"), xdir=tmp_path / "xdir2", roots=REPO1_DIR) as sess:
         sess.expect(b"reset: login prompt restored", timeout=60)
         assert sess.wait(timeout=20) == 0

@@ -288,7 +288,7 @@ def gate_env(monkeypatch, tmp_path):
     main.parent.mkdir(parents=True)
     monkeypatch.setattr("otto.config.completion_cache._cache_path", lambda: main)
     monkeypatch.setattr(
-        "otto.declared.get_repos",
+        "otto.declared.get_projects",
         lambda: [fake_repo(settings={"reservations": {"backend": "json"}})],
     )
     monkeypatch.setattr(
@@ -337,7 +337,7 @@ class _Backend:
 
 
 def test_gate_no_reservation_config_allows(monkeypatch, gate_env):
-    monkeypatch.setattr("otto.declared.get_repos", lambda: [fake_repo()])
+    monkeypatch.setattr("otto.declared.get_projects", lambda: [fake_repo()])
     _install_backend(monkeypatch, _Backend([]))  # would refuse if it were ever consulted
     assert rc._reservation_allows(_chain()) is True
 
@@ -480,9 +480,9 @@ def test_required_for_is_scoped_to_the_fleet_of_interest(monkeypatch, tmp_path):
     lab = fleet_lab(("slot1", "rig"), ("slot2", "rig"))
     lab.hosts["slot1"].resources = frozenset({"slot-1"})
     lab.hosts["slot2"].resources = frozenset({"slot-2"})
-    repo = _repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])
-    patch_bootstrap(monkeypatch, [repo])
-    monkeypatch.setattr("otto.session.lab.build_lab", lambda repos, labs: lab)
+    project = _repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])
+    patch_bootstrap(monkeypatch, [project])
+    monkeypatch.setattr("otto.session.lab.build_lab", lambda projects, labs: lab)
 
     assert rc._required_for(_chain(labs=("rig",))) == {"slot-1"}
 
@@ -499,12 +499,12 @@ def test_required_for_drops_the_hosts_of_an_excluded_project(monkeypatch, tmp_pa
     lab = fleet_lab(("slot1", "rig"), ("slot2", "rig"))
     lab.hosts["slot1"].resources = frozenset({"slot-1"})
     lab.hosts["slot2"].resources = frozenset({"slot-2"})
-    repos = [
+    projects = [
         _repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"]),
         _repo(tmp_path, "r2", labs=["rig"], hosts=["slot2"]),
     ]
-    patch_bootstrap(monkeypatch, repos)
-    monkeypatch.setattr("otto.session.lab.build_lab", lambda repos, labs: lab)
+    patch_bootstrap(monkeypatch, projects)
+    monkeypatch.setattr("otto.session.lab.build_lab", lambda projects, labs: lab)
 
     assert rc._required_for(_chain(labs=("rig",), host_id="")) == {"slot-1", "slot-2"}
     excluded = _chain(labs=("rig",), host_id="", exclude_projects=["r2"])
@@ -529,9 +529,9 @@ def test_required_for_adds_the_targeted_host_when_it_is_outside_the_fleet(monkey
     lab = fleet_lab(("slot1", "rig"), ("slot2", "rig"))
     lab.hosts["slot1"].resources = frozenset({"slot-1"})
     lab.hosts["slot2"].resources = frozenset({"slot-2"})
-    repo = _repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])
-    patch_bootstrap(monkeypatch, [repo])
-    monkeypatch.setattr("otto.session.lab.build_lab", lambda repos, labs: lab)
+    project = _repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])
+    patch_bootstrap(monkeypatch, [project])
+    monkeypatch.setattr("otto.session.lab.build_lab", lambda projects, labs: lab)
 
     assert rc._required_for(_chain(labs=("rig",), host_id="slot2")) == {"slot-1", "slot-2"}
 
@@ -553,9 +553,9 @@ def test_required_for_ignores_a_target_the_lab_does_not_hold(monkeypatch, tmp_pa
 
     lab = fleet_lab(("slot1", "rig"), ("slot2", "rig"))
     lab.hosts["slot1"].resources = frozenset({"slot-1"})
-    repo = _repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])
-    patch_bootstrap(monkeypatch, [repo])
-    monkeypatch.setattr("otto.session.lab.build_lab", lambda repos, labs: lab)
+    project = _repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])
+    patch_bootstrap(monkeypatch, [project])
+    monkeypatch.setattr("otto.session.lab.build_lab", lambda projects, labs: lab)
 
     assert rc._required_for(_chain(labs=("rig",), host_id="typo9")) == {"slot-1"}
 
@@ -576,9 +576,9 @@ def test_required_for_adds_the_hop_when_it_is_outside_the_fleet(monkeypatch, tmp
     lab = fleet_lab(("slot1", "rig"), ("slot2", "rig"))
     lab.hosts["slot1"].resources = frozenset({"slot-1"})
     lab.hosts["slot2"].resources = frozenset({"slot-2"})
-    repo = _repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])
-    patch_bootstrap(monkeypatch, [repo])
-    monkeypatch.setattr("otto.session.lab.build_lab", lambda repos, labs: lab)
+    project = _repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])
+    patch_bootstrap(monkeypatch, [project])
+    monkeypatch.setattr("otto.session.lab.build_lab", lambda projects, labs: lab)
 
     chain = rc._ChainParams(host_id="slot1", hop="slot2", term=None, labs=["rig"], holder="carol")
     assert rc._required_for(chain) == {"slot-1", "slot-2"}
@@ -603,9 +603,9 @@ def test_required_for_under_an_empty_declared_fleet_returns_the_lab_level_set(
     lab = fleet_lab(("slot1", "rig"), ("slot2", "rig"))
     lab.resources = {"rack-1"}
     lab.hosts["slot1"].resources = frozenset({"slot-1"})
-    repo = _repo(tmp_path, "r1", labs=["rig"], hosts=["nothing-matches"])
-    patch_bootstrap(monkeypatch, [repo])
-    monkeypatch.setattr("otto.session.lab.build_lab", lambda repos, labs: lab)
+    project = _repo(tmp_path, "r1", labs=["rig"], hosts=["nothing-matches"])
+    patch_bootstrap(monkeypatch, [project])
+    monkeypatch.setattr("otto.session.lab.build_lab", lambda projects, labs: lab)
 
     assert rc._required_for(_chain(labs=("rig",))) == {"rack-1"}
 
@@ -614,7 +614,7 @@ def test_gate_never_skips_under_dash_r(monkeypatch, gate_env):
     """-R must not reach the completion gate: the backend is always constructed."""
     seen = {}
 
-    def _build(repos, *, holder, skip_reservation_check, cwd_fallback):
+    def _build(projects, *, holder, skip_reservation_check, cwd_fallback):
         seen["skip"] = skip_reservation_check
         return SimpleNamespace(backend=_Backend([_res("r1")]))
 

@@ -38,10 +38,10 @@ def test_clear_bare_clears_only_current_workspace(tmp_path, monkeypatch):
     from otto.config.home import workspace_key
 
     home = _home(monkeypatch, tmp_path)
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
-    current = _mk_workspace(home, workspace_key([repo]), cache_age=YOUNG, sidecar=True)
+    project = tmp_path / "repo"
+    project.mkdir()
+    monkeypatch.setenv("OTTOPATH", str(project))
+    current = _mk_workspace(home, workspace_key([project]), cache_age=YOUNG, sidecar=True)
     other = _mk_workspace(home, "99999999-other", cache_age=YOUNG)
 
     result = runner.invoke(cache_app, ["clear"])
@@ -58,10 +58,10 @@ def test_clear_bare_removes_the_bytecode_and_pytests_cache_too(tmp_path, monkeyp
     from otto.config.home import workspace_key
 
     home = _home(monkeypatch, tmp_path)
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
-    current = _mk_workspace(home, workspace_key([repo]), cache_age=YOUNG, session_dirs=True)
+    project = tmp_path / "repo"
+    project.mkdir()
+    monkeypatch.setenv("OTTOPATH", str(project))
+    current = _mk_workspace(home, workspace_key([project]), cache_age=YOUNG, session_dirs=True)
 
     result = runner.invoke(cache_app, ["clear"])
 

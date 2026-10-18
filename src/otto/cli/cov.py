@@ -24,13 +24,13 @@ See the :doc:`/cli/cov/index` and :doc:`/cli/host/index` documentation.
 ``--overwrite-dir``
     Allow ``--dir`` to clear an existing non-empty directory.
 
-``--project-name STR``
+``--report-title STR``
     Title shown in the HTML report header.
 
 ``--tickets-json PATH``
     Also write a machine-readable per-ticket coverage summary (its own
     ``format`` version, independent of the internal ``store.json``) to this path.
-    Every file path in it is repo-relative posix (never an absolute,
+    Every file path in it is project-root-relative posix (never an absolute,
     machine-specific path), so it diffs cleanly across checkouts. Requires
     ``[coverage.tickets]`` to have attributed at least one ticket; fails
     loud otherwise (exit 1) rather than writing an empty file.
@@ -202,10 +202,10 @@ def report(
             ),
         ),
     ] = None,
-    project_name: Annotated[
+    report_title: Annotated[
         str,
         typer.Option(
-            "--project-name",
+            "--report-title",
             help="Title shown in the HTML report header.",
         ),
     ] = "Coverage Report",
@@ -261,10 +261,10 @@ def report(
 
     # Precedence rule: explicit --tier flags are a git-less escape hatch and
     # take precedence over settings tiers — route them through the legacy
-    # path unchanged, passing the empty inputs (no repo_root / tier_configs
+    # path unchanged, passing the empty inputs (no project_root / tier_configs
     # resolution, exactly as before). With no --tier flags, resolve_report_inputs
     # (below, inside the try block) reads the collection-model inputs
-    # (repo_root + declared tiers) from settings; a tree with no [coverage]
+    # (project_root + declared tiers) from settings; a tree with no [coverage]
     # section falls back to ReportInputs(), i.e. the legacy behavior.
     from ..coverage.report_inputs import ReportInputs, resolve_report_inputs
 
@@ -274,7 +274,7 @@ def report(
         # --tier never resolves settings (see precedence rule above), so
         # inputs stays ReportInputs() here — run_coverage_report defaults to
         # Thresholds()'s 80.0/70.0 and runs no ticket attribution (it has no
-        # git repo_root to walk).
+        # git project_root to walk).
     else:
         tier_specs = [(TIER_SYSTEM, None)]
 
@@ -306,19 +306,19 @@ def report(
             # clean-message `except ValueError` handler below as every
             # other settings/data ValueError, not propagate as a traceback.
             # The composition root: importing it installs the initiator that composes
-            # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+            # the projects this reads (spec 2026-10-11 placement-and-phases §3.12).
             from .. import bootstrap
 
             del bootstrap
-            from ..declared import get_repos
+            from ..declared import get_projects
 
-            inputs = resolve_report_inputs(get_repos())
+            inputs = resolve_report_inputs(get_projects())
         store = run_command(
             run_coverage_report(
                 cov_dirs,
                 report_dir,
                 inputs,
-                project_name=project_name,
+                report_title=report_title,
                 tier_specs=tier_specs,
                 prefix=prefix,
                 overwrite=overwrite_dir,
@@ -336,7 +336,7 @@ def report(
         logger.error(escape_markup(str(e)))  # noqa: TRY400 — deliberately no traceback: user-facing cause + remedy
         raise typer.Exit(1) from e
     except NotAGitRepoError as e:
-        # A [coverage] section resolved a repo_root that is not a git repo:
+        # A [coverage] section resolved a project_root that is not a git repository:
         # the base_commit-anchored capture features can't run. This hardcoded
         # message used to also cover a missing git and an ordinary git
         # failure, and told both the wrong story; the type now says which it
@@ -347,7 +347,7 @@ def report(
         )
         raise typer.Exit(1) from e
     except GitUnavailableError as e:
-        # git missing, or a git command that failed inside a real repo: echo
+        # git missing, or a git command that failed inside a real git repository: echo
         # what git said rather than mislabelling it as "not a git repository".
         logger.error(escape_markup(str(e)))  # noqa: TRY400 — deliberately no traceback: git's own message is the cause
         raise typer.Exit(1) from e
@@ -382,10 +382,10 @@ def report(
     if store.file_count() == 0:
         # A store with no files is a vacuous success — restore the old loud
         # CI-friendly fail. Name every input searched (run cov dirs plus, when
-        # a [coverage] repo resolved, its committed manual-capture store).
+        # a [coverage] project root resolved, its committed manual-capture store).
         searched = [str(d) for d in cov_dirs]
-        if inputs.repo_root is not None:
-            searched.append(str(inputs.repo_root / ".otto" / "coverage" / "manual"))
+        if inputs.project_root is not None:
+            searched.append(str(inputs.project_root / ".otto" / "coverage" / "manual"))
         where = ", ".join(searched) if searched else "the given inputs"
         logger.error("no coverage data found in: %s", where)
         raise typer.Exit(1)
@@ -404,14 +404,14 @@ def report(
         from ..coverage.ticket_export import make_generated_stamp, write_ticket_export
         from ..version import get_version
 
-        if inputs.repo_root is None:
+        if inputs.project_root is None:
             # The --tier legacy path and the no-[coverage]-section fallback
-            # both leave repo_root unset here — and both also leave
+            # both leave project_root unset here — and both also leave
             # ticket_spec unset, so no attribution ever ran and
             # store.tickets is always empty in this branch too. Same
             # message as the empty-store ValueError below, raised directly
-            # rather than handing a None repo_root to write_ticket_export
-            # (which requires one to emit repo-relative paths).
+            # rather than handing a None project_root to write_ticket_export
+            # (which requires one to emit project-root-relative paths).
             logger.error(
                 "no ticket data in this report — [coverage.tickets] must be configured "
                 "for --tickets-json"
@@ -422,8 +422,8 @@ def report(
             write_ticket_export(
                 store,
                 tickets_json,
-                repo_root=inputs.repo_root,
-                project=project_name,
+                project_root=inputs.project_root,
+                report_title=report_title,
                 otto_version=get_version(),
                 generated=make_generated_stamp(),
             )
@@ -612,7 +612,7 @@ kmodcov_app = typer.Typer(
     name="kmodcov",
     no_args_is_help=True,
     context_settings={"help_option_names": ["-h", "--help"]},
-    help="Vendor the otto_kmodcov kernel-module library into a repo, or check a vendored copy.",
+    help="Vendor the otto_kmodcov kernel-module library into a project, or check a vendored copy.",
 )
 
 
@@ -622,7 +622,7 @@ def kmodcov_callback(ctx: typer.Context) -> None:
 
     The library is a kernel module a user's own build system builds against
     each of their kernels; otto never builds it. `export` writes the sources
-    this otto ships, overwriting (the copy is committed, so the repo's own
+    this otto ships, overwriting (the copy is committed, so the project's own
     diff is the review); `check` compares byte for byte, ignoring the
     `kmodcov_local.h` override, and exits 0 current / 1 differs / 2 absent.
     """

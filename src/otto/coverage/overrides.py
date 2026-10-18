@@ -74,15 +74,15 @@ class OverrideConfig:
     reattributions: dict[str, list[str]]
 
 
-def _resolve_sha(sut_dir: Path, rev: str, *, where: str) -> str:
+def _resolve_sha(root: Path, rev: str, *, where: str) -> str:
     try:
-        return gitio.rev_parse_commit(sut_dir, rev)
+        return gitio.rev_parse_commit(root, rev)
     except gitio.GitUnavailableError as exc:
         raise OverrideConfigError(f"{where}: cannot resolve {rev!r} to a commit: {exc}") from exc
 
 
 def _load_asserted_entry(
-    entry: dict[str, Any], tier: str, entry_id: int, sut_dir: Path, where: str
+    entry: dict[str, Any], tier: str, entry_id: int, root: Path, where: str
 ) -> AssertedEntry:
     unknown = set(entry) - _ASSERTED_KEYS
     if unknown:
@@ -105,18 +105,16 @@ def _load_asserted_entry(
             raise OverrideConfigError(f"{where}: ticket id {ticket!r} is reserved")
         if "as_of" not in entry:
             raise OverrideConfigError(f"{where}: 'ticket' requires 'as_of'")
-        as_of = _resolve_sha(sut_dir, entry["as_of"], where=where)
+        as_of = _resolve_sha(root, entry["as_of"], where=where)
         return AssertedEntry(id=entry_id, tier=tier, reason=reason, ticket=ticket, as_of=as_of)
 
     if "as_of" in entry:
         raise OverrideConfigError(f"{where}: 'as_of' is not allowed with 'commit'")
-    commit = _resolve_sha(sut_dir, entry["commit"], where=where)
+    commit = _resolve_sha(root, entry["commit"], where=where)
     return AssertedEntry(id=entry_id, tier=tier, reason=reason, commit=commit)
 
 
-def _load_reattribute_entry(
-    entry: dict[str, Any], sut_dir: Path, where: str
-) -> tuple[str, list[str]]:
+def _load_reattribute_entry(entry: dict[str, Any], root: Path, where: str) -> tuple[str, list[str]]:
     unknown = set(entry) - _REATTRIBUTE_KEYS
     if unknown:
         raise OverrideConfigError(f"{where}: unknown key(s) {sorted(unknown)}")
@@ -140,12 +138,12 @@ def _load_reattribute_entry(
     if reserved:
         raise OverrideConfigError(f"{where}: ticket id(s) {reserved} are reserved")
 
-    sha = _resolve_sha(sut_dir, entry["commit"], where=where)
+    sha = _resolve_sha(root, entry["commit"], where=where)
     return sha, tickets
 
 
 def load_override_config(
-    cov_config: dict[str, Any], sut_dir: Path, tiers: list[TierConfig]
+    cov_config: dict[str, Any], root: Path, tiers: list[TierConfig]
 ) -> OverrideConfig | None:
     """Load and validate the override file, or None when the feature is off.
 
@@ -156,7 +154,7 @@ def load_override_config(
             that does not exist is an error, not a no-op.
     """
     raw_key = (cov_config.get("overrides") or {}).get("file")
-    path = anchor_path(Path(raw_key), sut_dir) if raw_key else sut_dir / DEFAULT_OVERRIDES_RELPATH
+    path = anchor_path(Path(raw_key), root) if raw_key else root / DEFAULT_OVERRIDES_RELPATH
     if not path.is_file():
         if raw_key:
             raise OverrideConfigError(f"[coverage.overrides] file does not exist: {path}")
@@ -207,12 +205,12 @@ def load_override_config(
                 raise OverrideConfigError(f"{where}: must be a table")
             entry = cast("dict[str, Any]", raw_entry)
             if table == _RESERVED_TABLE:
-                sha, ids = _load_reattribute_entry(entry, sut_dir, where)
+                sha, ids = _load_reattribute_entry(entry, root, where)
                 if sha in reattributions:
                     raise OverrideConfigError(f"{where}: duplicate reattribution for {sha}")
                 reattributions[sha] = ids
             else:
-                asserted.append(_load_asserted_entry(entry, table, next_id, sut_dir, where))
+                asserted.append(_load_asserted_entry(entry, table, next_id, root, where))
                 next_id += 1
     return OverrideConfig(path=path, asserted=asserted, reattributions=reattributions)
 
@@ -242,7 +240,7 @@ def apply_asserted_entries(
     store: CoverageStore,
     entries: list[AssertedEntry],
     *,
-    repo_root: Path,
+    project_root: Path,
     per_line_sha: dict[str, dict[int, str]],
     ticket_commits: dict[str, list[str]],
     fp_index: dict[str, int],
@@ -258,7 +256,7 @@ def apply_asserted_entries(
     """
     if not entries:
         return
-    resolved_root = repo_root.resolve()
+    resolved_root = project_root.resolve()
     records = {
         rec.path.relative_to(resolved_root).as_posix(): rec
         for rec in store.files()

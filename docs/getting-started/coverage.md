@@ -95,7 +95,7 @@ one with its `.gcno` by file name, whatever depth it was written at.
 ## Switch coverage on
 
 Retrieval is automatic, but it is not unconditional: otto collects only for a
-repo that declares a `[coverage]` table, and a table counts as declared only
+project that declares a `[coverage]` table, and a table counts as declared only
 when it carries `hosts`, `tiers` or `embedded` — an empty `[coverage]` is the
 same as none. The smallest one that works names the hosts to collect from:
 
@@ -170,7 +170,7 @@ with *some* products instrumented proceeds and warns about the rest, so a
 product that quietly stopped being a coverage build is visible rather than
 silently absent from the report.
 
-`--cov` also refuses when the repo has no `[coverage]` table at all: there is
+`--cov` also refuses when the project has no `[coverage]` table at all: there is
 nowhere to collect into. In auto mode the same situation is one warning and no
 coverage; the tests still run.
 
@@ -304,8 +304,8 @@ agent = ["build/agent-tests"]
 
 `kind = "unit"` is what makes a tier a build-directory sweep at report time
 instead of a lab collection; `precedence` orders the tiers when two of them
-cover the same line, lower winning. The paths are repo-relative — resolved
-against the repo that declares `[coverage]`, never the directory you happen to
+cover the same line, lower winning. The paths are project-relative — resolved
+against the project that declares `[coverage]`, never the directory you happen to
 run from. Without the `products` sub-table the tier still sweeps whatever
 `harvest_dirs` it declares, but as one unnamed view: the lines count, and no
 product owns them.

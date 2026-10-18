@@ -96,11 +96,29 @@ variable) and makes every host available to instructions, tests, and
 the monitor.  Multiple labs can be merged by combining their names with `+`
 (`--lab lab_a+lab_b`).
 
-### Repos and settings
+### Projects, project roots and OTTOPATH
 
-Otto discovers your project through a `.otto/settings.toml` file at the
-repository root.  This file tells otto where to find your Python libraries,
-tests, run instructions, and lab data:
+otto works on **projects**. A project is a named unit: its identity is the
+`name` in its `.otto/settings.toml`, and its optional `[project]` table scopes
+it to labs and hosts.
+
+A **project root** is the directory holding one copy of a project: its
+`.otto/settings.toml`, its libraries and its tests. Two clones of one project
+are two project roots, and otto refuses to load both at once.
+
+**`OTTOPATH`** lists the project roots otto loads, separated by the OS path
+separator (`:` on Linux and macOS, `;` on Windows), like `PATH`. To work on a
+project, add its project root to `OTTOPATH`. A root listed twice, under any
+spelling, is loaded once.
+
+A **workspace** is the set of projects active together: one `OTTOPATH` value.
+Each workspace has its own home under `~/.otto` for the state otto derives.
+
+Docker Compose's own *compose project* and the lab-data *repository* keep
+their names and always carry their qualifier.
+
+The project's `.otto/settings.toml` tells otto where to find your Python
+libraries, tests, run instructions, and lab data:
 
 ```toml
 name = "my_project"
@@ -115,7 +133,7 @@ backend = "json"
 paths = ["../lab_data"]
 ```
 
-Relative paths resolve against the repository root — see
+Relative paths resolve against the project root — see
 {doc}`configuration/settings`.  The `init` list names Python modules that
 otto imports at startup — this is where you register your instructions and
 shared options.  `[[lab.sources]]` is an ordered list: declare several and
@@ -159,10 +177,10 @@ otto -l my_lab run deploy --debug
 ### Tests (`otto test`)
 
 otto tests are pytest tests: `Test`-prefixed classes and `test_`-prefixed
-functions in your repo's test directories. Fixtures, `conftest.py`, markers,
+functions in your project's test directories. Fixtures, `conftest.py`, markers,
 parametrize and pytest plugins all work as pytest documents them.
 `otto test` runs them by name or marker expression. Its flags include those
-of every options class a repo registers for the `test` verb, and a test reads
+of every options class a project registers for the `test` verb, and a test reads
 their values with `ctx.options(...)`:
 
 ```python
@@ -191,7 +209,7 @@ and built-in monitoring; see {doc}`cookbook/authoring/writing-tests`.
 An options class is declared in an init module (a module listed in your
 `init` setting), with the verbs whose flags it joins:
 `@otto.options(verbs=["test"])` for flags only tests take, or
-`@otto.options(verbs=["run", "test"])` for repo-wide flags such as a device
+`@otto.options(verbs=["run", "test"])` for project-wide flags such as a device
 type or a lab environment, which every instruction and every test run then
 take. See {doc}`cookbook/authoring/options-classes`.
 
@@ -214,10 +232,10 @@ collects without a dashboard; see
 
 ## Quick-start example
 
-1. **Set the environment** — point otto at your repo and lab:
+1. **Set the environment** — point otto at your project and lab:
 
    ```bash
-   export OTTO_SUT_DIRS=/path/to/my_project
+   export OTTOPATH=/path/to/my_project
    otto --lab my_lab --list-hosts          # verify hosts are visible
    ```
 

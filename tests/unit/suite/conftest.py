@@ -96,7 +96,7 @@ def real_shell_bytecode(monkeypatch):
     """A real shell's bytecode settings for otto's sessions: no pycache prefix, writing on.
 
     The suite runs under a prefix (``tests/conftest.py``); a real shell has none.
-    Writing is on ONLY inside :func:`otto.suite.run._outside_the_repo`, where the
+    Writing is on ONLY inside :func:`otto.suite.run._outside_the_project_root`, where the
     session's own prefix is set, and off everywhere else in the test. Turning it
     on for the whole test would let every module this worker imports for the
     first time outside a session — otto's own lazy imports included — write a
@@ -108,7 +108,7 @@ def real_shell_bytecode(monkeypatch):
 
     from otto.suite import run
 
-    real_outside_the_repo = run._outside_the_repo
+    real_outside_the_repo = run._outside_the_project_root
 
     @contextlib.contextmanager
     def writing_inside_the_session(**kwargs):
@@ -121,4 +121,4 @@ def real_shell_bytecode(monkeypatch):
 
     monkeypatch.setattr(sys, "pycache_prefix", None)
     monkeypatch.setattr(sys, "dont_write_bytecode", True)
-    monkeypatch.setattr(run, "_outside_the_repo", writing_inside_the_session)
+    monkeypatch.setattr(run, "_outside_the_project_root", writing_inside_the_session)

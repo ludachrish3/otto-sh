@@ -1,5 +1,5 @@
 $ otto --lab busybox host bb1350-qemu probe
-INFO     fleet of interest: 5 of 7 lab hosts (1 repo(s), 0 excluded)                                
+INFO     fleet of interest: 5 of 7 lab hosts (1 project(s), 0 excluded)                             
 INFO     @test1   | export APP_ENV=lab                                                              
 INFO     @test1   | export APP_ENV=lab                                                              
 INFO     @test1   | python3 -u -i                                                                   
@@ -61,9 +61,8 @@ probe. This is the pin in force:
 ╭──────────┬──────────┬──────┬──────────────────┬───────────┬────────────────┬─────────────────────╮
 │ protocol │ kind     │ port │ state            │ tier      │ vantage        │ detail              │
 ├──────────┼──────────┼──────┼──────────────────┼───────────┼────────────────┼─────────────────────┤
-│ ssh      │ term     │ 22   │ closed           │ inventory │ session:telnet │ nothing bound on    │
-│          │          │      │                  │           │                │ :22 (inventory:     │
-│          │          │      │                  │           │                │ netstat, elevated)  │
+│ ssh      │ term     │ 22   │ supported        │ login     │ hop:test1      │ login 'root':       │
+│          │          │      │                  │           │                │ session opened      │
 │ telnet   │ term     │ 23   │ supported        │ login     │ hop:test1      │ login 'root':       │
 │          │          │      │                  │           │                │ session opened      │
 │ ftp      │ transfer │ 21   │ closed           │ inventory │ session:telnet │ nothing bound on    │

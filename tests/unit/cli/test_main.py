@@ -20,7 +20,7 @@ from typer.testing import CliRunner, Result
 
 from otto.cli.main import app
 from otto.cli.registry import register_cli_command
-from otto.config.env import LOG_LVL_ENV_VAR
+from otto.config.env import LOG_LVL_ENV_VAR, is_otto_env_var
 from otto.logger import management
 from otto.logger.levels import LEVEL_NAMES
 from otto.result import CommandResult
@@ -99,7 +99,7 @@ def main_mocks(tmp_path):
     # by the user's shell environment; point OTTO_XDIR at tmp_path so logger
     # side-effects land there instead of the project root (--xdir is optional
     # and defaults to CWD, which we don't want tests writing to).
-    clean_env = {k: v for k, v in os.environ.items() if not k.startswith("OTTO_")}
+    clean_env = {k: v for k, v in os.environ.items() if not is_otto_env_var(k)}
     clean_env["OTTO_XDIR"] = str(tmp_path)
 
     from otto import bootstrap as bs
@@ -111,7 +111,7 @@ def main_mocks(tmp_path):
     with (
         patch.dict(os.environ, clean_env, clear=True),
         patch("otto.logger.management.init_cli_logging") as p_logger,
-        patch("otto.declared.get_repos", return_value=[]),
+        patch("otto.declared.get_projects", return_value=[]),
         patch("otto.labs.loader.load_lab", return_value=mock_lab) as p_getlab,
     ):
         yield {
@@ -208,8 +208,8 @@ class TestEagerOptions:
         # every other caller sees it — would silently run the real bootstrap.
         from rich.panel import Panel
 
-        repo = fake_repo(get_lab_panel=lambda: Panel("sentinel-lab-from-patch"))
-        with patch("otto.declared.get_repos", return_value=[repo]):
+        project = fake_repo(get_lab_panel=lambda: Panel("sentinel-lab-from-patch"))
+        with patch("otto.declared.get_projects", return_value=[project]):
             result = runner.invoke(app, ["--list-labs"])
         assert result.exit_code == 0, result.output
         assert "sentinel-lab-from-patch" in result.output
@@ -836,7 +836,7 @@ class TestInvocationResets:
         def _interrupt() -> None:
             raise KeyboardInterrupt
 
-        monkeypatch.setattr("otto.config.repo.discovered_teardown_deadline", _interrupt)
+        monkeypatch.setattr("otto.config.project.discovered_teardown_deadline", _interrupt)
         outer = RunPolicy(dry_run=True)  # an embedding caller's dry run
         binding = install_policy(outer)
         try:
@@ -974,8 +974,8 @@ class TestProjectSwitchWiring:
         validator with exit 2 and witness none of the wiring it exists for.
         Names are the NORMALIZED spellings the validator compares against.
         """
-        repos = [fake_repo(n) for n in ("repo-a", "other-repo", "a", "b", "c")]
-        monkeypatch.setattr("otto.bootstrap.bootstrap", lambda: bootstrap_stub(repos))
+        projects = [fake_repo(n) for n in ("repo-a", "other-repo", "a", "b", "c")]
+        monkeypatch.setattr("otto.bootstrap.bootstrap", lambda: bootstrap_stub(projects))
 
     def _capture_root_options(self, monkeypatch):
         """Spy RootOptions, returning a dict that fills in with the built instance."""
@@ -1092,12 +1092,12 @@ class TestProjectSwitchWiring:
         """Install a discovered world where ``repo-a`` failed to load."""
         from otto.bootstrap import BootstrapError
 
-        broken = fake_repo("repo-a", sut_dir=Path("/repos/repo-a"), project_scope=None)
+        broken = fake_repo("repo-a", root=Path("/repos/repo-a"), project_scope=None)
         monkeypatch.setattr(
             "otto.bootstrap.bootstrap",
             lambda: bootstrap_stub(
                 [broken],
-                errors=[BootstrapError(broken.sut_dir, "repo_a_init", ImportError("paramiko"))],
+                errors=[BootstrapError(broken.root, "repo_a_init", ImportError("paramiko"))],
             ),
         )
 

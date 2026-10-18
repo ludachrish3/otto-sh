@@ -37,13 +37,13 @@ register the variant under a new name.
 
 ## Custom host classes
 
-To ship a host subclass from an external repo:
+To ship a host subclass from an external project:
 
 1. Subclass `EmbeddedHost` or `UnixHost` (whichever family fits).
 2. Call `register_host_class(name, cls)` from an init module.  `os_type:
    <name>` then resolves to the class's own profile with no extra config. It
    registers no `os_type` profile: the class's profile is the lowest layer
-   ({doc}`../../configuration/os-profiles`), so a code profile or a repo's
+   ({doc}`../../configuration/os-profiles`), so a code profile or a project's
    data table of the same name replaces it. Pass
    `profile=ProfileFields(...)` (from `otto.host`) to give it defaults or
    console prompt patterns; without it the profile carries none — even over
@@ -366,7 +366,7 @@ The profile's defaults are merged beneath the host's own fields; host fields
 always win.
 ## See also
 
-- {doc}`../../configuration/lab-config` — `lab.json` schema and repo-level host defaults
+- {doc}`../../configuration/lab-config` — `lab.json` schema and project-level host defaults
 - {doc}`../../cli/host/embedded` — embedded host classes, command frames, and filesystems
 - {doc}`extending-embedded` — writing a custom command frame or filesystem
 - {doc}`../../configuration/settings` — `init` modules and `settings.toml` field reference

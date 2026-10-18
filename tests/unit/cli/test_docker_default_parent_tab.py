@@ -15,21 +15,21 @@ from tests._fixtures.sutrepo import touch_settings
 def stored_names(tmp_path, monkeypatch):
     """Write a real cache carrying the map, read it back, install it as the TAB snapshot."""
     monkeypatch.setenv("OTTO_HOME", str(tmp_path))
-    repo = MagicMock()
-    repo.sut_dir = tmp_path / "sut"
-    repo.sut_dir.mkdir()
-    touch_settings(repo.sut_dir)
-    repo.init = []
-    repo.libs = []
-    repo.tests = []
-    repo.inventory_settings = {}
+    project = MagicMock()
+    project.root = tmp_path / "sut"
+    project.root.mkdir()
+    touch_settings(project.root)
+    project.init = []
+    project.libs = []
+    project.tests = []
+    project.inventory_settings = {}
     cc.write_cache(
-        [repo],
+        [project],
         instructions=[],
         hosts=[],
         docker_default_parent_by_lab={"east": "test3", "west": "alt2"},
     )
-    view = cc.read_cache([repo])
+    view = cc.read_cache([project])
     assert view is not None
     saved = registry.get_completion_names()
     registry.set_completion_names(view)
@@ -105,7 +105,7 @@ def test_default_parent_mirror_table(by_lab, labs, expected, monkeypatch):
 
 def test_reading_the_default_parent_never_bootstraps(stored_names):
     with patch(
-        "otto.declared.get_repos", side_effect=AssertionError("bootstrap in a TAB")
-    ) as get_repos:
+        "otto.declared.get_projects", side_effect=AssertionError("bootstrap in a TAB")
+    ) as get_projects:
         assert docker_cli._default_parent_for_tab(_ctx(["east"])) == "test3"
-    get_repos.assert_not_called()
+    get_projects.assert_not_called()

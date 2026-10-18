@@ -49,7 +49,7 @@ def home(tmp_path, monkeypatch, real_shell_bytecode) -> Path:
 
 
 @pytest.fixture
-def repo(sut_repo, tmp_path, home) -> ImportLogRepo:
+def project(sut_repo, tmp_path, home) -> ImportLogRepo:
     """``tests/test_a.py`` (``TestA``), ``tests/test_b.py``, ``tests/sub/test_c.py``, a conftest."""
     shell = ImportLogRepo(tmp_path / "sut")
     shell.root = sut_repo(
@@ -64,9 +64,9 @@ def repo(sut_repo, tmp_path, home) -> ImportLogRepo:
 
 
 def _the_repo():
-    from otto.bootstrap import get_repos
+    from otto.bootstrap import get_projects
 
-    [only] = get_repos()
+    [only] = get_projects()
     return only
 
 
@@ -93,15 +93,15 @@ def _prefix() -> Path:
     return workspace_home() / PYCACHE_DIRNAME
 
 
-def test_a_first_run_adds_nothing_to_any_directory_of_the_repo(repo, tmp_path):
-    tests = repo.root / "tests"
-    before = _listings(repo.root)
+def test_a_first_run_adds_nothing_to_any_directory_of_the_repo(project, tmp_path):
+    tests = project.root / "tests"
+    before = _listings(project.root)
     stats = {d: _stat(d) for d in [tests, tests / "sub"]}
 
     assert run_tests(["TestA"], output_dir=tmp_path / "out").exit_code == 0
 
-    assert repo.ran_tests() == ["test_a1"]
-    assert _listings(repo.root) == before, "no __pycache__, no .pytest_cache"
+    assert project.ran_tests() == ["test_a1"]
+    assert _listings(project.root) == before, "no __pycache__, no .pytest_cache"
     table = tr.read_table(_the_repo())
     assert table is not None
     assert {Path(d): stat for d, stat in table.dirs.items()} == {
@@ -111,66 +111,66 @@ def test_a_first_run_adds_nothing_to_any_directory_of_the_repo(repo, tmp_path):
     assert tr.classify(_the_repo(), table).is_current
 
 
-def test_a_run_after_a_collect_only_seed_leaves_the_table_current(repo, tmp_path):
+def test_a_run_after_a_collect_only_seed_leaves_the_table_current(project, tmp_path):
     assert tr.read_table(_the_repo()) is None, "cold"
     [seeded] = _refresh_tables([_the_repo()])
     assert seeded is not None
-    repo.next_run()
-    before = _listings(repo.root)
+    project.next_run()
+    before = _listings(project.root)
 
     assert run_tests(["test_b1"], output_dir=tmp_path / "out").exit_code == 0
 
-    assert repo.imported() == ["test_a", "test_b", "test_c"], "a whole-tree session"
-    assert _listings(repo.root) == before
+    assert project.imported() == ["test_a", "test_b", "test_c"], "a whole-tree session"
+    assert _listings(project.root) == before
     table = tr.read_table(_the_repo())
     assert table is not None
     assert tr.classify(_the_repo(), table).is_current
 
 
-def test_a_runs_rewritten_bytecode_lands_under_the_workspace_prefix(repo, tmp_path):
+def test_a_runs_rewritten_bytecode_lands_under_the_workspace_prefix(project, tmp_path):
     assert run_tests(["TestA"], output_dir=tmp_path / "out").exit_code == 0
 
-    test_a = repo.root / "tests" / "test_a.py"
+    test_a = project.root / "tests" / "test_a.py"
     assert _rewritten(_prefix(), test_a).is_file()
     seen = (tmp_path / "prefix-seen").read_text()
     assert seen == str(_prefix()), "the prefix the session's tests ran under"
     assert sys.pycache_prefix is None, "and it is gone once the session is"
 
 
-def test_a_collect_only_seed_writes_its_bytecode_under_the_prefix(repo):
-    before = _listings(repo.root)
+def test_a_collect_only_seed_writes_its_bytecode_under_the_prefix(project):
+    before = _listings(project.root)
 
     _refresh_tables([_the_repo()])
 
-    assert repo.imported() == ["test_a", "test_b", "test_c"]
-    assert _listings(repo.root) == before
-    tests = repo.root / "tests"
+    assert project.imported() == ["test_a", "test_b", "test_c"]
+    assert _listings(project.root) == before
+    tests = project.root / "tests"
     for test_file in [tests / "test_a.py", tests / "test_b.py", tests / "sub" / "test_c.py"]:
         assert _rewritten(_prefix(), test_file).is_file(), test_file.name
     assert sys.pycache_prefix is None
 
 
-def test_a_prefix_the_user_set_is_honoured(repo, tmp_path, monkeypatch):
+def test_a_prefix_the_user_set_is_honoured(project, tmp_path, monkeypatch):
     mine = tmp_path / "my-pycache"
     monkeypatch.setattr(sys, "pycache_prefix", str(mine))
 
     assert run_tests(["TestA"], output_dir=tmp_path / "out").exit_code == 0
 
-    test_a = repo.root / "tests" / "test_a.py"
+    test_a = project.root / "tests" / "test_a.py"
     assert _rewritten(mine, test_a).is_file()
     assert (tmp_path / "prefix-seen").read_text() == str(mine)
     assert not _prefix().exists(), "otto's own prefix stays unused"
     assert sys.pycache_prefix == str(mine)
 
 
-def test_a_run_keeps_pytests_cache_in_the_workspace(repo, tmp_path):
+def test_a_run_keeps_pytests_cache_in_the_workspace(project, tmp_path):
     assert run_tests(["TestA"], output_dir=tmp_path / "out").exit_code == 0
 
     assert (workspace_home() / PYTEST_CACHE_DIRNAME / "v" / "randomly_seed").is_file()
-    assert not list(repo.root.rglob(".pytest_cache"))
+    assert not list(project.root.rglob(".pytest_cache"))
 
 
-def test_a_session_that_raises_takes_its_prefix_away(repo, tmp_path, monkeypatch):
+def test_a_session_that_raises_takes_its_prefix_away(project, tmp_path, monkeypatch):
     seen: list[object] = []
 
     def exploding_main(*_args, **_kwargs):

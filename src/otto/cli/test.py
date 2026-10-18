@@ -6,9 +6,9 @@
     otto test --list-tests [NAMES...] [-m EXPR]
     otto test --list-markers
 
-**Names.** Each name is resolved against every configured repo's pytest
+**Names.** Each name is resolved against every configured project's pytest
 collection. ``test_reboot`` selects every test of that name, in any class,
-module or repo (every parametrization of it); ``TestDevice`` selects every
+module or project (every parametrization of it); ``TestDevice`` selects every
 test in every class of that name; ``TestDevice::test_reboot`` selects that
 test in every such class. ``-m EXPR`` narrows the named tests, or, with no
 names, selects on its own. A run needs at least one name or ``-m``. An
@@ -35,7 +35,7 @@ matches one of the run flags below is refused when the command is built.
 
 **Listing**
 
-``--list-tests``    List what the names and ``-m`` select, as a tree per repo:
+``--list-tests``    List what the names and ``-m`` select, as a tree per project:
                     module, then class, then test. Needs no lab.
 
 ``--list-markers``  List the markers available to ``-m`` and exit.
@@ -100,7 +100,7 @@ either limit is reached first.
 ``--overwrite-cov-report-dir``
     Clear the contents of ``--cov-report-dir`` before the report is rendered.
 
-``--project-name STR``
+``--report-title STR``
     Title shown in the HTML report header (only used with ``--cov-report``).
 
 ``--cov-tickets-json PATH``
@@ -176,7 +176,7 @@ if TYPE_CHECKING:
     from rich.panel import Panel
     from rich.tree import Tree
 
-    from ..config.repo import Repo
+    from ..config.project import Project
     from ..suite.plugin import SelectedTest
     from ..suite.run import Listing
 
@@ -192,10 +192,10 @@ TEST_HELP = "Run tests by name or marker expression."
 
 @completion_source(kind="tests")
 def _names_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: ARG001 — required by Typer autocompletion callback signature
-    """Completion source for ``NAMES``: the names pytest collected, from each repo's table.
+    """Completion source for ``NAMES``: the names pytest collected, from each project's table.
 
     Every test base name, every class around a test and each
-    ``Class::test`` pair (:func:`~otto.config.repo.selectable_names`), as the
+    ``Class::test`` pair (:func:`~otto.config.project.selectable_names`), as the
     last pytest collection of each file recorded them
     (:func:`otto.config.collected_tests.completion_view`). The first TAB with
     no table waits once for a whole-tree collection in a bounded child
@@ -210,14 +210,14 @@ def _names_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa:
     validates the test tree.
     """
     # The composition root: importing it installs the initiator that composes
-    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    # the projects this reads (spec 2026-10-11 placement-and-phases §3.12).
     from .. import bootstrap
 
     del bootstrap
     from ..config.collected_tests import completion_view
-    from ..declared import get_repos
+    from ..declared import get_projects
 
-    names = completion_view(get_repos()).names
+    names = completion_view(get_projects()).names
     return [name for name in names if name.startswith(incomplete)]
 
 
@@ -233,16 +233,16 @@ def _markers_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noq
     being typed and keeps the rest of the expression.
     """
     # The composition root: importing it installs the initiator that composes
-    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    # the projects this reads (spec 2026-10-11 placement-and-phases §3.12).
     from .. import bootstrap
 
     del bootstrap
     from ..config.collected_tests import completion_view
-    from ..declared import get_repos
+    from ..declared import get_projects
     from ..suite.markers import OTTO_MARKERS
     from ..utils import complete_marker_expression
 
-    markers = {*completion_view(get_repos()).markers, *OTTO_MARKERS}
+    markers = {*completion_view(get_projects()).markers, *OTTO_MARKERS}
     return complete_marker_expression(sorted(markers), incomplete)
 
 
@@ -278,10 +278,10 @@ def _builtin_markers_panel() -> "Panel":
 
 
 def list_markers_callback(value: bool) -> None:
-    """Print the markers available to --markers (one panel per repo, plus otto's) and exit.
+    """Print the markers available to --markers (one panel per project, plus otto's) and exit.
 
-    A repo's markers are the ones pytest knew when it last collected the
-    repo's tests: each one a pytest config file, a plugin or a conftest
+    A project's markers are the ones pytest knew when it last collected the
+    project's tests: each one a pytest config file, a plugin or a conftest
     registered, and each one a test applies. A cold table is collected first
     (``otto.suite.run._refresh_tables``); a warm one is read as it is, with
     no collection.
@@ -289,25 +289,25 @@ def list_markers_callback(value: bool) -> None:
     if not value:
         return
     # The composition root: importing it installs the initiator that composes
-    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    # the projects this reads (spec 2026-10-11 placement-and-phases §3.12).
     from .. import bootstrap
 
     del bootstrap
-    from ..declared import get_repos
+    from ..declared import get_projects
     from ..suite.markers import OTTO_MARKERS
     from ..suite.run import _refresh_tables
 
     panels = []
     code = 0
-    repos = get_repos()
-    for repo, table in zip(repos, _refresh_tables(repos, cold_only=True), strict=True):
+    projects = get_projects()
+    for project, table in zip(projects, _refresh_tables(projects, cold_only=True), strict=True):
         markers: list[str] = []
         if table is None:
             code = 1  # the collection that could not finish logged why
         else:
             # otto's own are pytest-registered too; its panel shows them once.
             markers = [m for m in table.markers if m not in OTTO_MARKERS]
-        panels.append(repo.get_markers_panel(markers))
+        panels.append(project.get_markers_panel(markers))
     panels.append(_builtin_markers_panel())
     _render_panels(panels)
     raise typer.Exit(code)
@@ -327,8 +327,8 @@ def _module_label(path: Path, roots: "list[Path]") -> str:
     return path.name
 
 
-def tests_tree(repo: "Repo", tests: "list[SelectedTest]") -> "Tree":
-    """Build one repo's tree: module file, then class (at every depth), then test.
+def tests_tree(project: "Project", tests: "list[SelectedTest]") -> "Tree":
+    """Build one project's tree: module file, then class (at every depth), then test.
 
     *tests* are what a pytest session selected, shown in the order given.
     Labels are plain text, never markup, so a parametrization id such as
@@ -337,11 +337,11 @@ def tests_tree(repo: "Repo", tests: "list[SelectedTest]") -> "Tree":
     from rich.text import Text
     from rich.tree import Tree
 
-    tree = Tree(Text(f"{repo.name} {repo.version}", style="bold"))
+    tree = Tree(Text(f"{project.name} {project.version}", style="bold"))
     if not tests:
         tree.add(Text("(no tests found)", style="dim"))
         return tree
-    roots = [Path(root) for root in repo.tests]
+    roots = [Path(root) for root in project.tests]
     nodes: dict[tuple[str, ...], Tree] = {}
     for test in tests:
         path = str(test.path)
@@ -361,7 +361,7 @@ def tests_tree(repo: "Repo", tests: "list[SelectedTest]") -> "Tree":
 def _selected_tests(names: "list[str]", markers: str) -> "Listing":
     """Collect what *names* and *markers* select, as a run would, running nothing.
 
-    :func:`otto.suite.run.selected_tests`. A name no repo holds ends it as
+    :func:`otto.suite.run.selected_tests`. A name no project holds ends it as
     it ends a run: a usage error with did-you-mean suggestions, or, with no
     collected test to suggest from, "No tests matched the selection." (exit 1).
     """
@@ -378,16 +378,16 @@ def _selected_tests(names: "list[str]", markers: str) -> "Listing":
 
 
 def _print_trees(listing: "Listing") -> None:
-    """Print *listing* as one tree per repo, a repo with no selected test included."""
+    """Print *listing* as one tree per project, a project with no selected test included."""
     # The composition root: importing it installs the initiator that composes
-    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    # the projects this reads (spec 2026-10-11 placement-and-phases §3.12).
     from .. import bootstrap
 
     del bootstrap
-    from ..declared import get_repos
+    from ..declared import get_projects
 
-    for repo in get_repos():
-        rprint(tests_tree(repo, listing.tests.get(repo.name, [])))
+    for project in get_projects():
+        rprint(tests_tree(project, listing.tests.get(project.name, [])))
 
 
 DRY_RUN_TESTS_HEADLINE = "dry run: pytest collected these tests; nothing ran"
@@ -414,7 +414,9 @@ def _run_flags(  # noqa: PLR0913 — one parameter per run flag, by design
         bool,
         typer.Option(
             "--list-tests",
-            help="List what the names and --markers select, by repo, module and class, and exit.",
+            help=(
+                "List what the names and --markers select, by project, module and class, and exit."
+            ),
         ),
     ] = False,
     markers: Annotated[
@@ -555,10 +557,10 @@ def _run_flags(  # noqa: PLR0913 — one parameter per run flag, by design
             ),
         ),
     ] = False,
-    project_name: Annotated[
+    report_title: Annotated[
         str,
         typer.Option(
-            "--project-name",
+            "--report-title",
             help="Title shown in the HTML report header (only used with --cov-report).",
         ),
     ] = "Coverage Report",

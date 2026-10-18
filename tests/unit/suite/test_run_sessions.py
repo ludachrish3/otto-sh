@@ -37,7 +37,7 @@ _C = _test("test_c1")
 
 
 @pytest.fixture
-def repo(sut_repo, tmp_path) -> _Repo:
+def project(sut_repo, tmp_path) -> _Repo:
     """One repo: ``tests/test_a.py`` (``TestA``), ``tests/test_b.py``, ``tests/sub/test_c.py``."""
     shell = _Repo(tmp_path / "sut")
     shell.root = sut_repo(
@@ -62,46 +62,46 @@ def sessions(monkeypatch) -> list:
     seen: list = []
     real = run_module._run_pytest_session
 
-    def spy(repo, selection, run=None, **kwargs):
+    def spy(project, selection, run=None, **kwargs):
         candidates = selection.candidates
         if candidates is None:
             seen.append(None)
         else:
             dirs = [f"{Path(d).name}/" for d in selection.candidate_dirs]
             seen.append(sorted(Path(c).name for c in candidates) + sorted(dirs))
-        return real(repo, selection, run, **kwargs)
+        return real(project, selection, run, **kwargs)
 
     monkeypatch.setattr(run_module, "_run_pytest_session", spy)
     return seen
 
 
 def _the_repo():
-    from otto.bootstrap import get_repos
+    from otto.bootstrap import get_projects
 
-    [only] = get_repos()
+    [only] = get_projects()
     return only
 
 
-def _warm(repo: _Repo, tmp_path: Path, sessions: list) -> None:
+def _warm(project: _Repo, tmp_path: Path, sessions: list) -> None:
     """Run once so the table holds what pytest collected; then forget the run."""
     assert run_tests(["test_b1"], output_dir=tmp_path / "warm").exit_code == 0
-    repo.next_run()
+    project.next_run()
     sessions.clear()
 
 
 # ── the warm path ────────────────────────────────────────────────────────────
 
 
-def test_a_cold_run_collects_the_whole_tree_once(repo, tmp_path, sessions):
+def test_a_cold_run_collects_the_whole_tree_once(project, tmp_path, sessions):
     result = run_tests(["TestA"], output_dir=tmp_path / "out")
 
     assert result.exit_code == 0
     assert sessions == [None]
-    assert repo.imported() == ["test_a", "test_b", "test_c"]
-    assert repo.ran_tests() == ["test_a1", "test_a2"]
+    assert project.imported() == ["test_a", "test_b", "test_c"]
+    assert project.ran_tests() == ["test_a1", "test_a2"]
 
 
-def test_a_cold_run_seeds_the_table_from_its_own_session(repo, tmp_path, monkeypatch):
+def test_a_cold_run_seeds_the_table_from_its_own_session(project, tmp_path, monkeypatch):
     """The run's whole-tree session is the seed: no ``--collect-only`` session runs first."""
     main_calls: list[list[str]] = []
     real_main = pytest.main
@@ -120,43 +120,43 @@ def test_a_cold_run_seeds_the_table_from_its_own_session(repo, tmp_path, monkeyp
     table = read_table(_the_repo())
     assert table is not None
     assert {"TestA", "test_a1", "test_b1", "test_c1"} <= set(table.names)
-    tests = repo.root / "tests"
+    tests = project.root / "tests"
     assert set(table.dirs) == {str(tests), str(tests / "sub")}
     assert classify(_the_repo(), table).is_current
 
 
-def test_a_warm_run_collects_the_whole_tree_and_runs_only_the_name(repo, tmp_path, sessions):
+def test_a_warm_run_collects_the_whole_tree_and_runs_only_the_name(project, tmp_path, sessions):
     """The table places TestA in test_a.py; pytest still decides, over every file (#592)."""
-    _warm(repo, tmp_path, sessions)
+    _warm(project, tmp_path, sessions)
 
     result = run_tests(["TestA"], output_dir=tmp_path / "out")
 
     assert result.exit_code == 0
     assert sessions == [None]
-    assert repo.imported() == ["test_a", "test_b", "test_c"]
-    assert repo.ran_tests() == ["test_a1", "test_a2"]
+    assert project.imported() == ["test_a", "test_b", "test_c"]
+    assert project.ran_tests() == ["test_a1", "test_a2"]
 
 
-def test_a_new_test_in_an_edited_file_runs_in_the_one_session(repo, tmp_path, sessions):
-    _warm(repo, tmp_path, sessions)
-    repo.write("tests/test_b.py", repo.module("test_b", _B + "\n\n" + _test("test_b_new")))
+def test_a_new_test_in_an_edited_file_runs_in_the_one_session(project, tmp_path, sessions):
+    _warm(project, tmp_path, sessions)
+    project.write("tests/test_b.py", project.module("test_b", _B + "\n\n" + _test("test_b_new")))
 
     result = run_tests(["test_b_new"], output_dir=tmp_path / "out")
 
     assert result.exit_code == 0
     assert sessions == [None]
-    assert repo.ran_tests() == ["test_b_new"]
+    assert project.ran_tests() == ["test_b_new"]
 
 
-def test_a_new_file_is_collected_in_the_first_session(repo, tmp_path, sessions):
-    _warm(repo, tmp_path, sessions)
-    repo.write("tests/sub/test_d.py", repo.module("test_d", _test("test_d1")))
+def test_a_new_file_is_collected_in_the_first_session(project, tmp_path, sessions):
+    _warm(project, tmp_path, sessions)
+    project.write("tests/sub/test_d.py", project.module("test_d", _test("test_d1")))
 
     result = run_tests(["test_d1"], output_dir=tmp_path / "out")
 
     assert result.exit_code == 0
     assert sessions == [None]
-    assert repo.ran_tests() == ["test_d1"]
+    assert project.ran_tests() == ["test_d1"]
 
 
 def test_a_file_saved_as_a_pruned_session_starts_is_not_vouched_for(
@@ -248,15 +248,15 @@ def test_a_file_deleted_and_saved_again_as_the_session_starts_keeps_its_record(
 
 
 def test_a_file_saved_in_a_listed_directory_during_the_session_is_not_vouched_for(
-    repo, tmp_path, sessions, real_shell_bytecode
+    project, tmp_path, sessions, real_shell_bytecode
 ):
     """A test writes a sibling file after pytest listed its directory: the listing missed it."""
-    _warm(repo, tmp_path, sessions)
-    sub = repo.root / "tests" / "sub"
-    later = repo.module("test_e", "def test_d1():\n    _ran('e::test_d1')\n")
-    repo.write(
+    _warm(project, tmp_path, sessions)
+    sub = project.root / "tests" / "sub"
+    later = project.module("test_e", "def test_d1():\n    _ran('e::test_d1')\n")
+    project.write(
         "tests/sub/test_d.py",
-        repo.module(
+        project.module(
             "test_d",
             "import pathlib\n\n\ndef test_d1():\n    _ran('d::test_d1')\n"
             f"    (pathlib.Path(__file__).parent / 'test_e.py').write_text({later!r})\n",
@@ -264,16 +264,16 @@ def test_a_file_saved_in_a_listed_directory_during_the_session_is_not_vouched_fo
     )
     assert run_tests(["test_d1"], output_dir=tmp_path / "saved").exit_code == 0
     assert (sub / "test_e.py").exists()
-    repo.next_run()
+    project.next_run()
 
     assert run_tests(["test_d1"], output_dir=tmp_path / "after").exit_code == 0
 
-    assert repo.ran_tests() == ["d::test_d1", "e::test_d1"]
+    assert project.ran_tests() == ["d::test_d1", "e::test_d1"]
 
 
-def test_an_edited_conftest_is_read_again_and_recorded(repo, tmp_path, sessions):
-    _warm(repo, tmp_path, sessions)
-    repo.write(
+def test_an_edited_conftest_is_read_again_and_recorded(project, tmp_path, sessions):
+    _warm(project, tmp_path, sessions)
+    project.write(
         "tests/sub/conftest.py",
         "def pytest_configure(config):\n"
         "    config.addinivalue_line('markers', 'edited_mine: from tests/sub')\n",
@@ -288,9 +288,9 @@ def test_an_edited_conftest_is_read_again_and_recorded(repo, tmp_path, sessions)
     assert "edited_mine" in table.registered_markers
 
 
-def test_a_changed_pytest_config_collects_the_whole_tree(repo, tmp_path, sessions):
-    _warm(repo, tmp_path, sessions)
-    repo.write("pytest.ini", "[pytest]\n")
+def test_a_changed_pytest_config_collects_the_whole_tree(project, tmp_path, sessions):
+    _warm(project, tmp_path, sessions)
+    project.write("pytest.ini", "[pytest]\n")
 
     result = run_tests(["TestA"], output_dir=tmp_path / "out")
 
@@ -298,38 +298,38 @@ def test_a_changed_pytest_config_collects_the_whole_tree(repo, tmp_path, session
     assert sessions == [None]
 
 
-def test_a_run_records_what_it_collected(repo, tmp_path, sessions):
-    _warm(repo, tmp_path, sessions)
-    repo.write("tests/test_b.py", repo.module("test_b", _B + "\n\n" + _test("test_b2")))
+def test_a_run_records_what_it_collected(project, tmp_path, sessions):
+    _warm(project, tmp_path, sessions)
+    project.write("tests/test_b.py", project.module("test_b", _B + "\n\n" + _test("test_b2")))
 
     run_tests(["TestA"], output_dir=tmp_path / "out")
 
-    from otto.bootstrap import get_repos
+    from otto.bootstrap import get_projects
 
-    [the_repo] = get_repos()
+    [the_repo] = get_projects()
     table = read_table(the_repo)
     assert table is not None
-    record = table.files[str(repo.root / "tests" / "test_b.py")]
+    record = table.files[str(project.root / "tests" / "test_b.py")]
     assert [t.name for t in record.tests] == ["test_b1", "test_b2"]
     assert "TestA::test_a1" in table.names
     assert "test_c1" in table.names
 
 
-def test_a_named_run_keeps_the_markers_every_conftest_registers(repo, tmp_path, sessions):
+def test_a_named_run_keeps_the_markers_every_conftest_registers(project, tmp_path, sessions):
     """A named run collects the whole tree, so it sees every conftest's markers."""
-    repo.write(
+    project.write(
         "tests/sub/conftest.py",
         "def pytest_configure(config):\n"
         "    config.addinivalue_line('markers', 'nested_mine: from tests/sub')\n",
     )
-    _warm(repo, tmp_path, sessions)
+    _warm(project, tmp_path, sessions)
 
     run_tests(["TestA"], output_dir=tmp_path / "out")
 
-    from otto.bootstrap import get_repos
+    from otto.bootstrap import get_projects
 
     assert sessions == [None]
-    table = read_table(get_repos()[0])
+    table = read_table(get_projects()[0])
     assert table is not None
     assert "nested_mine" in table.registered_markers
 
@@ -337,25 +337,25 @@ def test_a_named_run_keeps_the_markers_every_conftest_registers(repo, tmp_path, 
 # ── names the table cannot vouch for ─────────────────────────────────────────
 
 
-def test_an_unknown_name_is_refused_before_any_test(repo, tmp_path, sessions):
+def test_an_unknown_name_is_refused_before_any_test(project, tmp_path, sessions):
     """No record places test_a3, yet a file may generate it: pytest looks, then otto refuses."""
-    _warm(repo, tmp_path, sessions)
+    _warm(project, tmp_path, sessions)
 
     with pytest.raises(UnknownSelectionError, match=r"test_a3.*did you mean: test_a"):
         run_tests(["test_a3"], output_dir=tmp_path / "out")
 
     assert sessions == [None]
-    assert repo.ran_tests() == []
+    assert project.ran_tests() == []
 
 
-def test_one_unknown_name_among_known_ones_runs_nothing(repo, tmp_path, sessions):
-    _warm(repo, tmp_path, sessions)
+def test_one_unknown_name_among_known_ones_runs_nothing(project, tmp_path, sessions):
+    _warm(project, tmp_path, sessions)
 
     with pytest.raises(UnknownSelectionError, match="test_a3"):
         run_tests(["TestA", "test_a3"], output_dir=tmp_path / "out")
 
     assert sessions == [None]
-    assert repo.ran_tests() == []
+    assert project.ran_tests() == []
 
 
 def _count_sessions(monkeypatch) -> list[list[str]]:
@@ -371,38 +371,38 @@ def _count_sessions(monkeypatch) -> list[list[str]]:
     return calls
 
 
-def test_the_add_a_test_loop_is_one_pytest_session(repo, tmp_path, sessions, monkeypatch):
+def test_the_add_a_test_loop_is_one_pytest_session(project, tmp_path, sessions, monkeypatch):
     """The saved file is the one uncertain place: its collection and the run are one session."""
-    _warm(repo, tmp_path, sessions)
-    repo.write("tests/test_b.py", repo.module("test_b", _B + "\n\n" + _test("test_b_new")))
+    _warm(project, tmp_path, sessions)
+    project.write("tests/test_b.py", project.module("test_b", _B + "\n\n" + _test("test_b_new")))
     calls = _count_sessions(monkeypatch)
 
     assert run_tests(["test_b_new"], output_dir=tmp_path / "out").exit_code == 0
 
     assert len(calls) == 1
     assert "--collect-only" not in calls[0]
-    assert repo.ran_tests() == ["test_b_new"]
+    assert project.ran_tests() == ["test_b_new"]
 
 
-def test_a_warm_run_is_one_pytest_session(repo, tmp_path, sessions, monkeypatch):
-    _warm(repo, tmp_path, sessions)
+def test_a_warm_run_is_one_pytest_session(project, tmp_path, sessions, monkeypatch):
+    _warm(project, tmp_path, sessions)
     calls = _count_sessions(monkeypatch)
 
     assert run_tests(["TestA"], output_dir=tmp_path / "out").exit_code == 0
 
     assert len(calls) == 1
-    assert repo.ran_tests() == ["test_a1", "test_a2"]
+    assert project.ran_tests() == ["test_a1", "test_a2"]
 
 
-def test_a_typo_runs_nothing_and_says_nothing_else(repo, tmp_path, sessions, capfd):
+def test_a_typo_runs_nothing_and_says_nothing_else(project, tmp_path, sessions, capfd):
     """The name was placed nowhere and the session did not find it: one message, no JUnit.
 
     The session stops with a usage error pytest itself has no words for:
     the did-you-mean is otto's, said once, and the empty JUnit file pytest
     wrote is neither moved into place nor named.
     """
-    _warm(repo, tmp_path, sessions)
-    repo.write("tests/test_b.py", repo.module("test_b", _B + "\n\n" + _test("test_b2")))
+    _warm(project, tmp_path, sessions)
+    project.write("tests/test_b.py", project.module("test_b", _B + "\n\n" + _test("test_b2")))
     capfd.readouterr()
     out = tmp_path / "out"
 
@@ -410,7 +410,7 @@ def test_a_typo_runs_nothing_and_says_nothing_else(repo, tmp_path, sessions, cap
         run_tests(["test_b3"], output_dir=out)
 
     assert sessions == [None]
-    assert repo.ran_tests() == []
+    assert project.ran_tests() == []
     captured = capfd.readouterr()
     assert "ERROR" not in captured.err
     assert "generated xml file" not in captured.out
@@ -420,20 +420,20 @@ def test_a_typo_runs_nothing_and_says_nothing_else(repo, tmp_path, sessions, cap
     assert "test_b2" in table.names, "what the session collected is recorded"
 
 
-def test_a_typo_names_the_file_that_did_not_collect(repo, tmp_path, sessions):
+def test_a_typo_names_the_file_that_did_not_collect(project, tmp_path, sessions):
     """The broken file might have held the name: the refusal says it did not collect."""
-    _warm(repo, tmp_path, sessions)
-    repo.write("tests/sub/test_broken.py", "def test_broken(:\n")
+    _warm(project, tmp_path, sessions)
+    project.write("tests/sub/test_broken.py", "def test_broken(:\n")
     broken = r"tests/sub/test_broken\.py did not collect: SyntaxError"
 
     with pytest.raises(UnknownSelectionError, match=broken):
         run_tests(["test_c2"], output_dir=tmp_path / "first")
-    repo.next_run()
+    project.next_run()
 
     with pytest.raises(UnknownSelectionError, match=broken):
         run_tests(["test_c2"], output_dir=tmp_path / "again")
     assert sessions == [None, None]
-    assert repo.ran_tests() == []
+    assert project.ran_tests() == []
 
 
 def test_a_name_in_a_repo_where_nothing_collects_names_the_broken_file(sut_repo, tmp_path):
@@ -444,14 +444,14 @@ def test_a_name_in_a_repo_where_nothing_collects_names_the_broken_file(sut_repo,
         run_tests(["test_only"], output_dir=tmp_path / "out")
 
 
-def test_a_deleted_holder_leaves_its_name_unknown(repo, tmp_path, sessions):
-    _warm(repo, tmp_path, sessions)
-    (repo.root / "tests" / "test_b.py").unlink()
+def test_a_deleted_holder_leaves_its_name_unknown(project, tmp_path, sessions):
+    _warm(project, tmp_path, sessions)
+    (project.root / "tests" / "test_b.py").unlink()
 
     with pytest.raises(UnknownSelectionError, match="test_b1"):
         run_tests(["test_b1"], output_dir=tmp_path / "out")
 
-    assert repo.ran_tests() == []
+    assert project.ran_tests() == []
 
 
 _BASE = "class Base:\n    def test_gone(self):\n        pass\n"
@@ -459,17 +459,17 @@ _DERIVED = "from helpers.base import Base\n\n\nclass TestDerived(Base):\n    pas
 
 
 @pytest.fixture
-def inherited(repo, tmp_path, sessions) -> _Repo:
+def inherited(project, tmp_path, sessions) -> _Repo:
     """``tests/test_derived.py`` inherits its tests from a helper no stat watches; warm."""
-    repo.write("tests/helpers/__init__.py", "")
-    repo.write("tests/helpers/base.py", _BASE)
-    repo.write("tests/test_derived.py", repo.module("test_derived", _DERIVED))
+    project.write("tests/helpers/__init__.py", "")
+    project.write("tests/helpers/base.py", _BASE)
+    project.write("tests/test_derived.py", project.module("test_derived", _DERIVED))
     # Two runs: the first finds the helper as a dependency, the second stamps it.
     for warm in ("warm1", "warm2"):
         assert run_tests(["test_gone"], output_dir=tmp_path / warm).exit_code == 0
-        repo.next_run()
+        project.next_run()
     sessions.clear()
-    return repo
+    return project
 
 
 def test_a_name_a_helper_lost_is_unknown_after_the_one_session(inherited, tmp_path, sessions):
@@ -544,19 +544,19 @@ def test_a_marker_alone_runs_one_whole_tree_session_per_repo(two_sut_repos, tmp_
 
 
 def test_a_broken_file_does_not_stop_the_named_tests_and_fails_every_run_as_in_pytest(
-    repo, tmp_path, sessions, caplog
+    project, tmp_path, sessions, caplog
 ):
     """It might hold the name, so every run collects it: each one reports it and exits 1."""
-    _warm(repo, tmp_path, sessions)
-    repo.write("tests/sub/test_broken.py", "def test_broken(:\n")
+    _warm(project, tmp_path, sessions)
+    project.write("tests/sub/test_broken.py", "def test_broken(:\n")
 
     for out in ("first", "again"):
         result = run_tests(["TestA"], output_dir=tmp_path / out)
 
         assert result.exit_code == 1
-        assert repo.ran_tests() == ["test_a1", "test_a2"]
+        assert project.ran_tests() == ["test_a1", "test_a2"]
         assert "test_broken.py" in caplog.text
-        repo.next_run()
+        project.next_run()
         caplog.clear()
 
 
@@ -613,9 +613,9 @@ def kinds(monkeypatch) -> list:
     seen: list = []
     real = run_module._run_pytest_session
 
-    def spy(repo, selection, run=None, **kwargs):
-        seen.append((repo.sut_dir.name, "collect" if run is None else "run"))
-        return real(repo, selection, run, **kwargs)
+    def spy(project, selection, run=None, **kwargs):
+        seen.append((project.root.name, "collect" if run is None else "run"))
+        return real(project, selection, run, **kwargs)
 
     monkeypatch.setattr(run_module, "_run_pytest_session", spy)
     return seen
@@ -805,7 +805,7 @@ def test_a_name_a_fresh_record_holds_also_runs_where_a_changed_file_now_holds_it
     assert b.ran_tests() == ["test_in_a"]
 
 
-def _claim(repo_dir: Path, rel: str, name: str) -> None:
+def _claim(project_root: Path, rel: str, name: str) -> None:
     """Make the table's record of *rel* say it holds *name*, which the file does not.
 
     What an edit that keeps the file's size and mtime leaves behind (Python's
@@ -813,13 +813,13 @@ def _claim(repo_dir: Path, rel: str, name: str) -> None:
     """
     import dataclasses
 
-    from otto.bootstrap import get_repos
+    from otto.bootstrap import get_projects
     from otto.config import collected_tests as tr
 
-    [repo] = [r for r in get_repos() if r.sut_dir == repo_dir]
-    table = tr.read_table(repo)
+    [project] = [r for r in get_projects() if r.root == project_root]
+    table = tr.read_table(project)
     assert table is not None
-    key = str(repo_dir / rel)
+    key = str(project_root / rel)
     record = table.files[key]
     lying = dataclasses.replace(record, tests=[*record.tests, tr.RecordedTest([], name)])
     tr.write_tables([dataclasses.replace(table, files={**table.files, key: lying})])
@@ -941,7 +941,7 @@ def test_a_marker_run_goes_on_past_a_repo_that_cannot_finish(
     assert kinds == [("repo_a", "run"), ("repo_b", "run")]
     assert b.ran_tests() == ["test_in_b"]
     [error] = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
-    assert "Could not collect the tests of repo 'repo_a'" in error
+    assert "Could not collect the tests of project 'repo_a'" in error
     assert "the lab is not configured" in error
 
 
@@ -959,14 +959,14 @@ def test_a_changed_repo_whose_conftest_raises_is_logged_by_name(
     assert kinds == [("repo_a", "run"), ("repo_b", "run")]
     assert a.ran_tests() == ["test_in_a"]
     [error] = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
-    assert "Could not collect the tests of repo 'repo_b'" in error
+    assert "Could not collect the tests of project 'repo_b'" in error
     assert "RuntimeError: boom conftest" in error
 
 
-def test_a_run_that_learns_nothing_new_leaves_the_cache_file_alone(repo, tmp_path, sessions):
+def test_a_run_that_learns_nothing_new_leaves_the_cache_file_alone(project, tmp_path, sessions):
     """Not even to date what it read again: the table was written a minute ago."""
 
-    _warm(repo, tmp_path, sessions)
+    _warm(project, tmp_path, sessions)
     table = read_table(_the_repo())
     assert table is not None
     earlier = {
@@ -984,11 +984,11 @@ def test_a_run_that_learns_nothing_new_leaves_the_cache_file_alone(repo, tmp_pat
     assert (after.st_ino, after.st_mtime_ns) == (before.st_ino, before.st_mtime_ns)
 
 
-def test_a_run_finds_the_workspace_home_once(repo, tmp_path, sessions, monkeypatch):
+def test_a_run_finds_the_workspace_home_once(project, tmp_path, sessions, monkeypatch):
     """The table's read, the session's bytecode and cache dirs and the table's write share it."""
     from otto.config import home
 
-    _warm(repo, tmp_path, sessions)
+    _warm(project, tmp_path, sessions)
     calls: list[object] = []
     real = home.workspace_home
 
@@ -1041,17 +1041,17 @@ def test_a_broken_file_in_another_repo_is_reported_once_and_fails_the_run(
 # without its own stat moving.
 
 
-def _holders(repo: _Repo) -> dict[str, str]:
-    base = repo.module(
+def _holders(project: _Repo) -> dict[str, str]:
+    base = project.module(
         "test_base",
         "class TestBase:\n"
         "    def test_x(self):\n"
         "        _ran(f'{type(self).__name__}@{__name__}::test_x')\n",
     )
-    derived = repo.module(
+    derived = project.module(
         "test_d", "from test_base import TestBase\n\n\nclass TestD(TestBase):\n    pass\n"
     )
-    plain = repo.module("test_p", "def test_x():\n    _ran('plain::test_x')\n")
+    plain = project.module("test_p", "def test_x():\n    _ran('plain::test_x')\n")
     return {"tests/test_base.py": base, "tests/test_d.py": derived, "tests/test_p.py": plain}
 
 
@@ -1296,7 +1296,7 @@ def test_a_sourceless_library_is_followed_through_its_pyc(
     warm, cold = _warm_then_cold(shell, tmp_path, monkeypatch, sessions, edit)
 
     assert warm == cold == ["TestD::test_y", "test_y"]
-    [the_repo] = otto.bootstrap.get_repos()
+    [the_repo] = otto.bootstrap.get_projects()
     table = tr.read_table(the_repo)
     assert table is not None
     assert list(table.deps) == [str(lib / "pycbase.pyc")]
@@ -1352,7 +1352,7 @@ def pre_clean(monkeypatch):
     monkeypatch.setattr(
         run_module,
         "resolve_coverage",
-        lambda opts, repos, *, command: dataclasses.replace(opts, cov=True),
+        lambda opts, projects, *, command: dataclasses.replace(opts, cov=True),
     )
     clean = AsyncMock()
     monkeypatch.setattr("otto.coverage.collect.clean_coverage", clean)
@@ -1360,8 +1360,8 @@ def pre_clean(monkeypatch):
     return clean
 
 
-def test_a_typo_never_cleans_the_remote_coverage(repo, tmp_path, sessions, pre_clean):
-    _warm(repo, tmp_path, sessions)
+def test_a_typo_never_cleans_the_remote_coverage(project, tmp_path, sessions, pre_clean):
+    _warm(project, tmp_path, sessions)
     pre_clean.reset_mock()
 
     with pytest.raises(UnknownSelectionError):
@@ -1371,13 +1371,13 @@ def test_a_typo_never_cleans_the_remote_coverage(repo, tmp_path, sessions, pre_c
 
 
 def test_a_typo_the_session_finds_never_touches_the_remote_coverage(
-    repo, tmp_path, sessions, pre_clean
+    project, tmp_path, sessions, pre_clean
 ):
     """The session stops for the name: no pre-clean, and no coverage fetch either."""
     import otto.suite.run as run_module
 
-    _warm(repo, tmp_path, sessions)
-    repo.write("tests/test_a.py", repo.module("test_a", _A + "\n\n" + _test("test_extra")))
+    _warm(project, tmp_path, sessions)
+    project.write("tests/test_a.py", project.module("test_a", _A + "\n\n" + _test("test_extra")))
     pre_clean.reset_mock()
     run_module._post_run_coverage.reset_mock()
 
@@ -1385,7 +1385,7 @@ def test_a_typo_the_session_finds_never_touches_the_remote_coverage(
         run_tests(["TestA", "test_a3"], output_dir=tmp_path / "out")
 
     assert sessions == [None]
-    assert repo.ran_tests() == []
+    assert project.ran_tests() == []
     pre_clean.assert_not_awaited()
     run_module._post_run_coverage.assert_not_awaited()
 
@@ -1419,7 +1419,7 @@ def test_the_remote_coverage_is_cleaned_once_before_the_first_test(
         b={"tests/test_b.py": shell_b.module("test_b", _test("test_in_b"))},
     )
 
-    def _clean_and_record(repos: object) -> CleanReport:
+    def _clean_and_record(projects: object) -> CleanReport:
         shell_a.ran.write_text("PRECLEAN\n")
         return CleanReport(hosts={})
 
@@ -1432,13 +1432,13 @@ def test_the_remote_coverage_is_cleaned_once_before_the_first_test(
     assert logged_lines(shell_a.ran) == ["PRECLEAN", "test_in_a"]
 
 
-def test_a_failing_pre_clean_stops_the_run_with_its_own_error(repo, tmp_path, pre_clean):
+def test_a_failing_pre_clean_stops_the_run_with_its_own_error(project, tmp_path, pre_clean):
     pre_clean.side_effect = ValueError("no route to the coverage host")
 
     with pytest.raises(ValueError, match="no route to the coverage host"):
         run_tests(["TestA"], output_dir=tmp_path / "out")
 
-    assert repo.ran_tests() == []
+    assert project.ran_tests() == []
 
 
 # ── one seed per run; JUnit only from a session that ran ─────────────────────
@@ -1471,10 +1471,10 @@ def test_every_session_of_a_run_uses_the_one_seed(two_sut_repos, tmp_path, monke
     assert len(seeds) == 1
 
 
-def test_a_typo_leaves_an_existing_results_file_alone(repo, tmp_path, sessions):
+def test_a_typo_leaves_an_existing_results_file_alone(project, tmp_path, sessions):
     """The session stops for the typo: pytest's empty JUnit goes."""
-    _warm(repo, tmp_path, sessions)
-    repo.write("tests/test_b.py", repo.module("test_b", _B + "\n\n" + _test("test_b2")))
+    _warm(project, tmp_path, sessions)
+    project.write("tests/test_b.py", project.module("test_b", _B + "\n\n" + _test("test_b2")))
     results = tmp_path / "keep.xml"
     results.write_text("<previous/>")
 
@@ -1490,7 +1490,7 @@ def test_a_typo_leaves_an_existing_results_file_alone(repo, tmp_path, sessions):
     assert sorted(p.name for p in tmp_path.iterdir() if p.name.startswith(".keep")) == []
 
 
-def test_a_run_names_the_junit_file_where_it_ends_up(repo, tmp_path, capfd):
+def test_a_run_names_the_junit_file_where_it_ends_up(project, tmp_path, capfd):
     out = tmp_path / "out"
 
     assert run_tests(["TestA"], output_dir=out).exit_code == 0
@@ -1592,7 +1592,7 @@ def test_a_coverage_failure_after_a_refusal_never_hides_the_refusal(
 
 
 def test_a_coverage_failure_with_nothing_else_wrong_is_raised(
-    repo, tmp_path, pre_clean, monkeypatch
+    project, tmp_path, pre_clean, monkeypatch
 ):
     from unittest.mock import AsyncMock
 
@@ -1663,11 +1663,11 @@ _EXITS_WHILE_COLLECTING = (
 
 
 def test_a_search_a_conftest_stops_while_collecting_keeps_the_earlier_results(
-    repo, tmp_path, sessions
+    project, tmp_path, sessions
 ):
     """pytest writes JUnit on its way out of a session no test ran in: it is not put in place."""
-    _warm(repo, tmp_path, sessions)
-    repo.write("tests/conftest.py", _EXITS_WHILE_COLLECTING)
+    _warm(project, tmp_path, sessions)
+    project.write("tests/conftest.py", _EXITS_WHILE_COLLECTING)
     results = tmp_path / "keep.xml"
     results.write_text("<previous/>")
 
@@ -1677,7 +1677,7 @@ def test_a_search_a_conftest_stops_while_collecting_keeps_the_earlier_results(
 
     assert result.exit_code == pytest.ExitCode.INTERRUPTED
     assert result.junit_paths == []
-    assert repo.ran_tests() == []
+    assert project.ran_tests() == []
     assert results.read_text() == "<previous/>"
     assert sorted(p.name for p in tmp_path.iterdir() if p.name.startswith(".keep")) == []
 

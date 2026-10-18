@@ -75,27 +75,27 @@ def _executed(junit_files: list[Path]) -> set[tuple[str, str]]:
 
 
 def _otto_run(
-    xdir: Path, repos: list[Path], name: str, extra_env: dict[str, str] | None = None
+    xdir: Path, projects: list[Path], name: str, extra_env: dict[str, str] | None = None
 ) -> tuple[int, set[tuple[str, str]]]:
-    env = {"OTTO_SUT_DIRS": os.pathsep.join(str(r) for r in repos), **(extra_env or {})}
+    env = {"OTTOPATH": os.pathsep.join(str(r) for r in projects), **(extra_env or {})}
     r = run_otto(["test", name, "--no-cov", "--no-random"], xdir=xdir, lab="unix", extra_env=env)
     runs = sorted(p for p in (xdir / "test").iterdir() if p.is_dir())
     return r.returncode, _executed(sorted(runs[-1].rglob("junit*.xml")))
 
 
-def _prime(xdir: Path, repos: list[Path], extra_env: dict[str, str] | None = None) -> None:
-    env = {"OTTO_SUT_DIRS": os.pathsep.join(str(r) for r in repos), **(extra_env or {})}
+def _prime(xdir: Path, projects: list[Path], extra_env: dict[str, str] | None = None) -> None:
+    env = {"OTTOPATH": os.pathsep.join(str(r) for r in projects), **(extra_env or {})}
     r = run_otto(["test", "--list-tests"], xdir=xdir, extra_env=env)
     assert r.returncode == 0, r.stdout + r.stderr
 
 
 def _native(
-    repos: list[Path], name: str, tmp_path: Path, extra_env: dict[str, str] | None = None
+    projects: list[Path], name: str, tmp_path: Path, extra_env: dict[str, str] | None = None
 ) -> tuple[int, set[tuple[str, str]]]:
     """What plain pytest executes for ``-k name`` over each repo's tests."""
     rc, executed = 0, set()
-    for repo in repos:
-        junit = tmp_path / f"native-{repo.name}.xml"
+    for project in projects:
+        junit = tmp_path / f"native-{project.name}.xml"
         env = {k: v for k, v in os.environ.items() if not k.startswith(("PYTEST_", "COV"))}
         r = subprocess.run(
             [
@@ -114,7 +114,7 @@ def _native(
                 "no:tach",
                 "-q",
             ],
-            cwd=repo,
+            cwd=project,
             env={**env, "PYTHONDONTWRITEBYTECODE": "1", **(extra_env or {})},
             capture_output=True,
             text=True,
@@ -134,7 +134,7 @@ def _xdir(tmp_path: Path) -> Path:
 
 def test_a_same_named_test_external_data_adds_runs_warm(tmp_path: Path) -> None:
     """The issue's reproduction: JSON turns on a failing test_probe beside a passing one."""
-    repo = _repo(
+    project = _repo(
         tmp_path,
         "sut",
         {
@@ -143,11 +143,11 @@ def test_a_same_named_test_external_data_adds_runs_warm(tmp_path: Path) -> None:
         },
     )
     xdir = _xdir(tmp_path)
-    _prime(xdir, [repo])
-    (repo / "enabled.json").write_text("true")
+    _prime(xdir, [project])
+    (project / "enabled.json").write_text("true")
 
-    rc, executed = _otto_run(xdir, [repo], "test_probe")
-    native_rc, native = _native([repo], "test_probe", tmp_path)
+    rc, executed = _otto_run(xdir, [project], "test_probe")
+    native_rc, native = _native([project], "test_probe", tmp_path)
 
     assert native == {("test_static", "test_probe"), ("test_generated", "test_probe")}
     assert (rc, executed) == (native_rc, native) == (1, native)
@@ -176,7 +176,7 @@ def test_a_name_the_cache_never_saw_runs_where_external_data_generates_it(
     tmp_path: Path,
 ) -> None:
     """A generated name no fresh record holds is found, not refused as unknown."""
-    repo = _repo(
+    project = _repo(
         tmp_path,
         "sut",
         {
@@ -185,10 +185,10 @@ def test_a_name_the_cache_never_saw_runs_where_external_data_generates_it(
         },
     )
     xdir = _xdir(tmp_path)
-    _prime(xdir, [repo])
-    (repo / "enabled.json").write_text("true")
+    _prime(xdir, [project])
+    (project / "enabled.json").write_text("true")
 
-    rc, executed = _otto_run(xdir, [repo], "test_brand_new")
+    rc, executed = _otto_run(xdir, [project], "test_brand_new")
 
     assert executed == {("test_generated", "test_brand_new")}
     assert rc == 1
@@ -196,17 +196,17 @@ def test_a_name_the_cache_never_saw_runs_where_external_data_generates_it(
 
 def test_an_environment_driven_test_runs_warm(tmp_path: Path) -> None:
     """A test an environment variable turns on runs once it is set, as in native pytest."""
-    repo = _repo(
+    project = _repo(
         tmp_path,
         "sut",
         {"tests/test_static.py": _STATIC, "tests/test_generated.py": _FROM_ENV},
     )
     xdir = _xdir(tmp_path)
-    _prime(xdir, [repo])
+    _prime(xdir, [project])
     flag = {"OTTO_592_FLAG": "1"}
 
-    rc, executed = _otto_run(xdir, [repo], "test_probe", extra_env=flag)
-    native_rc, native = _native([repo], "test_probe", tmp_path, extra_env=flag)
+    rc, executed = _otto_run(xdir, [project], "test_probe", extra_env=flag)
+    native_rc, native = _native([project], "test_probe", tmp_path, extra_env=flag)
 
     assert native == {("test_static", "test_probe"), ("test_generated", "test_probe")}
     assert (rc, executed) == (native_rc, native)
@@ -214,7 +214,7 @@ def test_an_environment_driven_test_runs_warm(tmp_path: Path) -> None:
 
 def test_a_test_a_plain_imported_value_turns_on_runs_warm(tmp_path: Path) -> None:
     """``from cfg import FLAG``: editing cfg turns on a test in an unchanged test file."""
-    repo = _repo(
+    project = _repo(
         tmp_path,
         "sut",
         {
@@ -224,11 +224,11 @@ def test_a_test_a_plain_imported_value_turns_on_runs_warm(tmp_path: Path) -> Non
         },
     )
     xdir = _xdir(tmp_path)
-    _prime(xdir, [repo])
-    (repo / "tests" / "cfg.py").write_text("FLAG = True\n")
+    _prime(xdir, [project])
+    (project / "tests" / "cfg.py").write_text("FLAG = True\n")
 
-    rc, executed = _otto_run(xdir, [repo], "test_probe")
-    native_rc, native = _native([repo], "test_probe", tmp_path)
+    rc, executed = _otto_run(xdir, [project], "test_probe")
+    native_rc, native = _native([project], "test_probe", tmp_path)
 
     assert native == {("test_static", "test_probe"), ("test_generated", "test_probe")}
     assert (rc, executed) == (native_rc, native)

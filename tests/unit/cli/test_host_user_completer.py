@@ -73,8 +73,8 @@ def test_completer_falls_back_to_live(monkeypatch):
     import otto.config.completion_cache as cc
 
     monkeypatch.setattr("otto.registry.get_completion_names", lambda: None)
-    monkeypatch.setattr("otto.declared.get_repos", list)
-    monkeypatch.setattr(cc, "collect_logins_by_host", lambda repos: {"dut1": ENTRIES})
+    monkeypatch.setattr("otto.declared.get_projects", list)
+    monkeypatch.setattr(cc, "collect_logins_by_host", lambda projects: {"dut1": ENTRIES})
     assert host_user_completer("any")(_ctx(term="telnet"), "") == ["root", "tel", "u"]
 
 

@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-import otto.config.repo as config_repo
+import otto.config.project as config_repo
 from otto import bootstrap
 from otto.cli.main import PENDING_SUBCMD_ARGS_KEY, _completion_collectors, app
 from otto.config import completion_cache as cc
@@ -13,11 +13,11 @@ from tests._fixtures.generated_repo import generate_repo
 
 
 def _repos(tmp_path, monkeypatch):
-    repo = generate_repo(tmp_path, files=4, dirs=1, top_level=1)
-    monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
+    project = generate_repo(tmp_path, files=4, dirs=1, top_level=1)
+    monkeypatch.setenv("OTTOPATH", str(project))
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     bootstrap.invalidate()
-    return repo, config_repo.discover().repos
+    return project, config_repo.discover().projects
 
 
 def test_stat_triple_records_a_file_and_a_missing_path(tmp_path: Path):
@@ -29,13 +29,13 @@ def test_stat_triple_records_a_file_and_a_missing_path(tmp_path: Path):
 
 
 def test_payload_keys_mirror_the_names_key_set(tmp_path, monkeypatch):
-    _, repos = _repos(tmp_path, monkeypatch)
-    payload = build_shim_payload(repos, app=app, pending_key=PENDING_SUBCMD_ARGS_KEY)
+    _, projects = _repos(tmp_path, monkeypatch)
+    payload = build_shim_payload(projects, app=app, pending_key=PENDING_SUBCMD_ARGS_KEY)
     names = section_by_name("names")
-    keys = writer_key_paths(names, repos)
+    keys = writer_key_paths(names, projects)
     assert payload["keys"] == [stat_triple(p) for p in sorted(set(keys))]
-    assert payload["tables"] == [str(repo.sut_dir) for repo in repos]
-    assert payload["ttl_seconds"] == cc._cache_ttl_seconds(repos)
+    assert payload["tables"] == [str(project.root) for project in projects]
+    assert payload["ttl_seconds"] == cc._cache_ttl_seconds(projects)
     assert "tests_digest" not in payload
     assert payload["inventory"] == {"kind": "none"}
     assert payload["tree"]["name"] == "otto"
@@ -56,21 +56,26 @@ def test_a_section_declares_exactly_one_key_source():
     from otto.config.cache_sections import Section
 
     with pytest.raises(ValueError, match="exactly one"):
-        Section(name="x", collect=lambda repos: {})
+        Section(name="x", collect=lambda projects: {})
     with pytest.raises(ValueError, match="exactly one"):
-        Section(name="x", collect=lambda repos: {}, key_paths=lambda r: [], derived_from=["names"])
+        Section(
+            name="x", collect=lambda projects: {}, key_paths=lambda r: [], derived_from=["names"]
+        )
 
 
 def test_write_cache_stores_the_shim_section_when_given(tmp_path, monkeypatch):
-    _, repos = _repos(tmp_path, monkeypatch)
+    _, projects = _repos(tmp_path, monkeypatch)
     cc.write_cache(
-        repos, [], [], shim=build_shim_payload(repos, app=app, pending_key=PENDING_SUBCMD_ARGS_KEY)
+        projects,
+        [],
+        [],
+        shim=build_shim_payload(projects, app=app, pending_key=PENDING_SUBCMD_ARGS_KEY),
     )
     data = json.loads(cc._cache_path().read_text())
-    assert data["schema"] == cc.SCHEMA_VERSION == 27
+    assert data["schema"] == cc.SCHEMA_VERSION == 28
     assert set(data["sections"]) == {"names", "shim"}
     assert data["sections"]["shim"]["tainted"] is False
-    assert cc.cache_rebuild_is_worthwhile(repos) is False
+    assert cc.cache_rebuild_is_worthwhile(projects) is False
 
 
 def test_the_section_collects_exactly_what_the_writer_stores(tmp_path, monkeypatch):
@@ -80,23 +85,26 @@ def test_the_section_collects_exactly_what_the_writer_stores(tmp_path, monkeypat
     growing an argument of its own (another app, a different repo list) — the
     two would then drift silently.
     """
-    _, repos = _repos(tmp_path, monkeypatch)
-    assert section_by_name("shim").collect(repos, _completion_collectors()) == build_shim_payload(
-        repos, app=app, pending_key=PENDING_SUBCMD_ARGS_KEY
-    )
+    _, projects = _repos(tmp_path, monkeypatch)
+    assert section_by_name("shim").collect(
+        projects, _completion_collectors()
+    ) == build_shim_payload(projects, app=app, pending_key=PENDING_SUBCMD_ARGS_KEY)
 
 
 def test_a_missing_shim_section_makes_a_rebuild_worthwhile(tmp_path, monkeypatch):
-    _, repos = _repos(tmp_path, monkeypatch)
+    _, projects = _repos(tmp_path, monkeypatch)
     cc.write_cache(
-        repos, [], [], shim=build_shim_payload(repos, app=app, pending_key=PENDING_SUBCMD_ARGS_KEY)
+        projects,
+        [],
+        [],
+        shim=build_shim_payload(projects, app=app, pending_key=PENDING_SUBCMD_ARGS_KEY),
     )
-    assert cc.cache_rebuild_is_worthwhile(repos) is False
+    assert cc.cache_rebuild_is_worthwhile(projects) is False
     path = cc._cache_path()
     data = json.loads(path.read_text())
     del data["sections"]["shim"]
     path.write_text(json.dumps(data))
-    assert cc.cache_rebuild_is_worthwhile(repos) is True, (
+    assert cc.cache_rebuild_is_worthwhile(projects) is True, (
         "both siblings validate, but the shim entry is gone"
     )
 
@@ -124,28 +132,28 @@ def test_require_widens_validation_never_the_merged_view(tmp_path, monkeypatch):
     from otto.config import cache_sections as cs
     from otto.config.completion_tree import SHIM_SECTION
 
-    _, repos = _repos(tmp_path, monkeypatch)
+    _, projects = _repos(tmp_path, monkeypatch)
     cc.write_cache(
-        repos,
+        projects,
         [{"name": "real", "options": []}],
         [],
-        shim=build_shim_payload(repos, app=app, pending_key=PENDING_SUBCMD_ARGS_KEY),
+        shim=build_shim_payload(projects, app=app, pending_key=PENDING_SUBCMD_ARGS_KEY),
     )
 
-    merged = cc.read_cache(repos, require=(SHIM_SECTION,))
+    merged = cc.read_cache(projects, require=(SHIM_SECTION,))
     assert merged is not None
     assert not {"ttl_seconds", "tree", "keys", "tables", "inventory"} & set(merged)
     assert merged["instructions"] == [{"name": "real", "options": []}]
 
     throwaway = cs.Section(
         name="throwaway",
-        key_paths=lambda repos: [],
-        collect=lambda repos: {"instructions": ["INJECTED"]},
+        key_paths=lambda projects: [],
+        collect=lambda projects: {"instructions": ["INJECTED"]},
     )
     monkeypatch.setattr(cs, "SECTIONS", [*cs.SECTIONS, throwaway])
-    cs.write_section(repos, "throwaway", {"instructions": ["INJECTED"]})
+    cs.write_section(projects, "throwaway", {"instructions": ["INJECTED"]})
 
-    merged = cc.read_cache(repos, require=("throwaway",))
+    merged = cc.read_cache(projects, require=("throwaway",))
     assert merged is not None
     assert merged["instructions"] == [{"name": "real", "options": []}], (
         "a required section's payload must never clobber the merged view"
@@ -155,14 +163,14 @@ def test_require_widens_validation_never_the_merged_view(tmp_path, monkeypatch):
 def test_inventory_block_kinds(tmp_path, monkeypatch):
     import otto.config.completion_tree as ct
 
-    monkeypatch.setattr(ct, "_build_inventory", lambda repos: None)
+    monkeypatch.setattr(ct, "_build_inventory", lambda projects: None)
     assert inventory_block([]) == {"kind": "none"}
 
     class Opaque:
         def fingerprint(self):
             return "h"
 
-    monkeypatch.setattr(ct, "_build_inventory", lambda repos: Opaque())
+    monkeypatch.setattr(ct, "_build_inventory", lambda projects: Opaque())
     assert inventory_block([]) == {"kind": "opaque"}
     f = tmp_path / "inv.json"
     f.write_text("{}")
@@ -174,7 +182,7 @@ def test_inventory_block_kinds(tmp_path, monkeypatch):
         def stat_paths(self):
             return [f]
 
-    monkeypatch.setattr(ct, "_build_inventory", lambda repos: Stat())
+    monkeypatch.setattr(ct, "_build_inventory", lambda projects: Stat())
     assert inventory_block([]) == {"kind": "stat", "files": [stat_triple(f)]}
 
 
@@ -198,7 +206,7 @@ def test_inventory_block_includes_the_creds_files_stat_triple(tmp_path, monkeypa
     overlay = CredsOverlay(
         JsonInventory(inv_path, supplies=["ip"]), store=JsonCredsStore(creds_path)
     )
-    monkeypatch.setattr(ct, "_build_inventory", lambda repos: overlay)
+    monkeypatch.setattr(ct, "_build_inventory", lambda projects: overlay)
     block = inventory_block([])
     assert block["kind"] == "stat"
     assert block["files"] == [stat_triple(inv_path), stat_triple(creds_path)]

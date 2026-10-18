@@ -21,7 +21,7 @@ pytestmark = pytest.mark.hostless
 def test_list_tests_lists_gated_test_under_its_class(tmp_path: Path) -> None:
     """--list-tests exits 0 and shows the fixture class with its test under it."""
     # NO --lab: the discovery flags are lab-free.
-    r = run_otto(["test", "--list-tests"], xdir=tmp_path, sut_dirs=REPO_E2E)
+    r = run_otto(["test", "--list-tests"], xdir=tmp_path, roots=REPO_E2E)
     assert r.returncode == 0, r.stderr
     assert "TestE2EFixture" in r.stdout
     assert "test_gated" in r.stdout
@@ -31,7 +31,7 @@ def test_list_tests_lists_gated_test_under_its_class(tmp_path: Path) -> None:
 
 def test_list_markers_shows_what_pytest_registered(tmp_path: Path) -> None:
     """--list-markers lists the markers pytest knows: a plugin's (asyncio) included."""
-    r = run_otto(["test", "--list-markers"], xdir=tmp_path, sut_dirs=REPO_E2E)
+    r = run_otto(["test", "--list-markers"], xdir=tmp_path, roots=REPO_E2E)
     assert r.returncode == 0, r.stderr
     # Panel header always contains the repo name
     assert "repo_e2e" in r.stdout
@@ -44,7 +44,7 @@ def test_dry_run_prints_what_pytest_collected_and_runs_nothing(tmp_path: Path) -
     r = run_otto(
         ["-n", "test", "TestE2EFixture"],
         xdir=tmp_path,
-        sut_dirs=REPO_E2E,
+        roots=REPO_E2E,
         lab="unix",
     )
     assert r.returncode == 0, r.stderr
@@ -54,7 +54,7 @@ def test_dry_run_prints_what_pytest_collected_and_runs_nothing(tmp_path: Path) -
 
 def test_list_tests_class_scoped(tmp_path: Path) -> None:
     """--list-tests TestE2EFixture exits 0 and narrows output to that class's tests."""
-    r = run_otto(["test", "--list-tests", "TestE2EFixture"], xdir=tmp_path, sut_dirs=REPO_E2E)
+    r = run_otto(["test", "--list-tests", "TestE2EFixture"], xdir=tmp_path, roots=REPO_E2E)
     assert r.returncode == 0, r.stderr
     assert "test_gated" in r.stdout
     # The class name keeps output within the fixture class

@@ -127,18 +127,18 @@ def test_preexisting_name_blocks_a_declared_entry(seam):
 
 
 def test_a_declared_name_also_returned_by_a_provider_is_refused_at_the_chokepoint(seam):
-    from otto.registry import registering_repo
+    from otto.registry import registering_project
 
     seam.declared.append(_entry("fw", seam.seam))
-    with registering_repo("coderepo"):
+    with registering_project("coderepo"):
         seam.register_provider(lambda host: [SimpleNamespace(name="fw", owner=None)])
     host = _host()
     seam.apply_declared(host)
     with pytest.raises(
         ValueError,
         match=(
-            rf"\[\[{seam.seam}\]\] 'fw' \(repo declrepo\) is also defined by provider "
-            r".*\(repo coderepo\)"
+            rf"\[\[{seam.seam}\]\] 'fw' \(project declrepo\) is also defined by provider "
+            r".*\(project coderepo\)"
         ),
     ):
         seam.apply_providers(host)
@@ -298,13 +298,13 @@ def _factory_world():
         match={"id": "probe-box.*"},
         params={"artifact": "tools/probe.sh"},
     )
-    repo = fake_repo(
+    project = fake_repo(
         "declrepo",
         project_scope=_scope_for_factory(["somelab"]),
         declared_products=[product_entry],
         declared_dev_tools=[dev_tool_entry],
     )
-    publish_repos([repo])
+    publish_repos([project])
 
 
 def _factory_host():
@@ -330,10 +330,10 @@ def test_factory_applies_declared_entries_alongside_providers_after_the_lab_stam
     the source_lab stamp (the gate would judge "" and this scoped repo would be
     skipped, attaching nothing). Symmetric over both seams.
     """
-    from otto.registry import registering_repo
+    from otto.registry import registering_project
 
     _factory_world()
-    with registering_repo("coderepo"):
+    with registering_project("coderepo"):
         product_mod.register_product_provider(
             lambda host: [SimpleNamespace(name="extra", owner=None, cov_dir="/tmp/extra")]
         )
@@ -365,10 +365,10 @@ def test_factory_refuses_a_provider_name_a_declared_entry_holds(monkeypatch, sea
     provider would attach first, the declared instance would be skipped as a
     duplicate, and nothing would raise.
     """
-    from otto.registry import registering_repo
+    from otto.registry import registering_project
 
     _factory_world()
-    with registering_repo("coderepo"):
+    with registering_project("coderepo"):
         if seam_name == "products":
             product_mod.register_product_provider(
                 lambda host: [SimpleNamespace(name=name, owner=None)]
@@ -379,7 +379,7 @@ def test_factory_refuses_a_provider_name_a_declared_entry_holds(monkeypatch, sea
             )
 
     with pytest.raises(
-        ValueError, match=rf"\[\[{seam_name}\]\] '{name}' \(repo declrepo\) is also"
+        ValueError, match=rf"\[\[{seam_name}\]\] '{name}' \(project declrepo\) is also"
     ):
         _factory_host()
 

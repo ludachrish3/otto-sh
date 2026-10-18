@@ -13,7 +13,7 @@ config internals
 .. automodule:: otto.config.dependencies
    :ignore-module-all:
 
-.. automodule:: otto.config.repo
+.. automodule:: otto.config.project
    :ignore-module-all:
 
 .. automodule:: otto.config.user_settings

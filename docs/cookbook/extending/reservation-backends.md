@@ -4,7 +4,7 @@ Otto reads reservation state through a **backend**: a small class that
 answers "who holds this resource right now, and until when?" against whatever
 scheduler your team already uses. The `json` backend ships with otto
 ({doc}`../../cli/reservation/json-backend`); anything else is a class you
-register from your own repo.
+register from your own project.
 
 When your team already has a scheduler (Jira, a web API, a database), write a
 backend that talks to it instead of using the JSON file. A backend is a
@@ -106,7 +106,7 @@ time with "has no 'reservations' attribute", and the conformance helper fails
 it too. Inheriting closes that gap: it buys you a `TypeError` naming any
 method you forgot the moment the class is instantiated, the cached
 `reservations` member every consumer reads, and a constructor that already
-keeps `url`, `repo_dir` and `username` — the values your factory hands it from
+keeps `url`, `project_root` and `username` — the values your factory hands it from
 otto's environment ([below](#selecting-it-in-settings)). Declare your own
 settings as further keyword parameters and forward the otto-owned ones to
 `super().__init__`:
@@ -125,11 +125,11 @@ class MyTeamBackend(ReservationBackendBase):
         self,
         *,
         url: str | None = None,
-        repo_dir: Path | None = None,
+        project_root: Path | None = None,
         username: str | None = None,
         api_key_env: str,
     ) -> None:
-        super().__init__(url=url, repo_dir=repo_dir, username=username)
+        super().__init__(url=url, project_root=project_root, username=username)
         self._api_key_env = api_key_env
 
     @override
@@ -249,7 +249,7 @@ class MyTeamConfig(OttoModel):
 def my_team(c: Configured[MyTeamConfig, ReservationEnv]) -> MyTeamBackend:
     return MyTeamBackend(
         url=c.env.url,
-        repo_dir=c.env.repo_dir,
+        project_root=c.env.project_root,
         username=c.env.username,
         api_key_env=c.config.api_key_env,
     )
@@ -273,8 +273,8 @@ naming the field, the backend and the settings file (never quoting the
 rejected value); what a config model must be is stated once, under
 {ref}`configured-backends`. The factory receives the parsed configuration as
 `c.config`, and `c.env`, a {class}`~otto.reservations.ReservationEnv`, carries
-the rest: `url` (the `[reservations]` table's `url`, or `None`), `repo_dir`
-(the root of the repo whose table is in effect, for anchoring a relative
+the rest: `url` (the `[reservations]` table's `url`, or `None`), `project_root`
+(the root of the project whose table is in effect, for anchoring a relative
 path-like setting), `username` (the resolved identity, because `reservations`
 is a zero-argument member and has to know whose bookings to fetch) and
 `origin` (the settings file, for messages). A factory that raises, or that
@@ -433,7 +433,7 @@ the kwarg asserts *your* capability set rather than tightening the contract.
   is absent; use it, or hardcode your endpoint and ignore it.
 - **Pass `username` through.** Your factory hands `c.env.username` to the
   backend: it is the identity `reservations` queries for. Anchor any relative
-  path-like setting to `c.env.repo_dir`, the same way custom lab backends do.
+  path-like setting to `c.env.project_root`, the same way custom lab backends do.
 - **Optionally implement `list_usernames()`** to power cached `--holder`
   completion (see [Username tab-completion](../../cli/reservation/identity.md#username-tab-completion)).
 - **Optionally implement `holders()`** if your scheduler can answer the
@@ -484,7 +484,7 @@ warn about it.
 | `get_reserved_resources(username) -> set[str]` | `fetch_reservations(username, start=None, end=None) -> list[Reservation]` |
 | `get_reservation_windows(username)`, the `SupportsReservationWindows` capability, `ReservationWindow` | deleted — every backend now reports times, in `Reservation` |
 | epoch `start` / far-future `end` sentinels | `None` on either bound |
-| `__init__(self, *, url=None, repo_dir=None)` | `__init__(self, *, url=None, repo_dir=None, username=None)`, forwarded to `super().__init__` |
+| `__init__(self, *, url=None, project_root=None)` | `__init__(self, *, url=None, project_root=None, username=None)`, forwarded to `super().__init__` |
 | a query per consumer | the cached `reservations` member, queried once per run |
 
 The checklist:

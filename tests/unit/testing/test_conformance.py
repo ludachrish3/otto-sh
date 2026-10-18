@@ -73,9 +73,9 @@ def _reservations_file(path: Path) -> Path:
 class TestLabRepositoryConformance:
     def test_json_builtin_conforms(self, tmp_path):
         _hosts_file(tmp_path)
-        repo = JsonFileLabRepository([tmp_path])
+        repository = JsonFileLabRepository([tmp_path])
         # Must not raise.
-        assert_lab_repository_conforms(repo, expected_labs=["alpha", "beta"])
+        assert_lab_repository_conforms(repository, expected_labs=["alpha", "beta"])
 
     def test_non_conforming_repo_raises_with_aggregate(self):
         class Broken:
@@ -689,7 +689,7 @@ def _lab_repo(*, summaries=True, ghost_id=False):
     """
     from otto.labs.loader import Lab
 
-    class Repo:
+    class Project:
         def load_lab(self, name, preferences=None, inventory=None):
             if name != "mylab":
                 raise LabNotFoundError(name)
@@ -703,9 +703,9 @@ def _lab_repo(*, summaries=True, ghost_id=False):
         def list_host_summaries(self, *, inventory=None):
             return [HostSummary(id="ghost")] if ghost_id else []
 
-        Repo.list_host_summaries = list_host_summaries
+        Project.list_host_summaries = list_host_summaries
 
-    return Repo()
+    return Project()
 
 
 class TestExpectedCapabilities:
@@ -752,8 +752,8 @@ class TestExpectedCapabilities:
         )
 
     def test_host_summaries_absent_and_expected_is_a_conformance_failure(self):
-        repo = _lab_repo(summaries=False)
-        assert not isinstance(repo, SupportsHostSummaries)
+        repository = _lab_repo(summaries=False)
+        assert not isinstance(repository, SupportsHostSummaries)
         with pytest.raises(
             AssertionError,
             match=(
@@ -761,7 +761,7 @@ class TestExpectedCapabilities:
                 r"list_host_summaries\(\)"
             ),
         ):
-            assert_lab_repository_conforms(repo, expect_host_summaries=True)
+            assert_lab_repository_conforms(repository, expect_host_summaries=True)
 
     def test_host_summaries_absent_and_not_expected_still_skips(self):
         """The default must be byte-for-byte today's behaviour."""

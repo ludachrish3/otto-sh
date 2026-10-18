@@ -42,7 +42,7 @@ sandbox labs, can disable the check entirely:
 backend = "none"
 ```
 
-This is the default when no `[reservations]` section exists, so a repo
+This is the default when no `[reservations]` section exists, so a project
 with no reservations config behaves the same as `backend = "none"`.
 The `NullReservationBackend` short-circuits the check to a no-op — no
 banner, no warning, no error.
@@ -50,5 +50,5 @@ banner, no warning, no error.
 Omit `[reservations]` or set `backend = "none"` for labs that nobody
 else is using, while keeping `backend = "json"` (or your custom
 backend) on the production labs.  There is currently one
-`[reservations]` section per repo, so the backend cannot be varied by
+`[reservations]` section per project, so the backend cannot be varied by
 lab.

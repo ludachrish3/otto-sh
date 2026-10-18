@@ -18,7 +18,7 @@ pytestmark = pytest.mark.hostless
 
 def test_version(tmp_path: Path) -> None:
     """--version exits 0 and prints 'otto version:' to stdout."""
-    r = run_otto(["--version"], xdir=tmp_path, sut_dirs=REPO_E2E)
+    r = run_otto(["--version"], xdir=tmp_path, roots=REPO_E2E)
     assert r.returncode == 0
     assert "otto version:" in r.stdout
     assert_no_output_dir(tmp_path)  # root action flag — no subcommand, no run dir
@@ -26,7 +26,7 @@ def test_version(tmp_path: Path) -> None:
 
 def test_list_labs(tmp_path: Path) -> None:
     """--list-labs exits 0 and lists the concrete lab names from tech1 fixture data."""
-    r = run_otto(["--list-labs"], xdir=tmp_path, sut_dirs=REPO_E2E)
+    r = run_otto(["--list-labs"], xdir=tmp_path, roots=REPO_E2E)
     assert r.returncode == 0, r.stderr
     # repo_e2e → tech1 fixture → two labs: embedded and unix
     assert "unix" in r.stdout
@@ -36,7 +36,7 @@ def test_list_labs(tmp_path: Path) -> None:
 
 def test_list_hosts(tmp_path: Path) -> None:
     """--list-hosts with --lab unix exits 0 and lists a concrete host id."""
-    r = run_otto(["--lab", "unix", "--list-hosts"], xdir=tmp_path, sut_dirs=REPO_E2E)
+    r = run_otto(["--lab", "unix", "--list-hosts"], xdir=tmp_path, roots=REPO_E2E)
     assert r.returncode == 0, r.stderr
     # tech1 lab.json: test1/test2/test3 all belong to lab "unix"
     assert "test1" in r.stdout
@@ -53,10 +53,10 @@ def test_cache_clear(tmp_path: Path) -> None:
     """
     # Seed a warm completion cache first — an unseeded workspace reports
     # "nothing to remove", which contains neither "removed" nor "cache".
-    seed = run_otto(["--help"], xdir=tmp_path, sut_dirs=REPO_E2E)
+    seed = run_otto(["--help"], xdir=tmp_path, roots=REPO_E2E)
     assert seed.returncode == 0, seed.stderr
 
-    r = run_otto(["cache", "clear"], xdir=tmp_path, sut_dirs=REPO_E2E)
+    r = run_otto(["cache", "clear"], xdir=tmp_path, roots=REPO_E2E)
     assert r.returncode == 0, r.stderr
     assert "removed" in r.stdout.lower()
     assert "cache" in r.stdout.lower()
@@ -65,7 +65,7 @@ def test_cache_clear(tmp_path: Path) -> None:
 
 def test_cache_prune_dry_run(tmp_path: Path) -> None:
     """`otto cache prune --dry-run` reports its plan without touching the filesystem."""
-    seed = run_otto(["--help"], xdir=tmp_path, sut_dirs=REPO_E2E)
+    seed = run_otto(["--help"], xdir=tmp_path, roots=REPO_E2E)
     assert seed.returncode == 0, seed.stderr
 
     # <xdir>/otto-home is the harness's own pinned layout (_otto_subprocess.py's
@@ -80,7 +80,7 @@ def test_cache_prune_dry_run(tmp_path: Path) -> None:
     r = run_otto(
         ["cache", "prune", "--dry-run", "--age", "0"],
         xdir=tmp_path,
-        sut_dirs=REPO_E2E,
+        roots=REPO_E2E,
     )
     assert r.returncode == 0, r.stderr
     assert str(cache_file) in r.stdout
@@ -90,14 +90,14 @@ def test_cache_prune_dry_run(tmp_path: Path) -> None:
 
 def test_clear_autocomplete_cache_flag_no_longer_exists(tmp_path: Path) -> None:
     """The removed root flag is Typer's unknown-option error, not a silent no-op."""
-    r = run_otto(["--clear-autocomplete-cache"], xdir=tmp_path, sut_dirs=REPO_E2E)
+    r = run_otto(["--clear-autocomplete-cache"], xdir=tmp_path, roots=REPO_E2E)
     assert r.returncode != 0
     assert "no such option" in r.stderr.lower()
 
 
 def test_list_hosts_includes_builtin_local(tmp_path: Path) -> None:
     """The built-in `local` host appears in --list-hosts for any lab (no custom repo)."""
-    r = run_otto(["--lab", "unix", "--list-hosts"], xdir=tmp_path, sut_dirs=REPO_E2E)
+    r = run_otto(["--lab", "unix", "--list-hosts"], xdir=tmp_path, roots=REPO_E2E)
     assert r.returncode == 0, r.stderr
     assert "local" in r.stdout
     assert_no_output_dir(tmp_path)
@@ -111,7 +111,7 @@ def test_host_subapp_list_hosts_matches_the_root_flag(tmp_path: Path) -> None:
     existed and tracebacked ``No active OttoContext``; the root flag had long
     since moved to an inline load. Both forms now share ``ensure_inline_lab``.
     """
-    r = run_otto(["--lab", "unix", "host", "--list-hosts"], xdir=tmp_path, sut_dirs=REPO_E2E)
+    r = run_otto(["--lab", "unix", "host", "--list-hosts"], xdir=tmp_path, roots=REPO_E2E)
     assert r.returncode == 0, r.stderr
     assert "test1" in r.stdout
     assert "Traceback" not in r.stderr
@@ -120,7 +120,7 @@ def test_host_subapp_list_hosts_matches_the_root_flag(tmp_path: Path) -> None:
 
 def test_host_subapp_list_hosts_without_a_lab_refuses_cleanly(tmp_path: Path) -> None:
     """No ``--lab`` on the subapp form gets the root form's usage error, never a traceback."""
-    r = run_otto(["host", "--list-hosts"], xdir=tmp_path, sut_dirs=REPO_E2E)
+    r = run_otto(["host", "--list-hosts"], xdir=tmp_path, roots=REPO_E2E)
     assert r.returncode != 0
     assert "Traceback" not in r.stderr
     assert "--lab" in r.stderr + r.stdout

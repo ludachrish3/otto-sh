@@ -1,15 +1,15 @@
 """The seams a unit test uses to hand otto its repos: the composition root and its catalog.
 
-``otto.declared.get_repos`` and ``get_ordered_repos`` take the complete
+``otto.declared.get_projects`` and ``get_ordered_projects`` take the complete
 published result, else the in-progress one, else ask the initiator, which calls
 ``bootstrap()`` at call time, and a context built without ``bootstrap=`` calls
-it (on its first read of ``repos``, ``ordered_repos`` or its scope verdicts).
+it (on its first read of ``repos``, ``ordered_projects`` or its scope verdicts).
 A patched ``bootstrap`` is therefore reached only when nothing is published: a
 result already published bypasses it. A test that builds its own context hands
 it ``bootstrap=fake_bootstrap_result(...)`` instead.
 
 Below the root, ``otto.declared`` reads the composed-repos catalog the root
-publishes. ``scope_for_repo`` reads in the same order (complete result,
+publishes. ``scope_for_project`` reads in the same order (complete result,
 in-progress result, initiator), so a patched ``bootstrap`` reaches it only
 when nothing is published. ``declared_for_host`` reads only what is published and never composes: a
 test that hands a lab load its declared entries publishes its repos with
@@ -26,17 +26,17 @@ if TYPE_CHECKING:
     from otto.context import OttoContext
 
 
-def fake_bootstrap_result(repos, *, ordered=None, errors=None) -> BootstrapResult:
+def fake_bootstrap_result(projects, *, ordered=None, errors=None) -> BootstrapResult:
     """A ``BootstrapResult`` holding *repos*; *ordered* defaults to *repos* (nothing skipped)."""
     return BootstrapResult(
         env=cast("Any", None),  # no reader of these results reads env
-        repos=list(repos),
+        projects=list(projects),
         errors=list(cast("list[BootstrapError]", errors or [])),
-        ordered_repos=list(repos if ordered is None else ordered),
+        ordered_projects=list(projects if ordered is None else ordered),
     )
 
 
-def publish_repos(repos, *, ordered=None) -> BootstrapResult:
+def publish_repos(projects, *, ordered=None) -> BootstrapResult:
     """Publish a result holding *repos* in the catalog, as a finished composition would; return it.
 
     *ordered* defaults to *repos* (nothing dependency-skipped). The root
@@ -44,7 +44,7 @@ def publish_repos(repos, *, ordered=None) -> BootstrapResult:
     """
     from otto.declared import publish_composed
 
-    result = fake_bootstrap_result(repos, ordered=ordered)
+    result = fake_bootstrap_result(projects, ordered=ordered)
     publish_composed(result, complete=True)
     return result
 
@@ -54,7 +54,7 @@ def install_composed(monkeypatch, result: BootstrapResult) -> BootstrapResult:
 
     One write, as a finished ``bootstrap()`` makes it: the complete result on
     the catalog's record in ``otto.declared``, which ``bootstrap()``,
-    ``is_bootstrapped``, ``get_repos`` and ``declared_for_host`` all read. The
+    ``is_bootstrapped``, ``get_projects`` and ``declared_for_host`` all read. The
     monkeypatch undoes it.
     """
     from otto import declared
@@ -81,9 +81,9 @@ def fail_composition(monkeypatch) -> None:
     monkeypatch.setattr(declared._composition, "initiator", _unavailable)
 
 
-def patch_bootstrap(monkeypatch, repos, *, ordered=None, errors=None) -> BootstrapResult:
+def patch_bootstrap(monkeypatch, projects, *, ordered=None, errors=None) -> BootstrapResult:
     """Make ``otto.bootstrap.bootstrap()`` return one fake result, and return it."""
-    result = fake_bootstrap_result(repos, ordered=ordered, errors=errors)
+    result = fake_bootstrap_result(projects, ordered=ordered, errors=errors)
     monkeypatch.setattr("otto.bootstrap.bootstrap", lambda: result)
     return result
 

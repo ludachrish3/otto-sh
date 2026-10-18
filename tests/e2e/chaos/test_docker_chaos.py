@@ -35,7 +35,7 @@ from collections.abc import Iterator
 
 import pytest
 
-from otto.config.repo import Repo
+from otto.config.project import Project
 from otto.docker import build_images, compose_down, compose_up, composed
 from otto.docker.staging import cleanup_project
 from otto.host.docker_host import DockerContainerHost
@@ -167,8 +167,8 @@ def docker_parent(tmp_path_factory) -> "Iterator[UnixHost]":
 
 
 @pytest.fixture(scope="module")
-def docker_repo() -> Repo:
-    return Repo(sut_dir=REPO1_DIR)
+def docker_repo() -> Project:
+    return Project(root=REPO1_DIR)
 
 
 @pytest.fixture
@@ -186,16 +186,16 @@ def built_image(docker_parent, docker_repo):
     return results
 
 
-async def _teardown(repo: Repo, lab: Lab, parent: UnixHost, project: str) -> None:
+async def _teardown(project: Project, lab: Lab, parent: UnixHost, compose_project: str) -> None:
     """compose down, then clean the staging tree — staging must not survive
     into the hygiene bracket's after-snapshot."""
-    down = await compose_down(repo, lab, parent=parent.id, project_name=project)
+    down = await compose_down(project, lab, parent=parent.id, project_name=compose_project)
     # compose_down logs-and-returns on failure rather than raising (see its
     # docstring) — check the status explicitly so a failed teardown surfaces
     # as a named assertion here instead of silently leaving a stack for the
     # autouse hygiene bracket's after-snapshot to (also silently) miss.
-    assert down.is_ok, f"{project}: teardown compose_down failed (status={down})"
-    await cleanup_project(parent, project)
+    assert down.is_ok, f"{compose_project}: teardown compose_down failed (status={down})"
+    await cleanup_project(parent, compose_project)
 
 
 @pytest.fixture

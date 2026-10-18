@@ -107,7 +107,7 @@ def monitor(
     # its own shape: exactly one of ``--live`` or ``<source>`` must be given.
     # Both together is a usage error; neither prints usage. Both exit 2.
     # Everything else is the monitor library's: the interval floor, the host
-    # selection, the driving repo's scope, the TLS declaration and the review
+    # selection, the driving project's scope, the TLS declaration and the review
     # source are all checked by ``otto.monitor.live.run_live`` and
     # ``otto.monitor.review.serve_review``, which this body calls with the
     # parsed flags as they are.
@@ -115,7 +115,7 @@ def monitor(
     # The preamble is per mode, because monitor's spec is ``lab_free`` (review
     # needs no lab) and ``gate=False`` (review touches no hardware), so the
     # shared :func:`~otto.cli.invoke.command_preamble` skips both modes. Review
-    # runs :func:`~otto.cli.invoke.ensure_cli_session` only: the repos'
+    # runs :func:`~otto.cli.invoke.ensure_cli_session` only: the projects'
     # ``[logging.levels]`` and the console's host filter, with no lab loaded
     # and no output dir. ``--live`` runs
     # :func:`~otto.cli.invoke.ensure_lab_session` and then
@@ -156,18 +156,18 @@ def monitor(
     try:
         if source is not None:
             # The composition root: importing it installs the initiator that composes
-            # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+            # the projects this reads (spec 2026-10-11 placement-and-phases §3.12).
             from .. import bootstrap
 
             del bootstrap
-            from ..declared import get_repos
+            from ..declared import get_projects
             from ..monitor.review import serve_review
             from .invoke import ensure_cli_session
 
-            # Session state only (the repo's [logging.levels], the console's
+            # Session state only (the project's [logging.levels], the console's
             # HostFilter): review reads a local file, so no lab is loaded.
             ensure_cli_session(ctx)
-            run_command(serve_review(source, repos=get_repos()))
+            run_command(serve_review(source, projects=get_projects()))
             return
 
         from ..monitor.live import run_live

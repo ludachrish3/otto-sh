@@ -263,7 +263,7 @@ class EventCreateBody(OttoModel):
     production, with pydantic's default warning filters, that is one stray
     ``UnsupportedFieldAttributeWarning`` per server process (the first
     request that reaches this route) — harmless, just a log line. Under any
-    warnings-as-errors runtime (this repo's test config, or a deployment run
+    warnings-as-errors runtime (otto's own test config, or a deployment run
     with ``-W error`` / ``PYTHONWARNINGS=error``), the SAME warning is fatal:
     every request 500s, not just the first, because the mock validator
     re-raises it on every rebuild attempt. Building eagerly, as every model

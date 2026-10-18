@@ -114,7 +114,7 @@ def test_resolve_coverage_never_turns_a_destination_off(monkeypatch, tmp_path):
     from otto.config.coverage_settings import CoverageConfigError
     from otto.suite import run as run_module
 
-    monkeypatch.setattr("otto.config.coverage_settings.get_cov_config", lambda repos: {})
+    monkeypatch.setattr("otto.config.coverage_settings.get_cov_config", lambda projects: {})
     with pytest.raises(CoverageConfigError):
         run_module.resolve_coverage(RunOptions(cov_dir=tmp_path), [], command="otto test")
 

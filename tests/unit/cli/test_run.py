@@ -896,16 +896,16 @@ class TestInstructionOnAMethod:
     def test_free_function_on_a_registered_project_instruction_name_is_refused(self) -> None:
         from otto.cli.run import instruction
         from otto.project import ProjectActions, register_project_actions
-        from otto.registry import registering_repo
+        from otto.registry import registering_project
 
         class Base(ProjectActions):
             @instruction()
             async def deploy(self): ...
 
-        with registering_repo("a"):
+        with registering_project("a"):
             register_project_actions(Base)
         with (
-            registering_repo("b"),
+            registering_project("b"),
             pytest.raises(ValueError, match=r"'deploy'.*project instruction"),
         ):
 

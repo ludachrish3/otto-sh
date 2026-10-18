@@ -19,7 +19,7 @@ project's own configuration, build one {class}`~otto.host.declared_product.Decla
 (or a subclass) per product, and read {func}`otto.context.variant` where the
 run's variant matters — the registry does not consult `variant` for a provider,
 the provider decides. A provider also anchors its own paths, as the example's
-`ROOT` does: otto anchors an entry's `artifact` to its repo, never a path a
+`ROOT` does: otto anchors an entry's `artifact` to its project, never a path a
 provider builds.
 
 A provider's name must not be one a `[[products]]` entry declares: a name is
@@ -29,5 +29,5 @@ one. The rule, and what two providers returning one name do, are in
 
 Registering a provider makes the `[project]` table required
 ({ref}`project-scope-required`); otto does not call a provider for a host its
-repo did not declare. The dev-tool twin is
+project did not declare. The dev-tool twin is
 {func}`~otto.host.dev_tool.register_dev_tool_provider`.

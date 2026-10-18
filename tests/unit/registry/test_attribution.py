@@ -95,11 +95,11 @@ def test_otto_builtins_imported_first_by_a_test_are_otto_s():
 
 
 def test_the_repo_comes_from_the_registering_repo_marker():
-    with reg.registering_repo("a"):
+    with reg.registering_project("a"):
         TABLE.register("inside", Rec(1))
     TABLE.register("outside", Rec(2))
-    assert TABLE.repo("inside") == "a"
-    assert TABLE.repo("outside") is None
+    assert TABLE.project("inside") == "a"
+    assert TABLE.project("outside") is None
 
 
 def test_registry_defined_in_is_the_constructing_module():

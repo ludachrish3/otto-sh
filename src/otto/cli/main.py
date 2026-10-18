@@ -23,7 +23,7 @@ from ..config.env import (
     LOG_DAYS_ENV_VAR,
     LOG_LVL_ENV_VAR,
     LOG_RICH_ENV_VAR,
-    SUT_DIRS_ENV_VAR,
+    OTTOPATH_ENV_VAR,
     XDIR_ENV_VAR,
 )
 from ..logger.levels import LEVEL_NAMES
@@ -32,7 +32,7 @@ from .completers import completion_source
 
 if TYPE_CHECKING:
     from ..config.cache_sections import CliCollectors
-    from ..config.repo import Repo
+    from ..config.project import Project
     from ..declared import BootstrapResult
     from .registry import CommandSpec
 
@@ -58,9 +58,9 @@ invocation rather than about the handler stack it happens to have.
 DESCRIPTION = f"""
 O.T.T.O. (Our Trusty Testing Orchestrator)
 
-If a development repo is under test, then {SUT_DIRS_ENV_VAR} must be set in your environment.
-It is a list of paths to repo root directories, separated by `,` or the OS path separator
-(`:` on Linux/macOS, `;` on Windows).
+To work on a project, add its project root to {OTTOPATH_ENV_VAR}: a list of
+project roots separated by the OS path separator (`:` on Linux/macOS, `;` on
+Windows), like PATH.
 
 """
 
@@ -90,21 +90,21 @@ def version_callback(version: bool) -> None:
 
 
 def list_labs_callback(value: bool) -> None:
-    """Print all available lab names (one panel per repo) and exit when the flag is set."""
+    """Print all available lab names (one panel per project) and exit when the flag is set."""
     if value:
         from rich import print as rprint
         from rich.panel import Panel
         from rich.table import Table
 
         # The composition root: importing it installs the initiator that composes
-        # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+        # the projects this reads (spec 2026-10-11 placement-and-phases §3.12).
         from .. import bootstrap
 
         del bootstrap
-        from ..declared import get_repos
+        from ..declared import get_projects
 
-        # Extract lab search paths from all repos
-        panels: list[Panel] = [repo.get_lab_panel() for repo in get_repos()]
+        # Extract lab search paths from all projects
+        panels: list[Panel] = [project.get_lab_panel() for project in get_projects()]
 
         table = Table(
             show_header=False, show_footer=False, box=None, expand=True, padding=(0, 1, 1, 1)
@@ -151,19 +151,19 @@ def _username_completer(ctx: "typer.Context", incomplete: str) -> list[str]:  # 
     collection on a cache miss. Empty when the backend can't enumerate users.
     """
     # The composition root: importing it installs the initiator that composes
-    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    # the projects this reads (spec 2026-10-11 placement-and-phases §3.12).
     from .. import bootstrap
 
     del bootstrap
     from ..config.completion_cache import collect_reservation_usernames
-    from ..declared import get_repos
+    from ..declared import get_projects
     from ..registry import get_completion_names
 
     cached = get_completion_names()
     if cached is not None and isinstance(cached.get("usernames"), list):
         names = cached["usernames"]
     else:
-        names = collect_reservation_usernames(get_repos())
+        names = collect_reservation_usernames(get_projects())
     return sorted(n for n in names if n.startswith(incomplete))
 
 
@@ -177,12 +177,12 @@ def _lab_completer(ctx: "typer.Context", incomplete: str) -> list[str]:  # noqa:
     is completed and already-named labs are dropped.
     """
     # The composition root: importing it installs the initiator that composes
-    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    # the projects this reads (spec 2026-10-11 placement-and-phases §3.12).
     from .. import bootstrap
 
     del bootstrap
     from ..config.completion_cache import collect_lab_names
-    from ..declared import get_repos
+    from ..declared import get_projects
     from ..labs.loader import LAB_SEPARATOR
     from ..registry import get_completion_names
     from ..utils import complete_separated_list
@@ -191,7 +191,7 @@ def _lab_completer(ctx: "typer.Context", incomplete: str) -> list[str]:  # noqa:
     if cached is not None and isinstance(cached.get("labs"), list):
         names = cached["labs"]
     else:
-        names = collect_lab_names(get_repos())
+        names = collect_lab_names(get_projects())
     return complete_separated_list(sorted(names), incomplete, sep=LAB_SEPARATOR)
 
 
@@ -228,8 +228,8 @@ def parse_project_list(value: "list[str] | None") -> "list[str] | None":
 
     The switch repeats and each occurrence also splits on a comma, so
     ``-I a -I b`` and ``-I a,b`` are the same selection. Only the comma
-    separates — unlike ``OTTO_SUT_DIRS``, which also splits on ``os.pathsep``,
-    because these are names rather than paths. Each segment is stripped, so
+    separates (names, not paths), unlike ``OTTOPATH``, which splits only on
+    ``os.pathsep``. Each segment is stripped, so
     ``"a, b"`` and ``"a,b"`` are equivalent (the convention
     :func:`otto.labs.loader.split_lab_names` sets for ``--lab``); unlike that
     one, an empty segment is dropped rather than refused, which is what makes a
@@ -238,9 +238,9 @@ def parse_project_list(value: "list[str] | None") -> "list[str] | None":
     Stripping happens BEFORE normalization, not merely as the emptiness test:
     ``normalize_name`` collapses ``[-_.]+`` runs and lowercases but leaves
     whitespace intact, so an unstripped segment would store a name that matches
-    no repo — failing OPEN for ``-E`` (the project you meant to switch off stays
-    active) and slipping past the conflict rule, since ``"repo-a"`` and
-    ``" repo-a"`` do not overlap.
+    no project — failing OPEN for ``-E`` (the project you meant to switch off stays
+    active) and slipping past the conflict rule, since ``"proj-a"`` and
+    ``" proj-a"`` do not overlap.
 
     Normalization happens HERE so every downstream comparison — the conflict
     rule, :func:`otto.config.scope.active`, the unknown-name check — sees one
@@ -274,30 +274,30 @@ def _refuse_contradictory_switches(
 
 @completion_source(kind="payload", key="projects", sort=False)
 def _project_completer(ctx: "typer.Context", incomplete: str) -> list[str]:  # noqa: ARG001 — required by Typer autocompletion callback signature
-    """Completion source for -I/-E: the DISCOVERED repo names.
+    """Completion source for -I/-E: the DISCOVERED project names.
 
-    Phase 1 (:func:`otto.config.repo.discover`), never ``get_repos()``. The
-    difference is the whole point: ``get_repos`` runs ``bootstrap()``, which is
-    phase 2 — the dependency pass plus every sibling repo's init module, i.e.
+    Phase 1 (:func:`otto.config.project.discover`), never ``get_projects()``. The
+    difference is the whole point: ``get_projects`` runs ``bootstrap()``, which is
+    phase 2 — the dependency pass plus every sibling project's init module, i.e.
     third-party user code. ``entry()`` deliberately keeps that off the
-    completion path ("zero user code"), and a repo whose init is slow or opens
+    completion path ("zero user code"), and a project whose init is slow or opens
     a socket would otherwise hang every ``otto -I <TAB>`` with the bare
     ``except`` below swallowing the reason. Discovery parses settings only, and
     in completion mode it is already computed and cached, so this is free.
 
     The unknown-name validation in
     :func:`~otto.cli.invoke.validate_project_switches` is a different question
-    and correctly uses the full ``bootstrap().repos``: it runs at USE, where
+    and correctly uses the full ``bootstrap().projects``: it runs at USE, where
     user code has to run anyway.
     """
     try:
         # Imported inside the function, not at module scope: the tests patch the
-        # `otto.config.repo.discover` attribute, which a module-scope `from ...
+        # `otto.config.project.discover` attribute, which a module-scope `from ...
         # import discover` would bind past. Keep it local — hoisting it silently
         # takes the tests' seam with it.
-        from ..config.repo import discover
+        from ..config.project import discover
 
-        names = [repo.name for repo in discover().repos]
+        names = [project.name for project in discover().projects]
     except Exception:  # noqa: BLE001 — completion must never crash the shell
         return []
     return [name for name in names if name.startswith(incomplete)]
@@ -650,7 +650,7 @@ def main(  # noqa: PLR0913 — CLI command params
         typer.Option(
             "--list-products",
             help=(
-                "List the products the repos declare; with --lab, which hosts each one "
+                "List the products the projects declare; with --lab, which hosts each one "
                 "lands on and what was left out."
             ),
         ),
@@ -660,7 +660,7 @@ def main(  # noqa: PLR0913 — CLI command params
         typer.Option(
             "--list-tools",
             help=(
-                "List the dev tools the repos declare; with --lab, which hosts each one "
+                "List the dev tools the projects declare; with --lab, which hosts each one "
                 "lands on and what was left out."
             ),
         ),
@@ -761,7 +761,7 @@ def main(  # noqa: PLR0913 — CLI command params
     global _root_log_level  # noqa: PLW0603 — one per-invocation value, read by entry()'s frame
     _root_log_level = log_level
 
-    from ..config.repo import discovered_teardown_deadline
+    from ..config.project import discovered_teardown_deadline
     from ..invocation import RunPolicy, install_policy, reset_binding
 
     policy = RunPolicy(dry_run=dry_run, variant="field" if field else "debug")
@@ -803,7 +803,7 @@ def main(  # noqa: PLR0913 — CLI command params
 
     if list_products or list_tools:
         # Read-only listings that contact no host. Without --lab they describe
-        # what the repos declare, so they do not demand one (unlike --list-hosts).
+        # what the projects declare, so they do not demand one (unlike --list-hosts).
         from .listing import show_listing
 
         if list_products:
@@ -882,7 +882,7 @@ only the fast path, never correctness.
 """
 
 
-def _cache_is_writable(repos: list["Repo"]) -> bool:
+def _cache_is_writable(projects: list["Project"]) -> bool:
     """:func:`~otto.config.completion_cache.cache_is_writable`, imported only when asked.
 
     ``entry()`` asks only on the paths that read the cache; an ordinary command
@@ -890,7 +890,7 @@ def _cache_is_writable(repos: list["Repo"]) -> bool:
     """
     from ..config.completion_cache import cache_is_writable
 
-    return cache_is_writable(repos)
+    return cache_is_writable(projects)
 
 
 RAW_ITERATED_NAMES_KEYS: tuple[str, ...] = ("commands", "instructions", "test_options")
@@ -918,7 +918,7 @@ DELEGATED_NAMES_KEYS: frozenset[str] = frozenset(
         "docker_use_cases",
         "docker_images",
         "docker_services_by_use_case",
-        "repos",
+        "active_projects",
         "term_backends",
         "transfer_backends",
         "usernames",
@@ -944,8 +944,8 @@ broad ``except`` and hands over — their Typer-side completers
 no change to them. ``logins_by_host`` is read by
 ``otto.cli.completers.host_user_completer``, which scopes a host verb's
 ``--user`` menu to the typed host's logins. ``docker_images``,
-``docker_services_by_use_case`` and ``repos`` are the declared names the docker
-verbs complete from (images, the services of a typed use-case, ``--repo``).
+``docker_services_by_use_case`` and ``projects`` are the declared names the docker
+verbs complete from (images, the services of a typed use-case, ``--project``).
 ``docker_default_parent_by_lab`` maps each lab to the parent the docker verbs
 default to by the one rule (a lab the rule refuses is absent); the docker
 completers read it to scope a container id to the default parent.
@@ -959,7 +959,7 @@ either constant fails that test by name instead of drifting in silently.
 """
 
 
-def _cached_names_payload(repos: "list[Repo]") -> "dict[str, Any] | None":
+def _cached_names_payload(projects: "list[Project]") -> "dict[str, Any] | None":
     """Return the ``names`` section's payload if it is safe to install.
 
     THE ONE READER for both fast paths — root help and completion. They are
@@ -1000,7 +1000,7 @@ def _cached_names_payload(repos: "list[Repo]") -> "dict[str, Any] | None":
     """
     from ..config.cache_sections import read_section
 
-    payload = read_section(repos, "names")
+    payload = read_section(projects, "names")
     if payload is None:
         return None
     for key in RAW_ITERATED_NAMES_KEYS:
@@ -1065,7 +1065,7 @@ def entry(cache_stale: bool = False) -> None:
     (zero user code); everything else runs :func:`otto.bootstrap.bootstrap`
     before argv parsing so registered third-party commands exist when the root
     group is consulted. Contained user-code failures print one framed warning
-    line each; real command dispatch fails loud in the invoke preamble. Repo
+    line each; real command dispatch fails loud in the invoke preamble. Project
     test files are not part of that bootstrap, and a cache rebuild never
     reads them: test names come only from pytest's collections, which write
     the per-file test tables.
@@ -1113,7 +1113,7 @@ def entry(cache_stale: bool = False) -> None:
             from ..config.collected_tests import collect_child_main
             from ..suite.run import _refresh_tables
 
-            code = collect_child_main(lambda: bs.bootstrap().repos, _refresh_tables)
+            code = collect_child_main(lambda: bs.bootstrap().projects, _refresh_tables)
         except Exception as exc:  # noqa: BLE001 — the child reports by exit code and cooldown only
             with contextlib.suppress(Exception):
                 from ..config.completion_cache import stamp_collect_cooldown
@@ -1131,7 +1131,7 @@ def entry(cache_stale: bool = False) -> None:
         # slow path below.
         #
         # The `names` section: every completion source except `otto test`'s
-        # NAMES and `-m` is served from it. Those two read each repo's test
+        # NAMES and `-m` is served from it. Those two read each project's test
         # table (`otto.config.collected_tests.completion_view`), when they
         # need it, so `otto ho<TAB>` never looks at the test tree.
         #
@@ -1141,9 +1141,9 @@ def entry(cache_stale: bool = False) -> None:
         # `commands` list would traceback into the shell rather than fall
         # through to the slow path.
         with contextlib.suppress(Exception):
-            from ..config.repo import discover
+            from ..config.project import discover
 
-            set_completion_names(_cached_names_payload(discover().repos))
+            set_completion_names(_cached_names_payload(discover().projects))
     elif not completion and sys.argv[1:] in ROOT_HELP_ARGV:
         # Root help: the same names, the same reader, contained the same way —
         # a broken cache must cost a full load, not a traceback in front of
@@ -1151,27 +1151,27 @@ def entry(cache_stale: bool = False) -> None:
         # tail (`sys.argv[1:] == []`) coincides with a root-help tail, but a
         # bash TAB is never the root help screen.
         with contextlib.suppress(Exception):
-            from ..config.repo import discover
+            from ..config.project import discover
 
-            set_completion_names(_cached_names_payload(discover().repos))
+            set_completion_names(_cached_names_payload(discover().projects))
 
     if get_completion_names() is None:
         try:
             result = bs.bootstrap()
         except (FileNotFoundError, ValueError, bs.BootstrapError) as e:
-            # Env-level discovery failure (bad OTTO_SUT_DIRS / OTTO_* values;
+            # Env-level discovery failure (bad OTTOPATH / OTTO_* values;
             # pydantic validation errors are ValueErrors): nothing user-specific
             # can load, so there is no degraded help worth rendering — fail
-            # loud but CLEAN (one line, no traceback). Per-repo config-data
+            # loud but CLEAN (one line, no traceback). Per-project config-data
             # errors never reach here: discover() contains a settings file
             # that will not parse, and bootstrap() records a bad [os_profiles]
-            # table as that repo's load error, as it does a failed init module.
+            # table as that project's load error, as it does a failed init module.
             #
             # BootstrapError joins them for the ONE variety bootstrap raises
-            # instead of containing: ``ProjectScopeError``, a repo that
+            # instead of containing: ``ProjectScopeError``, a project that
             # registered providers without declaring the labs it applies to.
             # That refusal is a message the user is meant to act on — it names
-            # the repo and prints the TOML block to paste — and a traceback in
+            # the project and prints the TOML block to paste — and a traceback in
             # front of it is noise, not information.
             typer.echo(f"error: {e}", err=True)
             raise SystemExit(1) from e
@@ -1186,7 +1186,7 @@ def entry(cache_stale: bool = False) -> None:
         # Writability first: it costs no key-set stats, and when no entry could
         # be stored (no home, an inventory with no stable fingerprint) every
         # root help and TAB lands here, so the validity check is skipped too.
-        if reads_cache and _cache_is_writable(result.repos):
+        if reads_cache and _cache_is_writable(result.projects):
             from ..config.completion_cache import cache_is_stale
             from ..config.corpus_snapshot import corpus_snapshot
 
@@ -1197,8 +1197,9 @@ def entry(cache_stale: bool = False) -> None:
                 # section's key set is hashed at most once per invocation, and
                 # the scope makes each path's stat one syscall.
                 section_digests: dict[str, str] = {}
-                if cache_is_stale(result.repos, digests=section_digests):
+                if cache_is_stale(result.projects, digests=section_digests):
                     from ..config.completion_cache import (
+                        collect_active_project_names,
                         collect_backend_names,
                         collect_docker_capable_host_ids,
                         collect_docker_default_parent_by_lab,
@@ -1213,7 +1214,6 @@ def entry(cache_stale: bool = False) -> None:
                         collect_links,
                         collect_logins_by_host,
                         collect_project_names,
-                        collect_repo_names,
                         collect_reservation_usernames,
                         write_cache,
                     )
@@ -1224,36 +1224,36 @@ def entry(cache_stale: bool = False) -> None:
                     backends = collect_backend_names()
                     with contextlib.suppress(OSError):
                         write_cache(
-                            result.repos,
+                            result.projects,
                             instructions,
-                            collect_host_ids(result.repos),
+                            collect_host_ids(result.projects),
                             test_options=cli.test_options(),
-                            docker_hosts=collect_docker_capable_host_ids(result.repos),
-                            docker_use_cases=collect_docker_use_case_names(result.repos),
-                            docker_images=collect_docker_image_names(result.repos),
+                            docker_hosts=collect_docker_capable_host_ids(result.projects),
+                            docker_use_cases=collect_docker_use_case_names(result.projects),
+                            docker_images=collect_docker_image_names(result.projects),
                             docker_services_by_use_case=collect_docker_services_by_use_case(
-                                result.repos
+                                result.projects
                             ),
-                            repos_names=collect_repo_names(result.repos),
+                            active_projects=collect_active_project_names(result.projects),
                             term_backends=backends["term_backends"],
                             transfer_backends=backends["transfer_backends"],
-                            usernames=collect_reservation_usernames(result.repos),
+                            usernames=collect_reservation_usernames(result.projects),
                             commands=cli.commands(),
-                            labs=collect_lab_names(result.repos),
-                            hosts_by_lab=collect_host_ids_by_lab(result.repos),
-                            host_drops=collect_host_drops(result.repos),
-                            host_classes_by_id=collect_host_classes_by_id(result.repos),
-                            projects=collect_project_names(result.repos),
-                            links=collect_links(result.repos),
-                            logins_by_host=collect_logins_by_host(result.repos),
+                            labs=collect_lab_names(result.projects),
+                            hosts_by_lab=collect_host_ids_by_lab(result.projects),
+                            host_drops=collect_host_drops(result.projects),
+                            host_classes_by_id=collect_host_classes_by_id(result.projects),
+                            projects=collect_project_names(result.projects),
+                            links=collect_links(result.projects),
+                            logins_by_host=collect_logins_by_host(result.projects),
                             docker_default_parent_by_lab=collect_docker_default_parent_by_lab(
-                                result.repos
+                                result.projects
                             ),
                             # The shim section's collector, this write's parity
                             # reference, reads the same _completion_collectors(), so
                             # the tree has one source and the two cannot drift.
                             shim=build_shim_payload(
-                                result.repos, app=cli.app, pending_key=cli.pending_key
+                                result.projects, app=cli.app, pending_key=cli.pending_key
                             ),
                             digests=section_digests,
                             # A contained bootstrap error means registration did not
@@ -1268,8 +1268,8 @@ def entry(cache_stale: bool = False) -> None:
                             #
                             # Both sections, not just `names`. The taint is about the
                             # WORKSPACE the collect ran against, and `errors` carries
-                            # discovery failures too: a repo whose `settings.toml`
-                            # will not parse is absent from `result.repos` entirely,
+                            # discovery failures too: a project whose `settings.toml`
+                            # will not parse is absent from `result.projects` entirely,
                             # so its instructions are missing from `names` and its
                             # test table from the shim's `tables`.
                             tainted=bool(result.errors),
@@ -1283,7 +1283,7 @@ def entry(cache_stale: bool = False) -> None:
     except OttoError as e:
         # THE BOUNDARY FRAME. Every exception otto defines is a sentence
         # written for the person who typed the command — it names the host,
-        # the repo, the file to edit. A leaf that forgets to catch its own
+        # the project, the file to edit. A leaf that forgets to catch its own
         # therefore does not merely look untidy: the message the taxonomy
         # exists to deliver arrives buried under a stack trace of otto's
         # internals, and the reader's takeaway is "otto crashed".

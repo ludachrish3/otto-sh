@@ -2,7 +2,7 @@
 
 Spec 2026-10-11 placement-and-phases §3.9: the complete and in-progress results,
 the initiator and every reader over them have one home, below the root. The
-root re-exports the same objects, so a user's ``otto.bootstrap.get_repos`` is
+root re-exports the same objects, so a user's ``otto.bootstrap.get_projects`` is
 the function the layers below the root call. These pin that, and the three
 lifecycle rows the move keeps: an init module that reads the state while
 composition runs gets the result being built, a composition that fails
@@ -51,16 +51,16 @@ def _counted_passes(monkeypatch) -> "list[list[str]]":
     calls: "list[list[str]]" = []
     real = deps_mod.resolve_dependencies
 
-    def _counting(repos):
-        calls.append([r.name for r in repos])
-        return real(repos)
+    def _counting(projects):
+        calls.append([r.name for r in projects])
+        return real(projects)
 
     monkeypatch.setattr(deps_mod, "resolve_dependencies", _counting)
     return calls
 
 
 @pytest.mark.parametrize(
-    "name", ["BootstrapResult", "get_repos", "get_ordered_repos", "is_bootstrapped"]
+    "name", ["BootstrapResult", "get_projects", "get_ordered_projects", "is_bootstrapped"]
 )
 def test_the_root_re_exports_the_catalogs_own_object(name):
     assert name in bootstrap.__all__
@@ -79,18 +79,18 @@ def test_an_init_module_reading_the_state_mid_composition_gets_the_result_being_
     body = """
         from otto.declared import (
             compose,
-            current_ordered_repos,
-            current_repos,
-            get_ordered_repos,
-            get_repos,
+            current_ordered_projects,
+            current_projects,
+            get_ordered_projects,
+            get_projects,
             is_bootstrapped,
         )
 
         SEEN = [
-            [r.name for r in get_repos()],
-            [r.name for r in current_repos()],
-            [r.name for r in get_ordered_repos()],
-            [r.name for r in current_ordered_repos()],
+            [r.name for r in get_projects()],
+            [r.name for r in current_projects()],
+            [r.name for r in get_ordered_projects()],
+            [r.name for r in current_ordered_projects()],
             is_bootstrapped(),
         ]
         BUILDING = compose()
@@ -98,7 +98,7 @@ def test_an_init_module_reading_the_state_mid_composition_gets_the_result_being_
         """
     later = 'raise ValueError("a later init fails, contained")\n'
     calls = _counted_passes(monkeypatch)
-    monkeypatch.setenv("OTTO_SUT_DIRS", _repo(tmp_path, body, later))
+    monkeypatch.setenv("OTTOPATH", _repo(tmp_path, body, later))
     result = bootstrap.bootstrap()
 
     import composed_state_probe
@@ -120,11 +120,9 @@ def test_a_failed_composition_publishes_nothing_and_the_next_read_composes_again
     tmp_path, monkeypatch
 ):
     calls = _counted_passes(monkeypatch)
-    monkeypatch.setenv(
-        "OTTO_SUT_DIRS", _repo(tmp_path, 'raise KeyboardInterrupt("uncontainable")\n')
-    )
+    monkeypatch.setenv("OTTOPATH", _repo(tmp_path, 'raise KeyboardInterrupt("uncontainable")\n'))
     with pytest.raises(KeyboardInterrupt) as first:
-        declared.get_repos()
+        declared.get_projects()
     assert declared.published_result() is None
     assert declared.is_bootstrapped() is False
 
@@ -138,7 +136,7 @@ def test_a_failed_composition_publishes_nothing_and_the_next_read_composes_again
 
 
 def test_invalidation_withdraws_what_was_published_and_keeps_the_initiator(tmp_path, monkeypatch):
-    monkeypatch.setenv("OTTO_SUT_DIRS", _repo(tmp_path, "X = 1\n"))
+    monkeypatch.setenv("OTTOPATH", _repo(tmp_path, "X = 1\n"))
     first = declared.compose()
     assert declared.published_result() is first
 
@@ -148,4 +146,4 @@ def test_invalidation_withdraws_what_was_published_and_keeps_the_initiator(tmp_p
 
     second = declared.compose()
     assert second is not first
-    assert [r.name for r in second.repos] == ["repo"]
+    assert [r.name for r in second.projects] == ["repo"]

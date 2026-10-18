@@ -53,7 +53,7 @@ def _staging_failure(
     return HostUnreachableError(message) if result.timed_out else HostCommandError(message)
 
 
-def project_root(project: str) -> Path:
+def compose_staging_root(project: str) -> Path:
     """Per-project staging root on the parent host."""
     return PARENT_ROOT / project
 
@@ -65,17 +65,17 @@ def stage_key(name: str) -> str:
 
 def image_build_dir(project: str, image_name: str) -> Path:
     """Where this image's context will live on the parent."""
-    return project_root(project) / "build" / stage_key(image_name)
+    return compose_staging_root(project) / "build" / stage_key(image_name)
 
 
 def compose_dir(project: str) -> Path:
     """Per-project compose staging directory on the parent host."""
-    return project_root(project) / "compose"
+    return compose_staging_root(project) / "compose"
 
 
 def image_archive_path(project: str, image: DockerImage) -> Path:
     """Where an archive context is uploaded on the parent."""
-    return project_root(project) / "build" / f"{stage_key(image.name)}.{image.context.name}"
+    return compose_staging_root(project) / "build" / f"{stage_key(image.name)}.{image.context.name}"
 
 
 async def stage_image_archive(parent: Host, project: str, image: DockerImage) -> Path:
@@ -138,7 +138,7 @@ async def stage_image_context(
     # `tar -xf` below OVERLAYS rather than replaces: docker build would then
     # see a context still holding a file the user deleted locally, and produce
     # an image that still holds the deleted file. Build staging
-    # is keyed on the repo name (unlike compose staging, keyed on the
+    # is keyed on the project name (unlike compose staging, keyed on the
     # suffix-bearing project), so two users on one parent really do collide here.
     prepared = await parent.exec(
         f"rm -rf {shlex.quote(str(remote_dir))} && mkdir -p {shlex.quote(str(remote_dir))}"
@@ -271,7 +271,7 @@ async def cleanup_project(parent: Host, project: str) -> CommandResult:
     Returns the ``rm -rf``'s own :class:`~otto.result.CommandResult` — callers
     that care check ``.is_ok``; best-effort callers ignore it.
     """
-    return await parent.exec(f"rm -rf {shlex.quote(str(project_root(project)))}")
+    return await parent.exec(f"rm -rf {shlex.quote(str(compose_staging_root(project)))}")
 
 
 @dataclass
@@ -344,7 +344,7 @@ def _refuse_if_path_escapes(prefix: str, rel: str) -> None:
     the reference is supposed to land under (a ``../`` ref that normalizes
     outside it) — spec §8 constraint 5 says sidecars stay under ``<n>/``, so
     both are a loud, distinct refusal instead of a silent escape. Shared by
-    repo-committed ``env_file:`` refs (whose root is a numbered ``<n>/`` dir)
+    project-committed ``env_file:`` refs (whose root is a numbered ``<n>/`` dir)
     and unclaimed ``extra_files`` keys (whose root is ``compose/`` itself) —
     both name a path relative to a staging subtree and need the identical
     guard, just phrased without assuming which root it is.
@@ -482,7 +482,7 @@ def warn_relative_bind_sources(handle: str, text: str, staged_dir: Path) -> None
     says so.
 
     Advisory all the way down -- a text this cannot parse produces no
-    warning and no error. ``stage_compose_files`` ships repo-authored files
+    warning and no error. ``stage_compose_files`` ships project-authored files
     verbatim and has never parsed them, so letting an advisory walk turn an
     unreadable compose file into a staging refusal would be a behaviour
     change smuggled in behind a warning. The use-case path keeps its own
@@ -524,11 +524,11 @@ async def stage_use_case(
 
     *extra_files* is the vehicle for ADAPTER-GENERATED ``env_file:``
     sidecars (spec §7's ``AdapterResult.extra_files``: "relative name -> text
-    ... env_file: sidecars the adapter generates rather than the repo
+    ... env_file: sidecars the adapter generates rather than the project
     committing"). A rendered ``env_file:`` reference that does not resolve
     under its compose file's ``source_dir`` is looked up here by its
     relative name in *extra_files* before being refused as missing, and its
-    text is staged at the same ``<n>/<relative path>`` a repo-committed
+    text is staged at the same ``<n>/<relative path>`` a project-committed
     sidecar would get. Any *extra_files* key left unclaimed by a reference
     is genuinely-unreferenced content and is shipped once, under
     ``compose/`` preserving its own relative directory.

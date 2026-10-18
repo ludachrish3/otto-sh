@@ -27,7 +27,7 @@ Two mechanisms, one per shape, and the split is the point:
 Discipline, as everywhere in this workstream:
 
 * the hostile condition is INJECTED -- ``active_context(dry_run=True)`` around
-  real ``Repo``/``Lab``/``UnixHost`` objects and the real product functions.
+  real ``Project``/``Lab``/``UnixHost`` objects and the real product functions.
 * every "did not happen" carries its POSITIVE CONTROL in the same test against
   the same seam, and the controls here SUCCEED rather than merely reaching the
   seam: a build is commissioned, a stack is registered, a container id comes
@@ -47,7 +47,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from otto.config.repo import Repo
+from otto.config.project import Project
 from otto.docker.build import build_images
 from otto.docker.compose import _resolve_container_id as _compose_resolve_container_id
 from otto.docker.compose import (
@@ -143,7 +143,7 @@ def _spied_parent() -> UnixHost:
     return parent
 
 
-def _make_repo(tmp: Path) -> Repo:
+def _make_repo(tmp: Path) -> Project:
     """Every caller passes ``parent=`` explicitly, so this repo needs no placement
     of its own — [[docker.composes]] is a pure file inventory (spec §14)."""
     sut = make_sut_repo(
@@ -163,15 +163,15 @@ def _make_repo(tmp: Path) -> Repo:
         ),
         files={"docker/Dockerfile": "FROM alpine\n", "docker/compose.yml": "services: {}\n"},
     )
-    return Repo(sut_dir=sut)
+    return Project(root=sut)
 
 
-def _bed(tmp: Path) -> "tuple[Repo, Lab, UnixHost]":
-    repo = _make_repo(tmp)
+def _bed(tmp: Path) -> "tuple[Project, Lab, UnixHost]":
+    project = _make_repo(tmp)
     lab = Lab(name="test")
     parent = _spied_parent()
     lab.hosts[parent.id] = parent
-    return repo, lab, parent
+    return project, lab, parent
 
 
 # ---------------------------------------------------------------------------
@@ -179,24 +179,24 @@ def _bed(tmp: Path) -> "tuple[Repo, Lab, UnixHost]":
 # ---------------------------------------------------------------------------
 
 
-def _call_build_images(repo: Repo, lab: Lab, parent: UnixHost) -> Any:
-    return build_images(repo, parent)
+def _call_build_images(project: Project, lab: Lab, parent: UnixHost) -> Any:
+    return build_images(project, parent)
 
 
-def _call_compose_up(repo: Repo, lab: Lab, parent: UnixHost) -> Any:
-    return compose_up(repo, lab, parent=parent.id)
+def _call_compose_up(project: Project, lab: Lab, parent: UnixHost) -> Any:
+    return compose_up(project, lab, parent=parent.id)
 
 
-def _call_compose_down(repo: Repo, lab: Lab, parent: UnixHost) -> Any:
-    return compose_down(repo, lab, parent=parent.id)
+def _call_compose_down(project: Project, lab: Lab, parent: UnixHost) -> Any:
+    return compose_down(project, lab, parent=parent.id)
 
 
-def _call_stage_image_context(repo: Repo, lab: Lab, parent: UnixHost) -> Any:
-    return stage_image_context(parent, "repo1", repo.docker_settings.images[0])
+def _call_stage_image_context(project: Project, lab: Lab, parent: UnixHost) -> Any:
+    return stage_image_context(parent, "repo1", project.docker_settings.images[0])
 
 
-def _call_stage_compose_files(repo: Repo, lab: Lab, parent: UnixHost) -> Any:
-    return stage_compose_files(parent, "repo1", list(repo.docker_settings.composes))
+def _call_stage_compose_files(project: Project, lab: Lab, parent: UnixHost) -> Any:
+    return stage_compose_files(parent, "repo1", list(project.docker_settings.composes))
 
 
 _ARMED_VERBS = [
@@ -226,10 +226,10 @@ class TestTheDeviceDrivingVerbsAskTheParentNothing:
     @pytest.mark.parametrize(("call", "verb"), _ARMED_VERBS)
     @pytest.mark.asyncio
     async def test_the_verb_declines_above_every_device_touch(self, tmp_path, call, verb):
-        repo, lab, parent = _bed(tmp_path)
+        project, lab, parent = _bed(tmp_path)
 
         with active_context(lab=lab, dry_run=True), pytest.raises(CommandNotRunError) as caught:
-            await call(repo, lab, parent)
+            await call(project, lab, parent)
 
         assert parent.exec.await_count == 0, (
             f"a dry run ran {parent.exec.await_count} command(s) on the parent via "
@@ -244,7 +244,7 @@ class TestTheDeviceDrivingVerbsAskTheParentNothing:
         # the verb runs to COMPLETION and drives the parent. Without this,
         # "nothing was contacted" passes just as happily against a verb that
         # raises unconditionally, or one the test never actually reached.
-        await call(repo, lab, parent)
+        await call(project, lab, parent)
         assert parent.exec.await_count > 0, (
             f"{verb} contacted nothing even WITHOUT --dry-run, so the zero above "
             f"proves nothing about the arm"
@@ -258,11 +258,11 @@ class TestTheDeviceDrivingVerbsAskTheParentNothing:
         the ``with`` body would compensate a stack that was never brought up.
         Refusing on ``__aenter__`` means the block is never entered.
         """
-        repo, lab, parent = _bed(tmp_path)
+        project, lab, parent = _bed(tmp_path)
         entered = False
 
         with active_context(lab=lab, dry_run=True), pytest.raises(CommandNotRunError) as caught:
-            async with composed(repo, lab, parent=parent.id, own=True):
+            async with composed(project, lab, parent=parent.id, own=True):
                 entered = True
 
         assert entered is False, "a dry run entered the composed() body"
@@ -273,7 +273,7 @@ class TestTheDeviceDrivingVerbsAskTheParentNothing:
 
         # POSITIVE CONTROL, same seam: the block IS entered, a container host
         # IS yielded, and the teardown IS compensated.
-        async with composed(repo, lab, parent=parent.id, own=True) as hosts:
+        async with composed(project, lab, parent=parent.id, own=True) as hosts:
             entered = True
             assert "api" in hosts, f"the control never registered a container: {hosts}"
         assert entered is True
@@ -289,17 +289,17 @@ class TestTheDeviceDrivingVerbsAskTheParentNothing:
         in a dry run, and not a device fact. A guard that refused here would
         be declining to read a TOML file.
         """
-        repo, lab, parent = _bed(tmp_path)
+        project, lab, parent = _bed(tmp_path)
 
         with active_context(lab=lab, dry_run=True):
-            assert await build_images(repo, parent, image_names=["nosuchimage"]) == {}
+            assert await build_images(project, parent, image_names=["nosuchimage"]) == {}
         assert parent.exec.await_count == 0
 
         # POSITIVE CONTROL: the same call naming a DECLARED image refuses,
         # so the {} above is the empty selection talking and not a dry run
         # that quietly answers {} for everything.
         with active_context(lab=lab, dry_run=True), pytest.raises(CommandNotRunError):
-            await build_images(repo, parent, image_names=["api"])
+            await build_images(project, parent, image_names=["api"])
 
 
 # ---------------------------------------------------------------------------
@@ -491,7 +491,7 @@ class TestEveryPublicDockerExportIsAdjudicated:
             "FailedImage",
             "HostReport",
             "ImageBuild",
-            "RepoBuild",
+            "ProjectBuild",
             "TeardownReport",
         }
     )

@@ -11,7 +11,7 @@ version = "0.1.0"
 libs = ["libs"]
 init = [
     "gs_example",           # frames, parsers, proxies, session setups
-    "gs_example.actions",   # this repo's ProjectActions
+    "gs_example.actions",   # this project's ProjectActions
 ]
 # doc: end libs
 

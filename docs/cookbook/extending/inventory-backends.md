@@ -5,7 +5,7 @@ credentials, versions, location — through an **inventory backend**: a small
 class that answers "what is true about the machine with this key?". Two ship
 with otto, the `json` file and `netbox`
 ({doc}`../../configuration/inventory`); anything else is a backend you
-register from your own repo, because your source of record is a CMDB, an asset
+register from your own project, because your source of record is a CMDB, an asset
 database, or a service nobody else has.
 
 This page is the contract. The user-facing side — the partition rule, the
@@ -115,13 +115,13 @@ backend uses — see {doc}`https-clients`.
 file, which is where most declarations live. A validator on your config model
 reads it as `info.context["env"].anchor_dir` to anchor a relative path-like
 setting, as the built-in `json` backend's model does; do not read it as "the
-repo" — for the usual declaration there is no repo involved. Its `origin` is
+project" — for the usual declaration there is no project involved. Its `origin` is
 the settings file, for messages.
 
 Otto decides which tables name the same inventory, and keys the snapshot
 cache, by the *parsed* configuration (plus `cache_ttl`), never by the
-declaring directory or file: a relative path that one repo anchors and the
-absolute path another repo writes are one inventory.
+declaring directory or file: a relative path that one project anchors and the
+absolute path another project writes are one inventory.
 
 A factory that raises, or that returns something without the protocol's
 members, fails with {class}`~otto.inventory.InventoryConstructionError`

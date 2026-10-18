@@ -29,7 +29,7 @@ from otto.instruction_catalog import (
 )
 from otto.instructions import instruction
 from otto.project import InstallOptions, ProjectActions, register_project_actions
-from otto.registry import DuplicateRegistration, registering_repo
+from otto.registry import DuplicateRegistration, registering_project
 from tests._fixtures.sutrepo import make_sut_repo
 
 
@@ -57,15 +57,15 @@ def test_the_views_have_no_mutation_method():
 
 
 def test_a_project_instruction_s_entry_has_no_repo_and_the_first_declarer_s_module():
-    with registering_repo("a"):
+    with registering_project("a"):
         register_project_actions(_actions("A"))
-    assert INSTRUCTIONS.repo("smoke") is None
+    assert INSTRUCTIONS.project("smoke") is None
     assert INSTRUCTIONS.get("smoke").module == __name__
 
 
 def test_re_registering_the_same_class_needs_overwrite():
     cls = _actions("A")
-    with registering_repo("a"):
+    with registering_project("a"):
         register_project_actions(cls)
         with pytest.raises(DuplicateRegistration):
             register_project_actions(cls)
@@ -74,7 +74,7 @@ def test_re_registering_the_same_class_needs_overwrite():
 
 
 def test_replacing_an_actions_entry_drops_its_old_bodies():
-    with registering_repo("a"):
+    with registering_project("a"):
         register_project_actions(_actions("A", "smoke"))
         register_project_actions(_actions("A2", "other"), overwrite=True)
     assert "smoke" not in INSTRUCTIONS
@@ -82,11 +82,11 @@ def test_replacing_an_actions_entry_drops_its_old_bodies():
 
 
 def test_a_rejected_contribution_changes_neither_source_nor_view():
-    with registering_repo("a"):
+    with registering_project("a"):
         register_project_actions(_actions("A", walk="reverse"))
     before = (PROJECT_ACTIONS.revision, STANDALONE_INSTRUCTIONS.revision, INSTRUCTIONS.names())
     with (
-        registering_repo("b"),
+        registering_project("b"),
         pytest.raises(ProjectInstructionError, match="fixes the walk shape"),
     ):
         register_project_actions(_actions("B", walk="forward"))
@@ -100,14 +100,14 @@ def test_a_rejected_contribution_changes_neither_source_nor_view():
 def test_a_project_declared_over_a_repo_s_standalone_instruction_names_its_owner():
     async def smoke() -> None: ...
 
-    with registering_repo("s"):
+    with registering_project("s"):
         instruction(name="smoke")(smoke)
     with (
-        registering_repo("a"),
+        registering_project("a"),
         pytest.raises(
             ProjectInstructionError,
-            match=r"'smoke' \(declared by repo 'a' on A\) and a standalone instruction "
-            r"registered by repo 's' \(",
+            match=r"'smoke' \(declared by project 'a' on A\) and a standalone instruction "
+            r"registered by project 's' \(",
         ),
     ):
         register_project_actions(_actions("A"))
@@ -115,12 +115,12 @@ def test_a_project_declared_over_a_repo_s_standalone_instruction_names_its_owner
 
 def test_a_standalone_instruction_over_a_project_instruction_is_refused():
     """From a repo's init import it is the ProjectActions advice; from anywhere else, the clash."""
-    with registering_repo("a"):
+    with registering_project("a"):
         register_project_actions(_actions("A"))
 
     async def smoke() -> None: ...
 
-    with registering_repo("s"), pytest.raises(ValueError, match="is a project instruction"):
+    with registering_project("s"), pytest.raises(ValueError, match="is a project instruction"):
         instruction(name="smoke")(smoke)
     with pytest.raises(ProjectInstructionError, match=r"registered by otto \("):
         instruction(name="smoke")(smoke)
@@ -128,9 +128,9 @@ def test_a_standalone_instruction_over_a_project_instruction_is_refused():
 
 
 def test_an_omitted_shape_keyword_inherits_the_first_declarer_s_value():
-    with registering_repo("a"):
+    with registering_project("a"):
         register_project_actions(_actions("A", walk="reverse"))
-    with registering_repo("b"):
+    with registering_project("b"):
         register_project_actions(_actions("B"))
     assert PROJECT_INSTRUCTIONS.get("smoke").spec.walk == "reverse"
     (body,) = PROJECT_ACTIONS.get("b").bodies
@@ -138,27 +138,27 @@ def test_an_omitted_shape_keyword_inherits_the_first_declarer_s_value():
 
 
 def test_removing_the_first_declarer_lifts_its_shape():
-    with registering_repo("a"):
+    with registering_project("a"):
         register_project_actions(_actions("A", walk="reverse"))
-    with registering_repo("b"):
+    with registering_project("b"):
         register_project_actions(_actions("B"))
-    with registering_repo("a"):
+    with registering_project("a"):
         register_project_actions(_bare("A2"), overwrite=True)
     assert PROJECT_INSTRUCTIONS.get("smoke").spec.walk == "forward"
-    with registering_repo("c"):
+    with registering_project("c"):
         register_project_actions(_actions("C", walk="forward"))
-    assert [b.repo for b in PROJECT_INSTRUCTIONS.get("smoke").bodies] == ["b", "c"]
+    assert [b.project for b in PROJECT_INSTRUCTIONS.get("smoke").bodies] == ["b", "c"]
 
 
 def test_replacing_the_first_declarer_s_shape_is_checked_against_the_others():
     a = _actions("A", walk="reverse")
-    with registering_repo("a"):
+    with registering_project("a"):
         register_project_actions(a)
-    with registering_repo("b"):
+    with registering_project("b"):
         register_project_actions(_actions("B", walk="reverse"))
     revision = PROJECT_ACTIONS.revision
     with (
-        registering_repo("a"),
+        registering_project("a"),
         pytest.raises(ProjectInstructionError, match="fixes the walk shape"),
     ):
         register_project_actions(_actions("A2", walk="forward"), overwrite=True)
@@ -169,7 +169,7 @@ def test_replacing_the_first_declarer_s_shape_is_checked_against_the_others():
 
 def test_an_override_of_a_first_party_instruction_needs_its_options_base():
     with (
-        registering_repo("a"),
+        registering_project("a"),
         pytest.raises(ProjectInstructionError, match=r"must inherit otto\.project\.InstallOptions"),
     ):
         register_project_actions(_actions("A", "install"))
@@ -186,10 +186,10 @@ def test_a_first_party_override_with_the_options_base_is_accepted():
         async def install(self, opts: WidgetInstall):
             return await super().install(opts)
 
-    with registering_repo("a"):
+    with registering_project("a"):
         register_project_actions(A)
     entry = PROJECT_INSTRUCTIONS.get("install")
-    assert [b.repo for b in entry.bodies] == [None, "a"]
+    assert [b.project for b in entry.bodies] == [None, "a"]
     assert entry.first_party_options is InstallOptions
 
 
@@ -201,29 +201,29 @@ def test_two_bodies_for_one_owner_and_name_are_refused():
     async def two(self) -> None: ...
 
     twice = type("Twice", (ProjectActions,), {"one": one, "two": two})
-    with registering_repo("a"), pytest.raises(ProjectInstructionError, match="twice"):
+    with registering_project("a"), pytest.raises(ProjectInstructionError, match="twice"):
         register_project_actions(twice)
     assert "a" not in PROJECT_ACTIONS
 
     # The table refuses the same thing in a hand-built record.
     single = _actions("Single")
-    with registering_repo("a"):
+    with registering_project("a"):
         register_project_actions(single)
     (body,) = PROJECT_ACTIONS.get("a").bodies
-    with registering_repo("a"), pytest.raises(ProjectInstructionError, match="twice"):
+    with registering_project("a"), pytest.raises(ProjectInstructionError, match="twice"):
         PROJECT_ACTIONS.register("a", ProjectActionsEntry(single, (body, body)), overwrite=True)
 
 
 def test_one_class_registered_by_two_repos_is_refused_naming_both():
     shared = _actions("Shared")
-    with registering_repo("a"):
+    with registering_project("a"):
         register_project_actions(shared)
     with (
-        registering_repo("b"),
+        registering_project("b"),
         pytest.raises(
             ProjectInstructionError,
-            match=r"^repo 'b' registers class Shared, which repo 'a' already registered -- "
-            r"each repo registers its own ProjectActions subclass$",
+            match=r"^project 'b' registers class Shared, which project 'a' already registered -- "
+            r"each project registers its own ProjectActions subclass$",
         ),
     ):
         register_project_actions(shared)
@@ -235,7 +235,7 @@ def test_a_repo_claiming_install_through_the_decorator_gets_today_s_message(monk
 
     async def install() -> None: ...
 
-    with registering_repo("a"), pytest.raises(ValueError, match="is a project instruction"):
+    with registering_project("a"), pytest.raises(ValueError, match="is a project instruction"):
         instruction()(install)
     assert "otto.project.actions" not in sys.modules
     assert "install" not in STANDALONE_INSTRUCTIONS
@@ -263,15 +263,15 @@ def test_check_project_instruction_options_names_both_repos_on_a_clash():
         async def install(self, opts: BInstall):
             return await super().install(opts)
 
-    with registering_repo("a"):
+    with registering_project("a"):
         register_project_actions(A)
-    with registering_repo("b"):
+    with registering_project("b"):
         register_project_actions(B)
     with pytest.raises(OptionsCollisionError) as excinfo:
         check_project_instruction_options()
     message = str(excinfo.value)
-    assert "repo 'a'" in message
-    assert "repo 'b'" in message
+    assert "project 'a'" in message
+    assert "project 'b'" in message
 
 
 _ACTIONS_INIT = """\
@@ -301,17 +301,17 @@ def test_post_loop_options_check_is_idempotent(tmp_path, monkeypatch):
     from otto.project.commands import check_project_instruction_options
 
     dirs = []
-    for repo, cls, field in (("tables-a", "TablesA", "alpha"), ("tables-b", "TablesB", "beta")):
+    for project, cls, field in (("tables-a", "TablesA", "alpha"), ("tables-b", "TablesB", "beta")):
         module = f"{cls.lower()}_init"
         dirs.append(
             make_sut_repo(
-                tmp_path / repo,
-                name=repo,
+                tmp_path / project,
+                name=project,
                 extra=f'libs = ["lib"]\ninit = ["{module}"]\n',
                 files={f"lib/{module}.py": _ACTIONS_INIT.format(cls=cls, field=field)},
             )
         )
-    monkeypatch.setenv("OTTO_SUT_DIRS", os.pathsep.join(str(d) for d in dirs))
+    monkeypatch.setenv("OTTOPATH", os.pathsep.join(str(d) for d in dirs))
     bs._reset()
     try:
         result = bs.bootstrap()
@@ -321,7 +321,7 @@ def test_post_loop_options_check_is_idempotent(tmp_path, monkeypatch):
         check_project_instruction_options()
     finally:
         bs._reset()
-    assert [b.repo for b in PROJECT_INSTRUCTIONS.get("tables-smoke").bodies] == [
+    assert [b.project for b in PROJECT_INSTRUCTIONS.get("tables-smoke").bodies] == [
         "tables-a",
         "tables-b",
     ]
@@ -364,9 +364,9 @@ async def test_run_instruction_refuses_an_inactive_owner_through_the_view_s_repo
     async def tables_blink() -> None:
         ran.append("blink")
 
-    with registering_repo("acme"):
+    with registering_project("acme"):
         instruction(name="tables-blink")(tables_blink)
-    assert INSTRUCTIONS.repo("tables-blink") == "acme"
+    assert INSTRUCTIONS.project("tables-blink") == "acme"
     ctx = OttoContext(lab=Lab(name="t"), exclude_projects=("acme",))
     ctx.scopes = {}
     with pytest.raises(InstructionInactiveError):
@@ -381,7 +381,7 @@ def test_actions_for_returns_the_registered_class():
     from tests._fixtures.fake_repo import fake_repo
 
     cls = _actions("A")
-    with registering_repo("a"):
+    with registering_project("a"):
         register_project_actions(cls)
     ctx = OttoContext(lab=Lab(name="t"))
     assert type(actions_for(fake_repo("a"), ctx)) is cls
@@ -397,13 +397,13 @@ def test_a_registry_check_imports_nothing_from_the_project_layer_in_a_fresh_proc
     script = (
         "import sys\n"
         "from otto.instruction_catalog import STANDALONE_INSTRUCTIONS, instruction\n"
-        "from otto.registry import registering_repo\n"
+        "from otto.registry import registering_project\n"
         "assert 'otto.project.actions' not in sys.modules\n"
         "async def deploy(): ...\n"
-        "with registering_repo('acme'):\n"
+        "with registering_project('acme'):\n"
         "    instruction()(deploy)\n"
         "assert 'otto.project.actions' not in sys.modules, 'the check imported the project layer'\n"
-        "print(STANDALONE_INSTRUCTIONS.repo('deploy'))\n"
+        "print(STANDALONE_INSTRUCTIONS.project('deploy'))\n"
     )
     out = subprocess.run(
         [sys.executable, "-c", script], capture_output=True, text=True, check=False, timeout=120

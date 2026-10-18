@@ -57,7 +57,7 @@ The two `_llext` guests run the stock LLEXT `shell_loader` sample, into which
 an instrumented `.llext` is loaded at runtime; that is what backs embedded
 coverage. Every other guest runs `shell_module`.
 
-See `tests/firmware/zephyr/README.md` in the repo for the per-config
+See `tests/firmware/zephyr/README.md` in the repository for the per-config
 overlay layout.
 
 ### Serial consoles
@@ -176,11 +176,11 @@ checkout.
 ## Development setup
 
 Otto uses [uv](https://docs.astral.sh/uv/) for dependency management. Once
-the repo is cloned in the dev VM:
+the repository is cloned in the dev VM:
 
 ```bash
 make dev              # uv sync, git hooks, browsers, and web/ deps
-source project_env    # optional: sets up usage with test repos
+source project_env    # optional: sets up usage with test projects
 uv run pytest         # run the test suite
 ```
 
@@ -717,7 +717,7 @@ entry — write it that way:
   which earlier entry broke callers.
 
 The rendering is pinned by `tests/unit/test_changelog_rendering.py`, which
-runs the real renderer over a synthetic repo. The committed file is
+runs the real renderer over a synthetic git repository. The committed file is
 regenerated when a release is cut (`make release` runs `make changelog` at
 the new version), so between releases its `## [Unreleased]` section lags
 whatever has landed since — that is expected, and a reason not to hand-patch
@@ -806,8 +806,9 @@ mechanism, the tell, and why silence from a console is not evidence.
 
 #### Adding a harness environment knob
 
-`tests/conftest.py` strips every `OTTO_*` variable from the environment at
-import time so ambient otto *product* configuration can never leak into a run.
+`tests/conftest.py` strips every `OTTO_*` variable and `OTTOPATH` from the
+environment at import time so ambient otto *product* configuration can never
+leak into a run.
 Harness knobs like `OTTO_CHAOS_DOCKER`, `OTTO_CHAOS_SEED`, `OTTO_CHAOS_BED_HOST`
 and `OTTO_TUNNEL_SOAK_CYCLES` are exempt — but only because they are declared in
 `tests/_ambient_env.py`, which is the single source of truth for that allowlist.
@@ -840,16 +841,16 @@ patch inside its block, so the rule covers it too. The lazy table in the
 package's `__init__` names the defining module; a name declared through another
 lazy package (`otto.app` → `otto.cli.app`) is defined one hop further
 (`otto.cli.main.app`). An EAGER re-export is a different binding too:
-`otto.bootstrap` binds `get_repos`, `get_ordered_repos` and `is_bootstrapped`,
-which `otto.declared` defines, so a test patches `otto.declared.get_repos`
+`otto.bootstrap` binds `get_projects`, `get_ordered_projects` and `is_bootstrapped`,
+which `otto.declared` defines, so a test patches `otto.declared.get_projects`
 (`bootstrap` is the root's own). Its lazy `get_env` is discovery's, defined
-in `otto.config.repo`, so a test patches `otto.config.repo.get_env`. It also
+in `otto.config.project`, so a test patches `otto.config.project.get_env`. It also
 binds the error types
 `otto.config.scope` defines, so a test that needs to replace
 `ProjectScopeError` patches `otto.config.scope.ProjectScopeError`.
 Every other module that raises or catches it imports it from there when
 called, so that patch reaches every raise and `except` in otto except
-`otto.bootstrap`'s own: its providing-repo scope check raises through the
+`otto.bootstrap`'s own: its providing-project scope check raises through the
 binding it took at import. Do not replace the class to test that check; it
 raises the owner's object, so
 `pytest.raises(otto.config.scope.ProjectScopeError)` catches it.
@@ -863,19 +864,19 @@ from a `_LAZY_ATTRS` package that a consumer binds at module level
 leaks nothing.
 
 **Source reads process-wide getters at call time.** The process-wide getters —
-`otto.bootstrap`'s `bootstrap`, `otto.config.repo`'s `discover`, `get_env` and
-`discovered_teardown_deadline`, `otto.declared`'s `get_repos`,
-`get_ordered_repos`, `is_bootstrapped`, `current_repos`, `current_ordered_repos`
+`otto.bootstrap`'s `bootstrap`, `otto.config.project`'s `discover`, `get_env` and
+`discovered_teardown_deadline`, `otto.declared`'s `get_projects`,
+`get_ordered_projects`, `is_bootstrapped`, `current_projects`, `current_ordered_projects`
 and `compose`, `otto.registry`'s `get_completion_names` (`otto.bootstrap`
 re-exports it and the first three of `otto.declared`'s), and the function entries of the
 `otto`, `otto.config`, `otto.logger` and `otto.lab` lazy tables (`get_lab`,
 `all_hosts`, `do_for_all_hosts`, `get_context`, `try_get_context`, ... and the
 registrars, such as `register_options` and `register_cli_command`) — are
 imported inside the function that uses them, from the defining module
-(`from ..declared import get_repos`, `from ..fleet import get_lab`),
+(`from ..declared import get_projects`, `from ..fleet import get_lab`),
 never at module level outside `if TYPE_CHECKING:`. A module-level binding keeps
 the real function under a patch every other caller sees, so the module's tests
-run the real bootstrap without anyone noticing. Classes (`Repo`, `OttoContext`)
+run the real bootstrap without anyone noticing. Classes (`Project`, `OttoContext`)
 are free to import at module level: binding one defeats no patch.
 `tests/unit/test_no_import_time_lazy_exports.py` flags a module-level binding
 by any spelling; its `ALLOWED` table lists the sites that cannot move (a
@@ -917,17 +918,17 @@ All four static checks run in `make lint-arch` as well as in every pytest
 lane, so the per-change gate catches a violation that a targeted test run would
 never select.
 
-### Standing in for a Repo
+### Standing in for a Project
 
-A test that needs a {class}`~otto.config.repo.Repo` without a SUT on disk builds
+A test that needs a {class}`~otto.config.project.Project` without a project root on disk builds
 one with `fake_repo(name, **overrides)` from `tests/_fixtures/fake_repo.py`,
-never a hand-built `SimpleNamespace`. The factory returns a real `Repo` with
+never a hand-built `SimpleNamespace`. The factory returns a real `Project` with
 every field at its declared default, so a reader added to `src/` tomorrow finds
 the attribute it reads; a namespace carries only what its author's code path
 read the day it was written, and breaks the test for an unrelated reason the
 first time a patch reaches further. The module docstring records the two
 incidents that made this the rule; `tests/unit/test_fake_repo_fixture.py` pins
-the factory against a parsed `Repo`.
+the factory against a parsed `Project`.
 
 ### Embedded coverage bed
 
@@ -937,7 +938,7 @@ by tunnelling into `test4` (`zephyr-qemu-cov.service` on the zephyr VM, provisio
 like the other Zephyr instances). The **dev VM runs no QEMU** — it only builds
 the instrumented `.llext` extension and runs the cross-gcov report; the coverage
 instance itself runs on the zephyr VM. Which host(s) coverage is collected from
-is repo-declared by the `[coverage].hosts` regex in `.otto/settings.toml`
+is project-declared by the `[coverage].hosts` regex in `.otto/settings.toml`
 (default: every host in the lab), so the `test4` hop and the plain embedded test
 hosts are excluded by the pattern rather than by inference.
 
@@ -1006,7 +1007,7 @@ capture scripts into `docs/_static/generated/` (gitignored):
   product and ticket pins, the legend, asserted coverage — each still
   clipped to that feature (the `coverage-*.png` images on the `otto cov`
   pages).
-- `scripts/capture_docs_termynal.py` scaffolds a demo repo with
+- `scripts/capture_docs_termynal.py` scaffolds a demo project with
   `otto init --all` and captures every command's real `--help` output and
   the real tab-completion candidates (via typer's completion protocol),
   emitting one HTML snippet per capture. Pages pull them in with
@@ -1153,7 +1154,7 @@ page's step is "add this table to your settings" can name
 `settings_append = "<file>"`, a project-relative TOML fragment appended to the scratch copy's
 `.otto/settings.toml` for that capture alone and restored afterwards, so
 committing the table doesn't change every other capture of the project.
-A doctest on these pages that calls `repo.import_init_modules()` imports the
+A doctest on these pages that calls `project.import_init_modules()` imports the
 example project's init module, which registers process-global extensions — a
 command frame, monitor parsers, a login proxy, a reservation backend — that
 every later document in the same `sphinx-build -b doctest` process then sees.
@@ -1335,7 +1336,7 @@ make import-snapshot                      # regenerate THIS interpreter's ceilin
   after earlier minors were judged and printed. Surfaces the tag cannot run
   (a verb added since, or a run that did not end as the surface expects at
   the tag — its reason is printed) are listed, not judged; when the
-  generated repo's dispatch surface cannot run at the tag, every repo-based
+  generated project's dispatch surface cannot run at the tag, every project-based
   surface is listed with it. Each step's elapsed seconds are in
   `reports/budget/run.log`. Each side and minor is measured in
   `$TMPDIR/otto-budget-delta/<side>-<minor>/` (two worktrees and a venv,

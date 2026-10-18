@@ -306,7 +306,7 @@ def test_library_use_populates_registries():
 
 
 def test_repo_bearing_surface_isolates_home_and_repo():
-    """A repo-bearing surface must bring its own OTTO_SUT_DIRS and OTTO_HOME.
+    """A repo-bearing surface must bring its own OTTOPATH and OTTO_HOME.
 
     AND ITS BYTECODE PIN, on EVERY such surface — which is a gate, not
     housekeeping. ``PYTHONDONTWRITEBYTECODE`` keeps the fixture tree's own
@@ -322,7 +322,7 @@ def test_repo_bearing_surface_isolates_home_and_repo():
     surface = harness.surface_by_key("version_repo")
     env = harness.surface_env(surface)
 
-    assert Path(env["OTTO_SUT_DIRS"]).is_dir()
+    assert Path(env["OTTOPATH"]).is_dir()
     assert "OTTO_HOME" in env
     # CONTAINMENT, not inequality. `!= ~/.otto` is satisfied by any path under
     # it — `~/.otto/home-<uuid>` included — which is a home that writes into
@@ -452,7 +452,7 @@ def test_version_does_not_read_the_corpus():
     `otto.version` alone and never bootstraps.
 
     The delta is the load-bearing form. An absolute bound alone is satisfied
-    by a broken harness: if OTTO_SUT_DIRS stopped reaching the child, or the
+    by a broken harness: if OTTOPATH stopped reaching the child, or the
     fixture generation silently produced nothing, the count would also be low
     and this would pass for the wrong reason. The delta can only be zero
     because the corpus size stopped mattering.
@@ -486,20 +486,20 @@ def test_repo_bearing_surfaces_actually_find_the_generated_repo():
     directory alone cannot clear it.
     """
     from otto.config.cache_sections import section_by_name
-    from otto.config.repo import Repo
+    from otto.config.project import Project
 
     surface = harness.surface_by_key("help_repo")
     live = harness.measure_surface(surface)["file_ops"]["workspace"]
 
     env = harness.surface_env(surface)
-    repo_dir = Path(env["OTTO_SUT_DIRS"])
-    env["OTTO_SUT_DIRS"] = str(repo_dir.parent / "no-such-repo")
+    project_root = Path(env["OTTOPATH"])
+    env["OTTOPATH"] = str(project_root.parent / "no-such-repo")
     dead = harness.measure(
         surface.argv, bootstrap=surface.bootstrap, real_entry=surface.real_entry, env=env
     )["file_ops"]["workspace"]
 
-    keys = set(section_by_name("names").key_paths([Repo(sut_dir=repo_dir)]))
-    in_repo = [p for p in keys if repo_dir in p.parents]
+    keys = set(section_by_name("names").key_paths([Project(root=project_root)]))
+    in_repo = [p for p in keys if project_root in p.parents]
     assert in_repo, "the generated repo declares no settings or init module"
     assert live >= dead + len(in_repo), (
         f"help_repo counted {live}, a repo-less run {dead}: the repo was not found"

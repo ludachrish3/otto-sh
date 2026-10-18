@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-import otto.config.repo as config_repo
+import otto.config.project as config_repo
 from otto import _shim_complete as sc
 from otto import bootstrap
 from otto.cli.main import PENDING_SUBCMD_ARGS_KEY, app
@@ -18,31 +18,31 @@ from tests._fixtures.generated_repo import generate_repo
 
 @pytest.fixture
 def workspace(tmp_path, monkeypatch):
-    repo = generate_repo(tmp_path, files=3, dirs=1, top_level=1)
+    project = generate_repo(tmp_path, files=3, dirs=1, top_level=1)
     # Backdate every path under repo by 2s BEFORE write_cache stat()s them: the
     # kernel's coarse mtime clock (measured 1ms granularity on this VM) can
     # otherwise land generate_repo's writes and a later test write in the same
     # tick, so a directory's mtime would not visibly move (see obligation 2,
     # task-9 brief) and stat-pass pins that expect staleness would flake green.
     backdated = time.time_ns() - 2_000_000_000
-    for dirpath, dirnames, filenames in os.walk(repo):
+    for dirpath, dirnames, filenames in os.walk(project):
         for name in dirnames + filenames:
             os.utime(Path(dirpath) / name, ns=(backdated, backdated))
-    os.utime(repo, ns=(backdated, backdated))
+    os.utime(project, ns=(backdated, backdated))
     home = tmp_path / "home"
-    monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
+    monkeypatch.setenv("OTTOPATH", str(project))
     monkeypatch.setenv("OTTO_HOME", str(home))
     bootstrap.invalidate()
-    repos = config_repo.discover().repos
+    projects = config_repo.discover().projects
     cc.write_cache(
-        repos,
+        projects,
         [],
         ["local"],
-        shim=build_shim_payload(repos, app=app, pending_key=PENDING_SUBCMD_ARGS_KEY),
+        shim=build_shim_payload(projects, app=app, pending_key=PENDING_SUBCMD_ARGS_KEY),
     )
     cache = Path(sc.locate_cache(dict(os.environ)))
     assert cache == cc._cache_path()
-    yield repo, cache
+    yield project, cache
     bootstrap.invalidate()
 
 
@@ -51,8 +51,8 @@ def _data(cache: Path) -> dict:
 
 
 def test_locate_hands_over_without_sut_dirs(monkeypatch):
-    monkeypatch.delenv("OTTO_SUT_DIRS", raising=False)
-    with pytest.raises(sc.Handover, match="SUT"):
+    monkeypatch.delenv("OTTOPATH", raising=False)
+    with pytest.raises(sc.Handover, match="no OTTOPATH roots"):
         sc.locate_cache({})
 
 
@@ -60,18 +60,18 @@ def test_locate_splits_sut_dirs_on_the_path_separator_only(tmp_path):
     """The shim keys the cache as the loader reads the list: a comma is part of a path."""
     a, b, home = str(tmp_path / "a"), str(tmp_path / "b"), str(tmp_path / "home")
 
-    def located(sut_dirs: list[str]) -> str:
-        return str(Path(home) / sc.workspace_key(sut_dirs) / sc.CACHE_FILENAME)
+    def located(roots: list[str]) -> str:
+        return str(Path(home) / sc.workspace_key(roots) / sc.CACHE_FILENAME)
 
-    environ = {"OTTO_HOME": home, "OTTO_SUT_DIRS": f"{a}{os.pathsep}{b}"}
+    environ = {"OTTO_HOME": home, "OTTOPATH": f"{a}{os.pathsep}{b}"}
     assert sc.locate_cache(environ) == located([a, b])
-    environ["OTTO_SUT_DIRS"] = f"{a},{b}"
+    environ["OTTOPATH"] = f"{a},{b}"
     assert sc.locate_cache(environ) == located([f"{a},{b}"])
 
 
 def test_a_cold_cache_file_hands_over_with_a_plain_reason(tmp_path, monkeypatch):
     # The common first-run case: OTTO_HOME has no completion_cache.json yet.
-    monkeypatch.setenv("OTTO_SUT_DIRS", str(tmp_path / "repo"))
+    monkeypatch.setenv("OTTOPATH", str(tmp_path / "repo"))
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     monkeypatch.setenv("_OTTO_COMPLETE", "complete_bash")
     monkeypatch.setenv("COMP_WORDS", "otto ")
@@ -133,19 +133,19 @@ def test_a_marker_dated_in_the_future_is_not_trusted(workspace):
 
 
 def test_an_edited_key_file_fails_the_stat_pass_and_the_digest(workspace):
-    repo, cache = workspace
-    (repo / ".otto" / "settings.toml").write_text(  # sutrepo-exempt: the edit under test
+    project, cache = workspace
+    (project / ".otto" / "settings.toml").write_text(  # sutrepo-exempt: the edit under test
         'name = "genrepo"\nversion = "0.1.0"\n\n'
     )
     with pytest.raises(sc.Handover, match="stale"):
         sc.validate_keys(cache, _data(cache), time.time())
-    assert cc.cache_rebuild_is_worthwhile(config_repo.discover().repos) is True
+    assert cc.cache_rebuild_is_worthwhile(config_repo.discover().projects) is True
 
 
 def test_a_file_created_in_a_tests_directory_leaves_the_names_key_set_valid(workspace):
     """No test file registers anything, so no test directory keys the ``names`` section."""
-    repo, cache = workspace
-    (repo / "tests" / "test_added.py").write_text("def test_z():\n    pass\n")
+    project, cache = workspace
+    (project / "tests" / "test_added.py").write_text("def test_z():\n    pass\n")
     assert sc.validate_keys(cache, _data(cache), time.time()) == "stat"
 
 
@@ -290,7 +290,7 @@ def test_answer_or_reason_never_raises(monkeypatch):
 
 def test_schema_constants_track_the_product():
     from otto.config import collected_tests as ct
-    from otto.config.repo import selectable_names
+    from otto.config.project import selectable_names
     from otto.config.scope import TOML_SETTINGS_PATH
 
     assert sc.SCHEMA == cc.SCHEMA_VERSION

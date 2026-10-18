@@ -91,7 +91,7 @@ def teardown_after(fresh_suffix, docker_host, tmp_path):
             use_case,
             "--parent",
             docker_host,
-            sut_dirs=f"{REPO1}{os.pathsep}{REPO2}",
+            roots=f"{REPO1}{os.pathsep}{REPO2}",
             xdir=tmp_path,
             compose_suffix=fresh_suffix,
         )
@@ -109,7 +109,7 @@ def teardown_default_parent_after(fresh_suffix, default_parent_host, tmp_path):
             use_case,
             "--parent",
             default_parent_host,
-            sut_dirs=f"{REPO1}{os.pathsep}{REPO2}",
+            roots=f"{REPO1}{os.pathsep}{REPO2}",
             xdir=tmp_path,
             compose_suffix=fresh_suffix,
         )

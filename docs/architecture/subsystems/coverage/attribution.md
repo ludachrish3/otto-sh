@@ -69,15 +69,15 @@ history, `strace`-counted `.git` filesystem operations):
 | --- | --- | --- |
 | `git blame` × 189 files | ~37,233 | yes |
 | Pathspec-restricted walk (rejected) | 1,697 | **no** — 14.7% misattributed |
-| Unrestricted whole-repo walk | 12,519 | yes |
+| Unrestricted whole-project walk | 12,519 | yes |
 | **Bounded two-pass walk (shipped)** | **3,519** | yes |
 
-The bounded walk is 3.6× cheaper than the unrestricted whole-repo
+The bounded walk is 3.6× cheaper than the unrestricted whole-project
 alternative it replaced, with bounded memory to match (the unrestricted
 walk materializes the entire history in RAM — roughly 480 MB on
 `otto-sh`) — and both are an order of magnitude cheaper than `git blame`'s
 per-file fan-out. One caveat the numbers carry honestly: the unrestricted
-walk's cost is fixed by whole-repo churn rather than by the size of the
+walk's cost is fixed by whole-project churn rather than by the size of the
 covered set, so on a very small covered set (below roughly 64 files on
 `otto-sh`'s history) it can cost more than `blame` would have — which is
 exactly why the shipped engine is the bounded variant, not the
@@ -185,7 +185,7 @@ one call per entry or per file.
 **Design choices in the override file.** The override file is TOML, not
 JSON or a CLI verb, on purpose: it is a deliberate, commented, PR-reviewed
 record, meant to be read by humans as much as by otto, and it lives next to
-`settings.toml` so it is versioned alongside the SUT repo whose history it
+`settings.toml` so it is versioned alongside the project whose history it
 makes claims about.
 
 A ticket entry's `as_of` bound exists because attribution is *live*: without

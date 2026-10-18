@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
-from otto.config.repo import Repo
+from otto.config.project import Project
 from otto.docker import build_images, compose_down, compose_up
 from otto.host.element import Element
 from otto.host.login_proxy import Cred
@@ -59,7 +59,7 @@ async def stack(test3_lease, sut_dirs_env_module):
 
     ``sut_dirs_env_module`` because this fixture runs at MODULE scope, ahead of
     the function-scoped ``_default_sut_dirs_env``: ``compose_up`` walks
-    ``get_repos()``, which needs the SUT env, and the module-scoped bracket also
+    ``get_projects()``, which needs the SUT env, and the module-scoped bracket also
     keeps the bootstrap memo it primes from outliving this module.
 
     The parent and the container host outlive the test that connected them,
@@ -79,17 +79,17 @@ async def stack(test3_lease, sut_dirs_env_module):
             transfer="scp",
             docker_capable=True,
         )
-        repo = Repo(sut_dir=REPO1_DIR)
+        project = Project(root=REPO1_DIR)
         lab = Lab(name="docker_run_test")
         lab.hosts[parent.id] = parent
 
-        build_results = await build_images(repo, parent)
+        build_results = await build_images(project, parent)
         assert build_results["repo1-api"].is_ok, build_results
-        hosts = await compose_up(repo, lab, parent=parent.id)
+        hosts = await compose_up(project, lab, parent=parent.id)
         try:
             yield hosts["api"]
         finally:
-            await compose_down(repo, lab, parent=parent.id)
+            await compose_down(project, lab, parent=parent.id)
             await parent.close()
 
 

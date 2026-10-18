@@ -36,7 +36,7 @@ import pytest
 from otto.bootstrap import BootstrapError, DependencyError, ProjectScopeError
 from otto.check.errors import CheckCommandFailedError, CheckHostUnreachableError
 from otto.config.coverage_settings import CoverageConfigError
-from otto.config.scope import EmptySelectionError
+from otto.config.scope import DuplicateProjectError, EmptySelectionError
 from otto.coverage.capture.gitio import (
     GitCommandFailedError,
     GitMissingError,
@@ -120,8 +120,8 @@ from otto.session import (
     InstructionInactiveError,
     LabBuildError,
     LoggingLevelsConflictError,
+    ProjectLoadError,
     ProjectSelectionError,
-    RepoLoadError,
 )
 from otto.suite._retry import RetryAttemptTimeoutError
 from otto.suite.run import NoTestsMatchedError
@@ -136,6 +136,7 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (BootstrapError, Exception),
     (DependencyError, Exception),
     (ProjectScopeError, Exception),
+    (DuplicateProjectError, Exception),
     (InactiveRequiredDependencyError, Exception),
     (ProjectInstructionError, Exception),
     (OptionsCollisionError, Exception),
@@ -160,7 +161,7 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (MonitorInputError, Exception),
     (InitInputError, Exception),
     (ProjectSelectionError, ValueError),
-    (RepoLoadError, Exception),
+    (ProjectLoadError, Exception),
     (LabBuildError, Exception),
     (DependencyRefusedError, Exception),
     (InstructionInactiveError, Exception),
@@ -247,6 +248,7 @@ DELIBERATELY_ROOTLESS: frozenset[type[BaseException]] = frozenset(
         BootstrapError,
         DependencyError,
         ProjectScopeError,
+        DuplicateProjectError,
         # The shared base for every input refusal that names its offending
         # field (DockerVerbError, CoverageInputError): no stdlib type ever
         # carried a `.field` attribute, so Exception is its honest root —
@@ -268,7 +270,7 @@ DELIBERATELY_ROOTLESS: frozenset[type[BaseException]] = frozenset(
         # built, an unmet repo requirement, an inactive repo's instruction) —
         # otto's concepts, never a stdlib type a caller was already catching.
         # LabBuildError is a FieldError subclass, rootless like its base.
-        RepoLoadError,
+        ProjectLoadError,
         LabBuildError,
         DependencyRefusedError,
         InstructionInactiveError,

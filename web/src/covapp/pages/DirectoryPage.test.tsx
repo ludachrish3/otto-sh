@@ -111,7 +111,7 @@ function buildTree(): DirNode {
 
 function buildIndex(overrides: Partial<IndexPayload> = {}): IndexPayload {
   return makeIndex({
-    project_name: "acme-fw",
+    report_title: "acme-fw",
     tier_order: ["system", "unit"],
     tier_labels: { system: "System (e2e)", unit: "Unit" },
     tier_colors: { system: "green", unit: "blue" },
@@ -136,7 +136,7 @@ afterEach(() => {
 });
 
 describe("DirectoryPage", () => {
-  it("renders rollup numbers, meta line, and title at the repo root", () => {
+  it("renders rollup numbers, meta line, and title at the project root", () => {
     const index = buildIndex();
     renderPage({ index, segments: [] });
 
@@ -208,7 +208,7 @@ describe("DirectoryPage", () => {
     expect(screen.queryByTestId("tree-row-dir:src")).toBeNull();
   });
 
-  it("shows the runs disclosure (collapsed) only at the repo root", () => {
+  it("shows the runs disclosure (collapsed) only at the project root", () => {
     const index = buildIndex();
     const { unmount } = renderPage({ index, segments: [] });
     const disclosure = screen.getByTestId("runs-disclosure");
@@ -612,7 +612,7 @@ describe("DirectoryPage", () => {
       expect(banner.textContent).not.toContain("1 files hidden");
     });
 
-    it("the stats card shows a single ticket-scoped row using the recomputed (not whole-repo) total", async () => {
+    it("the stats card shows a single ticket-scoped row using the recomputed (not whole-project) total", async () => {
       vi.spyOn(dataModule, "loadTicketChunk").mockResolvedValue(makeTicketChunk());
       renderPinned(buildTicketIndex());
 
@@ -788,7 +788,7 @@ describe("DirectoryPage: hideAsserted (Task 11)", () => {
       branches: { total: 4, hit: 3, per_tier: { system: 2, unit: 1 } },
     });
     return makeIndex({
-      project_name: "acme-fw",
+      report_title: "acme-fw",
       tier_order: ["system", "unit"],
       tier_labels: { system: "System (e2e)", unit: "Unit" },
       tier_colors: { system: "green", unit: "blue" },
@@ -833,7 +833,7 @@ describe("DirectoryPage: hideAsserted (Task 11)", () => {
       },
     });
     const index = makeIndex({
-      project_name: "acme-fw",
+      report_title: "acme-fw",
       tier_order: ["system"],
       tier_labels: { system: "System (e2e)" },
       tier_colors: { system: "green" },

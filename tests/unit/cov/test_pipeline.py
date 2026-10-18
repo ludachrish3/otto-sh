@@ -33,7 +33,7 @@ class TestReadCovSourceRoot:
     def test_reads_from_meta_file(self, tmp_path):
         cov_dir = tmp_path / "cov"
         cov_dir.mkdir()
-        meta = {"repo_name": "myrepo", "sut_dir": str(tmp_path)}
+        meta = {"project_name": "myrepo", "project_root": str(tmp_path)}
         (cov_dir / ".otto_cov_meta.json").write_text(json.dumps(meta))
         assert read_cov_source_root([cov_dir]) == tmp_path
 
@@ -42,7 +42,7 @@ class TestReadCovSourceRoot:
         cov1.mkdir(parents=True)
         cov2 = tmp_path / "run2" / "cov"
         cov2.mkdir(parents=True)
-        meta = {"repo_name": "myrepo", "sut_dir": "/some/path"}
+        meta = {"project_name": "myrepo", "project_root": "/some/path"}
         (cov2 / ".otto_cov_meta.json").write_text(json.dumps(meta))
         assert read_cov_source_root([cov1, cov2]) == Path("/some/path")
 
@@ -145,7 +145,8 @@ class TestReadCovSourceRoots:
         (cov / ".otto_cov_meta.json").write_text(
             json.dumps(
                 {
-                    "sut_dir": "/x",
+                    "project_name": "p",
+                    "project_root": "/x",
                     "toolchains": {},
                     "source_roots": {"zephyr37-fat": "/b/v3_7", "zephyr44-fat": "/b/v4_4"},
                 }
@@ -162,7 +163,9 @@ class TestReadCovSourceRoots:
     def test_read_cov_source_roots_no_key_returns_empty(self, tmp_path):
         cov = tmp_path / "cov"
         cov.mkdir()
-        (cov / ".otto_cov_meta.json").write_text(json.dumps({"sut_dir": "/x"}))
+        (cov / ".otto_cov_meta.json").write_text(
+            json.dumps({"project_name": "p", "project_root": "/x"})
+        )
         assert read_cov_source_roots([cov]) == {}
 
 
@@ -331,7 +334,9 @@ class TestReadCovToolchains:
         cov_dir = tmp_path / "cov"
         cov_dir.mkdir()
         (cov_dir / ".otto_cov_meta.json").write_text(
-            json.dumps({"repo_name": "r", "sut_dir": str(tmp_path), "toolchains": toolchains})
+            json.dumps(
+                {"project_name": "r", "project_root": str(tmp_path), "toolchains": toolchains}
+            )
         )
         return cov_dir
 
@@ -398,7 +403,7 @@ class TestExclusionIsAFilterStage:
             order.append("apply")
 
         class FakeRenderer:
-            def __init__(self, output_dir, *, project_name="Coverage Report", prefix=None):
+            def __init__(self, output_dir, *, report_title="Coverage Report", prefix=None):
                 pass
 
             def render(self, store):
@@ -416,12 +421,12 @@ class TestExclusionIsAFilterStage:
         assert order == ["apply", "render"]
 
 
-def _git(repo: Path, tmp_path: Path, *args: str) -> None:
-    """Run one git command against *repo* (sync helper — keeps subprocess
+def _git(project: Path, tmp_path: Path, *args: str) -> None:
+    """Run one git command in the project root *project* (sync helper — keeps subprocess
     calls out of async test bodies directly, avoiding ASYNC221)."""
     subprocess.run(
         ["git", *args],
-        cwd=repo,
+        cwd=project,
         check=True,
         capture_output=True,
         env=git_env(tmp_path),
@@ -430,13 +435,13 @@ def _git(repo: Path, tmp_path: Path, *args: str) -> None:
 
 def _init_repo(tmp_path: Path) -> Path:
     """Create a one-commit git repo and return its root."""
-    repo = tmp_path / "sut"
-    repo.mkdir()
-    _git(repo, tmp_path, "init", "-q")
-    (repo / "f.c").write_text("int a;\nint b;\nint c;\n")
-    _git(repo, tmp_path, "add", "f.c")
-    _git(repo, tmp_path, "commit", "-qm", "init")
-    return repo
+    project = tmp_path / "sut"
+    project.mkdir()
+    _git(project, tmp_path, "init", "-q")
+    (project / "f.c").write_text("int a;\nint b;\nint c;\n")
+    _git(project, tmp_path, "add", "f.c")
+    _git(project, tmp_path, "commit", "-qm", "init")
+    return project
 
 
 _BASE_COMMIT_GUARD_COV = {"tiers": {"system": {"kind": "e2e", "precedence": 1}}}
@@ -447,8 +452,8 @@ class TestE2eBaseCommitGuard:
 
     @pytest.mark.asyncio
     async def test_capture_base_commit_mismatch_raises_naming_both_shas(self, tmp_path):
-        repo = _init_repo(tmp_path)
-        head = head_commit(repo)
+        project = _init_repo(tmp_path)
+        head = head_commit(project)
 
         cap = Capture(
             tier="system",
@@ -463,7 +468,7 @@ class TestE2eBaseCommitGuard:
             await run_coverage_report(
                 [cov],
                 tmp_path / "report",
-                ReportInputs(repo_root=repo, tier_configs=load_tiers(_BASE_COMMIT_GUARD_COV)),
+                ReportInputs(project_root=project, tier_configs=load_tiers(_BASE_COMMIT_GUARD_COV)),
             )
 
         message = str(excinfo.value)
@@ -473,8 +478,8 @@ class TestE2eBaseCommitGuard:
 
     @pytest.mark.asyncio
     async def test_capture_base_commit_matches_head_loads_into_store(self, tmp_path):
-        repo = _init_repo(tmp_path)
-        head = head_commit(repo)
+        project = _init_repo(tmp_path)
+        head = head_commit(project)
 
         cap = Capture(
             tier="system",
@@ -488,7 +493,7 @@ class TestE2eBaseCommitGuard:
         store = await run_coverage_report(
             [cov],
             tmp_path / "report",
-            ReportInputs(repo_root=repo, tier_configs=load_tiers(_BASE_COMMIT_GUARD_COV)),
+            ReportInputs(project_root=project, tier_configs=load_tiers(_BASE_COMMIT_GUARD_COV)),
         )
         assert store is not None
         (frec,) = [f for f in store.files() if f.path.name == "f.c"]
@@ -506,8 +511,8 @@ class TestE2eDirtyTreeRemap:
     async def test_dirty_tree_remaps_base_commit_to_worktree_and_drops_edited_lines(
         self, tmp_path, caplog
     ):
-        repo = _init_repo(tmp_path)  # f.c: "int a;\nint b;\nint c;\n"
-        head = head_commit(repo)
+        project = _init_repo(tmp_path)  # f.c: "int a;\nint b;\nint c;\n"
+        head = head_commit(project)
 
         # Capture in HEAD (base_commit) coordinates: all three lines covered.
         cap = Capture(
@@ -522,13 +527,13 @@ class TestE2eDirtyTreeRemap:
         # Dirty the worktree WITHOUT committing (HEAD, and thus the
         # base_commit guard, is unaffected): insert a line at the top
         # (shifts every line down one) and edit line 3 ("int c;" -> "int CHANGED;").
-        (repo / "f.c").write_text("int NEW;\nint a;\nint b;\nint CHANGED;\n")
+        (project / "f.c").write_text("int NEW;\nint a;\nint b;\nint CHANGED;\n")
 
         with caplog.at_level("WARNING"):
             store = await run_coverage_report(
                 [cov],
                 tmp_path / "report",
-                ReportInputs(repo_root=repo, tier_configs=load_tiers(_BASE_COMMIT_GUARD_COV)),
+                ReportInputs(project_root=project, tier_configs=load_tiers(_BASE_COMMIT_GUARD_COV)),
             )
 
         (frec,) = [f for f in store.files() if f.path.name == "f.c"]
@@ -549,14 +554,14 @@ class TestUnitHarvest:
     async def test_harvest_dir_loads_under_unit_tier(self, tmp_path, monkeypatch):
         from otto.coverage.merge import merger as merger_mod
 
-        repo = _init_repo(tmp_path)
+        project = _init_repo(tmp_path)
         # A harvest dir that is both the gcda and gcno root.
         hdir = tmp_path / "unit_build"
         hdir.mkdir()
         (hdir / "f.gcda").write_bytes(b"")
         (hdir / "f.gcno").write_bytes(b"")
 
-        src = repo / "f.c"
+        src = project / "f.c"
 
         async def fake_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
             # The merger is handed the harvest dir as *both* roots.
@@ -576,7 +581,7 @@ class TestUnitHarvest:
         store = await run_coverage_report(
             [],
             tmp_path / "report",
-            ReportInputs(repo_root=repo, tier_configs=load_tiers(cov_config)),
+            ReportInputs(project_root=project, tier_configs=load_tiers(cov_config)),
         )
         assert store is not None
         (frec,) = [f for f in store.files() if f.path.name == "f.c"]
@@ -590,7 +595,7 @@ class TestUnitHarvest:
         from otto.coverage.merge import lcov_loader as loader_mod
         from otto.coverage.merge import merger as merger_mod
 
-        repo = _init_repo(tmp_path)
+        project = _init_repo(tmp_path)
         app_dir = tmp_path / "build" / "app-tests"
         agent_dir = tmp_path / "build" / "agent-tests"
         unit_dir = tmp_path / "build" / "tests"
@@ -600,7 +605,7 @@ class TestUnitHarvest:
         (agent_dir / "y.gcda").write_bytes(b"")
         (unit_dir / "z.gcda").write_bytes(b"")
 
-        src = repo / "f.c"
+        src = project / "f.c"
 
         async def fake_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
             output.write_text(f"TN:\nSF:{src}\nDA:1,5\nend_of_record\n")
@@ -630,7 +635,7 @@ class TestUnitHarvest:
         store = await run_coverage_report(
             [],
             tmp_path / "report",
-            ReportInputs(repo_root=repo, tier_configs=load_tiers(cov_config)),
+            ReportInputs(project_root=project, tier_configs=load_tiers(cov_config)),
         )
         assert store is not None
         assert {r.product for r in store.runs} == {"app", "agent", ""}
@@ -648,7 +653,7 @@ class TestUnitHarvest:
     async def test_missing_harvest_dir_warns_and_skips(self, tmp_path, monkeypatch, caplog):
         from otto.coverage.merge import merger as merger_mod
 
-        repo = _init_repo(tmp_path)
+        project = _init_repo(tmp_path)
 
         async def fail_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
             raise AssertionError("merger.capture must not run for a missing harvest dir")
@@ -668,7 +673,7 @@ class TestUnitHarvest:
             store = await run_coverage_report(
                 [],
                 tmp_path / "report",
-                ReportInputs(repo_root=repo, tier_configs=load_tiers(cov_config)),
+                ReportInputs(project_root=project, tier_configs=load_tiers(cov_config)),
             )
         assert store is not None
         assert any("does not exist" in rec.message for rec in caplog.records)
@@ -681,7 +686,7 @@ class TestUnitHarvest:
         (distinct from the missing-dir case above)."""
         from otto.coverage.merge import merger as merger_mod
 
-        repo = _init_repo(tmp_path)
+        project = _init_repo(tmp_path)
         hdir = tmp_path / "unit_build_empty"
         hdir.mkdir()
 
@@ -703,7 +708,7 @@ class TestUnitHarvest:
             store = await run_coverage_report(
                 [],
                 tmp_path / "report",
-                ReportInputs(repo_root=repo, tier_configs=load_tiers(cov_config)),
+                ReportInputs(project_root=project, tier_configs=load_tiers(cov_config)),
             )
         assert store is not None
         assert any("no .gcda files" in rec.message for rec in caplog.records)
@@ -715,7 +720,7 @@ class TestUnitHarvest:
         (Task 10's `_warn_if_stale_counters`, deferred-untested finding closed here)."""
         from otto.coverage.merge import merger as merger_mod
 
-        repo = _init_repo(tmp_path)
+        project = _init_repo(tmp_path)
         hdir = tmp_path / "unit_build_stale"
         hdir.mkdir()
         gcda = hdir / "f.gcda"
@@ -727,7 +732,7 @@ class TestUnitHarvest:
         os.utime(gcda, (now - 100, now - 100))  # counters predate the build notes
         os.utime(gcno, (now, now))
 
-        src = repo / "f.c"
+        src = project / "f.c"
 
         async def fake_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
             output.write_text(f"TN:\nSF:{src}\nDA:1,5\nend_of_record\n")
@@ -744,7 +749,7 @@ class TestUnitHarvest:
             store = await run_coverage_report(
                 [],
                 tmp_path / "report",
-                ReportInputs(repo_root=repo, tier_configs=load_tiers(cov_config)),
+                ReportInputs(project_root=project, tier_configs=load_tiers(cov_config)),
             )
         assert store is not None
         assert any(
@@ -761,13 +766,13 @@ class TestUnitHarvest:
         from a directory other than the repo root."""
         from otto.coverage.merge import merger as merger_mod
 
-        repo = _init_repo(tmp_path)
-        hdir = repo / "unit_build"
+        project = _init_repo(tmp_path)
+        hdir = project / "unit_build"
         hdir.mkdir()
         (hdir / "f.gcda").write_bytes(b"")
         (hdir / "f.gcno").write_bytes(b"")
 
-        src = repo / "f.c"
+        src = project / "f.c"
 
         async def fake_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
             # Resolved against repo_root, matching the absolute harvest dir.
@@ -791,7 +796,7 @@ class TestUnitHarvest:
         store = await run_coverage_report(
             [],
             tmp_path / "report",
-            ReportInputs(repo_root=repo, tier_configs=load_tiers(cov_config)),
+            ReportInputs(project_root=project, tier_configs=load_tiers(cov_config)),
         )
         assert store is not None
         (frec,) = [f for f in store.files() if f.path.name == "f.c"]
@@ -808,7 +813,7 @@ class TestUnitHarvest:
         """
         from otto.coverage.merge import merger as merger_mod
 
-        repo = _init_repo(tmp_path)
+        project = _init_repo(tmp_path)
         home = tmp_path / "home"
         home.mkdir()
         monkeypatch.setenv("HOME", str(home))
@@ -817,7 +822,7 @@ class TestUnitHarvest:
         (hdir / "f.gcda").write_bytes(b"")
         (hdir / "f.gcno").write_bytes(b"")
 
-        src = repo / "f.c"
+        src = project / "f.c"
 
         async def fake_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
             # Resolved against HOME, not repo_root/"~"/... .
@@ -836,7 +841,7 @@ class TestUnitHarvest:
         store = await run_coverage_report(
             [],
             tmp_path / "report",
-            ReportInputs(repo_root=repo, tier_configs=load_tiers(cov_config)),
+            ReportInputs(project_root=project, tier_configs=load_tiers(cov_config)),
         )
         assert store is not None
         (frec,) = [f for f in store.files() if f.path.name == "f.c"]
@@ -857,19 +862,19 @@ async def test_duplicate_capture_across_sources_registers_one_run(tmp_path):
     from otto.coverage.reporter import CollectionInputs, CoverageReporter
     from otto.coverage.tiers import load_tiers
 
-    repo = _init_repo(tmp_path)  # f.c: "int a;\nint b;\nint c;\n"
+    project = _init_repo(tmp_path)  # f.c: "int a;\nint b;\nint c;\n"
 
     cap = Capture(
         tier="manual",
         product="app",
-        base_commit=head_commit(repo),
+        base_commit=head_commit(project),
         captured_at="2026-07-01T00:00:00Z",
         ticket="T-1",
         labs=["lab1"],
         board="b1",
-        files={"f.c": CaptureFileCov(blob=blob_sha(repo, Path("f.c")), lines={1: 2})},
+        files={"f.c": CaptureFileCov(blob=blob_sha(project, Path("f.c")), lines={1: 2})},
     )
-    write_manual_capture(cap, repo)  # manual-store copy
+    write_manual_capture(cap, project)  # manual-store copy
     dup = tmp_path / "cov" / "b1" / "capture.json"
     dup.parent.mkdir(parents=True)
     cap.save(dup)  # cov-dir copy of the SAME run
@@ -877,10 +882,10 @@ async def test_duplicate_capture_across_sources_registers_one_run(tmp_path):
     cov = {"tiers": {"manual": {"kind": "manual", "precedence": 1}}}
     reporter = CoverageReporter(
         [],
-        repo,
+        project,
         tmp_path / "report",
         collection=CollectionInputs(
-            repo_root=repo,
+            project_root=project,
             tier_configs=load_tiers(cov),
             capture_paths=[dup],
         ),
@@ -914,8 +919,8 @@ async def test_explicit_info_tier_gets_synthetic_run(tmp_path):
 
 async def _runs_for_captures(tmp_path: Path, contexts: list[tuple[str, str]]):
     """Fold one capture per ``(board, product)`` at HEAD and return the run table."""
-    repo = _init_repo(tmp_path)
-    head = head_commit(repo)
+    project = _init_repo(tmp_path)
+    head = head_commit(project)
     cov = tmp_path / "out" / "cov"
     capture_paths = []
     for board, product in contexts:
@@ -933,10 +938,10 @@ async def _runs_for_captures(tmp_path: Path, contexts: list[tuple[str, str]]):
 
     reporter = CoverageReporter(
         [],
-        repo,
+        project,
         tmp_path / "report",
         collection=CollectionInputs(
-            repo_root=repo,
+            project_root=project,
             tier_configs=load_tiers(_BASE_COMMIT_GUARD_COV),
             capture_paths=capture_paths,
         ),
@@ -977,8 +982,8 @@ async def test_e2e_hit_suppresses_manual_stale_mark_same_line(tmp_path):
     from otto.coverage.reporter import CollectionInputs, CoverageReporter
     from otto.coverage.tiers import load_tiers
 
-    repo = _init_repo(tmp_path)  # f.c: "int a;\nint b;\nint c;\n"
-    head1 = head_commit(repo)
+    project = _init_repo(tmp_path)  # f.c: "int a;\nint b;\nint c;\n"
+    head1 = head_commit(project)
 
     manual_cap = Capture(
         tier="manual",
@@ -988,15 +993,15 @@ async def test_e2e_hit_suppresses_manual_stale_mark_same_line(tmp_path):
         ticket="T-1",
         labs=["lab1"],
         board="b1",
-        files={"f.c": CaptureFileCov(blob=blob_sha(repo, Path("f.c")), lines={3: 1})},
+        files={"f.c": CaptureFileCov(blob=blob_sha(project, Path("f.c")), lines={3: 1})},
     )
-    write_manual_capture(manual_cap, repo)
+    write_manual_capture(manual_cap, project)
 
     # Edit + commit line 3 -> stales the manual capture's coverage of it
     # under the blob/diff anchor chain.
-    (repo / "f.c").write_text("int a;\nint b;\nint CHANGED;\n")
-    _git(repo, tmp_path, "commit", "-aqm", "edit")
-    head2 = head_commit(repo)
+    (project / "f.c").write_text("int a;\nint b;\nint CHANGED;\n")
+    _git(project, tmp_path, "commit", "-aqm", "edit")
+    head2 = head_commit(project)
 
     # An e2e capture anchored at the new HEAD covers the same (now-current)
     # line 3.
@@ -1019,10 +1024,10 @@ async def test_e2e_hit_suppresses_manual_stale_mark_same_line(tmp_path):
     }
     reporter = CoverageReporter(
         [],
-        repo,
+        project,
         tmp_path / "report",
         collection=CollectionInputs(
-            repo_root=repo,
+            project_root=project,
             tier_configs=load_tiers(cov_config),
             capture_paths=[e2e_path],
         ),
@@ -1054,8 +1059,8 @@ async def test_duplicate_survives_stale_base_commit_via_key_hoist(tmp_path):
     from otto.coverage.reporter import CollectionInputs, CoverageReporter
     from otto.coverage.tiers import load_tiers
 
-    repo = _init_repo(tmp_path)  # f.c: "int a;\nint b;\nint c;\n"
-    head1 = head_commit(repo)
+    project = _init_repo(tmp_path)  # f.c: "int a;\nint b;\nint c;\n"
+    head1 = head_commit(project)
 
     cap = Capture(
         tier="manual",
@@ -1065,28 +1070,28 @@ async def test_duplicate_survives_stale_base_commit_via_key_hoist(tmp_path):
         ticket="T-1",
         labs=["lab1"],
         board="b1",
-        files={"f.c": CaptureFileCov(blob=blob_sha(repo, Path("f.c")), lines={1: 2})},
+        files={"f.c": CaptureFileCov(blob=blob_sha(project, Path("f.c")), lines={1: 2})},
     )
-    write_manual_capture(cap, repo)  # committed manual-store copy, anchored to head1
+    write_manual_capture(cap, project)  # committed manual-store copy, anchored to head1
 
     dup = tmp_path / "out" / "cov" / "b1" / "capture.json"
     cap.save(dup)  # verbatim cov-dir duplicate of the same run
 
     # Advance the repo past head1 -- an unrelated commit so the duplicate's
     # base_commit no longer matches HEAD, but f.c's blob is untouched.
-    (repo / "unrelated.txt").write_text("x\n")
-    _git(repo, tmp_path, "add", "unrelated.txt")
-    _git(repo, tmp_path, "commit", "-qm", "unrelated")
-    head2 = head_commit(repo)
+    (project / "unrelated.txt").write_text("x\n")
+    _git(project, tmp_path, "add", "unrelated.txt")
+    _git(project, tmp_path, "commit", "-qm", "unrelated")
+    head2 = head_commit(project)
     assert head2 != head1
 
     cov_config = {"tiers": {"manual": {"kind": "manual", "precedence": 1}}}
     reporter = CoverageReporter(
         [],
-        repo,
+        project,
         tmp_path / "report",
         collection=CollectionInputs(
-            repo_root=repo,
+            project_root=project,
             tier_configs=load_tiers(cov_config),
             capture_paths=[dup],
         ),
@@ -1122,8 +1127,8 @@ async def test_superseded_covdir_duplicate_still_skipped(tmp_path):
     from otto.coverage.reporter import CollectionInputs, CoverageReporter
     from otto.coverage.tiers import load_tiers
 
-    repo = _init_repo(tmp_path)  # f.c: "int a;\nint b;\nint c;\n"
-    head1 = head_commit(repo)
+    project = _init_repo(tmp_path)  # f.c: "int a;\nint b;\nint c;\n"
+    head1 = head_commit(project)
 
     cap_old = Capture(
         tier="manual",
@@ -1133,18 +1138,18 @@ async def test_superseded_covdir_duplicate_still_skipped(tmp_path):
         ticket="T-1",
         labs=["lab1"],
         board="b1",
-        files={"f.c": CaptureFileCov(blob=blob_sha(repo, Path("f.c")), lines={1: 2})},
+        files={"f.c": CaptureFileCov(blob=blob_sha(project, Path("f.c")), lines={1: 2})},
     )
-    write_manual_capture(cap_old, repo)  # committed manual-store copy, anchored to head1
+    write_manual_capture(cap_old, project)  # committed manual-store copy, anchored to head1
 
     dup = tmp_path / "out" / "cov" / "b1" / "capture.json"
     cap_old.save(dup)  # verbatim cov-dir duplicate of the OLD run
 
     # Advance the repo past head1.
-    (repo / "unrelated.txt").write_text("x\n")
-    _git(repo, tmp_path, "add", "unrelated.txt")
-    _git(repo, tmp_path, "commit", "-qm", "unrelated")
-    head2 = head_commit(repo)
+    (project / "unrelated.txt").write_text("x\n")
+    _git(project, tmp_path, "add", "unrelated.txt")
+    _git(project, tmp_path, "commit", "-qm", "unrelated")
+    head2 = head_commit(project)
     assert head2 != head1
 
     # Re-capture the SAME context (tier=manual, label falls back to board=b1)
@@ -1152,15 +1157,15 @@ async def test_superseded_covdir_duplicate_still_skipped(tmp_path):
     cap_new = cap_old.model_copy(
         update={"base_commit": head2, "captured_at": "2026-07-02T00:00:00Z"}
     )
-    write_manual_capture(cap_new, repo)
+    write_manual_capture(cap_new, project)
 
     cov_config = {"tiers": {"manual": {"kind": "manual", "precedence": 1}}}
     reporter = CoverageReporter(
         [],
-        repo,
+        project,
         tmp_path / "report",
         collection=CollectionInputs(
-            repo_root=repo,
+            project_root=project,
             tier_configs=load_tiers(cov_config),
             capture_paths=[dup],
         ),
@@ -1176,21 +1181,21 @@ async def test_superseded_covdir_duplicate_still_skipped(tmp_path):
 
 def _repo_with_ticket_commit(tmp_path: Path) -> Path:
     """Create a one-commit git repo whose commit message names ticket PROJ-7."""
-    repo = tmp_path / "ticket_sut"
-    repo.mkdir()
-    _git(repo, tmp_path, "init", "-q")
-    (repo / "a.c").write_text("one\ntwo\n")
-    _git(repo, tmp_path, "add", "-A")
-    _git(repo, tmp_path, "commit", "-q", "-m", "seed PROJ-7")
-    return repo
+    project = tmp_path / "ticket_sut"
+    project.mkdir()
+    _git(project, tmp_path, "init", "-q")
+    (project / "a.c").write_text("one\ntwo\n")
+    _git(project, tmp_path, "add", "-A")
+    _git(project, tmp_path, "commit", "-q", "-m", "seed PROJ-7")
+    return project
 
 
-def _store_with_lines(repo: Path):
+def _store_with_lines(project: Path):
     """A minimal store with one file (repo/a.c) and two known line numbers."""
     from otto.coverage.store.model import CoverageStore
 
     store = CoverageStore(tier_order=["unit"])
-    record = store.get_or_create_file(repo / "a.c")
+    record = store.get_or_create_file(project / "a.c")
     record.get_or_create_line(1)
     record.get_or_create_line(2)
     return store
@@ -1219,11 +1224,11 @@ def test_reporter_annotates_lines_with_tickets(tmp_path):
     per-line ticket ids and the store's ticket -> commits table."""
     from otto.coverage.tickets import build_ticket_spec
 
-    repo = _repo_with_ticket_commit(tmp_path)
-    store = _store_with_lines(repo)
+    project = _repo_with_ticket_commit(tmp_path)
+    store = _store_with_lines(project)
     reporter = _reporter_with(ticket_spec=build_ticket_spec(r"[A-Z]{2,10}-[0-9]+", None))
 
-    reporter._annotate_tickets(store, repo)
+    reporter._annotate_tickets(store, project)
 
     assert next(store.files()).lines[1].ticket == ["PROJ-7"]
     assert store.tickets["PROJ-7"].commits
@@ -1232,11 +1237,11 @@ def test_reporter_annotates_lines_with_tickets(tmp_path):
 def test_reporter_without_spec_leaves_tickets_empty(tmp_path):
     """ticket_spec=None (the feature-absent default) must run no git walk at
     all and leave every LineRecord.ticket / store.tickets untouched."""
-    repo = _repo_with_ticket_commit(tmp_path)
-    store = _store_with_lines(repo)
+    project = _repo_with_ticket_commit(tmp_path)
+    store = _store_with_lines(project)
     reporter = _reporter_with(ticket_spec=None)
 
-    reporter._annotate_tickets(store, repo)
+    reporter._annotate_tickets(store, project)
 
     assert all(line.ticket == [] for line in next(store.files()).lines.values())
     assert store.tickets == {}
@@ -1253,28 +1258,28 @@ async def test_run_wires_ticket_attribution_into_the_store(tmp_path):
     and the entire cov + cli suite (482 tests) stayed green. This test goes
     through the public ``run()`` entry point with a real one-commit git repo
     (commit message names a ticket), a real ``.info`` tier so the store
-    actually holds lines, ``repo_root`` set via ``CollectionInputs``, and a
+    actually holds lines, ``project_root`` set via ``CollectionInputs``, and a
     ``ticket_spec`` — so deleting the ``run()`` call site makes *this* test
     fail even though every other test still passes.
     """
     from otto.coverage.tickets import build_ticket_spec
 
-    repo = tmp_path / "sut"
-    repo.mkdir()
-    _git(repo, tmp_path, "init", "-q")
-    (repo / "f.c").write_text("int a;\nint b;\n")
-    _git(repo, tmp_path, "add", "f.c")
-    _git(repo, tmp_path, "commit", "-q", "-m", "seed PROJ-9")
+    project = tmp_path / "sut"
+    project.mkdir()
+    _git(project, tmp_path, "init", "-q")
+    (project / "f.c").write_text("int a;\nint b;\n")
+    _git(project, tmp_path, "add", "f.c")
+    _git(project, tmp_path, "commit", "-q", "-m", "seed PROJ-9")
 
     info = tmp_path / "u.info"
-    info.write_text(f"TN:\nSF:{repo / 'f.c'}\nDA:1,3\nDA:2,1\nend_of_record\n")
+    info.write_text(f"TN:\nSF:{project / 'f.c'}\nDA:1,3\nDA:2,1\nend_of_record\n")
 
     reporter = CoverageReporter(
         [],
-        repo,
+        project,
         tmp_path / "report",
         tiers=[("unit", info)],
-        collection=CollectionInputs(repo_root=repo),
+        collection=CollectionInputs(project_root=project),
         ticket_spec=build_ticket_spec(r"[A-Z]{2,10}-[0-9]+", None),
     )
     store = await reporter.run()
@@ -1302,13 +1307,13 @@ async def test_run_wires_ticket_attribution_into_the_store(tmp_path):
 
 def _repo_with_no_ticket_commit(tmp_path: Path) -> Path:
     """A one-commit repo whose message names no ticket at all."""
-    repo = tmp_path / "no_ticket_sut"
-    repo.mkdir()
-    _git(repo, tmp_path, "init", "-q")
-    (repo / "a.c").write_text("one\ntwo\n")
-    _git(repo, tmp_path, "add", "-A")
-    _git(repo, tmp_path, "commit", "-q", "-m", "chore: bump dependency")
-    return repo
+    project = tmp_path / "no_ticket_sut"
+    project.mkdir()
+    _git(project, tmp_path, "init", "-q")
+    (project / "a.c").write_text("one\ntwo\n")
+    _git(project, tmp_path, "add", "-A")
+    _git(project, tmp_path, "commit", "-q", "-m", "chore: bump dependency")
+    return project
 
 
 def test_reporter_assigns_no_ticket_sentinel_for_unmatched_commit(tmp_path):
@@ -1317,11 +1322,11 @@ def test_reporter_assigns_no_ticket_sentinel_for_unmatched_commit(tmp_path):
     from otto.coverage.attribution import NO_TICKET
     from otto.coverage.tickets import build_ticket_spec
 
-    repo = _repo_with_no_ticket_commit(tmp_path)
-    store = _store_with_lines(repo)
+    project = _repo_with_no_ticket_commit(tmp_path)
+    store = _store_with_lines(project)
     reporter = _reporter_with(ticket_spec=build_ticket_spec(r"[A-Z]{2,10}-[0-9]+", None))
 
-    reporter._annotate_tickets(store, repo)
+    reporter._annotate_tickets(store, project)
 
     (rec,) = list(store.files())
     assert rec.lines[1].ticket == [NO_TICKET]
@@ -1339,12 +1344,12 @@ def test_reporter_assigns_uncommitted_sentinel_and_does_not_inherit_prior_ticket
     from otto.coverage.attribution import UNCOMMITTED_TICKET
     from otto.coverage.tickets import build_ticket_spec
 
-    repo = _repo_with_ticket_commit(tmp_path)  # commits "one\ntwo\n" as "seed PROJ-7"
-    (repo / "a.c").write_text("one\nDIRTY\n")  # line 2 edited, never committed
-    store = _store_with_lines(repo)
+    project = _repo_with_ticket_commit(tmp_path)  # commits "one\ntwo\n" as "seed PROJ-7"
+    (project / "a.c").write_text("one\nDIRTY\n")  # line 2 edited, never committed
+    store = _store_with_lines(project)
     reporter = _reporter_with(ticket_spec=build_ticket_spec(r"[A-Z]{2,10}-[0-9]+", None))
 
-    reporter._annotate_tickets(store, repo)
+    reporter._annotate_tickets(store, project)
 
     (rec,) = list(store.files())
     assert rec.lines[1].ticket == ["PROJ-7"]  # untouched line: still committed to PROJ-7
@@ -1374,20 +1379,20 @@ def _repo_with_a_non_coverable_gap(tmp_path: Path) -> tuple[Path, str, str]:
     real coverage tool would never report (a blank line, a comment, a
     brace-only line).
     """
-    repo = tmp_path / "gap_sut"
-    repo.mkdir()
-    _git(repo, tmp_path, "init", "-q")
-    (repo / "a.c").write_text("one\ntwo\nthree\n")
-    _git(repo, tmp_path, "add", "-A")
-    _git(repo, tmp_path, "commit", "-q", "-m", "seed PROJ-1")
-    first = head_commit(repo)
+    project = tmp_path / "gap_sut"
+    project.mkdir()
+    _git(project, tmp_path, "init", "-q")
+    (project / "a.c").write_text("one\ntwo\nthree\n")
+    _git(project, tmp_path, "add", "-A")
+    _git(project, tmp_path, "commit", "-q", "-m", "seed PROJ-1")
+    first = head_commit(project)
 
-    (repo / "a.c").write_text("one\nCHANGED\nthree\n")
-    _git(repo, tmp_path, "add", "-A")
-    _git(repo, tmp_path, "commit", "-q", "-m", "edit PROJ-2")
-    second = head_commit(repo)
+    (project / "a.c").write_text("one\nCHANGED\nthree\n")
+    _git(project, tmp_path, "add", "-A")
+    _git(project, tmp_path, "commit", "-q", "-m", "edit PROJ-2")
+    second = head_commit(project)
 
-    return repo, first, second
+    return project, first, second
 
 
 def test_ticket_owning_only_a_non_coverable_line_gets_no_ticket_record(tmp_path):
@@ -1395,14 +1400,14 @@ def test_ticket_owning_only_a_non_coverable_line_gets_no_ticket_record(tmp_path)
     from otto.coverage.store.model import CoverageStore
     from otto.coverage.tickets import build_ticket_spec
 
-    repo, first, _second = _repo_with_a_non_coverable_gap(tmp_path)
+    project, first, _second = _repo_with_a_non_coverable_gap(tmp_path)
     store = CoverageStore(tier_order=["unit"])
-    record = store.get_or_create_file(repo / "a.c")
+    record = store.get_or_create_file(project / "a.c")
     record.get_or_create_line(1)
     record.get_or_create_line(3)  # line 2 deliberately absent: the gap
     reporter = _reporter_with(ticket_spec=build_ticket_spec(r"[A-Z]{2,10}-[0-9]+", None))
 
-    reporter._annotate_tickets(store, repo)
+    reporter._annotate_tickets(store, project)
 
     (rec,) = list(store.files())
     assert rec.lines[1].ticket == ["PROJ-1"]

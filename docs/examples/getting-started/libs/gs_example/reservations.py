@@ -30,14 +30,14 @@ class TeamFileBackend(ReservationBackendBase):
         self,
         *,
         url: str | None = None,
-        repo_dir: Path | None = None,
+        project_root: Path | None = None,
         username: str | None = None,
         path: str,
     ) -> None:
-        # url, repo_dir and username come from otto's env; path is this backend's own.
-        super().__init__(url=url, repo_dir=repo_dir, username=username)
-        # A relative path anchors to the repo root the factory passes.
-        self._path = (self.repo_dir or Path()) / path
+        # url, project_root and username come from otto's env; path is this backend's own.
+        super().__init__(url=url, project_root=project_root, username=username)
+        # A relative path anchors to the project root the factory passes.
+        self._path = (self.project_root or Path()) / path
 
     def _reservations(self) -> list[Reservation]:
         """Every line as a Reservation. The file records no times, so both are None."""
@@ -88,7 +88,7 @@ class TeamFileConfig(OttoModel):
 def team_file(c: Configured[TeamFileConfig, ReservationEnv]) -> TeamFileBackend:
     """Build the backend from its parsed sub-table and otto's environment."""
     return TeamFileBackend(
-        url=c.env.url, repo_dir=c.env.repo_dir, username=c.env.username, path=c.config.path
+        url=c.env.url, project_root=c.env.project_root, username=c.env.username, path=c.config.path
     )
 
 

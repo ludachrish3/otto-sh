@@ -202,7 +202,7 @@ class PosixFileOps(UserlandHost):
         The shell does the expansion (``for p in <pattern>``), so every glob
         dialect question has the host's own answer, and transfer backends
         only ever see concrete paths. *pattern* is deliberately NOT quoted —
-        quoting is what would stop expansion; it comes from repo-controlled
+        quoting is what would stop expansion; it comes from project-controlled
         configuration, the same trust domain as every ``exec`` argument. An
         unmatched pattern stays literal in POSIX sh and the ``-e`` guard
         drops it: empty list, not an error (zero logs is success).

@@ -137,7 +137,7 @@ against a recording host double and asserts the recorded lines equal the plan,
 line for line. A kind that changes a command without changing its plan goes
 red, which is what keeps the preview from becoming a second, wrong description
 of install. The recorder (`PlanRecorder` in `tests/unit/host/conftest.py`) is
-otto's own test double; a repo-registered kind's author runs the same idea with a
+otto's own test double; a project-registered kind's author runs the same idea with a
 host double of their own.
 
 ## The library contract, for test and script authors

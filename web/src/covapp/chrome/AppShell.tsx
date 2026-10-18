@@ -6,7 +6,7 @@
 // ButtonUtility trigger > Dropdown.Popover > Dropdown.Menu >
 // Dropdown.Section/Item/Separator).
 //
-// AppShell reads tier/state legend data + project_name straight from
+// AppShell reads tier/state legend data + report_title straight from
 // getIndex() rather than via props: App.tsx only ever mounts AppShell once
 // dataGuard() === "ok", so a non-null payload is always available here, and
 // every page gluing AppShell in would otherwise have to thread the same
@@ -374,7 +374,7 @@ export function AppShell({ crumbs, title, meta, stats, searchHit, children }: Ap
               ⬡
             </span>
             <span>otto coverage</span>
-            {index && <span className="text-quaternary">· {index.project_name}</span>}
+            {index && <span className="text-quaternary">· {index.report_title}</span>}
           </div>
           {/* Top-level page nav. `#/tickets` sits outside the
               `#/coverage/...` namespace deliberately (see App.tsx) so it can

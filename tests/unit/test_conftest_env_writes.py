@@ -6,9 +6,10 @@ quietly re-inject a variable AFTER the root conftest's hermeticity strip,
 splitting the suite into two env lanes the hermeticity pin certified as
 one. The sanctioned spellings are: runtime writes (fixture/monkeypatch,
 torn down in scope), or the ONE allowlisted module-scope block in the root
-``tests/conftest.py`` (its colour block + the OTTO_* strip itself, which
-must precede the conftest's own otto imports and therefore cannot move to
-``pytest_configure``).
+``tests/conftest.py`` (its colour block + the strip of OTTO_* and OTTOPATH
+itself, which must run before any otto module reads the environment and
+therefore cannot move to ``pytest_configure``; the one otto import ahead of
+it, ``otto.config.env``, reads nothing at import time).
 
 AST, not regex — a docstring mentioning ``os.environ["X"] = ...`` must not
 count (the quoted-annotation lesson). Module-level *calls* are resolved one

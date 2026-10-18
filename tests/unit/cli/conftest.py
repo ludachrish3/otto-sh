@@ -26,7 +26,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from otto.config.repo import Repo
+from otto.config.env import is_otto_env_var
+from otto.config.project import Project
 from otto.result import CommandResult, Results
 from otto.utils import Status
 from tests._fixtures.labdata import write_lab_json
@@ -182,19 +183,19 @@ def _make_lab_fs(tmp_path: Path) -> tuple[Path, Path]:
     lab_data_dir.mkdir()
     write_lab_json(lab_data_dir / "lab.json", HOSTS_DATA)
 
-    sut_dir = make_sut_repo(
+    root = make_sut_repo(
         tmp_path / "sut",
         name="test_repo",
         extra='[[lab.sources]]\nbackend = "json"\npaths = ["../lab_data"]',
     )
 
-    return sut_dir, lab_data_dir
+    return root, lab_data_dir
 
 
-def _with_repos(real_bootstrap, repo):
+def _with_repos(real_bootstrap, project):
     """Run the real composition root, then hand back its result holding only *repo*.
 
-    Both ``repos`` and ``ordered_repos``: the context's readers take either,
+    Both ``repos`` and ``ordered_projects``: the context's readers take either,
     and a walk over the real result's order would reach repos this fixture
     never declared. The result is published to the composed-repos catalog
     too, over the real one, so the readers below the root (the declared
@@ -202,7 +203,7 @@ def _with_repos(real_bootstrap, repo):
     """
     from otto.declared import publish_composed
 
-    result = dataclasses.replace(real_bootstrap(), repos=[repo], ordered_repos=[repo])
+    result = dataclasses.replace(real_bootstrap(), projects=[project], ordered_projects=[project])
     publish_composed(result, complete=True)
     return result
 
@@ -220,17 +221,17 @@ def real_main_mocks(tmp_path):
       - ``management.remove_old_logs`` — filesystem listing + deletion
       - ``_ConsoleHandler`` (otto's ``RichHandler``) — console I/O
       - ``otto.bootstrap.bootstrap``'s repos — the real composition root
-        runs, and its result's ``repos`` and ``ordered_repos`` are one real
-        ``Repo``
+        runs, and its result's ``repos`` and ``ordered_projects`` are one real
+        ``Project``
       - ``LocalHost.run`` — subprocess for git commands
     """
-    sut_dir, lab_data_dir = _make_lab_fs(tmp_path)
-    repo = Repo(sut_dir=sut_dir)
+    root, lab_data_dir = _make_lab_fs(tmp_path)
+    project = Project(root=root)
 
     # Strip the user's OTTO_* env so test outcomes don't drift with the shell;
     # point OTTO_XDIR at tmp_path so init_cli_logging never writes to the project
     # root (--xdir is optional and defaults to CWD, which we don't want here).
-    clean_env = {k: v for k, v in os.environ.items() if not k.startswith("OTTO_")}
+    clean_env = {k: v for k, v in os.environ.items() if not is_otto_env_var(k)}
     clean_env["OTTO_XDIR"] = str(tmp_path)
 
     # Snapshot ROOT, not the ``'otto'`` logger: since the root-capture cutover
@@ -270,7 +271,7 @@ def real_main_mocks(tmp_path):
         # The REAL composition root runs (its registrations are part of what
         # runs for real), and only its result's repos are this one repo: the
         # CLI's lab load takes the result whole and hands it to the context.
-        patch("otto.bootstrap.bootstrap", side_effect=lambda: _with_repos(real_bootstrap, repo)),
+        patch("otto.bootstrap.bootstrap", side_effect=lambda: _with_repos(real_bootstrap, project)),
         patch(
             "otto.host.local_host.LocalHost.run",
             new_callable=AsyncMock,
@@ -288,9 +289,9 @@ def real_main_mocks(tmp_path):
     ):
         yield {
             "tmp_path": tmp_path,
-            "sut_dir": sut_dir,
+            "root": root,
             "lab_data_dir": lab_data_dir,
-            "repo": repo,
+            "repo": project,
             "remove_old_logs": p_remove,
             "RichHandler": p_rich,
         }
@@ -439,14 +440,14 @@ def _lib_ok_result():
 
 def _repo_with_tickets_configured():
     """A repo whose settings satisfy the --cov-tickets-json preflight gate."""
-    repo = MagicMock()
-    repo.settings = {
+    project = MagicMock()
+    project.settings = {
         "coverage": {
             "tiers": {"system": {"kind": "e2e", "precedence": 1}},
             "tickets": {"pattern": r"[A-Z]{2,10}-[0-9]+"},
         }
     }
-    return repo
+    return project
 
 
 @pytest.fixture

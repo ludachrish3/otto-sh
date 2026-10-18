@@ -25,8 +25,8 @@ Below are the hard requirements that `otto` strives to meet. If they are not met
 * Python 3.10+
 * Can be used in an air-gapped environment
 * Highly extensible by users
-  * Users will develop their own compiled products in their own repos (defined by `OTTO_SUT_DIRS`).
-  * These SUT directories (separate code repos) will define their own libraries, instructions, and product test suites with `otto` as a dependency
+  * Users will develop their own compiled products in their own projects (project roots listed in `OTTOPATH`).
+  * These project roots (separate code repositories) will define their own libraries, instructions, and product test suites with `otto` as a dependency
   * These user repos should be able to plugin, extend, and modify all aspects of `otto`'s capabilities
     * Host behavior needs hooks and mechanisms to provide alternative protocols and protocol options globally and to precise hosts
     * Instructions are independently provided by each SUT repo and appear dynamically in the help menu

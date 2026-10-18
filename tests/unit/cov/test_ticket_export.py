@@ -93,14 +93,30 @@ def test_export_orders_files_within_a_ticket_by_display_path(tmp_path):
     store = _store_with_reordering_paths(tmp_path)
     payload = build_ticket_export(
         store,
-        repo_root=tmp_path,
-        project="p",
+        project_root=tmp_path,
+        report_title="p",
         otto_version="0.8.0",
         generated="2026-07-26T00:00:00Z",
     )
     assert len(payload["tickets"]) == 1
     paths = [f["path"] for f in payload["tickets"][0]["files"]]
     assert paths == ["a.c", "a/b.c"] == sorted(paths)
+
+
+def test_the_title_rides_the_json_key_project(tmp_path):
+    """The parameter is report_title; tickets.json keeps its key "project".
+
+    tickets.json is a file format spec §4.3 does not list, so its key stays.
+    """
+    payload = build_ticket_export(
+        _store_with_reordering_paths(tmp_path),
+        project_root=tmp_path,
+        report_title="Firmware",
+        otto_version="0",
+        generated="g",
+    )
+    assert payload["project"] == "Firmware"
+    assert "report_title" not in payload
 
 
 def test_group_ranges_collapses_runs_and_keeps_singletons():
@@ -114,8 +130,8 @@ def test_group_ranges_empty():
 def test_export_has_its_own_format_version(tmp_path):
     payload = build_ticket_export(
         _store(tmp_path),
-        repo_root=tmp_path,
-        project="p",
+        project_root=tmp_path,
+        report_title="p",
         otto_version="0.8.0",
         generated="2026-07-26T00:00:00Z",
     )
@@ -125,8 +141,8 @@ def test_export_has_its_own_format_version(tmp_path):
 def test_export_counts_and_missing_ranges(tmp_path):
     payload = build_ticket_export(
         _store(tmp_path),
-        repo_root=tmp_path,
-        project="p",
+        project_root=tmp_path,
+        report_title="p",
         otto_version="0.8.0",
         generated="2026-07-26T00:00:00Z",
     )
@@ -145,8 +161,8 @@ def test_export_orders_tickets_by_id_and_files_by_path(tmp_path):
     docstring)."""
     payload = build_ticket_export(
         _store(tmp_path),
-        repo_root=tmp_path,
-        project="p",
+        project_root=tmp_path,
+        report_title="p",
         otto_version="0.8.0",
         generated="2026-07-26T00:00:00Z",
     )
@@ -175,8 +191,8 @@ def test_export_is_byte_deterministic(tmp_path):
         write_ticket_export(
             store,
             path,
-            repo_root=tmp_path,
-            project="p",
+            project_root=tmp_path,
+            report_title="p",
             otto_version="0.8.0",
             generated="2026-07-26T00:00:00Z",
         )
@@ -190,8 +206,8 @@ def test_export_without_tickets_fails_loud(tmp_path):
     with pytest.raises(ValueError, match=r"\[coverage.tickets\]"):
         build_ticket_export(
             CoverageStore(tier_order=["unit"]),
-            repo_root=tmp_path,
-            project="p",
+            project_root=tmp_path,
+            report_title="p",
             otto_version="0.8.0",
             generated="2026-07-26T00:00:00Z",
         )
@@ -220,8 +236,8 @@ def test_export_treats_sentinel_tickets_as_ordinary_entries_in_sorted_position(t
 
     payload = build_ticket_export(
         store,
-        repo_root=tmp_path,
-        project="p",
+        project_root=tmp_path,
+        report_title="p",
         otto_version="0.8.0",
         generated="2026-07-26T00:00:00Z",
     )
@@ -248,8 +264,8 @@ def test_export_succeeds_when_only_sentinel_tickets_attributed(tmp_path):
 
     payload = build_ticket_export(
         store,
-        repo_root=tmp_path,
-        project="p",
+        project_root=tmp_path,
+        report_title="p",
         otto_version="0.8.0",
         generated="2026-07-26T00:00:00Z",
     )
@@ -285,8 +301,8 @@ def test_export_totals_dedupe_a_line_owned_by_two_tickets(tmp_path):
 
     payload = build_ticket_export(
         store,
-        repo_root=tmp_path,
-        project="p",
+        project_root=tmp_path,
+        report_title="p",
         otto_version="0.8.0",
         generated="2026-07-26T00:00:00Z",
     )
@@ -305,17 +321,17 @@ def test_export_paths_are_repo_relative(tmp_path):
     runners with different workspace roots must emit identical bytes for
     identical coverage, and an external consumer has no way to map an
     absolute, machine-specific path onto their own checkout."""
-    repo_root = tmp_path / "repo"
-    (repo_root / "src").mkdir(parents=True)
+    project_root = tmp_path / "repo"
+    (project_root / "src").mkdir(parents=True)
     store = CoverageStore(tier_order=["unit"])
-    rec = store.get_or_create_file(repo_root / "src" / "a.c")
+    rec = store.get_or_create_file(project_root / "src" / "a.c")
     rec.get_or_create_line(1).ticket = ["PROJ-1"]
     store.tickets["PROJ-1"] = TicketRecord(id="PROJ-1", url=None, commits=["abc"])
 
     payload = build_ticket_export(
         store,
-        repo_root=repo_root,
-        project="p",
+        project_root=project_root,
+        report_title="p",
         otto_version="0.8.0",
         generated="2026-07-26T00:00:00Z",
     )
@@ -362,8 +378,8 @@ def test_asserted_counts_per_ticket_and_overrides_active(tmp_path):
     store = _store_with_asserted_line(tmp_path)
     payload = build_ticket_export(
         store,
-        repo_root=tmp_path,
-        project="p",
+        project_root=tmp_path,
+        report_title="p",
         otto_version="0",
         generated="g",
     )
@@ -377,8 +393,8 @@ def test_overrides_absent_emits_false_and_zero_asserted(tmp_path):
     store = _store(tmp_path)
     payload = build_ticket_export(
         store,
-        repo_root=tmp_path,
-        project="p",
+        project_root=tmp_path,
+        report_title="p",
         otto_version="0",
         generated="g",
     )
@@ -398,8 +414,8 @@ def test_overrides_active_true_with_no_asserted_entries(tmp_path):
     assert store.overrides == []
     payload = build_ticket_export(
         store,
-        repo_root=tmp_path,
-        project="p",
+        project_root=tmp_path,
+        report_title="p",
         otto_version="0",
         generated="g",
     )
@@ -416,8 +432,8 @@ def test_determinism_still_byte_stable_with_asserted_data(tmp_path):
         write_ticket_export(
             store,
             path,
-            repo_root=tmp_path,
-            project="p",
+            project_root=tmp_path,
+            report_title="p",
             otto_version="0.8.0",
             generated="2026-07-26T00:00:00Z",
         )

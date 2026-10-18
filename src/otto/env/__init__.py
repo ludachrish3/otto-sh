@@ -3,7 +3,7 @@
 :mod:`otto.env.manage` locates, builds, syncs and describes the venv and the
 metadata it records; :mod:`otto.env.backends` is the installer that fills it
 (uv, or stdlib ``venv`` plus pip); :mod:`otto.env.preflight` checks each
-repo's declared requirements against the running environment.
+project's declared requirements against the running environment.
 
 Every name is exported lazily (PEP 562), the shape every otto package shares:
 the preflight, which runs on the path of every ordinary command, loads
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from .manage import EnvExistsError as EnvExistsError
     from .manage import EnvMeta as EnvMeta
     from .manage import EnvStatus as EnvStatus
-    from .manage import RepoState as RepoState
+    from .manage import ProjectState as ProjectState
     from .manage import create_env as create_env
     from .manage import env_path as env_path
     from .manage import env_status as env_status
@@ -40,7 +40,7 @@ _LAZY_ATTRS: dict[str, str] = {
     "EnvMeta": "otto.env.manage",
     "EnvStatus": "otto.env.manage",
     "META_FILENAME": "otto.env.manage",
-    "RepoState": "otto.env.manage",
+    "ProjectState": "otto.env.manage",
     "create_env": "otto.env.manage",
     "env_path": "otto.env.manage",
     "env_status": "otto.env.manage",
@@ -73,7 +73,7 @@ __all__ = [
     "EnvExistsError",
     "EnvMeta",
     "EnvStatus",
-    "RepoState",
+    "ProjectState",
     "create_env",
     "env_path",
     "env_status",

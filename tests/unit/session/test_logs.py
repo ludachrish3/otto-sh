@@ -89,9 +89,9 @@ def _clean_logging():
 
 
 def _repos(monkeypatch, *tables):
-    repos = [_LevelsRepo(f"r{i}", dict(table)) for i, table in enumerate(tables)]
-    monkeypatch.setattr("otto.declared.get_repos", lambda: repos)
-    return repos
+    projects = [_LevelsRepo(f"r{i}", dict(table)) for i, table in enumerate(tables)]
+    monkeypatch.setattr("otto.declared.get_projects", lambda: projects)
+    return projects
 
 
 # The record's timestamp, fixed so the time column it would render is known

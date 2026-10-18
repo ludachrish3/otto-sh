@@ -21,7 +21,7 @@ from otto import registry
 from otto.cli.main import _completion_collectors
 from otto.config import completion_cache as cc
 from otto.config.completion_tree import build_shim_payload
-from otto.config.repo import PYTEST_CONFIG_NAMES
+from otto.config.project import PYTEST_CONFIG_NAMES
 from tests._fixtures.shim_repo import make_shim_repo
 
 EXPECTED_HANDOVER_REASONS = {
@@ -69,7 +69,7 @@ hand-overs does.
 """
 
 
-def _write_cache_like_entry(repos) -> None:
+def _write_cache_like_entry(projects) -> None:
     """The writer call ``otto.cli.main.entry()`` makes (src/otto/cli/main.py:997-1032).
 
     The writer's two remaining keywords are deliberately absent: ``digests=`` is the
@@ -81,34 +81,38 @@ def _write_cache_like_entry(repos) -> None:
     instructions = cli.instructions()
     backends = cc.collect_backend_names()
     cc.write_cache(
-        repos,
+        projects,
         instructions,
-        cc.collect_host_ids(repos),
-        docker_hosts=cc.collect_docker_capable_host_ids(repos),
-        docker_use_cases=cc.collect_docker_use_case_names(repos),
-        docker_images=cc.collect_docker_image_names(repos),
-        docker_services_by_use_case=cc.collect_docker_services_by_use_case(repos),
-        repos_names=cc.collect_repo_names(repos),
+        cc.collect_host_ids(projects),
+        docker_hosts=cc.collect_docker_capable_host_ids(projects),
+        docker_use_cases=cc.collect_docker_use_case_names(projects),
+        docker_images=cc.collect_docker_image_names(projects),
+        docker_services_by_use_case=cc.collect_docker_services_by_use_case(projects),
+        active_projects=cc.collect_active_project_names(projects),
         term_backends=backends["term_backends"],
         transfer_backends=backends["transfer_backends"],
-        usernames=cc.collect_reservation_usernames(repos),
+        usernames=cc.collect_reservation_usernames(projects),
         commands=cli.commands(),
-        labs=cc.collect_lab_names(repos),
-        hosts_by_lab=cc.collect_host_ids_by_lab(repos),
-        host_drops=cc.collect_host_drops(repos),
-        host_classes_by_id=cc.collect_host_classes_by_id(repos),
-        projects=cc.collect_project_names(repos),
-        links=cc.collect_links(repos),
-        logins_by_host=cc.collect_logins_by_host(repos),
-        docker_default_parent_by_lab=cc.collect_docker_default_parent_by_lab(repos),
-        shim=build_shim_payload(repos, app=cli.app, pending_key=cli.pending_key),
+        labs=cc.collect_lab_names(projects),
+        hosts_by_lab=cc.collect_host_ids_by_lab(projects),
+        host_drops=cc.collect_host_drops(projects),
+        host_classes_by_id=cc.collect_host_classes_by_id(projects),
+        projects=cc.collect_project_names(projects),
+        links=cc.collect_links(projects),
+        logins_by_host=cc.collect_logins_by_host(projects),
+        docker_default_parent_by_lab=cc.collect_docker_default_parent_by_lab(projects),
+        shim=build_shim_payload(projects, app=cli.app, pending_key=cli.pending_key),
     )
 
 
-def _seed_observed(repos) -> None:
+def _seed_observed(projects) -> None:
     """One fresh and one expired sub-entry per kind, so the TTL rows compare on both sides."""
-    cc.record_docker_images(repos, "dut1", refs=["api:latest", "api:1.2"], ids=["sha-a", "sha-b"])
-    cc.record_docker_containers(repos, "dut1", names=["east-integration-x-api-1"], ids=["3f9a3f9a"])
+    cc.record_docker_images(
+        projects, "dut1", refs=["api:latest", "api:1.2"], ids=["sha-a", "sha-b"]
+    )
+    cc.record_docker_containers(
+        projects, "dut1", names=["east-integration-x-api-1"], ids=["3f9a3f9a"]
+    )
     path = cc._cache_path()
     raw = json.loads(path.read_text())
     hosts = raw[cc.DOCKER_OBSERVED_KEY]["hosts"]
@@ -119,7 +123,7 @@ def _seed_observed(repos) -> None:
     path.write_text(json.dumps(raw))
 
 
-def _seed_matching_tables(repos) -> None:
+def _seed_matching_tables(projects) -> None:
     """A current per-file table, as a whole-tree collection of this SUT records it.
 
     Both sides answer a test-name or ``-m`` TAB from it: the shim by its own
@@ -134,8 +138,8 @@ def _seed_matching_tables(repos) -> None:
     from otto.config import collected_tests as ct
     from otto.suite.markers import OTTO_MARKERS
 
-    [repo] = repos
-    tests = repo.sut_dir / "tests"
+    [project] = projects
+    tests = project.root / "tests"
 
     def stat(path):
         st = path.stat()
@@ -161,16 +165,16 @@ def _seed_matching_tables(repos) -> None:
         ),
     }
     table = ct.updated_table(
-        repo,
+        project,
         None,
-        ct.classify(repo, None),
+        ct.classify(project, None),
         records,
         registered_markers=sorted({"slow", "smoke", *OTTO_MARKERS}),
         whole_tree=True,
         dirs={str(tests): stat(tests), str(tests / "sub"): stat(tests / "sub")},
     )
     ct.write_tables([table])
-    assert ct.classify(repo, table).is_current
+    assert ct.classify(project, table).is_current
 
 
 _TYPER_DEFAULT_PARENTS: dict[str, str] | None = None
@@ -192,8 +196,8 @@ def world(tmp_path, monkeypatch):
     explicitly NOT it — a warm-side difference would be a stub defect, not a
     shim one.
     """
-    repo = make_shim_repo(tmp_path)
-    monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
+    project = make_shim_repo(tmp_path)
+    monkeypatch.setenv("OTTOPATH", str(project))
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     monkeypatch.delenv("OTTO_LAB", raising=False)
     bs._reset()  # the bracket tests/unit/cli/test_default_instructions.py:198-202 uses
@@ -209,10 +213,10 @@ def world(tmp_path, monkeypatch):
             warnings.filterwarnings("ignore", category=pytest.PytestUnknownMarkWarning)
             result = bs.bootstrap()
         assert not result.errors, result.errors
-        repos = result.repos
-        _write_cache_like_entry(repos)
-        _seed_observed(repos)
-        _seed_matching_tables(repos)
+        projects = result.projects
+        _write_cache_like_entry(projects)
+        _seed_observed(projects)
+        _seed_matching_tables(projects)
 
         def _no_child():
             raise AssertionError("every table is warm; the collect child must not run")
@@ -220,7 +224,7 @@ def world(tmp_path, monkeypatch):
         monkeypatch.setattr(cc, "run_collect_child", _no_child)
         monkeypatch.setattr(cc, "spawn_collect_child", _no_child)
         registry.set_completion_names(None)
-        stored = cc.read_cache(repos)
+        stored = cc.read_cache(projects)
         assert stored is not None
         monkeypatch.setattr(
             sys.modules[__name__],
@@ -233,7 +237,7 @@ def world(tmp_path, monkeypatch):
         from otto.cli.main import app
 
         completion_init()  # registers Typer's BashComplete in typer._click.shell_completion
-        yield repo, typer.main.get_command(app)
+        yield project, typer.main.get_command(app)
     finally:
         bs._reset()
 
@@ -491,7 +495,7 @@ HAND_WRITTEN = [
     ("otto -l west host dut1 exec --user ", 7),
     ("otto docker build ", 3),
     ("otto docker build a", 3),
-    ("otto docker build --repo ", 4),
+    ("otto docker build --project ", 4),
     ("otto docker build --parent dut1 --tag ", 6),
     ("otto docker build --parent dut1 --tag api:", 6),
     ("otto docker build --parent dut2 --tag ", 6),
@@ -745,13 +749,13 @@ def test_the_tab_answers_last_known_names_and_never_stats_the_test_tree(world, m
     offered until a collection has seen them. Typer's completer (zsh, fish,
     a handed-over bash TAB) answers the same, the same way.
     """
-    repo, cli = world
+    project, cli = world
     monkeypatch.setattr(cc, "_collect_refresh_requested", False)
     before = _outcome("otto test ", 2).items
-    suite = repo / "tests" / "test_shim_suite.py"
+    suite = project / "tests" / "test_shim_suite.py"
     suite.write_text(suite.read_text() + "\n\ndef test_three():\n    pass\n")
-    (repo / "tests" / "sub" / "test_nested.py").unlink()
-    (repo / "tests" / "test_added.py").write_text("def test_added():\n    pass\n")
+    (project / "tests" / "sub" / "test_nested.py").unlink()
+    (project / "tests" / "test_added.py").write_text("def test_added():\n    pass\n")
 
     stats: list[str] = []
     real = os.stat
@@ -767,7 +771,7 @@ def test_the_tab_answers_last_known_names_and_never_stats_the_test_tree(world, m
     assert after.refresh is not None, "with no check recorded, the child checks"
     assert "\n".join(after.items) == _typer(cli, "otto test ", 2, {}, monkeypatch)
     assert cc._collect_refresh_requested, "and so does Typer's"
-    tests_dir = str(repo / "tests")
+    tests_dir = str(project / "tests")
     assert not [p for p in stats if p == tests_dir or p.startswith(tests_dir + os.sep)]
 
 
@@ -836,22 +840,22 @@ def _rewrite_site_packages() -> None:
 @pytest.mark.parametrize(
     ("cold", "reason"),
     [
-        (lambda repo: _rewrite_table(lambda ns, key: ns.pop(key)), "no test-names cache for "),
+        (lambda project: _rewrite_table(lambda ns, key: ns.pop(key)), "no test-names cache for "),
         (
-            lambda repo: _rewrite_table(lambda ns, key: ns[key].__setitem__("generated_at", 0)),
+            lambda project: _rewrite_table(lambda ns, key: ns[key].__setitem__("generated_at", 0)),
             "test-names cache expired",
         ),
-        (lambda repo: _bump(repo / "pyproject.toml"), "test-names cache env moved: "),
+        (lambda project: _bump(project / "pyproject.toml"), "test-names cache env moved: "),
         (
-            lambda repo: (repo / "pytest.ini").write_text("[pytest]\n"),
+            lambda project: (project / "pytest.ini").write_text("[pytest]\n"),
             "test-names cache env moved: ",
         ),
-        (lambda repo: _rewrite_env("python", "0.0.0"), "test-names cache env moved: python"),
+        (lambda project: _rewrite_env("python", "0.0.0"), "test-names cache env moved: python"),
         (
-            lambda repo: _rewrite_env("prefix", "/another/venv"),
+            lambda project: _rewrite_env("prefix", "/another/venv"),
             "test-names cache env moved: prefix",
         ),
-        (lambda repo: _rewrite_site_packages(), "test-names cache env moved: "),
+        (lambda project: _rewrite_site_packages(), "test-names cache env moved: "),
     ],
     ids=[
         "missing",
@@ -866,8 +870,8 @@ def _rewrite_site_packages() -> None:
 def test_a_cold_table_hands_over_stale_on_tests_sites_only(world, monkeypatch, cold, reason):
     """No table, one past its TTL, or one another interpreter, venv, installation or pytest
     config wrote: the full path seeds."""
-    repo, cli = world
-    cold(repo)
+    project, cli = world
+    cold(project)
     for words, cword in TESTS_SITE_LINES:
         out = _outcome(words, cword)
         assert out.items is None, words
@@ -882,7 +886,7 @@ def test_pytest_config_names_are_pytests_own():
     """Pinned literally: pytest keeps the list in a local of ``locate_config``
     (``_pytest.config.findpaths``), which no API exposes. Re-read it there when
     pytest is upgraded; a name missing here is a config edit no table sees."""
-    from otto.config.repo import PYTEST_CONFIG_NAMES
+    from otto.config.project import PYTEST_CONFIG_NAMES
 
     assert PYTEST_CONFIG_NAMES == (
         "pytest.toml",
@@ -901,15 +905,15 @@ def test_every_pytest_config_name_sends_the_table_back_to_a_whole_tree(world, na
     files makes ``classify`` want a whole-tree collection and the shim hand a
     tests site over as stale: either may change what pytest collects."""
     from otto.config import collected_tests as ct
-    from otto.config.repo import Repo
+    from otto.config.project import Project
 
-    repo, _cli = world
-    path = repo / name
+    project, _cli = world
+    path = project / name
     if path.exists():
         _bump(path)
     else:
         path.write_text("")
-    live = Repo(sut_dir=repo)
+    live = Project(root=project)
     assert ct.classify(live, ct.read_table(live)).whole_tree, name
     out = _outcome("otto test ", 2)
     assert out.items is None, name
@@ -919,10 +923,10 @@ def test_every_pytest_config_name_sends_the_table_back_to_a_whole_tree(world, na
 
 def test_the_real_collector_wrote_the_default_parents_the_pins_rely_on(world):
     """east defaults to dut1 (priority 10); west ties dut2/dut3 so the rule leaves it absent."""
-    repo, _cli = world
-    from otto.config.repo import Repo
+    project, _cli = world
+    from otto.config.project import Project
 
-    names = cc.read_cache([Repo(sut_dir=repo)])
+    names = cc.read_cache([Project(root=project)])
     assert names is not None
     assert names["docker_default_parent_by_lab"] == {"east": "dut1"}
 
@@ -945,7 +949,7 @@ def test_the_real_collector_wrote_the_default_parents_the_pins_rely_on(world):
         # west's dut2 and dut3 tie on docker_priority: the rule refuses, so TAB offers nothing.
         ("otto -l west docker logs ", 5, []),
         ("otto docker build ", 3, ["api"]),
-        ("otto docker build --repo ", 4, ["shimsut"]),
+        ("otto docker build --project ", 4, ["shimsut"]),
     ],
 )
 def test_the_docker_sites_are_answered_with_the_seeded_values(

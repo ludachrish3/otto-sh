@@ -8,14 +8,14 @@ from otto.env import EnvMeta, env_path, meta_path, read_meta, write_meta
 
 class TestEnvPath:
     def test_it_is_env_under_the_workspace_home(self, monkeypatch, tmp_path):
-        repo = tmp_path / "repo"
-        repo.mkdir()
+        project = tmp_path / "repo"
+        project.mkdir()
         monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
-        assert env_path([repo]) == workspace_home([repo]) / "env"
+        assert env_path([project]) == workspace_home([project]) / "env"
 
     def test_it_never_creates_anything(self, monkeypatch, tmp_path):
         monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
-        monkeypatch.delenv("OTTO_SUT_DIRS", raising=False)
+        monkeypatch.delenv("OTTOPATH", raising=False)
         env_path()
         assert not (tmp_path / "home").exists()
 

@@ -264,7 +264,7 @@ def declaring_class(cls: type, field_name: str) -> type:
     inheriting, on every supported interpreter (3.14's lazy ``__annotate__``
     included), so the first hit walking the MRO is the introducing class.
     Identity of THAT class -- not the field's name -- is what decides whether
-    two options classes share a flag: two repos each spelling ``lab_env``
+    two options classes share a flag: two projects each spelling ``lab_env``
     have two fields; two classes inheriting it from one base have one.
     """
     for klass in cls.__mro__:
@@ -390,7 +390,7 @@ class OptionsNotAvailableError(OttoError, LookupError):
 class OptionsEntry:
     """One registration: the class (or a lazy reference to it) and the verbs it serves.
 
-    The repo that registered it is the engine's: ``OPTIONS.repo(key)``.
+    The project that registered it is the engine's: ``OPTIONS.project(key)``.
     """
 
     target: "type | Ref"
@@ -399,10 +399,10 @@ class OptionsEntry:
 
 @dataclasses.dataclass(frozen=True)
 class OptionsOrigin:
-    """A resolved options class with the repo that registered it (``None`` is otto)."""
+    """A resolved options class with the project that registered it (``None`` is otto)."""
 
     cls: type
-    repo: str | None
+    project: str | None
 
 
 def options_key(cls_or_path: "type | str | Ref") -> str:
@@ -573,7 +573,7 @@ def verb_option_classes(verb: str) -> list[OptionsOrigin]:
     caller to discover as a silent double-registration.
 
     A string registration whose module or attribute fails to import raises
-    ``OptionsRegistrationError`` naming the target and the registering repo,
+    ``OptionsRegistrationError`` naming the target and the registering project,
     with the import error chained.
     """
     found: list[OptionsOrigin] = []
@@ -588,10 +588,10 @@ def verb_option_classes(verb: str) -> list[OptionsOrigin]:
                 # contain it and `otto run` says it in one line.
                 raise OptionsRegistrationError(
                     f"options class {key!r}, registered for {verb} by "
-                    f"{_who(OPTIONS.repo(key))}, cannot be imported: {exc}"
+                    f"{_who(OPTIONS.project(key))}, cannot be imported: {exc}"
                 ) from exc
         cls = cast("type", OPTIONS.get(key).target)
-        found.append(OptionsOrigin(cls=cls, repo=OPTIONS.repo(key)))
+        found.append(OptionsOrigin(cls=cls, project=OPTIONS.project(key)))
     return found
 
 
@@ -601,8 +601,8 @@ def verbs_for(cls: type) -> "list[OptionVerb] | None":
     return list(OPTIONS.peek(key).verbs) if key in OPTIONS else None
 
 
-def _who(repo: str | None) -> str:
-    return "otto" if repo is None else f"repo {repo!r}"
+def _who(project: str | None) -> str:
+    return "otto" if project is None else f"project {project!r}"
 
 
 def merge_option_params(
@@ -613,7 +613,7 @@ def merge_option_params(
     A field two classes inherit from one base is one parameter. The same name
     introduced by two unrelated classes, or a name in *reserved*, raises
     ``OptionsCollisionError`` naming both owners, so a user learns before any
-    body runs rather than by one repo silently reading the other's value.
+    body runs rather than by one project silently reading the other's value.
     """
     reserved = reserved or {}
     seen: dict[str, OptionsOrigin] = {}
@@ -624,7 +624,7 @@ def merge_option_params(
             declared = declaring_class(origin.cls, param.name)
             if param.name in reserved:
                 raise OptionsCollisionError(
-                    f"{what}: field {param.name!r} of {_who(origin.repo)} "
+                    f"{what}: field {param.name!r} of {_who(origin.project)} "
                     f"({declared.__module__}.{declared.__qualname__}) collides with "
                     f"{reserved[param.name]}; rename the field"
                 )
@@ -634,8 +634,9 @@ def merge_option_params(
                     prior_cls = declared_by[param.name]
                     raise OptionsCollisionError(
                         f"{what}: field {param.name!r} is declared by both "
-                        f"{_who(prior.repo)} ({prior_cls.__module__}.{prior_cls.__qualname__}) "
-                        f"and {_who(origin.repo)} ({declared.__module__}.{declared.__qualname__}); "
+                        f"{_who(prior.project)} ({prior_cls.__module__}.{prior_cls.__qualname__}) "
+                        f"and {_who(origin.project)} "
+                        f"({declared.__module__}.{declared.__qualname__}); "
                         "share one base class, in a required dependency or a library "
                         "package, or rename the field"
                     )

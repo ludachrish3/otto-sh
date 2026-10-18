@@ -1,7 +1,7 @@
 """``otto --list-products`` / ``--list-tools``: render the listing library's answer.
 
 A thin layer: :mod:`otto.host.listing` decides what the rows are; this module
-builds the Rich table and prints. Without ``--lab`` it shows what the repos
+builds the Rich table and prints. Without ``--lab`` it shows what the projects
 declare; with ``--lab`` it loads the lab the way ``--list-hosts`` does (no
 reservation gate, no output directory) and shows what each host gets. Neither
 view contacts a host.
@@ -50,14 +50,14 @@ def show_listing(ctx: "typer.Context", seam: str) -> None:
 
         ensure_inline_lab(ctx)
         lab = get_context().lab
-        result = listing.lab_rows(lab, listing.active_repos(), seam)
+        result = listing.lab_rows(lab, listing.active_projects(), seam)
         table = Table(title=f"{title} in lab {escape(lab.name)}", box=box.ROUNDED)
         for column in (
             "name",
             "kind",
             "variant",
             "instrumented",
-            "repo",
+            "project",
             "hosts",
             "artifact",
             "stage dir",
@@ -69,7 +69,7 @@ def show_listing(ctx: "typer.Context", seam: str) -> None:
                 escape(row.kind),
                 escape(row.variant),
                 escape(row.instrumented),
-                escape(row.repo),
+                escape(row.project),
                 escape(", ".join(row.hosts)),
                 escape(row.artifact),
                 escape(row.stage_dir),
@@ -78,26 +78,26 @@ def show_listing(ctx: "typer.Context", seam: str) -> None:
         if result.unused:
             _print_line("not used in this lab:")
             for entry in result.unused:
-                _print_line(f"  {entry.name} ({entry.kind}, {entry.repo}): {entry.reason}")
+                _print_line(f"  {entry.name} ({entry.kind}, {entry.project}): {entry.reason}")
         return
 
     # A half-registered world would list a partial answer as if it were whole.
     validate_project_switches(ctx)
     fail_loud_on_bootstrap_errors(ctx)
-    repos = listing.active_repos()
+    projects = listing.active_projects()
     table = Table(title=title, box=box.ROUNDED)
-    for column in ("name", "kind", "variant", "instrumented", "repo", "match", "artifact"):
+    for column in ("name", "kind", "variant", "instrumented", "project", "match", "artifact"):
         table.add_column(column)
-    for declared in listing.declared_rows(repos, seam):
+    for declared in listing.declared_rows(projects, seam):
         table.add_row(
             escape(declared.name),
             escape(declared.kind),
             escape(declared.variant),
             escape(declared.instrumented),
-            escape(declared.repo),
+            escape(declared.project),
             escape(declared.match),
             escape(declared.artifact),
         )
     rprint(table)
-    for note in listing.provider_notes(repos, seam):
+    for note in listing.provider_notes(projects, seam):
         _print_line(note)

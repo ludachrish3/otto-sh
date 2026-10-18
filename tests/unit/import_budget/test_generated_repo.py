@@ -1,16 +1,16 @@
 def test_realistic_repo_is_shaped_like_a_real_one(tmp_path):
     from tests._fixtures.generated_repo import generate_repo
 
-    repo = generate_repo(tmp_path, files=4, dirs=2, realistic=True)
-    top = (repo / "tests" / "test_top0.py").read_text()
+    project = generate_repo(tmp_path, files=4, dirs=2, realistic=True)
+    top = (project / "tests" / "test_top0.py").read_text()
     assert "import pytest" in top
     assert "class TestTop0:" in top
-    nested = next((repo / "tests" / "sub0").glob("test_*.py")).read_text()
+    nested = next((project / "tests" / "sub0").glob("test_*.py")).read_text()
     assert "import pytest" not in nested  # nested files are walked and parsed, never executed
-    init = (repo / "pylib" / "genrepo_instructions.py").read_text()
+    init = (project / "pylib" / "genrepo_instructions.py").read_text()
     assert "otto.monitor.parsers" in init
     assert "async def noop" in init
-    settings = (repo / ".otto" / "settings.toml").read_text()
+    settings = (project / ".otto" / "settings.toml").read_text()
     assert 'backend = "json"' in settings
     assert "lab_data/tech1" in settings
 
@@ -18,11 +18,11 @@ def test_realistic_repo_is_shaped_like_a_real_one(tmp_path):
 def test_generate_repo_creates_requested_shape(tmp_path):
     from tests._fixtures.generated_repo import generate_repo
 
-    repo = generate_repo(tmp_path, files=40, dirs=4, top_level=3)
+    project = generate_repo(tmp_path, files=40, dirs=4, top_level=3)
 
-    assert (repo / ".otto" / "settings.toml").is_file()
-    assert (repo / "pylib" / "genrepo_instructions.py").is_file()
-    tests_dir = repo / "tests"
+    assert (project / ".otto" / "settings.toml").is_file()
+    assert (project / "pylib" / "genrepo_instructions.py").is_file()
+    tests_dir = project / "tests"
     assert len(list(tests_dir.rglob("test_*.py"))) == 43
     assert len(list(tests_dir.glob("test_*.py"))) == 3
     assert len([d for d in tests_dir.iterdir() if d.is_dir()]) == 4
@@ -38,16 +38,16 @@ def test_ssh_lab_port_adds_a_closed_port_host(tmp_path):
 
     from tests._fixtures.generated_repo import BUDGET_SSH_HOST, generate_repo
 
-    repo = generate_repo(tmp_path, files=2, dirs=1, realistic=True, ssh_lab_port=40123)
-    lab = json.loads((repo / "budget_lab" / "lab.json").read_text())
+    project = generate_repo(tmp_path, files=2, dirs=1, realistic=True, ssh_lab_port=40123)
+    lab = json.loads((project / "budget_lab" / "lab.json").read_text())
     [element] = lab["elements"]
     assert element["name"] == BUDGET_SSH_HOST == "budget-ssh"
     assert element["labs"] == ["unix"]
     [host] = element["hosts"]
     assert (host["ip"], host["ssh_options"]["port"]) == ("127.0.0.1", 40123)
-    settings = (repo / ".otto" / "settings.toml").read_text()
+    settings = (project / ".otto" / "settings.toml").read_text()
     assert settings.count("[[lab.sources]]") == 2
-    assert str(repo / "budget_lab") in settings
+    assert str(project / "budget_lab") in settings
 
 
 def test_the_realistic_init_imports_where_the_decorator_lives_beside_the_run_verb(
@@ -64,7 +64,7 @@ def test_the_realistic_init_imports_where_the_decorator_lives_beside_the_run_ver
 
     from tests._fixtures.generated_repo import generate_repo
 
-    repo = generate_repo(tmp_path, files=1, dirs=1, realistic=True)
+    project = generate_repo(tmp_path, files=1, dirs=1, realistic=True)
     registered = []
 
     def instruction():
@@ -85,5 +85,5 @@ def test_the_realistic_init_imports_where_the_decorator_lives_beside_the_run_ver
         module = types.ModuleType(name)
         module.__dict__.update(attrs)
         monkeypatch.setitem(sys.modules, name, module)
-    runpy.run_path(str(repo / "pylib" / "genrepo_instructions.py"))
+    runpy.run_path(str(project / "pylib" / "genrepo_instructions.py"))
     assert registered == ["noop", "local_true"]

@@ -148,7 +148,7 @@ def test_set_context_installs_the_run_and_reset_context_restores_it():
 
 
 def test_the_active_run_protocol_is_the_four_names_the_context_provides():
-    """``lab``, ``repos``, ``ordered_repos`` and ``admissible_ids(require_nonempty=...)``.
+    """``lab``, ``repos``, ``ordered_projects`` and ``admissible_ids(require_nonempty=...)``.
 
     The protocol a reader below the run layer may use, and each member as the
     context defines it. ty checks the full shapes where ``set_context`` hands
@@ -160,9 +160,9 @@ def test_the_active_run_protocol_is_the_four_names_the_context_provides():
     from otto.context import OttoContext
 
     members = sorted(name for name in vars(inv.ActiveRun) if not name.startswith("_"))
-    assert members == ["admissible_ids", "lab", "ordered_repos", "repos"]
+    assert members == ["admissible_ids", "lab", "ordered_projects", "projects"]
     assert "lab" in {field.name for field in dataclasses.fields(OttoContext)}
-    for name in ["repos", "ordered_repos"]:
+    for name in ["projects", "ordered_projects"]:
         assert isinstance(inspect.getattr_static(OttoContext, name), property), name
     protocol = inspect.signature(inv.ActiveRun.admissible_ids).parameters
     context = inspect.signature(OttoContext.admissible_ids).parameters

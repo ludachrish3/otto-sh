@@ -17,7 +17,7 @@ from typing import Any
 import pytest
 import pytest_asyncio
 
-from otto.config.env import SUT_DIRS_ENV_VAR
+from otto.config.env import OTTOPATH_ENV_VAR
 from otto.context import OttoContext, set_context
 from otto.host.element import Element
 from otto.host.login_proxy import Cred
@@ -69,10 +69,10 @@ def pytest_collection_modifyitems(config, items):
 
 
 def _default_sut_dirs_env_impl():
-    """``OTTO_SUT_DIRS`` -> the ``repo1`` fixture SUT for this tree, at RUNTIME.
+    """``OTTOPATH`` -> the ``repo1`` fixture SUT for this tree, at RUNTIME.
 
     History: this was a module-scope ``ensure_sut_dirs()`` call justified by
-    a "config reads OTTO_SUT_DIRS at import time" comment that stopped being
+    a "config reads OTTOPATH at import time" comment that stopped being
     true — every reader (``bootstrap()``/``OttoEnvSettings``, spawned otto
     subprocesses) reads the env lazily at call time, which a write made before
     the reader runs fully precedes. Import-time env writes are banned (G11): they run
@@ -84,13 +84,13 @@ def _default_sut_dirs_env_impl():
     Plain generator (the ``_hygiene_bracket_impl`` pattern) so the unit-lane
     pin can drive set-and-restore directly.
     """
-    prior = os.environ.get(SUT_DIRS_ENV_VAR)
-    os.environ.setdefault(SUT_DIRS_ENV_VAR, default_sut_dir())
+    prior = os.environ.get(OTTOPATH_ENV_VAR)
+    os.environ.setdefault(OTTOPATH_ENV_VAR, default_sut_dir())
     yield
     if prior is None:
-        os.environ.pop(SUT_DIRS_ENV_VAR, None)
+        os.environ.pop(OTTOPATH_ENV_VAR, None)
     else:
-        os.environ[SUT_DIRS_ENV_VAR] = prior
+        os.environ[OTTOPATH_ENV_VAR] = prior
 
 
 @pytest.fixture(autouse=True)
@@ -99,10 +99,10 @@ def _default_sut_dirs_env():
 
     It was session-scoped, and ``make coverage`` runs every tier in ONE xdist
     session: the first integration test on a worker set
-    ``OTTO_SUT_DIRS=tests/repo1`` and left it set for the rest of that worker's
+    ``OTTOPATH=tests/repo1`` and left it set for the rest of that worker's
     life. A unit test scheduled there afterwards that builds an ``OttoContext``
     over a hand-made ``Lab`` resolves its project scopes through
-    ``get_ordered_repos()``, which bootstrapped repo1 out of that ambient env —
+    ``get_ordered_projects()``, which bootstrapped repo1 out of that ambient env —
     harmless only for as long as repo1 declared no ``[project]`` table. Once it
     did, those unit tests raised ``ProjectScopeError`` (or a ``TypeError``
     fullmatching a mock's ``source_lab``): 50 failures under ``make coverage``,
@@ -120,17 +120,17 @@ def _default_sut_dirs_env():
 
 @pytest.fixture(scope="module")
 def sut_dirs_env_module():
-    """``OTTO_SUT_DIRS`` for a MODULE-scoped fixture, which is set up before the
+    """``OTTOPATH`` for a MODULE-scoped fixture, which is set up before the
     function-scoped autouse above can run.
 
     Requested by name, never autouse, from the module-scoped fixtures in this
     tree that reach otto's config themselves — ``test_docker_run_get_put.stack``
-    is the live case: its ``compose_up`` walks ``get_repos()``. The others take
+    is the live case: its ``compose_up`` walks ``get_projects()``. The others take
     a flock or hand-build a ``UnixHost``/``Lab``, neither of which reads the env
     or bootstraps (a context reads its repos lazily), so they do not ask.
 
     Brackets the composition state too, at both of its owners: the discovery
-    cache ``otto.config.repo`` holds and the composed-repos catalog the root
+    cache ``otto.config.project`` holds and the composed-repos catalog the root
     publishes to ``otto.declared``, and
     the CLI's completion-cache snapshot on ``otto.registry``. A
     module fixture primes them BEFORE the root conftest's per-test
@@ -140,7 +140,7 @@ def sut_dirs_env_module():
     """
     import dataclasses
 
-    import otto.config.repo as config_repo
+    import otto.config.project as config_repo
     from otto import declared, registry
 
     saved_discovery = dataclasses.replace(config_repo._discovery)

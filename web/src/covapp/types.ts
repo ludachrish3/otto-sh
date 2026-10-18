@@ -116,7 +116,7 @@ export interface IndexPayload {
   stamp: string;
   generated_at: string;
   otto_version: string;
-  project_name: string;
+  report_title: string;
   /** Precedence order, index 0 = highest. Can be `[]` for a data-less store —
    * no phantom "system" fallback; tolerate an empty list without crashing. */
   tier_order: string[];
@@ -136,14 +136,14 @@ export interface IndexPayload {
    * `id` — `LineJson.asserted` values are indexes into this table. */
   overrides: OverrideJson[];
   run_contrib: Record<string, RunContrib>;
-  /** Repo-wide coverable line count. */
+  /** Project-wide coverable line count. */
   total_lines: number;
-  /** Root dir node; `name` == `project_name`. */
+  /** Root dir node; `name` == `report_title`. */
   tree: DirNode;
   /** Per-ticket rollups (commit-message attribution). Missing-line detail
    * is deferred to each ticket's `chunk` (`cov_data/tickets/<chunk>.js`). */
   tickets: TicketSummary[];
-  /** DEDUPED repo-truth behind the tickets page's aggregate StatsCard
+  /** DEDUPED project-truth behind the tickets page's aggregate StatsCard
    * (design §6.1: "the overall card is repo-truth; the rows sum to
    * more"). A line named by several tickets (§2 — the normal case, not an
    * edge case) counts ONCE here, unlike `tickets[].owned`/`covered`, which

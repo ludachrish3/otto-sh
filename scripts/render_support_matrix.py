@@ -1723,7 +1723,7 @@ def _provenance_section() -> "list[str]":
         "   teardown rather than from inside the test body.",
         "2. The collate step (`scripts/collate_support_matrix.py`, also `make",
         "   support-matrix`) folds those records into `schemas/support_matrix.json`. It is",
-        "   the **only** thing in the repo that may write a `measured-*` verdict; it cannot",
+        "   the **only** thing in the codebase that may write a `measured-*` verdict; it cannot",
         "   run `git`; and a run that did not draw a cell leaves that cell byte-identical,",
         "   so a sampled run can never quietly downgrade the matrix.",
         "3. The release commits the result (`make release-matrix`), but only when no cell",

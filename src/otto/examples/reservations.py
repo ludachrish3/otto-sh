@@ -80,8 +80,8 @@ class ExampleReservationBackend(ReservationBackendBase):
     url : str | None
         Forwarded to the base, which keeps it as ``self.url``. This in-memory
         sample never reads it.
-    repo_dir : Path | None
-        The SUT repo root, forwarded to the base as ``self.repo_dir``. This
+    project_root : Path | None
+        The project root, forwarded to the base as ``self.project_root``. This
         in-memory sample never reads it; a real backend would use it to anchor
         relative path-like settings of its own.
     username : str | None
@@ -96,11 +96,11 @@ class ExampleReservationBackend(ReservationBackendBase):
         self,
         *,
         url: str | None = None,
-        repo_dir: Path | None = None,
+        project_root: Path | None = None,
         username: str | None = None,
         reservations: dict[str, list[str]] | None = None,
     ) -> None:
-        super().__init__(url=url, repo_dir=repo_dir, username=username)
+        super().__init__(url=url, project_root=project_root, username=username)
         source = _DEMO_RESERVATIONS if reservations is None else reservations
         self._by_user: dict[str, set[str]] = {
             user: set(resources) for user, resources in source.items()
@@ -157,7 +157,7 @@ def example_reservations(
     """Build the example backend from its parsed sub-table and otto's environment."""
     return ExampleReservationBackend(
         url=c.env.url,
-        repo_dir=c.env.repo_dir,
+        project_root=c.env.project_root,
         username=c.env.username,
         reservations=c.config.reservations,
     )

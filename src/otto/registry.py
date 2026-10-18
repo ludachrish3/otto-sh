@@ -15,15 +15,15 @@ same rules:
   :class:`IncompleteRegistration`.
 - **Attribution is captured by the engine.** The first calling frame outside
   the engine and outside every ``register_*`` wrapper is the registrant; the
-  registering repo comes from :func:`registering_repo`.
+  registering project comes from :func:`registering_project`.
 - **Every change bumps a revision** that derived caches key on.
 
 Domain modules keep their public ``register_*``/``build_*`` wrapper functions;
 the wrappers build records, and the engine applies the rules.
 
-The module also holds the *registering-repo marker* (:func:`registering_repo`,
-:func:`get_registering_repo`): the context variable ``bootstrap()`` sets around
-each repo's init imports, so registrations record *which repo* an entry came
+The module also holds the *registering-project marker* (:func:`registering_project`,
+:func:`get_registering_project`): the context variable ``bootstrap()`` sets around
+each project's init imports, so registrations record *which project* an entry came
 from rather than only which module.
 
 And it holds the CLI's *completion-cache snapshot* (:func:`get_completion_names`,
@@ -40,7 +40,7 @@ caller (``tests/unit/test_slot_installers.py``): the CLI entry installs it
 (:func:`set_completion_names`), and :func:`otto.bootstrap.invalidate`
 withdraws it (:func:`clear_completion_names`).
 
-Every table refuses entries registered from outside otto while repo test files
+Every table refuses entries registered from outside otto while project test files
 load (:func:`loading_test_files`): test files and conftests load only inside a
 pytest session, so anything they registered would exist for some commands and
 not others. A registered :class:`Ref` resolves outside that phase, wherever its
@@ -103,11 +103,11 @@ __all__ = [
     "RegistrationRefused",
     "Registry",
     "RegistryView",
-    "RequireRepo",
+    "RequireProject",
     "Subscription",
     "class_backend",
     "configured_backend",
-    "registering_repo",
+    "registering_project",
 ]
 
 T = TypeVar("T")
@@ -184,8 +184,8 @@ class RegistrationRefused(OttoError, ValueError):  # noqa: N818 — interface-fi
     test file is often the first thing to import one.
 
     Also raised for a write attempted while a registry check runs, and for a
-    registration a registry's ``RequireRepo`` capability refuses outside a
-    repo's init import.
+    registration a registry's ``RequireProject`` capability refuses outside a
+    project's init import.
     """
 
 
@@ -216,7 +216,7 @@ _LOADING_TEST_FILES: "contextvars.ContextVar[bool]" = contextvars.ContextVar(
 
 @contextlib.contextmanager
 def loading_test_files() -> "Iterator[None]":
-    """Mark the block as importing repo test files: only otto's modules may register in it."""
+    """Mark the block as importing project test files: only otto's modules may register in it."""
     token = _LOADING_TEST_FILES.set(True)
     try:
         yield
@@ -225,7 +225,7 @@ def loading_test_files() -> "Iterator[None]":
 
 
 def is_loading_test_files() -> bool:
-    """Whether the current context is importing repo test files."""
+    """Whether the current context is importing project test files."""
     return _LOADING_TEST_FILES.get()
 
 
@@ -243,36 +243,36 @@ def refuse_during_test_load(kind: str, name: str, origin: str) -> None:
     """
     if _LOADING_TEST_FILES.get() and not _is_otto_origin(origin):
         raise RegistrationRefused(
-            f"{kind} {name!r} is registered from {origin!r} while repo test files load; "
+            f"{kind} {name!r} is registered from {origin!r} while project test files load; "
             f"register it from an init module listed in .otto/settings.toml, not a test "
             f"file or conftest (those load only inside a pytest session)"
         )
 
 
-# ── Registering-repo marker ─────────────────────────────────────────────
-# Bootstrap wraps each repo's init-module imports in registering_repo(name)
-# so the engine can attribute what they register to the repo whose import is
+# ── Registering-project marker ─────────────────────────────────────────────
+# Bootstrap wraps each project's init-module imports in registering_project(name)
+# so the engine can attribute what they register to the project whose import is
 # running. A ContextVar, not a module global: exception-safe restore for free,
-# and nested use (a repo importing another's init helper) unwinds correctly.
+# and nested use (a project importing another's init helper) unwinds correctly.
 
-_REGISTERING_REPO: "contextvars.ContextVar[str | None]" = contextvars.ContextVar(
+_REGISTERING_PROJECT: "contextvars.ContextVar[str | None]" = contextvars.ContextVar(
     "otto_registering_repo", default=None
 )
 
 
-def get_registering_repo() -> str | None:
-    """Name of the repo whose init modules are currently being imported, if any."""
-    return _REGISTERING_REPO.get()
+def get_registering_project() -> str | None:
+    """Name of the project whose init modules are currently being imported, if any."""
+    return _REGISTERING_PROJECT.get()
 
 
 @contextlib.contextmanager
-def registering_repo(name: str) -> "Iterator[None]":
-    """Attribute registrations inside this block to repo *name* (bootstrap-only)."""
-    token = _REGISTERING_REPO.set(name)
+def registering_project(name: str) -> "Iterator[None]":
+    """Attribute registrations inside this block to project *name* (bootstrap-only)."""
+    token = _REGISTERING_PROJECT.set(name)
     try:
         yield
     finally:
-        _REGISTERING_REPO.reset(token)
+        _REGISTERING_PROJECT.reset(token)
 
 
 @contextlib.contextmanager
@@ -280,13 +280,13 @@ def _registering_for_otto() -> "Iterator[None]":
     """Attribute registrations inside this block to otto itself, whatever block encloses it.
 
     Private, for otto's own slots: the first-party actions are otto's even when
-    a repo's init import is what first imports their installer.
+    a project's init import is what first imports their installer.
     """
-    token = _REGISTERING_REPO.set(None)
+    token = _REGISTERING_PROJECT.set(None)
     try:
         yield
     finally:
-        _REGISTERING_REPO.reset(token)
+        _REGISTERING_PROJECT.reset(token)
 
 
 # ── Completion-cache snapshot ───────────────────────────────────────────
@@ -669,10 +669,10 @@ class Capability:
 
 @final
 @dataclasses.dataclass(frozen=True)
-class RequireRepo(Capability):
-    """Refuse a registration made outside a repo's init import.
+class RequireProject(Capability):
+    """Refuse a registration made outside a project's init import.
 
-    A register or register_many made while :func:`get_registering_repo` is
+    A register or register_many made while :func:`get_registering_project` is
     ``None`` raises :class:`RegistrationRefused`. It does not apply to
     unregister, test restore or publish.
     """
@@ -816,7 +816,7 @@ ResultCheck = Callable[[str, object], None]
 class _Stored:
     value: object
     origin: str
-    repo: str | None
+    project: str | None
     generation: int
     owes_check: bool = False
     """The record holds a Ref and its check_resolved has not passed yet."""
@@ -924,10 +924,10 @@ class Registry(Generic[E]):
         """Register *entry* under *name*; a taken name raises unless *overwrite*.
 
         Raises:
-            RegistrationRefused: If repo test files are loading and the
+            RegistrationRefused: If project test files are loading and the
                 registrant is outside the ``otto`` package, if a registry check
-                is running, or if a ``RequireRepo`` registry is written outside
-                a repo's init import.
+                is running, or if a ``RequireProject`` registry is written outside
+                a project's init import.
             IncompleteRegistration: If *entry* is not a complete, frozen
                 record of the registry's entry type.
             DuplicateRegistration: If *name* is already registered and
@@ -952,7 +952,7 @@ class Registry(Generic[E]):
         if not batch:
             return  # nothing to register: no change, so no commit and no revision bump
         registrant = _attributed_module()
-        repo = get_registering_repo()
+        project = get_registering_project()
         names = [name for name, _ in batch]
         holding_refs: set[str] = set()
 
@@ -964,7 +964,7 @@ class Registry(Generic[E]):
                 else:
                     generation = old.generation if old is not None else 0
                 self._entries[name] = _Stored(
-                    entry, registrant, repo, generation, owes_check=name in holding_refs
+                    entry, registrant, project, generation, owes_check=name in holding_refs
                 )
 
         _commit(
@@ -975,20 +975,20 @@ class Registry(Generic[E]):
                 registrant,
                 write=write,
                 bump_revision=self._bump,
-                capabilities=lambda: self._check_capabilities(names, repo),
+                capabilities=lambda: self._check_capabilities(names, project),
                 records=lambda: holding_refs.update(self._check_records(batch)),
                 collisions=lambda: self._check_collisions(names, overwrite, registrant),
                 validate=lambda: self._run_validate(batch),
             )
         )
 
-    def _check_capabilities(self, names: list[str], repo: str | None) -> None:
+    def _check_capabilities(self, names: list[str], project: str | None) -> None:
         """Apply each declared capability (step 4)."""
         for justified in self._capabilities:
-            if isinstance(justified.capability, RequireRepo) and repo is None:
+            if isinstance(justified.capability, RequireProject) and project is None:
                 raise RegistrationRefused(
                     f"{self._kind} {names[0] if names else ''!r} must be registered from "
-                    "a repo init module (listed in .otto/settings.toml [init]); no repo's "
+                    "a project init module (listed in .otto/settings.toml [init]); no project's "
                     "init import is running"
                 )
 
@@ -1159,7 +1159,7 @@ class Registry(Generic[E]):
                 return  # replaced while the Ref imported: the newer entry stays
             generation = next(_GENERATIONS) if bump_generation else stored.generation
             self._entries[name] = _Stored(
-                result, stored.origin, stored.repo, generation, owes_check=owes_check
+                result, stored.origin, stored.project, generation, owes_check=owes_check
             )
 
         _commit(
@@ -1237,14 +1237,14 @@ class Registry(Generic[E]):
         self._ensure_known(name)
         return self._entries[name].origin
 
-    def repo(self, name: str) -> str | None:
-        """Return the repo whose init import registered *name*, or ``None`` outside one.
+    def project(self, name: str) -> str | None:
+        """Return the project whose init import registered *name*, or ``None`` outside one.
 
         Raises:
             ValueError: If *name* is unknown (same rich error as :meth:`get`).
         """
         self._ensure_known(name)
-        return self._entries[name].repo
+        return self._entries[name].project
 
     def __contains__(self, name: object) -> bool:
         """Return whether *name* is registered."""
@@ -1264,7 +1264,7 @@ class Registry(Generic[E]):
     def _snapshot(self) -> "list[_SnapshotRow]":
         """Return the stored state, in order, with nothing resolved (test support)."""
         return [
-            (name, s.value, s.origin, s.repo, s.generation, s.owes_check)
+            (name, s.value, s.origin, s.project, s.generation, s.owes_check)
             for name, s in self._entries.items()
         ]
 
@@ -1281,11 +1281,11 @@ class Registry(Generic[E]):
                 name: _Stored(
                     value,
                     origin,
-                    repo,
+                    project,
                     next(_GENERATIONS) if bump_generation else generation,
                     owes_check=owes_check,
                 )
-                for name, value, origin, repo, generation, owes_check in state
+                for name, value, origin, project, generation, owes_check in state
             }
 
         _commit(
@@ -1319,11 +1319,11 @@ class Registry(Generic[E]):
 @final
 @dataclasses.dataclass(frozen=True)
 class Subscribed(Generic[T]):
-    """One occurrence in a :class:`Subscription`: the value, who subscribed it, from which repo."""
+    """One occurrence in a :class:`Subscription`: the value, who subscribed it, and its project."""
 
     value: T
     origin: str
-    repo: str | None
+    project: str | None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1331,7 +1331,7 @@ class _Occurrence:
     id: int
     value: object
     origin: str
-    repo: str | None
+    project: str | None
 
 
 _OCCURRENCES = itertools.count(1)
@@ -1383,22 +1383,22 @@ class Subscription(Generic[T]):
         return self._revision
 
     def subscribe(self, value: T) -> Token:
-        """Append *value*, recording its origin and repo; return the token that cancels it.
+        """Append *value*, recording its origin and project; return the token that cancels it.
 
         Raises:
-            RegistrationRefused: If repo test files are loading and the
+            RegistrationRefused: If project test files are loading and the
                 subscriber is outside the ``otto`` package, or a registry check
                 is running.
         """
         origin = _attributed_module()
-        repo = get_registering_repo()
+        project = get_registering_project()
         occurrence = next(_OCCURRENCES)
         label = getattr(value, "__qualname__", None) or repr(value)
 
         def write(bump_generation: bool) -> None:
             if bump_generation:
                 raise RuntimeError("subscriptions have no generations")
-            self._occurrences.append(_Occurrence(occurrence, value, origin, repo))
+            self._occurrences.append(_Occurrence(occurrence, value, origin, project))
 
         _commit(
             _Change(
@@ -1438,7 +1438,7 @@ class Subscription(Generic[T]):
 
     def items(self) -> "list[Subscribed[T]]":
         """Every occurrence, in subscription order."""
-        return [Subscribed(cast("T", o.value), o.origin, o.repo) for o in self._occurrences]
+        return [Subscribed(cast("T", o.value), o.origin, o.project) for o in self._occurrences]
 
     def __len__(self) -> int:
         """Return the number of occurrences."""
@@ -1491,7 +1491,7 @@ class Derived(Generic[E]):
     name: str
     entry: E
     origin: str
-    repo: str | None
+    project: str | None
 
 
 @final
@@ -1595,9 +1595,9 @@ class RegistryView(Generic[E]):
         """Return the module credited with *name*'s row."""
         return self._row(name).origin
 
-    def repo(self, name: str) -> str | None:
-        """Return the repo credited with *name*'s row, or ``None``."""
-        return self._row(name).repo
+    def project(self, name: str) -> str | None:
+        """Return the project credited with *name*'s row, or ``None``."""
+        return self._row(name).project
 
     def __contains__(self, name: object) -> bool:
         """Return whether *name* is derived."""
@@ -1830,9 +1830,9 @@ class BackendRegistry(Generic[Env, T, M]):
         """Return the module that registered *name*."""
         return self._table.origin(name)
 
-    def repo(self, name: str) -> str | None:
-        """Return the repo whose init import registered *name*, or ``None``."""
-        return self._table.repo(name)
+    def project(self, name: str) -> str | None:
+        """Return the project whose init import registered *name*, or ``None``."""
+        return self._table.project(name)
 
     def __contains__(self, name: object) -> bool:
         """Return whether *name* is registered."""

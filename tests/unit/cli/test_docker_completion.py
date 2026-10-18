@@ -15,7 +15,7 @@ NAMES = {
     "docker_default_parent_by_lab": {"east": "test3"},  # west: two at 0, the rule refuses
     "docker_images": ["api", "db"],
     "docker_services_by_use_case": {"integration": ["api", "db"], "smoke": ["api"]},
-    "repos": ["one", "two"],
+    "active_projects": ["one", "two"],
 }
 
 
@@ -45,7 +45,7 @@ def test_service_completer_offers_nothing_until_a_use_case_is_on_the_line():
 
 
 def test_repo_completer_offers_the_repo_names():
-    assert docker_cli._repo_completer(_ctx(), "t") == ["two"]
+    assert docker_cli._active_project_completer(_ctx(), "t") == ["two"]
 
 
 OBSERVED = {
@@ -61,7 +61,7 @@ def observed():
             "otto.config.completion_cache.read_docker_observed",
             side_effect=lambda _r, h: OBSERVED.get(h, ObservedDockerState([], [], [], [])),
         ),
-        patch("otto.config.repo.discover", return_value=SimpleNamespace(repos=["repo"])),
+        patch("otto.config.project.discover", return_value=SimpleNamespace(projects=["repo"])),
     ):
         yield
 
@@ -124,14 +124,14 @@ def test_the_observed_completers_never_bootstrap_inside_a_tab(observed, monkeypa
     # without a parent on the line.
     monkeypatch.setattr(docker_cli, "_selected_labs_for_tab", lambda ctx: ["east"])
     with patch(
-        "otto.declared.get_repos",
+        "otto.declared.get_projects",
         side_effect=AssertionError("bootstrap inside a TAB"),
-    ) as get_repos:
+    ) as get_projects:
         assert docker_cli._container_completer(_ctx(parent="test3"), "") == ["unix-i-api-1", "3f9a"]
         assert docker_cli._container_completer(_ctx(parent=None), "unix-i-a") == ["unix-i-api-1"]
         assert docker_cli._tag_completer(_ctx(parent="test3"), "") == ["api:latest"]
         assert docker_cli._tag_completer(_ctx(parent=None), "") == ["api:latest"]
-    get_repos.assert_not_called()
+    get_projects.assert_not_called()
 
 
 def test_container_completer_reads_the_one_parents_state_alone(observed, monkeypatch):
@@ -147,7 +147,7 @@ def test_a_cold_cache_falls_back_to_the_collectors_for_declared_names():
     with (
         patch("otto.registry.get_completion_names", return_value=None),
         patch("otto.config.completion_cache.collect_docker_image_names", return_value=["cold"]),
-        patch("otto.declared.get_repos", return_value=["repo"]),
+        patch("otto.declared.get_projects", return_value=["repo"]),
     ):
         assert docker_cli._image_completer(_ctx(), "") == ["cold"]
 
@@ -156,13 +156,13 @@ def test_the_completers_never_raise():
     boom = RuntimeError("boom")
     with (
         patch("otto.registry.get_completion_names", side_effect=boom),
-        patch("otto.declared.get_repos", side_effect=boom),
-        patch("otto.config.repo.discover", side_effect=boom),
+        patch("otto.declared.get_projects", side_effect=boom),
+        patch("otto.config.project.discover", side_effect=boom),
         patch("otto.config.completion_cache.read_docker_observed", side_effect=boom),
     ):
         assert docker_cli._image_completer(_ctx(), "") == []
         assert docker_cli._service_completer(_ctx(use_case="integration"), "") == []
-        assert docker_cli._repo_completer(_ctx(), "") == []
+        assert docker_cli._active_project_completer(_ctx(), "") == []
         assert docker_cli._container_completer(_ctx(parent=None), "") == []
         assert docker_cli._container_completer(_ctx(parent="test3"), "") == []
         assert docker_cli._tag_completer(_ctx(parent="test3"), "") == []
@@ -172,7 +172,7 @@ def test_the_completers_never_raise():
     ("leaf", "param", "completer"),
     [
         ("_build", "image", "_image_completer"),
-        ("_build", "repo", "_repo_completer"),
+        ("_build", "project", "_active_project_completer"),
         ("_build", "tag", "_tag_completer"),
         ("_compose_build", "image", "_image_completer"),
         ("_compose_up", "service", "_service_completer"),

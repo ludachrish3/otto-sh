@@ -31,11 +31,11 @@ from tests._fixtures.sut_repos import collected, pytest_main_returning
 from tests._fixtures.sut_repos import repo_double as _stub_repo
 
 
-def _use_repo(monkeypatch, repo: MagicMock) -> MagicMock:
+def _use_repo(monkeypatch, project: MagicMock) -> MagicMock:
     """Make *repo* the lab's only repo."""
 
-    patch_bootstrap(monkeypatch, [repo])
-    return repo
+    patch_bootstrap(monkeypatch, [project])
+    return project
 
 
 def test_suite_package_reexports_selection_api():
@@ -61,7 +61,7 @@ def test_run_options_defaults_match_cli():
     o = RunOptions()
     assert o.cov_clean is True
     assert o.threshold == 100.0
-    assert o.project_name == "Coverage Report"
+    assert o.report_title == "Coverage Report"
 
 
 def test_suite_run_result_passed():
@@ -267,11 +267,11 @@ def _stub_instrumented_lab(monkeypatch, *, instrumented=True):
     rows = [InstrumentationRow("h1", "app", True)] if instrumented else []
     monkeypatch.setattr(
         "otto.coverage.instrumentation.detect_for_lab",
-        lambda repos: InstrumentationReport(rows),
+        lambda projects: InstrumentationReport(rows),
     )
     monkeypatch.setattr(
         "otto.config.coverage_settings.get_cov_config",
-        lambda repos: _real_get_cov_config(repos) or {"hosts": ".*"},
+        lambda projects: _real_get_cov_config(projects) or {"hosts": ".*"},
     )
 
 
@@ -281,10 +281,10 @@ def test_resolve_coverage_auto_turns_on_when_instrumented(monkeypatch):
 
     monkeypatch.setattr(
         "otto.coverage.instrumentation.detect_for_lab",
-        lambda repos: InstrumentationReport([InstrumentationRow("h1", "app", True)]),
+        lambda projects: InstrumentationReport([InstrumentationRow("h1", "app", True)]),
     )
     monkeypatch.setattr(
-        "otto.config.coverage_settings.get_cov_config", lambda repos: {"hosts": ".*"}
+        "otto.config.coverage_settings.get_cov_config", lambda projects: {"hosts": ".*"}
     )
     assert resolve_coverage(RunOptions(), [], command="otto test").cov is True
 
@@ -295,10 +295,10 @@ def test_resolve_coverage_auto_stays_off_when_nothing_instrumented(monkeypatch):
 
     monkeypatch.setattr(
         "otto.coverage.instrumentation.detect_for_lab",
-        lambda repos: InstrumentationReport([InstrumentationRow("h1", "app", False)]),
+        lambda projects: InstrumentationReport([InstrumentationRow("h1", "app", False)]),
     )
     monkeypatch.setattr(
-        "otto.config.coverage_settings.get_cov_config", lambda repos: {"hosts": ".*"}
+        "otto.config.coverage_settings.get_cov_config", lambda projects: {"hosts": ".*"}
     )
     assert resolve_coverage(RunOptions(), [], command="otto test").cov is False
 
@@ -309,10 +309,10 @@ def test_resolve_coverage_forced_on_with_nothing_raises(monkeypatch):
     from otto.suite.run import RunOptions, resolve_coverage
 
     monkeypatch.setattr(
-        "otto.coverage.instrumentation.detect_for_lab", lambda repos: InstrumentationReport([])
+        "otto.coverage.instrumentation.detect_for_lab", lambda projects: InstrumentationReport([])
     )
     monkeypatch.setattr(
-        "otto.config.coverage_settings.get_cov_config", lambda repos: {"hosts": ".*"}
+        "otto.config.coverage_settings.get_cov_config", lambda projects: {"hosts": ".*"}
     )
     with pytest.raises(CoverageNotInstrumentedError):
         resolve_coverage(RunOptions(cov=True), [], command="otto test --cov")
@@ -323,7 +323,7 @@ def test_resolve_coverage_forced_off_never_detects(monkeypatch):
 
     monkeypatch.setattr(
         "otto.coverage.instrumentation.detect_for_lab",
-        lambda repos: (_ for _ in ()).throw(AssertionError("must not detect")),
+        lambda projects: (_ for _ in ()).throw(AssertionError("must not detect")),
     )
     assert resolve_coverage(RunOptions(cov=False), [], command="otto test").cov is False
 
@@ -334,13 +334,13 @@ def test_resolve_coverage_returns_a_copy_keeping_every_other_field(monkeypatch):
 
     _stub_instrumented_lab(monkeypatch)
     monkeypatch.setattr(
-        "otto.config.coverage_settings.get_cov_config", lambda repos: {"hosts": ".*"}
+        "otto.config.coverage_settings.get_cov_config", lambda projects: {"hosts": ".*"}
     )
-    opts = RunOptions(markers="smoke", project_name="P")
+    opts = RunOptions(markers="smoke", report_title="P")
     resolved = resolve_coverage(opts, [], command="otto test")
     assert opts.cov is None
     assert resolved.cov is True
-    assert (resolved.markers, resolved.cov_report, resolved.project_name) == ("smoke", False, "P")
+    assert (resolved.markers, resolved.cov_report, resolved.report_title) == ("smoke", False, "P")
 
 
 def test_run_tests_forced_cov_with_nothing_instrumented_raises(tmp_path, monkeypatch):
@@ -373,9 +373,9 @@ def test_resolve_coverage_forced_on_refuses_a_missing_coverage_table(monkeypatch
 
     monkeypatch.setattr(
         "otto.coverage.instrumentation.detect_for_lab",
-        lambda repos: InstrumentationReport([InstrumentationRow("h1", "app", True)]),
+        lambda projects: InstrumentationReport([InstrumentationRow("h1", "app", True)]),
     )
-    monkeypatch.setattr("otto.config.coverage_settings.get_cov_config", lambda repos: {})
+    monkeypatch.setattr("otto.config.coverage_settings.get_cov_config", lambda projects: {})
     with pytest.raises(CoverageConfigError, match=r"\[coverage\] table"):
         resolve_coverage(RunOptions(cov=True), [], command="otto test --cov")
 
@@ -391,9 +391,9 @@ def test_run_tests_forced_cov_without_coverage_table_refuses_before_the_run(tmp_
     monkeypatch.setattr("otto.coverage.collect.clean_coverage", pre_clean)
     monkeypatch.setattr(
         "otto.coverage.instrumentation.detect_for_lab",
-        lambda repos: InstrumentationReport([InstrumentationRow("h1", "app", True)]),
+        lambda projects: InstrumentationReport([InstrumentationRow("h1", "app", True)]),
     )
-    monkeypatch.setattr("otto.config.coverage_settings.get_cov_config", lambda repos: {})
+    monkeypatch.setattr("otto.config.coverage_settings.get_cov_config", lambda projects: {})
 
     with pytest.raises(CoverageConfigError, match=r"\[coverage\] table"):
         run_tests([_ALPHA], run_options=RunOptions(cov=True), output_dir=tmp_path)
@@ -408,9 +408,9 @@ def test_resolve_coverage_auto_with_no_coverage_table_does_not_raise(monkeypatch
 
     monkeypatch.setattr(
         "otto.coverage.instrumentation.detect_for_lab",
-        lambda repos: InstrumentationReport([InstrumentationRow("h1", "app", True)]),
+        lambda projects: InstrumentationReport([InstrumentationRow("h1", "app", True)]),
     )
-    monkeypatch.setattr("otto.config.coverage_settings.get_cov_config", lambda repos: {})
+    monkeypatch.setattr("otto.config.coverage_settings.get_cov_config", lambda projects: {})
     assert resolve_coverage(RunOptions(), [], command="otto test").cov is False
 
 
@@ -428,7 +428,7 @@ def test_resolve_coverage_auto_survives_an_empty_hosts_selection(monkeypatch, ca
 
     monkeypatch.setattr("otto.coverage.instrumentation.detect_for_lab", _raise_empty_selection)
     monkeypatch.setattr(
-        "otto.config.coverage_settings.get_cov_config", lambda repos: {"hosts": "sensor"}
+        "otto.config.coverage_settings.get_cov_config", lambda projects: {"hosts": "sensor"}
     )
 
     with caplog.at_level("WARNING"):
@@ -457,7 +457,7 @@ def test_resolve_coverage_auto_survives_a_malformed_hosts_selector(monkeypatch, 
 
     monkeypatch.setattr("otto.coverage.instrumentation.detect_for_lab", _raise_config)
     monkeypatch.setattr(
-        "otto.config.coverage_settings.get_cov_config", lambda repos: {"hosts": ["a"]}
+        "otto.config.coverage_settings.get_cov_config", lambda projects: {"hosts": ["a"]}
     )
 
     with caplog.at_level("WARNING"):
@@ -489,7 +489,7 @@ def test_resolve_coverage_auto_warning_renders_its_brackets_literally(monkeypatc
 
     monkeypatch.setattr("otto.coverage.instrumentation.detect_for_lab", _raise_config)
     monkeypatch.setattr(
-        "otto.config.coverage_settings.get_cov_config", lambda repos: {"hosts": ["a"]}
+        "otto.config.coverage_settings.get_cov_config", lambda projects: {"hosts": ["a"]}
     )
 
     buf = io.StringIO()
@@ -517,7 +517,7 @@ def test_resolve_coverage_forced_on_propagates_an_empty_hosts_selection(monkeypa
 
     monkeypatch.setattr("otto.coverage.instrumentation.detect_for_lab", _raise_empty_selection)
     monkeypatch.setattr(
-        "otto.config.coverage_settings.get_cov_config", lambda repos: {"hosts": "sensor"}
+        "otto.config.coverage_settings.get_cov_config", lambda projects: {"hosts": "sensor"}
     )
 
     with pytest.raises(EmptySelectionError):
@@ -530,7 +530,7 @@ def test_resolve_coverage_forced_on_propagates_an_empty_hosts_selection(monkeypa
 def _run_tests_report(tmp_path, monkeypatch, *, run_options, log_dir):
     """Drive run_tests with a stubbed repo and mocked coverage tail; return the report mock."""
     # No [coverage] section → legacy gcda-only report path (what these pin).
-    _use_repo(monkeypatch, _stub_repo(tmp_path, sut_dir=log_dir, tests=[log_dir]))
+    _use_repo(monkeypatch, _stub_repo(tmp_path, root=log_dir, tests=[log_dir]))
     monkeypatch.setattr("pytest.main", pytest_main_returning())
     monkeypatch.setattr("otto.coverage.collect.collect_coverage", AsyncMock())
     monkeypatch.setattr("otto.coverage.collect.clean_coverage", AsyncMock())
@@ -577,7 +577,7 @@ def test_run_tests_default_report_dir_under_output_dir(tmp_path, monkeypatch):
     # instead.
 
 
-def test_run_tests_explicit_report_dir_and_project_name(tmp_path, monkeypatch):
+def test_run_tests_explicit_report_dir_and_report_title(tmp_path, monkeypatch):
     log_dir = tmp_path / "log"
     log_dir.mkdir()
     report_dir = tmp_path / "my_report"
@@ -590,14 +590,14 @@ def test_run_tests_explicit_report_dir_and_project_name(tmp_path, monkeypatch):
             cov_clean=False,
             cov_report=True,
             cov_report_dir=report_dir,
-            project_name="My App",
+            report_title="My App",
         ),
         log_dir=log_dir,
     )
     mock.assert_called_once()
     args = mock.call_args.args
     assert args[1] == report_dir
-    assert mock.call_args.kwargs["project_name"] == "My App"
+    assert mock.call_args.kwargs["report_title"] == "My App"
 
 
 def test_run_tests_cov_report_into_reused_dir_warns_not_raises(tmp_path, monkeypatch, caplog):
@@ -621,7 +621,7 @@ def test_run_tests_cov_report_into_reused_dir_warns_not_raises(tmp_path, monkeyp
     report_dir.mkdir()
     (report_dir / "stale.html").write_text("stale from a previous run")
 
-    _use_repo(monkeypatch, _stub_repo(tmp_path, sut_dir=log_dir, tests=[log_dir]))
+    _use_repo(monkeypatch, _stub_repo(tmp_path, root=log_dir, tests=[log_dir]))
     monkeypatch.setattr("pytest.main", pytest_main_returning())
     monkeypatch.setattr("otto.coverage.collect.clean_coverage", AsyncMock())
     _stub_instrumented_lab(monkeypatch)
@@ -699,9 +699,7 @@ def test_run_tests_ticket_spec_threaded_from_settings(tmp_path, monkeypatch):
             "tickets": {"pattern": r"[A-Z]{2,10}-[0-9]+"},
         }
     }
-    _use_repo(
-        monkeypatch, _stub_repo(tmp_path, sut_dir=log_dir, tests=[log_dir], settings=settings)
-    )
+    _use_repo(monkeypatch, _stub_repo(tmp_path, root=log_dir, tests=[log_dir], settings=settings))
     monkeypatch.setattr("pytest.main", pytest_main_returning())
     monkeypatch.setattr("otto.coverage.collect.collect_coverage", AsyncMock())
     monkeypatch.setattr("otto.coverage.collect.clean_coverage", AsyncMock())
@@ -752,7 +750,7 @@ def test_post_run_coverage_populates_ticket_data_end_to_end(tmp_path, monkeypatc
     from otto.suite.run import _post_run_coverage
 
     sut = TmpGitRepo(tmp_path / "sut")
-    repo_root = sut.root
+    project_root = sut.root
     sut.write("f.c", "int a;\nint b;\n")
     sut.commit("fix PROJ-7")
 
@@ -762,7 +760,7 @@ def test_post_run_coverage_populates_ticket_data_end_to_end(tmp_path, monkeypatc
     (hdir / "f.gcno").write_bytes(b"")
 
     async def fake_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
-        output.write_text(f"TN:\nSF:{repo_root / 'f.c'}\nDA:1,5\nend_of_record\n")
+        output.write_text(f"TN:\nSF:{project_root / 'f.c'}\nDA:1,5\nend_of_record\n")
         return output
 
     monkeypatch.setattr(merger_mod.LcovMerger, "capture", fake_capture)
@@ -771,10 +769,10 @@ def test_post_run_coverage_populates_ticket_data_end_to_end(tmp_path, monkeypatc
     # from the report path, not collection.
     monkeypatch.setattr("otto.coverage.collect.collect_coverage", AsyncMock())
 
-    repo = MagicMock()
-    repo.sut_dir = repo_root
-    repo.name = "repo"
-    repo.settings = {
+    project = MagicMock()
+    project.root = project_root
+    project.name = "repo"
+    project.settings = {
         "coverage": {
             "tiers": {"unit": {"kind": "unit", "precedence": 1, "harvest_dirs": [str(hdir)]}},
             "tickets": {"pattern": r"[A-Z]{2,10}-[0-9]+"},
@@ -789,8 +787,9 @@ def test_post_run_coverage_populates_ticket_data_end_to_end(tmp_path, monkeypatc
         cov_clean=False,
         cov_report=True,
         cov_tickets_json=tickets_json,
+        report_title="Firmware",
     )
-    asyncio.run(_post_run_coverage([repo], log_dir, opts))
+    asyncio.run(_post_run_coverage([project], log_dir, opts))
 
     assert tickets_json.exists(), (
         "tickets.json was not written — ticket_spec never reached the store"
@@ -798,6 +797,8 @@ def test_post_run_coverage_populates_ticket_data_end_to_end(tmp_path, monkeypatc
     payload = json.loads(tickets_json.read_text())
     assert [t["id"] for t in payload["tickets"]] == ["PROJ-7"]
     assert payload["tickets"][0]["lines"]["owned"] >= 1
+    assert payload["project"] == "Firmware"  # the title rides tickets.json's key "project"
+    assert "report_title" not in payload
 
 
 # ── run_tests / _post_run_coverage: overrides wiring ─────────────────────────
@@ -821,11 +822,11 @@ def test_run_tests_overrides_threaded_from_settings(tmp_path, monkeypatch):
     log_dir = tmp_path / "log"
     log_dir.mkdir()
     sut = TmpGitRepo(tmp_path / "sut")
-    repo_root = sut.root
+    project_root = sut.root
     sut.write("f.c", "int a;\n")
     sha = sut.commit("fix #1")
 
-    overrides_dir = repo_root / ".otto"
+    overrides_dir = project_root / ".otto"
     overrides_dir.mkdir()
     (overrides_dir / "coverage-overrides.toml").write_text(
         f'[[bench]]\ncommit = "{sha}"\nreason = "manual pass"\n'
@@ -841,7 +842,7 @@ def test_run_tests_overrides_threaded_from_settings(tmp_path, monkeypatch):
         }
     }
     _use_repo(
-        monkeypatch, _stub_repo(tmp_path, sut_dir=repo_root, tests=[log_dir], settings=settings)
+        monkeypatch, _stub_repo(tmp_path, root=project_root, tests=[log_dir], settings=settings)
     )
     monkeypatch.setattr("pytest.main", pytest_main_returning())
     monkeypatch.setattr("otto.coverage.collect.collect_coverage", AsyncMock())
@@ -877,9 +878,9 @@ def test_run_tests_malformed_overrides_file_warns_and_run_still_succeeds(
     pins for the report-dir collision case."""
     log_dir = tmp_path / "log"
     log_dir.mkdir()
-    repo_root = tmp_path / "sut"
-    repo_root.mkdir()
-    overrides_dir = repo_root / ".otto"
+    project_root = tmp_path / "sut"
+    project_root.mkdir()
+    overrides_dir = project_root / ".otto"
     overrides_dir.mkdir()
     (overrides_dir / "coverage-overrides.toml").write_text("not valid toml {{{")
 
@@ -890,7 +891,7 @@ def test_run_tests_malformed_overrides_file_warns_and_run_still_succeeds(
         }
     }
     _use_repo(
-        monkeypatch, _stub_repo(tmp_path, sut_dir=repo_root, tests=[log_dir], settings=settings)
+        monkeypatch, _stub_repo(tmp_path, root=project_root, tests=[log_dir], settings=settings)
     )
     monkeypatch.setattr("pytest.main", pytest_main_returning())
     monkeypatch.setattr("otto.coverage.collect.collect_coverage", AsyncMock())
@@ -1025,16 +1026,16 @@ def test_run_tests_multi_repo_junit_fan_out(tmp_path, monkeypatch):
     session's ArtifactLayout root gets the repo layer (spec §5.3) and mirrors module paths
     from THAT repo's own test roots, never the other repo's."""
 
-    repos = [
+    projects = [
         _stub_repo(
             tmp_path,
             name=name,
-            sut_dir=tmp_path / name,
+            root=tmp_path / name,
             tests=[tmp_path / name / "tests", tmp_path / name / "more_tests"],
         )
         for name in ("repoA", "repoB")
     ]
-    patch_bootstrap(monkeypatch, repos)
+    patch_bootstrap(monkeypatch, projects)
     layouts = _captured_layouts(monkeypatch)
 
     # A marker run: each repo's one session, with no collection before it.
@@ -1065,9 +1066,9 @@ def test_run_tests_a_repo_with_no_test_directory_is_not_searched(tmp_path, monke
     """Only a repo with a test directory on disk counts toward the repo layer, or gets a session."""
 
     searched = _stub_repo(
-        tmp_path, name="repoA", sut_dir=tmp_path / "repoA", tests=[tmp_path / "repoA" / "tests"]
+        tmp_path, name="repoA", root=tmp_path / "repoA", tests=[tmp_path / "repoA" / "tests"]
     )
-    bare = _stub_repo(tmp_path, name="repoB", sut_dir=tmp_path / "repoB", tests=[])
+    bare = _stub_repo(tmp_path, name="repoB", root=tmp_path / "repoB", tests=[])
     bare.tests = [tmp_path / "repoB" / "tests"]
     patch_bootstrap(monkeypatch, [searched, bare])
     layouts = _captured_layouts(monkeypatch)
@@ -1207,7 +1208,7 @@ def test_run_tests_restores_the_callers_verb_binding(tmp_path, monkeypatch, sess
 
     register_options(RunOpts, verbs=["run"])
     register_options(FirmwareOpts, verbs=["test"])
-    repo = _stub_repo(tmp_path)
+    project = _stub_repo(tmp_path)
     seen: list = []
 
     def fake_main(_args, plugins=(), **_kwargs):
@@ -1221,7 +1222,7 @@ def test_run_tests_restores_the_callers_verb_binding(tmp_path, monkeypatch, sess
 
     monkeypatch.setattr("pytest.main", fake_main)
 
-    ctx = OttoContext(lab=Lab(name="test"), bootstrap=fake_bootstrap_result([repo]))
+    ctx = OttoContext(lab=Lab(name="test"), bootstrap=fake_bootstrap_result([project]))
     ctx.bind_verb_options("run", {"lab_env": "prod"})
     before = ctx.options(RunOpts)
     token = set_context(ctx)
@@ -1271,9 +1272,9 @@ def test_run_tests_restores_prior_output_dir_on_exception(tmp_path, monkeypatch)
     from otto.context import OttoContext, reset_context, set_context
     from otto.labs.loader import Lab
 
-    repo = _stub_repo(tmp_path)
+    project = _stub_repo(tmp_path)
     _raising_session(monkeypatch)
-    ctx = OttoContext(lab=Lab(name="test"), bootstrap=fake_bootstrap_result([repo]))
+    ctx = OttoContext(lab=Lab(name="test"), bootstrap=fake_bootstrap_result([project]))
     assert ctx.output_dir is None
     token = set_context(ctx)
     try:
@@ -1383,7 +1384,7 @@ def test_run_tests_a_refused_coverage_run_leaves_an_overwrite_dir_untouched(tmp_
     (cov_dir / "stale.txt").write_text("stale")
     _use_repo(monkeypatch, _stub_repo(tmp_path))
     monkeypatch.setattr("pytest.main", pytest_main_returning())
-    monkeypatch.setattr("otto.config.coverage_settings.get_cov_config", lambda repos: {})
+    monkeypatch.setattr("otto.config.coverage_settings.get_cov_config", lambda projects: {})
 
     with pytest.raises(CoverageConfigError, match=r"\[coverage\] table"):
         run_tests(
@@ -1433,10 +1434,10 @@ def test_a_failed_pre_clean_stops_the_run_before_any_test(
     )
     monkeypatch.setattr(
         "otto.coverage.instrumentation.detect_for_lab",
-        lambda repos: InstrumentationReport([InstrumentationRow("h1", "app", True)]),
+        lambda projects: InstrumentationReport([InstrumentationRow("h1", "app", True)]),
     )
     monkeypatch.setattr(
-        "otto.config.coverage_settings.get_cov_config", lambda repos: {"hosts": ".*"}
+        "otto.config.coverage_settings.get_cov_config", lambda projects: {"hosts": ".*"}
     )
     bad = CleanReport(hosts={"t1": {"app": Result(Status.Error, msg="denied")}})
     monkeypatch.setattr("otto.coverage.collect.clean_coverage", AsyncMock(return_value=bad))
@@ -1497,7 +1498,7 @@ def test_a_failed_clean_after_collection_still_writes_the_inline_report(tmp_path
 
     log_dir = tmp_path / "log"
     log_dir.mkdir()
-    _use_repo(monkeypatch, _stub_repo(tmp_path, sut_dir=log_dir, tests=[log_dir]))
+    _use_repo(monkeypatch, _stub_repo(tmp_path, root=log_dir, tests=[log_dir]))
     monkeypatch.setattr("pytest.main", pytest_main_returning())
     _stub_instrumented_lab(monkeypatch)
     bad = CleanReport(hosts={"t1": {"app": Result(Status.Error, msg="denied")}})
@@ -1588,7 +1589,7 @@ def test_run_tests_abandons_hosts_left_on_the_inner_sessions_closed_loops(tmp_pa
     from otto.labs.loader import Lab
     from tests._fixtures.registry import DuckHost
 
-    repo = _stub_repo(tmp_path)
+    project = _stub_repo(tmp_path)
     host = DuckHost("bed1")
 
     def fake_pytest_main(args, plugins=(), **_kw):
@@ -1601,7 +1602,9 @@ def test_run_tests_abandons_hosts_left_on_the_inner_sessions_closed_loops(tmp_pa
 
     monkeypatch.setattr("pytest.main", fake_pytest_main)
 
-    token = set_context(OttoContext(lab=Lab(name="test"), bootstrap=fake_bootstrap_result([repo])))
+    token = set_context(
+        OttoContext(lab=Lab(name="test"), bootstrap=fake_bootstrap_result([project]))
+    )
     try:
         run_tests([_ALPHA], output_dir=tmp_path)
     finally:
@@ -1832,13 +1835,13 @@ def test_run_tests_restores_prior_cov_on_an_active_context(tmp_path, monkeypatch
     from otto.invocation import RunPolicy
     from otto.labs.loader import Lab
 
-    repo = _stub_repo(tmp_path)
+    project = _stub_repo(tmp_path)
     seen = _record_ctx_cov_during_session(monkeypatch, decision=True)
 
     ctx = OttoContext(
         lab=Lab(name="test"),
         policy=RunPolicy(output_dir=tmp_path),
-        bootstrap=fake_bootstrap_result([repo]),
+        bootstrap=fake_bootstrap_result([project]),
     )
     token = set_context(ctx)
     try:

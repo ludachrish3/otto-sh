@@ -34,7 +34,7 @@ class SpaRenderer:
 
     Args:
         output_dir: Directory to write the report into (created if needed).
-        project_name: Title shown in the report (``IndexPayload.project_name``).
+        report_title: Title shown in the report (``IndexPayload.report_title``).
         prefix: Strip this leading directory from file paths *shown* in the
             report (display only, like ``genhtml --prefix``). Files outside
             the prefix display unchanged; chunk names always use the full
@@ -44,12 +44,12 @@ class SpaRenderer:
     def __init__(
         self,
         output_dir: Path,
-        project_name: str = "Coverage Report",
+        report_title: str = "Coverage Report",
         *,
         prefix: Path | None = None,
     ) -> None:
         self.output_dir = output_dir
-        self.project_name = project_name
+        self.report_title = report_title
         self.prefix = prefix
 
     def render(self, store: CoverageStore) -> None:
@@ -59,7 +59,7 @@ class SpaRenderer:
         emit_chunks(
             store,
             self.output_dir,
-            project_name=self.project_name,
+            report_title=self.report_title,
             prefix=self.prefix,
             stamp=make_stamp(),
         )

@@ -214,9 +214,9 @@ def _placed(lab, tmp_path, *host_ids, services=("api", "db"), per_host=None):
     placed = {}
     for hid in host_ids:
         declared = per_host[hid] if per_host else services
-        repo = _repo("r1", composes=(_compose_file(tmp_path, "core", services=declared),))
+        project = _repo("r1", composes=(_compose_file(tmp_path, "core", services=declared),))
         frag = DockerUseCase(name="integration", composes=("core",))
-        placed[hid] = [SelectedFragment(repo=repo, fragment=frag)]
+        placed[hid] = [SelectedFragment(project=project, fragment=frag)]
     return placed
 
 

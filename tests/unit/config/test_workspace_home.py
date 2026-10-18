@@ -56,7 +56,7 @@ class TestWorkspaceKey:
     def test_the_empty_set_is_legal_and_stable(self):
         key = workspace_key([])
         assert key == workspace_key([])
-        assert key.endswith("-no-repos"), key
+        assert key.endswith("-no-projects"), key
 
     def test_the_empty_set_does_not_collide_with_a_real_one(self, tmp_path):
         a = tmp_path / "a"
@@ -97,25 +97,25 @@ class TestWorkspaceKey:
 class TestWorkspaceHome:
     def test_it_is_the_key_under_the_home(self, monkeypatch, tmp_path):
         monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        assert workspace_home([repo]) == tmp_path / "home" / workspace_key([repo])
+        project = tmp_path / "repo"
+        project.mkdir()
+        assert workspace_home([project]) == tmp_path / "home" / workspace_key([project])
 
     def test_it_reads_the_env_when_given_nothing(self, monkeypatch, tmp_path):
-        repo = tmp_path / "repo"
-        repo.mkdir()
+        project = tmp_path / "repo"
+        project.mkdir()
         monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
-        monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
-        assert workspace_home() == workspace_home([repo])
+        monkeypatch.setenv("OTTOPATH", str(project))
+        assert workspace_home() == workspace_home([project])
 
-    def test_no_sut_dirs_env_is_the_no_repos_workspace(self, monkeypatch, tmp_path):
+    def test_no_ottopath_is_the_no_projects_workspace(self, monkeypatch, tmp_path):
         monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
-        monkeypatch.delenv("OTTO_SUT_DIRS", raising=False)
-        assert workspace_home().name.endswith("-no-repos")
+        monkeypatch.delenv("OTTOPATH", raising=False)
+        assert workspace_home().name.endswith("-no-projects")
 
     def test_it_never_creates_the_directory(self, monkeypatch, tmp_path):
         monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
-        monkeypatch.delenv("OTTO_SUT_DIRS", raising=False)
+        monkeypatch.delenv("OTTOPATH", raising=False)
         home = workspace_home()
         assert not home.exists(), "workspace_home() must be a pure path computation"
 
@@ -145,22 +145,22 @@ class TestCacheRelocation:
     def test_the_main_cache_lands_in_the_workspace_home(self, monkeypatch, tmp_path):
         from otto.config.completion_cache import _cache_path
 
-        repo = tmp_path / "repo"
-        repo.mkdir()
+        project = tmp_path / "repo"
+        project.mkdir()
         monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
-        monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
-        assert _cache_path() == workspace_home([repo]) / "completion_cache.json"
+        monkeypatch.setenv("OTTOPATH", str(project))
+        assert _cache_path() == workspace_home([project]) / "completion_cache.json"
 
     def test_the_remote_cache_follows_without_its_own_derivation(self, monkeypatch, tmp_path):
         """F2: the remote cache derives from _cache_path BY DESIGN. If this
         passes while the main cache moved, the single-source rule held."""
         from otto.config.remote_completion_cache import _path
 
-        repo = tmp_path / "repo"
-        repo.mkdir()
+        project = tmp_path / "repo"
+        project.mkdir()
         monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
-        monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
-        assert _path() == workspace_home([repo]) / "remote_completion_cache.json"
+        monkeypatch.setenv("OTTOPATH", str(project))
+        assert _path() == workspace_home([project]) / "remote_completion_cache.json"
 
     def test_caching_now_works_without_an_xdir(self, monkeypatch, tmp_path):
         """F1: the behaviour change, pinned.
@@ -185,5 +185,5 @@ class TestCacheRelocation:
         xdir.mkdir()
         monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
         monkeypatch.setenv("OTTO_XDIR", str(xdir))
-        monkeypatch.delenv("OTTO_SUT_DIRS", raising=False)
+        monkeypatch.delenv("OTTOPATH", raising=False)
         assert xdir not in _cache_path().parents

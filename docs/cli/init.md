@@ -1,6 +1,6 @@
 # otto init
 
-`otto init` scaffolds a new otto repo — or validates and fills in an existing
+`otto init` scaffolds a new otto project — or validates and fills in an existing
 one. It is the first command you run in a fresh checkout, and the one you run
 again after upgrading otto to refresh the generated editor schemas.
 
@@ -15,7 +15,7 @@ otto init [--all | --schemas | --lab | --tests | --instructions] [--name NAME]
           [--version X.Y.Z] [--path DIR] [--kmodcov [--kmodcov-dir DIR]]
 ```
 
-`otto init` is **lab-free**: it needs no `--lab` and no `OTTO_SUT_DIRS`, and
+`otto init` is **lab-free**: it needs no `--lab` and no `OTTOPATH`, and
 it never creates an output directory.
 
 | Option | Default | Description |
@@ -24,12 +24,12 @@ it never creates an output directory.
 | `--schemas` | `False` | Scaffold (or refresh, if present) the schemas area: `.otto/schemas` + editor wiring + generated snippets |
 | `--lab` | `False` | Scaffold the lab area (`lab_data/lab.json` + `inventory.json` + `creds.json` + README) |
 | `--tests` | `False` | Scaffold the tests area (example tests + conftest), plus the instructions area when it is missing; never overwrites an existing file |
-| `--instructions` | `False` | Scaffold the instructions area (the init module; `pylib/<name>_instructions/` in a fresh repo) |
+| `--instructions` | `False` | Scaffold the instructions area (the init module; `pylib/<name>_instructions/` in a fresh project) |
 | `--kmodcov` | `False` | Scaffold (or refresh) the kmodcov area: vendor the `otto_kmodcov` library at `--kmodcov-dir` (default `third_party/otto_kmodcov`), write a consumer starter beside it, and print the `[[dev_tools]]` snippet to paste. Never scaffolded by `--all` or the prompts |
-| `--kmodcov-dir DIR` | `third_party/otto_kmodcov` | Where `--kmodcov` vendors the library (repo-relative) |
+| `--kmodcov-dir DIR` | `third_party/otto_kmodcov` | Where `--kmodcov` vendors the library (project-relative) |
 | `--name NAME` | directory name | Product name for `settings.toml` |
 | `--version X.Y.Z` | `0.1.0` | Product version for `settings.toml` |
-| `--path DIR` | current dir | Repo root to operate on (must already exist) |
+| `--path DIR` | current dir | Project root to operate on (must already exist) |
 
 With no flags, `otto init` runs interactively: it asks every question first
 (which missing areas to scaffold, and `--name`/`--version` only when
@@ -77,7 +77,7 @@ files. The summary table gives each area one status:
 | --------- | ------- |
 | `0` | no area failed |
 | `1` | at least one area is `✗` |
-| `2` | a bad flag value: `--path` is not a directory, or `--kmodcov-dir` is not strictly inside the repo (`.` and an empty value are refused too) |
+| `2` | a bad flag value: `--path` is not a directory, or `--kmodcov-dir` is not strictly inside the project root (`.` and an empty value are refused too) |
 
 The name used for areas scaffolded on a later run is read from the existing
 `settings.toml`'s `name` field, falling back to the directory name.
@@ -87,10 +87,10 @@ The name used for areas scaffolded on a later run is read from the existing
 The init module is the Python module `settings.toml`'s `init` key names (see
 {doc}`../configuration/settings`). How `otto init` treats it:
 
-- **`init` omitted or `[]` means the repo has no init modules.** That is
+- **`init` omitted or `[]` means the project has no init modules.** That is
   legitimate: the instructions area reads `not present`, and `--all` does not
   offer it. Asking for it explicitly (`--instructions`, or `--tests`, whose
-  example tests import `RepoOptions` from it) writes the module under the
+  example tests import `ProjectOptions` from it) writes the module under the
   first `libs` directory (`pylib/` when `libs` is empty) and prints the
   `init = [...]` line to set in `settings.toml`, plus the `libs` line when
   `libs` is empty; `otto init` never edits the file for you.
@@ -104,22 +104,22 @@ The init module is the Python module `settings.toml`'s `init` key names (see
   namespace package and a module reachable only through `sys.path` all count.
 - **A settings file written from the template brings its init module.** The
   template declares `init = ["<name>_instructions"]`, so writing it also writes
-  that module, and every repo `otto init` creates loads — including
+  that module, and every project `otto init` creates loads — including
   `otto init --lab` on a fresh checkout, which writes
   `pylib/<name>_instructions/` too.
 
 The files:
 
-- **`pylib/<name>_instructions/__init__.py`** (in a fresh repo) declares `RepoOptions` with
+- **`pylib/<name>_instructions/__init__.py`** (in a fresh project) declares `ProjectOptions` with
   `@otto.options(verbs=["run", "test"])`, which puts its `--message` flag on
   `otto test` and on every `otto run` command, and a `smoke` instruction that
   reads it.
 - **`tests/test_example.py`** holds the test class `TestExample` and the test
-  function `test_example_function`. The tests import `RepoOptions` from the
-  init module and read it with `ctx.options(RepoOptions)`. When the repo
+  function `test_example_function`. The tests import `ProjectOptions` from the
+  init module and read it with `ctx.options(ProjectOptions)`. When the project
   already has an init module, they import from the first one `init` names, and
   `otto init` prints what that module must declare for them to run:
-  `@otto.options(verbs=["run", "test"]) class RepoOptions` with a
+  `@otto.options(verbs=["run", "test"]) class ProjectOptions` with a
   `message: str` field.
 - **`tests/conftest.py`** holds a fixture every test under `tests/` can use.
 
@@ -142,7 +142,7 @@ what happens to it at startup, and {doc}`../configuration/lab-config` for the
 ## The lab doctor
 
 Validating an existing lab area is more than checking that a `lab.json` is
-there.  `otto init` runs every file the repo's json sources name through the
+there.  `otto init` runs every file the project's json sources name through the
 loader's own parsers — the section shape, the `labs` table, the element
 entries, each host entry against its host spec, and the links.  It applies
 the in-source duplicate rules **per source** too, so a lab declared twice
@@ -179,7 +179,7 @@ entry, an element, a cred, and each registered host type.  See
 ## kmodcov
 
 `otto init --kmodcov` vendors the `otto_kmodcov` kernel-module coverage library
-into the repo (`--kmodcov-dir`, default `third_party/otto_kmodcov`) and writes
+into the project (`--kmodcov-dir`, default `third_party/otto_kmodcov`) and writes
 a consumer starter beside it — two sentinel translation units
 (`kmodcov_begin.c`, `kmodcov_end.c`), a `Kbuild.example` fragment, and a
 `README.md`. Re-running `--kmodcov` refreshes the vendored library itself
@@ -200,7 +200,7 @@ export` remedy.
 See {doc}`cov/instrumenting/kernel-modules` for how the library attaches to a
 module and how otto loads/removes it around a run.
 
-For a full first-repo walkthrough, see {doc}`../getting-started/index`, then
+For a full first-project walkthrough, see {doc}`../getting-started/index`, then
 {doc}`../getting-started/running-instructions` and
 {doc}`../getting-started/running-tests`; for the
 one-time team decisions around it, the
@@ -209,11 +209,11 @@ one-time team decisions around it, the
 ## Next steps
 
 The last thing `otto init` prints is a "Next steps" panel: the
-`export OTTO_SUT_DIRS=...` line (omitted when the repo is already listed
+`export OTTOPATH=...` line (omitted when the project is already listed
 there), the tab-completion commands, and the commands to try first
 (`otto --lab example_lab --list-hosts`, `otto test --list-tests`, and the
 example test and instruction runs). When a command would not fit inside the
-box at your terminal's width (a long repo path), the same steps print
+box at your terminal's width (a long project-root path), the same steps print
 unboxed under a "Next steps" rule, so every command stays on one line you
 can copy. The panel repeats the completion
 commands; what they do and where to put them lives in
@@ -222,15 +222,15 @@ commands; what they do and where to put them lives in
 ## As a library
 
 The doctor and the scaffolder are the importable package `otto.init`
-({func}`otto.init.doctor.check_repo`, {func}`otto.init.scaffolder.scaffold`): they return
+({func}`otto.init.doctor.check_project`, {func}`otto.init.scaffolder.scaffold`): they return
 reports and never print, so `otto init` is a thin renderer over them — see
 {doc}`../api/init/index`.
 
 ```python
 from pathlib import Path
-from otto.init import InitConfig, check_repo, scaffold, scaffold_candidates
+from otto.init import InitConfig, check_project, scaffold, scaffold_candidates
 
-config = InitConfig.for_repo(Path("."), name="acme")
+config = InitConfig.for_project(Path("."), name="acme")
 report = scaffold(config, scaffold_candidates(config.root, all_areas=True))
-assert check_repo(config.root).ok
+assert check_project(config.root).ok
 ```

@@ -273,7 +273,7 @@ def _embedded_kind(entry: DeclaredEntry, host: "Host") -> EmbeddedProduct:
             f"{sorted(params)}; valid: {_VALID}"
         )
     return EmbeddedProduct(
-        # Local path: forward slashes in TOML, anchored to the declaring repo
+        # Local path: forward slashes in TOML, anchored to the declaring project's root
         # (never the CWD). There is no dest_dir — the load has no destination.
         artifact=anchor_path(Path(artifact), entry.base_dir),
         name=entry.name,

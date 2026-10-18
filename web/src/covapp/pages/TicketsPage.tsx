@@ -13,11 +13,11 @@
 // SPA must run from `file://`, where neither ES module imports nor `fetch`
 // work.
 //
-// A ticket's line-ownership set is NOT a partition of the repo: one commit
+// A ticket's line-ownership set is NOT a partition of the project: one commit
 // can name several tickets, so two tickets can both own the same line
 // (design §2 — the normal case, not an edge case). The StatsCard above
 // reads `index.tickets_totals` (spa_data.py's `_build_ticket_summaries`,
-// fix round 1) — a DEDUPED repo-truth total computed server-side, where a
+// fix round 1) — a DEDUPED project-truth total computed server-side, where a
 // shared line counts once — never a sum of the per-ticket rows below,
 // which deliberately DO attribute a shared line to every ticket that names
 // it. That's exactly why the rows can overlap and not sum to the card: the
@@ -477,7 +477,7 @@ export function TicketsPage({ index }: TicketsPageProps) {
 
   return (
     <AppShell
-      crumbs={[{ label: index.project_name, href: "#/coverage" }, { label: "tickets" }]}
+      crumbs={[{ label: index.report_title, href: "#/coverage" }, { label: "tickets" }]}
       title="Tickets"
       meta={
         <>
@@ -586,7 +586,7 @@ export function TicketsPage({ index }: TicketsPageProps) {
 
           <p data-testid="tickets-caption" className="mt-2 text-xs text-quaternary">
             Rows overlap and do not sum to the card above — a commit can name several tickets, so
-            per-ticket line sets are not a partition of the repo.
+            per-ticket line sets are not a partition of the project.
           </p>
         </>
       )}

@@ -31,7 +31,7 @@ The stages (packages `otto.coverage.fetcher` → `merge` → `capture` →
    `cov/<host>/<product>/` ({ref}`the run tree <run-tree>`).
    Fetchers are per-family: file transfer for Unix hosts and containers,
    console extraction for embedded targets. Which hosts are covered is
-   *repo-declared* — the `[coverage].hosts` regex in `settings.toml` — never
+   *project-declared* — the `[coverage].hosts` regex in `settings.toml` — never
    inferred, so hop hosts and uninstrumented beds can't sneak into a report.
    Which *products* on those hosts contribute is decided locally before
    anything runs, by scanning each artifact for the compiler's coverage
@@ -40,7 +40,7 @@ The stages (packages `otto.coverage.fetcher` → `merge` → `capture` →
 
    The `--cov`/auto/`--no-cov` decision is asymmetric on purpose. An
    explicit `--cov` refuses before the first test runs when nothing is
-   instrumented or the repo has no `[coverage]` table: a run worth the lab
+   instrumented or the project has no `[coverage]` table: a run worth the lab
    time only because it would produce coverage should not finish and then
    report that it could not. Auto mode degrades the same situations to a
    warning and no coverage, because a plain `otto test` asked for a test run
@@ -50,7 +50,7 @@ The stages (packages `otto.coverage.fetcher` → `merge` → `capture` →
    and runs (lcov semantics).
 3. **Capture** — freeze the merged result into one `capture.json` per host
    per product: parsed hits in committed-code coordinates, anchored to the
-   repo's `HEAD` (`base_commit`) and per-file blob SHAs, and tagged with the
+   checkout's `HEAD` (`base_commit`) and per-file blob SHAs, and tagged with the
    product they came from.
 4. **Render / report** — `otto cov report` assembles every tier — e2e
    captures, a fresh unit-tier harvest, the committed manual store — into an

@@ -15,8 +15,8 @@ digraph testpipeline {
     node [shape=box];
 
     cli [label="otto test NAMES [-m EXPR] [flags]\nbuild every class registered for test\n→ bind on OttoContext"];
-    resolve [label="before any session, across every repo: the order\n(a name the test-names cache places nowhere is\nlooked for first, else a did-you-mean)"];
-    session [label="one pytest session per repo over its whole test\ntree: OttoPlugin matches the names and\nrecords what it collected"];
+    resolve [label="before any session, across every project: the order\n(a name the test-names cache places nowhere is\nlooked for first, else a did-you-mean)"];
+    session [label="one pytest session per project over its whole test\ntree: OttoPlugin matches the names and\nrecords what it collected"];
     pytest_ [label="pytest\ncollection · fixtures · parametrize · markers"];
     plugin [label="OttoPlugin · OttoFixturesPlugin\nfixtures · artifact dirs · stability ·\nretry · monitor events · per-loop host\nsweep · coverage fetch after the session"];
 
@@ -64,14 +64,14 @@ name. Tests are not registered anywhere: pytest finds them.
 ## Handing off to pytest
 
 {func}`~otto.suite.run.run_tests` backs both `otto test` and the library call.
-It runs one `pytest.main()` per repo, over the repo's test directories, and
+It runs one `pytest.main()` per project, over the project's test directories, and
 that one session both finds the names and runs what they select, in
-collection order. There is no `--collect-only` pass: a repo's session
+collection order. There is no `--collect-only` pass: a project's session
 collects once, except when it searched for a name it lacked and stopped
 before its tests, then runs again (see below). {class}`~otto.suite.plugin.OttoPlugin` does the selecting inside the
 session:
 
-- **Collection.** A run's session collects its repo's whole test tree:
+- **Collection.** A run's session collects its project's whole test tree:
   `pytest_ignore_collect` keeps pytest inside the configured test
   directories and otherwise leaves the decision to pytest, so a conftest's
   `collect_ignore` and `python_files` still apply. The test-names cache
@@ -106,31 +106,31 @@ session:
 
 Before any session starts, the caches decide only the order of the sessions
 and how early a name is refused (`otto.suite.run._decide`). A name
-no record places is looked for by one repo not yet searched in the run
+no record places is looked for by one project not yet searched in the run
 (one whose cache is stale, where a test was just written, else the first):
 its run session runs first and must match the name, and one that lacks it
-stops with a usage error before any test. That repo is then searched (what
+stops with a usage error before any test. That project is then searched (what
 its session collected is the truth for the rest of the run) and the run
-decides again, so a typo is refused before any test in any repo, each repo
-collected once, with no `--collect-only` pass. A repo a search stopped in
-runs again if it holds a name, so names split across N repos that no cache
-has seen cost 2N - 1 collections: every repo but the last searcher must be
+decides again, so a typo is refused before any test in any project, each project
+collected once, with no `--collect-only` pass. A project a search stopped in
+runs again if it holds a name, so names split across N projects that no cache
+has seen cost 2N - 1 collections: every project but the last searcher must be
 collected before any test runs, and pytest cannot pause a session between
 collecting and running. A collection error a stopped search read is logged
-once and, if no later session of that repo runs, still fails the run. A search that can't finish
+once and, if no later session of that project runs, still fails the run. A search that can't finish
 ends the run before any test, with its exit code and the reason logged. A
 name still placed nowhere is an
 {class}`~otto.suite.selection.UnknownSelectionError` with did-you-mean
-suggestions (and the files that did not collect). Every repo then runs one
+suggestions (and the files that did not collect). Every project then runs one
 session, except one already searched that holds none of the names; each
-must match the names no other repo of the run can hold.
+must match the names no other project of the run can hold.
 The remote coverage pre-clean waits for the first session that is about to
 run a test, so a run that refuses a name the caches place nowhere never
-touches a host. (A name a stale record places in a repo, which turns out
+touches a host. (A name a stale record places in a project, which turns out
 to be gone, is an error after the sessions ran.) Every session of a run uses one random seed, logged once. A file that fails to collect is
 logged and, under `--continue-on-collection-errors`, doesn't stop the tests
 that were asked for; the run exits 1, as pytest does. Conftest loading is cut
-at the *owning repo's root* (`--confcutdir`), so the user repo's full
+at the *owning project's root* (`--confcutdir`), so the user project's full
 conftest hierarchy applies while otto's own never leaks in.
 
 Every session runs on one session-wide event loop by default
@@ -146,7 +146,7 @@ markers, reporting) and two plugins layer on otto's concerns:
   `module_dir`, `test_dir`, `expect` and `monitor`, plus the `ensure`
   marker's converge. `module_dir` and `test_dir` mirror the pytest test ID
   under the run's output directory ({class}`~otto.suite.layout.ArtifactLayout`),
-  with a repo layer on top when more than one repo takes part.
+  with a project layer on top when more than one project takes part.
 - **Stability modes** ({class}`~otto.suite.plugin.OttoPlugin`):
   `--iterations` / `--duration` re-run tests via the runtest protocol and
   aggregate per-test pass rates, reporting `Unstable` rather than failing on
@@ -182,7 +182,7 @@ that registered an extension would register it for `otto test` alone.
 A name is a test, a class, or a `Class::test` path, matched against each
 collected test's classes and base name
 ({func}`~otto.suite.selection.matches_name`); unknown names fail with a
-did-you-mean. `--list-tests` prints the collected selection grouped by repo,
+did-you-mean. `--list-tests` prints the collected selection grouped by project,
 module and class, and a dry run prints the same tree: both take the run's own
 sessions with `--collect-only`, so they import the files a run would and run
 nothing.
@@ -226,36 +226,36 @@ artifacts. Options classes registered for both verbs keep the two consistent
 
 The six first-party project instructions — `install`, `uninstall`,
 `cleanup`, `get-logs`, `install-tools`, `status` ({doc}`../../cli/run/defaults`)
-— are declared with the same decorator and table a repo uses, so nothing about
-them is special-cased and a repo extends the interface by the mechanism otto
+— are declared with the same decorator and table a project uses, so nothing about
+them is special-cased and a project extends the interface by the mechanism otto
 used to write it.
 
-A repo customizes `install` and the other project instructions only through
+A project customizes `install` and the other project instructions only through
 its `ProjectActions` subclass; a standalone instruction of the same name is
 refused at startup. `otto run install`, `await otto.project.install()` and
 `@pytest.mark.ensure("installed")` therefore run the same bodies, so the lab a
 test converges is the lab a person installed by hand. The first declaration
 of a project instruction also fixes its *walk shape* — the walk direction,
-whether it continues past a failing repo, whether it requires dependencies,
+whether it continues past a failing project, whether it requires dependencies,
 and how results combine and render — and a later declaration may not change
-any of it, so no repo can reshape the six first-party instructions.
+any of it, so no project can reshape the six first-party instructions.
 
-The rest of the design follows from what a walk across many repos must never
+The rest of the design follows from what a walk across many projects must never
 do:
 
 - **Never build on a known gap, never strand a teardown.** Composition is by
-  iteration over resolved repos in dependency order, not cross-repo
+  iteration over resolved projects in dependency order, not cross-project
   subclassing — a class that may be absent cannot be subclassed, and an
   optional dependency may well be. Building is fail-fast because installing a
   dependent on top of a dependency known to be missing produces a lab nobody
-  can reason about; tearing down is best-effort because a repo that will not
+  can reason about; tearing down is best-effort because a project that will not
   come down must not strand the ones behind it.
-- **Never let one repo reshape another's command.** An override's options
-  class must inherit otto's class for that name; otherwise one repo overriding
+- **Never let one project reshape another's command.** An override's options
+  class must inherit otto's class for that name; otherwise one project overriding
   `install` would take `--ensure` off the command for everyone, and
-  `super().install(opts)` would have no field to read. Two repos declaring the
+  `super().install(opts)` would have no field to read. Two projects declaring the
   same flag from different classes is a bootstrap error for the whole
-  invocation: a flag whose meaning depends on which repo reads it is not
+  invocation: a flag whose meaning depends on which project reads it is not
   something to resolve silently, and a flag set the user cannot see is not
   something to degrade around. Flags merge by declaring class. Under
   `otto test`, an `ensure` converge builds each body's options from the
@@ -263,22 +263,22 @@ do:
   builds them from its own; the collision rule is what makes the name
   unambiguous, and a body field with no `test` flag takes its default.
   Options modules are leaves — `typer` and `otto.options` — so a
-  shared base placed in a required repo or a library package can never
+  shared base placed in a required project or a library package can never
   create an import cycle.
-- **Never let one repo act for another.** No default `ProjectActions` body
-  spells `owner=`; the instance gets it from the repo view `actions_for`
-  builds (`ctx.for_repo(repo.name)`). That is why constructing one by hand
+- **Never let one project act for another.** No default `ProjectActions` body
+  spells `owner=`; the instance gets it from the project view `actions_for`
+  builds (`ctx.for_project(project.name)`). That is why constructing one by hand
   with a plain `OttoContext` raises `TypeError`: the object would walk the
   whole union *and* call every host verb with `owner=None`, which the host
   layer reads as **every** owner's products, so its `cleanup()` would
   uninstall the neighbours' products and report success.
-- **Never let a repo own what a host or the lab owns.** The defaults refuse
-  per-repo debug logs and toolchain tools: N repos each sweeping one host's
+- **Never let a project own what a host or the lab owns.** The defaults refuse
+  per-project debug logs and toolchain tools: N projects each sweeping one host's
   debug logs is N transfers each overwriting the last, and one toolchain
-  serves every owner on a host, so a repo removing it would take its
+  serves every owner on a host, so a project removing it would take its
   neighbours' tooling with it. Impairments and tunnels belong to the lab,
-  and nothing in a repo's products or dev tools put them there. All of these
-  run once, above the repo walk.
+  and nothing in a project's products or dev tools put them there. All of these
+  run once, above the project walk.
 - **Never report success over nothing.** A `pattern=` that selects no host
   raises, because a silently empty sweep is the one failure worse than a
   crash: it reports success over a lab nothing happened on.
@@ -311,7 +311,7 @@ do:
   foreign-qdisc refusal would be indistinguishable from that standing noise.
 - **Never cut the path teardown still needs.** `cleanup`'s tunnel reap runs
   last because a tunnel can *be* the access path to a host, and reaping it
-  earlier would sever the connection the repo walk, the log sweep and the
+  earlier would sever the connection the project walk, the log sweep and the
   toolchain removal still need; the impairment reset sits immediately before
   it because clearing delay and loss only improves the path everything above
   ran over.

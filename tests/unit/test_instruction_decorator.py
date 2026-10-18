@@ -6,7 +6,7 @@ import pytest
 
 from otto.instruction_catalog import INSTRUCTIONS, STANDALONE_INSTRUCTIONS
 from otto.instructions import instruction
-from otto.registry import registering_repo
+from otto.registry import registering_project
 
 
 @pytest.fixture(autouse=True)
@@ -75,7 +75,7 @@ def test_refuses_options_with_no_annotated_parameter():
 def test_refuses_a_repo_claiming_a_first_party_name():
     async def install() -> None: ...
 
-    with registering_repo("widget"), pytest.raises(ValueError, match="project instruction"):
+    with registering_project("widget"), pytest.raises(ValueError, match="project instruction"):
         instruction()(install)
 
 

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from .errors import ReviewSourceError
 
 if TYPE_CHECKING:
-    from ..config.repo import Repo
+    from ..config.project import Project
     from ..models.monitor import MonitorExport
 
 
@@ -48,7 +48,7 @@ def load_review_document(path: Path) -> "MonitorExport":
     )
 
 
-async def serve_review(path: Path, *, repos: "Sequence[Repo]") -> None:
+async def serve_review(path: Path, *, projects: "Sequence[Project]") -> None:
     """Serve a saved export for review until the server is stopped.
 
     A ``.db`` source is also the archive event edits persist to; a
@@ -57,19 +57,19 @@ async def serve_review(path: Path, *, repos: "Sequence[Repo]") -> None:
 
     Args:
         path: The export to review.
-        repos: The configured repos, whose ``[monitor]`` TLS declaration the
+        projects: The configured projects, whose ``[monitor]`` TLS declaration the
             dashboard honors.
 
     Raises:
         ReviewSourceError: *path* is not a loadable monitor export.
-        MonitorTlsError: the repos' declared dashboard TLS cannot be served.
+        MonitorTlsError: the projects' declared dashboard TLS cannot be served.
     """
     from .collector import MetricCollector
     from .server import MonitorServer
     from .tls import resolve_monitor_tls
 
     export = load_review_document(path)
-    tls = resolve_monitor_tls(repos)
+    tls = resolve_monitor_tls(projects)
     server = MonitorServer(
         collector=MetricCollector(targets=[]),
         mode="review",

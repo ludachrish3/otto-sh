@@ -483,8 +483,8 @@ from otto.declared import (
     declared_for_host,
     install_initiator,
     publish_composed,
-    scope_for_repo,
-    surviving_repos,
+    scope_for_project,
+    surviving_projects,
 )
 
 
@@ -513,7 +513,7 @@ def _scope(labs, hosts=(".*",)):
 def repos_table():
     """The repos a finished composition published; ``declared_for_host`` reads them there.
 
-    One list is both ``repos`` and ``ordered_repos``, so every repo a test adds
+    One list is both ``repos`` and ``ordered_projects``, so every repo a test adds
     survives the dependency pass. The root conftest withdraws the publication
     after the test.
     """
@@ -522,9 +522,9 @@ def repos_table():
     return table
 
 
-def _composed(repos, ordered):
+def _composed(projects, ordered):
     """A stand-in for a composition result: the two fields the catalog's readers take."""
-    return SimpleNamespace(repos=repos, ordered_repos=ordered)
+    return SimpleNamespace(projects=projects, ordered_projects=ordered)
 
 
 def test_declared_for_host_collects_only_targeting_repos(repos_table):
@@ -576,7 +576,7 @@ def test_declared_for_host_reads_the_result_a_running_composition_published():
     """An init module that builds a host runs while its composition is still in progress.
 
     The root publishes the in-progress result before the init modules run, and
-    its ``repos`` and ``ordered_repos`` are final by then: a reader that took
+    its ``repos`` and ``ordered_projects`` are final by then: a reader that took
     only the complete result would drop the entries of every host built in
     that window while its providers still applied.
     """
@@ -619,7 +619,7 @@ def test_declared_for_host_never_starts_composition(monkeypatch):
     clear_composed()
     monkeypatch.setattr(declared_mod._composition, "initiator", _initiator)
     assert declared_for_host(_host(), "declared_products") == []
-    assert surviving_repos() == []
+    assert surviving_projects() == []
     assert not called, "declared_for_host must never call the initiator"
 
 
@@ -679,7 +679,7 @@ def test_scope_for_repo_returns_the_named_repos_declaration(monkeypatch):
     publish_composed(_composed([other, wanted], [other, wanted]), complete=True)
     _initiating(monkeypatch)  # an initiator that would fail if it were asked
 
-    assert scope_for_repo("sensors") is wanted.project_scope
+    assert scope_for_project("sensors") is wanted.project_scope
 
 
 def test_scope_for_repo_asks_the_initiator_when_nothing_is_complete(monkeypatch):
@@ -689,7 +689,7 @@ def test_scope_for_repo_asks_the_initiator_when_nothing_is_complete(monkeypatch)
     clear_composed()
     calls = _initiating(monkeypatch, _composed([wanted], [wanted]))
 
-    assert scope_for_repo("sensors") is wanted.project_scope
+    assert scope_for_project("sensors") is wanted.project_scope
     assert calls == [1]
 
 
@@ -698,7 +698,7 @@ def test_scope_for_repo_reads_a_complete_result_before_the_initiator(monkeypatch
     publish_composed(_composed([wanted], [wanted]), complete=True)
     calls = _initiating(monkeypatch, AssertionError("the initiator was asked"))
 
-    assert scope_for_repo("sensors") is wanted.project_scope
+    assert scope_for_project("sensors") is wanted.project_scope
     assert calls == []
 
 
@@ -708,7 +708,7 @@ def test_scope_for_repo_admits_when_no_root_is_loaded(no_composition_root):
     admits rather than start composition from below."""
     clear_composed()
     assert declared_mod._composition.initiator is None
-    assert scope_for_repo("sensors") is None
+    assert scope_for_project("sensors") is None
 
 
 def test_scope_for_repo_admits_in_a_process_that_never_loaded_the_root():
@@ -718,7 +718,7 @@ def test_scope_for_repo_admits_in_a_process_that_never_loaded_the_root():
 
     probe = (
         "import sys, otto.declared as d; "
-        "print(d.scope_for_repo('sensors') is None, 'otto.bootstrap' in sys.modules)"
+        "print(d.scope_for_project('sensors') is None, 'otto.bootstrap' in sys.modules)"
     )
     proc = subprocess.run(
         [sys.executable, "-c", probe], capture_output=True, text=True, check=False
@@ -737,7 +737,7 @@ def test_scope_for_repo_admits_an_owner_no_repo_claims(monkeypatch):
     known = _repo("sensors", scope=_scope(["bench"], hosts=["sensor-.*"]))
     publish_composed(_composed([known], [known]), complete=True)
 
-    assert scope_for_repo("ghost") is None
+    assert scope_for_project("ghost") is None
 
 
 def test_scope_for_repo_of_an_undeclared_repo_is_none():
@@ -746,7 +746,7 @@ def test_scope_for_repo_of_an_undeclared_repo_is_none():
     plain = _repo("toolsrepo", scope=None)
     publish_composed(_composed([plain], [plain]), complete=True)
 
-    assert scope_for_repo("toolsrepo") is None
+    assert scope_for_project("toolsrepo") is None
 
 
 def test_scope_for_repo_never_composes_for_an_unowned_registration(monkeypatch):
@@ -756,7 +756,7 @@ def test_scope_for_repo_never_composes_for_an_unowned_registration(monkeypatch):
     clear_composed()
     calls = _initiating(monkeypatch, AssertionError("composed for an unowned registration"))
 
-    assert scope_for_repo(None) is None
+    assert scope_for_project(None) is None
     assert calls == [], "a registration made outside any repo has nothing to look up"
 
 
@@ -768,7 +768,7 @@ def test_scope_for_repo_admits_when_composition_fails(monkeypatch):
     clear_composed()
     calls = _initiating(monkeypatch, RuntimeError("composition failed"))
 
-    assert scope_for_repo("sensors") is None
+    assert scope_for_project("sensors") is None
     assert calls == [1]
 
 
@@ -780,12 +780,12 @@ def test_scope_for_repo_admits_when_composition_answers_with_no_repos(monkeypatc
     # mood.
     clear_composed()
     _initiating(monkeypatch, _composed(None, None), _composed([], []))
-    assert scope_for_repo("sensors") is None
-    assert scope_for_repo("sensors") is None
+    assert scope_for_project("sensors") is None
+    assert scope_for_project("sensors") is None
 
 
 def test_repo_parse_settings_builds_declared_entries(tmp_path):
-    from otto.config.repo import Repo
+    from otto.config.project import Project
     from tests._fixtures.sutrepo import make_sut_repo
 
     sut = make_sut_repo(
@@ -804,10 +804,10 @@ kind = "shell"
 artifact = "tools/probe.sh"
 """,
     )
-    repo = Repo(sut_dir=sut)
-    (fw,) = repo.declared_products
+    project = Project(root=sut)
+    (fw,) = project.declared_products
     assert (fw.name, fw.kind, fw.seam, fw.owner) == ("fw", "shell", "products", "declrepo")
     assert fw.base_dir == sut
     assert fw.params == {"artifact": "build/fw.bin"}  # raw: anchoring is the kind's job
-    (probe,) = repo.declared_dev_tools
+    (probe,) = project.declared_dev_tools
     assert (probe.seam, probe.owner) == ("dev_tools", "declrepo")

@@ -91,7 +91,7 @@ def test_a_lazy_export_never_degrades_into_its_own_submodule():
         "FailedImage",
         "HostReport",
         "ImageBuild",
-        "RepoBuild",
+        "ProjectBuild",
         "TeardownReport",
     }
     for name in docker_mod._LAZY_ATTRS:

@@ -44,7 +44,7 @@ def test_the_link_chaos_lab_is_closed_and_still_declares_the_unix_link(tmp_path:
     and ``repair --all`` skips every local-endpoint edge by its own rule
     (proved on the bed: repaired 1, skipped 3, exit 0)."""
     target = closed_unix_link_target(tmp_path)
-    lab = load_lab(target.lab, search_paths=[target.sut_dir / "lab_data"])
+    lab = load_lab(target.lab, search_paths=[target.root / "lab_data"])
 
     ids = {link.id for link in lab.static_links()}
     assert unix_link_id() in ids, ids

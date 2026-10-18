@@ -71,11 +71,11 @@ def run_fresh(tmp_path: Path, source: str, *, extra: str = "") -> "list[object]"
 
     *extra* is passed to :func:`scratch_repo`. Returns the source's last JSON line.
     """
-    repo = scratch_repo(tmp_path, extra=extra)
+    project = scratch_repo(tmp_path, extra=extra)
     source = _COUNT.format(log=str(tmp_path / "passes.log")) + source
     env = {
         **os.environ,
-        "OTTO_SUT_DIRS": str(repo),
+        "OTTOPATH": str(project),
         "OTTO_HOME": str(tmp_path / "home"),
     }
     env.pop("PYTEST_ADDOPTS", None)

@@ -928,7 +928,7 @@ async def test_the_error_names_the_container_and_each_way_to_start_it(project):
     assert f"compose project 'unix-{project}-vagrant'" in msg, msg
     assert f"`otto docker compose up {project}` (a use-case)" in msg, msg
     assert f"`otto.docker.deploy({project!r})` (a use-case)" in msg, msg
-    assert "`otto.docker.compose_up(...)` (a repo's own compose files)" in msg, msg
+    assert "`otto.docker.compose_up(...)` (a project's own compose files)" in msg, msg
     assert "session-scoped fixture" in msg, msg
 
 

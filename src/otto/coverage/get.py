@@ -14,23 +14,23 @@ from typing import TYPE_CHECKING
 from .errors import CoverageInputError
 
 if TYPE_CHECKING:
-    from ..config.repo import Repo
+    from ..config.project import Project
     from .reports import GetReport
 
 
-def _resolve_tester(name: str | None, email: str | None, sut_dir: Path) -> dict[str, str]:
+def _resolve_tester(name: str | None, email: str | None, root: Path) -> dict[str, str]:
     """Resolve tester identity for a manual capture (spec decision 15).
 
     ``name`` defaults to :func:`getpass.getuser`; ``email`` defaults to
-    ``git config user.email`` read *in the SUT repo* (so the identity comes
-    from the repo being tested, not whatever repo the process CWD happens to
+    ``git config user.email`` read *in the project's checkout* (so the identity comes
+    from the project being tested, not whatever git repository the process CWD happens to
     be in) and is omitted entirely (not annotated empty) when the key is
     unset or ``git config`` itself fails. Caller-supplied values always win
     over both defaults.
 
-    Note ``config_value`` runs WITHOUT ``--local``, so a *sut_dir* that is not
-    a repo still reads ``~/.gitconfig`` and answers rc 0 — the
-    NotAGitRepoError arm below is defensive, not a path a non-repo takes.
+    Note ``config_value`` runs WITHOUT ``--local``, so a *root* that is not
+    a git repository still reads ``~/.gitconfig`` and answers rc 0 — the
+    NotAGitRepoError arm below is defensive, not a path a non-repository takes.
     Reading the ambient identity there is the intended behaviour (it is the
     human running the capture), so this does not want narrowing.
 
@@ -49,7 +49,7 @@ def _resolve_tester(name: str | None, email: str | None, sut_dir: Path) -> dict[
     resolved_email = email
     if not resolved_email:
         try:
-            resolved_email = config_value(sut_dir, "user.email")
+            resolved_email = config_value(root, "user.email")
         except (NotAGitRepoError, GitCommandFailedError):
             resolved_email = None
 
@@ -68,7 +68,7 @@ async def get_coverage(
     tester_name: str | None = None,
     tester_email: str | None = None,
     clean: bool = False,
-    repos: "list[Repo] | None" = None,
+    projects: "list[Project] | None" = None,
 ) -> "GetReport":
     """Fetch the lab's coverage now and produce one capture per (host, product).
 
@@ -80,16 +80,16 @@ async def get_coverage(
     unknown or ambiguous *tier*, or a manual-kind tier with no *ticket*
     (:class:`~otto.coverage.errors.CoverageInputError` naming the field);
     nothing instrumented
-    (:class:`~otto.coverage.errors.CoverageNotInstrumentedError`); a SUT that
+    (:class:`~otto.coverage.errors.CoverageNotInstrumentedError`); a project root that
     is not a git checkout
     (:class:`~otto.coverage.capture.gitio.GitUnavailableError`); no
     *output_dir* and no context to take one from (``CoverageInputError``,
     ``field="output_dir"``). After collection, no capture produced is
     :class:`~otto.coverage.errors.NoCoverageDataError`.
 
-    A manual-kind tier's captures are also written into the repo's committed
+    A manual-kind tier's captures are also written into the project's committed
     manual store, attributed to *tester_name*/*tester_email* (defaults: the
-    current user, and ``git config user.email`` in the SUT repo). With
+    current user, and ``git config user.email`` in the project's checkout). With
     *clean*, the counters of every host that contributed a product are
     cleared afterwards; a failed reset does not raise — the captures are
     written — it makes the report not ok.
@@ -97,10 +97,10 @@ async def get_coverage(
     from ..config.coverage_settings import (
         CoverageConfigError,
         get_cov_config,
-        get_cov_repo,
+        get_cov_project,
         load_hosts_pattern,
     )
-    from ..declared import current_repos
+    from ..declared import current_projects
     from ..fleet import all_hosts
     from ..run_context import try_get_context
     from . import collect
@@ -112,17 +112,17 @@ async def get_coverage(
     from .reports import GetReport
     from .tiers import load_tiers, resolve_get_tier
 
-    if repos is None:
+    if projects is None:
         # The composition root: importing it installs the initiator that composes
-        # the run's repos when no run is installed (spec 2026-10-11
+        # the run's projects when no run is installed (spec 2026-10-11
         # placement-and-phases §3.12).
         from .. import bootstrap
 
         del bootstrap
-        repos = current_repos()
-    cov_config = get_cov_config(repos)
-    cov_repo = get_cov_repo(repos)
-    if not cov_config or cov_repo is None:
+        projects = current_projects()
+    cov_config = get_cov_config(projects)
+    cov_project = get_cov_project(projects)
+    if not cov_config or cov_project is None:
         raise CoverageConfigError("No [coverage] section found in .otto/settings.toml")
     hosts = list(all_hosts(pattern=load_hosts_pattern(cov_config), include_containers=True))
 
@@ -132,7 +132,7 @@ async def get_coverage(
             f"tier {resolved.name!r} is a manual-kind tier and requires a ticket", field="ticket"
         )
     decide_coverage(True, detect(hosts), has_cov_config=True, command="otto cov get")
-    head_commit(cov_repo.sut_dir)
+    head_commit(cov_project.root)
 
     if output_dir is None:
         ctx = try_get_context()
@@ -145,13 +145,13 @@ async def get_coverage(
     cov_dir = output_dir.resolve() / "cov"
 
     tester = (
-        _resolve_tester(tester_name, tester_email, cov_repo.sut_dir)
+        _resolve_tester(tester_name, tester_email, cov_project.root)
         if resolved.kind == "manual"
         else None
     )
     result = await collect.collect_coverage(
         cov_dir,
-        repos=repos,
+        projects=projects,
         tier=resolved,
         ticket=ticket,
         note=note,
@@ -167,14 +167,14 @@ async def get_coverage(
     manual = []
     if resolved.kind == "manual":
         manual = [
-            write_manual_capture(Capture.load(path), cov_repo.sut_dir)
+            write_manual_capture(Capture.load(path), cov_project.root)
             for path in result.captures_written
         ]
 
     clean_report = None
     if clean:
         contributed = sorted({host_id for host_id, _product in result.product_dirs})
-        clean_report = await collect.clean_coverage(repos, host_ids=contributed)
+        clean_report = await collect.clean_coverage(projects, host_ids=contributed)
 
     return GetReport(
         cov_dir=cov_dir,

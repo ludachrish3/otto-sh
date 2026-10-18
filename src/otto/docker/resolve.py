@@ -12,12 +12,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, TypedDict, cast
 
-from ..config.scope import repo_targets
-from ..declared import scope_for_repo
+from ..config.scope import project_targets
+from ..declared import scope_for_project
 from ..errors import OttoError
 
 if TYPE_CHECKING:
-    from ..config.repo import Repo
+    from ..config.project import Project
     from ..config.scope import DockerUseCase
     from ..host.unix_host import UnixHost
     from ..labs.loader import Lab
@@ -29,9 +29,9 @@ class UseCaseResolutionError(OttoError, ValueError):
 
 @dataclass
 class SelectedFragment:
-    """One participating fragment and the repo that declared it."""
+    """One participating fragment and the project that declared it."""
 
-    repo: "Repo"
+    project: "Project"
     fragment: "DockerUseCase"
 
 
@@ -40,50 +40,50 @@ class Displacement:
     """A provider fragment the competition excluded (spec §4)."""
 
     capability: str
-    loser_repo: str
+    loser_project: str
     loser_priority: int
-    winner_repo: str
+    winner_project: str
     winner_priority: int
 
     def describe(self) -> str:
         """Return the one sentence every surface uses to report this displacement.
 
         Names who won, at what priority, and who stands down, and calls NEITHER
-        priority the higher one: ``--provide cap=repo`` narrows the field to one
-        repo before ranking, so the winner can legitimately carry a LOWER
+        priority the higher one: ``--provide cap=project`` narrows the field to one
+        project before ranking, so the winner can legitimately carry a LOWER
         priority than the fragment it displaced, and the loser can be the
-        winner's own repo (two fragments of one repo at different priorities).
+        winner's own project (two fragments of one project at different priorities).
         "Lower priority lost" would be false in both cases; this sentence is
         true in all of them. The log line, the CLI reports and the dry-run
         plans each add their own lead-in and never re-word this.
         """
         return (
-            f"{self.capability} goes to {self.winner_repo} (priority {self.winner_priority}); "
-            f"{self.loser_repo} (priority {self.loser_priority}) stands down"
+            f"{self.capability} goes to {self.winner_project} (priority {self.winner_priority}); "
+            f"{self.loser_project} (priority {self.loser_priority}) stands down"
         )
 
 
 @dataclass
 class Selection:
-    """The competition's outcome for one use-case over the active repos."""
+    """The competition's outcome for one use-case over the active projects."""
 
     use_case: str
     fragments: "list[SelectedFragment]"
     displaced: "list[Displacement]" = field(default_factory=list)
 
 
-def declared_use_cases(repos: "list[Repo]") -> "dict[str, list[SelectedFragment]]":
-    """Group every declared fragment by use-case name, in repos order."""
+def declared_use_cases(projects: "list[Project]") -> "dict[str, list[SelectedFragment]]":
+    """Group every declared fragment by use-case name, in projects order."""
     out: dict[str, list[SelectedFragment]] = {}
-    for repo in repos:
-        for frag in repo.docker_settings.use_cases:
-            out.setdefault(frag.name, []).append(SelectedFragment(repo, frag))
+    for project in projects:
+        for frag in project.docker_settings.use_cases:
+            out.setdefault(frag.name, []).append(SelectedFragment(project, frag))
     return out
 
 
 def select_fragments(
     use_case: str,
-    repos: "list[Repo]",
+    projects: "list[Project]",
     *,
     provide: "Mapping[str, str] | None" = None,
 ) -> Selection:
@@ -91,16 +91,16 @@ def select_fragments(
 
     Unconditional fragments always participate. Fragments sharing a
     ``provides`` capability compete: highest priority wins, its composes join,
-    every loser is excluded whole. Exact cross-repo ties are refused with the
-    ``--provide`` knob named; a same-repo tie is refused with no knob (fix the
-    settings). *provide* maps capability -> repo name and must name a candidate.
+    every loser is excluded whole. Exact cross-project ties are refused with the
+    ``--provide`` knob named; a same-project tie is refused with no knob (fix the
+    settings). *provide* maps capability -> project name and must name a candidate.
     """
-    declared = declared_use_cases(repos)
+    declared = declared_use_cases(projects)
     candidates = declared.get(use_case)
     if not candidates:
         known = ", ".join(sorted(declared)) or "<none>"
         raise UseCaseResolutionError(
-            f"no active repo declares use-case {use_case!r}; declared: {known}"
+            f"no active project declares use-case {use_case!r}; declared: {known}"
         )
 
     provide_map: dict[str, str] = dict(provide) if provide is not None else {}
@@ -128,17 +128,17 @@ def select_fragments(
         displaced.extend(
             Displacement(
                 capability=capability,
-                loser_repo=sf.repo.name,
+                loser_project=sf.project.name,
                 loser_priority=sf.fragment.priority,
-                winner_repo=winner.repo.name,
+                winner_project=winner.project.name,
                 winner_priority=winner.fragment.priority,
             )
             for sf in contenders
             if sf is not winner
         )
 
-    # Participation order = declaration order over repos (candidates order),
-    # so -f merge order later derives deterministically from repo order.
+    # Participation order = declaration order over projects (candidates order),
+    # so -f merge order later derives deterministically from project order.
     chosen = set(map(id, unconditional)) | set(map(id, winners))
     fragments = [sf for sf in candidates if id(sf) in chosen]
     return Selection(use_case=use_case, fragments=fragments, displaced=displaced)
@@ -148,26 +148,26 @@ def _pick_winner(
     use_case: str,
     capability: str,
     contenders: "list[SelectedFragment]",
-    override_repo: "str | None",
+    override_project: "str | None",
 ) -> SelectedFragment:
-    """Pick the winning fragment for `capability`, honoring `override_repo` if given.
+    """Pick the winning fragment for `capability`, honoring `override_project` if given.
 
-    ``--provide`` picks a REPO, not a fragment: it narrows the field to that
-    repo's own candidates and then applies the same highest-priority rule as
-    the unforced path. It cannot resolve a tie *inside* the repo it names —
-    that is still a same-repo config error, just discovered a different way.
+    ``--provide`` picks a PROJECT, not a fragment: it narrows the field to that
+    project's own candidates and then applies the same highest-priority rule as
+    the unforced path. It cannot resolve a tie *inside* the project it names —
+    that is still a same-project config error, just discovered a different way.
     """
-    if override_repo is None:
-        return _highest_priority(use_case, capability, contenders, override_repo=None)
+    if override_project is None:
+        return _highest_priority(use_case, capability, contenders, override_project=None)
 
-    picked = [sf for sf in contenders if sf.repo.name == override_repo]
+    picked = [sf for sf in contenders if sf.project.name == override_project]
     if not picked:
         raise UseCaseResolutionError(
-            f"--provide {capability}={override_repo}: {override_repo!r} is not a "
+            f"--provide {capability}={override_project}: {override_project!r} is not a "
             f"candidate provider of {capability!r} in use-case {use_case!r}; "
-            f"candidates: {sorted(sf.repo.name for sf in contenders)}"
+            f"candidates: {sorted(sf.project.name for sf in contenders)}"
         )
-    return _highest_priority(use_case, capability, picked, override_repo=override_repo)
+    return _highest_priority(use_case, capability, picked, override_project=override_project)
 
 
 def _highest_priority(
@@ -175,13 +175,13 @@ def _highest_priority(
     capability: str,
     contenders: "list[SelectedFragment]",
     *,
-    override_repo: "str | None",
+    override_project: "str | None",
 ) -> SelectedFragment:
     """Resolve `contenders` to its single top-priority fragment, or refuse a tie.
 
     `contenders` is either every candidate for `capability` (no override) or
-    one repo's own fragments for it (`override_repo` narrowed the field to
-    that repo already). Either way, ties at the top priority are a config
+    one project's own fragments for it (`override_project` narrowed the field to
+    that project already). Either way, ties at the top priority are a config
     error resolved only by editing settings.
     """
     top = max(sf.fragment.priority for sf in contenders)
@@ -189,27 +189,27 @@ def _highest_priority(
     if len(tied) == 1:
         return tied[0]
 
-    if override_repo is not None:
-        # `contenders` here is already narrowed to override_repo's own
-        # fragments, so this tie is always a same-repo tie — --provide named
-        # a repo, it did not (and cannot) pick among that repo's own ties.
+    if override_project is not None:
+        # `contenders` here is already narrowed to override_project's own
+        # fragments, so this tie is always a same-project tie — --provide named
+        # a project, it did not (and cannot) pick among that project's own ties.
         raise UseCaseResolutionError(
-            f"--provide {capability}={override_repo} does not break a tie: repo "
-            f"{override_repo!r} still declares {len(tied)} fragments providing "
+            f"--provide {capability}={override_project} does not break a tie: project "
+            f"{override_project!r} still declares {len(tied)} fragments providing "
             f"{capability!r} at priority {top}; raise one fragment's priority instead."
         )
 
-    tied_repos = sorted(sf.repo.name for sf in tied)
-    if len(set(tied_repos)) == 1:
+    tied_projects = sorted(sf.project.name for sf in tied)
+    if len(set(tied_projects)) == 1:
         raise UseCaseResolutionError(
-            f"use-case {use_case!r}: repo {tied_repos[0]!r} declares "
+            f"use-case {use_case!r}: project {tied_projects[0]!r} declares "
             f"{len(tied)} fragments providing {capability!r} at priority {top} — a "
-            f"same repo tie has no knob; keep one fragment per capability per repo."
+            f"same project tie has no knob; keep one fragment per capability per project."
         )
     raise UseCaseResolutionError(
         f"use-case {use_case!r}: capability {capability!r} is tied at priority "
-        f"{top} between repos {tied_repos}. Raise one fragment's priority, or pass "
-        f"--provide {capability}=<repo> for this invocation."
+        f"{top} between projects {tied_projects}. Raise one fragment's priority, or pass "
+        f"--provide {capability}=<project> for this invocation."
     )
 
 
@@ -363,9 +363,9 @@ def build_facts(
             )
         return str(ip)
 
-    # Union of the participating repos' scoped universes: a fact dict serves
-    # every participating repo at once, so no single repo's scope can narrow
-    # it alone (spec §7: "the owning repo's scoped universe").
+    # Union of the participating projects' scoped universes: a fact dict serves
+    # every participating project at once, so no single project's scope can narrow
+    # it alone (spec §7: "the owning project's scoped universe").
     #
     # Deliberately NOT filtered by `docker_capable`, unlike the parent rule.
     # The parent rule asks "where can this stack RUN"; these facts
@@ -373,15 +373,15 @@ def build_facts(
     # answer includes hosts that will never run a container — the bench DUT a
     # container is meant to talk to is the motivating case, and spec §7 defines
     # `hosts` as the scoped universe with no capability qualifier. The scope
-    # clause stays: a host outside every participating repo's universe is not
+    # clause stays: a host outside every participating project's universe is not
     # this deployment's business.
-    repo_names = {sf.repo.name for sf in selection.fragments}
-    scopes = [scope_for_repo(name) for name in repo_names]
+    project_names = {sf.project.name for sf in selection.fragments}
+    scopes = [scope_for_project(name) for name in project_names]
     hosts: "dict[str, HostFact]" = {
         hid: {"addr": _addr(hid, context="host")}
         for hid, h in lab.hosts.items()
         if isinstance(h, UnixHost)
-        and any(repo_targets(scope, h.source_lab, hid) for scope in scopes)
+        and any(project_targets(scope, h.source_lab, hid) for scope in scopes)
     }
     return {
         "use_case": selection.use_case,

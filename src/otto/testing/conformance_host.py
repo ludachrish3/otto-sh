@@ -79,7 +79,7 @@ def _dry_run() -> "Iterator[None]":
     a dry-run policy and nothing else from the caller's environment, and the
     binding restores the previous context (including none) on the way out.
     The composition root is imported first: it installs the initiator the
-    context composes its repos through, should a probe read them.
+    context composes its projects through, should a probe read them.
     """
     from .. import bootstrap
 

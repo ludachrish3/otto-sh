@@ -132,7 +132,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     ``docker compose -p <proj> ps -q <service>``."""
 
     project: str = field(kw_only=False)
-    """Owning project name (the repo's settings ``name``). Combined with
+    """Owning project name (the project's settings ``name``). Combined with
     *parent* and *service* to form the host id."""
 
     service: str = field(kw_only=False)
@@ -324,7 +324,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                     f"use. Bring its stack up first: from the shell, "
                     f"`otto docker compose up {self.project}` (a use-case); from Python, "
                     f"`otto.docker.deploy({self.project!r})` (a use-case) or "
-                    f"`otto.docker.compose_up(...)` (a repo's own compose files), for "
+                    f"`otto.docker.compose_up(...)` (a project's own compose files), for "
                     f"example in a session-scoped fixture."
                 )
             self.container_id = cid

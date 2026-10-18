@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 
     from typer._click.core import Command, Context, Parameter
 
-    from .repo import Repo
+    from .project import Project
 
 _log = logging.getLogger(__name__)
 
@@ -263,18 +263,18 @@ def stat_triple(path: "Path") -> list[Any]:
     return [str(path), st.st_mtime_ns, st.st_size]
 
 
-def _build_inventory(repos: "list[Repo]") -> Any:
+def _build_inventory(projects: "list[Project]") -> Any:
     from ..inventory.config import build_inventory
 
-    return build_inventory(repos)
+    return build_inventory(projects)
 
 
-def inventory_block(repos: "list[Repo]") -> dict[str, Any]:
+def inventory_block(projects: "list[Project]") -> dict[str, Any]:
     """Return the process inventory's freshness as the shim can check it (spec §3.2)."""
     from ..inventory.protocol import SupportsStatPaths
 
     try:
-        inventory = _build_inventory(repos)
+        inventory = _build_inventory(projects)
         if inventory is None:
             return {"kind": "none"}
         # Also covers a third-party stat_paths() that raises: neither a broken
@@ -287,15 +287,15 @@ def inventory_block(repos: "list[Repo]") -> dict[str, Any]:
     return {"kind": "stat", "files": [stat_triple(p) for p in paths]}
 
 
-def build_shim_payload(repos: "list[Repo]", *, app: Any, pending_key: str) -> dict[str, Any]:
+def build_shim_payload(projects: "list[Project]", *, app: Any, pending_key: str) -> dict[str, Any]:
     """Everything the shim needs to validate and answer, from the bootstrapped app (spec §3).
 
     *app* is the root Typer app and *pending_key* the ``ctx.meta`` key its
     dispatch reads. The CLI supplies both (``otto.cli.main._completion_collectors``),
     because ``otto.config`` never imports the CLI. ``keys`` are the ``names``
     section's key paths as stat triples, its lab key paths included (computed
-    here, after init); ``tables`` are the repos whose per-file test tables a
-    test-name TAB reads (their ``sut_dir``, the key each table is stored
+    here, after init); ``tables`` are the projects whose per-file test tables a
+    test-name TAB reads (their ``root``, the key each table is stored
     under), in order. The tables themselves are not read here: only a pytest
     collection writes them.
     """
@@ -307,9 +307,9 @@ def build_shim_payload(repos: "list[Repo]", *, app: Any, pending_key: str) -> di
     tree = serialize_tree(typer.main.get_command(app), pending_key=pending_key).tree
     names = section_by_name("names")
     return {
-        "ttl_seconds": _cache_ttl_seconds(repos),
-        "keys": [stat_triple(p) for p in sorted(set(writer_key_paths(names, repos)))],
-        "tables": [str(repo.sut_dir) for repo in repos],
-        "inventory": inventory_block(repos),
+        "ttl_seconds": _cache_ttl_seconds(projects),
+        "keys": [stat_triple(p) for p in sorted(set(writer_key_paths(names, projects)))],
+        "tables": [str(project.root) for project in projects],
+        "inventory": inventory_block(projects),
         "tree": tree,
     }

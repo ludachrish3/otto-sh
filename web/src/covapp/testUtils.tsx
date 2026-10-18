@@ -75,7 +75,7 @@ export function makeIndex(overrides: Partial<IndexPayload> = {}): IndexPayload {
     stamp: "stamp-1",
     generated_at: "2026-07-25 00:00 UTC",
     otto_version: "0.0.0",
-    project_name: "acme-fw",
+    report_title: "acme-fw",
     tier_order: ["system", "unit"],
     tier_labels: { system: "System (e2e)", unit: "Unit" },
     tier_colors: { system: "green", unit: "blue" },

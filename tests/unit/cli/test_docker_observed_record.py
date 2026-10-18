@@ -23,7 +23,7 @@ def recorders():
     with (
         patch("otto.config.completion_cache.record_docker_images") as images,
         patch("otto.config.completion_cache.record_docker_containers") as containers,
-        patch("otto.declared.get_repos", return_value=["repo"]),
+        patch("otto.declared.get_projects", return_value=["repo"]),
     ):
         yield images, containers
 
@@ -172,7 +172,7 @@ def test_a_probe_that_raises_leaves_the_verbs_output_and_exit_alone():
         patch(
             "otto.docker.observe.observed_containers", AsyncMock(side_effect=OSError("gone"))
         ) as observed,
-        patch("otto.declared.get_repos", return_value=["repo"]),
+        patch("otto.declared.get_projects", return_value=["repo"]),
     ):
         result = DispatchRunner().invoke(docker_cli.docker_app, ["ps"], spec_name="docker")
     observed.assert_awaited_once_with("test3")
@@ -270,26 +270,26 @@ def test_compose_down_does_not_probe_a_host_whose_teardown_failed():
 
 
 def _two_host_build_report():
-    from otto.docker.reports import BuildReport, ImageBuild, RepoBuild
+    from otto.docker.reports import BuildReport, ImageBuild, ProjectBuild
 
     ok = CommandResult(Status.Success, value="", command="docker build", retcode=0)
     bad = CommandResult(Status.Failed, value="boom", command="docker build", retcode=1)
     return BuildReport(
-        repos=[
-            RepoBuild(
-                repo="one",
+        projects=[
+            ProjectBuild(
+                project="one",
                 host="test3",
                 kind="built",
                 images={"api": ImageBuild("api", ["api:latest"], "sha", ok)},
             ),
-            RepoBuild(
-                repo="two",
+            ProjectBuild(
+                project="two",
                 host="alt2",
                 kind="built",
                 images={"db": ImageBuild("db", [], None, bad)},
             ),
-            RepoBuild(
-                repo="three",
+            ProjectBuild(
+                project="three",
                 host="test3",
                 kind="built",
                 images={"web": ImageBuild("web", ["web:latest"], "sha2", ok)},

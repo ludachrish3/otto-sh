@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pytest
 
 from otto.host.product import ProductPlan
-from otto.project.plan import HostPlan, ProductPlanEntry, RepoPlan
+from otto.project.plan import HostPlan, ProductPlanEntry, ProjectPlan
 from tests._fixtures.bootstrap_seam import patch_bootstrap
 from tests._fixtures.fake_repo import fake_repo
 from tests.unit.cli.conftest import _flat
@@ -17,7 +17,7 @@ assert len(LONG_COMMAND) > 100
 def _canned(name, ctx, kwargs):
     del ctx, kwargs
     return [
-        RepoPlan(
+        ProjectPlan(
             "repo1",
             [
                 HostPlan(
@@ -114,8 +114,8 @@ def test_the_leaf_drives_the_real_planner_over_a_lab_without_contacting_the_host
     product.owner = "r1"
     host.products = [product]
     ctx = OttoContext(lab=Lab(name="bench", hosts={host.id: host}), policy=RunPolicy(dry_run=True))
-    repos = [fake_repo("r1", project_scope=None, sut_dir=tmp_path)]
-    patch_bootstrap(monkeypatch, repos)
+    projects = [fake_repo("r1", project_scope=None, root=tmp_path)]
+    patch_bootstrap(monkeypatch, projects)
     token = set_context(ctx)
     try:
         dry = DispatchRunner().invoke(run_app, ["install"], async_leaves=True)

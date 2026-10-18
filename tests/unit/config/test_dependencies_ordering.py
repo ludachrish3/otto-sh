@@ -1,7 +1,7 @@
 """Skip propagation, required cycles, soft edges, stable topological order."""
 
 from otto.config.dependencies import resolve_dependencies
-from otto.config.repo import Repo
+from otto.config.project import Project
 from tests._fixtures.sutrepo import make_sut_repo
 
 
@@ -14,16 +14,16 @@ def _repo(tmp_path, name, version="1.0.0", *, required=(), optional=(), dirname=
         version=version,
         extra=f"[dependencies]\nrequired = [{req}]\noptional = [{opt}]\n",
     )
-    return Repo(sut_dir=root)
+    return Project(root=root)
 
 
-def _names(repos):
-    return [r.name for r in repos]
+def _names(projects):
+    return [r.name for r in projects]
 
 
 def test_dep_free_setup_keeps_sut_dir_order(tmp_path):
-    repos = [_repo(tmp_path, n) for n in ("c", "a", "b")]
-    out = resolve_dependencies(repos)
+    projects = [_repo(tmp_path, n) for n in ("c", "a", "b")]
+    out = resolve_dependencies(projects)
     assert _names(out.ordered) == ["c", "a", "b"]
     assert out.errors == []
     assert out.warnings == []
@@ -113,7 +113,7 @@ def test_downstream_of_cycle_skipped_with_pointer(tmp_path):
     assert out.ordered == []
     downstream = [str(e) for e in out.errors if "part of a dependency cycle" in str(e)]
     assert len(downstream) == 1
-    assert str(c.sut_dir) in downstream[0]
+    assert str(c.root) in downstream[0]
 
 
 def test_soft_edge_orders_optional_provider_first(tmp_path):
@@ -150,7 +150,7 @@ def test_satisfied_optional_warns_when_provider_skipped(tmp_path):
     assert len(out.warnings) == 1
     (warn,) = out.warnings
     assert "e >= 1" in warn.message
-    assert str(e.sut_dir) in warn.message
+    assert str(e.root) in warn.message
     assert "feature disabled" in warn.message
     # the stored status is unchanged -- it describes the discovered set, not
     # registration success.

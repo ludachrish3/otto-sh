@@ -40,7 +40,7 @@ class TestStabilityE2E:
         result = run_otto(
             ["test", "--iterations", "3", "TestStabilityFixture"],
             xdir=xdir,
-            sut_dirs=REPO1,
+            roots=REPO1,
             lab="unix",
         )
 
@@ -72,7 +72,7 @@ class TestStabilityE2E:
         result = run_otto(
             ["test", "TestStabilityFixture"],
             xdir=xdir,
-            sut_dirs=REPO1,
+            roots=REPO1,
             lab="unix",
         )
 

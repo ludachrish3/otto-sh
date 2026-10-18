@@ -1,8 +1,8 @@
 """The first-party options classes: the flags otto's six project instructions carry.
 
-Each is the base a repo's override MUST inherit (the table refuses an override
+Each is the base a project's override MUST inherit (the table refuses an override
 that does not), so the first-party flags stay on ``otto run <name>`` however
-many repos add their own, and ``super()`` can read them off the subclass
+many projects add their own, and ``super()`` can read them off the subclass
 instance. Field names are the flag spellings ``otto run`` has always shown.
 """
 
@@ -30,10 +30,11 @@ class UninstallOptions:
     """``otto run uninstall``'s flags."""
 
     product_logs: Annotated[
-        bool, typer.Option(help="Haul each repo's product logs off before that repo comes down.")
+        bool,
+        typer.Option(help="Haul each project's product logs off before that project comes down."),
     ] = True
     debug_logs: Annotated[
-        bool, typer.Option(help="Sweep every host's debug logs once, after every repo is down.")
+        bool, typer.Option(help="Sweep every host's debug logs once, after every project is down.")
     ] = True
 
 
@@ -42,10 +43,11 @@ class CleanupOptions:
     """``otto run cleanup``'s flags."""
 
     product_logs: Annotated[
-        bool, typer.Option(help="Haul each repo's product logs off before that repo comes down.")
+        bool,
+        typer.Option(help="Haul each project's product logs off before that project comes down."),
     ] = True
     debug_logs: Annotated[
-        bool, typer.Option(help="Sweep every host's debug logs once, after every repo is down.")
+        bool, typer.Option(help="Sweep every host's debug logs once, after every project is down.")
     ] = True
     reset_impairments: Annotated[
         bool, typer.Option(help="Repair every lab link, clearing otto's netem impairments.")
@@ -59,7 +61,7 @@ class CleanupOptions:
 class GetLogsOptions:
     """``otto run get-logs``'s flags."""
 
-    product_logs: Annotated[bool, typer.Option(help="Gather every repo's product logs.")] = True
+    product_logs: Annotated[bool, typer.Option(help="Gather every project's product logs.")] = True
     debug_logs: Annotated[bool, typer.Option(help="Sweep every host's debug logs once.")] = True
     require_product_logs: Annotated[
         bool, typer.Option(help="Fail when a product that declares logs surrendered none.")
@@ -70,7 +72,7 @@ class GetLogsOptions:
 class InstallToolsOptions:
     """``otto run install-tools``'s flags."""
 
-    dev: Annotated[bool, typer.Option(help="Install each repo's own dev tools.")] = True
+    dev: Annotated[bool, typer.Option(help="Install each project's own dev tools.")] = True
     toolchain: Annotated[
         bool, typer.Option(help="Also place each host's shared toolchain tools.")
     ] = False

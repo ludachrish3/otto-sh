@@ -543,7 +543,7 @@ def test_a_monkeypatch_on_the_lazy_package_is_caught_and_evicted():
 
     assert leaked_lazy_exports() == []
     patcher = pytest.MonkeyPatch()
-    patcher.setattr(_on_the_package("otto.session", "build_lab"), lambda repos, labs: None)
+    patcher.setattr(_on_the_package("otto.session", "build_lab"), lambda projects, labs: None)
     patcher.undo()
     try:
         assert leaked_lazy_exports() == ["otto.session.build_lab"]
@@ -625,7 +625,7 @@ def test_a_monkeypatch_on_the_defining_module_leaves_nothing_behind():
     from tests._fixtures._lazy_exports import leaked_lazy_exports
 
     patcher = pytest.MonkeyPatch()
-    patcher.setattr("otto.session.lab.build_lab", lambda repos, labs: None)
+    patcher.setattr("otto.session.lab.build_lab", lambda projects, labs: None)
     try:
         assert otto.session.build_lab(None, None) is None  # the package resolves the patch
     finally:

@@ -49,6 +49,10 @@ old module is gone. Discovery left the root for ``otto.config.repo``: its cache
 ``DiscoveryResult`` and ``discovered_teardown_deadline``. The root still re-exports
 ``get_env``, its public name, the same object, so that one is not an old spelling there.
 
+The project loader moved whole with the project vocabulary (spec
+``docs/superpowers/specs/2026-10-17-649-project-vocabulary-design.md``):
+``otto.config.repo`` is now ``otto.config.project``, so the old module is gone.
+
 An old spelling fails loudly at most call sites, but not everywhere. Six
 readers import an accessor inside a broad ``except``, where a stale import
 degrades silently instead of raising
@@ -150,12 +154,12 @@ GONE: dict[str, frozenset[str]] = {
     "otto.config.bootstrapped": ACCESSORS,
     "otto.config.lab": LAB,
     "otto.config.fleet": FLEET | FLEET_HELPERS | RUN_REPOS,
+    "otto.config.repo": SETTINGS,
 }
 # old home -> the moved names it no longer has
 OLD_HOMES: dict[str, frozenset[str]] = {
     "otto.config": ACCESSORS | FLEET,
     **GONE,
-    "otto.config.repo": SETTINGS,
     "otto.config.env": SPLITTER,
     "otto.context": ACTIVE_RUN | CONTEXT_INTERNALS,
     "otto.bootstrap": COMPOSED_STATE | DISCOVERY_STATE,
@@ -326,7 +330,7 @@ def test_no_otto_code_or_test_names_a_moved_name_at_its_old_home():
         "splitter; otto.invocation for the active-run slot; otto.run_context for the fleet's "
         "override helper; otto.host.builtin_hosts for the membership rule and "
         "is_builtin_host; otto.declared for the composed state and the run's repos; "
-        "otto.config.repo for discovery). "
+        "otto.config.project for discovery and the project loader). "
         "A line marked (a facade) "
         "is re-pointed by scripts/facade_sweep.py --apply when it is a from-import "
         "(tests/unit/test_internal_imports_skip_facades.py):\n  " + "\n  ".join(offenders)
@@ -391,7 +395,7 @@ class TestTheScanSeesEverySpelling:
             'monkeypatch.setattr("otto.config.bootstrapped.get_repos", f)\n'
             'monkeypatch.setattr("otto.config.get_env", f)\n'
             'CODE = "from otto.config import get_repos\\n"\n'
-            'FINE = "otto.config.repo.Repo"\n'
+            'FINE = "otto.config.project.Project"\n'
             'ALSO_FINE = "otto.bootstrap.get_repos"\n'
         )
         assert self.lines(source, None) == [1, 2, 3]
@@ -437,13 +441,13 @@ class TestTheScanSeesEverySpelling:
             "import otto.config.repo as r\n"
             "r.MonitorSettings\n"
             'CODE = "from otto.config.repo import ARCHIVE_SUFFIXES\\n"\n'
-            "from otto.config.repo import Repo, selectable_names\n"
+            "from otto.config.project import Project, selectable_names\n"
             "from otto.config.scope import TOML_SETTINGS_PATH, DockerImage\n"
             "from otto.utils import split_path_list\n"
-            'FINE = "otto.config.repo.Repo"\n'
-            "r.Repo\n"
+            'FINE = "otto.config.project.Project"\n'
+            "r.Project\n"
         )
-        assert self.lines(source, "otto.config.collected_tests") == [1, 2, 3, 4, 5, 7, 8]
+        assert self.lines(source, "otto.config.collected_tests") == [1, 2, 3, 4, 5, 6, 8]
 
     def test_the_composed_state_and_the_run_s_repos_at_their_old_homes(self):
         """The root's caches and the run's repos live in ``otto.declared`` now."""
@@ -515,7 +519,7 @@ class TestTheScanSeesEverySpelling:
         assert self.lines(source, "otto.config.scope") == [1, 2, 3, 4, 6, 7, 8, 9]
 
     def test_discovery_at_the_root_it_left(self):
-        """Discovery lives in ``otto.config.repo``; the root re-exports its public get_env."""
+        """Discovery lives in ``otto.config.project``; the root re-exports its public get_env."""
         source = (
             "from otto import bootstrap as bs\n"
             "bs._discovered\n"
@@ -525,8 +529,8 @@ class TestTheScanSeesEverySpelling:
             'monkeypatch.setattr(bs, "_discovered", None)\n'
             "bs.discover()\n"
             "bs.get_env()\n"
-            "from otto.config.repo import DiscoveryResult, discover\n"
-            'FINE = "otto.config.repo.discover"\n'
+            "from otto.config.project import DiscoveryResult, discover\n"
+            'FINE = "otto.config.project.discover"\n'
         )
         assert self.lines(source) == [2, 3, 4, 5, 6, 7]
 

@@ -12,7 +12,7 @@ per-product verdicts, so a run that collected coverage says so.
 
 Two things have to be in place for any of it: a `[coverage]` table in
 `.otto/settings.toml` (a `hosts` selector is the smallest one that counts) and
-a git-tracked SUT, because every capture is anchored to a commit.  Tiers are
+a git-tracked project, because every capture is anchored to a commit.  Tiers are
 optional — with no `[coverage.tiers]` table otto assumes one implicit tier
 named `system` of the `e2e` kind, the kind a lab run collects into
 ({doc}`tiers`).
@@ -20,12 +20,12 @@ named `system` of the `e2e` kind, the kind a lab run collects into
 Retrieval then runs the tests normally, fetches each instrumented product's
 `.gcda` files from its own `cov_dir`, and — on a best-effort basis — produces
 a `capture.json` per host per product: one product's merged, source-resolved
-coverage on one host, stamped with the `base_commit` (the SUT's commit at
+coverage on one host, stamped with the `base_commit` (the project's commit at
 capture time) it is valid against.  It is the same capture-production
 machinery `otto cov get` runs.
 
 This tail never fails an otherwise-successful test run **over collection**: a
-SUT that is not a git checkout (no commit to anchor a capture to),
+project that is not a git checkout (no commit to anchor a capture to),
 misconfigured tiers, or a stamp mismatch during merge — gcov reporting that
 the fetched `.gcda` came from a different build than the local `.gcno` notes
 files — are logged and swallowed.  What survives is the fetched `.gcda`
@@ -49,7 +49,7 @@ case.
 | Mode | What it does |
 |---|---|
 | *(neither flag)* | Auto — retrieval runs when some product is instrumented **and** a `[coverage]` table is configured |
-| `--cov` | Insist. Refuses **before any test runs** when nothing is instrumented, or when the repo has no `[coverage]` table |
+| `--cov` | Insist. Refuses **before any test runs** when nothing is instrumented, or when the project has no `[coverage]` table |
 | `--no-cov` | Off, regardless of what the lab carries |
 
 `--cov-dir`, `--cov-report`, `--cov-report-dir` and `--cov-tickets-json` all
@@ -209,7 +209,7 @@ without a separate `otto cov report` invocation.  It goes through the
 same collection model: the configured tiers (colors, precedence),
 the exclusion rules, the unit-tier harvest (each `kind = "unit"` tier's build
 directories, swept for `.gcda` at report time) and the committed manual store
-(the captures under the repo's `.otto/coverage/manual/`, recorded by hand and
+(the captures under the project's `.otto/coverage/manual/`, recorded by hand and
 reviewed like any other file) all apply, exactly as they would in a standalone
 report.
 Like the capture tail, inline report generation is best-effort — a

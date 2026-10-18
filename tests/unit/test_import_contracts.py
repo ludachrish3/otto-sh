@@ -50,7 +50,7 @@ _NO_COMMAND_MODULE_LOADS = [
     "rich.table",
     "otto.fleet",
     "otto.labs.loader",
-    "otto.config.repo",
+    "otto.config.project",
     "otto.context",
     "otto.run_context",
     "otto.coverage.merge",
@@ -94,12 +94,12 @@ IMPORT_CONTRACTS: dict[str, list[str]] = {
     "import otto.cli.tunnel": ["otto.fleet", "rich.table"],
     # --- Shared modules every command imports. ---
     # The command tree imports otto.config for every `--help`; none reads a repo.
-    "import otto.config": ["otto.config.repo", "otto.config.version"],
+    "import otto.config": ["otto.config.project", "otto.config.version"],
     # The repo loader reads the settings types from the foundation module
     # otto.config.scope, so importing it (`from otto.config import Repo`) loads
     # no settings model and no pydantic. Discovery lives here, below the
     # composition root, so reading it never loads the root.
-    "import otto.config.repo": ["otto.bootstrap", "otto.models.settings", "pydantic"],
+    "import otto.config.project": ["otto.bootstrap", "otto.models.settings", "pydantic"],
     # Command modules take constants from otto.utils; only wait_for_async
     # needs asyncio, and it already runs on a loop.
     "import otto.utils": ["asyncio"],
@@ -224,7 +224,7 @@ IMPORT_CONTRACTS: dict[str, list[str]] = {
     # types it re-exports, and otto.declared, whose initiator slot it fills.
     # Of discovery it re-exports only get_env, lazily, from otto.config.repo.
     "import otto.bootstrap": [
-        "otto.config.repo",
+        "otto.config.project",
         "otto.config.version",
         "otto.host",
         "otto.models",
@@ -273,7 +273,7 @@ IMPORT_MUST_LOAD: dict[str, list[str]] = {
     "from otto.host import LocalHost": ["otto.host.local_host"],
     "from otto.lab import fleet_of_interest": ["otto.fleet"],
     "from otto.lab import Lab": ["otto.labs.loader"],
-    "from otto.bootstrap import get_env": ["otto.config.repo"],
+    "from otto.bootstrap import get_env": ["otto.config.project"],
     "from otto.context import OttoContext": ["otto.bootstrap", "otto.run_context"],
     "from otto import open_context": ["otto.bootstrap", "otto.run_context"],
     "import otto.instruction_catalog": ["otto.errors", "otto.registry"],
@@ -321,13 +321,13 @@ IMPORT_ONLY_DECLARED: dict[str, list[str]] = {
     # The run's policy, peer-host resolver, bindings and the active run: a leaf, below the
     # host layer that reads it (spec 2026-10-11 placement-and-phases §3.8).
     "otto.invocation": [],
-    # The shared helpers every layer reads, the OTTO_SUT_DIRS splitter among them.
+    # The shared helpers every layer reads, the OTTOPATH splitter among them.
     "otto.utils": [],
     # The user's home and the user settings file, carved out of otto.config into
     # the specs layer, so the inventory reads them without otto.config. The home
-    # reads the env settings model and normalizes the workspace slug inside its
-    # functions.
-    "otto.config.home": ["otto.models", "otto.models.dependencies"],
+    # reads the env settings model, normalizes the workspace slug and keys the
+    # roots (otto.utils.root_key) inside its functions.
+    "otto.config.home": ["otto.models", "otto.models.dependencies", "otto.utils"],
     "otto.config.user_settings": [],
 }
 

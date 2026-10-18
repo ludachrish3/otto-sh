@@ -27,6 +27,7 @@ import pytest
 from otto.cli.test import _markers_completer, _names_completer
 from otto.config import collected_tests as tr
 from otto.config import completion_cache as cc
+from otto.config.env import is_otto_env_var
 from otto.suite import run_tests
 from otto.suite.run import _refresh_tables
 from tests._fixtures.import_log_repo import ImportLogRepo, logged_test
@@ -42,9 +43,9 @@ def _bump(path: Path, seconds: int = 5) -> None:
 
 
 def _repos():
-    from otto.bootstrap import get_repos
+    from otto.bootstrap import get_projects
 
-    return get_repos()
+    return get_projects()
 
 
 def _tab(incomplete: str = "") -> list[str]:
@@ -58,7 +59,7 @@ def _own_home(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def repo(sut_repo, tmp_path) -> ImportLogRepo:
+def project(sut_repo, tmp_path) -> ImportLogRepo:
     shell = ImportLogRepo(tmp_path / "sut")
     shell.root = sut_repo(
         files={
@@ -84,7 +85,7 @@ def sessions(monkeypatch) -> list:
     seen: list = []
     real = run_module._run_pytest_session
 
-    def spy(repo, selection, run=None, **kwargs):
+    def spy(project, selection, run=None, **kwargs):
         files = selection.candidates
         seen.append(
             {
@@ -93,7 +94,7 @@ def sessions(monkeypatch) -> list:
                 "collect_only": run is None,
             }
         )
-        return real(repo, selection, run, **kwargs)
+        return real(project, selection, run, **kwargs)
 
     monkeypatch.setattr(run_module, "_run_pytest_session", spy)
     return seen
@@ -138,18 +139,18 @@ def popen(monkeypatch) -> list:
 # ── a cold table: the one TAB that waits ──────────────────────────────────────
 
 
-def test_a_cold_tab_seeds_the_whole_tree_once_and_answers(repo, sessions, child, popen):
+def test_a_cold_tab_seeds_the_whole_tree_once_and_answers(project, sessions, child, popen):
     answer = _tab()
 
     assert len(child) == 1, "one waited-for child"
     assert child[0]["timeout"] == cc.COLLECT_TIMEOUT_SECONDS + cc._COLLECT_KILL_GRACE_SECONDS
     assert sessions == [{"files": None, "dirs": [], "collect_only": True}]
-    assert repo.imported() == ["test_a", "test_b", "test_c"]
-    assert repo.ran_tests() == []
+    assert project.imported() == ["test_a", "test_b", "test_c"]
+    assert project.ran_tests() == []
     assert {"TestA", "TestA::test_a1", "test_a2", "test_b1", "test_c1"} <= set(answer)
     assert _tab("test_b") == ["test_b1"]
 
-    repo.next_run()
+    project.next_run()
     sessions.clear()
     assert _tab() == answer
     assert len(child) == 1, "a warm table never waits again"
@@ -159,7 +160,9 @@ def test_a_cold_tab_seeds_the_whole_tree_once_and_answers(repo, sessions, child,
     assert popen == []
 
 
-def test_a_child_that_times_out_leaves_an_empty_answer_and_a_cooldown(repo, sessions, monkeypatch):
+def test_a_child_that_times_out_leaves_an_empty_answer_and_a_cooldown(
+    project, sessions, monkeypatch
+):
     calls: list = []
 
     def run(argv, **kwargs):
@@ -177,14 +180,14 @@ def test_a_child_that_times_out_leaves_an_empty_answer_and_a_cooldown(repo, sess
     assert sessions == []
 
 
-def test_a_failing_child_stamps_the_cooldown(repo, monkeypatch):
+def test_a_failing_child_stamps_the_cooldown(project, monkeypatch):
     monkeypatch.setattr(subprocess, "run", lambda argv, **_k: subprocess.CompletedProcess(argv, 1))
 
     assert _tab() == []
     assert cc.collect_cooldown_active()
 
 
-def test_the_child_past_its_cap_stamps_the_cooldown_and_frees_the_lock(repo, monkeypatch):
+def test_the_child_past_its_cap_stamps_the_cooldown_and_frees_the_lock(project, monkeypatch):
     lock = cc._cache_path().parent / cc.COLLECT_LOCK_FILENAME
     lock.parent.mkdir(parents=True, exist_ok=True)
     lock.write_text("held")
@@ -217,7 +220,7 @@ def _exit_raises(monkeypatch) -> None:
     monkeypatch.setattr(tr.os, "_exit", exit_)
 
 
-def test_a_hanging_bootstrap_is_stopped_by_the_deadline(repo, monkeypatch):
+def test_a_hanging_bootstrap_is_stopped_by_the_deadline(project, monkeypatch):
     """The lock and the deadline come before the repos are loaded: an init module that hangs
     is stopped like a collection that hangs, and the next TABs cool down."""
     _exit_raises(monkeypatch)
@@ -240,7 +243,7 @@ def test_a_hanging_bootstrap_is_stopped_by_the_deadline(repo, monkeypatch):
     assert cc.collect_cooldown_active()
 
 
-def test_a_bootstrap_that_raises_in_the_child_stamps_the_cooldown(repo, monkeypatch):
+def test_a_bootstrap_that_raises_in_the_child_stamps_the_cooldown(project, monkeypatch):
     """``entry()``'s child branch: the lock is held while bootstrap runs; its failure cools down."""
     import otto.bootstrap as bs
     from otto.cli.main import entry
@@ -264,7 +267,7 @@ def test_a_bootstrap_that_raises_in_the_child_stamps_the_cooldown(repo, monkeypa
     assert "RuntimeError" in (cc._cache_path().parent / cc.COLLECT_COOLDOWN_FILENAME).read_text()
 
 
-def test_a_timed_out_child_leaves_a_lock_it_never_took_alone(repo, monkeypatch):
+def test_a_timed_out_child_leaves_a_lock_it_never_took_alone(project, monkeypatch):
     """Another process took the lock while the child ran; the child's timeout is not its release."""
 
     def run(argv, **kwargs):
@@ -278,7 +281,7 @@ def test_a_timed_out_child_leaves_a_lock_it_never_took_alone(repo, monkeypatch):
     assert cc.collect_cooldown_active()
 
 
-def test_a_timed_out_child_that_held_the_lock_has_it_freed(repo, monkeypatch):
+def test_a_timed_out_child_that_held_the_lock_has_it_freed(project, monkeypatch):
     """The child took the lock and was killed before it could free it: the waiting TAB frees it."""
 
     def run(argv, **kwargs):
@@ -291,7 +294,7 @@ def test_a_timed_out_child_that_held_the_lock_has_it_freed(repo, monkeypatch):
     assert not _lock().exists()
 
 
-def test_an_expiry_during_a_cache_write_leaves_no_temporary_file(repo, monkeypatch):
+def test_an_expiry_during_a_cache_write_leaves_no_temporary_file(project, monkeypatch):
     _exit_raises(monkeypatch)
     home = cc._cache_path().parent
     home.mkdir(parents=True, exist_ok=True)
@@ -309,11 +312,11 @@ def test_an_expiry_during_a_cache_write_leaves_no_temporary_file(repo, monkeypat
 
 
 def test_a_table_another_env_wrote_offers_nothing_when_the_seed_fails(
-    repo, tmp_path, sessions, monkeypatch
+    project, tmp_path, sessions, monkeypatch
 ):
     """An outdated table is cold: its names may be wrong in every file, so none are offered."""
     assert run_tests(["test_b1"], output_dir=tmp_path / "warm").exit_code == 0
-    repo.write("pytest.ini", "[pytest]\n")
+    project.write("pytest.ini", "[pytest]\n")
     monkeypatch.setattr(subprocess, "run", lambda argv, **_k: subprocess.CompletedProcess(argv, 1))
 
     assert _tab() == []
@@ -321,12 +324,14 @@ def test_a_table_another_env_wrote_offers_nothing_when_the_seed_fails(
     assert _tab() == [], "and during the cooldown"
 
 
-def test_a_refresh_that_leaves_the_table_behind_cools_down(repo, tmp_path, sessions, child, popen):
+def test_a_refresh_that_leaves_the_table_behind_cools_down(
+    project, tmp_path, sessions, child, popen
+):
     """A directory whose conftest breaks is still unlisted after the child: no respawn every TAB."""
-    _warm(repo, tmp_path, sessions)
-    repo.write("tests/new/conftest.py", "raise RuntimeError('broken conftest')\n")
-    repo.write("tests/new/test_n.py", repo.module("test_n", logged_test("test_n1")))
-    _bump(repo.root / "tests")
+    _warm(project, tmp_path, sessions)
+    project.write("tests/new/conftest.py", "raise RuntimeError('broken conftest')\n")
+    project.write("tests/new/test_n.py", project.module("test_n", logged_test("test_n1")))
+    _bump(project.root / "tests")
     _age(_check_marker(), 3600)
 
     _tab()
@@ -365,19 +370,19 @@ def test_a_refresh_that_finds_a_new_dependency_succeeds(sut_repo, tmp_path, monk
     assert tr.collect_child_main(_repos, _refresh_tables) == 0
 
     assert not cc.collect_cooldown_active()
-    [repo] = _repos()
-    table = tr.read_table(repo)
+    [project] = _repos()
+    table = tr.read_table(project)
     assert table is not None
     assert {"TestD::test_x", "TestE::test_z"} <= set(table.names)
 
 
 @pytest.mark.parametrize("start", ["run_collect_child", "spawn_collect_child"])
 def test_a_collect_child_starts_in_the_workspace_home_whatever_the_shell_cwd(
-    repo, child, popen, tmp_path, monkeypatch, start
+    project, child, popen, tmp_path, monkeypatch, start
 ):
     """Never the shell's cwd: the child starts in the workspace home, its OTTO_* paths absolute."""
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("OTTO_SUT_DIRS", str(repo.root.relative_to(tmp_path)))
+    monkeypatch.setenv("OTTOPATH", str(project.root.relative_to(tmp_path)))
     monkeypatch.setenv("OTTO_HOME", "home")
     cache_path = cc._cache_path()
     assert cache_path is not None
@@ -388,11 +393,11 @@ def test_a_collect_child_starts_in_the_workspace_home_whatever_the_shell_cwd(
     [kwargs] = child or [spawn["kwargs"] for spawn in popen]
     assert Path(kwargs["cwd"]) == home
     assert home.is_dir()
-    assert kwargs["env"]["OTTO_SUT_DIRS"] == str(repo.root)
+    assert kwargs["env"]["OTTOPATH"] == str(project.root)
     assert kwargs["env"]["OTTO_HOME"] == str(tmp_path / "home")
 
 
-def test_a_check_that_cannot_be_recorded_starts_no_child(repo, popen, monkeypatch):
+def test_a_check_that_cannot_be_recorded_starts_no_child(project, popen, monkeypatch):
     """As in the shim: an unwritable check marker would start a child on every late TAB."""
     cache_dir = cc._cache_path().parent
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -406,7 +411,7 @@ def test_a_check_that_cannot_be_recorded_starts_no_child(repo, popen, monkeypatc
     assert popen == []
 
 
-def test_a_spawn_lets_go_of_children_that_finished(repo, popen, monkeypatch):
+def test_a_spawn_lets_go_of_children_that_finished(project, popen, monkeypatch):
     """The handles held for detached children do not pile up in a long-lived process."""
 
     class _Finished:
@@ -431,10 +436,10 @@ def test_two_detached_children_in_a_row_collect_once(tmp_path, monkeypatch):
     """
     from tests._fixtures.generated_repo import generate_repo
 
-    repo = generate_repo(tmp_path, files=4, dirs=2)
+    project = generate_repo(tmp_path, files=4, dirs=2)
     loads = tmp_path / "bootstraps.log"
     release = tmp_path / "release"
-    init = repo / "pylib" / "genrepo_instructions.py"
+    init = project / "pylib" / "genrepo_instructions.py"
     init.write_text(
         init.read_text()
         + "\nimport pathlib, time\n"
@@ -443,9 +448,9 @@ def test_two_detached_children_in_a_row_collect_once(tmp_path, monkeypatch):
         + f"while not pathlib.Path({str(release)!r}).exists() and time.monotonic() < _until:\n"
         + "    time.sleep(0.05)\n"
     )
-    for key in [k for k in os.environ if k.startswith("OTTO_")]:
+    for key in [k for k in os.environ if is_otto_env_var(k)]:
         monkeypatch.delenv(key)
-    monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
+    monkeypatch.setenv("OTTOPATH", str(project))
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     for var in (cc.COMPLETION_ENV_VAR, "COMP_WORDS", "COMP_CWORD"):
         monkeypatch.delenv(var, raising=False)
@@ -471,7 +476,7 @@ def test_two_detached_children_in_a_row_collect_once(tmp_path, monkeypatch):
         spawned.wait(timeout=60)
     cc._detached_children.clear()
     cache = cache_dir / "completion_cache.json"
-    assert str(repo) in json.loads(cache.read_text())[cc.COLLECTED_TESTS_KEY]
+    assert str(project) in json.loads(cache.read_text())[cc.COLLECTED_TESTS_KEY]
     assert loads.read_text().split() == ["x"]
     assert not lock.exists()
 
@@ -479,24 +484,26 @@ def test_two_detached_children_in_a_row_collect_once(tmp_path, monkeypatch):
 # ── a warm table: answer at once, refresh behind ──────────────────────────────
 
 
-def _warm(repo: ImportLogRepo, tmp_path: Path, sessions: list) -> None:
+def _warm(project: ImportLogRepo, tmp_path: Path, sessions: list) -> None:
     """Run once, so the table holds what pytest collected; then forget the run."""
     assert run_tests(["test_b1"], output_dir=tmp_path / "warm").exit_code == 0
-    repo.next_run()
+    project.next_run()
     sessions.clear()
 
 
-def _save(repo: ImportLogRepo, rel: str, source: str) -> Path:
-    path = repo.write(rel, source)
+def _save(project: ImportLogRepo, rel: str, source: str) -> Path:
+    path = project.write(rel, source)
     _bump(path)
     return path
 
 
 def test_a_tab_after_a_save_answers_at_once_and_checks_behind(
-    repo, tmp_path, sessions, child, popen
+    project, tmp_path, sessions, child, popen
 ):
-    _warm(repo, tmp_path, sessions)
-    _save(repo, "tests/test_b.py", repo.module("test_b", _B + "\n\n" + logged_test("test_b2")))
+    _warm(project, tmp_path, sessions)
+    _save(
+        project, "tests/test_b.py", project.module("test_b", _B + "\n\n" + logged_test("test_b2"))
+    )
     _age(_check_marker(), 3600)
 
     answer = _tab("test_b")
@@ -523,16 +530,16 @@ def test_a_tab_after_a_save_answers_at_once_and_checks_behind(
     # The child, as the detached process runs it: exactly the saved file.
     assert tr.collect_child_main(_repos, _refresh_tables) == 0
     assert sessions == [{"files": ["test_b.py"], "dirs": [], "collect_only": True}]
-    assert repo.imported() == ["test_b"]
+    assert project.imported() == ["test_b"]
 
     assert _tab("test_b") == ["test_b1", "test_b2"]
     assert not cc._collect_refresh_requested
 
 
-def test_a_new_file_is_found_by_its_directory(repo, tmp_path, sessions, child, popen):
-    _warm(repo, tmp_path, sessions)
-    repo.write("tests/sub/test_d.py", repo.module("test_d", logged_test("test_d1")))
-    _bump(repo.root / "tests" / "sub")
+def test_a_new_file_is_found_by_its_directory(project, tmp_path, sessions, child, popen):
+    _warm(project, tmp_path, sessions)
+    project.write("tests/sub/test_d.py", project.module("test_d", logged_test("test_d1")))
+    _bump(project.root / "tests" / "sub")
     _age(_check_marker(), 3600)
 
     assert "test_d1" not in _tab(), "an omission until the refresh, never a phantom"
@@ -540,15 +547,15 @@ def test_a_new_file_is_found_by_its_directory(repo, tmp_path, sessions, child, p
     assert tr.collect_child_main(_repos, _refresh_tables) == 0
 
     assert sessions == [{"files": [], "dirs": ["sub"], "collect_only": True}]
-    assert repo.imported() == ["test_c", "test_d"]
+    assert project.imported() == ["test_c", "test_d"]
     assert "test_d1" in _tab()
 
 
-def test_a_deleted_files_names_stay_until_the_check(repo, tmp_path, sessions, child):
+def test_a_deleted_files_names_stay_until_the_check(project, tmp_path, sessions, child):
     """Last-known, like every other record: the TAB does not stat the file to find it gone."""
-    _warm(repo, tmp_path, sessions)
-    (repo.root / "tests" / "test_b.py").unlink()
-    _bump(repo.root / "tests")
+    _warm(project, tmp_path, sessions)
+    (project.root / "tests" / "test_b.py").unlink()
+    _bump(project.root / "tests")
 
     assert "test_b1" in _tab()
     assert not cc._collect_refresh_requested, "inside the check window"
@@ -562,10 +569,10 @@ def test_a_deleted_files_names_stay_until_the_check(repo, tmp_path, sessions, ch
     assert child == []
 
 
-def test_a_warm_tab_stats_nothing_the_table_tracks(repo, tmp_path, sessions, child, monkeypatch):
+def test_a_warm_tab_stats_nothing_the_table_tracks(project, tmp_path, sessions, child, monkeypatch):
     """O(1) in the corpus: the table's ``env`` paths are stat'ed, no test file or directory."""
-    _warm(repo, tmp_path, sessions)
-    tests = str(repo.root / "tests")
+    _warm(project, tmp_path, sessions)
+    tests = str(project.root / "tests")
     stats: list[str] = []
     real = os.stat
 
@@ -582,9 +589,11 @@ def test_a_warm_tab_stats_nothing_the_table_tracks(repo, tmp_path, sessions, chi
     assert child == []
 
 
-def test_a_held_lock_starts_no_child(repo, tmp_path, sessions, child, popen):
-    _warm(repo, tmp_path, sessions)
-    _save(repo, "tests/test_b.py", repo.module("test_b", _B + "\n\n" + logged_test("test_b2")))
+def test_a_held_lock_starts_no_child(project, tmp_path, sessions, child, popen):
+    _warm(project, tmp_path, sessions)
+    _save(
+        project, "tests/test_b.py", project.module("test_b", _B + "\n\n" + logged_test("test_b2"))
+    )
     _age(_check_marker(), 3600)
     lock = cc._cache_path().parent / cc.COLLECT_LOCK_FILENAME
     lock.write_text(str(time.time()))
@@ -596,7 +605,9 @@ def test_a_held_lock_starts_no_child(repo, tmp_path, sessions, child, popen):
     assert popen == [], "another collect child is at work"
 
 
-def test_a_request_left_from_before_a_completion_starts_no_child(repo, popen, monkeypatch, capsys):
+def test_a_request_left_from_before_a_completion_starts_no_child(
+    project, popen, monkeypatch, capsys
+):
     """Only this completion's own completers ask for the child: an older request is dropped.
 
     A completer called outside ``entry()`` (a library caller, an earlier test)
@@ -618,7 +629,7 @@ def test_a_request_left_from_before_a_completion_starts_no_child(repo, popen, mo
     assert popen == []
 
 
-def test_a_cold_tab_while_the_lock_is_held_does_not_wait(repo, sessions, child):
+def test_a_cold_tab_while_the_lock_is_held_does_not_wait(project, sessions, child):
     lock = cc._cache_path().parent / cc.COLLECT_LOCK_FILENAME
     lock.parent.mkdir(parents=True, exist_ok=True)
     lock.write_text(str(time.time()))
@@ -628,10 +639,14 @@ def test_a_cold_tab_while_the_lock_is_held_does_not_wait(repo, sessions, child):
 
 
 def test_a_run_before_the_refresh_collects_the_saved_file_itself(
-    repo, tmp_path, sessions, child, popen
+    project, tmp_path, sessions, child, popen
 ):
-    _warm(repo, tmp_path, sessions)
-    _save(repo, "tests/test_b.py", repo.module("test_b", _B + "\n\n" + logged_test("test_b_new")))
+    _warm(project, tmp_path, sessions)
+    _save(
+        project,
+        "tests/test_b.py",
+        project.module("test_b", _B + "\n\n" + logged_test("test_b_new")),
+    )
     _age(_check_marker(), 3600)
     assert "test_b_new" not in _tab()
     assert cc._collect_refresh_requested  # ...but the child has not run yet
@@ -639,7 +654,7 @@ def test_a_run_before_the_refresh_collects_the_saved_file_itself(
     result = run_tests(["test_b_new"], output_dir=tmp_path / "out")
 
     assert result.exit_code == 0
-    assert repo.ran_tests() == ["test_b_new"]
+    assert project.ran_tests() == ["test_b_new"]
     assert sessions == [{"files": None, "dirs": [], "collect_only": False}]
     assert "test_b_new" in _tab()
 
@@ -655,10 +670,10 @@ def _age(path: Path, seconds: float) -> None:
     os.utime(path, (then, then))
 
 
-def test_a_run_restarts_the_check_window_and_the_ttl(repo, tmp_path, sessions):
+def test_a_run_restarts_the_check_window_and_the_ttl(project, tmp_path, sessions):
     """A run classified the whole table before it wrote it, so the next TAB starts no
     check; and every named run collects the whole tree, so it dates the table too."""
-    _warm(repo, tmp_path, sessions)
+    _warm(project, tmp_path, sessions)
     cache = cc._cache_path()
     data = json.loads(cache.read_text())
     [key] = data[cc.COLLECTED_TESTS_KEY]
@@ -666,7 +681,9 @@ def test_a_run_restarts_the_check_window_and_the_ttl(repo, tmp_path, sessions):
     data[cc.COLLECTED_TESTS_KEY][key]["generated_at"] = dated
     cache.write_text(json.dumps(data))
     _age(_check_marker(), 3600)
-    _save(repo, "tests/test_b.py", repo.module("test_b", _B + "\n\n" + logged_test("test_b2")))
+    _save(
+        project, "tests/test_b.py", project.module("test_b", _B + "\n\n" + logged_test("test_b2"))
+    )
 
     assert run_tests(["test_b2"], output_dir=tmp_path / "out").exit_code == 0
 
@@ -716,7 +733,7 @@ def _forget_test_modules() -> None:
         sys.modules.pop(name, None)
 
 
-def _check(sessions) -> tuple[list, "tr.RepoTable"]:
+def _check(sessions) -> tuple[list, "tr.ProjectTable"]:
     assert tr.collect_child_main(_repos, _refresh_tables) == 0
     [repo_] = _repos()
     table = tr.read_table(repo_)
@@ -806,7 +823,7 @@ def test_a_check_refreshes_exactly_what_moved(checked, sessions, change, collect
 # ── markers ──────────────────────────────────────────────────────────────────
 
 
-def test_the_markers_are_what_pytest_registered_and_applied(repo, sessions, child):
+def test_the_markers_are_what_pytest_registered_and_applied(project, sessions, child):
     from otto.suite.markers import OTTO_MARKERS
 
     offered = _markers_completer(None, "")  # type: ignore[arg-type]  # ctx is unused
@@ -819,10 +836,10 @@ def test_the_markers_are_what_pytest_registered_and_applied(repo, sessions, chil
 
 
 @pytest.mark.filterwarnings("ignore::pytest.PytestUnknownMarkWarning")
-def test_a_marker_only_applied_is_offered(repo, sessions, child):
-    repo.write(
+def test_a_marker_only_applied_is_offered(project, sessions, child):
+    project.write(
         "tests/test_e.py",
-        repo.module(
+        project.module(
             "test_e", "import pytest\n\n\n@pytest.mark.applied_only\n" + logged_test("test_e1")
         ),
     )
@@ -835,9 +852,9 @@ def test_a_marker_only_applied_is_offered(repo, sessions, child):
 _OTTO = Path(sys.executable).with_name("otto")
 
 
-def _env(repo: Path, home: Path) -> dict[str, str]:
-    env = {k: v for k, v in os.environ.items() if not k.startswith("OTTO_")}
-    env.update(OTTO_SUT_DIRS=str(repo), OTTO_HOME=str(home))
+def _env(project: Path, home: Path) -> dict[str, str]:
+    env = {k: v for k, v in os.environ.items() if not is_otto_env_var(k)}
+    env.update(OTTOPATH=str(project), OTTO_HOME=str(home))
     return env
 
 
@@ -869,13 +886,13 @@ def _wait_for(predicate, seconds: float = 60) -> None:
 def test_the_console_script_seeds_once_then_checks_behind_the_answer(tmp_path):
     from tests._fixtures.generated_repo import generate_repo
 
-    repo = generate_repo(tmp_path, files=4, dirs=2)
-    env = _env(repo, tmp_path / "home")
+    project = generate_repo(tmp_path, files=4, dirs=2)
+    env = _env(project, tmp_path / "home")
     cache = tmp_path / "home"
 
     assert "test_x" in _real_tab(env), "the first TAB waited for the seed"
 
-    nested = next(repo.rglob("sub*/test_*.py"))
+    nested = next(project.rglob("sub*/test_*.py"))
     nested.write_text("def test_x():\n    pass\n\ndef test_saved():\n    pass\n")
     _bump(nested)
     cache_file = next(cache.rglob("completion_cache.json"))
@@ -891,7 +908,7 @@ def test_the_console_script_seeds_once_then_checks_behind_the_answer(tmp_path):
     def refreshed() -> bool:
         if lock.exists():
             return False
-        table = json.loads(cache_file.read_text())[cc.COLLECTED_TESTS_KEY].get(str(repo), {})
+        table = json.loads(cache_file.read_text())[cc.COLLECTED_TESTS_KEY].get(str(project), {})
         return any(
             name == "test_saved"
             for record in table.get("files", {}).values()

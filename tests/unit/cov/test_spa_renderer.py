@@ -196,9 +196,9 @@ class TestExcludedLinesRoundTripThroughReporter:
         from otto.coverage.reporter import run_coverage_report
         from otto.coverage.tiers import load_tiers
 
-        repo = tmp_path / "sut"
-        repo.mkdir()
-        (repo / "f.c").write_text("int a;\nint b; // LCOV_EXCL_LINE\nint c;\n")
+        project = tmp_path / "sut"
+        project.mkdir()
+        (project / "f.c").write_text("int a;\nint b; // LCOV_EXCL_LINE\nint c;\n")
 
         hdir = tmp_path / "unit_build"
         hdir.mkdir()
@@ -206,7 +206,7 @@ class TestExcludedLinesRoundTripThroughReporter:
         (hdir / "f.gcno").write_bytes(b"")
 
         async def fake_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
-            output.write_text(f"TN:\nSF:{repo / 'f.c'}\nDA:1,7\nend_of_record\n")
+            output.write_text(f"TN:\nSF:{project / 'f.c'}\nDA:1,7\nend_of_record\n")
             return output
 
         monkeypatch.setattr(merger_mod.LcovMerger, "capture", fake_capture)
@@ -216,7 +216,7 @@ class TestExcludedLinesRoundTripThroughReporter:
         }
         out = tmp_path / "report"
         store = await run_coverage_report(
-            [], out, ReportInputs(repo_root=repo, tier_configs=load_tiers(cov_config))
+            [], out, ReportInputs(project_root=project, tier_configs=load_tiers(cov_config))
         )
 
         assert store is not None

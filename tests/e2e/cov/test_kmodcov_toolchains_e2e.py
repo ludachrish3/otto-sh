@@ -14,7 +14,7 @@ compiler-independent assertions run through the shared helpers on a real
 counters' own stamp names (``gcov-N`` for a gcc, ``llvm-cov`` for clang, from
 PATH), so the bed hosts are left unconfigured for every gcc and the run's
 green is that discovery's proof; clang's arm alone layers an overlay SUT repo
-over repo5 with OTTO_SUT_DIRS (tests/e2e/cov/_repo5_build.py) naming an lcov
+over repo5 with OTTOPATH (tests/e2e/cov/_repo5_build.py) naming an lcov
 wrapper that ignores the kernel headers llvm-cov reports relative to the
 kernel tree. Unset or empty, the variable means the system's
 default compiler, so this module never collects an empty, skipped parameter
@@ -175,10 +175,10 @@ async def _refusal_on_the_bed(foreign_ko) -> "tuple[bool, str, list[str]]":
 def _run_otto(argv, *, xdir, timeout, overlay=None):
     # `sut_dirs` takes one Path; the two-repo layout goes through extra_env,
     # which run_otto merges last. repo5 FIRST and the overlay second: the
-    # composite reads lab sources in OTTO_SUT_DIRS order and the later one's
+    # composite reads lab sources in OTTOPATH order and the later one's
     # elements win, which is the whole point of the overlay.
-    env = {"OTTO_SUT_DIRS": os.pathsep.join([str(REPO5), str(overlay)])} if overlay else None
-    result = run_otto(argv, xdir=xdir, sut_dirs=REPO5, lab=_LAB, timeout=timeout, extra_env=env)
+    env = {"OTTOPATH": os.pathsep.join([str(REPO5), str(overlay)])} if overlay else None
+    result = run_otto(argv, xdir=xdir, roots=REPO5, lab=_LAB, timeout=timeout, extra_env=env)
     if result.returncode != 0:
         raise AssertionError(
             f"otto --lab {_LAB} {' '.join(argv)} exited {result.returncode}\n"

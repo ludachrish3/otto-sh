@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from otto.config.env import is_otto_env_var
 from tests._fixtures.generated_repo import generate_repo
 
 _ENTRY = [sys.executable, "-c", "from otto._shim import main; main()"]
@@ -135,9 +136,9 @@ raise RuntimeError("genrepo init is broken on purpose")
 '''
 
 
-def _env(repo: Path, home: Path) -> dict:
-    env = {k: v for k, v in os.environ.items() if not k.startswith("OTTO_")}
-    env["OTTO_SUT_DIRS"] = str(repo)
+def _env(project: Path, home: Path) -> dict:
+    env = {k: v for k, v in os.environ.items() if not is_otto_env_var(k)}
+    env["OTTOPATH"] = str(project)
     env["OTTO_HOME"] = str(home)
     # Never write bytecode into the fixture tree: it would make the second run
     # differ from the first for a reason that has nothing to do with the cache.
@@ -154,21 +155,21 @@ def _run(env: dict, *argv: str) -> subprocess.CompletedProcess:
 @pytest.fixture
 def plugin_repo(tmp_path):
     """A generated repo whose init module registers third-party CLI commands."""
-    repo = generate_repo(tmp_path, files=20, dirs=3)
-    (repo / "pylib" / "genrepo_instructions.py").write_text(_PLUGIN_INIT)
-    (repo / "pylib" / "genrepo_lazy.py").write_text(_PLUGIN_LAZY)
-    return repo, _env(repo, tmp_path / "home")
+    project = generate_repo(tmp_path, files=20, dirs=3)
+    (project / "pylib" / "genrepo_instructions.py").write_text(_PLUGIN_INIT)
+    (project / "pylib" / "genrepo_lazy.py").write_text(_PLUGIN_LAZY)
+    return project, _env(project, tmp_path / "home")
 
 
-def _arm_marker(repo: Path) -> Path:
+def _arm_marker(project: Path) -> Path:
     """Make the repo's init module touch a marker file when it is imported.
 
     The marker is the bootstrap detector these tests use: it appears if and
     only if phase 2 ran. It sits at the SUT root, which keys no section — a
     file the digests can see would invalidate the very cache under test.
     """
-    marker = repo / "init-ran"
-    (repo / "pylib" / "genrepo_instructions.py").write_text(
+    marker = project / "init-ran"
+    (project / "pylib" / "genrepo_instructions.py").write_text(
         _PLUGIN_INIT + f"\nopen({str(marker)!r}, 'a').close()\n"
     )
     return marker
@@ -177,9 +178,9 @@ def _arm_marker(repo: Path) -> Path:
 @pytest.fixture
 def broken_repo(tmp_path):
     """A generated repo whose init module raises after registering one command."""
-    repo = generate_repo(tmp_path, files=10, dirs=2)
-    (repo / "pylib" / "genrepo_instructions.py").write_text(_BROKEN_INIT)
-    return repo, _env(repo, tmp_path / "home")
+    project = generate_repo(tmp_path, files=10, dirs=2)
+    (project / "pylib" / "genrepo_instructions.py").write_text(_BROKEN_INIT)
+    return project, _env(project, tmp_path / "home")
 
 
 def _cache_file(home: Path) -> Path:
@@ -236,8 +237,8 @@ def test_warm_help_runs_no_user_code(plugin_repo):
     than by counting I/O — this is the correctness half; the import-budget
     harness owns the cost half.
     """
-    repo, env = plugin_repo
-    marker = _arm_marker(repo)
+    project, env = plugin_repo
+    marker = _arm_marker(project)
     _run(env, "--help")
     assert marker.is_file(), "the cold run did not import the init module at all"
     marker.unlink()
@@ -249,8 +250,8 @@ def test_warm_help_runs_no_user_code(plugin_repo):
 @pytest.mark.parametrize("argv", [(), ("--help",), ("-h",)])
 def test_every_root_help_spelling_takes_the_fast_path(plugin_repo, argv):
     """Bare ``otto``, ``--help`` and ``-h`` all render the root screen."""
-    repo, env = plugin_repo
-    marker = _arm_marker(repo)
+    project, env = plugin_repo
+    marker = _arm_marker(project)
     _run(env, "--help")  # seed
     marker.unlink()
 
@@ -267,8 +268,8 @@ def test_subcommand_help_still_takes_the_full_path(plugin_repo, argv):
     instructions the repo registered, and a scan for a help token anywhere in
     argv would hand it a name list instead.
     """
-    repo, env = plugin_repo
-    marker = _arm_marker(repo)
+    project, env = plugin_repo
+    marker = _arm_marker(project)
     _run(env, "--help")  # seed the cache so the fast path is available at all
     marker.unlink()
 
@@ -488,12 +489,12 @@ def test_editing_the_broken_init_still_rewrites_the_tainted_cache(broken_repo):
     stored entry is no longer current and the write has to land — otherwise
     fixing the file could never take effect.
     """
-    repo, env = broken_repo
+    project, env = broken_repo
     _run(env, "--help")
     cache = _cache_file(Path(env["OTTO_HOME"]))
     first = cache.stat().st_mtime_ns
 
-    init = repo / "pylib" / "genrepo_instructions.py"
+    init = project / "pylib" / "genrepo_instructions.py"
     init.write_text(init.read_text() + "\n# edited, still broken\n")
 
     _run(env, "--help")
@@ -514,14 +515,14 @@ def test_completion_serves_names_despite_a_stale_tests_section(plugin_repo):
     derives the completion env-var name from ``sys.argv[0]``, so its
     completion machinery only fires under the real ``otto`` name.
     """
-    repo, env = plugin_repo
-    marker = _arm_marker(repo)
+    project, env = plugin_repo
+    marker = _arm_marker(project)
     _run(env, "--help")  # seed
     assert marker.is_file()
     marker.unlink()
 
     # Move the TESTS digest only.
-    nested = next(repo.rglob("sub*/test_*.py"))
+    nested = next(project.rglob("sub*/test_*.py"))
     nested.write_text("def test_x():\n    pass\n\ndef test_added():\n    pass\n")
 
     result = subprocess.run(
@@ -559,12 +560,12 @@ def test_the_typer_fast_path_completes_the_test_verbs_flags(tmp_path):
     ``otto run``; without them the fast path built ``otto test`` with the run
     flags alone.
     """
-    repo = generate_repo(tmp_path, files=4, dirs=1)
-    marker = repo / "init-ran"
-    (repo / "pylib" / "genrepo_instructions.py").write_text(
+    project = generate_repo(tmp_path, files=4, dirs=1)
+    marker = project / "init-ran"
+    (project / "pylib" / "genrepo_instructions.py").write_text(
         _TEST_VERB_INIT + f"\nopen({str(marker)!r}, 'a').close()\n"
     )
-    env = _env(repo, tmp_path / "home")
+    env = _env(project, tmp_path / "home")
     _run(env, "--help")  # seed
     assert marker.is_file()
     marker.unlink()

@@ -3,7 +3,7 @@
 Pins Wave 14's conversion of ``_restore_otto_logger_state`` and the
 bootstrap-state restore, now ``_restore_composition_state`` (root conftest),
 from reset-to-default teardowns to snapshot-restore. The composition state has
-two owners, ``otto.config.repo``'s discovery cache and the catalog
+two owners, ``otto.config.project``'s discovery cache and the catalog
 ``otto.declared`` holds, and the guard restores the CLI's completion-cache snapshot on
 ``otto.registry`` with them; all three are pinned. The motivating defect
 (review §5.5): a module-scoped fixture's logging/bootstrap state was
@@ -30,7 +30,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import otto.config.repo as config_repo
+import otto.config.project as config_repo
 from otto import declared, registry
 from otto.logger import management
 
@@ -221,7 +221,7 @@ def test_the_guards_state_snapshot_does_not_alias_its_mutable_fields(tmp_path) -
 def primed_bootstrap_cache() -> Iterator[object]:
     """Module-scoped discovery cache: a discovery memoized before any per-test snapshot."""
     saved = config_repo._discovery.result
-    sentinel = SimpleNamespace(repos=[], errors=[])
+    sentinel = SimpleNamespace(projects=[], errors=[])
     config_repo._discovery.result = sentinel
     yield sentinel
     config_repo._discovery.result = saved
@@ -233,7 +233,7 @@ def _assert_bootstrap_state_survives_then_poison_it(sentinel: object) -> None:
         "the guard reset to defaults instead of restoring its snapshot"
     )
     # Poison for whichever sibling runs next: the guard must swap it back out.
-    config_repo._discovery.result = SimpleNamespace(repos=[], errors=[])
+    config_repo._discovery.result = SimpleNamespace(projects=[], errors=[])
 
 
 def test_bootstrap_state_outlives_a_sibling_test(primed_bootstrap_cache: object) -> None:
@@ -277,7 +277,7 @@ def test_the_completion_snapshot_outlives_another_sibling_test(
 def primed_catalog() -> Iterator[object]:
     """Module-scoped catalog: a complete result published before any per-test snapshot."""
     saved = dataclasses.replace(declared._composition)
-    sentinel = SimpleNamespace(repos=[], ordered_repos=[])
+    sentinel = SimpleNamespace(projects=[], ordered_projects=[])
     declared.publish_composed(sentinel, complete=True)
     yield sentinel
     declared._composition = saved
@@ -292,7 +292,7 @@ def _assert_catalog_survives_then_poison_it(sentinel: object) -> None:
         "a sibling's in-progress publication leaked forward"
     )
     # Poison for whichever sibling runs next: the guard must swap it back out.
-    declared._composition.in_progress = SimpleNamespace(repos=[], ordered_repos=[])
+    declared._composition.in_progress = SimpleNamespace(projects=[], ordered_projects=[])
 
 
 def test_the_catalog_outlives_a_sibling_test(primed_catalog: object) -> None:

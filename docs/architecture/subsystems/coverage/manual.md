@@ -3,7 +3,7 @@
 A manual capture is the one piece of coverage evidence otto cannot
 regenerate: a human at a GDB prompt or a serial console, driving a path no
 automated suite reaches. That makes it the only tier whose data is committed
-to the SUT repo ({doc}`types`) — and it creates the problem the rest of this
+to the project's git repository ({doc}`types`) — and it creates the problem the rest of this
 page is about. Committed evidence outlives the commit it was taken against,
 so every report has to decide, from scratch, whether a session recorded
 months ago still describes the code in front of it.
@@ -31,10 +31,10 @@ rather than a number:
   capture time, and every line number in the file records means that
   commit's numbering.
 - **the per-file `blob`** — each file's blob SHA at that commit
-  (`gitio.blob_sha`). Sources outside the repo root are skipped with a
+  (`gitio.blob_sha`). Sources outside the project root are skipped with a
   warning, and so are sources with no committed blob at all (untracked or
   generated files): otto will not commit evidence about code that isn't in
-  the repo.
+  the project.
 
 Tester identity is manual-only. `_resolve_tester` fills the name from
 `getpass.getuser()` and the email from `git config user.email`, with CLI
@@ -103,7 +103,7 @@ The validity pass's dominant cost is git subprocess fan-out, not computation —
 remaps are in-memory over `-U0` hunks, and history length is irrelevant to a
 tree-to-tree diff — so `AnchorResolver` (`otto.coverage.anchor`) resolves a
 whole capture per subprocess batch instead of per file. That distinction
-matters most on NFS-mounted repos, where every git spawn re-touches `.git`
+matters most on NFS-mounted checkouts, where every git spawn re-touches `.git`
 metadata over the wire.
 
 **Two-path resolution.** For each capture, `AnchorResolver` runs one
@@ -111,11 +111,11 @@ tree-wide `git diff -M -w -U0 --relative <base_commit> -- .` against the
 working tree. When that resolves — the common case — it answers every
 file at once: a path absent from the diff is unchanged (unless it is also
 absent from the working tree, e.g. a capture carried over from a different
-repo, in which case it is unverifiable), a path present is modified or
+repository, in which case it is unverifiable), a path present is modified or
 renamed (`-M` is git's rename tracking, taken as policy), and a path with
 no `new_path` was deleted. When `base_commit` itself cannot be resolved —
 the tree diff raises `GitUnavailableError` because the commit was
-squash-merged away and garbage-collected, or the repo is a shallow clone
+squash-merged away and garbage-collected, or the repository is a shallow clone
 that never fetched it — the resolver builds a batched fallback index from
 each capture entry's recorded blob SHA instead.
 
@@ -156,7 +156,7 @@ runner noise.
 That the fix is batching and not a cache is a deliberate, checkpointed
 call: a content-addressed validity cache was designed, then descoped at
 the 2026-07-24 checkpoint once profiling showed the batched fallback
-resolving a synthetic 2,000-file, 10%-churn repo in 5 flat spawns / 49 ms
+resolving a synthetic 2,000-file, 10%-churn repository in 5 flat spawns / 49 ms
 — down from 2,602 spawns / 1.53 s for the pre-batching per-file chain.
 A cache could not have touched the O(N) hashing spawns that dominated
 that cost (every current file still has to be hashed to know what
@@ -178,11 +178,11 @@ warning naming the commit and, when `gitio.is_shallow` confirms it, tells
 the reader to `git fetch --unshallow` before falling back to blobs. A base
 blob missing from the object database downgrades that one file rather than
 raising. The single case re-raised instead of degraded is "not a git
-repository" — a wrong repo root is a caller bug, not a repo that has moved
+repository" — a wrong project root is a caller bug, not a repository that has moved
 on.
 
 **RepoTimeline** (`tests/_fixtures/_repo_timeline.py`) is the executable
-spec for anchor and aging behavior: it scripts a real git repo through
+spec for anchor and aging behavior: it scripts a real git repository through
 `commit → capture → mutate → fold` and asserts the resulting per-line
 disposition, table-driven across renames, squash-merge/GC, shallow
 clones, reverts, and aging boundaries.
@@ -208,7 +208,7 @@ re-run the session, not a revocation of it.
 
 ## Dirty remap
 
-`dirty_remap` records that the SUT tree had uncommitted changes when the
+`dirty_remap` records that the project's working tree had uncommitted changes when the
 capture was taken. `build_capture` responds by remapping every file's
 coordinates the *other* direction from the report-time chain — worktree
 (NEW) back to `base_commit` (OLD), via `_remap_file` — and dropping the

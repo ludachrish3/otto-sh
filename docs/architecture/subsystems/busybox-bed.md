@@ -54,7 +54,7 @@ against the committed pin whichever host answered. The one lane that reads
 upstream alone is nightly's `busybox-upstream-drift` job, under
 `OTTO_BUSYBOX_SOURCE=upstream`, because its job is to notice upstream rebuilding an
 artifact in place and a mirror would answer for yesterday's bytes. That check runs
-nightly rather than on push on purpose: drift cannot affect a byte this repo tests
+nightly rather than on push on purpose: drift cannot affect a byte this repository tests
 or ships — the pin decides that, not the host — so it is monitoring, and monitoring
 enforced as a merge gate fails when a third party is down rather than when a change
 is bad. It sat on CI's `busybox` job until a 2026-08-26 busybox.net outage reddened

@@ -496,7 +496,7 @@ to-do list.
 
 **The console lock is cross-worker, not cross-session.** Zephyr's
 `shell_telnet` backend serves exactly ONE client per guest, as does every
-serial console, and `tests/conformance/_console_safety.py` holds the repo's
+serial console, and `tests/conformance/_console_safety.py` holds the repository's
 writer-fair console lock EXCLUSIVELY around every item whose drawn cell
 opens one. That lock is
 taken in `tmp_path_factory.getbasetemp().parent`, which resolves to
@@ -529,7 +529,7 @@ this very contract asserts — a stimulus that made the first assertion pass
 would make the second unmeasurable. (Driving a single-client console to a
 timeout and then asserting recovery is also the #260 wedge sequence.) What an
 embedded backend does with a command that outlives its budget is therefore
-**not asserted anywhere in this repo** — `tests/integration/host/` contains
+**not asserted anywhere in this repository** — `tests/integration/host/` contains
 no `timed_out` assertion at all, and the only bed-side one is
 `tests/integration/busybox_bed/test_session_frame.py`, which is a BusyBox
 guest. This is a stated hole, not a delegation.

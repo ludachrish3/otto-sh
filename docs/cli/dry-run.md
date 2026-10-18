@@ -59,7 +59,7 @@ $ otto --lab my_lab -n test TestExample
 dry run: no command body was run and no device was contacted
   would run: otto test TestExample
   options:
-    RepoOptions: message='hello from acme'
+    ProjectOptions: message='hello from acme'
   lab: my_lab (2 hosts)
 dry run: pytest collected these tests; nothing ran
 acme 0.1.0
@@ -95,7 +95,7 @@ dry run: no command body was run and no device was contacted
 
 `install` here is the real project instruction, and it also prints its plan
 above this block ({ref}`the lab-level verbs <dry-run-lab-verbs>` shows it; the
-plan is left out of this example to show the options). A repo overriding it
+plan is left out of this example to show the options). A project overriding it
 with its own options class (inheriting `InstallOptions`, see
 {doc}`../getting-started/customizing-project-instructions`) shows the same
 way, its own fields included.
@@ -305,14 +305,14 @@ dry run: no command body was run and no device was contacted
 lines, the order a host really uses; `install-tools` keeps each tool's two
 phases together. A host with nothing to do prints only its own line (the
 example leaves out `bench`'s other two hosts), and a local path is anchored to
-the repo that declared it. The lines' vocabulary, `<login home>` included, is
+the project that declared it. The lines' vocabulary, `<login home>` included, is
 {ref}`the product-kind contract's <product-kind-plan>`. Everything under `not checked:` is a fact a real run reads off the host (or a
 decision it takes from a flag) that a dry run cannot: `--ensure`'s "is the lab
-already installed" check, a repo or host class that replaces the default verb,
+already installed" check, a project or host class that replaces the default verb,
 `--toolchain`, the log hauls, and each product's own unchecked reads, prefixed
 with its name. A kernel-module load shows `sudo` only for a host whose
 configured login user is not root, the same test the real `load` applies. A gap that holds for the whole lab prints
-once, under the first repo it applies to. `status`, the other first-party
+once, under the first project it applies to. `status`, the other first-party
 instructions and every user-defined instruction keep the seam default.
 
 `otto.project`'s verbs — what `otto run install` and the `ensure` marker's
@@ -337,7 +337,7 @@ the converge directly.
 ## `otto docker` previews the exact command
 
 `otto --dry-run docker compose up <usecase>` is a place a preview is *more* than
-a description. Selection, env assembly and a repo's compose adapter
+a description. Selection, env assembly and a project's compose adapter
 are all pure — they contact no device — so otto runs the whole resolution and
 declines at the first real touch, printing the resolved plan **and the exact
 `docker compose` command it would have issued on the parent**, env prefix

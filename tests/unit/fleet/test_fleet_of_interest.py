@@ -2,7 +2,7 @@
 
 Spec ``docs/superpowers/specs/2026-10-06-repo-and-scope-inputs-design.md`` §3
 and §8. The ORACLE is the walk itself: ``ctx.all_hosts(...)`` for the union and
-``ctx.for_repo(owner).all_hosts(...)`` for one repo, on a non-sentinel context
+``ctx.for_project(owner).all_hosts(...)`` for one repo, on a non-sentinel context
 built on the same lab, repos and ``-E``, and handed one bootstrap result
 (``bootstrap=fake_bootstrap_result(...)``) holding those same repos. Over
 every generated case the query must equal the walk's ids, in the lab's
@@ -14,7 +14,7 @@ function under test (``_MUTANTS``): each one must turn the differential red. A
 generator that never reached an axis would let that axis's mutant through, and
 the mutation test names it.
 
-Real ``Repo`` objects parsed from real ``settings.toml`` files and real hosts
+Real ``Project`` objects parsed from real ``settings.toml`` files and real hosts
 built by the factory, as in ``test_fleet_scoping.py``: the scoping chain reads
 what settings parsing and lab loading produce.
 """
@@ -54,7 +54,7 @@ class _World:
     """One lab and a pool of repos, built once per module."""
 
     lab: object
-    repos: dict
+    projects: dict
 
 
 @pytest.fixture(scope="module")
@@ -78,7 +78,7 @@ def world(tmp_path_factory):
     lab = _lab(("h1", "a"), ("h2", "a"), ("h3", "b"))
     lab.add_host(_container(lab.hosts["h1"], "api", "a"))
     add_builtin_local(lab)
-    repos = {
+    projects = {
         "plain": _repo(base, "plain"),
         "alpha": _repo(base, "alpha", labs=["a"], hosts=["h1", r"h1\.r1\.api"]),
         "beta": _repo(base, "beta", labs=["a"], hosts=["h2"]),
@@ -89,7 +89,7 @@ def world(tmp_path_factory):
         "dup-second": _repo(base / "second", "dup", labs=["b"], hosts=[".*"]),
     }
     assert list(lab.hosts) == ["h1", "h2", "h3", "h1.r1.api", "local"]
-    return _World(lab=lab, repos=repos)
+    return _World(lab=lab, projects=projects)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -123,10 +123,10 @@ def _cases(world):
         list(combo) for size in range(4) for combo in itertools.combinations(_UNIQUE_KEYS, size)
     ]
     for keys in lists + _DUPLICATE_LISTS:
-        repos = [world.repos[key] for key in keys]
-        names = list(dict.fromkeys(repo.name for repo in repos))
+        projects = [world.projects[key] for key in keys]
+        names = list(dict.fromkeys(project.name for project in projects))
         declarers = list(
-            dict.fromkeys(repo.name for repo in repos if repo.project_scope is not None)
+            dict.fromkeys(project.name for project in projects if project.project_scope is not None)
         )
         excludes = [None, ["nobody"], *([name] for name in declarers)]
         if "every-a" in names:
@@ -149,7 +149,7 @@ def oracle(world):
     Module-scoped, so it runs OUTSIDE the root conftest's per-test bootstrap
     state restore: it must never reach the real composition root, whose cached
     discovery would outlive this module and poison later tests on the worker.
-    ``otto.config.repo.discover`` refuses for the fixture's duration, so a future
+    ``otto.config.project.discover`` refuses for the fixture's duration, so a future
     reach fails loudly here instead.
     """
 
@@ -158,7 +158,7 @@ def oracle(world):
 
     results = []
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr("otto.config.repo.discover", _refuse_discovery)
+        mp.setattr("otto.config.project.discover", _refuse_discovery)
         # One INFO line per context ("fleet of interest: N of M lab hosts")
         # over thousands of cases is noise in every live-log run, and the line
         # is not under test here.
@@ -168,9 +168,9 @@ def oracle(world):
             ctx = OttoContext(
                 lab=world.lab,
                 exclude_projects=tuple(case.exclude_projects or ()),
-                bootstrap=fake_bootstrap_result([world.repos[key] for key in case.repo_keys]),
+                bootstrap=fake_bootstrap_result([world.projects[key] for key in case.repo_keys]),
             )
-            surface = ctx if case.owner is None else ctx.for_repo(case.owner)
+            surface = ctx if case.owner is None else ctx.for_project(case.owner)
             try:
                 walked = [
                     host.id
@@ -194,7 +194,7 @@ def _mismatches(candidate, world, oracle):
         try:
             got = candidate(
                 world.lab,
-                [world.repos[key] for key in case.repo_keys],
+                [world.projects[key] for key in case.repo_keys],
                 owner=case.owner,
                 exclude_projects=(
                     None if case.exclude_projects is None else list(case.exclude_projects)
@@ -222,92 +222,92 @@ def test_the_query_equals_the_walk_on_every_generated_case(world, oracle):
 # ── planted divergences, one per §8 axis ──────────────────────────────────────
 
 
-def _declares(repo):
-    return repo.project_scope is not None
+def _declares(project):
+    return project.project_scope is not None
 
 
-def _mutant_no_declaration_is_empty(lab, repos, **kw):
+def _mutant_no_declaration_is_empty(lab, projects, **kw):
     """Axis: no repo declared. Answers nothing instead of the whole lab."""
-    if not any(_declares(repo) for repo in repos):
+    if not any(_declares(project) for project in projects):
         return []
-    return fleet_of_interest(lab, repos, **kw)
+    return fleet_of_interest(lab, projects, **kw)
 
 
-def _mutant_union_is_the_first_declarer(lab, repos, **kw):
+def _mutant_union_is_the_first_declarer(lab, projects, **kw):
     """Axis: several repos declared. The union keeps only the first declarer."""
     if kw["owner"] is None:
-        first = next((repo for repo in repos if _declares(repo)), None)
-        repos = [repo for repo in repos if not _declares(repo) or repo is first]
-    return fleet_of_interest(lab, repos, **kw)
+        first = next((project for project in projects if _declares(project)), None)
+        projects = [project for project in projects if not _declares(project) or project is first]
+    return fleet_of_interest(lab, projects, **kw)
 
 
-def _mutant_undeclared_widens_the_union(lab, repos, **kw):
+def _mutant_undeclared_widens_the_union(lab, projects, **kw):
     """Axis: a declared repo beside an undeclared one. The undeclared one restores the lab."""
-    declaring = [repo for repo in repos if _declares(repo)]
-    if kw["owner"] is None and declaring and len(declaring) < len(repos):
-        repos = [repo for repo in repos if not _declares(repo)]
-    return fleet_of_interest(lab, repos, **kw)
+    declaring = [project for project in projects if _declares(project)]
+    if kw["owner"] is None and declaring and len(declaring) < len(projects):
+        projects = [project for project in projects if not _declares(project)]
+    return fleet_of_interest(lab, projects, **kw)
 
 
-def _mutant_owner_ignored(lab, repos, **kw):
+def _mutant_owner_ignored(lab, projects, **kw):
     """Axis: owner set. Answers the union instead of the owner's fleet."""
-    return fleet_of_interest(lab, repos, **{**kw, "owner": None})
+    return fleet_of_interest(lab, projects, **{**kw, "owner": None})
 
 
-def _mutant_exclude_ignored(lab, repos, **kw):
+def _mutant_exclude_ignored(lab, projects, **kw):
     """Axis: ``-E`` on a declaring repo, without an owner. The switch does nothing."""
-    return fleet_of_interest(lab, repos, **{**kw, "exclude_projects": None})
+    return fleet_of_interest(lab, projects, **{**kw, "exclude_projects": None})
 
 
-def _mutant_exclude_binds_the_owner(lab, repos, **kw):
+def _mutant_exclude_binds_the_owner(lab, projects, **kw):
     """Axis: ``-E`` on a declaring repo, with that repo as owner. The switch empties it."""
     switched = {normalize_name(name) for name in kw["exclude_projects"] or []}
     if kw["owner"] is not None and normalize_name(kw["owner"]) in switched:
         return []
-    return fleet_of_interest(lab, repos, **kw)
+    return fleet_of_interest(lab, projects, **kw)
 
 
-def _mutant_exclude_not_normalized(lab, repos, **kw):
+def _mutant_exclude_not_normalized(lab, projects, **kw):
     """Axis: ``-E`` spelled differently from the name (``Every_A``). Only exact names count."""
-    names = {repo.name for repo in repos}
+    names = {project.name for project in projects}
     kept = [name for name in kw["exclude_projects"] or [] if name in names]
-    return fleet_of_interest(lab, repos, **{**kw, "exclude_projects": kept})
+    return fleet_of_interest(lab, projects, **{**kw, "exclude_projects": kept})
 
 
-def _mutant_unknown_exclude_refused(lab, repos, **kw):
+def _mutant_unknown_exclude_refused(lab, projects, **kw):
     """Axis: an ``-E`` name that matches no repo. The query validates it."""
-    known = {normalize_name(repo.name) for repo in repos}
+    known = {normalize_name(project.name) for project in projects}
     if any(normalize_name(name) not in known for name in kw["exclude_projects"] or []):
         raise ValueError("unknown --exclude-projects name")
-    return fleet_of_interest(lab, repos, **kw)
+    return fleet_of_interest(lab, projects, **kw)
 
 
-def _mutant_containers_flag_ignored(lab, repos, **kw):
+def _mutant_containers_flag_ignored(lab, projects, **kw):
     """Axis: container hosts with ``include_containers`` on. The flag does nothing."""
-    return fleet_of_interest(lab, repos, **{**kw, "include_containers": False})
+    return fleet_of_interest(lab, projects, **{**kw, "include_containers": False})
 
 
-def _mutant_local_flag_ignored(lab, repos, **kw):
+def _mutant_local_flag_ignored(lab, projects, **kw):
     """Axis: ``local`` with ``include_local`` on. The flag does nothing."""
-    return fleet_of_interest(lab, repos, **{**kw, "include_local": False})
+    return fleet_of_interest(lab, projects, **{**kw, "include_local": False})
 
 
-def _mutant_local_flag_bypasses_scope(lab, repos, **kw):
+def _mutant_local_flag_bypasses_scope(lab, projects, **kw):
     """Axis: a declaring scope that does NOT admit ``local``. The flag adds it anyway."""
-    got = fleet_of_interest(lab, repos, **kw)
+    got = fleet_of_interest(lab, projects, **kw)
     if kw["include_local"] and "local" not in got:
         got = [*got, "local"]
     return got
 
 
-def _mutant_first_duplicate_wins(lab, repos, **kw):
+def _mutant_first_duplicate_wins(lab, projects, **kw):
     """Axis: two repos with the same name. The first one wins instead of the last."""
     seen = set()
     kept = []
-    for repo in repos:
-        if repo.name not in seen:
-            seen.add(repo.name)
-            kept.append(repo)
+    for project in projects:
+        if project.name not in seen:
+            seen.add(project.name)
+            kept.append(project)
     return fleet_of_interest(lab, kept, **kw)
 
 
@@ -336,13 +336,13 @@ def test_every_axis_has_a_planted_divergence_the_differential_catches(world, ora
 
 
 def test_an_empty_declared_fleet_the_walk_refuses_and_the_query_answers_empty(world):
-    ghost = world.repos["ghost"]
+    ghost = world.projects["ghost"]
     ctx = install_scoped_context(world.lab, [ghost])
 
     with pytest.raises(ProjectScopeError):
         list(ctx.all_hosts())
     with pytest.raises(ProjectScopeError):
-        list(ctx.for_repo("ghost").all_hosts())
+        list(ctx.for_project("ghost").all_hosts())
     assert fleet_of_interest(world.lab, [ghost]) == []
     assert fleet_of_interest(world.lab, [ghost], owner="ghost") == []
 
@@ -350,16 +350,20 @@ def test_an_empty_declared_fleet_the_walk_refuses_and_the_query_answers_empty(wo
 def test_an_unknown_owner_is_refused_even_where_the_walk_falls_back(world):
     ctx = install_scoped_context(world.lab, [])
     # The walk: no scope resolved, so an unknown owner falls back to the whole lab.
-    assert [host.id for host in ctx.for_repo("x").all_hosts()] == ["h1", "h2", "h3"]
+    assert [host.id for host in ctx.for_project("x").all_hosts()] == ["h1", "h2", "h3"]
     # The query: the caller handed the repos over, so the whole lab would widen.
-    with pytest.raises(ProjectScopeError, match=r"none of the repos it was\s+given is named 'x'"):
+    with pytest.raises(
+        ProjectScopeError, match=r"none of the projects\s+it was\s+given is named 'x'"
+    ):
         fleet_of_interest(world.lab, [], owner="x")
 
-    alpha = world.repos["alpha"]
+    alpha = world.projects["alpha"]
     ctx = install_scoped_context(world.lab, [alpha])
     with pytest.raises(ProjectScopeError):
-        list(ctx.for_repo("x").all_hosts())
-    with pytest.raises(ProjectScopeError, match=r"none of the repos it was\s+given is named 'x'"):
+        list(ctx.for_project("x").all_hosts())
+    with pytest.raises(
+        ProjectScopeError, match=r"none of the projects\s+it was\s+given is named 'x'"
+    ):
         fleet_of_interest(world.lab, [alpha], owner="x")
 
 
@@ -369,7 +373,7 @@ def test_on_the_sentinel_lab_the_walk_takes_the_whole_lab_and_the_query_scopes_i
     ctx = OttoContext(lab=lab)
 
     assert [host.id for host in ctx.all_hosts()] == ["h1", "h2"]
-    assert fleet_of_interest(lab, [world.repos["alpha"]]) == ["h1"]
+    assert fleet_of_interest(lab, [world.projects["alpha"]]) == ["h1"]
 
 
 # ── purity, and the one membership-flag rule ──────────────────────────────────
@@ -380,13 +384,13 @@ def test_the_query_reads_nothing_but_its_arguments(world, monkeypatch):
         raise AssertionError("fleet_of_interest read the composition root")
 
     monkeypatch.setattr("otto.bootstrap.bootstrap", _refuse)
-    monkeypatch.setattr("otto.config.repo.discover", _refuse)
+    monkeypatch.setattr("otto.config.project.discover", _refuse)
     monkeypatch.setattr("otto.labs.loader.load_lab", _refuse)
     # The hostile ambient world: an installed context on a decoy lab. A query
     # that read the active context instead of its `lab` argument answers ["d1"].
     set_context(OttoContext(lab=_lab(("d1", "a"))))
 
-    got = fleet_of_interest(world.lab, [world.repos["alpha"]], include_containers=True)
+    got = fleet_of_interest(world.lab, [world.projects["alpha"]], include_containers=True)
     assert got == ["h1", "h1.r1.api"]
 
     # The injection is live: the read the walk makes does reach the refusal.
@@ -406,7 +410,7 @@ def test_every_membership_reader_consults_the_one_flag_rule(world, monkeypatch):
         return "include_containers" if host.id == "h2" else None
 
     monkeypatch.setattr("otto.host.builtin_hosts._flag_holding_out", _hold_out_h2_only)
-    plain = world.repos["plain"]
+    plain = world.projects["plain"]
     ctx = install_scoped_context(world.lab, [plain])
 
     expected = ["h1", "h3", "h1.r1.api", "local"]
@@ -419,10 +423,10 @@ def test_every_membership_reader_consults_the_one_flag_rule(world, monkeypatch):
 
 def test_owner_is_not_normalized_in_the_query_or_the_walk(world):
     """Spec 4 §3: the owner is not normalized, in the query as in the walk."""
-    repos = [world.repos["alpha"], world.repos["beta"]]
-    ctx = install_scoped_context(world.lab, repos)
+    projects = [world.projects["alpha"], world.projects["beta"]]
+    ctx = install_scoped_context(world.lab, projects)
 
     with pytest.raises(ProjectScopeError):
-        list(ctx.for_repo("Alpha").all_hosts())
+        list(ctx.for_project("Alpha").all_hosts())
     with pytest.raises(ProjectScopeError):
-        fleet_of_interest(world.lab, repos, owner="Alpha")
+        fleet_of_interest(world.lab, projects, owner="Alpha")

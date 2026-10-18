@@ -236,7 +236,7 @@ async def _close_on_cancel(copy: "UnixHost | RemoteHost", name: str, step: str) 
     possibly-established ssh/telnet/ftp transport to the TARGET -- was
     dropped unreferenced: a half-logged-in session left hanging on the
     device (the spec's lockout hygiene), and an "unclosed transport"
-    ResourceWarning that this repo's ``filterwarnings = error`` turns into a
+    ResourceWarning that this codebase's ``filterwarnings = error`` turns into a
     hard failure.
 
     :func:`otto.lifecycle.compensate` is the house answer (``teardown_step``'s

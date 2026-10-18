@@ -64,7 +64,7 @@ test suite keeps startup cost from regressing. ({doc}`subsystems/registries`,
 Every rule about a verb's inputs lives in the library entry point that
 takes them: in the class's `__post_init__` (or validators) when the inputs
 are an options class, and as leading validation when they are parameters.
-That `__post_init__`/validator hook is pure: no I/O, no repo config.
+That `__post_init__`/validator hook is pure: no I/O, no project config.
 Preflights that need the filesystem or the configuration live in a library
 `prepare_*` function with a check-only mode the CLI's `--dry-run` uses. The
 CLI parses, completes, constructs the library's object directly from parsed

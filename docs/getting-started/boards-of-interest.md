@@ -27,13 +27,13 @@ startup:
 ```{testsetup}
 import os
 
-from otto.config import Repo
-from otto.registry import registering_repo
+from otto.config import Project
+from otto.registry import registering_project
 
 _old_cwd = os.getcwd()
 os.chdir(GS_EXAMPLE)
-_init_repo = Repo(sut_dir=GS_EXAMPLE)
-with registering_repo(_init_repo.name):
+_init_repo = Project(root=GS_EXAMPLE)
+with registering_project(_init_repo.name):
     _init_repo.import_init_modules()
 ```
 
@@ -43,13 +43,13 @@ os.chdir(_old_cwd)
 
 ```{doctest}
 >>> from pathlib import Path
->>> from otto.config import Repo
+>>> from otto.config import Project
 >>> from otto.lab import fleet_of_interest, load_lab
->>> repo = Repo(sut_dir=Path.cwd())
+>>> project = Project(root=Path.cwd())
 >>> lab = load_lab("busybox", search_paths=[Path("lab_data")])
 >>> sorted(lab.hosts)
 ['bb1161-qemu', 'bb1211-qemu', 'bb1281-qemu', 'bb1310-qemu', 'bb1350-qemu', 'local', 'test1']
->>> sorted(fleet_of_interest(lab, [repo]))
+>>> sorted(fleet_of_interest(lab, [project]))
 ['bb1161-qemu', 'bb1211-qemu', 'bb1281-qemu', 'bb1310-qemu', 'bb1350-qemu']
 ```
 

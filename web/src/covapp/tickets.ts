@@ -43,7 +43,7 @@ interface TicketFileScope {
 
 /** One file's `Stats["lines"]` recomputed against the ticket's OWN line set:
  * `total`/`hit` become the LENGTH of `owned`/`hit` (never the file's
- * whole-repo counts) — the entire point of a denominator filter is that a
+ * whole-project counts) — the entire point of a denominator filter is that a
  * file where the ticket touched 12 of 400 coverable lines reports coverage
  * of those 12, not of the 400.
  *
@@ -56,7 +56,7 @@ interface TicketFileScope {
  *
  * `lines.asserted_per_tier`/`asserted_only` are scoped the SAME way, from
  * `TicketChunk.files[].asserted`/`asserted_only` (format 2) — without this a
- * scoped stats bag would otherwise carry the file's WHOLE-repo override
+ * scoped stats bag would otherwise carry the file's WHOLE-project override
  * provenance (spread from `...stats.lines` below) against a ticket-scoped
  * denominator, which is a lie the moment the ticket owns a strict subset of
  * the file's asserted lines. `asserted`/`assertedOnly` default to the
@@ -125,7 +125,7 @@ function scopeFile(
  * never the original whole-subtree one. `asserted_per_tier`/`asserted_only`
  * sum the same way — each child is already scoped (by `scopeFile` or a
  * nested `aggregateDirStats` call), so summing here never reintroduces
- * whole-repo counts. */
+ * whole-project counts. */
 function aggregateDirStats(stats: Stats, dirs: DirNode[], files: FileNode[]): Stats {
   let total = 0;
   let hit = 0;
@@ -163,7 +163,7 @@ function aggregateDirStats(stats: Stats, dirs: DirNode[], files: FileNode[]): St
  * `stats.lines` denominator (total) AND numerator (hit) against the
  * ticket's OWN line set (`scopeFileStats`) and each surviving directory's
  * rollup as the sum of its scoped children (`aggregateDirStats`) — never a
- * passthrough of the original, whole-repo numbers. A directory left with no
+ * passthrough of the original, whole-project numbers. A directory left with no
  * surviving files or subdirectories is DROPPED rather than rendered as a
  * hollow row (design §6.3: hide non-participating files and the
  * directories they empty, rather than dimming — the deliberate divergence
@@ -219,7 +219,7 @@ export function ticketChunkToFileLines(chunk: TicketChunk): {
   const tiers: Record<string, Record<string, number>> = {};
   // Same: real per-file override-provenance counts (format 2), so the
   // ticket-scoped tree reports the SUBSET of asserted lines this ticket
-  // actually owns in each file, not the file's whole-repo counts.
+  // actually owns in each file, not the file's whole-project counts.
   const asserted: Record<string, Record<string, number>> = {};
   const assertedOnly: Record<string, number> = {};
   for (const file of chunk.files) {

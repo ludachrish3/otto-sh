@@ -162,10 +162,10 @@ async def test_a_malformed_selector_is_refused_by_name(lab):
     """The ``[coverage].hosts`` loader runs here too, refusing a wrong shape
     before any host is touched — as it does in ``collect_coverage``."""
     lab()
-    repo = MagicMock()
-    repo.settings = {"coverage": {"hosts": 123}}
+    project = MagicMock()
+    project.settings = {"coverage": {"hosts": 123}}
     with pytest.raises(CoverageConfigError, match="hosts must be a string"):
-        await clean_coverage([repo])
+        await clean_coverage([project])
 
 
 @pytest.mark.asyncio

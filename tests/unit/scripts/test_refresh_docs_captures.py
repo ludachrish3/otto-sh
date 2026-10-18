@@ -280,8 +280,8 @@ def test_env_sets_otto_sut_dirs_only_when_project_given(tmp_path):
     (ctx.examples_root / "p" / "marker.txt").write_text("hi")
     with_project = rdc.Capture(id="a", argv=[], project="p")
     without_project = rdc.Capture(id="b", argv=[])
-    assert ctx.env(with_project)["OTTO_SUT_DIRS"] == str(ctx.tmp / "p")
-    assert "OTTO_SUT_DIRS" not in ctx.env(without_project)
+    assert ctx.env(with_project)["OTTOPATH"] == str(ctx.tmp / "p")
+    assert "OTTOPATH" not in ctx.env(without_project)
 
 
 # --- Task 9 fix round 1: finding T9-5 ---------------------------------------
@@ -292,7 +292,7 @@ def test_env_points_otto_sut_dirs_at_a_scratch_copy_of_the_project(tmp_path):
     (ctx.examples_root / "p").mkdir(parents=True)
     (ctx.examples_root / "p" / "marker.txt").write_text("hi")
     cap = rdc.Capture(id="a", argv=[], project="p")
-    assert ctx.env(cap)["OTTO_SUT_DIRS"] == str(ctx.tmp / "p")
+    assert ctx.env(cap)["OTTOPATH"] == str(ctx.tmp / "p")
     assert (ctx.tmp / "p" / "marker.txt").read_text() == "hi"
 
 
@@ -372,7 +372,7 @@ def test_mkdir_outside_scratch_dir_refuses(tmp_path):
 
 _READ_SETTINGS = (
     "import os, pathlib; "
-    "print(pathlib.Path(os.environ['OTTO_SUT_DIRS'], '.otto', 'settings.toml').read_text())"
+    "print(pathlib.Path(os.environ['OTTOPATH'], '.otto', 'settings.toml').read_text())"
 )
 
 

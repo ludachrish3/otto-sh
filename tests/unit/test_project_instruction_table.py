@@ -22,7 +22,7 @@ from otto import options
 from otto.instruction_catalog import INSTRUCTIONS, PROJECT_INSTRUCTIONS, ProjectInstructionError
 from otto.instructions import instruction
 from otto.project import InstallOptions, ProjectActions, register_project_actions
-from otto.registry import registering_repo
+from otto.registry import registering_project
 
 
 @options
@@ -40,7 +40,7 @@ class Foreign:
     ensure: Annotated[bool, typer.Option(help="e")] = False
 
 
-def _declare(repo: str, name: str = "provision", options_cls=ProvisionOptions, **shape):
+def _declare(project: str, name: str = "provision", options_cls=ProvisionOptions, **shape):
     """Register, as *repo*, a ``ProjectActions`` subclass whose one method declares *name*."""
     if options_cls is None:
 
@@ -52,8 +52,8 @@ def _declare(repo: str, name: str = "provision", options_cls=ProvisionOptions, *
         @instruction(name, options=options_cls, help="h", **shape)
         async def body(self, opts: options_cls) -> None: ...  # ty: ignore[invalid-type-form]
 
-    cls = type(f"{repo.title()}Actions", (ProjectActions,), {name.replace("-", "_"): body})
-    with registering_repo(repo):
+    cls = type(f"{project.title()}Actions", (ProjectActions,), {name.replace("-", "_"): body})
+    with registering_project(project):
         register_project_actions(cls)
     return cls
 
@@ -93,7 +93,7 @@ class TestSecondDeclaration:
         _declare("a", walk="reverse")
         widget = _declare("widget", options_cls=WidgetProvision)
         entry = PROJECT_INSTRUCTIONS.get("provision")
-        assert [b.repo for b in entry.bodies] == ["a", "widget"]
+        assert [b.project for b in entry.bodies] == ["a", "widget"]
         assert entry.body_for(widget).options_cls is WidgetProvision
         assert entry.spec.walk == "reverse"
 
@@ -122,7 +122,7 @@ class TestSecondDeclaration:
 
         _declare("widget", "install", WidgetInstall)
         entry = PROJECT_INSTRUCTIONS.get("install")
-        assert [b.repo for b in entry.bodies] == [None, "widget"]
+        assert [b.project for b in entry.bodies] == [None, "widget"]
         assert entry.first_party_options is InstallOptions
 
     def test_repo_added_name_has_no_inheritance_rule(self) -> None:
@@ -135,10 +135,10 @@ class TestStandaloneConflict:
     def test_a_name_already_taken_by_a_standalone_instruction_is_refused(self) -> None:
         async def deploy() -> None: ...
 
-        with registering_repo("a"):
+        with registering_project("a"):
             instruction()(deploy)
         with pytest.raises(
-            ProjectInstructionError, match=r"'deploy'.*repo 'b'.*standalone.*repo 'a'"
+            ProjectInstructionError, match=r"'deploy'.*project 'b'.*standalone.*project 'a'"
         ):
             _declare("b", "deploy", None)
         assert INSTRUCTIONS.get("deploy").handler is deploy
@@ -149,7 +149,7 @@ def test_the_instructions_view_derives_a_data_entry():
     entry = INSTRUCTIONS.get("provision")
     assert entry.project == PROJECT_INSTRUCTIONS.get("provision")
     assert entry.handler is None
-    assert INSTRUCTIONS.repo("provision") is None
+    assert INSTRUCTIONS.project("provision") is None
 
 
 def test_the_shipped_install_verbs_opt_in_to_the_dry_run_preview():

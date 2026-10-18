@@ -42,24 +42,24 @@ def test_init_input_error_is_a_field_error() -> None:
 
 def test_for_repo_defaults_the_name_to_the_settings_name(tmp_path: Path) -> None:
     make_sut_repo(tmp_path, name="acme", version="1.0.0")
-    assert InitConfig.for_repo(tmp_path).name == "acme"
+    assert InitConfig.for_project(tmp_path).name == "acme"
 
 
 def test_for_repo_defaults_the_name_to_the_directory_without_settings(tmp_path: Path) -> None:
-    repo = tmp_path / "widget"
-    repo.mkdir()
-    assert InitConfig.for_repo(repo).name == "widget"
+    project = tmp_path / "widget"
+    project.mkdir()
+    assert InitConfig.for_project(project).name == "widget"
 
 
 def test_for_repo_prefers_an_explicit_name_and_resolves_the_root(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    cfg = InitConfig.for_repo(Path(), name="given", version="2.0.0")
+    cfg = InitConfig.for_project(Path(), name="given", version="2.0.0")
     assert (cfg.root, cfg.name, cfg.version) == (tmp_path.resolve(), "given", "2.0.0")
 
 
 def test_for_repo_still_refuses_a_missing_root(tmp_path: Path) -> None:
     with pytest.raises(InitInputError) as caught:
-        InitConfig.for_repo(tmp_path / "nope")
+        InitConfig.for_project(tmp_path / "nope")
     assert caught.value.field == "root"

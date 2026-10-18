@@ -10,7 +10,7 @@ reading, and "no host comes up" was unanswerable without reading source
 
 This module is the outlet's recording half. The skip sites call
 :func:`record_drop` naming WHERE the entry was and WHY it was left out; the
-completion cache's writer collects the records per repo into the ``names``
+completion cache's writer collects the records per project into the ``names``
 payload (``host_drops``), and ``otto cache info`` prints them beside the
 hosts the cache offers. Records are taken only while a sink is open
 (:func:`collecting_drops`), so the loud ``load_lab`` path — which raises

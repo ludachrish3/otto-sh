@@ -58,7 +58,7 @@ class TestJsonBackend:
         f = _write_reservations(tmp_path)
         backend = build_backend(
             {"backend": "json", "json": {"path": str(f)}},
-            repo_dir=tmp_path,
+            project_root=tmp_path,
         )
         assert isinstance(backend, JsonReservationBackend)
         assert backend.fetch_reservations("anyone") == []
@@ -67,7 +67,7 @@ class TestJsonBackend:
         _write_reservations(tmp_path)
         backend = build_backend(
             {"backend": "json", "json": {"path": "reservations.json"}},
-            repo_dir=tmp_path,
+            project_root=tmp_path,
         )
         assert isinstance(backend, JsonReservationBackend)
         assert backend.fetch_reservations("anyone") == []  # read from tmp_path, not the cwd
@@ -106,13 +106,13 @@ class TestJsonBackend:
         home = tmp_path / "home"
         home.mkdir()
         _write_reservations(home)
-        repo_dir = tmp_path / "repo"
-        repo_dir.mkdir()
+        project_root = tmp_path / "repo"
+        project_root.mkdir()
         monkeypatch.setenv("HOME", str(home))
 
         backend = build_backend(
             {"backend": "json", "json": {"path": "~/reservations.json"}},
-            repo_dir=repo_dir,
+            project_root=project_root,
         )
         assert isinstance(backend, JsonReservationBackend)
         assert backend.fetch_reservations("anyone") == []
@@ -122,7 +122,7 @@ class TestJsonBackend:
         f = _write_reservations(tmp_path)
         backend = build_backend(
             {"backend": "json", "url": "https://example", "json": {"path": str(f)}},
-            repo_dir=tmp_path,
+            project_root=tmp_path,
         )
         assert isinstance(backend, JsonReservationBackend)
 
@@ -140,7 +140,7 @@ class _Recorder(ReservationBackendBase):
 
 
 def _recorder(c):
-    backend = _Recorder(url=c.env.url, repo_dir=c.env.repo_dir, username=c.env.username)
+    backend = _Recorder(url=c.env.url, project_root=c.env.project_root, username=c.env.username)
     backend.api_key = c.config.api_key
     return backend
 
@@ -158,17 +158,17 @@ class TestRegisteredBackend:
                 "url": "https://api.example",
                 "recorder-test": {"api_key": "secret"},
             },
-            repo_dir=tmp_path,
+            project_root=tmp_path,
         )
         assert isinstance(backend, _Recorder)
-        assert (backend.api_key, backend.url, backend.repo_dir) == (
+        assert (backend.api_key, backend.url, backend.project_root) == (
             "secret",
             "https://api.example",
             tmp_path,
         )
 
     def test_without_url_the_env_carries_none(self, tmp_path, recorder_registered):
-        backend = build_backend({"backend": "recorder-test"}, repo_dir=tmp_path)
+        backend = build_backend({"backend": "recorder-test"}, project_root=tmp_path)
         assert backend.url is None
 
     def test_unknown_backend_name_raises(self, tmp_path):

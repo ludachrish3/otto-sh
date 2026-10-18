@@ -44,7 +44,7 @@ otto cov kmodcov check DIR
 | `get` | Fetch `.gcda` counters from each coverage host's instrumented products and write one `capture.json` per host per product, anchored to `base_commit` (also run implicitly by `otto test --cov`) |
 | `clean` | Zero each product's remote `.gcda` counters ahead of a fresh session (Unix coverage hosts only) |
 | `report` | Assemble every tier — e2e captures, unit harvest, committed manual store — into an HTML report |
-| `kmodcov` | Vendor the `otto_kmodcov` kernel-module library into a repo (`export`), or compare a vendored copy with this otto (`check`: exit 0 current, 1 differs, 2 absent). Lab-free. See {doc}`instrumenting/kernel-modules`. |
+| `kmodcov` | Vendor the `otto_kmodcov` kernel-module library into a project (`export`), or compare a vendored copy with this otto (`check`: exit 0 current, 1 differs, 2 absent). Lab-free. See {doc}`instrumenting/kernel-modules`. |
 
 ## Examples
 
@@ -151,9 +151,9 @@ cov_dir = "/var/coverage/myproduct"
 install = "GCOV_PREFIX={cov_dir} GCOV_PREFIX_STRIP=3 /opt/myproduct/myproduct &"
 ```
 
-**Everything lab-wide** belongs to a `[coverage]` table in the repo's
+**Everything lab-wide** belongs to a `[coverage]` table in the project's
 `.otto/settings.toml`.  The table can be empty, but it has to exist: its
-presence is what says this repo collects coverage at all.  The source root is
+presence is what says this project collects coverage at all.  The source root is
 auto-detected by walking up from the current directory to find the
 `.otto/` directory.  Path mappings between build-host paths and local
 source paths are auto-discovered from the `.info` and `.gcno` files.

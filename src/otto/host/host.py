@@ -557,7 +557,7 @@ class Host(Protocol):
     """Software-under-test deployed to this host (default empty)."""
 
     dev_tools: list["DevTool"]
-    """Repo-internal tooling deployed to this host (default empty)."""
+    """Project-internal tooling deployed to this host (default empty)."""
 
     shadowed_products: list[tuple[str, "Product"]]
     """Provider products dropped at ingest because their name was already taken, as
@@ -965,7 +965,7 @@ class Host(Protocol):
     async def stage(self, owner: str | None = None) -> Result:
         """Stage every product onto this host (transfer/place, no install).
 
-        *owner* narrows the walk to that repo's products; ``None`` is every
+        *owner* narrows the walk to that project's products; ``None`` is every
         product. Returns a :class:`~otto.result.Result`.
         """
         ...
@@ -974,7 +974,7 @@ class Host(Protocol):
         """Stage and then install every product on this host.
 
         When *stage_only* is ``True``, stops after staging without installing.
-        *owner* narrows the walk to that repo's products. Returns a
+        *owner* narrows the walk to that project's products. Returns a
         :class:`~otto.result.Result`, short-circuiting on the first failure.
         """
         ...
@@ -1036,7 +1036,7 @@ class Host(Protocol):
     async def install_dev_tools(self, owner: str | None = None) -> Result:
         """Stage then install every dev tool (declaration order, first failure wins).
 
-        *owner* narrows the walk to that repo's tools; ``None`` is every tool.
+        *owner* narrows the walk to that project's tools; ``None`` is every tool.
         """
         ...
 
@@ -1152,15 +1152,15 @@ class BaseHost(ABC):
 
     products: list["Product"] = field(
         default_factory=list,
-        metadata={"otto": RuntimeOnly(reason="attached by repo logic after construction")},
+        metadata={"otto": RuntimeOnly(reason="attached by project logic after construction")},
     )
     """Software-under-test deployed to this host. Default empty."""
 
     dev_tools: list["DevTool"] = field(
         default_factory=list,
-        metadata={"otto": RuntimeOnly(reason="attached by repo logic after construction")},
+        metadata={"otto": RuntimeOnly(reason="attached by project logic after construction")},
     )
-    """Repo-internal tooling deployed to this host. Default empty."""
+    """Project-internal tooling deployed to this host. Default empty."""
 
     shadowed_products: list[tuple[str, "Product"]] = field(
         default_factory=list,
@@ -2296,8 +2296,8 @@ class BaseHost(ABC):
 
         Iterates :attr:`products` in declaration order, returning the first
         non-ok :class:`~otto.result.Result`; an empty list is a successful no-op.
-        *owner* narrows the walk to the products that repo attached, so one
-        repo's default actions never touch another's.
+        *owner* narrows the walk to the products that project attached, so one
+        project's default actions never touch another's.
         """
         for product in self._owned_products(owner):
             result = await product.stage(cast("Host", self))
@@ -2346,7 +2346,7 @@ class BaseHost(ABC):
         uninstall (that would strand products on the host over a lost log).
         The first non-ok result seen is what returns. *owner* scopes both the
         product walk and the product-log haul; debug logs are host-level and
-        unscoped, which is why the per-repo walk turns them off with
+        unscoped, which is why the per-project walk turns them off with
         ``get_debug_logs=False`` rather than filtering them.
         """
         first_failure: Result | None = None
@@ -2372,8 +2372,8 @@ class BaseHost(ABC):
 
         An empty :attr:`products` list is **not installed** (avoids the
         vacuous-truth surprise of ``all([])``) — and the rule applies to the
-        *owner*-filtered list, so a repo with nothing on this host is not
-        reported installed by another repo's products.
+        *owner*-filtered list, so a project with nothing on this host is not
+        reported installed by another project's products.
         """
         owned = self._owned_products(owner)
         if not owned:
@@ -2398,7 +2398,7 @@ class BaseHost(ABC):
         ordering. Project-specific remnant removal belongs in an override.
 
         HOST-GLOBAL, and takes no ``owner``: its last step removes the
-        toolchain tools, which one host shares with every owner on it. A repo
+        toolchain tools, which one host shares with every owner on it. A project
         scoping its own teardown composes ``uninstall(owner=…)`` with
         :meth:`uninstall_dev_tools` instead — an owner-scoped ``cleanup`` would
         be a verb that honours the scope for two of its three steps and takes
@@ -2618,8 +2618,8 @@ class BaseHost(ABC):
         Each tool is carried through both phases before the next one starts, so
         a tool that stages but cannot install stops the walk rather than
         leaving later tools installed on top of a half-placed prerequisite.
-        *owner* narrows the walk to the tools that repo attached, exactly as on
-        the product verbs: it is what lets one repo's project actions place its
+        *owner* narrows the walk to the tools that project attached, exactly as on
+        the product verbs: it is what lets one project's actions place its
         own tooling on a shared host without touching a neighbour's.
         """
         for tool in self._owned_dev_tools(owner):
@@ -2637,8 +2637,8 @@ class BaseHost(ABC):
 
     @cli_exposed(
         help_=(
-            "Remove this host's dev tools, best-effort; `--owner REPO` limits it to the "
-            "tools REPO attached."
+            "Remove this host's dev tools, best-effort; `--owner PROJECT` limits it to "
+            "the tools PROJECT attached."
         )
     )
     async def uninstall_dev_tools(self, owner: str | None = None) -> Result:
@@ -2647,10 +2647,10 @@ class BaseHost(ABC):
         The removal twin of :meth:`install_dev_tools`, and a verb of its own
         rather than a loop inside :meth:`cleanup` for the same reason
         :meth:`remove_toolchain_tools` is one: a caller needs exactly this step
-        on its own. The per-repo project actions tear down with
+        on its own. The per-project actions tear down with
         ``uninstall(owner=…)`` followed by ``uninstall_dev_tools(owner=…)`` --
         never :meth:`cleanup`, whose third step is the host-global toolchain a
-        repo must not touch -- and a second copy of the loop over there drifted
+        project must not touch -- and a second copy of the loop over there drifted
         from this one the moment either changed.
 
         Best-effort, unlike the installation walk: every tool is attempted even
@@ -2712,8 +2712,8 @@ class BaseHost(ABC):
 
         The removal twin of :meth:`install_toolchain_tools`, and a step of its
         own rather than a loop inside :meth:`cleanup`, because ONE TOOLCHAIN
-        SERVES EVERY OWNER on a host: the per-repo project actions must not
-        touch it (a repo tearing it down would take its neighbours' tooling
+        SERVES EVERY OWNER on a host: the per-project actions must not
+        touch it (a project tearing it down would take its neighbours' tooling
         with it), so the ``otto.project`` orchestrator sweeps it across the
         fleet exactly once at the end of a lab-level cleanup. Both callers ask
         the same method so the path a tool is removed from cannot drift from
@@ -2740,7 +2740,7 @@ class BaseHost(ABC):
 
         The matching question to :meth:`remove_toolchain_tools`, extracted for
         the same reason: it is the host-global half of :meth:`is_clean`, and the
-        orchestrator asks it across the fleet without re-asking the per-repo
+        orchestrator asks it across the fleet without re-asking the per-project
         product questions that its own walk already covered.
 
         ASKS rather than infers -- the probe refuses under a dry run

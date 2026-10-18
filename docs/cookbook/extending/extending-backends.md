@@ -93,9 +93,9 @@ Either may be a {class}`~otto.registry.Ref` (`"module:attr"`), which otto
 imports the first time it needs it, so registering costs no import.
 
 Otto **prepares** a declaration (parses its options, once) and then
-**builds** it (calls the factory) as two stages, after every repo's `init`
-modules have run, so a backend registered by any repo serves a declaration
-in any repo. Each stage's failure raises the seam's construction error (a
+**builds** it (calls the factory) as two stages, after every project's `init`
+modules have run, so a backend registered by any project serves a declaration
+in any project. Each stage's failure raises the seam's construction error (a
 `ValueError` beneath the seam's domain error), and the message names the
 stage (`lookup`, `resolution`, `parse`, `stale preparation`, `construction`
 or `result`), the backend, the module that registered it and the file that

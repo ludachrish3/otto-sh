@@ -13,7 +13,7 @@ implementation without changing this path:
   :func:`~otto.fleet.run_on_all_hosts`: walks over the run's fleet of
   interest;
 - :func:`~otto.fleet.fleet_of_interest`: the ids such a walk takes,
-  computed from a lab and its repos without connecting or bootstrapping;
+  computed from a lab and its projects without connecting or bootstrapping;
 - :class:`~otto.config.scope.EmptySelectionError`: a walk's pattern matched no
   host the walk may reach.
 

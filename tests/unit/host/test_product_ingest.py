@@ -74,9 +74,9 @@ def test_apply_providers_stamps_the_default_cov_dir():
 
 
 def test_ingest_runs_a_subscribed_provider_with_its_repo():
-    from otto.registry import registering_repo
+    from otto.registry import registering_project
 
-    with registering_repo("acme"):
+    with registering_project("acme"):
         product_mod.register_product_provider(lambda host: [_P(artifact=Path("/a"), name="app")])
     host = _host()
     factory.apply_providers(host)

@@ -12,17 +12,17 @@ from tests.e2e._otto_subprocess import REPO1, run_otto
 pytestmark = pytest.mark.hostless
 
 
-def _run(argv, *, home, xdir, sut_dirs=REPO1):
+def _run(argv, *, home, xdir, roots=REPO1):
     return run_otto(
         argv,
         xdir=xdir,
-        sut_dirs=None,
+        roots=None,
         extra_argv_prefix=["-R"],
-        extra_env={"OTTO_SUT_DIRS": str(sut_dirs), "OTTO_HOME": str(home)},
+        extra_env={"OTTOPATH": str(roots), "OTTO_HOME": str(home)},
     )
 
 
-def _run_root_help(*, home, xdir, sut_dirs=REPO1):
+def _run_root_help(*, home, xdir, roots=REPO1):
     """Seed/refresh the cache through root ``--help``, one of the two readers.
 
     Migrated off ``run --list-instructions`` (spec §4.2): ordinary dispatch no
@@ -36,8 +36,8 @@ def _run_root_help(*, home, xdir, sut_dirs=REPO1):
     return run_otto(
         ["--help"],
         xdir=xdir,
-        sut_dirs=None,
-        extra_env={"OTTO_SUT_DIRS": str(sut_dirs), "OTTO_HOME": str(home)},
+        roots=None,
+        extra_env={"OTTOPATH": str(roots), "OTTO_HOME": str(home)},
     )
 
 

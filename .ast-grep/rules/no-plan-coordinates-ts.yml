@@ -38,7 +38,7 @@ note: >
   grepping for "Task 13". One such site survived the first sweep in
   pages/SubjectPage.tsx and was caught only in review.
 
-  Provenance, stated exactly, because it is this repo's own thesis turned on
+  Provenance, stated exactly, because it is this codebase's own thesis turned on
   itself. Classes 1, 2 and 4 were swept BY HAND in c2db81d8's pass; class 5 was
   checked by the throwaway line-pair detector in 0f633016; class 3 was not
   known until 2026-08-05's final review. Every one of those is a check that

@@ -62,7 +62,7 @@ from the path alone; the lines it writes are listed under
 
 TLS is optional and config-driven — a `[monitor]` table in
 `.otto/settings.toml` — never a CLI flag, matching every other
-per-repo/team-level decision in this file rather than a per-invocation one.
+per-project/team-level decision in this file rather than a per-invocation one.
 Once configured, it is **mandatory** for that run: a cert or key path that
 doesn't resolve is a hard exit, not a fall back to plain HTTP. A security
 feature that silently downgrades on failure is worse than not having it,
@@ -96,8 +96,8 @@ actually belongs to rather than collapsing them into one:
 | Artifact | Scope | Why |
 | --- | --- | --- |
 | CA certificate + key | Team-wide: your organisation's CA, or one a team owner creates once | A viewer trusts the CA once; every future leaf cert issued under it is covered with no re-distribution. |
-| Server (leaf) cert + key | Per-machine | SANs bind a leaf cert to one machine's addresses; a repo is cloned onto many machines with different IPs, so no single leaf cert could cover them all. |
-| `[monitor]` settings entry | Per-repo, committed | Shared team-wide, so it points at a conventional per-user path (`~/.otto/tls/…`) rather than a machine-specific one — identical text resolves differently per user, and the key itself never enters the repo. |
+| Server (leaf) cert + key | Per-machine | SANs bind a leaf cert to one machine's addresses; a repository is cloned onto many machines with different IPs, so no single leaf cert could cover them all. |
+| `[monitor]` settings entry | Per-project, committed | Shared team-wide, so it points at a conventional per-user path (`~/.otto/tls/…`) rather than a machine-specific one — identical text resolves differently per user, and the key itself never enters the repository. |
 
 The alternative of per-user self-signed certificates (no CA) was rejected:
 every viewer would hit a browser trust interstitial on every origin, the
@@ -120,11 +120,11 @@ syntax.
   boundary spec (`tls_cert`/`tls_key`, `~` expansion, the
   key-without-cert validation error)
 - {mod}`otto.config.scope` — `MonitorSettings`, the runtime dataclass
-  `MonitorSettingsSpec.to_runtime()` builds and the repo loader holds (its
+  `MonitorSettingsSpec.to_runtime()` builds and the project loader holds (its
   public path is `otto.config.MonitorSettings`)
 - {mod}`otto.monitor.tls` — `resolve_monitor_tls`, which resolves the
-  declaration across every configured repo and raises `MonitorTlsError` for a
-  missing or unloadable cert/key file or a multi-repo disagreement;
+  declaration across every configured project and raises `MonitorTlsError` for a
+  missing or unloadable cert/key file or a multi-project disagreement;
   {mod}`otto.monitor.live` and {mod}`otto.monitor.review` call it, and
   `otto monitor` turns the error into a hard exit
 - {mod}`otto.tls` — `os_trust_session`, the one adapter that carries both

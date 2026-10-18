@@ -148,8 +148,8 @@ with none of it. The edges to know about:
 Registration must run **before** the root Typer group is consulted, which
 means it belongs in a module listed in your `.otto/settings.toml` `init`
 field (or a package pulled in transitively from one). {func}`otto.bootstrap.bootstrap`
-is otto's composition root: it discovers your repos, then imports each
-repo's `init` modules, and runs before argv parsing for every real invocation
+is otto's composition root: it discovers your projects, then imports each
+project's `init` modules, and runs before argv parsing for every real invocation
 (see {func}`otto.cli.main.entry`). Test files are not a place to register a
 command: they load only inside `otto test`'s pytest session, and a
 `register_cli_command()` made from one is refused with
@@ -164,14 +164,14 @@ stderr for each failed module — so a single broken plugin file degrades help
 output instead of bricking the CLI entirely:
 
 ```text
-warning: repo /path/to/repo: failed to load my_broken_module: ImportError(...)
+warning: project root /path/to/project: failed to load my_broken_module: ImportError(...)
 ```
 
 Real command dispatch is not so forgiving: {func}`~otto.cli.invoke.command_preamble`
 re-checks bootstrap's result and fails loud —
 
 ```text
-Cannot run commands while a repo fails to load (see warnings above).
+Cannot run commands while a project fails to load (see warnings above).
 ```
 
 — with exit code 1, before any subcommand body runs (the per-module `warning:`
@@ -235,7 +235,7 @@ replace it deliberately.
 ```
 
 A deliberate replacement passes `overwrite=True`, as for every registry in
-{doc}`extending-backends`. Two repos that both do so for one name get an
+{doc}`extending-backends`. Two projects that both do so for one name get an
 order-dependent winner — whichever init module runs last — and that is the
 explicit choice each of them made. Root `otto --help`, tab completion and
 dispatch serve the replacement from then on.

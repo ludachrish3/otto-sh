@@ -23,12 +23,12 @@ the WHOLE profile (:func:`resolve_os_profile`):
 
 1. **Code** — :func:`register_os_profile`, called from an init module listed in
    ``.otto/settings.toml``, so third-party libraries can ship profiles.
-2. **Repo data** — an ``[os_profiles.<name>]`` table in a repo's
+2. **Project data** — an ``[os_profiles.<name>]`` table in a project's
    ``.otto/settings.toml``. Settings parsing keeps the table as data
-   (:attr:`otto.config.repo.Repo.os_profiles`); it is never registered. A
-   :class:`ProfileContext` built from the selected repos carries the tables
-   to every reader, and the later repo in ``OTTO_SUT_DIRS`` wins a name two
-   repos declare. Each table is checked after every init module has run
+   (:attr:`otto.config.project.Project.os_profiles`); it is never registered. A
+   :class:`ProfileContext` built from the selected projects carries the tables
+   to every reader, and the later project in ``OTTOPATH`` wins a name two
+   projects declare. Each table is checked after every init module has run
    (:func:`check_data_profiles`), so a table may name a host class an init
    module registers.
 3. **Class or built-in** — a registered host class's name is its own profile
@@ -65,7 +65,7 @@ from typing import TYPE_CHECKING, TypeVar
 from ..registry import FrozenMap, Ref, Registry, registration_boundary, resolved
 
 if TYPE_CHECKING:
-    from ..config.repo import Repo
+    from ..config.project import Project
     from ..models.settings import OsProfileSpec
     from .options import ConsoleOptions
     from .remote_host import RemoteHost
@@ -125,7 +125,7 @@ class HostClassEntry:
 
     profile: ProfileFields = ProfileFields()
     """The class's own profile, which ``os_type: <name>`` selects when no code
-    or repo-data profile of that name exists."""
+    or project-data profile of that name exists."""
 
 
 @dataclass(frozen=True)
@@ -269,7 +269,7 @@ def check_os_profile(
 
     The one meaning check for a profile, wherever it comes from:
     :func:`register_os_profile` runs it, so does :func:`check_data_profiles`
-    for every repo table, and so does :func:`resolve_os_profile` for a repo
+    for every project table, and so does :func:`resolve_os_profile` for a project
     table it selects. *base* must name a registered host class that resolves
     (a class registered by reference is imported and checked here), every
     *defaults* key must be an input that class's spec accepts from lab data
@@ -541,7 +541,7 @@ def register_host_class(
 
     Call from an init module listed in ``.otto/settings.toml`` to ship a custom
     host subclass. ``os_type: <name>`` then selects the class with *profile*
-    (its defaults and prompts) unless a code or repo-data profile of that
+    (its defaults and prompts) unless a code or project-data profile of that
     name exists; registering a class registers no :class:`OsProfile`.
 
     Parameters
@@ -619,7 +619,7 @@ def register_os_profile(
     Call from an init module listed in ``.otto/settings.toml`` — the same
     pattern :func:`otto.host.command_frame.register_command_frame` follows. A
     code profile is the first layer :func:`resolve_os_profile` reads, so it
-    wins over a repo's ``[os_profiles]`` table and over a host class of the
+    wins over a project's ``[os_profiles]`` table and over a host class of the
     same name. Shadowing a built-in (``unix`` / ``embedded`` / ``zephyr`` /
     ``busybox``) logs a warning.
 
@@ -668,7 +668,7 @@ def register_os_profile(
         logger.warning(f"register_os_profile: overriding built-in profile {name!r}")
 
 
-# --- repo data profiles ------------------------------------------------------
+# --- project data profiles ----------------------------------------------------
 
 
 def _profile_from_spec(name: str, spec: "OsProfileSpec") -> OsProfile:
@@ -678,18 +678,18 @@ def _profile_from_spec(name: str, spec: "OsProfileSpec") -> OsProfile:
 
 @dataclass(frozen=True)
 class ProfileContext:
-    """The repo data profiles one set of selected repos declares.
+    """The project data profiles one set of selected projects declares.
 
-    Built after init from the repos in ``OTTO_SUT_DIRS`` order
-    (:meth:`from_repos`) and handed to every reader that resolves an
+    Built after init from the projects in ``OTTOPATH`` order
+    (:meth:`from_projects`) and handed to every reader that resolves an
     ``os_type``; frozen and hashable, so a cache can key on it.
     """
 
     profiles: "FrozenMap[str, OsProfile]"
-    """Every table by name, merged across the repos; a later repo wins a name."""
+    """Every table by name, merged across the projects; a later project wins a name."""
 
     owners: "FrozenMap[str, str]"
-    """The repo whose table each name resolves to, named in messages."""
+    """The project whose table each name resolves to, named in messages."""
 
     @classmethod
     def empty(cls) -> "ProfileContext":
@@ -697,14 +697,14 @@ class ProfileContext:
         return cls(profiles=FrozenMap(), owners=FrozenMap())
 
     @classmethod
-    def from_repos(cls, repos: "Sequence[Repo]") -> "ProfileContext":
-        """Merge the ``[os_profiles]`` tables of *repos*, in the given order (later wins)."""
+    def from_projects(cls, projects: "Sequence[Project]") -> "ProfileContext":
+        """Merge the ``[os_profiles]`` tables of *projects*, in the given order (later wins)."""
         profiles: dict[str, OsProfile] = {}
         owners: dict[str, str] = {}
-        for repo in repos:
-            for name, spec in repo.os_profiles.items():
+        for project in projects:
+            for name, spec in project.os_profiles.items():
                 profiles[name] = _profile_from_spec(name, spec)
-                owners[name] = repo.name
+                owners[name] = project.name
         return cls(profiles=FrozenMap(profiles), owners=FrozenMap(owners))
 
     def digest(self) -> str:
@@ -722,9 +722,9 @@ class ProfileContext:
 
 
 def _check_data_profile(profile: OsProfile, *, owner: str) -> None:
-    """Run the meaning check on one repo table, naming the table and its repo."""
+    """Run the meaning check on one project table, naming the table and its project."""
     _check_profile_meaning(
-        f"[os_profiles.{profile.name}] in repo {owner!r}",
+        f"[os_profiles.{profile.name}] in project {owner!r}",
         profile.base,
         profile.fields.defaults.thaw_json(),
         profile.fields.login_prompt,
@@ -732,8 +732,8 @@ def _check_data_profile(profile: OsProfile, *, owner: str) -> None:
     )
 
 
-def check_data_profiles(repos: "Sequence[Repo]") -> None:
-    """Check every ``[os_profiles]`` table of every repo in *repos*; idempotent.
+def check_data_profiles(projects: "Sequence[Project]") -> None:
+    """Check every ``[os_profiles]`` table of every project in *projects*; idempotent.
 
     Run once every init module has run, so a table may name a host class an
     init module registers. Every table is checked, not only the one a name
@@ -742,11 +742,11 @@ def check_data_profiles(repos: "Sequence[Repo]") -> None:
     Raises:
         ValueError: A table names an unregistered base or one whose host class
             does not resolve, defaults a field its base lacks, or holds a bad
-            prompt; the message names the table and its repo.
+            prompt; the message names the table and its project.
     """
-    for repo in repos:
-        for name, spec in repo.os_profiles.items():
-            _check_data_profile(_profile_from_spec(name, spec), owner=repo.name)
+    for project in projects:
+        for name, spec in project.os_profiles.items():
+            _check_data_profile(_profile_from_spec(name, spec), owner=project.name)
 
 
 # --- the resolver -------------------------------------------------------------
@@ -761,13 +761,13 @@ def _layer_names(data: ProfileContext) -> list[str]:
 def resolve_os_profile(name: str, *, data: ProfileContext) -> OsProfile:
     """Return the profile *name* selects: the first layer holding it supplies the whole profile.
 
-    Code profiles first, then the repo data in *data* (checked as it is
+    Code profiles first, then the project data in *data* (checked as it is
     selected), then a host class's own profile or a built-in.
 
     Raises:
         ValueError: No layer holds *name* (the message lists every name and
-            suggests a near miss), or the repo table it selects fails
-            :func:`check_os_profile` (the message names the table and repo).
+            suggests a near miss), or the project table it selects fails
+            :func:`check_os_profile` (the message names the table and project).
     """
     if name in OS_PROFILES:
         return OS_PROFILES.get(name)
@@ -791,7 +791,7 @@ def resolve_os_profile(name: str, *, data: ProfileContext) -> OsProfile:
 
 
 def build_os_profile(name: str, *, data: ProfileContext | None = None) -> OsProfile:
-    """Return the :class:`OsProfile` *name* selects, seeing repo data only through *data*.
+    """Return the :class:`OsProfile` *name* selects, seeing project data only through *data*.
 
     Raises:
         ValueError: As :func:`resolve_os_profile` does.
@@ -803,7 +803,7 @@ def get_os_profile(name: str, *, data: ProfileContext | None = None) -> OsProfil
     """Return the :class:`OsProfile` *name* selects, or ``None`` when no layer holds it.
 
     Non-raising for an unknown name, so a caller can skip it or produce its
-    own error (e.g. the completion cache's host-class index skips it); a repo
+    own error (e.g. the completion cache's host-class index skips it); a project
     table it selects that fails its check still raises.
     """
     context = data if data is not None else ProfileContext.empty()
@@ -813,7 +813,7 @@ def get_os_profile(name: str, *, data: ProfileContext | None = None) -> OsProfil
 
 
 def registered_profile_names(*, data: ProfileContext | None = None) -> list[str]:
-    """Return the sorted names every layer resolves, repo data only through *data*."""
+    """Return the sorted names every layer resolves, project data only through *data*."""
     return sorted(_layer_names(data if data is not None else ProfileContext.empty()))
 
 
@@ -891,7 +891,7 @@ def construction_fields(os_type: str) -> ProfileFields | None:
 
     The fields :func:`constructing_with` set for *os_type*, else those of the
     code, class or built-in profile *os_type* names (a directly constructed
-    host sees no repo data), else ``None``.
+    host sees no project data), else ``None``.
     """
     held = _CONSTRUCTION_PROFILE.get()
     if held is not None and held[0] == os_type:
@@ -904,7 +904,7 @@ def copy_host(host: _H, /, **changes: object) -> _H:
     """Return ``dataclasses.replace(host, **changes)``, keeping *host*'s resolved profile.
 
     ``dataclasses.replace`` skips ``init=False`` fields, so a copy would
-    otherwise resolve its profile afresh by name and lose a repo data
+    otherwise resolve its profile afresh by name and lose a project data
     profile the original was built from. Every host copy in otto goes
     through here.
     """

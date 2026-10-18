@@ -4,7 +4,7 @@
 by ``cov_dir`` and ``cov_report_dir``: create-if-missing, refuse a non-empty
 target unless ``overwrite``, and prove writability with a real probe file.
 :func:`check_destination` is the same refusal for a dry run, which creates
-and clears nothing. The ``[coverage]`` settings lookup (which repo declares
+and clears nothing. The ``[coverage]`` settings lookup (which project declares
 it, its ``hosts`` selector) lives beneath the coverage pipeline, in
 :mod:`otto.config.coverage_settings`.
 """

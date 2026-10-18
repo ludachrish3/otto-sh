@@ -7,7 +7,7 @@
 - ``refresh`` — force a fetch of a cached remote inventory.
 
 Lab-free, and settings-only: §8 resolves the process inventory from the active
-repos' ``[inventory]`` tables and the user settings file, and from nothing
+projects' ``[inventory]`` tables and the user settings file, and from nothing
 else — no lab, no root option and no host reaches it. That is why the verbs
 below take no ``typer.Context``: unlike ``otto reservation whoami``, which
 reads ``--holder``/``-R`` off the root options, there is nothing on the
@@ -110,16 +110,16 @@ def _inventory(code: int = 1) -> "Inventory":
     passes :data:`_CANNOT_ANSWER`.
     """
     # The composition root: importing it installs the initiator that composes
-    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    # the projects this reads (spec 2026-10-11 placement-and-phases §3.12).
     from .. import bootstrap
 
     del bootstrap
-    from ..declared import get_repos
+    from ..declared import get_projects
     from ..inventory.config import build_inventory
     from ..inventory.errors import InventoryError
 
     try:
-        inventory = build_inventory(get_repos())
+        inventory = build_inventory(get_projects())
     except InventoryError as e:
         fail(
             f"[bold red]Inventory unavailable:[/bold red] {escape(str(e))}",

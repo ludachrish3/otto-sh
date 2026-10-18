@@ -177,7 +177,7 @@ paths = [
     )
     cred = test4["creds"][0]
     return ChaosTarget(
-        sut_dir=sut,
+        root=sut,
         lab=_LAB_NAME,
         host_id=_HOST_ID,
         ssh_host=test4["ip"],  # unused by spawn_otto (sut_dir/lab only); kept for shape parity

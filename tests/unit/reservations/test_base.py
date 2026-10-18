@@ -45,8 +45,8 @@ class _Complete(ReservationBackendBase):
     have started failing this double the moment that instant went past.
     """
 
-    def __init__(self, *, url=None, repo_dir=None, username=None, holdings=None):
-        super().__init__(url=url, repo_dir=repo_dir, username=username)
+    def __init__(self, *, url=None, project_root=None, username=None, holdings=None):
+        super().__init__(url=url, project_root=project_root, username=username)
         self._holdings = holdings or {}
 
     def fetch_reservations(self, username, start=None, end=None):
@@ -120,20 +120,20 @@ class TestAbstractContract:
 
 class TestConstructor:
     def test_keeps_what_the_factory_passes(self, tmp_path):
-        backend = _Complete(url="https://sched.example", repo_dir=tmp_path, username="alice")
+        backend = _Complete(url="https://sched.example", project_root=tmp_path, username="alice")
         assert backend.url == "https://sched.example"
-        assert backend.repo_dir == tmp_path
+        assert backend.project_root == tmp_path
         assert backend.username == "alice"
 
     def test_defaults_are_none(self):
         backend = _Complete()
         assert backend.url is None
-        assert backend.repo_dir is None
+        assert backend.project_root is None
         assert backend.username is None
 
     def test_repo_dir_is_kept_as_a_path(self, tmp_path):
-        backend = _Complete(repo_dir=str(tmp_path))
-        assert isinstance(backend.repo_dir, Path)
+        backend = _Complete(project_root=str(tmp_path))
+        assert isinstance(backend.project_root, Path)
 
 
 class TestReservationsProperty:

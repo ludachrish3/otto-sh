@@ -1,7 +1,7 @@
 """Lab-file doctor warnings: advisory checks that need every declaration in view.
 
 Pure — takes parsed documents, returns strings — so ``otto init`` (the only
-caller) stays the single place that reads a repo's lab files. Warnings, not
+caller) stays the single place that reads a project's lab files. Warnings, not
 problems: a shared file may serve projects that declare different labs, so a
 dead pattern is advice, and the disjoint-resource overlap (spec 2026-08-28
 three-level-reservations §7) is the author's call to make once it is pointed
@@ -29,7 +29,7 @@ def lab_warnings(documents: Documents) -> list[str]:
     one finding per pair of labs that share an element left unprotected by
     any element- or host-level resource (spec §7), when BOTH labs declare at
     least one resource and none in common. An empty list means the
-    declarations are coherent; nothing here ever makes a repo invalid.
+    declarations are coherent; nothing here ever makes a project invalid.
     """
     declared: dict[str, LabEntrySpec] = {}
     for _, entries, _ in documents:

@@ -1,6 +1,6 @@
 """Null reservation backend used when no scheduler is configured.
 
-Selected by setting ``backend = "none"`` in the repo's ``[reservations]``
+Selected by setting ``backend = "none"`` in the project's ``[reservations]``
 TOML section.  :func:`otto.reservations.check.check_reservations` recognizes
 it through :func:`is_null_backend` and becomes a no-op, so teams that haven't
 set up a scheduler yet aren't blocked.

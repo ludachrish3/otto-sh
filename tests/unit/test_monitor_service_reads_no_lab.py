@@ -15,7 +15,7 @@ lab and its hosts) is ``otto.fleet`` (spec 2026-10-11 placement-and-phases
 so a file that reached either the fleet or the facade fails. The lab model and
 its loader live in ``otto.labs.loader`` (§3.7), banned by module: the rest of
 ``otto.labs`` is the lab sources, which read no run. The run's repos are read
-from ``otto.declared`` (``current_repos``, §3.9), banned by module too: nothing
+from ``otto.declared`` (``current_projects``, §3.9), banned by module too: nothing
 else under ``otto/monitor`` reads the composed state or the declared entries.
 
 A name imported through a package facade (``from otto.monitor import
@@ -198,7 +198,7 @@ def test_the_scan_sees_the_runner_read_the_lab() -> None:
         for _, module in imports(RUNNER.read_text(encoding="utf-8"), package_of(RUNNER))
         if _banned(module) and not module.startswith(RUNNER_MODULE)
     }
-    reads = {"all_hosts", "current_repos", "get_lab", "get_context", "discover_tunnel_records"}
+    reads = {"all_hosts", "current_projects", "get_lab", "get_context", "discover_tunnel_records"}
     assert reads <= seen, sorted(reads - seen)
 
 
@@ -286,7 +286,10 @@ def test_stricter_than_tach(text: str) -> None:
 @pytest.mark.parametrize(
     "text",
     [
-        "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    from ..config.repo import Repo\n",
+        (
+            "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n"
+            "    from ..config.project import Project\n"
+        ),
         "import typing\nif typing.TYPE_CHECKING:\n    import otto.tunnel\n",
         "if (TYPE_CHECKING):\n    import otto.tunnel\n",
         "def f():\n    if TYPE_CHECKING:\n        import otto.tunnel\n",

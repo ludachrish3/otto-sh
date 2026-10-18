@@ -198,20 +198,20 @@ def _lab(tmp_path, power_control):
 @pytest.mark.parametrize("kind", ["malformed", "uncopyable"])
 def test_the_loader_reports_a_bad_power_table_as_a_validation_error(tmp_path, kind):
     register_power_controller("t-uncopyable", config=_Uncopyable, factory=_recording_factory)
-    repo = _lab(tmp_path, _MALFORMED if kind == "malformed" else "t-uncopyable")
+    project = _lab(tmp_path, _MALFORMED if kind == "malformed" else "t-uncopyable")
     with pytest.raises(
         LabRepositoryError, match=r"element 'p' hosts\[0\] in lab 'l': host 'p'"
     ) as exc:
-        repo.load_lab("l")
+        project.load_lab("l")
     assert isinstance(exc.value.__cause__, HostValidationError)
 
 
 @pytest.mark.parametrize("kind", ["malformed", "uncopyable"])
 def test_summaries_drop_a_host_whose_power_table_fails(tmp_path, kind):
     register_power_controller("t-uncopyable", config=_Uncopyable, factory=_recording_factory)
-    repo = _lab(tmp_path, _MALFORMED if kind == "malformed" else "t-uncopyable")
+    project = _lab(tmp_path, _MALFORMED if kind == "malformed" else "t-uncopyable")
     with collecting_drops() as drops:
-        assert repo.list_host_summaries() == []
+        assert project.list_host_summaries() == []
     reason = "parse failed" if kind == "malformed" else "cannot be copied"
     assert any("element 'p' hosts[0]" in d.where and reason in d.reason for d in drops)
 
@@ -221,11 +221,11 @@ def test_a_summary_keeps_a_host_whose_controller_is_registered_and_records_the_d
 ):
     """Review Focus 5."""
     register_power_controller("t-repo", config=_SecretConfig, factory=_recording_factory)
-    repo = _lab(tmp_path, {"type": "t-repo", "password": 1})
-    assert {s.id for s in repo.list_host_summaries()} == {"p"}
+    project = _lab(tmp_path, {"type": "t-repo", "password": 1})
+    assert {s.id for s in project.list_host_summaries()} == {"p"}
     POWER_CONTROLLERS.unregister("t-repo")
     with collecting_drops() as drops:
-        assert repo.list_host_summaries() == []
+        assert project.list_host_summaries() == []
     assert any("t-repo" in d.reason for d in drops)
 
 
@@ -254,12 +254,12 @@ def test_a_copy_failure_never_quotes_its_cause_on_any_route(tmp_path):
             route(dict(entry))
         assert isinstance(exc.value.__cause__, ValidationError), name
         messages[name] = str(exc.value)
-    repo = _lab(tmp_path, "t-copy-leak")
+    project = _lab(tmp_path, "t-copy-leak")
     with pytest.raises(LabRepositoryError) as loaded:
-        repo.load_lab("l")
+        project.load_lab("l")
     messages["loader"] = str(loaded.value)
     with collecting_drops() as drops:
-        assert repo.list_host_summaries() == []
+        assert project.list_host_summaries() == []
     messages["summaries"] = " | ".join(d.reason for d in drops)
     for name, message in messages.items():
         assert "cannot be copied for construction: ValidationError" in message, name
@@ -288,12 +288,12 @@ def test_a_table_with_a_bad_type_never_quotes_the_table_on_any_route(tmp_path, t
             route(dict(entry))
         assert [e["loc"] for e in exc.value.errors()] == [("power_control", "table", "type")], name
         messages[name] = str(exc.value)
-    repo = _lab(tmp_path, dict(table))  # a lab file holds JSON objects
+    project = _lab(tmp_path, dict(table))  # a lab file holds JSON objects
     with pytest.raises(LabRepositoryError) as loaded:
-        repo.load_lab("l")
+        project.load_lab("l")
     messages["loader"] = str(loaded.value)
     with collecting_drops() as drops:
-        assert repo.list_host_summaries() == []
+        assert project.list_host_summaries() == []
     messages["summaries"] = " | ".join(d.reason for d in drops)
     for name, message in messages.items():
         assert "power_control.table.type" in message, name

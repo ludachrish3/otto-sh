@@ -6,9 +6,9 @@ test report to each item (as ``item.rep_setup``, ``item.rep_call``,
 ``item.rep_teardown``). This makes pass/fail status available to fixtures
 during the teardown phase.
 
-When ``sut_test_dirs`` is supplied, the ``pytest_ignore_collect`` hook
+When ``project_test_dirs`` is supplied, the ``pytest_ignore_collect`` hook
 restricts collection to only those directories and their descendants,
-ensuring that only tests defined in ``OTTO_SUT_DIRS`` repos are run.
+ensuring that only tests defined in ``OTTOPATH`` projects are run.
 
 Selecting tests by name happens inside the same session, in four steps:
 
@@ -209,9 +209,9 @@ class OttoPlugin:
 
     Parameters
     ----------
-    sut_test_dirs :
-        Resolved test directories from all configured ``OTTO_SUT_DIRS`` repos
-        (i.e. the union of ``Repo.tests`` for every repo). When provided,
+    project_test_dirs :
+        Resolved test directories from all configured ``OTTOPATH`` projects
+        (i.e. the union of ``Project.tests`` for every project). When provided,
         collection is restricted to these directories. Pass an empty list or
         omit to disable filtering.
     stability_collector :
@@ -219,7 +219,7 @@ class OttoPlugin:
         here to accumulate pass/fail counts across repeated runs.
     candidates :
         The files this session may collect, as absolute paths in the form the
-        session reaches them (the test directories as the repo lists them,
+        session reaches them (the test directories as the project lists them,
         joined with each file's relative path). Every other file under a test
         directory, and every directory holding no candidate, is ignored.
         ``None`` collects the whole tree.
@@ -264,7 +264,7 @@ class OttoPlugin:
 
     def __init__(  # noqa: PLR0913 — one plugin per session: each arg is one thing that session is told
         self,
-        sut_test_dirs: list[Path] | None = None,
+        project_test_dirs: list[Path] | None = None,
         stability_collector: StabilityCollector | None = None,
         iterations: int = 0,
         duration: int = 0,
@@ -283,7 +283,7 @@ class OttoPlugin:
         before_tests: Callable[[], None] | None = None,
         announce_seed: bool = True,
     ) -> None:
-        self._sut_test_dirs = sut_test_dirs or []
+        self._project_test_dirs = project_test_dirs or []
         self._candidates: set[str] | None = None
         self._ancestors: set[str] = set()
         """Every directory above a candidate file or directory: entered for what is below."""
@@ -378,7 +378,7 @@ class OttoPlugin:
 
         Collecting runs under :func:`otto.registry.loading_test_files`: a test
         file or conftest may register nothing. A refusal is a defect in the
-        repo, not a broken file to run past, so the session stops before any
+        project, not a broken file to run past, so the session stops before any
         test (a usage error, as for a required name) and its caller raises
         the first refusal."""
         self.stop_reason: str | None = None
@@ -501,12 +501,12 @@ class OttoPlugin:
             tr.report_collect = _erase_collect_line
 
     def _outside_the_test_dirs(self, path: Path) -> bool:
-        """Whether *path* is neither in a SUT test dir nor above one; ``False`` with no dirs."""
-        if not self._sut_test_dirs:
+        """Whether *path* is neither in a project test dir nor above one; ``False`` with no dirs."""
+        if not self._project_test_dirs:
             return False
         return not any(
             path.is_relative_to(test_dir) or test_dir.is_relative_to(path)
-            for test_dir in self._sut_test_dirs
+            for test_dir in self._project_test_dirs
         )
 
     @pytest.hookimpl(tryfirst=True)
@@ -515,9 +515,9 @@ class OttoPlugin:
         collection_path: Path,
         config: pytest.Config,  # noqa: ARG002 — required by pytest hook signature
     ) -> bool | None:
-        """Ignore any path not under a configured SUT test directory, or not a candidate.
+        """Ignore any path not under a configured project test directory, or not a candidate.
 
-        Returns ``True`` (ignore) for paths outside all SUT test dirs, and,
+        Returns ``True`` (ignore) for paths outside all project test dirs, and,
         with a candidate set, for every path that is neither a candidate, nor
         a directory above one, nor in a directory taken in full (a
         subdirectory there that the table knows is left to its own stat, unless
@@ -567,7 +567,7 @@ class OttoPlugin:
                 self._file_stats[key] = _stat_pair(module.path)
 
     def _in_the_test_dirs(self, key: str) -> bool:
-        return any(_within(key, str(test_dir)) for test_dir in self._sut_test_dirs)
+        return any(_within(key, str(test_dir)) for test_dir in self._project_test_dirs)
 
     def _start_directory(self, path: Path) -> None:
         """Stat a directory taken in full, and its conftest unless the caller already did.
@@ -602,7 +602,7 @@ class OttoPlugin:
             self._deps.setdefault(key, set()).update(self._namespace_sources(module.obj) - {key})
         if not report.failed:
             return
-        from ..config.repo import collect_failure_reason
+        from ..config.project import collect_failure_reason
 
         module = self._module_of.get(report.nodeid)
         if module is not None:
@@ -611,7 +611,7 @@ class OttoPlugin:
             self._failed_dirs.append(self._dir_of[report.nodeid])
 
     def _note_refusal(self, exc: BaseException) -> None:
-        from ..config.repo import registration_refusal
+        from ..config.project import registration_refusal
 
         refusal = registration_refusal(exc)
         if refusal is not None:
@@ -658,7 +658,7 @@ class OttoPlugin:
         deselects, so the record never depends on another plugin's hooks.
         """
         from ..config.collected_tests import RecordedTest
-        from ..config.repo import classes_from_nodeid
+        from ..config.project import classes_from_nodeid
         from .selection import base_test_name, matches_name
 
         classes = classes_from_nodeid(item.nodeid, item.name)
@@ -794,7 +794,7 @@ class OttoPlugin:
         directory is too. pytest serves an imported module again to a later
         session in the process, so these are what the caller drops to have
         the next session read the files as they are then. A module from
-        anywhere else stays: a repo's libraries are the bootstrap's, and
+        anywhere else stays: a project's libraries are the bootstrap's, and
         what their init modules registered must stay the class a test gets.
         """
         from ..config.completion_cache import CONFTEST_FILENAME
@@ -841,13 +841,13 @@ class OttoPlugin:
         self.collection_finished = True
         if self.refusals or any(name in self.unmatched_names for name in self._must_match):
             # No message: pytest prints a UsageError's args, and the caller,
-            # which can suggest names from every repo's table, says it once.
+            # which can suggest names from every project's table, says it once.
             raise pytest.UsageError
         return result
 
     def pytest_collection_finish(self, session: pytest.Session) -> None:
         """Keep what the session selected (:attr:`selected`): every deselection is done by now."""
-        from ..config.repo import classes_from_nodeid
+        from ..config.project import classes_from_nodeid
 
         self.selected = [
             SelectedTest(
@@ -881,7 +881,7 @@ class OttoPlugin:
         """Build the records, then narrow *items* to the selected ones (see the hook above)."""
         from ..config.collected_tests import FileRecord
         from ..config.completion_cache import CONFTEST_FILENAME
-        from ..config.repo import marker_name
+        from ..config.project import marker_name
 
         now = int(time.time())
         records = {

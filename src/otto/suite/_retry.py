@@ -5,7 +5,7 @@ Two registration sites delegate here, both as hookwrappers around
 ``otto test``) and otto's own ``tests/conftest.py`` (active under bare
 ``pytest``). No current path registers both on one item — ``otto test``
 builds a fresh plugin manager and its confcutdir keeps otto's root conftest
-out even for the in-tree example repos — but ``pytest_runtest_call`` is not
+out even for the in-tree example projects — but ``pytest_runtest_call`` is not
 ``firstresult``, so if both ever were live the cost would be silently
 multiplied attempts. Defensively, the outermost wrapper claims the item and
 any inner one passes through. The previous generation had one copy per site

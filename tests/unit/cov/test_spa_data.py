@@ -62,7 +62,7 @@ class TestIndexPayload:
         store.thresholds = Thresholds(high=90, medium=75)
         payload = build_index_payload(
             store,
-            project_name="Proj",
+            report_title="Proj",
             prefix=None,
             stamp="20260725T140200Z-1a2b3c4d",
         )
@@ -74,7 +74,7 @@ class TestIndexPayload:
 
     def test_empty_store_tree_is_bare_root(self, tmp_path):
         store = CoverageStore(tier_order=["system"])
-        payload = build_index_payload(store, project_name="Empty", prefix=None, stamp="S")
+        payload = build_index_payload(store, report_title="Empty", prefix=None, stamp="S")
         tree = payload["tree"]
         assert tree["name"] == "Empty"
         assert tree["dirs"] == []
@@ -92,7 +92,7 @@ class TestIndexPayload:
         src = _write(tmp_path, "empty.c", "")
         store = CoverageStore(tier_order=["system"])
         store.get_or_create_file(src)  # no lines added
-        payload = build_index_payload(store, project_name="P", prefix=tmp_path, stamp="S")
+        payload = build_index_payload(store, report_title="P", prefix=tmp_path, stamp="S")
         node = _find_file(payload["tree"], "empty.c")
         assert node is not None
         assert node["stats"]["lines"] == {
@@ -123,7 +123,7 @@ class TestTreeRollupAndCtxLines:
         lr_hit.run_hits[run_r1] = 1
         fr_y.get_or_create_line(2)  # miss, no run credit
 
-        payload = build_index_payload(store, project_name="Proj", prefix=tmp_path, stamp="S")
+        payload = build_index_payload(store, report_title="Proj", prefix=tmp_path, stamp="S")
         root = payload["tree"]
 
         assert root["name"] == "Proj"
@@ -158,13 +158,13 @@ class TestProductDimension:
 
     def test_products_list_is_sorted_distinct_and_skips_unnamed(self, tmp_path):
         payload = build_index_payload(
-            self._store(tmp_path), project_name="P", prefix=tmp_path, stamp="S"
+            self._store(tmp_path), report_title="P", prefix=tmp_path, stamp="S"
         )
         assert payload["products"] == ["agent", "app"]
 
     def test_product_lines_count_lines_hit_by_any_run_of_that_product(self, tmp_path):
         payload = build_index_payload(
-            self._store(tmp_path), project_name="P", prefix=tmp_path, stamp="S"
+            self._store(tmp_path), report_title="P", prefix=tmp_path, stamp="S"
         )
         stats = payload["tree"]["stats"]
         assert stats["product_lines"] == {"app": 2, "agent": 1}
@@ -181,7 +181,7 @@ class TestProductDimension:
         line = nested.get_or_create_line(1)
         line.hits.add("e2e", 1)
         line.run_hits = {r_app: 1}
-        payload = build_index_payload(store, project_name="P", prefix=tmp_path, stamp="S")
+        payload = build_index_payload(store, report_title="P", prefix=tmp_path, stamp="S")
         root = payload["tree"]
         sub = next(d for d in root["dirs"] if d["name"] == "sub")
         assert sub["stats"]["product_lines"] == {"app": 1}
@@ -221,7 +221,7 @@ class TestRunContrib:
         l3.hits.add("system", 1)
         l3.run_hits[run_id] = 1
 
-        payload = build_index_payload(store, project_name="P", prefix=tmp_path, stamp="S")
+        payload = build_index_payload(store, report_title="P", prefix=tmp_path, stamp="S")
         contrib = payload["run_contrib"][str(run_id)]
         assert contrib["lines"] == 2
         assert contrib["revoked"] == 1
@@ -236,7 +236,7 @@ class TestDisplayPathPrefixStripAndFallback:
         src = _write(tmp_path, "product/main.c", "int a;\n")
         store = CoverageStore(tier_order=["system"])
         store.get_or_create_file(src)
-        payload = build_index_payload(store, project_name="P", prefix=tmp_path, stamp="S")
+        payload = build_index_payload(store, report_title="P", prefix=tmp_path, stamp="S")
         node = _find_file(payload["tree"], "main.c")
         assert node is not None
         assert node["path"] == "product/main.c"
@@ -246,7 +246,7 @@ class TestDisplayPathPrefixStripAndFallback:
         src = _write(tmp_path, "elsewhere/b.c", "int b;\n")
         store = CoverageStore(tier_order=["system"])
         store.get_or_create_file(src)
-        payload = build_index_payload(store, project_name="P", prefix=inside_dir, stamp="S")
+        payload = build_index_payload(store, report_title="P", prefix=inside_dir, stamp="S")
         node = _find_file(payload["tree"], "b.c")
         assert node is not None
         assert node["path"] == str(src)
@@ -263,7 +263,7 @@ class TestOutOfRangeLines:
         emit_chunks(
             store,
             out_dir,
-            project_name="P",
+            report_title="P",
             prefix=None,
             stamp="S",
         )
@@ -272,7 +272,7 @@ class TestOutOfRangeLines:
         text = chunk_path.read_text()
         assert '"999"' in text
 
-        payload = build_index_payload(store, project_name="P", prefix=None, stamp="S")
+        payload = build_index_payload(store, report_title="P", prefix=None, stamp="S")
         assert payload["tree"]["stats"]["lines"]["total"] == 1
         assert payload["tree"]["stats"]["flags"]["stale"] == 1
 
@@ -286,7 +286,7 @@ class TestEmitChunks:
         emit_chunks(
             store,
             out_dir,
-            project_name="P",
+            report_title="P",
             prefix=None,
             stamp="S",
         )
@@ -317,7 +317,7 @@ class TestEmitChunks:
         emit_chunks(
             store,
             out_dir,
-            project_name="P",
+            report_title="P",
             prefix=None,
             stamp="S",
         )
@@ -358,7 +358,7 @@ class TestEmitChunks:
         emit_chunks(
             store,
             out_dir,
-            project_name="P",
+            report_title="P",
             prefix=None,
             stamp="S",
         )
@@ -375,7 +375,7 @@ class TestEmitChunks:
         emit_chunks(
             store,
             out_dir,
-            project_name="P",
+            report_title="P",
             prefix=None,
             stamp="S",
         )
@@ -397,7 +397,7 @@ def _ticket_store(tmp_path):
 
 def test_index_payload_carries_ticket_summaries(tmp_path):
     payload = build_index_payload(
-        _ticket_store(tmp_path), project_name="P", prefix=tmp_path, stamp="S"
+        _ticket_store(tmp_path), report_title="P", prefix=tmp_path, stamp="S"
     )
     assert payload["tickets"] == [
         {
@@ -420,7 +420,7 @@ def test_ticket_chunks_are_emitted_per_ticket(tmp_path):
     emit_chunks(
         _ticket_store(tmp_path),
         out,
-        project_name="P",
+        report_title="P",
         prefix=tmp_path,
         stamp="S",
     )
@@ -434,8 +434,8 @@ def test_no_tickets_emits_empty_list_and_no_chunk_dir(tmp_path):
     store.get_or_create_file(tmp_path / "a.c").get_or_create_line(1)
     out = tmp_path / "report"
     out.mkdir()
-    payload = build_index_payload(store, project_name="P", prefix=tmp_path, stamp="S")
-    emit_chunks(store, out, project_name="P", prefix=tmp_path, stamp="S")
+    payload = build_index_payload(store, report_title="P", prefix=tmp_path, stamp="S")
+    emit_chunks(store, out, report_title="P", prefix=tmp_path, stamp="S")
     assert payload["tickets"] == []
     assert not (out / "cov_data" / "tickets").exists()
 
@@ -446,7 +446,7 @@ def test_line_json_carries_ticket_ids_and_omits_empty(tmp_path):
     emit_chunks(
         _ticket_store(tmp_path),
         out,
-        project_name="P",
+        report_title="P",
         prefix=tmp_path,
         stamp="S",
     )
@@ -457,7 +457,7 @@ def test_line_json_carries_ticket_ids_and_omits_empty(tmp_path):
     plain.get_or_create_file(tmp_path / "b.c").get_or_create_line(1)
     out2 = tmp_path / "report2"
     out2.mkdir()
-    emit_chunks(plain, out2, project_name="P", prefix=tmp_path, stamp="S")
+    emit_chunks(plain, out2, report_title="P", prefix=tmp_path, stamp="S")
     assert '"ticket"' not in next((out2 / "cov_data" / "files").iterdir()).read_text()
 
 
@@ -480,7 +480,7 @@ def test_tickets_totals_dedupes_a_line_owned_by_two_tickets(tmp_path):
     store.tickets["PROJ-1"] = TicketRecord(id="PROJ-1", url=None, commits=["a"])
     store.tickets["PROJ-2"] = TicketRecord(id="PROJ-2", url=None, commits=["b"])
 
-    payload = build_index_payload(store, project_name="P", prefix=tmp_path, stamp="S")
+    payload = build_index_payload(store, report_title="P", prefix=tmp_path, stamp="S")
 
     assert payload["tickets_totals"] == {
         "owned": 2,
@@ -500,7 +500,7 @@ def test_tickets_totals_dedupes_a_line_owned_by_two_tickets(tmp_path):
 def test_tickets_totals_is_zero_when_no_tickets(tmp_path):
     store = CoverageStore(tier_order=["unit"])
     store.get_or_create_file(tmp_path / "a.c").get_or_create_line(1)
-    payload = build_index_payload(store, project_name="P", prefix=tmp_path, stamp="S")
+    payload = build_index_payload(store, report_title="P", prefix=tmp_path, stamp="S")
     assert payload["tickets_totals"] == {
         "owned": 0,
         "covered": 0,
@@ -523,7 +523,7 @@ def test_sentinel_ticket_ids_flow_through_summaries_and_get_their_own_chunk(tmp_
     store.tickets["(no ticket)"] = TicketRecord(id="(no ticket)", url=None, commits=["abc"])
     store.tickets["(uncommitted)"] = TicketRecord(id="(uncommitted)", url=None, commits=[])
 
-    payload = build_index_payload(store, project_name="P", prefix=tmp_path, stamp="S")
+    payload = build_index_payload(store, report_title="P", prefix=tmp_path, stamp="S")
     ids = {t["id"]: t for t in payload["tickets"]}
     assert set(ids) == {"(no ticket)", "(uncommitted)"}
     assert ids["(no ticket)"]["url"] is None
@@ -531,7 +531,7 @@ def test_sentinel_ticket_ids_flow_through_summaries_and_get_their_own_chunk(tmp_
 
     out = tmp_path / "report"
     out.mkdir()
-    emit_chunks(store, out, project_name="P", prefix=tmp_path, stamp="S")
+    emit_chunks(store, out, report_title="P", prefix=tmp_path, stamp="S")
     chunk_files = sorted((out / "cov_data" / "tickets").iterdir())
     assert len(chunk_files) == 2
 
@@ -548,7 +548,7 @@ def test_tickets_totals_counts_a_sentinel_owned_line_once(tmp_path):
     line.hits.add("unit", 1)
     store.tickets["(no ticket)"] = TicketRecord(id="(no ticket)", url=None, commits=["abc"])
 
-    payload = build_index_payload(store, project_name="P", prefix=tmp_path, stamp="S")
+    payload = build_index_payload(store, report_title="P", prefix=tmp_path, stamp="S")
 
     assert payload["tickets_totals"] == {
         "owned": 1,
@@ -568,7 +568,7 @@ def test_ticket_chunk_carries_the_report_stamp(tmp_path):
     emit_chunks(
         _ticket_store(tmp_path),
         out,
-        project_name="P",
+        report_title="P",
         prefix=tmp_path,
         stamp="the-stamp",
     )
@@ -609,7 +609,7 @@ def test_ticket_chunk_files_carry_per_tier_covered_counts(tmp_path):
     emit_chunks(
         _two_file_two_tier_ticket_store(tmp_path),
         out,
-        project_name="P",
+        report_title="P",
         prefix=tmp_path,
         stamp="S",
     )
@@ -629,7 +629,7 @@ class TestOverrideProvenance:
 
     def test_data_format_matches_the_module_constant(self, tmp_path):
         store = CoverageStore(tier_order=["system"])
-        payload = build_index_payload(store, project_name="P", prefix=None, stamp="S")
+        payload = build_index_payload(store, report_title="P", prefix=None, stamp="S")
         assert payload["format"] == OTTO_COV_DATA_FORMAT
 
     def test_line_json_carries_asserted_map_and_omits_when_empty(self, tmp_path):
@@ -642,7 +642,7 @@ class TestOverrideProvenance:
         asserted_line.asserted = {"bench": [0]}
         fr.get_or_create_line(2)  # plain line
 
-        emit_chunks(store, out, project_name="P", prefix=tmp_path, stamp="S")
+        emit_chunks(store, out, report_title="P", prefix=tmp_path, stamp="S")
         chunk_path = out / "cov_data" / "files" / f"{mangle_path(tmp_path / 'a.c')}.js"
         text = chunk_path.read_text()
         body = text[len("window.__OTTO_COV_FILE__(") : -len(");\n")]
@@ -661,7 +661,7 @@ class TestOverrideProvenance:
                 id=0, tier="bench", key="ticket:PROJ-1", reason="first", as_of="2026-07-01"
             )
         )
-        payload = build_index_payload(store, project_name="P", prefix=None, stamp="S")
+        payload = build_index_payload(store, report_title="P", prefix=None, stamp="S")
         assert payload["overrides"] == [
             {
                 "id": 0,
@@ -684,7 +684,7 @@ class TestOverrideProvenance:
         really_hit = fr.get_or_create_line(3)
         really_hit.hits.add("bench", 1)
 
-        payload = build_index_payload(store, project_name="P", prefix=tmp_path, stamp="S")
+        payload = build_index_payload(store, report_title="P", prefix=tmp_path, stamp="S")
         node = _find_file(payload["tree"], "a.c")
         assert node["stats"]["lines"]["asserted_per_tier"]["bench"] == 2
         assert payload["tree"]["stats"]["lines"]["asserted_per_tier"]["bench"] == 2
@@ -712,7 +712,7 @@ class TestOverrideProvenance:
         pure.hits.add("unit", 0)
         pure.asserted = {"bench": [0]}  # bench is asserted, and it's the only hitting tier
 
-        payload = build_index_payload(store, project_name="P", prefix=tmp_path, stamp="S")
+        payload = build_index_payload(store, report_title="P", prefix=tmp_path, stamp="S")
         node = _find_file(payload["tree"], "a.c")
         assert node["stats"]["lines"]["asserted_only"] == 1
         assert payload["tree"]["stats"]["lines"]["asserted_only"] == 1
@@ -728,7 +728,7 @@ class TestOverrideProvenance:
         plain_line.ticket = ["PROJ-1"]
         store.tickets["PROJ-1"] = TicketRecord(id="PROJ-1", url=None, commits=["abc"])
 
-        payload = build_index_payload(store, project_name="P", prefix=tmp_path, stamp="S")
+        payload = build_index_payload(store, report_title="P", prefix=tmp_path, stamp="S")
         summary = next(t for t in payload["tickets"] if t["id"] == "PROJ-1")
         assert summary["asserted"] == {"bench": 1}
         assert payload["tickets_totals"]["asserted"] == {"bench": 1}
@@ -750,7 +750,7 @@ class TestOverrideProvenance:
         store.tickets["PROJ-1"] = TicketRecord(id="PROJ-1", url=None, commits=["a"])
         store.tickets["PROJ-2"] = TicketRecord(id="PROJ-2", url=None, commits=["b"])
 
-        payload = build_index_payload(store, project_name="P", prefix=tmp_path, stamp="S")
+        payload = build_index_payload(store, report_title="P", prefix=tmp_path, stamp="S")
 
         assert payload["tickets_totals"]["asserted"] == {"bench": 1}
         by_id = {t["id"]: t for t in payload["tickets"]}
@@ -784,7 +784,7 @@ class TestTreeOrder:
         store = CoverageStore(tier_order=["system"])
         for rel in ("z.c", "b/y.c", "b/a/x.c", "a/w.c"):
             store.get_or_create_file(_write(tmp_path, rel, "int v;\n"))
-        payload = build_index_payload(store, project_name="P", prefix=tmp_path, stamp="S")
+        payload = build_index_payload(store, report_title="P", prefix=tmp_path, stamp="S")
         assert [f["path"] for f in iter_tree_files(payload["tree"])] == [
             "a/w.c",
             "b/a/x.c",
@@ -799,7 +799,7 @@ class TestSearchAndSymbolsPayloads:
         second = store.get_or_create_file(_write(tmp_path, "b.c", "int b;\nint c;\n"))
         second.get_or_create_line(1).hits.add("system", 1)
         first = store.get_or_create_file(_write(tmp_path, "a.c", "int a;\n"))
-        payload = build_index_payload(store, project_name="P", prefix=tmp_path, stamp="S")
+        payload = build_index_payload(store, report_title="P", prefix=tmp_path, stamp="S")
         records = {mangle_path(fr.path): fr for fr in store.files()}
         sources = {chunk: fr.path.read_text() for chunk, fr in records.items()}
         search = build_search_payload(payload["tree"], records, sources, "S")
@@ -842,7 +842,7 @@ class TestSearchAndSymbolsPayloads:
         out = tmp_path / "report"
         monkeypatch.setattr(spa_data, "SEARCH_CHUNK_WARN_BYTES", 10)
         with caplog.at_level("WARNING", logger="otto.coverage.renderer.spa_data"):
-            emit_chunks(store, out, project_name="P", prefix=tmp_path, stamp="S")
+            emit_chunks(store, out, report_title="P", prefix=tmp_path, stamp="S")
         search_text = (out / "cov_data" / "search.js").read_text()
         symbols_text = (out / "cov_data" / "symbols.js").read_text()
         assert search_text.startswith("window.__OTTO_COV_SEARCH__(")

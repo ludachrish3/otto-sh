@@ -122,7 +122,7 @@ def snapshot_slug_material(
     compares: the backend, its NORMALIZED configuration (what its config model
     parsed, defaults included; a :class:`~otto.registry.FrozenMap` is thawed)
     and ``cache_ttl`` (``|ttl=<whole seconds>``). Never where the table was
-    declared: two repos naming one inventory share its snapshot.
+    declared: two projects naming one inventory share its snapshot.
 
     The backend's own ``label`` stands in for a key the backend adopted
     verbatim, because a backend NORMALISES its identity and a configuration

@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 import pytest_asyncio
 
-from otto.config.repo import Repo
+from otto.config.project import Project
 from otto.docker import build_images, composed
 from otto.host.element import Element
 from otto.host.login_proxy import Cred
@@ -63,15 +63,15 @@ async def parent_lab(test3_lease):
 async def test_instruction_uses_composed_context_manager(parent_lab):
     """Simulate an instruction using composed() as its lifecycle scope."""
     parent, lab = parent_lab
-    repo = Repo(sut_dir=REPO1_DIR)
+    project = Project(root=REPO1_DIR)
     container_id = f"{parent.id}.repo1.api"
 
-    build_results = await build_images(repo, parent)
+    build_results = await build_images(project, parent)
     assert build_results["repo1-api"].is_ok, build_results
 
     # Mimic: @instruction async def my_workflow(): async with composed(...) as ...
     async def my_workflow() -> str:
-        async with composed(repo, lab, parent=parent.id, own=True) as containers:
+        async with composed(project, lab, parent=parent.id, own=True) as containers:
             api = containers["api"]
             res = await api.exec("hostname")
             assert res.status is Status.Success
@@ -88,17 +88,17 @@ async def test_instruction_uses_composed_context_manager(parent_lab):
 async def test_session_fixture_holds_stack_for_inner_users(parent_lab):
     """A suite-level fixture using own=True should not be torn down by an inner own=False call."""
     parent, lab = parent_lab
-    repo = Repo(sut_dir=REPO1_DIR)
+    project = Project(root=REPO1_DIR)
     container_id = f"{parent.id}.repo1.api"
 
-    build_results = await build_images(repo, parent)
+    build_results = await build_images(project, parent)
     assert build_results["repo1-api"].is_ok, build_results
 
-    async with composed(repo, lab, parent=parent.id, own=True) as outer_hosts:
+    async with composed(project, lab, parent=parent.id, own=True) as outer_hosts:
         outer_id = outer_hosts["api"].container_id
 
         # Inner user: default own=False — must reuse and NOT teardown on exit.
-        async with composed(repo, lab, parent=parent.id, own=False) as inner_hosts:
+        async with composed(project, lab, parent=parent.id, own=False) as inner_hosts:
             assert inner_hosts["api"].container_id == outer_id
 
         # Container must still be running after inner exit.

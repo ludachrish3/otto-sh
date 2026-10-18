@@ -15,12 +15,12 @@ any other name — each with a `kind` (`e2e` / `unit` / `manual`) that selects
 how otto collects that tier's data; declaring tiers and driving the
 three-tier workflow is covered in {doc}`../../../cli/cov/index`.
 
-Only the **manual** tier's data is committed into the repo, even though
+Only the **manual** tier's data is committed into the project's git repository, even though
 every tier's data is anchored to `base_commit`: e2e and unit data are
 reproducible — a fresh `otto test --cov` or a rebuilt unit harvest
 regenerates them — but a manual session (a human at a GDB prompt, poking at
 running hardware) produces evidence nothing else can regenerate. Selecting a
-manual-kind tier on `otto cov get` copies the capture into the repo's
+manual-kind tier on `otto cov get` copies the capture into the project's
 committed store at `.otto/coverage/manual/` — proof of that session that
 travels with the code and is PR-reviewable. E2e data instead lives in each
 test run's output directory, and unit data is harvested fresh from the build
@@ -46,7 +46,7 @@ state table and how each renders in a report.
 `otto.coverage.tiers.load_tiers` turns the raw `[coverage.tiers]` dict into
 `TierConfig` values sorted by `precedence`, first entry highest. An
 empty or missing table yields exactly one tier — `system`, `kind="e2e"`,
-`precedence=1` — which is byte-for-byte pre-tier behavior: a repo that never
+`precedence=1` — which is byte-for-byte pre-tier behavior: a project that never
 declares tiers never meets the machinery.
 
 `kind` is the closed set (`e2e` / `unit` / `manual`, validated at

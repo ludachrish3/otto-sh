@@ -4,16 +4,16 @@ load-bearing properties, not the implementation."""
 import pytest
 import tomli
 
-from otto.config.repo import Repo
+from otto.config.project import Project
 from tests._fixtures.sutrepo import make_sut_repo
 
 
 def test_scaffold_loads_through_the_product_reader(tmp_path):
     """The point of the builder: what it writes IS a valid otto repo."""
     root = make_sut_repo(tmp_path / "sut", tests=["tests"])
-    repo = Repo(sut_dir=root)
-    assert repo.settings["name"] == "sut"
-    assert repo.settings["version"] == "1.0.0"
+    project = Project(root=root)
+    assert project.settings["name"] == "sut"
+    assert project.settings["version"] == "1.0.0"
 
 
 def test_extra_toml_is_carried_verbatim(tmp_path):

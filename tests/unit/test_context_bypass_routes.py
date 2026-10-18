@@ -20,7 +20,7 @@ import pytest
 from tests._fixtures.fresh_composition import armed, compositions, run_fresh
 
 _REFUSAL = (
-    "Nothing composed otto's repos, and no composition root is loaded to compose them: "
+    "Nothing composed otto's projects, and no composition root is loaded to compose them: "
     "call otto.bootstrap.bootstrap(), or open a run with otto.open_context(...)."
 )
 
@@ -30,7 +30,7 @@ import json, pickle, sys, typing
 from otto.lab import Lab
 root = "otto.bootstrap" in sys.modules
 try:
-    read = [r.name for r in cls(lab=Lab(name="pin")).repos]
+    read = [r.name for r in cls(lab=Lab(name="pin")).projects]
 except RuntimeError as exc:
     read = str(exc)
 print(json.dumps([cls.__module__, root, read]))

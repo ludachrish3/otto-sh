@@ -4,7 +4,7 @@ Otto reads its hosts through **host-data sources** declared in
 `[[lab.sources]]` — see {doc}`../../configuration/host-sources` for the
 declaration syntax and merge order. The `json` backend ships with otto;
 anything else (a CMDB, an inventory API, a scheduler's asset list) is a
-backend you register from your own repo. This page is that contract.
+backend you register from your own project. This page is that contract.
 
 ## The interface
 
@@ -128,10 +128,10 @@ The shipped sample works out of the box and demonstrates the contract:
 
 ```{doctest}
 >>> from otto.examples.lab_repository import ExampleLabRepository
->>> repo = ExampleLabRepository()
->>> repo.list_labs()
+>>> repository = ExampleLabRepository()
+>>> repository.list_labs()
 ['east', 'west']
->>> lab = repo.load_lab("east")
+>>> lab = repository.load_lab("east")
 >>> lab.name
 'east'
 >>> sorted(lab.hosts)
@@ -146,7 +146,7 @@ Loading an unknown lab raises the contract's error — never a bare `KeyError` o
 ```{doctest}
 >>> from otto.labs import LabNotFoundError
 >>> try:
-...     repo.load_lab("does-not-exist")
+...     repository.load_lab("does-not-exist")
 ... except LabNotFoundError:
 ...     print("not found")
 not found
@@ -179,18 +179,18 @@ backend = "example"
 What otto does with it, and when:
 
 - **At settings parse**, only the entry's envelope is checked: `backend`,
-  `name`, and that labels are unique within the repo. The options are kept
+  `name`, and that labels are unique within the project. The options are kept
   as they were written.
-- **After every repo's `init` modules have run**, otto prepares each source:
+- **After every project's `init` modules have run**, otto prepares each source:
   it calls the config model's `model_validate(options, context={"env": env})`
-  once. `env` is a {class}`~otto.labs.LabSourceEnv`: the declaring repo's root
-  (`repo_dir`, where a relative path anchors), the source's `label`, its
-  `origin` (the settings file) and `profiles`, the selected repos'
+  once. `env` is a {class}`~otto.labs.LabSourceEnv`: the declaring project's root
+  (`project_root`, where a relative path anchors), the source's `label`, its
+  `origin` (the settings file) and `profiles`, the selected projects'
   `[os_profiles]` tables as a {class}`~otto.host.ProfileContext`. Keep
   `profiles` and pass it as `profiles=` to every host helper you call
   (`create_host_from_dict`, `host_identity`, `validate_host_dict`, each with
   the element), so a
-  host's `os_type` may name a table any selected repo declares; without it,
+  host's `os_type` may name a table any selected project declares; without it,
   such a host is refused as an unknown `os_type`. An unknown option or a bad
   value fails here,
   naming the source's settings file. Preparing a source while an init module
@@ -214,8 +214,8 @@ def example_lab_source(c: Configured[ExampleLabSourceConfig, LabSourceEnv]) -> E
 
 A CMDB source takes the server's URL and, optionally, a CA bundle file. The
 config model parses both, and its validator anchors a relative `ca_bundle`
-to the root of the repo that declares the source, which it reads from
-`info.context["env"].repo_dir`:
+to the root of the project that declares the source, which it reads from
+`info.context["env"].project_root`:
 
 ```python
 # my_lab_source.py  (listed in init = [...])
@@ -240,7 +240,7 @@ class CmdbConfig(OttoModel):
     def _anchor(cls, value: Path | None, info: ValidationInfo) -> Path | None:
         if value is None or value.is_absolute():
             return value
-        return info.context["env"].repo_dir / value
+        return info.context["env"].project_root / value
 
 
 def cmdb_source(c: Configured[CmdbConfig, LabSourceEnv]) -> CmdbLabRepository:
@@ -255,7 +255,7 @@ register_lab_repository("cmdb", config=CmdbConfig, factory=cmdb_source)
 `OttoModel` refuses an unknown key, so a typo in the source's options fails
 when the source is prepared, naming the field and the settings file. The
 anchored path is part of the parsed configuration, so the factory never
-needs `repo_dir` itself; when it does, it reads `c.env.repo_dir`.
+needs `project_root` itself; when it does, it reads `c.env.project_root`.
 
 ### Files and the completion cache
 
@@ -321,7 +321,7 @@ from my_lab_source import CmdbConfig, cmdb_source
 
 def test_cmdb_conforms(tmp_path):
     env = LabSourceEnv(
-        repo_dir=tmp_path, label="test/cmdb", origin="test", profiles=ProfileContext.empty()
+        project_root=tmp_path, label="test/cmdb", origin="test", profiles=ProfileContext.empty()
     )
     config = CmdbConfig.model_validate({"url": "https://cmdb.example.com"}, context={"env": env})
     assert_lab_repository_conforms(cmdb_source(Configured(config, env)))

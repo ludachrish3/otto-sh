@@ -147,7 +147,7 @@ removes nothing.
 
 ## `path`
 
-Globs, matched against each file's path relative to the `[coverage]` repo
+Globs, matched against each file's path relative to the `[coverage]` project
 root. Matching files are dropped whole and never even opened.
 
 ```toml
@@ -160,10 +160,10 @@ A `**` segment crosses directory separators — any number of them,
 including none. A `*` matches within one path segment and `?` matches one
 character, neither crossing a `/`. Patterns are anchored at both ends, so
 `vendor/**` names everything under `vendor/` and `**/*_generated.c` names
-that suffix at any depth, the repo root included.
+that suffix at any depth, the project root included.
 
 A glob that **starts with `/`** is matched against the file's absolute
-path instead. That is the only way to name a file outside the repo root:
+path instead. That is the only way to name a file outside the project root:
 a relative glob cannot match one, since there is no relative path to match
 it against.
 

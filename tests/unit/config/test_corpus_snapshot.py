@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-import otto.config.repo as config_repo
+import otto.config.project as config_repo
 from otto.config import corpus_snapshot as cs
 from tests._fixtures.generated_repo import generate_repo
 from tests._fixtures.paths import PROJECT_ROOT
@@ -60,11 +60,11 @@ def discovered(request, tmp_path, monkeypatch):
         sut = generate_repo(tmp_path, files=12, dirs=3, realistic=True)
     else:
         sut = PROJECT_ROOT / "tests" / request.param
-    monkeypatch.setenv("OTTO_SUT_DIRS", str(sut))
+    monkeypatch.setenv("OTTOPATH", str(sut))
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     bs.invalidate()
     try:
-        yield config_repo.discover().repos
+        yield config_repo.discover().projects
     finally:
         bs.invalidate()
 

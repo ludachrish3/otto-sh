@@ -4,7 +4,7 @@ severity: error
 message: this branches on a backend's NAME, so a backend registered over "json" (or "none") with overwrite=True is treated as the built-in it replaced, and a third-party backend never gets the built-in's treatment. Read what you need from the prepared backend (its config model's prepared facts, or the entry's static metadata) instead.
 note: >
   A configured seam's name is a registry key, and any backend can be
-  registered under any key: a repo can replace the built-in "json" with its
+  registered under any key: a project can replace the built-in "json" with its
   own. Code that compares the name against "json" or "none" keeps treating a
   replacement as the built-in (reading the built-in's files, skipping the
   built-in's work), which the replacement differential cannot see when the

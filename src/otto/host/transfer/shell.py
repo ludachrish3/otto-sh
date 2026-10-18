@@ -126,7 +126,7 @@ destination (27 characters) and a longer path spends the headroom -- what
 matters is the RELATIONSHIP, not either number.
 
 THAT MEASUREMENT NO LONGER HAS A TEST, AND CANNOT GET ONE BACK HERE. The rig
-was a dropbear this repo grafted onto a BusyBox-only chroot, retired with the
+was a dropbear this codebase grafted onto a BusyBox-only chroot, retired with the
 rest of the artifact harness; the live BusyBox bed cannot replace it: four of
 its five guests run no sshd at all and the fifth (bb1350) runs a 2012 dropbear
 whose ``MAX_STRING_LEN`` of 1400 rejects a full chunk command outright
@@ -339,7 +339,7 @@ def staged_temp_name(dest_name: str, max_filename_len: int) -> str:
     that an over-long name is a clear refusal instead of an opaque device
     error partway through -- and then both hand that basename to a staging
     step that makes it longer. A name at the cap therefore passed the front
-    door and failed at the back one: measured on this repo's ext4 checkout
+    door and failed at the back one: measured on this codebase's ext4 checkout
     (``NAME_MAX`` 255), a 255-character source staged as a 293-character temp
     and PUT died with ``/bin/sh: cannot create ...: File name too long``
     after the first chunk had already crossed the wire, GET with
@@ -1671,7 +1671,7 @@ class ShellFileTransfer(UnixFileTransfer):
         alone does not fix it: shield keeps the cancellation off the inner
         task, but the AWAITING side still raises at once, so the ``rm`` would
         be left running detached -- a leaked temp traded for a stray task,
-        which this repo's coverage lanes arm a detector for.
+        which this codebase's coverage lanes arm a detector for.
         :func:`otto.lifecycle.compensate` is the shape that does hold: it
         keeps the shielded task running, HOLDS the second cancellation, and
         re-raises it once the cleanup resolves or the bound below expires

@@ -27,7 +27,7 @@ def _lines(output: str) -> list[str]:
 def _the_repo():
     import otto.bootstrap
 
-    [only] = otto.bootstrap.get_repos()
+    [only] = otto.bootstrap.get_projects()
     return only
 
 
@@ -191,11 +191,11 @@ def test_an_unfiltered_listing_writes_the_per_file_table(otto_test_cli, sut_repo
 
     assert otto_test_cli(["test", "--list-tests"], lab=None).exit_code == 0
 
-    repo = _the_repo()
-    table = read_table(repo)
+    project = _the_repo()
+    table = read_table(project)
     assert table is not None
     assert "test_g" in table.names
-    assert classify(repo, table).is_current
+    assert classify(project, table).is_current
 
 
 def test_an_unfiltered_listing_rereads_a_file_no_stat_says_changed(
@@ -217,17 +217,17 @@ def test_an_unfiltered_listing_rereads_a_file_no_stat_says_changed(
     # A new otto process would import cfg afresh. This one kept it: a session
     # evicts what its record names, and a bare value is what no record follows.
     sys.modules.pop("cfg", None)
-    repo = _the_repo()
-    before = read_table(repo)
+    project = _the_repo()
+    before = read_table(project)
     assert before is not None
     assert "test_flagged" not in before.names
-    assert classify(repo, before).is_current, "the hole: nothing the table follows moved"
+    assert classify(project, before).is_current, "the hole: nothing the table follows moved"
 
     result = otto_test_cli(["test", "--list-tests"], lab=None)
 
     assert result.exit_code == 0, result.output
     assert "test_flagged" in _lines(result.output)
-    after = read_table(repo)
+    after = read_table(project)
     assert after is not None
     assert "test_flagged" in after.names
 
@@ -285,7 +285,7 @@ def test_a_listing_whose_collection_cannot_finish_says_why_and_fails(
         result = otto_test_cli(["test", "--list-tests"], lab=None)
 
     assert result.exit_code != 0
-    assert "Could not collect the tests of repo 'sut'" in caplog.text
+    assert "Could not collect the tests of project 'sut'" in caplog.text
     assert "boom" in caplog.text
 
 

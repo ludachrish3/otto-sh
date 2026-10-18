@@ -23,10 +23,10 @@ _EXPORTS_WHEN_INACTIVE = 3
 """This shell, ~/.bashrc and ~/.profile each get the export line."""
 
 
-def _render(root: Path, sut_dirs: str, *, width: int = 300) -> str:
+def _render(root: Path, roots: str, *, width: int = 300) -> str:
     """Print the block exactly as ``otto init`` does, on a *width*-column console."""
     console = Console(width=width, record=True, color_system=None)
-    steps = next_steps_panel(root, sut_dirs=sut_dirs, width=width)
+    steps = next_steps_panel(root, roots=roots, width=width)
     console.print(steps.renderable, soft_wrap=steps.soft_wrap)
     return console.export_text()
 
@@ -61,16 +61,16 @@ def test_both_shells_are_covered_and_completion_is_sourced_after_install(tmp_pat
         "source ~/.bash_completions/otto.sh"
     )
     assert "Never put `otto --install-completion` itself in a startup file" in text
-    assert text.count(f"export OTTO_SUT_DIRS={root}") == _EXPORTS_WHEN_INACTIVE
+    assert text.count(f"export OTTOPATH={root}") == _EXPORTS_WHEN_INACTIVE
     # This shell and ~/.profile source the script; ~/.bashrc already does.
     assert text.count("source ~/.bash_completions/otto.sh") == 2
 
 
 def test_exports_are_omitted_when_the_root_is_already_active(tmp_path: Path) -> None:
     root = tmp_path.resolve()
-    for sut_dirs in (str(root), f"/elsewhere{os.pathsep}{root}/"):
-        text = _render(root, sut_dirs)
-        assert "export OTTO_SUT_DIRS" not in text, sut_dirs
+    for roots in (str(root), f"/elsewhere{os.pathsep}{root}/"):
+        text = _render(root, roots)
+        assert "export OTTOPATH" not in text, roots
         assert "Add only" not in text
         assert text.count("source ~/.bash_completions/otto.sh") == 2
 
@@ -79,21 +79,33 @@ def test_an_entry_the_loader_would_not_find_still_gets_the_exports(tmp_path: Pat
     """``/elsewhere: <root>`` names ``" <root>"`` to the loader, so the root is not active yet."""
     root = tmp_path.resolve()
     text = _render(root, f"/elsewhere{os.pathsep} {root}")
-    assert text.count(f"export OTTO_SUT_DIRS={root}") == _EXPORTS_WHEN_INACTIVE
+    assert text.count(f"export OTTOPATH={root}") == _EXPORTS_WHEN_INACTIVE
+
+
+def test_a_tilde_entry_names_the_root_the_loader_reads(tmp_path: Path, monkeypatch) -> None:
+    """``OTTOPATH=~/proj`` loads ``$HOME/proj``, so init must not ask for a second export."""
+    from otto.cli.init import _already_active
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    root = (tmp_path / "proj").resolve()
+    root.mkdir()
+    assert _already_active(root, "~/proj")
+    assert "export OTTOPATH" not in _render(root, "~/proj")
 
 
 def test_a_comma_list_still_gets_the_exports(tmp_path: Path) -> None:
     """A comma does not separate: ``/elsewhere,<root>`` is one path, not the root."""
     root = tmp_path.resolve()
     text = _render(root, f"/elsewhere,{root}")
-    assert text.count(f"export OTTO_SUT_DIRS={root}") == _EXPORTS_WHEN_INACTIVE
+    assert text.count(f"export OTTOPATH={root}") == _EXPORTS_WHEN_INACTIVE
 
 
 def test_a_long_root_prints_every_export_line_whole_at_80_columns(tmp_path: Path) -> None:
     root = _long_root(tmp_path)
     assert len(str(root)) >= 70
     lines = [line.strip() for line in _render(root, "", width=80).splitlines()]
-    assert lines.count(f"export OTTO_SUT_DIRS={root}") == _EXPORTS_WHEN_INACTIVE, lines
+    assert lines.count(f"export OTTOPATH={root}") == _EXPORTS_WHEN_INACTIVE, lines
     assert "╭" not in "".join(lines)
     assert lines[0].startswith("Next steps ─")
 
@@ -104,19 +116,19 @@ def test_a_long_root_reaches_the_cli_output_whole(tmp_path: Path) -> None:
     result = _invoke(["--all", "--name", "widget", "--path", str(root)])
     assert result.exit_code == 0, result.output
     lines = [line.strip(" │") for line in result.output.splitlines()]
-    assert lines.count(f"export OTTO_SUT_DIRS={root}") == _EXPORTS_WHEN_INACTIVE, result.output
+    assert lines.count(f"export OTTOPATH={root}") == _EXPORTS_WHEN_INACTIVE, result.output
 
 
 def test_a_short_root_keeps_the_box_at_80_columns() -> None:
     text = _render(Path("/srv/acme"), "", width=80)
     assert text.startswith("╭─ Next steps ─")
     assert text.rstrip().endswith("╯")
-    assert "│          export OTTO_SUT_DIRS=/srv/acme" in text
+    assert "│          export OTTOPATH=/srv/acme" in text
 
 
 def test_every_export_line_is_whole_on_either_side_of_the_box_boundary() -> None:
     """At 80 columns the box holds a command of up to 66 characters (80 - 8 indent - 6 box)."""
-    prefix = "export OTTO_SUT_DIRS="
+    prefix = "export OTTOPATH="
     for length in range(63, 70):
         root = Path("/" + "a" * (length - len(prefix) - 1))
         text = _render(root, "", width=80)

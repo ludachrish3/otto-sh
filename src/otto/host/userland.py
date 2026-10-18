@@ -1638,7 +1638,7 @@ class UserlandHost:
 # measured once; a path is a place OTTO touches it, and otto touches most of
 # these from more than one. Wiring one path leaves the others exactly as broken
 # while a count of wired surfaces reports the surface done -- and three such
-# holes were live in this repo, unmentioned by any count, when the paths were
+# holes were live in this codebase, unmentioned by any count, when the paths were
 # written: ``run-command-line-length`` is guarded on ``SessionManager.run_cmd``
 # and open on a named session and on a pooled ``exec()``, and
 # ``file-ops-base64`` can never fire on ``LocalHost`` or a docker container
@@ -1798,7 +1798,7 @@ PATH_PROTECTED = "PROTECTED"
 
 Load-bearing on its own: without it ``otto.tunnel.manage.add_tunnel`` reads as a
 permanent hole, and the fix someone reaches for is a guard that cannot fire --
-this repo's most common defect. :attr:`GapPath.checked_by` names the protector
+this codebase's most common defect. :attr:`GapPath.checked_by` names the protector
 and :attr:`GapPath.pinned_by` the test that holds it in place.
 """
 
@@ -1891,7 +1891,7 @@ class GapPath:
     :class:`Gap` rather than replacing it. otto reaches most of these surfaces
     from more than one place, and wiring one of them leaves the others silently
     broken while a count of wired surfaces reports the surface done. Three such
-    holes were live in this repo when these records were written, all of them
+    holes were live in this codebase when these records were written, all of them
     invisible to a table that recorded only surfaces.
 
     Frozen for the same reason :class:`Gap` is: every consumer reads and none
@@ -2510,7 +2510,7 @@ GAPS: list[Gap] = [
             "on. The dropbear rig, 2026-08-13: an `sftp` session into the pinned BusyBox "
             "root fails "
             "with `/bin/sh: /usr/lib/sftp-server: not found` -- ash inside the chroot, "
-            "not the host's shell (driven by `sftp(1)` against a dropbear this repo "
+            "not the host's shell (driven by `sftp(1)` against a dropbear this codebase "
             "grafted onto that chroot; the rig has since been retired and the live "
             "BusyBox bed is telnet-only by design, so this half is a standing "
             "measurement rather than a re-runnable test). "
@@ -3007,7 +3007,7 @@ GAPS: list[Gap] = [
 The single source of truth §4 of the spec asks for. Read it, do not edit it in
 flight: the entries are declared constants, and the three consumers (the
 runtime error, the docs page, the parity queue) all assume this list is what
-the repo says it is.
+the codebase says it is.
 
 Adding one is a four-part claim -- what breaks, why, what proved it, and who
 would fix it -- and :class:`Gap` refuses a record that leaves any of the four

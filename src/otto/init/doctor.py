@@ -1,10 +1,10 @@
-"""The ``otto init`` doctor: :func:`check_repo` and the :class:`DoctorReport` it returns.
+"""The ``otto init`` doctor: :func:`check_project` and the :class:`DoctorReport` it returns.
 
-Every check runs the code otto itself loads a repo with — the settings
+Every check runs the code otto itself loads a project with — the settings
 compile, the lab loader's section, entry and duplicate rules, the host and
-link specs, the inventory build, importlib's finder — so a repo the doctor
-passes is a repo otto loads. The doctor never prints and never raises for
-what a repo holds: ``otto init`` renders the report.
+link specs, the inventory build, importlib's finder — so a project the doctor
+passes is a project otto loads. The doctor never prints and never raises for
+what a project holds: ``otto init`` renders the report.
 """
 
 import dataclasses
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     # Annotation-only: importing ``otto.inventory`` for real pulls ~77 otto
     # modules (see ``otto/inventory/config.py``'s module docstring). Every
     # real use below is a function-local import.
-    from ..config.repo import Repo
+    from ..config.project import Project
     from ..host.element import Element
     from ..host.os_profile import ProfileContext
     from ..inventory.protocol import Inventory
@@ -63,7 +63,7 @@ class AreaVerdict:
 
 @dataclasses.dataclass(frozen=True)
 class DoctorReport:
-    """Everything :func:`check_repo` found. Warnings and labels never fail it."""
+    """Everything :func:`check_project` found. Warnings and labels never fail it."""
 
     verdicts: list[AreaVerdict]
     warnings: list[str]
@@ -80,10 +80,10 @@ class DoctorReport:
         return next(verdict for verdict in self.verdicts if verdict.name == name)
 
 
-def check_repo(root: Path) -> DoctorReport:
-    """Check every area of the repo at *root*; never prints, never raises for its content.
+def check_project(root: Path) -> DoctorReport:
+    """Check every area of the project at *root*; never prints, never raises for its content.
 
-    settings: the loader's own compile (:func:`otto.config.repo.validate_settings`),
+    settings: the loader's own compile (:func:`otto.config.project.validate_settings`),
     then the check the loader runs on each ``[os_profiles]`` table after init
     (:func:`otto.host.os_profile.check_data_profiles`; this doctor imports no
     init module, so a table over a class an init module registers fails here).
@@ -94,7 +94,7 @@ def check_repo(root: Path) -> DoctorReport:
     error is shown once. A source whose backend an init module registers is
     named in the lab detail as checked after init. tests: a light
     check (dirs, ``test_*.py``, ``ast.parse``). instructions: ``absent``
-    when ``init`` is omitted or empty (a repo with no init modules is
+    when ``init`` is omitted or empty (a project with no init modules is
     legitimate), ``blocked`` when the settings are not valid TOML, else
     every entry must resolve. kmodcov: a declared ``source`` must hold the
     library. Warnings (lab, inventory, kmodcov drift) never fail the report.
@@ -102,7 +102,7 @@ def check_repo(root: Path) -> DoctorReport:
     Raises:
         InitInputError: *root* is not a directory (``field="root"``).
     """
-    from ..config.repo import validate_settings
+    from ..config.project import validate_settings
     from ..models.jsonschema import schema_drift
 
     if not root.is_dir():
@@ -115,12 +115,12 @@ def check_repo(root: Path) -> DoctorReport:
     settings_problems = validate_settings(root) if "settings" in present else []
     profiles: "ProfileContext | None" = None
     if "settings" in present and not settings_problems:
-        from ..config.repo import Repo
+        from ..config.project import Project
         from ..host.os_profile import ProfileContext
 
-        repo = Repo(sut_dir=root)
-        settings_problems = _data_profile_problems(repo)
-        profiles = None if settings_problems else ProfileContext.from_repos([repo])
+        project = Project(root=root)
+        settings_problems = _data_profile_problems(project)
+        profiles = None if settings_problems else ProfileContext.from_projects([project])
     lab_blocked = bool(settings_problems)
     lab_unprepared = [] if lab_blocked else _lab_preparation_problems(root)
     deferred = "" if lab_blocked or lab_unprepared else _deferred_detail(root)
@@ -161,15 +161,15 @@ def _checked(name: str, problems: list[str], *, detail: str = "") -> AreaVerdict
     )
 
 
-def _data_profile_problems(repo: "Repo") -> list[str]:
-    """Check *repo*'s ``[os_profiles]`` tables as the loader does after init."""
+def _data_profile_problems(project: "Project") -> list[str]:
+    """Check *project*'s ``[os_profiles]`` tables as the loader does after init."""
     from ..config.scope import TOML_SETTINGS_PATH
     from ..host.os_profile import check_data_profiles
 
     try:
-        check_data_profiles([repo])
+        check_data_profiles([project])
     except ValueError as e:
-        return [f"{repo.sut_dir / TOML_SETTINGS_PATH}: {e}"]
+        return [f"{project.root / TOML_SETTINGS_PATH}: {e}"]
     return []
 
 
@@ -199,7 +199,7 @@ def _deferred_detail(root: Path) -> str:
 def _instructions_verdict(root: Path) -> AreaVerdict:
     """``absent`` when no init module is declared, else every declared one must resolve.
 
-    A repo with no init modules is legitimate (spec 2026-10-03 init-library
+    A project with no init modules is legitimate (spec 2026-10-03 init-library
     §2), so an omitted or empty ``init`` never fails. A settings file that is
     not valid TOML is the settings area's problem; this verdict reads
     ``blocked`` rather than repeating it, and so does an ``init`` that is not
@@ -233,7 +233,7 @@ def _inventory_for(
     traceback on a broken ``[inventory]`` table or user settings file.
 
     *cache* memoises the result (inventory, ``None``, or the raised
-    exception) per *root* — one :func:`check_repo` asks this up to three
+    exception) per *root* — one :func:`check_project` asks this up to three
     times (the "lab" area's own validation, the warnings pass, the labels),
     and while today's construction is I/O-free, a real backend (the netbox
     one, still to land) would otherwise pay a whole-set fetch three times
@@ -320,7 +320,7 @@ def _parse_lab_documents(root: Path) -> tuple[list[str], list[_ParsedLab]]:
     The duplicate state is threaded per SOURCE (:func:`lab_file_groups`), not
     over the flat file list: two sources may each declare the same lab, which
     is how ``[[lab.sources]]`` layering works, and rejecting that would fail
-    repos otto loads happily.
+    projects otto loads happily.
     """
     from ..labs.errors import LabRepositoryError
     from ..labs.json_repository import (
@@ -371,7 +371,7 @@ def _item_problem(validate: Callable[[Any], object], item: Any, prefix: str) -> 
 
     A one-item helper rather than the loop body its callers would otherwise
     write: a ``try``/``except`` inside a per-item loop is ``PERF203``, and the
-    repo's answer (``otto.labs.json_repository._parse_element``) is to move
+    otto's answer (``otto.labs.json_repository._parse_element``) is to move
     the ``try`` into a function the loop calls. ``ValueError`` covers both
     arms — pydantic's ``ValidationError`` is one; ``InventoryError`` covers a
     third — a host entry's :func:`~otto.inventory.resolve_host_entry` call
@@ -408,7 +408,7 @@ def _validate_lab(
 
     The file shape is :func:`_parse_lab_documents`' job; what is left is the
     two payloads the wrapper models hold opaquely. Each element's host
-    entries are resolved against this repo's inventory the way the loader
+    entries are resolved against this project's inventory the way the loader
     resolves them (:func:`otto.inventory.resolve_host_entry`, spec §6, against
     the element :meth:`otto.models.lab.ElementSpec.to_element` builds), and
     handed to
@@ -574,11 +574,11 @@ def _validate_tests(root: Path) -> list[str]:
 def _validate_instructions(root: Path, modules: list[str]) -> list[str]:
     """Every declared init module must resolve the way the loader will import it.
 
-    Resolution only (:func:`otto.config.repo.find_init_module`): no user code
+    Resolution only (:func:`otto.config.project.find_init_module`): no user code
     runs, because the doctor runs lab-free and may run before
-    ``OTTO_SUT_DIRS`` is set.
+    ``OTTOPATH`` is set.
     """
-    from ..config.repo import find_init_module
+    from ..config.project import find_init_module
 
     libs = instruction_libs(root)
     problems = [f"libs dir not found: {lib}" for lib in libs if not lib.is_dir()]

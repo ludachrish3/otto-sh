@@ -1,4 +1,4 @@
-"""Whether a repo-owned instruction may run in this context."""
+"""Whether a project-owned instruction may run in this context."""
 
 from typing import TYPE_CHECKING
 
@@ -9,11 +9,11 @@ if TYPE_CHECKING:
 
 
 def check_instruction_active(name: str, owner: "str | None", ctx: "OttoContext") -> None:
-    """Refuse instruction *name* when its owning repo is inactive in *ctx*.
+    """Refuse instruction *name* when its owning project is inactive in *ctx*.
 
-    *owner* is ``INSTRUCTIONS.repo(name)``, the repo whose init import
+    *owner* is ``INSTRUCTIONS.project(name)``, the project whose init import
     registered the instruction. ``None`` (otto's own, a project instruction,
-    or one registered outside any repo's init import) is never refused. The verdict is
+    or one registered outside any project's init import) is never refused. The verdict is
     :func:`otto.config.scope.active`'s, so it needs the lab's scope verdicts:
     call this after the context is installed.
     """
@@ -29,7 +29,7 @@ def check_instruction_active(name: str, owner: "str | None", ctx: "OttoContext")
     if switched_off(owner, ctx):
         raise InstructionInactiveError(name, owner, project=project, reason="excluded")
     # Not switched off, yet inactive: `active()` reaches that verdict only by
-    # finding an unusable ProjectScope under the repo's declared name, so the
+    # finding an unusable ProjectScope under the project's declared name, so the
     # lookup cannot miss.
     scope = scopes_of(ctx)[owner]
     raise InstructionInactiveError(

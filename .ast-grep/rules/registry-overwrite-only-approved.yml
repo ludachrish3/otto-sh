@@ -3,7 +3,7 @@ language: python
 severity: error
 message: a literal `overwrite=True` in otto replaces whatever an earlier registration put under that name, silently. otto's own registrations need no overwrite; a wrapper passes its caller's `overwrite` through instead.
 note: >
-  `overwrite=True` is how a user replaces an entry deliberately: a repo's
+  `overwrite=True` is how a user replaces an entry deliberately: a project's
   init module registering its own class over a built-in name. Inside otto it
   would mean one otto module silently replacing another's entry, or a
   wrapper that always overwrites, so the engine can never report the

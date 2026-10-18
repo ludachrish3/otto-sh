@@ -1,7 +1,7 @@
 """Runtime access to declarative ``[coverage.tiers]`` config.
 
 Settings are validated at the boundary by
-:class:`otto.models.settings.CoverageSettingsSpec`; at runtime the repo
+:class:`otto.models.settings.CoverageSettingsSpec`; at runtime the project
 exposes plain dicts.  This module turns those dicts into ordered
 :class:`TierConfig` values for the CLI and reporter.
 """
@@ -51,7 +51,7 @@ def load_tiers(cov_config: dict[str, Any]) -> list[TierConfig]:
     An empty/missing ``tiers`` table yields the implicit ``system`` tier
     only — identical to pre-tier behavior. ``harvest_dirs`` entries are carried
     through verbatim as unanchored paths; ``otto.coverage.reporter`` anchors
-    them against the repo root at consumption time.
+    them against the project root at consumption time.
     """
     raw = cov_config.get("tiers") or {}
     if not raw:

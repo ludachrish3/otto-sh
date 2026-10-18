@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from otto.config import completion_cache as cc
-from otto.config.repo import Repo
+from otto.config.project import Project
 from otto.host.element import Element
 from otto.host.os_profile import ProfileContext
 from otto.labs import HostSummary
@@ -13,33 +13,33 @@ from tests._fixtures.labdata import json_lab_sources, write_lab_json
 _CREDS = [{"login": "u", "password": "p"}]
 
 
-def _repo(tmp_path: Path, hosts: list[dict]) -> Repo:
+def _repo(tmp_path: Path, hosts: list[dict]) -> Project:
     lab = tmp_path / "lab"
     lab.mkdir()
     write_lab_json(lab / "lab.json", hosts)
-    return fake_repo(lab_sources=json_lab_sources(tmp_path, [lab]), sut_dir=tmp_path)
+    return fake_repo(lab_sources=json_lab_sources(tmp_path, [lab]), root=tmp_path)
 
 
-def _summaries(repo) -> dict[str, HostSummary]:
+def _summaries(project) -> dict[str, HostSummary]:
     return {
         s.id: s
-        for s in cc.repo_host_summaries(
-            repo, cc.resolve_process_inventory([repo]), profiles=ProfileContext.empty()
+        for s in cc.project_host_summaries(
+            project, cc.resolve_process_inventory([project]), profiles=ProfileContext.empty()
         )
     }
 
 
 def test_json_backend_records_the_declared_os_type(tmp_path):
-    repo = _repo(
+    project = _repo(
         tmp_path,
         [{"ip": "1.1.1.1", "element": "z1", "labs": ["e"], "creds": _CREDS, "os_type": "zephyr"}],
     )
-    assert _summaries(repo)["z1"].os_type == "zephyr"
+    assert _summaries(project)["z1"].os_type == "zephyr"
 
 
 def test_json_backend_applies_the_factory_default_when_none_is_declared(tmp_path):
-    repo = _repo(tmp_path, [{"ip": "1.1.1.1", "element": "u1", "labs": ["e"], "creds": _CREDS}])
-    assert _summaries(repo)["u1"].os_type == "unix"
+    project = _repo(tmp_path, [{"ip": "1.1.1.1", "element": "u1", "labs": ["e"], "creds": _CREDS}])
+    assert _summaries(project)["u1"].os_type == "unix"
 
 
 def test_the_field_defaults_to_none_for_backends_that_do_not_know():
@@ -49,11 +49,11 @@ def test_the_field_defaults_to_none_for_backends_that_do_not_know():
 def test_composite_copies_os_type_across_sources(tmp_path):
     from otto.labs import build_lab_sources
 
-    repo = _repo(
+    project = _repo(
         tmp_path,
         [{"ip": "1.1.1.1", "element": "z1", "labs": ["e"], "creds": _CREDS, "os_type": "zephyr"}],
     )
-    composite = build_lab_sources([repo])
+    composite = build_lab_sources([project])
     got = {s.id: s.os_type for s in composite.list_host_summaries()}
     assert got == {"z1": "zephyr"}
 
@@ -63,7 +63,7 @@ def test_the_example_backend_reports_each_records_os_type():
     carry the selector — declared, and defaulted the way the factory defaults it."""
     from otto.examples.lab_repository import ExampleLabRepository
 
-    repo = ExampleLabRepository(
+    repository = ExampleLabRepository(
         labs={
             "e": [
                 {
@@ -75,7 +75,10 @@ def test_the_example_backend_reports_each_records_os_type():
         },
         resources={},
     )
-    assert {s.id: s.os_type for s in repo.list_host_summaries()} == {"z": "zephyr", "u": "unix"}
+    assert {s.id: s.os_type for s in repository.list_host_summaries()} == {
+        "z": "zephyr",
+        "u": "unix",
+    }
 
 
 def test_load_lab_fallback_records_the_built_hosts_os_type():

@@ -4,7 +4,7 @@ The library's rows and reasons are pinned in ``tests/unit/host/test_listing.py``
 this file pins what only the CLI decides: the flags exist, ``--lab`` selects the
 view (and is not demanded), the table renders, user cells survive Rich markup,
 and no host is contacted. The lab is the real one ``real_main_mocks`` builds from
-``lab.json``; the entries are put on its real ``Repo`` before the lab loads.
+``lab.json``; the entries are put on its real ``Project`` before the lab loads.
 """
 
 import re
@@ -17,7 +17,7 @@ from otto.cli.main import app
 from otto.config.scope import ProjectScopeConfig
 from otto.declared import DeclaredEntry
 from otto.host.product import Product, register_product_provider
-from otto.registry import registering_repo
+from otto.registry import registering_project
 from otto.result import Result
 from otto.utils import Status
 
@@ -27,13 +27,13 @@ runner = CliRunner()
 WIDE = {"COLUMNS": "240", "OTTO_LAB": ""}
 
 
-def _entry(repo, name, kind="shell", *, seam="products", match=None, **params):
+def _entry(project, name, kind="shell", *, seam="products", match=None, **params):
     return DeclaredEntry(
         name=name,
         kind=kind,
         seam=seam,
-        owner=repo.name,
-        base_dir=repo.sut_dir,
+        owner=project.name,
+        base_dir=project.root,
         match=match or {},
         params=params,
     )
@@ -66,13 +66,13 @@ def _invoke(*args, env=None):
     return runner.invoke(app, list(args), env={**WIDE, **(env or {})})
 
 
-def _declare_two(repo):
-    repo.declared_products = [
-        _entry(repo, "agent", artifact="build/agent.tar.gz", stage_dir="/opt/stage"),
-        _entry(repo, "kcov", artifact="build/kcov.ko", match={"id": "host2"}),
+def _declare_two(project):
+    project.declared_products = [
+        _entry(project, "agent", artifact="build/agent.tar.gz", stage_dir="/opt/stage"),
+        _entry(project, "kcov", artifact="build/kcov.ko", match={"id": "host2"}),
     ]
-    repo.declared_dev_tools = [
-        _entry(repo, "trace", seam="dev_tools", artifact="tools/trace.sh"),
+    project.declared_dev_tools = [
+        _entry(project, "trace", seam="dev_tools", artifact="tools/trace.sh"),
     ]
 
 
@@ -89,7 +89,7 @@ def test_list_products_without_lab_exits_zero_and_prints_the_declared_table(list
         "kind",
         "variant",
         "instrumented",
-        "repo",
+        "project",
         "match",
         "artifact",
     ]
@@ -129,7 +129,7 @@ def test_a_registered_provider_gets_a_note_naming_module_and_qualname(listing_wo
     def supply(host):
         return None
 
-    with registering_repo(listing_world.name):
+    with registering_project(listing_world.name):
         register_product_provider(supply)
     result = _invoke("--list-products")
     assert result.exit_code == 0, result.output
@@ -151,13 +151,13 @@ def test_user_cells_survive_rich_markup(listing_world):
 
 
 def test_list_products_with_lab_shows_hosts_stage_dir_and_not_used(listing_world):
-    repo = listing_world
-    repo.declared_products = [
-        _entry(repo, "agent", artifact="build/agent.tar.gz", stage_dir="/opt/stage"),
-        _entry(repo, "kcov", "kmod", artifact="build/kcov.ko", match={"id": "host2"}),
-        _entry(repo, "fw", "embedded", artifact="out/fw.o", match={"id": "nope"}),
+    project = listing_world
+    project.declared_products = [
+        _entry(project, "agent", artifact="build/agent.tar.gz", stage_dir="/opt/stage"),
+        _entry(project, "kcov", "kmod", artifact="build/kcov.ko", match={"id": "host2"}),
+        _entry(project, "fw", "embedded", artifact="out/fw.o", match={"id": "nope"}),
     ]
-    repo.project_scope = ProjectScopeConfig([re.compile("test_lab")], [re.compile("host.*")])
+    project.project_scope = ProjectScopeConfig([re.compile("test_lab")], [re.compile("host.*")])
     result = _invoke("--lab", "test_lab", "--list-products")
     assert result.exit_code == 0, result.output
     lines = result.output.splitlines()
@@ -168,7 +168,7 @@ def test_list_products_with_lab_shows_hosts_stage_dir_and_not_used(listing_world
         "kind",
         "variant",
         "instrumented",
-        "repo",
+        "project",
         "hosts",
         "artifact",
         "stage dir",
@@ -198,16 +198,16 @@ def test_the_not_used_section_is_absent_when_everything_landed(listing_world):
 
 
 def test_outside_scope_reason_prints_its_brackets_literally(listing_world):
-    repo = listing_world
-    repo.declared_products = [_entry(repo, "agent", artifact="a")]
-    repo.project_scope = ProjectScopeConfig([re.compile("other")], [re.compile(".*")])
+    project = listing_world
+    project.declared_products = [_entry(project, "agent", artifact="a")]
+    project.project_scope = ProjectScopeConfig([re.compile("other")], [re.compile(".*")])
     result = _invoke("--lab", "test_lab", "--list-products")
     assert result.exit_code == 0, result.output
     assert "  agent (shell, test_repo): outside test_repo's [project] scope" in result.output
 
 
 def test_a_provider_product_row_reads_code_and_its_class(listing_world):
-    with registering_repo(listing_world.name):
+    with registering_project(listing_world.name):
         register_product_provider(
             lambda host: [ProbeProduct("probe")] if host.id == "host1" else None
         )
@@ -302,8 +302,8 @@ def test_help_describes_both_flags_in_plain_language():
     text = _rendered_help()
     assert "--list-products" in text
     assert "--list-tools" in text
-    assert "List the products the repos declare" in text
-    assert "List the dev tools the repos declare" in text
+    assert "List the products the projects declare" in text
+    assert "List the dev tools the projects declare" in text
     assert "``" not in text
 
 
@@ -337,17 +337,17 @@ def test_the_lab_name_in_the_title_is_not_read_as_markup(listing_world):
 
 
 def test_a_name_defined_in_data_and_by_a_provider_fails_the_lab_load_naming_both(listing_world):
-    repo = listing_world
-    repo.declared_products = [_entry(repo, "agent", artifact="build/agent.tar.gz")]
-    repo.project_scope = ProjectScopeConfig([re.compile("test_lab")], [re.compile("host.*")])
+    project = listing_world
+    project.declared_products = [_entry(project, "agent", artifact="build/agent.tar.gz")]
+    project.project_scope = ProjectScopeConfig([re.compile("test_lab")], [re.compile("host.*")])
 
     def products(host):
         return [ProbeProduct("agent")]
 
-    with registering_repo(repo.name):
+    with registering_project(project.name):
         register_product_provider(products)
     result = _invoke("--lab", "test_lab", "--list-products")
     assert result.exit_code != 0
     text = result.output + str(result.exception or "")
-    assert "[[products]] 'agent' (repo test_repo) is also defined by provider" in text
+    assert "[[products]] 'agent' (project test_repo) is also defined by provider" in text
     assert f"{products.__module__}:{products.__qualname__}" in text

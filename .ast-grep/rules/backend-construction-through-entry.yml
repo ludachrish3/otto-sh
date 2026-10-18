@@ -1,9 +1,9 @@
 id: backend-construction-through-entry
 language: python
 severity: error
-message: this constructs a built-in backend directly, so a backend a repo registers over the built-in's name is never used here. Build through the seam's registry (`prepare` + `build`, or the seam's `build_*` function), which calls whatever entry is registered under the name.
+message: this constructs a built-in backend directly, so a backend a project registers over the built-in's name is never used here. Build through the seam's registry (`prepare` + `build`, or the seam's `build_*` function), which calls whatever entry is registered under the name.
 note: >
-  A built-in backend is one registry entry among others: a repo replaces it
+  A built-in backend is one registry entry among others: a project replaces it
   by registering its own backend under the same name with overwrite=True.
   Only the entry's factory may call the built-in's constructor: the
   function registered as `factory=`, which has a parameter annotated

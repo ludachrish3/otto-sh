@@ -10,11 +10,11 @@ import typer
 
 from otto import fleet as fleet_mod
 from otto.cli import docker as docker_cli
-from otto.config.repo import Repo
+from otto.config.project import Project
 from otto.config.scope import DockerUseCase
 from otto.docker.deployment import UseCaseStack
 from otto.docker.observe import DockerVerbError
-from otto.docker.reports import BuildReport, ImageBuild, RepoBuild, TeardownReport
+from otto.docker.reports import BuildReport, ImageBuild, ProjectBuild, TeardownReport
 from otto.docker.resolve import Displacement, Selection
 from otto.host.element import Element
 from otto.host.unix_host import UnixHost
@@ -29,7 +29,7 @@ from tests.conftest import active_context
 _DOCKER_FILES = {"docker/Dockerfile": "FROM alpine\n", "docker/compose.yml": "services: {}\n"}
 
 
-def _make_repo_images_only(tmp: Path, *, name: str) -> Repo:
+def _make_repo_images_only(tmp: Path, *, name: str) -> Project:
     """A repo declaring [[docker.images]] but no [[docker.composes]] at all.
     Used to prove ``_compose_up``/``_compose_down`` now
     print a loud notice (and fail if it's all they were given) instead of
@@ -45,7 +45,7 @@ def _make_repo_images_only(tmp: Path, *, name: str) -> Repo:
         ),
         files=_DOCKER_FILES,
     )
-    return Repo(sut_dir=sut)
+    return Project(root=sut)
 
 
 # ---------------------------------------------------------------------------
@@ -54,7 +54,7 @@ def _make_repo_images_only(tmp: Path, *, name: str) -> Repo:
 
 
 def _report(*entries, displaced=()):
-    return BuildReport(repos=list(entries), displaced=list(displaced))
+    return BuildReport(projects=list(entries), displaced=list(displaced))
 
 
 @pytest.mark.asyncio
@@ -66,7 +66,7 @@ async def test_build_hands_the_library_exactly_its_flags():
     ):
         await docker_cli._build(
             parent="test3",
-            repo="r1",
+            project="r1",
             image=["api"],
             tag=["api:1"],
             no_cache=True,
@@ -76,7 +76,7 @@ async def test_build_hands_the_library_exactly_its_flags():
         )
     build_on.assert_awaited_once_with(
         "test3",
-        repo="r1",
+        project="r1",
         images=["api"],
         tags=["api:1"],
         no_cache=True,
@@ -114,7 +114,7 @@ def test_build_takes_dockers_flags_in_dockers_spelling_through_the_dispatch():
     assert result.exit_code == 0, result.output
     build_on.assert_awaited_once_with(
         "test3",
-        repo=None,
+        project=None,
         images=None,
         tags=["api:1"],
         no_cache=True,
@@ -156,7 +156,7 @@ def test_a_tag_with_several_images_is_spelled_as_tag():
 @pytest.mark.asyncio
 async def test_build_renders_built_and_failed_and_exits_1_on_a_failure():
     report = _report(
-        RepoBuild(
+        ProjectBuild(
             "r1",
             "test3",
             "built",
@@ -169,8 +169,8 @@ async def test_build_renders_built_and_failed_and_exits_1_on_a_failure():
                 ),
             },
         ),
-        RepoBuild("r2", "test3", "no_images"),
-        RepoBuild(
+        ProjectBuild("r2", "test3", "no_images"),
+        ProjectBuild(
             "r3",
             "test3",
             "built",
@@ -193,7 +193,7 @@ async def test_build_renders_built_and_failed_and_exits_1_on_a_failure():
         patch.object(docker_cli, "print_error", err),
         pytest.raises(typer.Exit) as e,
     ):
-        await docker_cli._build(parent="test3", repo=None, image=None)
+        await docker_cli._build(parent="test3", project=None, image=None)
     printed = " ".join(str(c) for c in out.call_args_list)
     assert "r1/api: built api:latest  cbd8571d4b6e  (test3)" in printed
     # `str(call(...))` reprs the arg, doubling rich.markup.escape()'s own
@@ -216,8 +216,8 @@ def test_render_build_report_prints_literal_brackets_with_the_real_rprint(capsys
     actually does to the rendered text.
     """
     report = _report(
-        RepoBuild("[bold]r", "test3", "no_images"),
-        RepoBuild(
+        ProjectBuild("[bold]r", "test3", "no_images"),
+        ProjectBuild(
             "[bold]r",
             "test3",
             "built",
@@ -284,7 +284,7 @@ def test_build_unknown_image_is_spelled_as_IMAGE():  # noqa: N802 — IMAGE is t
     from tests._fixtures.dispatch import DispatchRunner
 
     err = DockerVerbError(
-        "no selected repo declares an image named 'apo'; declared: ['api']", field="images"
+        "no selected project declares an image named 'apo'; declared: ['api']", field="images"
     )
     with patch("otto.docker.build_verbs.build_on", AsyncMock(side_effect=err)):
         result = DispatchRunner().invoke(
@@ -326,7 +326,7 @@ async def test_compose_build_defaults_the_use_case_and_hands_the_flags():
 @pytest.mark.asyncio
 async def test_compose_build_prints_displacements_then_images():
     report = _report(
-        RepoBuild(
+        ProjectBuild(
             "real",
             "alt2",
             "built",
@@ -357,7 +357,7 @@ async def test_compose_build_prints_displacements_then_images():
 async def test_compose_build_with_no_declared_use_case_is_the_existing_refusal():
     """Review focus: zero declared use-cases exits 1 through _default_use_case, no traceback."""
     with (
-        patch("otto.declared.get_repos", return_value=[]),
+        patch("otto.declared.get_projects", return_value=[]),
         pytest.raises(typer.Exit) as e,
     ):
         await docker_cli._compose_build(use_case=None, image=None, parent=None, provide=None)
@@ -369,12 +369,12 @@ async def test_compose_build_with_no_declared_use_case_is_the_existing_refusal()
     [
         ("host is required; docker-capable hosts in lab 'unix': ['test3']", "parent", "--parent"),
         (
-            "repo 'c' is not a loaded repo with a [docker] section; docker repos: ['a']",
-            "repo",
-            "--repo",
+            "project 'c' is not a loaded project with a [docker] section; docker projects: ['a']",
+            "project",
+            "--project",
         ),
         (
-            "no selected repo declares an image named 'apo'; declared: ['api']",
+            "no selected project declares an image named 'apo'; declared: ['api']",
             "images",
             "IMAGE",
         ),
@@ -427,7 +427,7 @@ def _uc(
     )
 
 
-def _uc_repo(name: str, *fragments: DockerUseCase) -> Repo:
+def _uc_repo(name: str, *fragments: DockerUseCase) -> Project:
     """A repo table in the shape `declared_use_cases`/`select_fragments` read."""
     return fake_repo(
         name, docker_settings=SimpleNamespace(use_cases=tuple(fragments), composes=(), images=())
@@ -435,7 +435,7 @@ def _uc_repo(name: str, *fragments: DockerUseCase) -> Repo:
 
 
 def test_default_use_case_returns_the_only_one_declared():
-    with patch("otto.declared.get_repos", return_value=[_uc_repo("a", _uc())]):
+    with patch("otto.declared.get_projects", return_value=[_uc_repo("a", _uc())]):
         assert docker_cli._default_use_case(None) == "integration"
 
 
@@ -445,14 +445,14 @@ def test_default_use_case_passes_an_explicit_name_through_unresolved():
     Checking it twice would give one mistake two different messages depending
     on which verb the user reached it through.
     """
-    with patch("otto.declared.get_repos", return_value=[]):
+    with patch("otto.declared.get_projects", return_value=[]):
         assert docker_cli._default_use_case("whatever") == "whatever"
 
 
 def test_default_use_case_refuses_when_two_are_declared(capsys):
-    repos = [_uc_repo("a", _uc("integration")), _uc_repo("b", _uc("soak"))]
+    projects = [_uc_repo("a", _uc("integration")), _uc_repo("b", _uc("soak"))]
     with (
-        patch("otto.declared.get_repos", return_value=repos),
+        patch("otto.declared.get_projects", return_value=projects),
         pytest.raises(typer.Exit) as excinfo,
     ):
         docker_cli._default_use_case(None)
@@ -464,7 +464,7 @@ def test_default_use_case_refuses_when_two_are_declared(capsys):
 
 def test_default_use_case_refuses_when_none_are_declared(capsys):
     with (
-        patch("otto.declared.get_repos", return_value=[_uc_repo("a")]),
+        patch("otto.declared.get_projects", return_value=[_uc_repo("a")]),
         pytest.raises(typer.Exit) as excinfo,
     ):
         docker_cli._default_use_case(None)
@@ -479,7 +479,7 @@ def test_parse_provide_splits_on_the_first_equals():
 def test_parse_provide_refuses_a_malformed_pair_naming_the_form():
     with pytest.raises(typer.BadParameter) as excinfo:
         docker_cli._parse_provide(["edge"])
-    assert "CAPABILITY=REPO" in str(excinfo.value)
+    assert "CAPABILITY=PROJECT" in str(excinfo.value)
 
 
 def test_parse_env_keeps_every_equals_after_the_first_in_the_value():
@@ -545,7 +545,7 @@ async def test_up_deploys_the_only_declared_use_case_when_bare():
     deploy = AsyncMock(return_value=_stub_stack())
     with (
         patch("otto.docker.deployment.deploy", deploy),
-        patch("otto.declared.get_repos", return_value=[_uc_repo("a", _uc())]),
+        patch("otto.declared.get_projects", return_value=[_uc_repo("a", _uc())]),
         patch.object(docker_cli, "rprint"),
     ):
         await docker_cli._compose_up()
@@ -556,10 +556,10 @@ async def test_up_deploys_the_only_declared_use_case_when_bare():
 @pytest.mark.asyncio
 async def test_up_bare_refuses_when_two_use_cases_are_declared(capsys):
     deploy = AsyncMock()
-    repos = [_uc_repo("a", _uc("integration")), _uc_repo("b", _uc("soak"))]
+    projects = [_uc_repo("a", _uc("integration")), _uc_repo("b", _uc("soak"))]
     with (
         patch("otto.docker.deployment.deploy", deploy),
-        patch("otto.declared.get_repos", return_value=repos),
+        patch("otto.declared.get_projects", return_value=projects),
         pytest.raises(typer.Exit) as excinfo,
     ):
         await docker_cli._compose_up()
@@ -686,9 +686,9 @@ async def test_up_leaves_displacements_to_the_librarys_log_line():
     displaced = [
         Displacement(
             capability="edge",
-            loser_repo="repo1",
+            loser_project="repo1",
             loser_priority=10,
-            winner_repo="repo1",
+            winner_project="repo1",
             winner_priority=5,
         )
     ]
@@ -871,14 +871,16 @@ async def test_down_surfaces_a_library_refusal(capsys):
     with (
         patch(
             "otto.docker.deployment.teardown",
-            AsyncMock(side_effect=UseCaseResolutionError("no active repo declares use-case 'x'")),
+            AsyncMock(
+                side_effect=UseCaseResolutionError("no active project declares use-case 'x'")
+            ),
         ),
         pytest.raises(typer.Exit) as excinfo,
     ):
         await docker_cli._compose_down(use_case="x", service=None)
 
     assert excinfo.value.exit_code == 1
-    assert "no active repo declares use-case 'x'" in capsys.readouterr().out
+    assert "no active project declares use-case 'x'" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------
@@ -895,9 +897,9 @@ def test_use_cases_lists_fragments_hosts_env_keys_and_displacements(capsys):
     lab.add_host(host)
 
     with (
-        patch("otto.declared.get_repos", return_value=[winner, loser]),
+        patch("otto.declared.get_projects", return_value=[winner, loser]),
         patch.object(fleet_mod, "get_lab", return_value=lab),
-        patch("otto.docker.resolve.scope_for_repo", return_value=None),
+        patch("otto.docker.resolve.scope_for_project", return_value=None),
     ):
         docker_cli._use_cases()
 
@@ -922,7 +924,7 @@ def test_use_cases_renders_the_compose_names_literally_not_as_rich_markup(capsys
     compose stacks rendered two identical rows (found on the live bed, T15).
     The brackets are the only thing distinguishing them, so they are pinned.
     """
-    repo = _uc_repo(
+    project = _uc_repo(
         "repo2",
         _uc(name="soak", composes=("core",)),
         _uc(name="soak", composes=("mock",)),
@@ -930,9 +932,9 @@ def test_use_cases_renders_the_compose_names_literally_not_as_rich_markup(capsys
     lab = Lab(name="unix")
 
     with (
-        patch("otto.declared.get_repos", return_value=[repo]),
+        patch("otto.declared.get_projects", return_value=[project]),
         patch.object(fleet_mod, "get_lab", return_value=lab),
-        patch("otto.docker.resolve.scope_for_repo", return_value=None),
+        patch("otto.docker.resolve.scope_for_project", return_value=None),
     ):
         docker_cli._use_cases()
 
@@ -947,13 +949,13 @@ def test_use_cases_prints_the_parent_rule_refusal_instead_of_a_host(capsys):
     Reported in the rule's own words (the sentence ``deploy`` would refuse
     with), and every row's host cell falls back to ``-``: nothing landed.
     """
-    repo = _uc_repo("repo1", _uc())
+    project = _uc_repo("repo1", _uc())
     lab = Lab(name="unix")
     for name, ip in (("test1", "10.0.0.1"), ("test3", "10.0.0.3")):
         lab.add_host(UnixHost(ip=ip, creds=[], element=Element(name), docker_capable=True))
 
     with (
-        patch("otto.declared.get_repos", return_value=[repo]),
+        patch("otto.declared.get_projects", return_value=[project]),
         patch.object(fleet_mod, "get_lab", return_value=lab),
     ):
         docker_cli._use_cases()  # exit 0
@@ -965,7 +967,7 @@ def test_use_cases_prints_the_parent_rule_refusal_instead_of_a_host(capsys):
 
 def test_use_cases_shows_the_ranked_parent_and_no_role_column(capsys):
     """The host column is the parent the rule picks; the role column is gone."""
-    repo = _uc_repo("repo1", _uc())
+    project = _uc_repo("repo1", _uc())
     lab = Lab(name="unix")
     lab.add_host(UnixHost(ip="10.0.0.1", creds=[], element=Element("test1"), docker_capable=True))
     lab.add_host(
@@ -979,7 +981,7 @@ def test_use_cases_shows_the_ranked_parent_and_no_role_column(capsys):
     )
 
     with (
-        patch("otto.declared.get_repos", return_value=[repo]),
+        patch("otto.declared.get_projects", return_value=[project]),
         patch.object(fleet_mod, "get_lab", return_value=lab),
     ):
         docker_cli._use_cases()
@@ -1006,28 +1008,28 @@ def test_use_cases_prints_a_provider_tie_refusal_instead_of_a_table_row(capsys):
     lab.add_host(UnixHost(ip="10.0.0.1", creds=[], element=Element("test3"), docker_capable=True))
 
     with (
-        patch("otto.declared.get_repos", return_value=[a, b, healthy]),
+        patch("otto.declared.get_projects", return_value=[a, b, healthy]),
         patch.object(fleet_mod, "get_lab", return_value=lab),
-        patch("otto.docker.resolve.scope_for_repo", return_value=None),
+        patch("otto.docker.resolve.scope_for_project", return_value=None),
     ):
         docker_cli._use_cases()  # exit 0 — a listing reports, it does not raise
 
     out = " ".join(capsys.readouterr().out.split())
-    assert "capability 'edge' is tied at priority 5 between repos ['repo1', 'repo2']" in out
+    assert "capability 'edge' is tied at priority 5 between projects ['repo1', 'repo2']" in out
     # The tied use-case does not suppress the healthy one.
     assert "use-case soak" in out
 
 
 def test_use_cases_filters_to_the_named_use_case(capsys):
     """Spec §10: `otto docker use-cases [USE_CASE]`."""
-    repos = [_uc_repo("repo1", _uc("integration")), _uc_repo("repo2", _uc("soak"))]
+    projects = [_uc_repo("repo1", _uc("integration")), _uc_repo("repo2", _uc("soak"))]
     lab = Lab(name="unix")
     lab.add_host(UnixHost(ip="10.0.0.1", creds=[], element=Element("test3"), docker_capable=True))
 
     with (
-        patch("otto.declared.get_repos", return_value=repos),
+        patch("otto.declared.get_projects", return_value=projects),
         patch.object(fleet_mod, "get_lab", return_value=lab),
-        patch("otto.docker.resolve.scope_for_repo", return_value=None),
+        patch("otto.docker.resolve.scope_for_project", return_value=None),
     ):
         docker_cli._use_cases(use_case="soak")
 
@@ -1045,7 +1047,7 @@ def test_use_cases_filter_naming_nothing_refuses_loudly(capsys):
     "you have no use-cases".
     """
     with (
-        patch("otto.declared.get_repos", return_value=[_uc_repo("repo1", _uc())]),
+        patch("otto.declared.get_projects", return_value=[_uc_repo("repo1", _uc())]),
         patch.object(fleet_mod, "get_lab", return_value=Lab(name="unix")),
         pytest.raises(typer.Exit) as excinfo,
     ):
@@ -1053,13 +1055,13 @@ def test_use_cases_filter_naming_nothing_refuses_loudly(capsys):
 
     assert excinfo.value.exit_code == 1
     out = " ".join(capsys.readouterr().out.split())
-    assert "no active repo declares use-case 'integraton'" in out
+    assert "no active project declares use-case 'integraton'" in out
     assert "declared: integration" in out, "the refusal must name what IS declared"
 
 
 def test_use_cases_says_so_when_nothing_is_declared(capsys):
     with (
-        patch("otto.declared.get_repos", return_value=[_uc_repo("repo1")]),
+        patch("otto.declared.get_projects", return_value=[_uc_repo("repo1")]),
         patch.object(fleet_mod, "get_lab", return_value=Lab(name="unix")),
     ):
         docker_cli._use_cases()  # exit 0 — an empty inventory is an answer
@@ -1094,9 +1096,9 @@ def test_use_cases_prints_the_same_under_dry_run(argv):
 
     def run(*, dry_run: bool):
         with (
-            patch("otto.declared.get_repos", return_value=[winner, loser]),
+            patch("otto.declared.get_projects", return_value=[winner, loser]),
             patch.object(fleet_mod, "get_lab", return_value=lab),
-            patch("otto.docker.resolve.scope_for_repo", return_value=None),
+            patch("otto.docker.resolve.scope_for_project", return_value=None),
             patch.object(UnixHost, "exec", dialled),
             patch.object(UnixHost, "put", dialled),
             active_context(dry_run=dry_run),
@@ -1133,7 +1135,7 @@ def test_a_malformed_provide_is_a_usage_error_through_the_dispatch():
 
     deploy.assert_not_called()
     assert result.exit_code == 2, result.output
-    assert "CAPABILITY=REPO" in " ".join(result.output.split()), result.output
+    assert "CAPABILITY=PROJECT" in " ".join(result.output.split()), result.output
 
 
 def test_use_cases_runs_through_the_production_dispatch():
@@ -1149,7 +1151,7 @@ def test_use_cases_runs_through_the_production_dispatch():
     from tests._fixtures.dispatch import DispatchRunner
 
     with (
-        patch("otto.declared.get_repos", return_value=[_uc_repo("repo1", _uc())]),
+        patch("otto.declared.get_projects", return_value=[_uc_repo("repo1", _uc())]),
         patch.object(fleet_mod, "get_lab", return_value=Lab(name="unix")),
     ):
         result = DispatchRunner().invoke(docker_app, ["use-cases"], spec_name="docker")
@@ -1170,7 +1172,7 @@ def test_use_case_completer_cache_miss_falls_back_to_the_repos():
     with (
         patch("otto.registry.get_completion_names", return_value=None),
         patch(
-            "otto.declared.get_repos",
+            "otto.declared.get_projects",
             return_value=[_uc_repo("a", _uc()), _uc_repo("b", _uc())],
         ),
     ):
@@ -1209,7 +1211,7 @@ def test_completer_cache_miss_falls_back():
             "otto.config.completion_cache.collect_docker_capable_host_ids",
             return_value=["h2", "h1"],
         ),
-        patch("otto.declared.get_repos", return_value=[]),
+        patch("otto.declared.get_projects", return_value=[]),
     ):
         result = docker_cli._docker_host_completer(MagicMock(), "")
 
@@ -1274,12 +1276,12 @@ def test_completer_cache_miss_filters_by_selected_lab(tmp_path):
             },
         ],
     )
-    repo = fake_repo(
-        lab_sources=json_lab_sources(tmp_path, [lab]), docker_settings=None, sut_dir=tmp_path
+    project = fake_repo(
+        lab_sources=json_lab_sources(tmp_path, [lab]), docker_settings=None, root=tmp_path
     )
     with (
         patch("otto.registry.get_completion_names", return_value=None),
-        patch("otto.declared.get_repos", return_value=[repo]),
+        patch("otto.declared.get_projects", return_value=[project]),
     ):
         result = docker_cli._docker_host_completer(_ctx_with_labs(["unix"]), "")
 
@@ -1295,3 +1297,13 @@ def test_completer_no_lab_selected_keeps_all_docker_hosts():
         result = docker_cli._docker_host_completer(_ctx_with_labs(None), "")
 
     assert result == ["alt2", "test1"]
+
+
+def test_the_old_repo_flag_is_refused():
+    """Red before the rename: ``--repo`` parsed as the build's project flag."""
+    from otto.cli.docker import docker_app
+    from tests._fixtures.dispatch import DispatchRunner
+
+    result = DispatchRunner().invoke(docker_app, ["build", "--repo", "a"], spec_name="docker")
+    assert result.exit_code == 2, result.output
+    assert "No such option: --repo" in " ".join(result.output.split())

@@ -1,11 +1,11 @@
 """The install preview: what ``otto run install`` would do, from configuration alone.
 
 :func:`plan_instruction` walks the lab exactly as the real run does (the
-orchestrator's own ``_walk_order``: same repos, same order, same applicability
+orchestrator's own ``_walk_order``: same projects, same order, same applicability
 filter) and asks each owned product or dev tool for its
 :meth:`~otto.host.product.Product.plan`. Nothing here contacts a host. What a
 real run would decide from a host's answer is named as a gap, never guessed:
-a repo whose actions override the body, a host class that overrides the verb,
+a project whose actions override the body, a host class that overrides the verb,
 ``--ensure``'s "already installed" check, the log hauls.
 """
 
@@ -38,7 +38,7 @@ class ProductPlanEntry:
 
 @dataclass
 class HostPlan:
-    """What one host would do for one repo, and what could not be checked."""
+    """What one host would do for one project, and what could not be checked."""
 
     host_id: str
     products: list[ProductPlanEntry] = field(default_factory=list)
@@ -46,10 +46,10 @@ class HostPlan:
 
 
 @dataclass
-class RepoPlan:
-    """One repo's hosts, in lab order, and the repo-level gaps."""
+class ProjectPlan:
+    """One project's hosts, in lab order, and the project-level gaps."""
 
-    repo: str
+    project: str
     hosts: list[HostPlan] = field(default_factory=list)
     gaps: list[str] = field(default_factory=list)
 
@@ -78,7 +78,7 @@ def _host_override(host: "Host", name: str) -> str | None:
 def _body_override(actions: ProjectActions, body: "ProjectInstructionBody") -> bool:
     """Whether *actions*' class replaces the base body, marked with ``@instruction`` or not.
 
-    Method identity rather than ``body.repo``: a subclass that overrides the
+    Method identity rather than ``body.project``: a subclass that overrides the
     method without the decorator carries no mark (``body_for`` finds the base
     body), yet the real run dispatches to the subclass method all the same.
     """
@@ -108,11 +108,11 @@ def _debug_log_gap(host: "Host") -> str:
     globs = ", ".join(host.debug_log_globs)
     if not globs:
         return "debug logs: no globs declared; nothing is swept"
-    return f"debug logs: {globs} are swept once after every repo"
+    return f"debug logs: {globs} are swept once after every project"
 
 
-def plan_instruction(name: str, ctx: "OttoContext", kwargs: "dict[str, Any]") -> list[RepoPlan]:
-    """Collect every repo's plan for *name* (``install``, ``uninstall`` or ``install-tools``).
+def plan_instruction(name: str, ctx: "OttoContext", kwargs: "dict[str, Any]") -> list[ProjectPlan]:
+    """Collect every project's plan for *name* (``install``, ``uninstall`` or ``install-tools``).
 
     *kwargs* are the CLI's parsed flags, the same mapping the real run builds
     its options from. ``--ensure``, the two log flags and ``--toolchain``
@@ -128,17 +128,18 @@ def plan_instruction(name: str, ctx: "OttoContext", kwargs: "dict[str, Any]") ->
     install = source.build(InstallOptions) if name == "install" else None
     logs = source.build(UninstallOptions) if name == "uninstall" else None
     tools = source.build(InstallToolsOptions) if name == "install-tools" else None
-    plans: list[RepoPlan] = []
-    for repo, actions, body in _walk_order(name, ctx, ctx.ordered_repos, announce=False):
-        repo_plan = RepoPlan(repo.name)
-        # The converge runs lab-wide before any body, so an overriding repo is covered too.
+    plans: list[ProjectPlan] = []
+    for project, actions, body in _walk_order(name, ctx, ctx.ordered_projects, announce=False):
+        project_plan = ProjectPlan(project.name)
+        # The converge runs lab-wide before any body, so an overriding project is covered too.
         if install is not None and install.ensure:
-            repo_plan.gaps.append(_ensure_gap(install.recover_partial))
+            project_plan.gaps.append(_ensure_gap(install.recover_partial))
         overridden = _body_override(actions, body)
         if overridden:
             cls = type(actions)
-            repo_plan.gaps.append(
-                f"repo `{repo.name}`: `{cls.__module__}.{cls.__qualname__}.{body.method_name}` "
+            project_plan.gaps.append(
+                f"project `{project.name}`: "
+                f"`{cls.__module__}.{cls.__qualname__}.{body.method_name}` "
                 f"replaces the default {name}; its steps are not previewed"
             )
         for host in actions.ctx.all_hosts():
@@ -150,16 +151,16 @@ def plan_instruction(name: str, ctx: "OttoContext", kwargs: "dict[str, Any]") ->
             if override is not None:
                 host_plan.gaps.append(override)
             elif dispatches:
-                for item in _attached(host, name, repo.name):
+                for item in _attached(host, name, project.name):
                     plan = item.plan(host)
                     host_plan.products.append(ProductPlanEntry(item.name, plan))
                     host_plan.gaps += [f"{item.name}: {line}" for line in plan.unchecked]
             if tools is not None and tools.toolchain:
                 host_plan.gaps.append(
-                    "toolchain tools: installed on this host once after every repo "
+                    "toolchain tools: installed on this host once after every project "
                     "(--toolchain); not previewed"
                 )
-            # A host or repo override says the steps are unknown, so the default
+            # A host or project override says the steps are unknown, so the default
             # contract "collected before anything is removed" is not claimed for it.
             if logs is not None and logs.product_logs and override is None and not overridden:
                 host_plan.gaps.append(
@@ -168,6 +169,6 @@ def plan_instruction(name: str, ctx: "OttoContext", kwargs: "dict[str, Any]") ->
                 )
             if logs is not None and logs.debug_logs:
                 host_plan.gaps.append(_debug_log_gap(host))
-            repo_plan.hosts.append(host_plan)
-        plans.append(repo_plan)
+            project_plan.hosts.append(host_plan)
+        plans.append(project_plan)
     return plans

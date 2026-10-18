@@ -201,6 +201,7 @@ UNIT_TREES = {
         "tests/unit/test_ci_color_env.py",
         "tests/unit/test_conftest_env_writes.py",
         "tests/unit/test_env_hermeticity.py",
+        "tests/unit/test_env_strip_sites.py",
     ],
     "examples": ["tests/unit/examples"],
     "models": ["tests/unit/models"],

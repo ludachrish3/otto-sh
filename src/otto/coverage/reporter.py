@@ -73,7 +73,7 @@ class CollectionInputs:
     default) selects the legacy, purely ``.gcda``-driven behavior — every
     collection-model step becomes a no-op.
 
-    - ``repo_root``: SUT git repo root.  Enables e2e captures + the manual
+    - ``project_root``: the project's git checkout root.  Enables e2e captures + the manual
       store; also the base_commit-guard reference and the exclusion source.
     - ``tier_configs``: Declared coverage tiers (precedence order).  Seeds
       ``tier_order`` / ``tier_colors`` and drives unit-harvest.
@@ -83,36 +83,66 @@ class CollectionInputs:
       built-in ``LCOV_EXCL_*`` families always apply and are not listed here.
     """
 
-    repo_root: Path | None = None
+    project_root: Path | None = None
     tier_configs: "list[TierConfig]" = field(default_factory=list)
     capture_paths: list[Path] = field(default_factory=list)
     exclusion_rules: "list[ExclusionRule]" = field(default_factory=list)
 
 
-def _read_cov_meta(cov_dirs: list[Path]) -> dict[str, Any]:
-    """Read coverage metadata written by ``otto test --cov``.
+_META_KEYS = ["project_name", "project_root"]
+"""The keys ``otto test --cov`` writes into ``.otto_cov_meta.json`` and every reader needs."""
+_OLD_META_KEYS = ["repo_name", "sut_dir"]
+"""Keys an older otto wrote; metadata carrying one is refused, never translated.
 
-    Looks for ``.otto_cov_meta.json`` directly inside each *cov_dir* and
-    returns the parsed JSON from the first one found.
+The one place in ``src/`` that must spell the old keys. The vocabulary checks
+exempt exactly this whole line, by ``REJECTION_INVENTORY`` in
+``tests/_fixtures/vocabulary.py``; keep it byte for byte."""
+
+
+def _read_cov_meta(cov_dirs: list[Path]) -> dict[str, Any]:
+    """Read and validate every input's ``.otto_cov_meta.json``; return the first one.
+
+    A directory without the file is skipped, as before. A file that carries an
+    old key, or lacks a current one, is refused: reporting reads counters
+    from every input, so one stale directory must not slip in behind a
+    current first one.
 
     Raises:
-        FileNotFoundError: If no metadata file is found in any cov dir.
+        CoverageInputError: A metadata file is stale (``field="cov_dirs"``).
+        FileNotFoundError: No input directory has a metadata file.
     """
+    from .errors import CoverageInputError
+
+    first: "dict[str, Any] | None" = None
     for cov_dir in cov_dirs:
         meta_path = cov_dir / ".otto_cov_meta.json"
-        if meta_path.is_file():
-            return json.loads(meta_path.read_text())
-    raise FileNotFoundError(
-        "No .otto_cov_meta.json found in any coverage directory. "
-        "Re-run 'otto test --cov' to generate coverage metadata."
-    )
+        if not meta_path.is_file():
+            continue
+        meta = json.loads(meta_path.read_text())
+        old = [k for k in _OLD_META_KEYS if k in meta]
+        missing = [k for k in _META_KEYS if k not in meta]
+        if old or missing:
+            what = f"has the old key {old[0]!r}" if old else f"lacks the key {missing[0]!r}"
+            raise CoverageInputError(
+                f"{cov_dir}: coverage metadata {meta_path.name} {what} (written by an "
+                "older otto); re-collect with 'otto test --cov'",
+                field="cov_dirs",
+            )
+        if first is None:
+            first = meta
+    if first is None:
+        raise FileNotFoundError(
+            "No .otto_cov_meta.json found in any coverage directory. "
+            "Re-run 'otto test --cov' to generate coverage metadata."
+        )
+    return first
 
 
 def read_cov_source_root(cov_dirs: list[Path]) -> Path:
     """Read the source root from coverage metadata written by ``otto test --cov``.
 
     Looks for ``.otto_cov_meta.json`` in each *cov_dir*.  Returns the
-    ``sut_dir`` from the first metadata file found.
+    ``project_root`` from the first metadata file found.
 
     Args:
         cov_dirs: Coverage directories (each containing host subdirs and
@@ -122,10 +152,11 @@ def read_cov_source_root(cov_dirs: list[Path]) -> Path:
         The source root path.
 
     Raises:
+        CoverageInputError: A metadata file is stale (``field="cov_dirs"``).
         FileNotFoundError: If no metadata file is found in any cov dir.
     """
     meta = _read_cov_meta(cov_dirs)
-    return Path(meta["sut_dir"])
+    return Path(meta["project_root"])
 
 
 def read_cov_source_roots(cov_dirs: list[Path]) -> dict[str, Path]:
@@ -217,7 +248,7 @@ class CoverageReporter:
             .gcno discovery).  Acts as the fallback for hosts that have
             no entry in *source_roots*.
         output_dir: Directory for the HTML report output.
-        project_name: Title shown in the HTML report.
+        report_title: Title shown in the HTML report.
         toolchains: Per-host toolchains keyed by host directory name.
             When a host has no entry the pipeline falls back to gcno-based
             auto-discovery, then to system defaults.
@@ -263,7 +294,7 @@ class CoverageReporter:
         gcda_dirs: list[Path],
         source_root: Path,
         output_dir: Path,
-        project_name: str = "Coverage Report",
+        report_title: str = "Coverage Report",
         toolchains: "dict[str, Toolchain] | None" = None,
         tiers: list[TierSpec] | None = None,
         source_roots: dict[str, Path] | None = None,
@@ -277,12 +308,12 @@ class CoverageReporter:
         self.gcda_dirs = gcda_dirs
         self.source_root = source_root
         self.output_dir = output_dir
-        self.project_name = project_name
+        self.report_title = report_title
         self.toolchains = toolchains or {}
         self.tiers: list[TierSpec] = list(tiers) if tiers else [(TIER_SYSTEM, None)]
         self.source_roots: dict[str, Path] = source_roots or {}
         coll = collection or CollectionInputs()
-        self.repo_root: Path | None = coll.repo_root
+        self.project_root: Path | None = coll.project_root
         self.tier_configs: "list[TierConfig]" = list(coll.tier_configs)
         self.capture_paths: list[Path] = list(coll.capture_paths)
         self.exclusion_rules: "list[ExclusionRule]" = list(coll.exclusion_rules)
@@ -477,22 +508,22 @@ class CoverageReporter:
             # --help` path (import-budget guard), same as SpaRenderer below.
             from .exclusions.apply import apply_exclusions
 
-            apply_exclusions(store, self.exclusion_rules, self.repo_root or self.source_root)
+            apply_exclusions(store, self.exclusion_rules, self.project_root or self.source_root)
 
             # 3c. Per-ticket attribution (design §6): a no-op unless both
-            # ticket_spec is configured and repo_root is known (only the
+            # ticket_spec is configured and project_root is known (only the
             # collection-model path resolves one — the git-less --tier
             # escape hatch never does). Must run after every fold above so
             # the store's final line set is what gets attributed, and
             # before rendering so the SPA data build sees populated
             # LineRecord.ticket / store.tickets.
-            if self.repo_root is not None:
-                attribution = self._annotate_tickets(store, self.repo_root)
+            if self.project_root is not None:
+                attribution = self._annotate_tickets(store, self.project_root)
                 # 3d. Manual-testing overrides (overrides spec §3): asserted
                 # entries fold in after attribution so the line->sha map and
                 # ticket->commits map they resolve against are final.
                 if self.overrides is not None and attribution is not None:
-                    self._apply_overrides(store, self.repo_root, *attribution)
+                    self._apply_overrides(store, self.project_root, *attribution)
 
             # 4. Render the SPA report. Exclusion is no longer a render-time
             # concern: the filter stage above already deleted the excluded
@@ -506,7 +537,7 @@ class CoverageReporter:
 
             renderer = SpaRenderer(
                 self.output_dir,
-                project_name=self.project_name,
+                report_title=self.report_title,
                 prefix=self.prefix,
             )
             renderer.render(store)
@@ -564,7 +595,7 @@ class CoverageReporter:
         copy itself does not fold into the store until
         :meth:`_load_manual_store` runs later.
         """
-        if not self.capture_paths or self.repo_root is None:
+        if not self.capture_paths or self.project_root is None:
             return
         from .capture import gitio
         from .capture.model import Capture
@@ -575,14 +606,14 @@ class CoverageReporter:
             register_capture_run,
         )
 
-        head = gitio.head_commit(self.repo_root)
-        dirty = gitio.is_dirty(self.repo_root)
+        head = gitio.head_commit(self.project_root)
+        dirty = gitio.is_dirty(self.project_root)
         if dirty:
             logger.warning(
-                "SUT repo %s has uncommitted changes; e2e capture hits are being "
+                "Project root %s has uncommitted changes; e2e capture hits are being "
                 "remapped from HEAD to the working tree, and hits on locally-modified "
                 "lines are omitted.",
-                self.repo_root,
+                self.project_root,
             )
         for cap_path in self.capture_paths:
             capture = Capture.load(cap_path)
@@ -599,9 +630,9 @@ class CoverageReporter:
                     f"report from the matching commit"
                 )
             if dirty:
-                load_dirty_capture_into_store(store, capture, self.repo_root, run_id=run_id)
+                load_dirty_capture_into_store(store, capture, self.project_root, run_id=run_id)
             else:
-                load_capture_into_store(store, capture, self.repo_root, run_id=run_id)
+                load_capture_into_store(store, capture, self.project_root, run_id=run_id)
 
     async def _harvest_unit_tiers(
         self,
@@ -612,8 +643,8 @@ class CoverageReporter:
         """Capture + load each unit tier's ``harvest_dirs`` and ``products``.
 
         Per spec §4/§11, ``harvest_dirs``/``products`` entries are
-        repo-relative: a relative entry is resolved against
-        :attr:`repo_root`, not the process CWD (``otto cov report`` may run
+        project-root-relative: a relative entry is resolved against
+        :attr:`project_root`, not the process CWD (``otto cov report`` may run
         from anywhere). Absolute entries pass through unchanged.
 
         ``harvest_dirs`` folds into one unnamed run (``product=""``); each
@@ -653,8 +684,8 @@ class CoverageReporter:
         run_id: int | None = None
         for idx, raw_hdir in enumerate(hdirs):
             hdir = (
-                anchor_path(raw_hdir, self.repo_root)
-                if self.repo_root is not None
+                anchor_path(raw_hdir, self.project_root)
+                if self.project_root is not None
                 else raw_hdir.expanduser()
             )
             if not hdir.is_dir():
@@ -697,19 +728,19 @@ class CoverageReporter:
             )
 
     def _manual_captures(self) -> "list[Capture]":
-        """Load every committed manual capture under ``repo_root``.
+        """Load every committed manual capture under ``project_root``.
 
-        Returns ``[]`` when ``repo_root`` is unset. Split out from
+        Returns ``[]`` when ``project_root`` is unset. Split out from
         :meth:`_load_manual_store` so :meth:`run` can seed the cross-source
         dedupe set with these captures' run keys *before* e2e captures and
         unit harvest fold in, while still folding the manual captures
         themselves last (see :meth:`run`'s step-3b comment).
         """
-        if self.repo_root is None:
+        if self.project_root is None:
             return []
         from .capture.store_dir import load_manual_captures
 
-        return list(load_manual_captures(self.repo_root))
+        return list(load_manual_captures(self.project_root))
 
     def _load_manual_store(self, store: CoverageStore, manual_captures: "list[Capture]") -> None:
         """Fold every committed manual capture in with report-time validity states.
@@ -727,7 +758,7 @@ class CoverageReporter:
         needs to dedupe *within* ``manual_captures`` itself, so two
         identical committed captures still fold once.
         """
-        if self.repo_root is None or not manual_captures:
+        if self.project_root is None or not manual_captures:
             return
         from .validity import apply_manual_capture, register_capture_run
 
@@ -743,7 +774,7 @@ class CoverageReporter:
             apply_manual_capture(
                 store,
                 capture,
-                self.repo_root,
+                self.project_root,
                 max_age_days=max_age_by_tier.get(capture.tier),
                 run_id=run_id,
             )
@@ -754,13 +785,13 @@ class CoverageReporter:
             store.tier_colors[tier.name] = tier.color
 
     def _annotate_tickets(
-        self, store: CoverageStore, repo_root: Path
+        self, store: CoverageStore, project_root: Path
     ) -> tuple[dict[str, dict[int, str]], dict[str, list[str]]] | None:
         """Attribute every stored line to the ticket(s) that last touched it.
 
         A no-op when :attr:`ticket_spec` is ``None`` (the feature-absent
         signal — no git log walk runs) or when the store holds no files
-        under *repo_root* to attribute. Files outside *repo_root* have no
+        under *project_root* to attribute. Files outside *project_root* have no
         history to attribute against it and are skipped rather than
         crashing the run.
 
@@ -795,23 +826,23 @@ class CoverageReporter:
         from .attribution import NO_TICKET, UNCOMMITTED, UNCOMMITTED_TICKET, attribute_tickets
 
         # The store keys files by resolved absolute path (get_or_create_file
-        # resolves whenever the file exists on disk); resolve repo_root the
+        # resolves whenever the file exists on disk); resolve project_root the
         # same way before every is_relative_to/relative_to comparison below —
-        # otherwise a repo_root that reaches the tree through a symlink
+        # otherwise a project_root that reaches the tree through a symlink
         # component would wrongly read every file in it as "outside the
-        # repo" (mirrors capture/model.py's identical repo_root.resolve()
+        # project root" (mirrors capture/model.py's identical project_root.resolve()
         # ahead of its own is_relative_to check).
-        repo_root = repo_root.resolve()
+        project_root = project_root.resolve()
         line_counts = {
-            path.relative_to(repo_root).as_posix(): max(rec.lines)
+            path.relative_to(project_root).as_posix(): max(rec.lines)
             for rec in store.files()
             for path in [rec.path]
-            if rec.lines and rec.path.is_relative_to(repo_root)
+            if rec.lines and rec.path.is_relative_to(project_root)
         }
         if not line_counts:
             return None
         per_line, commits, per_line_sha = attribute_tickets(
-            repo_root,
+            project_root,
             line_counts,
             self.ticket_spec,
             reattributions=self.overrides.reattributions if self.overrides else None,
@@ -835,9 +866,9 @@ class CoverageReporter:
         tickets_with_coverable_lines: set[str] = set()
 
         for rec in store.files():
-            if not rec.path.is_relative_to(repo_root):
+            if not rec.path.is_relative_to(project_root):
                 continue
-            relpath = rec.path.relative_to(repo_root).as_posix()
+            relpath = rec.path.relative_to(project_root).as_posix()
             line_shas = per_line_sha.get(relpath, {})
             for lineno, ids in per_line.get(relpath, {}).items():
                 if lineno not in rec.lines:
@@ -879,7 +910,7 @@ class CoverageReporter:
     def _apply_overrides(
         self,
         store: CoverageStore,
-        repo_root: Path,
+        project_root: Path,
         per_line_sha: dict[str, dict[int, str]],
         ticket_commits: dict[str, list[str]],
     ) -> None:
@@ -900,11 +931,11 @@ class CoverageReporter:
             return
         from .capture.gitio import rev_list_first_parent
 
-        fp_index = {sha: i for i, sha in enumerate(rev_list_first_parent(repo_root))}
+        fp_index = {sha: i for i, sha in enumerate(rev_list_first_parent(project_root))}
         apply_asserted_entries(
             store,
             self.overrides.asserted,
-            repo_root=repo_root,
+            project_root=project_root,
             per_line_sha=per_line_sha,
             ticket_commits=ticket_commits,
             fp_index=fp_index,
@@ -970,7 +1001,7 @@ async def run_coverage_report(
     output_dir: Path,
     inputs: ReportInputs,
     *,
-    project_name: str = "Coverage Report",
+    report_title: str = "Coverage Report",
     tier_specs: list[TierSpec] | None = None,
     prefix: Path | None = None,
     overwrite: bool = False,
@@ -985,14 +1016,14 @@ async def run_coverage_report(
     raises :class:`~otto.coverage.config.DestinationError` before anything is
     read.
 
-    **Two modes, one precedence rule.**  When neither ``inputs.repo_root``
+    **Two modes, one precedence rule.**  When neither ``inputs.project_root``
     nor ``inputs.tier_configs`` is given the function runs the **legacy**
     path unchanged: it reads the source root + per-host toolchains from
     ``.otto_cov_meta.json``, discovers per-host gcda subdirs, and merges
     them with lcov — returning ``None`` (as before) when there is no
     metadata sidecar or no gcda subdirs.
 
-    When ``inputs.repo_root`` or ``inputs.tier_configs`` is given the
+    When ``inputs.project_root`` or ``inputs.tier_configs`` is given the
     function runs the **collection-model** path, which additionally
     consumes, in order:
 
@@ -1001,7 +1032,7 @@ async def run_coverage_report(
        on mismatch); board dirs without one keep the legacy gcda-merge.
     2. **unit harvest** — each ``kind == "unit"`` tier's ``harvest_dirs``.
     3. **manual store** — every committed capture under
-       ``inputs.repo_root``'s ``.otto/coverage/manual/`` (with report-time
+       ``inputs.project_root``'s ``.otto/coverage/manual/`` (with report-time
        validity states).
 
     Crucially the legacy "no metadata → return ``None``" early-outs do
@@ -1018,9 +1049,9 @@ async def run_coverage_report(
     table it comes from, and what its feature-absent default means. All four
     reach :class:`CoverageReporter` on the collection-model path; on the
     legacy path only ``thresholds`` is forwarded (the others need a git
-    *repo_root* to walk or a collection-model store to filter, neither of
+    *project_root* to walk or a collection-model store to filter, neither of
     which the legacy path has) — a caller that supplies them without
-    ``repo_root``/``tier_configs`` falls into the legacy branch and they are
+    ``project_root``/``tier_configs`` falls into the legacy branch and they are
     silently ignored, mirroring that branch's "byte-for-byte the historical
     behavior" contract. The one exception is the exclusion filter stage
     itself, which runs on **both** paths, because the built-in
@@ -1045,11 +1076,11 @@ async def run_coverage_report(
     prepare_destination(
         output_dir, overwrite=overwrite, field="output_dir", remedy_field="overwrite"
     )
-    if inputs.repo_root is None and inputs.tier_configs is None:
+    if inputs.project_root is None and inputs.tier_configs is None:
         return await _run_legacy_report(
             cov_dirs,
             output_dir,
-            project_name,
+            report_title,
             tier_specs,
             prefix=prefix,
             thresholds=inputs.thresholds,
@@ -1057,9 +1088,9 @@ async def run_coverage_report(
     return await _run_collection_report(
         cov_dirs,
         output_dir,
-        project_name=project_name,
+        report_title=report_title,
         tier_specs=tier_specs,
-        repo_root=inputs.repo_root,
+        project_root=inputs.project_root,
         tier_configs=inputs.tier_configs,
         exclusion_rules=inputs.exclusion_rules,
         prefix=prefix,
@@ -1072,7 +1103,7 @@ async def run_coverage_report(
 async def _run_legacy_report(
     cov_dirs: list[Path],
     output_dir: Path,
-    project_name: str,
+    report_title: str,
     tier_specs: list[TierSpec] | None,
     *,
     prefix: Path | None = None,
@@ -1100,7 +1131,7 @@ async def _run_legacy_report(
         gcda_dirs=gcda_dirs,
         source_root=source_root,
         output_dir=output_dir,
-        project_name=project_name,
+        report_title=report_title,
         toolchains=toolchains,
         tiers=tier_specs,
         source_roots=source_roots,
@@ -1114,9 +1145,9 @@ async def _run_collection_report(  # noqa: PLR0913 — wide internal helper: mir
     cov_dirs: list[Path],
     output_dir: Path,
     *,
-    project_name: str,
+    report_title: str,
     tier_specs: list[TierSpec] | None,
-    repo_root: Path | None,
+    project_root: Path | None,
     tier_configs: "list[TierConfig] | None",
     exclusion_rules: "list[ExclusionRule] | None",
     prefix: Path | None = None,
@@ -1135,12 +1166,12 @@ async def _run_collection_report(  # noqa: PLR0913 — wide internal helper: mir
     # The gcda-merge fallback needs a source root only when there are
     # legacy (non-capture) board dirs to merge.  When the meta sidecar is
     # absent — e.g. a captures-only or manual-only run — fall back to the
-    # repo root (or cwd) rather than bailing out the way the legacy path
+    # project root (or cwd) rather than bailing out the way the legacy path
     # would.
     try:
         source_root = read_cov_source_root(cov_dirs)
     except FileNotFoundError:
-        source_root = repo_root or Path.cwd()
+        source_root = project_root or Path.cwd()
 
     toolchains = read_cov_toolchains(cov_dirs)
     source_roots = read_cov_source_roots(cov_dirs)
@@ -1149,12 +1180,12 @@ async def _run_collection_report(  # noqa: PLR0913 — wide internal helper: mir
         gcda_dirs=gcda_dirs,
         source_root=source_root,
         output_dir=output_dir,
-        project_name=project_name,
+        report_title=report_title,
         toolchains=toolchains,
         tiers=tier_specs,
         source_roots=source_roots,
         collection=CollectionInputs(
-            repo_root=repo_root,
+            project_root=project_root,
             tier_configs=list(tier_configs) if tier_configs else [],
             capture_paths=capture_paths,
             exclusion_rules=list(exclusion_rules) if exclusion_rules else [],

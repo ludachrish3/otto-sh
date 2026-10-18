@@ -39,7 +39,7 @@ from tests.unit.config.test_completion_cache_inventory import (
 
 
 def _sections_file(
-    repos: list,
+    projects: list,
     *,
     generated_at: int | None = None,
     names_payload: dict | None = None,
@@ -53,7 +53,7 @@ def _sections_file(
     """
     from otto.config.cache_sections import SECTIONS, lab_key_paths, section_digest
 
-    lab = [str(path) for path in lab_key_paths(repos)]
+    lab = [str(path) for path in lab_key_paths(projects)]
 
     at = int(time.time()) if generated_at is None else generated_at
     payloads = {
@@ -63,10 +63,10 @@ def _sections_file(
         "schema": cc.SCHEMA_VERSION,
         "sections": {
             s.name: {
-                "fingerprint": section_digest(s, repos),
+                "fingerprint": section_digest(s, projects),
                 "generated_at": at,
                 "tainted": False,
-                "ttl_seconds": cc._cache_ttl_seconds(repos),
+                "ttl_seconds": cc._cache_ttl_seconds(projects),
                 **({"lab_key_paths": lab} if s.lab_keyed else {}),
                 "payload": payloads.get(s.name, {}),
             }
@@ -75,11 +75,11 @@ def _sections_file(
     }
 
 
-def _names_digest(repos: list) -> str:
+def _names_digest(projects: list) -> str:
     """The ``names`` section's digest: what a lab-file or init edit must move."""
     from otto.config.cache_sections import section_by_name, section_digest
 
-    return section_digest(section_by_name("names"), repos)
+    return section_digest(section_by_name("names"), projects)
 
 
 def test_read_cache_returns_none_for_empty_repos(tmp_path: Path, monkeypatch) -> None:
@@ -132,7 +132,7 @@ def test_cache_rebuild_is_worthwhile_is_false_for_an_ephemeral_fingerprint(
     """
     monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     with _registered("unit-ephemeral-worthwhile", _Uncacheable) as table:
-        repo = _inventory_repo(tmp_path, table)
+        project = _inventory_repo(tmp_path, table)
         cache_file = cc._cache_path()
         assert cache_file is not None
         cache_file.parent.mkdir(parents=True, exist_ok=True)
@@ -140,9 +140,9 @@ def test_cache_rebuild_is_worthwhile_is_false_for_an_ephemeral_fingerprint(
         # As close to "a matching entry on disk" as an ephemeral digest can
         # ever get: sections stamped with THIS moment's digests, which the
         # clock text guarantees the next computation will not reproduce.
-        cache_file.write_text(json.dumps(_sections_file([repo])))
+        cache_file.write_text(json.dumps(_sections_file([project])))
 
-        assert cc.cache_rebuild_is_worthwhile([repo]) is False, (
+        assert cc.cache_rebuild_is_worthwhile([project]) is False, (
             "an ephemeral fingerprint must never be judged worth an O(corpus) collect"
         )
 
@@ -150,30 +150,30 @@ def test_cache_rebuild_is_worthwhile_is_false_for_an_ephemeral_fingerprint(
 # ── Effective TTL: a non-file host source has no invalidation signal ─────────
 
 
-def _pending(label: str, backend: str, sut_dir: Path, **raw: object) -> PendingLabSource:
+def _pending(label: str, backend: str, root: Path, **raw: object) -> PendingLabSource:
     """One declared ``[[lab.sources]]`` entry, as settings parsing leaves it."""
     return PendingLabSource(
         backend=backend,
         label=label,
         raw=FrozenMap.freeze_json(raw),
-        origin=str(sut_dir / ".otto" / "settings.toml"),
-        repo_dir=sut_dir,
+        origin=str(root / ".otto" / "settings.toml"),
+        project_root=root,
     )
 
 
 def _ttl_repo(tmp_path: Path, backend: str | None = None) -> MagicMock:
     """A repo declaring one [[lab.sources]] entry on *backend* (None = none)."""
-    repo = MagicMock()
-    repo.sut_dir = tmp_path / "sut"
-    repo.init = []
-    repo.libs = []
-    repo.tests = []
+    project = MagicMock()
+    project.root = tmp_path / "sut"
+    project.init = []
+    project.libs = []
+    project.tests = []
     options = {"paths": ["lab"]} if backend == "json" else {}
-    repo.lab_sources = (
-        [] if backend is None else [_pending(f"ttl/{backend}#1", backend, repo.sut_dir, **options)]
+    project.lab_sources = (
+        [] if backend is None else [_pending(f"ttl/{backend}#1", backend, project.root, **options)]
     )
-    repo.reservation_settings = {}
-    return repo
+    project.reservation_settings = {}
+    return project
 
 
 def test_json_backends_keep_the_long_ttl(tmp_path: Path) -> None:
@@ -190,15 +190,15 @@ def test_a_reservation_backend_also_shortens_the_ttl(tmp_path: Path) -> None:
     so that field is populated exclusively by custom — typically networked —
     backends, and the fingerprint tracks only settings.toml for them.
     """
-    repo = _ttl_repo(tmp_path)
-    repo.reservation_settings = {"backend": "acme"}
-    assert cc._cache_ttl_seconds([repo]) == cc.UNFINGERPRINTED_CACHE_TTL_SECONDS
+    project = _ttl_repo(tmp_path)
+    project.reservation_settings = {"backend": "acme"}
+    assert cc._cache_ttl_seconds([project]) == cc.UNFINGERPRINTED_CACHE_TTL_SECONDS
 
 
 def test_a_custom_backend_shortens_the_ttl(tmp_path: Path) -> None:
     """A non-file host source's digest never moves, so the TTL is the only bound."""
-    repos = [_ttl_repo(tmp_path, "cmdb")]
-    assert cc._cache_ttl_seconds(repos) == cc.UNFINGERPRINTED_CACHE_TTL_SECONDS
+    projects = [_ttl_repo(tmp_path, "cmdb")]
+    assert cc._cache_ttl_seconds(projects) == cc.UNFINGERPRINTED_CACHE_TTL_SECONDS
     assert cc.UNFINGERPRINTED_CACHE_TTL_SECONDS < cc.CACHE_TTL_SECONDS
 
     # One custom repo among json ones is enough — the cache entry is shared.
@@ -215,7 +215,7 @@ def test_a_repo_double_without_lab_sources_reads_as_json(tmp_path: Path) -> None
     """
     # Each double pins `os_profiles`, which every repo has: the profile
     # context reads it unguarded.
-    bare = MagicMock(spec=["sut_dir", "os_profiles"])
+    bare = MagicMock(spec=["root", "os_profiles"])
     bare.os_profiles = {}
     assert cc._cache_ttl_seconds([bare]) == cc.CACHE_TTL_SECONDS
 
@@ -281,21 +281,21 @@ def test_fingerprint_moves_when_a_source_lab_file_is_edited(
     wired to the directory form alone would silently stop tracking a source
     that names its ``.json`` file directly.
     """
-    sut_dir = tmp_path / "sut"
-    sut_dir.mkdir(parents=True)
-    touch_settings(sut_dir)
+    root = tmp_path / "sut"
+    root.mkdir(parents=True)
+    touch_settings(root)
     lab_dir = tmp_path / "lab"
     lab_dir.mkdir(parents=True)
     lab_file = write_lab_json(lab_dir / "lab.json", [{"ip": "10.0.0.1", "element": "test1"}])
 
-    repo = MagicMock()
-    repo.sut_dir = sut_dir
-    repo.init = []
-    repo.libs = []
-    repo.tests = []
-    repo.lab_sources = [_pending(f"fp/{spelling}", "json", sut_dir, paths=[str(path_of(lab_dir))])]
+    project = MagicMock()
+    project.root = root
+    project.init = []
+    project.libs = []
+    project.tests = []
+    project.lab_sources = [_pending(f"fp/{spelling}", "json", root, paths=[str(path_of(lab_dir))])]
 
-    before = _names_digest([repo])
+    before = _names_digest([project])
     write_lab_json(
         lab_file,
         [
@@ -304,7 +304,7 @@ def test_fingerprint_moves_when_a_source_lab_file_is_edited(
         ],
     )
 
-    assert _names_digest([repo]) != before, (
+    assert _names_digest([project]) != before, (
         f"editing the lab file of a {spelling} source left the digest unchanged — "
         "the cache cannot self-invalidate on host-data edits"
     )
@@ -319,21 +319,21 @@ def test_fingerprint_ignores_a_custom_source_with_no_files(tmp_path: Path) -> No
     Hashing the repo_dir here would give such a source a false invalidation
     signal.
     """
-    sut_dir = tmp_path / "sut"
-    sut_dir.mkdir(parents=True)
-    touch_settings(sut_dir)
+    root = tmp_path / "sut"
+    root.mkdir(parents=True)
+    touch_settings(root)
 
-    repo = MagicMock()
-    repo.sut_dir = sut_dir
-    repo.init = []
-    repo.libs = []
-    repo.tests = []
-    repo.lab_sources = [_pending("fp/cmdb#1", "cmdb", sut_dir)]
+    project = MagicMock()
+    project.root = root
+    project.init = []
+    project.libs = []
+    project.tests = []
+    project.lab_sources = [_pending("fp/cmdb#1", "cmdb", root)]
 
-    before = _names_digest([repo])
-    (sut_dir / "anything.json").write_text("{}")
-    assert _names_digest([repo]) == before
-    assert cc._has_unfingerprinted_source([repo]) is True
+    before = _names_digest([project])
+    (root / "anything.json").write_text("{}")
+    assert _names_digest([project]) == before
+    assert cc._has_unfingerprinted_source([project]) is True
 
 
 def test_write_cache_skips_empty_repos(tmp_path: Path, monkeypatch) -> None:
@@ -348,9 +348,9 @@ def test_read_cache_rejects_schema_mismatch(tmp_path: Path, monkeypatch) -> None
     from unittest.mock import MagicMock
 
     fake_repo = MagicMock()
-    fake_repo.sut_dir = tmp_path / "sut"
-    fake_repo.sut_dir.mkdir()
-    touch_settings(fake_repo.sut_dir)
+    fake_repo.root = tmp_path / "sut"
+    fake_repo.root.mkdir()
+    touch_settings(fake_repo.root)
     fake_repo.init = []
     fake_repo.libs = []
     fake_repo.tests = []
@@ -512,9 +512,9 @@ def test_write_read_cache_round_trips_backend_names(tmp_path: Path, monkeypatch)
 
     monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     fake_repo = MagicMock()
-    fake_repo.sut_dir = tmp_path / "sut"
-    fake_repo.sut_dir.mkdir()
-    touch_settings(fake_repo.sut_dir)
+    fake_repo.root = tmp_path / "sut"
+    fake_repo.root.mkdir()
+    touch_settings(fake_repo.root)
     fake_repo.init = []
     fake_repo.libs = []
     fake_repo.tests = []
@@ -781,9 +781,9 @@ def test_write_read_cache_round_trips_commands(tmp_path: Path, monkeypatch) -> N
     """write_cache/read_cache carry the 'commands' key through a round trip."""
     monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     fake_repo = MagicMock()
-    fake_repo.sut_dir = tmp_path / "sut"
-    fake_repo.sut_dir.mkdir()
-    touch_settings(fake_repo.sut_dir)
+    fake_repo.root = tmp_path / "sut"
+    fake_repo.root.mkdir()
+    touch_settings(fake_repo.root)
     fake_repo.init = []
     fake_repo.libs = []
     fake_repo.tests = []
@@ -807,9 +807,9 @@ def test_read_cache_defaults_commands_to_empty_list(tmp_path: Path, monkeypatch)
     """A cache entry written without 'commands' reads back as an empty list."""
     monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     fake_repo = MagicMock()
-    fake_repo.sut_dir = tmp_path / "sut"
-    fake_repo.sut_dir.mkdir()
-    touch_settings(fake_repo.sut_dir)
+    fake_repo.root = tmp_path / "sut"
+    fake_repo.root.mkdir()
+    touch_settings(fake_repo.root)
     fake_repo.init = []
     fake_repo.libs = []
     fake_repo.tests = []
@@ -828,9 +828,9 @@ def test_write_read_cache_round_trips_hosts_by_lab(tmp_path: Path, monkeypatch) 
     """write_cache/read_cache carry the 'hosts_by_lab' map through a round trip."""
     monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     fake_repo = MagicMock()
-    fake_repo.sut_dir = tmp_path / "sut"
-    fake_repo.sut_dir.mkdir()
-    touch_settings(fake_repo.sut_dir)
+    fake_repo.root = tmp_path / "sut"
+    fake_repo.root.mkdir()
+    touch_settings(fake_repo.root)
     fake_repo.init = []
     fake_repo.libs = []
     fake_repo.tests = []
@@ -854,9 +854,9 @@ def test_read_cache_defaults_hosts_by_lab_to_empty_dict(tmp_path: Path, monkeypa
     """A cache entry written without 'hosts_by_lab' reads back as an empty dict."""
     monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     fake_repo = MagicMock()
-    fake_repo.sut_dir = tmp_path / "sut"
-    fake_repo.sut_dir.mkdir()
-    touch_settings(fake_repo.sut_dir)
+    fake_repo.root = tmp_path / "sut"
+    fake_repo.root.mkdir()
+    touch_settings(fake_repo.root)
     fake_repo.init = []
     fake_repo.libs = []
     fake_repo.tests = []
@@ -874,9 +874,9 @@ def test_read_cache_defaults_hosts_by_lab_to_empty_dict(tmp_path: Path, monkeypa
 def test_write_read_cache_round_trips_the_class_map_projects_and_links(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     fake_repo = MagicMock()
-    fake_repo.sut_dir = tmp_path / "sut"
-    fake_repo.sut_dir.mkdir()
-    touch_settings(fake_repo.sut_dir)
+    fake_repo.root = tmp_path / "sut"
+    fake_repo.root.mkdir()
+    touch_settings(fake_repo.root)
     fake_repo.init = []
     fake_repo.libs = []
     fake_repo.tests = []
@@ -900,9 +900,9 @@ def test_read_cache_rejects_a_malformed_class_map(tmp_path, monkeypatch):
     """A dict is what every consumer indexes; anything else is a miss, not a crash."""
     monkeypatch.setenv("OTTO_HOME", str(tmp_path))
     fake_repo = MagicMock()
-    fake_repo.sut_dir = tmp_path / "sut"
-    fake_repo.sut_dir.mkdir()
-    touch_settings(fake_repo.sut_dir)
+    fake_repo.root = tmp_path / "sut"
+    fake_repo.root.mkdir()
+    touch_settings(fake_repo.root)
     fake_repo.init = []
     fake_repo.libs = []
     fake_repo.tests = []
@@ -943,9 +943,9 @@ _NON_DOCKER_HOST = {
 def _make_fake_repo(tmp_path: Path) -> MagicMock:
     """Build a minimal fake Repo whose lab path is tmp_path."""
     fake_repo = MagicMock()
-    fake_repo.sut_dir = tmp_path / "sut"
-    fake_repo.sut_dir.mkdir(parents=True, exist_ok=True)
-    touch_settings(fake_repo.sut_dir)
+    fake_repo.root = tmp_path / "sut"
+    fake_repo.root.mkdir(parents=True, exist_ok=True)
+    touch_settings(fake_repo.root)
     fake_repo.init = []
     fake_repo.libs = []
     fake_repo.tests = []
@@ -956,7 +956,7 @@ def _make_fake_repo(tmp_path: Path) -> MagicMock:
     fake_repo.inventory_settings = {}
     # One json source over tmp_path/lab — the built-in backend, which is what
     # these tests exercise.
-    fake_repo.lab_sources = json_lab_sources(fake_repo.sut_dir, [tmp_path / "lab"])
+    fake_repo.lab_sources = json_lab_sources(fake_repo.root, [tmp_path / "lab"])
     return fake_repo
 
 
@@ -977,9 +977,9 @@ def test_collect_returns_only_capable_sorted(tmp_path: Path) -> None:
             {**_DOCKER_HOST, "element": "junk", "slot": "not-an-int"},
         ],
     )
-    repo = _make_fake_repo(tmp_path)
+    project = _make_fake_repo(tmp_path)
 
-    result = cc.collect_docker_capable_host_ids([repo])
+    result = cc.collect_docker_capable_host_ids([project])
 
     assert result == ["b-seed"]
 
@@ -989,9 +989,9 @@ def test_collect_skips_missing_file(tmp_path: Path) -> None:
     lab_path = tmp_path / "lab"
     lab_path.mkdir(parents=True)
     # Deliberately do NOT write lab.json
-    repo = _make_fake_repo(tmp_path)
+    project = _make_fake_repo(tmp_path)
 
-    assert cc.collect_docker_capable_host_ids([repo]) == []
+    assert cc.collect_docker_capable_host_ids([project]) == []
 
 
 def test_collect_skips_non_list_elements_section(tmp_path: Path) -> None:
@@ -1004,9 +1004,9 @@ def test_collect_skips_non_list_elements_section(tmp_path: Path) -> None:
     lab_path = tmp_path / "lab"
     lab_path.mkdir(parents=True)
     (lab_path / LAB_FILENAME).write_text(json.dumps({"elements": {"not": "a list"}}))
-    repo = _make_fake_repo(tmp_path)
+    project = _make_fake_repo(tmp_path)
 
-    assert cc.collect_docker_capable_host_ids([repo]) == []
+    assert cc.collect_docker_capable_host_ids([project]) == []
 
 
 # ---------------------------------------------------------------------------
@@ -1023,9 +1023,9 @@ def _make_fingerprint_repo(
 ) -> MagicMock:
     """Build a fake Repo suitable for names-digest tests."""
     fake_repo = MagicMock()
-    fake_repo.sut_dir = tmp_path / "sut"
-    fake_repo.sut_dir.mkdir(parents=True, exist_ok=True)
-    touch_settings(fake_repo.sut_dir)
+    fake_repo.root = tmp_path / "sut"
+    fake_repo.root.mkdir(parents=True, exist_ok=True)
+    touch_settings(fake_repo.root)
     fake_repo.init = init
     fake_repo.libs = libs
     fake_repo.tests = []
@@ -1033,7 +1033,7 @@ def _make_fingerprint_repo(
     # as a present-but-empty [inventory] — a shape no real Repo produces, and
     # one `build_inventory` rejects, taking the cache write down with it.
     fake_repo.inventory_settings = {}
-    fake_repo.lab_sources = json_lab_sources(fake_repo.sut_dir, labs) if labs else []
+    fake_repo.lab_sources = json_lab_sources(fake_repo.root, labs) if labs else []
     return fake_repo
 
 
@@ -1043,12 +1043,12 @@ def test_fingerprint_resolves_single_py_module(tmp_path: Path) -> None:
     lib_dir.mkdir()
     (lib_dir / "mymod.py").write_text("# init module")
 
-    repo = _make_fingerprint_repo(
+    project = _make_fingerprint_repo(
         tmp_path,
         init=["mymod"],
         libs=[lib_dir],
     )
-    d1 = _names_digest([repo])
+    d1 = _names_digest([project])
     assert isinstance(d1, str)
     assert len(d1) == 64  # sha256 hex
 
@@ -1083,9 +1083,9 @@ def test_an_unresolved_init_module_shortens_the_ttl(tmp_path: Path) -> None:
     so a repo declaring one needs the same short TTL the other
     unfingerprinted sources get.
     """
-    repo = _make_fingerprint_repo(tmp_path, init=["no_such_plugin"], libs=[])
-    assert cc._has_unfingerprinted_source([repo]) is True
-    assert cc._cache_ttl_seconds([repo]) == cc.UNFINGERPRINTED_CACHE_TTL_SECONDS
+    project = _make_fingerprint_repo(tmp_path, init=["no_such_plugin"], libs=[])
+    assert cc._has_unfingerprinted_source([project]) is True
+    assert cc._cache_ttl_seconds([project]) == cc.UNFINGERPRINTED_CACHE_TTL_SECONDS
 
 
 def test_a_resolved_init_module_keeps_the_long_ttl(tmp_path: Path) -> None:
@@ -1094,9 +1094,9 @@ def test_a_resolved_init_module_keeps_the_long_ttl(tmp_path: Path) -> None:
     lib_dir.mkdir()
     (lib_dir / "myplugin.py").write_text("# init module")
 
-    repo = _make_fingerprint_repo(tmp_path, init=["myplugin"], libs=[lib_dir])
-    assert cc._has_unfingerprinted_source([repo]) is False
-    assert cc._cache_ttl_seconds([repo]) == cc.CACHE_TTL_SECONDS
+    project = _make_fingerprint_repo(tmp_path, init=["myplugin"], libs=[lib_dir])
+    assert cc._has_unfingerprinted_source([project]) is False
+    assert cc._cache_ttl_seconds([project]) == cc.CACHE_TTL_SECONDS
 
 
 def test_fingerprint_resolves_package_dir_module(tmp_path: Path) -> None:
@@ -1108,12 +1108,12 @@ def test_fingerprint_resolves_package_dir_module(tmp_path: Path) -> None:
     (pkg_dir / "__init__.py").write_text("# package init")
     (pkg_dir / "helpers.py").write_text("# helper")
 
-    repo = _make_fingerprint_repo(
+    project = _make_fingerprint_repo(
         tmp_path,
         init=["mypkg"],
         libs=[lib_dir],
     )
-    digest = _names_digest([repo])
+    digest = _names_digest([project])
     assert isinstance(digest, str)
     assert len(digest) == 64  # sha256 hex
 
@@ -1124,14 +1124,14 @@ def test_fingerprint_is_deterministic(tmp_path: Path) -> None:
     lib_dir.mkdir()
     (lib_dir / "mymod.py").write_text("# init module")
 
-    repo = _make_fingerprint_repo(
+    project = _make_fingerprint_repo(
         tmp_path,
         init=["mymod"],
         libs=[lib_dir],
     )
 
-    d1 = _names_digest([repo])
-    d2 = _names_digest([repo])
+    d1 = _names_digest([project])
+    d2 = _names_digest([project])
 
     assert d1 == d2
 
@@ -1141,9 +1141,9 @@ def test_collect_skips_corrupt_json(tmp_path: Path) -> None:
     lab_path = tmp_path / "lab"
     lab_path.mkdir(parents=True)
     (lab_path / LAB_FILENAME).write_text("not valid json }{")
-    repo = _make_fake_repo(tmp_path)
+    project = _make_fake_repo(tmp_path)
 
-    assert cc.collect_docker_capable_host_ids([repo]) == []
+    assert cc.collect_docker_capable_host_ids([project]) == []
 
 
 def test_collect_skips_invalid_host_dict(tmp_path: Path) -> None:
@@ -1163,9 +1163,9 @@ def test_collect_skips_invalid_host_dict(tmp_path: Path) -> None:
             {"labs": {"x": {}}, "elements": [{"name": "x", "labs": ["x"], "hosts": [bad_host]}]}
         )
     )
-    repo = _make_fake_repo(tmp_path)
+    project = _make_fake_repo(tmp_path)
 
-    assert cc.collect_docker_capable_host_ids([repo]) == []
+    assert cc.collect_docker_capable_host_ids([project]) == []
 
 
 # ── A host source that STALLS must not wedge the shell ───────────────────────
@@ -1193,13 +1193,13 @@ def test_a_hanging_host_source_is_bounded_not_waited_on(monkeypatch, caplog) -> 
 
     monkeypatch.setattr(cc, "_enumerate_host_summaries", _never_returns)
     monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})
-    repo = MagicMock()
-    repo.sut_dir = Path("/nowhere-hang")
+    project = MagicMock()
+    project.root = Path("/nowhere-hang")
 
     started = time.monotonic()
     with caplog.at_level(logging.WARNING, logger="otto.config.completion_cache"):
-        result = cc.repo_host_summaries(
-            repo, cc.InventoryResolution(), profiles=ProfileContext.empty()
+        result = cc.project_host_summaries(
+            project, cc.InventoryResolution(), profiles=ProfileContext.empty()
         )
     elapsed = time.monotonic() - started
 
@@ -1215,17 +1215,19 @@ def test_a_working_host_source_is_untouched_by_the_deadline(monkeypatch) -> None
     """The bound must not cost the normal path its answer."""
     from otto.labs import HostSummary
 
-    expected = cc.RepoEnumeration(summaries=[HostSummary(id="test1", labs=["unix"])])
+    expected = cc.ProjectEnumeration(summaries=[HostSummary(id="test1", labs=["unix"])])
     monkeypatch.setattr(
         cc,
         "_enumerate_host_summaries",
         lambda _repo, _inventory, _profiles, _abandoned=None: expected,
     )
     monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})
-    repo = MagicMock()
-    repo.sut_dir = Path("/nowhere-ok")
+    project = MagicMock()
+    project.root = Path("/nowhere-ok")
     assert (
-        cc.repo_host_summaries(repo, cc.InventoryResolution(), profiles=ProfileContext.empty())
+        cc.project_host_summaries(
+            project, cc.InventoryResolution(), profiles=ProfileContext.empty()
+        )
         == expected.summaries
     )
 
@@ -1245,18 +1247,18 @@ def test_one_enumeration_per_repo_however_many_collectors_ask(monkeypatch) -> No
     def _count(_repo, _inventory, _profiles, _abandoned=None):
         nonlocal calls
         calls += 1
-        return cc.RepoEnumeration(summaries=[HostSummary(id="test1", labs=["unix"])])
+        return cc.ProjectEnumeration(summaries=[HostSummary(id="test1", labs=["unix"])])
 
     monkeypatch.setattr(cc, "_enumerate_host_summaries", _count)
     monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})
-    repo = MagicMock()
-    repo.sut_dir = Path("/memo")
+    project = MagicMock()
+    project.root = Path("/memo")
 
     for _ in range(3):
         assert [
             s.id
-            for s in cc.repo_host_summaries(
-                repo, cc.InventoryResolution(), profiles=ProfileContext.empty()
+            for s in cc.project_host_summaries(
+                project, cc.InventoryResolution(), profiles=ProfileContext.empty()
             )
         ] == ["test1"]
     assert calls == 1, f"enumerated {calls} times for one repo"
@@ -1290,11 +1292,13 @@ def test_a_backend_that_explodes_does_not_reach_the_terminal(monkeypatch, capsys
 
     monkeypatch.setattr(cc, "_enumerate_host_summaries", _explodes)
     monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})
-    repo = MagicMock()
-    repo.sut_dir = Path("/boom")
+    project = MagicMock()
+    project.root = Path("/boom")
 
     assert (
-        cc.repo_host_summaries(repo, cc.InventoryResolution(), profiles=ProfileContext.empty())
+        cc.project_host_summaries(
+            project, cc.InventoryResolution(), profiles=ProfileContext.empty()
+        )
         == []
     )
     assert "Traceback" not in capsys.readouterr().err
@@ -1347,19 +1351,19 @@ def _cache_repo(tmp_path: Path, name: str = "sut") -> MagicMock:
 
     ``inventory_settings = {}`` is not decoration: a MagicMock auto-attribute
     is TRUTHY and ``dict()``s to ``{}``, which reads as a present-but-empty
-    ``[inventory]`` — a shape no real ``Repo`` produces and one
+    ``[inventory]`` — a shape no real ``Project`` produces and one
     ``build_inventory_from_declarations`` SKIPS (no inventory is built), same
     as if ``[inventory]`` were never declared at all.
     """
-    repo = MagicMock()
-    repo.sut_dir = tmp_path / name
-    repo.sut_dir.mkdir()
-    touch_settings(repo.sut_dir)
-    repo.init = []
-    repo.libs = []
-    repo.tests = []
-    repo.inventory_settings = {}
-    return repo
+    project = MagicMock()
+    project.root = tmp_path / name
+    project.root.mkdir()
+    touch_settings(project.root)
+    project.init = []
+    project.libs = []
+    project.tests = []
+    project.inventory_settings = {}
+    return project
 
 
 def _use_case(name: str):
@@ -1390,13 +1394,13 @@ def test_write_read_cache_round_trips_docker_use_cases(tmp_path: Path, monkeypat
     ``otto docker compose up <TAB>`` does.
     """
     monkeypatch.setenv("OTTO_HOME", str(tmp_path))
-    repo = _cache_repo(tmp_path)
-    repo.docker_settings.use_cases = (_use_case("soak"), _use_case("integration"))
+    project = _cache_repo(tmp_path)
+    project.docker_settings.use_cases = (_use_case("soak"), _use_case("integration"))
 
-    names = cc.collect_docker_use_case_names([repo])
-    cc.write_cache([repo], instructions=[], hosts=[], docker_use_cases=names)
+    names = cc.collect_docker_use_case_names([project])
+    cc.write_cache([project], instructions=[], hosts=[], docker_use_cases=names)
 
-    out = cc.read_cache([repo])
+    out = cc.read_cache([project])
     assert out is not None
     assert out["docker_use_cases"] == ["integration", "soak"], (
         "write_cache did not persist docker_use_cases, or read_cache did not return it"
@@ -1427,7 +1431,7 @@ def test_a_v13_entry_is_not_served_for_docker_use_cases(tmp_path: Path, monkeypa
     genuine artifact an upgrade finds on disk.
     """
     monkeypatch.setenv("OTTO_HOME", str(tmp_path))
-    repo = _cache_repo(tmp_path)
+    project = _cache_repo(tmp_path)
     cache_file = cc._cache_path()
     cache_file.parent.mkdir(parents=True, exist_ok=True)  # type: ignore[union-attr]
     entry = {
@@ -1438,10 +1442,10 @@ def test_a_v13_entry_is_not_served_for_docker_use_cases(tmp_path: Path, monkeypa
         "hosts": [],
     }
     cache_file.write_text(  # type: ignore[union-attr]
-        json.dumps({_names_digest([repo]): entry})
+        json.dumps({_names_digest([project]): entry})
     )
 
-    assert cc.read_cache([repo]) is None, (
+    assert cc.read_cache([project]) is None, (
         "a pre-v14 entry was served, so it would answer `otto docker compose up <TAB>` "
         "with an empty use-case list"
     )
@@ -1451,8 +1455,8 @@ def test_a_non_list_docker_use_cases_entry_is_rejected(tmp_path: Path, monkeypat
     """The new validation arm: a corrupt value fails the whole entry, not the
     reader. Without it the completer would iterate a string one char at a time."""
     monkeypatch.setenv("OTTO_HOME", str(tmp_path))
-    repo = _cache_repo(tmp_path)
-    cc.write_cache([repo], instructions=[], hosts=[], docker_use_cases=["integration"])
+    project = _cache_repo(tmp_path)
+    cc.write_cache([project], instructions=[], hosts=[], docker_use_cases=["integration"])
 
     cache_file = cc._cache_path()
     data = json.loads(cache_file.read_text())  # type: ignore[union-attr]
@@ -1460,4 +1464,4 @@ def test_a_non_list_docker_use_cases_entry_is_rejected(tmp_path: Path, monkeypat
     payload["docker_use_cases"] = "integration"  # a string, not a list
     cache_file.write_text(json.dumps(data))  # type: ignore[union-attr]
 
-    assert cc.read_cache([repo]) is None
+    assert cc.read_cache([project]) is None

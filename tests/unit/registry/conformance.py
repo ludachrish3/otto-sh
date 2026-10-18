@@ -74,15 +74,15 @@ def assert_raw_registry(
     ``(name, record)`` holding a ``Ref`` to a module not yet imported, which
     resolves cleanly; *wrongly_typed_lazy* one whose ``Ref`` resolves to a
     value ``check_resolved`` rejects. *require_repo* names the repo to
-    register under for a ``RequireRepo`` table.
+    register under for a ``RequireProject`` table.
     """
     with _Restored(table):
         _assert_raw_registry(table, make, invalid, lazy, wrongly_typed_lazy, require_repo)
 
 
 def _assert_raw_registry(table, make, invalid, lazy, wrongly_typed_lazy, require_repo) -> None:
-    repo = reg.registering_repo(require_repo) if require_repo else contextlib.nullcontext()
-    with repo:
+    project = reg.registering_project(require_repo) if require_repo else contextlib.nullcontext()
+    with project:
         name, first = make(1)
         assert name not in table, f"{name!r} is already registered; pick a name the case owns"
         from_module(USER, table.register, name, first)
@@ -286,12 +286,12 @@ def assert_subscription(sub: Any, *, value_a: Any, value_b: Any) -> None:
     with _Restored(sub):
         start = len(sub.items())
         token = from_module(USER, sub.subscribe, value_a)
-        with reg.registering_repo("conformance_repo"):
+        with reg.registering_project("conformance_repo"):
             from_module(USER, sub.subscribe, value_b)
         from_module(USER, sub.subscribe, value_a)
         added = sub.items()[start:]
         assert [s.value for s in added] == [value_a, value_b, value_a]
-        assert [(s.origin, s.repo) for s in added] == [
+        assert [(s.origin, s.project) for s in added] == [
             (USER, None),
             (USER, "conformance_repo"),
             (USER, None),

@@ -127,7 +127,7 @@ def _split_names(value: object) -> "list[str]":
 
     Split here as well as in the option's callback: a value read off the chain
     mid-TAB may not have been through it, and an unsplit ``"a,b"`` would name
-    no repo.
+    no project.
     """
     return [
         part.strip()
@@ -290,17 +290,17 @@ def _load_host(chain: _ChainParams) -> "tuple[Any, Any]":
     will use.
     """
     # The composition root: importing it installs the initiator that composes
-    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    # the projects this reads (spec 2026-10-11 placement-and-phases §3.12).
     from .. import bootstrap
 
     del bootstrap
-    from ..declared import get_repos
+    from ..declared import get_projects
     from ..fleet import get_host
     from ..run_context import OttoContext, _apply_option_overrides, set_context
     from ..session.lab import build_lab
 
-    repos = get_repos()
-    lab = build_lab(repos, chain.labs)
+    projects = get_projects()
+    lab = build_lab(projects, chain.labs)
     token = set_context(OttoContext(lab=lab))
     try:
         host = get_host(chain.host_id)
@@ -421,11 +421,11 @@ def _required_for(chain: _ChainParams) -> "set[str]":
     by :func:`remote_path_completer`'s catch-all into an empty completion, so
     an abort on this path is not a loud failure but a dead TAB with no
     explanation anywhere. The one refusal that does reach the catch-all is a
-    repo that failed to load: the context carries the chain's ``-I`` and
+    project that failed to load: the context carries the chain's ``-I`` and
     ``-E`` so its verdicts judge the load errors as the command would, and the
-    command itself then fails loudly through ``check_repos``.
+    command itself then fails loudly through ``check_projects``.
 
-    Every host the user NAMED joins the fleet, even when no repo declared it —
+    Every host the user NAMED joins the fleet, even when no project declared it —
     the target and the ``--hop``. ``otto host <id> --hop <id>`` is deliberately
     unscoped (explicit targeting beats scoping), and :func:`_load_host` opens a
     session to the target THROUGH the hop, so a TAB about to contact either
@@ -441,18 +441,18 @@ def _required_for(chain: _ChainParams) -> "set[str]":
     the user a dead TAB with no explanation.
     """
     # The composition root: importing it installs the initiator that composes
-    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    # the projects this reads (spec 2026-10-11 placement-and-phases §3.12).
     from .. import bootstrap
 
     del bootstrap
-    from ..declared import get_repos
+    from ..declared import get_projects
     from ..fleet import get_hosts_in_play
     from ..host.builtin_hosts import is_builtin_host
     from ..reservations.check import required_resources
     from ..run_context import OttoContext, reset_context, set_context
     from ..session.lab import build_lab
 
-    lab = build_lab(get_repos(), chain.labs)
+    lab = build_lab(get_projects(), chain.labs)
     ctx = OttoContext(
         lab=lab,
         include_projects=tuple(chain.include_projects),
@@ -487,19 +487,19 @@ def _reservation_allows(chain: _ChainParams) -> bool:
     actually gave is ever cached.
     """
     # The composition root: importing it installs the initiator that composes
-    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    # the projects this reads (spec 2026-10-11 placement-and-phases §3.12).
     from .. import bootstrap
 
     del bootstrap
     from ..config.remote_completion_cache import cached_reservation_ok, store_reservations
-    from ..declared import get_repos
+    from ..declared import get_projects
     from ..reservations.check import active_reservations
     from ..reservations.factory import build_reservation_gate
     from ..reservations.identity import resolve_username
     from ..reservations.null_backend import is_null_backend
 
-    repos = get_repos()
-    if not any(getattr(r, "reservation_settings", None) for r in repos):
+    projects = get_projects()
+    if not any(getattr(r, "reservation_settings", None) for r in projects):
         return True
 
     required = _required_for(chain)
@@ -513,7 +513,7 @@ def _reservation_allows(chain: _ChainParams) -> bool:
         return cached
 
     gate = build_reservation_gate(
-        repos,
+        projects,
         holder=chain.holder,
         skip_reservation_check=False,
         cwd_fallback=Path.cwd(),

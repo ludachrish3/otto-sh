@@ -6,7 +6,7 @@ application/CLI side: it configures the ROOT logger's handlers + formatters,
 creates each invocation's output directory, and prunes old log directories.
 
 Configuring ROOT (not the ``'otto'`` logger) is what makes capture
-zero-registration: a record from ANY logger — otto's own, a repo's product
+zero-registration: a record from ANY logger — otto's own, a project's product
 code, a suite module, a third-party library — reaches otto's three sinks by
 plain propagation, with no allowlist to keep in sync.
 
@@ -184,7 +184,7 @@ def apply_library_levels(overrides: Mapping[str, str] | None = None) -> None:
 
     *overrides* are REMEMBERED on the state, not just applied: ``install_console``
     re-applies the table on every install, and without the memory a second
-    install would quietly put a repo's ``[logging.levels]`` back to otto's
+    install would quietly put a project's ``[logging.levels]`` back to otto's
     defaults — the one knob the operator set, silently undone. ``reset()``
     forgets them again.
 
@@ -215,8 +215,8 @@ def install_console(log_level: str, *, show_time: bool = False) -> None:
     This is also where the per-library noise floor is applied
     (:func:`apply_library_levels`, spec §4): root sits at the verbose floor, so
     without it ``--log-level DEBUG`` would admit every dependency's DEBUG
-    records into the sinks. The CLI re-applies the same function once repo
-    settings are parsed, adding each repo's ``[logging.levels]`` overrides —
+    records into the sinks. The CLI re-applies the same function once project
+    settings are parsed, adding each project's ``[logging.levels]`` overrides —
     and because those overrides are remembered on the state, re-installing the
     console afterwards re-applies them rather than reverting to the defaults.
     """

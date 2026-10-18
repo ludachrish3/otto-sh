@@ -115,7 +115,7 @@ def test_every_options_class_defers_its_build():
     classes = _load_options_classes()
     assert classes, "the AST sweep found no @options classes -- it may be broken"
     assert ("otto.project.options", "InstallOptions") in classes
-    assert ("otto.examples.options", "RepoOptions") in classes
+    assert ("otto.examples.options", "ProjectOptions") in classes
     for (dotted, name), cls in classes.items():
         assert pydantic.dataclasses.is_pydantic_dataclass(cls), f"{dotted}.{name}"
         assert cls.__pydantic_config__.get("defer_build") is True, f"{dotted}.{name}"

@@ -6,19 +6,19 @@ from pydantic import ValidationError
 from otto.examples.options import (
     DeployInstructionOptions,
     DeviceTestOptions,
-    RepoOptions,
+    ProjectOptions,
 )
 
 
 def test_repo_options_defaults():
-    opts = RepoOptions()
+    opts = ProjectOptions()
     assert opts.device_type == "router"
     assert opts.lab_env == "staging"
     assert opts.retries == 3
 
 
 def test_repo_options_accepts_overrides():
-    opts = RepoOptions(device_type="switch", lab_env="production", retries=5)
+    opts = ProjectOptions(device_type="switch", lab_env="production", retries=5)
     assert opts.device_type == "switch"
     assert opts.lab_env == "production"
     assert opts.retries == 5
@@ -29,7 +29,7 @@ def test_retries_constraint_rejects_negative():
     with pytest.raises(
         ValidationError, match=r"(?m)^retries\n\s+Input should be greater than or equal to 0"
     ):
-        RepoOptions(retries=-1)
+        ProjectOptions(retries=-1)
 
 
 def test_device_test_options_carries_only_its_own_field():
@@ -37,7 +37,7 @@ def test_device_test_options_carries_only_its_own_field():
     opts = DeviceTestOptions()
     assert opts.firmware == "latest"
     assert DeviceTestOptions(firmware="2.1").firmware == "2.1"
-    assert not isinstance(opts, RepoOptions)
+    assert not isinstance(opts, ProjectOptions)
 
 
 def test_device_test_options_check_interfaces_is_an_on_by_default_bool():

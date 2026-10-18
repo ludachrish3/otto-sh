@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 import tomli
 
-from otto.config.repo import Repo, compile_settings, validate_settings
+from otto.config.project import Project, compile_settings, validate_settings
 from otto.host.os_profile import OS_PROFILES
 from tests._fixtures.sutrepo import make_sut_repo
 
@@ -32,9 +32,9 @@ def test_a_typo_in_an_os_profile_default_is_checked_after_init(tmp_path: Path) -
     _write(tmp_path, '[os_profiles.acme-os]\nbase = "unix"\nosTyp = "unix"\n')
     assert validate_settings(tmp_path) == []
     with pytest.raises(
-        ValueError, match=r"\[os_profiles\.acme-os\] in repo .*unknown default field"
+        ValueError, match=r"\[os_profiles\.acme-os\] in project .*unknown default field"
     ):
-        check_data_profiles([Repo(sut_dir=tmp_path)])
+        check_data_profiles([Project(root=tmp_path)])
 
 
 def test_validating_registers_no_os_profile(tmp_path: Path) -> None:
@@ -114,7 +114,7 @@ def test_compile_settings_matches_what_the_loader_assigns(
     compiled = compile_settings(
         tomli.loads((tmp_path / ".otto" / "settings.toml").read_text()), tmp_path
     )
-    repo = Repo(sut_dir=tmp_path)
+    project = Project(root=tmp_path)
     for field in (
         "name",
         "version",
@@ -130,11 +130,11 @@ def test_compile_settings_matches_what_the_loader_assigns(
         "declared_products",
         "declared_dev_tools",
     ):
-        assert getattr(compiled, field) == getattr(repo, field), field
-    assert [s.label for s in compiled.lab_sources] == [s.label for s in repo.lab_sources]
+        assert getattr(compiled, field) == getattr(project, field), field
+    assert [s.label for s in compiled.lab_sources] == [s.label for s in project.lab_sources]
     assert compiled.project_scope is not None
-    assert repo.project_scope is not None
-    assert set(compiled.os_profiles) == set(repo.os_profiles) == {"acme-os-parity"}
+    assert project.project_scope is not None
+    assert set(compiled.os_profiles) == set(project.os_profiles) == {"acme-os-parity"}
 
 
 def test_the_loader_reads_settings_as_utf8_under_an_ascii_locale(tmp_path: Path) -> None:
@@ -152,12 +152,12 @@ def test_the_loader_reads_settings_as_utf8_under_an_ascii_locale(tmp_path: Path)
         'name = "café"\nversion = "1.0.0"\n', encoding="utf-8"
     )
     script = (
-        "import sys; from pathlib import Path; from otto.config.repo import Repo; "
-        "print(Repo(sut_dir=Path(sys.argv[1])).name.encode('utf-8').hex())"
+        "import sys; from pathlib import Path; from otto.config.project import Project; "
+        "print(Project(root=Path(sys.argv[1])).name.encode('utf-8').hex())"
     )
     out = subprocess.run(
         [sys.executable, "-c", script, str(tmp_path)],
-        env={**os.environ, "LC_ALL": "C", "PYTHONUTF8": "0", "OTTO_SUT_DIRS": ""},
+        env={**os.environ, "LC_ALL": "C", "PYTHONUTF8": "0", "OTTOPATH": ""},
         capture_output=True,
         text=True,
         check=True,

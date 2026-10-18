@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from otto.config.repo import find_init_module
+from otto.config.project import find_init_module
 
 
 def _lib(tmp_path: Path) -> Path:

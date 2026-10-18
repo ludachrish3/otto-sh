@@ -61,7 +61,7 @@ def _run_on_host(host_id: str, command: str, xdir: Path) -> subprocess.Completed
     return run_otto(
         ["host", host_id, "exec", command],
         xdir=xdir,
-        sut_dirs=REPO1,
+        roots=REPO1,
         lab=_LAB,
         extra_argv_prefix=["-R"],
         timeout=180,
@@ -130,8 +130,8 @@ def test_remote_completion_lists_live_host(monkeypatch, tmp_path: Path, unix_hos
     """
     from otto.cli.remote_completion import remote_path_completer
 
-    monkeypatch.setenv("OTTO_SUT_DIRS", str(REPO1))
-    # The sidecar cache lives in the WORKSPACE HOME now, keyed by OTTO_SUT_DIRS
+    monkeypatch.setenv("OTTOPATH", str(REPO1))
+    # The sidecar cache lives in the WORKSPACE HOME now, keyed by OTTOPATH
     # -- pinning OTTO_XDIR no longer relocates it, and without OTTO_HOME this
     # test would read and write the developer's real ~/.otto.
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "otto-home"))
@@ -276,8 +276,8 @@ def test_completion_without_reservation_is_empty(monkeypatch, tmp_path: Path) ->
     import otto.cli.remote_completion as rc
     from otto.reservations.identity import resolve_username
 
-    repo = _reservation_repo(tmp_path / "repo", holder=f"someone-else-{uuid.uuid4().hex[:8]}")
-    monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
+    project = _reservation_repo(tmp_path / "repo", holder=f"someone-else-{uuid.uuid4().hex[:8]}")
+    monkeypatch.setenv("OTTOPATH", str(project))
 
     touched: list[str] = []
 
@@ -296,7 +296,7 @@ def test_completion_without_reservation_is_empty(monkeypatch, tmp_path: Path) ->
     )
 
     # --- control: the same fixture, booked to the effective user, gets past the gate ---
-    _write_reservations(repo, resolve_username(None).username)
+    _write_reservations(project, resolve_username(None).username)
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home_allowed"))  # fresh cache
     assert rc.remote_path_completer(_ctx("test1"), "/tmp/") == []  # _load_host raises
     assert touched == ["test1"], (

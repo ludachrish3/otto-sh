@@ -283,7 +283,7 @@ def test_back_forward_with_focus_pinned_history_not_trapped(page: Page, report_d
     """Entry A: #/runs, unfocused (this initial ``page.goto`` navigation).
     Entry B: #/runs?ctx=nightly-full (a real click on "Focus this
     context" — a user action, must push). Entry C: #/coverage (a real
-    click on the breadcrumb's project-name link — genuine in-app
+    click on the breadcrumb's report_title link — genuine in-app
     navigation, must push; focus.tsx's own re-append then corrects it
     in place to carry ``?ctx=`` too, still entry C).
 

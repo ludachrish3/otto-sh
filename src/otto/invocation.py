@@ -1,7 +1,7 @@
 """What this run does and who installed it: the active run, its policy, resolver and bindings.
 
 A leaf. It imports no otto module at runtime (its annotations name otto
-types, hosts, the lab and repos, under ``TYPE_CHECKING`` only), so the host
+types, hosts, the lab and projects, under ``TYPE_CHECKING`` only), so the host
 layer reads the run's policy and resolves a peer host through it without
 importing :mod:`otto.context`.
 :class:`otto.context.OttoContext` composes these; the public names are
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
-    from .config.repo import Repo
+    from .config.project import Project
     from .host.host import Host
     from .labs.loader import Lab
 
@@ -204,13 +204,13 @@ class ActiveRun(Protocol):
         ...
 
     @property
-    def repos(self) -> "list[Repo]":
-        """Every repo the run parsed, a fresh list on every read."""
+    def projects(self) -> "list[Project]":
+        """Every project the run parsed, a fresh list on every read."""
         ...
 
     @property
-    def ordered_repos(self) -> "list[Repo]":
-        """The repos a fleet-wide walk visits, in dependency order."""
+    def ordered_projects(self) -> "list[Project]":
+        """The projects a fleet-wide walk visits, in dependency order."""
         ...
 
     def admissible_ids(

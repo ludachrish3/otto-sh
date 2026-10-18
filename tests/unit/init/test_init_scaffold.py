@@ -16,7 +16,7 @@ from otto.init import (
     InitConfig,
     InitInputError,
     ScaffoldReport,
-    check_repo,
+    check_project,
     detect_areas,
     scaffold,
     scaffold_candidates,
@@ -163,8 +163,8 @@ def test_tests_scaffold_is_plain_pytest(tmp_path: Path) -> None:
     _scaffold(tmp_path, "tests")
     src = (tmp_path / "tests" / "test_example.py").read_text()
     assert "class TestExample:" in src
-    assert "ctx.options(RepoOptions)" in src
-    assert "from widget_instructions import RepoOptions" in src
+    assert "ctx.options(ProjectOptions)" in src
+    assert "from widget_instructions import ProjectOptions" in src
     assert "logger = logging.getLogger(__name__)" in src
     assert '@pytest.fixture(scope="class", autouse=True)\n    @classmethod' in src
     assert "def test_example_function" in src
@@ -209,7 +209,7 @@ def test_detect_flips_after_scaffold(tmp_path: Path, area: str) -> None:
 
 
 def test_the_tests_scaffold_writes_no_options_module(tmp_path: Path) -> None:
-    """The example tests import ``RepoOptions`` from the init module; no other module holds it."""
+    """The example tests import ``ProjectOptions`` from the init module; no other module has it."""
     _scaffold(tmp_path, "settings")
     created = _paths(_scaffold(tmp_path, "tests"))
     assert created == [tmp_path / "tests" / "test_example.py", tmp_path / "tests" / "conftest.py"]
@@ -217,17 +217,17 @@ def test_the_tests_scaffold_writes_no_options_module(tmp_path: Path) -> None:
 
 
 def test_the_init_module_declares_and_registers_repo_options(tmp_path: Path) -> None:
-    """``RepoOptions`` is declared in the init module, registered by its own decorator."""
+    """``ProjectOptions`` is declared in the init module, registered by its own decorator."""
     created = _paths(_scaffold(tmp_path, "instructions"))
     init_file = tmp_path / "pylib" / "widget_instructions" / "__init__.py"
     assert [p for p in created if p.is_relative_to(tmp_path / "pylib")] == [init_file]
     assert not (tmp_path / "pylib" / "widget_options.py").exists()
     src = init_file.read_text()
-    assert '@otto.options(verbs=["run", "test"])\nclass RepoOptions:' in src
+    assert '@otto.options(verbs=["run", "test"])\nclass ProjectOptions:' in src
     assert "register_options" not in src
     assert "hello from widget" in src
     # The instruction receives the class by injection rather than inheriting it.
-    assert "@instruction()\nasync def smoke(\n    opts: RepoOptions," in src
+    assert "@instruction()\nasync def smoke(\n    opts: ProjectOptions," in src
     # The decorator rejects a sync handler, so scaffolding one would make
     # `otto init` emit a repo that cannot import.
     assert "async def smoke" in src
@@ -236,7 +236,7 @@ def test_the_init_module_declares_and_registers_repo_options(tmp_path: Path) -> 
 def test_importing_the_init_module_registers_repo_options_for_both_verbs(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """Importing the scaffolded init module is what registers ``RepoOptions``.
+    """Importing the scaffolded init module is what registers ``ProjectOptions``.
 
     The root conftest's registry isolation drops the registration (and the
     ``smoke`` instruction) when the test ends.
@@ -254,8 +254,8 @@ def test_importing_the_init_module_registers_repo_options_for_both_verbs(
     module = importlib.util.module_from_spec(spec)
     monkeypatch.setitem(sys.modules, "widget_instructions", module)
     spec.loader.exec_module(module)
-    assert verbs_for(module.RepoOptions) == ["run", "test"]
-    assert module.RepoOptions().message == "hello from widget"
+    assert verbs_for(module.ProjectOptions) == ["run", "test"]
+    assert module.ProjectOptions().message == "hello from widget"
 
 
 def test_module_names_are_sanitized_identifiers(tmp_path: Path) -> None:
@@ -328,7 +328,7 @@ def test_snippets_file_is_not_a_validated_artifact(tmp_path: Path) -> None:
     """The doctor must not fail a repo over an editor convenience file."""
     _scaffold(tmp_path, "schemas")
     (tmp_path / ".vscode" / "otto.code-snippets").write_text("{not json")
-    assert check_repo(tmp_path).verdict("schemas").state == "ok"
+    assert check_project(tmp_path).verdict("schemas").state == "ok"
 
 
 def test_existing_vscode_settings_left_byte_for_byte_untouched(tmp_path: Path) -> None:
@@ -344,13 +344,13 @@ def test_existing_vscode_settings_left_byte_for_byte_untouched(tmp_path: Path) -
 
 def _anchoring_repo(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
     """A SUT repo whose path lists mix relative, ``~``-rooted and absolute entries."""
-    repo = tmp_path / "repo"
-    repo.mkdir()
+    project = tmp_path / "repo"
+    project.mkdir()
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     make_sut_repo(
-        repo,
+        project,
         name="test",
         tests=["tests"],
         # [[lab.sources]] is a table-array header: every top-level key must
@@ -363,21 +363,21 @@ def _anchoring_repo(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
             'paths = ["lab_data", "~/custom_labs", "/abs/global.json"]\n'
         ),
     )
-    return repo, home
+    return project, home
 
 
 def test_settings_paths_anchors_relative_and_tilde_paths(tmp_path: Path, monkeypatch) -> None:
     """settings_paths anchors bare relative paths to root and expands ~ to home."""
     from otto.init.settings_file import settings_paths
 
-    repo, _home = _anchoring_repo(tmp_path, monkeypatch)
+    project, _home = _anchoring_repo(tmp_path, monkeypatch)
 
-    paths = settings_paths(repo)
+    paths = settings_paths(project)
     assert paths is not None
 
     # Bare relative paths should anchor to repo root
-    assert paths["tests"][0] == repo / "tests"
-    assert paths["libs"][0] == repo / "pylib"
+    assert paths["tests"][0] == project / "tests"
+    assert paths["libs"][0] == project / "pylib"
     # Host data is NOT one of these lists — it is read through lab_files.
     assert set(paths) == {"tests", "libs"}
 
@@ -395,14 +395,14 @@ def test_lab_files_anchor_relative_expand_tilde_and_pass_absolutes_through(
     """
     from otto.init.areas import lab_files
 
-    repo = tmp_path / "repo"
-    repo.mkdir()
+    project = tmp_path / "repo"
+    project.mkdir()
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     absolute = tmp_path / "elsewhere" / "global.json"
     make_sut_repo(
-        repo,
+        project,
         name="test",
         tests=["tests"],
         extra=(
@@ -413,12 +413,16 @@ def test_lab_files_anchor_relative_expand_tilde_and_pass_absolutes_through(
             f'paths = ["lab_data", "~/custom_labs", "{absolute}"]\n'
         ),
     )
-    for lab_file in (repo / "lab_data" / "lab.json", home / "custom_labs" / "lab.json", absolute):
+    for lab_file in (
+        project / "lab_data" / "lab.json",
+        home / "custom_labs" / "lab.json",
+        absolute,
+    ):
         lab_file.parent.mkdir(parents=True, exist_ok=True)
         lab_file.write_text("{}")
 
-    assert lab_files(repo) == [
-        repo / "lab_data" / "lab.json",  # relative -> anchored to the repo root
+    assert lab_files(project) == [
+        project / "lab_data" / "lab.json",  # relative -> anchored to the repo root
         home / "custom_labs" / "lab.json",  # ~ -> home, never the repo
         absolute,  # absolute .json entry IS the lab file
     ]
@@ -435,12 +439,12 @@ def test_lab_files_empty_when_settings_declare_no_lab_table(tmp_path: Path) -> N
     """Settings that declare no [lab] declare no host data — no conventional guess."""
     from otto.init.areas import lab_files
 
-    repo = tmp_path / "repo"
-    make_sut_repo(repo, name="test", tests=["tests"])
-    (repo / "lab_data").mkdir()
-    (repo / "lab_data" / "lab.json").write_text("{}")
+    project = tmp_path / "repo"
+    make_sut_repo(project, name="test", tests=["tests"])
+    (project / "lab_data").mkdir()
+    (project / "lab_data" / "lab.json").write_text("{}")
 
-    assert lab_files(repo) == []
+    assert lab_files(project) == []
 
 
 def test_area_order_ends_with_the_opt_in_kmodcov_area() -> None:
@@ -574,7 +578,7 @@ def test_all_does_not_offer_instructions_when_no_init_is_declared(
 ) -> None:
     make_sut_repo(tmp_path, name="widget", tests=["tests"], extra=init_line)
     assert "instructions" not in scaffold_candidates(tmp_path, all_areas=True)
-    assert check_repo(tmp_path).verdict("instructions").state == "absent"
+    assert check_project(tmp_path).verdict("instructions").state == "absent"
 
 
 def test_a_fresh_repo_offers_instructions(tmp_path: Path) -> None:
@@ -613,7 +617,7 @@ def test_a_declared_unresolved_init_scaffolds_that_module_under_the_first_lib(
     )
     report = _scaffold(tmp_path, "instructions")
     assert (tmp_path / "src" / "acme" / "__init__.py").is_file()
-    assert "RepoOptions" in (tmp_path / "src" / "acme" / "hooks" / "__init__.py").read_text()
+    assert "ProjectOptions" in (tmp_path / "src" / "acme" / "hooks" / "__init__.py").read_text()
     assert not (tmp_path / "pylib" / "widget_instructions").exists()
     assert not any("init = [" in n for n in report.notices)
 
@@ -621,12 +625,12 @@ def test_a_declared_unresolved_init_scaffolds_that_module_under_the_first_lib(
 def test_a_declared_init_that_is_no_module_name_is_never_written_as_a_path(tmp_path: Path) -> None:
     """An ``init`` entry is a module name, never a path: joined as one it could leave the repo."""
     outside = tmp_path / "outside"
-    repo = tmp_path / "repo"
-    make_sut_repo(repo, name="widget", extra=f'libs = ["pylib"]\ninit = ["{outside}"]')
-    report = _scaffold(repo, "instructions")
+    project = tmp_path / "repo"
+    make_sut_repo(project, name="widget", extra=f'libs = ["pylib"]\ninit = ["{outside}"]')
+    report = _scaffold(project, "instructions")
     assert not outside.exists()
-    assert all(w.path.is_relative_to(repo) for w in report.writes)
-    assert (repo / "pylib" / "widget_instructions" / "__init__.py").is_file()
+    assert all(w.path.is_relative_to(project) for w in report.writes)
+    assert (project / "pylib" / "widget_instructions" / "__init__.py").is_file()
 
 
 def test_settings_is_a_prerequisite_of_every_area(tmp_path: Path) -> None:
@@ -641,7 +645,7 @@ def test_writing_settings_pulls_in_the_init_module_it_declares(tmp_path: Path) -
     assert scaffold_prerequisites(tmp_path, ["settings"]) == ["instructions"]
     _scaffold(tmp_path, "lab")
     assert (tmp_path / "pylib" / "widget_instructions" / "__init__.py").is_file()
-    assert check_repo(tmp_path).ok
+    assert check_project(tmp_path).ok
 
 
 def test_existing_settings_pull_in_nothing_for_a_lab(tmp_path: Path) -> None:
@@ -653,8 +657,8 @@ def test_the_repo_marker_notice_names_a_settings_prerequisite_only(tmp_path: Pat
     pulled, asked = tmp_path / "pulled", tmp_path / "asked"
     pulled.mkdir()
     asked.mkdir()
-    assert any("repo marker" in n for n in _scaffold(pulled, "lab").notices)
-    assert not any("repo marker" in n for n in _scaffold(asked, "settings", "lab").notices)
+    assert any("project marker" in n for n in _scaffold(pulled, "lab").notices)
+    assert not any("project marker" in n for n in _scaffold(asked, "settings", "lab").notices)
 
 
 def test_an_unknown_area_is_refused_naming_areas(tmp_path: Path) -> None:
@@ -683,7 +687,7 @@ def test_an_orphan_schema_is_pruned_and_reported(tmp_path: Path) -> None:
     orphan.write_text("{}")
     report = _scaffold(tmp_path, "schemas")
     assert FileWrite(orphan, "pruned") in report.writes
-    assert check_repo(tmp_path).verdict("schemas").state == "ok"
+    assert check_project(tmp_path).verdict("schemas").state == "ok"
 
 
 def test_the_existing_vscode_settings_notice(tmp_path: Path) -> None:
@@ -697,7 +701,7 @@ def test_scaffolding_instructions_beside_a_resolving_init_module_writes_nothing(
     tmp_path: Path,
 ) -> None:
     """A direct request must not shadow the user's single-file module with a package."""
-    from otto.config.repo import find_init_module
+    from otto.config.project import find_init_module
 
     make_sut_repo(
         tmp_path,
@@ -725,7 +729,7 @@ def test_the_undeclared_init_module_goes_under_the_declared_libs(tmp_path: Path)
     settings = tmp_path / ".otto" / "settings.toml"
     with settings.open("a") as f:  # sutrepo-exempt: following the scaffold's notice
         f.write('init = ["widget_instructions"]\n')
-    assert check_repo(tmp_path).verdict("instructions").state == "ok"
+    assert check_project(tmp_path).verdict("instructions").state == "ok"
 
 
 def test_with_no_libs_the_notice_also_names_the_libs_line(tmp_path: Path) -> None:
@@ -738,7 +742,7 @@ def test_with_no_libs_the_notice_also_names_the_libs_line(tmp_path: Path) -> Non
     settings = tmp_path / ".otto" / "settings.toml"
     with settings.open("a") as f:  # sutrepo-exempt: following the scaffold's notice
         f.write('init = ["widget_instructions"]\nlibs = ["pylib"]\n')
-    assert check_repo(tmp_path).verdict("instructions").state == "ok"
+    assert check_project(tmp_path).verdict("instructions").state == "ok"
 
 
 def test_the_example_tests_never_import_from_an_init_entry_that_is_no_module_name(
@@ -747,7 +751,7 @@ def test_the_example_tests_never_import_from_an_init_entry_that_is_no_module_nam
     make_sut_repo(tmp_path, name="widget", extra='libs = ["pylib"]\ninit = ["bad-name"]')
     _scaffold(tmp_path, "tests")
     src = (tmp_path / "tests" / "test_example.py").read_text()
-    assert "from widget_instructions import RepoOptions" in src
+    assert "from widget_instructions import ProjectOptions" in src
     assert "bad-name" not in src
 
 

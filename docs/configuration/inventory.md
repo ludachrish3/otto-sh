@@ -8,7 +8,7 @@ it sits in the building. A host entry that says `"inventory": "<key>"` gets
 that second half from the inventory backend you configure, and keeps everything
 otto-specific in the lab file.
 
-This is for a lab that wants its otto configuration in the repo, reviewed with
+This is for a lab that wants its otto configuration in the project, reviewed with
 the code, while the machine facts are owned **once**, outside it — by a JSON
 file the lab team maintains, or by a NetBox instance that already exists. None
 of it is required: a host entry that carries its own `ip` and `creds` works
@@ -200,7 +200,7 @@ The creds store is declared the same way, in the same two files, and resolves
 independently — a project may override `[inventory]` alone and inherit the
 user file's `[creds]`, or the reverse. `backend` is otto's; the `json` store
 takes `path` (required) and nothing else; a third-party store takes whatever
-its config model declares. When more than one active repo declares `[creds]`,
+its config model declares. When more than one active project declares `[creds]`,
 the tables must parse to the same configuration (defaults filled in, paths
 anchored), exactly as for `[inventory]`.
 
@@ -213,7 +213,7 @@ need no change.
 
 First hit wins:
 
-1. `[inventory]` in an **active repo's** `.otto/settings.toml` — the
+1. `[inventory]` in an **active project's** `.otto/settings.toml` — the
    per-project override.
 2. `[inventory]` in `~/.otto/settings.toml`.
 3. Nothing. Inline hosts work as always; a referenced entry fails with an
@@ -223,23 +223,23 @@ There is no implicit discovery: an inventory is always declared, in one of
 exactly two files, and a process has exactly one. An empty `[inventory]` table
 declares nothing and falls through to the user file.
 
-When more than one active repo declares `[inventory]`, the tables must be
+When more than one active project declares `[inventory]`, the tables must be
 **identical** — same backend, the same parsed configuration (defaults
 filled in, paths anchored), **and** the same `cache_ttl`; the `[creds]`
 tables are compared among themselves the same way. Otherwise bootstrap fails
 naming both settings files.
 
 ```{note}
-The doctor (`otto init`) validates **this** repo's declaration against the user
-file; it never sees the other repos in your workspace. A disagreement between
-two repos is a bootstrap error — you meet it the first time you run otto with
+The doctor (`otto init`) validates **this** project's declaration against the user
+file; it never sees the other projects in your workspace. A disagreement between
+two projects is a bootstrap error — you meet it the first time you run otto with
 both of them active, not when you run the doctor in one.
 ```
 
 ### Paths
 
 A relative `path` (under `[inventory]` or `[creds]`) anchors to the directory
-of the settings file that declared it: the **repo root** for a project override
+of the settings file that declared it: the **project root** for a project override
 (the directory holding `.otto/`), `~/.otto` for the user file. `~` expands,
 absolute paths are used as written — the rule every otto settings path follows.
 See [Path resolution](settings.md#path-resolution).
@@ -248,15 +248,15 @@ See [Path resolution](settings.md#path-resolution).
 
 `otto init` writes live `[inventory]` and `[creds]` tables into a new
 `.otto/settings.toml`, pointing at `lab_data/inventory.json` and
-`lab_data/creds.json`, with `supplies = ["ip"]` — so a new repo starts in the
+`lab_data/creds.json`, with `supplies = ["ip"]` — so a new project starts in the
 three-file shape and grows `supplies` as the inventory takes over more
 fields. The user-level file is still where a shared inventory lives: delete
-the project tables once one exists, or keep them as this repo's override.
-Two active repos that both keep their scaffolded tables fail bootstrap,
+the project tables once one exists, or keep them as this project's override.
+Two active projects that both keep their scaffolded tables fail bootstrap,
 naming both files: tables compare by their parsed configuration, paths
-**anchored**, and each repo's own `lab_data/inventory.json` anchors to its own
+**anchored**, and each project's own `lab_data/inventory.json` anchors to its own
 root, so the paths never match. Move the tables to `~/.otto/settings.toml`, or
-delete one repo's.
+delete one project's.
 
 ## The json backend
 
@@ -387,7 +387,7 @@ OpenSSL's own overrides and `curl`, `git` and otto all honour them — on
 macOS and Windows the platform store is the only source, so the CA must be
 installed there.
 
-The token is read at the **first fetch**, not at construction. A repo that
+The token is read at the **first fetch**, not at construction. A project that
 declares a netbox table can therefore still run every verb that does not need
 the inventory — and a lab with no referenced entry never talks to NetBox at
 all.
@@ -464,7 +464,7 @@ returns a string opts out ({doc}`../cookbook/extending/inventory-backends`).
   `OTTO_HOME` says otherwise. One snapshot per distinct inventory
   configuration — the backend's parsed table, defaults filled in, plus
   `cache_ttl` — named for a hash of it, written whole-or-not-at-all at mode
-  `0600` with a small meta file beside it. Two repos whose tables parse to the
+  `0600` with a small meta file beside it. Two projects whose tables parse to the
   same configuration share one snapshot. `otto inventory refresh` prints the
   snapshot's full path, which saves you guessing the hash.
 - **Fresh.** A snapshot younger than the TTL is served **without contacting the
@@ -564,10 +564,10 @@ file-backed one does, and no TAB keystroke depends on the inventory service
 being reachable.
 
 Completion resolves the inventory **once per process**, the way commands do:
-the repos on `OTTO_SUT_DIRS` that agree on a declaration, else the user file
-([Resolution order](#resolution-order)). A repo that only *references* keys
-therefore completes against an inventory another repo — or the user file —
-declares, and a broken declaration empties completion for every repo, not just
+the projects on `OTTOPATH` that agree on a declaration, else the user file
+([Resolution order](#resolution-order)). A project that only *references* keys
+therefore completes against an inventory another project — or the user file —
+declares, and a broken declaration empties completion for every project, not just
 the one carrying it, until it is fixed. An entry completion could not build is
 skipped silently, never warned about, so when a host does not come up, ask
 [`otto cache info`](../cli/cache/index.md#info): its closing block shows the

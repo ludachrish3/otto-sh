@@ -223,7 +223,7 @@ async def collect_embedded_coverage(
     Args:
         staging_root: Directory under which per-host, per-product ``.gcda`` is
             staged (see :func:`otto.layout.cov_product_dir_in`).
-        pattern: Optional compiled regex (the repo-declared ``[coverage].hosts``
+        pattern: Optional compiled regex (the project-declared ``[coverage].hosts``
             selector) matched against each host's id; ``None`` collects from
             every embedded host in the lab.
 

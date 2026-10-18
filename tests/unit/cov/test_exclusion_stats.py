@@ -58,11 +58,11 @@ def test_file_percentage_moves(tmp_path: Path) -> None:
 def test_index_payload_totals_move(tmp_path: Path) -> None:
     """The tree rollup the SPA reads must shrink too, not just the record."""
     unfiltered, _ = _build(tmp_path)
-    before = build_index_payload(unfiltered, project_name="P", prefix=tmp_path, stamp="S")
+    before = build_index_payload(unfiltered, report_title="P", prefix=tmp_path, stamp="S")
 
     filtered, _ = _build(tmp_path)
     apply_exclusions(filtered, [_rule()], tmp_path)
-    after = build_index_payload(filtered, project_name="P", prefix=tmp_path, stamp="S")
+    after = build_index_payload(filtered, report_title="P", prefix=tmp_path, stamp="S")
 
     assert before["total_lines"] == 5
     assert after["total_lines"] == 3
@@ -74,7 +74,7 @@ def test_excluded_flag_still_reports_the_count(tmp_path: Path) -> None:
     """Deleting the records must not cost the per-file 'N excl' pill."""
     filtered, _ = _build(tmp_path)
     apply_exclusions(filtered, [_rule()], tmp_path)
-    payload = build_index_payload(filtered, project_name="P", prefix=tmp_path, stamp="S")
+    payload = build_index_payload(filtered, report_title="P", prefix=tmp_path, stamp="S")
     # Lines 3, 4, 5. The #endif on line 6 is the arm TERMINATOR and is
     # deliberately not excluded (Task 3: the opening directive is greyed,
     # the terminator is not, so a following #else stays uncoloured).
@@ -99,7 +99,7 @@ async def test_excluded_lines_never_reach_ticket_attribution(tmp_path, monkeypat
 
     seen: dict[str, set[int]] = {}
 
-    def fake_annotate(self, store, repo_root):
+    def fake_annotate(self, store, project_root):
         for record in store.files():
             seen[record.path.name] = set(record.lines)
         # Falls off the end returning None, which is the real
@@ -107,7 +107,7 @@ async def test_excluded_lines_never_reach_ticket_attribution(tmp_path, monkeypat
         # _apply_overrides, so the double has to reproduce it.
 
     class FakeRenderer:
-        def __init__(self, output_dir, *, project_name="Coverage Report", prefix=None):
+        def __init__(self, output_dir, *, report_title="Coverage Report", prefix=None):
             pass
 
         def render(self, store):
@@ -121,7 +121,7 @@ async def test_excluded_lines_never_reach_ticket_attribution(tmp_path, monkeypat
         source_root=tmp_path,
         output_dir=tmp_path / "out",
         tiers=[("unit", info)],
-        collection=CollectionInputs(repo_root=tmp_path, exclusion_rules=[_rule()]),
+        collection=CollectionInputs(project_root=tmp_path, exclusion_rules=[_rule()]),
     )
     await reporter.run()
 

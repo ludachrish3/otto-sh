@@ -67,7 +67,7 @@ supplies it. A direct `.register()` credits the module that called it. Every
 `register_*` wrapper and registering decorator is a transparent boundary, so
 an entry registered through one is credited to the module that called the
 wrapper. A helper of your own that wraps a wrapper is credited as the
-registrant. The repo comes from the init import that is running.
+registrant. The project comes from the init import that is running.
 
 **Revision.** Every change to what a table holds (a register, an unregister,
 a subscribe, a token's cancel, a test restore) bumps its `revision`, and a
@@ -77,9 +77,9 @@ without a bump: it changes no observable entry.
 
 **Capabilities.** A registry follows every rule above unless it declares a
 deviation, at its definition, with its reason:
-`capabilities=[Justified(RequireRepo(), reason="...")]`. The set is closed;
-its one member, {class}`~otto.registry.RequireRepo`, refuses a registration
-made outside a repo's init import. Each declaration is also listed in a
+`capabilities=[Justified(RequireProject(), reason="...")]`. The set is closed;
+its one member, {class}`~otto.registry.RequireProject`, refuses a registration
+made outside a project's init import. Each declaration is also listed in a
 shrink-only approved list in the tests (`tests/unit/registry/approved_capabilities.py`),
 which fails on any difference from the live declarations. Whether a
 declaration is justified is review's call ([What remains
@@ -92,7 +92,7 @@ fails when constructed). A seam's own rules live in its record type and its
 
 **Views.** A {class}`~otto.registry.RegistryView` has no `register` or
 `unregister`. Its entries are derived from its source tables, each with the
-origin and repo the derivation gives it, and the derivation is cached until a
+origin and project the derivation gives it, and the derivation is cached until a
 source's `revision` moves; the view's own `revision` moves with it. A rule
 that spans the sources lives in their `validate` hooks, which read the other
 source and refuse a registration the view could not derive, so a view never
@@ -107,13 +107,13 @@ command, derived from `PROJECT_INSTRUCTIONS` (itself a view over
 | --- | --- | --- | --- |
 | `CLI_COMMANDS` | top-level CLI command | {func}`otto.cli.registry.register_cli_command` / {func}`~otto.cli.registry.cli_command` | the fourteen first-party verbs (`run`, `test`, `host`, …) |
 | `STANDALONE_INSTRUCTIONS` | `otto run` subcommand on a plain function | {func}`~otto.instructions.instruction` | — |
-| `PROJECT_ACTIONS` | a repo's `ProjectActions` subclass and the bodies it declares, keyed by the repo (only from that repo's init import) | `otto.project.actions.register_project_actions` | — |
+| `PROJECT_ACTIONS` | a project's `ProjectActions` subclass and the bodies it declares, keyed by the project (only from that project's init import) | `otto.project.actions.register_project_actions` | — |
 | `FIRST_PARTY_ACTIONS` | otto's own `ProjectActions` class and its six bodies, one row keyed `otto`: a slot the instruction tables read and never import | only `otto.project.actions`, when it is imported and from its `declare()` | `otto` |
 | `PROJECT_INSTRUCTIONS` (view) | project instruction (a `ProjectActions` method), derived from `FIRST_PARTY_ACTIONS` and `PROJECT_ACTIONS` | {func}`~otto.instructions.instruction` on a `ProjectActions` method | `install`, `uninstall`, `status`, `cleanup`, `get-logs`, `install-tools` |
 | `INSTRUCTIONS` (view) | `otto run` subcommand, derived from `PROJECT_INSTRUCTIONS` and `STANDALONE_INSTRUCTIONS` | — | the six project instructions |
 | `OPTIONS` | options class, with the verbs (`run`, `test`) whose flags it joins | {func}`otto.params.register_options` / `@options(verbs=[...])` | — |
 | `HOST_CLASSES` | host class | `otto.host.os_profile.register_host_class` | `unix`, `embedded`, `zephyr` |
-| `OS_PROFILES` | `os_type` profile registered by code (a repo's `[os_profiles]` tables and the host classes' own profiles are separate layers) | `otto.host.os_profile.register_os_profile` | — |
+| `OS_PROFILES` | `os_type` profile registered by code (a project's `[os_profiles]` tables and the host classes' own profiles are separate layers) | `otto.host.os_profile.register_os_profile` | — |
 | `LOGIN_PROXIES` | login proxy | `otto.host.login_proxy.register_login_proxy` | `su` |
 | `TERM_BACKENDS` | term (connection) backend | `otto.host.connections.register_term_backend` | `ssh`, `telnet`, `console` |
 | `TRANSFER_BACKENDS` | transfer backend | `otto.host.transfer.register_transfer_backend` | `sftp`, `scp`, `ftp`, `nc`, `shell`, `console`, `tftp` |
@@ -130,7 +130,7 @@ command, derived from `PROJECT_INSTRUCTIONS` (itself a view over
 | `CREDS_BACKENDS` | creds store | `otto.creds.register_creds_backend` | `json` |
 | `IMPAIRERS` | link impairer | `otto.link.register_impairer` | `netem` |
 | `CARRIERS` | tunnel carrier | `otto.tunnel.register_carrier` | `socat` |
-| `COMPOSE_ADAPTERS` | a repo's compose adapter, per use case | `otto.docker.register_compose_adapter` | — |
+| `COMPOSE_ADAPTERS` | a project's compose adapter, per use case | `otto.docker.register_compose_adapter` | — |
 | `HOST_PARSERS` | monitor parser set, per host id | `otto.monitor.parsers.register_host_parsers` | — (a host with no entry uses the default `/proc` parsers) |
 | `HOST_PATTERN_PARSERS` | monitor parser set, per host-id pattern | `otto.monitor.parsers.register_host_parsers` with a compiled pattern | — |
 | `PROJECT_PARSERS` | project-level monitor parser | `otto.monitor.parsers.register_parsers` | — |
@@ -140,7 +140,7 @@ command, derived from `PROJECT_INSTRUCTIONS` (itself a view over
 
 The two provider seams are subscriptions, not named registries: every
 subscribed provider runs for every lab-ingested host, in subscription order,
-and each keeps the repo that registered it; see {doc}`hosts`.
+and each keeps the project that registered it; see {doc}`hosts`.
 
 ## References
 
@@ -230,7 +230,7 @@ Built-ins whose value is built beside the registry itself — the `su` login pro
 registered as values: there is no implementation module for a reference to
 defer.
 
-Downstream repos keep registering real objects through the public `register_*`
+Downstream projects keep registering real objects through the public `register_*`
 functions, from their init modules (the `init` list in `.otto/settings.toml`),
 which bootstrap imports in phase 2 ({doc}`../lifecycle`). Two guards in
 `tests/unit/test_registry_refs_guard.py` hold the shape: every reference
@@ -292,7 +292,7 @@ cover them, and nothing here claims otherwise:
 `OPTIONS` ({mod}`otto.params`) holds the options classes registered for a
 verb. Its entry is an `OptionsEntry`: the class, or a `Ref` to it, together
 with the verbs it serves, so the verbs are known without importing the class;
-the repo that registered it is the engine's (`OPTIONS.repo(key)`). That is
+the project that registered it is the engine's (`OPTIONS.project(key)`). That is
 what lets `otto host` and every other command stay free of options modules
 registered by string.
 
@@ -309,7 +309,7 @@ registered by string.
   or a repeated verb raises there, not at dispatch.
 - **Reading a verb resolves only that verb's classes**
   (`verb_option_classes`), in registration order: otto's own first, then
-  each repo's in dependency order. `merge_option_params` then merges their
+  each project's in dependency order. `merge_option_params` then merges their
   fields by declaring class, the same rule project instructions use.
 
 The architecture of the verbs themselves, and how the built instances reach
@@ -400,7 +400,7 @@ cannot build is skipped silently, and `otto cache info` is where those skips
 are explained.
 
 The payoff is registry-shaped completion everywhere — captured live from a
-scaffolded demo repo at docs build time:
+scaffolded demo project at docs build time:
 
 ```{raw} html
 :file: ../../_static/generated/termynal/complete-host-ids.html
@@ -416,7 +416,7 @@ The consistent rule behind all of them: a keystroke answered from the cache
 **never runs user code**, and one that finds the cache missing or stale runs
 it once, to rebuild the cache. Registry names come from the completion cache
 ({doc}`completion-cache`); host ids and lab names are read from `lab.json` data;
-test names come from each repo's per-file table of what pytest last
+test names come from each project's per-file table of what pytest last
 collected, which runs and listings keep up to date. Test names are the one
 case that genuinely needs a live pytest collection, and it is handled without
 breaking that rule: when a table must be seeded or refreshed, the collection
@@ -436,7 +436,7 @@ its result from the cache ({doc}`completion-cache`, "The test-names cache").
   `FIRST_PARTY_ACTIONS` and the two views derived from them) and their checks,
   deliberately CLI-free and in the foundation layer (`InstructionEntry` is
   plain data with no Typer field; the CLI builds the command from it) so core
-  readers — `Repo`'s instruction panel, the completion cache, the project
+  readers — `Project`'s instruction panel, the completion cache, the project
   layer — see the registered set without importing `otto.cli` or anything
   that runs an instruction
 - {mod}`otto.instructions` — `run_instruction` and the handler-binding rule,

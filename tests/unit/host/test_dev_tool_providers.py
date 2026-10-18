@@ -36,9 +36,9 @@ def test_registered_provider_attaches_dev_tools():
 
 
 def test_ingest_runs_a_subscribed_provider_with_its_repo():
-    from otto.registry import registering_repo
+    from otto.registry import registering_project
 
-    with registering_repo("acme"):
+    with registering_project("acme"):
         register_dev_tool_provider(lambda host: [_tool("gdbserver")])
     host = _host()
     apply_dev_tool_providers(host)
@@ -112,9 +112,9 @@ def test_dev_tools_are_stamped_with_registering_repo():
     # Kills: capturing the marker at APPLY time instead of REGISTER time —
     # apply runs at lab ingest, long after init imports, when the marker is
     # None, so every dev tool would be unowned.
-    from otto.registry import registering_repo
+    from otto.registry import registering_project
 
-    with registering_repo("acme"):
+    with registering_project("acme"):
         register_dev_tool_provider(lambda host: [_tool("gdbserver")])
     host = _host()
     apply_dev_tool_providers(host)
@@ -131,11 +131,11 @@ def test_dev_tools_registered_outside_any_repo_stay_unowned():
 def test_explicit_owner_is_not_clobbered():
     # Kills: unconditional stamping, which would erase a provider that
     # deliberately hands one repo's dev tool to another's ownership.
-    from otto.registry import registering_repo
+    from otto.registry import registering_project
 
     explicit = _tool("gdbserver")
     explicit.owner = "other"
-    with registering_repo("acme"):
+    with registering_project("acme"):
         register_dev_tool_provider(lambda host: [explicit])
     host = _host()
     apply_dev_tool_providers(host)
@@ -202,7 +202,7 @@ def scope_table(monkeypatch):
     from otto import declared as declared_mod
 
     table = {}
-    monkeypatch.setattr(declared_mod, "scope_for_repo", table.get)
+    monkeypatch.setattr(declared_mod, "scope_for_project", table.get)
     return table
 
 
@@ -213,7 +213,7 @@ def test_provider_not_invoked_outside_its_repos_universe(scope_table):
     # their own per-host registries, so "called and discarded" still leaks the
     # fleet. `host.dev_tools` alone cannot tell the two apart, which is why the
     # invocation list is asserted as well.
-    from otto.registry import registering_repo
+    from otto.registry import registering_project
 
     scope_table["r1"] = _scope(["a"])
     invocations = []
@@ -222,7 +222,7 @@ def test_provider_not_invoked_outside_its_repos_universe(scope_table):
         invocations.append(host.id)
         return [_tool("gdbserver")]
 
-    with registering_repo("r1"):
+    with registering_project("r1"):
         register_dev_tool_provider(provider)
     host = _host(source_lab="b")
 
@@ -235,7 +235,7 @@ def test_provider_not_invoked_outside_its_repos_universe(scope_table):
 def test_provider_invoked_inside_its_repos_universe(scope_table):
     # The other half: the gate must not be a blanket refusal. Same declaration,
     # same provider — only the host's lab differs.
-    from otto.registry import registering_repo
+    from otto.registry import registering_project
 
     scope_table["r1"] = _scope(["a"])
     invocations = []
@@ -244,7 +244,7 @@ def test_provider_invoked_inside_its_repos_universe(scope_table):
         invocations.append(host.id)
         return [_tool("gdbserver")]
 
-    with registering_repo("r1"):
+    with registering_project("r1"):
         register_dev_tool_provider(provider)
     host = _host(source_lab="a")
 
@@ -258,7 +258,7 @@ def test_the_host_axis_gates_as_well_as_the_lab(scope_table):
     # Kills: gating on the lab alone. A repo declared for lab `a` shares that
     # lab with every other repo's hosts, so the host axis is what keeps its
     # tooling off the gateways sitting next to its sensors.
-    from otto.registry import registering_repo
+    from otto.registry import registering_project
 
     scope_table["r1"] = _scope(["a"], hosts=["sensor-.*"])
     invocations = []
@@ -267,7 +267,7 @@ def test_the_host_axis_gates_as_well_as_the_lab(scope_table):
         invocations.append(host.id)
         return [_tool("gdbserver")]
 
-    with registering_repo("r1"):
+    with registering_project("r1"):
         register_dev_tool_provider(provider)
     host = _host(source_lab="a", id="gw-1")
 
@@ -282,13 +282,13 @@ def test_one_repos_exclusion_does_not_gate_another(scope_table):
     # one — a single per-apply verdict, or reading the wrong element of the
     # (provider, owner) pair. Both providers run on the same host in the same
     # apply, and exactly one of them belongs there.
-    from otto.registry import registering_repo
+    from otto.registry import registering_project
 
     scope_table["here"] = _scope(["a"])
     scope_table["elsewhere"] = _scope(["b"])
-    with registering_repo("here"):
+    with registering_project("here"):
         register_dev_tool_provider(lambda host: [_tool("mine")])
-    with registering_repo("elsewhere"):
+    with registering_project("elsewhere"):
         register_dev_tool_provider(lambda host: [_tool("theirs")])
     host = _host(source_lab="a")
 
@@ -308,7 +308,7 @@ def test_an_unstamped_host_admits_without_consulting_any_declaration(monkeypatch
     # reach the lookup, which composes lazily — asking would drag a full
     # composition root into bare library use.
     from otto import declared as declared_mod
-    from otto.registry import registering_repo
+    from otto.registry import registering_project
 
     lookups = []
 
@@ -316,8 +316,8 @@ def test_an_unstamped_host_admits_without_consulting_any_declaration(monkeypatch
         lookups.append(owner)
         return _scope(["nowhere"], hosts=["nothing"])
 
-    monkeypatch.setattr(declared_mod, "scope_for_repo", _excluding)
-    with registering_repo("r1"):
+    monkeypatch.setattr(declared_mod, "scope_for_project", _excluding)
+    with registering_project("r1"):
         register_dev_tool_provider(lambda host: [_tool("gdbserver")])
     host = _host()  # no source_lab: BaseHost's unattributed default
 
@@ -346,10 +346,10 @@ def test_an_owner_config_cannot_resolve_admits(monkeypatch):
     # ingest that ran where the repos cannot be composed must attach exactly
     # what it attached before this gate existed. A gate that let the lookup's
     # failure propagate would turn an uncomposed process into an ingest crash.
-    from otto.registry import registering_repo
+    from otto.registry import registering_project
 
     fail_composition(monkeypatch)
-    with registering_repo("ghost"):
+    with registering_project("ghost"):
         register_dev_tool_provider(lambda host: [_tool("gdbserver")])
     host = _host(source_lab="b")
 
@@ -400,19 +400,19 @@ def _declared(name, owner="declrepo"):
 
 
 def test_a_provider_name_held_by_a_declared_entry_is_refused_naming_both_sites():
-    from otto.registry import registering_repo
+    from otto.registry import registering_project
 
     def tools(host):
         return [_tool("gdbserver")]
 
-    with registering_repo("coderepo"):
+    with registering_project("coderepo"):
         register_dev_tool_provider(tools)
     host = _host(dev_tools=[_declared("gdbserver")])
     with pytest.raises(ValueError, match=r"defined in data OR in code") as e:
         apply_dev_tool_providers(host)
     assert str(e.value) == (
-        "[[dev_tools]] 'gdbserver' (repo declrepo) is also defined by provider "
-        f"{tools.__module__}:{tools.__qualname__} (repo coderepo) — a dev tool is "
+        "[[dev_tools]] 'gdbserver' (project declrepo) is also defined by provider "
+        f"{tools.__module__}:{tools.__qualname__} (project coderepo) — a dev tool is "
         "defined in data OR in code; to give a declared entry custom behaviour, set "
         '`class = "pkg.mod:Class"` on it'
     )

@@ -26,8 +26,8 @@ APPENDIX_F = [
     "bootstrap",
     "get_completion_names",
     "get_env",
-    "get_ordered_repos",
-    "get_repos",
+    "get_ordered_projects",
+    "get_projects",
     "invalidate",
     "is_bootstrapped",
 ]
@@ -49,24 +49,24 @@ def test_otto_bootstrap_declares_exactly_appendix_f():
 
 
 def test_the_accessors_read_the_composition_root(tmp_path, monkeypatch):
-    repo = make_sut_repo(tmp_path / "r", name="r")
-    monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
+    project = make_sut_repo(tmp_path / "r", name="r")
+    monkeypatch.setenv("OTTOPATH", str(project))
     monkeypatch.setenv("OTTO_TEARDOWN_DEADLINE", "7.5")
 
     assert bs.get_env().teardown_deadline == 7.5
     assert not bs.is_bootstrapped()  # get_env runs discovery, never bootstrap
-    assert [r.name for r in bs.get_repos()] == ["r"]
+    assert [r.name for r in bs.get_projects()] == ["r"]
     assert bs.is_bootstrapped()
-    assert bs.get_repos() is bs.bootstrap().repos
-    assert bs.get_ordered_repos() is bs.bootstrap().ordered_repos
+    assert bs.get_projects() is bs.bootstrap().projects
+    assert bs.get_ordered_projects() is bs.bootstrap().ordered_projects
 
 
 def test_the_accessors_follow_a_patched_bootstrap(monkeypatch):
     """They look ``bootstrap`` up when called, so a test's patch of it reaches them."""
-    fake = SimpleNamespace(repos=["x"], ordered_repos=["y"])
+    fake = SimpleNamespace(projects=["x"], ordered_projects=["y"])
     monkeypatch.setattr("otto.bootstrap.bootstrap", lambda: fake)
-    assert bs.get_repos() == ["x"]
-    assert bs.get_ordered_repos() == ["y"]
+    assert bs.get_projects() == ["x"]
+    assert bs.get_ordered_projects() == ["y"]
 
 
 def test_get_completion_names_documents_the_snapshot_keys():

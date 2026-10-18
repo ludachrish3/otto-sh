@@ -27,7 +27,7 @@ paths = ["{PROJECT_ROOT / "tests/_fixtures/lab_data/tech1"}"]
 
 
 def _run(tmp_path: Path, body: str, *names: str, timeout: int = 90):
-    repo = make_sut_repo(
+    project = make_sut_repo(
         tmp_path / "probe",
         name="probe",
         tests=["tests"],
@@ -39,7 +39,7 @@ def _run(tmp_path: Path, body: str, *names: str, timeout: int = 90):
     started = time.monotonic()
     result = run_otto(
         ["test", "--no-random", *names],
-        sut_dirs=repo,
+        roots=project,
         lab="unix",
         xdir=xdir,
         timeout=timeout,

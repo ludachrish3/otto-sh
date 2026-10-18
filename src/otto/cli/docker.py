@@ -4,25 +4,25 @@ otto docker — build images and deploy use-case stacks on lab hosts.
 Subcommands::
 
     otto docker use-cases       [USE_CASE]
-    otto docker build           [IMAGE...] [--parent H] [--repo NAME] [-t REF] [--no-cache]
+    otto docker build           [IMAGE...] [--parent H] [--project NAME] [-t REF] [--no-cache]
                                  [--pull] [--build-arg K=V] [--target STAGE]
-    otto docker compose build   [USE_CASE [IMAGE...]] [--parent H] [--provide CAP=REPO]
+    otto docker compose build   [USE_CASE [IMAGE...]] [--parent H] [--provide CAP=PROJECT]
                                  [--no-cache] [--pull] [--build-arg K=V]
     otto docker compose up      [USE_CASE [SERVICE...]] [--parent H] [--build]
                                  [--force-recreate] [--pull POLICY]
-                                 [--provide CAP=REPO] [--env K=V] [--env-file FILE]
-    otto docker compose down    [USE_CASE [SERVICE...]] [--parent H] [--provide CAP=REPO]
+                                 [--provide CAP=PROJECT] [--env K=V] [--env-file FILE]
+    otto docker compose down    [USE_CASE [SERVICE...]] [--parent H] [--provide CAP=PROJECT]
     otto docker ps              [-a] [--parent H]
     otto docker images          [--parent H]
     otto docker logs            CONTAINER [--tail N] [--since T] [-t] [-f] [--parent H]
-    otto docker compose ps      [USE_CASE] [-a] [--parent H] [--provide CAP=REPO]
+    otto docker compose ps      [USE_CASE] [-a] [--parent H] [--provide CAP=PROJECT]
     otto docker compose logs    [USE_CASE [SERVICE...]] [--tail N] [--since T] [-t] [-f]
-                                 [--parent H] [--provide CAP=REPO]
+                                 [--parent H] [--provide CAP=PROJECT]
 
 ``compose build``/``compose up``/``compose down`` speak USE-CASES (spec §10): one named,
-cross-repo deployment resolved by the provider competition (§4) onto one
-parent (§2), not a per-repo loop over ``[[docker.composes]]``. ``build`` builds
-images only: it stages a repo's declared images onto one lab host and knows
+cross-project deployment resolved by the provider competition (§4) onto one
+parent (§2), not a per-project loop over ``[[docker.composes]]``. ``build`` builds
+images only: it stages a project's declared images onto one lab host and knows
 nothing about a composition, so it takes a host (``--parent``), never a
 use-case. ``ps``, ``images``, ``logs``, ``compose ps`` and ``compose logs`` print
 docker's output as docker printed it.
@@ -114,12 +114,12 @@ def _docker_host_completer(ctx: typer.Context, incomplete: str) -> list[str]:
     scan on cache miss so first-run completion still works.
     """
     # The composition root: importing it installs the initiator that composes
-    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    # the projects this reads (spec 2026-10-11 placement-and-phases §3.12).
     from .. import bootstrap
 
     del bootstrap
     from ..config.completion_cache import collect_docker_capable_host_ids
-    from ..declared import get_repos
+    from ..declared import get_projects
     from ..registry import get_completion_names
     from .completers import lab_scoped_host_ids, selected_lab_names
 
@@ -127,7 +127,7 @@ def _docker_host_completer(ctx: typer.Context, incomplete: str) -> list[str]:
     if cached is not None and isinstance(cached.get("docker_hosts"), list):
         ids = cached["docker_hosts"]
     else:
-        ids = collect_docker_capable_host_ids(get_repos())
+        ids = collect_docker_capable_host_ids(get_projects())
 
     if selected_lab_names(ctx):
         in_lab = set(lab_scoped_host_ids(ctx))
@@ -142,25 +142,25 @@ def _use_case_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # no
 
     Mirrors :func:`_docker_host_completer`'s cache/fallback shape exactly:
     prefer the entry the slow path wrote (``cache['docker_use_cases']``), fall
-    through to a live scan of the active repos' ``[[docker.use_cases]]`` on a
+    through to a live scan of the active projects' ``[[docker.use_cases]]`` on a
     miss so first-run completion still works. Not lab-scoped, unlike the host
-    completer: a use-case is declared by REPOS, and which lab is selected
+    completer: a use-case is declared by PROJECTS, and which lab is selected
     decides where its fragments land, not whether it exists.
     """
     # The composition root: importing it installs the initiator that composes
-    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    # the projects this reads (spec 2026-10-11 placement-and-phases §3.12).
     from .. import bootstrap
 
     del bootstrap
     from ..config.completion_cache import collect_docker_use_case_names
-    from ..declared import get_repos
+    from ..declared import get_projects
     from ..registry import get_completion_names
 
     cached = get_completion_names()
     if cached is not None and isinstance(cached.get("docker_use_cases"), list):
         names = cached["docker_use_cases"]
     else:
-        names = collect_docker_use_case_names(get_repos())
+        names = collect_docker_use_case_names(get_projects())
 
     return sorted(n for n in names if n.startswith(incomplete))
 
@@ -179,15 +179,15 @@ def _names_or(key: str, collect: "Callable[[], Any]") -> Any:
 def _image_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: ARG001 — required by Typer autocompletion callback signature
     """Shell-completion source for ``IMAGE``: every declared ``[[docker.images]]`` name."""
     # The composition root: importing it installs the initiator that composes
-    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    # the projects this reads (spec 2026-10-11 placement-and-phases §3.12).
     from .. import bootstrap
 
     del bootstrap
     from ..config.completion_cache import collect_docker_image_names
-    from ..declared import get_repos
+    from ..declared import get_projects
 
     try:
-        names = _names_or("docker_images", lambda: collect_docker_image_names(get_repos()))
+        names = _names_or("docker_images", lambda: collect_docker_image_names(get_projects()))
         return sorted(n for n in names if n.startswith(incomplete))
     except Exception:  # noqa: BLE001 — completion never crashes the shell
         return []
@@ -203,12 +203,12 @@ def _service_completer(ctx: typer.Context, incomplete: str) -> list[str]:
     unnamed use-case would be a guess).
     """
     # The composition root: importing it installs the initiator that composes
-    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    # the projects this reads (spec 2026-10-11 placement-and-phases §3.12).
     from .. import bootstrap
 
     del bootstrap
     from ..config.completion_cache import collect_docker_services_by_use_case
-    from ..declared import get_repos
+    from ..declared import get_projects
 
     try:
         use_case = (
@@ -218,41 +218,41 @@ def _service_completer(ctx: typer.Context, incomplete: str) -> list[str]:
             return []
         by_use_case = _names_or(
             "docker_services_by_use_case",
-            lambda: collect_docker_services_by_use_case(get_repos()),
+            lambda: collect_docker_services_by_use_case(get_projects()),
         )
         return sorted(s for s in by_use_case.get(use_case, []) if s.startswith(incomplete))
     except Exception:  # noqa: BLE001 — completion never crashes the shell
         return []
 
 
-@completion_source(kind="payload", key="repos", sort=True)
-def _repo_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: ARG001 — required by Typer autocompletion callback signature
-    """Shell-completion source for ``--repo``: every active repo's name."""
+@completion_source(kind="payload", key="active_projects", sort=True)
+def _active_project_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: ARG001 — required by Typer autocompletion callback signature
+    """Shell-completion source for ``--project``: every active project's name."""
     # The composition root: importing it installs the initiator that composes
-    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    # the projects this reads (spec 2026-10-11 placement-and-phases §3.12).
     from .. import bootstrap
 
     del bootstrap
-    from ..config.completion_cache import collect_repo_names
-    from ..declared import get_repos
+    from ..config.completion_cache import collect_active_project_names
+    from ..declared import get_projects
 
     try:
-        names = _names_or("repos", lambda: collect_repo_names(get_repos()))
+        names = _names_or("active_projects", lambda: collect_active_project_names(get_projects()))
         return sorted(n for n in names if n.startswith(incomplete))
     except Exception:  # noqa: BLE001 — completion never crashes the shell
         return []
 
 
-def _discovered_repos() -> "list[Any]":
-    """Return the active repos as discovery found them: settings and lab data, no init code.
+def _discovered_projects() -> "list[Any]":
+    """Return the active projects as discovery found them: settings and lab data, no init code.
 
-    The observed-state readers need the repos only to reach the cache file, so
-    a TAB goes through ``otto.config.repo.discover()`` — NEVER ``get_repos()``,
+    The observed-state readers need the projects only to reach the cache file, so
+    a TAB goes through ``otto.config.project.discover()`` — NEVER ``get_projects()``,
     which runs bootstrap and with it the user's init code inside a TAB.
     """
-    from ..config.repo import discover
+    from ..config.project import discover
 
-    return discover().repos
+    return discover().projects
 
 
 def _selected_labs_for_tab(ctx: typer.Context) -> list[str]:
@@ -293,7 +293,7 @@ def _default_parent_for_tab(ctx: typer.Context) -> "str | None":
 def _observed_for_tab(ctx: typer.Context) -> "ObservedDockerState | None":
     """Return the parent's last-observed docker state: ``--parent`` on the line, else the default.
 
-    Cache only -- a TAB never asks a host and never bootstraps (the repos come
+    Cache only -- a TAB never asks a host and never bootstraps (the projects come
     from discovery, which runs no init code).
     """
     from ..config.completion_cache import read_docker_observed
@@ -303,7 +303,7 @@ def _observed_for_tab(ctx: typer.Context) -> "ObservedDockerState | None":
         parent = _default_parent_for_tab(ctx)
     if parent is None:
         return None
-    return read_docker_observed(_discovered_repos(), parent)
+    return read_docker_observed(_discovered_projects(), parent)
 
 
 @completion_source(kind="observed", key="containers", by_option="parent")
@@ -344,7 +344,7 @@ def _default_use_case(use_case: str | None) -> str:
     """Resolve an omitted ``USE_CASE`` positional, or refuse loudly.
 
     An EXPLICIT name is passed straight through, unchecked: ``select_fragments``
-    owns "no active repo declares that" and phrases it with the declared set,
+    owns "no active project declares that" and phrases it with the declared set,
     and checking it twice would give one mistake two different messages
     depending on which verb the user typed.
 
@@ -357,19 +357,19 @@ def _default_use_case(use_case: str | None) -> str:
         return use_case
 
     # The composition root: importing it installs the initiator that composes
-    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    # the projects this reads (spec 2026-10-11 placement-and-phases §3.12).
     from .. import bootstrap
 
     del bootstrap
-    from ..declared import get_repos
+    from ..declared import get_projects
     from ..docker.resolve import declared_use_cases
 
-    names = sorted(declared_use_cases(get_repos()))
+    names = sorted(declared_use_cases(get_projects()))
     if not names:
         fail(
-            "otto docker: no active repo declares [[docker.use_cases]] — there is "
-            "nothing to deploy. Declare a [[docker.use_cases]] fragment in a repo's "
-            ".otto/settings.toml (see the docker guide), or name a repo's compose "
+            "otto docker: no active project declares [[docker.use_cases]] — there is "
+            "nothing to deploy. Declare a [[docker.use_cases]] fragment in a project's "
+            ".otto/settings.toml (see the docker guide), or name a project's compose "
             "stack through the library API."
         )
     if len(names) > 1:
@@ -400,7 +400,7 @@ def _parse_pairs(values: "list[str] | None", *, form: str, flag: str) -> dict[st
 
 def _parse_provide(values: "list[str] | None") -> dict[str, str]:
     """``--provide edge=repo1`` -> ``{"edge": "repo1"}`` (spec §4's tie knob)."""
-    return _parse_pairs(values, form="CAPABILITY=REPO", flag="--provide CAPABILITY=REPO")
+    return _parse_pairs(values, form="CAPABILITY=PROJECT", flag="--provide CAPABILITY=PROJECT")
 
 
 def _parse_env(values: "list[str] | None") -> dict[str, str]:
@@ -432,9 +432,9 @@ def _print_stack_report(stack: "UseCaseStack") -> None:
         rprint(f"[yellow]{msg}")
         return
     for host_id, hosts in stack.by_host.items():
-        project = stack.projects.get(host_id, "?")
+        compose = stack.projects.get(host_id, "?")
         headline = (
-            f"{stack.use_case} on {host_id} ({project}): {len(hosts)} container(s) registered:"
+            f"{stack.use_case} on {host_id} ({compose}): {len(hosts)} container(s) registered:"
         )
         rprint(f"[green]{escape(headline)}")
         for host in hosts.values():
@@ -456,7 +456,7 @@ _DECLINED = _Declined()
 
 _DOCKER_FLAGS: "dict[str, str]" = {
     "parent": "--parent",
-    "repo": "--repo",
+    "project": "--project",
     "images": "IMAGE",
     "tag": "--tag",
     "container": "CONTAINER",
@@ -518,10 +518,10 @@ async def _run_docker(action: "Coroutine[Any, Any, _T]") -> "_T | _Declined":
 def _render_build_report(report: "BuildReport") -> None:
     """Print a build report one image per line; exit 1 when any image failed."""
     _print_displacements(report.displaced)
-    for entry in report.repos:
+    for entry in report.projects:
         if entry.kind == "no_images":
             msg = (
-                f"docker: {entry.repo} declares no [[docker.images]] — "
+                f"docker: {entry.project} declares no [[docker.images]] — "
                 f"nothing to build on {entry.host}"
             )
             rprint(f"[yellow]{escape(msg)}")
@@ -529,10 +529,10 @@ def _render_build_report(report: "BuildReport") -> None:
         for name, built in entry.images.items():
             if built.is_ok:
                 refs = ", ".join(built.references)
-                line = escape(f"{entry.repo}/{name}: built {refs}  {built.image_id}")
+                line = escape(f"{entry.project}/{name}: built {refs}  {built.image_id}")
                 rprint(f"[green]{line}  ({entry.host})")
             else:
-                failed = f"{entry.repo}/{name}: FAILED on {entry.host}"
+                failed = f"{entry.project}/{name}: FAILED on {entry.host}"
                 if built.result.command:
                     failed += f"\n{built.result.command}"
                 print_error(f"{failed}\n{built.result.value}")
@@ -554,7 +554,7 @@ def _render_host_report(report: "HostReport", *, done: str) -> None:
 
 def _build_hosts(report: "BuildReport") -> "list[str]":
     """Return the hosts a build report names, in build order, each once."""
-    return list(dict.fromkeys(entry.host for entry in report.repos))
+    return list(dict.fromkeys(entry.host for entry in report.projects))
 
 
 async def _record_observed(
@@ -592,23 +592,23 @@ async def _record_host(host_id: str, *, images: bool, containers: bool) -> None:
     record nor changes the verb.
     """
     # The composition root: importing it installs the initiator that composes
-    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    # the projects this reads (spec 2026-10-11 placement-and-phases §3.12).
     from .. import bootstrap
 
     del bootstrap
     from ..config.completion_cache import record_docker_containers, record_docker_images
-    from ..declared import get_repos
+    from ..declared import get_projects
     from ..docker.observe import observed_containers, observed_images
 
     try:
         if images:
             seen = await observed_images(host_id)
             if seen.answered:
-                record_docker_images(get_repos(), host_id, refs=seen.refs, ids=seen.ids)
+                record_docker_images(get_projects(), host_id, refs=seen.refs, ids=seen.ids)
         if containers:
             found = await observed_containers(host_id)
             if found.answered:
-                record_docker_containers(get_repos(), host_id, names=found.names, ids=found.ids)
+                record_docker_containers(get_projects(), host_id, names=found.names, ids=found.ids)
     except Exception as e:  # noqa: BLE001 — a completion hint never fails a verb
         logger.debug(r"\[docker] observed state of %s not recorded: %r", host_id, e)
 
@@ -632,12 +632,12 @@ async def _build(
             autocompletion=_docker_host_completer,
         ),
     ] = None,
-    repo: Annotated[
+    project: Annotated[
         str | None,
         typer.Option(
-            "--repo",
-            help="Restrict to a single repo by name.",
-            autocompletion=_repo_completer,
+            "--project",
+            help="Restrict to a single project by name.",
+            autocompletion=_active_project_completer,
         ),
     ] = None,
     tag: Annotated[
@@ -663,7 +663,7 @@ async def _build(
         str | None, typer.Option("--target", help="The build stage to build.")
     ] = None,
 ) -> None:
-    """Build the selected repos' declared images on one lab host.
+    """Build the selected projects' declared images on one lab host.
 
     Like `docker build`, this knows nothing about a composition: it needs a
     host, not a use-case, so it takes --parent (the lab's default parent when omitted).
@@ -676,7 +676,7 @@ async def _build(
     report = await _run_docker(
         build_on(
             parent,
-            repo=repo,
+            project=project,
             images=image,
             tags=tag,
             no_cache=no_cache,
@@ -719,7 +719,7 @@ async def _compose_build(
     ] = None,
     provide: Annotated[
         list[str] | None,
-        typer.Option("--provide", help="Break a provider tie: CAPABILITY=REPO. Repeatable."),
+        typer.Option("--provide", help="Break a provider tie: CAPABILITY=PROJECT. Repeatable."),
     ] = None,
     no_cache: Annotated[
         bool, typer.Option("--no-cache", help="Do not use docker's layer cache.")
@@ -790,7 +790,7 @@ async def _compose_up(
         typer.Option(
             "--build",
             help=(
-                "Build the participating repos' declared `\\[\\[docker.images]]` first "
+                "Build the participating projects' declared `\\[\\[docker.images]]` first "
                 "(otto's build; docker's own `--build` is not passed)."
             ),
         ),
@@ -807,7 +807,7 @@ async def _compose_up(
     ] = None,
     provide: Annotated[
         list[str] | None,
-        typer.Option("--provide", help="Break a provider tie: CAPABILITY=REPO. Repeatable."),
+        typer.Option("--provide", help="Break a provider tie: CAPABILITY=PROJECT. Repeatable."),
     ] = None,
     env: Annotated[
         list[str] | None,
@@ -827,7 +827,7 @@ async def _compose_up(
 
     The fragments that take part are chosen by the provider competition,
     deployed on one parent (--parent, or the lab's default), and handed the
-    assembled env mapping. Each participating repo's declared images are
+    assembled env mapping. Each participating project's declared images are
     built first only with --build; without it, `up` is docker's own, so a service whose image
     is missing fails with docker's error. With no USE_CASE, the only declared
     one is deployed; naming SERVICEs narrows the deployment to them.
@@ -888,14 +888,14 @@ async def _compose_down(
     ] = None,
     provide: Annotated[
         list[str] | None,
-        typer.Option("--provide", help="Break a provider tie: CAPABILITY=REPO. Repeatable."),
+        typer.Option("--provide", help="Break a provider tie: CAPABILITY=PROJECT. Repeatable."),
     ] = None,
 ) -> None:
     """Tear a use-case's stacks down and unregister their container hosts.
 
     --parent and --provide are resolved exactly as `otto docker compose up` resolves them,
-    so a teardown can never address a different project than the deployment it
-    is undoing. Naming SERVICEs stops and removes just those, leaving the rest
+    so a teardown can never address a different compose project than the
+    deployment it is undoing. Naming SERVICEs stops and removes just those, leaving the rest
     of the stack and its network standing.
     """
     from ..docker.deployment import teardown
@@ -938,11 +938,11 @@ def _use_cases(
     from rich.table import Table
 
     # The composition root: importing it installs the initiator that composes
-    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    # the projects this reads (spec 2026-10-11 placement-and-phases §3.12).
     from .. import bootstrap
 
     del bootstrap
-    from ..declared import get_repos
+    from ..declared import get_projects
     from ..docker.observe import DockerVerbError, docker_parent
     from ..docker.resolve import (
         UseCaseResolutionError,
@@ -952,10 +952,10 @@ def _use_cases(
     )
     from ..fleet import get_lab
 
-    repos = get_repos()
-    declared = declared_use_cases(repos)
+    projects = get_projects()
+    declared = declared_use_cases(projects)
     if not declared:
-        rprint(f"[yellow]{escape('otto docker: no active repo declares [[docker.use_cases]].')}")
+        rprint(f"[yellow]{escape('otto docker: no active project declares [[docker.use_cases]].')}")
         return
 
     # A filter naming nothing is a USER error about the argument, not a state
@@ -965,7 +965,7 @@ def _use_cases(
     # whichever verb found it.
     if use_case is not None and use_case not in declared:
         fail(
-            f"otto docker use-cases: no active repo declares use-case "
+            f"otto docker use-cases: no active project declares use-case "
             f"{use_case!r}; declared: {', '.join(sorted(declared))}"
         )
     names = [use_case] if use_case is not None else sorted(declared)
@@ -985,13 +985,13 @@ def _use_cases(
         displaced: "list[Displacement]" = []
         excluded: set[int] = set()
         try:
-            selection = select_fragments(name, repos)
+            selection = select_fragments(name, projects)
         except UseCaseResolutionError as e:
             problems.append(str(e))
         else:
             displaced = selection.displaced
             # Keyed on the FRAGMENT's identity, never the SelectedFragment's:
-            # `select_fragments` rebuilds its own wrappers from the same repo
+            # `select_fragments` rebuilds its own wrappers from the same project
             # tables, so the wrapper objects here and there are different while
             # the `DockerUseCase` inside them is one shared object.
             participating = {id(sf.fragment) for sf in selection.fragments}
@@ -1019,11 +1019,11 @@ def _use_cases(
                 f"{frag.provides} (priority {frag.priority})" if frag.provides is not None else "-"
             )
             table.add_row(
-                # escape()d: the `repo[compose,...]` spelling is rich MARKUP
+                # escape()d: the `project[compose,...]` spelling is rich MARKUP
                 # syntax, and an unescaped `[core]` is eaten as a style tag —
-                # which rendered a repo's two fragments identically (found on
+                # which rendered a project's two fragments identically (found on
                 # the live bed, T15). The other cells carry no bracket idiom.
-                escape(f"{sf.repo.name}[{','.join(frag.composes)}]"),
+                escape(f"{sf.project.name}[{','.join(frag.composes)}]"),
                 provides,
                 hosts.get(id(frag), "-"),
                 _env_key_names(frag),
@@ -1238,7 +1238,9 @@ async def _compose_ps(
     all_: Annotated[
         bool,
         typer.Option(
-            "--all", "-a", help="Show every container of the project, not only the running ones."
+            "--all",
+            "-a",
+            help="Show every container of the compose project, not only the running ones.",
         ),
     ] = False,
     parent: Annotated[
@@ -1254,10 +1256,13 @@ async def _compose_ps(
     ] = None,
     provide: Annotated[
         list[str] | None,
-        typer.Option("--provide", help="Break a provider tie: CAPABILITY=REPO. Repeatable."),
+        typer.Option("--provide", help="Break a provider tie: CAPABILITY=PROJECT. Repeatable."),
     ] = None,
 ) -> None:
-    """Print `docker compose ps` for a use-case's project on one parent or every capable host."""
+    """Print `docker compose ps` for a use-case's compose project.
+
+    It asks one parent, or every capable host.
+    """
     from ..docker.observe import compose_ps
 
     name = _default_use_case(use_case)
@@ -1320,10 +1325,10 @@ async def _compose_logs(
     ] = None,
     provide: Annotated[
         list[str] | None,
-        typer.Option("--provide", help="Break a provider tie: CAPABILITY=REPO. Repeatable."),
+        typer.Option("--provide", help="Break a provider tie: CAPABILITY=PROJECT. Repeatable."),
     ] = None,
 ) -> None:
-    """Print `docker compose logs` for a use-case's project on one parent."""
+    """Print `docker compose logs` for a use-case's compose project on one parent."""
     from ..docker.observe import compose_logs
 
     name = _default_use_case(use_case)

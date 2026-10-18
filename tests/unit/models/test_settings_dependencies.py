@@ -52,16 +52,16 @@ def test_unknown_dependencies_key_rejected():
 
 
 def test_repo_parses_declared_dependencies(tmp_path):
-    from otto.config.repo import Repo
+    from otto.config.project import Project
 
     make_sut_repo(
         tmp_path,
         name="widget",
         extra='[dependencies]\nrequired = ["vantage >= 2.1"]\noptional = ["metrics"]\n',
     )
-    repo = Repo(sut_dir=tmp_path)
-    assert [(d.normalized, d.required) for d in repo.declared_dependencies] == [
+    project = Project(root=tmp_path)
+    assert [(d.normalized, d.required) for d in project.declared_dependencies] == [
         ("vantage", True),
         ("metrics", False),
     ]
-    assert repo.dependencies == []  # resolution has not run
+    assert project.dependencies == []  # resolution has not run

@@ -60,7 +60,7 @@ class CompositeLabRepository:
     downstream consumer (``labs.loader.load_lab``, completion, conformance)
     works unchanged. An EMPTY composite is valid: it lists no labs and
     ``load_lab`` fails loud with configuration guidance — the state of a
-    process where no repo declares a ``[[lab.sources]]`` entry.
+    process where no project declares a ``[[lab.sources]]`` entry.
     """
 
     def __init__(self, sources: "list[LabSource]") -> None:
@@ -98,7 +98,7 @@ class CompositeLabRepository:
         """
         if not self.sources:
             raise LabNotFoundError(
-                f"Lab {name!r} cannot be loaded: no repo declares a "
+                f"Lab {name!r} cannot be loaded: no project declares a "
                 "[[lab.sources]] entry in .otto/settings.toml"
             )
         declared_by = [s.label for s in self.sources if name in s.repository.list_labs()]

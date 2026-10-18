@@ -22,7 +22,7 @@ def _repo_with_tickets(monkeypatch, tickets: bool) -> None:
         else {}
     )
     patch_bootstrap(monkeypatch, [MagicMock()])
-    monkeypatch.setattr("otto.config.coverage_settings.get_cov_config", lambda repos: cov)
+    monkeypatch.setattr("otto.config.coverage_settings.get_cov_config", lambda projects: cov)
 
 
 def test_cov_dir_is_prepared(tmp_path):

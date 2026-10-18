@@ -14,23 +14,23 @@ from tests._fixtures.sutrepo import make_sut_repo
 def test_invalidate_drops_the_discovery_and_the_next_read_discovers_again(tmp_path, monkeypatch):
     first = make_sut_repo(tmp_path / "first", name="first")
     second = make_sut_repo(tmp_path / "second", name="second")
-    monkeypatch.setenv("OTTO_SUT_DIRS", str(first))
+    monkeypatch.setenv("OTTOPATH", str(first))
     bs.invalidate()
-    assert [path.name for path in bs.get_env().sut_dirs] == ["first"]
-    monkeypatch.setenv("OTTO_SUT_DIRS", str(second))
-    assert [path.name for path in bs.get_env().sut_dirs] == ["first"], "cached until invalidated"
+    assert [path.name for path in bs.get_env().ottopath] == ["first"]
+    monkeypatch.setenv("OTTOPATH", str(second))
+    assert [path.name for path in bs.get_env().ottopath] == ["first"], "cached until invalidated"
     bs.invalidate()
-    assert [path.name for path in bs.get_env().sut_dirs] == ["second"]
+    assert [path.name for path in bs.get_env().ottopath] == ["second"]
     assert not bs.is_bootstrapped(), "discovery composes nothing"
 
 
 def test_invalidate_drops_the_discovery_a_composition_read(tmp_path, monkeypatch):
     first = make_sut_repo(tmp_path / "first", name="first")
     second = make_sut_repo(tmp_path / "second", name="second")
-    monkeypatch.setenv("OTTO_SUT_DIRS", str(first))
+    monkeypatch.setenv("OTTOPATH", str(first))
     bs.invalidate()
-    assert [repo.name for repo in bs.bootstrap().repos] == ["first"]
-    monkeypatch.setenv("OTTO_SUT_DIRS", str(second))
+    assert [project.name for project in bs.bootstrap().projects] == ["first"]
+    monkeypatch.setenv("OTTOPATH", str(second))
     bs.invalidate()
     assert not bs.is_bootstrapped()
-    assert [repo.name for repo in bs.get_repos()] == ["second"]
+    assert [project.name for project in bs.get_projects()] == ["second"]

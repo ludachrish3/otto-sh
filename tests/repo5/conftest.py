@@ -1,7 +1,7 @@
 """pytest configuration for repo5's test suite.
 
 When ``otto test`` (e.g. ``otto test TestKmodDemo``) runs the tests, otto has
-already called ``Repo.add_libs_to_pythonpath()`` at startup, which adds
+already called ``Project.add_libs_to_pythonpath()`` at startup, which adds
 ``repo5/pylib`` to ``sys.path`` before pytest collects anything.
 
 When pytest collects tests directly (e.g. ``pytest tests/repo5/``), that

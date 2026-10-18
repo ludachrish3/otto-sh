@@ -4,16 +4,16 @@ from pathlib import Path
 
 import pytest
 
-from otto.config.repo import Repo
+from otto.config.project import Project
 from tests._fixtures.fake_repo import fake_repo
 from tests._fixtures.sutrepo import make_sut_repo
 
 
 def test_a_fake_repo_has_every_attribute_a_parsed_repo_has(tmp_path: Path) -> None:
-    real = Repo(sut_dir=make_sut_repo(tmp_path, name="real"))
+    real = Project(root=make_sut_repo(tmp_path, name="real"))
     fake = fake_repo()
 
-    assert type(fake) is Repo
+    assert type(fake) is Project
     assert sorted(vars(fake)) == sorted(vars(real))
     assert sorted(dir(fake)) == sorted(dir(real))
 
@@ -40,13 +40,13 @@ def test_overrides_apply() -> None:
     scope = object()
     fake = fake_repo(
         "acme",
-        sut_dir=Path("/srv/acme"),
+        root=Path("/srv/acme"),
         project_scope=scope,
         settings={"inventory": {"backend": "json"}},
         get_lab_panel=lambda: "panel",
     )
 
-    assert fake.sut_dir == Path("/srv/acme")
+    assert fake.root == Path("/srv/acme")
     assert fake.project_scope is scope
     assert fake.inventory_settings == {"backend": "json"}
     assert fake.get_lab_panel() == "panel"

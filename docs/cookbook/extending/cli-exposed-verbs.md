@@ -2,7 +2,7 @@
 Any method a host class exposes with {func}`~otto.utils.cli_exposed`
 becomes an `otto host <id> <verb>` subcommand, with its signature inferred
 into CLI arguments and options. This page is the authoring contract: how a
-method is exposed, how its parameters are inferred, and how a repo registers
+method is exposed, how its parameters are inferred, and how a project registers
 the product and dev-tool providers whose verbs appear the same way.
 For what the resulting verbs *do*, see
 {doc}`../../cli/host/capabilities/index`.
@@ -165,10 +165,10 @@ log: Annotated[bool, Exclude] = True
 | `install` | — | `--stage-only / --no-stage-only` | |
 | `power` | `STATE` (optional positional) | — | `on`/`off`/omit to toggle |
 | `ls` | `PATH` (optional positional, default `.`) | `--all / --no-all` | |
-## Registering products from a product repo
+## Registering products from a product project
 
 Products are **behavior**, so they're customized in code — never declared in lab
-data. A product repo registers its products from a `.otto` init module, and
+data. A product project registers its products from a `.otto` init module, and
 otto applies them to each host as it is ingested from lab data:
 
     from pathlib import Path
@@ -188,7 +188,7 @@ host entry's) and `element.metadata` (its element's), and the two reservation
 sets that ride beside them, `resources` (the host entry's) and
 `element.resources` (its element's) — both `frozenset[str]` — to decide which hosts
 get which products; source any per-host parameters (versions, artifact paths)
-from your own product-repo config. Providers aggregate in registration order
+from your own product-project config. Providers aggregate in registration order
 and dedupe by `Product.name`.
 
 ```{warning}
@@ -208,15 +208,15 @@ list; providers apply only to hosts built from lab data.
 
 (provider-scope-gate)=
 
-### A provider only runs inside its repo's universe
+### A provider only runs inside its project's universe
 
 Registering a provider makes the `[project]` declaration in your
-`.otto/settings.toml` **required**: bootstrap refuses a repo that registers
+`.otto/settings.toml` **required**: bootstrap refuses a project that registers
 products or dev tools without saying which labs it applies to (see
 {ref}`project-scope`).
 
 Once declared, that reach is enforced at ingest. A provider is **not called** —
-not called and then filtered, but never called — for a host its repo's
+not called and then filtered, but never called — for a host its project's
 declaration does not target:
 
 ```toml
@@ -232,11 +232,11 @@ Two cases are admitted — the provider runs for them unscoped:
 
 - **A host with no lab attribution** — one built outside the lab loader by a
   direct `create_host_from_dict` call, and the built-in `local` host.
-- **A registering repo otto cannot resolve** — a provider carrying a repo name
+- **A registering project otto cannot resolve** — a provider carrying a project name
   this process has no settings for.
 
-Skips are logged at DEBUG, naming the repo, the host and the host's lab.
-## Registering dev tools from a repo
+Skips are logged at DEBUG, naming the project, the host and the host's lab.
+## Registering dev tools from a project
 
 The dev-tool twin of the product provider above, and the same authoring model —
 a `DevTool` implements `stage`, `install`, `uninstall` and `is_installed`:
@@ -252,18 +252,18 @@ a `DevTool` implements `stage`, `install`, `uninstall` and `is_installed`:
 
 Providers run once per lab-ingested host, aggregate in registration order, and
 dedupe by `DevTool.name`. Each attached tool is stamped with the registering
-repo as its owner **unless it already names one** — a tool that arrives with
-`owner` already set keeps it, so one repo can hand a tool to another's
+project as its owner **unless it already names one** — a tool that arrives with
+`owner` already set keeps it, so one project can hand a tool to another's
 ownership deliberately.
 
 That stamp is what the **owner-scoped** walk reads: `otto run install-tools`
-runs per repo and passes `owner=` down to `install_dev_tools`, so one repo's
+runs per project and passes `owner=` down to `install_dev_tools`, so one project's
 tooling installs while another's is left alone. The host verb above is the
 host-wide one — `otto host <id> install-tools` (and `host.install_tools()`)
-takes no `owner=` and acts on every dev tool the host carries, whichever repo
+takes no `owner=` and acts on every dev tool the host carries, whichever project
 registered it.
 
-Dev-tool providers are gated by the registering repo's `[project]` declaration
+Dev-tool providers are gated by the registering project's `[project]` declaration
 under exactly the rule and the carve-outs products use
 ({ref}`provider-scope-gate`), applied separately, and registering either kind
 makes `lab_patterns` required.

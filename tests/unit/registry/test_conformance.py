@@ -28,7 +28,7 @@ from otto.registry import (
     Ref,
     Registry,
     RegistryView,
-    RequireRepo,
+    RequireProject,
     Subscription,
     configured_backend,
 )
@@ -105,7 +105,7 @@ def test_the_raw_case_holds_for_a_require_repo_registry():
         "conformance per-repo thing",
         entry=Rec,
         register_hint="register_thing()",
-        capabilities=[Justified(RequireRepo(), reason="one per repo")],
+        capabilities=[Justified(RequireProject(), reason="one per repo")],
     )
     conformance.assert_raw_registry(
         table, make=lambda i: ("thing", Rec(i)), require_repo="conformance_repo"
@@ -192,7 +192,7 @@ def test_the_view_case_holds_for_an_engine_view():
     def derive():
         for source in (left, right):
             for name, entry in source.raw_items():
-                yield Derived(name, entry, source.origin(name), source.repo(name))
+                yield Derived(name, entry, source.origin(name), source.project(name))
 
     view = RegistryView("both", register_hint="x", sources=[left, right], derive=derive)
     conformance.assert_view(

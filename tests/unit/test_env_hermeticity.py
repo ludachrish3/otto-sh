@@ -1,6 +1,6 @@
 """The test suite must be hermetic against ambient otto configuration.
 
-A developer shell with ``OTTO_SUT_DIRS`` exported (say, pointing at another
+A developer shell with ``OTTOPATH`` exported (say, pointing at another
 checkout's ``tests/repo1``) leaks into every test that exercises a CLI path
 whose callback calls ``bootstrap()`` without monkeypatching the env: the
 ambient repo's init modules load into the process-wide registries under
@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 
+from otto.config.env import is_otto_env_var
 from tests._ambient_env import AMBIENT_OPT_INS as AMBIENT_OPT_IN_NOTES
 from tests._ambient_env import ambient, ambient_opt_ins
 from tests._fixtures.paths import PROJECT_ROOT
@@ -55,7 +56,7 @@ def test_probe_ambient_otto_env_is_stripped(tmp_path_factory: pytest.TempPathFac
     leaked = [
         k
         for k in os.environ
-        if k.startswith("OTTO_") and k not in AMBIENT_OPT_INS and k != "OTTO_HOME"
+        if is_otto_env_var(k) and k not in AMBIENT_OPT_INS and k != "OTTO_HOME"
     ]
     assert leaked == [], (
         f"ambient otto configuration leaked into the test process: {leaked} "
@@ -100,7 +101,7 @@ def test_ambient_otto_env_cannot_leak_into_a_pytest_run():
             **os.environ,
             PROBE_FLAG: "1",
             # Product configuration: must be stripped.
-            "OTTO_SUT_DIRS": "/somewhere/else/tests/repo1",
+            "OTTOPATH": "/somewhere/else/tests/repo1",
             "OTTO_XDIR": "/somewhere/else/xdir",
             # Stripped AND replaced by the per-worker hermetic home.
             "OTTO_HOME": _AMBIENT_HOME,
@@ -128,7 +129,7 @@ def test_ambient_otto_env_cannot_leak_into_a_pytest_run():
 # e2e/chaos, integration/host, ...) outside every leg. Collecting the tree
 # root imports every module and therefore every conftest in the tree
 # (measured: unit 2.5s, integration 0.5s, e2e 0.8s — cheap enough).
-# tests/integration's chain re-injected OTTO_SUT_DIRS for a year while the
+# tests/integration's chain re-injected OTTOPATH for a year while the
 # (unit-only) pin above certified "hermetic".
 _TREE_COLLECT_TARGETS = {
     "unit": "tests/unit",
@@ -142,7 +143,7 @@ def test_conftest_chain_writes_no_ambient_env_at_collection(tree):
     """Import-time env writes are visible at collection; runtime writes are not.
 
     ``--collect-only`` imports every conftest in the tree but runs no
-    session fixture — so integration's sanctioned runtime ``OTTO_SUT_DIRS``
+    session fixture — so integration's sanctioned runtime ``OTTOPATH``
     fixture stays invisible, while the banned import-time spelling (the
     pre-Wave-4 ``ensure_sut_dirs()`` module call) trips the probe. The
     polluted vars in the env prove the root strip still runs first on every
@@ -167,7 +168,7 @@ def test_conftest_chain_writes_no_ambient_env_at_collection(tree):
         ],
         env={
             **os.environ,
-            "OTTO_SUT_DIRS": "/polluted/tests/repo1",
+            "OTTOPATH": "/polluted/tests/repo1",
             "OTTO_XDIR": "/polluted/xdir",
         },
         cwd=str(PROJECT_ROOT),
@@ -197,22 +198,22 @@ def test_integration_sut_dirs_fixture_sets_scoped_and_restores(monkeypatch):
     Drives the impl generator directly (the ``_impl`` pattern)."""
     from tests.integration.conftest import _default_sut_dirs_env_impl
 
-    monkeypatch.delenv("OTTO_SUT_DIRS", raising=False)
+    monkeypatch.delenv("OTTOPATH", raising=False)
     gen = _default_sut_dirs_env_impl()
     next(gen)
-    assert os.environ.get("OTTO_SUT_DIRS", "").endswith("repo1"), "default not applied"
+    assert os.environ.get("OTTOPATH", "").endswith("repo1"), "default not applied"
     with pytest.raises(StopIteration):
         next(gen)
-    assert "OTTO_SUT_DIRS" not in os.environ, "teardown must remove what setup added"
+    assert "OTTOPATH" not in os.environ, "teardown must remove what setup added"
 
     # A pre-set value (another harness layer) stays authoritative and survives.
-    monkeypatch.setenv("OTTO_SUT_DIRS", "/pre-set/by/harness")
+    monkeypatch.setenv("OTTOPATH", "/pre-set/by/harness")
     gen = _default_sut_dirs_env_impl()
     next(gen)
-    assert os.environ["OTTO_SUT_DIRS"] == "/pre-set/by/harness"
+    assert os.environ["OTTOPATH"] == "/pre-set/by/harness"
     with pytest.raises(StopIteration):
         next(gen)
-    assert os.environ["OTTO_SUT_DIRS"] == "/pre-set/by/harness"
+    assert os.environ["OTTOPATH"] == "/pre-set/by/harness"
 
 
 def test_reading_an_undeclared_opt_in_raises():
@@ -246,7 +247,7 @@ def test_bootstrap_state_cannot_leak_between_tests():
 
     ``bootstrap()`` memoizes into module globals and folds the append-only
     ``_discovery_errors`` into every later result, so a test that drives the CLI
-    with ``OTTO_SUT_DIRS`` pointed at a scratch repo leaves a framed discovery
+    with ``OTTOPATH`` pointed at a scratch repo leaves a framed discovery
     error behind after ``monkeypatch`` restores the variable. Every later test
     on that worker then hits ``fail_loud_on_bootstrap_errors()`` and exits 1
     before Click reports the missing ``--lab`` — the "must exit 2" tests below

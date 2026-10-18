@@ -268,7 +268,7 @@ def test_e2e_multi_repo_build_builds_every_loaded_repo_on_the_host(docker_host, 
         "build",
         "--parent",
         docker_host,
-        sut_dirs=f"{REPO1}{os.pathsep}{REPO2}",
+        roots=f"{REPO1}{os.pathsep}{REPO2}",
         xdir=tmp_path,
     )
     assert result.returncode == 0, (
@@ -300,7 +300,7 @@ def test_e2e_multi_repo_up_composes_only_the_named_use_case(teardown_after, dock
         "--parent",
         docker_host,
         "--build",
-        sut_dirs=f"{REPO1}{os.pathsep}{REPO2}",
+        roots=f"{REPO1}{os.pathsep}{REPO2}",
         xdir=tmp_path,
         compose_suffix=suffix,
     )
@@ -339,7 +339,7 @@ def test_e2e_multi_repo_down_no_traceback(docker_host, tmp_path):
         _REPO1_USE_CASE,
         "--parent",
         docker_host,
-        sut_dirs=f"{REPO1}{os.pathsep}{REPO2}",
+        roots=f"{REPO1}{os.pathsep}{REPO2}",
         xdir=tmp_path,
     )
     # Even if nothing is up, the command must exit cleanly without a traceback.
@@ -463,7 +463,7 @@ def test_e2e_up_with_no_use_case_names_the_declared_ones(tmp_path):
         "docker",
         "compose",
         "up",
-        sut_dirs=f"{REPO1}{os.pathsep}{REPO2}",
+        roots=f"{REPO1}{os.pathsep}{REPO2}",
         xdir=tmp_path,
     )
     output = " ".join((result.stdout + result.stderr).split())
@@ -571,7 +571,7 @@ def test_e2e_use_cases_reports_the_displacement(tmp_path):
         "docker",
         "use-cases",
         _MERGED_USE_CASE,
-        sut_dirs=_BOTH_REPOS,
+        roots=_BOTH_REPOS,
         xdir=tmp_path,
         env=_WIDE,
     )
@@ -610,7 +610,7 @@ def test_e2e_merged_use_case_up_then_down(teardown_after, docker_host, tmp_path)
         "--parent",
         docker_host,
         "--build",
-        sut_dirs=_BOTH_REPOS,
+        roots=_BOTH_REPOS,
         xdir=tmp_path,
         compose_suffix=suffix,
     )
@@ -637,7 +637,7 @@ def test_e2e_merged_use_case_up_then_down(teardown_after, docker_host, tmp_path)
         _MERGED_USE_CASE,
         "--parent",
         docker_host,
-        sut_dirs=_BOTH_REPOS,
+        roots=_BOTH_REPOS,
         xdir=tmp_path,
         compose_suffix=suffix,
     )
@@ -671,7 +671,7 @@ def test_e2e_provide_flips_the_winner(teardown_after, docker_host, tmp_path):
         "--parent",
         docker_host,
         "--build",
-        sut_dirs=_BOTH_REPOS,
+        roots=_BOTH_REPOS,
         xdir=tmp_path,
         compose_suffix=suffix,
     )
@@ -714,7 +714,7 @@ def test_e2e_dry_run_prints_the_plan_and_starts_nothing(docker_host, tmp_path):
         str(env_file),
         "--parent",
         docker_host,
-        sut_dirs=_BOTH_REPOS,
+        roots=_BOTH_REPOS,
         xdir=tmp_path,
         compose_suffix=suffix,
     )

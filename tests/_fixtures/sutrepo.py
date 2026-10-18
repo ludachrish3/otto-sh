@@ -3,7 +3,7 @@
 Every ``.otto/settings.toml`` the suite writes must come from here — the
 drift guard in ``tests/unit/test_sutrepo_scaffold_policy.py`` enforces it
 (writer-under-test sites carry a ``# sutrepo-exempt: <reason>`` marker
-instead).  Before this module existed the mkdir → write-literal → ``Repo``
+instead).  Before this module existed the mkdir → write-literal → ``Project``
 dance was re-typed at 46 sites across 28 files (by this wave's landed
 guard; its first cut counted 43/25 before the local-binding arm existed),
 so every new settings field meant two dozen edits and the copies drifted.
@@ -11,7 +11,7 @@ so every new settings field meant two dozen edits and the copies drifted.
 ``extra`` is VERBATIM TOML appended after the generated header — the
 dependency tables, coverage sections, and host preferences the sites write
 today are carried byte-for-byte (preserve the computation; a renderer would
-re-encode them).  Callers construct ``Repo(sut_dir=...)`` themselves: this
+re-encode them).  Callers construct ``Project(root=...)`` themselves: this
 module deliberately imports nothing from otto, so fixture import order can
 never entangle with product import-time behavior.
 """
@@ -62,15 +62,15 @@ def make_sut_repo(
     return root
 
 
-def touch_settings(sut_dir: Path) -> Path:
+def touch_settings(root: Path) -> Path:
     """An EMPTY ``.otto/settings.toml`` under *sut_dir*, for repo STAND-INS.
 
     The completion-cache tests hash the settings file as a fingerprint source
     on ``MagicMock``/``SimpleNamespace`` repos that are never parsed by
-    ``Repo`` — they need a file to hash, not a repo.  Centralized so the
+    ``Project`` — they need a file to hash, not a repo.  Centralized so the
     ``.otto/settings.toml`` layout is spelled in exactly one module.
     """
-    otto_dir = sut_dir / ".otto"
+    otto_dir = root / ".otto"
     otto_dir.mkdir(parents=True, exist_ok=True)
     settings = otto_dir / "settings.toml"
     settings.write_text("")

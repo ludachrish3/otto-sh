@@ -58,7 +58,7 @@ def built_modules(tmp_path_factory):
 
 
 def _run_otto(argv, *, xdir, timeout):
-    result = run_otto(argv, xdir=xdir, sut_dirs=REPO5, lab=_LAB, timeout=timeout)
+    result = run_otto(argv, xdir=xdir, roots=REPO5, lab=_LAB, timeout=timeout)
     if result.returncode != 0:
         raise AssertionError(
             f"otto --lab {_LAB} {' '.join(argv)} exited {result.returncode}\n"

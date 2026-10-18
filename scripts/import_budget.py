@@ -18,7 +18,7 @@ docs/architecture/startup-performance.md.
 
 EVERY GATED COUNTER IS A CEILING: a measured baseline plus headroom
 (:func:`ceiling`). Two counters per surface, ``file_ops`` (the whole tree) and
-``workspace`` (the subset under the generated repo and ``OTTO_HOME``). Growing
+``workspace`` (the subset under the generated project and ``OTTO_HOME``). Growing
 past a ceiling fails, with the growth broken down by package and by child
 process (:func:`breakdown_diff`); shrinking never fails, and a counter far below
 its ceiling earns an advisory NOTE (:func:`advisories`). A tracked surface is
@@ -38,7 +38,7 @@ RUNNING interpreter's file; a missing baseline is a named failure, never a
 skip. `--update` regenerates only the running interpreter's file.
 
 The ``real_entry`` surfaces run the console entry path against a GENERATED
-repo, because startup I/O against an empty workspace is zero and therefore
+project, because startup I/O against an empty workspace is zero and therefore
 unmeasurable. They stay host-independent the same way — the harness creates
 what it measures.
 
@@ -91,7 +91,7 @@ RATIO_FLOOR = "version_repo"
 """The surface every :attr:`Surface.target_ratio` divides by: ``otto --version``.
 
 The shim answers it without importing the CLI, so it is an interpreter start
-plus ``otto._shim`` and ``otto.version`` against the same generated repo: the
+plus ``otto._shim`` and ``otto.version`` against the same generated project: the
 least any command can cost."""
 
 STALE_RATIO = 0.8
@@ -124,9 +124,9 @@ class Surface:
     """
 
     sut_files: int | None = None
-    """Generate a repo with this many NESTED test files and measure against it.
+    """Generate a project with this many NESTED test files and measure against it.
 
-    None keeps the historical behaviour: no repos, otto-core only.
+    None keeps the historical behaviour: no projects, otto-core only.
     """
 
     sut_dirs_count: int = 1
@@ -140,7 +140,7 @@ class Surface:
     purpose."""
 
     warm: bool = False
-    """Measure the SECOND run against one repo and one ``OTTO_HOME``.
+    """Measure the SECOND run against one project and one ``OTTO_HOME``.
 
     Every measurement is otherwise COLD by construction: ``surface_env``
     mints a fresh ``OTTO_HOME`` per call so repeated measurements of one
@@ -149,7 +149,7 @@ class Surface:
     full bootstrap → collect → write), because cache-or-load never degrades
     help.
     A warm surface therefore runs the child TWICE against the same generated
-    repo and the same home: a discarded seed run, then the measured one.
+    project and the same home: a discarded seed run, then the measured one.
 
     The seed writes ONLY into ``OTTO_HOME`` (the cache file). Nothing is
     written into the fixture tree — ``PYTHONDONTWRITEBYTECODE`` still keeps
@@ -223,7 +223,7 @@ class Surface:
     earlier cannot pass as the surface with a smaller count."""
 
     ssh_lab: bool = False
-    """Generate the repo with a second lab source holding one SSH host on a closed port.
+    """Generate the project with a second lab source holding one SSH host on a closed port.
 
     See ``generate_repo``'s ``ssh_lab_port``. The harness picks the port and
     proves it refuses a connection before every measured run, so the surface
@@ -276,10 +276,10 @@ def _verb_surface(
     """Build a surface measuring one real command, the way a user runs it day to day.
 
     Every verb surface shares one shape, so the numbers compare across verbs:
-    the real console entry against a realistic generated repo, WARM (seeded
+    the real console entry against a realistic generated project, WARM (seeded
     with root help, which writes the cache an ordinary command then finds
     beside it, as ``dispatch_repo_warm`` explains), with ``OTTO_LAB`` naming
-    the JSON lab the repo declares so no command needs a real host.
+    the JSON lab the project declares so no command needs a real host.
     *seed_argv* replaces root help for a verb whose own warm state is
     something else (``test_repo``).
     """
@@ -345,11 +345,11 @@ SURFACES: list[Surface] = [
     # bootstrap registers are `otto run`'s.
     Surface("run_bootstrapped", ["otto", "run", "--help"], bootstrap=True),
     # EVERY SURFACE ABOVE MEASURES AN EMPTY WORKSPACE. The sanitized env strips
-    # OTTO_*, so `sut_dirs` is empty, discovery finds zero repos, and a walk of
+    # OTTO_* and OTTOPATH, so `ottopath` is empty, discovery finds zero projects, and a walk of
     # the workspace costs nothing on any of them. A guard that cannot observe a
     # defect cannot witness its fix either.
     #
-    # The surfaces below carry a GENERATED repo (deterministic by
+    # The surfaces below carry a GENERATED project (deterministic by
     # construction, so they stay as host-independent as the rest of the table)
     # and — `bootstrap_repo`, which drives the composition root directly, aside
     # — run the REAL entry path, so they observe bootstrap and cache
@@ -363,8 +363,8 @@ SURFACES: list[Surface] = [
     # so it is the fallback path: cache miss → full bootstrap → collect →
     # write, which is what cache-or-load promises and must keep costing what
     # a complete answer costs. It is therefore also the surface that PROVES
-    # THE HARNESS still finds a real repo (its `workspace` count clears a
-    # repo-less run of the same command by every `names` key path), which is
+    # THE HARNESS still finds a real project (its `workspace` count clears a
+    # project-less run of the same command by every `names` key path), which is
     # why it stays in the table unchanged.
     #
     # `help_repo_warm` is the same surface measured on its SECOND run against
@@ -382,10 +382,10 @@ SURFACES: list[Surface] = [
     ),
     # `run_bootstrapped`'s REPO-BEARING SIBLING, and the pair is again the
     # measurement. That surface runs the composition root against an EMPTY
-    # workspace — zero repos discovered — which is what isolates bootstrap's
+    # workspace — zero projects discovered — which is what isolates bootstrap's
     # own import graph from anything a workspace drags in, and it must keep
     # doing exactly that. This one runs the same root against a generated
-    # repo, so the work bootstrap does PER REPO (reading the repo's settings,
+    # project, so the work bootstrap does PER PROJECT (reading the project's settings,
     # putting its lib dirs on the path, importing its init tree) is charged to
     # a surface. Same argv for the same reason the original chose it: the
     # verbs bootstrap registers are `otto run`'s.
@@ -400,8 +400,8 @@ SURFACES: list[Surface] = [
     # a warm cache. Every other real-entry surface above is `--version`, root
     # help or a TAB, so until this existed nothing measured what `otto run Y`
     # pays before its own work starts — which is where a completion-cache
-    # check and every repo's test-file import were hiding. `-R` skips the
-    # reservation check and OTTO_LAB names a JSON lab the generated repo
+    # check and every project's test-file import were hiding. `-R` skips the
+    # reservation check and OTTO_LAB names a JSON lab the generated project
     # declares, so the run contacts no host.
     #
     # `seed_argv=root --help`, NOT this surface's own argv: see
@@ -481,7 +481,7 @@ SURFACES: list[Surface] = [
     # that has never held the file.
     #
     # The one verb that must import pytest. Its warm state is a repeated
-    # run: the seed is the same `otto test TestTop0`, which writes the repo's
+    # run: the seed is the same `otto test TestTop0`, which writes the project's
     # collected-tests table, so the measured run finds it current. Its
     # session collects the whole tree all the same, as every run does: the
     # table is a hint and never narrows a run (#592). Seeded with root help
@@ -614,10 +614,10 @@ _CHILD_IMPORT = _CHILD_PREAMBLE + _CHILD_IMPORT_BODY
 # `Surface.bootstrap` additionally runs the composition root, in the position
 # `otto.cli.main.entry` runs it: BEFORE argv is parsed, so every import
 # bootstrap performs is charged to the surface. It needs no lab and reads no
-# repo — the sanitized env strips OTTO_*, `sut_dirs` then defaults to empty,
-# and discovery finds zero repos — so the surface stays as host-independent
-# and deterministic as the rest of the table while covering otto's own
-# startup graph.
+# project — the sanitized env strips OTTO_* and OTTOPATH, `ottopath` then
+# defaults to empty, and discovery finds zero projects — so the surface stays
+# as host-independent and deterministic as the rest of the table while
+# covering otto's own startup graph.
 _CHILD_CLI_BODY = """
 import sys, json
 import typer
@@ -663,7 +663,7 @@ _CHILD_CLI = _CHILD_PREAMBLE.replace("{", "{{").replace("}", "}}") + _CHILD_CLI_
 #
 # `sys_path_len` and `fixture_path_entries` ride EVERY child's payload (not
 # just this one) so `measure()` returns one uniform shape whichever child
-# produced it. `Repo.add_libs_to_pythonpath` prepends each discovered repo's
+# produced it. `Project.add_libs_to_pythonpath` prepends each discovered project's
 # lib dirs, and every later import probe pays for every entry, so the tests
 # read `fixture_path_entries`: the entries under the FIXTURE ROOT only, because
 # the total length moves with editable-vs-wheel installs, layout changes, and
@@ -733,8 +733,8 @@ print(json.dumps([m for m in sorted(sys.modules)
 
 
 def _sanitized_env() -> dict[str, str]:
-    """Env with all OTTO_* vars stripped, so measurement is lab/host independent."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith("OTTO_")}
+    """Env with every OTTO_* var and OTTOPATH stripped, so measurement is lab/host independent."""
+    env = {k: v for k, v in os.environ.items() if not (k.startswith("OTTO_") or k == "OTTOPATH")}
     # The measured command must set this itself, as the `otto` command does.
     env.pop("PYDANTIC_DISABLE_PLUGINS", None)
     return env
@@ -979,7 +979,7 @@ def parse_file_ops(
     - ``workspace`` is the subset under *workspace_prefixes*, the roots
       themselves included (see :meth:`PathBuckets.bucket`). Nothing is
       subtracted: this is a ceiling, and a ceiling may carry the import
-      system's per-import probes of a repo's lib dirs.
+      system's per-import probes of a project's lib dirs.
     - The first tid in the trace is the measured interpreter, which never
       execs. Any other tid is named by the program it ``execve``s; its
       ``execve`` counts under that name.
@@ -1045,7 +1045,7 @@ def _run_child(
     *env* defaults to the sanitized env — no ``OTTO_*`` at all, which is the
     right baseline for a direct ``measure`` call. A SURFACE always passes
     :func:`surface_env` instead (via :func:`measure_surface`), so its private
-    ``OTTO_HOME`` — and, when it has one, its generated repo — reach the child.
+    ``OTTO_HOME`` — and, when it has one, its generated project — reach the child.
 
     The child never inherits the caller's cwd; it starts in :func:`_quiet_cwd`.
 
@@ -1180,9 +1180,9 @@ def _remove_fixture_roots() -> None:
 
 @functools.cache
 def _home_parent_for_non_repo_surfaces() -> Path:
-    """Parent directory for the temp ``OTTO_HOME``s of non-repo surfaces.
+    """Parent directory for the temp ``OTTO_HOME``s of non-project surfaces.
 
-    A repo-bearing surface's home sits beside its generated repo, inside the
+    A project-bearing surface's home sits beside its generated project, inside the
     fixture root, so one sweep collects both. A surface with no fixture has no
     such parent, and it still needs a pinned home (see :func:`surface_env`)
     — so one throwaway parent is made on first use
@@ -1218,7 +1218,7 @@ def _quiet_cwd() -> Path:
 
 @functools.cache
 def _generated_repo_for(key: str, files: int, dirs: int, ssh_lab_port: int | None = None) -> Path:
-    """Build (once per surface) a generated sut-dir repo and return its path.
+    """Build (once per surface) a generated project and return its path.
 
     Keyed on the surface's NAME and shape rather than on the ``Surface`` itself:
     ``Surface.argv`` is a list, so the frozen dataclass is unhashable and cannot
@@ -1239,8 +1239,8 @@ def _generated_repo_for(key: str, files: int, dirs: int, ssh_lab_port: int | Non
     # realistic=True (spec §3.5 of `2026-09-25-dispatch-startup-cost-design.md`):
     # top-level suite files import pytest, the init module registers an
     # instruction and imports a monitor parser, and a JSON
-    # lab source is declared — so every repo-bearing surface's count shows
-    # what a real repo actually costs, rather than an empty init module nobody
+    # lab source is declared — so every project-bearing surface's count shows
+    # what a real project actually costs, rather than an empty init module nobody
     # ships.
     return generate_repo(root, files=files, dirs=dirs, realistic=True, ssh_lab_port=ssh_lab_port)
 
@@ -1275,15 +1275,15 @@ def _prove_port_closed(port: int) -> None:
 
 
 def _surface_repo(surface: Surface) -> Path:
-    """Return *surface*'s generated repo, built once per process."""
+    """Return *surface*'s generated project, built once per process."""
     if surface.sut_files is None:
-        raise ValueError(f"surface {surface.key!r} carries no generated repo")
+        raise ValueError(f"surface {surface.key!r} carries no generated project")
     port = _budget_ssh_port() if surface.ssh_lab else None
     return _generated_repo_for(surface.key, surface.sut_files, surface.sut_dirs_count, port)
 
 
 def fixture_root(surface: Surface) -> Path:
-    """Return the fixture root ``{root}`` names in *surface*'s argv: its repo's parent."""
+    """Return the fixture root ``{root}`` names in *surface*'s argv: its project's parent."""
     return _surface_repo(surface).parent
 
 
@@ -1299,7 +1299,7 @@ def _uses_fixture_root(surface: Surface) -> bool:
 def _reset_transfer_fixture(root: Path) -> None:
     """Write the file a transfer surface moves, and empty the directories it moves it into.
 
-    Reset before every measured run, because the repo (and so the root) is
+    Reset before every measured run, because the project (and so the root) is
     cached per process: a destination that already held the file from an
     earlier measurement would let a later one measure an overwrite, or pass a
     "the file arrived" check the run itself never earned.
@@ -1312,7 +1312,7 @@ def _reset_transfer_fixture(root: Path) -> None:
 
 FIXTURE_ROOT_ENV_VAR = "IMPORT_BUDGET_FIXTURE_ROOT"
 """Tells the child which tree is the fixture, so it can report how many of its
-own ``sys.path`` entries came from the repo under measurement.
+own ``sys.path`` entries came from the project under measurement.
 
 Deliberately NOT ``OTTO_``-prefixed: otto parses that namespace, and a name it
 does not know has no business reaching its settings model. The sanitizer only
@@ -1331,16 +1331,16 @@ corrupting the one stdout line every child kind used to be parsed from. Not
 
 
 def surface_env(surface: Surface) -> dict[str, str]:
-    """Env for *surface*: sanitized, a FRESH OTTO_HOME, plus any generated repo.
+    """Env for *surface*: sanitized, a FRESH OTTO_HOME, plus any generated project.
 
     ``OTTO_HOME`` is not optional, AND IT IS PINNED ON EVERY SURFACE, not only
-    the repo-bearing ones. ``workspace_home()`` resolves under ``otto_home()``
+    the project-bearing ones. ``workspace_home()`` resolves under ``otto_home()``
     = ``$OTTO_HOME`` else ``~/.otto``, and the sanitizer strips ``OTTO_*`` — so
     without injection a child reads (and, on the surfaces that run the real
     entry path, WRITES) the developer's real ``~/.otto``, whose contents are
     machine state. The ``workspace`` counter also attributes by prefix
     against this root, so an unpinned surface would charge its home reads to
-    whatever that box keeps under ``~/.otto``. A non-repo surface's home
+    whatever that box keeps under ``~/.otto``. A non-project surface's home
     therefore comes from :func:`_home_parent_for_non_repo_surfaces` rather
     than from a fixture root it does not have.
 
@@ -1352,9 +1352,9 @@ def surface_env(surface: Surface) -> dict[str, str]:
     lands directly inside the corpus delta the gates assert.
 
     - The child writes ``completion_cache.json`` into its ``OTTO_HOME``, so the
-      home is a fresh directory per call. For a repo-bearing surface it stays
+      home is a fresh directory per call. For a project-bearing surface it stays
       inside the fixture root, so the atexit sweep still collects it.
-    - The dominant one: importing the repo's init module and its top-level test
+    - The dominant one: importing the project's init module and its top-level test
       files writes ``__pycache__`` INTO THE FIXTURE TREE, which is cached and
       therefore shared across calls. Measured directly with the audit-hook
       open count this harness used before strace — 607, then 598, 598, 598;
@@ -1362,7 +1362,7 @@ def surface_env(surface: Surface) -> dict[str, str]:
       ``PYTHONDONTWRITEBYTECODE`` keeps the harness from mutating
       the tree it is measuring, so every call is the cold number.
 
-    Only these need to be fresh. The repo tree stays cached: generating a
+    Only these need to be fresh. The project tree stays cached: generating a
     200-file corpus per call is pure cost, and with no bytecode written it
     never warms.
 
@@ -1378,16 +1378,16 @@ def surface_env(surface: Surface) -> dict[str, str]:
     code. The cache is compiled before the first measurement
     (:func:`_warm_bytecode`) and no child writes to it, so every measurement
     sees the same warm cache: the steady state of any installation after its
-    first run. The fixture repo's own modules are never compiled, so they
+    first run. The fixture project's own modules are never compiled, so they
     are cold on every run alike, and their probes are charged back to the
     workspace (:func:`parse_file_ops`).
     """
     env = _sanitized_env()
     if surface.sut_files is not None:
-        repo = _surface_repo(surface)
-        env["OTTO_SUT_DIRS"] = str(repo)
-        env[FIXTURE_ROOT_ENV_VAR] = str(repo.parent)
-        home_parent = repo.parent
+        project = _surface_repo(surface)
+        env["OTTOPATH"] = str(project)
+        env[FIXTURE_ROOT_ENV_VAR] = str(project.parent)
+        home_parent = project.parent
     else:
         home_parent = _home_parent_for_non_repo_surfaces()
     env["OTTO_HOME"] = str(home_parent / f"home-{uuid.uuid4().hex}")
@@ -1639,7 +1639,7 @@ def measure_surface(surface: Surface) -> dict:
         root = env[FIXTURE_ROOT_ENV_VAR]
         argv = [arg.replace(ROOT_PLACEHOLDER, root) for arg in argv]
     if surface.warm:
-        # The seed. Same child, same repo, same home — so it performs exactly
+        # The seed. Same child, same project, same home — so it performs exactly
         # the work the measured run would have had to, and leaves exactly the
         # cache the measured run reads. Its counts are discarded. The argv is
         # the surface's own UNLESS ``seed_argv`` overrides it — see

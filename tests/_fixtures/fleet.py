@@ -2,7 +2,7 @@
 
 Lifted out of ``tests/unit/fleet/test_fleet_scoping.py`` when a second module
 (the reservation gate, which now computes its requirement over
-``OttoContext.admissible_ids()``) needed the same construction. Real ``Repo``
+``OttoContext.admissible_ids()``) needed the same construction. Real ``Project``
 objects parsed from a real ``settings.toml`` and real hosts built by the
 factory — the scoping chain reads what settings parsing and lab loading
 produced, so a stub of either would pin the stub's shape instead of the chain's.
@@ -10,7 +10,7 @@ produced, so a stub of either would pin the stub's shape instead of the chain's.
 
 import textwrap
 
-from otto.config.repo import Repo
+from otto.config.project import Project
 from otto.context import OttoContext, set_context
 from otto.host.element import Element
 from otto.labs.loader import Lab
@@ -24,7 +24,7 @@ def _toml_list(patterns):
 
 
 def _repo(tmp_path, name, *, labs=None, hosts=None):
-    """A real ``Repo`` whose ``[project]`` block declares *labs* / *hosts*.
+    """A real ``Project`` whose ``[project]`` block declares *labs* / *hosts*.
 
     Both ``None`` writes no ``[project]`` table at all — the undeclared repo the
     whole-lab fallback is built on, which is a different thing from a repo that
@@ -38,7 +38,7 @@ def _repo(tmp_path, name, *, labs=None, hosts=None):
         if hosts is not None:
             lines.append(f"host_patterns = {_toml_list(hosts)}")
         body = "\n".join(lines)
-    return Repo(sut_dir=make_sut_repo(tmp_path / name, name=name, extra=textwrap.dedent(body)))
+    return Project(root=make_sut_repo(tmp_path / name, name=name, extra=textwrap.dedent(body)))
 
 
 def _host(element, lab_name, octet):
@@ -81,7 +81,7 @@ def add_builtin_local(lab, *, resources=frozenset()):
     return lab
 
 
-def install_scoped_context(lab, repos, *, exclude_projects=()):
+def install_scoped_context(lab, projects, *, exclude_projects=()):
     """Build and install an ``OttoContext`` whose scopes resolve over *repos*.
 
     *exclude_projects* is the run's ``-E`` list, as the CLI would set it.
@@ -102,7 +102,7 @@ def install_scoped_context(lab, repos, *, exclude_projects=()):
     ctx = OttoContext(
         lab=lab,
         exclude_projects=tuple(exclude_projects),
-        bootstrap=fake_bootstrap_result(repos),
+        bootstrap=fake_bootstrap_result(projects),
     )
     set_context(ctx)
     return ctx

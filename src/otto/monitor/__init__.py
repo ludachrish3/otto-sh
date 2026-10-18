@@ -54,7 +54,7 @@ collection — the library behind ``otto monitor <source>``)::
 
     from otto.monitor import serve_review
 
-    asyncio.run(serve_review(Path("metrics.db"), repos=[]))  # blocks until stopped
+    asyncio.run(serve_review(Path("metrics.db"), projects=[]))  # blocks until stopped
 
 Every name is exported lazily (PEP 562): ``from otto.monitor import
 MetricCollector`` imports ``otto.monitor.collector`` and what it needs, and

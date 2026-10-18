@@ -395,7 +395,7 @@ conftest's sanctioned block.
    gate draws. Marker line in stdout = anti-vacuity control; leak (rc 7 — clear of
    pytest's own exit codes; it was 3 at t0, which collides with INTERNAL_ERROR)
    distinguished from a broken inner run (any other rc). ✅ DONE (Wave 4); proven red
-   first: the integration leg failed with `['OTTO_SUT_DIRS']`, rc=3, pre-fix.
+   first: the integration leg failed with `['OTTOPATH']`, rc=3, pre-fix.
 2. Meta-guard `tests/unit/test_conftest_env_writes.py`: AST scan of every non-fixture
    `tests/**/conftest.py` + `tests/_fixtures/*.py`; module-scope (incl. class-body,
    `if`/`for`-nested) env writes flagged, import aliases resolved, and module-scope
@@ -404,7 +404,7 @@ conftest's sanctioned block.
    controls for every banned and sanctioned shape. ✅ DONE (Wave 4); t0 red:
    `['tests/integration/conftest.py:32']` exactly.
 **Fix landed:** the integration conftest's import-time `ensure_sut_dirs()` (whose
-"config reads OTTO_SUT_DIRS at import time" justification had gone stale — all
+"config reads OTTOPATH at import time" justification had gone stale — all
 readers are lazy) became a session-scoped autouse fixture (`_impl` pattern,
 set-with-restore, pinned directly); `ensure_sut_dirs` deleted from
 `tests/_fixtures/paths.py`. **In-wave decision:** the root `NO_COLOR`/`TERM` block
@@ -755,7 +755,7 @@ Either way the *pin* is the deliverable; the write becomes declared or scoped.
       collection-time pin (`--collect-only` + `tests/_collect_env_probe.py` plugin at
       `collection_finish`) — the runtime probe can't draw the import-time/runtime
       boundary, a collect-only run can. t0: integration leg red with
-      `['OTTO_SUT_DIRS']`, rc=3; unit/e2e legs green.*
+      `['OTTOPATH']`, rc=3; unit/e2e legs green.*
 - [x] Apply the chosen fix; pin green in all three trees. *Default option taken: the
       "import-time singleton" justification was STALE (all readers lazy), so a plain
       session-scoped autouse fixture suffices — `_impl` pattern, set-with-restore,

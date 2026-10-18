@@ -261,7 +261,7 @@ class Lab:
 def _json_source(search_paths: list[Path]) -> "LabRepository":
     """Build a json source over *search_paths* through the lab-source registry.
 
-    No repo is selected on this path, so its hosts see no repo data profiles.
+    No project is selected on this path, so its hosts see no project data profiles.
     """
     from ..host.os_profile import ProfileContext
     from .registry import LAB_REPOSITORIES
@@ -271,7 +271,7 @@ def _json_source(search_paths: list[Path]) -> "LabRepository":
         "json",
         {"paths": [str(p) for p in search_paths]},
         LabSourceEnv(
-            repo_dir=Path.cwd(),
+            project_root=Path.cwd(),
             label="json",
             origin="load_lab(search_paths=)",
             profiles=ProfileContext.empty(),

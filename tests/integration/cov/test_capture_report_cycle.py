@@ -70,7 +70,7 @@ async def test_manual_survives_unrelated_commit_and_stales_on_edit(tmp_path: Pat
 
     report1 = tmp_path / "r1"
     store = await run_coverage_report(
-        [], report1, ReportInputs(repo_root=repo, tier_configs=load_tiers(COV))
+        [], report1, ReportInputs(project_root=repo, tier_configs=load_tiers(COV))
     )
     (frec,) = [f for f in store.files() if f.path.name == "f.c"]
     assert frec.lines[2].hits.for_tier("manual") == 4
@@ -82,7 +82,7 @@ async def test_manual_survives_unrelated_commit_and_stales_on_edit(tmp_path: Pat
 
     report2 = tmp_path / "r2"
     store2 = await run_coverage_report(
-        [], report2, ReportInputs(repo_root=repo, tier_configs=load_tiers(COV))
+        [], report2, ReportInputs(project_root=repo, tier_configs=load_tiers(COV))
     )
     (frec2,) = [f for f in store2.files() if f.path.name == "f.c"]
     assert frec2.lines[2].hits.for_tier("manual") == 0
@@ -127,7 +127,7 @@ async def test_runs_traceable_end_to_end(tmp_path: Path) -> None:
 
     report = tmp_path / "r"
     store = await run_coverage_report(
-        [], report, ReportInputs(repo_root=repo, tier_configs=load_tiers(COV))
+        [], report, ReportInputs(project_root=repo, tier_configs=load_tiers(COV))
     )
 
     by_ticket = {c.ticket: c for c in store.runs}

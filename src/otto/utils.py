@@ -2,13 +2,15 @@
 
 Among others: the :class:`Status` enum, the CLI overlays (:class:`Arg`,
 :class:`Opt`, ``Exclude``) and :func:`cli_exposed`, path anchoring
-(:func:`anchor_path`), path-list splitting (:func:`split_path_list`), the
+(:func:`anchor_path`), path-list splitting (:func:`split_path_list`) and
+``OTTOPATH``'s kept spelling (:func:`ottopath_entries`), the
 ``cache_ttl`` grammar (:func:`parse_cache_ttl`), the monitor
 collection-interval floor (:data:`MIN_INTERVAL_SECONDS`), list-option
 splitting and completion helpers, the dry-run headlines, and deadline polling
 (:func:`wait_for`, :func:`wait_for_async`).
 """
 
+import functools
 import inspect
 import math
 import os
@@ -42,7 +44,7 @@ def anchor_path(value: Path, root: Path, *, quote: bool = True) -> Path:
     ``~``-rooted ones, already expanded here) pass through untouched.
 
     Deliberately does not ``resolve()``: that would collapse symlinks and
-    change path identity for repos reached through symlinked checkouts.
+    change path identity for projects reached through symlinked checkouts.
 
     Raises:
         ValueError: *value*'s ``~`` cannot be expanded (``~nosuchuser/...``,
@@ -61,7 +63,7 @@ def anchor_path(value: Path, root: Path, *, quote: bool = True) -> Path:
     return value if value.is_absolute() else root / value
 
 
-# Path-list env vars (e.g. OTTO_SUT_DIRS) separate entries with os.pathsep
+# Path-list env vars (e.g. OTTOPATH) separate entries with os.pathsep
 # (':' on POSIX, ';' on Windows), like PATH and PYTHONPATH. A comma is an
 # ordinary path character. The console-script shim and the completion cache
 # split the same variables with this pattern, so all three agree.
@@ -69,17 +71,71 @@ _PATH_LIST_SEP = re.compile(re.escape(os.pathsep))
 
 
 def split_path_list(value: str) -> list[Path]:
-    """Split a path-list env value (``OTTO_SUT_DIRS``) into its paths.
+    """Split a path-list env value (``OTTOPATH``) into its paths.
 
     Entries are separated by :data:`os.pathsep` only, and empty entries are
     dropped. A comma is part of a path. Nothing else is touched: whitespace is
     part of an entry (``/a: /b`` names ``" /b"`` on POSIX), exactly as the
     completion-cache environment and the console-script shim split the same
-    variable. The loader and ``otto init``'s "is this repo already on the
-    list" check both read the variable through here, so they cannot disagree
-    about what it names.
+    variable. A reader that needs the roots themselves does not stop here: the
+    loader and ``otto init``'s "is this project root already on the list" check
+    read the value through :func:`ottopath_entries`, which splits the same way
+    and then expands ``~`` and joins a relative entry to the cwd, and the
+    completion cache and the shim build the same pieces in the same order. So
+    no two readers disagree about which directories the value names.
     """
     return [Path(entry) for entry in _PATH_LIST_SEP.split(value) if entry]
+
+
+def kept_path_spelling(entry: str) -> str:
+    """Return the spelling otto keeps for a root: ``~`` expanded, a relative one joined to the cwd.
+
+    Nothing else changes: ``..`` and symlinks stay exactly as written.
+    ``os.path.abspath`` would fold ``<link>/..`` lexically, naming a different
+    directory than the filesystem does. The stdlib-only console-script shim
+    mirrors this function byte for byte (``otto._shim_complete``), hence
+    ``os.path`` rather than ``pathlib``.
+    """
+    path = os.path.expanduser(entry)  # noqa: PTH111
+    return path if os.path.isabs(path) else os.path.join(os.getcwd(), path)  # noqa: PTH109, PTH117, PTH118
+
+
+@functools.cache
+def root_key(path: str) -> str:
+    """Return the comparison key of a root in its kept spelling: its ``os.path.realpath``.
+
+    Used only to compare roots (a repeated root, ``otto init``'s "already on
+    ``OTTOPATH``" check) and to key the workspace home, never to load or to
+    hand to a child. Cached, so each root is resolved once per
+    process however many times the env settings are built (``realpath`` costs
+    one ``lstat`` per path component); ``otto.bootstrap.invalidate`` clears it
+    with the rest of the cached composition state.
+    """
+    return os.path.realpath(path)
+
+
+def collapse_path_list(entries: list[str]) -> list[str]:
+    """Drop every entry naming the same directory as an earlier one; the first keeps its spelling.
+
+    Two entries are the same when their :func:`root_key` agree. That key is
+    only compared, never kept or passed on. A list of fewer than two entries is
+    returned as is, so the common one-root workspace resolves nothing here.
+    """
+    if len(entries) <= 1:
+        return list(entries)
+    seen: set[str] = set()
+    kept: list[str] = []
+    for entry in entries:
+        key = root_key(entry)
+        if key not in seen:
+            seen.add(key)
+            kept.append(entry)
+    return kept
+
+
+def ottopath_entries(value: str) -> list[str]:
+    """Return the roots an ``OTTOPATH`` value names: split, kept spelling, repeats collapsed."""
+    return collapse_path_list([kept_path_spelling(e) for e in _PATH_LIST_SEP.split(value) if e])
 
 
 _TTL = re.compile(r"\A(?:0|([1-9]\d*)([mhd]))\Z")
@@ -244,7 +300,7 @@ class WaitTimeoutError(OttoError, TimeoutError):
     A dedicated subclass so callers can tell the helper's own expiry apart
     from a ``TimeoutError`` raised *by the predicate* (which propagates
     unchanged) — a bare ``except TimeoutError`` around a wait would conflate
-    the two. OttoError-rooted per the repo-wide raises convention
+    the two. OttoError-rooted per the codebase-wide raises convention
     (``tests/unit/test_error_base.py``), keeping ``TimeoutError`` as its
     stdlib root so both spellings catch it.
     """

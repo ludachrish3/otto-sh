@@ -99,7 +99,7 @@ describe("scopeTreeToTicket", () => {
   });
 
   // Directory rollups must be RECOMPUTED from their (already-scoped)
-  // children, not carried over from the original whole-repo aggregate —
+  // children, not carried over from the original whole-project aggregate —
   // otherwise a directory row would still show "this node and below" as
   // the old, unscoped denominator even though every file row beneath it
   // now reports a ticket-scoped one. Both dirs' ORIGINAL totals below are
@@ -265,7 +265,7 @@ describe("ticketChunkToFileLines", () => {
       stats: emptyStats(),
     } as unknown as DirNode;
     const scoped = scopedOrThrow(tree, lines, hits, { tiers, asserted, assertedOnly });
-    // per_tier is the ticket's 4, never the file's whole-repo 380.
+    // per_tier is the ticket's 4, never the file's whole-project 380.
     expect(scoped.files[0].stats.lines).toEqual({
       total: 12,
       hit: 6,

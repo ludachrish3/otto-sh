@@ -23,7 +23,7 @@ _REPO_E2E = TESTS_ROOT / "repo_e2e"
 
 @dataclasses.dataclass(frozen=True)
 class ChaosTarget:
-    sut_dir: Path
+    root: Path
     lab: str
     host_id: str
     ssh_host: str
@@ -71,7 +71,7 @@ paths = [
 """,
     )
     return ChaosTarget(
-        sut_dir=sut,
+        root=sut,
         lab="chaos",
         host_id="loopback",
         ssh_host="127.0.0.1",
@@ -87,7 +87,7 @@ def make_bed_target(element: str) -> ChaosTarget:
     host = next(h for h in flat_hosts("tech1") if h["element"] == element)
     cred = host["creds"][0]
     return ChaosTarget(
-        sut_dir=_REPO_E2E,
+        root=_REPO_E2E,
         lab="unix",
         host_id=make_host_id(element, host.get("board"), None),
         ssh_host=host["ip"],

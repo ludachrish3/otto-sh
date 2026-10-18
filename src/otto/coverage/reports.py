@@ -90,7 +90,7 @@ class GetReport:
     """One ``capture.json`` per collected (host, product); never empty."""
 
     manual_captures: list[Path]
-    """Copies written into the repo's committed manual store (manual-kind tiers)."""
+    """Copies written into the project's committed manual store (manual-kind tiers)."""
 
     clean: "CleanReport | None"
     """The post-retrieval clean, when one was asked for."""

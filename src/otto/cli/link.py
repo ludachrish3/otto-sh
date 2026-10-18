@@ -63,16 +63,16 @@ def _link_completer(ctx: typer.Context, incomplete: str) -> list[str]:
     file's links and letting ``find_link`` refuse most of them.
     """
     # The composition root: importing it installs the initiator that composes
-    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    # the projects this reads (spec 2026-10-11 placement-and-phases §3.12).
     from .. import bootstrap
 
     del bootstrap
-    from ..declared import get_repos
+    from ..declared import get_projects
 
     try:
         labs = selected_lab_names(ctx)
         loaded_ids = set(lab_scoped_host_ids(ctx)) if labs else None
-        ids = collect_link_ids(get_repos(), loaded_ids=loaded_ids)
+        ids = collect_link_ids(get_projects(), loaded_ids=loaded_ids)
     except Exception:  # noqa: BLE001 — completion never crashes the shell
         ids = []
     return sorted(i for i in ids if i.startswith(incomplete))

@@ -9,7 +9,7 @@ from otto.docker.reports import (
     FailedImage,
     HostReport,
     ImageBuild,
-    RepoBuild,
+    ProjectBuild,
     TeardownReport,
 )
 from otto.result import CommandResult
@@ -53,7 +53,7 @@ def test_build_report_ok_treats_skipped_as_ok():
         "api": ImageBuild("api", ["api:latest"], "cbd8571d4b6e", _skipped()),
         "w": ImageBuild("w", ["w:latest"], "cbd8571d4b6e", _ok()),
     }
-    report = BuildReport(repos=[RepoBuild("r1", "test3", "built", images)])
+    report = BuildReport(projects=[ProjectBuild("r1", "test3", "built", images)])
     assert report.ok
     assert report.failed == []
 
@@ -61,15 +61,15 @@ def test_build_report_ok_treats_skipped_as_ok():
 def test_build_report_failed_lists_repo_image_and_result():
     bad = _fail("syntax error", command="docker build ...")
     report = BuildReport(
-        repos=[
-            RepoBuild(
+        projects=[
+            ProjectBuild(
                 "r1",
                 "test3",
                 "built",
                 {"api": ImageBuild("api", ["api:latest"], "cbd8571d4b6e", _ok())},
             ),
-            RepoBuild("r2", "test3", "built", {"db": ImageBuild("db", [], None, bad)}),
-            RepoBuild("r3", "test3", "no_images"),
+            ProjectBuild("r2", "test3", "built", {"db": ImageBuild("db", [], None, bad)}),
+            ProjectBuild("r3", "test3", "no_images"),
         ]
     )
     assert not report.ok
@@ -77,9 +77,9 @@ def test_build_report_failed_lists_repo_image_and_result():
 
 
 def test_no_images_entry_has_no_image_results_and_never_fails():
-    entry = RepoBuild("r3", "test3", "no_images")
+    entry = ProjectBuild("r3", "test3", "no_images")
     assert entry.images == {}
-    assert BuildReport(repos=[entry]).ok
+    assert BuildReport(projects=[entry]).ok
 
 
 def test_reports_are_frozen():
@@ -89,7 +89,7 @@ def test_reports_are_frozen():
 
 
 def test_build_report_displaced_defaults_empty():
-    assert BuildReport(repos=[]).displaced == []
+    assert BuildReport(projects=[]).displaced == []
 
 
 def test_the_new_names_are_lazily_exported():
@@ -100,7 +100,7 @@ def test_the_new_names_are_lazily_exported():
         "compose_build",
         "DockerVerbError",
         "BuildReport",
-        "RepoBuild",
+        "ProjectBuild",
         "FailedImage",
         "HostReport",
         "TeardownReport",

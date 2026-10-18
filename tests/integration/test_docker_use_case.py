@@ -31,7 +31,7 @@ from unittest.mock import patch
 import pytest
 import pytest_asyncio
 
-from otto.config.repo import Repo
+from otto.config.project import Project
 from otto.docker import resolve as resolve_mod
 from otto.docker.compose import use_case_project
 from otto.docker.deployment import deploy, teardown
@@ -106,9 +106,9 @@ def lab(parent) -> Lab:
 
 
 @pytest.fixture
-def repos() -> list[Repo]:
+def projects() -> list[Project]:
     """The two sample repos, parsed from their committed settings.toml."""
-    return [Repo(sut_dir=REPO1_DIR), Repo(sut_dir=REPO2_DIR)]
+    return [Project(root=REPO1_DIR), Project(root=REPO2_DIR)]
 
 
 @pytest.fixture
@@ -130,7 +130,7 @@ def project(suffix) -> str:
 
 
 @pytest.fixture(autouse=True)
-def _deployment_config(monkeypatch, lab, repos, suffix):
+def _deployment_config(monkeypatch, lab, projects, suffix):
     """Point ``deploy``/``teardown`` at THIS module's lab, repos and suffix.
 
     A run on THIS module's lab is installed and the composition root is
@@ -141,7 +141,7 @@ def _deployment_config(monkeypatch, lab, repos, suffix):
     the test process (they register process-global providers) to obtain repos
     this fixture already holds.
 
-    ``scope_for_repo`` is patched to its TRUTHFUL answer, not a convenient
+    ``scope_for_project`` is patched to its TRUTHFUL answer, not a convenient
     one: neither sample repo declares a ``[project]`` table, so the real
     lookup returns ``None`` for both — it just reaches it through the same
     lazy bootstrap.
@@ -149,8 +149,8 @@ def _deployment_config(monkeypatch, lab, repos, suffix):
     monkeypatch.setenv("OTTO_COMPOSE_SUFFIX", suffix)
     with (
         active_context(lab),
-        patch("otto.bootstrap.bootstrap", return_value=fake_bootstrap_result(repos)),
-        patch.object(resolve_mod, "scope_for_repo", return_value=None),
+        patch("otto.bootstrap.bootstrap", return_value=fake_bootstrap_result(projects)),
+        patch.object(resolve_mod, "scope_for_project", return_value=None),
     ):
         yield
 
@@ -219,8 +219,8 @@ async def test_merged_stack_displaces_mock(parent, project):
         # down at 0. Both priorities, neither described as "the higher one".
         (displacement,) = stack.selection.displaced
         assert displacement.capability == "edge"
-        assert (displacement.winner_repo, displacement.winner_priority) == ("repo1", 10)
-        assert (displacement.loser_repo, displacement.loser_priority) == ("repo2", 0)
+        assert (displacement.winner_project, displacement.winner_priority) == ("repo1", 10)
+        assert (displacement.loser_project, displacement.loser_priority) == ("repo2", 0)
 
         edge = await _container_of(parent, project, "edge")
         assert edge, f"no running `edge` container in project {project}"
@@ -304,8 +304,8 @@ async def test_additive_up_converges_and_removes_orphans(parent, project):
         # The override seats a LOWER priority than what it displaced, and the
         # record says exactly that rather than claiming the winner ranked higher.
         (displacement,) = flipped.selection.displaced
-        assert (displacement.winner_repo, displacement.winner_priority) == ("repo2", 0)
-        assert (displacement.loser_repo, displacement.loser_priority) == ("repo1", 10)
+        assert (displacement.winner_project, displacement.winner_priority) == ("repo2", 0)
+        assert (displacement.loser_project, displacement.loser_priority) == ("repo1", 10)
     finally:
         await _reap(parent, project)
 

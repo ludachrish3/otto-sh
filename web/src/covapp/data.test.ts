@@ -36,7 +36,7 @@ function makeIndex(overrides: Partial<IndexPayload> = {}): IndexPayload {
     stamp: "stamp-1",
     generated_at: "2026-07-25 00:00 UTC",
     otto_version: "0.0.0",
-    project_name: "otto example product",
+    report_title: "otto example product",
     tier_order: [],
     tier_labels: {},
     tier_colors: {},

@@ -21,7 +21,7 @@ def register_builtin_commands() -> None:
     register_cli_command(
         "init",
         "otto.cli.init:init_command",
-        help="Scaffold a new otto repo or validate an existing one.",
+        help="Scaffold a new otto project or validate an existing one.",
         lab_free=True,
         output_dir=False,
         gate=False,
@@ -135,7 +135,7 @@ def register_builtin_commands() -> None:
         "reservation",
         "otto.cli.reservation:reservation_app",
         help="Inspect and verify lab reservations.",
-        # Reservation queries need the backend + identity (repo settings), not
+        # Reservation queries need the backend + identity (project settings), not
         # the lab, and never a live host: `whoami` runs with no lab at all;
         # `check` loads the lab itself — lazily, loudly — because the lab
         # defines the required-resource list.
@@ -148,7 +148,7 @@ def register_builtin_commands() -> None:
         "otto.cli.inventory:inventory_app",
         help="Inspect, export and diff the configured host inventory.",
         # Settings-only, like reservation: spec §8 resolves the process
-        # inventory from the active repos' [inventory] tables and the user
+        # inventory from the active projects' [inventory] tables and the user
         # settings file, never from a lab, and no verb touches a host or
         # writes to the inventory.
         lab_free=True,

@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 class DockerVerbError(FieldError, ValueError):
     """A docker verb's input is unusable; nothing was touched.
 
-    ``field`` names the offending parameter (``parent``, ``repo``, ``images``,
+    ``field`` names the offending parameter (``parent``, ``project``, ``images``,
     ``tag``, ``container``, ``follow``) or is ``None`` for a refusal about the
     selection as a whole. The CLI spells the field in the verb's flags at
     its one translation site.

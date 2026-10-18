@@ -46,13 +46,13 @@ tls_key  = "~/.otto/tls/monitor-key.pem"   # omit if the cert PEM bundles the ke
 `settings.toml` is committed and shared by the whole team, so `tls_cert` /
 `tls_key` point at a conventional per-user path (`~` is expanded) rather
 than a path that only exists on one machine. The certificate itself lives
-per-machine, never in the repo — see [Who creates which
+per-machine, never in the project — see [Who creates which
 certificate](#who-creates-which-certificate) below.
 
 TLS configured but broken — a missing or unreadable cert/key file — exits 1
 naming the path and the settings key; it never falls back to plain HTTP. With
-more than one repo listed in `OTTO_SUT_DIRS`, disagreeing `[monitor]` tables
-across those repos are a hard error naming both; identical or single
+more than one project listed in `OTTOPATH`, disagreeing `[monitor]` tables
+across those projects are a hard error naming both; identical or single
 declarations just apply.
 
 ## Who creates which certificate
@@ -63,7 +63,7 @@ TLS needs three artifacts, and each one has a different owner and scope:
 | --- | --- | --- | --- |
 | **CA certificate + CA key** | Team-wide: your organisation's CA, or one a team owner creates once | CA key: restricted (owner's machine or secrets store). CA cert: distributed freely | CA cert may be committed (it's public); CA key **never** |
 | **Server (leaf) cert + key** | Per-machine — one per machine that runs `otto monitor`, because the SANs bind it to that machine's addresses | `~/.otto/tls/` on the server machine, key `chmod 600` | **Never** |
-| **`[monitor]` settings entry** | Per-repo, committed, shared by the team | `.otto/settings.toml` | Yes — it points at the conventional `~/.otto/tls/` path, identical for every user |
+| **`[monitor]` settings entry** | Per-project, committed, shared by the team | `.otto/settings.toml` | Yes — it points at the conventional `~/.otto/tls/` path, identical for every user |
 
 Design notes: {doc}`../../architecture/subsystems/security`.
 

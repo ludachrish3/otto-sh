@@ -7,7 +7,7 @@ import types
 
 import pytest
 
-import otto.config.repo as config_repo
+import otto.config.project as config_repo
 from otto import bootstrap as bs
 from tests._fixtures.sutrepo import make_sut_repo
 
@@ -38,11 +38,11 @@ def _write_repo(tmp_path, *, broken_test: bool = False) -> str:
 
 
 def test_idempotent_single_result(tmp_path, monkeypatch):
-    monkeypatch.setenv("OTTO_SUT_DIRS", _write_repo(tmp_path))
+    monkeypatch.setenv("OTTOPATH", _write_repo(tmp_path))
     first = bs.bootstrap()
     assert first is bs.bootstrap()
     assert first.errors == []
-    assert len(first.repos) == 1
+    assert len(first.projects) == 1
 
 
 def test_bootstrap_never_imports_a_test_file(tmp_path, monkeypatch):
@@ -53,36 +53,36 @@ def test_bootstrap_never_imports_a_test_file(tmp_path, monkeypatch):
     """
     sentinel = tmp_path / "imported"
     body = f"import pathlib\npathlib.Path({str(sentinel)!r}).write_text('x')\ndef broken(:\n"
-    repo = make_sut_repo(
+    project = make_sut_repo(
         tmp_path / "repo", name="repo", tests=["tests"], files={"tests/test_broken.py": body}
     )
-    monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
+    monkeypatch.setenv("OTTOPATH", str(project))
     assert bs.bootstrap().errors == []
     assert not sentinel.exists()
 
 
 def test_discover_runs_no_user_code(tmp_path, monkeypatch):
-    monkeypatch.setenv("OTTO_SUT_DIRS", _write_repo(tmp_path, broken_test=True))
+    monkeypatch.setenv("OTTOPATH", _write_repo(tmp_path, broken_test=True))
     discovered = config_repo.discover()  # broken test file must NOT explode discovery
-    assert len(discovered.repos) == 1
+    assert len(discovered.projects) == 1
     assert discovered.errors == []  # phase 1 never imports it, so it cannot have failed yet
 
 
 def _write_bad_toml_repo(tmp_path) -> str:
-    repo = tmp_path / "bad"
-    (repo / ".otto").mkdir(parents=True)
-    (repo / ".otto" / "settings.toml").write_text(  # sutrepo-exempt: malformed TOML IS the subject
-        "this is [not valid toml\n"
-    )
-    return str(repo)
+    project = tmp_path / "bad"
+    (project / ".otto").mkdir(parents=True)
+    settings = project / ".otto" / "settings.toml"
+    malformed = "this is [not valid toml\n"
+    settings.write_text(malformed)  # sutrepo-exempt: malformed TOML IS the subject
+    return str(project)
 
 
 def test_malformed_settings_toml_is_contained_and_framed(tmp_path, monkeypatch):
     good = _write_repo(tmp_path)
     bad = _write_bad_toml_repo(tmp_path)
-    monkeypatch.setenv("OTTO_SUT_DIRS", f"{good}{os.pathsep}{bad}")
+    monkeypatch.setenv("OTTOPATH", f"{good}{os.pathsep}{bad}")
     result = bs.bootstrap()
-    assert len(result.repos) == 1  # the healthy repo still loads
+    assert len(result.projects) == 1  # the healthy repo still loads
     assert len(result.errors) == 1
     msg = str(result.errors[0])
     assert "failed to load" in msg
@@ -91,9 +91,9 @@ def test_malformed_settings_toml_is_contained_and_framed(tmp_path, monkeypatch):
 
 
 def test_discover_contains_settings_errors_without_raising(tmp_path, monkeypatch):
-    monkeypatch.setenv("OTTO_SUT_DIRS", _write_bad_toml_repo(tmp_path))
+    monkeypatch.setenv("OTTOPATH", _write_bad_toml_repo(tmp_path))
     discovered = config_repo.discover()  # malformed config data must NOT explode discovery
-    assert discovered.repos == []
+    assert discovered.projects == []
     # The name of this test promises the error is CONTAINED, not merely survived;
     # asserting only `repos == []` passed just as well when nothing was recorded.
     assert len(discovered.errors) == 1
@@ -105,7 +105,7 @@ def test_invalidate_recovers_from_fixed_repo(tmp_path, monkeypatch):
     fix the repo, invalidate(), re-bootstrap — the stale error is gone because
     errors ride the cached ``DiscoveryResult`` instead of a parallel global."""
     bad = _write_bad_toml_repo(tmp_path)
-    monkeypatch.setenv("OTTO_SUT_DIRS", bad)
+    monkeypatch.setenv("OTTOPATH", bad)
     assert bs.bootstrap().errors
     # Fix the same repo in place, then invalidate: recomputed discovery must
     # not carry the prior failure.
@@ -118,11 +118,11 @@ def test_invalidate_recovers_from_fixed_repo(tmp_path, monkeypatch):
 
 
 def test_reset_clears_discovery_errors(tmp_path, monkeypatch):
-    monkeypatch.setenv("OTTO_SUT_DIRS", _write_bad_toml_repo(tmp_path))
+    monkeypatch.setenv("OTTOPATH", _write_bad_toml_repo(tmp_path))
     assert bs.bootstrap().errors
     bs._reset()
     # A re-bootstrap against a now-healthy world must not carry stale errors.
-    monkeypatch.setenv("OTTO_SUT_DIRS", _write_repo(tmp_path))
+    monkeypatch.setenv("OTTOPATH", _write_repo(tmp_path))
     assert bs.bootstrap().errors == []
 
 
@@ -159,8 +159,8 @@ def test_interrupt_and_exit_still_propagate(tmp_path, monkeypatch, stem, body, e
     Ctrl-C while init modules load would see their interrupt turned into a
     framed 'failed to load' line and otto would carry on.
     """
-    repo = _write_repo_with_init_module(tmp_path, f"init{stem}", body)
-    monkeypatch.setenv("OTTO_SUT_DIRS", repo)
+    project = _write_repo_with_init_module(tmp_path, f"init{stem}", body)
+    monkeypatch.setenv("OTTOPATH", project)
     with pytest.raises(expected):
         bs.bootstrap()
 
@@ -179,8 +179,8 @@ def test_cancelled_error_is_contained_not_propagated(tmp_path, monkeypatch):
     import asyncio
 
     body = "import asyncio\nraise asyncio.CancelledError()\n"
-    repo = _write_repo_with_init_module(tmp_path, "initcancelled", body)
-    monkeypatch.setenv("OTTO_SUT_DIRS", repo)
+    project = _write_repo_with_init_module(tmp_path, "initcancelled", body)
+    monkeypatch.setenv("OTTOPATH", project)
     result = bs.bootstrap()
     assert len(result.errors) == 1
     # Assert the TYPE, not `isinstance(..., BaseException)`: BootstrapError.__init__
@@ -191,13 +191,13 @@ def test_cancelled_error_is_contained_not_propagated(tmp_path, monkeypatch):
 
 def _write_repo_with_init_module(tmp_path, stem: str, body: str) -> str:
     """A repo whose single ``init`` module runs *body* — bootstrap's OTHER user-code seam."""
-    repo = make_sut_repo(
+    project = make_sut_repo(
         tmp_path / stem,
         name=stem,
         extra=f'libs = ["lib"]\ninit = ["{stem}_init"]\n',
         files={f"lib/{stem}_init.py": textwrap.dedent(body)},
     )
-    return str(repo)
+    return str(project)
 
 
 @pytest.mark.parametrize(("stem", "body"), DECLINING_MODULE_BODIES)
@@ -210,8 +210,8 @@ def test_module_level_pytest_outcome_in_init_module_is_contained(tmp_path, monke
     ``BaseException`` subclasses that are not ``Exception``, so reverting the
     seam to ``except Exception`` would let one such module brick every command.
     """
-    repo = _write_repo_with_init_module(tmp_path, f"init{stem}", body)
-    monkeypatch.setenv("OTTO_SUT_DIRS", repo)
+    project = _write_repo_with_init_module(tmp_path, f"init{stem}", body)
+    monkeypatch.setenv("OTTOPATH", project)
     try:
         result = bs.bootstrap()
     except BaseException as exc:  # the escape IS the defect under test
@@ -225,7 +225,7 @@ def test_module_level_pytest_outcome_in_init_module_is_contained(tmp_path, monke
 def test_init_module_imports_run_under_the_registering_repo_marker(tmp_path, monkeypatch):
     """Phase-2 imports must be attributable to the repo whose imports they are.
 
-    Registration seams read ``otto.registry.get_registering_repo()`` to record
+    Registration seams read ``otto.registry.get_registering_project()`` to record
     WHICH repo registered an entry; only bootstrap can tell them, and only
     while the import is on the stack. Observed from inside the init module
     itself — asserting it after ``bootstrap()`` returns would pass just as well
@@ -235,41 +235,41 @@ def test_init_module_imports_run_under_the_registering_repo_marker(tmp_path, mon
     body = f"""
         import pathlib
 
-        from otto.registry import get_registering_repo
+        from otto.registry import get_registering_project
 
-        pathlib.Path({str(seen)!r}).write_text(repr(get_registering_repo()))
+        pathlib.Path({str(seen)!r}).write_text(repr(get_registering_project()))
     """
-    monkeypatch.setenv("OTTO_SUT_DIRS", _write_repo_with_init_module(tmp_path, "marked", body))
+    monkeypatch.setenv("OTTOPATH", _write_repo_with_init_module(tmp_path, "marked", body))
     result = bs.bootstrap()
     assert result.errors == []
     assert seen.read_text() == "'marked'"
     # And the marker is bootstrap-scoped: nothing after it inherits the name.
-    from otto.registry import get_registering_repo
+    from otto.registry import get_registering_project
 
-    assert get_registering_repo() is None
+    assert get_registering_project() is None
 
 
 def test_discovery_seam_contains_a_base_exception(tmp_path, monkeypatch):
     """The phase-1 seam is defensive, and defensive code still needs a guard.
 
-    ``Repo(sut_dir=...)`` only parses TOML today, so nothing naturally raises a
+    ``Project(root=...)`` only parses TOML today, so nothing naturally raises a
     non-``Exception`` there — which is exactly why reverting it to ``except
     Exception`` was invisible to the suite. Inject one.
     """
-    monkeypatch.setenv("OTTO_SUT_DIRS", _write_repo(tmp_path))
-    import otto.config.repo as repo_mod
+    monkeypatch.setenv("OTTOPATH", _write_repo(tmp_path))
+    import otto.config.project as repo_mod
 
     def _raise_skipped(*_a, **_k):
         pytest.skip("simulated declining repo", allow_module_level=True)
 
-    monkeypatch.setattr(repo_mod, "Repo", _raise_skipped)
+    monkeypatch.setattr(repo_mod, "Project", _raise_skipped)
     try:
         discovered = config_repo.discover()
     except BaseException as exc:  # the escape IS the defect under test
         raise AssertionError(
             f"discover() let {type(exc).__name__} escape the phase-1 seam: {exc!r}"
         ) from exc
-    assert discovered.repos == []
+    assert discovered.projects == []
     assert len(discovered.errors) == 1
     assert "settings.toml" in str(discovered.errors[0])
 
@@ -296,12 +296,14 @@ def test_composition_root_does_not_import_asyncio():
 # --- D2: a repo that registers providers must declare the labs it applies to ---
 
 
-def _write_provider_repo(tmp_path, stem: str, *, project: str = "", seam: str = "product") -> str:
+def _write_provider_repo(
+    tmp_path, stem: str, *, project_toml: str = "", seam: str = "product"
+) -> str:
     """A repo whose init module registers a real provider on *seam*, plus *project* TOML.
 
     The registration goes through ``register_*_provider`` rather than poking the
     module-level list, because the owner name D2 reads is captured THERE, from
-    the ``registering_repo`` marker bootstrap sets around the init import. A
+    the ``registering_project`` marker bootstrap sets around the init import. A
     fixture appending to the list directly would carry ``None`` for the owner
     and every check below would pass vacuously.
     """
@@ -309,13 +311,13 @@ def _write_provider_repo(tmp_path, stem: str, *, project: str = "", seam: str = 
         "product": "from otto.host.product import register_product_provider as register",
         "dev_tool": "from otto.host.dev_tool import register_dev_tool_provider as register",
     }[seam]
-    repo = make_sut_repo(
+    project = make_sut_repo(
         tmp_path / stem,
         name=stem,
-        extra=f'libs = ["lib"]\ninit = ["{stem}_init"]\n' + textwrap.dedent(project),
+        extra=f'libs = ["lib"]\ninit = ["{stem}_init"]\n' + textwrap.dedent(project_toml),
         files={f"lib/{stem}_init.py": f"{register}\n\nregister(lambda host: [])\n"},
     )
-    return str(repo)
+    return str(project)
 
 
 def _assert_names_the_missing_declaration(msg: str, stem: str) -> None:
@@ -328,7 +330,7 @@ def _assert_names_the_missing_declaration(msg: str, stem: str) -> None:
 
 def test_provider_registering_repo_without_lab_patterns_fails_bootstrap(tmp_path, monkeypatch):
     """D2: registering a provider makes ``[project] lab_patterns`` mandatory."""
-    monkeypatch.setenv("OTTO_SUT_DIRS", _write_provider_repo(tmp_path, "provnolabs"))
+    monkeypatch.setenv("OTTOPATH", _write_provider_repo(tmp_path, "provnolabs"))
     with pytest.raises(bs.BootstrapError) as exc:
         bs.bootstrap()
     _assert_names_the_missing_declaration(str(exc.value), "provnolabs")
@@ -340,13 +342,13 @@ def test_provider_registering_repo_without_lab_patterns_fails_bootstrap(tmp_path
 
 def test_provider_repo_with_lab_patterns_bootstraps(tmp_path, monkeypatch):
     """The declared case is the whole point — and the fixture really does register."""
-    repo = _write_provider_repo(
-        tmp_path, "provlabs", project='\n[project]\nlab_patterns = [".*"]\n'
+    project = _write_provider_repo(
+        tmp_path, "provlabs", project_toml='\n[project]\nlab_patterns = [".*"]\n'
     )
-    monkeypatch.setenv("OTTO_SUT_DIRS", repo)
+    monkeypatch.setenv("OTTOPATH", project)
     result = bs.bootstrap()
     assert result.errors == []
-    assert [r.name for r in result.repos] == ["provlabs"]
+    assert [r.name for r in result.projects] == ["provlabs"]
     # Without this the negative tests would pass just as well against a fixture
     # whose init module registered nothing at all.
     from otto.host.product import registered_product_providers
@@ -359,28 +361,28 @@ def test_provider_owner_check_reads_the_subscription():
     from types import SimpleNamespace
 
     from otto.host.product import register_product_provider
-    from otto.registry import registering_repo
+    from otto.registry import registering_project
 
     ghost = SimpleNamespace(
         name="ghost",
-        sut_dir="/nowhere/ghost",
+        root="/nowhere/ghost",
         project_scope=None,
         declared_products=[],
         declared_dev_tools=[],
     )
-    with registering_repo("ghost"):
+    with registering_project("ghost"):
         register_product_provider(lambda host: [])
     # The positive control: once ghost is among the repos that ran, its
     # provider makes it owe a [project] declaration it does not have.
     with pytest.raises(bs.ProjectScopeError, match="ghost"):
-        bs._check_providing_repos_declare_scope([ghost], [ghost])
+        bs._check_providing_projects_declare_scope([ghost], [ghost])
     # Absent from ordered_repos, its provider's owner is ignored.
-    bs._check_providing_repos_declare_scope([ghost], [])
+    bs._check_providing_projects_declare_scope([ghost], [])
 
 
 def test_providerless_repo_needs_no_declaration(tmp_path, monkeypatch):
     """A repo that registers no provider owes no ``[project]`` block."""
-    monkeypatch.setenv("OTTO_SUT_DIRS", _write_repo(tmp_path))
+    monkeypatch.setenv("OTTOPATH", _write_repo(tmp_path))
     assert bs.bootstrap().errors == []
 
 
@@ -397,7 +399,7 @@ EMPTY_LAB_SCOPES = [
 )
 def test_explicitly_empty_lab_scope_fails_like_a_missing_one(tmp_path, monkeypatch, stem, project):
     """``lab_patterns = []`` (and a ``[project]`` without the key) must refuse too."""
-    monkeypatch.setenv("OTTO_SUT_DIRS", _write_provider_repo(tmp_path, stem, project=project))
+    monkeypatch.setenv("OTTOPATH", _write_provider_repo(tmp_path, stem, project_toml=project))
     with pytest.raises(bs.BootstrapError) as exc:
         bs.bootstrap()
     _assert_names_the_missing_declaration(str(exc.value), stem)
@@ -407,7 +409,7 @@ def test_provider_repo_with_empty_host_patterns_fails(tmp_path, monkeypatch):
     """``host_patterns = []`` admits no host — distinct from the ``[".*"]`` default."""
     project = '\n[project]\nlab_patterns = [".*"]\nhost_patterns = []\n'
     monkeypatch.setenv(
-        "OTTO_SUT_DIRS", _write_provider_repo(tmp_path, "emptyhosts", project=project)
+        "OTTOPATH", _write_provider_repo(tmp_path, "emptyhosts", project_toml=project)
     )
     with pytest.raises(bs.BootstrapError) as exc:
         bs.bootstrap()
@@ -418,30 +420,30 @@ def test_provider_repo_with_empty_host_patterns_fails(tmp_path, monkeypatch):
 
 def test_dev_tool_provider_repo_needs_lab_patterns_too(tmp_path, monkeypatch):
     """The dev-tool registry is a SEPARATE list — a check reading only products passes above."""
-    monkeypatch.setenv(
-        "OTTO_SUT_DIRS", _write_provider_repo(tmp_path, "devtoolrepo", seam="dev_tool")
-    )
+    monkeypatch.setenv("OTTOPATH", _write_provider_repo(tmp_path, "devtoolrepo", seam="dev_tool"))
     with pytest.raises(bs.BootstrapError) as exc:
         bs.bootstrap()
     _assert_names_the_missing_declaration(str(exc.value), "devtoolrepo")
 
 
-def _write_declaring_repo(tmp_path, stem: str, *, project: str = "", seam: str = "products") -> str:
+def _write_declaring_repo(
+    tmp_path, stem: str, *, project_toml: str = "", seam: str = "products"
+) -> str:
     """A repo with one ``[[products]]``/``[[dev_tools]]`` entry, plus *project* TOML.
 
     Unlike :func:`_write_provider_repo`, no init module is needed:
     ``declared_products``/``declared_dev_tools`` are populated straight from
-    ``Repo.parse_settings`` (settings parse alone), so a bare TOML array is
+    ``Project.parse_settings`` (settings parse alone), so a bare TOML array is
     enough to trip D2 on the declarative seam.
     """
     entry = f'[[{seam}]]\nname = "{stem}-entry"\nkind = "noop"\n'
-    repo = make_sut_repo(tmp_path / stem, name=stem, extra=entry + textwrap.dedent(project))
-    return str(repo)
+    project = make_sut_repo(tmp_path / stem, name=stem, extra=entry + textwrap.dedent(project_toml))
+    return str(project)
 
 
 def test_declaring_repo_without_lab_patterns_fails_bootstrap(tmp_path, monkeypatch):
     """D2 parity: a repo with ``[[products]]`` entries but no ``[project]`` must fail too."""
-    monkeypatch.setenv("OTTO_SUT_DIRS", _write_declaring_repo(tmp_path, "declnolabs"))
+    monkeypatch.setenv("OTTOPATH", _write_declaring_repo(tmp_path, "declnolabs"))
     with pytest.raises(bs.BootstrapError) as exc:
         bs.bootstrap()
     _assert_names_the_missing_declaration(str(exc.value), "declnolabs")
@@ -451,19 +453,19 @@ def test_declaring_repo_without_lab_patterns_fails_bootstrap(tmp_path, monkeypat
 
 def test_declaring_repo_with_lab_patterns_bootstraps(tmp_path, monkeypatch):
     """The declared case, WITH ``[project]``, must bootstrap clean."""
-    repo = _write_declaring_repo(
-        tmp_path, "decllabs", project='\n[project]\nlab_patterns = [".*"]\n'
+    project = _write_declaring_repo(
+        tmp_path, "decllabs", project_toml='\n[project]\nlab_patterns = [".*"]\n'
     )
-    monkeypatch.setenv("OTTO_SUT_DIRS", repo)
+    monkeypatch.setenv("OTTOPATH", project)
     result = bs.bootstrap()
     assert result.errors == []
-    assert [r.name for r in result.repos] == ["decllabs"]
+    assert [r.name for r in result.projects] == ["decllabs"]
 
 
 def test_dev_tools_declaring_repo_without_lab_patterns_fails_bootstrap(tmp_path, monkeypatch):
     """The dev_tools array is a separate list from products — cover it too."""
     monkeypatch.setenv(
-        "OTTO_SUT_DIRS", _write_declaring_repo(tmp_path, "devtdeclnolabs", seam="dev_tools")
+        "OTTOPATH", _write_declaring_repo(tmp_path, "devtdeclnolabs", seam="dev_tools")
     )
     with pytest.raises(bs.BootstrapError) as exc:
         bs.bootstrap()
@@ -485,15 +487,15 @@ def test_dependency_skipped_declaring_repo_is_excused_and_contributes_nothing(
     from otto.declared import declared_for_host
 
     entry = '[[products]]\nname = "declskipped-entry"\nkind = "noop"\n'
-    repo = make_sut_repo(
+    project = make_sut_repo(
         tmp_path / "declskipped",
         name="declskipped",
         extra=entry + '[dependencies]\nrequired = ["ghost"]\n',
     )
-    monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
+    monkeypatch.setenv("OTTOPATH", str(project))
     result = bs.bootstrap()
     assert any("ghost" in str(e) for e in result.errors)  # the real finding
-    assert [r.name for r in result.ordered_repos] == []  # the repo was skipped
+    assert [r.name for r in result.ordered_projects] == []  # the repo was skipped
     host = types.SimpleNamespace(id="h1", source_lab="")
     assert declared_for_host(host, "declared_products") == []
 
@@ -504,12 +506,12 @@ def test_providerless_repo_may_declare_an_empty_scope(tmp_path, monkeypatch):
     A repo with no providers is free to scope itself to nothing — that is a repo
     saying "none of these labs are mine", which costs nobody anything.
     """
-    repo = make_sut_repo(
+    project = make_sut_repo(
         tmp_path / "quiet",
         name="quiet",
         extra="[project]\nlab_patterns = []\nhost_patterns = []\n",
     )
-    monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
+    monkeypatch.setenv("OTTOPATH", str(project))
     assert bs.bootstrap().errors == []
 
 
@@ -529,23 +531,23 @@ def _reentrant_repo(tmp_path, body: str) -> str:
 
 
 def test_an_init_module_that_reenters_gets_the_settled_repos(tmp_path, monkeypatch):
-    """A repo init calling ``get_repos()`` is answered, not recursed.
+    """A repo init calling ``get_projects()`` is answered, not recursed.
 
     The import phase runs USER code, and user code reaching
-    ``otto.bootstrap.get_repos()`` re-enters composition with no complete
+    ``otto.bootstrap.get_projects()`` re-enters composition with no complete
     result published yet — directly, or by way of a stamped host whose product
-    providers consult ``scope_for_repo``. Discovery and the dependency pass
+    providers consult ``scope_for_project``. Discovery and the dependency pass
     are already done by then, so the honest answer is the repo list the outer
     call is about to publish.
     """
     monkeypatch.setenv(
-        "OTTO_SUT_DIRS",
+        "OTTOPATH",
         _reentrant_repo(
             tmp_path,
             """
-            from otto.bootstrap import get_repos
+            from otto.bootstrap import get_projects
 
-            SEEN = [r.name for r in get_repos()]
+            SEEN = [r.name for r in get_projects()]
             """,
         ),
     )
@@ -555,7 +557,7 @@ def test_an_init_module_that_reenters_gets_the_settled_repos(tmp_path, monkeypat
     import reenter  # the init module, imported by the bootstrap above
 
     assert reenter.SEEN == ["repo"]  # the settled list, not an empty degraded one
-    assert [r.name for r in result.repos] == ["repo"]
+    assert [r.name for r in result.projects] == ["repo"]
 
 
 def test_a_host_built_mid_bootstrap_gets_its_declared_entries(tmp_path, monkeypatch):
@@ -603,13 +605,13 @@ def test_a_host_built_mid_bootstrap_gets_its_declared_entries(tmp_path, monkeypa
         kind = "shell"
         artifact = "tools/probe.sh"
         """)
-    repo = make_sut_repo(
+    project = make_sut_repo(
         tmp_path / "declmid",
         name="declmid",
         extra=settings,
         files={"pylib/declmid_init.py": textwrap.dedent(body)},
     )
-    monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
+    monkeypatch.setenv("OTTOPATH", str(project))
 
     result = bs.bootstrap()
 
@@ -634,19 +636,19 @@ def test_reentrance_does_not_compose_the_root_twice(tmp_path, monkeypatch):
     calls = []
     real = deps_mod.resolve_dependencies
 
-    def _counting(repos):
-        calls.append([r.name for r in repos])
-        return real(repos)
+    def _counting(projects):
+        calls.append([r.name for r in projects])
+        return real(projects)
 
     monkeypatch.setattr(deps_mod, "resolve_dependencies", _counting)
     monkeypatch.setenv(
-        "OTTO_SUT_DIRS",
+        "OTTOPATH",
         _reentrant_repo(
             tmp_path,
             """
-            from otto.bootstrap import get_repos
+            from otto.bootstrap import get_projects
 
-            SEEN = [r.name for r in get_repos()]
+            SEEN = [r.name for r in get_projects()]
             """,
         ),
     )
@@ -664,7 +666,7 @@ def test_a_raising_bootstrap_leaves_no_partial_view_behind(tmp_path, monkeypatch
     a half-built answer and report success for a run that never finished.
     """
     monkeypatch.setenv(
-        "OTTO_SUT_DIRS",
+        "OTTOPATH",
         _reentrant_repo(
             tmp_path,
             """
@@ -689,7 +691,7 @@ def test_a_completed_bootstrap_publishes_its_result(tmp_path, monkeypatch):
     """The complete result is what ``otto.declared``'s readers take; the in-progress one goes."""
     from otto import declared
 
-    monkeypatch.setenv("OTTO_SUT_DIRS", _write_repo(tmp_path))
+    monkeypatch.setenv("OTTOPATH", _write_repo(tmp_path))
     result = bs.bootstrap()
     assert declared._composition.result is result
     assert declared._composition.in_progress is None
@@ -698,7 +700,7 @@ def test_a_completed_bootstrap_publishes_its_result(tmp_path, monkeypatch):
 def test_invalidate_withdraws_the_catalog_and_keeps_the_initiator(tmp_path, monkeypatch):
     from otto import declared
 
-    monkeypatch.setenv("OTTO_SUT_DIRS", _write_repo(tmp_path))
+    monkeypatch.setenv("OTTOPATH", _write_repo(tmp_path))
     bs.bootstrap()
     bs.invalidate()
     assert declared._composition.result is None
@@ -708,7 +710,7 @@ def test_invalidate_withdraws_the_catalog_and_keeps_the_initiator(tmp_path, monk
 
 def test_the_initiator_runs_the_patched_bootstrap(monkeypatch):
     """The initiator looks ``bootstrap`` up when called, so a patch of the root reaches it."""
-    sentinel = bs.BootstrapResult(env=None, repos=[])
+    sentinel = bs.BootstrapResult(env=None, projects=[])
     monkeypatch.setattr(bs, "bootstrap", lambda: sentinel)
     assert bs._initiate() is sentinel
 
@@ -716,7 +718,7 @@ def test_the_initiator_runs_the_patched_bootstrap(monkeypatch):
 def test_importing_the_root_installs_the_initiator_and_composes_nothing():
     """A fresh interpreter: importing ``otto.bootstrap`` fills the slot and runs no discovery.
 
-    Discovery builds each repo with ``otto.config.repo``, so a root import that ran it
+    Discovery builds each repo with ``otto.config.project``, so a root import that ran it
     would have loaded that module.
     """
     import subprocess
@@ -725,7 +727,7 @@ def test_importing_the_root_installs_the_initiator_and_composes_nothing():
     probe = (
         "import sys, otto.bootstrap as bs, otto.declared as d; "
         "print(d._composition.initiator is bs._initiate, "
-        "d._composition.result is None, 'otto.config.repo' not in sys.modules)"
+        "d._composition.result is None, 'otto.config.project' not in sys.modules)"
     )
     proc = subprocess.run(
         [sys.executable, "-c", probe], capture_output=True, text=True, check=False
@@ -739,14 +741,14 @@ def test_importing_the_root_installs_the_initiator_and_composes_nothing():
 
 def test_is_bootstrapped_true_mid_bootstrap(tmp_path, monkeypatch):
     """The phase-2 re-entrant window (an in-progress result published, no complete one yet)
-    must read as bootstrapped: `get_repos()` already answers correctly and
+    must read as bootstrapped: `get_projects()` already answers correctly and
     for free there (the re-entrant branch returns the in-progress result, whose
-    `repos`/`ordered_repos` are final by then), so a host built by an init
+    `repos`/`ordered_projects` are final by then), so a host built by an init
     module mid-bootstrap must not have its declared entries silently dropped
     while its providers still apply.
     """
     monkeypatch.setenv(
-        "OTTO_SUT_DIRS",
+        "OTTOPATH",
         _reentrant_repo(
             tmp_path,
             """
@@ -781,9 +783,9 @@ def _counted_passes(monkeypatch) -> "list[list[str]]":
     calls: "list[list[str]]" = []
     real = deps_mod.resolve_dependencies
 
-    def _counting(repos):
-        calls.append([r.name for r in repos])
-        return real(repos)
+    def _counting(projects):
+        calls.append([r.name for r in projects])
+        return real(projects)
 
     monkeypatch.setattr(deps_mod, "resolve_dependencies", _counting)
     return calls
@@ -816,13 +818,18 @@ def test_lifecycle_a_reentrant_init_reads_the_result_being_built(tmp_path, monke
         tmp_path,
         {
             "life_reader": """
-            from otto.bootstrap import bootstrap, get_ordered_repos, get_repos, is_bootstrapped
+            from otto.bootstrap import (
+                bootstrap,
+                get_ordered_projects,
+                get_projects,
+                is_bootstrapped,
+            )
 
             BUILDING = bootstrap()
             SEEN = [
-                [r.name for r in get_repos()],
-                [r.name for r in get_ordered_repos()],
-                [r.name for r in BUILDING.ordered_repos],
+                [r.name for r in get_projects()],
+                [r.name for r in get_ordered_projects()],
+                [r.name for r in BUILDING.ordered_projects],
                 is_bootstrapped(),
                 len(BUILDING.errors),
             ]
@@ -833,7 +840,7 @@ def test_lifecycle_a_reentrant_init_reads_the_result_being_built(tmp_path, monke
         },
         extra='\n[dependencies]\nrequired = ["base"]\n',
     )
-    monkeypatch.setenv("OTTO_SUT_DIRS", f"{life}{os.pathsep}{base}")
+    monkeypatch.setenv("OTTOPATH", f"{life}{os.pathsep}{base}")
 
     result = bs.bootstrap()
 
@@ -845,8 +852,8 @@ def test_lifecycle_a_reentrant_init_reads_the_result_being_built(tmp_path, monke
     assert life_reader.BUILDING.errors is result.errors
     assert any("a later init fails, contained" in str(e) for e in life_reader.BUILDING.errors)
     assert calls == [discovered]
-    assert [r.name for r in bs.get_repos()] == discovered
-    assert [r.name for r in bs.get_ordered_repos()] == ordered
+    assert [r.name for r in bs.get_projects()] == discovered
+    assert [r.name for r in bs.get_ordered_projects()] == ordered
 
 
 def test_lifecycle_a_failed_composition_fails_the_same_way_again(tmp_path, monkeypatch):
@@ -857,7 +864,7 @@ def test_lifecycle_a_failed_composition_fails_the_same_way_again(tmp_path, monke
     """
     calls = _counted_passes(monkeypatch)
     monkeypatch.setenv(
-        "OTTO_SUT_DIRS",
+        "OTTOPATH",
         _lifecycle_repo(tmp_path, {"life_fatal": 'raise KeyboardInterrupt("uncontainable")\n'}),
     )
 
@@ -866,7 +873,7 @@ def test_lifecycle_a_failed_composition_fails_the_same_way_again(tmp_path, monke
     assert bs.is_bootstrapped() is False
 
     with pytest.raises(KeyboardInterrupt) as second:
-        bs.get_repos()
+        bs.get_projects()
     assert bs.is_bootstrapped() is False
 
     assert [type(first.value), str(first.value)] == [type(second.value), str(second.value)]
@@ -875,16 +882,16 @@ def test_lifecycle_a_failed_composition_fails_the_same_way_again(tmp_path, monke
 
 def test_lifecycle_a_refused_composition_admits_in_scope_for_repo(tmp_path, monkeypatch):
     """The providing-repo refusal publishes nothing; the scope lookup admits and recomposes."""
-    from otto.declared import scope_for_repo
+    from otto.declared import scope_for_project
 
     calls = _counted_passes(monkeypatch)
-    monkeypatch.setenv("OTTO_SUT_DIRS", _write_provider_repo(tmp_path, "provlife"))
+    monkeypatch.setenv("OTTOPATH", _write_provider_repo(tmp_path, "provlife"))
 
     with pytest.raises(bs.BootstrapError) as first:
         bs.bootstrap()
     assert bs.is_bootstrapped() is False
 
-    assert scope_for_repo("provlife") is None  # composition failed again: the gate admits
+    assert scope_for_project("provlife") is None  # composition failed again: the gate admits
     assert bs.is_bootstrapped() is False
 
     with pytest.raises(bs.BootstrapError) as third:
@@ -897,21 +904,21 @@ def test_lifecycle_invalidate_withdraws_the_result_and_the_next_read_recomposes(
     tmp_path, monkeypatch
 ):
     """Invalidation: nothing published after it, and the kept initiator composes again."""
-    from otto.declared import scope_for_repo
+    from otto.declared import scope_for_project
 
     calls = _counted_passes(monkeypatch)
-    monkeypatch.setenv("OTTO_SUT_DIRS", _lifecycle_repo(tmp_path, {"life_plain": "X = 1\n"}))
+    monkeypatch.setenv("OTTOPATH", _lifecycle_repo(tmp_path, {"life_plain": "X = 1\n"}))
     first = bs.bootstrap()
     assert bs.is_bootstrapped() is True
 
     bs.invalidate()
     assert bs.is_bootstrapped() is False
 
-    scope_for_repo("life")  # a read below the root composes through the kept initiator
+    scope_for_project("life")  # a read below the root composes through the kept initiator
     assert bs.is_bootstrapped() is True
     second = bs.bootstrap()
     assert second is not first
-    assert [r.name for r in second.repos] == ["life"]
+    assert [r.name for r in second.projects] == ["life"]
     assert calls == [["life"], ["life"]]
 
 
@@ -929,14 +936,14 @@ _BAD_TABLE = '[os_profiles.broken]\nbase = "windows"\n'
 def test_a_bad_os_profiles_table_is_contained_naming_the_repo_and_the_table(tmp_path, monkeypatch):
     bad = _profile_repo(tmp_path, "repo-a", _BAD_TABLE)
     good = _profile_repo(tmp_path, "repo-b", '[os_profiles.fine]\nbase = "unix"\n')
-    monkeypatch.setenv("OTTO_SUT_DIRS", f"{bad}{os.pathsep}{good}")
+    monkeypatch.setenv("OTTOPATH", f"{bad}{os.pathsep}{good}")
     result = bs.bootstrap()  # does not raise
-    assert [repo.name for repo in result.repos] == ["repo-a", "repo-b"]  # still discovered
+    assert [project.name for project in result.projects] == ["repo-a", "repo-b"]  # still discovered
     # Kept in the dependency order, as a repo whose init failed is.
-    assert [repo.name for repo in result.ordered_repos] == ["repo-a", "repo-b"]
+    assert [project.name for project in result.ordered_projects] == ["repo-a", "repo-b"]
     (err,) = result.errors
-    assert err.sut_dir == pathlib.Path(bad)
-    assert "[os_profiles.broken] in repo 'repo-a'" in str(err)
+    assert err.root == pathlib.Path(bad)
+    assert "[os_profiles.broken] in project 'repo-a'" in str(err)
     assert "register_os_profile" not in str(err)
 
 
@@ -945,20 +952,20 @@ def test_a_dependency_skipped_repo_s_malformed_table_is_still_reported(tmp_path,
     skipped = _profile_repo(
         tmp_path, "repo-a", "[os_profiles.broken]\nbase = 5\n", required="ghost"
     )
-    monkeypatch.setenv("OTTO_SUT_DIRS", skipped)
+    monkeypatch.setenv("OTTOPATH", skipped)
     result = bs.bootstrap()
-    assert result.ordered_repos == []
+    assert result.ordered_projects == []
     (err,) = result.errors
-    assert err.sut_dir == pathlib.Path(skipped)
+    assert err.root == pathlib.Path(skipped)
     assert "os_profiles.broken.base" in str(err)
 
 
 def test_a_dependency_skipped_repo_s_tables_are_not_judged_by_meaning(tmp_path, monkeypatch):
     """Its init never ran, so a base it may register is not its error: the skip is its only one."""
     skipped = _profile_repo(tmp_path, "repo-a", _BAD_TABLE, required="ghost")
-    monkeypatch.setenv("OTTO_SUT_DIRS", skipped)
+    monkeypatch.setenv("OTTOPATH", skipped)
     result = bs.bootstrap()
-    assert result.ordered_repos == []
+    assert result.ordered_projects == []
     (err,) = result.errors
     assert "dependency 'ghost' is not satisfied" in str(err)
 
@@ -973,7 +980,7 @@ def test_a_command_not_involving_the_broken_repo_still_runs(tmp_path):
     good = _profile_repo(tmp_path, "repo-b")
     env = {
         **os.environ,
-        "OTTO_SUT_DIRS": f"{bad}{os.pathsep}{good}",
+        "OTTOPATH": f"{bad}{os.pathsep}{good}",
         "OTTO_HOME": str(tmp_path / "home"),
         "OTTO_XDIR": str(tmp_path / "xdir"),
     }
@@ -994,8 +1001,8 @@ def _scoped(lab: str) -> str:
 
 def test_a_bad_table_does_not_excuse_an_unscoped_provider_from_d2(tmp_path, monkeypatch):
     """D2 still judges a repo whose table is bad: its init ran and registered a provider."""
-    repo = _write_provider_repo(tmp_path, "provbadtable", project=_BAD_TABLE)
-    monkeypatch.setenv("OTTO_SUT_DIRS", repo)
+    project = _write_provider_repo(tmp_path, "provbadtable", project_toml=_BAD_TABLE)
+    monkeypatch.setenv("OTTOPATH", project)
     with pytest.raises(bs.ProjectScopeError) as exc:
         bs.bootstrap()
     _assert_names_the_missing_declaration(str(exc.value), "provbadtable")
@@ -1005,11 +1012,11 @@ def _dependent_pair(root, broken_repo: str, monkeypatch) -> "types.SimpleNamespa
     """Bootstrap *broken_repo* (named repo-a) and repo-c, which requires it."""
     bs._reset()
     c = _profile_repo(root, "repo-c", required="repo-a")
-    monkeypatch.setenv("OTTO_SUT_DIRS", f"{broken_repo}{os.pathsep}{c}")
+    monkeypatch.setenv("OTTOPATH", f"{broken_repo}{os.pathsep}{c}")
     result = bs.bootstrap()
     return types.SimpleNamespace(
-        ordered=[repo.name for repo in result.ordered_repos],
-        failing=sorted(pathlib.Path(e.sut_dir).name for e in result.errors),
+        ordered=[project.name for project in result.ordered_projects],
+        failing=sorted(pathlib.Path(e.root).name for e in result.errors),
     )
 
 
@@ -1039,31 +1046,31 @@ def test_a_dependent_of_a_bad_table_repo_behaves_as_with_a_failed_init(tmp_path,
 def _scoped_pair(tmp_path, monkeypatch):
     bad = _profile_repo(tmp_path, "repo-a", _scoped("lab-a") + _BAD_TABLE)
     good = _profile_repo(tmp_path, "repo-b", _scoped(".*"))
-    monkeypatch.setenv("OTTO_SUT_DIRS", f"{bad}{os.pathsep}{good}")
+    monkeypatch.setenv("OTTOPATH", f"{bad}{os.pathsep}{good}")
     return bs.bootstrap()
 
 
 def test_a_run_not_using_the_bad_table_repo_proceeds_with_a_warning(tmp_path, monkeypatch):
-    from otto.session.projects import check_repos, select_projects
+    from otto.session.projects import check_projects, select_projects
 
     result = _scoped_pair(tmp_path, monkeypatch)
     # Kept ordered, as a repo whose init failed is: D2 and the dependency
     # order still see it.
-    assert [repo.name for repo in result.ordered_repos] == ["repo-a", "repo-b"]
-    check = check_repos(result, ["lab-b"], select_projects(result.repos, [], []))
+    assert [project.name for project in result.ordered_projects] == ["repo-a", "repo-b"]
+    check = check_projects(result, ["lab-b"], select_projects(result.projects, [], []))
     (demoted,) = check.demoted
-    assert demoted.repo == "repo-a"
+    assert demoted.name == "repo-a"
     assert demoted.reason == "out_of_scope"
-    assert "[os_profiles.broken] in repo 'repo-a'" in str(demoted.error)
+    assert "[os_profiles.broken] in project 'repo-a'" in str(demoted.error)
 
 
 def test_a_run_using_the_bad_table_repo_fails_loudly(tmp_path, monkeypatch):
-    from otto.session.projects import RepoLoadError, check_repos, select_projects
+    from otto.session.projects import ProjectLoadError, check_projects, select_projects
 
     result = _scoped_pair(tmp_path, monkeypatch)
-    with pytest.raises(RepoLoadError) as exc:
-        check_repos(result, ["lab-a"], select_projects(result.repos, [], []))
-    assert "[os_profiles.broken] in repo 'repo-a'" in str(exc.value)
+    with pytest.raises(ProjectLoadError) as exc:
+        check_projects(result, ["lab-a"], select_projects(result.projects, [], []))
+    assert "[os_profiles.broken] in project 'repo-a'" in str(exc.value)
 
 
 # ── [os_profiles] over a host class registered by reference ─────────────────
@@ -1098,13 +1105,13 @@ _ALPHA_OVER_PLUGIN_HOST = '[os_profiles.alpha]\nbase = "plugin-host"\n'
 
 def test_a_table_over_a_class_whose_module_is_missing_is_contained(tmp_path, monkeypatch):
     """The class's import fails at the table check: that repo's error, never a crash."""
-    repo = _ref_class_repo(tmp_path, "repo-ref", _MISSING_MODULE_CLASS, _ALPHA_OVER_PLUGIN_HOST)
-    monkeypatch.setenv("OTTO_SUT_DIRS", repo)
+    project = _ref_class_repo(tmp_path, "repo-ref", _MISSING_MODULE_CLASS, _ALPHA_OVER_PLUGIN_HOST)
+    monkeypatch.setenv("OTTOPATH", project)
     result = bs.bootstrap()  # does not raise
     (err,) = result.errors
-    assert err.sut_dir == pathlib.Path(repo)
+    assert err.root == pathlib.Path(project)
     text = str(err)
-    assert "[os_profiles.alpha] in repo 'repo-ref'" in text
+    assert "[os_profiles.alpha] in project 'repo-ref'" in text
     assert "base 'plugin-host' (host class registered by repo_ref_init)" in text
     assert "resolution failed: ModuleNotFoundError" in text
     assert "plugin_hosts_missing" in text
@@ -1132,10 +1139,10 @@ def test_a_ref_class_s_bad_own_profile_names_its_registering_module(tmp_path, mo
         """,
     )
     user = _profile_repo(tmp_path, "repo-user", '[os_profiles.alpha]\nbase = "typo-host"\n')
-    monkeypatch.setenv("OTTO_SUT_DIRS", f"{owner}{os.pathsep}{user}")
+    monkeypatch.setenv("OTTOPATH", f"{owner}{os.pathsep}{user}")
     result = bs.bootstrap()
     (err,) = result.errors
     text = str(err)
-    assert "[os_profiles.alpha] in repo 'repo-user'" in text
+    assert "[os_profiles.alpha] in project 'repo-user'" in text
     assert "base 'typo-host' (host class registered by repo_owner_init)" in text
     assert "unknown default field(s)" in text

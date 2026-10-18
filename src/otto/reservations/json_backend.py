@@ -3,8 +3,8 @@
 Intended for two audiences:
 
 1. **Small teams with no scheduler** who just want to hand-edit a JSON file
-   checked into the repo (or kept on a shared volume) that lists who holds
-   which resources.
+   committed to the project's git repository (or kept on a shared volume)
+   that lists who holds which resources.
 2. **Tests** — unit and integration tests construct fixture JSON files and
    point a :class:`JsonReservationBackend` at them.
 
@@ -53,12 +53,12 @@ class JsonReservationConfig(OttoModel):
     model_config = ConfigDict(frozen=True)
 
     path: Path
-    """The reservation file; a relative path anchors to the repo root; ``~`` is expanded."""
+    """The reservation file; a relative path anchors to the project root; ``~`` is expanded."""
 
     @field_validator("path", mode="before")
     @classmethod
     def _not_empty(cls, value: object) -> object:
-        """Refuse an empty string, which would otherwise read as the repo root."""
+        """Refuse an empty string, which would otherwise read as the project root."""
         if value == "":
             raise ValueError("must name the reservation file")
         return value
@@ -66,9 +66,9 @@ class JsonReservationConfig(OttoModel):
     @field_validator("path", mode="after")
     @classmethod
     def _anchor(cls, value: Path, info: ValidationInfo) -> Path:
-        """Anchor a relative path to the env's ``repo_dir`` when prepared with one."""
+        """Anchor a relative path to the env's ``project_root`` when prepared with one."""
         env = (info.context or {}).get("env")
-        return anchor_path(value, env.repo_dir, quote=False) if env is not None else value
+        return anchor_path(value, env.project_root, quote=False) if env is not None else value
 
 
 class JsonReservationBackend(ReservationBackendBase):

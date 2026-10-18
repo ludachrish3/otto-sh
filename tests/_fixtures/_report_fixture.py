@@ -462,6 +462,6 @@ def build_fixture_report(base_dir: Path) -> Path:
     apply_exclusions(store, [], base_dir)
 
     report_dir = base_dir / "report"
-    SpaRenderer(report_dir, project_name="otto example product", prefix=base_dir).render(store)
+    SpaRenderer(report_dir, report_title="otto example product", prefix=base_dir).render(store)
     store.save(report_dir / "store.json")
     return report_dir

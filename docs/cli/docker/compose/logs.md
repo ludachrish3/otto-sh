@@ -1,11 +1,11 @@
 # otto docker compose logs
 
-Print `docker compose logs` for a use-case's project on the parent, exactly as
+Print `docker compose logs` for a use-case's compose project on the parent, exactly as
 docker printed it.
 
 ```text
 otto docker compose logs [USE_CASE [SERVICE]...] [--tail N] [--since WHEN] [-t|--timestamps]
-                         [-f|--follow] [--parent HOST] [--provide CAP=REPO]...
+                         [-f|--follow] [--parent HOST] [--provide CAP=PROJECT]...
 ```
 
 | Option | Description |
@@ -17,7 +17,7 @@ otto docker compose logs [USE_CASE [SERVICE]...] [--tail N] [--since WHEN] [-t|-
 | `-t`, `--timestamps` | Show timestamps (docker's `-t`) |
 | `-f`, `--follow` | Follow the logs live; Ctrl-C ends it. Needs an SSH parent |
 | `--parent HOST` | The docker-capable lab host to read the logs from (default: {ref}`Which host <docker-which-host>`) |
-| `--provide CAP=REPO` | Break a provider tie for capability `CAP`; resolved exactly as {doc}`up` resolves it. Repeatable |
+| `--provide CAP=PROJECT` | Break a provider tie for capability `CAP`; resolved exactly as {doc}`up` resolves it. Repeatable |
 
 `USE_CASE`, `--parent` and `--provide` pick the same compose project `up` and
 {doc}`down` pick on that host. Naming no service prints every service's

@@ -5,7 +5,7 @@ resulting container registered as a lab host.
 
 ```text
 otto docker compose up [USE_CASE [SERVICE]...] [--parent HOST] [--build] [--force-recreate]
-                       [--pull POLICY] [--provide CAP=REPO]... [--env K=V]...
+                       [--pull POLICY] [--provide CAP=PROJECT]... [--env K=V]...
                        [--env-file PATH]...
 ```
 
@@ -14,20 +14,20 @@ otto docker compose up [USE_CASE [SERVICE]...] [--parent HOST] [--build] [--forc
 | `USE_CASE` (argument) | Use-case to deploy (default: the only one declared; several is an error) |
 | `SERVICE...` (argument) | Deploy only these services; requires an explicit `USE_CASE` |
 | `--parent HOST` | The docker-capable lab host to deploy on (default: {ref}`Which host <docker-which-host>`) |
-| `--build` | Build the participating repos' declared `[[docker.images]]` first (otto's build; docker's own `--build` is not passed) |
+| `--build` | Build the participating projects' declared `[[docker.images]]` first (otto's build; docker's own `--build` is not passed) |
 | `--force-recreate` | Recreate containers even if their configuration is unchanged |
 | `--pull POLICY` | docker's `--pull` policy, passed through unchanged |
-| `--provide CAP=REPO` | Break a provider tie for capability `CAP`. Repeatable |
+| `--provide CAP=PROJECT` | Break a provider tie for capability `CAP`. Repeatable |
 | `--env K=V` | Extra env var; wins over every channel. Repeatable |
 | `--env-file PATH` | Local `KEY=VALUE` file, read client-side, merged under `--env`. Repeatable |
 
-There is no `--repo`: a merged deployment is not per-repo, so narrowing is by
-use-case name (`--repo` belongs to the image-level {doc}`../build`).
+There is no `--project`: a merged deployment is not per-project, so narrowing is by
+use-case name (`--project` belongs to the image-level {doc}`../build`).
 
 `up` is `docker compose up -d`: otto builds nothing on its own, so the `up` is
 docker's, with docker's own build and pull policy, and a service whose image is
 missing fails with docker's own error. `--build` builds every participating
-repo's declared `[[docker.images]]` first (the build itself is {doc}`build`'s;
+project's declared `[[docker.images]]` first (the build itself is {doc}`build`'s;
 it is otto's build, and docker's own `--build` is not passed). `--force-recreate`
 and `--pull` are handed to docker unchanged, and the value of `--pull` is
 docker's to judge: a policy docker rejects is docker's error. `up` is

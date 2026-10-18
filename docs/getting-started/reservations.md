@@ -74,7 +74,7 @@ happens when a backend cannot answer: the run fails.
 The JSON file is a stand-in for the scheduler your team already has. A
 backend subclasses `ReservationBackendBase`, implements its two read-only
 methods, and comes with a config model for its own settings and a factory
-that builds it from that model and otto's environment (`url`, `repo_dir`,
+that builds it from that model and otto's environment (`url`, `project_root`,
 `username`); this one reads a text file, and everything but the file read
 and its `path` setting is what every backend looks like. It also implements the optional `holders` — the inverted "who
 holds this?" query. `@override` marks only the two required methods
@@ -127,7 +127,7 @@ os.chdir(_old_cwd)
 >>> from otto.testing import assert_reservation_backend_conforms
 >>> from gs_example.reservations import TeamFileBackend
 >>> assert_reservation_backend_conforms(
-...     TeamFileBackend(repo_dir=Path.cwd(), username="chris", path="team-reservations.txt"),
+...     TeamFileBackend(project_root=Path.cwd(), username="chris", path="team-reservations.txt"),
 ...     known_user="chris",
 ...     known_resources=["bb-bench", "bb1350-chassis", "bb1350-slot"],
 ...     expect_holders=True,

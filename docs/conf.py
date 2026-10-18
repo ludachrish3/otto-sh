@@ -205,7 +205,7 @@ _SHORT_TYPE_ALIASES = {
     "Path": "pathlib.Path",
     "datetime": "datetime.datetime",
     "timedelta": "datetime.timedelta",
-    # A TYPE_CHECKING-only import in config/repo.py; the class's __module__ is
+    # A TYPE_CHECKING-only import in config/project.py; the class's __module__ is
     # the private _frozen_importlib, so the stdlib inventory only has it here.
     "ModuleSpec": "importlib.machinery.ModuleSpec",
     "asyncio.queues.Queue": "asyncio.Queue",
@@ -222,7 +222,7 @@ _SHORT_TYPE_ALIASES = {
     # and the stdlib inventory carries it only fully qualified.
     "AbstractAsyncContextManager": "contextlib.AbstractAsyncContextManager",
     # Autodoc qualifies a bare ``Annotated`` with the module of its FIRST
-    # argument, so ``Annotated[Path, ...]`` (models/settings.py's RepoPath)
+    # argument, so ``Annotated[Path, ...]`` (models/settings.py's ProjectPath)
     # renders as ``pathlib.Annotated`` — a target that does not exist. Same
     # class of misqualification as ``types.Annotated`` above; both resolve to
     # the one real symbol rather than being silenced.
@@ -313,7 +313,7 @@ _INTERNAL_ALIASES = {
     "C": "otto.registry.C",
     # otto.init's package docstring names its two entry points bare, relative
     # to the package; the pages document them under their defining modules.
-    "check_repo": "otto.init.doctor.check_repo",
+    "check_project": "otto.init.doctor.check_project",
     "scaffold": "otto.init.scaffolder.scaffold",
     # otto.coverage.reporter
     "TierSpec": "otto.coverage.reporter.TierSpec",
@@ -330,13 +330,13 @@ _INTERNAL_ALIASES = {
     # guard, so autodoc can never document it directly. Point the signature
     # xref at its bound type instead.
     "AppShellT": "otto.host.app_shell.AppShell",
-    # models/settings.py's RepoPath is ``Annotated[Path,
-    # AfterValidator(anchor_to_repo)]``; autodoc renders every annotation
-    # component as a py:class xref, but anchor_to_repo is documented as a
+    # models/settings.py's ProjectPath is ``Annotated[Path,
+    # AfterValidator(anchor_to_project_root)]``; autodoc renders every annotation
+    # component as a py:class xref, but anchor_to_project_root is documented as a
     # py:function. Already fully qualified — the identity mapping exists to
     # re-dispatch through resolve_any_xref, which matches across object types
     # (same trick as ``asyncssh.connect`` in _SHORT_TYPE_ALIASES).
-    "otto.models.settings.anchor_to_repo": "otto.models.settings.anchor_to_repo",
+    "otto.models.settings.anchor_to_project_root": "otto.models.settings.anchor_to_project_root",
     # host/specs.py's IntOrStr is the same shape one alias down —
     # ``Annotated[int | str, BeforeValidator(coerce_digit_string)]``, carried by
     # HostSpec.site/.rack and InventoryRecord.site/.rack — so the validator
@@ -437,7 +437,7 @@ def _strip_inherited_pydantic_signature(
     class signature. Those carry private ``pydantic_settings.main`` types
     (``EnvPrefixTarget``/``DotenvType``/``PathType``) that have no public
     intersphinx target, and the params themselves document nothing the public
-    settings fields (``sut_dirs``, ``lab``, ...) don't already. Drop the
+    settings fields (``ottopath``, ``lab``, ...) don't already. Drop the
     signature for any class whose ``__init__`` is inherited straight from
     pydantic-settings; otto-defined ``__init__`` methods are untouched.
     """
@@ -618,7 +618,7 @@ def _process_signature(app, what, name, obj, options, signature, return_annotati
 # committed: scripts/capture_docs_media.py serves the real dashboard (via the
 # browser-e2e harness fixtures), feeds it committed web/fixtures/ exports and
 # captures it with headless Chromium; capture_docs_termynal.py
-# scaffolds a demo repo with `otto init` and captures real --help output and
+# scaffolds a demo project with `otto init` and captures real --help output and
 # tab-completion candidates. Both write into docs/_static/generated/
 # (gitignored). Hooked here — rather than in the Makefile / CI / RTD configs —
 # so every environment gets the same artifacts with one wiring point.
@@ -640,7 +640,7 @@ def _run_capture_script(name: str) -> None:
     script = pathlib.Path(__file__).parent.parent / "scripts" / name
     # Capture output: the dashboard harness prints benign asyncio teardown
     # noise on stderr; keep successful builds quiet and failures fully loud.
-    proc = subprocess.run(  # noqa: S603 — fixed interpreter + repo-local script, no shell
+    proc = subprocess.run(  # noqa: S603 — fixed interpreter + repository-local script, no shell
         [sys.executable, str(script)], capture_output=True, text=True, check=False
     )
     if proc.stdout.strip():
@@ -689,7 +689,7 @@ def _generate_rendered_pages(app):  # noqa: ARG001 — Sphinx event signature
     logger = sphinx_logging.getLogger(__name__)
     root = pathlib.Path(__file__).parent.parent
     for module, page in _RENDERED_PAGES.items():
-        proc = subprocess.run(  # noqa: S603 — fixed interpreter + a repo-local module named above
+        proc = subprocess.run(  # noqa: S603 — fixed interpreter + a repository-local module named above
             [sys.executable, "-m", module],
             capture_output=True,
             text=True,

@@ -20,7 +20,7 @@ _FLAGS = ["--variant", "--ensure", "--recover-partial"]
 
 
 def _flag_counts(argv: list[str], tmp_path) -> dict[str, int]:
-    r = run_otto(argv, xdir=tmp_path, sut_dirs=EXAMPLE)
+    r = run_otto(argv, xdir=tmp_path, roots=EXAMPLE)
     assert r.returncode == 0, r.stdout + r.stderr
     # Count option rows only (a flag in the first column of rich's options
     # panel), not mentions in help prose ("With --ensure: ...").

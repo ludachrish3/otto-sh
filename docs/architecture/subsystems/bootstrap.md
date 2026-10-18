@@ -1,17 +1,17 @@
 # Bootstrap and multi-project design
 
-otto composes one running process out of potentially many repos. Each repo
-directory named in `OTTO_SUT_DIRS` contributes independently — its own
+otto composes one running process out of potentially many projects. Each project
+root named in `OTTOPATH` contributes independently — its own
 `.otto/settings.toml`, its own `libs` joining `sys.path`, its own `init`
-modules and test files. Bootstrap's two phases discover every repo and import
+modules and test files. Bootstrap's two phases discover every project and import
 its init modules; test files load only inside `otto test`'s pytest session
 ({doc}`../lifecycle` walks the shared path). Instructions, options classes
-and host classes from every repo land in the same flat registries,
+and host classes from every project land in the same flat registries,
 indistinguishable to the CLI or to `all_hosts()`. See
-{doc}`../../configuration/settings` for the settings a repo contributes and
+{doc}`../../configuration/settings` for the settings a project contributes and
 what happens at startup from a user's point of view. `otto init`
 (`otto.init`, rendered by the
-`otto.cli.init` leaf) works one repo at a time: it gets a single repo into
+`otto.cli.init` leaf) works one project at a time: it gets a single project into
 the shape bootstrap expects to compose.
 
 ## Areas, not a monolith
@@ -41,20 +41,20 @@ host entries through the same validator lab loading uses
 accepts, because there is no second validator to drift: the doctor calls
 `compile_settings`, the loader's own compile, and resolves init modules with
 `find_init_module`, which is not called by the loader but asks the same
-`PathFinder` in the loader's search order. A repo that passes `otto init`
+`PathFinder` in the loader's search order. A project that passes `otto init`
 loads, by construction.
 
 ## Project activation
 
-Composing every repo into one process has a cost: before activation
-({doc}`../../cli/projects`), every repo named in `OTTO_SUT_DIRS` was equally
-present in every invocation. A colleague's half-finished repo with an
+Composing every project into one process has a cost: before activation
+({doc}`../../cli/projects`), every project named in `OTTOPATH` was equally
+present in every invocation. A colleague's half-finished project with an
 unimportable `init` module took down `otto host dut1 exec uptime` for
 everybody, and the only cure was to edit the environment variable. Activation
 makes "which projects is this run about?" a question otto answers per
-invocation, from the labs the user already had to name, so a repo that is not
-part of the run cannot fail it by being broken. A repo that declares no
-`[project]` table stays always active, which keeps a single-repo workspace
+invocation, from the labs the user already had to name, so a project that is not
+part of the run cannot fail it by being broken. A project that declares no
+`[project]` table stays always active, which keeps a single-project workspace
 exactly as it was and makes activation opt-in for everyone else.
 
 The reporting and enforcement rules each follow from what the user can
@@ -63,12 +63,12 @@ already see and what they asked for:
 - **An unknown `-I`/`-E` name is a usage error**, not a no-op: the failure it
   prevents is a run the user believed was narrowed and was not.
 - **Only `-E` gets a warning line in a fleet walk.** Every reason a lab
-  verdict can leave a repo out is already printed beside it, but nothing in
+  verdict can leave a project out is already printed beside it, but nothing in
   that report records that the user typed `-E` at all.
 - **The import-failure gate demotes on the lab axis only**, because it runs
   before the lab is built and its job is to protect lab construction from a
-  half-registered world. A repo forced active with `-I` stays fatal when
-  broken: a run cannot be partly about a repo that did not load.
+  half-registered world. A project forced active with `-I` stays fatal when
+  broken: a run cannot be partly about a project that did not load.
 - **Only build-up walks refuse over a dependency the labs dropped.** A
   cleanup that dies rather than removing what it can leaves the lab dirtier
   than it found it, and a report that dies whole is worse than a report with
@@ -82,12 +82,12 @@ already see and what they asked for:
 lab: every-lab is spelled `[".*"]`, out loud, so match-all is a visible choice
 and never a default that quietly widens a project's reach. Explicit targeting
 (`otto host <id>`, `get_host("id")`) is not bounded by the declaration, because
-a repo naming a jump host it does not own must still be able to reach it, and a
+a project naming a jump host it does not own must still be able to reach it, and a
 scoping typo must never brick the one command that could diagnose it.
 
 ## The orchestration environment
 
-One process means one interpreter, so the repos' glue code has to be
+One process means one interpreter, so the projects' glue code has to be
 satisfiable from a single environment; `otto env` ({doc}`../../cli/env/index`)
 builds it. Its choices:
 
@@ -96,16 +96,16 @@ builds it. Its choices:
   import against the wrong site-packages, and the environment would be
   decoration.
 - **The dependency preflight runs after the lab loads**, so it can ask the
-  real activation question. A pre-lab approximation could not tell that a repo
+  real activation question. A pre-lab approximation could not tell that a project
   whose `host_patterns` match no host is inactive, and would refuse the run
   instead of warning. It is metadata only — no network, no imports — which is
   what makes it affordable on every invocation.
-- **The command line outranks the settings file.** `--backend` beats a repo's
+- **The command line outranks the settings file.** `--backend` beats a project's
   `[env] backend`, because the operator at the terminal knows things the file
   does not — that uv is not installed on this particular host, say.
 - **Backend choices are never silently changed.** An explicit backend that
   cannot be honoured is refused rather than downgraded, since the user asked
-  for it precisely to avoid the fallback; two repos declaring different
+  for it precisely to avoid the fallback; two projects declaring different
   backends is an error, since picking one would bind an installer nobody
   chose; and the recorded backend lives *inside* the venv, so `create --force`
   cannot inherit the backend it was run to escape.
@@ -115,33 +115,33 @@ builds it. Its choices:
   and `show` never fails on a broken environment, because a diagnostic that
   fails when things are broken is the one the user needed most.
 - **Resolver failures are passed through, not guessed at.** otto adds a line
-  naming the colliding repos only when it can attribute the failure; a guess
+  naming the colliding projects only when it can attribute the failure; a guess
   would send the user to edit the wrong `pyproject.toml`.
 
 ## Where the code lives
 
 - {mod}`otto.bootstrap` — the two-phase composition root: discovery (env +
-  every repo's `settings.toml`) and contained registration (each repo's
+  every project's `settings.toml`) and contained registration (each project's
   `libs` and `init` modules). Phase 1 is
-  {func}`~otto.config.repo.discover`, which reads settings and so lives in
-  {mod}`otto.config.repo`, below the root, and runs no user code; its
-  {class}`~otto.config.repo.DiscoveryResult` carries three fields — `env`,
-  `repos`, and the `errors` for repos whose settings would not parse — which
+  {func}`~otto.config.project.discover`, which reads settings and so lives in
+  {mod}`otto.config.project`, below the root, and runs no user code; its
+  {class}`~otto.config.project.DiscoveryResult` carries three fields — `env`,
+  `projects`, and the `errors` for projects whose settings would not parse — which
   phase 2 folds into the {class}`~otto.bootstrap.BootstrapResult` alongside
   its own. {func}`~otto.bootstrap.invalidate` drops every cached result and
-  is the supported recovery path for a long-lived embedder: fix the repo or
+  is the supported recovery path for a long-lived embedder: fix the project or
   the environment, invalidate, bootstrap again. That is also why the errors
   ride the cached result rather than a parallel module global — recomputing
   discovery necessarily recomputes them, so a stale error cannot outlive the
-  discovery that produced it. The four repo accessors —
-  {func}`~otto.bootstrap.get_repos`, {func}`~otto.bootstrap.get_ordered_repos`,
+  discovery that produced it. The four project accessors —
+  {func}`~otto.bootstrap.get_projects`, {func}`~otto.bootstrap.get_ordered_projects`,
   {func}`~otto.bootstrap.get_env` and {func}`~otto.bootstrap.is_bootstrapped` —
   are imported from here, their public path; `get_env` is discovery's, defined
-  in {mod}`otto.config.repo` and re-exported here lazily, so importing the root
-  loads no repo loader, and the other three are defined in
+  in {mod}`otto.config.project` and re-exported here lazily, so importing the root
+  loads no project loader, and the other three are defined in
   {mod}`otto.declared`, beside the composed state they read, and re-exported
-  here. {func}`~otto.bootstrap.get_repos` and
-  {func}`~otto.bootstrap.get_ordered_repos` bootstrap on first use and
+  here. {func}`~otto.bootstrap.get_projects` and
+  {func}`~otto.bootstrap.get_ordered_projects` bootstrap on first use and
   {func}`~otto.bootstrap.get_env` runs discovery only;
   {func}`~otto.bootstrap.is_bootstrapped` never forces either; none runs at
   import. {func}`~otto.bootstrap.get_completion_names`, the CLI's
@@ -157,13 +157,13 @@ builds it. Its choices:
   holds the composed state, which the layers below the root read instead of
   importing it: the published results, the initiator, and the readers over
   them, {func}`~otto.declared.compose` (the one read that starts a
-  composition) and {func}`~otto.declared.current_repos`, the run's repos where
+  composition) and {func}`~otto.declared.current_projects`, the run's projects where
   no context is in hand. {func}`~otto.bootstrap.bootstrap` publishes the
-  in-progress result before the repos' init modules run, then the complete
+  in-progress result before the projects' init modules run, then the complete
   one; a failed composition and {func}`~otto.bootstrap.invalidate` withdraw
   both. Importing {mod}`otto.bootstrap` installs the catalog's initiator, and
   installing runs nothing. {func}`~otto.declared.declared_for_host` reads only
-  what was published and never composes. {func}`~otto.declared.scope_for_repo`
+  what was published and never composes. {func}`~otto.declared.scope_for_project`
   reads the complete result, else the in-progress one, else asks the
   initiator to compose; in a process
   that never imported the root there is no initiator, and it admits (answers
@@ -175,7 +175,7 @@ builds it. Its choices:
   composes through the initiator), while {func}`~otto.suite.run.run_tests`,
   {func}`~otto.suite.prepare_run`, the coverage entry points,
   {func}`~otto.session.install_logging` and the `otto.testing` host checks
-  load it on the call that reads the repos
+  load it on the call that reads the projects
 - `otto.init` — the `otto init` doctor and scaffolder over the areas
   (settings, schemas, lab, tests, instructions, kmodcov): detect / validate /
   scaffold, reusing bootstrap's own ingestion code; `otto.cli.init` only
@@ -183,15 +183,15 @@ builds it. Its choices:
 
 **A process that never imports the root composes nothing.** Take a library
 process that registers a product or dev-tool provider through the public
-{func}`otto.registry.registering_repo` and never imports {mod}`otto.bootstrap`.
+{func}`otto.registry.registering_project` and never imports {mod}`otto.bootstrap`.
 The provider gate judges each host built stamped with its lab: a lab load
 ({func}`otto.lab.load_lab`, `otto.load_lab`, a
 {class}`~otto.labs.LabRepository`'s loader such as the built-in JSON
 repository's), a direct {func}`~otto.host.create_host_from_dict` call with a
 `lab_name`, and the container hosts {mod}`otto.docker.compose` stamps from
-their parent. With no initiator, {func}`~otto.declared.scope_for_repo` admits,
+their parent. With no initiator, {func}`~otto.declared.scope_for_project` admits,
 so that provider runs on every such host. And because nothing composes, the
-repos' init modules do not run in that process, so their
+projects' init modules do not run in that process, so their
 `[[products]]`/`[[dev_tools]]` entries and the providers they register attach
 to no host either. To keep the narrowing and the declared entries, import
 {mod}`otto.bootstrap` first, or start from an entry point that composes (the

@@ -7,7 +7,7 @@ beyond the unit + stability suites.
 
 Run it against the lab (``unix``)::
 
-    OTTO_SUT_DIRS=<repo1 dir> otto -l unix run nc-smoke
+    OTTOPATH=<repo1 dir> otto -l unix run nc-smoke
 
 A pass means the telnet nc control plane (port discovery, listener probes,
 file-size stats) and both data paths still work end to end.

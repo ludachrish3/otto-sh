@@ -354,7 +354,7 @@ register_login_proxy("sudo-su-shell", _sudo_su_shell, undo=_sudo_su_shell_undo, 
 """
 
 
-def _scaffold_sut_dir(sut_dir: Path, ip: str, element: str) -> str:
+def _scaffold_sut_dir(root: Path, ip: str, element: str) -> str:
     """Build a throwaway, fully self-contained SUT dir for the CLI subprocess.
 
     The child ``otto`` process never imports this test module, so it needs
@@ -372,7 +372,7 @@ def _scaffold_sut_dir(sut_dir: Path, ip: str, element: str) -> str:
         }
     ]
     make_sut_repo(
-        sut_dir,
+        root,
         name="lp_e2e",
         extra=(
             'libs = ["initlib"]\ninit = ["lp_e2e_init"]\n'
@@ -396,14 +396,14 @@ def test_login_user_over_bridge(leased_host: tuple[str, str], tmp_path: Path) ->
     lab, with zero shared lab-data mutation.
     """
     element, ip = leased_host
-    sut_dir = tmp_path / "sut"
-    host_id = _scaffold_sut_dir(sut_dir, ip, element)
+    root = tmp_path / "sut"
+    host_id = _scaffold_sut_dir(root, ip, element)
     xdir = tmp_path / "xdir"
 
     with InteractiveOttoSession(
         ["-R", "-l", _LP_E2E_LAB, "host", host_id, "login", "--user", "mysql"],
         xdir=xdir,
-        sut_dirs=sut_dir,
+        roots=root,
     ) as sess:
         sess.expect(b"Press Ctrl+] to disconnect", timeout=30)
         # Let the proxy exchange (sudo su -s /bin/bash mysql) and the new

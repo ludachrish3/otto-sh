@@ -26,7 +26,7 @@ Two sections:
   bash TAB from; its digest is DERIVED from ``names``'s, so it moves whenever
   that does, with no walk of its own.
 
-Test names have no section: they live in each repo's per-file table
+Test names have no section: they live in each project's per-file table
 (:mod:`otto.config.collected_tests`), which only a pytest collection writes
 and which validates itself, one ``stat`` per path it tracks. A rebuild reads
 no test file.
@@ -60,7 +60,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import completion_cache as _cc
-from .repo import Repo
+from .project import Project
 
 if TYPE_CHECKING:
     from ..host.os_profile import ProfileContext
@@ -73,7 +73,7 @@ whole CLI tree); a module-scope import the other way round would drag `completio
 everything IT imports — onto every TAB, not just a cache write."""
 
 
-def _names_static_key_paths(repos: list[Repo]) -> list[Path]:
+def _names_static_key_paths(projects: list[Project]) -> list[Path]:
     """Every settings and init path whose edit can change a REGISTERED name.
 
     Registration executes init modules only, steered by ``settings.toml``.
@@ -85,21 +85,21 @@ def _names_static_key_paths(repos: list[Repo]) -> list[Path]:
     entry by the writer.
     """
     paths: list[Path] = []
-    for repo in repos:
-        paths.append(repo.sut_dir / ".otto" / "settings.toml")
-        paths.extend(_cc.resolved_init_paths(repo))
+    for project in projects:
+        paths.append(project.root / ".otto" / "settings.toml")
+        paths.extend(_cc.resolved_init_paths(project))
     return paths
 
 
-def lab_key_paths(repos: list[Repo]) -> list[Path]:
-    """Every lab file the repos' prepared sources read, then every directory they were found in.
+def lab_key_paths(projects: list[Project]) -> list[Path]:
+    """Every lab file the projects' prepared sources read, then every directory they were found in.
 
     For the cache WRITER only, after init: it prepares the sources
     (:func:`~otto.labs.sources.prepared_lab_sources`) and expands their
     entries, and the writer stores the result beside the entry so a warm
     reader never does either. A source whose backend is not registered, or
     that is not file-backed, contributes nothing (its TTL class covers it);
-    so does a repo whose sources fail to prepare, which no cache write may
+    so does a project whose sources fail to prepare, which no cache write may
     crash over.
 
     Every directory the enumeration entered is a key path too — its mtime
@@ -113,10 +113,10 @@ def lab_key_paths(repos: list[Repo]) -> list[Path]:
 
     paths: list[Path] = []
     visited: set[Path] = set()
-    profiles = ProfileContext.from_repos(repos)
-    for repo in repos:
+    profiles = ProfileContext.from_projects(projects)
+    for project in projects:
         try:
-            states = prepared_lab_sources(repo, profiles=profiles)
+            states = prepared_lab_sources(project, profiles=profiles)
         except LabRepositoryError:
             continue
         for state in states:
@@ -125,23 +125,23 @@ def lab_key_paths(repos: list[Repo]) -> list[Path]:
     return [*paths, *sorted(visited)]
 
 
-def describe_lab_sources(repo: Repo, *, profiles: "ProfileContext") -> list[tuple[str, str]]:
-    """``(source label, what it reads)`` for each of *repo*'s lab sources, for ``otto cache info``.
+def describe_lab_sources(project: Project, *, profiles: "ProfileContext") -> list[tuple[str, str]]:
+    """``(source label, what it reads)`` per lab source of *project*, for ``otto cache info``.
 
     Read before any init module runs, so a backend an init module registers
     is not registered yet: such a source is "unprepared", because whether it
     reads files cannot be told. A source that is not file-backed says so, and
-    so does a repo whose sources do not prepare. *profiles* are the data
-    profiles of every repo the caller holds, so the preparation is the one
+    so does a project whose sources do not prepare. *profiles* are the data
+    profiles of every project the caller holds, so the preparation is the one
     the cache writer shares.
     """
     from ..labs.errors import LabRepositoryError
     from ..labs.sources import prepared_lab_sources
 
     try:
-        states = prepared_lab_sources(repo, profiles=profiles)
+        states = prepared_lab_sources(project, profiles=profiles)
     except LabRepositoryError as e:
-        return [(source.label, f"cannot prepare — {e}") for source in repo.lab_sources]
+        return [(source.label, f"cannot prepare — {e}") for source in project.lab_sources]
     lines: list[tuple[str, str]] = []
     for state in states:
         source = state.pending
@@ -155,11 +155,11 @@ def describe_lab_sources(repo: Repo, *, profiles: "ProfileContext") -> list[tupl
     return lines
 
 
-def writer_key_paths(section: "Section", repos: list[Repo]) -> list[Path]:
+def writer_key_paths(section: "Section", projects: list[Project]) -> list[Path]:
     """Every key path of *section* as the writer computes it: its own, then its lab key paths."""
     assert section.key_paths is not None  # noqa: S101 — a derived section has no key paths
-    own = section.key_paths(repos)
-    return [*own, *lab_key_paths(repos)] if section.lab_keyed else own
+    own = section.key_paths(projects)
+    return [*own, *lab_key_paths(projects)] if section.lab_keyed else own
 
 
 @dataclass(frozen=True)
@@ -189,8 +189,8 @@ class CliCollectors:
     """The ``ctx.meta`` key the root group's dispatch protocol reads."""
 
 
-def _collect_names(repos: list[Repo], cli: CliCollectors) -> dict[str, Any]:
-    """Assemble the ``names`` payload from the live registries, *repos* and the CLI's walks.
+def _collect_names(projects: list[Project], cli: CliCollectors) -> dict[str, Any]:
+    """Assemble the ``names`` payload from the live registries, *projects* and the CLI's walks.
 
     Key-for-key the view :func:`completion_cache.read_cache` serves — the
     writer's keywords must match this key set (pinned by
@@ -200,31 +200,31 @@ def _collect_names(repos: list[Repo], cli: CliCollectors) -> dict[str, Any]:
     return {
         "instructions": cli.instructions(),
         "test_options": cli.test_options(),
-        "hosts": _cc.collect_host_ids(repos),
-        "hosts_by_lab": _cc.collect_host_ids_by_lab(repos),
-        "host_drops": _cc.collect_host_drops(repos),
-        "docker_hosts": _cc.collect_docker_capable_host_ids(repos),
-        "docker_use_cases": _cc.collect_docker_use_case_names(repos),
-        "docker_images": _cc.collect_docker_image_names(repos),
-        "docker_services_by_use_case": _cc.collect_docker_services_by_use_case(repos),
-        "repos": _cc.collect_repo_names(repos),
+        "hosts": _cc.collect_host_ids(projects),
+        "hosts_by_lab": _cc.collect_host_ids_by_lab(projects),
+        "host_drops": _cc.collect_host_drops(projects),
+        "docker_hosts": _cc.collect_docker_capable_host_ids(projects),
+        "docker_use_cases": _cc.collect_docker_use_case_names(projects),
+        "docker_images": _cc.collect_docker_image_names(projects),
+        "docker_services_by_use_case": _cc.collect_docker_services_by_use_case(projects),
+        "active_projects": _cc.collect_active_project_names(projects),
         "term_backends": backends["term_backends"],
         "transfer_backends": backends["transfer_backends"],
-        "usernames": _cc.collect_reservation_usernames(repos),
+        "usernames": _cc.collect_reservation_usernames(projects),
         "commands": cli.commands(),
-        "labs": _cc.collect_lab_names(repos),
-        "host_classes_by_id": _cc.collect_host_classes_by_id(repos),
-        "projects": _cc.collect_project_names(repos),
-        "links": _cc.collect_links(repos),
-        "logins_by_host": _cc.collect_logins_by_host(repos),
-        "docker_default_parent_by_lab": _cc.collect_docker_default_parent_by_lab(repos),
+        "labs": _cc.collect_lab_names(projects),
+        "host_classes_by_id": _cc.collect_host_classes_by_id(projects),
+        "projects": _cc.collect_project_names(projects),
+        "links": _cc.collect_links(projects),
+        "logins_by_host": _cc.collect_logins_by_host(projects),
+        "docker_default_parent_by_lab": _cc.collect_docker_default_parent_by_lab(projects),
     }
 
 
-def _collect_shim(repos: list[Repo], cli: CliCollectors) -> dict[str, Any]:
+def _collect_shim(projects: list[Project], cli: CliCollectors) -> dict[str, Any]:
     from .completion_tree import build_shim_payload  # lazy: the cold write path only
 
-    return build_shim_payload(repos, app=cli.app, pending_key=cli.pending_key)
+    return build_shim_payload(projects, app=cli.app, pending_key=cli.pending_key)
 
 
 @dataclass(frozen=True)
@@ -240,7 +240,7 @@ class Section:
     name: str
     """Storage key under ``"sections"`` in the cache file."""
 
-    collect: Callable[[list[Repo], CliCollectors], dict[str, Any]]
+    collect: Callable[[list[Project], CliCollectors], dict[str, Any]]
     """Build this section's payload from live state and the CLI's walks.
 
     ``otto.cli.main.entry`` writes the cache without calling this; it is the
@@ -248,7 +248,7 @@ class Section:
     write to.
     """
 
-    key_paths: Callable[[list[Repo]], list[Path]] | None = None
+    key_paths: Callable[[list[Project]], list[Path]] | None = None
     """Every path whose edit must move this section's digest, besides its lab
     key paths. Order and duplicates are irrelevant — :func:`section_digest`
     sorts and dedups."""
@@ -287,7 +287,7 @@ def section_by_name(name: str) -> Section:
     raise KeyError(name)
 
 
-def _shared_tail(repos: list[Repo]) -> list[str]:
+def _shared_tail(projects: list[Project]) -> list[str]:
     """Digest lines every section mixes in after its key paths.
 
     The process-wide contributions no path list can carry: the literal
@@ -299,20 +299,20 @@ def _shared_tail(repos: list[Repo]) -> list[str]:
     this line, so no section of an ephemeral write could ever be served).
     """
     lines: list[str] = []
-    for repo in sorted(repos, key=lambda r: str(r.sut_dir)):
-        lines.extend(f"unresolved:{name}" for name in _cc.unresolved_init_modules(repo))
-    lines.append(f"inventory:{_cc.inventory_digest_text(repos)}")
+    for project in sorted(projects, key=lambda r: str(r.root)):
+        lines.extend(f"unresolved:{name}" for name in _cc.unresolved_init_modules(project))
+    lines.append(f"inventory:{_cc.inventory_digest_text(projects)}")
     return lines
 
 
-def section_digest(section: Section, repos: list[Repo]) -> str:
+def section_digest(section: Section, projects: list[Project]) -> str:
     """Stat-based sha256 over *section*'s key paths (plus the shared tail), as the writer sees them.
 
     A thin wrapper over :func:`section_digests` for a single section — a
     derived section has no key paths of its own to stat, so both shapes go
     through the same memoized resolution rather than forking into two paths.
     """
-    return section_digests(repos, [section])[section.name]
+    return section_digests(projects, [section])[section.name]
 
 
 class _StoredKeysMissingError(LookupError):
@@ -333,14 +333,14 @@ def stored_ttl_seconds(entry: object) -> "int | None":
     return ttl if isinstance(ttl, int) and not isinstance(ttl, bool) else None
 
 
-def _digest(section: Section, repos: list[Repo], tail: list[str], lab: list[Path]) -> str:
+def _digest(section: Section, projects: list[Project], tail: list[str], lab: list[Path]) -> str:
     """:func:`section_digest` with the shared tail and the lab key paths supplied by the caller."""
     assert section.key_paths is not None  # noqa: S101 — type narrows: a derived section never reaches here
     h = hashlib.sha256()
     # Via the module attribute, not a from-import: tests count digest work by
     # monkeypatching ``completion_cache.hash_file``, and a bound name here
     # would let this module hash behind the counter's back.
-    for path in sorted(set(section.key_paths(repos)) | set(lab)):
+    for path in sorted(set(section.key_paths(projects)) | set(lab)):
         _cc.hash_file(h, path)
     for line in tail:
         h.update(f"{line}\n".encode())
@@ -348,7 +348,7 @@ def _digest(section: Section, repos: list[Repo], tail: list[str], lab: list[Path
 
 
 def section_digests(
-    repos: list[Repo],
+    projects: list[Project],
     sections: list[Section],
     *,
     known: "dict[str, str] | None" = None,
@@ -396,7 +396,7 @@ def section_digests(
                 raise _StoredKeysMissingError(section.name)
             return paths
         if computed_lab is None:
-            computed_lab = lab_key_paths(repos)
+            computed_lab = lab_key_paths(projects)
         return computed_lab
 
     def digest_of(section: Section) -> str:
@@ -410,8 +410,8 @@ def section_digests(
             value = h.hexdigest()
         else:
             if tail is None:
-                tail = _shared_tail(repos)
-            value = _digest(section, repos, tail, lab_of(section))
+                tail = _shared_tail(projects)
+            value = _digest(section, projects, tail, lab_of(section))
         memo[section.name] = value
         return value
 
@@ -427,7 +427,7 @@ def needs_lab_keys(section: Section) -> bool:
     return any(needs_lab_keys(section_by_name(child)) for child in section.derived_from)
 
 
-def read_section(repos: list[Repo], name: str) -> "dict[str, Any] | None":
+def read_section(projects: list[Project], name: str) -> "dict[str, Any] | None":
     """Return section *name*'s fresh payload, or ``None`` (cold for any reason).
 
     ``KeyError`` for an unregistered *name*. The single-section view of
@@ -435,12 +435,12 @@ def read_section(repos: list[Repo], name: str) -> "dict[str, Any] | None":
     <otto.config.completion_cache.read_sections>`: one file open, one
     section's digest.
     """
-    payloads = _cc.read_sections(repos, [name])
+    payloads = _cc.read_sections(projects, [name])
     return None if payloads is None else payloads[name]
 
 
 def write_section(
-    repos: list[Repo], name: str, payload: dict[str, Any], *, tainted: bool = False
+    projects: list[Project], name: str, payload: dict[str, Any], *, tainted: bool = False
 ) -> None:
     """Write (or update) section *name* with *payload*, leaving the others alone.
 
@@ -449,4 +449,4 @@ def write_section(
     was collected while bootstrap reported errors, so the fix (or the TTL)
     forces a full load instead of serving partial names forever.
     """
-    _cc.write_sections(repos, {name: payload}, tainted=tainted)
+    _cc.write_sections(projects, {name: payload}, tainted=tainted)

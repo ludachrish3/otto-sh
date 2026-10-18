@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 import pytest_asyncio
 
-from otto.config.repo import Repo
+from otto.config.project import Project
 from otto.docker import build_images
 from otto.host.element import Element
 from otto.host.login_proxy import Cred
@@ -68,7 +68,7 @@ async def parent(test3_lease):
 
 @pytest.fixture
 def repo1():
-    return Repo(sut_dir=REPO1_DIR)
+    return Project(root=REPO1_DIR)
 
 
 @pytest.mark.asyncio(loop_scope="module")

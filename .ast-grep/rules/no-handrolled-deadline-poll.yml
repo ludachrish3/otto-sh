@@ -53,7 +53,7 @@ files:
 - src/otto/**
 - tests/**
 ignores:
-# Fixture SUT repos + firmware: user-example input data, not otto's code
+# Fixture projects + firmware: user-example input data, not otto's code
 # (sgconfig.yml discipline for tests-scoped rules).
 - tests/repo1/**
 - tests/repo2/**

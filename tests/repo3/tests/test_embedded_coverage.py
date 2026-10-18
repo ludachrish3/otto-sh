@@ -36,7 +36,7 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
-from otto.bootstrap import get_repos
+from otto.bootstrap import get_projects
 from otto.coverage import clean_coverage
 from otto.coverage.fetcher.embedded import decode_cov_dump
 from otto.declared import DeclaredEntry
@@ -57,8 +57,8 @@ BUILD_SCRIPT = PRODUCT_DIR / "build.sh"
 
 def _embedded_cov_config() -> dict:
     """Return the ``[coverage.embedded]`` table from the first repo declaring one."""
-    for repo in get_repos():
-        embedded = (repo.settings.get("coverage") or {}).get("embedded")
+    for project in get_projects():
+        embedded = (project.settings.get("coverage") or {}).get("embedded")
         if embedded:
             return embedded
     return {}
@@ -152,8 +152,8 @@ async def _build_extension_for(build_dir: str, zver: "str | None") -> None:
 
 def _coverage_host_pattern() -> "re.Pattern[str] | None":
     """Return the repo-declared ``[coverage].hosts`` selector, compiled (or ``None``)."""
-    for repo in get_repos():
-        hosts = (repo.settings.get("coverage") or {}).get("hosts")
+    for project in get_projects():
+        hosts = (project.settings.get("coverage") or {}).get("hosts")
         if hosts:
             return re.compile(hosts)
     return None

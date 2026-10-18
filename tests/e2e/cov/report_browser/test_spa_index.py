@@ -31,7 +31,7 @@ def _row_testids(page: Page) -> list[str]:
     )
 
 
-def test_boots_without_pageerrors_and_shows_project_name(page: Page, report_dir: Path) -> None:
+def test_boots_without_pageerrors_and_shows_report_title(page: Page, report_dir: Path) -> None:
     _goto(page, report_dir)
     # Root only has one child ("product/") — its tree row is the boot pin.
     expect(page.locator('[data-testid="tree-row-dir:product"]')).to_be_visible()

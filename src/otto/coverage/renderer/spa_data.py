@@ -14,7 +14,7 @@ This is the pure-Python half of the SPA report: it turns a
   (``window.__OTTO_COV_TICKET__(id, {...});``) per ticket, carrying its
   per-file missing-line detail. Small per-ticket rollups ride
   ``index.js``; this deferred chunk keeps boot cost constant regardless
-  of how many tickets a mature repo yields.
+  of how many tickets a mature project yields.
 
 It deliberately mirrors the mechanics of the retired Jinja renderer
 (display-path prefix stripping, path mangling, tier labels/colors, the
@@ -421,14 +421,14 @@ def _build_ticket_summaries(
 
     Summaries are small and ride ``index.js``; the missing-line detail is
     deferred to a per-ticket chunk so boot cost stays constant regardless of
-    how many tickets a mature repo yields. Each chunk carries ``stamp`` (design
+    how many tickets a mature project yields. Each chunk carries ``stamp`` (design
     §5: every data chunk does, so a stale bundle guard-screens instead of
     silently rendering against a newer report), mirroring how file chunks
     already carry it (``_build_file_chunk``).
 
-    The third return value, ``tickets_totals``, is the DEDUPED repo-truth
+    The third return value, ``tickets_totals``, is the DEDUPED project-truth
     behind the tickets page's aggregate StatsCard (design §6.1: "the overall
-    card is repo-truth; the rows sum to more"). Multi-ticket lines are the
+    card is project-truth; the rows sum to more"). Multi-ticket lines are the
     normal case (§2: a commit naming several ids attributes its lines to
     ALL of them), so summing the per-ticket rows below would double-count
     every such line — this instead counts each line AT MOST ONCE, in the
@@ -451,7 +451,7 @@ def _build_ticket_summaries(
     # ticket -> display path -> tier -> asserted count, mirroring
     # per_tier_file_of — lets a ticket-scoped file row report the SUBSET of
     # asserted lines the ticket actually owns in that file, not the file's
-    # whole-repo asserted_per_tier (without this, a
+    # whole-project asserted_per_tier (without this, a
     # scoped stats bag would carry whole-file override provenance against a
     # ticket-scoped denominator).
     asserted_file_of: dict[str, dict[str, dict[str, int]]] = {}
@@ -565,7 +565,7 @@ def _build_ticket_summaries(
 def build_index_payload(
     store: CoverageStore,
     *,
-    project_name: str,
+    report_title: str,
     prefix: Path | None,
     stamp: str,
 ) -> dict[str, Any]:
@@ -581,7 +581,7 @@ def build_index_payload(
     tier_labels = {t: _label_for(t) for t in tier_order}
     runs_by_id = {r.id: r for r in store.runs}
 
-    root = _new_dir(project_name)
+    root = _new_dir(report_title)
     root["stats"] = _empty_stats(tier_order)
     for fr in store.files():
         display_path = _display_path(fr, prefix)
@@ -603,7 +603,7 @@ def build_index_payload(
         "stamp": stamp,
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         "otto_version": get_version(),
-        "project_name": project_name,
+        "report_title": report_title,
         "tier_order": tier_order,
         "tier_labels": tier_labels,
         "tier_colors": tier_colors,
@@ -658,7 +658,7 @@ def emit_chunks(
     store: CoverageStore,
     output_dir: Path,
     *,
-    project_name: str,
+    report_title: str,
     prefix: Path | None,
     stamp: str,
 ) -> None:
@@ -706,7 +706,7 @@ def emit_chunks(
                 f"{json.dumps(chunk_payload)});\n"
             )
 
-    payload = build_index_payload(store, project_name=project_name, prefix=prefix, stamp=stamp)
+    payload = build_index_payload(store, report_title=report_title, prefix=prefix, stamp=stamp)
 
     search_text = (
         f"window.__OTTO_COV_SEARCH__("

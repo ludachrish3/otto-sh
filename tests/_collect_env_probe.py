@@ -16,11 +16,13 @@ import os
 
 import pytest
 
+from otto.config.env import is_otto_env_var
+
 
 def pytest_collection_finish(session):
     from tests._ambient_env import ambient_opt_ins
 
-    leaked = sorted(k for k in os.environ if k.startswith("OTTO_") and k not in ambient_opt_ins())
+    leaked = sorted(k for k in os.environ if is_otto_env_var(k) and k not in ambient_opt_ins())
     print(f"collect-env-probe: checked ({len(leaked)} leaked)")  # noqa: T201 — the pin greps this
     if leaked:
         # 7: clear of pytest's own exit codes (1-5, incl. INTERNAL_ERROR=3),

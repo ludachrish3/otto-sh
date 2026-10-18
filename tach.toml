@@ -45,7 +45,7 @@ layers = [
     "root",         # the composition root, and the workflows that can start it
     "workflows",    # instructions, project, init, the monitor service
     "run",          # the live run: context, session, fleet accessors, docker
-    "composition",  # settings, Repo, discovery, the completion cache, env
+    "composition",  # settings, Project, discovery, the completion cache, env
     "sources",      # where labs, inventory, creds and reservations come from; the lab model and its loader
     "topology",     # link, check, tunnel, the monitor's lower files
     "specs",        # pydantic models for lab, settings and inventory data
@@ -61,19 +61,19 @@ path = "otto.bootstrap"
 layer = "root"
 depends_on = [
     "otto.config",
-    # bootstrap() declares otto's first-party actions before any repo init and
+    # bootstrap() declares otto's first-party actions before any project init and
     # checks the merged instruction options after them, each read off its
     # module when called. Function-scope; otto.project sits a layer below.
     "otto.project",
     "otto.errors",
-    # Phase-2 registration wraps each repo's init imports in
-    # `registry.registering_repo(name)` so registration seams can attribute an
-    # entry to the repo that registered it. otto.registry is a foundation
+    # Phase-2 registration wraps each project's init imports in
+    # `registry.registering_project(name)` so registration seams can attribute an
+    # entry to the project that registered it. otto.registry is a foundation
     # leaf (it depends only on otto.errors), so this cannot invert layering or
     # create a cycle.
     "otto.registry",
     # The D2 scope check (2026-08-18) reads the provider registries — the
-    # question "did this repo register a product/dev-tool provider?" can only
+    # question "did this project register a product/dev-tool provider?" can only
     # be answered by the lists those registration seams append to, and reading
     # them THERE is what keeps one source of truth (a mirrored ledger in a
     # lower module would drift the moment a test cleared one and not the
@@ -85,10 +85,13 @@ depends_on = [
     # import cycle — both ends were already in it.
     "otto.host",
     # otto.config.scope: the error types this module re-exports. otto.declared:
-    # the composed-repos catalog bootstrap() publishes into, and the initiator
+    # the composed-projects catalog bootstrap() publishes into, and the initiator
     # slot this module fills when it is imported (its one installer).
     "otto.config.scope",
     "otto.declared",
+    # otto.utils: invalidate() clears the cached root keys (root_key),
+    # function-scope; a foundation leaf, so no layer inverts and no cycle closes.
+    "otto.utils",
 ]
 
 [[modules]]
@@ -102,7 +105,7 @@ depends_on = ["otto.host", "otto.logger", "otto.version", "otto.errors", "otto.r
 path = "otto.cli"
 layer = "entry"
 # otto.session: the root callback and invoke.py render the library's typed
-# refusals and call its project, repo, lab, dependency and logging decisions.
+# refusals and call its project, lab, dependency and logging decisions.
 # otto.inventory: inventory.py's `otto inventory` verbs build, query and cache
 # the process inventory. (The lab load's inventory is otto.session.build_lab's.)
 # Function-local, because that module is on the budgeted import surfaces.
@@ -155,14 +158,15 @@ depends_on = [
     "otto.host",
     "otto.link",
     "otto.reservations",
-    # repo.py's collection pass marks itself as loading test files, so a test
+    # project.py's collection pass marks itself as loading test files, so a test
     # file or conftest that registers anything is refused there too. A leaf
     # (it depends only on otto.errors), so no cycle can form.
     "otto.registry",
     "otto.config.scope",
     "otto.models.dependencies",
-    # otto.utils: the completion cache's collection child splits the path-list
-    # variables with the one separator split_path_list uses.
+    # otto.utils: the completion cache's collection child spells and collapses
+    # the path-list variables with the one rule kept_path_spelling and
+    # collapse_path_list define.
     "otto.utils",
     # otto.config.home: the completion cache lives in the workspace home.
     "otto.config.home",
@@ -174,23 +178,29 @@ layer = "specs"
 # otto's user-level home and the workspace key that shards it: the one owner of
 # every path under ~/.otto (spec 2026-10-11 placement-and-phases §2.2, §3.6).
 # A module of its own, so the inventory and the suite read it without importing
-# otto.config. It reads OTTO_HOME and OTTO_SUT_DIRS through the env settings
+# otto.config. It reads OTTO_HOME and OTTOPATH through the env settings
 # model, and normalizes the workspace slug, inside its functions. Its ancestor
 # otto/config/__init__.py stays lazy (§4.3) bar one eager import,
 # otto.config.env, so importing this module loads that too.
-depends_on = ["otto.models", "otto.models.dependencies"]
+depends_on = [
+    "otto.models",
+    "otto.models.dependencies",
+    # otto.utils: _normalized() keys the workspace through kept_path_spelling and
+    # the cached root_key, function-scope; a foundation leaf, so no cycle closes.
+    "otto.utils",
+]
 
 [[modules]]
 path = "otto.config.scope"
 layer = "foundation"
 # The one membership predicate, its config and resolver, the composition
 # root's error types (spec 2026-10-11 placement-and-phases §3.5), and the
-# runtime settings types the repo loader holds and the settings specs build
+# runtime settings types the project loader holds and the settings specs build
 # (§3.6). Foundation, so the host layer's ingest gate and otto.declared may
 # import it. Its
 # ancestor otto/config/__init__.py stays lazy (§4.3) bar one eager import,
 # otto.config.env, so importing this module loads that too.
-# otto.models.dependencies is read inside the functions that normalize a repo
+# otto.models.dependencies is read inside the functions that normalize a project
 # name.
 depends_on = ["otto.errors", "otto.models.dependencies"]
 
@@ -279,14 +289,14 @@ depends_on = [
     # otto.layout: the run-tree paths (a pure leaf).
     "otto.layout",
     "otto.config.scope",
-    # otto.declared: the run's repos when no repos are given (current_repos),
+    # otto.declared: the run's projects when no projects are given (current_projects),
     # the composed state's home (spec 2026-10-11 placement-and-phases §3.9).
     "otto.declared",
     # otto.fleet: the hosts coverage cleans and collects from (all_hosts,
     # do_for_all_hosts), the fleet's walks.
     "otto.fleet",
     # otto.bootstrap: clean_coverage, collect_coverage and get_coverage load the
-    # composition root when no repos are given, so their read of the run's repos
+    # composition root when no projects are given, so their read of the run's projects
     # composes them as it always did (spec 2026-10-11 placement-and-phases
     # §3.12). Same layer: root to root.
     "otto.bootstrap",
@@ -304,7 +314,7 @@ depends_on = ["otto.errors", "otto.models", "otto.models.base", "otto.registry",
 [[modules]]
 path = "otto.declared"
 layer = "foundation"
-# The declared-entry core and the composed-repos catalog with its initiator
+# The declared-entry core and the composed-projects catalog with its initiator
 # slot (spec 2026-10-11 placement-and-phases §2.1, §3.5): otto.bootstrap
 # publishes into it and installs the initiator; nothing here imports the root.
 # The scope predicate and the run policy are read inside the functions that
@@ -321,14 +331,14 @@ depends_on = [
     "otto.utils",
     "otto.config",
     "otto.result",
-    # UseCaseResolutionError roots on OttoError, because the repo's
+    # UseCaseResolutionError roots on OttoError, because the project's
     # `test_every_public_exception_in_src_is_ottoerror_rooted` guard requires
     # every public exception in src/otto to. Same standing as otto.result's
     # edge below: otto.errors is a zero-import leaf, so this can neither
     # invert layering nor create a cycle.
     "otto.errors",
     # `register_compose_adapter` is a registration seam — it writes into a
-    # Registry and attributes the entry to the registering repo, exactly as
+    # Registry and attributes the entry to the registering project, exactly as
     # every other registration seam in the tree does (docker use-cases spec
     # §5). otto.registry is a foundation leaf too (see otto.bootstrap's note
     # above), so the same no-cycle argument holds.
@@ -338,7 +348,7 @@ depends_on = [
     # depends only on otto.console, so this edge cannot make a cycle.
     "otto.logger",
     "otto.config.scope",
-    # otto.declared: the run's repos (current_repos, current_ordered_repos).
+    # otto.declared: the run's projects (current_projects, current_ordered_projects).
     "otto.declared",
     # otto.invocation: the active run's lab (require_run), never the
     # fleet at otto.fleet (spec 2026-10-11 placement-and-phases §3.9).
@@ -437,7 +447,7 @@ depends_on = ["otto.session.errors", "otto.config.scope", "otto.models.dependenc
 [[modules]]
 path = "otto.session.dependencies"
 layer = "run"
-# otto.env: the dependency preflight reads each repo's project table.
+# otto.env: the dependency preflight reads each project's ``[project]`` table.
 depends_on = ["otto.session.errors", "otto.config.scope", "otto.env"]
 
 [[modules]]
@@ -452,7 +462,7 @@ depends_on = ["otto.session.errors", "otto.config.scope", "otto.models.dependenc
 
 [[modules]]
 path = "otto.session.logs"
-# Root, not run: install_logging is a library entry point that reads the repos
+# Root, not run: install_logging is a library entry point that reads the projects
 # with no run in hand, so it imports the composition root when called (spec
 # 2026-10-11 placement-and-phases §3.12). Only the CLI and the facade import it.
 layer = "root"
@@ -467,7 +477,7 @@ depends_on = [
 path = "otto.instruction_catalog"
 layer = "foundation"
 # The instruction tables, the @instruction decorator and their checks: data and
-# rules, read by every layer above (Repo's panel, the completion cache, the
+# rules, read by every layer above (Project's panel, the completion cache, the
 # project layer, the CLI). Its first-party slot, FIRST_PARTY_ACTIONS, is filled
 # from above by otto.project.actions, its one installer (spec 2026-10-11
 # placement-and-phases §2.1, §3.2); the catalog never imports the project layer.
@@ -483,7 +493,7 @@ layer = "workflows"
 # pulls the binding machinery and the orchestrator in. run_instruction also
 # declares otto's first-party actions (otto.project.actions) before its lookup.
 # otto.session.activation: run_instruction asks check_instruction_active whether the owning
-# repo is active in the context. Function-scope, like the edges above.
+# project is active in the context. Function-scope, like the edges above.
 depends_on = ["otto.instruction_catalog", "otto.run_context", "otto.params", "otto.project", "otto.session.activation"]
 
 [[modules]]
@@ -519,8 +529,8 @@ depends_on = [
     "otto.invocation",
     # otto.layout: the run-tree paths (a pure leaf).
     "otto.layout",
-    # The ingest gate: product.py and dev_tool.py judge a provider's repo with
-    # otto.config.scope's repo_targets, after otto.declared's scope_for_repo names
+    # The ingest gate: product.py and dev_tool.py judge a provider's project with
+    # otto.config.scope's project_targets, after otto.declared's scope_for_project names
     # its declaration; the declared-entry kinds and listing read otto.declared.
     # Both are foundation modules that never import upward.
     "otto.config.scope",
@@ -715,7 +725,7 @@ depends_on = []
 [[modules]]
 path = "otto.models.dependencies"
 layer = "foundation"
-# Dependency-spec parsing and repo-name normalization: the standard library and
+# Dependency-spec parsing and project-name normalization: the standard library and
 # packaging only, so the scope predicate below every layer can normalize a name.
 depends_on = []
 
@@ -731,7 +741,7 @@ layer = "workflows"
 # as a module of its own it would import factory and session from here while
 # the facade's lazy binding imports it back, a loop through a string.
 # otto.fleet, otto.context, otto.declared, otto.tunnel: live.py only. It
-# reads the active lab, the repos, the driving repo's scope and full-lab tunnel
+# reads the active lab, the projects, the driving project's scope and full-lab tunnel
 # discovery and hands them to the collector, whose tunnel discovery is INJECTED
 # through the tunnel_source callable (collector.py). tach cannot tell live.py
 # from the rest of this module, so tests/unit/test_monitor_service_reads_no_lab.py
@@ -816,15 +826,15 @@ depends_on = ["otto.errors", "otto.registry"]
 path = "otto.project"
 layer = "workflows"
 # The project layer sits ABOVE hosts and below the CLI: it drives host verbs
-# across the fleet on behalf of one repo. Every edge here points down.
+# across the fleet on behalf of one project. Every edge here points down.
 #
 # otto.host is imported LAZILY inside the methods that dispatch (BaseHost.install
 # and friends) — `import otto.project` must stay cheap, because the default
 # instructions import it at CLI startup. tach counts a function-scope import as
 # an edge regardless, which is why it is declared.
 #
-# otto.config is TYPE_CHECKING-only here (Repo), and otto.context is in
-# actions.py (OttoContext): the per-repo actions are HANDED both at
+# otto.config is TYPE_CHECKING-only here (Project), and otto.context is in
+# actions.py (OttoContext): the per-project actions are HANDED both at
 # construction and never look either up. The orchestrator DOES look the context
 # up -- ambient-context module functions are its whole shape -- but only from
 # inside the call (orchestrator._lab), for the same reason otto.host is lazy
@@ -846,7 +856,7 @@ layer = "workflows"
 #
 # otto.link and otto.tunnel are `cleanup`'s last two steps and `is_clean`'s
 # last two questions (2026-08-17): a netem impairment and a tunnel belong to
-# the LAB rather than to any repo, so the orchestrator resets and reaps them
+# the LAB rather than to any project, so the orchestrator resets and reaps them
 # once, exactly as it does the debug sweep and the toolchain. BOTH EDGES POINT
 # DOWN and both are function-scope, in orchestrator.py alone — the four calls
 # are `link.manage.repair_all` / `read_link_states` and
@@ -934,7 +944,7 @@ path = "otto.suite"
 layer = "root"
 # otto.project is the `ensure` marker's converge steps (`_converge` in
 # pytest_plugin.py resolves the otto.project function at call time). The edge
-# points DOWN — project drives hosts on behalf of a repo, a suite consumes
+# points DOWN — otto.project drives hosts on behalf of a project, a suite consumes
 # that — and it is the point of the layer: `otto run install` and the marker
 # call the same function, so the CLI and the suites cannot diverge on what
 # "installed" means.
@@ -943,11 +953,11 @@ layer = "root"
 # otto.invocation: the runner sweep (suite/loops.py) reads the run policy's teardown deadline.
 # otto.labs: run_tests opens a context on an empty lab (otto.labs.loader.Lab)
 # when none is active.
-# otto.declared: prepare_run and selected_tests read the run's repos through
-# current_repos, the composed state's home (spec 2026-10-11
+# otto.declared: prepare_run and selected_tests read the run's projects through
+# current_projects, the composed state's home (spec 2026-10-11
 # placement-and-phases §3.9).
 # otto.bootstrap: prepare_run loads the composition root before it reads the
-# run's repos for cov_tickets_json, so that read composes them as it always did
+# run's projects for cov_tickets_json, so that read composes them as it always did
 # (spec 2026-10-11 placement-and-phases §3.12). Same layer: root to root.
 depends_on = ["otto.run_context", "otto.config", "otto.invocation", "otto.lifecycle", "otto.registry", "otto.monitor", "otto.version", "otto.models", "otto.host", "otto.coverage", "otto.params", "otto.errors", "otto.project", "otto.utils", "otto.monitor.errors", "otto.config.scope", "otto.config.home", "otto.labs", "otto.bootstrap", "otto.declared", "otto.fleet"]
 
@@ -1040,7 +1050,7 @@ depends_on = []
 [[modules]]
 path = "otto.env"
 # The project environments `otto env` manages: settings work, beside discovery,
-# which it reads to find the repos.
+# which it reads to find the projects.
 layer = "composition"
 depends_on = [
     "otto.errors",

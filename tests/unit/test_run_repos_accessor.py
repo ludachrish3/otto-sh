@@ -19,7 +19,7 @@ def _fresh():
 
 
 def test_the_accessor_reads_the_installed_context_first(monkeypatch):
-    from otto.declared import current_ordered_repos, current_repos
+    from otto.declared import current_ordered_projects, current_projects
 
     # Composed in a dependency order unlike the discovery order, so each reader's
     # fallback must answer its own list.
@@ -28,12 +28,12 @@ def test_the_accessor_reads_the_installed_context_first(monkeypatch):
     ctx = OttoContext(lab=Lab(name="rig"), bootstrap=fake_bootstrap_result([fake_repo("from_ctx")]))
     binding = set_context(ctx)
     try:
-        assert [r.name for r in current_repos()] == ["from_ctx"]
-        assert [r.name for r in current_ordered_repos()] == ["from_ctx"]
+        assert [r.name for r in current_projects()] == ["from_ctx"]
+        assert [r.name for r in current_ordered_projects()] == ["from_ctx"]
     finally:
         reset_context(binding)
-    assert [r.name for r in current_repos()] == ["from_bootstrap", "its_dependency"]
-    assert [r.name for r in current_ordered_repos()] == ["its_dependency", "from_bootstrap"]
+    assert [r.name for r in current_projects()] == ["from_bootstrap", "its_dependency"]
+    assert [r.name for r in current_ordered_projects()] == ["its_dependency", "from_bootstrap"]
 
 
 @pytest.mark.usefixtures("no_composition_root")
@@ -41,7 +41,7 @@ def test_with_no_composition_root_a_read_that_would_compose_refuses():
     """Nothing published, no run installed, no initiator: every composing read refuses."""
     from otto import declared
 
-    for read in [declared.compose, declared.get_repos, declared.current_repos]:
+    for read in [declared.compose, declared.get_projects, declared.current_projects]:
         with pytest.raises(RuntimeError, match="no composition root is loaded"):
             read()
 

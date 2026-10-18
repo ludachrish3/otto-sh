@@ -37,12 +37,12 @@ def test_a_raw_entry_under_the_wrong_key_is_refused():
 
 
 def test_the_repo_comes_from_the_engine():
-    from otto.registry import registering_repo
+    from otto.registry import registering_project
 
-    with registering_repo("acme"):
+    with registering_project("acme"):
         register_options(Opts, verbs=["run"])
-    assert OPTIONS.repo(f"{__name__}:Opts") == "acme"
-    assert verb_option_classes("run")[-1].repo == "acme"
+    assert OPTIONS.project(f"{__name__}:Opts") == "acme"
+    assert verb_option_classes("run")[-1].project == "acme"
 
 
 def test_a_raw_entry_with_an_unknown_verb_is_refused():

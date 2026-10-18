@@ -31,7 +31,7 @@ note: >
 files:
 - tests/**
 ignores:
-# Fixture SUT repos + firmware: user-example input data, not otto's tests
+# Fixture projects + firmware: user-example input data, not otto's tests
 # (sgconfig.yml discipline for tests-scoped rules).
 - tests/repo1/**
 - tests/repo2/**

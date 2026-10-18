@@ -51,7 +51,7 @@ def _make_repo(root: Path, tmp_path: Path, *, local_hosts: list[dict]) -> Path:
 
 
 def test_list_hosts_unions_sources_and_surfaces_the_override(tmp_path: Path) -> None:
-    repo = _make_repo(
+    project = _make_repo(
         tmp_path / "multisrc",
         tmp_path,
         local_hosts=[_host("alt1", "10.9.9.9"), _host("test2", "10.0.0.2")],
@@ -59,7 +59,7 @@ def test_list_hosts_unions_sources_and_surfaces_the_override(tmp_path: Path) -> 
     xdir = tmp_path / "xdir"
     xdir.mkdir()
 
-    result = run_otto(["--list-hosts"], xdir=xdir, sut_dirs=repo, lab="site")
+    result = run_otto(["--list-hosts"], xdir=xdir, roots=project, lab="site")
     combined = result.stdout + result.stderr
 
     assert result.returncode == 0, combined
@@ -90,7 +90,7 @@ def test_show_lab_renders_the_winning_record_not_the_shadowed_one(tmp_path: Path
     is needed. The losing ip must be ABSENT, not merely out-ranked — an
     override replaces the record wholesale rather than blending fields.
     """
-    repo = _make_repo(
+    project = _make_repo(
         tmp_path / "multisrc",
         tmp_path,
         local_hosts=[_host("alt1", "10.9.9.9"), _host("test2", "10.0.0.2")],
@@ -98,7 +98,7 @@ def test_show_lab_renders_the_winning_record_not_the_shadowed_one(tmp_path: Path
     xdir = tmp_path / "xdir"
     xdir.mkdir()
 
-    result = run_otto(["--show-lab"], xdir=xdir, sut_dirs=repo, lab="site")
+    result = run_otto(["--show-lab"], xdir=xdir, roots=project, lab="site")
     combined = result.stdout + result.stderr
 
     assert result.returncode == 0, combined
@@ -120,11 +120,11 @@ def test_list_hosts_without_a_collision_says_nothing_about_overrides(tmp_path: P
     override taking effect). Removing the collision is the control that keeps
     the product rule intact.
     """
-    repo = _make_repo(tmp_path / "multisrc", tmp_path, local_hosts=[_host("test2", "10.0.0.2")])
+    project = _make_repo(tmp_path / "multisrc", tmp_path, local_hosts=[_host("test2", "10.0.0.2")])
     xdir = tmp_path / "xdir"
     xdir.mkdir()
 
-    result = run_otto(["--list-hosts"], xdir=xdir, sut_dirs=repo, lab="site")
+    result = run_otto(["--list-hosts"], xdir=xdir, roots=project, lab="site")
     combined = result.stdout + result.stderr
 
     assert result.returncode == 0, combined
@@ -140,7 +140,7 @@ def test_host_completion_offers_the_union_without_warning_into_the_shell(tmp_pat
     the same, but the override warning must NOT appear — a warning printed
     into a completing shell corrupts the candidate list the shell is parsing.
     """
-    repo = _make_repo(
+    project = _make_repo(
         tmp_path / "multisrc",
         tmp_path,
         local_hosts=[_host("alt1", "10.9.9.9"), _host("test2", "10.0.0.2")],
@@ -151,7 +151,7 @@ def test_host_completion_offers_the_union_without_warning_into_the_shell(tmp_pat
     result = run_otto(
         [],
         xdir=xdir,
-        sut_dirs=repo,
+        roots=project,
         extra_env={
             "_OTTO_COMPLETE": "complete_bash",
             "COMP_WORDS": "otto -l site host ",

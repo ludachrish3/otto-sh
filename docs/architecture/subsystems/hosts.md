@@ -196,7 +196,7 @@ Which backend a host actually uses is resolved from three inputs:
 1. **The host's menu** — `valid_transfers` / `valid_terms` in lab data
    declare what the machine supports.
 2. **Preferences** — `[host_preferences]` tables (from lab data and product
-   repos) rank capabilities per host selector; the first preference present
+   projects) rank capabilities per host selector; the first preference present
    in the menu wins, and product preferences take precedence over lab
    preferences.
 3. **Per-invocation overrides** — `--transfer` / `--term` on the CLI, or
@@ -235,17 +235,17 @@ classes and profiles register through `register_host_class` /
 Profiles are the **data** half of otto's customization split: they name a
 bundle of defaults many hosts share. The **code** half is products —
 {class}`~otto.host.product.Product` bundles stage/install/uninstall behavior,
-and product repos attach products to hosts by registering a *provider
+and product projects attach products to hosts by registering a *provider
 function* (`register_product_provider`) that otto applies to each host at
 ingest. Declaring products in lab data is deliberately not supported: lab
 data stays product-agnostic and the two evolve independently.
 
-A provider is gated by its repo's `[project]` declaration *before* it is
+A provider is gated by its project's `[project]` declaration *before* it is
 called, never filtered after: a provider that ran has already been handed a
-machine its repo never declared, and providers inspect hosts and keep their
+machine its project never declared, and providers inspect hosts and keep their
 own state. Where the gate cannot compute a narrowing it narrows nothing. A
 host with no lab attribution predates scoping and is admitted, and a provider
-whose repo otto cannot resolve still runs, because refusing it would turn
+whose project otto cannot resolve still runs, because refusing it would turn
 "otto could not find its config" into "your host has no products" — the same
 silent wrong answer scoping exists to prevent, pointed the other way.
 
@@ -263,7 +263,7 @@ a `[[products]]` entry's verbs — install, check, uninstall — and how its
 coverage counters are collected. The same naming rule governs every kind: a
 kind is named for **what drives its verbs**, never for the artifact's
 format. {doc}`../../configuration/declared-products-tools`'s kinds
-table is the one home for the built-ins and how a repo registers another.
+table is the one home for the built-ins and how a project registers another.
 
 A `docker_image` product's `pull` defaults to `false` because a lab is
 commonly air-gapped by policy: a `docker pull` on every install would

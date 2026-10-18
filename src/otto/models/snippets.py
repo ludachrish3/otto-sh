@@ -28,7 +28,7 @@ _COMMON_OPTIONAL = ("os_type", "valid_terms", "valid_transfers", "board", "metad
 # ones: a Unix host almost always logs in, so its skeleton keeps the credential
 # pair although the spec does not require it; an RTOS shell usually has no
 # login step, so the embedded skeleton stays without one. Lists, not tuples,
-# as the repo prefers for new collections; never mutated, like the tuple above.
+# as otto prefers for new collections; never mutated, like the tuple above.
 _FAMILY_USUAL: dict[str, list[str]] = {"unix": ["creds"]}
 
 
@@ -72,7 +72,7 @@ def _host_body(spec_cls: type[HostSpec], os_type: str) -> list[str]:
 def build_snippets(*, builtins_only: bool = False) -> dict[str, dict[str, Any]]:
     """Return a ``.code-snippets`` document: lab entry, element, cred, one host per family.
 
-    With *builtins_only*, skip host specs registered by a repo's ``init``
+    With *builtins_only*, skip host specs registered by a project's ``init``
     modules — the same knob ``otto.models.jsonschema.build_schemas``
     offers, so the two generated products describe the same set of types.
     """

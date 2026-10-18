@@ -1,11 +1,11 @@
-"""The ``[coverage]`` table in ``.otto/settings.toml``: which repo declares it, and its selector.
+"""The ``[coverage]`` table in ``.otto/settings.toml``: which project declares it, and its selector.
 
-Pure helpers over the already-parsed repo list: which repo (if any) declared
+Pure helpers over the already-parsed project list: which project (if any) declared
 a ``[coverage]`` section, and what that section's raw settings dict looks
 like. Every coverage code path — ``otto test --cov``, ``otto cov``, and the
 coverage awareness behind :attr:`otto.context.OttoContext.cov` — resolves
-its coverage settings through :func:`has_cov_config`, :func:`get_cov_repo`
-and :func:`get_cov_config`, so a lab with multiple SUT repos always picks the
+its coverage settings through :func:`has_cov_config`, :func:`get_cov_project`
+and :func:`get_cov_config`, so a lab with multiple projects always picks the
 same one. :func:`load_hosts_pattern` compiles that section's optional
 ``hosts`` host-id selector, refusing a malformed value by name.
 
@@ -20,11 +20,11 @@ from typing import TYPE_CHECKING, Any
 from ..errors import OttoError
 
 if TYPE_CHECKING:
-    from .repo import Repo
+    from .project import Project
 
 
 class CoverageConfigError(OttoError, ValueError):
-    """No ``[coverage]`` section is configured for the resolved repo(s).
+    """No ``[coverage]`` section is configured for the resolved project(s).
 
     Raised by ``otto.coverage.collect.collect_coverage`` before any fetch is
     attempted: with no ``[coverage]`` section there is nothing to resolve a
@@ -40,22 +40,22 @@ class CoverageConfigError(OttoError, ValueError):
 
 
 def has_cov_config(cov: dict[str, Any]) -> bool:
-    """Return True when the repo actually declared coverage settings."""
+    """Return True when the project actually declared coverage settings."""
     return bool(cov.get("embedded") or cov.get("tiers") or cov.get("hosts"))
 
 
-def get_cov_repo(repos: "list[Repo]") -> "Repo | None":
-    """Return the first repo with a ``[coverage]`` section in its settings."""
-    for repo in repos:
-        if has_cov_config(repo.settings.get("coverage") or {}):
-            return repo
+def get_cov_project(projects: "list[Project]") -> "Project | None":
+    """Return the first project with a ``[coverage]`` section in its settings."""
+    for project in projects:
+        if has_cov_config(project.settings.get("coverage") or {}):
+            return project
     return None
 
 
-def get_cov_config(repos: "list[Repo]") -> dict[str, Any]:
-    """Extract the ``[coverage]`` config from the first repo that has one."""
-    repo = get_cov_repo(repos)
-    return repo.settings["coverage"] if repo else {}
+def get_cov_config(projects: "list[Project]") -> dict[str, Any]:
+    """Extract the ``[coverage]`` config from the first project that has one."""
+    project = get_cov_project(projects)
+    return project.settings["coverage"] if project else {}
 
 
 def load_hosts_pattern(cov_config: dict[str, Any]) -> "re.Pattern[str] | None":

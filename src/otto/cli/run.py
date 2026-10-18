@@ -81,7 +81,7 @@ def _project_leaf(project: ProjectInstruction) -> Callable[..., Any]:
         try:
             ctx.bind_verb_options("run", kw)
             # Validates every applicable body's own options class up front --
-            # the SAME per-repo walk the real path's `_run_bodies` performs --
+            # the SAME per-project walk the real path's `_run_bodies` performs --
             # so a bad value in a body's own class fails identically whether
             # or not `--dry-run` was requested, before any body runs. Under a
             # real run the result is otherwise unused and the run's own walk
@@ -109,7 +109,7 @@ def _project_leaf(project: ProjectInstruction) -> Callable[..., Any]:
                 # Verbatim: a plan line is a host command, so a `[` must not be read
                 # as markup, a `:name:` as an emoji, or a long line hard-wrapped.
                 text = render_plan(name, plan_instruction(name, ctx, kw))
-                if text:  # no repo applies: print nothing, not a blank line
+                if text:  # no project applies: print nothing, not a blank line
                     get_console().print(
                         text, markup=False, emoji=False, highlight=False, soft_wrap=True
                     )
@@ -139,7 +139,7 @@ def build_instruction_app(entry: InstructionEntry) -> typer.Typer:
     ``otto run`` should pay. A clash between the instruction's own fields
     and the verb's is found here, before any body runs.
 
-    *entry* must already be registered: its owning repo, which the dispatch
+    *entry* must already be registered: its owning project, which the dispatch
     gate reads, is looked up in ``INSTRUCTIONS`` by name, and an unregistered
     name raises rather than running ownerless.
     """
@@ -150,7 +150,7 @@ def build_instruction_app(entry: InstructionEntry) -> typer.Typer:
     if entry.handler is None:  # unreachable: __post_init__ requires handler xor project
         raise ValueError(f"instruction {entry.name!r} has neither handler nor project set")
     target = prepare_command_target(
-        entry.handler, entry.options_cls, verb="run", repo=INSTRUCTIONS.repo(entry.name)
+        entry.handler, entry.options_cls, verb="run", project=INSTRUCTIONS.project(entry.name)
     )
     app.command(entry.name, help=entry.help)(target)
     return app
@@ -172,12 +172,12 @@ run_app = typer.Typer(
 def first_party_instructions_panel() -> "Panel | None":
     """Build the ``otto defaults`` panel, or None when otto registered nothing.
 
-    Attribution is by MODULE, exactly like ``Repo.get_instructions_panel``'s
+    Attribution is by MODULE, exactly like ``Project.get_instructions_panel``'s
     ``init``-prefix match, so every instruction lands in exactly one panel:
-    otto's defaults are declared in ``otto.project.actions`` and a repo's
+    otto's defaults are declared in ``otto.project.actions`` and a project's
     live under its own init modules.
     Matching on the first-party NAMES instead would
-    put a repo's instruction in otto's panel the day one slips past the
+    put a project's instruction in otto's panel the day one slips past the
     decorator's guard -- hiding the very collision the guard exists to shout
     about.
 
@@ -192,9 +192,9 @@ def first_party_instructions_panel() -> "Panel | None":
     names = [entry.name for _, entry in INSTRUCTIONS.items() if entry.module.startswith("otto.")]
     if not names:
         return None
-    # No subtitle, where a repo panel carries its dependency summary: panels
+    # No subtitle, where a project panel carries its dependency summary: panels
     # share the terminal's width, so anything written there is truncated
-    # mid-sentence as soon as a second repo shows up.
+    # mid-sentence as soon as a second project shows up.
     return Panel(
         Text("\n".join(f"• {name}" for name in names)),
         title=Text("otto defaults", style="bold not dim"),
@@ -205,20 +205,20 @@ def first_party_instructions_panel() -> "Panel | None":
 
 
 def list_instructions_callback(value: bool) -> None:
-    """Print all available run instructions (one panel per repo) and exit when the flag is set."""
+    """Print every run instruction (one panel per project) and exit when the flag is set."""
     if not value:
         return
     from rich.table import Table
 
     # The composition root: importing it installs the initiator that composes
-    # the repos this reads (spec 2026-10-11 placement-and-phases §3.12).
+    # the projects this reads (spec 2026-10-11 placement-and-phases §3.12).
     from .. import bootstrap
 
     del bootstrap
-    from ..declared import get_repos
+    from ..declared import get_projects
 
-    panels = [repo.get_instructions_panel() for repo in get_repos()]
-    # Ahead of the repos: these are the verbs every lab has, and the ones a
+    panels = [project.get_instructions_panel() for project in get_projects()]
+    # Ahead of the projects: these are the verbs every lab has, and the ones a
     # reader must recognize as taken before writing an instruction of their own.
     first_party = first_party_instructions_panel()
     if first_party is not None:

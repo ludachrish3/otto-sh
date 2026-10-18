@@ -41,7 +41,7 @@ from otto.instruction_catalog import (
 from otto.instructions import instruction, run_instruction
 from otto.labs.loader import Lab
 from otto.project.actions import ProjectActions, declare, register_project_actions
-from otto.registry import DuplicateRegistration, get_registering_repo, registering_repo
+from otto.registry import DuplicateRegistration, get_registering_project, registering_project
 from tests._fixtures.sutrepo import make_sut_repo
 
 SIX = sorted(FIRST_PARTY_INSTRUCTIONS)
@@ -83,7 +83,7 @@ def test_a_view_read_early_derives_the_six_once_otto_declares_them(initialize, t
     """The acceptance case: read early, initialize, read again, in a fresh process."""
     env = {
         **os.environ,
-        "OTTO_SUT_DIRS": str(make_sut_repo(tmp_path / "repo", name="repo")),
+        "OTTOPATH": str(make_sut_repo(tmp_path / "repo", name="repo")),
         "OTTO_HOME": str(tmp_path / "home"),
     }
     out = subprocess.run(
@@ -102,18 +102,18 @@ def test_otto_s_class_is_declared_by_its_installer_outside_any_repo():
     entry = FIRST_PARTY_ACTIONS.peek("otto")
     assert entry.cls is ProjectActions
     assert sorted(body.name for body in entry.bodies) == SIX
-    assert {body.repo for body in entry.bodies} == {None}
+    assert {body.project for body in entry.bodies} == {None}
     assert FIRST_PARTY_ACTIONS.origin("otto") == "otto.project.actions"
-    assert FIRST_PARTY_ACTIONS.repo("otto") is None
+    assert FIRST_PARTY_ACTIONS.project("otto") is None
 
 
 def test_redeclaring_inside_a_repo_s_import_keeps_the_slot_otto_s():
     _empty_the_slot()
-    with registering_repo("acme"):
+    with registering_project("acme"):
         declare()
-        assert get_registering_repo() == "acme"
-    assert FIRST_PARTY_ACTIONS.repo("otto") is None
-    assert {body.repo for body in FIRST_PARTY_ACTIONS.peek("otto").bodies} == {None}
+        assert get_registering_project() == "acme"
+    assert FIRST_PARTY_ACTIONS.project("otto") is None
+    assert {body.project for body in FIRST_PARTY_ACTIONS.peek("otto").bodies} == {None}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -133,7 +133,7 @@ def test_the_public_repo_marker_is_unchanged():
     Compared parameter by parameter (name, kind, default, type), so a change
     in how an annotation is spelled is not a signature change.
     """
-    signature = inspect.signature(registering_repo)
+    signature = inspect.signature(registering_project)
     assert [
         _Parameter(p.name, p.kind.name, p.default, p.annotation in {str, "str"})
         for p in signature.parameters.values()
@@ -142,21 +142,21 @@ def test_the_public_repo_marker_is_unchanged():
             "name", inspect.Parameter.POSITIONAL_OR_KEYWORD.name, inspect.Parameter.empty, True
         )
     ]
-    assert registering_repo.__doc__ == (
-        "Attribute registrations inside this block to repo *name* (bootstrap-only)."
+    assert registering_project.__doc__ == (
+        "Attribute registrations inside this block to project *name* (bootstrap-only)."
     )
-    with registering_repo("acme"):
-        assert get_registering_repo() == "acme"
-    assert get_registering_repo() is None
+    with registering_project("acme"):
+        assert get_registering_project() == "acme"
+    assert get_registering_project() is None
 
 
 _FIRST_IMPORT_IN_A_REPO = """
-from otto.registry import get_registering_repo, registering_repo
-with registering_repo('acme'):
+from otto.registry import get_registering_project, registering_project
+with registering_project('acme'):
     import otto.project.actions
-    inside = get_registering_repo()
+    inside = get_registering_project()
 from otto.instruction_catalog import FIRST_PARTY_ACTIONS
-print(FIRST_PARTY_ACTIONS.repo('otto'), inside)
+print(FIRST_PARTY_ACTIONS.project('otto'), inside)
 """
 
 
@@ -179,8 +179,8 @@ def test_a_raw_write_under_a_repo_s_marker_is_refused():
     _empty_the_slot()
     entry = ProjectActionsEntry(ProjectActions, _bodies_of(ProjectActions, None))
     with (
-        registering_repo("acme"),
-        pytest.raises(ValueError, match="first-party actions are otto's, but repo 'acme'"),
+        registering_project("acme"),
+        pytest.raises(ValueError, match="first-party actions are otto's, but project 'acme'"),
     ):
         FIRST_PARTY_ACTIONS.register("otto", entry)
     assert "otto" not in FIRST_PARTY_ACTIONS
@@ -224,15 +224,15 @@ def test_the_views_follow_the_slot():
     assert INSTRUCTIONS.get("install").project.spec.declared_by is None
 
 
-@pytest.mark.parametrize("repo", [None, "acme"], ids=["outside-a-repo", "from-a-repo"])
-def test_an_empty_slot_still_refuses_the_six_to_a_standalone_instruction(repo):
+@pytest.mark.parametrize("project", [None, "acme"], ids=["outside-a-repo", "from-a-repo"])
+def test_an_empty_slot_still_refuses_the_six_to_a_standalone_instruction(project):
     _empty_the_slot()
     register = instruction(name="install")
-    if repo is None:
+    if project is None:
         with pytest.raises(ProjectInstructionError, match="first-party instructions"):
             register(_handler)
     else:
-        with registering_repo(repo), pytest.raises(ValueError, match="project instruction"):
+        with registering_project(project), pytest.raises(ValueError, match="project instruction"):
             register(_handler)
     assert "install" not in STANDALONE_INSTRUCTIONS
 
@@ -240,7 +240,7 @@ def test_an_empty_slot_still_refuses_the_six_to_a_standalone_instruction(repo):
 def test_an_empty_slot_refuses_every_repo_actions_class():
     _empty_the_slot()
     with (
-        registering_repo("acme"),
+        registering_project("acme"),
         pytest.raises(TypeError, match="is not a ProjectActions subclass"),
     ):
         register_project_actions(type("AcmeActions", (ProjectActions,), {}))
@@ -302,13 +302,13 @@ def test_bootstrap_declares_before_any_repo_init(tmp_path, monkeypatch):
     contains that refusal as the repo's init error; so a declare that moved
     after the repo loop fails here, not only one that went missing.
     """
-    repo = make_sut_repo(
+    project = make_sut_repo(
         tmp_path / "repo",
         name="repo",
         extra=f'libs = ["lib"]\ninit = ["{_ORDER_INIT_MODULE}"]\n',
         files={f"lib/{_ORDER_INIT_MODULE}.py": _ORDER_INIT},
     )
-    monkeypatch.setenv("OTTO_SUT_DIRS", str(repo))
+    monkeypatch.setenv("OTTOPATH", str(project))
     monkeypatch.delitem(sys.modules, _ORDER_INIT_MODULE, raising=False)
     monkeypatch.setattr(sys, "path", list(sys.path))
     bs._reset()

@@ -38,26 +38,26 @@ def _counting(monkeypatch, *results):
 
 
 def test_a_hand_built_context_reads_its_repos_once_lazily(monkeypatch):
-    repo = fake_repo("alpha")
-    calls = _counting(monkeypatch, fake_bootstrap_result([repo]))
+    project = fake_repo("alpha")
+    calls = _counting(monkeypatch, fake_bootstrap_result([project]))
     ctx = OttoContext(lab=Lab(name="rig"))
     assert calls == []  # nothing read at construction
-    assert [r.name for r in ctx.repos] == ["alpha"]
-    assert [r.name for r in ctx.ordered_repos] == ["alpha"]
+    assert [r.name for r in ctx.projects] == ["alpha"]
+    assert [r.name for r in ctx.ordered_projects] == ["alpha"]
     assert calls == [1]
 
 
 def test_a_given_result_is_used_and_bootstrap_is_never_called(monkeypatch):
-    repo = fake_repo("alpha")
+    project = fake_repo("alpha")
     calls = _counting(monkeypatch, RuntimeError("must not be called"))
-    ctx = OttoContext(lab=Lab(name="rig"), bootstrap=fake_bootstrap_result([repo]))
-    assert [r.name for r in ctx.repos] == ["alpha"]
+    ctx = OttoContext(lab=Lab(name="rig"), bootstrap=fake_bootstrap_result([project]))
+    assert [r.name for r in ctx.projects] == ["alpha"]
     assert calls == []
 
 
 def test_known_empty_and_unavailable_are_distinct_and_a_refusal_is_cached(monkeypatch):
     empty = OttoContext(lab=Lab(name="rig"), bootstrap=fake_bootstrap_result([]))
-    assert empty.repos == []
+    assert empty.projects == []
     assert scopes_of(empty) == {}
 
     refusal = FileNotFoundError("no such SUT dir")
@@ -65,7 +65,7 @@ def test_known_empty_and_unavailable_are_distinct_and_a_refusal_is_cached(monkey
     unavailable = OttoContext(lab=Lab(name="rig"))
     for _ in range(2):
         with pytest.raises(FileNotFoundError) as raised:
-            _ = unavailable.repos
+            _ = unavailable.projects
         assert raised.value is refusal
     with pytest.raises(FileNotFoundError):
         scopes_of(unavailable)
@@ -73,10 +73,10 @@ def test_known_empty_and_unavailable_are_distinct_and_a_refusal_is_cached(monkey
 
 
 def test_the_library_sentinel_still_bootstraps_for_its_repos(monkeypatch):
-    repo = fake_repo("alpha")
-    _counting(monkeypatch, fake_bootstrap_result([repo]))
+    project = fake_repo("alpha")
+    _counting(monkeypatch, fake_bootstrap_result([project]))
     ctx = OttoContext(lab=Lab(name=LIBRARY_LAB))
-    assert [r.name for r in ctx.repos] == ["alpha"]
+    assert [r.name for r in ctx.projects] == ["alpha"]
     assert scopes_of(ctx) == {}  # verdicts special-case the sentinel; repos do not
 
 
@@ -86,21 +86,21 @@ def test_repos_ordered_repos_and_the_verdicts_read_one_result_across_an_invalida
     first, second = fake_repo("first"), fake_repo("second")
     _counting(monkeypatch, fake_bootstrap_result([first]), fake_bootstrap_result([second]))
     ctx = OttoContext(lab=Lab(name="rig"))
-    assert [r.name for r in ctx.repos] == ["first"]
+    assert [r.name for r in ctx.projects] == ["first"]
     bs.invalidate()
-    assert [r.name for r in ctx.ordered_repos] == ["first"]
+    assert [r.name for r in ctx.ordered_projects] == ["first"]
     assert list(scopes_of(ctx)) == ["first"]  # every parsed repo is keyed, so "second" would show
 
 
 def test_mutating_the_returned_repos_changes_nothing():  # Review Focus 5
     alpha, beta = fake_repo("alpha"), fake_repo("beta")
     ctx = OttoContext(lab=Lab(name="rig"), bootstrap=fake_bootstrap_result([alpha]))
-    ctx.repos.append(beta)
-    ctx.ordered_repos.clear()
+    ctx.projects.append(beta)
+    ctx.ordered_projects.clear()
     # Resolved only now, after the mutations: verdicts over a live list would key "beta" too.
     assert list(scopes_of(ctx)) == ["alpha"]
-    assert [r.name for r in ctx.repos] == ["alpha"]
-    assert [r.name for r in ctx.ordered_repos] == ["alpha"]
+    assert [r.name for r in ctx.projects] == ["alpha"]
+    assert [r.name for r in ctx.ordered_projects] == ["alpha"]
 
 
 def test_scopes_is_no_longer_a_member_and_the_private_alias_is_gone():
@@ -135,7 +135,7 @@ def test_the_cli_context_holds_the_result_ensure_lab_context_read(monkeypatch, r
     from tests._fixtures.rootoptions import make_root_options
 
     calls = _first_then_later(monkeypatch)
-    monkeypatch.setattr("otto.session.lab.build_lab", lambda repos, labs: Lab(name="rig"))
+    monkeypatch.setattr("otto.session.lab.build_lab", lambda projects, labs: Lab(name="rig"))
     monkeypatch.setattr(
         "otto.reservations.factory.build_reservation_gate",
         lambda *args, **kwargs: SimpleNamespace(identity=None),
@@ -146,8 +146,8 @@ def test_the_cli_context_holds_the_result_ensure_lab_context_read(monkeypatch, r
             ctx.meta["_otto_root_options"] = make_root_options(labs=["rig"])
             built = ensure_lab_context(ctx)
             # The one read the lab was built from, not a second one by the context.
-            assert [r.name for r in built.repos] == ["given"]
-            assert [r.name for r in built.ordered_repos] == ["given"]
+            assert [r.name for r in built.projects] == ["given"]
+            assert [r.name for r in built.ordered_projects] == ["given"]
     finally:
         if binding is not None:
             reset_binding(binding)
@@ -161,5 +161,5 @@ async def test_open_context_hands_its_context_the_result_it_read(monkeypatch):
     _first_then_later(monkeypatch)
     # open_context reads bootstrap() first; a context reading its own would see "later".
     async with open_context(lab=Lab(name="rig")) as ctx:
-        assert [r.name for r in ctx.repos] == ["given"]
-        assert [r.name for r in ctx.ordered_repos] == ["given"]
+        assert [r.name for r in ctx.projects] == ["given"]
+        assert [r.name for r in ctx.ordered_projects] == ["given"]

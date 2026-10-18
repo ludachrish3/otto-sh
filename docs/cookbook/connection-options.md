@@ -28,7 +28,7 @@ field on the returned host wholesale, so the caller is responsible for
 constructing the full options instance they want.
 
 This page collects the recipes you actually reach for: pushing a
-common setting up to repo-wide defaults, setting a non-standard port,
+common setting up to project-wide defaults, setting a non-standard port,
 disabling host-key checking on a lab host, pinning a port-forward,
 switching to FTPS, tuning SCP for slow links, and reaching for a
 transient override at a call site.
@@ -88,11 +88,11 @@ picks up `connect_timeout` from the product preference:
 The resolved `SshOptions` for this host has `port=2222`,
 `connect_timeout=5.0`, and `keepalive_interval=30`.
 
-When several repos are loaded simultaneously (`OTTO_SUT_DIRS=...`),
+When several projects are loaded simultaneously (`OTTOPATH=...`),
 their `[host_preferences]` selectors are applied in list order — later
-repos overlay earlier ones.  Within a repo, selectors are applied in
+projects overlay earlier ones.  Within a project, selectors are applied in
 definition order (later selector wins on the same key).  This makes one
-repo a "base" for shared conventions and others its overlays.
+project a "base" for shared conventions and others its overlays.
 
 ## Non-standard SSH port
 
@@ -298,7 +298,7 @@ results = await run_on_all_hosts(
 ```{note}
 Per-call overrides **replace** the corresponding `*_options` field
 wholesale on the returned copy.  If you want to keep some of the
-stored or repo-default values, construct the full `SshOptions` (etc.)
+stored or project-default values, construct the full `SshOptions` (etc.)
 instance you want — there is no per-key merge at this layer.
 ```
 

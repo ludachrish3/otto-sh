@@ -68,7 +68,7 @@ def loopback_parent(work_dir: Path) -> Iterator[UnixHost]:
     Mirrors ``tests/integration/chaos/conftest.py``'s ``chaos_target`` setup
     (keypairs -> sshd config -> ``LoopbackSshd`` on a free loopback port),
     but wraps THIS host's docker daemon rather than generating a lab/SUT
-    pair — the caller already has a ``Repo``/``Lab`` of its own. Stops the
+    pair — the caller already has a ``Project``/``Lab`` of its own. Stops the
     sshd on exit no matter what happened inside the ``with`` block.
     """
     host_key, client_key = generate_keypairs(work_dir / "keys")

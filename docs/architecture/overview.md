@@ -23,7 +23,7 @@ explaining what it does once the shared machinery hands over control:
 | {doc}`otto docker <subsystems/docker-hosts>` | Images and compose stacks on lab hosts |
 | {doc}`otto reservation <subsystems/reservations>` | The reservation gate, made inspectable |
 | {doc}`otto schema <subsystems/data-boundary>` | The data contracts, exported for editors |
-| {doc}`otto init <subsystems/bootstrap>` | Scaffold a new repo; doctor an existing one |
+| {doc}`otto init <subsystems/bootstrap>` | Scaffold a new project; doctor an existing one |
 
 These first-party commands stand on shared machinery, and the machinery
 stands on a small set of foundations:
@@ -98,7 +98,7 @@ graph from `tach.toml`, and says which layer a new module goes in.
 | --- | --- |
 | `otto.models` | The data-model facade: pydantic specs for lab.json, settings.toml, env vars, monitor records; the host specs live in `otto.host.specs` and are exported from `otto.host`; this package still exports `ToolchainSpec` and the eight option specs |
 | `otto.labs` | The lab model and its loader (`labs/loader.py`, behind `otto.lab.Lab` and `otto.lab.load_lab`), the lab-repository (host source) protocol and the default JSON backend |
-| `otto.config` | Parsing otto's inputs: the environment and each repo's `settings.toml` |
+| `otto.config` | Parsing otto's inputs: the environment and each project's `settings.toml` |
 | {mod}`otto.lab` | The public lab and fleet API: load a lab, reach its hosts, walk the fleet of interest |
 
 **Domain** — the subsystems that do the actual work:
@@ -116,7 +116,7 @@ graph from `tach.toml`, and says which layer a new module goes in.
 
 | Module | Responsibility |
 | --- | --- |
-| {mod}`otto.bootstrap` | Two-phase composition root: discovery ({mod}`otto.config.repo`'s), then contained user-code registration; the repo accessors (`get_repos`, `get_env`, ...) read it |
+| {mod}`otto.bootstrap` | Two-phase composition root: discovery ({mod}`otto.config.project`'s), then contained user-code registration; the project accessors (`get_projects`, `get_env`, ...) read it |
 | {mod}`otto.context` | {class}`~otto.context.OttoContext`: the per-invocation runtime and host lifecycle scope; the public facade over `otto.run_context`, where otto's own code reads it |
 | `otto.fleet` | Internal: the active lab, its hosts and the fleet walks behind {mod}`otto.lab` |
 | `otto.cli` | The Typer app, the command registry, lazy dispatch, shell completion |
@@ -127,7 +127,7 @@ implementations, conformance-verified in otto's own suite).
 
 ## Where the boundaries are enforced
 
-- **The CLI edge is lazy.** Importing `otto.cli` must never parse repo
+- **The CLI edge is lazy.** Importing `otto.cli` must never parse project
   settings — a malformed `settings.toml` cannot brick `otto --help`. A bare
   `import otto` resolves its public names lazily (PEP 562), so library users
   pay only for what they touch.

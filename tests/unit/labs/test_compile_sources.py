@@ -17,12 +17,12 @@ def _cfg(*entries: dict) -> LabConfigSpec:
 
 
 def _compile(cfg) -> list[PendingLabSource]:
-    return compile_lab_sources(cfg, repo_name="r1", sut_dir=SUT)
+    return compile_lab_sources(cfg, project_name="r1", root=SUT)
 
 
-def _prepared(entry: dict, sut_dir: Path = SUT):
+def _prepared(entry: dict, root: Path = SUT):
     (state,) = prepare_lab_sources(
-        compile_lab_sources(_cfg(entry), repo_name="r1", sut_dir=sut_dir),
+        compile_lab_sources(_cfg(entry), project_name="r1", root=root),
         profiles=ProfileContext.empty(),
     )
     return state
@@ -57,7 +57,7 @@ def test_duplicate_labels_within_repo_rejected() -> None:
 def test_compile_keeps_the_options_raw_and_names_the_settings_file() -> None:
     (src,) = _compile(_cfg({"backend": "cmdb", "server": "db", "paths": ["not-anchored"]}))
     assert src.raw.thaw_json() == {"server": "db", "paths": ["not-anchored"]}
-    assert src.repo_dir == SUT
+    assert src.project_root == SUT
     assert src.origin == str(SUT / ".otto" / "settings.toml")
 
 
