@@ -63,7 +63,7 @@ class RequiredProject:
     normalized_name: str
     """The project's normalised name, the spelling the project switches take."""
     reason: 'Literal["excluded", "out_of_scope"]'
-    """Why the project is inactive on its own: switched off, or outside the labs."""
+    """Why the project is inactive on its own, switched off or outside the labs."""
     required_by: list[str]
     """The active projects that require it, directly or transitively, by discovered name."""
     labs: list[str] = dataclasses.field(default_factory=list)
