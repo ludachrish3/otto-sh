@@ -444,3 +444,62 @@ class TestBusyBoxProfile:
         # well as the profile value.
         assert isinstance(host.command_frame, AshFrame)
         assert host.has_bash is False
+
+
+_CATALOG = """
+import collections, json
+from otto import registry as reg
+
+tables = [t for t in reg.instances() if t.defined_in.split(".")[0] == "otto"]
+keys = collections.Counter(f"{t.defined_in}: {t.kind}" for t in tables)
+names = {
+    f"{t.defined_in}: {t.kind}": sorted(t.names())
+    for t in tables
+    if isinstance(t, (reg.Registry, reg.BackendRegistry))
+}
+print(json.dumps({"duplicates": sorted(k for k, n in keys.items() if n > 1), "names": names}))
+"""
+
+
+def _fresh_catalog(prelude: str) -> dict:
+    """Run *prelude* in a fresh interpreter, then return its live otto tables' names."""
+    import json
+    import subprocess
+    import sys
+
+    from tests.e2e._otto_subprocess import PROJECT_ROOT, coverage_subprocess_env
+
+    result = subprocess.run(
+        [sys.executable, "-c", prelude + _CATALOG],
+        env=coverage_subprocess_env(),
+        capture_output=True,
+        text=True,
+        cwd=str(PROJECT_ROOT),
+        timeout=120,
+        check=False,
+    )
+    assert result.returncode == 0, f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+    return json.loads(result.stdout.strip().splitlines()[-1])
+
+
+def test_a_first_register_os_profile_imports_the_host_class_whole():
+    """#634: in a fresh process, the first thing to resolve ``unix`` is the profile's check.
+
+    That check imports the host class and spec modules for the first time,
+    under the registry's check guard. Their own module-level registrations
+    (binary loaders, command frames, impairers, ...) must all land, exactly as
+    when the same modules are imported outside any check, and no module may be
+    left half-imported with a dead second table.
+    """
+    first = _fresh_catalog(
+        "from otto.host.os_profile import register_os_profile\n"
+        "register_os_profile('_fresh', 'unix', defaults={'board': 'lc', 'slot': 2})\n"
+    )
+    reference = _fresh_catalog(
+        "from otto.host.os_profile import HOST_CLASSES\nHOST_CLASSES.get('unix')\n"
+    )
+    assert first["duplicates"] == []
+    profiles = "otto.host.os_profile: os_type profile"
+    assert "_fresh" in first["names"].pop(profiles)
+    reference["names"].pop(profiles)
+    assert first["names"] == reference["names"]

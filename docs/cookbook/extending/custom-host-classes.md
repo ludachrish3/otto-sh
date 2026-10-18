@@ -26,6 +26,11 @@ fails the init module rather than a later connect. A profile carries none
 unless you pass them, even one based on `unix`; the built-in values are
 listed in {doc}`../../configuration/os-profiles`.
 
+Registration also checks each `defaults` key against what the `base` class
+accepts from lab data, so it imports that class if nothing has yet. The call
+can therefore be the first thing an init module does: the class's modules
+load whole, with everything they register, before the check reads them.
+
 A code profile wins over a data table of the same name, whichever comes
 first (see {doc}`../../configuration/os-profiles`), so an `[os_profiles]`
 table in `settings.toml` cannot patch a profile a library registers in code.

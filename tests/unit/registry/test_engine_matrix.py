@@ -186,10 +186,13 @@ def test_a_check_may_read_and_publish(monkeypatch, tmp_path):
     assert source.peek("s").value == 3
 
 
-def test_a_ref_that_registers_at_import_is_refused_inside_a_check_and_retried(
-    monkeypatch, tmp_path
-):
-    """Refused, nothing cached, the next get retries. Not special-cased."""
+def test_a_ref_first_imported_inside_a_check_keeps_its_modules_registrations(monkeypatch, tmp_path):
+    """The first import a Ref triggers inside a check is not a write by the check (#634).
+
+    Its module's own import-time registrations land, credited to that module,
+    and the check that resolved the Ref passes. Mutation: drop the guard lift
+    around the import in ``Ref.resolve`` (the registration is then refused).
+    """
     target = _reg()
     _home(monkeypatch, "_nested_home", TARGET=target, Rec=Rec)
     _module(
@@ -203,12 +206,85 @@ def test_a_ref_that_registers_at_import_is_refused_inside_a_check_and_retried(
     source = _lazy()
     source.register("s", LazyRec(Ref("registers_on_import:VALUE")))
     r = _reg(validate=lambda name, entry, proposed: source.get("s"))
-    with pytest.raises(RegistrationRefused):
-        r.register("w", Rec(1))
-    assert isinstance(source.peek("s").value, Ref)  # nothing cached
-    monkeypatch.delitem(sys.modules, "registers_on_import", raising=False)
-    assert source.get("s").value == 5  # retried outside the check
+    r.register("w", Rec(1))
+    assert "w" in r
+    assert source.peek("s").value == 5  # published
     assert target.origin("side") == "registers_on_import"
+
+
+def test_a_lazy_packages_attribute_read_inside_a_check_keeps_its_registrations(
+    monkeypatch, tmp_path
+):
+    """A Ref naming a lazy package resolves whole inside a check, too.
+
+    The package's ``__getattr__`` imports the defining submodule, whose
+    registrations land like a first import's. Mutation: read the attribute
+    after the guard is back in ``Ref.resolve`` (the registration is then
+    refused).
+    """
+    target = _reg()
+    _home(monkeypatch, "_lazy_home", TARGET=target, Rec=Rec)
+    _module(
+        monkeypatch,
+        "lazy_package",
+        "def __getattr__(name):\n"
+        "    import _lazy_home\n"
+        "    _lazy_home.TARGET.register('side', _lazy_home.Rec(9))\n"
+        "    return 7\n",
+        tmp_path,
+    )
+    source = _lazy()
+    source.register("s", LazyRec(Ref("lazy_package:VALUE")))
+    r = _reg(validate=lambda name, entry, proposed: source.get("s"))
+    r.register("w", Rec(1))
+    assert "w" in r
+    assert source.peek("s").value == 7
+    assert "side" in target
+
+
+def test_the_check_itself_still_cannot_write_after_a_ref_import(monkeypatch, tmp_path):
+    """The guard is lifted for the import alone and is back when it returns.
+
+    Mutation: lift the guard in ``Ref.resolve`` without restoring it.
+    """
+    _module(monkeypatch, "plain_on_import", "VALUE = 6\n", tmp_path)
+    other = _reg()
+    source = _lazy()
+    source.register("s", LazyRec(Ref("plain_on_import:VALUE")))
+
+    def validate(name, entry, proposed):
+        source.get("s")  # a first import, under the lift
+        other.register("w2", Rec(2))  # the check's own write
+
+    r = _reg(validate=validate)
+    with pytest.raises(RegistrationRefused, match="while a registry check runs"):
+        r.register("w", Rec(1))
+    assert "w" not in r and "w2" not in other  # noqa: PT018
+
+
+def test_a_check_run_by_the_imported_module_is_still_guarded(monkeypatch, tmp_path):
+    """Only the module's own registrations are lifted, not a check they run.
+
+    The module registers into a table whose ``validate`` writes; that nested
+    check is refused even though the import runs under the lift.
+    """
+    victim = _reg()
+    writing = _reg(validate=lambda name, entry, proposed: victim.register("x", Rec(0)))
+    _home(monkeypatch, "_writing_home", TARGET=writing, Rec=Rec)
+    _module(
+        monkeypatch,
+        "runs_a_writing_check",
+        "import _writing_home\n"
+        "_writing_home.TARGET.register('side', _writing_home.Rec(9))\n"
+        "VALUE = 5\n",
+        tmp_path,
+    )
+    source = _lazy()
+    source.register("s", LazyRec(Ref("runs_a_writing_check:VALUE")))
+    r = _reg(validate=lambda name, entry, proposed: source.get("s"))
+    with pytest.raises(RegistrationRefused, match="while a registry check runs"):
+        r.register("w", Rec(1))
+    assert "x" not in victim and "side" not in writing and "w" not in r  # noqa: PT018
 
 
 # --- step 4: capabilities --------------------------------------------------

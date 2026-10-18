@@ -162,6 +162,24 @@ record: a class seam stores
   and nothing is cached, so the next lookup tries again.
 - **`items()` resolves every entry,** the same way, so it costs every
   import. Code that only needs names calls `names()`.
+- **A check may read, never write, and a first import is not its write.**
+  While any table's `validate` or `check_resolved` runs, a register,
+  unregister, subscribe or cancel on any table raises
+  {class}`~otto.registry.RegistrationRefused`. A `get()` inside a check is a
+  read, so it may resolve a `Ref`, and the import that resolution runs is
+  exempt: a module's own import-time registrations are what importing it
+  means, and refusing them would leave it half-imported. The exemption
+  covers that resolution alone: the import, and the attribute read that in
+  a lazy package imports the defining submodule. The check's code is
+  refused again once it returns, an already-imported module runs no code, and a check the
+  imported module's registrations trigger is guarded as usual.
+  {func}`~otto.host.os_profile.register_os_profile` depends on this: its
+  check reads the base host class, which may be that class's first import.
+  The exemption belongs to the `Ref` import, not to first imports in
+  general: a plain `import` or `from ... import` written inside a check
+  still runs under the guard, so a module that registers at import must be
+  reached through a `Ref` (or imported before the check) when a check is
+  what loads it.
 
 `get()` returns the record. Its `Ref`-able field is typed as "the object or a
 `Ref`", so code that reads it states the narrowing with

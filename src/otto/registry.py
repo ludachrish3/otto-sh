@@ -160,17 +160,32 @@ class Ref:
         init module, not to the test file whose lookup triggered it. The
         phase is back in force as soon as the import returns.
 
+        The import also runs outside the nested-write guard, even when the
+        lookup happens inside a registry check (a ``validate`` that reads
+        another table with ``get``). A first import's module-level
+        registrations are what importing that module means, not writes by the
+        check; refused, they would leave the module half-imported. Only the
+        resolution is lifted: the import, and the attribute read that in a
+        lazy package imports the defining submodule. The check's own code is
+        guarded again as soon as it returns, and a check that the imported
+        module's registrations run is guarded as always.
+
         Import and attribute errors propagate unchanged.
         """
         import importlib
 
         module, _, attr = self.target.partition(":")
-        token = _LOADING_TEST_FILES.set(False)
+        loading = _LOADING_TEST_FILES.set(False)
         try:
-            imported = importlib.import_module(module)
+            checking = _CHECKING.set(False)
+            try:
+                # The attribute read is part of the resolution: a lazy
+                # package's ``__getattr__`` imports the defining submodule here.
+                return getattr(importlib.import_module(module), attr)
+            finally:
+                _CHECKING.reset(checking)
         finally:
-            _LOADING_TEST_FILES.reset(token)
-        return getattr(imported, attr)
+            _LOADING_TEST_FILES.reset(loading)
 
 
 class RegistrationRefused(OttoError, ValueError):  # noqa: N818 — interface-fixed name the docs refer to
