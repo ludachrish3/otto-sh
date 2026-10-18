@@ -51,9 +51,9 @@ def _counted_passes(monkeypatch) -> "list[list[str]]":
     calls: "list[list[str]]" = []
     real = deps_mod.resolve_dependencies
 
-    def _counting(projects):
+    def _counting(projects, refused=None):
         calls.append([r.name for r in projects])
-        return real(projects)
+        return real(projects, refused=refused)
 
     monkeypatch.setattr(deps_mod, "resolve_dependencies", _counting)
     return calls

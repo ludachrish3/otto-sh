@@ -37,10 +37,10 @@ class _CountPasses(importlib.abc.MetaPathFinder):
             run(module)
             real = module.resolve_dependencies
 
-            def counted(repos):
+            def counted(projects, refused=None):
                 with open({log!r}, "a") as f:
                     f.write("pass\\n")
-                return real(repos)
+                return real(projects, refused=refused)
 
             module.resolve_dependencies = counted
             with open({log!r}, "a") as f:

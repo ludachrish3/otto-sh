@@ -63,8 +63,14 @@ class _StatusOutcome:
     dependent's optional dep still reads "satisfied"."""
 
 
-def _resolve_statuses(projects: "list[Project]") -> _StatusOutcome:
-    """Resolve every declared dep; populate ``project.dependencies`` on each project."""
+def _resolve_statuses(
+    projects: "list[Project]", refused: "list[str] | None" = None
+) -> _StatusOutcome:
+    """Resolve every declared dep; populate ``project.dependencies`` on each project.
+
+    *refused* is as :func:`resolve_dependencies` takes it.
+    """
+    refused = refused or []
     errors: list[DependencyError] = []
     warnings: list[BootstrapWarning] = []
     skip_reason: dict[int, str] = {}
@@ -89,6 +95,7 @@ def _resolve_statuses(projects: "list[Project]") -> _StatusOutcome:
                 required_edges,
                 soft_edges,
                 satisfied_optionals,
+                refused,
             )
             resolved.append(
                 ResolvedDependency(
@@ -125,18 +132,22 @@ def _resolve_one(
     required_edges: set[tuple[int, int]],
     soft_edges: list[tuple[int, int]],
     satisfied_optionals: list[tuple[int, int, "ParsedDependency"]],
+    refused: list[str],
 ) -> "tuple[DepStatus, Version | None]":
     """Status + provider version for one dep; append its error/warning/edge."""
     project = projects[i]
     candidates = providers.get(dep.normalized, [])
     if not candidates:
         if dep.required:
-            errors.append(
-                DependencyError(
-                    project.root,
-                    f"dependency {dep.raw!r} is not satisfied: no project named "
-                    f"{dep.name!r} in OTTOPATH",
+            if dep.normalized in refused:
+                reason = (
+                    f"project {dep.name!r} was refused because more than one root "
+                    "in OTTOPATH declares it"
                 )
+            else:
+                reason = f"no project named {dep.name!r} in OTTOPATH"
+            errors.append(
+                DependencyError(project.root, f"dependency {dep.raw!r} is not satisfied: {reason}")
             )
         return "missing", None
     provider_idx = candidates[0]
@@ -212,13 +223,19 @@ class ResolutionOutcome:
     warnings: list[BootstrapWarning]
 
 
-def resolve_dependencies(projects: "list[Project]") -> ResolutionOutcome:
+def resolve_dependencies(
+    projects: "list[Project]", refused: "list[str] | None" = None
+) -> ResolutionOutcome:
     """Resolve declared dependencies; return ordering, errors, warnings.
+
+    *refused* names the projects discovery refused because more than one root
+    declared them (``refused_names``); a dependency on one is reported as
+    refused, not as missing.
 
     Side effect: populates ``project.dependencies`` on every project (including
     skipped ones — the statuses are the diagnostic).
     """
-    status = _resolve_statuses(projects)
+    status = _resolve_statuses(projects, refused or [])
     errors = list(status.errors)
     warnings = list(status.warnings)
     skip_reason = dict(status.skip_reason)

@@ -222,7 +222,7 @@ def test_module_level_pytest_outcome_in_init_module_is_contained(tmp_path, monke
     assert "failed to load" in str(result.errors[0])
 
 
-def test_init_module_imports_run_under_the_registering_repo_marker(tmp_path, monkeypatch):
+def test_init_module_imports_run_under_the_registering_project_marker(tmp_path, monkeypatch):
     """Phase-2 imports must be attributable to the repo whose imports they are.
 
     Registration seams read ``otto.registry.get_registering_project()`` to record
@@ -636,9 +636,9 @@ def test_reentrance_does_not_compose_the_root_twice(tmp_path, monkeypatch):
     calls = []
     real = deps_mod.resolve_dependencies
 
-    def _counting(projects):
+    def _counting(projects, refused=None):
         calls.append([r.name for r in projects])
-        return real(projects)
+        return real(projects, refused=refused)
 
     monkeypatch.setattr(deps_mod, "resolve_dependencies", _counting)
     monkeypatch.setenv(
@@ -783,9 +783,9 @@ def _counted_passes(monkeypatch) -> "list[list[str]]":
     calls: "list[list[str]]" = []
     real = deps_mod.resolve_dependencies
 
-    def _counting(projects):
+    def _counting(projects, refused=None):
         calls.append([r.name for r in projects])
-        return real(projects)
+        return real(projects, refused=refused)
 
     monkeypatch.setattr(deps_mod, "resolve_dependencies", _counting)
     return calls

@@ -134,3 +134,63 @@ def test_a_real_command_fails_loudly_whatever_the_switches_say(tmp_path, switche
     assert _REFUSED in out
     assert "no project" not in out  # a refused name is still a known name
     assert "fails to load" in out  # the load gate, before the lab is built
+
+
+def _requiring(root: Path, name: str, needs: str) -> Path:
+    return make_sut_repo(root, name=name, extra=f'[dependencies]\nrequired = ["{needs}"]')
+
+
+def _bootstrap_messages() -> list[str]:
+    from otto import bootstrap as bs
+
+    bs.invalidate()
+    try:
+        return [str(e) for e in bs.bootstrap().errors]
+    finally:
+        bs.invalidate()
+
+
+def test_a_dependency_on_a_refused_name_says_it_was_refused(tmp_path, ottopath):
+    """Red before the fix: the error said "no project named 'twin' in OTTOPATH",
+    false when two roots name it."""
+    one = make_sut_repo(tmp_path / "one", name="twin")
+    two = make_sut_repo(tmp_path / "two", name="Twin")
+    app = _requiring(tmp_path / "app", "app", "twin")
+    ottopath(one, two, app)
+    messages = _bootstrap_messages()
+    assert (
+        f"project root {app}: dependency 'twin' is not satisfied: project 'twin' was "
+        "refused because more than one root in OTTOPATH declares it"
+    ) in messages, messages
+    assert not any("no project named 'twin'" in m for m in messages), messages
+
+
+def test_a_dependency_on_an_absent_name_still_says_no_project(tmp_path, ottopath):
+    app = _requiring(tmp_path / "app", "app", "ghost")
+    ottopath(app)
+    assert (
+        f"project root {app}: dependency 'ghost' is not satisfied: no project named "
+        "'ghost' in OTTOPATH"
+    ) in _bootstrap_messages()
+
+
+def test_the_resolver_reports_a_refused_name_it_is_handed(tmp_path, ottopath):
+    from otto.config.dependencies import resolve_dependencies
+
+    app = _requiring(tmp_path / "app", "app", "Twin")
+    ottopath(app)
+    projects = discover().projects
+    refused = resolve_dependencies(projects, refused=["twin"])
+    absent = resolve_dependencies(projects)
+    assert [str(e) for e in refused.errors] == [
+        (
+            f"project root {app}: dependency 'Twin' is not satisfied: project 'Twin' was "
+            "refused because more than one root in OTTOPATH declares it"
+        )
+    ]
+    assert [str(e) for e in absent.errors] == [
+        (
+            f"project root {app}: dependency 'Twin' is not satisfied: no project named "
+            "'Twin' in OTTOPATH"
+        )
+    ]

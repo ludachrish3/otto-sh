@@ -964,8 +964,9 @@ def validate_project_switches(ctx: typer.Context) -> None:
     if opts is None or not (opts.include_projects or opts.exclude_projects):
         return
     from ..bootstrap import bootstrap
+    from ..config.scope import refused_names
     from ..session.errors import ProjectSelectionError
-    from ..session.projects import refused_names, select_projects_with_refused
+    from ..session.projects import select_projects_with_refused
 
     try:
         result = bootstrap()

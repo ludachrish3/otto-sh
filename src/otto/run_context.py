@@ -1447,13 +1447,13 @@ async def open_context(
     refuse_inside_a_sweep("open_context")
     policy_binding = install_policy(policy)  # ingest reads the variant while the lab is built
     try:
+        from .config.scope import refused_names
         from .declared import compose
         from .labs.loader import Lab, split_lab_names
         from .session.dependencies import check_dependencies
         from .session.lab import build_lab
         from .session.projects import (
             check_projects,
-            refused_names,
             select_projects_with_refused,
         )
 

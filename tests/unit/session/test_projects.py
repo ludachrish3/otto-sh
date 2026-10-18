@@ -170,8 +170,7 @@ def test_a_refused_name_counts_as_known_to_the_switches():
 
 
 def test_refused_names_reads_only_the_duplicate_errors(tmp_path):
-    from otto.config.scope import BootstrapError, DuplicateProjectError
-    from otto.session.projects import refused_names
+    from otto.config.scope import BootstrapError, DuplicateProjectError, refused_names
 
     a, b = tmp_path / "a", tmp_path / "b"
     errors = [

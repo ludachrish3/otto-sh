@@ -286,8 +286,9 @@ def bootstrap() -> BootstrapResult:
     env, projects = discovered.env, discovered.projects
     errors: list[BootstrapError] = list(discovered.errors)
     from .config.dependencies import resolve_dependencies
+    from .config.scope import refused_names
 
-    resolution = resolve_dependencies(projects)
+    resolution = resolve_dependencies(projects, refused=refused_names(discovered.errors))
     errors.extend(resolution.errors)
     # otto's six project instructions (install/uninstall/cleanup/get-logs/
     # install-tools/status) are declared by `otto.project.actions` into the

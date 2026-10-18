@@ -127,6 +127,11 @@ class DuplicateProjectError(BootstrapError):
         self.source = "OTTOPATH"
 
 
+def refused_names(errors: "list[BootstrapError]") -> list[str]:
+    """Return the normalized names discovery refused because two roots claimed them."""
+    return sorted({e.name for e in errors if isinstance(e, DuplicateProjectError)})
+
+
 @dataclasses.dataclass(frozen=True)
 class BootstrapWarning:
     """A non-fatal dependency finding: rendered at startup, never gates dispatch."""

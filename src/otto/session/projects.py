@@ -279,13 +279,6 @@ def check_project_overlap(include: list[str], exclude: list[str]) -> None:
         )
 
 
-def refused_names(errors: "list[BootstrapError]") -> list[str]:
-    """Return the normalized names discovery refused because two roots claimed them."""
-    from ..config.scope import DuplicateProjectError
-
-    return sorted({e.name for e in errors if isinstance(e, DuplicateProjectError)})
-
-
 def select_projects(
     projects: "list[Project]", include: list[str], exclude: list[str]
 ) -> ProjectSelection:
@@ -305,7 +298,7 @@ def select_projects_with_refused(
 ) -> ProjectSelection:
     """:func:`select_projects`, with the names discovery refused counted as known.
 
-    A name in *refused* (see :func:`refused_names`) counts as known, so
+    A name in *refused* (see :func:`~otto.config.scope.refused_names`) counts as known, so
     ``-I``/``-E`` naming a project with two roots reaches the duplicate-root
     error instead of 'no project'.
     """
