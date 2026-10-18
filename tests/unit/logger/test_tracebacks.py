@@ -185,7 +185,10 @@ def test_the_console_renders_a_rich_traceback_without_locals(tmp_path, capsys):
 
     shown = capsys.readouterr().out
     assert "the logged failure" in shown
-    assert "in _explode" in shown, f"no Rich frame on the console:\n{shown}"
+    # The terminal traceback wraps to the console width, and where the frame
+    # line breaks depends on how long the checkout's absolute path is: a short
+    # one leaves "in" at the end of a panel row and "_explode" on the next.
+    assert re.search(r"in[\s│]+_explode", shown), f"no Rich frame on the console:\n{shown}"
     assert "distinctive local value" not in shown, f"the console printed locals:\n{shown}"
 
 
