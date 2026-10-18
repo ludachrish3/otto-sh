@@ -1,31 +1,31 @@
 $ otto --lab unix host test1 probe
-INFO     fleet of interest: 0 of 4 lab hosts (1 project(s), 1 excluded)                             
-INFO     @test1   | export APP_ENV=lab                                                              
-INFO     @test1   | export APP_ENV=lab                                                              
-INFO     @test1   | python3 -u -i                                                                   
-INFO     @test1 > |                                                                                 
-         @test1 > | vagrant@test1:~$ Python 3.12.3 (main, Aug 14 2025, 17:47:21) [GCC 13.3.0] on    
-         linux                                                                                      
-         @test1 > | Type "help", "copyright", "credits" or "license" for more information.          
-         @test1 > | >>>                                                                             
-INFO     @test1   | open('/tmp/otto-gs-provisioned', 'w').write('ok')                               
-INFO     @test1 > | 2                                                                               
-         @test1 > | >>>                                                                             
-INFO     @test1   | exit()                                                                          
-INFO     Connected to <Peer 10.10.200.11 23>                                                        
-INFO     @test1   | export APP_ENV=lab                                                              
-INFO     @test1   | python3 -u -i                                                                   
-INFO     @test1 > |                                                                                 
-         @test1 > | vagrant@test1:~$ Python 3.12.3 (main, Aug 14 2025, 17:47:21) [GCC 13.3.0] on    
-         linux                                                                                      
-         @test1 > | Type "help", "copyright", "credits" or "license" for more information.          
-         @test1 > | >>>                                                                             
-INFO     @test1   | open('/tmp/otto-gs-provisioned', 'w').write('ok')                               
-INFO     @test1 > | 2                                                                               
-         @test1 > | >>>                                                                             
-INFO     @test1   | exit()                                                                          
-INFO     Connection closed to <Peer 10.10.200.11 23>                                                
-                userland                
+INFO     fleet of interest: 0 of 4 lab hosts (1 project(s), 1 excluded)
+INFO     @test1   | export APP_ENV=lab
+INFO     @test1   | export APP_ENV=lab
+INFO     @test1   | python3 -u -i
+INFO     @test1 > |
+         @test1 > | vagrant@test1:~$ Python 3.12.3 (main, Aug 14 2025, 17:47:21) [GCC 13.3.0] on
+         linux
+         @test1 > | Type "help", "copyright", "credits" or "license" for more information.
+         @test1 > | >>>
+INFO     @test1   | open('/tmp/otto-gs-provisioned', 'w').write('ok')
+INFO     @test1 > | 2
+         @test1 > | >>>
+INFO     @test1   | exit()
+INFO     Connected to <Peer 10.10.200.11 23>
+INFO     @test1   | export APP_ENV=lab
+INFO     @test1   | python3 -u -i
+INFO     @test1 > |
+         @test1 > | vagrant@test1:~$ Python 3.12.3 (main, Aug 14 2025, 17:47:21) [GCC 13.3.0] on
+         linux
+         @test1 > | Type "help", "copyright", "credits" or "license" for more information.
+         @test1 > | >>>
+INFO     @test1   | open('/tmp/otto-gs-provisioned', 'w').write('ok')
+INFO     @test1 > | 2
+         @test1 > | >>>
+INFO     @test1   | exit()
+INFO     Connection closed to <Peer 10.10.200.11 23>
+                userland
 ╭─────────────────┬───────────┬────────╮
 │ capability      │ value     │ source │
 ├─────────────────┼───────────┼────────┤
@@ -44,12 +44,12 @@ INFO     Connection closed to <Peer 10.10.200.11 23>
 │ timeout_style   │ coreutils │ probed │
 ╰─────────────────┴───────────┴────────╯
 
-declared = already pinned in this host's userland_options, and never re-probed. probed = the device 
+declared = already pinned in this host's userland_options, and never re-probed. probed = the device
 answered, so this one is worth pinning. assumed = otto could not ask, so the value is only what otto
 did before it asked anything -- and it is left out of the pin for that reason, because inside a JSON
 payload a guess is indistinguishable from a measurement.
 
-Every capability settled. Pin these into this host's lab.json entry and the next connection to this 
+Every capability settled. Pin these into this host's lab.json entry and the next connection to this
 device issues no probe at all:
 
 "userland_options": {
@@ -68,7 +68,7 @@ device issues no probe at all:
   "timeout_style": "coreutils"
 }
 
-                                             protocols                                              
+                                             protocols
 ╭──────────┬──────────┬──────┬───────────┬───────────┬─────────────┬───────────────────────────────╮
 │ protocol │ kind     │ port │ state     │ tier      │ vantage     │ detail                        │
 ├──────────┼──────────┼──────┼───────────┼───────────┼─────────────┼───────────────────────────────┤
@@ -91,7 +91,7 @@ device issues no probe at all:
 not applicable to this family: console, tftp
 8 loopback-only listeners not shown
 other listeners: 68/udp systemd-network, 546/udp systemd-network
-                              drift                               
+                              drift
 ╭──────────┬──────────┬────────────────────────┬─────────────────╮
 │ protocol │ kind     │ drift                  │ detail          │
 ├──────────┼──────────┼────────────────────────┼─────────────────┤

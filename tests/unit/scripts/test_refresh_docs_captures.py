@@ -517,3 +517,16 @@ def test_scratch_lock_says_it_is_waiting_then_takes_the_lock(tmp_path, capsys):
             release.cancel()
             release.join()
     assert f"another capture run holds {lock}; waiting" in capsys.readouterr().err
+
+
+def test_a_capture_keeps_no_trailing_spaces_and_keeps_everything_else(tmp_path):
+    """Red before the fix: Rich pads a table row to the terminal width, and the
+    padding reached the artifact, so a refresh at another width rewrote lines
+    that had not changed."""
+    ctx = _ctx(tmp_path)
+    emit = tmp_path / "emit.py"
+    emit.write_text('print("a  b   ")\nprint("")\nprint("  c\\t ")\nprint("   ")\n')
+    m = _manifest(tmp_path, f'[[capture]]\nid = "pad"\nargv = ["{{python}}", "{emit}"]\n')
+    rdc.refresh(rdc.load_manifest(m), ctx)
+    lines = (ctx.captures_dir / "pad.txt").read_text().split("\n")
+    assert lines[1:] == ["a  b", "", "  c", "", ""]

@@ -14,7 +14,7 @@ creds:    json:/tmp/otto-gs/getting-started-inventory/creds.json
 │ shelf      │ 3                                                                                   │
 │ site       │ lab-a                                                                               │
 ╰────────────┴─────────────────────────────────────────────────────────────────────────────────────╯
-extra (opaque to otto) 
+extra (opaque to otto)
 ╭───────────┬─────────╮
 │ key       │ value   │
 ├───────────┼─────────┤

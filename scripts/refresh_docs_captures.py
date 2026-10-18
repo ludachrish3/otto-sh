@@ -377,7 +377,11 @@ def run_capture(cap: Capture, ctx: RunContext) -> str:
             f"expected {cap.expect_exit}:\n{proc.stdout}"
         )
     body = redact(proc.stdout, ctx.default_rules() + cap.redact)
-    return render_command(cap.argv) + "\n" + body.rstrip("\n") + "\n"
+    # Rich pads a table row to the terminal width; the padding is not output a
+    # reader sees, and keeping it made a refresh at another width rewrite lines
+    # that had not changed.
+    lines = [line.rstrip() for line in body.rstrip("\n").split("\n")]
+    return render_command(cap.argv) + "\n" + "\n".join(lines) + "\n"
 
 
 def _substitute(arg: str, subs: dict[str, str]) -> str:

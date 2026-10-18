@@ -20,7 +20,7 @@ created lab_data/README.md
 created tests/test_example.py
 created tests/conftest.py
 created pylib/acme_instructions/__init__.py
-                            otto init — /tmp/otto-gs/acme                            
+                            otto init — /tmp/otto-gs/acme
 ┏━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 ┃ area         ┃ status      ┃ detail                                               ┃
 ┡━━━━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
