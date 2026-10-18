@@ -11,6 +11,7 @@ Covers:
     ``tests/unit/cov/test_clean.py``)
 """
 
+import json
 import logging
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -165,6 +166,29 @@ class TestCovReportValidation:
         assert "Invalid value for OUTPUT_DIRS" in out
         assert "output directory does not exist" in out
         assert not (tmp_path / "out").exists()
+
+    def test_stale_coverage_metadata_is_a_usage_error_naming_the_directory(self, run_dir, tmp_path):
+        """A run collected by an older otto carries the old metadata keys."""
+        cov = run_dir / "cov"
+        (cov / ".otto_cov_meta.json").write_text(
+            json.dumps(
+                {"repo_name": "fw", "sut_dir": "/src/fw", "toolchains": {}, "source_roots": {}}
+            )
+        )
+        with patch(
+            "otto.coverage.report_inputs.resolve_report_inputs", return_value=ReportInputs()
+        ):
+            result = runner.invoke(
+                cov_app, ["report", str(run_dir), "--dir", str(tmp_path / "out")]
+            )
+        assert result.exit_code == 2, result.output
+        out = _flat(result.output)
+        assert "Invalid value for OUTPUT_DIRS" in out
+        # Rich may wrap a long temp path across lines, so compare without whitespace.
+        assert str(cov) in "".join(out.split())
+        assert "'repo_name'" in out
+        assert "re-collect" in out
+        assert "Traceback" not in result.output
 
     def test_a_non_system_tier_without_a_path_is_a_usage_error(self, run_dir, tmp_path):
         result = runner.invoke(
