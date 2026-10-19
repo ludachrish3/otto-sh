@@ -103,7 +103,7 @@ sweep can't tell a killed run's from one that a check running right now
 still needs. It goes by age instead, and judges each run's leftovers
 together: a run is as old as its oldest leftover, so a killed run's last
 echo, started seconds before it died, goes with the rest. A run older than
-45 minutes is removed. That's longer than either check can run, even with
+65 minutes is removed. That's longer than either check can run, even with
 every probe on a slow host waiting out its timeout, for a tunnel path of up
 to five hosts that run echoes and a link check on its two placement hosts.
 A longer path, or a host slow on every command, can run past it, and

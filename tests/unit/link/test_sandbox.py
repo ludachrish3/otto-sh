@@ -110,7 +110,7 @@ async def test_sweep_removes_an_old_namespace_and_leaves_a_young_one() -> None:
     assert swept.said == [
         (
             "swept leftover sandbox otto-check-a1b2c3 on test1 "
-            "(earlier or concurrent run, created 45 min ago)"
+            f"(earlier or concurrent run, created {SWEEP_MIN_AGE_S // 60} min ago)"
         ),
         "left otto-check-b0b0b0 namespace on test1 (created 40 s ago — may be a running check)",
     ]

@@ -60,7 +60,7 @@ class TestTheLines:
         assert swept_note(None) == "earlier or concurrent run, age unknown"
 
     @pytest.mark.parametrize(
-        ("seconds", "said"), [(0, "0 s"), (119, "119 s"), (120, "2 min"), (2700, "45 min")]
+        ("seconds", "said"), [(0, "0 s"), (119, "119 s"), (120, "2 min"), (3900, "65 min")]
     )
     def test_ages_under_two_minutes_are_seconds_then_whole_minutes(self, seconds, said) -> None:
         assert age_text(seconds) == said
@@ -118,7 +118,7 @@ class TestTheBoundClearsEveryWorstCase:
         assert f"{SWEEP_MIN_AGE_S // 60} minutes" in text
 
     def test_the_docstring_s_addends_sum_to_its_totals(self) -> None:
-        """Each itemised worst case adds up: ``2 x 354 (…) + 32 (…) + … = 1697 s``."""
+        """Each itemised worst case adds up: ``2 x 574 (…) + 32 (…) + … = 2577 s``."""
         flat = " ".join(_bound_docstring().split())
         sums = re.findall(r": ([^:]*?) = (\d+) s\b", flat)
         assert len(sums) == 3, sums

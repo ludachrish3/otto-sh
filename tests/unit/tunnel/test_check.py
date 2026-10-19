@@ -168,7 +168,7 @@ class TestDryRun:
         steps = [
             "would fingerprint a, b, c (one probe command each)",
             (
-                "would sweep leftover otto-check echoes older than 45 min on a, b, c, and "
+                "would sweep leftover otto-check echoes older than 65 min on a, b, c, and "
                 "remove the throwaway tunnels they name, scanning the lab for them the way "
                 "`otto tunnel remove` does; a younger one may be a running check's, and "
                 "would be left"

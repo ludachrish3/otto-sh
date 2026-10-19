@@ -109,7 +109,7 @@ class TestRefusalAndDryRun:
                 in plan
             )
             assert (
-                f"would sweep leftover otto-check-* namespaces older than 45 min on {host}; "
+                f"would sweep leftover otto-check-* namespaces older than 65 min on {host}; "
                 "a younger one may be a running check's, and would be left"
             ) in plan
             assert (
@@ -117,7 +117,7 @@ class TestRefusalAndDryRun:
                 f"picks: its first address on ock<id> ↔ its second inside) and test: {tested}"
             ) in plan
         assert (
-            "would sweep leftover otto-check processes older than 45 min on test1 and test2; "
+            "would sweep leftover otto-check processes older than 65 min on test1 and test2; "
             "a younger one may be a running check's, and would be left"
         ) in plan
         assert plan.count("would run echo listeners inside it on tcp 5205, 5211, 5299") == 2
@@ -249,7 +249,7 @@ class TestSkips:
         report = await check_link(lab, "edge", features=["read-back"], from_host="test1")
         said = (
             "swept leftover sandbox otto-check-abc123 on test1 "
-            "(earlier or concurrent run, created 46 min ago)"
+            f"(earlier or concurrent run, created {(SWEEP_MIN_AGE_S + 60) // 60} min ago)"
         )
         assert report.hosts[0].swept == [said]
         assert "ip netns del otto-check-abc123 2>/dev/null || true" in test1.commands

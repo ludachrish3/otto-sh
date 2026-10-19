@@ -79,7 +79,15 @@ LIVE_DELAY_MS = 50.0
 """The delay every live step that proves a delay applies."""
 
 LIVE_EXPIRE_S = 60
-"""Seconds before each live impairment clears itself, even if otto dies mid-step."""
+"""Seconds before each live impairment clears itself, even if otto dies mid-step.
+
+It bounds how long a crashed otto leaves the real link impaired, so it is
+kept short, and it does not cover a step's worst case: the ``port range``
+step's nine connects can, in theory, take about two minutes on a host whose
+every command runs near the 30 s cut-off. Such a host can see the delay
+clear before the step's last out-of-range readings, and pass a selector
+that wrongly delays the out-of-range port. No real host has shown this.
+"""
 
 _ROUND_TRIP_S = 1.0
 """Roughly what the impair, its post-apply verify and the repair add to each step."""
@@ -325,8 +333,8 @@ _CONNECT_S = 2 * LIVE_DELAY_MS / 1000
 
 _STEPS = [
     _StepPlan(["read-back", "delay"], _step_delay, rows.DELAY_PING.seconds),
-    _StepPlan(["port range"], _step_port_range, 2 * _CONNECT_S),
-    _StepPlan(["side"], _step_side, _CONNECT_S),
+    _StepPlan(["port range"], _step_port_range, 2 * rows.CONNECT_SAMPLES * _CONNECT_S),
+    _StepPlan(["side"], _step_side, rows.CONNECT_SAMPLES * _CONNECT_S),
     _StepPlan(["rate"], _step_rate, rows.RATE_BYTES * 8 / (rows.RATE_KBIT * 1000)),
     _StepPlan(["loss"], _step_loss, rows.LOSS_PING.seconds),
 ]
@@ -369,8 +377,8 @@ def _step_worst_s(features: list[str]) -> float:
     state = _STATE_COMMANDS * COMMAND_ALLOWANCE_S
     measure: dict[Step, float] = {
         _step_delay: state + rows.ping_worst_s(rows.DELAY_PING),
-        _step_port_range: 3 * rows.connect_worst_s(),
-        _step_side: 2 * rows.connect_worst_s(),
+        _step_port_range: 3 * rows.CONNECT_SAMPLES * rows.connect_worst_s(),
+        _step_side: 2 * rows.CONNECT_SAMPLES * rows.connect_worst_s(),
         _step_rate: rows.transfer_worst_s(),
         _step_loss: rows.ping_worst_s(rows.LOSS_PING),
     }

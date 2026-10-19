@@ -167,8 +167,8 @@ sandbox's probe traffic and are never changed.
 | `reorder` | 50 ms delay with 50% reordering; 100 pings. | At least one reply arrives out of order. |
 | `corrupt` | 50% corruption; 100 pings. | At least 25% of pings are lost. A corrupted ping fails its checksum and is dropped, so corruption shows up as loss. |
 | `rate` | A 1 mbit rate limit; 256 KiB sent through an echo listener on TCP port 5299 and timed. | Throughput is within a factor of two of 1000 kbit/s (500 to 2000 kbit/s). |
-| `port range` | 100 ms delay on TCP destination ports 5200–5210 only. otto times a connection to port 5211 first, then to 5205 (inside the range) and 5211 (outside it). | A connection crosses the delayed direction twice, so delayed traffic slows by about twice the delay and clean traffic by about nothing; one delay is the midpoint. The connection to 5205 slows by at least one delay and under four delays; the cap catches gross over-application, and a delay applied twice rises about four delays, right at it. The one to 5211 slows by less than one delay (100 ms). |
-| `side` | 100 ms delay on TCP *source* port 5205 (`--side src`). otto times a connection to destination port 5205 before and after. | The connection does not slow down (by less than one delay, 100 ms): a source-port selector must not match traffic to that destination port. |
+| `port range` | 100 ms delay on TCP destination ports 5200–5210 only. otto times connections to port 5211 first, then to 5205 (inside the range) and 5211 (outside it). Each reading is the median of three connections, so one slow round trip on a loaded host does not decide the row. | A connection crosses the delayed direction twice, so delayed traffic slows by about twice the delay and clean traffic by about nothing; one delay is the midpoint. The median connection to 5205 slows by at least one delay and under four delays; the cap catches gross over-application, and a delay applied twice rises about four delays, right at it. The median connection to 5211 slows by less than one delay (100 ms). |
+| `side` | 100 ms delay on TCP *source* port 5205 (`--side src`). otto times connections to destination port 5205 before and after, taking the median of three each time. | The median connection does not slow down (by less than one delay, 100 ms): a source-port selector must not match traffic to that destination port. |
 | `expire` | 100 ms delay with a 3-second expire timer; otto waits 6 seconds. | The delay is gone. |
 
 The `rate`, `port range` and `side` rows use three echo listeners inside the
@@ -222,7 +222,12 @@ How the cycle runs:
   {doc}`safety`. Remove it yourself, or run without `--live`.
 - **One direction at a time, one step at a time.** Each step impairs the
   link through the same code as `otto link impair`, with `--expire 60`. If
-  otto dies mid-step, the impairment clears itself within a minute. Each
+  otto dies mid-step, the impairment clears itself within a minute. The
+  minute is kept short on purpose, and a step normally ends in seconds; but
+  on a host so slow that every command takes close to the 30-second limit,
+  the `port range` step can outlast it, and the delay can clear before the
+  step's last readings, so a selector that wrongly delays the out-of-range
+  port could pass. Each
   step is repaired as soon as it has been measured. `otto -n … --live` prints
   roughly how many seconds each direction is impaired (about 12 for all six
   features).
@@ -334,10 +339,10 @@ $ otto -n --lab unix link check edge --from test1 --live --feature delay,rate
 dry run edge:
   placement a->b on test1/eth1.100
   would fingerprint test1 (one read-only command) and check it can become root
-  would sweep leftover otto-check-* namespaces older than 45 min on test1; a younger one may be a running check's, and would be left
+  would sweep leftover otto-check-* namespaces older than 65 min on test1; a younger one may be a running check's, and would be left
   would build netns otto-check-<id> on test1 (the /30 of 198.18.0.0/15 <id> picks: its first address on ock<id> ↔ its second inside) and test: read-back, delay, rate
   would run echo listeners inside it on tcp 5205, 5211, 5299
-  would sweep leftover otto-check processes older than 45 min on test1 and test2; a younger one may be a running check's, and would be left
+  would sweep leftover otto-check processes older than 65 min on test1 and test2; a younger one may be a running check's, and would be left
   would impair edge a->b on test1/eth1.100 for about 7s (read-back, delay, rate), each step with expire 60s
   would run echo listeners on test2 10.10.202.12 tcp 5205, 5211, 5299 for a->b
   no device was contacted — nothing was measured

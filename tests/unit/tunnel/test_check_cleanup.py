@@ -92,9 +92,8 @@ class TestSweepByAge:
         )
         report = await check_tunnel(the_bed, ABC, port=PORT, protocol="tcp")
         assert pid in a.procs
-        assert report.hops[0].swept == [
-            "left otto-check echo segment on a (started 45 min ago — may be a running check)"
-        ]
+        said = f"started {SWEEP_MIN_AGE_S // 60} min ago — may be a running check"
+        assert report.hops[0].swept == [f"left otto-check echo segment on a ({said})"]
 
     @pytest.mark.asyncio
     async def test_an_echo_whose_age_ps_cannot_say_is_swept(self, monkeypatch) -> None:

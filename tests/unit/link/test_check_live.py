@@ -338,14 +338,14 @@ class TestTheListenerSweepGoesByAge:
         lab, _, test2, _ = bed()
         test2.answer(
             "ps -eo pid=",
-            "4242 01:00:00 socat TCP-LISTEN:5299,fork,reuseaddr PIPE otto-check-abc123\n"
+            "4242 02:00:00 socat TCP-LISTEN:5299,fork,reuseaddr PIPE otto-check-abc123\n"
             "4243 00:03 socat TCP-LISTEN:5299,fork,reuseaddr PIPE otto-check-abc123\n",
         )
         _fake(monkeypatch, lab)
         report = await check_link(lab, "edge", live=True, from_host="test1")
         said = (
             "swept otto-check process otto-check-abc123 on test2 "
-            "(earlier or concurrent run, started 60 min ago)"
+            "(earlier or concurrent run, started 120 min ago)"
         )
         assert report.live_swept == [said]
         assert "kill 4242 4243" in test2.commands
@@ -662,7 +662,7 @@ class TestEveryCommandSurvivesElevation:
             )
             lab, test1, test2, _ = bed(fingerprint=fingerprint, stale=stale)
             test2.fingerprint = fingerprint
-            test2.answer("ps -eo pid=", "4242 01:00:00 socat PIPE otto-check-abc123\n")
+            test2.answer("ps -eo pid=", "4242 02:00:00 socat PIPE otto-check-abc123\n")
             _fake(monkeypatch, lab)
             await check_link(lab, "edge", live=True)
             raw += test1.raw_commands + test2.raw_commands

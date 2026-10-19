@@ -30,8 +30,8 @@ the unix bed. Two seconds is twenty times that, for a loaded host. A command
 that takes much longer than this, on every call, is outside the derived worst
 case (see :data:`~otto.check.sweep.SWEEP_MIN_AGE_S`)."""
 
-SWEEP_MIN_AGE_S = 2700
-"""How old a check leftover must be before a sweep removes it, in seconds (45 minutes).
+SWEEP_MIN_AGE_S = 3900
+"""How old a check leftover must be before a sweep removes it, in seconds (65 minutes).
 
 It must exceed the longest either check can run, derived from each check's own
 timeouts. Every host command a check sends is cut off after
@@ -52,11 +52,11 @@ column + the UDP column + the run end:
   72 + 512.2 + 502.2 + 210 = 1296 s, about 22 min.
 
 ``otto link check`` (``otto.link.check.worst_case_run_s``), every feature, two
-placement hosts, ``--live`` in both directions: 2 x 354 (each host's sandbox
-pass) + 32 (``--live``'s state reads and listener sweep) + 2 x 418.5 (each
-direction's live cycle) + 120 (the run end) = 1697 s, about 28 min.
+placement hosts, ``--live`` in both directions: 2 x 574 (each host's sandbox
+pass) + 32 (``--live``'s state reads and listener sweep) + 2 x 638.5 (each
+direction's live cycle) + 120 (the run end) = 2577 s, about 43 min.
 
-45 minutes clears the longest of these by half again. A longer path, or a host
+65 minutes clears the longest of these by half again. A longer path, or a host
 slow on every command, can still run past it: a concurrent sweep may then take
 that run's leftovers, and ``otto tunnel check`` says so in its teardown row
 rather than blaming the tunnel. What the bound costs is how long a killed

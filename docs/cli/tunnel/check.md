@@ -345,7 +345,7 @@ would do:
 $ otto -n --lab unix tunnel check --hosts test1@eth2,test2@eth2,test3@eth2 --port 15300
 dry run test1@eth2 → test2@eth2 → test3@eth2:
   would fingerprint test1, test2, test3 (one probe command each)
-  would sweep leftover otto-check echoes older than 45 min on test1, test2, test3, and remove the throwaway tunnels they name, scanning the lab for them the way `otto tunnel remove` does; a younger one may be a running check's, and would be left
+  would sweep leftover otto-check echoes older than 65 min on test1, test2, test3, and remove the throwaway tunnels they name, scanning the lab for them the way `otto tunnel remove` does; a younger one may be a running check's, and would be left
   would check --port 15300 is free for tcp, udp on test1 and test3 (looked at, never bound), and allocate a scratch service port at random from above every hop's ephemeral range to build on instead
   would run a segment echo on test2 at 192.168.1.12:<scratch> and send it 5 round trips of 1 B from test1
   would run a segment echo on test3 at 192.168.1.13:<scratch> and send it 5 round trips of 1 B from test2

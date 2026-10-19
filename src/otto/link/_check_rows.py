@@ -19,6 +19,7 @@ verdict each one means, so both passes report evidence the same way.
 
 import asyncio
 import dataclasses
+import statistics
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -64,6 +65,8 @@ RATE_PORT = 5299
 LISTEN_PORTS = [IN_RANGE_PORT, OUT_OF_RANGE_PORT, RATE_PORT]
 RANGE_SELECTOR = Selector(5200, "tcp", end=5210, side="dst")
 SIDE_SELECTOR = Selector(IN_RANGE_PORT, "tcp", side="src")
+CONNECT_SAMPLES = 3
+"""Connects per measurement in the connect-differential rows; their median is the reading."""
 _READY_TRIES = 10
 _READY_INTERVAL_S = 0.5
 """Listener readiness: about five seconds of connects before the probe rows are skipped."""
@@ -267,6 +270,19 @@ async def connect(ctx: ProbeCtx, port: int) -> float:
     return await timed(ctx, timed_connect_command(need_backend(ctx), ctx.target, port))
 
 
+async def connect_median(ctx: ProbeCtx, port: int) -> float:
+    """Return the median of :data:`CONNECT_SAMPLES` timed connects to the target's *port*.
+
+    The connect-differential rows compare one connect time with another
+    against a threshold of one delay. A single sample let one slow round
+    trip on a loaded host decide the row: a ``side`` probe whose packets the
+    selector never touched once took 74 ms against a 50 ms delay (#658). The
+    median ignores one outlier in either direction, and an impaired path
+    still delays every sample.
+    """
+    return statistics.median([await connect(ctx, port) for _ in range(CONNECT_SAMPLES)])
+
+
 async def delay_verdict(ctx: ProbeCtx, want_ms: float) -> FeatureResult:
     """Ping through an applied *want_ms* delay and judge it against the control."""
     return judge_delay(ctx.control, await ping(ctx, DELAY_PING), want_ms)
@@ -285,18 +301,18 @@ async def rate_verdict(ctx: ProbeCtx) -> FeatureResult:
 
 async def port_range_verdict(ctx: ProbeCtx, impair: ScopedImpair, delay_ms: float) -> FeatureResult:
     """Connect-time differential: only ports inside :data:`RANGE_SELECTOR` get *delay_ms*."""
-    base = await connect(ctx, OUT_OF_RANGE_PORT)
+    base = await connect_median(ctx, OUT_OF_RANGE_PORT)
     await impair(ImpairmentParams(delay_ms=delay_ms), RANGE_SELECTOR)
-    in_ms = await connect(ctx, IN_RANGE_PORT)
-    out_ms = await connect(ctx, OUT_OF_RANGE_PORT)
+    in_ms = await connect_median(ctx, IN_RANGE_PORT)
+    out_ms = await connect_median(ctx, OUT_OF_RANGE_PORT)
     return judge_port_range(in_ms, out_ms, base, delay_ms)
 
 
 async def side_verdict(ctx: ProbeCtx, impair: ScopedImpair, delay_ms: float) -> FeatureResult:
     """Check that a ``side=src`` selector leaves destination-port traffic undelayed."""
-    base = await connect(ctx, IN_RANGE_PORT)
+    base = await connect_median(ctx, IN_RANGE_PORT)
     await impair(ImpairmentParams(delay_ms=delay_ms), SIDE_SELECTOR)
-    return judge_side(await connect(ctx, IN_RANGE_PORT), base, delay_ms)
+    return judge_side(await connect_median(ctx, IN_RANGE_PORT), base, delay_ms)
 
 
 def missing_tool(feature: str, detail: str) -> FeatureResult:

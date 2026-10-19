@@ -728,8 +728,8 @@ def _row_worst_s(feature: str) -> float:
         "reorder": k + rows.ping_worst_s(_REORDER_PING),
         "corrupt": k + rows.ping_worst_s(_CORRUPT_PING),
         "rate": k + rows.transfer_worst_s(),
-        "port range": 3 * rows.connect_worst_s() + scoped,
-        "side": 2 * rows.connect_worst_s() + scoped,
+        "port range": 3 * rows.CONNECT_SAMPLES * rows.connect_worst_s() + scoped,
+        "side": 2 * rows.CONNECT_SAMPLES * rows.connect_worst_s() + scoped,
         "expire": k + k + _EXPIRE_WAIT_S + read,
     }
     return cost[feature] + k
