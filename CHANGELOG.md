@@ -5,6 +5,234 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.0] - 2026-10-19
+
+### Added
+
+- **BREAKING** **config**: one project vocabulary — OTTOPATH, project, project root
+- **BREAKING** **config**: OTTO_SUT_DIRS splits on the OS path separator only; a comma is part of a path
+- **BREAKING** **release**: releases run every excluded lane once, and a census proves no test is left out
+- **BREAKING** **docker**: a declared container that is not running fails fast instead of being started; host -> docker removed
+- **BREAKING** **host**: hosts are built from a validated, prepared record, and a host class and its spec are checked as a pair
+- **BREAKING** **registry**: every registry runs on one strict engine, with the legacy allowances gone
+- **BREAKING** **context**: otto.invocation holds run state and loop-owned hosts; the context carries the repos
+- **monitor**: the live stream declares its own format
+- **host**: a Unix host spec's creds are optional
+- **BREAKING** **api**: declare otto's public surface; the API golden becomes the v2 dump (#590)
+- **release**: one release event model, and a correction for a missing mark
+- **testing**: conformance helpers check what registration asks, and the cookbook stops teaching refused calls (#602)
+- **config**: fleet_of_interest answers a project's fleet without walking it
+- **BREAKING** **projects**: -E takes a switched-off project's hosts out of play
+- **BREAKING** **reservations**: one report, read by every reservation check
+- **BREAKING** **docker**: one use-case, one parent — --parent names the host, or docker_priority ranks it
+- **docker**: TAB completes from declared names and what the daemon last said
+- **context**: open_context selects the product variant, as --field/--debug do
+- **BREAKING** **docker**: the curated verbs print docker's output over otto's resolution
+- **BREAKING** **session**: otto.session -- the library path makes every decision the CLI makes
+- **BREAKING** **cli**: --log-level knows its levels and completes them in the case you type
+- **BREAKING** **products**: one definition per product, and a debug/field variant the run selects
+- **suite**: RunOptions refuses a cov_report_dir that is or contains cov_dir
+- **BREAKING** **init**: otto init's doctor and scaffolder are the otto.init library
+- **BREAKING** **host**: host ids are kebab-case at every seam
+- **BREAKING** **docker**: compose up is docker compose up — it builds only with --build
+- **run**: a dry run of install, uninstall and install-tools shows every step
+- **run**: say what happened to each product on each host
+- **BREAKING** **docker**: a build names, tags and reports images exactly as docker does
+- **cli**: --list-products and --list-tools show what each host gets
+- **logger**: write failure tracebacks with local variables to both log files
+- **BREAKING** **monitor**: otto monitor and otto test --monitor share one monitor library
+- **BREAKING** **coverage**: the coverage verbs own their rules; one public entry point per verb
+- **BREAKING** **docker**: the docker verbs align with docker; build and teardown have one owner
+- **BREAKING** **kmodcov**: dump and reset move from debugfs to sysfs; interface 2
+- **kgcov**: kernel compatibility ladder, 2.6.32 to 6.17 proven per kernel
+- **BREAKING** **suite**: run options own their rules; the coverage report has one owner
+- **test**: the test docs speak pytest, and the scaffold leads with @otto.options(verbs=[...])
+- **BREAKING** **test**: tests are plain pytest, options register per verb, and pytest is the only source of test names
+- **BREAKING** **tunnel**: otto tunnel check proves a tunnel path end to end
+- **BREAKING** **tunnel**: UDP tunnels carry UDP between hops; --idle-timeout opts in
+- **BREAKING** **host**: console term — serial consoles behind a telnet server
+- **link**: otto link check
+- **BREAKING** **context**: ctx.cov — coverage awareness on OttoContext
+- **link**: port ranges, --side, and nesting-or-collide selectors
+
+
+### Changed
+
+- **utils**: the unused path-list splitter goes
+- **BREAKING** **bootstrap**: the composition root moves up and tach forbids import cycles
+- **bootstrap**: the composed state and the fleet leave the import cycle
+- **reservations**: the reservation gate reads the active run and leaves the import cycle
+- **labs**: the lab model and its loader move into otto.labs, which leaves the import cycle
+- **settings**: the runtime settings types move into the foundation scope module; creds, inventory, link and models leave the import cycle
+- **BREAKING** **declared**: the composed repos move into a catalog in otto.declared; host and check leave the import cycle
+- **make**: make coverage's main leg runs one worker more than the CPU count
+- **nox**: the 3.14 hostless lane runs without coverage
+- the test suite stops redoing work it already did, and reports its slow unit tests
+- **arch**: host specs move into otto.host, the impairer contract into otto.link.params; host -> models and models -> link removed
+- **arch**: the instruction catalog leaves the cycle, and otto's six are declared through a slot
+- **arch**: internal imports skip facades, the monitor's lower files are declared, and the completion cache stops importing the CLI
+- **BREAKING** **kmodcov**: otto_kgcov becomes otto_kmodcov, one name for module coverage in any format
+- **BREAKING** **instructions**: instruction registration leaves otto.cli
+- **startup**: the shim drops the console script's directory from sys.path
+- **BREAKING** each command pays only for its own verb
+- **BREAKING** ordinary commands stop paying for the completion cache and test suites
+
+
+### Dependencies
+
+- **deps**: bump wouter from 3.11.0 to 3.12.0 in /web
+- **deps-dev**: bump ty from 0.0.83 to 0.0.84
+- **deps**: bump @xyflow/react from 12.11.6 to 12.12.0 in /web
+- **deps-dev**: bump the vitest group in /web with 2 updates
+- **deps-dev**: bump hypothesis from 6.168.1 to 6.168.3
+- **deps-dev**: bump @types/node from 26.6.2 to 26.6.3 in /web
+- **deps-dev**: bump knip from 6.37.0 to 6.38.0 in /web
+- **deps-dev**: bump ruff from 0.16.8 to 0.16.9
+- **deps**: bump aioftp from 0.28.0 to 0.28.3
+- **deps**: bump telnetlib3 from 5.0.0 to 5.0.1
+- **deps-dev**: bump git-cliff from 2.13.1 to 2.14.2
+- **deps-dev**: bump hypothesis from 6.168.0 to 6.168.1
+- **deps-dev**: bump jsdom from 30.1.0 to 30.1.1 in /web
+- **deps**: bump @untitledui/icons from 0.0.22 to 0.0.23 in /web
+- **deps-dev**: bump @types/node from 26.6.1 to 26.6.2 in /web
+- **deps-dev**: bump knip from 6.36.0 to 6.37.0 in /web
+- **deps**: bump astral-sh/setup-uv from 10.1.0 to 10.2.0
+- **deps-dev**: bump ty from 0.0.82 to 0.0.83
+
+
+### Documentation
+
+- **session**: RequiredProject.reason's docstring is prose, not a type
+- **spec**: amend the registry catalog's Ref-inside-a-check ruling for #634
+- **plan**: #649 landing 1 — OTTOPATH, project and project root
+- **spec**: #649 — one vocabulary: OTTOPATH, project, project root, workspace
+- **spec**: the import-cycle ratchet retires; tach forbids cycles alone
+- **spec**: #590 P9b — the run context's own module, discovery's re-export, the composing routes and the measured import cost
+- **spec**: #590 P9a — the fleet's home, the composing call, the empty ratchet and the measured import cost
+- **spec**: #590 P8 — the active run's home, the layer count and the measured import cost
+- **gates**: the scoped gates apply to the commits that persist on main; a squash branch gates once, at its tip
+- **spec**: #590 P7 — the lab model's home, the layer count and the measured import cost
+- **spec**: #590 P6 — the settings types' home, the carve's edges and the measured import cost
+- **spec**: #566 Q9 — the chaos lanes leave the release campaign
+- **spec**: the completion snapshot lives in otto.registry, and D2 composes nothing
+- **spec**: #566 batch 2 — the stability ladder stays opt-in; release runs the campaign once
+- **spec**: #566 batch 2 — test burden and gating policy design
+- **spec**: placement and phases records what building P4 changed
+- **arch**: the module overview says which arrows it leaves out and points to the table for all of them
+- **spec**: placement and phases records what building P3 changed
+- **spec**: placement and phases records what building P2 changed
+- **spec**: placement and phases records what building P1b changed
+- **spec**: placement and phases §5.3 records what building the string audit changed
+- **spec**: placement and phases, the design that ends #590's import cycle
+- **spec**: note that the loader's interim validation call is gone
+- **spec**: run flags reach the context only by policy=; an expired drain abandons closes it cut short
+- **monitor**: the stream fragment's docstring names its declared format
+- **spec**: the live stream is a declared format
+- **todo**: name the renamed host hooks
+- **docs-api**: factory_default states what it shows, not what an alias builds
+- **todo**: #590 P1 has landed
+- **spec**: appendix G retires the UnixHostSpec deep path #602 taught
+- **todo**: the three before-P1 commits of #590 have landed
+- **spec**: spec 3b settles host construction and spec validation, approved
+- **spec**: specs 2, 3a and 4 of the #590 series, approved
+- **spec**: the specs name the modules that do the work, by symbol not line
+- **spec**: a callable without a readable signature is refused, never a value
+- **spec**: a call kind is recorded only for shapes it is certain of
+- **spec**: the dump archives only its inputs, states cost in file ops, and settles four producer edges
+- **spec**: a partial and a bound builtin class dump the same on every interpreter
+- **spec**: a versioned format declares what it reads and writes; dropping a version is a break
+- **spec**: the golden records each public binding's shape, regenerated per commit
+- **spec**: once the golden is v2, no commit or merge takes it back
+- **spec**: every #590 phase accounts for its file operations
+- **spec**: otto declares its public surface, then changes paths in one cutover
+- **todo**: the user-feedback file names the issue for each open item
+- **todo**: the user-feedback file records where every docker item stands
+- **spec**: one reservations report, read by every reservation check
+- **spec**: docker verbs — one use-case, one parent; --on becomes --parent
+- **feedback**: add system architecture review from Codex
+- **spec**: the curated docker verbs print docker's output over otto's resolution
+- **spec**: otto.session — the library path makes every decision the CLI makes
+- **spec**: otto init's doctor and scaffolder become a library
+- **spec**: the variant is a ContextVar and DeclaredProduct has its own module
+- **spec**: products are defined once, subclass a public base, and carry a debug/field variant
+- **todo**: the host-id delimiter decision is done
+- **spec**: the collision message names each side by element, board, slot and ip
+- **spec**: host ids are kebab-case end to end; a collision is refused naming both
+- **todo**: the docker section records what landed and what is filed
+- **todo**: the install preview and the product listing close walk item 8
+- **spec**: the install preview shows every step a dry run would take
+- **logging**: explain Rich markup in log messages
+- close four first-run gaps found reading from the docs index
+- **config**: make splitting lab data across files and directories findable
+- show terminal snapshots at 100 columns
+- add a copy button to every code block
+- **spec**: otto monitor and otto test --monitor share one monitor library
+- **todo**: record the first naive-reader walk of the docs
+- **todo**: the design items from the first user feedback
+- **todo**: kickoff briefs for the parallel thin-CLI items
+- **todo**: periodic review 2026-09-29 — sprint quality audit
+- **spec**: every kgcov build column compiles in its kernel's own era
+- **spec**: otto_kgcov builds from 2.6.32 on, proven per kernel
+- **spec**: what a narrower loop pin can and cannot share
+- **spec**: otto test runs on one session loop by default
+- **spec**: module_dir keeps the test-directory path, plain functions own a loop, dry runs build options
+- **spec**: checks sweep leftovers by age, and concurrent checks are safe
+- **spec**: tests become plain pytest and options register per verb
+- **cookbook**: share host connections across tests at each pytest scope
+- **spec**: record the before numbers; #457 follows knowingly
+- **spec**: each command pays only for its own verb
+- **spec**: pin the dispatch argv and five Part 3 mechanics
+- **spec**: the completion cache gets its own architecture page
+- **spec**: a cache rebuild walks the test corpus once
+- **spec**: ordinary commands stop paying for completion and test suites
+- **spec**: tunnels never time out unless asked; --idle-timeout opts in
+- **spec**: UDP tunnels carry UDP between hops; tunnel check amendments
+- **spec**: otto link check and otto tunnel check
+- **spec**: port-range and side-scoped impairment selectors
+- **specs**: console term for serial consoles behind a telnet server
+
+
+### Fixed
+
+- **BREAKING** **init**: a new project's scaffold says project, not repo
+- **BREAKING** **config**: a dependency on a refused name says it was refused
+- **tunnel**: a cut-off handshake drain is not lost to the script killing its watchdog
+- **BREAKING** **session**: a failed project an active project requires is fatal, even when excluded or out of scope
+- **BREAKING** **registry**: a Ref first imported inside a registry check imports whole
+- **monitor-web**: a snapshot with more than ~125k metric rows no longer dies in the parser
+- **chaos**: the BusyBox chaos target takes its element name from the Element, not a stripped key
+- **link**: live check judges ask whether an option applied, not how precisely
+- **BREAKING** **context**: scopes never widens silently
+- **docs**: a None-defaulted CLI parameter shows one None
+- **docs**: the raw ~otto. leak rule ignores quoted string defaults
+- **docs**: an Annotated default factory shows the class it builds
+- **host**: embedded hosts build their connections through the term registry (#601)
+- **cli**: reset the invocation's context and variant when Click closes it
+- **BREAKING** **test**: a named run collects every test file; the test-names cache never narrows it
+- **test**: the inner pytest session no longer depends on dev-only or auto-loaded plugins
+- **host**: docker_priority is a strict integer, and the key alone needs docker_capable
+- **suite**: a refused coverage run never clears an overwrite destination
+- **cli**: show plain-language --help for run, monitor, host verbs and more
+- **docker**: print the use-case inventory under `--dry-run`
+- **docker**: show each provider displacement once in `docker compose up`
+- **host**: a host that cannot be reached fails with one line, not a traceback
+- **docs**: the Ref example registers a free name; the API golden lists what the docs teach
+- **scripts**: end every release watch on a SUCCESS or FAILED line
+
+
+### Maintenance
+
+- **matrix**: re-measure the kmodcov matrix
+- **matrix**: re-measure the bed support matrix
+- **matrix**: re-measure the bed support and kmodcov matrices
+- **matrix**: re-measure the bed support matrix
+- **matrix**: re-measure the bed support matrix
+- codify the session's lessons -- import rules in lint-arch, a docs-capture lock, one Repo test double, and a module dependencies page
+- **lint-arch**: ban hidden CLI options
+- **vagrant**: increase dev VM's disk to 90 GB
+- **vagrant**: give the dev VM an 80 GB disk
+
+
 ## [0.16.1] - 2026-09-24
 
 ### Added
@@ -1971,7 +2199,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.16.1...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/ludachrish3/otto-sh/compare/v0.16.1...v0.17.0
 [0.16.1]: https://github.com/ludachrish3/otto-sh/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/ludachrish3/otto-sh/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/ludachrish3/otto-sh/compare/v0.14.0...v0.15.0
