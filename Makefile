@@ -9,7 +9,7 @@
 # on -j.
 .NOTPARALLEL:
 
-.PHONY: help quick quick-guards gate-scope gate-tip coverage-gate-args all ci nox nox-release budget-delta nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-stamp-start coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release release-campaign stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health lab-reachability qemu-restart console-logout import-snapshot api-snapshot check-api-snapshot check-api-teaching api-surface-report check-breaking profile unit-outliers browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check wheel-smoke
+.PHONY: help quick quick-guards gate-scope gate-tip coverage-gate-args all ci nox nox-release budget-delta nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-stamp-start coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release release-preflight release-campaign stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health lab-reachability qemu-restart console-logout import-snapshot api-snapshot check-api-snapshot check-api-teaching api-surface-report check-breaking profile unit-outliers browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check wheel-smoke
 
 # git-cliff's conventional-commit census decides the bump by default (see
 # scripts/release_bump.py); BUMP= only RAISES it, never lowers it. Override
@@ -429,17 +429,28 @@ release-campaign: ## (Build & Release) Run every lane the default gates exclude,
 # again; 2 — a refusal no stamp can cure (a dirty tree, a venv on anything
 # but the primary, a command-line variable other than BUMP=, NEW_VERSION= or
 # BUDGET_APPROVE=), so `[ $$? -eq 1 ]` is false and the release stops at
-# once, before forty minutes of a run that could not be stamped. Both checks
+# once, before forty minutes of a run that could not be stamped.
+#
+# The check runs ONCE, first of all, and the release reuses its answer
+# ($$stamp) at the coverage stage (#660). It must not be repeated there: the
+# cheap stages that now run in between include `make docs`, whose
+# prerequisites rebuild the web assets, and the stamp records an assets
+# digest. So 0 skips `make coverage`; 1 runs it and checks again; any other
+# status (2, or a crash) is printed by a second, visible check and stops the
+# release before release-preflight touches anything. Both checks
 # are told the command-line variables ($(COVERAGE_STAMP_OVERRIDES)): a stamp
 # vouches for the declared gate, not for a release whose later stages a
 # `PYTEST_ADDOPTS=-k …` would narrow.
 release: export PATH := $(VENV_BIN):$(PATH)
-release: ## (Build & Release) npm ci web/, the coverage stamp check (HEAD's committed tree passed `make coverage` under this venv — else run it now, before anything commits), Python static checks (check-python), the import-budget delta against the previous tag (budget-delta — growth stops the release unless BUDGET_APPROVE names the surface and its buckets), nox-release (3.11–3.14; the primary's session is what the stamp proves), build web dist, all-browser dashboard e2e, full TS gate (validate-ts), the bed support matrix and otto_kmodcov toolchain proofs (release-matrix, release-kmodcov-matrix — they commit), the release campaign (every excluded lane once: stability, soak, conformance over every cell, busybox — never the chaos lanes), docs, then changelog, bump, wheel-check (which builds dist/) (git-cliff's conventional-commit census decides the version; BUMP=minor|major only RAISES it, never lowers it -- a lower BUMP= is refused; or NEW_VERSION=X.Y.Z[rcN] for prereleases, warned but never refused)
-	@$(MAKE) clean-dist \
+release: ## (Build & Release) The cheap stages first, so a cheap failure costs minutes, not the hour the test stages take: the coverage stamp check, read once here (its refusals stop the release at once; its answer decides the coverage stage below), release-preflight (refuses unpushed commits and untracked sources the release would read, clears stale run output), clean-dist, npm ci web/, docs (which builds the web assets), Python static checks (check-python), the import-budget delta against the previous tag (budget-delta — growth stops the release unless BUDGET_APPROVE names the surface and its buckets). Then the coverage stage (the stamp said HEAD's committed tree passed `make coverage` under this venv — else run it now, before anything commits), nox-release (3.11–3.14; the primary's session is what the stamp proves), build web dist, all-browser dashboard e2e, full TS gate (validate-ts), the bed support matrix and otto_kmodcov toolchain proofs (release-matrix, release-kmodcov-matrix — they commit), the release campaign (every excluded lane once: stability, soak, conformance over every cell, busybox — never the chaos lanes), docs again (it renders the matrices the release just re-measured), then changelog, bump, wheel-check (which builds dist/) (git-cliff's conventional-commit census decides the version; BUMP=minor|major only RAISES it, never lowers it -- a lower BUMP= is refused; or NEW_VERSION=X.Y.Z[rcN] for prereleases, warned but never refused)
+	@{ $(COVERAGE_STAMP) check $(COVERAGE_STAMP_GATE) $(COVERAGE_STAMP_OVERRIDES) >/dev/null 2>&1; stamp=$$?; [ $$stamp -ne 1 ] || echo "release: HEAD's tree has no valid coverage stamp, so make coverage runs after the cheap stages"; [ $$stamp -le 1 ] || $(COVERAGE_STAMP) check $(COVERAGE_STAMP_GATE) $(COVERAGE_STAMP_OVERRIDES) || exit $$?; } \
+		&& $(MAKE) release-preflight \
+		&& $(MAKE) clean-dist \
 		&& $(MAKE) web-install \
-		&& ( $(COVERAGE_STAMP) check $(COVERAGE_STAMP_GATE) $(COVERAGE_STAMP_OVERRIDES) || { [ $$? -eq 1 ] && $(MAKE) coverage && $(COVERAGE_STAMP) check $(COVERAGE_STAMP_GATE) $(COVERAGE_STAMP_OVERRIDES); } ) \
+		&& $(MAKE) docs \
 		&& $(MAKE) check-python \
 		&& $(MAKE) budget-delta \
+		&& { [ $$stamp -eq 0 ] || { $(MAKE) coverage && $(COVERAGE_STAMP) check $(COVERAGE_STAMP_GATE) $(COVERAGE_STAMP_OVERRIDES); }; } \
 		&& $(LEAK_DETECT) $(MAKE) nox-release \
 		&& $(MAKE) web \
 		&& $(MAKE) dashboard-all \
@@ -465,6 +476,10 @@ release: ## (Build & Release) npm ci web/, the coverage stamp check (HEAD's comm
 		&& echo "    git push --follow-tags" \
 		&& echo \
 		&& echo "To rehearse first, dispatch release-testpypi.yml from the Actions tab."
+
+release-preflight: ## (Build & Release) The release's first stage: refuse commits not pushed to the branch's upstream (the push gate excuses only the release's own commits), refuse untracked files under docs/, src/, tests/ and schemas/ (the release would build and test them though no commit carries them), then clear the gitignored run output it regenerates anyway (reports/*-observations, tests/project5/build, a src/otto/ package holding only __pycache__). Safe to run by hand before a release.
+	@$(SAY) "release preflight: untracked sources and stale run output"
+	@uv run python scripts/release_preflight.py
 
 nox-unit: ## Run the unit suite across all supported Pythons (no VMs; the `interpreter_agnostic` family runs on 3.10 only). Fastest safe test. Override iterations with COUNT=N (default 1); JUnit XML lands in reports/junit/nox-unit/.
 	@$(SAY) "nox: unit suite, all Pythons (x$(NOX_COUNT))"

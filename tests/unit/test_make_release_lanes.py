@@ -412,7 +412,13 @@ def test_every_stamp_and_release_target_is_phony():
     )
     assert "b" in _phony_targets(".PHONY: a \\\n\tb\n"), "a continued .PHONY line must be read"
     phony = _phony_targets((CHECKOUT_ROOT / "Makefile").read_text())
-    missing = {"coverage", "coverage-stamp-start", "nox-release", "release"} - phony
+    missing = {
+        "coverage",
+        "coverage-stamp-start",
+        "nox-release",
+        "release",
+        "release-preflight",
+    } - phony
     assert not missing, f"not .PHONY: {sorted(missing)}"
 
 
@@ -449,12 +455,14 @@ def _delta_line(stdout: str) -> str:
 
 
 def test_the_release_runs_the_budget_delta_right_after_check_python():
-    """Early and failing: between check-python and nox-release, a bare `$(MAKE)` line."""
+    """Early and failing: right after check-python, before coverage, a bare `$(MAKE)` line."""
     text = (CHECKOUT_ROOT / "Makefile").read_text()
     _prerequisites, recipe = _rule(text, "release")
     stages = re.findall(r"\$\(MAKE\) ([a-z-]+)", " ".join(recipe))
     assert stages.index("budget-delta") == stages.index("check-python") + 1, stages
-    assert stages.index("nox-release") == stages.index("budget-delta") + 1, stages
+    # The coverage stamp check (its `$(MAKE) coverage` fallback) sits between them.
+    assert stages.index("coverage") == stages.index("budget-delta") + 1, stages
+    assert stages.index("nox-release") == stages.index("coverage") + 1, stages
     # A link of the `&&` chain, continued: its failure stops everything after it.
     [line] = [ln for ln in recipe if "budget-delta" in ln]
     assert line == "&& $(MAKE) budget-delta \\", line
@@ -596,3 +604,127 @@ def test_the_declared_coverage_gate_frames_as_four_option_value_lines():
     assert len(lines) == 8, "a value holding a newline would break the shape"
     assert lines[0::2] == gt.COVERAGE_GATE_OPTIONS
     assert " " in lines[lines.index("--selection") + 1]
+
+
+# --- the release's order: cheap stages first (#660, #661) -------------------
+
+
+def _stub_stamp(tmp_path: Path, code: int) -> Path:
+    """A `coverage_stamp.py` stand-in that answers every `check` with *code*."""
+    stub = tmp_path / "stamp-stub"
+    stub.write_text(f"#!/bin/sh\nexit {code}\n", encoding="utf-8")
+    stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
+    return stub
+
+
+def _run_release(tmp_path: Path, stub: Path, stamp: int) -> "subprocess.CompletedProcess[str]":
+    """Run the real `release` recipe with `$(MAKE)` and the stamp check stubbed.
+
+    `VENV_BIN` is the recipe's own PATH prefix, so the guard stubs here shadow
+    the real `uv`, `git-cliff` and `bump-my-version`: even a regressed recipe
+    that ran past every stub could not bump, commit or tag this checkout. Each
+    guard logs its name to :func:`_guard_log` and fails.
+    """
+    guard = tmp_path / "guard"
+    guard.mkdir()
+    guard_log = _guard_log(tmp_path)
+    for tool in ("uv", "git-cliff", "bump-my-version"):
+        path = guard / tool
+        path.write_text(f'#!/bin/sh\necho {tool} >> "{guard_log}"\nexit 97\n', encoding="utf-8")
+        path.chmod(path.stat().st_mode | stat.S_IXUSR)
+    return _run_make(
+        stub,
+        "release",
+        f"COVERAGE_STAMP={_stub_stamp(tmp_path, stamp)}",
+        f"VENV_BIN={guard}",
+    )
+
+
+def _guard_log(tmp_path: Path) -> Path:
+    return tmp_path / "guard.log"
+
+
+def _calls(log: Path) -> "list[str]":
+    return _targets_called(log) if log.exists() else []
+
+
+def test_a_stamp_refusal_stops_the_release_before_anything_runs(tmp_path: Path):
+    """Exit 2 is a refusal no stamp can cure: it is said before anything is built or cleared."""
+    stub, log = _stub_make(tmp_path, {})
+
+    completed = _run_release(tmp_path, stub, 2)
+
+    assert completed.returncode != 0
+    assert _calls(log) == []
+    assert not _guard_log(tmp_path).exists()
+
+
+def test_the_cheap_stages_run_before_coverage_and_a_red_coverage_stops_the_rest(tmp_path: Path):
+    """No stamp (exit 1) and a coverage that cannot stamp: the release stops there.
+
+    It also proves the order: everything cheap has already run, and nothing
+    expensive after coverage has started.
+    """
+    stub, log = _stub_make(tmp_path, {})
+
+    completed = _run_release(tmp_path, stub, 1)
+
+    assert completed.returncode != 0
+    assert _calls(log) == [
+        "release-preflight",
+        "clean-dist",
+        "web-install",
+        "docs",
+        "check-python",
+        "budget-delta",
+        "coverage",
+    ]
+    assert "no valid coverage stamp" in completed.stdout, "the wait for coverage is said up front"
+    assert not _guard_log(tmp_path).exists()
+
+
+def test_a_valid_stamp_skips_coverage_and_the_release_goes_on(tmp_path: Path):
+    """Exit 0, read once at the start, is trusted at the coverage stage.
+
+    nox-release is failed so the run stops right after the stage under test.
+    """
+    stub, log = _stub_make(tmp_path, {"nox-release": 1})
+
+    completed = _run_release(tmp_path, stub, 0)
+
+    assert completed.returncode != 0
+    calls = _calls(log)
+    assert "coverage" not in calls, calls
+    assert calls[-2:] == ["budget-delta", "nox-release"], calls
+    assert "no valid coverage stamp" not in completed.stdout
+    assert not _guard_log(tmp_path).exists()
+
+
+def test_a_red_preflight_stops_the_release_before_anything_else(tmp_path: Path):
+    stub, log = _stub_make(tmp_path, {"release-preflight": 1})
+
+    completed = _run_release(tmp_path, stub, 1)
+
+    assert completed.returncode != 0
+    assert _calls(log) == ["release-preflight"]
+    assert not _guard_log(tmp_path).exists()
+
+
+def test_a_red_early_docs_build_stops_the_release_before_coverage(tmp_path: Path):
+    stub, log = _stub_make(tmp_path, {"docs": 1})
+
+    completed = _run_release(tmp_path, stub, 1)
+
+    assert completed.returncode != 0
+    assert _calls(log)[-1] == "docs"
+    assert "coverage" not in _calls(log)
+
+
+def test_the_release_builds_the_docs_again_after_it_re_measures_the_matrices():
+    """The early build is a probe; the final one renders the committed matrices."""
+    _prerequisites, recipe = _rule((CHECKOUT_ROOT / "Makefile").read_text(), "release")
+    stages = re.findall(r"\$\(MAKE\) ([a-z-]+)", " ".join(recipe))
+    assert stages.count("docs") == 2, stages
+    last_docs = len(stages) - 1 - stages[::-1].index("docs")
+    assert stages.index("release-kmodcov-matrix") < last_docs, stages
+    assert stages.index("release-campaign") < last_docs, stages

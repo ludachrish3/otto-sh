@@ -48,8 +48,9 @@ POLL_SECONDS="${POLL_SECONDS:-20}"
 
 # The gates of the `release` target, in the order the recipe chains them
 # (its `$(MAKE) <goal>` words; pinned by tests/unit/scripts/test_watch_release.py).
-STAGES=(clean-dist web-install coverage check-python budget-delta nox-release web dashboard-all \
-        validate-ts release-matrix release-kmodcov-matrix release-campaign docs wheel-check)
+STAGES=(release-preflight clean-dist web-install docs check-python budget-delta coverage nox-release \
+        web dashboard-all validate-ts release-matrix release-kmodcov-matrix release-campaign docs \
+        wheel-check)
 
 usage() { sed -n '2,/^# Two traps/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'; }
 

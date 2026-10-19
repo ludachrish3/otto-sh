@@ -1,6 +1,7 @@
 """Pins for scripts/gate_scope.py — the diff classifier behind `make gate-scope` (#566)."""
 
 import ast
+import json
 import os
 import re
 import subprocess
@@ -12,6 +13,7 @@ import pytest
 from _pytest.mark.expression import Expression
 
 from scripts import gate_scope as gs
+from scripts import gate_tip as gt
 from scripts.gate_fresh import GATED_TARGETS
 from tests._fixtures.gitrepo import git_env
 from tests._fixtures.paths import CHECKOUT_ROOT
@@ -1986,3 +1988,139 @@ def test_the_report_ends_with_the_gate_tip_remedy_only_when_something_lands():
         count=0,
     )
     assert "gate-tip" not in text
+
+
+# --- a release's own non-code edits (#660) ---------------------------------
+
+_PYPROJECT = (CHECKOUT_ROOT / "pyproject.toml").read_text()
+_LOCK = (CHECKOUT_ROOT / "uv.lock").read_text()
+_VERSION = gs._BUMP_CONFIG_VERSION.search(_PYPROJECT)[1]
+
+
+def _bump(text: str, new: str = "99.0.0") -> str:
+    """bump-my-version's own edit, spelled as its config spells it."""
+    return text.replace(f'version = "{_VERSION}"', f'version = "{new}"')
+
+
+def _bump_lock(text: str, new: str = "99.0.0") -> str:
+    entry = 'name = "otto-sh"\nversion = "{}"'
+    return text.replace(entry.format(_VERSION), entry.format(new))
+
+
+def _one(path: str, base: str, head: str, status: str = "M"):
+    return _scope([gs.Change(path, status)], {("base", path): base, ("head", path): head})
+
+
+def test_a_version_only_pyproject_bump_needs_no_lane():
+    bumped = _bump(_PYPROJECT)
+    assert bumped.count('version = "99.0.0"') == 2, "the bump rewrites version and current_version"
+    scope = _one("pyproject.toml", _PYPROJECT, bumped)
+    assert scope.classes == [gs.NONE]
+    assert scope.changed_paths == [], "a release edit must not trigger the build-file rider"
+    assert gs.commands(scope, tip=True, base="origin/main") == ["make check-breaking"]
+    assert gs.commands(scope, tip=False, base="origin/main") == ["make check-breaking"]
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        lambda t: t.replace("[tool.bumpversion]", "[tool.bumpversion]\nallow_dirty = true"),
+        lambda t: t + "\n# a trailing comment\n",
+        lambda t: t.replace('version = "99.0.0"', 'version = "99.0.1"', 1),
+    ],
+    ids=["tool-setting", "comment", "versions-disagree"],
+)
+def test_a_bump_with_any_other_pyproject_edit_is_classified_as_before(extra):
+    scope = _one("pyproject.toml", _PYPROJECT, extra(_bump(_PYPROJECT)))
+    assert gs.NONE not in scope.classes
+    assert gs.ESCALATE in scope.classes
+    assert "make coverage" in gs.commands(scope, tip=True, base="origin/main")
+
+
+def test_a_pyproject_edit_that_moves_no_version_is_not_a_release_edit():
+    scope = _one("pyproject.toml", _PYPROJECT, _PYPROJECT + "\n")
+    assert gs.ESCALATE in scope.classes
+
+
+def test_otto_s_own_lock_version_bump_needs_no_lane_but_any_other_lock_edit_does():
+    assert _one("uv.lock", _LOCK, _bump_lock(_LOCK)).classes == [gs.NONE]
+    moved_dep = _bump_lock(_LOCK).replace(
+        'name = "rich"\nversion = "', 'name = "rich"\nversion = "0', 1
+    )
+    assert moved_dep != _bump_lock(_LOCK), "the fixture must really move a dependency"
+    scope = _one("uv.lock", _LOCK, moved_dep)
+    assert scope.classes == [gs.FULL]
+
+
+def test_a_matrix_re_dated_and_nothing_else_needs_no_lane():
+    base = json.dumps(
+        {"format": 1, "cells": {"s": {"p": {"verdict": "measured-ok", "as_of": "2026-10-18"}}}}
+    )
+    redated = base.replace("2026-10-18", "2026-10-19")
+    scope = _one("schemas/support_matrix.json", base, redated)
+    assert scope.classes == [gs.NONE]
+    changed_verdict = redated.replace("measured-ok", "measured-broken")
+    scope = _scope(
+        [gs.Change("schemas/support_matrix.json", "M")],
+        {
+            ("base", "schemas/support_matrix.json"): base,
+            ("head", "schemas/support_matrix.json"): changed_verdict,
+            **_real_reader_sources(),
+        },
+        head_paths=set(gs.MATRIX_READERS) | {"schemas/support_matrix.json"},
+    )
+    assert scope.classes == [gs.TESTS_LEAF], "a verdict change still runs the matrix readers"
+
+
+@pytest.mark.parametrize(
+    "as_of",
+    [None, "not-a-date", {"d": "2026-10-19"}, "2026-10-19\n", "drop"],
+    ids=["null", "not-a-date", "a-dict", "trailing-newline", "deleted"],
+)
+def test_a_matrix_whose_as_of_is_no_longer_a_date_is_not_a_release_edit(as_of):
+    cell = {"verdict": "measured-ok", "as_of": "2026-10-18"}
+    base = json.dumps({"cells": {"s": cell}})
+    head_cell = {"verdict": "measured-ok"} if as_of == "drop" else {**cell, "as_of": as_of}
+    assert not gs._redated_matrix(base, json.dumps({"cells": {"s": head_cell}}))
+
+
+def test_a_version_that_spans_lines_is_not_a_release_edit():
+    broken = _bump(_PYPROJECT, new="99.0.0\nX")
+    assert not gs._bumped_pyproject(_PYPROJECT, broken)
+    assert not gs._bumped_lock(_LOCK, _bump_lock(_LOCK, new="99.0.0\nX"))
+
+
+def test_an_unparsable_matrix_is_not_a_release_edit():
+    assert not gs._redated_matrix("{", "{")
+
+
+def test_an_added_or_deleted_release_file_is_never_a_release_edit():
+    for status in ("A", "D"):
+        change = gs.Change("pyproject.toml", status)
+        files = {
+            ("base", "pyproject.toml"): _PYPROJECT,
+            ("head", "pyproject.toml"): _bump(_PYPROJECT),
+        }
+        assert not gs.release_owned(change, _reader(files), "base", "head")
+
+
+def test_a_whole_release_range_needs_only_live_lanes():
+    """The 0.17.0 shape: two matrix re-dates and the bump commit with its CHANGELOG."""
+    base_matrix = json.dumps({"cells": {"a": {"as_of": "2026-10-18"}}})
+    head_matrix = base_matrix.replace("18", "19")
+    files = {
+        ("base", "pyproject.toml"): _PYPROJECT,
+        ("head", "pyproject.toml"): _bump(_PYPROJECT),
+        ("base", "uv.lock"): _LOCK,
+        ("head", "uv.lock"): _bump_lock(_LOCK),
+        ("base", "CHANGELOG.md"): "# Changelog\n",
+        ("head", "CHANGELOG.md"): "# Changelog\n\n## [99.0.0]\n",
+        ("base", "schemas/support_matrix.json"): base_matrix,
+        ("head", "schemas/support_matrix.json"): head_matrix,
+        ("base", "schemas/kmodcov_matrix.json"): base_matrix,
+        ("head", "schemas/kmodcov_matrix.json"): head_matrix,
+    }
+    changes = [gs.Change(path, "M") for (rev, path) in files if rev == "head"]
+    tip = gs.commands(_scope(changes, files), tip=True, base="origin/main")
+    assert tip == ["make check-breaking", "make gate-fresh"]
+    assert all(gt.is_live(line) for line in tip)

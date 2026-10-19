@@ -459,7 +459,8 @@ def test_the_release_refreshes_the_kmodcov_matrix_before_it_builds_the_docs():
     assert "release-kmodcov-matrix" in stages, (
         f"the release no longer refreshes the kmodcov matrix; stages: {stages}"
     )
-    assert stages.index("release-kmodcov-matrix") < stages.index("docs"), (
+    last_docs = len(stages) - 1 - stages[::-1].index("docs")
+    assert stages.index("release-kmodcov-matrix") < last_docs, (
         f"the release must refresh the kmodcov matrix BEFORE building the docs that render it; "
         f"stages: {stages}"
     )

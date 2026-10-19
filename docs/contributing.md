@@ -337,8 +337,14 @@ the message subject:
 | `refactor:` | Code restructuring, no behavior change      |
 | `ci:`       | CI/CD configuration                         |
 
-A commit that removes, renames or moves a public name, or changes one in a
-way an existing caller, subclass or reader can observe, is a breaking change.
+A commit that removes, renames or moves a public name, or changes otto's
+user-facing behavior so that an existing user has to change something (a
+caller, a subclass, a script, a lab file), is a breaking change. Behavior a
+user does not have to act on is not breaking, even when it shows: a
+verdict that becomes more reliable, a run that takes a little longer, an
+internal budget or timeout. Neither is any change to maintainer tooling
+(`make` targets, `scripts/`, the gates, the hooks, CI), even one a
+maintainer must adapt to; say what changed in the commit body instead.
 A public name is any name in the `__all__` of a namespace declared in
 `api/public.toml`; {doc}`api/stability` says which those are. Mark it with
 `type(scope)!:` in the subject or a `BREAKING CHANGE:` footer (either is
@@ -543,6 +549,28 @@ a measured matrix ran against the pre-measurement matrix, at the tree that was
 stamped; CI runs it again at the committed one. The oracle's row for the
 matrices is what a measurement commit owes locally: the reader modules, through
 `make quick-guards` for the family modules and `make quick` for the rest.
+
+A release's own commits need no stamp. `make release` re-dates the two
+matrices and bumps the version in `pyproject.toml` and `uv.lock` after its
+test stages have passed on the tree before them, so those edits cannot change
+a test's outcome. The oracle recognises each one by its content, never by path
+alone (`RELEASE_OWNED` in `scripts/gate_scope.py`):
+
+- `pyproject.toml` must be the base file with exactly bump-my-version's
+  replacement applied (`version = "OLD"` to `version = "NEW"`, which also
+  moves `current_version`).
+- `uv.lock` may move only otto-sh's own `version` line.
+- A matrix may change only its `as_of` dates, each still a date.
+
+Such a change is classed `none` and adds no lane, so a pushed range made of
+nothing else needs only the live lanes (`CHANGELOG.md` is on the docs row,
+which is live too). Any other edit to these files, such as a dependency, a tool
+setting or a changed verdict, is classified as before.
+
+The exemption covers only those files. A commit on `main` that was not pushed
+before the release still owes its own lanes, and they must be stamped on the
+released tree: a stamp taken before the release names a different tree. So
+push your work first, then run `make release`.
 
 When the pre-push hook finds a stamped lane without a satisfying stamp it
 refuses and says which, as in:

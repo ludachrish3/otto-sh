@@ -17,7 +17,11 @@ The distribution name is `otto-sh`; the installed CLI command is `otto`.
 
 ## Cutting a release
 
-1. **Land all changes on `main`.** Releases are cut from a clean `main`.
+1. **Land all changes on `main` and push them.** Releases are cut from a
+   clean `main` that matches `origin/main`. The push gate excuses only the
+   release's own commits (step 3), so a commit left unpushed here would need
+   its lanes stamped again on the released tree before the push.
+   `release-preflight` refuses to start while any commit is unpushed.
    Commit messages should follow Conventional Commits so git-cliff can
    classify them in the changelog.
 
@@ -49,13 +53,34 @@ The distribution name is `otto-sh`; the installed CLI command is `otto`.
    [Repairing a missing mark](contributing.md#repairing-a-missing-mark)).
    `NEW_VERSION=` skips the first check and turns the second into a warning.
 
-   `make release` runs, in this order (after `clean-dist` and
-   `web-install`): the
-   **[coverage stamp](contributing.md#the-coverage-stamp)** check — when
-   HEAD's committed tree has no valid stamp it runs `make coverage` itself
-   and checks again, and a dirty tree, a non-primary venv or a command-line
-   variable other than `BUMP=`/`NEW_VERSION=` stops it at once — then the
-   Python static checks, `nox-release` (the
+   `make release` runs its cheap stages first, so a cheap failure costs
+   minutes rather than the hour the test stages take:
+
+   - The **[coverage stamp](contributing.md#the-coverage-stamp)** is checked
+     once, before anything is built, and the answer is kept for the coverage
+     stage. A dirty tree, a non-primary venv, or a command-line variable
+     other than `BUMP=`/`NEW_VERSION=`/`BUDGET_APPROVE=` stops the release
+     here.
+   - **`release-preflight`** refuses commits not yet pushed to the branch's
+     upstream (or a branch with no upstream) and names each one; push, then
+     run the release again. It also refuses untracked files under `docs/`, `src/`,
+     `tests/` and `schemas/` and names each one (an untracked file under
+     `src/` or a test root is usually refused one step earlier, by the
+     stamp check, in its own words; the remedy is the same). The release builds and
+     tests the primary checkout in place, so it would read them even though
+     no commit carries them, and neither CI nor `make gate-fresh` ever sees
+     them. Commit, ignore or move each one, then run the release again. The
+     preflight then clears the gitignored run output the release regenerates
+     anyway: `reports/*-observations`, `tests/project5/build`, and any
+     `src/otto/` directory left holding only `__pycache__` (it would import
+     as a namespace package). You can run `make release-preflight` by hand.
+   - `clean-dist`, `web-install`, a first **docs** build (its prerequisites
+     build the web assets, so a broken web build also surfaces here), the
+     Python static checks and `budget-delta`.
+
+   Then the coverage stage: when the stamp check found no valid stamp for
+   HEAD's committed tree, the release runs `make coverage` itself and checks
+   again — then `nox-release` (the
    **[tiered nox matrix](contributing.md#cross-version-testing-with-nox)**
    on the canary and the middle Pythons; the primary's session is what the
    stamp proves), the web build with the
@@ -64,7 +89,8 @@ The distribution name is `otto-sh`; the installed CLI command is `otto`.
    campaign (`release-campaign` — every lane the default gates exclude, once
    each; its contents are described under
    [the last two rows are the point](architecture/quality-gates.md#the-last-two-rows-are-the-point)),
-   and the docs; only then does it regenerate
+   and the docs again (this build renders the matrices the release just
+   re-measured, so it must come after them); only then does it regenerate
    `CHANGELOG.md` at the new version, bump the version in `pyproject.toml`
    and `uv.lock`, commit, tag `vX.Y.Z`, and build `dist/`. It needs the dev
    VM with the lab VMs and the Zephyr guests up and **exclusive use of the
@@ -72,13 +98,20 @@ The distribution name is `otto-sh`; the installed CLI command is `otto`.
    (the chaos lanes are not in it — they are on-demand only); a
    red lane anywhere stops the release before any version commit (the two
    matrix stages may already have committed a refreshed matrix; that commit
-   is correct and stays).
+   is correct and stays). Push it with `git push` before running the
+   release again, since `release-preflight` refuses unpushed commits; the
+   push gate asks no stamp for a matrix re-date (step 3).
 
 3. **Push the tag:**
 
    ```bash
    git push --follow-tags
    ```
+
+   The pre-push gate asks no stamp for the release's own commits (the matrix
+   re-dates and the version bump), as long as nothing else on `main` is
+   unpushed; see
+   [the landing's gate is stamped](contributing.md#the-landings-gate-is-stamped).
 
 ## What the tag push triggers
 
@@ -113,8 +146,9 @@ Pushing a `v*` tag fires [`.github/workflows/release.yml`](https://github.com/lu
 
 ### If the docs job fails
 
-`make release` builds the docs before it bumps the version, so a docs failure
-normally stops the release locally and no tag is ever cut. A failure on the
+`make release` builds the docs twice before it bumps the version (once among
+its first stages and once after the matrices), so a docs failure normally stops
+the release locally and no tag is ever cut. A failure on the
 runner therefore means an environment problem there (npm, apt, the Chromium
 install, a network blip), not broken documentation.
 

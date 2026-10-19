@@ -14,6 +14,8 @@ import argparse
 import ast
 import copy
 import fnmatch
+import json
+import re
 import subprocess
 import sys
 from collections.abc import Callable, Iterator
@@ -264,6 +266,101 @@ MEASURED_ROWS = {
 }
 """The bed and kmodcov lanes rewrite these with what they measured (the Makefile says review
 and commit the diff); the commit is a tests-leaf change over the readers, never a full gate."""
+
+_BUMP_CONFIG_VERSION = re.compile(r'^current_version = "([^"\n]+)"$', re.MULTILINE)
+_LOCK_VERSION = re.compile(r'^name = "otto-sh"\nversion = "([^"\n]+)"$', re.MULTILINE)
+_AS_OF_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+_A_DATE = object()
+"""Stands in for an ``as_of`` date, so two matrices compare equal across a re-date only."""
+
+
+def _bumped_pyproject(base: str, head: str) -> bool:
+    """Return whether *head* is *base* with exactly bump-my-version's pyproject edit applied.
+
+    ``[[tool.bumpversion.files]]`` replaces ``version = "{old}"`` with
+    ``version = "{new}"``, which also rewrites ``current_version``; this
+    repeats that replacement on *base* and requires every other byte to match.
+    Like bump-my-version's own search, it is unscoped: any other key whose
+    text ends in ``version = "{old}"`` moves with it, so a key of that shape
+    must not be added to ``pyproject.toml``.
+    """
+    old, new = _BUMP_CONFIG_VERSION.search(base), _BUMP_CONFIG_VERSION.search(head)
+    if old is None or new is None or old[1] == new[1]:
+        return False
+    return base.replace(f'version = "{old[1]}"', f'version = "{new[1]}"') == head
+
+
+def _bumped_lock(base: str, head: str) -> bool:
+    """Return whether *head* is *base* with only otto-sh's own lock version moved."""
+    old, new = _LOCK_VERSION.search(base), _LOCK_VERSION.search(head)
+    if old is None or new is None or old[1] == new[1]:
+        return False
+    entry = 'name = "otto-sh"\nversion = "{}"'
+    return base.replace(entry.format(old[1]), entry.format(new[1])) == head
+
+
+def _undated(value: object) -> object:
+    """Return *value* with each ``as_of`` that holds a date replaced by one placeholder.
+
+    Only a date is replaced: an ``as_of`` that is missing, ``null`` or not a
+    date stays as it is, so it compares unequal to a dated one.
+    """
+    if isinstance(value, dict):
+        return {
+            k: _A_DATE
+            if k == "as_of" and isinstance(v, str) and _AS_OF_DATE.fullmatch(v)
+            else _undated(v)
+            for k, v in value.items()
+        }
+    if isinstance(value, list):
+        return [_undated(v) for v in value]
+    return value
+
+
+def _redated_matrix(base: str, head: str) -> bool:
+    """Return whether *head* differs from *base* in nothing but ``as_of`` dates.
+
+    The two are compared as parsed JSON, so a change of key order or
+    whitespace alone also passes; the matrix readers parse it the same way.
+    """
+    try:
+        return _undated(json.loads(base)) == _undated(json.loads(head))
+    except ValueError:
+        return False
+
+
+RELEASE_OWNED: "dict[str, Callable[[str, str], bool]]" = {
+    "pyproject.toml": _bumped_pyproject,
+    "uv.lock": _bumped_lock,
+    "schemas/support_matrix.json": _redated_matrix,
+    "schemas/kmodcov_matrix.json": _redated_matrix,
+}
+"""The non-code edits a release makes, each recognised by its content, never by path alone.
+
+``make release`` re-dates the two matrices (``release-matrix``,
+``release-kmodcov-matrix``) and bumps the version in ``pyproject.toml`` and
+``uv.lock`` after its test stages have passed on the tree before them, so
+none of these edits can change a test's outcome. A change that passes its
+check is classed ``none``: it adds no lane and no stamp, and the push gate
+does not ask the release to re-run coverage for its own commits (#660). Any
+other change to these files (a dependency, a tool setting, a verdict) is
+classified as before.
+
+The checks read content, not who made the commit: a hand-made version-only
+edit passes too, and CI's locked sync and build catch a pyproject and lock
+that disagree. They exempt only these files: commits not yet pushed before
+the release still owe their own lanes on the released tree.
+"""
+
+
+def release_owned(change: Change, read: Reader, base_rev: str, head_rev: str) -> bool:
+    """Return whether *change* is one of :data:`RELEASE_OWNED`'s non-code release edits."""
+    check = RELEASE_OWNED.get(change.path)
+    if check is None or change.status != "M":
+        return False
+    base, head = read(base_rev, change.path), read(head_rev, change.path)
+    return base is not None and head is not None and check(base, head)
+
 
 _GATE_PIN_MODULES = frozenset({"scripts.gate_scope", "scripts.gate_tip"})
 
@@ -944,8 +1041,14 @@ def _route_measured(
 def classify(
     changes: "list[Change]", read: Reader, base_rev: str, head_rev: str, head_paths: "set[str]"
 ) -> Scope:
-    """Classify `changes` between `base_rev` and `head_rev`; `head_paths` are the files at head."""
-    classes: "set[str]" = set()
+    """Classify `changes` between `base_rev` and `head_rev`; `head_paths` are the files at head.
+
+    A release's own non-code edits (:data:`RELEASE_OWNED`) are classed ``none``
+    and take no further part.
+    """
+    kept = [c for c in changes if not release_owned(c, read, base_rev, head_rev)]
+    classes: "set[str]" = {NONE} if len(kept) < len(changes) else set()
+    changes = kept
     quick: "set[str]" = set()
     guards: "set[str]" = set()
     packages: "set[str]" = set()

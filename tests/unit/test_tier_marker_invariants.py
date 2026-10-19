@@ -2223,23 +2223,31 @@ def test_release_invokes_the_campaign_which_runs_every_excluded_lane_once():
 def test_the_release_campaign_runs_after_the_matrices_and_before_the_docs():
     """G13b: the matrices commit, so they follow the functional legs; the campaign holds the bed.
 
-    The docs render the matrices, so they come after both.
+    The docs render the matrices, so the LAST docs build comes after both
+    (an early one runs among the cheap first stages to fail fast, #660).
     """
     order = _make_invocations(_makefile_recipes()["release"])
+    last_docs = len(order) - 1 - order[::-1].index("docs")
     for earlier, later in (
         ("nox-release", "release-matrix"),
         ("validate-ts", "release-matrix"),
         ("release-matrix", "release-kmodcov-matrix"),
         ("release-kmodcov-matrix", "release-campaign"),
-        ("release-campaign", "docs"),
     ):
         assert order.index(earlier) < order.index(later), (
             f"{earlier} must precede {later}; stages: {order}"
         )
+    assert order.index("release-campaign") < last_docs, (
+        f"the final docs build must follow the campaign; stages: {order}"
+    )
 
 
 def test_the_release_trusts_the_coverage_stamp_and_runs_no_duplicate_stage():
-    """G13c: the stamp check comes first, its fallback is `coverage`, and three stages are gone.
+    """G13c: the stamp check's fallback is `coverage`, and three stages are gone.
+
+    #660 moved the cheap stages (docs, check-python, budget-delta) ahead of
+    the stamp check, so a cheap failure costs minutes; the stamp's refusals
+    (exit 2) still come first, from an earlier probe of the same check.
 
     #566 C2/C4: `nox` (whose 3.10 session repeated `make coverage`'s
     selection) is `nox-release` (3.11 to 3.14 only); `profile` (its 38 checks
@@ -2261,18 +2269,34 @@ def test_the_release_trusts_the_coverage_stamp_and_runs_no_duplicate_stage():
     # variable): `[ $$? -eq 1 ]` is then false and the release stops at
     # once; 1 (no or a mismatched stamp) runs `make coverage` and re-checks,
     # so a run the stamp withheld ends the chain there instead of releasing.
+    # #660: the check runs ONCE, first, and its status ($$stamp) is reused at
+    # the coverage stage; the cheap stages in between rebuild the web assets
+    # the stamp's digest covers, so a second first-check would never match.
+    first = (
+        r"\{ \$\(COVERAGE_STAMP\) check \$\(COVERAGE_STAMP_GATE\) \$\(COVERAGE_STAMP_OVERRIDES\) "
+        r">/dev/null 2>&1; stamp=\$\$\?; \[ \$\$stamp -ne 1 \] \|\| echo \"[^\"]+\"; "
+        r"\[ \$\$stamp -le 1 \] \|\| \$\(COVERAGE_STAMP\) check "
+        r"\$\(COVERAGE_STAMP_GATE\) \$\(COVERAGE_STAMP_OVERRIDES\) \|\| exit \$\$\?; \}"
+    )
+    assert re.search(first, release), (
+        "the release must check the stamp first, keep its status, and stop on anything but 0/1"
+    )
+    assert release.lstrip().startswith("@{ $(COVERAGE_STAMP) check"), (
+        "the stamp check must be the release's very first command"
+    )
     fallback = (
-        r"\( \$\(COVERAGE_STAMP\) check \$\(COVERAGE_STAMP_GATE\) \$\(COVERAGE_STAMP_OVERRIDES\) "
-        r"\|\| \{ \[ \$\$\? -eq 1 \] && \$\(MAKE\) coverage && \$\(COVERAGE_STAMP\) check "
-        r"\$\(COVERAGE_STAMP_GATE\) \$\(COVERAGE_STAMP_OVERRIDES\); \} \)"
+        r"\{ \[ \$\$stamp -eq 0 \] \|\| \{ \$\(MAKE\) coverage && \$\(COVERAGE_STAMP\) check "
+        r"\$\(COVERAGE_STAMP_GATE\) \$\(COVERAGE_STAMP_OVERRIDES\); \}; \}"
     )
     assert re.search(fallback, release), (
-        "the release must run `check || { [ $? -eq 1 ] && make coverage && check; }` — exit 2 "
-        "stops at once, and the second check is what refuses a run the stamp withheld"
+        "the coverage stage must run `[ stamp = 0 ] || { make coverage && check; }` — the "
+        "second check is what refuses a run the stamp withheld"
     )
     for earlier, later in (
-        ("coverage", "check-python"),
-        ("check-python", "nox-release"),
+        ("docs", "coverage"),
+        ("check-python", "coverage"),
+        ("budget-delta", "coverage"),
+        ("coverage", "nox-release"),
         ("nox-release", "web"),
         ("coverage", "release-matrix"),
     ):

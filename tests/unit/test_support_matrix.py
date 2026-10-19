@@ -4123,7 +4123,10 @@ def test_the_release_refreshes_the_matrix_before_it_builds_the_docs():
     assert "release-matrix" in stages, (
         f"the release no longer refreshes the support matrix; stages: {stages}"
     )
-    assert stages.index("release-matrix") < stages.index("docs"), (
+    # The LAST docs build: an early one runs before the test stages to fail fast,
+    # and only the final one is the release's published site.
+    last_docs = len(stages) - 1 - stages[::-1].index("docs")
+    assert stages.index("release-matrix") < last_docs, (
         f"the release must refresh the matrix BEFORE building the docs that render it; "
         f"stages: {stages}"
     )

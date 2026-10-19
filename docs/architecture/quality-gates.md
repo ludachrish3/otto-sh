@@ -305,9 +305,11 @@ The coverage lane's stamp records that every leg passed
 under the primary interpreter (3.10 — a venv
 rebuilt on another CPython is refused), at the declared threshold and
 selection, against the built web assets; `make release` checks that stamp
-first and, finding none for HEAD's tree (or one written under another patch
-release of the primary, other assets, or a different gate), runs `make coverage` itself
-before any test stage, and before any stage that commits — then checks again,
+first, before anything is built, and keeps the answer. Finding none for HEAD's
+tree (or one written under another patch release of the primary, other assets,
+or a different gate), it runs `make coverage` itself once its cheap stages
+(docs, the static checks, the budget delta) have passed — before any other test
+stage, and before any stage that commits — then checks again,
 so a run the stamp refused ends the release there. The release's own matrix,
 `make nox-release`, then runs the canary and the middle versions only: the
 primary's session was the selection the stamp already proves (it used to run

@@ -1,5 +1,6 @@
 """Pins for scripts/gate_tip.py — the landing's gate: lane stamps, the runner and the push check."""
 
+import dataclasses
 import fnmatch
 import functools
 import io
@@ -18,7 +19,8 @@ from scripts import gate_tip as gt
 from scripts.gate_stamp_common import tree_hash
 from tests._fixtures.gitrepo import git_env
 from tests._fixtures.paths import CHECKOUT_ROOT
-from tests.unit.scripts.test_gate_fresh import _published, _stamp_tip
+from tests.unit.scripts.test_gate_fresh import _bare, _commit_file, _published, _stamp_tip
+from tests.unit.scripts.test_gate_fresh import _repo as _fresh_repo
 from tests.unit.scripts.test_gate_scope import _head_paths
 from tests.unit.test_tier_marker_invariants import _makefile_recipes
 
@@ -1169,3 +1171,62 @@ class TestPushCheck:
         assert (
             capsys.readouterr().out == f"gate-tip: every stamped lane for {tip[:12]} is stamped\n"
         )
+
+
+@dataclasses.dataclass(frozen=True)
+class _Released:
+    repo: Path
+    remote_sha: str
+    tip: str
+
+
+class TestReleaseCommits:
+    """#660: a green `make release`'s own commits pass the push check with no stamp at all."""
+
+    _PYPROJECT = (
+        '[project]\nname = "otto-sh"\nversion = "1.0.0"\n\n'
+        '[tool.bumpversion]\ncurrent_version = "1.0.0"\n'
+    )
+    _LOCK = 'version = 1\n\n[[package]]\nname = "otto-sh"\nversion = "1.0.0"\n'
+
+    def _released(self, tmp_path, *, pyproject_extra: str = "") -> _Released:
+        """Publish a base, then add the release's three commits on top of it."""
+        repo = _fresh_repo(tmp_path)
+        files = {
+            "pyproject.toml": self._PYPROJECT,
+            "uv.lock": self._LOCK,
+            "CHANGELOG.md": "# Changelog\n",
+            "schemas/support_matrix.json": '{"cells": {"a": {"as_of": "2026-10-18"}}}\n',
+            "schemas/kmodcov_matrix.json": '{"cells": {"b": {"as_of": "2026-10-18"}}}\n',
+        }
+        for path, text in files.items():
+            (repo / path).parent.mkdir(parents=True, exist_ok=True)
+            (repo / path).write_text(text)
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "base")
+        remote_sha = _git(repo, "rev-parse", "HEAD").strip()
+        bare = _bare(tmp_path, "origin")
+        _git(repo, "remote", "add", "origin", str(bare))
+        _git(repo, "push", "-q", "origin", "HEAD:refs/heads/main")
+        for matrix in ("schemas/support_matrix.json", "schemas/kmodcov_matrix.json"):
+            _commit_file(
+                repo, matrix, files[matrix].replace("18", "19"), "chore(matrix): re-measure"
+            )
+        (repo / "pyproject.toml").write_text(
+            self._PYPROJECT.replace('version = "1.0.0"', 'version = "1.1.0"') + pyproject_extra
+        )
+        (repo / "uv.lock").write_text(self._LOCK.replace("1.0.0", "1.1.0"))
+        (repo / "CHANGELOG.md").write_text("# Changelog\n\n## [1.1.0]\n")
+        _git(repo, "commit", "-qam", "chore(release): bump version 1.0.0 -> 1.1.0")
+        return _Released(repo, remote_sha, _git(repo, "rev-parse", "HEAD").strip())
+
+    def test_the_release_s_own_commits_need_no_stamp(self, tmp_path):
+        r = self._released(tmp_path)
+        root = gt.stamps_root(r.repo, gt.STORE)
+        assert not root.exists() or not any(root.iterdir()), "the store must start empty"
+        assert gt.missing_stamps(r.repo, "origin", r.remote_sha, r.tip).missing == []
+
+    def test_a_bump_that_also_edits_another_pyproject_key_still_needs_the_full_gate(self, tmp_path):
+        r = self._released(tmp_path, pyproject_extra="allow_dirty = true\n")
+        lanes = [m.lane for m in gt.missing_stamps(r.repo, "origin", r.remote_sha, r.tip).missing]
+        assert "make coverage" in lanes
