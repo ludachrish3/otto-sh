@@ -23,10 +23,10 @@ from scripts import api_compat, api_records, api_regen
 from scripts.api_agreement import namespace_reports
 from scripts.api_manifest import load_manifest
 from tests._fixtures.gitrepo import git_env
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-_MODULE_PATH = PROJECT_ROOT / "scripts" / "api_snapshot.py"
-MANIFEST = PROJECT_ROOT / "api" / "public.toml"
+_MODULE_PATH = CHECKOUT_ROOT / "scripts" / "api_snapshot.py"
+MANIFEST = CHECKOUT_ROOT / "api" / "public.toml"
 
 
 def _load():
@@ -42,7 +42,7 @@ mod = _load()
 @pytest.fixture(scope="module")
 def live_dump() -> str:
     """The working tree's API dump, generated once for the module."""
-    generated = api_regen.generate_worktree(PROJECT_ROOT, MANIFEST)
+    generated = api_regen.generate_worktree(CHECKOUT_ROOT, MANIFEST)
     assert generated.text is not None, generated.refusals
     return generated.text
 
@@ -68,7 +68,7 @@ def test_the_dump_records_every_name_the_declaration_exports(live_dump):
     producer that dropped declared names is caught by name, not by a count.
     """
     names = sorted(load_manifest(MANIFEST))
-    assert mod.undumped_names(live_dump, namespace_reports(names, PROJECT_ROOT)) == []
+    assert mod.undumped_names(live_dump, namespace_reports(names, CHECKOUT_ROOT)) == []
 
 
 def _resolve(module: str, name: str) -> "str | None":
@@ -140,13 +140,13 @@ def _dump_of_an_edited_copy(tmp_path: Path, rel: str, anchors: "list[str]", old:
     """
     listed = subprocess.run(
         ["git", "ls-files", "-z", "--", "src"],
-        cwd=PROJECT_ROOT,
+        cwd=CHECKOUT_ROOT,
         env=git_env(tmp_path / "home"),  # hermetic per tests/_fixtures/gitrepo.py
         capture_output=True,
         check=True,
     ).stdout.decode("utf-8")
     for path in filter(None, listed.split("\0")):
-        source = PROJECT_ROOT / path
+        source = CHECKOUT_ROOT / path
         if source.is_file():
             (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, tmp_path / path)
@@ -363,7 +363,7 @@ def test_dump_update_refuses_a_dump_that_misses_a_declared_name(tmp_path, capsys
     from scripts import api_regen
 
     manifest, golden = _tls_manifest(tmp_path), tmp_path / "golden.txt"
-    real = api_regen.generate_worktree(PROJECT_ROOT, manifest)
+    real = api_regen.generate_worktree(CHECKOUT_ROOT, manifest)
     short = _without(real.text, "otto.tls:os_trust_session")
     monkeypatch.setattr(
         api_regen,
@@ -382,8 +382,8 @@ def test_a_complete_dump_misses_no_declared_name(tmp_path):
     from scripts import api_regen
     from scripts.api_agreement import namespace_reports
 
-    real = api_regen.generate_worktree(PROJECT_ROOT, _tls_manifest(tmp_path))
-    assert mod.undumped_names(real.text, namespace_reports(["otto.tls"], PROJECT_ROOT)) == []
+    real = api_regen.generate_worktree(CHECKOUT_ROOT, _tls_manifest(tmp_path))
+    assert mod.undumped_names(real.text, namespace_reports(["otto.tls"], CHECKOUT_ROOT)) == []
 
 
 def test_the_hash_seed_reaches_the_dump_child(tmp_path, monkeypatch):

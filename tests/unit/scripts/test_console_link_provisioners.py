@@ -17,7 +17,7 @@ import re
 
 import yaml
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 _TEST2_LAB_IP = "10.10.200.12"
 _LINK_PORT = 4102
@@ -39,7 +39,7 @@ def _unit(body: str, path: str) -> str:
 
 
 def _vagrantfile() -> str:
-    return (PROJECT_ROOT / "Vagrantfile").read_text()
+    return (CHECKOUT_ROOT / "Vagrantfile").read_text()
 
 
 def _helper_body(signature: str) -> str:

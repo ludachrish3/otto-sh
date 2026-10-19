@@ -44,7 +44,7 @@ import re
 
 import pytest
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
 
@@ -140,17 +140,17 @@ def coveragerc_show_contexts(text: str) -> bool:
 
 def test_the_html_report_shows_which_tests_covered_each_line() -> None:
     """`--cov-context=test` records the contexts; `show_contexts` renders them (owner decision)."""
-    assert coveragerc_show_contexts((PROJECT_ROOT / ".coveragerc").read_text())
+    assert coveragerc_show_contexts((CHECKOUT_ROOT / ".coveragerc").read_text())
     assert not coveragerc_show_contexts("[html]\ndirectory = x\n")
     assert not coveragerc_show_contexts("[html]\n; show_contexts = True\n")
     assert coveragerc_show_contexts("[run]\nbranch = true\n[html]\nshow_contexts = True\n[paths]\n")
-    assert "--cov-context=test" in (PROJECT_ROOT / "pyproject.toml").read_text(), (
+    assert "--cov-context=test" in (CHECKOUT_ROOT / "pyproject.toml").read_text(), (
         "the contexts the report shows are recorded by addopts"
     )
 
 
 def test_the_full_fold_floor_holds_at_its_codified_minimum() -> None:
-    value = makefile_threshold((PROJECT_ROOT / "Makefile").read_text(), "COVERAGE_THRESHOLD")
+    value = makefile_threshold((CHECKOUT_ROOT / "Makefile").read_text(), "COVERAGE_THRESHOLD")
     assert value >= _FULL_COVERAGE_FLOOR, (
         f"COVERAGE_THRESHOLD is {value}, below the codified {_FULL_COVERAGE_FLOOR}% floor for "
         f"the full fold. Lowering it is a decision: change _FULL_COVERAGE_FLOOR here, in the "
@@ -159,7 +159,7 @@ def test_the_full_fold_floor_holds_at_its_codified_minimum() -> None:
 
 
 def test_the_hostless_floor_holds_at_its_codified_minimum() -> None:
-    value = makefile_threshold((PROJECT_ROOT / "Makefile").read_text(), "CI_COVERAGE_THRESHOLD")
+    value = makefile_threshold((CHECKOUT_ROOT / "Makefile").read_text(), "CI_COVERAGE_THRESHOLD")
     assert value >= _HOSTLESS_COVERAGE_FLOOR, (
         f"CI_COVERAGE_THRESHOLD is {value}, below the codified {_HOSTLESS_COVERAGE_FLOOR}% floor "
         f"for the hostless selection CI runs. Lowering it is a decision: change "
@@ -175,8 +175,8 @@ def test_the_hostless_floor_is_one_number_in_both_build_files() -> None:
     pins their serial_timing halves). This pins the NUMBER only: a local
     hostless green must mean what a CI green means.
     """
-    make = makefile_threshold((PROJECT_ROOT / "Makefile").read_text(), "CI_COVERAGE_THRESHOLD")
-    nox = noxfile_hostless_serial_floor((PROJECT_ROOT / "noxfile.py").read_text())
+    make = makefile_threshold((CHECKOUT_ROOT / "Makefile").read_text(), "CI_COVERAGE_THRESHOLD")
+    nox = noxfile_hostless_serial_floor((CHECKOUT_ROOT / "noxfile.py").read_text())
     assert make == nox, (
         f"the hostless floor has drifted: Makefile CI_COVERAGE_THRESHOLD={make} but "
         f"noxfile HOSTLESS_SERIAL_ARGS gates at {nox}. CI runs the nox session and `make "
@@ -187,7 +187,7 @@ def test_the_hostless_floor_is_one_number_in_both_build_files() -> None:
 
 def test_the_makefile_still_gates_on_both_variables() -> None:
     """A floor nobody applies is a number, not a gate: each variable must reach a fail-under."""
-    live = _live_lines((PROJECT_ROOT / "Makefile").read_text())
+    live = _live_lines((CHECKOUT_ROOT / "Makefile").read_text())
     for name in ("COVERAGE_THRESHOLD", "CI_COVERAGE_THRESHOLD"):
         assert f"--cov-fail-under=$({name})" in live, (
             f"no Makefile recipe applies `--cov-fail-under=$({name})` — the floor is declared "
@@ -199,7 +199,7 @@ def test_the_floors_judge_branches_as_well_as_lines() -> None:
     """Every floor here was measured with branch tracking ON; without it the same
     tree reports a higher number while measuring less, and a floor set against
     the combined total would then pass on lines alone."""
-    assert coveragerc_branch((PROJECT_ROOT / ".coveragerc").read_text()), (
+    assert coveragerc_branch((CHECKOUT_ROOT / ".coveragerc").read_text()), (
         ".coveragerc [run] no longer sets `branch = true`: the coverage floors are "
         "combined line+branch numbers and would silently gate lines only"
     )
@@ -210,7 +210,7 @@ def test_the_floors_judge_branches_as_well_as_lines() -> None:
 
 def test_the_comparison_is_to_two_decimals_not_to_a_rounding() -> None:
     """``round(total, 0) >= 96`` accepts 95.50; the floor has to compare to its own number."""
-    assert coveragerc_precision((PROJECT_ROOT / ".coveragerc").read_text()) >= 2, (
+    assert coveragerc_precision((CHECKOUT_ROOT / ".coveragerc").read_text()) >= 2, (
         ".coveragerc [report] precision is below 2: --cov-fail-under compares round(total, "
         "precision), so precision 0 makes a floor of N enforce N-0.5"
     )
@@ -267,7 +267,7 @@ def test_the_primary_hostless_pair_carries_the_noxfile_s_only_floor() -> None:
     The hostless primary pair keeps CI's floor (the parallel twin's ``0``
     is the "judge the fold after the serial leg appends" idiom).
     """
-    text = (PROJECT_ROOT / "noxfile.py").read_text()
+    text = (CHECKOUT_ROOT / "noxfile.py").read_text()
     assert noxfile_floors(text) == {
         "HOSTLESS_TEST_ARGS": [0.0],
         "HOSTLESS_SERIAL_ARGS": [noxfile_hostless_serial_floor(text)],

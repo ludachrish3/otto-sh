@@ -235,7 +235,7 @@ def test_a_timeout_that_is_not_a_positive_number_is_refused_at_construction(bad)
 
 
 def _compiled(tmp_path, table, *, anchor=None):
-    """The ``[inventory]`` table prepared as a repo's settings file would declare it."""
+    """The ``[inventory]`` table prepared as a project's settings file would declare it."""
     return compile_inventory(
         InventoryConfigSpec.model_validate({"backend": "netbox", "cache_ttl": "0", **table}),
         anchor_dir=anchor or tmp_path,
@@ -253,14 +253,14 @@ def test_a_refused_timeout_names_the_settings_file_and_the_backend(tmp_path):
         construct_inventory(_compiled(tmp_path, {"url": DEAD, "timeout": 0}))
 
 
-def test_two_repos_declaring_one_table_build_identical_inventories(tmp_path):
-    # Nothing here interprets a path, so two repos declaring the same table
+def test_two_projects_declaring_one_table_build_identical_inventories(tmp_path):
+    # Nothing here interprets a path, so two projects declaring the same table
     # build an inventory identical in EVERY attribute — the whole `vars()`,
     # not a chosen pair, because `CompiledInventory.same_as` ignores
     # anchor_dir and an attribute that quietly remembered it would make two
-    # such repos disagree about an inventory they call the same.
-    a = construct_inventory(_compiled(tmp_path, {"url": DEAD}, anchor=tmp_path / "repo-a"))
-    b = construct_inventory(_compiled(tmp_path, {"url": DEAD}, anchor=tmp_path / "repo-b"))
+    # such projects disagree about an inventory they call the same.
+    a = construct_inventory(_compiled(tmp_path, {"url": DEAD}, anchor=tmp_path / "proj-a"))
+    b = construct_inventory(_compiled(tmp_path, {"url": DEAD}, anchor=tmp_path / "proj-b"))
     assert vars(a) == vars(b)
     assert not [v for v in vars(a).values() if isinstance(v, Path)]
 

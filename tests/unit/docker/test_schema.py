@@ -6,7 +6,7 @@ import pytest
 
 from otto.config.project import Project
 from otto.models.settings import DockerUseCaseSpec
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.project_scaffold import make_project
 
 _FILES = {"docker/Dockerfile": "FROM alpine\n", "docker/compose.yml": "services: {}\n"}
 
@@ -27,7 +27,7 @@ pass_env = ["EDGE_TAG"]
 
 
 def test_use_case_round_trip(tmp_path):
-    project = Project(root=make_sut_repo(tmp_path / "r", name="r", extra=_UC_TOML, files=_FILES))
+    project = Project(root=make_project(tmp_path / "r", name="r", extra=_UC_TOML, files=_FILES))
     (uc,) = project.docker_settings.use_cases
     assert uc.name == "integration"
     assert uc.composes == ("core",)
@@ -41,16 +41,16 @@ def test_use_case_round_trip(tmp_path):
 
 @pytest.mark.parametrize("line", ['role = "edge"', 'placement = { edge = "test3" }'])
 def test_a_settings_file_with_role_or_placement_is_refused_at_load(tmp_path, line):
-    """The old model's keys fail the repo load, never silently ignored."""
+    """The old model's keys fail the project load, never silently ignored."""
     toml = _UC_TOML.replace('provides = "edge"', f'{line}\nprovides = "edge"')
     assert line in toml
     with pytest.raises(Exception, match="is gone: a use-case deploys on one parent"):
-        Project(root=make_sut_repo(tmp_path / "r", name="r", extra=toml, files=_FILES))
+        Project(root=make_project(tmp_path / "r", name="r", extra=toml, files=_FILES))
 
 
 def test_compose_name_defaults_to_path_stem(tmp_path):
     toml = '[[docker.composes]]\npath = "docker/compose.yml"\nservices = ["api"]\n'
-    project = Project(root=make_sut_repo(tmp_path / "r", name="r", extra=toml, files=_FILES))
+    project = Project(root=make_project(tmp_path / "r", name="r", extra=toml, files=_FILES))
     (c,) = project.docker_settings.composes
     assert c.name == "compose"
 
@@ -61,7 +61,7 @@ def test_unknown_compose_handle_is_refused(tmp_path):
         '[[docker.use_cases]]\nname = "x"\ncomposes = ["nope"]\n'
     )
     with pytest.raises(Exception, match="unknown compose handle"):
-        Project(root=make_sut_repo(tmp_path / "r", name="r", extra=toml, files=_FILES))
+        Project(root=make_project(tmp_path / "r", name="r", extra=toml, files=_FILES))
 
 
 def test_duplicate_compose_names_refused(tmp_path):
@@ -70,7 +70,7 @@ def test_duplicate_compose_names_refused(tmp_path):
         '[[docker.composes]]\nname = "core"\npath = "docker/compose.yml"\nservices = ["b"]\n'
     )
     with pytest.raises(Exception, match="unique"):
-        Project(root=make_sut_repo(tmp_path / "r", name="r", extra=toml, files=_FILES))
+        Project(root=make_project(tmp_path / "r", name="r", extra=toml, files=_FILES))
 
 
 def test_compose_users_round_trip(tmp_path):
@@ -79,7 +79,7 @@ def test_compose_users_round_trip(tmp_path):
         'services = ["api", "db"]\n'
         'users = { db = "postgres", api = "1000:1000" }\n'
     )
-    project = Project(root=make_sut_repo(tmp_path / "r", name="r", extra=toml, files=_FILES))
+    project = Project(root=make_project(tmp_path / "r", name="r", extra=toml, files=_FILES))
     (c,) = project.docker_settings.composes
     assert c.users == (("api", "1000:1000"), ("db", "postgres"))
 
@@ -90,7 +90,7 @@ def test_compose_users_unknown_service_refused(tmp_path):
         'users = { db = "postgres" }\n'
     )
     with pytest.raises(Exception, match="users keys must name declared services"):
-        Project(root=make_sut_repo(tmp_path / "r", name="r", extra=toml, files=_FILES))
+        Project(root=make_project(tmp_path / "r", name="r", extra=toml, files=_FILES))
 
 
 @pytest.mark.parametrize("bad", ["", "a b", " root", "\troot", "a\tb"])
@@ -100,7 +100,7 @@ def test_compose_users_bad_form_refused(tmp_path, bad):
         f'users = {{ api = "{bad}" }}\n'
     )
     with pytest.raises(Exception, match="non-empty string with no whitespace"):
-        Project(root=make_sut_repo(tmp_path / "r", name="r", extra=toml, files=_FILES))
+        Project(root=make_project(tmp_path / "r", name="r", extra=toml, files=_FILES))
 
 
 @pytest.mark.parametrize("form", ["root", "1000", "1000:1000", "postgres:staff"])
@@ -109,7 +109,7 @@ def test_compose_users_forms_pass_verbatim(tmp_path, form):
         '[[docker.composes]]\npath = "docker/compose.yml"\nservices = ["api"]\n'
         f'users = {{ api = "{form}" }}\n'
     )
-    project = Project(root=make_sut_repo(tmp_path / "r", name="r", extra=toml, files=_FILES))
+    project = Project(root=make_project(tmp_path / "r", name="r", extra=toml, files=_FILES))
     (c,) = project.docker_settings.composes
     assert dict(c.users)["api"] == form
 
@@ -135,4 +135,4 @@ def test_default_host_is_refused(tmp_path):
         Exception,
         match=r"(?m)^docker\.composes\.0\.default_host\n\s+Extra inputs are not permitted",
     ):
-        Project(root=make_sut_repo(tmp_path / "r", name="r", extra=toml, files=_FILES))
+        Project(root=make_project(tmp_path / "r", name="r", extra=toml, files=_FILES))

@@ -29,11 +29,11 @@ from typing import NamedTuple
 
 import pytest
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
 
-_SRC = PROJECT_ROOT / "src" / "otto"
+_SRC = CHECKOUT_ROOT / "src" / "otto"
 _OUTERMOST_TUPLE = re.compile(r"^(tuple|Tuple)\[")
 _IGNORE = "# ast-grep-ignore: no-tuple-return"
 

@@ -20,11 +20,11 @@ from otto.docker import deployment as deploy_mod
 from otto.docker.build_verbs import compose_build
 from otto.docker.deployment import deploy
 
-from .test_deploy import _compose_file, _frag, _host, _install, _lab, _repo, _wire
+from .test_deploy import _compose_file, _frag, _host, _install, _lab, _project, _wire
 
 
 def _sub(tmp, name):
-    """A fresh subdirectory of *tmp* for a second repo's compose file."""
+    """A fresh subdirectory of *tmp* for a second project's compose file."""
     path = tmp / name
     path.mkdir()
     return path
@@ -47,21 +47,21 @@ def _alt3_host():
     return host
 
 
-def _two_repos(tmp):
+def _two_projects(tmp):
     return [
-        _repo("a", _frag(), composes=[_compose_file(tmp, "core")], images=("api",)),
-        _repo("b", _frag(), composes=[_compose_file(_sub(tmp, "b"), "core")], images=("db",)),
+        _project("a", _frag(), composes=[_compose_file(tmp, "core")], images=("api",)),
+        _project("b", _frag(), composes=[_compose_file(_sub(tmp, "b"), "core")], images=("db",)),
     ]
 
 
 LAYOUTS = {
     "only_host": lambda tmp: (
-        _two_repos(tmp),
+        _two_projects(tmp),
         [_wire(_host("test3", "10.10.200.13"))],
         {},
     ),
     "ranked": lambda tmp: (
-        _two_repos(tmp),
+        _two_projects(tmp),
         [
             _wire(_host("test3", "10.10.200.13")),
             _wire(_ranked("alt2", "10.10.200.22", 10)),
@@ -70,19 +70,19 @@ LAYOUTS = {
     ),
     "provider": lambda tmp: (
         [
-            _repo(
+            _project(
                 "real",
                 _frag(provides="db", priority=1),
                 composes=[_compose_file(tmp, "core")],
                 images=("db",),
             ),
-            _repo(
+            _project(
                 "mock",
                 _frag(provides="db", priority=0),
                 composes=[_compose_file(_sub(tmp, "m"), "core")],
                 images=("mockdb",),
             ),
-            _repo(
+            _project(
                 "app",
                 _frag(),
                 composes=[_compose_file(_sub(tmp, "app"), "core")],
@@ -96,7 +96,7 @@ LAYOUTS = {
         {"provide": {"db": "mock"}},
     ),
     "named_over_rank": lambda tmp: (
-        _two_repos(tmp),
+        _two_projects(tmp),
         [
             _wire(_host("test3", "10.10.200.13")),
             _wire(_ranked("alt2", "10.10.200.22", 10)),
@@ -104,7 +104,7 @@ LAYOUTS = {
         {"parent": "test3"},
     ),
     "named_other_lab": lambda tmp: (
-        _two_repos(tmp),
+        _two_projects(tmp),
         [
             _wire(_alt3_host()),
             _wire(_ranked("alt2", "10.10.200.22", 10)),

@@ -51,7 +51,7 @@ def test_product_is_unowned_until_ingest_stamps_it():
 @pytest.mark.asyncio
 async def test_get_logs_default_is_successful_noop(tmp_path):
     # Kills: an abstract get_logs, which would break every existing Product
-    # subclass in every repo at import time — _DummyShellProduct declares only
+    # subclass in every project at import time — _DummyShellProduct declares only
     # the four abstract verbs that predate the hook.
     #
     # The exact status, not `is_ok`: `Status.Skipped.is_ok` is True, so a

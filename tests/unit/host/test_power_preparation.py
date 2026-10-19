@@ -220,13 +220,13 @@ def test_a_summary_keeps_a_host_whose_controller_is_registered_and_records_the_d
     tmp_path,
 ):
     """Review Focus 5."""
-    register_power_controller("t-repo", config=_SecretConfig, factory=_recording_factory)
-    project = _lab(tmp_path, {"type": "t-repo", "password": 1})
+    register_power_controller("t-project", config=_SecretConfig, factory=_recording_factory)
+    project = _lab(tmp_path, {"type": "t-project", "password": 1})
     assert {s.id for s in project.list_host_summaries()} == {"p"}
-    POWER_CONTROLLERS.unregister("t-repo")
+    POWER_CONTROLLERS.unregister("t-project")
     with collecting_drops() as drops:
         assert project.list_host_summaries() == []
-    assert any("t-repo" in d.reason for d in drops)
+    assert any("t-project" in d.reason for d in drops)
 
 
 _COPY_SECRET = "COPY-SECRET-SENTINEL"

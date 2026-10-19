@@ -14,9 +14,9 @@ from pathlib import Path
 import pytest
 
 from otto.models import formats
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-DATA = PROJECT_ROOT / "web" / "src" / "data"
+DATA = CHECKOUT_ROOT / "web" / "src" / "data"
 
 
 def _ts_list(ts: Path, name: str) -> list:

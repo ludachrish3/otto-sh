@@ -1,4 +1,4 @@
-"""Only otto/monitor/live.py reads the run's lab, repos and tunnels.
+"""Only otto/monitor/live.py reads the run's lab, projects and tunnels.
 
 ``otto.monitor.live`` was a tach module of its own, so tach kept
 ``otto.config``, ``otto.context`` and ``otto.tunnel`` out of the rest of the
@@ -14,7 +14,7 @@ lab and its hosts) is ``otto.fleet`` (spec 2026-10-11 placement-and-phases
 §3.9), banned by module, and the lab facade ``otto.lab`` is banned by package,
 so a file that reached either the fleet or the facade fails. The lab model and
 its loader live in ``otto.labs.loader`` (§3.7), banned by module: the rest of
-``otto.labs`` is the lab sources, which read no run. The run's repos are read
+``otto.labs`` is the lab sources, which read no run. The run's projects are read
 from ``otto.declared`` (``current_projects``, §3.9), banned by module too: nothing
 else under ``otto/monitor`` reads the composed state or the declared entries.
 
@@ -65,12 +65,12 @@ from pathlib import Path
 
 import pytest
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 from tests.unit.test_dynamic_import_audit import strings_in
 
 pytestmark = pytest.mark.interpreter_agnostic
 
-SRC = PROJECT_ROOT / "src"
+SRC = CHECKOUT_ROOT / "src"
 MONITOR = SRC / "otto" / "monitor"
 RUNNER = MONITOR / "live.py"
 FACADE = MONITOR / "__init__.py"
@@ -181,7 +181,7 @@ def test_only_the_runner_reads_the_lab() -> None:
         )
     ]
     assert not found, (
-        "these monitor files import the run's lab, repos or tunnels, or the lab-aware runner; "
+        "these monitor files import the run's lab, projects or tunnels, or the lab-aware runner; "
         "only otto/monitor/live.py may. Hand the value in from live.py instead:\n  "
         + "\n  ".join(found)
     )

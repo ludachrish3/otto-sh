@@ -24,14 +24,14 @@ from playwright.sync_api import Locator, Page
 
 from tests._fixtures._dashboard_harness import DashboardHarness
 from tests._fixtures._fake_collector import FakeCollector
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = [
     pytest.mark.hostless,
     pytest.mark.browser,
 ]
 
-FIXTURES = PROJECT_ROOT / "web" / "fixtures"
+FIXTURES = CHECKOUT_ROOT / "web" / "fixtures"
 
 
 def _import_fixture(page: Page, name: str) -> None:

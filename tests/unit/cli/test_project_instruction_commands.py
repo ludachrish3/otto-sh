@@ -6,16 +6,16 @@
 every declared body's options class, and whose body forwards to
 :func:`otto.project.orchestrator.run_project_instruction`. This file covers the
 derivation (what ``INSTRUCTIONS`` holds), the merge (whose flags land on the
-command, and what a cross-repo field collision does), the dispatch (every flag
+command, and what a cross-project field collision does), the dispatch (every flag
 reaching the orchestrator as an options instance), ``status``' rendering and its
 three exit codes, and the ``otto defaults`` panel.
 
 Otto's six are declared when ``otto.project.actions`` loads, which this module
 imports, and the root conftest fills their table again after each test's
 restore; the ``registered`` fixture only says a test relies on them.
-The flag set is only known once every repo's init has spoken, so bootstrap
+The flag set is only known once every project's init has spoken, so bootstrap
 checks the merged options (``check_project_instruction_options``) AFTER the
-repo loop.
+project loop.
 
 THE ORCHESTRATOR IS PATCHED AT ``orchestrator.<name>``, never at
 ``otto.project.<name>``: :data:`otto.project.orchestrator._ENTRIES` resolves the
@@ -83,8 +83,8 @@ from tests._fixtures.bootstrap_seam import (
     seed_scope_verdicts,
 )
 from tests._fixtures.dispatch import DispatchRunner
-from tests._fixtures.fake_repo import fake_repo
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.fake_project import fake_project
+from tests._fixtures.project_scaffold import make_project
 
 SIX = ["install", "uninstall", "cleanup", "get-logs", "install-tools", "status"]
 
@@ -158,9 +158,9 @@ def test_the_six_are_derived(registered):
         assert name in INSTRUCTIONS, name
         entry = INSTRUCTIONS.get(name)
         assert entry.module == ACTIONS_MODULE
-        # No owning repo whoever declared a body: the dispatch gate refuses an
+        # No owning project whoever declared a body: the dispatch gate refuses an
         # instruction whose OWNER is inactive, and a project instruction has a
-        # body per repo rather than one owner.
+        # body per project rather than one owner.
         assert INSTRUCTIONS.project(name) is None
     assert frozenset(SIX) == FIRST_PARTY_INSTRUCTIONS
 
@@ -168,10 +168,10 @@ def test_the_six_are_derived(registered):
 def test_the_registered_set_is_exactly_the_declared_set(registered):
     """No drift between the frozenset the guard reads and what the tables derive.
 
-    The guard refuses a repo instruction by NAME, from
+    The guard refuses a project instruction by NAME, from
     ``FIRST_PARTY_INSTRUCTIONS`` — a name in that set with no instruction
-    behind it forbids a repo a name otto never took, and an instruction absent
-    from it is one a repo can still shadow.
+    behind it forbids a project a name otto never took, and an instruction absent
+    from it is one a project can still shadow.
     """
     registered_here = {
         name for name, entry in INSTRUCTIONS.items() if entry.module == ACTIONS_MODULE
@@ -182,7 +182,7 @@ def test_the_registered_set_is_exactly_the_declared_set(registered):
 # ── Collision policy ─────────────────────────────────────────────────────────
 
 
-def test_repo_defining_a_first_party_name_fails_loud_with_migration_message():
+def test_project_defining_a_first_party_name_fails_loud_with_migration_message():
     # THE collision policy: fail loud, point at ProjectActions. Kills silent
     # shadowing (the CLI/fixture split-brain the design exists to prevent).
     with registering_project("acme"), pytest.raises(ValueError, match="project instruction"):
@@ -205,7 +205,7 @@ def test_the_refusal_beats_the_registry_and_leaves_ottos_entry_intact(registered
     assert INSTRUCTIONS.get("cleanup").module == ACTIONS_MODULE
 
 
-def test_repo_instruction_with_novel_name_is_unaffected():
+def test_project_instruction_with_novel_name_is_unaffected():
     with registering_project("acme"):
 
         @instruction()
@@ -217,15 +217,15 @@ def test_repo_instruction_with_novel_name_is_unaffected():
 # ── Bootstrap wiring ─────────────────────────────────────────────────────────
 
 
-def test_bootstrap_declares_the_bodies_before_any_repo_init_and_checks_after(
+def test_bootstrap_declares_the_bodies_before_any_project_init_and_checks_after(
     tmp_path, monkeypatch, purge_tmp_imports
 ):
     """Phase 2 declares otto's BODIES first and checks the merged OPTIONS last.
 
-    The two halves are ordered against opposite ends of the repo loop and both
+    The two halves are ordered against opposite ends of the project loop and both
     orderings are load-bearing. ``otto.project.actions.declare`` runs first, so
-    every repo's actions class is checked against otto's own; the options check
-    comes last, because a repo's override is what ADDS flags to the merged
+    every project's actions class is checked against otto's own; the options check
+    comes last, because a project's override is what ADDS flags to the merged
     command and a check taken before the loop would check the union of nothing.
 
     Observed as the CALLS, each read off its module when the root calls it, so a
@@ -251,7 +251,7 @@ def test_bootstrap_declares_the_bodies_before_any_repo_init_and_checks_after(
     def _check_spy() -> None:
         seen.append("<check>")
 
-    project = make_sut_repo(
+    project = make_project(
         tmp_path / "acme",
         name="acme",
         extra='libs = ["lib"]\ninit = ["acme_order_init"]\n',
@@ -271,7 +271,7 @@ def test_bootstrap_declares_the_bodies_before_any_repo_init_and_checks_after(
     assert seen == ["<declare>", "acme_init", "<check>"]
 
 
-def test_a_repos_collision_reaches_the_user_as_a_framed_error_not_a_crash(
+def test_a_projects_collision_reaches_the_user_as_a_framed_error_not_a_crash(
     tmp_path, monkeypatch, registered
 ):
     """END TO END: the guard's ValueError is CONTAINED, and its advice survives.
@@ -285,9 +285,9 @@ def test_a_repos_collision_reaches_the_user_as_a_framed_error_not_a_crash(
     not exist.
 
     Kills a framing that drops the cause (``failed to load acme_init`` with no
-    reason, which is the shape a caller reads when the repo is skipped), and
+    reason, which is the shape a caller reads when the project is skipped), and
     kills a containment seam that lets this one through and bricks the process
-    over a repo naming its instruction badly.
+    over a project naming its instruction badly.
     """
     from otto import bootstrap as bs
     from otto.bootstrap import BootstrapError
@@ -295,7 +295,7 @@ def test_a_repos_collision_reaches_the_user_as_a_framed_error_not_a_crash(
     # A MODULE NAME OF ITS OWN: init modules are imported by bare name into the
     # one process-wide sys.modules, so reusing another test's name here would
     # hand this bootstrap that test's already-cached module and import nothing.
-    project = make_sut_repo(
+    project = make_project(
         tmp_path / "acme",
         name="acme",
         extra='libs = ["lib"]\ninit = ["acme_collision_init"]\n',
@@ -321,7 +321,7 @@ def test_a_repos_collision_reaches_the_user_as_a_framed_error_not_a_crash(
     # …and the guard's whole point survives it: WHERE to put the override.
     assert "ProjectActions" in str(err)
     assert "docs/cli/run/defaults.md" in str(err)
-    # otto keeps the name; the repo did not shadow it on the way past.
+    # otto keeps the name; the project did not shadow it on the way past.
     assert INSTRUCTIONS.get("install").module == ACTIONS_MODULE
 
 
@@ -455,10 +455,10 @@ def test_a_skipped_result_renders_as_success():
 
 
 def _state_rows(out: str) -> dict[str, str]:
-    """Parse the status table into ``{repo: state}``, one entry per printed row.
+    """Parse the status table into ``{project: state}``, one entry per printed row.
 
     The table is ``project_name`` then the state, so the FIRST token names the
-    repo and the rest is its state ("partially installed" is two words).
+    project and the rest is its state ("partially installed" is two words).
     """
     rows = {}
     for line in out.splitlines():
@@ -504,7 +504,7 @@ def test_the_status_answer_reaches_the_process_exit_code(monkeypatch, registered
 
 
 @pytest.mark.asyncio
-async def test_status_prints_every_repos_state(monkeypatch, registered, capsys):
+async def test_status_prints_every_projects_state(monkeypatch, registered, capsys):
     report = ProjectStatus(
         overall=InstallState.PARTIAL,
         projects={"acme": InstallState.INSTALLED, "widgets": InstallState.UNINSTALLED},
@@ -514,9 +514,9 @@ async def test_status_prints_every_repos_state(monkeypatch, registered, capsys):
     answer = await _run("status")
 
     # ROW-WISE, because "installed" is a SUBSTRING of "uninstalled": a renderer
-    # that printed every repo as uninstalled — or as installed — satisfies both
+    # that printed every project as uninstalled — or as installed — satisfies both
     # bare `in out` checks, and this table exists precisely to tell the two
-    # apart per repo. Pairing each name with its own cell is the only form that
+    # apart per project. Pairing each name with its own cell is the only form that
     # can fail. Kills a row built from the wrong side of the mapping, a state
     # column read off the aggregate, and the substring accident itself.
     assert _state_rows(capsys.readouterr().out) == {
@@ -558,8 +558,8 @@ def _row_line(out: str, name: str) -> str:
     """The one line of the CLEANLINESS section whose NAME column is *name*.
 
     Sliced from the first section heading down, because the install table
-    prints first and names the same repos: a parser over the whole output finds
-    two lines for one repo and cannot say which axis it just read. Matched
+    prints first and names the same projects: a parser over the whole output finds
+    two lines for one project and cannot say which axis it just read. Matched
     line-wise within that slice for the reason the install table's own parser
     is -- "clean" is a substring of the summary line below it, so a renderer
     that painted every row alike satisfies a bare ``in out`` check and fails
@@ -657,7 +657,7 @@ async def test_status_full_prints_a_row_per_thing_and_heads_each_section_once(
 
     # Row-wise, because "clean" is a substring of nothing here by luck alone:
     # a renderer reading the state off the report's AGGREGATE would paint both
-    # repo rows the same and still contain both words somewhere.
+    # project rows the same and still contain both words somewhere.
     assert "clean" in _row_line(out, "acme")
     assert "dirty" in _row_line(out, "widgets")
     assert out.count("products & dev tools") == 1  # heading on the row the kind changes
@@ -732,7 +732,7 @@ async def test_status_full_does_not_read_a_device_message_as_markup(
     assert detail in _row_line(capsys.readouterr().out, "core")
 
 
-# ── status: the repos this run does not apply to ─────────────────────────────
+# ── status: the projects this run does not apply to ─────────────────────────────
 
 
 def _cells(line: str) -> list[str]:
@@ -745,7 +745,7 @@ def _fleet_line(out: str, name: str) -> str:
 
     Sliced between its own heading and the first cleanliness heading, for the
     reason ``_row_line`` is sliced: the install table above names the same
-    repos, so a parser over the whole output finds two lines for one repo and
+    projects, so a parser over the whole output finds two lines for one project and
     cannot say which of them it just read.
     """
     lines = out.splitlines()
@@ -756,14 +756,14 @@ def _fleet_line(out: str, name: str) -> str:
 
 
 @pytest.mark.asyncio
-async def test_status_prints_a_not_applicable_row_for_the_repo_the_walks_skipped(
+async def test_status_prints_a_not_applicable_row_for_the_project_the_walks_skipped(
     monkeypatch, registered, capsys
 ):
-    """A repo no loaded lab applies to gets a row that SAYS SO (D3).
+    """A project no loaded lab applies to gets a row that SAYS SO (D3).
 
     Whole-cell equality, never ``in``: "applicable" is a substring of "not
     applicable" exactly as "installed" is of "uninstalled", so a renderer that
-    painted every scoped-out repo as in-scope — or every in-scope repo as
+    painted every scoped-out project as in-scope — or every in-scope project as
     skipped — passes a containment check and fails the only question the row
     is asked. The labs are IN the cell because "not applicable" without them
     reads as a bug in otto rather than as the wrong ``-l``.
@@ -799,12 +799,12 @@ async def test_status_prints_a_not_applicable_row_for_the_repo_the_walks_skipped
 
 
 @pytest.mark.asyncio
-async def test_status_prints_a_no_matching_hosts_row_for_the_host_starved_repo(
+async def test_status_prints_a_no_matching_hosts_row_for_the_host_starved_project(
     monkeypatch, registered, capsys
 ):
     """The OTHER skipped shape gets the OTHER text — the axis that actually failed.
 
-    This repo's labs DO apply; its ``host_patterns`` match nothing in them. The
+    This project's labs DO apply; its ``host_patterns`` match nothing in them. The
     "not applicable (labs: ...)" cell would be a lie here and would send the
     reader to change ``-l``. Whole-cell equality for the reason its twin uses
     it: one text printed for both conditions passes every containment check.
@@ -840,8 +840,8 @@ async def test_status_prints_a_no_matching_hosts_row_for_the_host_starved_repo(
 
 
 @pytest.mark.asyncio
-async def test_status_full_lists_each_repos_labs_and_hosts(monkeypatch, registered, capsys):
-    """``--full`` shows the fleet each repo actually resolved, cell for cell.
+async def test_status_full_lists_each_projects_labs_and_hosts(monkeypatch, registered, capsys):
+    """``--full`` shows the fleet each project actually resolved, cell for cell.
 
     Cells rather than substrings, because the two lab columns are prefixes of
     each other in the commonest lab: a section that printed the LOADED labs
@@ -881,11 +881,11 @@ async def test_status_full_prints_no_section_for_an_empty_scoping_mapping(
     A RENDERER-LEVEL pin, and the title says which emptiness it is about. An
     empty ``scoping`` means nothing was RESOLVED — a library context, an
     unavailable bootstrap — and it is the only input that reaches the early
-    return. It is emphatically NOT the whole-lab fallback: an undeclared repo
+    return. It is emphatically NOT the whole-lab fallback: an undeclared project
     still gets a verdict, so a lab where nobody wrote ``[project]`` arrives
-    here with a row per repo and prints one. This test used to claim it proved
+    here with a row per project and prints one. This test used to claim it proved
     that fallback case, while wiring the empty mapping by hand — pinning its
-    own premise. ``test_status_full_renders_a_row_per_repo_on_an_undeclared_lab``
+    own premise. ``test_status_full_renders_a_row_per_project_on_an_undeclared_lab``
     asks the real pipeline instead.
     """
     _wire_status(monkeypatch, InstallState.INSTALLED, {"acme": InstallState.INSTALLED})
@@ -896,21 +896,21 @@ async def test_status_full_prints_no_section_for_an_empty_scoping_mapping(
 
 
 @pytest.mark.asyncio
-async def test_status_full_renders_a_row_per_repo_on_an_undeclared_lab(
+async def test_status_full_renders_a_row_per_project_on_an_undeclared_lab(
     monkeypatch, registered, capsys
 ):
-    """The whole-lab fallback still gets a fleet-of-interest row per repo.
+    """The whole-lab fallback still gets a fleet-of-interest row per project.
 
     THE PIPELINE, NOT A HAND-WIRED REPORT. Every other test in this section
     hands the renderer a ``ProjectStatus`` it built itself, which can only ever
     prove what the renderer does with an input someone chose. The question here
     is which inputs ``orchestrator.status()`` actually PRODUCES, and the answer
-    for a lab where no repo declared ``[project]`` is a verdict per repo — the
+    for a lab where no project declared ``[project]`` is a verdict per project — the
     fallback resolves to "applies to every loaded lab, targets every host",
     which is a fact about the run and not an absence of one. So the section
     renders, and each row names the whole lab.
 
-    ``_counts`` is stubbed False so no repo is asked for an install state:
+    ``_counts`` is stubbed False so no project is asked for an install state:
     that keeps the test on the one thing it is about (what ``scoping`` gets
     filled with) instead of dragging in fleet walks that would need hosts.
     ``_lab`` is stubbed with a context carrying REAL verdicts from
@@ -919,15 +919,15 @@ async def test_status_full_renders_a_row_per_repo_on_an_undeclared_lab(
 
     Cell equality, matching this section's other assertions: a renderer that
     printed the applicable labs where the universe belongs, or "(none)" for a
-    fallback repo, passes any containment check.
+    fallback project, passes any containment check.
     """
     import types
 
     from otto.config.scope import resolve_scopes
 
     projects = [
-        fake_repo("acme", root="/repos/acme", project_scope=None),
-        fake_repo("widgets", root="/repos/widgets", project_scope=None),
+        fake_project("acme", root="/projects/acme", project_scope=None),
+        fake_project("widgets", root="/projects/widgets", project_scope=None),
     ]
     hosts = {
         "h0": types.SimpleNamespace(source_lab="bench"),
@@ -938,10 +938,10 @@ async def test_status_full_renders_a_row_per_repo_on_an_undeclared_lab(
     # defaults them: this lab is decided by declarations alone.
     ctx = OttoContext(lab=Lab(name="t"), bootstrap=fake_bootstrap_result(projects))
     seed_scope_verdicts(ctx, resolve_scopes(projects, ["bench", "floor"], hosts))
-    monkeypatch.setattr(ctx, "for_project", lambda name: types.SimpleNamespace(_repo=name))
+    monkeypatch.setattr(ctx, "for_project", lambda name: types.SimpleNamespace(_project=name))
 
     monkeypatch.setattr(orchestrator, "_lab", lambda: (ctx, projects))
-    # The scoping rows cover every parsed repo, read from the composition root.
+    # The scoping rows cover every parsed project, read from the composition root.
     patch_bootstrap(monkeypatch, projects)
     monkeypatch.setattr(orchestrator, "_counts", lambda actions: False)
     monkeypatch.setattr(orchestrator, "cleanliness", _Recorder(_report()))
@@ -964,12 +964,12 @@ async def test_status_full_renders_a_row_per_repo_on_an_undeclared_lab(
 
 
 @pytest.mark.asyncio
-async def test_status_full_renders_both_rows_for_a_host_starved_repo(
+async def test_status_full_renders_both_rows_for_a_host_starved_project(
     monkeypatch, registered, capsys
 ):
     """THE PIPELINE, not a hand-built report: real verdicts, real ``status()``, real cells.
 
-    The regression this pins crashed ``status()`` outright — a declared repo
+    The regression this pins crashed ``status()`` outright — a declared project
     whose labs apply while its ``host_patterns`` match nothing raised out of its
     own fleet walk — so the pin has to come from
     :func:`~otto.project.orchestrator.status` over verdicts
@@ -978,7 +978,7 @@ async def test_status_full_renders_both_rows_for_a_host_starved_repo(
     this kind of divergence once already (056b1032).
 
     BOTH surfaces, because they answer different questions: the status table
-    says why the repo has no state, and ``--full``'s fleet-of-interest row says
+    says why the project has no state, and ``--full``'s fleet-of-interest row says
     what it resolved to (its labs DO apply; the host column is empty). Cell
     equality throughout.
     """
@@ -988,10 +988,10 @@ async def test_status_full_renders_both_rows_for_a_host_starved_repo(
     from otto.config.scope import ProjectScopeConfig, resolve_scopes
 
     projects = [
-        fake_repo("acme", root="/repos/acme", project_scope=None),
-        fake_repo(
+        fake_project("acme", root="/projects/acme", project_scope=None),
+        fake_project(
             "widgets",
-            root="/repos/widgets",
+            root="/projects/widgets",
             project_scope=ProjectScopeConfig([_re.compile("bench")], [_re.compile("sensor-.*")]),
         ),
     ]
@@ -1004,10 +1004,10 @@ async def test_status_full_renders_both_rows_for_a_host_starved_repo(
     # defaults them: this lab is decided by declarations alone.
     ctx = OttoContext(lab=Lab(name="t"), bootstrap=fake_bootstrap_result(projects))
     seed_scope_verdicts(ctx, resolve_scopes(projects, ["bench", "floor"], hosts))
-    monkeypatch.setattr(ctx, "for_project", lambda name: types.SimpleNamespace(_repo=name))
+    monkeypatch.setattr(ctx, "for_project", lambda name: types.SimpleNamespace(_project=name))
 
     monkeypatch.setattr(orchestrator, "_lab", lambda: (ctx, projects))
-    # The scoping rows cover every parsed repo, read from the composition root.
+    # The scoping rows cover every parsed project, read from the composition root.
     patch_bootstrap(monkeypatch, projects)
     monkeypatch.setattr(orchestrator, "_counts", lambda actions: False)
     monkeypatch.setattr(orchestrator, "cleanliness", _Recorder(_report()))
@@ -1018,7 +1018,7 @@ async def test_status_full_renders_both_rows_for_a_host_starved_repo(
     assert "fleet of interest" in out
     assert _cells(_fleet_line(out, "widgets")) == ["widgets", "labs: bench", "hosts: (none)"]
     # The status table is everything ABOVE the fleet-of-interest heading: both
-    # sections print a row per repo, so a parser over the whole output finds
+    # sections print a row per project, so a parser over the whole output finds
     # two lines for `widgets` and cannot say which one it just read.
     lines = out.splitlines()
     heading = next(i for i, line in enumerate(lines) if line.startswith("fleet of interest"))
@@ -1028,7 +1028,7 @@ async def test_status_full_renders_both_rows_for_a_host_starved_repo(
 
 @pytest.mark.asyncio
 async def test_bare_status_prints_no_fleet_of_interest_section(monkeypatch, registered, capsys):
-    """The scoping detail is ``--full``'s, so a plain status stays one line per repo."""
+    """The scoping detail is ``--full``'s, so a plain status stays one line per project."""
     _wire_status(
         monkeypatch,
         InstallState.INSTALLED,
@@ -1077,7 +1077,7 @@ def test_no_panel_when_otto_registered_nothing(monkeypatch):
     assert first_party_instructions_panel() is None
 
 
-def test_list_instructions_shows_the_defaults_with_no_repos_configured(registered):
+def test_list_instructions_shows_the_defaults_with_no_projects_configured(registered):
     from unittest.mock import patch
 
     with patch("otto.declared.get_projects", return_value=[]):
@@ -1088,8 +1088,8 @@ def test_list_instructions_shows_the_defaults_with_no_repos_configured(registere
     assert "install-tools" in result.output
 
 
-class _PanelRepo:
-    """Repo double for the listing: contributes one panel with a known title."""
+class _PanelProject:
+    """Project double for the listing: contributes one panel with a known title."""
 
     def __init__(self, title: str) -> None:
         self.title = title
@@ -1101,29 +1101,33 @@ class _PanelRepo:
         return Panel(Text("• deploy"), title=Text(self.title), expand=True)
 
 
-def test_list_instructions_puts_the_defaults_ahead_of_the_repo_panels(registered):
-    """The ``otto defaults`` panel is the FIRST column, before every repo's.
+def test_list_instructions_puts_the_defaults_ahead_of_the_project_panels(registered):
+    """The ``otto defaults`` panel is the FIRST column, before every project's.
 
     ORDERING NEEDS A REPO TO BE AHEAD OF. With ``get_projects`` patched to ``[]``
     the panel list has one element, so ``insert(0, …)`` and ``append(…)`` are
-    the same program — and "ahead of the repos" is asserted by a test that
-    configured no repos. Kills the append, which is the natural edit (the
+    the same program — and "ahead of the projects" is asserted by a test that
+    configured no projects. Kills the append, which is the natural edit (the
     first-party panel is built last) and which buries the six verbs every lab
-    has behind however many repos the lab happens to configure.
+    has behind however many projects the lab happens to configure.
 
     The panels are columns of a single-row table, so both titles land on the
     same output line and their column order IS their character order there.
     """
     from unittest.mock import patch
 
-    projects = [_PanelRepo("first-repo 1.0"), _PanelRepo("second-repo 1.0")]
+    projects = [_PanelProject("first-project 1.0"), _PanelProject("second-project 1.0")]
     with patch("otto.declared.get_projects", return_value=projects):
         result = runner.invoke(run_app, ["--list-instructions"])
 
     assert result.exit_code == 0, result.output
     (titles,) = [ln for ln in result.output.splitlines() if "otto defaults" in ln]
-    assert "first-repo" in titles, "the repo panels share the title line with otto's"
-    assert titles.index("otto defaults") < titles.index("first-repo") < titles.index("second-repo")
+    assert "first-project" in titles, "the project panels share the title line with otto's"
+    assert (
+        titles.index("otto defaults")
+        < titles.index("first-project")
+        < titles.index("second-project")
+    )
 
 
 # ── The merge: one command, every body's flags ───────────────────────────────
@@ -1131,20 +1135,20 @@ def test_list_instructions_puts_the_defaults_ahead_of_the_repo_panels(registered
 
 @options
 class _Shared:
-    """A base two repos can agree on: one declaring class, so one flag."""
+    """A base two projects can agree on: one declaring class, so one flag."""
 
     lab_env: Annotated[str, typer.Option(help="Lab environment name.")] = "bench"
 
 
 @options
 class _DeployOptions:
-    """A repo-added instruction's own flags."""
+    """A project-added instruction's own flags."""
 
     target: Annotated[str, typer.Option(help="Where to deploy.")] = "bench"
 
 
 class TestMergedFlags:
-    def test_a_repos_fields_join_the_first_party_flags(self, registered) -> None:
+    def test_a_projects_fields_join_the_first_party_flags(self, registered) -> None:
         @options
         class WidgetInstall(InstallOptions):
             variant: Annotated[str, typer.Option(help="Firmware variant.")] = "field"
@@ -1164,10 +1168,10 @@ class TestMergedFlags:
         assert "--recover-partial" in out
         assert "--variant" in out
 
-    def test_two_repos_sharing_a_base_get_one_flag(self, registered) -> None:
+    def test_two_projects_sharing_a_base_get_one_flag(self, registered) -> None:
         """One BASE CLASS, one flag — identity of the declaring class decides.
 
-        Two repos that agree on a field by inheriting it from one class are
+        Two projects that agree on a field by inheriting it from one class are
         describing one flag; merging by NAME instead would either refuse this
         (the collision below) or silently keep whichever copy came first.
         """
@@ -1203,10 +1207,10 @@ class TestMergedFlags:
         params = merged_option_params(PROJECT_INSTRUCTIONS.get("install"))
         assert [p.name for p in params].count("lab_env") == 1
 
-    def test_two_repos_each_declaring_the_same_field_collide_loud(self, registered) -> None:
+    def test_two_projects_each_declaring_the_same_field_collide_loud(self, registered) -> None:
         """The same NAME from two classes is two flags, and otto refuses to guess.
 
-        Silently keeping the first would hand repo ``b``'s body repo ``a``'s
+        Silently keeping the first would hand project ``b``'s body project ``a``'s
         value — a flag that reads as its own and is not — so the publish fails
         and the message says how to share one.
         """
@@ -1245,11 +1249,11 @@ class TestMergedFlags:
         assert "project 'b'" in message
         assert "share one base class" in message
 
-    def test_a_repo_added_instruction_is_published_under_its_module(self, registered) -> None:
+    def test_a_project_added_instruction_is_published_under_its_module(self, registered) -> None:
         """A name otto never declared is derived too, attributed to ITS declarer.
 
         ``module`` is what ``--list-instructions`` attributes panels by, so a
-        repo's own project instruction has to carry the repo's module or it
+        project's own project instruction has to carry the project's module or it
         lands in otto's panel.
         """
         with registering_project("widget"):
@@ -1258,7 +1262,7 @@ class TestMergedFlags:
             class Widget(ProjectActions):
                 @instruction(options=_DeployOptions)
                 async def deploy(self, opts: _DeployOptions) -> Result:
-                    """Deploy this repo's firmware."""
+                    """Deploy this project's firmware."""
                     return Result(Status.Success, value=opts.target)
 
         entry = INSTRUCTIONS.get("deploy")
@@ -1286,9 +1290,9 @@ class TestMergedFlags:
         assert {o["name"] for o in serialised} >= {"ensure", "recover_partial"}
 
     def test_the_published_help_is_the_lab_wide_summary(self, registered) -> None:
-        """`--help` describes the command, which walks EVERY repo.
+        """`--help` describes the command, which walks EVERY project.
 
-        The bodies' docstrings are per-repo ("this repo's products"), so the
+        The bodies' docstrings are per-project ("this project's products"), so the
         published summary comes from each declaration's ``help=`` instead --
         and ``status`` keeps the exit-code contract a script branches on, which
         no other surface states.
@@ -1299,10 +1303,10 @@ class TestMergedFlags:
         assert "every project" in install
         assert "exit 0" in status
 
-    def test_a_hand_built_entry_under_a_repo_s_project_name_is_refused(self, registered) -> None:
-        """The table refuses a standalone entry under a repo's own project instruction.
+    def test_a_hand_built_entry_under_a_project_s_project_name_is_refused(self, registered) -> None:
+        """The table refuses a standalone entry under a project's own project instruction.
 
-        A repo declares ``deploy`` on its actions class and hand-registers an
+        A project declares ``deploy`` on its actions class and hand-registers an
         ``InstructionEntry`` under the same name: the one table check refuses
         it at registration, whatever module either came from.
         """
@@ -1312,7 +1316,7 @@ class TestMergedFlags:
             class Widget(ProjectActions):
                 @instruction(options=_DeployOptions, help="Deploy the lab's firmware.")
                 async def deploy(self, opts: _DeployOptions) -> Result:
-                    """Deploy this repo's firmware."""
+                    """Deploy this project's firmware."""
                     return Result(Status.Success, value=opts.target)
 
         entry = InstructionEntry(name="deploy", module=Widget.__module__, handler=_noop)
@@ -1332,11 +1336,11 @@ class TestMergedFlags:
     def test_a_hand_built_first_party_entry_is_refused(self, registered) -> None:
         """A standalone entry under one of otto's names is refused at registration.
 
-        From a repo's init import it is the guard's ProjectActions advice; from
+        From a project's init import it is the guard's ProjectActions advice; from
         anywhere else, the table's clash. Either way otto's command stays.
         """
-        entry = InstructionEntry(name="install", module="repo.init", handler=_noop)
-        with registering_project("repo"), pytest.raises(ValueError, match="ProjectActions"):
+        entry = InstructionEntry(name="install", module="project.init", handler=_noop)
+        with registering_project("project"), pytest.raises(ValueError, match="ProjectActions"):
             STANDALONE_INSTRUCTIONS.register("install", entry)
         with pytest.raises(ProjectInstructionError, match="rename one of them"):
             STANDALONE_INSTRUCTIONS.register("install", entry)
@@ -1421,7 +1425,7 @@ class TestProjectInstructionOwnOptionValidation:
 
     Regression: ``bind_verb_options`` only validates the classes registered
     for the ``run`` verb; a body's own options class is built later, walked
-    per repo by ``orchestrator._run_bodies``/``project_instruction_body_options``.
+    per project by ``orchestrator._run_bodies``/``project_instruction_body_options``.
     Before this fix the leaf called the body-options walk only under ``--dry-run``,
     so a bad value in a body's own class raised the untranslated
     ``OptionsValidationError`` straight through to ``main``'s generic
@@ -1433,7 +1437,7 @@ class TestProjectInstructionOwnOptionValidation:
     """
 
     def _register_guarded_install(self) -> type:
-        """Give ``install`` a repo-owned body whose own class rejects ``minimum < 1``."""
+        """Give ``install`` a project-owned body whose own class rejects ``minimum < 1``."""
 
         @options
         class GuardedInstall(InstallOptions):
@@ -1453,23 +1457,23 @@ class TestProjectInstructionOwnOptionValidation:
 
         return GuardedInstall
 
-    def _wire_one_repo(self, monkeypatch) -> None:
-        """Make ``guarded`` a walked repo: undeclared, so it is always kept (§6).
+    def _wire_one_project(self, monkeypatch) -> None:
+        """Make ``guarded`` a walked project: undeclared, so it is always kept (§6).
 
-        The patch feeds the run's repos, and with them the orchestrator's walk
+        The patch feeds the run's projects, and with them the orchestrator's walk
         order (``ctx.ordered_projects``).
         ``project_scope=None`` is the documented undeclared shape
         (:func:`otto.config.scope._lab_applies`) -- the whole-lab fallback,
         never a narrowing -- so whatever verdicts the context resolves, this
-        repo's walk is never narrowed away.
+        project's walk is never narrowed away.
         """
         patch_bootstrap(
-            monkeypatch, [fake_repo("guarded", project_scope=None, root="/tmp/guarded")]
+            monkeypatch, [fake_project("guarded", project_scope=None, root="/tmp/guarded")]
         )
 
     def test_a_bad_own_option_exits_2_on_a_real_run(self, monkeypatch, registered) -> None:
         self._register_guarded_install()
-        self._wire_one_repo(monkeypatch)
+        self._wire_one_project(monkeypatch)
 
         result = dispatch.invoke(run_app, ["install", "--minimum", "0"], async_leaves=True)
         assert result.exit_code == 2, result.output
@@ -1479,7 +1483,7 @@ class TestProjectInstructionOwnOptionValidation:
         from tests.conftest import active_context
 
         self._register_guarded_install()
-        self._wire_one_repo(monkeypatch)
+        self._wire_one_project(monkeypatch)
 
         with active_context(dry_run=True):
             result = dispatch.invoke(run_app, ["install", "--minimum", "0"], async_leaves=True)
@@ -1487,14 +1491,14 @@ class TestProjectInstructionOwnOptionValidation:
         assert "minimum must be >= 1" in result.stderr
 
 
-# ── One dispatch, one announcement per skipped repo ──────────────────────────
+# ── One dispatch, one announcement per skipped project ──────────────────────────
 
 
 def _wire_widget_lab(monkeypatch, seen: list, names=("widget", "dormant")) -> None:
-    """A lab of *names* whose ``widget`` repo carries a recording ``install`` body.
+    """A lab of *names* whose ``widget`` project carries a recording ``install`` body.
 
     The body appends the context it ran under to *seen* and touches no host.
-    Every repo is undeclared (``project_scope=None``, the whole-lab fallback),
+    Every project is undeclared (``project_scope=None``, the whole-lab fallback),
     so a switch is the only thing that drops one: a test passes
     ``exclude_projects=("dormant",)`` to make the walk announce a skip.
     Needs the ``registered`` fixture first; this republishes over it.
@@ -1510,12 +1514,12 @@ def _wire_widget_lab(monkeypatch, seen: list, names=("widget", "dormant")) -> No
                 seen.append(try_get_context())
                 return Result(Status.Success)
 
-    projects = [fake_repo(n, project_scope=None, root=f"/tmp/{n}") for n in names]
+    projects = [fake_project(n, project_scope=None, root=f"/tmp/{n}") for n in names]
     patch_bootstrap(monkeypatch, projects)
 
 
 def _install_skips(caplog) -> list[str]:
-    """Every captured line announcing a repo skipped for ``install``."""
+    """Every captured line announcing a project skipped for ``install``."""
     return [r.getMessage() for r in caplog.records if "skipping it for install" in r.getMessage()]
 
 
@@ -1525,10 +1529,10 @@ class TestTheOptionsWalkAnnouncesNothing:
     Both dispatch routes walk the bodies twice -- once to validate every
     applicable body's own options before any runs, once to run them -- and
     the warnings belong to the walk that acts. Announcing from both printed
-    every skipped repo twice.
+    every skipped project twice.
     """
 
-    def test_the_cli_leaf_announces_a_skipped_repo_once(
+    def test_the_cli_leaf_announces_a_skipped_project_once(
         self, monkeypatch, registered, caplog
     ) -> None:
         from tests.conftest import active_context
@@ -1545,7 +1549,7 @@ class TestTheOptionsWalkAnnouncesNothing:
         assert len(seen) == 1, "the widget body did not run exactly once"
         assert len(_install_skips(caplog)) == 1, _install_skips(caplog)
 
-    def test_a_dry_run_still_announces_a_skipped_repo(
+    def test_a_dry_run_still_announces_a_skipped_project(
         self, monkeypatch, registered, caplog
     ) -> None:
         """Under ``--dry-run`` the options walk is the only walk, so it speaks."""
@@ -1564,7 +1568,7 @@ class TestTheOptionsWalkAnnouncesNothing:
         assert len(_install_skips(caplog)) == 1, _install_skips(caplog)
 
     @pytest.mark.asyncio
-    async def test_run_instruction_announces_a_skipped_repo_once(
+    async def test_run_instruction_announces_a_skipped_project_once(
         self, monkeypatch, registered, caplog
     ) -> None:
         seen: list = []
@@ -1582,7 +1586,7 @@ class TestTheOptionsWalkAnnouncesNothing:
 async def test_run_instruction_runs_a_first_party_body_through_the_real_orchestrator(
     monkeypatch, registered
 ) -> None:
-    """No orchestrator double: the published walk reaches the repo's body.
+    """No orchestrator double: the published walk reaches the project's body.
 
     The body runs under the context ``run_instruction`` installed, which is
     the one the caller passed -- the same ambient context ``otto run install``

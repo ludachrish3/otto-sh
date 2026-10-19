@@ -961,7 +961,7 @@ class TestMonitorSessionsEndpoint:
     async def test_live_mode_with_no_session_returns_404(self) -> None:
         """A live server built without frame/lab has no session to serve.
 
-        Both in-repo consumers that build a bare ``DashboardHarness``/
+        Both in-tree consumers that build a bare ``DashboardHarness``/
         ``MonitorServer`` (``shell_dash`` in the dashboard e2e conftest, and
         ``scripts/capture_docs_media.py``) get exactly this: the default
         ``mode="live"`` with ``frame=None``/``lab=None``. Before this fix, that

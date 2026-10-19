@@ -2,7 +2,7 @@
 
 ``tests/e2e/conftest.py`` enforces the exactly-one-primary-resource-marker rule.
 It originally raised ``pytest.UsageError`` from ``pytest_collection_modifyitems``,
-which under this repo's default ``-n auto`` is an xdist **controller crash**, not
+which under this repository's default ``-n auto`` is an xdist **controller crash**, not
 a clean failure: any exception from a hook that fires after a worker's
 ``pytest_sessionstart`` — which every collection-time hook does — kills the
 controller with an ``INTERNALERROR`` (``AssertionError`` / ``RuntimeError`` in
@@ -41,7 +41,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._fixtures.paths import PROJECT_ROOT, TESTS_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT, TESTS_ROOT
 
 pytestmark = pytest.mark.hostless
 
@@ -64,7 +64,7 @@ def test_mistagged():
 
 # Registers the marker axes the copied conftest works with, nothing else: the
 # probe session must stay inert (no addopts, no plugins beyond what the args
-# pass) so the behaviour under test is the conftest's, not this repo's config.
+# pass) so the behaviour under test is the conftest's, not this repository's config.
 PROBE_INI = """\
 [pytest]
 markers =
@@ -78,7 +78,7 @@ markers =
 
 # `-p no:tach`: in a venv that carries the lint group, tach's pytest11 plugin
 # auto-loads and its Rust Ctrl-C handler panics on repeated in-tree sessions
-# (issue #193) — same guard the repo addopts and the e2e child env use.
+# (issue #193) — same guard the repository's addopts and the e2e child env use.
 INNER_ARGS = ("-p", "no:tach", "-p", "no:cacheprovider")
 
 
@@ -86,7 +86,7 @@ INNER_ARGS = ("-p", "no:tach", "-p", "no:cacheprovider")
 def probe_tree(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A throwaway pytest rootdir holding the real e2e conftest + one mistagged test."""
     # The inner session must not inherit the outer one's env-based config: no
-    # repo addopts, no live pytest-cov subprocess hooks writing into the outer
+    # repository addopts, no live pytest-cov subprocess hooks writing into the outer
     # datafile, no stale xdist worker identity.
     monkeypatch.delenv("PYTEST_ADDOPTS", raising=False)
     for var in (
@@ -100,8 +100,8 @@ def probe_tree(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> Pa
     ):
         monkeypatch.delenv(var, raising=False)
     # The copied conftest does `from tests._ambient_env import ambient`; the
-    # subprocess resolves that against the real repo root.
-    monkeypatch.setenv("PYTHONPATH", str(PROJECT_ROOT))
+    # subprocess resolves that against the real checkout root.
+    monkeypatch.setenv("PYTHONPATH", str(CHECKOUT_ROOT))
 
     pytester.makeini(PROBE_INI)
     probe = pytester.path / "e2eprobe"

@@ -26,21 +26,21 @@ from otto.logger.mode import LogMode
 
 # Private, but the lab tooling's — and already imported this way by
 # tests/unit/scripts/test_lab_health.py. Reused so the hop-id index and the
-# password-SSH invocation exist once for the whole repo.
+# password-SSH invocation exist once for the whole repository.
 from scripts.lab_health import _hop_index, _load_hosts, _run_ssh, _ssh_user_pass
 from tests._fixtures._console_lock import console_access
 from tests._fixtures.fd_watermark import fd_watermark_bracket
 from tests._fixtures.labdata import lab_data_path
 
-# Make repo1's custom Zephyr 2.7 dialect resolvable by the storage factory.
+# Make project1's custom Zephyr 2.7 dialect resolvable by the storage factory.
 #
 # The embedded integration tests build hosts via ``create_host_from_dict``
 # directly (the raw factory path), which — unlike a full ``otto`` config load —
-# does not import the SUT repo's init modules, so the ``"zephyr-inline"`` frame
+# does not import the project's init modules, so the ``"zephyr-inline"`` frame
 # the 2.7 lab entries declare would be unregistered. Register it here by
 # importing the shared ``custom_hosts`` module (the third-party-style package
-# SUT repos depend on for this frame), adding its dir to the path the way
-# ``Repo.add_libs_to_pythonpath`` does at config-load time.
+# projects depend on for this frame), adding its dir to the path the way
+# ``Project.add_libs_to_pythonpath`` does at config-load time.
 from tests._fixtures.paths import ensure_custom_hosts_on_path
 from tests._fixtures.run_state import preserved_run_state
 from tests.conftest import (
@@ -304,7 +304,7 @@ def _guest_console_tail(backend: str) -> str:
     side both present identically, as "shell never became ready".
 
     Queries the ``zephyr-qemu-*`` units as a glob rather than resolving this
-    backend's own unit: no backend-to-unit mapping exists in this repo, and
+    backend's own unit: no backend-to-unit mapping exists in this repository, and
     inventing one here would be a second place to keep in sync with the bed.
     Each line carries its own unit in the syslog identifier, so the tail stays
     attributable without one — and a wedge whose cause is a *neighbour* board

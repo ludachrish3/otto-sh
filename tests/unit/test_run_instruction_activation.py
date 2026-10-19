@@ -1,4 +1,4 @@
-"""``otto.run_instruction`` refuses an inactive repo's instruction before running anything."""
+"""``otto.run_instruction`` refuses an inactive project's instruction before running anything."""
 
 import pytest
 
@@ -38,14 +38,14 @@ def ran() -> "list[str]":
     return calls
 
 
-async def test_an_excluded_repos_instruction_is_refused_and_never_runs(ran):
+async def test_an_excluded_projects_instruction_is_refused_and_never_runs(ran):
     with pytest.raises(InstructionInactiveError) as exc:
         await run_instruction(_ctx(exclude=("acme",)), "blink")
     assert exc.value.reason == "excluded"
     assert ran == []
 
 
-async def test_the_same_instruction_runs_when_its_repo_is_active(ran):
+async def test_the_same_instruction_runs_when_its_project_is_active(ran):
     assert await run_instruction(_ctx(), "blink") == "blinked"
     assert ran == ["blink"]
 

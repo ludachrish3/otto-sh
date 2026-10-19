@@ -26,11 +26,11 @@ import shlex
 import pytest
 import yaml
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
 
-WORKFLOWS = PROJECT_ROOT / ".github" / "workflows"
+WORKFLOWS = CHECKOUT_ROOT / ".github" / "workflows"
 
 # `uv run` options that take a value, so the value is not mistaken for the
 # command being run. Only the ones the workflows use need to be here: an
@@ -40,7 +40,7 @@ _VALUED_OPTIONS = {"--group", "--python", "--with", "--extra"}
 
 
 def _floor() -> str:
-    return (PROJECT_ROOT / ".python-versions").read_text().split()[0]
+    return (CHECKOUT_ROOT / ".python-versions").read_text().split()[0]
 
 
 def _unquote(word: str) -> str:

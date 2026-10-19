@@ -89,7 +89,7 @@ def spy() -> Spy:
 def table() -> "BackendRegistry[dict, object, None]":
     t = _backends()
     _from_module(
-        "repo.init",
+        "project.init",
         t.register,
         "thing",
         configured_backend(config=SpyConfig, factory=_built, metadata=None),
@@ -190,7 +190,7 @@ def _stage_error(stage: str, spy: Spy) -> SeamConstructionError:
 
     def register(name, overwrite=False, **kw):
         entry = configured_backend(metadata=None, **kw)
-        _from_module("repo.init", t.register, name, entry, overwrite=overwrite)
+        _from_module("project.init", t.register, name, entry, overwrite=overwrite)
 
     def boom(c):
         raise RuntimeError("factory exploded")
@@ -230,7 +230,7 @@ def test_each_stage_names_itself_the_origin_and_the_backend(stage, spy):
     if stage == "lookup":
         assert "'unknown'" in text and "not registered" in text  # noqa: PT018
     else:
-        assert "registered by repo.init" in text
+        assert "registered by project.init" in text
     if stage != "stale preparation":
         assert error.__cause__ is not None
 
@@ -243,7 +243,7 @@ def test_a_prepare_source_is_named_in_parse_and_construction_errors(spy):
         raise RuntimeError("factory exploded")
 
     _from_module(
-        "repo.init",
+        "project.init",
         t.register,
         "b",
         configured_backend(config=SpyConfig, factory=boom, metadata=None),
@@ -251,11 +251,11 @@ def test_a_prepare_source_is_named_in_parse_and_construction_errors(spy):
     source = "/r/.otto/settings.toml"
     with pytest.raises(SeamConstructionError) as err:
         t.prepare("b", {"token": "x"}, {"spy": spy}, source=source)
-    assert "repo.init" in str(err.value) and source in str(err.value)  # noqa: PT018
+    assert "project.init" in str(err.value) and source in str(err.value)  # noqa: PT018
     prepared = t.prepare("b", {}, {"spy": spy}, source=source)
     with pytest.raises(SeamConstructionError) as err:
         t.build(prepared)
-    assert "repo.init" in str(err.value) and source in str(err.value)  # noqa: PT018
+    assert "project.init" in str(err.value) and source in str(err.value)  # noqa: PT018
     with pytest.raises(SeamConstructionError) as err:
         t.build(t.prepare("b", {}, {"spy": spy}))
     assert "configured in" not in str(err.value)

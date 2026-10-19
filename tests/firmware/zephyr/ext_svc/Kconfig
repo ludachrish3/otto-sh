@@ -8,7 +8,7 @@
 # Deliberately NOT here: any gcov
 # runtime — otto applications that want coverage ship their own
 # instrumentation and emission in the extension (Approach A,
-# tests/repo3/docs/feasibility.md), keeping the base product-agnostic.
+# tests/project3/docs/feasibility.md), keeping the base product-agnostic.
 
 menuconfig OTTO_EXT_SVC
 	bool "otto LLEXT extension-service helpers"

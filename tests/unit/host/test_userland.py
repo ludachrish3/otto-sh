@@ -829,7 +829,7 @@ def test_is_settled_refuses_a_name_it_does_not_resolve():
     """A typo must be loud, because the quiet answer is the dangerous one.
 
     ``is_settled("base64flag")`` answering False forever is a caller's refusal
-    that can never fire -- this repo's most common defect, delivered by a
+    that can never fire -- this repository's most common defect, delivered by a
     missing underscore.
     """
     userland = Userland(UserlandOptions(), _Runner())
@@ -1232,7 +1232,7 @@ async def test_a_probe_whose_grant_is_spent_is_abandoned_not_awaited(monkeypatch
     sleep against a threshold, so nothing here reads a clock and no load can
     reorder the outcome: ``asyncio.wait_for`` with a non-positive timeout
     abandons a coroutine that is not already finished, so the runner is never
-    reached at all. Verified on every interpreter this repo supports — 3.10,
+    reached at all. Verified on every interpreter this repository supports — 3.10,
     3.11, 3.12, 3.13 and 3.14 all raise ``TimeoutError`` with the callee
     untouched. Recorded because the dependency is real, not because it is
     silent: were that special case ever dropped, the runner would simply be
@@ -1629,7 +1629,7 @@ async def test_a_transport_blip_never_becomes_a_measurement(caplog):
 
     THE SCENARIO, on a perfectly healthy GNU/sudo host: the very first probe
     hits a refused exec channel — an sshd at its ``MaxSessions`` ceiling
-    refuses rather than queues, which this repo has already paid for once —
+    refuses rather than queues, which this repository has already paid for once —
     and every later probe succeeds. The su arm then answers yes, because a
     sudo host has ``su`` too.
 
@@ -1795,7 +1795,7 @@ def test_every_probed_applet_has_a_declarable_field_and_no_field_is_orphaned():
     on the first resolution against any host. A field with no list entry is the
     quieter one: a maintainer writes it into ``lab.json``, the boundary accepts
     it because the field exists, and nothing ever reads it -- a declaration
-    that silently does nothing, which is this repo's most common defect wearing
+    that silently does nothing, which is this repository's most common defect wearing
     a config file.
 
     The prefix is written out here, once, because that is the only way to ask

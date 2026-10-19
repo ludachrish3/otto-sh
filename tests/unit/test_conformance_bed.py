@@ -44,7 +44,7 @@ from tests._fixtures.labdata import (
     host_data,
     write_lab_json,
 )
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 from tests._fixtures.profiles import (
     Cell,
     HostAxes,
@@ -868,7 +868,7 @@ async def test_a_hopped_cell_with_no_context_cannot_resolve_its_hop_at_all(monke
 
     The absence of a context is INJECTED rather than inherited: whether one
     happens to be installed when this test starts depends on what else the
-    session ran (``make coverage`` puts the whole repo in one process, and
+    session ran (``make coverage`` puts the whole suite in one process, and
     the root conftest's ``_reset_otto_context`` restores rather than clears).
     A test that inherited ``None`` would assert nothing on the run where a
     context WAS installed, and would not say so. And the context alone is not
@@ -1071,14 +1071,6 @@ def test_a_hop_target_whose_host_id_is_not_its_element_is_refused(monkeypatch, t
 # needed for -- which is all of it: the classification is a function of the
 # space, and the lock is a function of the kernel.
 
-# PRE-EXISTING G9 VIOLATION, FIXED IN PASSING: this was
-# `Path(__file__).resolve().parents[2]`, which `make lint-arch`'s
-# `no-parents-arithmetic-in-tests` rule rejects -- a parents[N] count encodes
-# the file's own depth, so moving this file re-anchors every subprocess cwd
-# below it in silence. `tests/_fixtures/paths.py` is the one sanctioned place
-# that derives the anchor.
-_PROJECT_ROOT = PROJECT_ROOT
-
 # The hermetic venue's `local` cell, by the substring that selects exactly its
 # items and nothing else. `busybox-artifact[busybox-1.16.1:local:local]`
 # contains `local:local` but not `local:local:local`, which is why the triple
@@ -1197,7 +1189,7 @@ def _run_conformance(tmp_path, *, shape: str, breakage: str):
     )
     return subprocess.run(
         args,
-        cwd=str(_PROJECT_ROOT),
+        cwd=str(CHECKOUT_ROOT),
         env={
             **os.environ,
             "PYTHONPATH": os.pathsep.join([str(tmp_path), os.environ.get("PYTHONPATH", "")]),
@@ -1563,7 +1555,7 @@ def test_both_trees_take_the_console_lock_in_the_same_directory():
     stub = SimpleNamespace(getbasetemp=lambda: Path("/tmp/pytest-of-x/pytest-3/popen-gw0"))
     assert console_lock_dir(stub) == Path("/tmp/pytest-of-x/pytest-3")
     integration_conftest = (
-        _PROJECT_ROOT / "tests" / "integration" / "host" / "conftest.py"
+        CHECKOUT_ROOT / "tests" / "integration" / "host" / "conftest.py"
     ).read_text()
     assert "lock_dir = tmp_path_factory.getbasetemp().parent" in integration_conftest, (
         "tests/integration/host/conftest.py no longer derives its console lock directory "
@@ -1594,7 +1586,7 @@ def _tests_modules_imported_by(module: str) -> "list[str]":
 
     - path-LESS (``pytest -k ...``, the shape ``make coverage``'s hostless
       legs use): ``tests.integration.chaos._sshd`` is ALREADY imported, along
-      with every other test module in the repo, because a path-less run
+      with every other test module in the suite, because a path-less run
       collects them all;
     - path-NAMED at this file alone: nothing under ``tests.integration`` is
       imported at all.
@@ -1609,7 +1601,7 @@ def _tests_modules_imported_by(module: str) -> "list[str]":
     )
     result = subprocess.run(
         [sys.executable, "-c", probe, module],
-        cwd=str(_PROJECT_ROOT),
+        cwd=str(CHECKOUT_ROOT),
         capture_output=True,
         text=True,
         timeout=120,

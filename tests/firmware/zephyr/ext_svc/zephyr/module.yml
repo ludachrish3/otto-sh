@@ -3,7 +3,7 @@
 #
 # Pulled into the ARM loader builds via
 #   -DEXTRA_ZEPHYR_MODULES=/vagrant/tests/firmware/zephyr/ext_svc
-# (see the zephyr-qemu-cov-build step in the repo Vagrantfile). The module
+# (see the zephyr-qemu-cov-build step in the checkout's Vagrantfile). The module
 # contributes its own Kconfig (the CONFIG_OTTO_EXT_SVC gate) and CMake sources;
 # nothing is compiled unless that symbol is set, so listing the module is
 # harmless on configs that leave it off (no_fs_arm).

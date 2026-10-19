@@ -1,4 +1,4 @@
-"""The run gate says project, never repo."""
+"""The run gate names the failing project."""
 
 from pathlib import Path
 

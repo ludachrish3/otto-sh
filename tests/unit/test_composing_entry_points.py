@@ -1,9 +1,9 @@
 """otto.suite's and otto.coverage's composing entry points compose as they always did.
 
-A public function whose call can reach a read of the run's repos with no run in hand
+A public function whose call can reach a read of the run's projects with no run in hand
 composes them: ``prepare_run`` from ``otto.suite`` and ``clean_coverage``,
 ``collect_coverage`` and ``get_coverage`` from ``otto.coverage`` read them when no
-repos are given, and ``run_tests`` reads them through the context it opens (spec
+projects are given, and ``run_tests`` reads them through the context it opens (spec
 2026-10-11 placement-and-phases §3.12). Each composes once, on its call, and then
 answers as it answered before the composed state moved below the root; resolving a
 name composes nothing and loads no composition root.
@@ -122,7 +122,7 @@ def test_run_tests_composes_once_then_finds_nothing_as_today(tmp_path: Path) -> 
     [_CLEAN, _COLLECT, _GET],
     ids=["clean_coverage", "collect_coverage", "get_coverage"],
 )
-def test_a_coverage_entry_point_with_no_repos_composes_once_then_refuses_as_today(
+def test_a_coverage_entry_point_with_no_projects_composes_once_then_refuses_as_today(
     body: str, tmp_path: Path
 ) -> None:
     source = _CALL.format(body=body.format(out=str(tmp_path / "cov")))

@@ -14,7 +14,7 @@ def _git(git_repo: Path, tmp_path: Path, *args: str) -> subprocess.CompletedProc
     (``tests/_fixtures/gitrepo.py``) — so a host-level ``~/.gitconfig``
     setting, most notably ``commit.gpgsign = true`` (which made these three
     tests fail while every sibling suite, built the same way but already
-    isolated, survived), can never reach the throwaway repos these tests
+    isolated, survived), can never reach the throwaway git repositories these tests
     build. Redirecting ``HOME`` into *tmp_path* means there is no
     ``~/.gitconfig`` file to read at all, rather than trying to override
     every setting a real one might contain.

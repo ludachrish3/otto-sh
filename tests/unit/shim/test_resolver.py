@@ -437,7 +437,7 @@ def test_site_of():
 def test_workspace_key_matches_the_product(tmp_path: Path, monkeypatch):
     from otto.config.home import workspace_key
 
-    real = tmp_path / "Real_Repo.x"
+    real = tmp_path / "Real_Project.x"
     real.mkdir()
     link = tmp_path / "link"
     link.symlink_to(real)
@@ -459,7 +459,7 @@ def test_workspace_key_matches_the_product(tmp_path: Path, monkeypatch):
     corpora = [
         [str(real)],
         [str(link), str(real)],
-        ["Real_Repo.x", str(real)],
+        ["Real_Project.x", str(real)],
         [],
         [str(a_b), str(a_dash_b_x)],
         [str(a_dash_b_x), str(a_b)],

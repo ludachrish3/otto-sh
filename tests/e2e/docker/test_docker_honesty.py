@@ -12,10 +12,10 @@ from pathlib import Path
 
 import pytest
 
-from tests._fixtures.paths import PROJECT_ROOT
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.paths import CHECKOUT_ROOT
+from tests._fixtures.project_scaffold import make_project
 
-from ._cli import _REPO1_USE_CASE, _WIDE, _run_otto
+from ._cli import _PROJECT1_USE_CASE, _WIDE, _run_otto
 from ._honesty import (
     DAEMON_LIST_COMMAND,
     names_a_missing_image,
@@ -27,8 +27,8 @@ from ._honesty import (
 
 pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("docker_e2e")]
 
-_IMAGE = "repo1/repo1-api"
-_LATEST = "repo1-api:latest"
+_IMAGE = "project1/project1-api"
+_LATEST = "project1-api:latest"
 
 
 def _daemon_images(host: str, xdir, *, allow_empty: bool = False) -> "dict[str, str]":
@@ -73,9 +73,9 @@ def _references_of(daemon: "dict[str, str]", image_id: str) -> "set[str]":
 
 
 def _build(host: str, xdir, *flags: str, check: bool = True):
-    """Build ``repo1-api`` on *host*; *check* False leaves the exit code to the caller."""
+    """Build ``project1-api`` on *host*; *check* False leaves the exit code to the caller."""
     built = _run_otto(
-        "docker", "build", "repo1-api", "--parent", host, *flags, xdir=xdir, env=_WIDE
+        "docker", "build", "project1-api", "--parent", host, *flags, xdir=xdir, env=_WIDE
     )
     if check:
         assert built.returncode == 0, built.stdout + built.stderr
@@ -109,7 +109,7 @@ def test_build_leaves_no_tag_nobody_asked_for(docker_host, tmp_path):
 
 
 def test_a_typed_tag_is_the_tag_and_nothing_else_is_added(docker_host, tmp_path):
-    tag = "repo1-api:honesty-typed"
+    tag = "project1-api:honesty-typed"
     line = None
     try:
         # --no-cache gives the image a fresh id, so no reference was ever on it:
@@ -150,22 +150,22 @@ def test_no_cache_makes_docker_rebuild_every_step(docker_host, tmp_path):
 
 _ARCHIVE_IMAGE = "honesty-archive"
 _ARCHIVE_REPO = "honesty"
-_LAB_DATA = PROJECT_ROOT / "tests" / "_fixtures" / "lab_data" / "tech1"
-_REPO1_DOCKER = PROJECT_ROOT / "tests" / "repo1" / "docker"
+_LAB_DATA = CHECKOUT_ROOT / "tests" / "_fixtures" / "lab_data" / "tech1"
+_PROJECT1_DOCKER = CHECKOUT_ROOT / "tests" / "project1" / "docker"
 
 
-def _archive_repo(root: Path, dockerfile: str) -> Path:
-    """A throwaway SUT repo whose one image is `tests/repo1/docker` as a .tar.gz.
+def _archive_project(root: Path, dockerfile: str) -> Path:
+    """A throwaway project whose one image is `tests/project1/docker` as a .tar.gz.
 
     The Dockerfile and its files sit at the archive root; *dockerfile* is the
-    path inside the archive. The lab is the same one repo1 reads, by absolute
+    path inside the archive. The lab is the same one project1 reads, by absolute
     path, so `--parent <host>` resolves the same host.
     """
     archive = root / "ctx.tar.gz"
     with tarfile.open(archive, "w:gz") as tar:
-        for member in sorted(_REPO1_DOCKER.iterdir()):
+        for member in sorted(_PROJECT1_DOCKER.iterdir()):
             tar.add(member, arcname=member.name)
-    return make_sut_repo(
+    return make_project(
         root / "sut",
         name=_ARCHIVE_REPO,
         extra=f"""\
@@ -198,7 +198,7 @@ def _archive_left_on_host(host: str, xdir) -> bool:
 
 
 def test_an_archive_context_builds_what_the_daemon_lists(docker_host, tmp_path):
-    sut = _archive_repo(tmp_path, "Dockerfile")
+    sut = _archive_project(tmp_path, "Dockerfile")
     line = None
     try:
         built = _build_archive_image(docker_host, sut, tmp_path)
@@ -217,7 +217,7 @@ def test_an_archive_context_builds_what_the_daemon_lists(docker_host, tmp_path):
 
 
 def test_a_wrong_dockerfile_path_inside_the_archive_is_dockers_error(docker_host, tmp_path):
-    sut = _archive_repo(tmp_path, "nope/Dockerfile")
+    sut = _archive_project(tmp_path, "nope/Dockerfile")
     built = _build_archive_image(docker_host, sut, tmp_path)
     output = built.stdout + built.stderr
 
@@ -257,7 +257,7 @@ def test_compose_up_without_build_on_a_missing_image_is_dockers_error_and_no_bui
             "docker",
             "compose",
             "up",
-            _REPO1_USE_CASE,
+            _PROJECT1_USE_CASE,
             "--parent",
             docker_host,
             xdir=tmp_path,
@@ -295,7 +295,7 @@ def test_compose_up_with_build_builds_then_deploys_the_id_the_daemon_lists(
         "docker",
         "compose",
         "up",
-        _REPO1_USE_CASE,
+        _PROJECT1_USE_CASE,
         "--parent",
         docker_host,
         "--build",
@@ -311,7 +311,7 @@ def test_compose_up_with_build_builds_then_deploys_the_id_the_daemon_lists(
         "host",
         docker_host,
         "exec",
-        project_image_ids_command(f"unix-{_REPO1_USE_CASE}-{suffix}"),
+        project_image_ids_command(f"unix-{_PROJECT1_USE_CASE}-{suffix}"),
         xdir=tmp_path,
         env=_WIDE,
     )

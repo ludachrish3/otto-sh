@@ -29,7 +29,7 @@ from tests._fixtures.tunnel_bed import (
     UNIX,
     assert_reachable,
     build_bed_host,
-    cli_sut_dir,
+    cli_project_root,
     random_outfile,
     remove_remote_file,
     run_tunnel_cli,
@@ -207,7 +207,7 @@ async def test_repeated_degrade_recover(tunnel_lab, reap_tunnels, tmp_path: Path
     """
     test1 = tunnel_lab.hosts[INGRESS]
     chain = [(INGRESS, None), (EXIT, None)]
-    cli_sut = cli_sut_dir(tmp_path)
+    cli_sut = cli_project_root(tmp_path)
     for cycle in range(SOAK_CYCLES):
         added = await add_tunnel(tunnel_lab, chain, port=PORT_DEGRADE, protocol="udp")
         reap_tunnels.append(added.tunnel.id)

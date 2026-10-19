@@ -41,7 +41,7 @@ def test_cancel_twice_removes_exactly_one_occurrence():
     assert [s.value for s in sub.items()] == [len]
 
 
-def test_origin_and_repo_are_recorded_per_occurrence():
+def test_origin_and_project_are_recorded_per_occurrence():
     sub = _sub()
     _from_module("pkg_a.init", sub.subscribe, len)
     with reg.registering_project("b"):

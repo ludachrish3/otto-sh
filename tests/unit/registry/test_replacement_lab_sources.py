@@ -8,7 +8,7 @@ registered over ``json`` with ``overwrite=True`` must be what it builds for a
 from otto.labs.composite import CompositeLabRepository
 from otto.labs.registry import LAB_REPOSITORIES, register_lab_repository
 from otto.labs.sources import build_lab_sources
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.project_scaffold import make_project
 
 REPLACES = [("otto.labs.registry:LAB_REPOSITORIES", "json")]
 """Every ``(table, built-in name)`` pair this module replaces."""
@@ -34,7 +34,7 @@ def test_replaces_names_every_built_in_lab_source():
 def test_a_replaced_json_source_is_what_build_lab_sources_builds(tmp_path):
     from otto.config.project import Project
 
-    make_sut_repo(
+    make_project(
         tmp_path, name="r", extra='[[lab.sources]]\nbackend = "json"\npaths = ["lab_data"]\n'
     )
     project = Project(root=tmp_path)

@@ -120,7 +120,7 @@ are `src/otto web/src tests` — tests/ joined in the test-infra remediation
 (2026-08-06) so that *test-suite* pattern rules can exist — and the
 discipline that keeps that widening safe is that every rule carries an
 explicit `files:` scope; a rule scoped to `tests/**` must also ignore the
-fixture projects (`tests/repo1..repo3`, `repo_broken`, `repo_e2e`) and
+fixture projects (`tests/project1..project3`, `project_broken`, `project_e2e`) and
 `tests/firmware`, which are user-example input data:
 
 | Rule | Scope |
@@ -145,7 +145,7 @@ fixture projects (`tests/repo1..repo3`, `repo_broken`, `repo_e2e`) and
 | `no-cli-import-outside-cli` | `src/otto/**` minus `src/otto/cli/**`, `src/otto/__init__.py` and `src/otto/_shim.py` — an import ban: the CLI projects the libraries, and no library reaches up into it; see [Import bans](../contributing.md#import-bans) |
 | `no-handrolled-deadline-poll` | `src/otto/**` + `tests/**` minus fixture projects — poll-until-deadline grew 21 copies in three incompatible shapes with divergent expiry behavior; `otto.utils.wait_for` / `wait_for_async` is the one spelling, and expiry always raises (silent expiry is the defect class); `src/otto/host/shell_liveness.py` is ignored as the sanctioned fused probe-response primitive |
 | `no-hidden-cli-options` | `src/otto/**` — no `hidden=`: a removed option or command is deleted, never hidden from `--help` |
-| `no-parents-arithmetic-in-tests` | `tests/**` minus fixture projects — `Path(__file__).parents[N]` encodes the file's own depth, so moving the file silently re-anchors every path built from it; import `TESTS_ROOT`/`PROJECT_ROOT` from `tests/_fixtures/paths.py` (the one sanctioned derivation point) |
+| `no-parents-arithmetic-in-tests` | `tests/**` minus fixture projects — `Path(__file__).parents[N]` encodes the file's own depth, so moving the file silently re-anchors every path built from it; import `TESTS_ROOT`/`CHECKOUT_ROOT` from `tests/_fixtures/paths.py` (the one sanctioned derivation point) |
 | `no-plan-coordinates` | `src/otto/**` |
 | `no-plan-coordinates-ts` / `no-plan-coordinates-tsx` | `web/src/**` |
 | `no-raw-started-poll` | `src/otto/**` + `tests/**` minus fixture projects — polling a started flag without a task-death guard turns a startup failure into an infinite hang; `MonitorServer.wait_started()` is the readiness API (its event is set on success AND failure, re-raising the recorded cause), and the wave retired every `noqa: ASYNC110` whose justification was "no event source available" |

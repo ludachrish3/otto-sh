@@ -1,4 +1,4 @@
-"""Load failures say project root, never repo.
+"""Load failures name the project root.
 
 The run gate's wording (otto.session.errors) is pinned beside its package, in
 ``tests/unit/session/test_run_gate_wording.py``.

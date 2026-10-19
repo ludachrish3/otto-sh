@@ -15,10 +15,10 @@ from otto.session import (
     check_projects,
     select_projects,
 )
-from tests._fixtures.fake_repo import fake_repo
+from tests._fixtures.fake_project import fake_project
 
 
-def _repo(name, *, lab_patterns=None):
+def _project(name, *, lab_patterns=None):
     scope = (
         None
         if lab_patterns is None
@@ -26,7 +26,7 @@ def _repo(name, *, lab_patterns=None):
             lab_patterns=[re.compile(p) for p in lab_patterns], host_patterns=[]
         )
     )
-    return fake_repo(name, root=Path(f"/repos/{name}"), project_scope=scope)
+    return fake_project(name, root=Path(f"/projects/{name}"), project_scope=scope)
 
 
 def _result(*, errors=(), projects=()):
@@ -39,13 +39,13 @@ def _broken(project):
 
 class TestSelectProjects:
     def test_names_are_normalised_deduplicated_and_kept_in_order(self):
-        projects = [_repo("My_Repo"), _repo("other")]
-        sel = select_projects(projects, ["My_Repo", "my-repo"], ["Other"])
-        assert sel == ProjectSelection(include=["my-repo"], exclude=["other"])
+        projects = [_project("My_Project"), _project("other")]
+        sel = select_projects(projects, ["My_Project", "my-project"], ["Other"])
+        assert sel == ProjectSelection(include=["my-project"], exclude=["other"])
 
     def test_an_unknown_name_is_refused_with_a_suggestion(self):
         with pytest.raises(ProjectSelectionError) as exc:
-            select_projects([_repo("firmware")], ["firmwre"], [])
+            select_projects([_project("firmware")], ["firmwre"], [])
         err = exc.value
         assert (err.kind, err.field, err.names, err.suggestion) == (
             "unknown",
@@ -57,7 +57,7 @@ class TestSelectProjects:
 
     def test_an_unknown_exclude_names_its_own_field_and_may_have_no_suggestion(self):
         with pytest.raises(ProjectSelectionError) as exc:
-            select_projects([_repo("firmware")], [], ["zzz"])
+            select_projects([_project("firmware")], [], ["zzz"])
         assert (exc.value.field, exc.value.suggestion) == ("exclude_projects", None)
         assert str(exc.value) == "no project 'zzz'"
 
@@ -71,13 +71,13 @@ class TestSelectProjects:
         )
 
     def test_the_suggestion_is_computed_from_the_normalised_name(self):
-        # Raw, ``My_Rep0`` is too far from ``my-repo`` for any suggestion;
-        # normalised to ``my-rep0`` it is one character off.
+        # Raw, ``MY_PR0JECT`` is too far from ``my-project`` for any suggestion;
+        # normalised to ``my-pr0ject`` it is one character off.
         with pytest.raises(ProjectSelectionError) as exc:
-            select_projects([_repo("my-repo")], ["My_Rep0"], [])
-        assert (exc.value.names, exc.value.suggestion) == (["my-rep0"], "my-repo")
+            select_projects([_project("my-project")], ["MY_PR0JECT"], [])
+        assert (exc.value.names, exc.value.suggestion) == (["my-pr0ject"], "my-project")
 
-    def test_no_switches_selects_nothing_and_needs_no_repos(self):
+    def test_no_switches_selects_nothing_and_needs_no_projects(self):
         assert select_projects([], [], []) == ProjectSelection()
 
 
@@ -92,26 +92,26 @@ def test_check_project_overlap_refuses_a_name_in_both_lists_once_normalised():
     assert (err.kind, err.field, err.names) == ("overlap", "include_projects", ["beta", "c-d"])
 
 
-class TestCheckRepos:
+class TestCheckProjects:
     def test_no_errors_demote_nothing(self):
         assert check_projects(_result(), ["unix"], ProjectSelection()).demoted == []
 
-    def test_an_excluded_repos_error_is_demoted(self):
-        project = _repo("Repo2")
+    def test_an_excluded_projects_error_is_demoted(self):
+        project = _project("Project2")
         check = check_projects(
             _result(errors=[_broken(project)], projects=[project]),
             [],
-            ProjectSelection(exclude=["repo2"]),
+            ProjectSelection(exclude=["project2"]),
         )
         [d] = check.demoted
-        assert (d.name, d.normalized_name, d.reason) == ("Repo2", "repo2", "excluded")
+        assert (d.name, d.normalized_name, d.reason) == ("Project2", "project2", "excluded")
         assert d.message == (
-            "project 'Repo2' failed to load, but is inactive for this run "
-            "(exclude_projects repo2) — continuing without it"
+            "project 'Project2' failed to load, but is inactive for this run "
+            "(exclude_projects project2) — continuing without it"
         )
 
-    def test_an_out_of_scope_repos_error_is_demoted_with_the_labs(self):
-        project = _repo("repo2", lab_patterns=["unix_alt"])
+    def test_an_out_of_scope_projects_error_is_demoted_with_the_labs(self):
+        project = _project("project2", lab_patterns=["unix_alt"])
         check = check_projects(
             _result(errors=[_broken(project)], projects=[project]), ["unix"], ProjectSelection()
         )
@@ -119,29 +119,29 @@ class TestCheckRepos:
         assert (d.reason, d.labs) == ("out_of_scope", ["unix"])
         assert "not applicable to lab(s) [unix]" in d.message
 
-    def test_an_active_repos_error_is_fatal(self):
-        project = _repo("repo2")
+    def test_an_active_projects_error_is_fatal(self):
+        project = _project("project2")
         err = _broken(project)
         with pytest.raises(ProjectLoadError) as exc:
             check_projects(_result(errors=[err], projects=[project]), ["unix"], ProjectSelection())
         assert exc.value.errors == [err]
 
     def test_include_forces_an_out_of_scope_error_fatal(self):
-        project = _repo("repo2", lab_patterns=["unix_alt"])
+        project = _project("project2", lab_patterns=["unix_alt"])
         with pytest.raises(ProjectLoadError):
             check_projects(
                 _result(errors=[_broken(project)], projects=[project]),
                 ["unix"],
-                ProjectSelection(include=["repo2"]),
+                ProjectSelection(include=["project2"]),
             )
 
-    def test_an_error_with_no_repo_is_always_fatal(self):
-        err = bs.BootstrapError(Path("/repos/unparsable"), "settings.toml", ValueError("bad"))
+    def test_an_error_with_no_project_is_always_fatal(self):
+        err = bs.BootstrapError(Path("/projects/unparsable"), "settings.toml", ValueError("bad"))
         with pytest.raises(ProjectLoadError):
             check_projects(_result(errors=[err]), [], ProjectSelection(exclude=["unparsable"]))
 
     def test_a_fatal_error_keeps_the_demotions_beside_it(self):
-        active, excluded = _repo("a"), _repo("b")
+        active, excluded = _project("a"), _project("b")
         fatal, demoted = _broken(active), _broken(excluded)
         with pytest.raises(ProjectLoadError) as exc:
             check_projects(
@@ -155,7 +155,7 @@ class TestCheckRepos:
         assert [d.name for d in exc.value.demoted] == ["b"]
 
     def test_no_labs_never_infers_out_of_scope(self):
-        project = _repo("repo2", lab_patterns=["unix_alt"])
+        project = _project("project2", lab_patterns=["unix_alt"])
         with pytest.raises(ProjectLoadError):
             check_projects(
                 _result(errors=[_broken(project)], projects=[project]), [], ProjectSelection()

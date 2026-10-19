@@ -32,7 +32,7 @@ from pathlib import Path
 
 from typing_extensions import Self
 
-from tests.e2e._otto_subprocess import OTTO_BIN, PROJECT_ROOT, otto_subprocess_env
+from tests.e2e._otto_subprocess import CHECKOUT_ROOT, OTTO_BIN, otto_subprocess_env
 
 
 class InteractiveOttoSession:
@@ -67,7 +67,7 @@ class InteractiveOttoSession:
         self._xdir = Path(xdir)
         self._cols = cols
         self._rows = rows
-        self._sut_dirs = roots
+        self._roots = roots
         self._extra_env = extra_env
         self._master_fd: int | None = None
         self._proc: subprocess.Popen[bytes] | None = None
@@ -88,12 +88,12 @@ class InteractiveOttoSession:
         master_fd, slave_fd = pty.openpty()
         self._set_winsize(slave_fd, self._cols, self._rows)
 
-        # ``sut_dirs=None`` omits ``OTTOPATH`` (this driver has no default
-        # SUT repo); TERM is inherited so the child sees the same terminal type
+        # ``roots=None`` omits ``OTTOPATH`` (this driver has no default
+        # project); TERM is inherited so the child sees the same terminal type
         # the suite runs under (the root conftest pins it to ``dumb``).
         env = otto_subprocess_env(
             xdir=self._xdir,
-            roots=self._sut_dirs,
+            roots=self._roots,
             term=os.environ.get("TERM", "xterm"),
             extra_env=self._extra_env,
         )
@@ -121,7 +121,7 @@ class InteractiveOttoSession:
             stdout=slave_fd,
             stderr=slave_fd,
             start_new_session=True,
-            cwd=str(PROJECT_ROOT),
+            cwd=str(CHECKOUT_ROOT),
             env=env,
             close_fds=True,
         )

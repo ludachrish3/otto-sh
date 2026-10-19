@@ -79,8 +79,8 @@ inventory on today's tree (the burn-down list Chris asked for), and landing mode
 **Mechanism:** widen the scan target in both call sites:
 - `Makefile:751`: `ast-grep scan src/otto web/src` → `ast-grep scan src/otto web/src tests`
 - `noxfile.py:360`: same change.
-Every tests-scoped rule carries `ignores: ["tests/repo1/**", "tests/repo2/**",
-"tests/repo3/**", "tests/repo_broken/**", "tests/repo_e2e/**", "tests/firmware/**"]` —
+Every tests-scoped rule carries `ignores: ["tests/project1/**", "tests/project2/**",
+"tests/project3/**", "tests/project_broken/**", "tests/project_e2e/**", "tests/firmware/**"]` —
 fixture SUT repos are input data, not otto's tests.
 **Red today:** none by itself (no tests-scoped rules exist yet).
 **Landing:** Wave 0, first — every tests-scoped rule depends on it. Verify:
@@ -89,14 +89,14 @@ fixture SUT repos are input data, not otto's tests.
 ### G1. `@pytest.mark.retry` is banned in otto's own suite
 
 **Policy:** otto's own tests never retry; retry is a shipped product feature for otto
-*users* (`tests/repo1` demonstrates it), not a flake-management tool for this repo.
+*users* (`tests/project1` demonstrates it), not a flake-management tool for this repo.
 **Mechanism:** `.ast-grep/rules/no-retry-marker-in-otto-tests.yml`:
 
 ```yaml
 id: no-retry-marker-in-otto-tests
 language: python
 severity: error
-message: otto's own tests must not retry — fix the flake or the product. retry(n) is a shipped feature for otto users; tests/repo1 is its only sanctioned home here.
+message: otto's own tests must not retry — fix the flake or the product. retry(n) is a shipped feature for otto users; tests/project1 is its only sanctioned home here.
 note: >
   Baseline 2 violations as of 2026-08-06, both in
   tests/integration/host/test_hop_integration.py, both shielding the
@@ -105,11 +105,11 @@ note: >
 files:
 - tests/**
 ignores:
-- tests/repo1/**   # user-facing sample; retry demo is the point
-- tests/repo2/**
-- tests/repo3/**
-- tests/repo_broken/**
-- tests/repo_e2e/**
+- tests/project1/**   # user-facing sample; retry demo is the point
+- tests/project2/**
+- tests/project3/**
+- tests/project_broken/**
+- tests/project_e2e/**
 - tests/integration/host/test_hop_integration.py  # pending hang fix (Wave 2) — do not add siblings
 rule:
   pattern: pytest.mark.retry($$$N)
@@ -164,7 +164,7 @@ note: >
   count is 7. Never recount a spec with the instrument under test.]
 files:
 - tests/**
-ignores: [tests/repo1/**, tests/repo2/**, tests/repo3/**, tests/repo_broken/**, tests/repo_e2e/**, tests/firmware/**]
+ignores: [tests/project1/**, tests/project2/**, tests/project3/**, tests/project_broken/**, tests/project_e2e/**, tests/firmware/**]
 rule:
   pattern: pytest.raises(typer.Exit)
   inside:
@@ -425,7 +425,7 @@ escape now killed by both gates. Detector also gained `environb`/`__setitem__`/
 annotated-assign/bare-`putenv` shapes with controls, and states its two
 over-approximations. Coverage note: `make coverage` total dropped 95.89% → 95.69%
 across Waves 3-4 — partly THIS wave de-faking coverage (unit tests no longer see
-ambient `repo1` for part of the session, so incidental `otto/config` discovery
+ambient `project1` for part of the session, so incidental `otto/config` discovery
 branches stopped executing); expected, not to be chased. **Landing:** Wave 4.
 
 ### G12. Skip policy: lanes that must never skip, pinned — LANDED (Wave 13)
@@ -444,7 +444,7 @@ proof system: five stated blind spots in docstring + gates row, grepped zero at
 landing. Anti-vacuity:
 an empty or moved lane FAILS the scan (`assert files`) — the same stale-skip shape
 the tier-marker fix below retires. Embedded positive control asserts the detector
-sees every spelling. repo3's own skip stays: fixture SUT data, the standard
+sees every spelling. project3's own skip stays: fixture SUT data, the standard
 tests-scoped carve-out; the *runner* is what hard-fails.
 **Red measured:** 2 (`test_embedded_coverage_e2e.py:52,:152` — the plan's draft line
 numbers 58/168 had drifted), both converted to `pytest.fail` naming the missing
@@ -607,7 +607,7 @@ review → squash to main → empty-diff check → hand to Chris.
 ### Wave 1 — Retry overhaul (item 1; G1 + G2)
 **Files:** `src/otto/suite/plugin.py:240-261`, `tests/conftest.py:194-223`, new
 `src/otto/suite/_retry.py`, new `tests/unit/suite/test_retry_semantics.py`, new
-`.ast-grep/rules/no-retry-marker-in-otto-tests.yml`, `tests/repo1/tests/test_device.py`
+`.ast-grep/rules/no-retry-marker-in-otto-tests.yml`, `tests/project1/tests/test_device.py`
 (docstring: when retry is legitimate), docs gate page.
 **Design:** one shared implementation. `_retry.py` exposes `run_with_retry(item, n)` as
 a proper hookwrapper-compatible helper that (a) re-arms a per-attempt `signal.alarm`
@@ -1319,10 +1319,10 @@ deadline path); plus the agent's then=-reorder proof on the helper pin.
 ### Wave 17 — Test-fixture library build-out (items 16 + §7.4/§7.5 tail; **Effort: M–L**, split a/b/c)
 
 **17a — hermetic git harness (LANDED in this squash).** `tests/_fixtures/gitrepo.py`:
-`git_env(home, *, dates=None)` + `TmpGitRepo`; `RepoTimeline` rebased onto it. Dates
+`git_env(home, *, dates=None)` + `TmpGitRepo`; `GitTimeline` rebased onto it. Dates
 are opt-IN — the pre-existing files created "now" commits feeding age-sensitive
 consumers (coverage validity, changelog), so pinning by default would have changed
-what those tests compute; only the changelog test and `RepoTimeline` pin. Drift guard
+what those tests compute; only the changelog test and `GitTimeline` pin. Drift guard
 `tests/unit/test_gitenv_hermeticity.py` (AST, four arms: `GIT_*` dict literal /
 `dict(GIT_*=…)` / `env["GIT_*"]=…` / a git argv spawned with an AMBIENT env —
 no `env=` at all, `None`, `os.environ` bare, `.copy()`, `dict()`-wrapped, or
@@ -1335,23 +1335,23 @@ environment) only surfaced when the guard grew its fourth arm. Stated blind spot
 variable-bound argv lists, concatenated key strings, `os.environ.update` of prebuilt
 dicts — each grepped zero at adoption; `monkeypatch.setenv("GIT_…")` is sanctioned.
 
-**17b — SUT-repo scaffold (LANDED in this squash).** `tests/_fixtures/sutrepo.py::
-make_sut_repo(root, name, version, tests, extra, files)` — `extra` is VERBATIM
+**17b — SUT-repo scaffold (LANDED in this squash).** `tests/_fixtures/project_scaffold.py::
+make_project(root, name, version, tests, extra, files)` — `extra` is VERBATIM
 TOML (no renderer: the dependency tables the sites write are carried
 byte-for-byte), `files` writes suites/conftests under root (contained: cannot
 escape root or clobber the settings just written), callers construct `Repo`
 themselves (the fixture imports nothing from otto — pinned by an AST assert);
 plus `touch_settings(sut_dir)` for the empty fingerprint stubs on MagicMock
-repo stand-ins. Drift guard `tests/unit/test_sutrepo_scaffold_policy.py`:
+repo stand-ins. Drift guard `tests/unit/test_project_scaffold_policy.py`:
 write_text/write_bytes/touch/`.open(w)`/`open(w)` arms, PLUS the same shapes
 on a LOCAL NAME bound from a settings path — the first cut claimed that shape
 "grepped zero" and the interim review found a LIVE unmigrated scaffold behind
 it (test_init_scaffold.py; a blind-spot enumeration inherits its omissions);
-`# sutrepo-exempt: <reason>` markers, where a bare marker AND a dead marker
+`# scaffold-exempt: <reason>` markers, where a bare marker AND a dead marker
 (line no longer an offence) are themselves offences. t0 by the LANDED
 instrument against the pre-wave tree: **46 sites / 28 files** (the first-cut
 instrument said 43/25; the draft's 48/27 was a hand estimate). Landed as 31
-make_sut_repo migrations + 10 touch_settings stubs + 5 exempts (2
+make_project migrations + 10 touch_settings stubs + 5 exempts (2
 malformed-TOML subjects, 1 in-place repair, 2 in-place edits of
 product-scaffolded files). Stated blind spots: the product's
 SETTINGS_FILENAME constant / variable filenames, shutil/os.rename moves,

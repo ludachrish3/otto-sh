@@ -1,7 +1,7 @@
 """End-to-end CLI tests for ``otto run`` against a real docker container host.
 
 Invokes the installed ``otto`` entrypoint as a subprocess so the full
-dispatch path — repo discovery, lab loading, docker-stack bring-up, the
+dispatch path — project discovery, lab loading, docker-stack bring-up, the
 ``run`` subcommand, and the ``DockerContainerHost`` exec path —
 runs exactly as the user runs it.
 
@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 from tests._fixtures._host_pool import lease_unix_host
-from tests.e2e._otto_subprocess import REPO1, assert_output_dir, run_otto
+from tests.e2e._otto_subprocess import PROJECT1, assert_output_dir, run_otto
 
 # Docker container hosts require an SSH-based parent (DockerContainerHost
 # uses docker exec via the parent's SSH session), which rules out test2
@@ -35,7 +35,7 @@ from tests.e2e._otto_subprocess import REPO1, assert_output_dir, run_otto
 # ``<parent>.<usecase>.<service>`` ids under that one parent. The test below
 # hands such an id to a SECOND otto process, which knows only what the parent
 # resolution gave it, so the pool names the element every invocation must
-# resolve to: test3. A different parent would register ``test1.repo1.api``
+# resolve to: test3. A different parent would register ``test1.project1.api``
 # inside the invocation that deployed it and nowhere else.
 _DOCKER_POOL = ("test3",)
 
@@ -49,7 +49,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("run_exec_e2e")]
 
 def _run_otto(
     *args: str,
-    roots: Path = REPO1,
+    roots: Path = PROJECT1,
     lab: str = "unix",
     xdir: Path | None = None,
     compose_suffix: str | None = None,
@@ -85,10 +85,10 @@ def docker_host(tmp_path_factory) -> str:  # type: ignore[type-arg]
         yield element
 
 
-# The use-case repo1 declares for its own stack (spec §14: naming the
-# fragment after the repo keeps container ids literally unchanged). repo1 now
+# The use-case project1 declares for its own stack (spec §14: naming the
+# fragment after the project keeps container ids literally unchanged). project1 now
 # declares two use-cases, so a bare `otto docker compose up` is ambiguous and refuses.
-_REPO1_USE_CASE = "repo1"
+_PROJECT1_USE_CASE = "project1"
 
 
 @pytest.fixture
@@ -112,7 +112,7 @@ def teardown_after(fresh_suffix, docker_host, tmp_path):
         "docker",
         "compose",
         "down",
-        _REPO1_USE_CASE,
+        _PROJECT1_USE_CASE,
         "--parent",
         docker_host,
         xdir=tmp_path,
@@ -130,21 +130,21 @@ def test_run_instruction_on_container(teardown_after, docker_host, tmp_path):
     the running container and return the fixture marker text.
 
     Flow:
-    1. Bring the repo1 docker stack up on the leased host.
+    1. Bring the project1 docker stack up on the leased host.
     2. Run the ``run-on-container`` instruction targeting the api container.
-    3. Assert exit 0 and that ``"repo1-fixture"`` appears in stdout (the
-       instruction prints the raw ``cat /etc/repo1-marker.txt`` output).
+    3. Assert exit 0 and that ``"project1-fixture"`` appears in stdout (the
+       instruction prints the raw ``cat /etc/project1-marker.txt`` output).
     4. The ``teardown_after`` fixture runs ``otto docker compose down`` on exit.
     """
     suffix = teardown_after
-    container_id = f"{docker_host}.repo1.api"
+    container_id = f"{docker_host}.project1.api"
 
     # Step 1: bring the stack up.
     up = _run_otto(
         "docker",
         "compose",
         "up",
-        _REPO1_USE_CASE,
+        _PROJECT1_USE_CASE,
         "--parent",
         docker_host,
         "--build",
@@ -171,8 +171,8 @@ def test_run_instruction_on_container(teardown_after, docker_host, tmp_path):
     assert run.returncode == 0, (
         f"`otto run run-on-container` should succeed\nstdout:\n{run.stdout}\nstderr:\n{run.stderr}"
     )
-    assert "repo1-fixture" in run.stdout, (
-        f"expected 'repo1-fixture' marker in stdout from the container:\n{run.stdout}"
+    assert "project1-fixture" in run.stdout, (
+        f"expected 'project1-fixture' marker in stdout from the container:\n{run.stdout}"
     )
     # the run instruction does real work on a host → run output dir created
     assert_output_dir(tmp_path, "run")

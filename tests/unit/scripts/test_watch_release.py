@@ -19,9 +19,9 @@ import subprocess
 from pathlib import Path
 
 from tests._fixtures.gitrepo import TmpGitRepo, git_env
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-_SCRIPT = PROJECT_ROOT / "scripts" / "watch_release.sh"
+_SCRIPT = CHECKOUT_ROOT / "scripts" / "watch_release.sh"
 
 _JUNIT_RED = (
     '<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" '
@@ -156,6 +156,6 @@ def test_the_watcher_s_stages_are_the_release_recipe_s_make_goals_in_order():
     red = _release_make_goals("release: ## x\n\t@$(MAKE) a \\\n\t\t&& $(MAKE) b\n")
     assert red == ["a", "b"]
     assert _watcher_stages("STAGES=(b \\\n        a)\n") != red, "order must be compared"
-    goals = _release_make_goals((PROJECT_ROOT / "Makefile").read_text())
+    goals = _release_make_goals((CHECKOUT_ROOT / "Makefile").read_text())
     assert goals.count("coverage") == 1, goals
     assert _watcher_stages(_SCRIPT.read_text()) == goals

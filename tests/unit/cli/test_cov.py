@@ -235,7 +235,7 @@ class TestCovReportValidation:
         """Real directory but no cov/ subdirectory → error (git-less legacy path)."""
         # Pin the git-less scenario: no [coverage] settings resolvable, so the
         # legacy no-data path runs and returns None → exit 1. (Without this the
-        # outcome would depend on whatever repo bootstrap resolved globally.)
+        # outcome would depend on whatever project bootstrap resolved globally.)
         with (
             patch("otto.coverage.report_inputs.resolve_report_inputs", return_value=ReportInputs()),
             patch.object(cov_module.logger, "error") as mock_err,
@@ -360,9 +360,9 @@ class TestCovReportMergeErrors:
         ) as rcr:
             runner.invoke(
                 cov_app,
-                ["report", str(cov_dir), "--prefix", "/repo", "--dir", str(cov_dir / "report")],
+                ["report", str(cov_dir), "--prefix", "/project", "--dir", str(cov_dir / "report")],
             )
-        assert rcr.call_args.kwargs["prefix"] == Path("/repo")
+        assert rcr.call_args.kwargs["prefix"] == Path("/project")
 
 
 # ── report command — success ─────────────────────────────────────────────────
@@ -593,8 +593,8 @@ class TestCovReportTicketsJson:
 
     @pytest.fixture
     def mock_resolve_settings(self, tmp_path):
-        """A resolved repo_root -- --tickets-json requires one (to emit
-        repo-relative paths), and the settings-driven collection-model path
+        """A resolved project_root -- --tickets-json requires one (to emit
+        project-relative paths), and the settings-driven collection-model path
         (not --tier) is what normally resolves it."""
         from otto.coverage.tickets import build_ticket_spec
         from otto.coverage.tiers import TierConfig
@@ -676,11 +676,11 @@ class TestCovReportTicketsJson:
         assert "Traceback" not in result.output
         assert "[coverage.tickets]" in mock_err.call_args[0][0]
 
-    def test_tickets_json_without_repo_root_exits_1_clean(self, cov_tree, mock_run_report):
-        """The --tier legacy path never resolves a repo_root (or a
+    def test_tickets_json_without_project_root_exits_1_clean(self, cov_tree, mock_run_report):
+        """The --tier legacy path never resolves a project_root (or a
         ticket_spec) -- store.tickets is guaranteed empty there, so this
         must fail with the same clean "no ticket data" message rather than
-        crashing on a None repo_root inside write_ticket_export."""
+        crashing on a None project_root inside write_ticket_export."""
         target = cov_tree / "tickets.json"
         with patch.object(cov_module.logger, "error") as mock_err:
             result = runner.invoke(
@@ -714,10 +714,10 @@ class TestCovReportCollectionModel:
         with patch.object(reporter_module, "run_coverage_report", mock):
             yield mock
 
-    def test_no_tier_resolves_repo_root_and_tier_configs_from_settings(
+    def test_no_tier_resolves_project_root_and_tier_configs_from_settings(
         self, tmp_path, mock_run_report
     ):
-        """No --tier → settings-driven collection path (repo_root + tier_configs)."""
+        """No --tier → settings-driven collection path (project_root + tier_configs)."""
         from otto.coverage.tiers import TierConfig
 
         host_dir = tmp_path / "cov" / "host1"
@@ -820,7 +820,7 @@ class TestCovReportCollectionModel:
         assert [r.name for r in threaded] == ["MYPROJ_NO_COV"]
 
     def test_explicit_tier_flags_bypass_settings(self, tmp_path, mock_run_report):
-        """--tier escape hatch: no settings resolution, repo_root/tier_configs None."""
+        """--tier escape hatch: no settings resolution, project_root/tier_configs None."""
         host_dir = tmp_path / "cov" / "host1"
         host_dir.mkdir(parents=True)
         (host_dir / "main.gcda").write_bytes(b"\x00")
@@ -854,7 +854,7 @@ class TestCovReportCollectionModel:
 
     def test_no_output_dirs_allowed_for_manual_only_report(self, mock_run_report, tmp_path):
         """output_dirs is optional: a manual-store-only report needs no run dirs."""
-        project_root = Path("/some/repo")
+        project_root = Path("/some/project")
         with patch(
             "otto.coverage.report_inputs.resolve_report_inputs",
             return_value=ReportInputs(project_root=project_root),
@@ -919,7 +919,7 @@ class TestCovReportCollectionModelErrors:
         assert "manual" in str(mock_err.call_args[0][1])
 
     def test_non_git_repo_root_reports_cleanly(self, tmp_path):
-        """A [coverage] repo_root that is not a git repo can't run pinned-capture
+        """A [coverage] project_root that is not a git repository can't run pinned-capture
         features; report names the cause + the git-less escape hatch, no traceback."""
         not_git = tmp_path / "notgit"
         (not_git / "cov" / "board1" / "app").mkdir(parents=True)
@@ -1118,7 +1118,7 @@ class TestCovGetLeaf:
         ],
         ids=[
             "empty-selection",
-            "not-a-git-repo",
+            "not-a-git-repository",
             "no-coverage-data",
             "data-mismatch",
             "host-unreachable",

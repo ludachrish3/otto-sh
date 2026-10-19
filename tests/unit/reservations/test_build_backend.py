@@ -28,7 +28,7 @@ class TestNoneBackend:
         assert isinstance(backend, NullReservationBackend)
 
     def test_absent_section_is_the_null_backend(self, tmp_path):
-        # {} is what build_reservation_gate passes when NO repo has a
+        # {} is what build_reservation_gate passes when NO project has a
         # [reservations] table — no checker specified, nothing to gate.
         backend = build_backend({}, tmp_path)
         assert isinstance(backend, NullReservationBackend)
@@ -63,7 +63,7 @@ class TestJsonBackend:
         assert isinstance(backend, JsonReservationBackend)
         assert backend.fetch_reservations("anyone") == []
 
-    def test_relative_path_resolved_against_repo_dir(self, tmp_path):
+    def test_relative_path_resolved_against_project_root(self, tmp_path):
         _write_reservations(tmp_path)
         backend = build_backend(
             {"backend": "json", "json": {"path": "reservations.json"}},
@@ -80,7 +80,7 @@ class TestJsonBackend:
         with pytest.raises(ReservationConstructionError, match=r"'json'.*parse failed.*path"):
             build_backend({"backend": "json"}, tmp_path)
 
-    def test_an_empty_path_is_refused_not_read_as_the_repo_root(self, tmp_path):
+    def test_an_empty_path_is_refused_not_read_as_the_project_root(self, tmp_path):
         with pytest.raises(ReservationConstructionError, match="must name the reservation file"):
             build_backend({"backend": "json", "json": {"path": ""}}, tmp_path)
 
@@ -96,17 +96,17 @@ class TestJsonBackend:
         assert "hunter2" not in message
 
     def test_tilde_path_expands_via_home(self, tmp_path, monkeypatch):
-        """A ``~``-prefixed path expands against ``HOME`` before repo-anchoring
+        """A ``~``-prefixed path expands against ``HOME`` before project-anchoring
         (path-resolution convention, docs/configuration/settings.md).
 
         Without the fix, ``~`` is never expanded and the path is anchored
-        literally under ``repo_dir / "~" / "reservations.json"``, which never
+        literally under ``project_root / "~" / "reservations.json"``, which never
         exists — the backend raises on first read.
         """
         home = tmp_path / "home"
         home.mkdir()
         _write_reservations(home)
-        project_root = tmp_path / "repo"
+        project_root = tmp_path / "project"
         project_root.mkdir()
         monkeypatch.setenv("HOME", str(home))
 
@@ -151,7 +151,9 @@ def recorder_registered():
 
 
 class TestRegisteredBackend:
-    def test_the_sub_table_url_and_repo_dir_reach_the_factory(self, tmp_path, recorder_registered):
+    def test_the_sub_table_url_and_project_root_reach_the_factory(
+        self, tmp_path, recorder_registered
+    ):
         backend = build_backend(
             {
                 "backend": "recorder-test",

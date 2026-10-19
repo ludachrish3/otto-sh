@@ -101,19 +101,19 @@ def test_report_names_host_and_lists_leftovers():
 
 def test_diff_reports_new_docker_containers_only():
     before = _snap(docker_containers=frozenset({"old x"}))
-    after = _snap(docker_containers=frozenset({"old x", "abc123 otto-repo1-e2e-x-api-1"}))
+    after = _snap(docker_containers=frozenset({"old x", "abc123 otto-project1-e2e-x-api-1"}))
     leftovers = diff_snapshots(before, after)
     joined = "\n".join(str(item) for item in leftovers)
-    assert "abc123 otto-repo1-e2e-x-api-1" in joined
+    assert "abc123 otto-project1-e2e-x-api-1" in joined
     assert "old x" not in joined
 
 
 def test_diff_reports_new_docker_networks_only():
     before = _snap(docker_networks=frozenset({"bridge"}))
-    after = _snap(docker_networks=frozenset({"bridge", "otto-repo1-e2e-x_default"}))
+    after = _snap(docker_networks=frozenset({"bridge", "otto-project1-e2e-x_default"}))
     leftovers = diff_snapshots(before, after)
     joined = "\n".join(str(item) for item in leftovers)
-    assert "otto-repo1-e2e-x_default" in joined
+    assert "otto-project1-e2e-x_default" in joined
     assert "bridge" not in joined
 
 
@@ -138,15 +138,15 @@ class _ScriptedHost:
 async def test_snapshot_host_captures_docker_containers_and_networks():
     host = _ScriptedHost(
         canned_outputs={
-            _DOCKER_PS_PROBE: "abc123 otto-repo1-e2e-x-api-1\ndef456 otto-repo1-e2e-x-db-1\n",
-            _DOCKER_NET_PROBE: "bridge\notto-repo1-e2e-x_default\n",
+            _DOCKER_PS_PROBE: "abc123 otto-project1-e2e-x-api-1\ndef456 otto-project1-e2e-x-db-1\n",
+            _DOCKER_NET_PROBE: "bridge\notto-project1-e2e-x_default\n",
         }
     )
     snap = await snapshot_host(host)
     assert snap.docker_containers == frozenset(
-        {"abc123 otto-repo1-e2e-x-api-1", "def456 otto-repo1-e2e-x-db-1"}
+        {"abc123 otto-project1-e2e-x-api-1", "def456 otto-project1-e2e-x-db-1"}
     )
-    assert snap.docker_networks == frozenset({"bridge", "otto-repo1-e2e-x_default"})
+    assert snap.docker_networks == frozenset({"bridge", "otto-project1-e2e-x_default"})
 
 
 @pytest.mark.asyncio
@@ -243,7 +243,7 @@ def _probe_regex() -> re.Pattern[str]:
     reopens the hole fails here instead of quietly passing a copy of itself.
 
     Pulled out by splitting on the quotes rather than by matching the literal
-    command text: the repo-wide scan (`test_no_unbracketed_pkill_patterns`)
+    command text: the checkout-wide scan (`test_no_unbracketed_pkill_patterns`)
     rejects any source line carrying a `pgrep -f` pattern that is not built by
     an inline `argv_pattern(...)` call, and it cannot tell a line that BUILDS a
     probe from one that PARSES it. Writing the command text here to reach the

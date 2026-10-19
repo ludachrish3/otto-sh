@@ -7,8 +7,8 @@ satisfied by a column header and ``"inventory" in output`` by the label.
 
 The verbs are driven through the sub-app with typer's ``CliRunner`` (the shape
 ``tests/unit/cli/test_schema_cli.py`` uses for the other settings-only group),
-and the repo they read is a real one on disk: ``OTTOPATH`` points at a
-scaffolded SUT repo and ``OTTO_HOME`` at a tmp dir, so ``build_inventory`` runs
+and the project they read is a real one on disk: ``OTTOPATH`` points at a
+scaffolded project and ``OTTO_HOME`` at a tmp dir, so ``build_inventory`` runs
 its real §8 resolution over real files rather than a patched seam. That is what
 makes "no inventory is configured" a reachable state here at all.
 """
@@ -24,7 +24,7 @@ from typer.testing import CliRunner
 
 from otto import bootstrap
 from otto.cli.inventory import inventory_app
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.project_scaffold import make_project
 from tests.unit.inventory.netbox_stub import TOKEN, NetBoxStub, device
 
 runner = CliRunner()
@@ -53,12 +53,12 @@ def _wide_console(monkeypatch):
 
 
 def _scaffold(tmp_path, monkeypatch, *, inventory_toml=""):
-    """A real SUT repo at ``tmp_path/repo``, active for this process, with a tmp home."""
+    """A real project at ``tmp_path/project``, active for this process, with a tmp home."""
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
-    root = make_sut_repo(tmp_path / "repo", name="inv_repo", extra=inventory_toml)
+    root = make_project(tmp_path / "project", name="inv_project", extra=inventory_toml)
     monkeypatch.setenv("OTTOPATH", str(root))
     # The root conftest snapshot-restores bootstrap's caches, so invalidating
-    # here cannot outlive the test; without it the repo above is invisible.
+    # here cannot outlive the test; without it the project above is invisible.
     bootstrap._reset()
     return root
 
@@ -72,7 +72,7 @@ def _netbox_toml(stub, ttl, *, creds=None):
 
 @pytest.fixture
 def project(tmp_path, monkeypatch):
-    """A repo whose ``[inventory]`` names a json file holding ``_RECORDS``."""
+    """A project whose ``[inventory]`` names a json file holding ``_RECORDS``."""
     inventory_file = tmp_path / "inventory.json"
     inventory_file.write_text(json.dumps(_RECORDS))
     toml = f'[inventory]\nbackend = "json"\npath = "{inventory_file}"\n'
@@ -390,14 +390,14 @@ _NETBOX_DEVICES = [
 
 
 @pytest.fixture
-def netbox_repo(tmp_path, monkeypatch):
+def netbox_project(tmp_path, monkeypatch):
     with NetBoxStub(_NETBOX_DEVICES, page_size=2) as stub:
         monkeypatch.setenv("NETBOX_TOKEN", TOKEN)
         _scaffold(tmp_path, monkeypatch, inventory_toml=_netbox_toml(stub, "24h"))
         yield stub
 
 
-def test_list_reports_the_devices_netbox_made_it_skip(netbox_repo):
+def test_list_reports_the_devices_netbox_made_it_skip(netbox_project):
     result = _run(["list"])
     assert result.exit_code == 0, result.output
     assert "3 record(s) in netbox:" in result.output
@@ -433,9 +433,9 @@ def far_east_timezone():
         time.tzset()
 
 
-def test_refresh_replaces_the_snapshot_and_reports_its_age(netbox_repo, far_east_timezone):
+def test_refresh_replaces_the_snapshot_and_reports_its_age(netbox_project, far_east_timezone):
     assert _run(["list"]).exit_code == 0  # one fetch; writes the snapshot
-    fetched = len(netbox_repo.queries)
+    fetched = len(netbox_project.queries)
     assert fetched, "the first use must actually fetch"
 
     result = _run(["refresh"])
@@ -443,7 +443,7 @@ def test_refresh_replaces_the_snapshot_and_reports_its_age(netbox_repo, far_east
     assert "3 record(s)" in result.output
     assert "replaced the snapshot fetched" in result.output
     assert "(0m old)" in result.output
-    assert len(netbox_repo.queries) > fetched, "refresh must contact the backend"
+    assert len(netbox_project.queries) > fetched, "refresh must contact the backend"
 
     # LOCAL time, unlike the load path's UTC-stamped stale warning (R25). At
     # UTC+14 the two renderings differ in every field, so `%Z` alone settles
@@ -455,14 +455,14 @@ def test_refresh_replaces_the_snapshot_and_reports_its_age(netbox_repo, far_east
     assert f"{now:%Y-%m-%d %H:%M} UTC" not in result.output
 
 
-def test_a_second_list_is_served_from_the_snapshot(netbox_repo):
+def test_a_second_list_is_served_from_the_snapshot(netbox_project):
     assert _run(["list"]).exit_code == 0
-    fetched = len(netbox_repo.queries)
+    fetched = len(netbox_project.queries)
     assert _run(["list"]).exit_code == 0
-    assert len(netbox_repo.queries) == fetched, "a fresh snapshot must not refetch"
+    assert len(netbox_project.queries) == fetched, "a fresh snapshot must not refetch"
 
 
-def test_refresh_on_a_never_fetched_inventory_says_there_was_no_snapshot(netbox_repo):
+def test_refresh_on_a_never_fetched_inventory_says_there_was_no_snapshot(netbox_project):
     result = _run(["refresh"])
     assert result.exit_code == 0, result.output
     assert "no previous snapshot" in result.output

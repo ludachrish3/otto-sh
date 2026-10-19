@@ -1,7 +1,7 @@
 """The release stage's directional gate: which matrix changes may auto-commit.
 
 Every case INJECTS its own pair of matrices rather than reading the committed
-artifact. A gate tested against the repo's current (healthy) state would score
+artifact. A gate tested against the checkout's current (healthy) state would score
 green no matter what it did.
 """
 
@@ -159,7 +159,7 @@ def test_the_gate_reads_the_committed_matrix_by_default(tmp_path):
     """--candidate defaults to the real artifact, so the Makefile need not name it.
 
     Compared against ITSELF, so this asserts the default resolves and parses --
-    not that the repo happens to be healthy.
+    not that the checkout happens to be healthy.
     """
     from scripts.check_matrix_downgrades import MATRIX_PATH
 

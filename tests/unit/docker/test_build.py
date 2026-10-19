@@ -74,14 +74,14 @@ def test_the_command_carries_dockers_flags_in_dockers_spelling(tmp_path):
     img = _img(tmp_path)
     options = BuildOptions(tags=["api:1.4"], no_cache=True, pull=True, target="prod")
 
-    cmd = build_command("repo1", img, options)
+    cmd = build_command("project1", img, options)
 
     assert cmd.startswith("docker build ")
     assert " -t api:1.4 " in cmd
     assert " --no-cache" in cmd
     assert " --pull" in cmd
     assert " --target prod" in cmd
-    assert cmd.endswith(" /tmp/otto-docker/repo1/build/api")
+    assert cmd.endswith(" /tmp/otto-docker/project1/build/api")
 
 
 def test_a_flag_build_arg_wins_over_the_declared_one_and_is_passed_verbatim(tmp_path):
@@ -92,7 +92,7 @@ def test_a_flag_build_arg_wins_over_the_declared_one_and_is_passed_verbatim(tmp_
     )
     options = BuildOptions(build_args={"PORT": "8080", "URL": "http://x/?a=b c;rm -rf /"})
 
-    cmd = build_command("repo1", img, options)
+    cmd = build_command("project1", img, options)
 
     assert "--build-arg PORT=8080" in cmd
     assert "PORT=80 " not in cmd
@@ -105,8 +105,8 @@ def test_the_flag_target_replaces_the_declared_one(tmp_path):
     df = tmp_path / "Dockerfile"
     df.write_text("FROM alpine\n")
     img = DockerImage(name="api", dockerfile=df, context=tmp_path, target="dev")
-    assert " --target prod" in build_command("repo1", img, BuildOptions(target="prod"))
-    assert " --target dev" in build_command("repo1", img, BuildOptions())
+    assert " --target prod" in build_command("project1", img, BuildOptions(target="prod"))
+    assert " --target dev" in build_command("project1", img, BuildOptions())
 
 
 def test_a_registry_qualified_name_stages_into_one_flat_directory(tmp_path):
@@ -114,11 +114,11 @@ def test_a_registry_qualified_name_stages_into_one_flat_directory(tmp_path):
     df.write_text("FROM alpine\n")
     img = DockerImage(name="registry.example:5000/team/api", dockerfile=df, context=tmp_path)
 
-    cmd = build_command("repo1", img, BuildOptions())
+    cmd = build_command("project1", img, BuildOptions())
 
     assert " -t registry.example:5000/team/api:latest " in cmd
     context_dir = cmd.rsplit(" ", 1)[1]
-    assert context_dir == "/tmp/otto-docker/repo1/build/registry.example_5000_team_api"
+    assert context_dir == "/tmp/otto-docker/project1/build/registry.example_5000_team_api"
 
 
 @pytest.mark.asyncio
@@ -128,10 +128,10 @@ async def test_the_build_runs_exactly_the_rendered_command(tmp_path):
     img = _img(tmp_path)
     options = BuildOptions(no_cache=True)
 
-    await _build_one(parent, "repo1", img, options)
+    await _build_one(parent, "project1", img, options)
 
     cmds = [c.args[0] for c in parent.exec.call_args_list]
-    assert build_command("repo1", img, options) in cmds
+    assert build_command("project1", img, options) in cmds
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +145,7 @@ async def test_the_build_always_runs_and_asks_the_daemon_nothing_first(tmp_path)
     _daemon(parent, listing="api:latest cbd8571d4b6e\n")
     img = _img(tmp_path)
 
-    res = await _build_one(parent, "repo1", img, BuildOptions())
+    res = await _build_one(parent, "project1", img, BuildOptions())
 
     assert res.is_ok
     cmds = [c.args[0] for c in parent.exec.call_args_list]
@@ -176,7 +176,7 @@ async def test_build_failure_propagates(tmp_path):
 
     parent.exec.side_effect = exec_side_effect
 
-    built = await _build_one(parent, "repo1", img, BuildOptions())
+    built = await _build_one(parent, "project1", img, BuildOptions())
     res = built.result
     assert res is build_failure, "the build's own result, not a summary of it"
     assert not built.is_ok
@@ -205,7 +205,7 @@ async def test_the_report_carries_what_the_daemon_lists_for_the_built_image(tmp_
     parent = _mock_parent()
     _daemon(parent, listing="api:latest cbd8571d4b6e\n")
 
-    built = await _build_one(parent, "repo1", _img(tmp_path), BuildOptions())
+    built = await _build_one(parent, "project1", _img(tmp_path), BuildOptions())
 
     assert built.is_ok
     assert built.references == ["api:latest"]
@@ -218,7 +218,7 @@ async def test_other_images_under_the_same_name_are_not_reported(tmp_path):
     parent = _mock_parent()
     _daemon(parent, listing="api:latest cbd8571d4b6e\napi:old 111122223333\napi:1.4 cbd8571d4b6e\n")
 
-    built = await _build_one(parent, "repo1", _img(tmp_path), BuildOptions(tags=["api"]))
+    built = await _build_one(parent, "project1", _img(tmp_path), BuildOptions(tags=["api"]))
 
     assert built.references == ["api:latest", "api:1.4"]
     assert built.image_id == "cbd8571d4b6e"
@@ -229,7 +229,7 @@ async def test_a_build_the_daemon_does_not_list_is_a_failure(tmp_path):
     parent = _mock_parent()
     _daemon(parent, listing="")
 
-    built = await _build_one(parent, "repo1", _img(tmp_path), BuildOptions())
+    built = await _build_one(parent, "project1", _img(tmp_path), BuildOptions())
 
     assert not built.is_ok
     assert built.references == []
@@ -254,9 +254,9 @@ def _archive_img(tmp: Path) -> DockerImage:
 
 
 def test_an_archive_is_given_to_docker_on_stdin_with_the_inner_dockerfile(tmp_path):
-    cmd = build_command("repo1", _archive_img(tmp_path), BuildOptions())
+    cmd = build_command("project1", _archive_img(tmp_path), BuildOptions())
     assert " -f docker/Dockerfile " in cmd
-    assert cmd.endswith(" - < /tmp/otto-docker/repo1/build/api.ctx.tar.gz")
+    assert cmd.endswith(" - < /tmp/otto-docker/project1/build/api.ctx.tar.gz")
 
 
 @pytest.mark.asyncio
@@ -270,14 +270,14 @@ async def test_an_archive_is_uploaded_unopened_and_removed_after_a_failed_build(
 
     parent.exec.side_effect = exec_side_effect
 
-    built = await _build_one(parent, "repo1", img, BuildOptions())
+    built = await _build_one(parent, "project1", img, BuildOptions())
 
     assert built.result is failure, "docker's own error, whole"
     put_sources = parent.put.call_args.args[0]
     assert put_sources == [img.context], "the user's file itself, not a re-tarred copy"
     cmds = [c.args[0] for c in parent.exec.call_args_list]
     assert not any(c.startswith("tar ") for c in cmds), "otto never opens the archive"
-    assert cmds[-1] == "rm -f /tmp/otto-docker/repo1/build/api.ctx.tar.gz"
+    assert cmds[-1] == "rm -f /tmp/otto-docker/project1/build/api.ctx.tar.gz"
 
 
 @pytest.mark.asyncio
@@ -286,11 +286,11 @@ async def test_an_archive_is_removed_before_the_daemon_is_read_after_a_good_buil
     img = _archive_img(tmp_path)
     _daemon(parent, listing="api:latest cbd8571d4b6e\n")
 
-    built = await _build_one(parent, "repo1", img, BuildOptions())
+    built = await _build_one(parent, "project1", img, BuildOptions())
 
     assert built.references == ["api:latest"]
     cmds = [c.args[0] for c in parent.exec.call_args_list]
-    removed = cmds.index("rm -f /tmp/otto-docker/repo1/build/api.ctx.tar.gz")
+    removed = cmds.index("rm -f /tmp/otto-docker/project1/build/api.ctx.tar.gz")
     assert cmds[removed - 1].startswith("docker build ")
     assert cmds[removed + 1].startswith("docker image inspect")
 
@@ -308,7 +308,7 @@ async def test_a_failed_archive_removal_does_not_replace_the_builds_outcome(tmp_
 
     parent.exec.side_effect = exec_side_effect
 
-    built = await _build_one(parent, "repo1", img, BuildOptions())
+    built = await _build_one(parent, "project1", img, BuildOptions())
 
     assert built.result is failure
 
@@ -328,11 +328,11 @@ async def test_an_archive_removal_that_exits_non_zero_warns_and_keeps_the_builds
     parent.exec.side_effect = exec_side_effect
 
     with patch("otto.docker.build.logger") as log:
-        built = await _build_one(parent, "repo1", img, BuildOptions())
+        built = await _build_one(parent, "project1", img, BuildOptions())
 
     assert built.result is failure
     warned = [c.args[0] for c in log.warning.call_args_list]
     assert len(warned) == 1
     assert "test3" in warned[0]
-    assert "/tmp/otto-docker/repo1/build/api.ctx.tar.gz" in warned[0]
+    assert "/tmp/otto-docker/project1/build/api.ctx.tar.gz" in warned[0]
     assert "Permission denied" in warned[0]

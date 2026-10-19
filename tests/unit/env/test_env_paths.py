@@ -8,7 +8,7 @@ from otto.env import EnvMeta, env_path, meta_path, read_meta, write_meta
 
 class TestEnvPath:
     def test_it_is_env_under_the_workspace_home(self, monkeypatch, tmp_path):
-        project = tmp_path / "repo"
+        project = tmp_path / "proj"
         project.mkdir()
         monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
         assert env_path([project]) == workspace_home([project]) / "env"

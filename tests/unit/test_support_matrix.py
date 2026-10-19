@@ -67,7 +67,7 @@ from scripts.render_support_matrix import (
 from scripts.render_support_matrix import main as render_main
 from tests._ambient_env import ambient_opt_ins
 from tests._fixtures.docs_conf import assert_conf_renders
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 from tests._fixtures.profiles import Cell
 from tests._fixtures.support_matrix import (
     CELL_FIXTURE,
@@ -146,12 +146,12 @@ def _fabricated_cell(element: str, term: str, transfer: str, *, kind: str) -> Re
     )
 
 
-COLLATOR_PATH = PROJECT_ROOT / "scripts" / "collate_support_matrix.py"
-DOWNGRADE_GATE_PATH = PROJECT_ROOT / "scripts" / "check_matrix_downgrades.py"
-RENDERER_PATH = PROJECT_ROOT / "scripts" / "render_support_matrix.py"
+COLLATOR_PATH = CHECKOUT_ROOT / "scripts" / "collate_support_matrix.py"
+DOWNGRADE_GATE_PATH = CHECKOUT_ROOT / "scripts" / "check_matrix_downgrades.py"
+RENDERER_PATH = CHECKOUT_ROOT / "scripts" / "render_support_matrix.py"
 """The collate step: the ONLY writer of a ``measured-*`` verdict (spec §5)."""
 
-GAP_REGISTRY_PATH = PROJECT_ROOT / "src" / "otto" / "host" / "userland.py"
+GAP_REGISTRY_PATH = CHECKOUT_ROOT / "src" / "otto" / "host" / "userland.py"
 """The ONE other file spelling ``measured-broken``, for a DIFFERENT artifact.
 
 otto's gap registry has its own two-state vocabulary rendered into
@@ -160,9 +160,9 @@ rather than excluded by scope, so the collision stays visible -- see
 ``test_the_gap_registry_uses_the_same_two_status_words_for_a_different_artifact``.
 """
 
-KMODCOV_FIXTURE_PATH = PROJECT_ROOT / "tests" / "_fixtures" / "kmodcov_matrix.py"
-KMODCOV_COLLATOR_PATH = PROJECT_ROOT / "scripts" / "collate_kmodcov_matrix.py"
-KMODCOV_RENDERER_PATH = PROJECT_ROOT / "scripts" / "render_kmodcov_matrix.py"
+KMODCOV_FIXTURE_PATH = CHECKOUT_ROOT / "tests" / "_fixtures" / "kmodcov_matrix.py"
+KMODCOV_COLLATOR_PATH = CHECKOUT_ROOT / "scripts" / "collate_kmodcov_matrix.py"
+KMODCOV_RENDERER_PATH = CHECKOUT_ROOT / "scripts" / "render_kmodcov_matrix.py"
 """The kmodcov compatibility matrix's own three files, sharing this vocabulary.
 
 Its axes fixture, its collate step and its renderer. See the guard below for
@@ -1336,14 +1336,14 @@ def test_the_observations_directory_is_anchored_at_the_project_root(monkeypatch)
     """Never CWD-relative. A lane invoked from a subdirectory would otherwise
     scatter records where the collate step does not look."""
     monkeypatch.delenv(OBSERVATIONS_ENV_VAR, raising=False)
-    assert observations_dir() == PROJECT_ROOT / "reports" / "conformance-observations"
+    assert observations_dir() == CHECKOUT_ROOT / "reports" / "conformance-observations"
     monkeypatch.setenv(OBSERVATIONS_ENV_VAR, "/tmp/elsewhere")
     assert observations_dir() == Path("/tmp/elsewhere")
 
 
 def test_the_observations_knob_survives_the_ambient_env_strip():
     """Undeclared, ``tests/conftest.py`` would strip it and a redirected run
-    would write into the repo's real directory in silence -- issue #192."""
+    would write into the checkout's real directory in silence -- issue #192."""
     assert OBSERVATIONS_ENV_VAR in ambient_opt_ins()
 
 
@@ -1544,7 +1544,7 @@ def _run_conformance(
             "injected_plugin",
         ],
         env=env,
-        cwd=str(PROJECT_ROOT),
+        cwd=str(CHECKOUT_ROOT),
         capture_output=True,
         text=True,
         timeout=600,
@@ -1681,7 +1681,7 @@ def test_a_cell_a_contract_excludes_leaves_an_exclusion_record_not_silence(tmp_p
 def test_a_run_that_exercises_no_contract_writes_nothing(tmp_path):
     """``make coverage``'s path-less legs collect this tree and deselect every
     item of it. An emitter that wrote exclusion records regardless would have
-    every unit lane in the repo depositing conformance evidence.
+    every unit lane in the suite depositing conformance evidence.
 
     THE DOMAIN NARROWING IS INJECTED HERE TOO, and that is what gives this
     test teeth. Collection happens before mark filtering, so the excluded
@@ -1716,7 +1716,7 @@ def test_a_run_that_exercises_no_contract_writes_nothing(tmp_path):
             "OTTO_CONFORMANCE_CELLS": "all",
             "PYTHONPATH": os.pathsep.join([str(tmp_path), os.environ.get("PYTHONPATH", "")]),
         },
-        cwd=str(PROJECT_ROOT),
+        cwd=str(CHECKOUT_ROOT),
         capture_output=True,
         text=True,
         timeout=600,
@@ -1789,7 +1789,7 @@ def test_the_conformance_walk_sees_an_edit_that_keeps_the_size_and_the_mtime(tmp
     """
     from tests.conformance import _controls
 
-    monkeypatch.setattr(_controls, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(_controls, "CHECKOUT_ROOT", tmp_path)
     path = tmp_path / "test_walked.py"
     path.write_text("def test_aa():\n    pass\n", encoding="utf-8")
     first = path.stat()
@@ -1806,7 +1806,7 @@ def test_the_conformance_walk_parses_each_content_once(tmp_path, monkeypatch):
 
     from tests.conformance import _controls
 
-    monkeypatch.setattr(_controls, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(_controls, "CHECKOUT_ROOT", tmp_path)
     path = tmp_path / "test_walked_once.py"
     # The cache is process-wide, so the text is unique to this run.
     path.write_text(f"# {tmp_path}\ndef test_once():\n    pass\n", encoding="utf-8")
@@ -2214,17 +2214,17 @@ def test_the_observable_a_contract_notes_is_the_one_that_reaches_the_record(tmp_
 
 
 def test_the_observable_marker_is_registered():
-    """An unregistered marker is a WARNING, and this repo turns warnings into errors."""
+    """An unregistered marker is a WARNING, and this repository turns warnings into errors."""
     registered = [
         line
-        for line in (PROJECT_ROOT / "pyproject.toml").read_text().splitlines()
+        for line in (CHECKOUT_ROOT / "pyproject.toml").read_text().splitlines()
         if line.strip().startswith(f'"{OBSERVABLE_MARK}(')
     ]
     assert len(registered) == 1, f"`{OBSERVABLE_MARK}` is registered {len(registered)} times"
 
 
 def test_the_control_marker_is_registered(committed):
-    """An unregistered marker is a WARNING, and this repo turns warnings into errors.
+    """An unregistered marker is a WARNING, and this repository turns warnings into errors.
 
     Pinned rather than trusted to the run: ``filterwarnings = ["error"]``
     means a missing registration fails the conformance lane and not this one,
@@ -2232,7 +2232,7 @@ def test_the_control_marker_is_registered(committed):
     """
     registered = [
         line
-        for line in (PROJECT_ROOT / "pyproject.toml").read_text().splitlines()
+        for line in (CHECKOUT_ROOT / "pyproject.toml").read_text().splitlines()
         if line.strip().startswith(f'"{CONTROL_MARK}(')
     ]
     assert len(registered) == 1, f"`{CONTROL_MARK}` is registered {len(registered)} times"
@@ -4056,7 +4056,7 @@ def test_no_ci_workflow_runs_the_collate_step():
     rather than the one nightly job, so a future workflow cannot pick it up
     quietly.
     """
-    workflows = sorted((PROJECT_ROOT / ".github" / "workflows").glob("*.yml"))
+    workflows = sorted((CHECKOUT_ROOT / ".github" / "workflows").glob("*.yml"))
     assert workflows, "no workflows found, so this guard would pass vacuously"
     for path in workflows:
         # COMMENTS ARE STRIPPED, and that is not a loophole: nightly.yml
@@ -4114,7 +4114,7 @@ def test_the_release_refreshes_the_matrix_before_it_builds_the_docs():
     consistent and the page would simply be one release stale.
     """
     body = (
-        (PROJECT_ROOT / "Makefile")
+        (CHECKOUT_ROOT / "Makefile")
         .read_text(encoding="utf-8")
         .split("\nrelease:", 1)[1]
         .split("\n\n", 1)[0]
@@ -4163,7 +4163,11 @@ def test_only_the_collator_ever_writes_a_measured_verdict():
     verdict-preservation guard proves its ``build_matrix`` never mints a
     ``measured-*`` verdict of its own either.
     """
-    roots = (PROJECT_ROOT / "src", PROJECT_ROOT / "scripts", PROJECT_ROOT / "tests" / "_fixtures")
+    roots = (
+        CHECKOUT_ROOT / "src",
+        CHECKOUT_ROOT / "scripts",
+        CHECKOUT_ROOT / "tests" / "_fixtures",
+    )
     exempt = (
         COLLATOR_PATH,
         GAP_REGISTRY_PATH,
@@ -4174,7 +4178,7 @@ def test_only_the_collator_ever_writes_a_measured_verdict():
         KMODCOV_RENDERER_PATH,
     )
     offenders = [
-        path.relative_to(PROJECT_ROOT).as_posix()
+        path.relative_to(CHECKOUT_ROOT).as_posix()
         for root in roots
         for path in root.rglob("*.py")
         if path not in exempt
@@ -4182,7 +4186,7 @@ def test_only_the_collator_ever_writes_a_measured_verdict():
     ]
     assert offenders == [], (
         f"{offenders} construct a `measured-*` verdict; only "
-        f"{COLLATOR_PATH.relative_to(PROJECT_ROOT)} may"
+        f"{COLLATOR_PATH.relative_to(CHECKOUT_ROOT)} may"
     )
 
 
@@ -4226,7 +4230,7 @@ def _contradiction_report(
     bed in another checkout and committed the result, which is the ordinary
     case and needs no defence of the matrix. A cell whose evidence is as new as
     the verdict, or newer, is the serious one: what this machine measured
-    disagrees with what the repo claims, and the matrix is what must answer.
+    disagrees with what the repository claims, and the matrix is what must answer.
 
     The remedy is NOT symmetrical either, so both are spelled out at the site
     rather than left to be rediscovered. Note what is deliberately absent:
@@ -4321,7 +4325,7 @@ def test_the_contradiction_report_tells_the_two_causes_apart():
     The message is the whole value of a guard that fires rarely, so its two
     branches are exercised here rather than trusted. A reader who is sent to
     `make conformance-bed` when their own fresh measurement disagrees with the
-    repo has been told to overwrite the finding.
+    repository has been told to overwrite the finding.
     """
     committed = {
         "transfer-roundtrip": {
@@ -5202,7 +5206,7 @@ def test_the_page_still_names_the_registry_and_the_division_of_labour(committed)
     it opened `assert broken, "no measured-broken cell in the artifact; this guard is
     vacuous"`. The 2026-08-26 re-measure emptied that list, and the per-row half went
     with it rather than being kept as a loop over nothing: a guard that cannot fail is
-    this repo's recurring defect, and the property it checked is asserted, injected, in
+    this repository's recurring defect, and the property it checked is asserted, injected, in
     `test_an_unexpected_failure_is_not_rendered_as_a_registered_gap` -- which makes a
     predicted failure and asserts its row says `registered gap` and points at
     {doc}`subsystems/busybox-support`. So nothing was lost by deleting the loop; what
@@ -5558,7 +5562,7 @@ def test_the_page_is_reachable_from_the_architecture_index():
     over nine profiles -- and filing a cross-cutting reference under one area makes it less
     findable than it deserves.
     """
-    index = (PROJECT_ROOT / "docs" / "architecture" / "index.rst").read_text(encoding="utf-8")
+    index = (CHECKOUT_ROOT / "docs" / "architecture" / "index.rst").read_text(encoding="utf-8")
     entries = [line.strip() for line in index.splitlines()]
     assert "support-matrix" in entries, "no toctree entry, so the page is an orphan"
     overview = entries[
@@ -5573,9 +5577,9 @@ def test_the_page_is_reachable_from_the_architecture_index():
 
 def test_the_rendered_page_is_build_output_and_not_a_second_committed_copy():
     """Two copies of 54 verdicts, and the one that goes stale is the one nothing runs."""
-    ignored = (PROJECT_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+    ignored = (CHECKOUT_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
     assert "docs/architecture/support-matrix.md" in [line.strip() for line in ignored]
-    assert PAGE_PATH.relative_to(PROJECT_ROOT).as_posix() == "docs/architecture/support-matrix.md"
+    assert PAGE_PATH.relative_to(CHECKOUT_ROOT).as_posix() == "docs/architecture/support-matrix.md"
 
 
 # --------------------------------------------------------------------------
@@ -5619,7 +5623,7 @@ def test_the_narrowing_pin_examines_a_real_mechanism_on_every_narrowing_surface(
     """
     with_rules = {}
     for surface in SURFACES:
-        rule = _domain_rule(PROJECT_ROOT / surface.contract.split("::")[0])
+        rule = _domain_rule(CHECKOUT_ROOT / surface.contract.split("::")[0])
         if rule is not None:
             with_rules[surface.id] = rule
     narrowing = {

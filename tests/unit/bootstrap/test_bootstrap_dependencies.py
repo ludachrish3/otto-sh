@@ -6,7 +6,7 @@ import pytest
 
 from otto import bootstrap as bs
 from otto.bootstrap import get_ordered_projects
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.project_scaffold import make_project
 
 
 @pytest.fixture(autouse=True)
@@ -16,11 +16,11 @@ def _fresh(monkeypatch):
     bs._reset()
 
 
-def _write_repo(tmp_path, name, version="1.0.0", *, required=(), optional=()) -> str:
-    """A repo whose init module appends its name to $OTTO_TEST_ORDER_FILE."""
+def _write_project(tmp_path, name, version="1.0.0", *, required=(), optional=()) -> str:
+    """A project whose init module appends its name to $OTTO_TEST_ORDER_FILE."""
     req = ", ".join(f'"{e}"' for e in required)
     opt = ", ".join(f'"{e}"' for e in optional)
-    project = make_sut_repo(
+    project = make_project(
         tmp_path / name,
         name=name,
         version=version,
@@ -51,8 +51,8 @@ def _order(order_file):
     return order_file.read_text().split()
 
 
-def test_dep_free_setup_registers_in_sut_dir_order(tmp_path, monkeypatch, order_file):
-    dirs = [_write_repo(tmp_path, n) for n in ("c", "a", "b")]
+def test_dep_free_setup_registers_in_ottopath_order(tmp_path, monkeypatch, order_file):
+    dirs = [_write_project(tmp_path, n) for n in ("c", "a", "b")]
     monkeypatch.setenv("OTTOPATH", os.pathsep.join(dirs))
     result = bs.bootstrap()
     assert result.errors == []
@@ -61,13 +61,13 @@ def test_dep_free_setup_registers_in_sut_dir_order(tmp_path, monkeypatch, order_
 
 
 def test_required_dep_reorders_registration(tmp_path, monkeypatch, order_file):
-    b = _write_repo(tmp_path, "b", required=["a >= 1"])
-    a = _write_repo(tmp_path, "a")
+    b = _write_project(tmp_path, "b", required=["a >= 1"])
+    a = _write_project(tmp_path, "a")
     monkeypatch.setenv("OTTOPATH", f"{b}{os.pathsep}{a}")
     result = bs.bootstrap()
     assert result.errors == []
     assert _order(order_file) == ["a", "b"]
-    # ordered_repos must carry the SAME order the imports ran in -- it is what
+    # ordered_projects must carry the SAME order the imports ran in -- it is what
     # the otto.project orchestrator walks, so a result that kept discovery
     # order (b, a) would install a dependent before its dependency.
     assert [r.name for r in result.ordered_projects] == ["a", "b"]
@@ -76,8 +76,8 @@ def test_required_dep_reorders_registration(tmp_path, monkeypatch, order_file):
 
 
 def test_missing_required_skips_registration(tmp_path, monkeypatch, order_file):
-    a = _write_repo(tmp_path, "a", required=["ghost"])
-    b = _write_repo(tmp_path, "b")
+    a = _write_project(tmp_path, "a", required=["ghost"])
+    b = _write_project(tmp_path, "b")
     monkeypatch.setenv("OTTOPATH", f"{a}{os.pathsep}{b}")
     result = bs.bootstrap()
     assert _order(order_file) == ["b"]  # a never registered
@@ -85,13 +85,13 @@ def test_missing_required_skips_registration(tmp_path, monkeypatch, order_file):
     assert [r.name for r in result.ordered_projects] == ["b"]  # and absent from the walk order
     (err,) = result.errors
     assert "ghost" in str(err)
-    a_repo = next(r for r in result.projects if r.name == "a")
-    assert a_repo.dependencies[0].status == "missing"
+    a_project = next(r for r in result.projects if r.name == "a")
+    assert a_project.dependencies[0].status == "missing"
 
 
 def test_optional_incompatible_warns_and_registers(tmp_path, monkeypatch, order_file):
-    a = _write_repo(tmp_path, "a", optional=["metrics >= 1.4"])
-    m = _write_repo(tmp_path, "metrics", version="1.2.0")
+    a = _write_project(tmp_path, "a", optional=["metrics >= 1.4"])
+    m = _write_project(tmp_path, "metrics", version="1.2.0")
     monkeypatch.setenv("OTTOPATH", f"{a}{os.pathsep}{m}")
     result = bs.bootstrap()
     assert result.errors == []
@@ -101,8 +101,8 @@ def test_optional_incompatible_warns_and_registers(tmp_path, monkeypatch, order_
 
 
 def test_skip_propagation_through_bootstrap(tmp_path, monkeypatch, order_file):
-    a = _write_repo(tmp_path, "a", required=["b"])
-    b = _write_repo(tmp_path, "b", required=["ghost"])
+    a = _write_project(tmp_path, "a", required=["b"])
+    b = _write_project(tmp_path, "b", required=["ghost"])
     monkeypatch.setenv("OTTOPATH", f"{a}{os.pathsep}{b}")
     result = bs.bootstrap()
     assert _order(order_file) == []
@@ -111,8 +111,8 @@ def test_skip_propagation_through_bootstrap(tmp_path, monkeypatch, order_file):
 
 def test_import_error_does_not_propagate_like_dep_failure(tmp_path, monkeypatch, order_file):
     # b's init module raises; a requires b (satisfied). a must STILL register.
-    a = _write_repo(tmp_path, "a", required=["b"])
-    b = _write_repo(tmp_path, "b")
+    a = _write_project(tmp_path, "a", required=["b"])
+    b = _write_project(tmp_path, "b")
     (tmp_path / "b" / "b_init.py").write_text("raise RuntimeError('boom')\n")
     monkeypatch.setenv("OTTOPATH", f"{a}{os.pathsep}{b}")
     result = bs.bootstrap()
@@ -125,8 +125,8 @@ def test_optional_provider_skipped_warns_and_dependent_registers(tmp_path, monke
     # d optionally depends on e; e's own required dep is missing so e is
     # skipped entirely. d must still register, but a warning must surface
     # that the optional feature it thinks it has is actually unavailable.
-    d = _write_repo(tmp_path, "d", optional=["e >= 1"])
-    e = _write_repo(tmp_path, "e", required=["ghost"])
+    d = _write_project(tmp_path, "d", optional=["e >= 1"])
+    e = _write_project(tmp_path, "e", required=["ghost"])
     monkeypatch.setenv("OTTOPATH", f"{d}{os.pathsep}{e}")
     result = bs.bootstrap()
     assert _order(order_file) == ["d"]  # d registered, e never did
@@ -138,7 +138,7 @@ def test_optional_provider_skipped_warns_and_dependent_registers(tmp_path, monke
 def test_no_dependencies_table_registers_normally(tmp_path, monkeypatch, order_file):
     # A settings.toml with no [dependencies] table at all -- must still
     # register normally, with an empty resolved-dependencies list.
-    root = make_sut_repo(
+    root = make_project(
         tmp_path / "solo",
         name="solo",
         extra='libs = ["."]\ninit = ["solo_init"]\n',
@@ -167,8 +167,8 @@ def test_a_broken_excluded_project_an_active_project_requires_refuses_the_run(
     from otto.session.errors import ProjectLoadError
     from otto.session.projects import ProjectSelection, check_projects
 
-    a = _write_repo(tmp_path, "a", required=["b"])
-    b = _write_repo(tmp_path, "b")
+    a = _write_project(tmp_path, "a", required=["b"])
+    b = _write_project(tmp_path, "b")
     (tmp_path / "b" / "b_init.py").write_text("raise RuntimeError('boom')\n")
     monkeypatch.setenv("OTTOPATH", f"{a}{os.pathsep}{b}")
     result = bs.bootstrap()

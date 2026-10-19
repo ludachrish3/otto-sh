@@ -3,7 +3,7 @@
 Mirrors ``tests/unit/models/test_defer_build.py``: that file walks
 ``OttoModel`` subclasses via ``__subclasses__()``; a pydantic *dataclass* has
 no such common base to recurse from, so this walks the AST of every module
-under ``src/otto`` (and the in-tree repo fixtures' importable ``pylib``
+under ``src/otto`` (and the in-tree project fixtures' importable ``pylib``
 packages) looking for a class decorated with ``@options`` or
 ``@options(...)``, by tracking the local name(s) a module's imports bind to
 ``options`` — the same alias-tracking approach
@@ -21,15 +21,15 @@ from pathlib import Path
 
 import pydantic.dataclasses
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-_SRC_OTTO = PROJECT_ROOT / "src" / "otto"
+_SRC_OTTO = CHECKOUT_ROOT / "src" / "otto"
 
-# In-tree repo fixtures whose pylib/ otto imports cleanly (no lab hardware
-# needed at import time). A repo whose pylib turns out NOT importable in a
+# In-tree project fixtures whose pylib/ otto imports cleanly (no lab hardware
+# needed at import time). A project whose pylib turns out NOT importable in a
 # plain unit test process is skipped entirely -- "if they're importable in
 # unit tests" -- rather than failing this sweep for an unrelated reason.
-_REPO_PYLIBS = [PROJECT_ROOT / "tests" / f"repo{n}" / "pylib" for n in (1, 2, 3, 4)]
+_PROJECT_PYLIBS = [CHECKOUT_ROOT / "tests" / f"project{n}" / "pylib" for n in (1, 2, 3, 4)]
 
 
 def _options_aliases(tree: ast.Module) -> set[str]:
@@ -80,13 +80,13 @@ def _find_options_classes(root: Path, *, package_prefix: str) -> list[tuple[str,
 
 
 def _load_options_classes() -> dict[tuple[str, str], type]:
-    """Import every ``@options`` class found in ``src/otto`` and importable repo pylibs."""
+    """Import every ``@options`` class found in ``src/otto`` and importable project pylibs."""
     classes: dict[tuple[str, str], type] = {}
     for dotted, name in _find_options_classes(_SRC_OTTO, package_prefix="otto"):
         module = importlib.import_module(dotted)
         classes[(dotted, name)] = getattr(module, name)
 
-    for pylib in _REPO_PYLIBS:
+    for pylib in _PROJECT_PYLIBS:
         if not pylib.is_dir():
             continue
         found = _find_options_classes(pylib, package_prefix="")
@@ -101,7 +101,7 @@ def _load_options_classes() -> dict[tuple[str, str], type]:
                     module = importlib.import_module(dotted)
                 except ImportError:
                     # Not importable in a plain unit-test process (e.g. a
-                    # lab-hardware dependency); the repo's classes are skipped,
+                    # lab-hardware dependency); the project's classes are skipped,
                     # not the whole sweep.
                     continue
                 classes[(dotted, name)] = getattr(module, name)

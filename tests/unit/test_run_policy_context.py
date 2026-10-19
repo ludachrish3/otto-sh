@@ -15,7 +15,7 @@ from otto.labs.loader import Lab
 from otto.run_context import LIBRARY_LAB_NAME, OttoContext, reset_context, set_context
 from tests._fixtures.bootstrap_seam import patch_bootstrap
 from tests._fixtures.labdata import make_host
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 from tests._fixtures.run_state import cleared_run_state, installed_run_state
 
 
@@ -386,7 +386,7 @@ class _BodyError(Exception):
 
 
 def test_declared_reads_the_variant_through_the_leaf_and_never_imports_the_context():
-    tree = ast.parse((PROJECT_ROOT / "src" / "otto" / "declared.py").read_text())
+    tree = ast.parse((CHECKOUT_ROOT / "src" / "otto" / "declared.py").read_text())
     bad = []
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
@@ -400,4 +400,4 @@ def test_declared_reads_the_variant_through_the_leaf_and_never_imports_the_conte
     ]
     assert bad == []
     assert leaf_at_top == []
-    assert "invocation" in (PROJECT_ROOT / "src" / "otto" / "declared.py").read_text()
+    assert "invocation" in (CHECKOUT_ROOT / "src" / "otto" / "declared.py").read_text()

@@ -93,7 +93,7 @@ def test_the_getting_started_variant_reaches_the_ensured_install(
 
     import_gs_example()
     # Only its options classes and its register_options call are under test:
-    # outside a repo's init import, register_project_actions refuses the
+    # outside a project's init import, register_project_actions refuses the
     # class, so it is stood in for by the identity.
     monkeypatch.setattr(actions_module, "register_project_actions", lambda cls: cls)
     actions = importlib.import_module("gs_example.actions")

@@ -14,7 +14,7 @@ whole userland is one BusyBox binary plus the symlinks its installer made
 (``scripts/build_busybox_guest_images.py``), with no GNU anything beside it
 (pinned by ``test_guest_smoke.py``). What the move adds is that the shell
 answering ``command -v`` is now the one otto is actually driving, over the
-same telnet session every other row uses, rather than a chroot this repo
+same telnet session every other row uses, rather than a chroot this repository
 built for the occasion.
 
 Every table is INDEXED by the row's version, never iterated. A guest whose

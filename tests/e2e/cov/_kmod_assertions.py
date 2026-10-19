@@ -1,4 +1,4 @@
-"""The assertions repo5's kmod coverage e2e and the otto_kmodcov toolchain matrix share.
+"""The assertions project5's kmod coverage e2e and the otto_kmodcov toolchain matrix share.
 
 Everything here is a fact about the demo module's coverage that does not
 depend on which compiler built it: which hosts and files the fetch tree
@@ -14,7 +14,7 @@ from pathlib import Path
 
 from otto.coverage.capture.model import Capture, CaptureFileCov
 from otto.coverage.store.model import CoverageStore, FileRecord
-from tests.e2e.cov._repo5_build import DEMO_SRC, _hits, _line_of, _record
+from tests.e2e.cov._project5_build import DEMO_SRC, _hits, _line_of, _record
 
 DEMO = "otto_kmod_demo"
 HOSTS = {"test1", "test2"}
@@ -71,7 +71,7 @@ def assert_run_log_reports_the_library_loaded_on_demand(log_dir: Path) -> None:
     # KmodProduct._ensure_library says so at INFO once per real load (never
     # when the library was already resident), and the run's verbose.log holds
     # it: a root-logger handler floored at INFO, so the line lands there
-    # regardless of --log-level. The demo repo names its kmodcov entry
+    # regardless of --log-level. The demo project names its kmodcov entry
     # `otto_kmodcov`, which is the name in the parentheses.
     verbose = (log_dir / "verbose.log").read_text()
     collapsed = " ".join(verbose.split())
@@ -124,7 +124,7 @@ def assert_exit_routine_lines_are_hit_once_per_host(store: CoverageStore) -> Non
     assert _hits(rec, _line_of(src, "demo_queue_free(&queue);")) == 2
     assert _hits(rec, _line_of(src, 'pr_info("loaded, queue capacity')) == 2
     # Both hosts' mixes end with an extra enqueue (see TEST1_ONLY/TEST2_ONLY in
-    # tests/repo5/tests/test_kmod_demo.py), so the queue is non-empty at
+    # tests/project5/tests/test_kmod_demo.py), so the queue is non-empty at
     # unload time on both hosts and the exit-time drain branch fires twice.
     assert _hits(rec, _line_of(src, 'pr_info("draining')) == 2
 

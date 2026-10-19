@@ -1,7 +1,7 @@
 """
 Tests for the --list-* options on otto test and otto run.
 
-Unit tests exercise panel methods directly on tmp_path-backed Repo
+Unit tests exercise panel methods directly on tmp_path-backed Project
 instances; the listings pytest collects are pinned in
 ``tests/unit/cli/test_test_listings.py``.
 """
@@ -16,7 +16,7 @@ from typer.testing import CliRunner
 from otto.config.project import Project
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result
 from tests._fixtures.labdata import write_lab_json
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.project_scaffold import make_project
 
 runner = CliRunner()
 
@@ -40,20 +40,20 @@ def _render(renderable) -> str:
     return buf.getvalue()
 
 
-def _make_sut(
+def _make_project_root(
     base: Path,
     name: str = "myrepo",
     version: str = "1.0.0",
     extra_toml: str = "",
 ) -> Path:
-    """Create a minimal SUT directory with .otto/settings.toml."""
-    return make_sut_repo(base / name, name=name, version=version, tests=["tests"], extra=extra_toml)
+    """Create a minimal project root with .otto/settings.toml."""
+    return make_project(base / name, name=name, version=version, tests=["tests"], extra=extra_toml)
 
 
 def _add_test_file(
     root: Path, filename: str = "test_example.py", content: str | None = None
 ) -> Path:
-    """Write a test file into the SUT's tests/ directory."""
+    """Write a test file into the project's tests/ directory."""
     tests_dir = root / "tests"
     tests_dir.mkdir(exist_ok=True)
     if content is None:
@@ -71,7 +71,7 @@ def _add_test_file(
 class TestGetLabPanel:
     def test_lists_lab_names_from_host_source(self, tmp_path):
         """The default json backend's lab names render as bulleted entries."""
-        root = _make_sut(
+        root = _make_project_root(
             tmp_path, extra_toml='[[lab.sources]]\nbackend = "json"\npaths = ["labdata"]\n'
         )
         labdata = root / "labdata"
@@ -86,19 +86,21 @@ class TestGetLabPanel:
         assert "beta" in text
 
     def test_declaring_no_source_says_so_instead_of_rendering_blank(self, tmp_path):
-        """A repo with no host source names the missing declaration.
+        """A project with no host source names the missing declaration.
 
         The empty composite lists no labs, so the bulleted branch would render
         an empty panel — indistinguishable from a source that answered with
         zero labs. The two are different problems and must read differently.
         """
-        project = Project(root=_make_sut(tmp_path))
+        project = Project(root=_make_project_root(tmp_path))
         assert project.lab_sources == []
         assert "no [[lab.sources]] declared" in _render(project.get_lab_panel())
 
     def test_unknown_backend_renders_error_not_traceback(self, tmp_path):
         """A misconfigured [[lab.sources]] backend surfaces in-panel instead of crashing."""
-        root = _make_sut(tmp_path, extra_toml='[[lab.sources]]\nbackend = "does-not-exist"\n')
+        root = _make_project_root(
+            tmp_path, extra_toml='[[lab.sources]]\nbackend = "does-not-exist"\n'
+        )
         project = Project(root=root)
         # Must not raise — get_lab_panel catches the build failure.
         text = _render(project.get_lab_panel())
@@ -113,13 +115,13 @@ class TestGetLabPanel:
 
 class TestGetMarkersPanel:
     def test_populated_panel_shows_markers(self, tmp_path):
-        project = Project(root=_make_sut(tmp_path))
+        project = Project(root=_make_project_root(tmp_path))
         text = _render(project.get_markers_panel(["slow", "smoke"]))
         assert "slow" in text
         assert "smoke" in text
 
     def test_empty_panel_shows_placeholder(self, tmp_path):
-        project = Project(root=_make_sut(tmp_path))
+        project = Project(root=_make_project_root(tmp_path))
         text = _render(project.get_markers_panel([]))
         assert "no markers found" in text
 
@@ -130,17 +132,17 @@ class TestGetMarkersPanel:
 
 
 class TestListMarkers:
-    def test_a_repo_with_no_tests_shows_the_placeholder(self, tmp_path):
-        sut = _make_sut(tmp_path)
-        with patch("otto.declared.get_projects", return_value=[Project(root=sut)]):
+    def test_a_project_with_no_tests_shows_the_placeholder(self, tmp_path):
+        root = _make_project_root(tmp_path)
+        with patch("otto.declared.get_projects", return_value=[Project(root=root)]):
             result = runner.invoke(_test_app(), ["--list-markers"])
         assert result.exit_code == 0
         assert "no markers found" in result.stdout
 
     def test_list_markers_includes_otto_builtins(self, tmp_path):
-        """`ensure` and `retry` are otto's, not the repo's — they get their own panel."""
-        sut = _make_sut(tmp_path)
-        with patch("otto.declared.get_projects", return_value=[Project(root=sut)]):
+        """`ensure` and `retry` are otto's, not the project's — they get their own panel."""
+        root = _make_project_root(tmp_path)
+        with patch("otto.declared.get_projects", return_value=[Project(root=root)]):
             result = runner.invoke(_test_app(), ["--list-markers"])
         assert result.exit_code == 0
         assert "ensure(*steps)" in result.stdout
@@ -171,7 +173,7 @@ class TestGetInstructionsPanel:
         return registry
 
     def test_shows_command_from_matching_module(self, tmp_path):
-        root = _make_sut(tmp_path, extra_toml='init = ["my_instructions"]\n')
+        root = _make_project_root(tmp_path, extra_toml='init = ["my_instructions"]\n')
         project = Project(root=root)
         fake = self._fake_registry(("do-something", "my_instructions.cmd"))
         with patch("otto.instruction_catalog.INSTRUCTIONS", fake):
@@ -179,9 +181,9 @@ class TestGetInstructionsPanel:
         assert "do-something" in text
 
     def test_excludes_command_from_other_module(self, tmp_path):
-        root = _make_sut(tmp_path, extra_toml='init = ["my_instructions"]\n')
+        root = _make_project_root(tmp_path, extra_toml='init = ["my_instructions"]\n')
         project = Project(root=root)
-        fake = self._fake_registry(("foreign-command", "other_repo.cmd"))
+        fake = self._fake_registry(("foreign-command", "other_project.cmd"))
         with patch("otto.instruction_catalog.INSTRUCTIONS", fake):
             text = _render(project.get_instructions_panel())
         assert "foreign-command" not in text
@@ -189,7 +191,7 @@ class TestGetInstructionsPanel:
 
     def test_explicit_cmd_name_takes_priority_over_func_name(self, tmp_path):
         """The registered name is already the explicit/derived name at registration time."""
-        root = _make_sut(tmp_path, extra_toml='init = ["my_instructions"]\n')
+        root = _make_project_root(tmp_path, extra_toml='init = ["my_instructions"]\n')
         project = Project(root=root)
         fake = self._fake_registry(("explicit-name", "my_instructions.cmd"))
         with patch("otto.instruction_catalog.INSTRUCTIONS", fake):
@@ -199,7 +201,7 @@ class TestGetInstructionsPanel:
 
     def test_matches_top_level_init_module(self, tmp_path):
         """Module name exactly equal to an init entry (not just a prefix) should match."""
-        root = _make_sut(tmp_path, extra_toml='init = ["my_instructions"]\n')
+        root = _make_project_root(tmp_path, extra_toml='init = ["my_instructions"]\n')
         project = Project(root=root)
         fake = self._fake_registry(("top-level-cmd", "my_instructions"))
         with patch("otto.instruction_catalog.INSTRUCTIONS", fake):
@@ -207,7 +209,7 @@ class TestGetInstructionsPanel:
         assert "top-level-cmd" in text
 
     def test_empty_when_no_groups(self, tmp_path):
-        root = _make_sut(tmp_path, extra_toml='init = ["my_instructions"]\n')
+        root = _make_project_root(tmp_path, extra_toml='init = ["my_instructions"]\n')
         project = Project(root=root)
         fake = self._fake_registry()
         with patch("otto.instruction_catalog.INSTRUCTIONS", fake):
@@ -221,23 +223,23 @@ class TestGetInstructionsPanel:
 
 
 class TestListTests:
-    def _repo_with_tests(self, tmp_path: Path) -> Project:
-        sut = _make_sut(tmp_path)
+    def _project_with_tests(self, tmp_path: Path) -> Project:
+        root = _make_project_root(tmp_path)
         _add_test_file(
-            sut,
+            root,
             "test_device.py",
             "import pytest\n"
             "class TestDevice:\n"
             "    def test_alpha(self):\n        assert True\n"
             "    @pytest.mark.slow\n    def test_beta(self):\n        assert True\n",
         )
-        (sut / "tests" / "conftest.py").write_text(
+        (root / "tests" / "conftest.py").write_text(
             "def pytest_configure(config):\n    config.addinivalue_line('markers','slow: x')\n"
         )
-        return Project(root=sut)
+        return Project(root=root)
 
     def test_list_tests_lists_all_and_exits(self, tmp_path: Path) -> None:
-        project = self._repo_with_tests(tmp_path)
+        project = self._project_with_tests(tmp_path)
         with patch("otto.bootstrap.bootstrap", return_value=fake_bootstrap_result([project])):
             result = runner.invoke(_test_app(), ["--list-tests"])
         assert result.exit_code == 0
@@ -245,7 +247,7 @@ class TestListTests:
         assert "test_beta" in result.stdout
 
     def test_list_tests_filters_by_marker(self, tmp_path: Path) -> None:
-        project = self._repo_with_tests(tmp_path)
+        project = self._project_with_tests(tmp_path)
         with patch("otto.bootstrap.bootstrap", return_value=fake_bootstrap_result([project])):
             result = runner.invoke(_test_app(), ["--list-tests", "--markers", "slow"])
         assert result.exit_code == 0

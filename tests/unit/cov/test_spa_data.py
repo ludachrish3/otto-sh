@@ -242,7 +242,7 @@ class TestDisplayPathPrefixStripAndFallback:
         assert node["path"] == "product/main.c"
 
     def test_file_outside_prefix_falls_back_to_full_path(self, tmp_path):
-        inside_dir = tmp_path / "repo"
+        inside_dir = tmp_path / "proj"
         src = _write(tmp_path, "elsewhere/b.c", "int b;\n")
         store = CoverageStore(tier_order=["system"])
         store.get_or_create_file(src)
@@ -463,7 +463,7 @@ def test_line_json_carries_ticket_ids_and_omits_empty(tmp_path):
 
 def test_tickets_totals_dedupes_a_line_owned_by_two_tickets(tmp_path):
     """Design spec §2/§6.1: overlap is the normal case — a line named by two
-    tickets must count ONCE in the repo-truth totals, never once per ticket.
+    tickets must count ONCE in the codebase-truth totals, never once per ticket.
 
     Fixture is built so a summing implementation and a deduping one produce
     DIFFERENT numbers (line 1 is claimed by both PROJ-1 and PROJ-2 and is

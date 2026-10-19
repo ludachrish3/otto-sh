@@ -24,7 +24,7 @@ def _entry(kind="kmod", **params):
         kind=kind,
         seam="dev_tools",
         owner="r",
-        base_dir=Path("/repo"),
+        base_dir=Path("/project"),
         match={},
         params=params,
     )
@@ -58,7 +58,7 @@ def test_kmod_is_registered_for_dev_tools():
 def test_kmod_tool_defaults_module_name_from_the_artifact_stem():
     tool = _build(artifact="build/my-tracer.ko")
     assert isinstance(tool, KmodTool)
-    assert tool.artifact == Path("/repo/build/my-tracer.ko")
+    assert tool.artifact == Path("/project/build/my-tracer.ko")
     assert tool.module_name == "my_tracer"
     assert tool.params == ""
 
@@ -102,7 +102,7 @@ async def test_kmod_tool_stage_is_a_noop_and_install_loads_with_params():
     assert (await tool.stage(host)).is_ok
     assert (await tool.install(host)).is_ok
     host.load.assert_awaited_once_with(
-        Path("/repo/build/tracer.ko"), "tracer", params="debug=1", dest_dir=Path("/home/tester")
+        Path("/project/build/tracer.ko"), "tracer", params="debug=1", dest_dir=Path("/home/tester")
     )
 
 
@@ -164,9 +164,9 @@ def test_kmodcov_is_registered_and_fixes_the_module_name():
     assert tool.source is None
 
 
-def test_kmodcov_reads_source_anchored_to_the_repo():
+def test_kmodcov_reads_source_anchored_to_the_project():
     tool = _kmodcov(source="third_party/otto_kmodcov")
-    assert tool.source == Path("/repo/third_party/otto_kmodcov")
+    assert tool.source == Path("/project/third_party/otto_kmodcov")
 
 
 @pytest.mark.parametrize(
@@ -192,7 +192,7 @@ def test_kmodcov_refuses_a_built_ko_of_another_interface_at_lab_load(tmp_path: P
     assert (  # noqa: PT018
         f"kmodcov{kmodcov.INTERFACE + 1}" in message and f"kmodcov{kmodcov.INTERFACE}" in message
     )
-    assert "otto cov kmodcov export /repo/third_party/otto_kmodcov" in message
+    assert "otto cov kmodcov export /project/third_party/otto_kmodcov" in message
 
 
 def test_kmodcov_refuses_a_built_ko_with_no_version_at_lab_load(tmp_path: Path):
@@ -211,7 +211,7 @@ def test_kmodcov_refuses_a_version_with_no_interface_number_without_printing_non
     assert "kmodcovNone" not in message
     assert "reports 1.6.0, which carries no kmodcov interface number" in message
     assert f"kmodcov{kmodcov.INTERFACE}" in message
-    assert "otto cov kmodcov export /repo/third_party/otto_kmodcov" in message
+    assert "otto cov kmodcov export /project/third_party/otto_kmodcov" in message
 
 
 def test_kmodcov_remedy_without_a_source_never_guesses_the_artifacts_parent(tmp_path: Path):
@@ -305,7 +305,7 @@ def test_a_module_coverage_product_with_no_kmodcov_tool_is_refused_naming_all_th
         kind="kmod",
         seam="products",
         owner="r",
-        base_dir=Path("/repo"),
+        base_dir=Path("/project"),
         match={},
         params={"artifact": "build/demo.ko", "coverage": "module"},
     )
@@ -359,7 +359,7 @@ async def test_dev_tool_install_falls_back_to_the_hosts_transfer_default(kind, t
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["kmod", "kmodcov"])
 async def test_dev_tool_install_falls_back_to_the_login_home(kind, tmp_path: Path):
-    host = _Host()  # the repo-wide case: no default_dest_dir at all
+    host = _Host()  # the project-wide case: no default_dest_dir at all
     assert (await _tool(kind, host, tmp_path).install(host)).is_ok
     assert host.load.await_args.kwargs["dest_dir"] == Path("/home/tester")
 

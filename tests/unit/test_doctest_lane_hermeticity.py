@@ -3,10 +3,10 @@
 ``make doctest-src`` and the nox ``docs`` session run ``pytest --doctest-modules
 src/otto``. Collecting ``src/otto`` does not load ``tests/conftest.py``, so the
 suite's ``OTTO_*`` strip never runs there: a developer shell that sourced
-``project_env`` hands the doctests ``OTTOPATH=tests/repo1:tests/repo2``.
+``project_env`` hands the doctests ``OTTOPATH=tests/project1:tests/project2``.
 That broke the pre-push gate on ``otto.examples.reservations_cli``: the
 reservations example once reached ``OttoContext.scopes``, which bootstraps those
-repos, and repo1 declares a ``[project]`` scope, so the ``fleet of interest`` INFO line is
+projects, and project1 declares a ``[project]`` scope, so the ``fleet of interest`` INFO line is
 logged mid-example.
 
 That log line is harmful because of the second defect. pyproject turns on
@@ -30,21 +30,21 @@ from pathlib import Path
 
 import pytest
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-# The failing shape from the pre-push gate: two fixture repos, one of which
-# declares a project scope, so reaching the repos logs at INFO.
+# The failing shape from the pre-push gate: two fixture projects, one of which
+# declares a project scope, so reaching the projects logs at INFO.
 _HOSTILE_OTTO_ENV = {
-    "OTTOPATH": os.pathsep.join(str(PROJECT_ROOT / "tests" / r) for r in ("repo1", "repo2")),
+    "OTTOPATH": os.pathsep.join(str(CHECKOUT_ROOT / "tests" / r) for r in ("project1", "project2")),
     "OTTO_LAB": "unix",
 }
 
 
 # Named explicitly because a probe under tmp_path has no pyproject above it, so
-# pytest would run it without the repo's config, `log_cli` included, and the
+# pytest would run it without the repository's config, `log_cli` included, and the
 # probe could not see that flag go missing. For `src/otto` this is the file
 # pytest finds on its own.
-_PYPROJECT = PROJECT_ROOT / "pyproject.toml"
+_PYPROJECT = CHECKOUT_ROOT / "pyproject.toml"
 
 
 def _hostile_env() -> dict[str, str]:
@@ -56,7 +56,7 @@ def _assert_green(proc: subprocess.CompletedProcess[str]) -> None:
 
 
 def _make_lane(target: str) -> list[str]:
-    """``make doctest-src``'s own command, pointed at *target* under the repo's config.
+    """``make doctest-src``'s own command, pointed at *target* under the repository's config.
 
     ``make -n`` expands the recipe under the hostile environment, so the
     ``OTTO_*`` strip resolves exactly as it would for a real invocation. Only
@@ -65,7 +65,7 @@ def _make_lane(target: str) -> list[str]:
     """
     dry = subprocess.run(
         ["make", "-n", "doctest-src"],
-        cwd=PROJECT_ROOT,
+        cwd=CHECKOUT_ROOT,
         env=_hostile_env(),
         capture_output=True,
         text=True,
@@ -79,18 +79,18 @@ def _make_lane(target: str) -> list[str]:
 
 
 def _nox_lane(target: str, monkeypatch: pytest.MonkeyPatch) -> tuple[list[str], dict[str, str]]:
-    """The nox ``docs`` session's pytest leg, pointed at *target* under the repo's config.
+    """The nox ``docs`` session's pytest leg, pointed at *target* under the repository's config.
 
     The session body is called with a recording double, which yields the argv
     and the ``env`` mapping it hands ``session.run``. nox merges that mapping
     over the outer environment and treats a ``None`` value as "unset", so the
     same merge is applied here.
     """
-    sys.path.insert(0, str(PROJECT_ROOT))
+    sys.path.insert(0, str(CHECKOUT_ROOT))
     try:
         import noxfile
     finally:
-        sys.path.remove(str(PROJECT_ROOT))
+        sys.path.remove(str(CHECKOUT_ROOT))
 
     for name, value in _HOSTILE_OTTO_ENV.items():
         monkeypatch.setenv(name, value)
@@ -118,7 +118,7 @@ def _run_lane(
     else:
         argv, env = _nox_lane(target, monkeypatch)
     return subprocess.run(
-        argv, cwd=PROJECT_ROOT, env=env, capture_output=True, text=True, check=False
+        argv, cwd=CHECKOUT_ROOT, env=env, capture_output=True, text=True, check=False
     )
 
 

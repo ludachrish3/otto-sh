@@ -1275,7 +1275,7 @@ def test_no_elevated_command_sits_inside_a_handler_that_swallows_the_refusal():
     ``contextlib.suppress`` with a broad argument is checked too and has no
     such escape: there is nowhere in a ``suppress`` block to re-raise from, so
     the only fix there is to narrow the argument. It is worth checking because
-    it is this repo's idiomatic swallow — 24 broad uses under ``src/otto`` —
+    it is this repository's idiomatic swallow — 24 broad uses under ``src/otto`` —
     and it leaves no ``ast.Try`` node for a handler-only sweep to find.
 
     **WHAT THIS DOES NOT SEE, so that it is not read as complete.** The sweep
@@ -1288,9 +1288,9 @@ def test_no_elevated_command_sits_inside_a_handler_that_swallows_the_refusal():
     why it does not appear below. Re-check by hand when a new indirection like
     it appears, or teach this sweep to follow one hop.
     """
-    from tests._fixtures.paths import PROJECT_ROOT
+    from tests._fixtures.paths import CHECKOUT_ROOT
 
-    src = PROJECT_ROOT / "src" / "otto"
+    src = CHECKOUT_ROOT / "src" / "otto"
     offenders: list[str] = []
     files_with_sites: set[str] = set()
 

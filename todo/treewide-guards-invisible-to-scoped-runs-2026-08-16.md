@@ -41,7 +41,7 @@ Repo-wide source scanners:
 | [test_no_skip_lanes.py](../tests/unit/test_no_skip_lanes.py) | skips standing in for host-down failures |
 | [test_tuple_return_debt.py](../tests/unit/test_tuple_return_debt.py) | tuple returns where a dataclass belongs |
 | [test_e2e_clock_hygiene.py](../tests/unit/test_e2e_clock_hygiene.py) | wall-clock use in e2e |
-| [test_sutrepo_scaffold_policy.py](../tests/unit/test_sutrepo_scaffold_policy.py) | SUT-repo scaffold policy |
+| [test_project_scaffold_policy.py](../tests/unit/test_project_scaffold_policy.py) | SUT-repo scaffold policy |
 | [test_bed_oracle_honesty.py](../tests/unit/test_bed_oracle_honesty.py) | bed oracles that cannot fail |
 
 Repo-artifact scanners (Makefile / noxfile / `.gitignore` / pytest config):

@@ -56,8 +56,8 @@ def _stub_post_fetch_clean(monkeypatch):
 
 
 @pytest.fixture
-def sut_repo(tmp_path):
-    """A real tmp_path git repo standing in for the SUT checkout."""
+def project_root(tmp_path):
+    """A real tmp_path git repository standing in for the project checkout."""
     import subprocess
 
     root = tmp_path / "sut"
@@ -117,7 +117,7 @@ class TestNamedExceptions:
         cov_dir.mkdir()
         project = MagicMock()
         project.root = tmp_path
-        project.name = "repo"
+        project.name = "proj"
 
         host = MagicMock(spec=UnixHost)
         host.id = "test1"
@@ -162,7 +162,7 @@ class TestFetchStage:
         cov_dir.mkdir()
         project = MagicMock()
         project.root = tmp_path
-        project.name = "repo"
+        project.name = "proj"
 
         host = MagicMock(spec=UnixHost)
         host.id = "test1"
@@ -184,7 +184,7 @@ class TestFetchStage:
 
         # The fetcher stages into the exact cov_dir it was handed (no override
         # logic — the caller resolves the destination now), carrying the
-        # repo-declared host selector so its own host walk matches ours.
+        # project-declared host selector so its own host walk matches ours.
         fetcher_cls.assert_called_once()
         assert fetcher_cls.call_args.args == (cov_dir,)
         assert fetcher_cls.call_args.kwargs["pattern"].pattern == ".*"
@@ -196,7 +196,7 @@ class TestFetchStage:
         cov_dir.mkdir()
         project = MagicMock()
         project.root = tmp_path
-        project.name = "repo"
+        project.name = "proj"
 
         h1 = MagicMock(spec=UnixHost)
         h1.id = "test1"
@@ -227,7 +227,7 @@ class TestFetchStage:
         cov_dir.mkdir()
         project = MagicMock()
         project.root = tmp_path
-        project.name = "repo"
+        project.name = "proj"
 
         host = MagicMock(spec=UnixHost)
         host.id = "test1"
@@ -256,7 +256,7 @@ class TestFetchStage:
         cov_dir.mkdir()
         project = MagicMock()
         project.root = tmp_path
-        project.name = "repo"
+        project.name = "proj"
 
         host = MagicMock(spec=UnixHost)
         host.id = "test1"
@@ -293,7 +293,7 @@ class TestProductsOnly:
         cov_dir.mkdir()
         project = MagicMock()
         project.root = tmp_path
-        project.name = "repo"
+        project.name = "proj"
         host = MagicMock(spec=UnixHost)
         host.id = "test1"
         host.products = [_product("app", "/var/cov/app"), _product("agent")]
@@ -327,7 +327,7 @@ class TestProductsOnly:
         cov_dir.mkdir()
         project = MagicMock()
         project.root = tmp_path
-        project.name = "repo"
+        project.name = "proj"
         board = MagicMock(spec=EmbeddedHost)
         board.id = "bench-1"
         board.products = [_product("blink")]
@@ -354,7 +354,7 @@ class TestProductsOnly:
         cov_dir.mkdir()
         project = MagicMock()
         project.root = tmp_path
-        project.name = "repo"
+        project.name = "proj"
         host = MagicMock(spec=UnixHost)
         host.id = "test1"
         host.products = []
@@ -392,7 +392,7 @@ class TestCleanAfterFetch:
 
         project = MagicMock()
         project.root = cov_dir.parent
-        project.name = "repo"
+        project.name = "proj"
 
         host = MagicMock(spec=UnixHost)
         host.id = "test1"
@@ -413,7 +413,7 @@ class TestCleanAfterFetch:
                 new=AsyncMock(return_value={}),
             ),
             patch("otto.coverage.collect.clean_coverage", clean_mock),
-            # get_cov_repo None short-circuits the metadata + capture tail so the
+            # get_cov_project None short-circuits the metadata + capture tail so the
             # test pins only the fetch/clean seam.
             patch("otto.config.coverage_settings.get_cov_project", return_value=None),
         ):
@@ -427,7 +427,7 @@ class TestCleanAfterFetch:
         cov_dir.mkdir()
         result, clean_mock, board, project = self._run(cov_dir)  # default True
         # Scoped to the hosts that actually contributed a product, through the
-        # same repo list collect_coverage itself resolved.
+        # same project list collect_coverage itself resolved.
         clean_mock.assert_awaited_once_with([project], host_ids=["test1"])
         assert result.product_dirs == {("test1", "app"): board}
         assert result.clean == CleanReport(hosts={})
@@ -435,7 +435,7 @@ class TestCleanAfterFetch:
     def test_false_skips_the_internal_clean(self, tmp_path):
         cov_dir = tmp_path / "cov"
         cov_dir.mkdir()
-        result, clean_mock, board, _repo = self._run(cov_dir, clean_after_fetch=False)
+        result, clean_mock, board, _project = self._run(cov_dir, clean_after_fetch=False)
         clean_mock.assert_not_awaited()
         # The fetch still happened and its dirs are reported unchanged.
         assert result.product_dirs == {("test1", "app"): board}
@@ -448,7 +448,7 @@ class TestCleanAfterFetch:
 class TestCollectEmbedded:
     """``collect_coverage`` collects embedded boards' products, and its
     ``.otto_cov_meta.json`` sidecar behaves exactly as the old coverage-metadata
-    writer did. Where a ``[coverage]`` repo resolves (so the capture tail would
+    writer did. Where a ``[coverage]`` project resolves (so the capture tail would
     fire), ``produce_captures`` is stubbed — these tests pin metadata, not
     capture production."""
 
@@ -470,7 +470,7 @@ class TestCollectEmbedded:
         embedded_collect.assert_awaited_once()
         assert isinstance(result, CollectResult)
         assert result.product_dirs == {("zephyr37-fat", "cov_ext"): staged}
-        # No [coverage] repo → no captures produced.
+        # No [coverage] project → no captures produced.
         assert result.captures_written == []
 
     def test_unix_hop_host_not_treated_as_coverage_target(self, tmp_path):
@@ -479,8 +479,8 @@ class TestCollectEmbedded:
         An embedded coverage lab must include the SSH hop (e.g. ``test4``
         fronting ``zephyr37_llext``) so the hop resolves — but the hop is
         infrastructure, not a coverage target, and emits no ``.gcda``. The meta
-        must therefore (a) keep ``sut_dir`` = the embedded build dir (the hop must
-        not flip it to the repo dir, which breaks ``.gcno`` discovery and made
+        must therefore (a) keep ``project_root`` = the embedded build dir (the hop must
+        not flip it to the project dir, which breaks ``.gcno`` discovery and made
         ``geninfo`` skip the file on the real lab) and (b) carry only the embedded
         host's toolchain, not the hop's. Regression for the test4-hop report bug.
         """
@@ -494,8 +494,8 @@ class TestCollectEmbedded:
         build_dir.mkdir(parents=True)
 
         project = MagicMock()
-        project.name = "repo3"
-        project.root = tmp_path / "repo3"  # NOT what sut_dir should resolve to
+        project.name = "project3"
+        project.root = tmp_path / "project3"  # NOT what the meta project_root should resolve to
 
         hop = MagicMock(spec=UnixHost)
         hop.id = "test4"  # a Unix hop, produces no coverage
@@ -553,8 +553,8 @@ class TestCollectEmbedded:
         (build_dir / "zephyr").mkdir(parents=True)
 
         project = MagicMock()
-        project.name = "repo3"
-        project.root = tmp_path / "repo3"
+        project.name = "project3"
+        project.root = tmp_path / "project3"
 
         embedded_collect = AsyncMock(
             return_value={("zephyr37-llext", "cov_ext"): cov_dir / "zephyr37-llext" / "cov_ext"}
@@ -589,8 +589,8 @@ class TestCollectEmbedded:
         build_dir.mkdir()
 
         project = MagicMock()
-        project.name = "repo3"
-        project.root = tmp_path / "repo3"
+        project.name = "project3"
+        project.root = tmp_path / "project3"
 
         embedded_collect = AsyncMock(
             return_value={("zephyr37-llext", "cov_ext"): cov_dir / "zephyr37-llext" / "cov_ext"}
@@ -624,7 +624,7 @@ class TestCollectEmbedded:
 
     def test_coverage_hosts_regex_passed_to_both_selectors(self, tmp_path):
         """``[coverage].hosts`` compiles to a regex handed to the Unix and
-        embedded host selectors, so the collect-from set is repo-declared
+        embedded host selectors, so the collect-from set is project-declared
         rather than inferred from which hosts happened to emit ``.gcda``.
         """
         project = MagicMock()
@@ -690,8 +690,8 @@ class TestCollectEmbedded:
         build44.mkdir(parents=True)
 
         project = MagicMock()
-        project.name = "repo3"
-        project.root = tmp_path / "repo3"
+        project.name = "project3"
+        project.root = tmp_path / "project3"
 
         zephyr37_fat = ZephyrHost(
             ip="192.0.2.33",
@@ -759,8 +759,8 @@ class TestFetchedToolchainMetadata:
         cov_dir = tmp_path / "cov"
         cov_dir.mkdir()
         project = MagicMock()
-        project.name = "repo1"
-        project.root = tmp_path / "repo1"
+        project.name = "project1"
+        project.root = tmp_path / "project1"
 
         doubles = []
         fetched = {}
@@ -797,7 +797,7 @@ class TestFetchedToolchainMetadata:
         # field — so the value rule covers it without a kind check.
         toolchains = self._collect(
             tmp_path,
-            [("test1", "unix", Toolchain()), ("test3.repo1.api", "container", Toolchain())],
+            [("test1", "unix", Toolchain()), ("test3.project1.api", "container", Toolchain())],
         )
 
         assert toolchains == {}
@@ -861,7 +861,7 @@ class TestBuildDirPathAnchoring:
     through the pydantic model's ``ProjectPath``, so it must be anchored by hand
     at the point it's read to obey the documented path-resolution convention
     (docs/configuration/settings.md ``### Path resolution``): ``~`` expansion,
-    then repo-root anchoring for a still-relative value. Regression coverage
+    then project-root anchoring for a still-relative value. Regression coverage
     for the settings-path-anchoring-phase2 gap.
     """
 
@@ -902,21 +902,21 @@ class TestBuildDirPathAnchoring:
 
     # ── single ``build_dir`` fallback ────────────────────────────────────────
 
-    def test_relative_build_dir_anchors_to_repo_root_not_cwd(self, tmp_path, monkeypatch):
-        """A bare relative ``build_dir`` resolves under the repo root
+    def test_relative_build_dir_anchors_to_project_root_not_cwd(self, tmp_path, monkeypatch):
+        """A bare relative ``build_dir`` resolves under the project root
         (``cov_project.root``), never the process CWD.
 
         Without the fix, ``Path(build_dir).resolve()`` resolves relative to
         wherever ``otto cov`` happens to be invoked from.
         """
-        project_root = tmp_path / "repo3"
+        project_root = tmp_path / "project3"
         (project_root / "build").mkdir(parents=True)
         elsewhere = tmp_path / "elsewhere"
         elsewhere.mkdir()
         monkeypatch.chdir(elsewhere)
 
         project = MagicMock()
-        project.name = "repo3"
+        project.name = "project3"
         project.root = project_root
 
         host = self._zephyr_host(element="zephyr37_llext")
@@ -937,8 +937,8 @@ class TestBuildDirPathAnchoring:
         build_dir.mkdir()
 
         project = MagicMock()
-        project.name = "repo3"
-        project.root = tmp_path / "repo3"
+        project.name = "project3"
+        project.root = tmp_path / "project3"
 
         host = self._zephyr_host(element="zephyr37_llext")
         cov_config = {"embedded": {"build_dir": "~/covbuild"}}
@@ -948,21 +948,21 @@ class TestBuildDirPathAnchoring:
 
     # ── per-version ``builds.<ver>.build_dir`` ──────────────────────────────
 
-    def test_per_version_relative_build_dir_anchors_to_repo_root_not_cwd(
+    def test_per_version_relative_build_dir_anchors_to_project_root_not_cwd(
         self, tmp_path, monkeypatch
     ):
         """The per-version ``builds.<ver>.build_dir`` obeys the same
         anchoring rule as the single fallback: relative values resolve under
-        the repo root, not the process CWD.
+        the project root, not the process CWD.
         """
-        project_root = tmp_path / "repo3"
+        project_root = tmp_path / "project3"
         (project_root / "build" / "v3_7").mkdir(parents=True)
         elsewhere = tmp_path / "elsewhere"
         elsewhere.mkdir()
         monkeypatch.chdir(elsewhere)
 
         project = MagicMock()
-        project.name = "repo3"
+        project.name = "project3"
         project.root = project_root
 
         host = self._zephyr_host(element="zephyr37_fat", os_version="3.7")
@@ -984,8 +984,8 @@ class TestBuildDirPathAnchoring:
         build_dir.mkdir()
 
         project = MagicMock()
-        project.name = "repo3"
-        project.root = tmp_path / "repo3"
+        project.name = "project3"
+        project.root = tmp_path / "project3"
 
         host = self._zephyr_host(element="zephyr37_fat", os_version="3.7")
         cov_config = {"embedded": {"builds": {"3.7": {"build_dir": "~/v3_7"}}}}
@@ -1013,8 +1013,8 @@ class TestCaptureTail:
         ):
             return asyncio.run(collect_coverage(cov_dir, projects=[project]))
 
-    def test_happy_path_writes_pinned_capture(self, tmp_path, sut_repo, monkeypatch):
-        """A well-formed single-tier repo leaves behind a real capture.json and
+    def test_happy_path_writes_pinned_capture(self, tmp_path, project_root, monkeypatch):
+        """A well-formed single-tier project leaves behind a real capture.json and
         returns it in CollectResult.captures_written."""
         from otto.coverage.capture import produce as produce_mod
 
@@ -1023,14 +1023,14 @@ class TestCaptureTail:
         (cov_dir / "board1" / "app" / "x.gcda").write_bytes(b"")
 
         async def fake_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
-            output.write_text(f"TN:\nSF:{sut_repo / 'f.c'}\nDA:1,3\nend_of_record\n")
+            output.write_text(f"TN:\nSF:{project_root / 'f.c'}\nDA:1,3\nend_of_record\n")
             return output
 
         monkeypatch.setattr(produce_mod.LcovMerger, "capture", fake_capture)
 
         project = MagicMock()
-        project.root = sut_repo
-        project.name = "repo"
+        project.root = project_root
+        project.name = "proj"
 
         # Non-empty (truthy) but no explicit [coverage.tiers] -> implicit
         # single "system" e2e tier.
@@ -1041,7 +1041,7 @@ class TestCaptureTail:
         assert json.loads(capture_path.read_text())["tier"] == "system"
         assert result.captures_written == [capture_path]
 
-    def test_ambiguous_tiers_raise(self, tmp_path, sut_repo, monkeypatch):
+    def test_ambiguous_tiers_raise(self, tmp_path, project_root, monkeypatch):
         """Two e2e-kind tiers make ``resolve_get_tier`` raise ``ValueError`` —
         which now propagates out of collect_coverage (no swallow)."""
         from otto.coverage.capture import produce as produce_mod
@@ -1051,14 +1051,14 @@ class TestCaptureTail:
         (cov_dir / "board1" / "app" / "x.gcda").write_bytes(b"")
 
         async def fake_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
-            output.write_text(f"TN:\nSF:{sut_repo / 'f.c'}\nDA:1,3\nend_of_record\n")
+            output.write_text(f"TN:\nSF:{project_root / 'f.c'}\nDA:1,3\nend_of_record\n")
             return output
 
         monkeypatch.setattr(produce_mod.LcovMerger, "capture", fake_capture)
 
         project = MagicMock()
-        project.root = sut_repo
-        project.name = "repo"
+        project.root = project_root
+        project.name = "proj"
 
         cov_config = {
             "tiers": {
@@ -1072,8 +1072,8 @@ class TestCaptureTail:
 
         assert not (cov_dir / "board1" / "app" / "capture.json").exists()
 
-    def test_non_git_sut_raises(self, tmp_path, monkeypatch):
-        """A non-git sut dir now raises (GitUnavailableError, a RuntimeError)."""
+    def test_non_git_project_root_raises(self, tmp_path, monkeypatch):
+        """A non-git project root now raises (GitUnavailableError, a RuntimeError)."""
         from otto.coverage.capture import produce as produce_mod
         from otto.coverage.capture.gitio import GitUnavailableError
 
@@ -1093,7 +1093,7 @@ class TestCaptureTail:
 
         project = MagicMock()
         project.root = notgit
-        project.name = "repo"
+        project.name = "proj"
 
         with pytest.raises(GitUnavailableError):
             self._collect(project, cov_dir, {"tiers": {}})
@@ -1102,7 +1102,7 @@ class TestCaptureTail:
         """tier/ticket/note/tester/display_names thread through to produce_captures."""
         project = MagicMock()
         project.root = tmp_path / "sut"
-        project.name = "repo"
+        project.name = "proj"
         cov_dir = tmp_path / "cov"
         cov_dir.mkdir()
 
@@ -1157,7 +1157,7 @@ class TestTierPassthrough:
 
         project = MagicMock()
         project.root = tmp_path / "sut"
-        project.name = "repo"
+        project.name = "proj"
         cov_dir = tmp_path / "cov"
         cov_dir.mkdir()
 
@@ -1201,14 +1201,14 @@ class TestPostRunSwallowPolicy:
         ):
             asyncio.run(_post_run_coverage([project], cov_dir.parent / "log", opts))
 
-    def test_ambiguous_tiers_do_not_fail_the_run(self, tmp_path, sut_repo, caplog):
+    def test_ambiguous_tiers_do_not_fail_the_run(self, tmp_path, project_root, caplog):
         cov_dir = tmp_path / "cov"
         (cov_dir / "board1" / "app").mkdir(parents=True)
         (cov_dir / "board1" / "app" / "x.gcda").write_bytes(b"")
 
         project = MagicMock()
-        project.root = sut_repo
-        project.name = "repo"
+        project.root = project_root
+        project.name = "proj"
 
         cov_config = {
             "tiers": {
@@ -1223,7 +1223,7 @@ class TestPostRunSwallowPolicy:
         assert not (cov_dir / "board1" / "app" / "capture.json").exists()
         assert any("Coverage collection failed" in rec.message for rec in caplog.records)
 
-    def test_non_git_sut_does_not_fail_the_run(self, tmp_path, monkeypatch, caplog):
+    def test_non_git_project_root_does_not_fail_the_run(self, tmp_path, monkeypatch, caplog):
         from otto.coverage.capture import produce as produce_mod
 
         cov_dir = tmp_path / "cov"
@@ -1242,7 +1242,7 @@ class TestPostRunSwallowPolicy:
 
         project = MagicMock()
         project.root = notgit
-        project.name = "repo"
+        project.name = "proj"
 
         with caplog.at_level("WARNING"):
             self._drive_post_run(project, cov_dir, {"tiers": {}})

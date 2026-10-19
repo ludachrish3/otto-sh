@@ -22,12 +22,12 @@ variables get set, never what they do. See
 this kind takes, including why an instrumented tarball entry must say
 `instrumented = true`.
 
-The worked example throughout this page is `tests/repo5/docker/`: a static
+The worked example throughout this page is `tests/project5/docker/`: a static
 `--coverage` build of a small C program, baked into an image and declared
 as two products — `cov_container`, loaded from a tarball, and
 `cov_container_ref`, the reference the tarball loaded:
 
-```{literalinclude} ../../../../tests/repo5/.otto/settings.toml
+```{literalinclude} ../../../../tests/project5/.otto/settings.toml
 :language: toml
 :start-after: "# needs no pull. An archive scans unknown, hence `instrumented = true`."
 :end-before: "# All three unix hosts are eligible"
@@ -37,11 +37,11 @@ Both entries' `run_args` set `GCOV_PREFIX` and nothing else — no
 `GCOV_PREFIX_STRIP`. That half is baked into the image itself at build
 time instead of written as a number in settings:
 
-```{literalinclude} ../../../../tests/repo5/docker/Dockerfile
+```{literalinclude} ../../../../tests/project5/docker/Dockerfile
 :language: docker
 ```
 
-`tests/repo5/docker/build.sh` computes the strip count from its own build
+`tests/project5/docker/build.sh` computes the strip count from its own build
 directory's absolute path and passes it as `--build-arg
 GCOV_PREFIX_STRIP`. The strip count depends on where on disk the compiler
 ran, which differs between checkouts of the same project, so bake it into the
@@ -84,7 +84,7 @@ already gone has nothing to resolve an image from, so nothing beyond the
 hauled — `otto host <id> get-product-logs`, and `Host.uninstall`'s own
 haul-then-remove sequence both do this. `otto test` never calls either
 one, so a test module that installs and tears down its own products, the way
-`tests/repo5/tests/test_cov_container.py` does, must haul the container's
+`tests/project5/tests/test_cov_container.py` does, must haul the container's
 logs itself before it removes the container — `docker logs` needs the
 container to still exist. `docker logs` captures only the container's PID
 1 — whatever a test runs against it separately, with `docker exec`, never
@@ -104,7 +104,7 @@ container whose own process is not root then fails to write under
 `GCOV_PREFIX=<cov_dir>` — silently, with no error anywhere otto surfaces,
 just an empty fetch afterward. Either run the container as root, or
 pre-create `<cov_dir>` writable for the container's user before `install`
-(`tests/repo5/tests/test_cov_container.py`'s own fixture does this with
+(`tests/project5/tests/test_cov_container.py`'s own fixture does this with
 `sudo mkdir -p` and `chmod`).
 
 ## Compose is the other path

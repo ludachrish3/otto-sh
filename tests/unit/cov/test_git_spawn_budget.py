@@ -51,7 +51,7 @@ def counted_git(monkeypatch):
 
 
 @pytest.fixture
-def big_repo(tmp_path: Path):
+def big_git_repo(tmp_path: Path):
     root = tmp_path / "r"
     root.mkdir()
     _git(root, "init", "-q", "-b", "main")
@@ -75,10 +75,10 @@ def big_repo(tmp_path: Path):
     return root, cap
 
 
-def test_failure_path_classification_probe_is_counted(counted_git, big_repo):
+def test_failure_path_classification_probe_is_counted(counted_git, big_git_repo):
     """The work-tree probe must be VISIBLE to this counter, not invisible.
 
-    It classifies a failed git call (not-a-repo vs. the command itself
+    It classifies a failed git call (not-a-git-repository vs. the command itself
     failing) and it runs through ``_run_raw`` for exactly that reason: a spawn
     that goes straight to ``subprocess`` is a spawn no budget guard can bound,
     and failure paths are precisely where an unnoticed per-file spawn would
@@ -89,7 +89,7 @@ def test_failure_path_classification_probe_is_counted(counted_git, big_repo):
     unresolvable base, the probe that classifies that failure, and the shallow
     probe behind the degradation warning.
     """
-    root, _cap = big_repo
+    root, _cap = big_git_repo
     counted_git.clear()
     AnchorResolver(root, "0" * 40)
     spawned = [" ".join(c) for c in counted_git]
@@ -97,8 +97,8 @@ def test_failure_path_classification_probe_is_counted(counted_git, big_repo):
     assert gitio._WORK_TREE_PROBE in counted_git, spawned
 
 
-def test_fold_spawns_constant_git_calls(counted_git, big_repo):
-    root, cap = big_repo
+def test_fold_spawns_constant_git_calls(counted_git, big_git_repo):
+    root, cap = big_git_repo
     # Touch a handful of files so the tree diff is non-trivial.
     for i in (3, 7):
         (root / f"f{i:03}.c").write_text(f"int f{i}(void)\n{{\n    return -1;\n}}\n")

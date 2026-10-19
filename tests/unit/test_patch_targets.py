@@ -49,7 +49,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from tests._fixtures._lazy_exports import lazy_export_map, lazy_facade_names
-from tests._fixtures.paths import PROJECT_ROOT, TESTS_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT, TESTS_ROOT
 
 
 def _dotted(node: ast.AST) -> str | None:
@@ -136,7 +136,7 @@ def package_level_patches(source: str, filename: str) -> list[str]:
 def _offences(path: Path) -> list[str]:
     try:
         source = path.read_text(encoding="utf-8")
-        return package_level_patches(source, str(path.relative_to(PROJECT_ROOT)))
+        return package_level_patches(source, str(path.relative_to(CHECKOUT_ROOT)))
     except (SyntaxError, UnicodeDecodeError, ValueError):
         return []  # a deliberately broken fixture file; nothing to read
 
@@ -337,7 +337,7 @@ def apply_exclusions(found: list[Offence], exclusions: list[Exclusion]) -> ScanR
 def _reexport_offences(path: Path, reexports: "dict[str, dict[str, str]]") -> list[Offence]:
     try:
         source = path.read_text(encoding="utf-8")
-        return eager_reexport_patches(source, str(path.relative_to(PROJECT_ROOT)), reexports)
+        return eager_reexport_patches(source, str(path.relative_to(CHECKOUT_ROOT)), reexports)
     except (SyntaxError, UnicodeDecodeError, ValueError):
         return []  # a deliberately broken fixture file; nothing to read
 

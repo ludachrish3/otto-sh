@@ -1,14 +1,14 @@
 """Completion synthesizes container ids in the shape registration actually uses.
 
-`register_declared_container_hosts` takes the USE-CASE branch for any repo
+`register_declared_container_hosts` takes the USE-CASE branch for any project
 that declares `[[docker.use_cases]]` and registers
 ``<parent>.<usecase>.<service>`` placeholders (spec §9); only a composes-only
-repo keeps the legacy ``<parent>.<repo>.<service>`` shape. Completion has to
+project keeps the legacy ``<parent>.<project>.<service>`` shape. Completion has to
 mirror that branch or it offers ids nothing registers.
 
-The sample repos (`tests/repo1`, `tests/repo2`) name their use-cases after
+The sample projects (`tests/project1`, `tests/project2`) name their use-cases after
 themselves, so both shapes coincide there and a divergence is invisible. Every
-test below therefore uses a use-case name that DIFFERS from its repo name —
+test below therefore uses a use-case name that DIFFERS from its project name —
 that mismatch is the point, not incidental naming.
 """
 
@@ -17,12 +17,12 @@ from pathlib import Path
 from otto.config.completion_cache import collect_host_ids
 from otto.config.project import Project
 from otto.config.scope import DockerCompose, DockerSettings, DockerUseCase
-from tests._fixtures.fake_repo import fake_repo
+from tests._fixtures.fake_project import fake_project
 from tests._fixtures.labdata import json_lab_sources, write_lab_json
 
 
-def _repo(tmp_path: Path, *, name: str, docker: DockerSettings) -> Project:
-    """A duck-typed Repo carrying one docker-capable host and a [docker] block."""
+def _project(tmp_path: Path, *, name: str, docker: DockerSettings) -> Project:
+    """A duck-typed Project carrying one docker-capable host and a [docker] block."""
     labs_dir = tmp_path / "labs"
     labs_dir.mkdir()
     write_lab_json(
@@ -37,7 +37,7 @@ def _repo(tmp_path: Path, *, name: str, docker: DockerSettings) -> Project:
             }
         ],
     )
-    return fake_repo(
+    return fake_project(
         name,
         lab_sources=json_lab_sources(labs_dir.parent, [labs_dir]),
         root=labs_dir.parent,
@@ -46,39 +46,39 @@ def _repo(tmp_path: Path, *, name: str, docker: DockerSettings) -> Project:
 
 
 def _compose(name: str, *services: str) -> DockerCompose:
-    return DockerCompose(path=Path(f"/repo/docker/{name}.yml"), services=services, name=name)
+    return DockerCompose(path=Path(f"/project/docker/{name}.yml"), services=services, name=name)
 
 
-def test_use_case_repo_completes_use_case_ids_not_repo_ids(tmp_path):
-    """The masked case: repo ``acme`` declaring use-case ``integration``.
+def test_use_case_project_completes_use_case_ids_not_project_ids(tmp_path):
+    """The masked case: project ``acme`` declaring use-case ``integration``.
 
     `--list-hosts` shows ``server47.integration.api`` (that is what the
     placeholder walk registers); completion must offer the same string. The
-    repo-named id is not merely redundant — it names nothing, so a user who
+    project-named id is not merely redundant — it names nothing, so a user who
     tab-completes it gets a host error for an id otto handed them.
     """
     docker = DockerSettings(
         composes=(_compose("core", "api"),),
         use_cases=(DockerUseCase(name="integration", composes=("core",)),),
     )
-    ids = set(collect_host_ids([_repo(tmp_path, name="acme", docker=docker)]))
+    ids = set(collect_host_ids([_project(tmp_path, name="acme", docker=docker)]))
 
     assert "server47.integration.api" in ids, "the id registration mints must complete"
     assert "server47.acme.api" not in ids, (
-        "the repo-named id names nothing for a use-case repo — offering it "
+        "the project-named id names nothing for a use-case project — offering it "
         "sends the user to a host that does not exist"
     )
 
 
-def test_a_composes_only_repo_keeps_the_legacy_repo_named_ids(tmp_path):
-    """The legacy branch is unchanged: no fragments, so the middle is the repo."""
+def test_a_composes_only_project_keeps_the_legacy_project_named_ids(tmp_path):
+    """The legacy branch is unchanged: no fragments, so the middle is the project."""
     docker = DockerSettings(composes=(_compose("core", "api"),), use_cases=())
-    ids = set(collect_host_ids([_repo(tmp_path, name="acme", docker=docker)]))
+    ids = set(collect_host_ids([_project(tmp_path, name="acme", docker=docker)]))
 
     assert "server47.acme.api" in ids
 
 
-def test_every_fragment_of_a_multi_use_case_repo_contributes_its_own_ids(tmp_path):
+def test_every_fragment_of_a_multi_use_case_project_contributes_its_own_ids(tmp_path):
     """Two fragments, two use-cases, one shared compose handle → both ids.
 
     Placement is NOT mirrored here (this function has no lab), so the walk
@@ -92,7 +92,7 @@ def test_every_fragment_of_a_multi_use_case_repo_contributes_its_own_ids(tmp_pat
             DockerUseCase(name="soak", composes=("core",)),
         ),
     )
-    ids = set(collect_host_ids([_repo(tmp_path, name="acme", docker=docker)]))
+    ids = set(collect_host_ids([_project(tmp_path, name="acme", docker=docker)]))
 
     assert {
         "server47.integration.api",
@@ -116,7 +116,7 @@ def test_a_fragment_naming_an_unknown_handle_is_skipped_not_raised(tmp_path):
             DockerUseCase(name="soak", composes=("core",)),
         ),
     )
-    ids = set(collect_host_ids([_repo(tmp_path, name="acme", docker=docker)]))
+    ids = set(collect_host_ids([_project(tmp_path, name="acme", docker=docker)]))
 
     assert "server47.soak.api" in ids, "the resolvable fragment still completes"
     assert not any(".integration." in i for i in ids)

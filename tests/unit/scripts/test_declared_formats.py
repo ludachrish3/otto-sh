@@ -17,9 +17,9 @@ import pytest
 
 from scripts import api_records, api_regen
 from scripts.api_manifest import load_formats
-from tests._fixtures.paths import PROJECT_ROOT, TESTS_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT, TESTS_ROOT
 
-MANIFEST = PROJECT_ROOT / "api" / "public.toml"
+MANIFEST = CHECKOUT_ROOT / "api" / "public.toml"
 SAMPLES = TESTS_ROOT / "_fixtures" / "formats"
 FORMATS = load_formats(MANIFEST)
 
@@ -50,7 +50,7 @@ _PROBE = (
 @pytest.fixture(scope="module")
 def recorded() -> "dict[str, api_records.Record]":
     report = api_regen.run_child(
-        Path(sys.executable), PROJECT_ROOT / "src", [], formats=list(FORMATS.values())
+        Path(sys.executable), CHECKOUT_ROOT / "src", [], formats=list(FORMATS.values())
     )
     assert report["refusals"] == []
     assert report["provenance"] == []
@@ -100,7 +100,7 @@ def test_each_format_module_imports_only_the_standard_library(module):
         capture_output=True,
         text=True,
         check=True,
-        cwd=PROJECT_ROOT,
+        cwd=CHECKOUT_ROOT,
     )
     loaded = json.loads(out.stdout)
     parts = module.split(".")

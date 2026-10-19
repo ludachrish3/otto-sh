@@ -6,7 +6,7 @@ excepthook, and the exit of the process with the logging listener still
 running. A run that leaves the traceback in the queue at exit fails here,
 which an in-process test cannot show.
 
-The repo registers lab-bound commands from its init module. The marker values
+The project registers lab-bound commands from its init module. The marker values
 live in module constants so that they reach a log file only through a frame's
 LOCALS panel, never through the three lines of source Rich prints around each
 frame.
@@ -21,7 +21,7 @@ import pytest
 
 from otto.config.env import is_otto_env_var
 from tests._fixtures.labdata import write_lab_json
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.project_scaffold import make_project
 
 _ENTRY = [sys.executable, "-c", "from otto.cli.main import entry; entry()"]
 
@@ -120,7 +120,7 @@ def workspace(tmp_path):
             }
         ],
     )
-    project = make_sut_repo(
+    project = make_project(
         tmp_path / "sut",
         name="acme",
         extra=(

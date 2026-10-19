@@ -18,11 +18,11 @@ from pathlib import Path
 
 import pytest
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
 
-SCRIPT = PROJECT_ROOT / "scripts" / "provision_kmodcov_kernels.sh"
+SCRIPT = CHECKOUT_ROOT / "scripts" / "provision_kmodcov_kernels.sh"
 CROSS = "x86_64-cross"
 
 
@@ -38,7 +38,7 @@ def _run(args, *, path: str, cwd=None) -> subprocess.CompletedProcess:
 
 
 def makefile_kernel_ids() -> list[str]:
-    text = (PROJECT_ROOT / "Makefile").read_text(encoding="utf-8")
+    text = (CHECKOUT_ROOT / "Makefile").read_text(encoding="utf-8")
     m = re.search(r"^KMODCOV_KERNELS \?= (.+)$", text, re.MULTILINE)
     assert m, "the Makefile declares no `KMODCOV_KERNELS ?= …` line"
     return [k.strip() for k in m.group(1).split(",") if k.strip()]
@@ -239,7 +239,7 @@ def test_2_6_32_with_the_binfmt_registered_proceeds_past_the_check(tmp_path: Pat
 
 def test_list_agrees_with_the_kernel_column_table_id_by_id():
     """The script's pin table and the lane's KernelColumn table cannot drift apart."""
-    from tests.e2e.cov._repo5_build import KERNEL_IDS, kernel_column
+    from tests.e2e.cov._project5_build import KERNEL_IDS, kernel_column
 
     assert [row[0] for row in listed()] == KERNEL_IDS[1:]
     kernels = Path("/k")

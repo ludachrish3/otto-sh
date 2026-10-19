@@ -17,7 +17,7 @@ from otto.config.completion_cache import collect_link_ids
 from otto.config.project import Project
 from otto.labs import build_lab_sources
 from otto.link.placement import BOTH_DIRECTIONS, endpoint_placements, ensure_not_local_link
-from tests._fixtures.fake_repo import fake_repo
+from tests._fixtures.fake_project import fake_project
 from tests._fixtures.labdata import json_lab_sources, write_lab_json
 
 _TEST1 = {
@@ -34,15 +34,15 @@ _TEST2 = {
 }
 
 
-def _repo_with_lab(
+def _project_with_lab(
     tmp_path: Path, hosts: list[dict], links: list[dict], *, lab: str = "unix"
 ) -> Project:
-    """A fake Repo whose single lab search path holds *hosts* and *links*."""
+    """A fake Project whose single lab search path holds *hosts* and *links*."""
     lab_dir = tmp_path / "lab"
     lab_dir.mkdir(parents=True, exist_ok=True)
     hosts = [{**h, "labs": h.get("labs", [lab])} for h in hosts]
     write_lab_json(lab_dir / "lab.json", hosts, links)
-    return fake_repo("fake", lab_sources=json_lab_sources(tmp_path, [lab_dir]), root=tmp_path)
+    return fake_project("fake", lab_sources=json_lab_sources(tmp_path, [lab_dir]), root=tmp_path)
 
 
 def _impairable(link) -> bool:
@@ -62,7 +62,7 @@ def _impairable(link) -> bool:
 
 
 def test_collect_link_ids_names_and_derived(tmp_path: Path) -> None:
-    project = _repo_with_lab(
+    project = _project_with_lab(
         tmp_path,
         hosts=[_TEST1, _TEST2],
         links=[
@@ -74,16 +74,16 @@ def test_collect_link_ids_names_and_derived(tmp_path: Path) -> None:
 
 
 def test_collect_link_ids_empty_without_links(tmp_path: Path) -> None:
-    project = _repo_with_lab(tmp_path, hosts=[_TEST1], links=[])
+    project = _project_with_lab(tmp_path, hosts=[_TEST1], links=[])
     assert collect_link_ids([project]) == []
 
 
-def test_collect_link_ids_no_repos() -> None:
+def test_collect_link_ids_no_projects() -> None:
     assert collect_link_ids([]) == []
 
 
 def test_collect_link_ids_skips_malformed_entries(tmp_path: Path) -> None:
-    project = _repo_with_lab(
+    project = _project_with_lab(
         tmp_path,
         hosts=[_TEST1],
         links=[
@@ -98,7 +98,7 @@ def test_collect_link_ids_skips_malformed_entries(tmp_path: Path) -> None:
 
 
 def test_collect_link_ids_dedupes_and_sorts(tmp_path: Path) -> None:
-    project = _repo_with_lab(
+    project = _project_with_lab(
         tmp_path,
         hosts=[_TEST1, _TEST2],
         links=[
@@ -120,7 +120,7 @@ def test_every_offered_id_resolves_and_is_impairable(tmp_path: Path) -> None:
     but can never be impaired, so an acceptance-only assertion would pass
     while the shell suggested guaranteed errors.
     """
-    project = _repo_with_lab(
+    project = _project_with_lab(
         tmp_path,
         hosts=[_TEST1, _TEST2],
         links=[
@@ -148,7 +148,7 @@ def test_implicit_links_are_offered_by_nobody_because_nothing_can_impair_them(
     tmp_path: Path,
 ) -> None:
     """Pins the reason for the exclusion, so a future widening has to face it."""
-    project = _repo_with_lab(tmp_path, hosts=[_TEST1, {**_TEST2, "hop": "test1"}], links=[])
+    project = _project_with_lab(tmp_path, hosts=[_TEST1, {**_TEST2, "hop": "test1"}], links=[])
     lab = build_lab_sources([project]).load_lab("unix")
 
     implicit = [link for link in lab.static_links() if link.provenance.value == "implicit"]
@@ -180,7 +180,7 @@ def test_loaded_ids_scopes_to_the_selected_lab(
         {**_TEST1, "element": "alt1", "board": None, "labs": ["unix_alt"]},
         {**_TEST2, "element": "alt2", "board": None, "labs": ["unix_alt"]},
     ]
-    project = _repo_with_lab(
+    project = _project_with_lab(
         tmp_path,
         hosts=[_TEST1, _TEST2, *unix_alt],
         links=[
@@ -194,7 +194,7 @@ def test_loaded_ids_scopes_to_the_selected_lab(
 def test_collect_links_carries_endpoint_hosts_for_lab_scoping(tmp_path: Path) -> None:
     from otto.config.completion_cache import collect_links
 
-    project = _repo_with_lab(
+    project = _project_with_lab(
         tmp_path,
         hosts=[_TEST1, _TEST2],
         links=[
@@ -228,7 +228,7 @@ def test_declared_twice_with_disjoint_hosts_merges_both_declarations(tmp_path: P
         {**_TEST1, "element": "alt1"},
         {**_TEST2, "element": "alt2"},
     ]
-    project = _repo_with_lab(
+    project = _project_with_lab(
         tmp_path,
         hosts=[_TEST1, _TEST2, *alt],
         links=[

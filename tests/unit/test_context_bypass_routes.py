@@ -1,6 +1,6 @@
 """A route around the run context's facade reaches a context that does not compose.
 
-The composition root, ``otto.bootstrap``, composes the repos. ``otto.context``'s resolver
+The composition root, ``otto.bootstrap``, composes the projects. ``otto.context``'s resolver
 loads it for ``OttoContext`` and ``open_context``, and the run context below it,
 ``otto.run_context``, never imports it (spec 2026-10-11 placement-and-phases §3.9,
 §3.12). A route that reaches the class without that resolver, in a process that never
@@ -8,7 +8,7 @@ loaded the root, gets a class whose first composing read refuses with the catalo
 refusal, which names both ways to compose, and an ``open_context`` whose entry
 refuses the same way before it installs or yields a context. Each case runs in a
 fresh interpreter over
-a scratch repo (``tests/_fixtures/fresh_composition.py``), composes nothing, and then
+a scratch project (``tests/_fixtures/fresh_composition.py``), composes nothing, and then
 arms the counting hook, so its 0 is a count the hook would have made.
 """
 

@@ -82,7 +82,7 @@ def test_a_warning_renders_a_tag_shaped_regex_verbatim(tmp_path: Path) -> None:
     assert "'nope[a-z]+'" in result.output
 
 
-def test_a_clean_repo_prints_no_warnings_block(tmp_path: Path) -> None:
+def test_a_clean_project_prints_no_warnings_block(tmp_path: Path) -> None:
     """The scaffold itself must be warning-free, or the block is just noise."""
     _scaffold_all(tmp_path)
     result = _invoke(["--all", "--path", str(tmp_path)])
@@ -109,7 +109,7 @@ def test_statuses_render_scaffolded_not_present_and_blocked(tmp_path: Path) -> N
     assert "scaffolded" in result.output
     assert "not present" in result.output
     settings = tmp_path / ".otto" / "settings.toml"
-    settings.write_text(  # sutrepo-exempt: a settings file that does not compile IS the subject
+    settings.write_text(  # scaffold-exempt: a settings file that does not compile IS the subject
         'name = "w\n'
     )
     result = _invoke(["--lab", "--path", str(tmp_path)])

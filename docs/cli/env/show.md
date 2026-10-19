@@ -8,15 +8,15 @@ otto env show
 
 ```console
 $ otto env show
-environment: ~/.otto/134b91c0-repo1-repo4/env
+environment: ~/.otto/134b91c0-project1-project4/env
   backend:     uv
   otto:        0.8.6
-╭─────────┬───────────────────┬───────────┬───────────────────────────────────╮
-│ project │ distribution      │ installed │ state                             │
-├─────────┼───────────────────┼───────────┼───────────────────────────────────┤
-│ repo1   │ —                 │ —         │ no pyproject (libs ride sys.path) │
-│ repo4   │ otto-sample-repo4 │ yes       │ current                           │
-╰─────────┴───────────────────┴───────────┴───────────────────────────────────╯
+╭──────────┬──────────────────────┬───────────┬───────────────────────────────────╮
+│ project  │ distribution         │ installed │ state                             │
+├──────────┼──────────────────────┼───────────┼───────────────────────────────────┤
+│ project1 │ —                    │ —         │ no pyproject (libs ride sys.path) │
+│ project4 │ otto-sample-project4 │ yes       │ current                           │
+╰──────────┴──────────────────────┴───────────┴───────────────────────────────────╯
 ```
 
 | Column | Meaning |
@@ -30,7 +30,7 @@ environment: ~/.otto/134b91c0-repo1-repo4/env
 
 ```console
 $ otto env show
-no environment for this workspace (~/.otto/134b91c0-repo1-repo4/env)
+no environment for this workspace (~/.otto/134b91c0-project1-project4/env)
 build one with:
   otto env create
 ```
@@ -46,7 +46,7 @@ requirements last changed.
 
 ```console
 $ otto env show
-│ repo4 │ otto-sample-repo4 │ yes       │ stale — run `otto env sync`       │
+│ project4 │ otto-sample-project4 │ yes       │ stale — run `otto env sync`       │
 ```
 
 The check is cheap — no imports, no installer call, nothing that can hang on

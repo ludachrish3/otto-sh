@@ -10,9 +10,9 @@ instead, at the cost of an assertion that (by construction) can't catch a
 build-config regression — that half is `wheel-check`'s job.
 """
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-_MARKER = PROJECT_ROOT / "src" / "otto" / "py.typed"
+_MARKER = CHECKOUT_ROOT / "src" / "otto" / "py.typed"
 
 
 def test_py_typed_marker_exists_and_is_empty():

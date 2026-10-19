@@ -1,24 +1,24 @@
-"""The orchestrator — cross-repo composition, one debug sweep, and converge.
+"""The orchestrator — cross-project composition, one debug sweep, and converge.
 
-Everything here is about what the LAB does, not what one repo does: the walk
+Everything here is about what the LAB does, not what one project does: the walk
 order (dependencies first to build, dependents first to tear down), what a
 failure stops and what it does not, and the host-global steps that belong to no
-repo at all (the debug sweep, the toolchain tools).
+project at all (the debug sweep, the toolchain tools).
 
 THE CONTEXT IS MONKEYPATCHED WHERE THE ORCHESTRATOR LOOKS IT UP.
 :func:`otto.project.orchestrator._lab` imports ``get_context`` inside the call
 (the package's circular-import idiom), so the attribute read happens on
 ``otto.context`` at call time and patching that name is what the module
-actually sees. The repos come off the context it returns (``ctx.projects`` and
+actually sees. The projects come off the context it returns (``ctx.projects`` and
 ``ctx.ordered_projects``), so the double carries them.
 
 No registry-isolation fixture here, deliberately: the tests register recording
 ``ProjectActions`` subclasses, and the root conftest's autouse
 ``_isolate_registries`` reaches ``PROJECT_ACTIONS`` dynamically (the same
 reasoning as ``test_actions.py``). They register through
-:func:`_register_actions`, which enters the repo's init-import marker (the
+:func:`_register_actions`, which enters the project's init-import marker (the
 table refuses a registration outside one) and passes ``overwrite=True``, since
-a test that wires two labs in a row registers a repo's actions twice.
+a test that wires two labs in a row registers a project's actions twice.
 """
 
 import io
@@ -83,7 +83,7 @@ from otto.tunnel import (
 )
 from otto.utils import Status
 from tests._fixtures.bootstrap_seam import seed_scope_verdicts
-from tests._fixtures.fake_repo import fake_repo
+from tests._fixtures.fake_project import fake_project
 
 # ── doubles ──────────────────────────────────────────────────────────────
 
@@ -137,7 +137,7 @@ class _FakeHost:
 
 
 def _register_actions(project: str, cls: "type[ProjectActions]") -> None:
-    """Register *cls* as *repo*'s actions, as that repo's init import would."""
+    """Register *cls* as *project*'s actions, as that project's init import would."""
     with registering_project(project):
         register_project_actions(cls, overwrite=True)
 
@@ -174,8 +174,8 @@ class _FakeCtx:
     """
 
     # The real seam, borrowed rather than reimplemented: ``actions_for`` builds
-    # every repo's actions around ``ctx.for_repo(name)``, so this double is
-    # asked for one on each level-1 hop. ``for_repo`` only wraps, and a second
+    # every project's actions around ``ctx.for_project(name)``, so this double is
+    # asked for one on each level-1 hop. ``for_project`` only wraps, and a second
     # copy of that wiring here would be a copy that can drift.
     for_project = OttoContext.for_project
     # ``scopes_of(ctx)`` reads the verdicts through the context's own resolver,
@@ -221,16 +221,16 @@ class _FakeCtx:
 
 
 def _recording_actions(events, flags, questions=None, failing=None, state=None, dirty=()):
-    """A ``ProjectActions`` subclass recording ``(repo, verb)`` and the flags it got.
+    """A ``ProjectActions`` subclass recording ``(project, verb)`` and the flags it got.
 
-    *failing* is one ``(repo, verb)`` pair that answers Failed; *state* scripts
-    ``status()`` (one state for every repo, or a ``{repo: state}`` mapping when
-    they differ); *dirty* names the repos whose ``is_clean()`` answers False.
+    *failing* is one ``(project, verb)`` pair that answers Failed; *state* scripts
+    ``status()`` (one state for every project, or a ``{project: state}`` mapping when
+    they differ); *dirty* names the projects whose ``is_clean()`` answers False.
 
     Questions (``status``/``is_clean``) land in *questions*, never in *events*:
     ``events`` is the list of things the lab was made to DO, and the two are
-    kept apart because a repo this run does not apply to must appear in
-    NEITHER — a status that asks an excluded repo for its state has contacted
+    kept apart because a project this run does not apply to must appear in
+    NEITHER — a status that asks an excluded project for its state has contacted
     hosts outside the fleet of interest just as surely as an install would.
     """
     questions = [] if questions is None else questions
@@ -278,25 +278,26 @@ def _recording_actions(events, flags, questions=None, failing=None, state=None, 
 
 
 def _wire_lab(monkeypatch, project_names, ctx, current=None, dependencies=None):
-    """Point the orchestrator's context lookup at *ctx*, carrying *repo_names* and the driving repo.
+    """Point the orchestrator's context lookup at *ctx*, carrying *project_names* and the driving
+    project.
 
-    TWO REPO LISTS, DELIBERATELY DIFFERENT. ``ctx.ordered_projects`` hands back
+    TWO PROJECT LISTS, DELIBERATELY DIFFERENT. ``ctx.ordered_projects`` hands back
     the dependency-topological walk order (dependencies first), while
     ``ctx.projects`` hands back bootstrap's own ``OTTOPATH`` order, whose
-    FIRST entry is the driving project — the repo D3 aborts for. *current*
+    FIRST entry is the driving project — the project D3 aborts for. *current*
     defaults to the LAST name in walk order, which is where a dependent sits,
     so a gate that read the walk order's first element would be asking about a
     dependency and these fixtures would catch it.
 
-    EVERY fake repo carries ``dependencies``, empty by default, because the
+    EVERY fake project carries ``dependencies``, empty by default, because the
     real :class:`~otto.config.project.Project` always does (a ``field`` with
     ``default_factory=list``, populated by bootstrap's resolution pass). A
-    double that omitted it would make ``for dep in repo.dependencies`` look
+    double that omitted it would make ``for dep in project.dependencies`` look
     like it needed a ``getattr`` guard the production type never wants.
-    *dependencies* maps a repo name to the resolved entries it declares.
+    *dependencies* maps a project name to the resolved entries it declares.
     """
     deps = dependencies or {}
-    ordered = [fake_repo(name, dependencies=list(deps.get(name, []))) for name in project_names]
+    ordered = [fake_project(name, dependencies=list(deps.get(name, []))) for name in project_names]
     driving = current if current is not None else (project_names[-1] if project_names else None)
     configured = [project for project in ordered if project.name == driving]
     configured += [project for project in ordered if project.name != driving]
@@ -367,7 +368,7 @@ def _wire(  # noqa: PLR0913 — one independently-optional knob per axis of the 
     dependencies=None,
     **actions_kwargs,
 ):
-    """A lab of *repos* (topological order) with recording actions and *hosts* fleet hosts."""
+    """A lab of *projects* (topological order) with recording actions and *hosts* fleet hosts."""
     events, flags, questions = [], [], []
     cls = _recording_actions(events, flags, questions, **actions_kwargs)
     for name in projects:
@@ -417,7 +418,7 @@ def _scope(
     could certify an orchestrator reading the wrong one.
 
     ``universe=()`` is the OTHER unusable shape and is left free of
-    ``excluded``: a repo whose labs DO apply while its ``host_patterns`` match
+    ``excluded``: a project whose labs DO apply while its ``host_patterns`` match
     no host there keeps its ``applicable_labs``, which is what makes the two
     conditions — and the two messages — tellable apart.
 
@@ -436,7 +437,7 @@ def _scope(
         applicable_labs=frozenset() if excluded else frozenset(loaded[:1]),
         universe=frozenset() if excluded else frozenset(universe),
         excluded=excluded,
-        root=f"/repos/{name}",
+        root=f"/projects/{name}",
         loaded_labs=tuple(loaded),
         lab_patterns=(f"{name}-lab",),
         host_patterns=tuple(host_patterns),
@@ -482,7 +483,7 @@ def _said(caplog):
 
 
 @pytest.mark.asyncio
-async def test_install_walks_repos_in_topological_order(monkeypatch):
+async def test_install_walks_projects_in_topological_order(monkeypatch):
     # Kills: any walk that ignores the resolved order — a dependent installed
     # before the dependency it needs.
     #
@@ -506,14 +507,14 @@ async def test_install_is_fail_fast(monkeypatch):
     # Exhaustive too, and for a second reason: the fleet is wired, so a
     # host-global step appended in the shape `cleanup` uses (run it anyway,
     # reduce the failures afterwards) is caught here even though it does not
-    # touch the repo walk. Fail-fast means the FAILURE STOPS EVERYTHING after
-    # it, not just the next repo.
+    # touch the project walk. Fail-fast means the FAILURE STOPS EVERYTHING after
+    # it, not just the next project.
     lab = _wire(monkeypatch, projects=["base", "app"], hosts=2, failing=("base", "install"))
     result = await project.install()
     assert lab.events == [("base", "install")]
     assert not result.is_ok
-    assert result.status is Status.Failed  # the repo's own status, not a generic one
-    assert "base" in result.msg  # kills: dropping WHICH repo failed
+    assert result.status is Status.Failed  # the project's own status, not a generic one
+    assert "base" in result.msg  # kills: dropping WHICH project failed
     assert "install refused" in result.msg
 
 
@@ -523,7 +524,7 @@ async def test_install_is_fail_fast(monkeypatch):
 @pytest.mark.asyncio
 async def test_uninstall_walks_reverse_and_is_best_effort(monkeypatch):
     # Kills BOTH: forward-order teardown (dependents must come down first) and
-    # fail-fast teardown (a failed repo must not strand the rest).
+    # fail-fast teardown (a failed project must not strand the rest).
     lab = _wire(monkeypatch, projects=["base", "app"], failing=("app", "uninstall"))
     result = await project.uninstall()
     assert [e[0] for e in lab.events if e[1] == "uninstall"] == ["app", "base"]
@@ -532,9 +533,9 @@ async def test_uninstall_walks_reverse_and_is_best_effort(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_uninstall_does_not_mutate_the_cached_repo_order(monkeypatch):
+async def test_uninstall_does_not_mutate_the_cached_project_order(monkeypatch):
     # The double hands back the SAME ordered list on every read. Kills: an
-    # in-place ``repos.reverse()``, which would leave every later reader of
+    # in-place ``projects.reverse()``, which would leave every later reader of
     # that list — including the next orchestrator verb — walking backwards.
     lab = _wire(monkeypatch, projects=["base", "app"])
     before = list(lab.ordered)
@@ -543,7 +544,7 @@ async def test_uninstall_does_not_mutate_the_cached_repo_order(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_uninstall_forwards_get_product_logs_to_every_repo(monkeypatch):
+async def test_uninstall_forwards_get_product_logs_to_every_project(monkeypatch):
     lab = _wire(monkeypatch, projects=["base", "app"])
     await project.uninstall(UninstallOptions(product_logs=False))
     assert [f[2] for f in lab.flags] == [{"product_logs": False}] * 2
@@ -554,13 +555,13 @@ async def test_uninstall_forwards_get_product_logs_to_every_repo(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_debug_sweep_runs_once_per_host_after_all_uninstalls(monkeypatch):
-    # THE spec §5 rule. Kills: per-repo debug gathering (N sweeps, each
+    # THE spec §5 rule. Kills: per-project debug gathering (N sweeps, each
     # overwriting the last), and pre-teardown sweeping (Chris reversed that —
     # teardown activity is what debug logs exist to capture).
     lab = _wire(monkeypatch, projects=["base", "app"], hosts=2)
     assert (await project.uninstall()).is_ok
     debug_events = [e for e in lab.events if e[1] == "get_debug_logs"]
-    assert len(debug_events) == 2  # once per host, not once per repo on every host
+    assert len(debug_events) == 2  # once per host, not once per project on every host
     last_uninstall = max(i for i, e in enumerate(lab.events) if e[1] == "uninstall")
     first_debug = min(i for i, e in enumerate(lab.events) if e[1] == "get_debug_logs")
     assert first_debug > last_uninstall
@@ -586,8 +587,8 @@ async def test_uninstall_reports_a_failed_debug_sweep(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_debug_sweep_runs_even_when_a_repo_failed_to_uninstall(monkeypatch):
-    # Best-effort all the way down: the repo that would not tear down is
+async def test_debug_sweep_runs_even_when_a_project_failed_to_uninstall(monkeypatch):
+    # Best-effort all the way down: the project that would not tear down is
     # exactly the one whose debug logs are wanted.
     lab = _wire(monkeypatch, projects=["app"], hosts=1, failing=("app", "uninstall"))
     result = await project.uninstall()
@@ -602,12 +603,12 @@ async def test_debug_sweep_runs_even_when_a_repo_failed_to_uninstall(monkeypatch
 @pytest.mark.asyncio
 async def test_cleanup_walks_reverse_sweeps_untools_then_repairs_and_reaps_last(monkeypatch):
     # The toolchain is HOST-global (one per host, shared by every owner), so it
-    # is removed once at the end rather than by any repo. Kills: a per-repo
+    # is removed once at the end rather than by any project. Kills: a per-project
     # toolchain removal, which would take a neighbour's tooling with it.
     #
     # THE LAST TWO ARE THE ORDER THAT MATTERS MOST, and this is the only place
     # it is asserted: a tunnel can BE the access path to a host, so reaping it
-    # before the repo walk, the sweep or the toolchain removal severs the
+    # before the project walk, the sweep or the toolchain removal severs the
     # connection the rest of cleanup still needs. Resetting impairments first
     # only improves that path, which is why it comes second-to-last rather
     # than last. Kills: either step hoisted anywhere earlier, and the two
@@ -641,7 +642,7 @@ async def test_cleanup_hands_both_lab_sweeps_the_active_context_lab(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_cleanup_removes_the_toolchain_even_when_a_repo_failed(monkeypatch):
+async def test_cleanup_removes_the_toolchain_even_when_a_project_failed(monkeypatch):
     lab = _wire(monkeypatch, projects=["app"], hosts=1, failing=("app", "cleanup"))
     result = await project.cleanup()
     assert ("h0", "remove_toolchain_tools") in lab.events
@@ -682,8 +683,8 @@ async def test_cleanup_forwards_get_product_logs(monkeypatch):
 
 # ── cleanup: the lab's own infrastructure ────────────────────────────────
 #
-# Impairments and tunnels belong to no repo, exactly like the debug sweep and
-# the toolchain above: nothing in a repo's products or dev tools put them
+# Impairments and tunnels belong to no project, exactly like the debug sweep and
+# the toolchain above: nothing in a project's products or dev tools put them
 # there. Both go through the library functions — `repair_all` keeps the
 # refuse-a-foreign-qdisc rail, `remove_all_tunnels` keeps the post-kill verify
 # — so nothing here reimplements `tc` or `kill`.
@@ -807,7 +808,7 @@ async def test_cleanup_names_the_declines_alongside_an_impairment_failure(monkey
 
 
 @pytest.mark.asyncio
-async def test_cleanup_a_repo_failure_outranks_a_refused_impairment(monkeypatch):
+async def test_cleanup_a_project_failure_outranks_a_refused_impairment(monkeypatch):
     # The decline is `is_ok`, so it must never displace a real failure in the
     # reported result. Kills: a reduction that returns the last non-Success.
     _wire(
@@ -964,15 +965,15 @@ async def test_cleanup_dry_run_preview_of_the_tunnel_reap_is_not_a_reap(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_get_logs_walks_every_repo_then_sweeps_debug_once(monkeypatch):
+async def test_get_logs_walks_every_project_then_sweeps_debug_once(monkeypatch):
     lab = _wire(monkeypatch, projects=["base", "app"], hosts=2)
     assert (await project.get_logs()).is_ok
     assert _verbs(lab.events) == ["get_logs", "get_logs", "get_debug_logs", "get_debug_logs"]
 
 
 @pytest.mark.asyncio
-async def test_get_logs_is_best_effort_across_repos(monkeypatch):
-    # A repo whose haul failed must not cost the others theirs.
+async def test_get_logs_is_best_effort_across_projects(monkeypatch):
+    # A project whose haul failed must not cost the others theirs.
     lab = _wire(monkeypatch, projects=["base", "app"], failing=("base", "get_logs"))
     result = await project.get_logs()
     assert ("app", "get_logs") in lab.events
@@ -996,8 +997,8 @@ async def test_get_logs_forwards_require_product_logs(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_get_logs_require_product_logs_with_product_false_is_refused(monkeypatch):
-    # Kills: leaning on the per-repo refusal, which never fires in a lab with
-    # no repos — the requirement would be parsed and silently unenforceable.
+    # Kills: leaning on the per-project refusal, which never fires in a lab with
+    # no projects — the requirement would be parsed and silently unenforceable.
     lab = _wire(monkeypatch, projects=[], hosts=1)
     result = await project.get_logs(GetLogsOptions(product_logs=False, require_product_logs=True))
     assert not result.is_ok
@@ -1032,7 +1033,7 @@ async def test_install_tools_default_leaves_the_toolchain_alone(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_install_tools_toolchain_runs_the_host_global_sweep(monkeypatch):
-    # THE host-global half: no repo places toolchain tools (one toolchain per
+    # THE host-global half: no project places toolchain tools (one toolchain per
     # host, shared by every owner), so if the orchestrator does not sweep,
     # ``install_tools(toolchain=True)`` is a silent end-to-end no-op.
     lab = _wire(monkeypatch, projects=["app"], hosts=2)
@@ -1048,7 +1049,7 @@ async def test_install_tools_toolchain_runs_the_host_global_sweep(monkeypatch):
 async def test_install_tools_dev_false_toolchain_true_still_sweeps(monkeypatch):
     lab = _wire(monkeypatch, projects=["app"], hosts=1)
     assert (await project.install_tools(InstallToolsOptions(dev=False, toolchain=True))).is_ok
-    # --toolchain reaches the repo's own options instance — a subclass with
+    # --toolchain reaches the project's own options instance — a subclass with
     # toolchain work of its own has somewhere to hang it — while the
     # host-global sweep below stays the orchestrator's, performed once.
     assert lab.flags == [("app", "install_tools", {"dev": False, "toolchain": True})]
@@ -1090,9 +1091,9 @@ def _state_actions(state):
 
 
 def _wire_status(monkeypatch, projects):
-    """Lab whose repos map name -> (scripted state | None, installed product flags).
+    """Lab whose projects map name -> (scripted state | None, installed product flags).
 
-    ``None`` means the repo registers nothing and gets otto's default actions,
+    ``None`` means the project registers nothing and gets otto's default actions,
     so its state is computed from the products the fleet actually carries.
     """
     products = []
@@ -1105,9 +1106,9 @@ def _wire_status(monkeypatch, projects):
 
 
 @pytest.mark.asyncio
-async def test_status_uncounted_repo_rule_and_empty_aggregate(monkeypatch):
-    # A default-actions repo owning no products must not drag the aggregate;
-    # zero counted repos aggregate to UNINSTALLED (no vacuous INSTALLED).
+async def test_status_uncounted_project_rule_and_empty_aggregate(monkeypatch):
+    # A default-actions project owning no products must not drag the aggregate;
+    # zero counted projects aggregate to UNINSTALLED (no vacuous INSTALLED).
     _wire_status(monkeypatch, {"docs": (None, [])})
     st = await project.status()
     assert st.overall is InstallState.UNINSTALLED
@@ -1115,7 +1116,7 @@ async def test_status_uncounted_repo_rule_and_empty_aggregate(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_status_ignores_an_uncounted_repo_beside_a_counted_one(monkeypatch):
+async def test_status_ignores_an_uncounted_project_beside_a_counted_one(monkeypatch):
     _wire_status(monkeypatch, {"docs": (None, []), "app": (None, [True, True])})
     st = await project.status()
     assert st.overall is InstallState.INSTALLED
@@ -1133,9 +1134,9 @@ async def test_status_counts_registered_subclass_even_without_products(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_status_aggregate_is_partial_when_repos_disagree(monkeypatch):
-    # Kills: an aggregate read off the first (or last) repo, and one that only
-    # sees PARTIAL when some repo is itself PARTIAL.
+async def test_status_aggregate_is_partial_when_projects_disagree(monkeypatch):
+    # Kills: an aggregate read off the first (or last) project, and one that only
+    # sees PARTIAL when some project is itself PARTIAL.
     _wire_status(monkeypatch, {"base": (None, [True]), "app": (None, [False])})
     st = await project.status()
     assert st.overall is InstallState.PARTIAL
@@ -1143,20 +1144,20 @@ async def test_status_aggregate_is_partial_when_repos_disagree(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_status_aggregate_follows_a_single_partial_repo(monkeypatch):
+async def test_status_aggregate_follows_a_single_partial_project(monkeypatch):
     _wire_status(monkeypatch, {"app": (None, [True, False])})
     assert (await project.status()).overall is InstallState.PARTIAL
 
 
 @pytest.mark.asyncio
-async def test_status_aggregate_is_uninstalled_when_every_counted_repo_is(monkeypatch):
+async def test_status_aggregate_is_uninstalled_when_every_counted_project_is(monkeypatch):
     _wire_status(monkeypatch, {"base": (None, [False]), "app": (None, [False])})
     assert (await project.status()).overall is InstallState.UNINSTALLED
 
 
 @pytest.mark.asyncio
 async def test_status_is_immune_to_impairments_and_tunnels(monkeypatch):
-    """INSTALL STATE IS ABOUT PRODUCTS AND NOTHING ELSE (the repo owner's rule).
+    """INSTALL STATE IS ABOUT PRODUCTS AND NOTHING ELSE (the project owner's rule).
 
     An impaired link and a live tunnel are lab infrastructure: `cleanup`
     removes them and `is_clean` counts them, but the tri-state answer stays a
@@ -1188,32 +1189,32 @@ async def test_status_is_immune_to_impairments_and_tunnels(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_is_clean_is_true_when_every_repo_and_host_is_clean(monkeypatch):
+async def test_is_clean_is_true_when_every_project_and_host_is_clean(monkeypatch):
     lab = _wire(monkeypatch, projects=["base", "app"], hosts=2)
     assert await project.is_clean() is True
     assert _verbs(lab.events) == ["toolchain_tools_absent"] * 2
 
 
 @pytest.mark.asyncio
-async def test_is_clean_is_false_while_a_repo_has_leftovers(monkeypatch):
+async def test_is_clean_is_false_while_a_project_has_leftovers(monkeypatch):
     _wire(monkeypatch, projects=["base", "app"], hosts=1, dirty=("app",))
     assert await project.is_clean() is False
 
 
 @pytest.mark.asyncio
 async def test_is_clean_is_false_while_a_host_toolchain_tool_remains(monkeypatch):
-    # Kills: an is_clean that only asks the repos. Toolchain tools belong to no
-    # repo, so nobody but the orchestrator can see them left behind.
+    # Kills: an is_clean that only asks the projects. Toolchain tools belong to no
+    # project, so nobody but the orchestrator can see them left behind.
     lab = _wire(monkeypatch, projects=["app"], hosts=2)
     lab.hosts[1].toolchain_absent = False
     assert await project.is_clean() is False
 
 
 @pytest.mark.asyncio
-async def test_is_clean_asks_a_repo_that_status_does_not_count(monkeypatch):
-    # An uncounted repo (no products, no registered actions) can still own DEV
+async def test_is_clean_asks_a_project_that_status_does_not_count(monkeypatch):
+    # An uncounted project (no products, no registered actions) can still own DEV
     # TOOLS — ``owns_products`` cannot see them. Kills: reusing status()'s
-    # counted-repo filter here, which would report a lab with a probe still on
+    # counted-project filter here, which would report a lab with a probe still on
     # the board as clean.
     tool = _FakeItem("tools", installed=True)
     ctx = _FakeCtx([_FakeHost("h0", [], dev_tools=[tool])])
@@ -1515,10 +1516,10 @@ async def test_cleanliness_marks_what_it_could_not_read_instead_of_refusing(monk
 
 
 @pytest.mark.asyncio
-async def test_cleanliness_marks_a_repo_whose_own_probe_failed(monkeypatch):
-    # A repo's is_clean walks products and dev tools on real hosts, so it can
+async def test_cleanliness_marks_a_project_whose_own_probe_failed(monkeypatch):
+    # A project's is_clean walks products and dev tools on real hosts, so it can
     # raise like anything else that touches one. Kills a report that dies with
-    # the first repo it asked.
+    # the first project it asked.
     class _Raising(ProjectActions):
         async def is_clean(self):
             raise CommandNotRunError("test -e /opt/acme", "h0")
@@ -1591,7 +1592,7 @@ async def test_cleanliness_shows_both_the_tunnel_it_found_and_the_host_it_missed
 
 
 @pytest.mark.asyncio
-async def test_cleanliness_asks_every_repo_even_past_a_dirty_one(monkeypatch):
+async def test_cleanliness_asks_every_project_even_past_a_dirty_one(monkeypatch):
     # "Which of them" is the whole question a report is asked, so nothing here
     # short-circuits -- where the boolean below deliberately does.
     _wire(monkeypatch, projects=["base", "app"], hosts=1, dirty=("base",))
@@ -1603,7 +1604,7 @@ async def test_cleanliness_asks_every_repo_even_past_a_dirty_one(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_is_clean_stops_before_the_device_reads_once_a_repo_is_dirty(monkeypatch):
+async def test_is_clean_stops_before_the_device_reads_once_a_project_is_dirty(monkeypatch):
     # THE CONVERGE'S CHEAP PATH, and the reason is_clean is not `cleanliness()`
     # reduced: a lab already known to need cleaning is not worth a link read
     # per link and a process scan per host, and `ensure_clean` takes this path
@@ -1755,18 +1756,18 @@ async def test_install_ensure_flag_delegates_to_the_converge(monkeypatch):
 
 # ── project scoping: D3's abort, and D3's loud skip ──────────────────────
 
-# THE TWO HALVES OF D3 ARE ASYMMETRIC ON PURPOSE (spec §10). The repo DRIVING
-# the run — bootstrap's first sut_dir — aborts at project-layer entry when its
+# THE TWO HALVES OF D3 ARE ASYMMETRIC ON PURPOSE (spec §10). The project DRIVING
+# the run — bootstrap's first project root — aborts at project-layer entry when its
 # own [project] declaration cannot work: every verb it could run would act on
 # nothing, and a silent no-op is the failure this design rates worse than a
 # crash. A DEPENDENCY no loaded lab applies to is skipped instead, loudly: one
 # project's fleet declaration must never veto another project's run.
 #
-# EVERY FIXTURE BELOW GIVES THE DRIVING REPO AND A DEPENDENCY DIFFERENT
-# VERDICTS, which is what makes a gate asking about the wrong repo visible. In
-# walk order the driving repo comes LAST (a dependent follows what it depends
-# on), so ``repos[0]`` of the walk order is a DEPENDENCY — the mutant these
-# pairs exist to kill, in both directions: with the driving repo excluded it
+# EVERY FIXTURE BELOW GIVES THE DRIVING PROJECT AND A DEPENDENCY DIFFERENT
+# VERDICTS, which is what makes a gate asking about the wrong project visible. In
+# walk order the driving project comes LAST (a dependent follows what it depends
+# on), so ``projects[0]`` of the walk order is a DEPENDENCY — the mutant these
+# pairs exist to kill, in both directions: with the driving project excluded it
 # must raise, and with only the dependency excluded it must not.
 
 _PUBLIC_VERBS = [
@@ -1808,7 +1809,7 @@ def test_the_verb_list_is_derived_membership_not_memory():
 
 
 def _scoped(monkeypatch, excluded, **kwargs):
-    """A two-repo lab (dependency ``base``, driving ``app``) with *excluded* named out."""
+    """A two-project lab (dependency ``base``, driving ``app``) with *excluded* named out."""
     return _wire(
         monkeypatch,
         projects=["base", "app"],
@@ -1822,7 +1823,7 @@ def _scoped(monkeypatch, excluded, **kwargs):
 
 @pytest.mark.parametrize("verb", _PUBLIC_VERBS)
 @pytest.mark.asyncio
-async def test_every_public_verb_refuses_the_driving_repos_unusable_scope(monkeypatch, verb):
+async def test_every_public_verb_refuses_the_driving_projects_unusable_scope(monkeypatch, verb):
     """D3 at project-layer entry, on every verb — and BEFORE anything is contacted.
 
     Enumerated rather than sampled because "every public verb begins with the
@@ -1832,7 +1833,7 @@ async def test_every_public_verb_refuses_the_driving_repos_unusable_scope(monkey
 
     The three recording lists are asserted EMPTY, not merely the raise: a gate
     that fired after the walk would still raise, having already installed
-    products on hosts the declaration says are none of this repo's business.
+    products on hosts the declaration says are none of this project's business.
     """
     lab = _scoped(monkeypatch, excluded="app", hosts=2)
 
@@ -1846,11 +1847,11 @@ async def test_every_public_verb_refuses_the_driving_repos_unusable_scope(monkey
 
 
 @pytest.mark.asyncio
-async def test_the_gate_asks_about_the_driving_repo_not_the_first_repo_walked(monkeypatch):
+async def test_the_gate_asks_about_the_driving_project_not_the_first_project_walked(monkeypatch):
     """The reading is ``ctx.projects[0]`` — the first OTTOPATH entry.
 
     Pinned at the call because the two lists coincide in the commonest lab (one
-    repo) and disagree in every interesting one: ``ctx.ordered_projects`` is a
+    project) and disagree in every interesting one: ``ctx.ordered_projects`` is a
     TOPOLOGICAL reorder, so its first element is a dependency. Asserting the
     scopes mapping too pins the other half — the verdicts come from the live
     context, not from a resolution the gate ran for itself.
@@ -1868,8 +1869,8 @@ async def test_the_gate_asks_about_the_driving_repo_not_the_first_repo_walked(mo
 
 
 @pytest.mark.asyncio
-async def test_an_inapplicable_dependency_does_not_abort_the_driving_repos_run(monkeypatch):
-    """D3's asymmetry, and the mirror that kills a gate pointed at the wrong repo.
+async def test_an_inapplicable_dependency_does_not_abort_the_driving_projects_run(monkeypatch):
+    """D3's asymmetry, and the mirror that kills a gate pointed at the wrong project.
 
     ``base`` is excluded and ``app`` is healthy: a gate reading the walk
     order's first entry — or its last, or any dependency — aborts here, where
@@ -1882,7 +1883,7 @@ async def test_an_inapplicable_dependency_does_not_abort_the_driving_repos_run(m
 
 
 @pytest.mark.asyncio
-async def test_the_refusal_names_the_loaded_labs_and_the_repos_own_patterns(monkeypatch):
+async def test_the_refusal_names_the_loaded_labs_and_the_projects_own_patterns(monkeypatch):
     """D3's message carries what was loaded AND what was declared (both, or neither helps).
 
     Rendered by ``require_current_scope`` itself; the orchestrator hands it the
@@ -1897,13 +1898,13 @@ async def test_the_refusal_names_the_loaded_labs_and_the_repos_own_patterns(monk
     message = _one_line(str(excinfo.value))
     assert "'app'" in message
     assert "bench, floor" in message  # what this run loaded
-    assert "app-lab" in message  # what the repo declared
+    assert "app-lab" in message  # what the project declared
     assert "base" not in message  # a healthy dependency is not a suspect
 
 
 @pytest.mark.asyncio
-async def test_a_lab_with_no_repos_has_no_current_scope_to_enforce(monkeypatch):
-    """Kills an ``IndexError`` on ``ctx.projects[0]`` — a repo-less run is legal."""
+async def test_a_lab_with_no_projects_has_no_current_scope_to_enforce(monkeypatch):
+    """Kills an ``IndexError`` on ``ctx.projects[0]`` — a project-less run is legal."""
     _wire(monkeypatch, projects=[], hosts=1)
 
     assert (await project.install()).is_ok
@@ -1911,13 +1912,13 @@ async def test_a_lab_with_no_repos_has_no_current_scope_to_enforce(monkeypatch):
 
 @pytest.mark.parametrize("verb", ["install", "uninstall", "cleanup", "get_logs", "install_tools"])
 @pytest.mark.asyncio
-async def test_every_walking_verb_leaves_the_inapplicable_repo_alone(monkeypatch, verb):
-    """The excluded repo's actions record ZERO dispatches, on every walk there is.
+async def test_every_walking_verb_leaves_the_inapplicable_project_alone(monkeypatch, verb):
+    """The excluded project's actions record ZERO dispatches, on every walk there is.
 
-    Both halves asserted with ``==``: the skipped repo's contact list is
-    EMPTY, and the applicable repo's is EXACTLY its one dispatch. A skip that
+    Both halves asserted with ``==``: the skipped project's contact list is
+    EMPTY, and the applicable project's is EXACTLY its one dispatch. A skip that
     merely dropped the RESULT would leave the first list full, and a skip that
-    dropped both repos would leave the second empty.
+    dropped both projects would leave the second empty.
     """
     lab = _scoped(monkeypatch, excluded="base")
 
@@ -1928,15 +1929,15 @@ async def test_every_walking_verb_leaves_the_inapplicable_repo_alone(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_the_skip_is_announced_once_naming_the_repo_the_labs_and_the_patterns(
+async def test_the_skip_is_announced_once_naming_the_project_the_labs_and_the_patterns(
     monkeypatch, caplog
 ):
-    """A skipped repo is LOUD — one warning per skip, carrying the whole diagnosis.
+    """A skipped project is LOUD — one warning per skip, carrying the whole diagnosis.
 
     Name, loaded labs and declared patterns together, because each alone reads
     as the other's fault, and whitespace-normalized so a wrapped log line
     cannot hide a word the reader needs. ONE line, not one per host or per
-    repo-in-the-lab: a message repeated is a message skipped.
+    project-in-the-lab: a message repeated is a message skipped.
     """
     _scoped(monkeypatch, excluded="base")
 
@@ -1952,13 +1953,13 @@ async def test_the_skip_is_announced_once_naming_the_repo_the_labs_and_the_patte
 
 
 @pytest.mark.asyncio
-async def test_status_never_asks_an_inapplicable_repo_and_leaves_it_out_of_the_fold(monkeypatch):
-    """The tri-state fold counts applicable repos only (as it already skips uncounted ones).
+async def test_status_never_asks_an_inapplicable_project_and_leaves_it_out_of_the_fold(monkeypatch):
+    """The tri-state fold counts applicable projects only (as it already skips uncounted ones).
 
     The two states DISAGREE on purpose: folding ``base`` in reads PARTIAL and
-    would send ``ensure_installed`` into a teardown-and-reinstall over a repo
+    would send ``ensure_installed`` into a teardown-and-reinstall over a project
     this run does not apply to. The question list is asserted too — a status
-    that asks an excluded repo has contacted hosts outside the fleet of
+    that asks an excluded project has contacted hosts outside the fleet of
     interest, whatever it then does with the answer.
     """
     lab = _scoped(
@@ -1975,11 +1976,11 @@ async def test_status_never_asks_an_inapplicable_repo_and_leaves_it_out_of_the_f
 
 
 @pytest.mark.asyncio
-async def test_status_reports_each_repos_fleet_of_interest_and_why_one_was_left_out(monkeypatch):
-    """``status`` says WHY a repo has no state, rather than dropping it silently.
+async def test_status_reports_each_projects_fleet_of_interest_and_why_one_was_left_out(monkeypatch):
+    """``status`` says WHY a project has no state, rather than dropping it silently.
 
-    An absent row is what an uncounted (product-less) repo gets, and reusing
-    that for an excluded one would leave an operator with a lab whose repo
+    An absent row is what an uncounted (product-less) project gets, and reusing
+    that for an excluded one would leave an operator with a lab whose project
     simply vanished from the report that is supposed to explain it.
     """
     _scoped(monkeypatch, excluded="base", state=InstallState.INSTALLED)
@@ -1995,11 +1996,11 @@ async def test_status_reports_each_repos_fleet_of_interest_and_why_one_was_left_
 
 
 @pytest.mark.asyncio
-async def test_an_undeclared_repo_is_walked_like_every_other(monkeypatch):
+async def test_an_undeclared_project_is_walked_like_every_other(monkeypatch):
     """Undeclared is the whole-lab FALLBACK, never an exclusion (§6).
 
     Kills a skip keyed on ``not declared`` — or on an empty universe — which
-    would silently drop every product-less repo and every pre-``[project]``
+    would silently drop every product-less project and every pre-``[project]``
     project from the walks they have always been part of.
     """
     lab = _wire(
@@ -2013,12 +2014,12 @@ async def test_an_undeclared_repo_is_walked_like_every_other(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_is_clean_does_not_probe_an_inapplicable_repo(monkeypatch):
+async def test_is_clean_does_not_probe_an_inapplicable_project(monkeypatch):
     """The cheap converge path skips it too — its leftovers are on nobody's fleet.
 
     ``base`` is scripted DIRTY, so a probe that reached it would answer False:
     the assertion cannot pass by accident. Skipping matters beyond noise here —
-    an excluded repo's own fleet walk is refused by ``scoped_ids``, so probing
+    an excluded project's own fleet walk is refused by ``scoped_ids``, so probing
     it raises rather than answering, and ``ensure_clean`` would die on a
     dependency that has nothing to do with this run.
     """
@@ -2029,7 +2030,7 @@ async def test_is_clean_does_not_probe_an_inapplicable_repo(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_cleanliness_has_no_row_for_an_inapplicable_repo(monkeypatch):
+async def test_cleanliness_has_no_row_for_an_inapplicable_project(monkeypatch):
     """The display half of the same skip — no row, rather than a row nobody could read."""
     lab = _scoped(monkeypatch, excluded="base")
 
@@ -2047,12 +2048,12 @@ async def test_cleanliness_has_no_row_for_an_inapplicable_repo(monkeypatch):
 # excluded one does — its own fleet walk is refused by ``require_nonempty_fleet``
 # — so admitting it into the walk raises out of the DEPENDENCY's walk and takes
 # down the driving project's run: the veto D3 exists to prevent. The current
-# repo in that shape still aborts up front (``require_current_scope`` reads the
+# project in that shape still aborts up front (``require_current_scope`` reads the
 # same two conditions); only the dependency half is a skip.
 
 
 def _starved(monkeypatch, **kwargs):
-    """A two-repo lab whose dependency ``base`` applies to a lab but targets no host in it."""
+    """A two-project lab whose dependency ``base`` applies to a lab but targets no host in it."""
     return _wire(
         monkeypatch,
         projects=["base", "app"],
@@ -2072,7 +2073,7 @@ async def test_every_walking_verb_skips_a_dependency_whose_host_patterns_match_n
     """The second unusable shape is SKIPPED, not raised through.
 
     Both halves with ``==``: the starved dependency's contact list is EMPTY and
-    the healthy repo's is EXACTLY its one dispatch. A skip keyed on
+    the healthy project's is EXACTLY its one dispatch. A skip keyed on
     ``excluded`` alone leaves ``base`` in the walk, where its owner-bound fleet
     walk raises ``ProjectScopeError`` — so this test fails LOUD (an error, not
     a wrong list) on that mutant.
@@ -2090,7 +2091,7 @@ async def test_every_walking_verb_skips_a_dependency_whose_host_patterns_match_n
 async def test_the_starved_skip_names_the_host_patterns_not_the_labs(monkeypatch, caplog):
     """One warning, and it blames the axis that actually failed.
 
-    This repo's labs DO apply, so the excluded message ("not applicable to the
+    This project's labs DO apply, so the excluded message ("not applicable to the
     loaded lab(s)") would send the reader to change ``-l`` or ``lab_patterns``
     — both already right — past the host_patterns that are the cause. Two
     conditions, two texts, each reachable only under its own.
@@ -2114,7 +2115,7 @@ async def test_status_reports_the_starved_dependency_instead_of_raising(monkeypa
 
     The two states DISAGREE so the fold is measurable — counting ``base`` in
     reads PARTIAL. The question list is asserted for the reason the excluded
-    twin's is: asking a repo whose fleet is empty by declaration is a contact
+    twin's is: asking a project whose fleet is empty by declaration is a contact
     outside the fleet of interest, whatever is then done with the answer.
     """
     lab = _starved(
@@ -2135,7 +2136,7 @@ async def test_status_still_carries_a_scoping_row_for_the_starved_dependency(mon
 
     ``applicable`` stays True (its labs really do apply) while ``usable`` is
     False, and that pair is what lets the renderer print the host-patterns text
-    here and the labs text for an excluded repo.
+    here and the labs text for an excluded project.
     """
     _starved(monkeypatch, state=InstallState.INSTALLED)
 
@@ -2151,7 +2152,7 @@ async def test_status_still_carries_a_scoping_row_for_the_starved_dependency(mon
 
 @pytest.mark.asyncio
 async def test_cleanup_runs_every_host_global_step_when_a_dependency_is_starved(monkeypatch):
-    """Best-effort teardown is not abortable by one repo's declaration (cleanup's contract).
+    """Best-effort teardown is not abortable by one project's declaration (cleanup's contract).
 
     The exact regression: ``base`` raising mid-walk stranded the debug sweep,
     the toolchain removal, the impairment reset and the tunnel reap — the last
@@ -2174,8 +2175,8 @@ async def test_cleanup_runs_every_host_global_step_when_a_dependency_is_starved(
 
 
 @pytest.mark.asyncio
-async def test_a_starved_driving_repo_still_aborts_the_whole_run(monkeypatch):
-    """The current-repo half is unchanged: abort, not skip — and nothing contacted.
+async def test_a_starved_driving_project_still_aborts_the_whole_run(monkeypatch):
+    """The current-project half is unchanged: abort, not skip — and nothing contacted.
 
     The mirror of the pair above, and the mutant it kills is a fix applied at
     the wrong end: ``require_current_scope`` relaxed to skip-like tolerance
@@ -2209,36 +2210,36 @@ async def test_a_starved_driving_repo_still_aborts_the_whole_run(monkeypatch):
 # what the walk did. Re-spelling the order at this layer would create a second
 # authority, which is the drift a shared predicate exists to prevent.
 #
-# ``current=`` MATTERS IN THIS SECTION. ``_lab()`` runs D3's current-repo gate
+# ``current=`` MATTERS IN THIS SECTION. ``_lab()`` runs D3's current-project gate
 # (``otto.config.scope.require_current_scope``) before ``_applicable`` sees
 # anything, and that gate reads the lab verdict ALONE — no switch overrides it,
 # by D3's asymmetry. A case that hung an unusable scope on the default driving
-# repo would abort there and never reach the code under test: green for a
+# project would abort there and never reach the code under test: green for a
 # reason that has nothing to do with switches. So every scoped case below names
-# a driving repo that is not the scoped one.
+# a driving project that is not the scoped one.
 #
 # NAMES ARE DELIBERATELY NOT NORMALIZATION-INVARIANT where the spelling is what
-# is under test. `repo1`/`repo2` normalize to themselves, so a bed built only
-# from them cannot tell `active(repo.name, ctx)` from
-# `active(normalize_name(repo.name), ctx)` -- and the spec names that exact
+# is under test. `project1`/`project2` normalize to themselves, so a bed built only
+# from them cannot tell `active(project.name, ctx)` from
+# `active(normalize_name(project.name), ctx)` -- and the spec names that exact
 # confusion as a FAIL-OPEN hazard, because `scopes_of(ctx)` is keyed by the raw
-# declared name and a missed verdict resolves ACTIVE. `_UNDERSCORED` is a repo
+# declared name and a missed verdict resolves ACTIVE. `_UNDERSCORED` is a project
 # whose declared name and normalized name differ, so every cell routed through
 # it discriminates the two spellings. Its switch is typed in the NORMALIZED
 # form, which is what a user types and what `_switched` compares on.
-_UNDERSCORED = "Repo_Two"
-"""A declared repo name that is NOT its own normalization (-> ``repo-two``)."""
+_UNDERSCORED = "Project_Two"
+"""A declared project name that is NOT its own normalization (-> ``project-two``)."""
 
-_UNDERSCORED_NORM = "repo-two"
+_UNDERSCORED_NORM = "project-two"
 """What :func:`~otto.models.dependencies.normalize_name` makes of it -- spelled
 out rather than computed, so a broken normalizer cannot agree with itself."""
 
-_PROVIDER = "Repo_One"
-"""The dropped PROVIDER's declared name (-> ``repo-one``). A dependent declares
+_PROVIDER = "Project_One"
+"""The dropped PROVIDER's declared name (-> ``project-one``). A dependent declares
 its dependency in the normalized form, which is the shape `dropped` is keyed and
 looked up in."""
 
-_PROVIDER_NORM = "repo-one"
+_PROVIDER_NORM = "project-one"
 
 
 def _dep(name, *, required, status="satisfied"):
@@ -2260,10 +2261,10 @@ def _dep(name, *, required, status="satisfied"):
 
 
 class TestSwitchAxis:
-    """``-E`` drops a repo the labs admitted; ``-I`` keeps one they did not."""
+    """``-E`` drops a project the labs admitted; ``-I`` keeps one they did not."""
 
     @pytest.mark.asyncio
-    async def test_excluded_repo_is_skipped_with_the_switch_message(self, monkeypatch, caplog):
+    async def test_excluded_project_is_skipped_with_the_switch_message(self, monkeypatch, caplog):
         """The line names the SWITCH, not the labs — because nothing else will.
 
         A lab-inferred skip is explained twice over (this warning, and the
@@ -2273,15 +2274,15 @@ class TestSwitchAxis:
         """
         bed = _wire(
             monkeypatch,
-            projects=["repo1", _UNDERSCORED],
+            projects=["project1", _UNDERSCORED],
             exclude_projects=(_UNDERSCORED_NORM,),
         )
 
         with caplog.at_level(logging.WARNING, logger="otto.project.orchestrator"):
             assert (await project.install()).is_ok
 
-        assert [e[0] for e in bed.events if e[1] == "install"] == ["repo1"]
-        # The repo is named as DECLARED and the switch is echoed NORMALIZED --
+        assert [e[0] for e in bed.events if e[1] == "install"] == ["project1"]
+        # The project is named as DECLARED and the switch is echoed NORMALIZED --
         # the two differ here, so a message built from the wrong one is visible.
         assert (
             f"project '{_UNDERSCORED}' switched off for this run "
@@ -2292,28 +2293,28 @@ class TestSwitchAxis:
     async def test_without_the_switch_the_walk_is_unchanged(self, monkeypatch, caplog):
         """The discriminator for the cell above, and for the whole section.
 
-        Without it, an ``_applicable`` that dropped ``repo2`` for any reason at
-        all — or one that dropped the last repo of every walk — would satisfy
+        Without it, an ``_applicable`` that dropped ``project2`` for any reason at
+        all — or one that dropped the last project of every walk — would satisfy
         the switch test and this bed would never notice.
         """
-        bed = _wire(monkeypatch, projects=["repo1", "repo2"])
+        bed = _wire(monkeypatch, projects=["project1", "project2"])
 
         with caplog.at_level(logging.WARNING, logger="otto.project.orchestrator"):
             assert (await project.install()).is_ok
 
-        assert [e[0] for e in bed.events if e[1] == "install"] == ["repo1", "repo2"]
+        assert [e[0] for e in bed.events if e[1] == "install"] == ["project1", "project2"]
         assert "switched off" not in _said(caplog)
 
     @pytest.mark.parametrize(
         ("include", "walked"),
-        [((), ["repo1"]), ((_UNDERSCORED_NORM,), ["repo1", _UNDERSCORED])],
+        [((), ["project1"]), ((_UNDERSCORED_NORM,), ["project1", _UNDERSCORED])],
         ids=["without -I", "with -I"],
     )
     @pytest.mark.asyncio
     async def test_include_overrides_an_excluded_scope(self, monkeypatch, include, walked):
         """``-I`` beats the lab verdict — and the no-switch row proves it had to.
 
-        The repo's verdict is UNUSABLE (declared, and no loaded lab applies),
+        The project's verdict is UNUSABLE (declared, and no loaded lab applies),
         which is precisely the shape D3 skips on. The parametrization is what
         makes this an override rather than a coincidence: same scope, same
         walk, and the only thing that changed is the switch.
@@ -2321,14 +2322,14 @@ class TestSwitchAxis:
         BOTH ROWS ALSO DISCRIMINATE THE NAME SPELLING, on opposite sides. The
         no-switch row reaches ``scopes_of(ctx).get(project.name)``, keyed by the
         DECLARED name, so a lookup that normalized first would miss the verdict
-        and walk an inactive repo (the spec's fail-open hazard). The ``-I`` row
+        and walk an inactive project (the spec's fail-open hazard). The ``-I`` row
         types the NORMALIZED name, which is what a user types, so a switch
         comparison that skipped normalization would not match it.
         """
         bed = _wire(
             monkeypatch,
-            projects=["repo1", _UNDERSCORED],
-            current="repo1",  # the D3 current-repo gate is switch-blind — see the section note
+            projects=["project1", _UNDERSCORED],
+            current="project1",  # the D3 current-project gate is switch-blind; see the section note
             scopes={_UNDERSCORED: _scope(_UNDERSCORED, excluded=True)},
             include_projects=include,
         )
@@ -2339,7 +2340,7 @@ class TestSwitchAxis:
 
 
 class TestDependencyInteraction:
-    """What a KEPT repo's dependencies mean once a provider has been dropped.
+    """What a KEPT project's dependencies mean once a provider has been dropped.
 
     Two independent bits decide the outcome: whether the dependency is
     REQUIRED, and whether the provider went away by an explicit ``-E`` or by
@@ -2359,25 +2360,25 @@ class TestDependencyInteraction:
         Those are two different strings here, which is what makes the
         assertion able to fail: the dependent declares its dependency in the
         normalized spelling (as a ``[dependencies]`` entry always is) while the
-        provider repo is named ``Repo_One``, so a ``dropped`` map keyed by the
+        provider project is named ``Project_One``, so a ``dropped`` map keyed by the
         raw name never matches the lookup and the whole warning disappears.
         """
         bed = _wire(
             monkeypatch,
-            projects=[_PROVIDER, "repo4"],
+            projects=[_PROVIDER, "project4"],
             exclude_projects=(_PROVIDER_NORM,),
-            dependencies={"repo4": [_dep(_PROVIDER_NORM, required=True)]},
+            dependencies={"project4": [_dep(_PROVIDER_NORM, required=True)]},
         )
 
         with caplog.at_level(logging.WARNING, logger="otto.project.orchestrator"):
             assert (await project.install()).is_ok
 
         assert (
-            f"project 'repo4' requires '{_PROVIDER}', which was switched off "
+            f"project 'project4' requires '{_PROVIDER}', which was switched off "
             f"(--exclude-projects {_PROVIDER_NORM}) — proceeding as though "
             f"{_PROVIDER} is handled externally"
         ) in _said(caplog)
-        assert [e[0] for e in bed.events if e[1] == "install"] == ["repo4"]
+        assert [e[0] for e in bed.events if e[1] == "install"] == ["project4"]
 
     @pytest.mark.asyncio
     async def test_required_provider_lab_inactive_errors_naming_both_fixes(self, monkeypatch):
@@ -2394,16 +2395,16 @@ class TestDependencyInteraction:
         """
         bed = _wire(
             monkeypatch,
-            projects=[_PROVIDER, "repo4"],
+            projects=[_PROVIDER, "project4"],
             scopes={_PROVIDER: _scope(_PROVIDER, excluded=True, loaded=("unix_alt",))},
-            dependencies={"repo4": [_dep(_PROVIDER_NORM, required=True)]},
+            dependencies={"project4": [_dep(_PROVIDER_NORM, required=True)]},
         )
 
         with pytest.raises(InactiveRequiredDependencyError) as excinfo:
             await project.install()
 
         text = _one_line(str(excinfo.value))
-        assert f"project 'repo4' requires '{_PROVIDER}'" in text
+        assert f"project 'project4' requires '{_PROVIDER}'" in text
         assert "not applicable to the loaded lab(s) [unix_alt]" in text
         # `=`, not a space: the hint is meant to be PASTED, and rich folds
         # between words -- see `test_the_refusals_switch_hint_never_folds`.
@@ -2420,17 +2421,17 @@ class TestDependencyInteraction:
         """
         bed = _wire(
             monkeypatch,
-            projects=[_PROVIDER, "repo4"],
+            projects=[_PROVIDER, "project4"],
             scopes={_PROVIDER: _scope(_PROVIDER, excluded=True, loaded=("unix_alt",))},
-            dependencies={"repo4": [_dep(_PROVIDER_NORM, required=False)]},
+            dependencies={"project4": [_dep(_PROVIDER_NORM, required=False)]},
         )
 
         with caplog.at_level(logging.WARNING, logger="otto.project.orchestrator"):
             assert (await project.install()).is_ok
 
-        assert [e[0] for e in bed.events if e[1] == "install"] == ["repo4"]
+        assert [e[0] for e in bed.events if e[1] == "install"] == ["project4"]
         assert (
-            f"project 'repo4': optional dependency '{_PROVIDER}' not satisfied for this run "
+            f"project 'project4': optional dependency '{_PROVIDER}' not satisfied for this run "
             f"— {_PROVIDER} is inactive (not applicable to the loaded lab(s) [unix_alt])"
         ) in _said(caplog)
 
@@ -2446,22 +2447,22 @@ class TestDependencyInteraction:
         """
         bed = _wire(
             monkeypatch,
-            projects=[_PROVIDER, "repo4"],
+            projects=[_PROVIDER, "project4"],
             exclude_projects=(_PROVIDER_NORM,),
-            dependencies={"repo4": [_dep(_PROVIDER_NORM, required=False)]},
+            dependencies={"project4": [_dep(_PROVIDER_NORM, required=False)]},
         )
 
         with caplog.at_level(logging.WARNING, logger="otto.project.orchestrator"):
             assert (await project.install()).is_ok
 
-        assert [e[0] for e in bed.events if e[1] == "install"] == ["repo4"]
+        assert [e[0] for e in bed.events if e[1] == "install"] == ["project4"]
         assert (
-            f"project 'repo4': optional dependency '{_PROVIDER}' not satisfied for this run "
+            f"project 'project4': optional dependency '{_PROVIDER}' not satisfied for this run "
             f"— {_PROVIDER} is inactive (switched off via --exclude-projects {_PROVIDER_NORM})"
         ) in _said(caplog)
 
     @pytest.mark.asyncio
-    async def test_a_dependency_on_a_kept_repo_says_nothing(self, monkeypatch, caplog):
+    async def test_a_dependency_on_a_kept_project_says_nothing(self, monkeypatch, caplog):
         """The anti-vacuity control for the whole class.
 
         Every cell above asserts a message about a DROPPED provider. Without
@@ -2470,14 +2471,14 @@ class TestDependencyInteraction:
         """
         bed = _wire(
             monkeypatch,
-            projects=[_PROVIDER, "repo4"],
-            dependencies={"repo4": [_dep(_PROVIDER_NORM, required=True)]},
+            projects=[_PROVIDER, "project4"],
+            dependencies={"project4": [_dep(_PROVIDER_NORM, required=True)]},
         )
 
         with caplog.at_level(logging.WARNING, logger="otto.project.orchestrator"):
             assert (await project.install()).is_ok
 
-        assert [e[0] for e in bed.events if e[1] == "install"] == [_PROVIDER, "repo4"]
+        assert [e[0] for e in bed.events if e[1] == "install"] == [_PROVIDER, "project4"]
         assert caplog.records == []
 
 
@@ -2485,11 +2486,11 @@ class TestTheRefusalIsBuildUpOnly:
     """Which verbs may refuse over a contradictory required dependency: only the two
     that BUILD.
 
-    THE SHAPE IS ONE LAB, DRIVEN SIX WAYS. ``Repo_One`` is dropped by the labs;
-    ``repo4`` is undeclared (whole-lab fallback, so it stays active) and
+    THE SHAPE IS ONE LAB, DRIVEN SIX WAYS. ``Project_One`` is dropped by the labs;
+    ``project4`` is undeclared (whole-lab fallback, so it stays active) and
     requires it. That is a contradiction on every verb, but it is only
-    ACTIONABLE on the two that build ``repo4`` on top of it. Everything else
-    either takes ``repo4`` down or reads it, and for those the refusal is worse
+    ACTIONABLE on the two that build ``project4`` on top of it. Everything else
+    either takes ``project4`` down or reads it, and for those the refusal is worse
     than the contradiction:
 
     * ``uninstall``/``cleanup`` are best-effort teardowns whose whole contract
@@ -2506,12 +2507,12 @@ class TestTheRefusalIsBuildUpOnly:
 
     @staticmethod
     def _contradiction(monkeypatch, **kwargs):
-        """``repo4`` (active, undeclared) requiring ``Repo_One`` (dropped by the labs)."""
+        """``project4`` (active, undeclared) requiring ``Project_One`` (dropped by the labs)."""
         return _wire(
             monkeypatch,
-            projects=[_PROVIDER, "repo4"],
+            projects=[_PROVIDER, "project4"],
             scopes={_PROVIDER: _scope(_PROVIDER, excluded=True, loaded=("unix_alt",))},
-            dependencies={"repo4": [_dep(_PROVIDER_NORM, required=True)]},
+            dependencies={"project4": [_dep(_PROVIDER_NORM, required=True)]},
             **kwargs,
         )
 
@@ -2544,11 +2545,11 @@ class TestTheRefusalIsBuildUpOnly:
             result = await getattr(project, verb)()
 
         assert result.is_ok
-        assert [e[0] for e in bed.events if e[1] == verb] == ["repo4"]
+        assert [e[0] for e in bed.events if e[1] == verb] == ["project4"]
         said = _said(caplog)
-        assert f"project 'repo4' requires '{_PROVIDER}'" in said
+        assert f"project 'project4' requires '{_PROVIDER}'" in said
         assert "not applicable to the loaded lab(s) [unix_alt]" in said
-        assert f"continuing, because {walk} does not build repo4 on top of it" in said
+        assert f"continuing, because {walk} does not build project4 on top of it" in said
         assert f"--exclude-projects={_PROVIDER_NORM}" in said
 
     @pytest.mark.asyncio
@@ -2581,20 +2582,20 @@ class TestTheRefusalIsBuildUpOnly:
         die before it has one to frame."""
         _wire(
             monkeypatch,
-            projects=[_PROVIDER, "repo4"],
+            projects=[_PROVIDER, "project4"],
             scopes={_PROVIDER: _scope(_PROVIDER, excluded=True, loaded=("unix_alt",))},
-            dependencies={"repo4": [_dep(_PROVIDER_NORM, required=True)]},
+            dependencies={"project4": [_dep(_PROVIDER_NORM, required=True)]},
         )
 
         report = await project.cleanliness()
 
-        assert [i.name for i in report.items if i.kind is CleanlinessKind.PROJECT] == ["repo4"]
+        assert [i.name for i in report.items if i.kind is CleanlinessKind.PROJECT] == ["project4"]
 
     @pytest.mark.asyncio
     async def test_is_clean_still_answers(self, monkeypatch):
         """The cheap converge path. ``ensure_clean`` asks this BEFORE deciding whether
         to clean, so a refusal here pre-empts the decision it exists to inform."""
-        self._contradiction(monkeypatch, dirty=("repo4",))
+        self._contradiction(monkeypatch, dirty=("project4",))
 
         assert await project.is_clean() is False
 
@@ -2608,15 +2609,15 @@ class TestTheRefusalIsBuildUpOnly:
         """
         bed = _wire(
             monkeypatch,
-            projects=[_PROVIDER, "repo4"],
+            projects=[_PROVIDER, "project4"],
             exclude_projects=(_PROVIDER_NORM,),
-            dependencies={"repo4": [_dep(_PROVIDER_NORM, required=True)]},
+            dependencies={"project4": [_dep(_PROVIDER_NORM, required=True)]},
         )
 
         with caplog.at_level(logging.WARNING, logger="otto.project.orchestrator"):
             assert (await project.install()).is_ok
 
-        assert [e[0] for e in bed.events if e[1] == "install"] == ["repo4"]
+        assert [e[0] for e in bed.events if e[1] == "install"] == ["project4"]
         assert "handled externally" in _said(caplog)
 
 
@@ -2624,44 +2625,44 @@ class TestStatusHonorsSwitches:
     """``status`` reads the same predicate, and is loud on exactly one axis."""
 
     @pytest.mark.asyncio
-    async def test_switched_off_repo_is_not_asked_for_state(self, monkeypatch, caplog):
+    async def test_switched_off_project_is_not_asked_for_state(self, monkeypatch, caplog):
         """Not merely absent from the report — never ASKED.
 
-        ``status`` reaches the fleet, and a switched-off repo's is none of this
+        ``status`` reaches the fleet, and a switched-off project's is none of this
         run's business. ``bed.questions`` is what proves it was not contacted;
-        a repo dropped from the mapping after being asked would pass an
+        a project dropped from the mapping after being asked would pass an
         absence-only assertion having already talked to hosts.
         """
         bed = _wire(
             monkeypatch,
-            projects=["repo1", "repo2"],
+            projects=["project1", "project2"],
             hosts=1,
-            exclude_projects=("repo2",),
-            # Both repos declare a usable scope, so the LAB axis leaves both in
+            exclude_projects=("project2",),
+            # Both projects declare a usable scope, so the LAB axis leaves both in
             # and the switch is the only thing that can drop one.
-            scopes={"repo1": _scope("repo1"), "repo2": _scope("repo2")},
+            scopes={"project1": _scope("project1"), "project2": _scope("project2")},
             state=InstallState.INSTALLED,
         )
 
         with caplog.at_level(logging.WARNING, logger="otto.project.orchestrator"):
             result = await project.status()
 
-        assert result.projects == {"repo1": InstallState.INSTALLED}
-        assert bed.questions == [("repo1", "status")]
+        assert result.projects == {"project1": InstallState.INSTALLED}
+        assert bed.questions == [("project1", "status")]
         assert (
-            "project 'repo2' switched off for this run (--exclude-projects repo2) "
+            "project 'project2' switched off for this run (--exclude-projects project2) "
             "— skipping it for status"
         ) in _said(caplog)
         # The row survives the skip: `scoping` is the display's account of the
-        # whole lab, and a repo that vanished from it entirely would be the
+        # whole lab, and a project that vanished from it entirely would be the
         # silent disappearance the warning above exists to prevent.
-        assert set(result.scoping) == {"repo1", "repo2"}
+        assert set(result.scoping) == {"project1", "project2"}
 
     @pytest.mark.asyncio
-    async def test_a_lab_inactive_repo_is_left_out_silently(self, monkeypatch, caplog):
+    async def test_a_lab_inactive_project_is_left_out_silently(self, monkeypatch, caplog):
         """And the OTHER axis stays quiet, deliberately — the answer is the display.
 
-        The scoping row already carries "not applicable" beside the repo, and a
+        The scoping row already carries "not applicable" beside the project, and a
         warning as well would put a line in front of every operator whose lab
         simply does not include a project. Switches get one because no row
         mentions them; verdicts do not, because every row is one.
@@ -2672,9 +2673,9 @@ class TestStatusHonorsSwitches:
         """
         bed = _wire(
             monkeypatch,
-            projects=["repo1", _UNDERSCORED],
+            projects=["project1", _UNDERSCORED],
             hosts=1,
-            current="repo1",  # the D3 current-repo gate again — see the section note
+            current="project1",  # the D3 current-project gate again — see the section note
             scopes={_UNDERSCORED: _scope(_UNDERSCORED, excluded=True)},
             state=InstallState.INSTALLED,
         )
@@ -2682,17 +2683,17 @@ class TestStatusHonorsSwitches:
         with caplog.at_level(logging.WARNING, logger="otto.project.orchestrator"):
             result = await project.status()
 
-        assert result.projects == {"repo1": InstallState.INSTALLED}
-        assert bed.questions == [("repo1", "status")]
+        assert result.projects == {"project1": InstallState.INSTALLED}
+        assert bed.questions == [("project1", "status")]
         assert result.scoping[_UNDERSCORED].applicable is False
         assert caplog.records == []
 
 
 class TestForcedInclusionOfAnEmptyFleet:
-    """``-I`` on a HOST-STARVED repo: forced in, then loud from its own walk.
+    """``-I`` on a HOST-STARVED project: forced in, then loud from its own walk.
 
     Plan deviation 3. ``_applicable`` does not second-guess the switch — the
-    operator said this repo participates — so the repo is walked and the
+    operator said this project participates — so the project is walked and the
     refusal comes out of its own fleet surface, where the message can name the
     ``host_patterns`` that are the actual cause. An ``-I`` that honoured one
     unusable shape and quietly declined the other would be a switch meaning
@@ -2701,18 +2702,18 @@ class TestForcedInclusionOfAnEmptyFleet:
 
     @pytest.mark.parametrize(
         ("include", "walked"),
-        [((), ["repo1"]), (("repo2",), ["repo1", "repo2"])],
+        [((), ["project1"]), (("project2",), ["project1", "project2"])],
         ids=["without -I", "with -I"],
     )
     @pytest.mark.asyncio
-    async def test_include_forces_a_host_starved_repo_into_the_walk(
+    async def test_include_forces_a_host_starved_project_into_the_walk(
         self, monkeypatch, include, walked
     ):
         bed = _wire(
             monkeypatch,
-            projects=["repo1", "repo2"],
-            current="repo1",  # the D3 current-repo gate again — see the section note
-            scopes={"repo2": _scope("repo2", universe=(), host_patterns=("nope",))},
+            projects=["project1", "project2"],
+            current="project1",  # the D3 current-project gate again — see the section note
+            scopes={"project2": _scope("project2", universe=(), host_patterns=("nope",))},
             include_projects=include,
         )
 
@@ -2720,7 +2721,7 @@ class TestForcedInclusionOfAnEmptyFleet:
 
         assert [e[0] for e in bed.events if e[1] == "install"] == walked
 
-    def test_the_forced_repos_own_fleet_walk_is_still_refused(self):
+    def test_the_forced_projects_own_fleet_walk_is_still_refused(self):
         """The consequence, through PRODUCTION code rather than this bed's doubles.
 
         ``_FakeCtx.all_hosts`` ignores ``_scope_owner``, so no walk in this
@@ -2736,21 +2737,21 @@ class TestForcedInclusionOfAnEmptyFleet:
             "h1": SimpleNamespace(source_lab="bench"),
         }
         starved = _scope(
-            "repo2",
+            "project2",
             universe=(),
             host_patterns=("nope",),
             config=ProjectScopeConfig([re.compile("bench")], [re.compile("nope")]),
         )
         widened = _scope(
-            "repo2",
+            "project2",
             config=ProjectScopeConfig([re.compile("bench")], [re.compile("h.*")]),
         )
 
-        assert scoped_ids(hosts, {"repo2": starved}, "repo2") == set()
-        assert scoped_ids(hosts, {"repo2": widened}, "repo2") == {"h0", "h1"}
+        assert scoped_ids(hosts, {"project2": starved}, "project2") == set()
+        assert scoped_ids(hosts, {"project2": widened}, "project2") == {"h0", "h1"}
 
         with pytest.raises(ProjectScopeError) as excinfo:
-            require_nonempty_fleet({"repo2": starved}, set(), "repo2")
+            require_nonempty_fleet({"project2": starved}, set(), "project2")
 
         assert "nope" in _one_line(str(excinfo.value))
 
@@ -2873,16 +2874,16 @@ async def test_the_skip_line_keeps_its_lab_list_in_every_sink(monkeypatch, rende
     """
     _wire(
         monkeypatch,
-        projects=["repo1", "repo2"],
-        current="repo1",
-        scopes={"repo2": _scope("repo2", excluded=True, loaded=("unix_alt", "bench"))},
+        projects=["project1", "project2"],
+        current="project1",
+        scopes={"project2": _scope("project2", excluded=True, loaded=("unix_alt", "bench"))},
     )
 
     assert (await project.install()).is_ok
 
     for sink, text in rendered_warnings.rendered().items():
         assert "not applicable to the loaded lab(s) [unix_alt, bench]" in text, sink
-        assert "(lab_patterns: repo2-lab)" in text, sink
+        assert "(lab_patterns: project2-lab)" in text, sink
         assert "\\[" not in text, sink  # escaped at the source, rendered back to a bare [
 
 
@@ -2891,9 +2892,9 @@ async def test_the_optional_dependency_note_keeps_its_lab_list(monkeypatch, rend
     """The new message with the same shape — its reason parenthetical is a lab list."""
     _wire(
         monkeypatch,
-        projects=[_PROVIDER, "repo4"],
+        projects=[_PROVIDER, "project4"],
         scopes={_PROVIDER: _scope(_PROVIDER, excluded=True, loaded=("unix_alt",))},
-        dependencies={"repo4": [_dep(_PROVIDER_NORM, required=False)]},
+        dependencies={"project4": [_dep(_PROVIDER_NORM, required=False)]},
     )
 
     assert (await project.install()).is_ok
@@ -2927,9 +2928,9 @@ async def test_the_refusal_survives_the_cli_error_boundary_and_lands_on_stdout(m
 
     _wire(
         monkeypatch,
-        projects=[_PROVIDER, "repo4"],
+        projects=[_PROVIDER, "project4"],
         scopes={_PROVIDER: _scope(_PROVIDER, excluded=True, loaded=("unix_alt",))},
-        dependencies={"repo4": [_dep(_PROVIDER_NORM, required=True)]},
+        dependencies={"project4": [_dep(_PROVIDER_NORM, required=True)]},
     )
     with pytest.raises(InactiveRequiredDependencyError) as excinfo:
         await project.install()
@@ -3030,7 +3031,7 @@ def test_the_refusals_switch_hint_never_folds(dependent_len, length):
 
 
 def _name(length):
-    """A repo name of exactly *length* characters, with no break opportunity inside it."""
+    """A project name of exactly *length* characters, with no break opportunity inside it."""
     return ("p" * (length - 1)) + "z"
 
 
@@ -3059,9 +3060,9 @@ async def test_the_real_refusal_uses_the_unbreakable_form(monkeypatch):
     """
     _wire(
         monkeypatch,
-        projects=[_PROVIDER, "repo4"],
+        projects=[_PROVIDER, "project4"],
         scopes={_PROVIDER: _scope(_PROVIDER, excluded=True, loaded=("unix_alt",))},
-        dependencies={"repo4": [_dep(_PROVIDER_NORM, required=True)]},
+        dependencies={"project4": [_dep(_PROVIDER_NORM, required=True)]},
     )
 
     with pytest.raises(InactiveRequiredDependencyError) as excinfo:
@@ -3094,19 +3095,19 @@ def test_orchestrator_functions_are_reachable_from_the_package():
         assert callable(getattr(project, name)), name
 
 
-# ── per-repo options: one source, one options class per body ─────────────
+# ── per-project options: one source, one options class per body ─────────────
 
 
-class TestPerRepoOptions:
+class TestPerProjectOptions:
     """Each body is built its OWN options class from the shared source."""
 
     @pytest.fixture
-    def two_repo_lab(self, monkeypatch):
-        """Wire a two-repo lab (``a`` then ``b`` in walk order) around the given classes.
+    def two_project_lab(self, monkeypatch):
+        """Wire a two-project lab (``a`` then ``b`` in walk order) around the given classes.
 
         The classes arrive already registered by ``@register_project_actions``
-        -- that decorator is what attributes their instruction bodies to a repo
-        -- so this only re-registers them under the repo names this file's
+        -- that decorator is what attributes their instruction bodies to a project
+        -- so this only re-registers them under the project names this file's
         doubles use, and points the orchestrator's lookups at them.
         """
 
@@ -3120,10 +3121,10 @@ class TestPerRepoOptions:
         return wire
 
     @pytest.mark.asyncio
-    async def test_kwargs_source_hands_each_repo_its_declared_class(self, two_repo_lab):
-        # Kills: one options instance built once and handed to every body. Repo
+    async def test_kwargs_source_hands_each_project_its_declared_class(self, two_project_lab):
+        # Kills: one options instance built once and handed to every body. Project
         # ``a`` declared a field of its own, so the flag the operator typed has
-        # to reach IT -- while repo ``b``, which declared nothing, must still
+        # to reach IT -- while project ``b``, which declared nothing, must still
         # get otto's own class rather than its neighbour's.
         from typing import Annotated
 
@@ -3158,7 +3159,7 @@ class TestPerRepoOptions:
                     seen["b"] = opts
                     return Result(Status.Success)
 
-        two_repo_lab(A=A, B=B)
+        two_project_lab(A=A, B=B)
 
         result = await run_project_instruction(
             "install", {"ensure": False, "recover_partial": True, "variant": "debug"}
@@ -3170,7 +3171,7 @@ class TestPerRepoOptions:
         assert type(seen["b"]) is InstallOptions
 
     @pytest.mark.asyncio
-    async def test_a_repo_added_instruction_walks_and_combines(self, two_repo_lab):
+    async def test_a_project_added_instruction_walks_and_combines(self, two_project_lab):
         """A name otto never declared gets the same walk, order and combiner."""
         from otto.cli.run import instruction
         from otto.project import ProjectActions, register_project_actions
@@ -3200,7 +3201,7 @@ class TestPerRepoOptions:
                     order.append("b")
                     return Result(Status.Success)
 
-        two_repo_lab(A=A, B=B)
+        two_project_lab(A=A, B=B)
 
         result = await run_project_instruction("deploy", {})
 
@@ -3208,8 +3209,8 @@ class TestPerRepoOptions:
         assert result.is_ok
 
     @pytest.mark.asyncio
-    async def test_first_failure_names_the_repo_and_stops_a_forward_walk(self, two_repo_lab):
-        """``install``'s shape: fail-fast, with the repo named in the message."""
+    async def test_first_failure_names_the_project_and_stops_a_forward_walk(self, two_project_lab):
+        """``install``'s shape: fail-fast, with the project named in the message."""
         from otto.project import ProjectActions, register_project_actions
         from otto.project.orchestrator import run_project_instruction
         from otto.registry import registering_project
@@ -3234,7 +3235,7 @@ class TestPerRepoOptions:
                     ran.append("b")
                     return Result(Status.Success)
 
-        two_repo_lab(A=A, B=B)
+        two_project_lab(A=A, B=B)
 
         result = await run_project_instruction("install", {})
 
@@ -3242,7 +3243,9 @@ class TestPerRepoOptions:
         assert ran == ["a"]
 
     @pytest.mark.asyncio
-    async def test_continue_on_failure_walks_every_repo_and_reports_the_first(self, two_repo_lab):
+    async def test_continue_on_failure_walks_every_project_and_reports_the_first(
+        self, two_project_lab
+    ):
         """``uninstall``'s shape: reversed, best-effort, first failure reported."""
         from otto.project import ProjectActions, register_project_actions
         from otto.project.orchestrator import run_project_instruction
@@ -3268,7 +3271,7 @@ class TestPerRepoOptions:
                     ran.append("b")
                     return Result(Status.Failed, msg="stuck")
 
-        two_repo_lab(A=A, B=B)
+        two_project_lab(A=A, B=B)
 
         result = await run_project_instruction("uninstall", {"debug_logs": False})
 
@@ -3276,10 +3279,10 @@ class TestPerRepoOptions:
         assert result.msg == "uninstall failed in project 'b': stuck"
 
     @pytest.mark.asyncio
-    async def test_a_non_result_body_with_no_combiner_is_not_judged(self, two_repo_lab):
+    async def test_a_non_result_body_with_no_combiner_is_not_judged(self, two_project_lab):
         """The default combiner reads ``is_ok`` off a Result and off nothing else.
 
-        A repo may declare an instruction whose bodies answer in a vocabulary of
+        A project may declare an instruction whose bodies answer in a vocabulary of
         their own -- a state, a count, a row -- and declare no ``combine_results``
         for it. Reading ``is_ok`` off such a value would raise ``AttributeError``
         out of the orchestrator on the one declaration shape that never asked
@@ -3310,7 +3313,7 @@ class TestPerRepoOptions:
                     ran.append("b")
                     return "b is fine"
 
-        two_repo_lab(A=A, B=B)
+        two_project_lab(A=A, B=B)
 
         result = await run_project_instruction("survey", {})
 

@@ -9,7 +9,7 @@ under bare ``pytest`` nothing does. So an async fixture with a wider
 itself, for its whole scope, with :func:`held_for_scope`; otherwise the first
 test to use it errors at teardown with ``LeakedRegistrationError``.
 ``tests/unit/test_wider_loop_fixtures_hold_a_boundary.py`` requires it of
-every such fixture in the repo.
+every such fixture in the suite.
 """
 
 import asyncio

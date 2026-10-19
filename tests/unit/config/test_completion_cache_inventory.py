@@ -18,20 +18,20 @@ from otto.inventory import register_inventory_backend
 from otto.inventory.registry import INVENTORY_BACKENDS
 from otto.models.base import OttoModel
 from otto.models.inventory import InventoryRecord
-from tests._fixtures.fake_repo import fake_repo
+from tests._fixtures.fake_project import fake_project
 from tests._fixtures.labdata import json_lab_sources, write_lab_json
-from tests._fixtures.sutrepo import touch_settings
+from tests._fixtures.project_scaffold import touch_settings
 
 _REFERENCED = {"inventory": "dut-1", "element": "dut", "creds": [{"login": "u", "password": "p"}]}
 _RECORD = {"dut-1": {"ip": "10.0.0.1"}}
 
 
-def _repo(
+def _project(
     tmp_path: Path, inventory_settings: dict, *, hosts: list[dict] | None = None, name: str = "sut"
 ):
-    """A Repo stand-in with one json lab source and the given ``[inventory]`` table.
+    """A Project stand-in with one json lab source and the given ``[inventory]`` table.
 
-    *name* is the repo's directory under *tmp_path* — two stand-ins in one
+    *name* is the project's directory under *tmp_path* — two stand-ins in one
     workspace need two.
     """
     sut = tmp_path / name
@@ -39,7 +39,7 @@ def _repo(
     lab.mkdir(parents=True, exist_ok=True)
     touch_settings(sut)
     write_lab_json(lab / "lab.json", hosts if hosts is not None else [], declare_labs=True)
-    return fake_repo(
+    return fake_project(
         root=sut,
         lab_sources=json_lab_sources(sut, [lab]),
         settings={"inventory": dict(inventory_settings)},
@@ -54,9 +54,9 @@ def _digest(projects) -> str:
 
 
 def _with_inventory(project, inventory_settings: dict):
-    """The SAME repo — same files, same mtimes — carrying a different ``[inventory]``.
+    """The SAME project — same files, same mtimes — carrying a different ``[inventory]``.
 
-    Calling ``_repo`` twice would rewrite ``settings.toml`` and ``lab.json``,
+    Calling ``_project`` twice would rewrite ``settings.toml`` and ``lab.json``,
     and :func:`hash_file` reads ``st_mtime_ns``: the two digests would then
     differ by TIMING rather than by the inventory, so the comparison would
     pass with the inventory term deleted whenever the two writes landed in
@@ -65,7 +65,7 @@ def _with_inventory(project, inventory_settings: dict):
     settings table makes every other fingerprint input byte-identical, which
     is what the comparison claims.
     """
-    return fake_repo(**{**vars(project), "settings": {"inventory": dict(inventory_settings)}})
+    return fake_project(**{**vars(project), "settings": {"inventory": dict(inventory_settings)}})
 
 
 def _json_inventory(tmp_path: Path, records: dict, *, name: str = "sut") -> dict:
@@ -74,8 +74,8 @@ def _json_inventory(tmp_path: Path, records: dict, *, name: str = "sut") -> dict
     Not a fingerprint input in its own right — only lab files are stat'd — so
     writing it does not move the digest by itself. It reaches the digest only
     through the inventory's own ``fingerprint()``, which is the term under
-    test. The table's relative ``path`` anchors to the declaring repo, so
-    *name* must be that repo's directory.
+    test. The table's relative ``path`` anchors to the declaring project, so
+    *name* must be that project's directory.
     """
     (tmp_path / name).mkdir(parents=True, exist_ok=True)
     (tmp_path / name / "inventory.json").write_text(json.dumps(records))
@@ -85,22 +85,22 @@ def _json_inventory(tmp_path: Path, records: dict, *, name: str = "sut") -> dict
 def test_a_declared_inventory_changes_the_digest(tmp_path, monkeypatch):
     """The positive control for the whole feature: the line contributes at all.
 
-    ONE repo, two ``[inventory]`` tables — same settings file, same lab file,
+    ONE project, two ``[inventory]`` tables — same settings file, same lab file,
     same paths, same mtimes — differing only in whether an inventory is
     declared. Without the inventory term in the section digests these two
-    digests are equal, and a repo that switched its inventory on would be
+    digests are equal, and a project that switched its inventory on would be
     served the pre-inventory cache entry.
     """
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     table = _json_inventory(tmp_path, _RECORD)
-    without = _repo(tmp_path, {})
+    without = _project(tmp_path, {})
     assert _digest([without]) != _digest([_with_inventory(without, table)])
 
 
 def test_without_an_inventory_the_digest_is_stable(tmp_path, monkeypatch):
     """``none`` is a constant: no inventory must not mean no caching."""
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
-    project = _repo(tmp_path, {})
+    project = _project(tmp_path, {})
     assert _digest([project]) == _digest([project])
 
 
@@ -114,7 +114,7 @@ def test_editing_the_inventory_file_moves_the_digest(tmp_path, monkeypatch):
     """
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     table = _json_inventory(tmp_path, _RECORD)
-    project = _repo(tmp_path, table)
+    project = _project(tmp_path, table)
     before = _digest([project])
     (tmp_path / "sut" / "inventory.json").write_text(
         json.dumps({"dut-1": {"ip": "10.0.0.1"}, "dut-2": {"ip": "10.0.0.2"}})
@@ -131,15 +131,15 @@ def test_a_broken_declaration_hashes_its_error_and_the_fix_moves_the_digest(tmp_
     Three comparisons, because the first two alone do not say that. Replacing
     the error text with the constant ``"none"`` keeps the broken digest stable
     AND different from the working one, so a broken ``[inventory]`` would
-    collide with having no inventory at all — a repo that declared one and
+    collide with having no inventory at all — a project that declared one and
     typo'd it would be served its pre-inventory entry. The third comparison is
     the one that catches that.
     """
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     _json_inventory(tmp_path, _RECORD)
-    # One repo, three tables — see `_with_inventory` for why rebuilding it
+    # One project, three tables — see `_with_inventory` for why rebuilding it
     # would make these pass on mtime drift alone.
-    broken = _repo(tmp_path, {"backend": "no-such-backend", "path": "inventory.json"})
+    broken = _project(tmp_path, {"backend": "no-such-backend", "path": "inventory.json"})
     fixed = _with_inventory(
         broken, {"backend": "json", "path": "inventory.json", "supplies": ["ip"]}
     )
@@ -195,7 +195,7 @@ def test_an_uncacheable_backend_never_matches_its_own_entry(tmp_path, monkeypatc
     """
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     with _registered("uncacheable-test", _Uncacheable) as table:
-        project = _repo(tmp_path, table)
+        project = _project(tmp_path, table)
         assert _digest([project]) != _digest([project])
 
 
@@ -210,7 +210,7 @@ def test_an_uncacheable_inventory_writes_nothing_at_all(tmp_path, monkeypatch):
     """
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     with _registered("uncacheable-write-test", _Uncacheable) as table:
-        project = _repo(tmp_path, table)
+        project = _project(tmp_path, table)
         cache_path = cc._cache_path()
         assert cache_path is not None
 
@@ -221,10 +221,10 @@ def test_an_uncacheable_inventory_writes_nothing_at_all(tmp_path, monkeypatch):
         entries = json.loads(cache_path.read_text()) if cache_path.is_file() else {}
         assert entries == {}, f"an uncacheable inventory must leave no entry behind, got {entries}"
 
-    # Positive control, same repo shape with a CACHEABLE inventory: the
+    # Positive control, same project shape with a CACHEABLE inventory: the
     # writers are not simply broken. Without this a `return` at the top of
     # write_cache would pass the assertion above.
-    cacheable = _repo(tmp_path, _json_inventory(tmp_path, _RECORD))
+    cacheable = _project(tmp_path, _json_inventory(tmp_path, _RECORD))
     cc.write_cache([cacheable], [], ["dut"])
     assert cc.read_cache([cacheable]) is not None
 
@@ -240,7 +240,7 @@ def test_a_backend_whose_freshness_probe_raises_does_not_crash_the_command(tmp_p
     """
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     with _registered("exploding-test", _Exploding) as table:
-        project = _repo(tmp_path, table)
+        project = _project(tmp_path, table)
         digest = _digest([project])
         assert isinstance(digest, str)
         assert len(digest) == 64  # sha256 hex — a real digest, not a swallowed None
@@ -262,7 +262,7 @@ def test_an_erroring_probe_writes_nothing_either(tmp_path, monkeypatch):
     """
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     with _registered("exploding-write-test", _Exploding) as table:
-        project = _repo(tmp_path, table)
+        project = _project(tmp_path, table)
         cache_path = cc._cache_path()
         assert cache_path is not None
 
@@ -276,7 +276,7 @@ def test_an_erroring_probe_writes_nothing_either(tmp_path, monkeypatch):
     # Positive control, same shape with a WORKING inventory: the writers are
     # not simply broken. Without it a bare `return` in write_cache would
     # satisfy the assertion above.
-    working = _repo(tmp_path, _json_inventory(tmp_path, _RECORD))
+    working = _project(tmp_path, _json_inventory(tmp_path, _RECORD))
     cc.write_cache([working], [], ["dut"])
     assert cc.read_cache([working]) is not None
 
@@ -291,8 +291,8 @@ def test_a_referenced_host_completes_only_with_the_inventory(tmp_path, monkeypat
     """
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     table = _json_inventory(tmp_path, _RECORD)
-    with_inventory = _repo(tmp_path, table, hosts=[_REFERENCED])
-    without = _repo(tmp_path, {}, hosts=[_REFERENCED])
+    with_inventory = _project(tmp_path, table, hosts=[_REFERENCED])
+    without = _project(tmp_path, {}, hosts=[_REFERENCED])
 
     monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})
     resolved = cc.resolve_process_inventory([with_inventory])
@@ -313,24 +313,24 @@ def test_a_referenced_host_completes_only_with_the_inventory(tmp_path, monkeypat
     )
 
 
-def test_a_host_referencing_another_repos_inventory_completes(tmp_path, monkeypatch):
-    """The inventory is resolved ONCE over every active repo (spec §8) — for completion too.
+def test_a_host_referencing_another_projects_inventory_completes(tmp_path, monkeypatch):
+    """The inventory is resolved ONCE over every active project (spec §8) — for completion too.
 
-    Repo ``inv`` declares ``[inventory]`` and carries no hosts; repo ``sut``
+    Project ``inv`` declares ``[inventory]`` and carries no hosts; project ``sut``
     references a key and declares nothing. Dispatch resolves the process
     inventory over both, so ``otto -l L --list-hosts`` listed ``dut`` — while
-    the enumeration resolved each repo against ITS OWN declaration, else the
+    the enumeration resolved each project against ITS OWN declaration, else the
     user file, so ``dut`` completed nowhere and the cache was written that
-    way (observed 2026-09-03). Red against the per-repo resolution.
+    way (observed 2026-09-03). Red against the per-project resolution.
     """
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
-    declaring = _repo(tmp_path, _json_inventory(tmp_path, _RECORD, name="inv"), name="inv")
-    referencing = _repo(tmp_path, {}, hosts=[_REFERENCED])
+    declaring = _project(tmp_path, _json_inventory(tmp_path, _RECORD, name="inv"), name="inv")
+    referencing = _project(tmp_path, {}, hosts=[_REFERENCED])
 
     monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})
     assert "dut" in cc.collect_host_ids([declaring, referencing])
 
-    # The same answer through the per-repo entry point, given the SAME
+    # The same answer through the per-project entry point, given the SAME
     # resolution a collector makes over the whole workspace.
     monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})
     resolved = cc.resolve_process_inventory([declaring, referencing])
@@ -343,22 +343,22 @@ def test_a_host_referencing_another_repos_inventory_completes(tmp_path, monkeypa
     assert summaries["dut"].ip == "10.0.0.1"
 
 
-def test_a_broken_declaration_empties_every_repo_and_warns_once(tmp_path, monkeypatch, caplog):
+def test_a_broken_declaration_empties_every_project_and_warns_once(tmp_path, monkeypatch, caplog):
     """A declaration that cannot be built fails EVERY lab load at dispatch, so
-    completion offers nothing for any repo — the inline host of a repo that
-    declared nothing included — and says why once, not once per repo.
+    completion offers nothing for any project — the inline host of a project that
+    declared nothing included — and says why once, not once per project.
 
-    Per-repo resolution offered that inline host (its own resolution saw no
+    Per-project resolution offered that inline host (its own resolution saw no
     error) while dispatch refuses it: an id that cannot dispatch, and a
-    warning the declaring repo repeated on every collector.
+    warning the declaring project repeated on every collector.
     """
     from otto.host.builtin_hosts import builtin_host_ids
 
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
-    broken = _repo(tmp_path, {"backend": "json"}, name="broken")  # json needs a path
+    broken = _project(tmp_path, {"backend": "json"}, name="broken")  # json needs a path
     creds = [{"login": "u", "password": "p"}]
     inline_host = {"ip": "10.0.0.9", "element": "inline", "creds": creds}
-    inline = _repo(tmp_path, {}, hosts=[inline_host])
+    inline = _project(tmp_path, {}, hosts=[inline_host])
 
     monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})
     with caplog.at_level(logging.WARNING, logger="otto.config.completion_cache"):

@@ -10,7 +10,7 @@ only. It is **not** a general SNMP agent and is not meant to leave the test bed.
 
 ## Wiring
 
-- Pulled into the build via `-DEXTRA_ZEPHYR_MODULES=.../snmp_agent` (repo `Vagrantfile`).
+- Pulled into the build via `-DEXTRA_ZEPHYR_MODULES=.../snmp_agent` (the checkout's `Vagrantfile`).
 - Gated by `CONFIG_OTTO_SNMP_AGENT` (set in `common/otto-overlay.conf`; defined in
   this module's `Kconfig`). Nothing compiles unless the symbol is on.
 - Reached from otto via a per-instance `socat` UDP relay on the zephyr VM

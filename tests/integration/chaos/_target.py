@@ -16,9 +16,9 @@ from otto.host.remote_host import make_host_id
 from tests._ambient_env import ambient
 from tests._fixtures.labdata import flat_hosts, write_lab_json
 from tests._fixtures.paths import TESTS_ROOT
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.project_scaffold import make_project
 
-_REPO_E2E = TESTS_ROOT / "repo_e2e"
+_PROJECT_E2E = TESTS_ROOT / "project_e2e"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -34,7 +34,7 @@ class ChaosTarget:
 
 
 def make_loopback_target(root: Path, *, port: int, client_key: Path) -> ChaosTarget:
-    """Generate the SUT dir + lab data for the loopback host and return the target."""
+    """Generate the project + lab data for the loopback host and return the target."""
     user = getpass.getuser()
     tech_dir = root / "labdata" / "chaostech"
     tech_dir.mkdir(parents=True)
@@ -58,7 +58,7 @@ def make_loopback_target(root: Path, *, port: int, client_key: Path) -> ChaosTar
             }
         ],
     )
-    sut = make_sut_repo(
+    sut = make_project(
         root / "sut",
         name="chaos_harness",
         version="0.1.0",
@@ -83,11 +83,11 @@ paths = [
 
 
 def make_bed_target(element: str) -> ChaosTarget:
-    """Aim at a unix bed host via the existing repo_e2e SUT (lab leg only)."""
+    """Aim at a unix bed host via the existing project_e2e SUT (lab leg only)."""
     host = next(h for h in flat_hosts("tech1") if h["element"] == element)
     cred = host["creds"][0]
     return ChaosTarget(
-        root=_REPO_E2E,
+        root=_PROJECT_E2E,
         lab="unix",
         host_id=make_host_id(element, host.get("board"), None),
         ssh_host=host["ip"],

@@ -2,7 +2,7 @@
 
 The "other half" of issue #108: ``_isolate_registries`` (tests/conftest.py)
 snapshots every engine table (``otto.registry.instances()``) and restores it on
-teardown. But an extension module listed in a repo's ``init`` (e.g.
+teardown. But an extension module listed in a project's ``init`` (e.g.
 ``custom_hosts``, which calls ``register_command_frame`` at import) registers as
 an **import side effect** — so dropping the entry while leaving the module in
 ``sys.modules`` desyncs registry state from module state: a later

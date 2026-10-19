@@ -45,7 +45,7 @@ COV = {
 @pytest.mark.asyncio
 async def test_manual_survives_unrelated_commit_and_stales_on_edit(tmp_path: Path) -> None:
     sut = TmpGitRepo(tmp_path / "sut")
-    repo, git = sut.root, sut.git
+    root, git = sut.root, sut.git
 
     sut.write("f.c", "int a;\nint b;\nint c;\n")
     git("add", "f.c")
@@ -54,35 +54,35 @@ async def test_manual_survives_unrelated_commit_and_stales_on_edit(tmp_path: Pat
     cap = Capture(
         tier="manual",
         product="app",
-        base_commit=head_commit(repo),
+        base_commit=head_commit(root),
         captured_at="2026-07-01T00:00:00Z",
         ticket="T-9",
         labs=["lab1"],
         board="b1",
-        files={"f.c": CaptureFileCov(blob=blob_sha(repo, Path("f.c")), lines={2: 4})},
+        files={"f.c": CaptureFileCov(blob=blob_sha(root, Path("f.c")), lines={2: 4})},
     )
-    write_manual_capture(cap, repo)
+    write_manual_capture(cap, root)
 
     # Unrelated commit: line 2 untouched → still covered.
-    (repo / "g.c").write_text("int z;\n")
+    (root / "g.c").write_text("int z;\n")
     git("add", "g.c")
     git("commit", "-qm", "unrelated")
 
     report1 = tmp_path / "r1"
     store = await run_coverage_report(
-        [], report1, ReportInputs(project_root=repo, tier_configs=load_tiers(COV))
+        [], report1, ReportInputs(project_root=root, tier_configs=load_tiers(COV))
     )
     (frec,) = [f for f in store.files() if f.path.name == "f.c"]
     assert frec.lines[2].hits.for_tier("manual") == 4
     assert frec.lines[2].state is None
 
     # Edit line 2 → stale.
-    (repo / "f.c").write_text("int a;\nint EDITED;\nint c;\n")
+    (root / "f.c").write_text("int a;\nint EDITED;\nint c;\n")
     git("commit", "-aqm", "edit line 2")
 
     report2 = tmp_path / "r2"
     store2 = await run_coverage_report(
-        [], report2, ReportInputs(project_root=repo, tier_configs=load_tiers(COV))
+        [], report2, ReportInputs(project_root=root, tier_configs=load_tiers(COV))
     )
     (frec2,) = [f for f in store2.files() if f.path.name == "f.c"]
     assert frec2.lines[2].hits.for_tier("manual") == 0
@@ -99,7 +99,7 @@ async def test_runs_traceable_end_to_end(tmp_path: Path) -> None:
     from otto.coverage.store.model import CoverageStore
 
     sut = TmpGitRepo(tmp_path / "sut")
-    repo, git = sut.root, sut.git
+    root, git = sut.root, sut.git
 
     sut.write("f.c", "int a;\nint b;\nint c;\n")
     git("add", "f.c")
@@ -109,25 +109,25 @@ async def test_runs_traceable_end_to_end(tmp_path: Path) -> None:
         return Capture(
             tier="manual",
             product="app",
-            base_commit=head_commit(repo),
+            base_commit=head_commit(root),
             captured_at=f"2026-07-0{len(ticket)}T00:00:00Z",
             ticket=ticket,
             labs=["lab1"],
             board="b1",
             display_name=display_name,
-            files={"f.c": CaptureFileCov(blob=blob_sha(repo, Path("f.c")), lines=lines)},
+            files={"f.c": CaptureFileCov(blob=blob_sha(root, Path("f.c")), lines=lines)},
         )
 
-    write_manual_capture(cap("T-1", {1: 2, 2: 1}, "Rack 2 Slot 4"), repo)
-    write_manual_capture(cap("T-22", {2: 3}, None), repo)
+    write_manual_capture(cap("T-1", {1: 2, 2: 1}, "Rack 2 Slot 4"), root)
+    write_manual_capture(cap("T-22", {2: 3}, None), root)
 
     # Edit line 1 → T-1's evidence for it is revoked.
-    (repo / "f.c").write_text("int EDITED;\nint b;\nint c;\n")
+    (root / "f.c").write_text("int EDITED;\nint b;\nint c;\n")
     git("commit", "-aqm", "edit line 1")
 
     report = tmp_path / "r"
     store = await run_coverage_report(
-        [], report, ReportInputs(project_root=repo, tier_configs=load_tiers(COV))
+        [], report, ReportInputs(project_root=root, tier_configs=load_tiers(COV))
     )
 
     by_ticket = {c.ticket: c for c in store.runs}

@@ -1,4 +1,4 @@
-"""Options registrations are checked records: key, verbs, duplicates and the repo."""
+"""Options registrations are checked records: key, verbs, duplicates and the project."""
 
 import pytest
 
@@ -36,7 +36,7 @@ def test_a_raw_entry_under_the_wrong_key_is_refused():
         OPTIONS.register("wrong:Key", OptionsEntry(target=Opts, verbs=("run",)))
 
 
-def test_the_repo_comes_from_the_engine():
+def test_the_project_comes_from_the_engine():
     from otto.registry import registering_project
 
     with registering_project("acme"):

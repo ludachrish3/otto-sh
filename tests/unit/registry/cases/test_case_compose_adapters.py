@@ -1,4 +1,4 @@
-"""Compose adapters: one per (repo, use case), attributed to the decorating module."""
+"""Compose adapters: one per (project, use case), attributed to the decorating module."""
 
 import pytest
 
@@ -28,10 +28,10 @@ def test_raw_case():
     conformance.assert_raw_registry(
         COMPOSE_ADAPTERS,
         make=lambda i: (
-            "case-repo:bench",
+            "case-project:bench",
             ComposeAdapterEntry(use_case="bench", fn=_fn if i % 2 else _other),
         ),
-        require_repo="case-repo",
+        require_project="case-project",
     )
 
 
@@ -47,7 +47,7 @@ def test_a_key_that_disagrees_with_the_record_is_refused():
         COMPOSE_ADAPTERS.register("acme:other", ComposeAdapterEntry(use_case="bench", fn=_fn))
 
 
-def test_a_key_naming_another_repo_is_refused():
+def test_a_key_naming_another_project_is_refused():
     with registering_project("beta"), pytest.raises(ValueError, match="use case"):
         COMPOSE_ADAPTERS.register("acme:bench", ComposeAdapterEntry("bench", _fn))
     assert "acme:bench" not in COMPOSE_ADAPTERS

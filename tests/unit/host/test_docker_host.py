@@ -68,9 +68,9 @@ def _make_container(
     return DockerContainerHost(
         parent=parent or _mock_parent(),
         container_id=container_id,
-        project="repo1",
+        project="project1",
         service="api",
-        compose_project="otto-repo1-vagrant",
+        compose_project="otto-project1-vagrant",
         user=user,
     )
 
@@ -121,18 +121,18 @@ def _build_fake_ssh_remote_host():
 
 def test_id_format():
     h = _make_container(_mock_parent("test3"))
-    assert h.id == "test3.repo1.api"
+    assert h.id == "test3.project1.api"
 
 
 def test_id_lowercased():
     h = DockerContainerHost(
         parent=_mock_parent("TEST3"),
         container_id="abc",
-        project="Repo1",
+        project="Project1",
         service="API",
         compose_project="proj",
     )
-    assert h.id == "test3.repo1.api"
+    assert h.id == "test3.project1.api"
 
 
 def test_is_virtual_default():
@@ -357,9 +357,9 @@ async def test_run_rejects_localhost_parent():
     h = DockerContainerHost(
         parent=LocalHost(),
         container_id="abc123",
-        project="repo1",
+        project="project1",
         service="api",
-        compose_project="otto-repo1-vagrant",
+        compose_project="otto-project1-vagrant",
     )
     with pytest.raises(NotImplementedError, match="SSH-based UnixHost parent"):
         await h.run("pwd")
@@ -390,9 +390,9 @@ async def test_session_factory_resolves_container_id_lazily():
     h = DockerContainerHost(
         parent=parent,
         container_id="",  # placeholder
-        project="repo1",
+        project="project1",
         service="api",
-        compose_project="otto-repo1-vagrant",
+        compose_project="otto-project1-vagrant",
     )
     # Simulate _ensure_running populating the id post-hoc.
     h.container_id = "resolved_cid_xyz"
@@ -899,16 +899,16 @@ async def test_a_down_placeholder_fails_fast_and_starts_nothing():
     probes = _probes(parent)
     assert len(probes) == 1, probes
     assert probes[0].startswith("docker ps -q"), probes
-    assert "com.docker.compose.project=otto-repo1-vagrant" in probes[0], probes
+    assert "com.docker.compose.project=otto-project1-vagrant" in probes[0], probes
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("project", ["repo1", "integration"])
+@pytest.mark.parametrize("project", ["project1", "integration"])
 async def test_the_error_names_the_container_and_each_way_to_start_it(project):
     """The message is the remedy: the container, and each explicit way to start it.
 
     The host does not ask whether ``project`` names a declared use-case or a
-    repo's own compose files, so the message offers the route for each and
+    project's own compose files, so the message offers the route for each and
     says which is which.
     """
     parent = _mock_parent()
@@ -999,7 +999,7 @@ async def test_a_probe_the_parent_could_not_complete_is_an_unreachable_parent(an
 
     assert not isinstance(exc.value, ContainerNotRunningError)
     msg = str(exc.value)
-    assert "'test3.repo1.api'" in msg, msg
+    assert "'test3.project1.api'" in msg, msg
     assert "parent 'test3'" in msg, msg
     probes = _probes(parent)
     assert len(probes) == 1, probes
@@ -2178,9 +2178,9 @@ def test_parent_path_translates_through_a_bind():
     ctr = DockerContainerHost(
         parent=_mock_parent(),
         container_id="abc123def456",
-        project="repo1",
+        project="project1",
         service="api",
-        compose_project="otto-repo1-vagrant",
+        compose_project="otto-project1-vagrant",
         mounts=[Mount(Path("/var/lib/app"), Path("/srv/data"), "bind")],
     )
     assert ctr.parent_path("/var/lib/app/logs/x.txt") == Path("/srv/data/logs/x.txt")
@@ -2193,9 +2193,9 @@ def test_parent_path_names_the_checked_mounts_when_there_is_no_match():
     ctr = DockerContainerHost(
         parent=_mock_parent(),
         container_id="abc123def456",
-        project="repo1",
+        project="project1",
         service="api",
-        compose_project="otto-repo1-vagrant",
+        compose_project="otto-project1-vagrant",
         mounts=[Mount(Path("/var/lib/app"), Path("/srv/data"), "bind")],
     )
     with pytest.raises(MountNotFoundError, match="/var/lib/app"):
@@ -2208,9 +2208,9 @@ def test_container_path_names_the_checked_parent_mounts_when_there_is_no_match()
     ctr = DockerContainerHost(
         parent=_mock_parent(),
         container_id="abc123def456",
-        project="repo1",
+        project="project1",
         service="api",
-        compose_project="otto-repo1-vagrant",
+        compose_project="otto-project1-vagrant",
         mounts=[Mount(Path("/var/lib/app"), Path("/srv/data"), "bind")],
     )
     with pytest.raises(MountNotFoundError, match="/srv/data"):

@@ -30,7 +30,7 @@ def _lines_naming(out: str, name: str) -> list[str]:
 
 
 def test_a_dependency_skipped_row_is_marked_in_the_full_scoping_table(capsys) -> None:
-    """``--full`` lists a skipped repo's verdict, and the row says why it was not walked."""
+    """``--full`` lists a skipped project's verdict, and the row says why it was not walked."""
     from otto.project.render import _print_scoping
     from otto.project.state import ProjectScopeSummary
 
@@ -45,10 +45,10 @@ def test_a_dependency_skipped_row_is_marked_in_the_full_scoping_table(capsys) ->
 
 
 @pytest.mark.asyncio
-async def test_the_bare_table_never_lists_a_dependency_skipped_repo(capsys) -> None:
-    """Only ``--full`` shows a skipped repo: the bare table accounts for the walked ones.
+async def test_the_bare_table_never_lists_a_dependency_skipped_project(capsys) -> None:
+    """Only ``--full`` shows a skipped project: the bare table accounts for the walked ones.
 
-    The skipped repo here is also lab-inactive, the one shape the bare table
+    The skipped project here is also lab-inactive, the one shape the bare table
     would otherwise print as "not applicable".
     """
     from otto.project.state import ProjectScopeSummary

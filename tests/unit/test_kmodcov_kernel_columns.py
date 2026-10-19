@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.e2e.cov._repo5_build import (
+from tests.e2e.cov._project5_build import (
     CROSS_KERNEL,
     CTORS_SECTION,
     DEFAULT_KERNELS_DIR,

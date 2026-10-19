@@ -2,7 +2,7 @@
 
 The read side of completion's outlet (``otto.labs.drops``). Driven through
 ``cache_app`` with ``CliRunner`` like the rest of ``test_cache_cli.py``, but
-against a REAL parsed repo under ``OTTOPATH`` — the block runs
+against a REAL parsed project under ``OTTOPATH`` — the block runs
 discovery, reads the workspace's ``names`` entry and describes the inventory
 as completion resolves it, so a stand-in would test nothing.
 """
@@ -14,9 +14,9 @@ from types import SimpleNamespace
 from typer.testing import CliRunner
 
 import otto.config.completion_cache as cc
-import otto.config.project as config_repo
+import otto.config.project as config_project
 from tests._fixtures.labdata import write_lab_json
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.project_scaffold import make_project
 
 runner = CliRunner()
 
@@ -47,11 +47,11 @@ backend = "json"
 
 
 def _workspace(tmp_path, monkeypatch, *, references: list[str], settings: str = SETTINGS):
-    """A parsed SUT repo whose ``hosts.json`` supplement references *references*."""
+    """A parsed project whose ``hosts.json`` supplement references *references*."""
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("OTTO_HOME", str(home))
-    project = make_sut_repo(tmp_path / "invsut", name="invsut", extra=settings)
+    project = make_project(tmp_path / "invsut", name="invsut", extra=settings)
     (project / "inventory.json").write_text(json.dumps({"dut-1": {"ip": "10.0.0.1"}}))
     write_lab_json(
         project / "lab" / "lab.json",
@@ -75,7 +75,7 @@ def _seed_cache() -> None:
     from otto.config.project import discover
 
     projects = discover().projects
-    assert projects, "discovery found no repo under OTTOPATH"
+    assert projects, "discovery found no project under OTTOPATH"
     cc.write_cache(
         projects,
         instructions=[],
@@ -161,7 +161,7 @@ def test_info_with_an_unfingerprinted_inventory_promises_no_write(tmp_path, monk
 
     _workspace(tmp_path, monkeypatch, references=["dut-1"])
     unfingerprinted = SimpleNamespace(label="probe:live", fingerprint=lambda: None)
-    monkeypatch.setattr("otto.inventory.config.build_inventory", lambda _repos: unfingerprinted)
+    monkeypatch.setattr("otto.inventory.config.build_inventory", lambda _projects: unfingerprinted)
 
     result = runner.invoke(cache_app, ["info"])
 
@@ -198,7 +198,7 @@ def test_info_reports_the_shim_standing(tmp_path, monkeypatch):
     from otto.config import completion_cache as cc
     from otto.config.completion_tree import build_shim_payload
 
-    projects = config_repo.discover().projects
+    projects = config_project.discover().projects
     cc.write_cache(
         projects,
         [],
@@ -214,7 +214,7 @@ def test_info_reports_the_shim_standing(tmp_path, monkeypatch):
 
 
 def _tests_workspace(tmp_path, monkeypatch):
-    """A repo with one test file, its names/shim entry written as a rebuild writes it."""
+    """A project with one test file, its names/shim entry written as a rebuild writes it."""
     from otto import bootstrap as bs
     from otto.cli.main import PENDING_SUBCMD_ARGS_KEY, app
     from otto.config.completion_tree import build_shim_payload
@@ -222,7 +222,7 @@ def _tests_workspace(tmp_path, monkeypatch):
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("OTTO_HOME", str(home))
-    project = make_sut_repo(
+    project = make_project(
         tmp_path / "tsut",
         name="tsut",
         tests=["tests"],
@@ -230,7 +230,7 @@ def _tests_workspace(tmp_path, monkeypatch):
     )
     monkeypatch.setenv("OTTOPATH", str(project))
     bs.invalidate()
-    projects = config_repo.discover().projects
+    projects = config_project.discover().projects
     cc.write_cache(
         projects,
         [],
@@ -240,20 +240,23 @@ def _tests_workspace(tmp_path, monkeypatch):
     return project, projects
 
 
-def _write_table(repo_obj) -> None:
-    """The table a whole-tree collection of the repo writes: ``test_a`` in ``tests/test_a.py``."""
+def _write_table(project_obj) -> None:
+    """The table a whole-tree collection of the project writes.
+
+    ``test_a`` in ``tests/test_a.py``.
+    """
     from otto.config import collected_tests as ct
 
-    tests = repo_obj.root / "tests"
+    tests = project_obj.root / "tests"
     st = (tests / "test_a.py").stat()
     record = ct.FileRecord(
         stat=[st.st_mtime_ns, st.st_size], tests=[ct.RecordedTest(classes=[], name="test_a")]
     )
     dst = tests.stat()
     table = ct.updated_table(
-        repo_obj,
+        project_obj,
         None,
-        ct.classify(repo_obj, None),
+        ct.classify(project_obj, None),
         {str(tests / "test_a.py"): record},
         registered_markers=["slow"],
         whole_tree=True,
@@ -270,11 +273,11 @@ def test_info_reports_what_the_next_test_name_tab_does(tmp_path, monkeypatch):
     from otto import _shim_complete as sc
     from otto.cli.cache import cache_app
 
-    project, [repo_obj] = _tests_workspace(tmp_path, monkeypatch)
+    project, [project_obj] = _tests_workspace(tmp_path, monkeypatch)
     out = runner.invoke(cache_app, ["info"]).output
-    assert f"  test names: handing over — no test-names cache for {repo_obj.root}" in out
+    assert f"  test names: handing over — no test-names cache for {project_obj.root}" in out
 
-    _write_table(repo_obj)
+    _write_table(project_obj)
     out = runner.invoke(cache_app, ["info"]).output
     assert re.search(
         r"  test names: served \(1 name; checked \d+s ago, the next check is due in \d+s\)", out

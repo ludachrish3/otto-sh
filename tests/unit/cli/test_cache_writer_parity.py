@@ -14,7 +14,7 @@ process (the way a user's ``otto --help`` does) and requires the stored
 ``names`` and ``shim`` payloads to equal what the sections collect from the
 same collectors, per section key. A writer that bypasses the collectors, or
 passes the real app or key, stores something else and fails here. So does one
-that passes its own repo list: of the two repos, the second's required
+that passes its own project list: of the two projects, the second's required
 dependency is missing, so the dependency-ordered list (``bootstrap()``'s
 ``ordered_projects``) leaves it out while discovery, the list the sections read,
 keeps it.
@@ -29,8 +29,8 @@ from pathlib import Path
 import pytest
 
 from otto.config.env import is_otto_env_var
-from tests._fixtures.generated_repo import generate_repo
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.generated_project import generate_project
+from tests._fixtures.project_scaffold import make_project
 
 PROBE = """
 import json, sys
@@ -98,9 +98,9 @@ SKIPPED = "zz-parity-skipped"
 
 
 @pytest.fixture
-def repo_env(tmp_path):
-    project = generate_repo(tmp_path, files=4, dirs=1)
-    skipped = make_sut_repo(
+def project_env(tmp_path):
+    project = generate_project(tmp_path, files=4, dirs=1)
+    skipped = make_project(
         tmp_path / "skipped",
         name=SKIPPED,
         extra='[dependencies]\nrequired = ["zz-parity-missing"]\n',
@@ -111,17 +111,17 @@ def repo_env(tmp_path):
     return env
 
 
-def test_entry_stores_what_the_sections_collect(repo_env):
+def test_entry_stores_what_the_sections_collect(project_env):
     p = subprocess.run(
         [sys.executable, "-c", PROBE],
-        env=repo_env,
+        env=project_env,
         capture_output=True,
         text=True,
         check=False,
     )
     assert p.returncode == 0, p.stderr
     collected = json.loads(p.stdout.strip().splitlines()[-1])
-    caches = list(Path(repo_env["OTTO_HOME"]).rglob("completion_cache.json"))
+    caches = list(Path(project_env["OTTO_HOME"]).rglob("completion_cache.json"))
     assert len(caches) == 1, caches
     stored = json.loads(caches[0].read_text())["sections"]
     names, shim = stored["names"]["payload"], stored["shim"]["payload"]
@@ -129,7 +129,7 @@ def test_entry_stores_what_the_sections_collect(repo_env):
     assert {"name": "--zz-parity-option"} in names["test_options"]
     assert {"name": "zz-parity-command"} in names["commands"]
     assert list(shim["tree"]["commands"]) == ["zz-parity-app"]  # the toy app, under its key
-    assert len(shim["tables"]) == 2  # the dependency-skipped repo too
+    assert len(shim["tables"]) == 2  # the dependency-skipped project too
     for section, payload in [["names", names], ["shim", shim]]:
         assert sorted(payload) == sorted(collected[section]), section
         for key in payload:

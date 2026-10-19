@@ -15,7 +15,7 @@ wheels/
 .venv
 
 # Dummy files
-tests/repo1/product/product
+tests/project1/product/product
 
 # Test artifacts (coverage data + HTML, JUnit XML)
 reports/
@@ -103,10 +103,10 @@ docs/superpowers/plans/
 # the repo, so an ignore rule for them would match nothing and read as though
 # the tree could contain them.
 
-# kernel build products of the repo5 fixture
-tests/repo5/build/
+# kernel build products of the project5 fixture
+tests/project5/build/
 
-# repo5's vendored copy of the library (tests/repo5/third_party/otto_kmodcov/)
+# project5's vendored copy of the library (tests/project5/third_party/otto_kmodcov/)
 # is committed source, exported by `otto cov kmodcov export`. The package copy
 # at src/otto/kmodcov/ is never built in place — its build.sh builds out of
 # tree — so it carries no ignore patterns of its own: a git-ignored file
@@ -117,40 +117,40 @@ tests/repo5/build/
 # build.sh) must not commit objects either, so the same ten patterns apply
 # here, and tests/unit/test_kmodcov_export.py's package-hygiene guard fails on
 # any stray file left behind by one.
-tests/repo5/third_party/otto_kmodcov/**/*.o
-tests/repo5/third_party/otto_kmodcov/**/*.ko
-tests/repo5/third_party/otto_kmodcov/**/*.mod
-tests/repo5/third_party/otto_kmodcov/**/*.mod.c
-tests/repo5/third_party/otto_kmodcov/**/*.cmd
-tests/repo5/third_party/otto_kmodcov/**/.*.cmd
-tests/repo5/third_party/otto_kmodcov/**/.*.o.d
-tests/repo5/third_party/otto_kmodcov/**/Module.symvers
-tests/repo5/third_party/otto_kmodcov/**/modules.order
-tests/repo5/third_party/otto_kmodcov/**/*.gcno
+tests/project5/third_party/otto_kmodcov/**/*.o
+tests/project5/third_party/otto_kmodcov/**/*.ko
+tests/project5/third_party/otto_kmodcov/**/*.mod
+tests/project5/third_party/otto_kmodcov/**/*.mod.c
+tests/project5/third_party/otto_kmodcov/**/*.cmd
+tests/project5/third_party/otto_kmodcov/**/.*.cmd
+tests/project5/third_party/otto_kmodcov/**/.*.o.d
+tests/project5/third_party/otto_kmodcov/**/Module.symvers
+tests/project5/third_party/otto_kmodcov/**/modules.order
+tests/project5/third_party/otto_kmodcov/**/*.gcno
 
-# repo5's own demo product builds in place (tests/repo5/kmod/demo/) rather
+# project5's own demo product builds in place (tests/project5/kmod/demo/) rather
 # than out of tree, so its build products need their own per-extension
-# list (mirroring tests/repo5/third_party/otto_kmodcov/**'s shape above),
+# list (mirroring tests/project5/third_party/otto_kmodcov/**'s shape above),
 # scoped to that directory instead of a blanket build/ (the demo's sources
 # live right beside these outputs).
-tests/repo5/kmod/**/*.o
-tests/repo5/kmod/**/*.ko
-tests/repo5/kmod/**/*.mod
-tests/repo5/kmod/**/*.mod.c
-tests/repo5/kmod/**/*.cmd
-tests/repo5/kmod/**/.*.o.d
-tests/repo5/kmod/**/Module.symvers
-tests/repo5/kmod/**/modules.order
-tests/repo5/kmod/**/*.gcno
-tests/repo5/kmod/**/*.gcda
-tests/repo5/kmod/**/.tmp_versions
-tests/repo5/kmod/**/*.a
-tests/repo5/kmod/**/*.symvers
+tests/project5/kmod/**/*.o
+tests/project5/kmod/**/*.ko
+tests/project5/kmod/**/*.mod
+tests/project5/kmod/**/*.mod.c
+tests/project5/kmod/**/*.cmd
+tests/project5/kmod/**/.*.o.d
+tests/project5/kmod/**/Module.symvers
+tests/project5/kmod/**/modules.order
+tests/project5/kmod/**/*.gcno
+tests/project5/kmod/**/*.gcda
+tests/project5/kmod/**/.tmp_versions
+tests/project5/kmod/**/*.a
+tests/project5/kmod/**/*.symvers
 
-# repo5's container-image product builds in place too (tests/repo5/docker/):
+# project5's container-image product builds in place too (tests/project5/docker/):
 # the compiled binary and its .gcno files stay out of tree in docker/build/
 # (its committed sources sit right beside it, under docker/src/), and the
 # saved image tarball is a build product of docker/build.sh, not a fixture
 # input.
-tests/repo5/docker/build/
-tests/repo5/docker/*.tar
+tests/project5/docker/build/
+tests/project5/docker/*.tar

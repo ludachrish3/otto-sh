@@ -3,8 +3,8 @@
 `otto/__init__.py` is import-light (PEP 562 lazy exports), so a fresh process —
 e.g. an xdist worker importing the root ``tests/conftest.py`` — can make
 ``otto.config`` (or a submodule like ``otto.config.project``) its very
-first otto import, with an ``OTTOPATH`` repo configured but none of its
-init modules imported yet. Repo init-module registration now happens lazily
+first otto import, with an ``OTTOPATH`` project configured but none of its
+init modules imported yet. Project init-module registration now happens lazily
 inside :func:`otto.bootstrap.bootstrap`, not as an import-time side effect of
 ``otto.config`` — so this test's job is narrower than it used to be: it
 guards against a regression that would make plain package/submodule import
@@ -20,12 +20,12 @@ import sys
 from otto.config.env import is_otto_env_var
 from tests._fixtures.paths import TESTS_ROOT
 
-_REPO1 = TESTS_ROOT / "repo1"
+_PROJECT1 = TESTS_ROOT / "project1"
 
 
-def test_config_first_import_with_repo_no_circular():
+def test_config_first_import_with_project_no_circular():
     env = {k: v for k, v in os.environ.items() if not is_otto_env_var(k)}
-    env["OTTOPATH"] = str(_REPO1)
+    env["OTTOPATH"] = str(_PROJECT1)
     out = subprocess.run(
         [sys.executable, "-c", "import otto.config.project; print('IMPORT OK')"],
         capture_output=True,

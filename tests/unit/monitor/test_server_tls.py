@@ -1,7 +1,7 @@
 """TLS-mode MonitorServer: https URLs, Secure cookie, real TLS handshake.
 
 Certificates are throwaway self-signed PEMs minted into tmp_path with the
-openssl CLI (universally present on the Linux targets this repo supports;
+openssl CLI (universally present on the Linux targets this repository supports;
 no trustme/cryptography dev-dep needed).
 """
 

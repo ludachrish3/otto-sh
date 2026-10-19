@@ -45,8 +45,8 @@ from tests._fixtures.labdata import (
     lab_data_path,
 )
 from tests._fixtures.run_state import preserved_run_state
-from tests._fixtures.tunnel_bed import assert_reachable, build_bed_host, cli_sut_dir
-from tests.e2e._otto_subprocess import REPO_E2E
+from tests._fixtures.tunnel_bed import assert_reachable, build_bed_host, cli_project_root
+from tests.e2e._otto_subprocess import PROJECT_E2E
 from tests.integration.chaos._target import ChaosTarget, make_bed_target
 
 
@@ -138,7 +138,7 @@ def declared_link_id(host_a: str, host_b: str) -> str:
     # Skip records this process cannot resolve, mirroring JsonFileLabRepository:
     # addressing_from_dict validates through the profile/frame registries, and
     # tech1/lab.json's `zephyr27_fat` declares `command_frame: zephyr-inline`, which
-    # only a SUT repo's init modules register — never the pytest process.
+    # only a project's init modules register — never the pytest process.
     hosts = {}
     for h in flatten_lab_doc(data):
         try:
@@ -166,7 +166,7 @@ def unix_link_id() -> str:
 
 
 def tunnel_target(root) -> ChaosTarget:
-    """ChaosTarget for CLI-driven tunnel commands against `cli_sut_dir`'s isolated SUT.
+    """ChaosTarget for CLI-driven tunnel commands against `cli_project_root`'s isolated SUT.
 
     Hoisted from two former per-module copies (``test_tunnel_link_chaos.py``,
     ``test_reboot_chaos.py`` — verified byte-identical before the hoist).
@@ -216,7 +216,7 @@ def closed_unix_link_target(tmp_path: Path) -> ChaosTarget:
     link chaos scenarios ask. Pinned hostless by
     ``tests/unit/test_chaos_link_lab_scope.py``.
     """
-    return tunnel_target(cli_sut_dir(tmp_path, links=unix_link_entries()))
+    return tunnel_target(cli_project_root(tmp_path, links=unix_link_entries()))
 
 
 def assert_eth2_netem_free(what: str) -> None:
@@ -298,14 +298,14 @@ class BusyboxChaosBed:
 def busybox_target() -> ChaosTarget:
     """``ChaosTarget`` aiming an otto subprocess at the bed's BusyBox guest.
 
-    The SUT is ``tests/repo_e2e`` unchanged — its one ``[[lab.sources]]``
+    The SUT is ``tests/project_e2e`` unchanged — its one ``[[lab.sources]]``
     entry already compiles ``tech1/lab.json``, which is where the five guest
     records and their ``test1`` hop live, so the lab leg is a plain
     ``-l busybox`` and no generated SUT is needed (unlike the hop-routed
     ``chaosdrop`` and console targets, which exist only because they need lab
-    data this repo does not commit).
+    data this repository does not commit).
 
-    ``spawn_otto`` reads ``sut_dir``/``lab`` and nothing else (see
+    ``spawn_otto`` reads ``root``/``lab`` and nothing else (see
     ``tests/integration/chaos/_driver.py::_otto_env``); the ``ssh_*`` fields
     exist to feed the asyncssh oracle in ``tests.integration.chaos._target``,
     which is not used here: the chaos target drives the guest over telnet
@@ -321,7 +321,7 @@ def busybox_target() -> ChaosTarget:
     hop = host_data(BUSYBOX_HOP_ELEMENT)
     cred = hop["creds"][0]
     return ChaosTarget(
-        root=REPO_E2E,
+        root=PROJECT_E2E,
         lab="busybox",
         host_id=make_host_id(
             element_for(BUSYBOX_CHAOS_ELEMENT).name, guest.get("board"), guest.get("slot")

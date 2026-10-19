@@ -93,7 +93,7 @@ from tests._fixtures.tunnel_bed import (
     assert_no_leftover_tunnel_processes,
     assert_reachable,
     build_bed_host,
-    cli_sut_dir,
+    cli_project_root,
     kill_tagged,
     random_outfile,
     remove_remote_file,
@@ -132,8 +132,8 @@ _PORT_FOREIGN = 45003
 # without the reader having to map a nodeid back to a file.
 _MODULE_ID = "tests/e2e/test_tunnel_e2e.py"
 
-REPO2_DIR = TESTS_ROOT / "repo2"
-OLDOS_DOCKER_DIR = REPO2_DIR / "docker" / "oldos"
+PROJECT2_DIR = TESTS_ROOT / "project2"
+OLDOS_DOCKER_DIR = PROJECT2_DIR / "docker" / "oldos"
 OLDOS_COMPOSE_PROJECT = "otto-tunnel-e2e-oldos"
 
 
@@ -322,15 +322,15 @@ async def test_multihop_relay_and_via(tunnel_lab, reap_tunnels) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _oldos_repo() -> Project:
-    """A ``Project`` over ``tests/repo2`` with docker settings replaced wholesale
-    to point at the oldos fixture -- the existing repo2 compose entry (used by
+def _oldos_project() -> Project:
+    """A ``Project`` over ``tests/project2`` with docker settings replaced wholesale
+    to point at the oldos fixture -- the existing project2 compose entry (used by
     ``tests/e2e/docker/``) is never touched or referenced."""
-    project = Project(root=REPO2_DIR)
+    project = Project(root=PROJECT2_DIR)
     project.docker_settings = DockerSettings(
         images=(
             DockerImage(
-                name="repo2-oldos",
+                name="project2-oldos",
                 dockerfile=OLDOS_DOCKER_DIR / "Dockerfile",
                 context=OLDOS_DOCKER_DIR,
             ),
@@ -456,7 +456,7 @@ async def test_container_endpoint_oldos(tunnel_lab, reap_tunnels) -> None:
     inside it exercises the ``setsid`` fallback in
     ``otto.host.daemon.launch_command`` rather than ``systemd-run --user``.
     """
-    project = _oldos_repo()
+    project = _oldos_project()
     hosts = await compose_up(
         project, tunnel_lab, parent=_INGRESS, project_name=OLDOS_COMPOSE_PROJECT, build=True
     )
@@ -578,8 +578,8 @@ async def test_foreign_socat_excluded_and_outofband_kill_degrades(tunnel_lab, re
 # ---------------------------------------------------------------------------
 
 
-def _run_cycle(argv: list[str], sut: Path) -> "subprocess.CompletedProcess[str]":
-    return run_otto(argv, roots=sut, lab="unix", timeout=180)
+def _run_cycle(argv: list[str], project_root: Path) -> "subprocess.CompletedProcess[str]":
+    return run_otto(argv, roots=project_root, lab="unix", timeout=180)
 
 
 def _assert_docker_free(proc: "subprocess.CompletedProcess[str]", step: str) -> None:
@@ -603,7 +603,7 @@ def test_cli_cycle_add_list_remove_list_docker_free(tmp_path: Path) -> None:
     """
     for ne in ("test1", "test2"):
         asyncio.run(assert_reachable(ne, host_data(ne)["ip"]))
-    sut = cli_sut_dir(tmp_path)
+    project_root = cli_project_root(tmp_path)
     cleanup_id = ""
     try:
         add = _run_cycle(
@@ -617,7 +617,7 @@ def test_cli_cycle_add_list_remove_list_docker_free(tmp_path: Path) -> None:
                 "--protocol",
                 "udp",
             ],
-            sut,
+            project_root,
         )
         assert add.returncode == 0, f"add failed:\n{add.stdout}\n{add.stderr}"
         # Extract the id BEFORE the docker-free pin: if that assertion fires,
@@ -627,7 +627,7 @@ def test_cli_cycle_add_list_remove_list_docker_free(tmp_path: Path) -> None:
         tid = cleanup_id = match.group(1)
         _assert_docker_free(add, "add")
 
-        listed = _run_cycle(["tunnel", "list"], sut)
+        listed = _run_cycle(["tunnel", "list"], project_root)
         assert listed.returncode == 0, f"list failed:\n{listed.stdout}\n{listed.stderr}"
         _assert_docker_free(listed, "list")
         assert tid in listed.stdout, f"{tid!r} missing from list:\n{listed.stdout}"
@@ -636,20 +636,20 @@ def test_cli_cycle_add_list_remove_list_docker_free(tmp_path: Path) -> None:
         row = next(line for line in listed.stdout.splitlines() if tid in line)
         assert row.rstrip().endswith(" ok"), f"expected status 'ok' in row: {row!r}"
 
-        removed = _run_cycle(["tunnel", "remove", tid], sut)
+        removed = _run_cycle(["tunnel", "remove", tid], project_root)
         assert removed.returncode == 0, f"remove failed:\n{removed.stdout}\n{removed.stderr}"
         _assert_docker_free(removed, "remove")
         assert tid in removed.stdout, f"remove did not name {tid!r}:\n{removed.stdout}"
         cleanup_id = ""  # removed cleanly; disarm the safety net
 
-        relisted = _run_cycle(["tunnel", "list"], sut)
+        relisted = _run_cycle(["tunnel", "list"], project_root)
         assert relisted.returncode == 0, f"re-list failed:\n{relisted.stdout}\n{relisted.stderr}"
         _assert_docker_free(relisted, "second list")
         assert tid not in relisted.stdout, f"{tid!r} survived remove:\n{relisted.stdout}"
     finally:
         if cleanup_id:
             with contextlib.suppress(Exception):
-                _run_cycle(["tunnel", "remove", cleanup_id], sut)
+                _run_cycle(["tunnel", "remove", cleanup_id], project_root)
 
 
 # ---------------------------------------------------------------------------

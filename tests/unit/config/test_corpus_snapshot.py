@@ -4,10 +4,10 @@ import os
 
 import pytest
 
-import otto.config.project as config_repo
+import otto.config.project as config_project
 from otto.config import corpus_snapshot as cs
-from tests._fixtures.generated_repo import generate_repo
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.generated_project import generate_project
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 
 def test_outside_a_scope_nothing_is_memoized(tmp_path):
@@ -52,19 +52,19 @@ def test_scopes_nest_by_reusing_the_outer_one():
         assert inner is outer
 
 
-@pytest.fixture(params=["generated", "repo1", "repo2"])
+@pytest.fixture(params=["generated", "project1", "project2"])
 def discovered(request, tmp_path, monkeypatch):
     from otto import bootstrap as bs
 
     if request.param == "generated":
-        sut = generate_repo(tmp_path, files=12, dirs=3, realistic=True)
+        sut = generate_project(tmp_path, files=12, dirs=3, realistic=True)
     else:
-        sut = PROJECT_ROOT / "tests" / request.param
+        sut = CHECKOUT_ROOT / "tests" / request.param
     monkeypatch.setenv("OTTOPATH", str(sut))
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     bs.invalidate()
     try:
-        yield config_repo.discover().projects
+        yield config_project.discover().projects
     finally:
         bs.invalidate()
 

@@ -130,7 +130,7 @@ from otto.tunnel.discovery import TunnelNotMeasuredError
 from otto.tunnel.records import TunnelScanFailedError
 from otto.tunnel.socat import NoFreePortError
 from otto.utils import WaitTimeoutError
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (BootstrapError, Exception),
@@ -150,7 +150,7 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (EnvBuildError, RuntimeError),
     # A settings error like the model-level ones, which are pydantic
     # ValidationErrors — so an `except ValueError` around config loading
-    # catches a cross-repo [logging.levels] conflict too.
+    # catches a cross-project [logging.levels] conflict too.
     (LoggingLevelsConflictError, ValueError),
     (GitUnavailableError, RuntimeError),
     (GitMissingError, RuntimeError),
@@ -266,8 +266,8 @@ DELIBERATELY_ROOTLESS: frozenset[type[BaseException]] = frozenset(
         # The init library's input refusal: a FieldError subclass, rootless like its base.
         InitInputError,
         # otto.session's refusals: a run that cannot start because of otto's
-        # own configuration (a repo that fails to load, a lab that cannot be
-        # built, an unmet repo requirement, an inactive repo's instruction) —
+        # own configuration (a project that fails to load, a lab that cannot be
+        # built, an unmet project requirement, an inactive project's instruction) —
         # otto's concepts, never a stdlib type a caller was already catching.
         # LabBuildError is a FieldError subclass, rootless like its base.
         ProjectLoadError,
@@ -275,13 +275,13 @@ DELIBERATELY_ROOTLESS: frozenset[type[BaseException]] = frozenset(
         DependencyRefusedError,
         InstructionInactiveError,
         # A contradictory ACTIVATION configuration: the labs drop a provider
-        # while a kept repo requires it. Sits beside ProjectScopeError above
+        # while a kept project requires it. Sits beside ProjectScopeError above
         # for the same reason it has no stdlib root — the project layer's
         # "these declarations cannot work together" failures are otto's own
         # concept, never a ValueError a caller was already catching.
         InactiveRequiredDependencyError,
         # A project instruction DECLARED in a way the table refuses, and
-        # two repos declaring the same flag from different classes. Both
+        # two projects declaring the same flag from different classes. Both
         # are the same project-layer "these declarations cannot work
         # together" concept as the two above, raised while otto builds
         # its own command table -- never a ValueError a caller could
@@ -343,7 +343,7 @@ def test_sync_phase_interrupt_stays_outside_ottoerror():
 
 # The enumerated CASES above pin the KNOWN classes; this sweep is the
 # completeness half of the gate — a future public exception added without
-# OttoError fails here, not in review prose (the repo's own history says
+# OttoError fails here, not in review prose (the repository's own history says
 # ungated conventions decay).
 
 _STDLIB_EXCEPTION_SEEDS = frozenset(
@@ -406,7 +406,7 @@ def _sweep_src() -> tuple[set[str], set[str], dict[str, str]]:
     """
     import ast
 
-    src = PROJECT_ROOT / "src" / "otto"
+    src = CHECKOUT_ROOT / "src" / "otto"
     assert src.is_dir(), src
 
     bases_by_class: dict[str, set[str]] = {}

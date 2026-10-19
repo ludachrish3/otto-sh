@@ -433,8 +433,8 @@ def _git(project: Path, tmp_path: Path, *args: str) -> None:
     )
 
 
-def _init_repo(tmp_path: Path) -> Path:
-    """Create a one-commit git repo and return its root."""
+def _init_git_repo(tmp_path: Path) -> Path:
+    """Create a one-commit git repository and return its root."""
     project = tmp_path / "sut"
     project.mkdir()
     _git(project, tmp_path, "init", "-q")
@@ -452,7 +452,7 @@ class TestE2eBaseCommitGuard:
 
     @pytest.mark.asyncio
     async def test_capture_base_commit_mismatch_raises_naming_both_shas(self, tmp_path):
-        project = _init_repo(tmp_path)
+        project = _init_git_repo(tmp_path)
         head = head_commit(project)
 
         cap = Capture(
@@ -478,7 +478,7 @@ class TestE2eBaseCommitGuard:
 
     @pytest.mark.asyncio
     async def test_capture_base_commit_matches_head_loads_into_store(self, tmp_path):
-        project = _init_repo(tmp_path)
+        project = _init_git_repo(tmp_path)
         head = head_commit(project)
 
         cap = Capture(
@@ -511,7 +511,7 @@ class TestE2eDirtyTreeRemap:
     async def test_dirty_tree_remaps_base_commit_to_worktree_and_drops_edited_lines(
         self, tmp_path, caplog
     ):
-        project = _init_repo(tmp_path)  # f.c: "int a;\nint b;\nint c;\n"
+        project = _init_git_repo(tmp_path)  # f.c: "int a;\nint b;\nint c;\n"
         head = head_commit(project)
 
         # Capture in HEAD (base_commit) coordinates: all three lines covered.
@@ -554,7 +554,7 @@ class TestUnitHarvest:
     async def test_harvest_dir_loads_under_unit_tier(self, tmp_path, monkeypatch):
         from otto.coverage.merge import merger as merger_mod
 
-        project = _init_repo(tmp_path)
+        project = _init_git_repo(tmp_path)
         # A harvest dir that is both the gcda and gcno root.
         hdir = tmp_path / "unit_build"
         hdir.mkdir()
@@ -595,7 +595,7 @@ class TestUnitHarvest:
         from otto.coverage.merge import lcov_loader as loader_mod
         from otto.coverage.merge import merger as merger_mod
 
-        project = _init_repo(tmp_path)
+        project = _init_git_repo(tmp_path)
         app_dir = tmp_path / "build" / "app-tests"
         agent_dir = tmp_path / "build" / "agent-tests"
         unit_dir = tmp_path / "build" / "tests"
@@ -653,7 +653,7 @@ class TestUnitHarvest:
     async def test_missing_harvest_dir_warns_and_skips(self, tmp_path, monkeypatch, caplog):
         from otto.coverage.merge import merger as merger_mod
 
-        project = _init_repo(tmp_path)
+        project = _init_git_repo(tmp_path)
 
         async def fail_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
             raise AssertionError("merger.capture must not run for a missing harvest dir")
@@ -686,7 +686,7 @@ class TestUnitHarvest:
         (distinct from the missing-dir case above)."""
         from otto.coverage.merge import merger as merger_mod
 
-        project = _init_repo(tmp_path)
+        project = _init_git_repo(tmp_path)
         hdir = tmp_path / "unit_build_empty"
         hdir.mkdir()
 
@@ -720,7 +720,7 @@ class TestUnitHarvest:
         (Task 10's `_warn_if_stale_counters`, deferred-untested finding closed here)."""
         from otto.coverage.merge import merger as merger_mod
 
-        project = _init_repo(tmp_path)
+        project = _init_git_repo(tmp_path)
         hdir = tmp_path / "unit_build_stale"
         hdir.mkdir()
         gcda = hdir / "f.gcda"
@@ -760,13 +760,13 @@ class TestUnitHarvest:
         assert frec.lines[1].hits.for_tier("unit") == 5
 
     @pytest.mark.asyncio
-    async def test_relative_harvest_dir_resolves_against_repo_root(self, tmp_path, monkeypatch):
-        """A relative ``harvest_dirs`` entry is repo-relative (spec §4), not
+    async def test_relative_harvest_dir_resolves_against_project_root(self, tmp_path, monkeypatch):
+        """A relative ``harvest_dirs`` entry is project-root-relative (spec §4), not
         CWD-relative — it must resolve even when ``otto cov report`` runs
-        from a directory other than the repo root."""
+        from a directory other than the project root."""
         from otto.coverage.merge import merger as merger_mod
 
-        project = _init_repo(tmp_path)
+        project = _init_git_repo(tmp_path)
         hdir = project / "unit_build"
         hdir.mkdir()
         (hdir / "f.gcda").write_bytes(b"")
@@ -775,7 +775,7 @@ class TestUnitHarvest:
         src = project / "f.c"
 
         async def fake_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
-            # Resolved against repo_root, matching the absolute harvest dir.
+            # Resolved against project_root, matching the absolute harvest dir.
             assert gcda_dir == hdir
             assert gcno_dir == hdir
             output.write_text(f"TN:\nSF:{src}\nDA:1,5\nend_of_record\n")
@@ -783,7 +783,7 @@ class TestUnitHarvest:
 
         monkeypatch.setattr(merger_mod.LcovMerger, "capture", fake_capture)
 
-        # CWD is a sibling of the repo, not the repo root itself.
+        # CWD is a sibling of the project root, not the project root itself.
         elsewhere = tmp_path / "elsewhere"
         elsewhere.mkdir()
         monkeypatch.chdir(elsewhere)
@@ -805,15 +805,15 @@ class TestUnitHarvest:
     @pytest.mark.asyncio
     async def test_tilde_harvest_dir_expands_via_home(self, tmp_path, monkeypatch):
         """A ``~``-prefixed ``harvest_dirs`` entry expands against ``HOME`` before
-        repo-anchoring (path-resolution convention, docs/configuration/settings.md).
+        project-root anchoring (path-resolution convention, docs/configuration/settings.md).
 
         Without the fix, ``~`` is never expanded and the entry is anchored
-        literally under ``repo_root / "~" / "unit_build"``, which never exists —
+        literally under ``project_root / "~" / "unit_build"``, which never exists —
         the harvest dir is silently skipped and no unit coverage loads.
         """
         from otto.coverage.merge import merger as merger_mod
 
-        project = _init_repo(tmp_path)
+        project = _init_git_repo(tmp_path)
         home = tmp_path / "home"
         home.mkdir()
         monkeypatch.setenv("HOME", str(home))
@@ -825,7 +825,7 @@ class TestUnitHarvest:
         src = project / "f.c"
 
         async def fake_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
-            # Resolved against HOME, not repo_root/"~"/... .
+            # Resolved against HOME, not project_root/"~"/... .
             assert gcda_dir == hdir
             assert gcno_dir == hdir
             output.write_text(f"TN:\nSF:{src}\nDA:1,5\nend_of_record\n")
@@ -862,7 +862,7 @@ async def test_duplicate_capture_across_sources_registers_one_run(tmp_path):
     from otto.coverage.reporter import CollectionInputs, CoverageReporter
     from otto.coverage.tiers import load_tiers
 
-    project = _init_repo(tmp_path)  # f.c: "int a;\nint b;\nint c;\n"
+    project = _init_git_repo(tmp_path)  # f.c: "int a;\nint b;\nint c;\n"
 
     cap = Capture(
         tier="manual",
@@ -919,7 +919,7 @@ async def test_explicit_info_tier_gets_synthetic_run(tmp_path):
 
 async def _runs_for_captures(tmp_path: Path, contexts: list[tuple[str, str]]):
     """Fold one capture per ``(board, product)`` at HEAD and return the run table."""
-    project = _init_repo(tmp_path)
+    project = _init_git_repo(tmp_path)
     head = head_commit(project)
     cov = tmp_path / "out" / "cov"
     capture_paths = []
@@ -982,7 +982,7 @@ async def test_e2e_hit_suppresses_manual_stale_mark_same_line(tmp_path):
     from otto.coverage.reporter import CollectionInputs, CoverageReporter
     from otto.coverage.tiers import load_tiers
 
-    project = _init_repo(tmp_path)  # f.c: "int a;\nint b;\nint c;\n"
+    project = _init_git_repo(tmp_path)  # f.c: "int a;\nint b;\nint c;\n"
     head1 = head_commit(project)
 
     manual_cap = Capture(
@@ -1048,7 +1048,7 @@ async def test_e2e_hit_suppresses_manual_stale_mark_same_line(tmp_path):
 async def test_duplicate_survives_stale_base_commit_via_key_hoist(tmp_path):
     """The dedupe guarantee the key-hoist design advertises: a cov-dir
     duplicate of an already-committed manual run is skipped by *key* before
-    the e2e base_commit guard ever runs against it — even once the repo has
+    the e2e base_commit guard ever runs against it — even once the checkout has
     moved past the duplicate's base_commit. Without cross-source dedupe this raised
     ``CoverageDataMismatchError``; the manual anchor-chain copy stays the
     sole source of truth for the run.
@@ -1059,7 +1059,7 @@ async def test_duplicate_survives_stale_base_commit_via_key_hoist(tmp_path):
     from otto.coverage.reporter import CollectionInputs, CoverageReporter
     from otto.coverage.tiers import load_tiers
 
-    project = _init_repo(tmp_path)  # f.c: "int a;\nint b;\nint c;\n"
+    project = _init_git_repo(tmp_path)  # f.c: "int a;\nint b;\nint c;\n"
     head1 = head_commit(project)
 
     cap = Capture(
@@ -1077,7 +1077,7 @@ async def test_duplicate_survives_stale_base_commit_via_key_hoist(tmp_path):
     dup = tmp_path / "out" / "cov" / "b1" / "capture.json"
     cap.save(dup)  # verbatim cov-dir duplicate of the same run
 
-    # Advance the repo past head1 -- an unrelated commit so the duplicate's
+    # Advance the checkout past head1 -- an unrelated commit so the duplicate's
     # base_commit no longer matches HEAD, but f.c's blob is untouched.
     (project / "unrelated.txt").write_text("x\n")
     _git(project, tmp_path, "add", "unrelated.txt")
@@ -1127,7 +1127,7 @@ async def test_superseded_covdir_duplicate_still_skipped(tmp_path):
     from otto.coverage.reporter import CollectionInputs, CoverageReporter
     from otto.coverage.tiers import load_tiers
 
-    project = _init_repo(tmp_path)  # f.c: "int a;\nint b;\nint c;\n"
+    project = _init_git_repo(tmp_path)  # f.c: "int a;\nint b;\nint c;\n"
     head1 = head_commit(project)
 
     cap_old = Capture(
@@ -1145,7 +1145,7 @@ async def test_superseded_covdir_duplicate_still_skipped(tmp_path):
     dup = tmp_path / "out" / "cov" / "b1" / "capture.json"
     cap_old.save(dup)  # verbatim cov-dir duplicate of the OLD run
 
-    # Advance the repo past head1.
+    # Advance the checkout past head1.
     (project / "unrelated.txt").write_text("x\n")
     _git(project, tmp_path, "add", "unrelated.txt")
     _git(project, tmp_path, "commit", "-qm", "unrelated")
@@ -1179,8 +1179,8 @@ async def test_superseded_covdir_duplicate_still_skipped(tmp_path):
 # ── Task 7: CoverageReporter ticket attribution wiring ───────────────────────
 
 
-def _repo_with_ticket_commit(tmp_path: Path) -> Path:
-    """Create a one-commit git repo whose commit message names ticket PROJ-7."""
+def _git_repo_with_ticket_commit(tmp_path: Path) -> Path:
+    """Create a one-commit git repository whose commit message names ticket PROJ-7."""
     project = tmp_path / "ticket_sut"
     project.mkdir()
     _git(project, tmp_path, "init", "-q")
@@ -1191,7 +1191,7 @@ def _repo_with_ticket_commit(tmp_path: Path) -> Path:
 
 
 def _store_with_lines(project: Path):
-    """A minimal store with one file (repo/a.c) and two known line numbers."""
+    """A minimal store with one file (project/a.c) and two known line numbers."""
     from otto.coverage.store.model import CoverageStore
 
     store = CoverageStore(tier_order=["unit"])
@@ -1224,7 +1224,7 @@ def test_reporter_annotates_lines_with_tickets(tmp_path):
     per-line ticket ids and the store's ticket -> commits table."""
     from otto.coverage.tickets import build_ticket_spec
 
-    project = _repo_with_ticket_commit(tmp_path)
+    project = _git_repo_with_ticket_commit(tmp_path)
     store = _store_with_lines(project)
     reporter = _reporter_with(ticket_spec=build_ticket_spec(r"[A-Z]{2,10}-[0-9]+", None))
 
@@ -1237,7 +1237,7 @@ def test_reporter_annotates_lines_with_tickets(tmp_path):
 def test_reporter_without_spec_leaves_tickets_empty(tmp_path):
     """ticket_spec=None (the feature-absent default) must run no git walk at
     all and leave every LineRecord.ticket / store.tickets untouched."""
-    project = _repo_with_ticket_commit(tmp_path)
+    project = _git_repo_with_ticket_commit(tmp_path)
     store = _store_with_lines(project)
     reporter = _reporter_with(ticket_spec=None)
 
@@ -1256,7 +1256,7 @@ async def test_run_wires_ticket_attribution_into_the_store(tmp_path):
     so they prove the method works but say nothing about whether ``run()``
     actually invokes it; a reviewer deleted that one call site from ``run()``
     and the entire cov + cli suite (482 tests) stayed green. This test goes
-    through the public ``run()`` entry point with a real one-commit git repo
+    through the public ``run()`` entry point with a real one-commit git repository
     (commit message names a ticket), a real ``.info`` tier so the store
     actually holds lines, ``project_root`` set via ``CollectionInputs``, and a
     ``ticket_spec`` — so deleting the ``run()`` call site makes *this* test
@@ -1299,14 +1299,14 @@ async def test_run_wires_ticket_attribution_into_the_store(tmp_path):
 # test_attribution.py's `test_attribute_tickets_exposes_owning_sha_...`), so
 # the falsy check silently discarded both instead of just one. These tests
 # exercise `_annotate_tickets` directly (like the two tests above) with a
-# real one-commit repo, so a reviewer reverting the sentinel assignment
+# real one-commit git repository, so a reviewer reverting the sentinel assignment
 # would see one of these fail even though every ticket-configured test
 # above (which never exercises a no-ticket commit or a dirty line) stays
 # green.
 
 
-def _repo_with_no_ticket_commit(tmp_path: Path) -> Path:
-    """A one-commit repo whose message names no ticket at all."""
+def _git_repo_with_no_ticket_commit(tmp_path: Path) -> Path:
+    """A one-commit git repository whose message names no ticket at all."""
     project = tmp_path / "no_ticket_sut"
     project.mkdir()
     _git(project, tmp_path, "init", "-q")
@@ -1322,7 +1322,7 @@ def test_reporter_assigns_no_ticket_sentinel_for_unmatched_commit(tmp_path):
     from otto.coverage.attribution import NO_TICKET
     from otto.coverage.tickets import build_ticket_spec
 
-    project = _repo_with_no_ticket_commit(tmp_path)
+    project = _git_repo_with_no_ticket_commit(tmp_path)
     store = _store_with_lines(project)
     reporter = _reporter_with(ticket_spec=build_ticket_spec(r"[A-Z]{2,10}-[0-9]+", None))
 
@@ -1344,7 +1344,7 @@ def test_reporter_assigns_uncommitted_sentinel_and_does_not_inherit_prior_ticket
     from otto.coverage.attribution import UNCOMMITTED_TICKET
     from otto.coverage.tickets import build_ticket_spec
 
-    project = _repo_with_ticket_commit(tmp_path)  # commits "one\ntwo\n" as "seed PROJ-7"
+    project = _git_repo_with_ticket_commit(tmp_path)  # commits "one\ntwo\n" as "seed PROJ-7"
     (project / "a.c").write_text("one\nDIRTY\n")  # line 2 edited, never committed
     store = _store_with_lines(project)
     reporter = _reporter_with(ticket_spec=build_ticket_spec(r"[A-Z]{2,10}-[0-9]+", None))
@@ -1371,10 +1371,10 @@ def test_reporter_assigns_uncommitted_sentinel_and_does_not_inherit_prior_ticket
 # tickets page and the `tickets.json` export with zero owned lines.
 
 
-def _repo_with_a_non_coverable_gap(tmp_path: Path) -> tuple[Path, str, str]:
+def _git_repo_with_a_non_coverable_gap(tmp_path: Path) -> tuple[Path, str, str]:
     """Two commits against a 3-line file; only the second touches line 2.
 
-    Returns ``(repo, first_sha, second_sha)``. Callers register a store
+    Returns ``(root, first_sha, second_sha)``. Callers register a store
     that knows about lines 1 and 3 only, leaving line 2 as the "gap" a
     real coverage tool would never report (a blank line, a comment, a
     brace-only line).
@@ -1400,7 +1400,7 @@ def test_ticket_owning_only_a_non_coverable_line_gets_no_ticket_record(tmp_path)
     from otto.coverage.store.model import CoverageStore
     from otto.coverage.tickets import build_ticket_spec
 
-    project, first, _second = _repo_with_a_non_coverable_gap(tmp_path)
+    project, first, _second = _git_repo_with_a_non_coverable_gap(tmp_path)
     store = CoverageStore(tier_order=["unit"])
     record = store.get_or_create_file(project / "a.c")
     record.get_or_create_line(1)

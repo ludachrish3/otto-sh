@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 from scripts import gate_tip as gt
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
 
@@ -56,7 +56,7 @@ def _run_make(stub: Path, *args: str) -> "subprocess.CompletedProcess[str]":
     env = {k: v for k, v in os.environ.items() if k not in dropped}
     return subprocess.run(
         ["make", "--no-print-directory", *args, f"MAKE={stub}"],
-        cwd=PROJECT_ROOT,
+        cwd=CHECKOUT_ROOT,
         capture_output=True,
         text=True,
         timeout=120,
@@ -224,7 +224,7 @@ def test_the_rule_reader_skips_a_target_specific_variable_line():
 
 
 def test_make_coverage_is_stamped_at_its_start_and_its_end():
-    text = (PROJECT_ROOT / "Makefile").read_text()
+    text = (CHECKOUT_ROOT / "Makefile").read_text()
     prerequisites, recipe = _rule(text, "coverage")
     assert prerequisites == ["coverage-stamp-start", "coverage-python", "coverage-ts"], (
         prerequisites
@@ -285,7 +285,7 @@ def test_a_command_line_pytest_addopts_does_not_reach_the_stamped_legs(tmp_path:
     stub, _log = _stub_make(tmp_path, {})
     probe = tmp_path / "Probe.mk"
     probe.write_text(
-        f"include {PROJECT_ROOT / 'Makefile'}\n"
+        f"include {CHECKOUT_ROOT / 'Makefile'}\n"
         "coverage: addopts-probe\n"
         "addopts-probe:\n"
         '\t+@echo "ADDOPTS=[$$PYTEST_ADDOPTS]"\n'
@@ -303,7 +303,7 @@ def test_a_command_line_pytest_addopts_does_not_reach_the_stamped_legs(tmp_path:
             "PYTEST_ADDOPTS=--no-cov",
             f"MAKE={stub}",
         ],
-        cwd=PROJECT_ROOT,
+        cwd=CHECKOUT_ROOT,
         capture_output=True,
         text=True,
         timeout=120,
@@ -319,7 +319,7 @@ def test_a_command_line_pytest_addopts_does_not_reach_the_stamped_legs(tmp_path:
 
 def test_every_coverage_python_leg_selects_m_coverage():
     """The stamp records `$(M_COVERAGE)` as the selection; the legs must run exactly that."""
-    text = (PROJECT_ROOT / "Makefile").read_text()
+    text = (CHECKOUT_ROOT / "Makefile").read_text()
     _, legs = _rule(text, "coverage-python")
     selections = re.findall(r'-m "([^"]+)"', "\n".join(legs))
     assert selections == [
@@ -370,7 +370,7 @@ def test_a_command_line_variable_is_marked_inside_the_coverage_context(tmp_path:
     """
     stub, _log = _stub_make(tmp_path, {})
     probe = tmp_path / "Probe.mk"
-    probe.write_text(f"include {PROJECT_ROOT / 'Makefile'}\n")
+    probe.write_text(f"include {CHECKOUT_ROOT / 'Makefile'}\n")
     env = {k: v for k, v in os.environ.items() if k not in {"MAKEFLAGS", "MFLAGS", "MAKELEVEL"}}
     completed = subprocess.run(
         [
@@ -383,7 +383,7 @@ def test_a_command_line_variable_is_marked_inside_the_coverage_context(tmp_path:
             "PYTEST_ADDOPTS=--no-cov",
             f"MAKE={stub}",
         ],
-        cwd=PROJECT_ROOT,
+        cwd=CHECKOUT_ROOT,
         capture_output=True,
         text=True,
         timeout=120,
@@ -411,7 +411,7 @@ def test_every_stamp_and_release_target_is_phony():
         "the reader must take whole tokens, not substrings of a merged one"
     )
     assert "b" in _phony_targets(".PHONY: a \\\n\tb\n"), "a continued .PHONY line must be read"
-    phony = _phony_targets((PROJECT_ROOT / "Makefile").read_text())
+    phony = _phony_targets((CHECKOUT_ROOT / "Makefile").read_text())
     missing = {"coverage", "coverage-stamp-start", "nox-release", "release"} - phony
     assert not missing, f"not .PHONY: {sorted(missing)}"
 
@@ -427,7 +427,7 @@ def test_an_environment_value_is_not_an_override(tmp_path: Path):
     env["DASHBOARD_BROWSERS"] = "firefox"
     completed = subprocess.run(
         ["make", "--no-print-directory", "-n", "coverage-stamp-start", f"MAKE={stub}"],
-        cwd=PROJECT_ROOT,
+        cwd=CHECKOUT_ROOT,
         capture_output=True,
         text=True,
         timeout=120,
@@ -450,7 +450,7 @@ def _delta_line(stdout: str) -> str:
 
 def test_the_release_runs_the_budget_delta_right_after_check_python():
     """Early and failing: between check-python and nox-release, a bare `$(MAKE)` line."""
-    text = (PROJECT_ROOT / "Makefile").read_text()
+    text = (CHECKOUT_ROOT / "Makefile").read_text()
     _prerequisites, recipe = _rule(text, "release")
     stages = re.findall(r"\$\(MAKE\) ([a-z-]+)", " ".join(recipe))
     assert stages.index("budget-delta") == stages.index("check-python") + 1, stages
@@ -506,16 +506,16 @@ def test_a_multi_word_override_of_any_other_name_is_marked_once(tmp_path: Path):
 
 
 def test_budget_delta_is_phony():
-    assert "budget-delta" in _phony_targets((PROJECT_ROOT / "Makefile").read_text())
+    assert "budget-delta" in _phony_targets((CHECKOUT_ROOT / "Makefile").read_text())
 
 
 def test_gate_tip_targets_are_phony():
-    phony = _phony_targets((PROJECT_ROOT / "Makefile").read_text())
+    phony = _phony_targets((CHECKOUT_ROOT / "Makefile").read_text())
     assert {"gate-tip", "coverage-gate-args"} <= phony
 
 
 def _recipe(target: str) -> str:
-    text = (PROJECT_ROOT / "Makefile").read_text()
+    text = (CHECKOUT_ROOT / "Makefile").read_text()
     match = re.search(rf"^{re.escape(target)}:[^\n]*\n((?:\t[^\n]*\n)+)", text, re.MULTILINE)
     assert match, f"no recipe for {target}"
     return match.group(1).strip("\t\n")
@@ -526,7 +526,7 @@ def test_the_gate_tip_recipe_and_its_overrides_are_the_declared_wiring():
         '@uv run python scripts/gate_tip.py --repo . --base "$(if $(filter command line,'
         '$(origin BASE)),$(BASE),origin/main)" $(GATE_TIP_OVERRIDES)'
     )
-    text = (PROJECT_ROOT / "Makefile").read_text()
+    text = (CHECKOUT_ROOT / "Makefile").read_text()
     assert (
         "GATE_TIP_OVERRIDES = $(foreach n,$(filter-out BASE,"
         "$(COVERAGE_STAMP_OVERRIDE_NAMES)),--overridden $(n))\n"
@@ -547,7 +547,7 @@ def _make_with_uv_stub(tmp_path: Path, *args: str) -> "list[str]":
     env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
     completed = subprocess.run(
         ["make", "--no-print-directory", "gate-tip", *args],
-        cwd=PROJECT_ROOT,
+        cwd=CHECKOUT_ROOT,
         capture_output=True,
         text=True,
         timeout=120,
@@ -583,7 +583,7 @@ def test_the_declared_coverage_gate_frames_as_four_option_value_lines():
     env = {k: v for k, v in os.environ.items() if k not in dropped}
     completed = subprocess.run(
         ["make", "-s", "coverage-gate-args"],
-        cwd=PROJECT_ROOT,
+        cwd=CHECKOUT_ROOT,
         capture_output=True,
         text=True,
         timeout=120,

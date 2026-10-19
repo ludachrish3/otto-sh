@@ -14,11 +14,11 @@ import re
 
 import pytest
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
 
-_WEB = PROJECT_ROOT / "web"
+_WEB = CHECKOUT_ROOT / "web"
 _PACKAGES = json.loads((_WEB / "package-lock.json").read_text())["packages"]
 _OVERRIDES = json.loads((_WEB / "package.json").read_text()).get("overrides", {})
 

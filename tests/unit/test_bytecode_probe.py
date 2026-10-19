@@ -4,7 +4,7 @@ An instrument whose output is *evidence about other code* has to be verified in
 both directions before any run of it is worth reading. A positive control alone
 is what a probe that always says MATCH would pass; a negative control alone is
 what one that always says DIVERGED would pass. This module drives it against a
-synthetic module in `tmp_path` — never a repo file — so the negative control can
+synthetic module in `tmp_path` — never a checked-in file — so the negative control can
 poison a real `__pycache__` without touching anything under version control.
 
 The poisoning is reproduced DETERMINISTICALLY rather than by racing the clock:
@@ -23,9 +23,9 @@ from pathlib import Path
 
 import pytest
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-_PROBE = PROJECT_ROOT / "scripts" / "bytecode_probe.py"
+_PROBE = CHECKOUT_ROOT / "scripts" / "bytecode_probe.py"
 
 # Same length, different behaviour — the shape that defeats mtime+size
 # validation. Asserted below rather than trusted, because the whole scenario is

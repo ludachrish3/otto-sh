@@ -58,7 +58,7 @@ def test_build_report_ok_treats_skipped_as_ok():
     assert report.failed == []
 
 
-def test_build_report_failed_lists_repo_image_and_result():
+def test_build_report_failed_lists_project_image_and_result():
     bad = _fail("syntax error", command="docker build ...")
     report = BuildReport(
         projects=[

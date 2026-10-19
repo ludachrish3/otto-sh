@@ -11,7 +11,7 @@ import subprocess
 import zipfile
 
 from tests._fixtures.gitrepo import git_env
-from tests._fixtures.paths import PROJECT_ROOT, WHEELS_DIR
+from tests._fixtures.paths import CHECKOUT_ROOT, WHEELS_DIR
 
 WHEEL = WHEELS_DIR / "otto_fixture_beetroot-0.1.0-py3-none-any.whl"
 
@@ -69,21 +69,21 @@ def test_the_wheel_is_tracked_by_git_not_merely_present_on_disk(tmp_path):
     ``.gitignore`` ignores every ``wheels/`` directory as build output, so this
     fixture directory lives behind an explicit negation. Without that negation
     the whole tree is invisible to git: the suite passes locally, because the
-    files are right there on disk, and CI clones a repo with no wheel to
+    files are right there on disk, and CI clones a checkout with no wheel to
     install. ``test_the_committed_wheel_exists`` above cannot see the
     difference -- it asks the filesystem, which is exactly the witness that
     lies here.
     """
     probe = subprocess.run(
         ["git", "ls-files", "--error-unmatch", str(WHEEL)],
-        cwd=PROJECT_ROOT,
+        cwd=CHECKOUT_ROOT,
         env=git_env(tmp_path),  # hermetic per tests/_fixtures/gitrepo.py
         capture_output=True,
         text=True,
         check=False,  # a non-zero exit IS the finding, not an error to raise
     )
     assert probe.returncode == 0, (
-        f"{WHEEL.relative_to(PROJECT_ROOT)} is not tracked by git — it exists on "
+        f"{WHEEL.relative_to(CHECKOUT_ROOT)} is not tracked by git — it exists on "
         "disk but would not reach a clone. Check that .gitignore still carries "
         "the `!tests/_fixtures/wheels/` negation beside its `wheels/` rule."
     )

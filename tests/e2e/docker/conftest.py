@@ -6,9 +6,9 @@ import uuid
 import pytest
 
 from tests._fixtures._host_pool import lease_unix_host
-from tests.e2e._otto_subprocess import REPO1
+from tests.e2e._otto_subprocess import PROJECT1
 
-from ._cli import _DEFAULT_PARENT, _MERGED_USE_CASE, _REPO1_USE_CASE, REPO2, _run_otto
+from ._cli import _DEFAULT_PARENT, _MERGED_USE_CASE, _PROJECT1_USE_CASE, PROJECT2, _run_otto
 
 # Docker container hosts require an SSH-based UnixHost parent (see
 # DockerContainerHost._make_session: term must be 'ssh').  test2 defaults
@@ -68,22 +68,22 @@ def teardown_after(fresh_suffix, docker_host, tmp_path):
     the test failed mid-flight. Idempotent — `down` is harmless when the
     stack isn't up.
 
-    Tears down BOTH declared use-cases (``repo1`` and the merged
+    Tears down BOTH declared use-cases (``project1`` and the merged
     ``integration``), because a use-case is now the unit of deployment and
     each one gets its own compose project: a test that brought up
-    ``integration`` leaves a stack ``down repo1`` would never touch. A
+    ``integration`` leaves a stack ``down project1`` would never touch. A
     half-torn-down stack leaks a docker network on each run; enough leaks
     (~30) and the docker daemon runs out of subnet pools and subsequent
     ``compose up``s fail with ``all predefined address pools have been fully
     subnetted``.
     """
     yield fresh_suffix
-    # Both repos in SUT_DIRS so the merged use-case resolves the same set of
+    # Both projects in OTTOPATH so the merged use-case resolves the same set of
     # fragments the test deployed. --parent <docker_host> targets the daemon the
     # test used. `provide` is deliberately NOT passed: the compose project is
     # derived from (lab, use-case, suffix) alone, so one `down` reaps the
     # stack whichever provider won.
-    for use_case in (_REPO1_USE_CASE, _MERGED_USE_CASE):
+    for use_case in (_PROJECT1_USE_CASE, _MERGED_USE_CASE):
         _run_otto(
             "docker",
             "compose",
@@ -91,7 +91,7 @@ def teardown_after(fresh_suffix, docker_host, tmp_path):
             use_case,
             "--parent",
             docker_host,
-            roots=f"{REPO1}{os.pathsep}{REPO2}",
+            roots=f"{PROJECT1}{os.pathsep}{PROJECT2}",
             xdir=tmp_path,
             compose_suffix=fresh_suffix,
         )
@@ -101,7 +101,7 @@ def teardown_after(fresh_suffix, docker_host, tmp_path):
 def teardown_default_parent_after(fresh_suffix, default_parent_host, tmp_path):
     """``teardown_after``, for the tests that lease :data:`_DEFAULT_PARENT`."""
     yield fresh_suffix
-    for use_case in (_REPO1_USE_CASE, _MERGED_USE_CASE):
+    for use_case in (_PROJECT1_USE_CASE, _MERGED_USE_CASE):
         _run_otto(
             "docker",
             "compose",
@@ -109,7 +109,7 @@ def teardown_default_parent_after(fresh_suffix, default_parent_host, tmp_path):
             use_case,
             "--parent",
             default_parent_host,
-            roots=f"{REPO1}{os.pathsep}{REPO2}",
+            roots=f"{PROJECT1}{os.pathsep}{PROJECT2}",
             xdir=tmp_path,
             compose_suffix=fresh_suffix,
         )

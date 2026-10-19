@@ -30,7 +30,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import otto.config.project as config_repo
+import otto.config.project as config_project
 from otto import declared, registry
 from otto.logger import management
 
@@ -133,7 +133,7 @@ def test_logger_state_outlives_another_sibling_test(
 # sibling-test pattern above. The autouse fixture wraps every test, so its
 # teardown cannot be observed from inside one; and a sibling pair would pass
 # vacuously whenever pytest-randomly happened to schedule the observer first,
-# which is exactly the "green whether the fix exists or not" shape this repo
+# which is exactly the "green whether the fix exists or not" shape this repository
 # rejects. Driving it directly is deterministic and order-independent.
 
 
@@ -220,20 +220,20 @@ def test_the_guards_state_snapshot_does_not_alias_its_mutable_fields(tmp_path) -
 @pytest.fixture(scope="module")
 def primed_bootstrap_cache() -> Iterator[object]:
     """Module-scoped discovery cache: a discovery memoized before any per-test snapshot."""
-    saved = config_repo._discovery.result
+    saved = config_project._discovery.result
     sentinel = SimpleNamespace(projects=[], errors=[])
-    config_repo._discovery.result = sentinel
+    config_project._discovery.result = sentinel
     yield sentinel
-    config_repo._discovery.result = saved
+    config_project._discovery.result = saved
 
 
 def _assert_bootstrap_state_survives_then_poison_it(sentinel: object) -> None:
-    assert config_repo._discovery.result is sentinel, (
+    assert config_project._discovery.result is sentinel, (
         "a module fixture's discovery cache was cleared by a per-test teardown — "
         "the guard reset to defaults instead of restoring its snapshot"
     )
     # Poison for whichever sibling runs next: the guard must swap it back out.
-    config_repo._discovery.result = SimpleNamespace(projects=[], errors=[])
+    config_project._discovery.result = SimpleNamespace(projects=[], errors=[])
 
 
 def test_bootstrap_state_outlives_a_sibling_test(primed_bootstrap_cache: object) -> None:

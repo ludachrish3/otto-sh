@@ -25,7 +25,7 @@ from pathlib import Path
 import pytest
 
 from tests.e2e._otto_subprocess import run_otto
-from tests.e2e._selection_fixtures import make_selection_repo
+from tests.e2e._selection_fixtures import make_selection_project
 
 pytestmark = pytest.mark.hostless
 
@@ -66,7 +66,7 @@ _ENVS = pytest.mark.parametrize(
 def _run(
     tmp_path: Path, argv: list[str], extra_env: dict[str, str] | None
 ) -> subprocess.CompletedProcess[str]:
-    project = make_selection_repo(tmp_path, suite_src=_SUITE)
+    project = make_selection_project(tmp_path, suite_src=_SUITE)
     return run_otto(argv, xdir=tmp_path, roots=project, lab="unix", extra_env=extra_env)
 
 

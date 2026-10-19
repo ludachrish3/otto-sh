@@ -1,4 +1,4 @@
-"""``resolve_monitor_tls``: one dashboard TLS declaration across repos, fail-loud.
+"""``resolve_monitor_tls``: one dashboard TLS declaration across projects, fail-loud.
 
 Certificates are throwaway self-signed PEMs minted into tmp_path with the
 openssl CLI, as in ``test_server_tls.py``.
@@ -13,18 +13,18 @@ from otto.config.project import Project
 from otto.config.scope import MonitorSettings
 from otto.monitor.errors import MonitorTlsError
 from otto.monitor.tls import resolve_monitor_tls
-from tests._fixtures.fake_repo import fake_repo
+from tests._fixtures.fake_project import fake_project
 
 
-def _repo(name: str, cert=None, key=None) -> Project:
-    return fake_repo(name, monitor_settings=MonitorSettings(tls_cert=cert, tls_key=key))
+def _project(name: str, cert=None, key=None) -> Project:
+    return fake_project(name, monitor_settings=MonitorSettings(tls_cert=cert, tls_key=key))
 
 
 def _make_cert(tmp_path: Path) -> Path:
     """Mint a throwaway self-signed PEM (cert+key bundled into one file) via openssl.
 
     Same approach as ``tests/unit/monitor/test_server_tls.py``: universally
-    present on the Linux targets this repo supports, no extra dev-dep needed.
+    present on the Linux targets this repository supports, no extra dev-dep needed.
     Cert and key are generated to separate files (openssl can't safely write
     both to one ``-out``/``-keyout`` path — the second write clobbers the
     first) then concatenated, exercising the ``tls_key is None`` "cert
@@ -58,34 +58,34 @@ def _make_cert(tmp_path: Path) -> Path:
 
 
 def test_no_declaration_is_plain_http():
-    assert resolve_monitor_tls([_repo("a"), _repo("b")]) is None
+    assert resolve_monitor_tls([_project("a"), _project("b")]) is None
 
 
 def test_single_declaration_with_real_files_applies(tmp_path):
     cert = _make_cert(tmp_path)
-    settings = resolve_monitor_tls([_repo("a", cert)])
+    settings = resolve_monitor_tls([_project("a", cert)])
     assert settings is not None
     assert settings.tls_cert == cert
 
 
-def test_agreeing_repos_resolve_to_the_declaration(tmp_path):
+def test_agreeing_projects_resolve_to_the_declaration(tmp_path):
     cert = _make_cert(tmp_path)
-    settings = resolve_monitor_tls([_repo("a", cert), _repo("b", cert)])
+    settings = resolve_monitor_tls([_project("a", cert), _project("b", cert)])
     assert settings is not None
     assert settings.tls_cert == cert
 
 
-def test_disagreeing_repos_refuse_naming_both(tmp_path):
+def test_disagreeing_projects_refuse_naming_both(tmp_path):
     c1, c2 = tmp_path / "1.pem", tmp_path / "2.pem"
     with pytest.raises(MonitorTlsError, match=r"disagree across projects \(a, b\)") as excinfo:
-        resolve_monitor_tls([_repo("b", c2), _repo("a", c1)])
+        resolve_monitor_tls([_project("b", c2), _project("a", c1)])
     assert (excinfo.value.setting, excinfo.value.projects) == (None, ["a", "b"])
 
 
 def test_missing_cert_file_refuses_naming_the_setting(tmp_path):
     missing = tmp_path / "nope.pem"
     with pytest.raises(MonitorTlsError, match="tls_cert") as excinfo:
-        resolve_monitor_tls([_repo("a", missing)])
+        resolve_monitor_tls([_project("a", missing)])
     assert excinfo.value.setting == "tls_cert"
     assert str(missing) in str(excinfo.value)
     assert excinfo.value.projects == ["a"]
@@ -94,7 +94,7 @@ def test_missing_cert_file_refuses_naming_the_setting(tmp_path):
 def test_missing_key_file_refuses_naming_the_setting(tmp_path):
     cert = _make_cert(tmp_path)
     with pytest.raises(MonitorTlsError, match="tls_key") as excinfo:
-        resolve_monitor_tls([_repo("a", cert, tmp_path / "nokey.pem")])
+        resolve_monitor_tls([_project("a", cert, tmp_path / "nokey.pem")])
     assert excinfo.value.setting == "tls_key"
 
 
@@ -104,6 +104,6 @@ def test_unloadable_pair_refuses_never_falls_back_to_http(tmp_path):
     garbage = tmp_path / "cert.pem"
     garbage.write_text("not a pem")
     with pytest.raises(MonitorTlsError, match="could not be loaded") as excinfo:
-        resolve_monitor_tls([_repo("a", garbage)])
+        resolve_monitor_tls([_project("a", garbage)])
     assert excinfo.value.setting == "tls_cert"
     assert str(garbage) in str(excinfo.value)

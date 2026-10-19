@@ -19,9 +19,9 @@ import re
 import tomli
 
 from tests._fixtures.labdata import lab_data_dir
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-_PAGE = PROJECT_ROOT / "docs" / "configuration" / "inventory.md"
+_PAGE = CHECKOUT_ROOT / "docs" / "configuration" / "inventory.md"
 _FIXTURE = "tech1-inventory"
 _BLOCK = re.compile(
     r"<!-- fixture: tech1-inventory/(?P<name>[\w.-]+) -->\s*"

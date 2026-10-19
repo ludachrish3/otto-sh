@@ -19,7 +19,7 @@ from otto.config.remote_completion_cache import ListingEntry
 from otto.result import CommandResult
 from otto.utils import Status
 from tests._fixtures.bootstrap_seam import patch_bootstrap
-from tests._fixtures.fake_repo import fake_repo
+from tests._fixtures.fake_project import fake_project
 
 
 @pytest.mark.parametrize(
@@ -289,7 +289,7 @@ def gate_env(monkeypatch, tmp_path):
     monkeypatch.setattr("otto.config.completion_cache._cache_path", lambda: main)
     monkeypatch.setattr(
         "otto.declared.get_projects",
-        lambda: [fake_repo(settings={"reservations": {"backend": "json"}})],
+        lambda: [fake_project(settings={"reservations": {"backend": "json"}})],
     )
     monkeypatch.setattr(
         "otto.reservations.identity.resolve_username",
@@ -337,7 +337,7 @@ class _Backend:
 
 
 def test_gate_no_reservation_config_allows(monkeypatch, gate_env):
-    monkeypatch.setattr("otto.declared.get_projects", lambda: [fake_repo()])
+    monkeypatch.setattr("otto.declared.get_projects", lambda: [fake_project()])
     _install_backend(monkeypatch, _Backend([]))  # would refuse if it were ever consulted
     assert rc._reservation_allows(_chain()) is True
 
@@ -472,15 +472,15 @@ def test_required_for_is_scoped_to_the_fleet_of_interest(monkeypatch, tmp_path):
     Deliberately not on ``gate_env``: that fixture stubs ``_required_for``
     itself, so it cannot say anything about what ``_required_for`` computes.
     Mutation: drop the ``host_ids=`` argument in ``_required_for`` and this
-    goes red with ``slot-2`` — the resource on the host no repo declared.
+    goes red with ``slot-2`` — the resource on the host no project declared.
     """
     from tests._fixtures.fleet import _lab as fleet_lab
-    from tests._fixtures.fleet import _repo
+    from tests._fixtures.fleet import _project
 
     lab = fleet_lab(("slot1", "rig"), ("slot2", "rig"))
     lab.hosts["slot1"].resources = frozenset({"slot-1"})
     lab.hosts["slot2"].resources = frozenset({"slot-2"})
-    project = _repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])
+    project = _project(tmp_path, "r1", labs=["rig"], hosts=["slot1"])
     patch_bootstrap(monkeypatch, [project])
     monkeypatch.setattr("otto.session.lab.build_lab", lambda projects, labs: lab)
 
@@ -494,14 +494,14 @@ def test_required_for_drops_the_hosts_of_an_excluded_project(monkeypatch, tmp_pa
     the switch's doing.
     """
     from tests._fixtures.fleet import _lab as fleet_lab
-    from tests._fixtures.fleet import _repo
+    from tests._fixtures.fleet import _project
 
     lab = fleet_lab(("slot1", "rig"), ("slot2", "rig"))
     lab.hosts["slot1"].resources = frozenset({"slot-1"})
     lab.hosts["slot2"].resources = frozenset({"slot-2"})
     projects = [
-        _repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"]),
-        _repo(tmp_path, "r2", labs=["rig"], hosts=["slot2"]),
+        _project(tmp_path, "r1", labs=["rig"], hosts=["slot1"]),
+        _project(tmp_path, "r2", labs=["rig"], hosts=["slot2"]),
     ]
     patch_bootstrap(monkeypatch, projects)
     monkeypatch.setattr("otto.session.lab.build_lab", lambda projects, labs: lab)
@@ -524,12 +524,12 @@ def test_required_for_adds_the_targeted_host_when_it_is_outside_the_fleet(monkey
     and ``slot-2`` was never demanded.
     """
     from tests._fixtures.fleet import _lab as fleet_lab
-    from tests._fixtures.fleet import _repo
+    from tests._fixtures.fleet import _project
 
     lab = fleet_lab(("slot1", "rig"), ("slot2", "rig"))
     lab.hosts["slot1"].resources = frozenset({"slot-1"})
     lab.hosts["slot2"].resources = frozenset({"slot-2"})
-    project = _repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])
+    project = _project(tmp_path, "r1", labs=["rig"], hosts=["slot1"])
     patch_bootstrap(monkeypatch, [project])
     monkeypatch.setattr("otto.session.lab.build_lab", lambda projects, labs: lab)
 
@@ -549,11 +549,11 @@ def test_required_for_ignores_a_target_the_lab_does_not_hold(monkeypatch, tmp_pa
     'id'``.
     """
     from tests._fixtures.fleet import _lab as fleet_lab
-    from tests._fixtures.fleet import _repo
+    from tests._fixtures.fleet import _project
 
     lab = fleet_lab(("slot1", "rig"), ("slot2", "rig"))
     lab.hosts["slot1"].resources = frozenset({"slot-1"})
-    project = _repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])
+    project = _project(tmp_path, "r1", labs=["rig"], hosts=["slot1"])
     patch_bootstrap(monkeypatch, [project])
     monkeypatch.setattr("otto.session.lab.build_lab", lambda projects, labs: lab)
 
@@ -571,12 +571,12 @@ def test_required_for_adds_the_hop_when_it_is_outside_the_fleet(monkeypatch, tmp
     ``{'slot-1'}``.
     """
     from tests._fixtures.fleet import _lab as fleet_lab
-    from tests._fixtures.fleet import _repo
+    from tests._fixtures.fleet import _project
 
     lab = fleet_lab(("slot1", "rig"), ("slot2", "rig"))
     lab.hosts["slot1"].resources = frozenset({"slot-1"})
     lab.hosts["slot2"].resources = frozenset({"slot-2"})
-    project = _repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])
+    project = _project(tmp_path, "r1", labs=["rig"], hosts=["slot1"])
     patch_bootstrap(monkeypatch, [project])
     monkeypatch.setattr("otto.session.lab.build_lab", lambda projects, labs: lab)
 
@@ -598,12 +598,12 @@ def test_required_for_under_an_empty_declared_fleet_returns_the_lab_level_set(
     ``admissible_ids`` call and this goes red with ``ProjectScopeError``.
     """
     from tests._fixtures.fleet import _lab as fleet_lab
-    from tests._fixtures.fleet import _repo
+    from tests._fixtures.fleet import _project
 
     lab = fleet_lab(("slot1", "rig"), ("slot2", "rig"))
     lab.resources = {"rack-1"}
     lab.hosts["slot1"].resources = frozenset({"slot-1"})
-    project = _repo(tmp_path, "r1", labs=["rig"], hosts=["nothing-matches"])
+    project = _project(tmp_path, "r1", labs=["rig"], hosts=["nothing-matches"])
     patch_bootstrap(monkeypatch, [project])
     monkeypatch.setattr("otto.session.lab.build_lab", lambda projects, labs: lab)
 

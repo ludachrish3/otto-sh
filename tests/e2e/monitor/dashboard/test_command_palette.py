@@ -14,14 +14,14 @@ their own copy too).
 import pytest
 from playwright.sync_api import Locator, Page, expect
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = [
     pytest.mark.hostless,
     pytest.mark.browser,
 ]
 
-FIXTURES = PROJECT_ROOT / "web" / "fixtures"
+FIXTURES = CHECKOUT_ROOT / "web" / "fixtures"
 
 
 def _import_fixture(page: Page, name: str) -> None:

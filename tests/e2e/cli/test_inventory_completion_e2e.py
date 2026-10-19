@@ -3,9 +3,9 @@ plus a ``hosts.json`` supplement, through the real binary's TAB and ``otto cache
 
 The deployment shape reported on 2026-09-03 ("JSON inventory with a hosts.json
 supplement, no hosts come up"): the inventory declared in the USER file, the
-repo carrying only references. Nothing below the binary had ever driven that
-route — the unit pins build the inventory from repo stand-ins — and the
-process-wide resolution it depends on (``build_inventory`` over ALL repos,
+project carrying only references. Nothing below the binary had ever driven that
+route — the unit pins build the inventory from project stand-ins — and the
+process-wide resolution it depends on (``build_inventory`` over ALL projects,
 falling back to the user file) is exactly what completion had got wrong.
 
 Cold TAB, warm TAB (the cache entry written by the cold one), and the
@@ -20,7 +20,7 @@ import pytest
 from otto.config.completion_cache import CACHE_FILENAME
 from otto.config.home import workspace_key
 from tests._fixtures.labdata import write_lab_json
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.project_scaffold import make_project
 from tests.e2e._otto_subprocess import run_otto
 
 pytestmark = pytest.mark.hostless
@@ -43,12 +43,12 @@ supplies = ["ip"]
 
 
 def _workspace(tmp_path: Path, *, references: list[str]) -> tuple[Path, Path]:
-    """Build the repo referencing *references* and an xdir whose home declares the inventory.
+    """Build the project referencing *references* and an xdir whose home declares the inventory.
 
     ``run_otto`` pins ``OTTO_HOME`` at ``<xdir>/otto-home``, so the user file
     written there is the one the binary resolves the inventory from.
     """
-    project = make_sut_repo(tmp_path / "invsut", name="invsut", extra=SETTINGS)
+    project = make_project(tmp_path / "invsut", name="invsut", extra=SETTINGS)
     write_lab_json(
         project / "lab" / "lab.json",
         [{"ip": "10.0.0.9", "element": "plain", "creds": _CREDS, "labs": ["site"]}],
@@ -68,7 +68,7 @@ def _workspace(tmp_path: Path, *, references: list[str]) -> tuple[Path, Path]:
     home.mkdir()
     inventory_file = tmp_path / "inventory.json"
     inventory_file.write_text(json.dumps({"dut-1": {"ip": "10.0.0.1"}}))
-    (home / "settings.toml").write_text(  # sutrepo-exempt: the USER file is the route under test
+    (home / "settings.toml").write_text(  # scaffold-exempt: the USER file is the route under test
         USER_SETTINGS.format(inventory_file=inventory_file)
     )
     return project, xdir

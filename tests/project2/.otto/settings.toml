@@ -1,0 +1,53 @@
+name = "project2"
+version = "1.0.4"
+libs = [
+    "pylib",
+]
+tests = [
+    "tests"
+]
+init = [
+    'project2_instructions',
+]
+
+[[lab.sources]]
+backend = "json"
+paths = [
+    "../_fixtures/lab_data/tech2",
+]
+
+[docker]
+
+[[docker.images]]
+name = "project2-worker"
+dockerfile = "docker/Dockerfile"
+context = "docker"
+
+[[docker.composes]]
+name = "core"
+path = "docker/compose.yml"
+services = ["worker"]
+
+[[docker.use_cases]]
+name = "project2"
+composes = ["core"]
+
+# The displacement pair's loser (spec §4). Two fragments, on purpose:
+# the unconditional one always participates (project2's `worker` is part of the
+# merged stack either way), while the provider one competes for `edge` at the
+# default priority 0 and loses to project1's 10 unless `--provide edge=project2`
+# narrows the field to this project.
+[[docker.composes]]
+name = "mock-edge"
+path = "docker/mock-edge.yml"
+services = ["edge"]
+
+[[docker.use_cases]]
+name = "integration"
+composes = ["core"]
+
+[[docker.use_cases]]
+name = "integration"
+composes = ["mock-edge"]
+provides = "edge"
+priority = 0

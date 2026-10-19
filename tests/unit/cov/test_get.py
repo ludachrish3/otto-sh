@@ -85,8 +85,8 @@ def _embedded_board(host_id="board1", *, products=("app",), instrumented=True):
     return _host_double(host_id, products=products, cls=EmbeddedHost, instrumented=instrumented)
 
 
-def _repo(coverage_cfg, root=None, name="sut"):
-    """A repo double carrying the ``[coverage]`` settings table."""
+def _project(coverage_cfg, root=None, name="sut"):
+    """A project double carrying the ``[coverage]`` settings table."""
     project = MagicMock()
     project.settings = {"coverage": coverage_cfg} if coverage_cfg is not None else {}
     project.root = root or Path("/nonexistent/sut")
@@ -96,7 +96,7 @@ def _repo(coverage_cfg, root=None, name="sut"):
 
 @pytest.fixture
 def git_sut(tmp_path):
-    """A real one-commit git repo standing in for the SUT checkout."""
+    """A real one-commit git repository standing in for the project checkout."""
     project = TmpGitRepo(tmp_path / "sut")
     project.write("f.c", "int a;\n")
     project.commit("init")
@@ -150,11 +150,11 @@ class TestResolveTester:
         assert tester == {"name": "alice"}
         assert "email" not in tester
 
-    @pytest.mark.parametrize("failure", ["not_a_repo", "command_failed"])
+    @pytest.mark.parametrize("failure", ["not_a_git_repo", "command_failed"])
     def test_omits_email_when_git_cannot_answer(self, monkeypatch, tmp_path, failure):
         from otto.coverage.capture.gitio import GitCommandFailedError, NotAGitRepoError
 
-        exc = NotAGitRepoError if failure == "not_a_repo" else GitCommandFailedError
+        exc = NotAGitRepoError if failure == "not_a_git_repo" else GitCommandFailedError
         monkeypatch.setattr("getpass.getuser", lambda: "alice")
 
         def boom(root, key):
@@ -183,14 +183,14 @@ class TestResolveTester:
         tester = _resolve_tester("Carol", None, tmp_path)
         assert tester == {"name": "Carol", "email": "carol@example.com"}
 
-    def test_email_reads_sut_repo_not_cwd(self, monkeypatch, tmp_path):
-        def make_repo(name: str, email: str) -> Path:
+    def test_email_reads_project_checkout_not_cwd(self, monkeypatch, tmp_path):
+        def make_git_repo(name: str, email: str) -> Path:
             project = TmpGitRepo(tmp_path / name)
             project.git("config", "user.email", email)
             return project.root
 
-        sut = make_repo("sut", "sut@example.com")
-        elsewhere = make_repo("elsewhere", "wrong@example.com")
+        sut = make_git_repo("sut", "sut@example.com")
+        elsewhere = make_git_repo("elsewhere", "wrong@example.com")
         monkeypatch.chdir(elsewhere)
         tester = _resolve_tester(None, None, sut)
         assert tester["email"] == "sut@example.com"
@@ -202,7 +202,7 @@ class TestResolveTester:
 @pytest.mark.asyncio
 async def test_no_coverage_config_raises(all_hosts_of):
     all_hosts_of()
-    project = _repo(None)
+    project = _project(None)
     with pytest.raises(CoverageConfigError):
         await get_coverage(projects=[project])
 
@@ -211,7 +211,7 @@ async def test_no_coverage_config_raises(all_hosts_of):
 async def test_a_non_string_hosts_selector_is_refused_by_name(all_hosts_of):
     """A list where the ``hosts`` regex belongs is refused by name, not by re.compile."""
     all_hosts_of()
-    project = _repo({"hosts": ["host1", "host2"]})
+    project = _project({"hosts": ["host1", "host2"]})
     with pytest.raises(CoverageConfigError, match="hosts must be a string"):
         await get_coverage(projects=[project])
 
@@ -229,7 +229,7 @@ async def test_a_selector_matching_no_host_refuses(monkeypatch):
         yield  # pragma: no cover — unreachable; keeps this a generator function
 
     monkeypatch.setattr("otto.fleet.all_hosts", _raising_all_hosts)
-    project = _repo({"hosts": "sensor"})
+    project = _project({"hosts": "sensor"})
     with pytest.raises(EmptySelectionError):
         await get_coverage(projects=[project])
 
@@ -237,7 +237,7 @@ async def test_a_selector_matching_no_host_refuses(monkeypatch):
 @pytest.mark.asyncio
 async def test_unknown_tier_lists_configured_tiers(all_hosts_of):
     all_hosts_of()
-    project = _repo({"hosts": ".*"})
+    project = _project({"hosts": ".*"})
     with pytest.raises(CoverageInputError) as exc:
         await get_coverage(tier="bogus", projects=[project])
     assert exc.value.field == "tier"
@@ -248,7 +248,7 @@ async def test_unknown_tier_lists_configured_tiers(all_hosts_of):
 @pytest.mark.asyncio
 async def test_a_manual_tier_without_a_ticket_is_refused(all_hosts_of):
     all_hosts_of()
-    project = _repo(
+    project = _project(
         {
             "tiers": {
                 "manual": {"kind": "manual", "precedence": 1},
@@ -266,7 +266,7 @@ async def test_a_manual_tier_without_a_ticket_is_refused(all_hosts_of):
 async def test_an_ambiguous_default_tier_is_refused_listing_the_candidates(all_hosts_of):
     """No tier given and more than one e2e-kind tier configured is ambiguous."""
     all_hosts_of()
-    project = _repo(
+    project = _project(
         {
             "tiers": {
                 "sys_a": {"kind": "e2e", "precedence": 1},
@@ -284,7 +284,7 @@ async def test_an_ambiguous_default_tier_is_refused_listing_the_candidates(all_h
 @pytest.mark.asyncio
 async def test_get_with_no_instrumented_product_raises(all_hosts_of, git_sut):
     """A lab whose products are all uninstrumented is refused before any fetch."""
-    project = _repo({"hosts": ".*"}, root=git_sut)
+    project = _project({"hosts": ".*"}, root=git_sut)
     board = _embedded_board("board1", products=("app",), instrumented=False)
     all_hosts_of(board)
     with pytest.raises(CoverageNotInstrumentedError, match="no instrumented product"):
@@ -294,7 +294,7 @@ async def test_get_with_no_instrumented_product_raises(all_hosts_of, git_sut):
 @pytest.mark.asyncio
 async def test_get_with_unknown_instrumentation_verdict_raises(all_hosts_of, git_sut):
     """An ``unknown`` (``None``) verdict counts as not instrumented too."""
-    project = _repo({"hosts": ".*"}, root=git_sut)
+    project = _project({"hosts": ".*"}, root=git_sut)
     board = _embedded_board("board1", products=("app",), instrumented=None)
     all_hosts_of(board)
     with pytest.raises(CoverageNotInstrumentedError):
@@ -309,7 +309,7 @@ async def test_the_engines_no_data_refusal_passes_through(all_hosts_of, git_sut)
     the engine's to own and is covered by its own tests); ``get_coverage``'s
     *own* no-captures refusal, raised after a successful fetch that produced
     no capture.json, is a separate rule tested separately below."""
-    project = _repo({"hosts": ".*"}, root=git_sut)
+    project = _project({"hosts": ".*"}, root=git_sut)
     board = _embedded_board("zephyr37-fat")
     all_hosts_of(board)
     collect_mock = AsyncMock(
@@ -328,7 +328,7 @@ async def test_the_engines_no_data_refusal_passes_through(all_hosts_of, git_sut)
 async def test_no_captures_produced_raises_no_coverage_data(all_hosts_of, git_sut, tmp_path):
     """``collect_coverage`` fetched something, but produced no captures: ``get_coverage``
     raises on its own ``captures_written`` check, naming every searched product."""
-    project = _repo({"hosts": ".*"}, root=git_sut)
+    project = _project({"hosts": ".*"}, root=git_sut)
     board = _embedded_board("board1")
     all_hosts_of(board)
     product_dir = tmp_path / "cov" / "board1" / "app"
@@ -352,7 +352,7 @@ async def test_get_own_no_captures_refusal_names_every_product(all_hosts_of, git
     ``NoCoverageDataError`` above — names *every* searched ``host:product``
     pair when more than one contributed a staging dir but none produced a
     capture, not just the first."""
-    project = _repo({"hosts": ".*"}, root=git_sut)
+    project = _project({"hosts": ".*"}, root=git_sut)
     t1 = _host_double("t1")
     zephyr = _embedded_board("zephyr")
     all_hosts_of(t1, zephyr)
@@ -376,10 +376,10 @@ async def test_get_own_no_captures_refusal_names_every_product(all_hosts_of, git
 
 
 @pytest.mark.asyncio
-async def test_a_sut_that_is_not_a_git_checkout_is_refused(all_hosts_of, tmp_path):
-    not_a_repo = tmp_path / "not_a_repo"
-    not_a_repo.mkdir()
-    project = _repo({"hosts": ".*"}, root=not_a_repo)
+async def test_a_project_that_is_not_a_git_checkout_is_refused(all_hosts_of, tmp_path):
+    not_a_git_repo = tmp_path / "not_a_git_repo"
+    not_a_git_repo.mkdir()
+    project = _project({"hosts": ".*"}, root=not_a_git_repo)
     board = _embedded_board("board1")
     all_hosts_of(board)
     with pytest.raises(GitUnavailableError):
@@ -394,7 +394,7 @@ async def test_get_defaults_to_the_per_invocation_output_dir(all_hosts_of, git_s
     from otto.invocation import RunPolicy
     from otto.labs.loader import Lab
 
-    project = _repo({"hosts": ".*"}, root=git_sut)
+    project = _project({"hosts": ".*"}, root=git_sut)
     board = _embedded_board("board1")
     all_hosts_of(board)
 
@@ -425,7 +425,7 @@ async def test_no_output_dir_and_no_context_is_refused(all_hosts_of, git_sut):
     """No ``output_dir`` and no context (a bare programmatic call) fails clean —
     after config/tier/ticket/instrumentation/repository validation, so those
     never get masked by it."""
-    project = _repo({"hosts": ".*"}, root=git_sut)
+    project = _project({"hosts": ".*"}, root=git_sut)
     board = _embedded_board("board1")
     all_hosts_of(board)
 
@@ -438,7 +438,7 @@ async def test_no_output_dir_and_no_context_is_refused(all_hosts_of, git_sut):
 async def test_get_manual_tier_writes_capture_and_manual_store(all_hosts_of, git_sut, tmp_path):
     from otto.coverage.capture.model import Capture
 
-    project = _repo(
+    project = _project(
         {
             "tiers": {
                 "manual": {"kind": "manual", "precedence": 1},
@@ -495,7 +495,7 @@ async def test_get_manual_tier_writes_capture_and_manual_store(all_hosts_of, git
 async def test_get_default_tier_no_manual_store(all_hosts_of, git_sut, tmp_path):
     from otto.coverage.capture.model import Capture
 
-    project = _repo({"hosts": ".*"}, root=git_sut)
+    project = _project({"hosts": ".*"}, root=git_sut)
     board = _embedded_board("board1")
     all_hosts_of(board)
 
@@ -540,7 +540,7 @@ async def test_resolve_get_tier_called_once_across_full_get_flow(all_hosts_of, g
     """
     from otto.coverage import tiers as tiers_module
 
-    project = _repo({"hosts": ".*"}, root=git_sut)
+    project = _project({"hosts": ".*"}, root=git_sut)
     board = _embedded_board("board1")
     all_hosts_of(board)
 
@@ -563,7 +563,7 @@ async def test_resolve_get_tier_called_once_across_full_get_flow(all_hosts_of, g
 async def test_get_clean_resets_only_the_hosts_that_contributed(all_hosts_of, git_sut, tmp_path):
     """``clean=True`` scopes the post-fetch clean to exactly the hosts that
     contributed a product — not the raw ``[coverage].hosts`` match set."""
-    project = _repo({"hosts": ".*"}, root=git_sut)
+    project = _project({"hosts": ".*"}, root=git_sut)
     t1 = _host_double("t1")
     zephyr = _embedded_board("zephyr")
     t2 = _host_double("t2")  # matched by the selector but contributes nothing
@@ -596,7 +596,7 @@ async def test_get_clean_resets_only_the_hosts_that_contributed(all_hosts_of, gi
 async def test_a_failed_get_clean_keeps_the_captures_and_reports_not_ok(
     all_hosts_of, git_sut, tmp_path
 ):
-    project = _repo({"hosts": ".*"}, root=git_sut)
+    project = _project({"hosts": ".*"}, root=git_sut)
     board = _embedded_board("board1")
     all_hosts_of(board)
 
@@ -626,20 +626,20 @@ async def test_a_failed_get_clean_keeps_the_captures_and_reports_not_ok(
 async def test_each_refusal_fires_before_any_host_is_touched(all_hosts_of, tmp_path):
     """Configuration, tier, ticket, instrumentation, repository, destination:
     in that order — none of them ever calls ``collect_coverage``/``clean_coverage``."""
-    git_sut_repo = TmpGitRepo(tmp_path / "sut")
-    git_sut_repo.write("f.c", "int a;\n")
-    git_sut_repo.commit("init")
-    git_sut = git_sut_repo.root
+    project_git_repo = TmpGitRepo(tmp_path / "sut")
+    project_git_repo.write("f.c", "int a;\n")
+    project_git_repo.commit("init")
+    git_sut = project_git_repo.root
 
-    not_a_repo = tmp_path / "not_a_repo"
-    not_a_repo.mkdir()
+    not_a_git_repo = tmp_path / "not_a_git_repo"
+    not_a_git_repo.mkdir()
 
     scenarios = [
-        # (repo, hosts, kwargs, expected exception)
-        (_repo(None), [], {}, CoverageConfigError),
-        (_repo({"hosts": ".*"}), [], {"tier": "bogus"}, CoverageInputError),
+        # (project, hosts, kwargs, expected exception)
+        (_project(None), [], {}, CoverageConfigError),
+        (_project({"hosts": ".*"}), [], {"tier": "bogus"}, CoverageInputError),
         (
-            _repo(
+            _project(
                 {
                     "tiers": {
                         "manual": {"kind": "manual", "precedence": 1},
@@ -652,19 +652,19 @@ async def test_each_refusal_fires_before_any_host_is_touched(all_hosts_of, tmp_p
             CoverageInputError,
         ),
         (
-            _repo({"hosts": ".*"}, root=git_sut),
+            _project({"hosts": ".*"}, root=git_sut),
             [_embedded_board("board1", instrumented=False)],
             {},
             CoverageNotInstrumentedError,
         ),
         (
-            _repo({"hosts": ".*"}, root=not_a_repo),
+            _project({"hosts": ".*"}, root=not_a_git_repo),
             [_embedded_board("board1")],
             {},
             GitUnavailableError,
         ),
         (
-            _repo({"hosts": ".*"}, root=git_sut),
+            _project({"hosts": ".*"}, root=git_sut),
             [_embedded_board("board1")],
             {},
             CoverageInputError,  # output_dir refusal, with no context installed
@@ -699,7 +699,7 @@ async def test_each_refusal_fires_before_any_host_is_touched(all_hosts_of, tmp_p
 
 @pytest.mark.asyncio
 async def test_e2e_kind_keeps_ticket_and_note_but_no_tester(all_hosts_of, git_sut, tmp_path):
-    project = _repo({"hosts": ".*"}, root=git_sut)
+    project = _project({"hosts": ".*"}, root=git_sut)
     board = _embedded_board("board1")
     all_hosts_of(board)
 
@@ -731,7 +731,7 @@ async def test_e2e_kind_keeps_ticket_and_note_but_no_tester(all_hosts_of, git_su
 async def test_manual_kind_resolves_tester(all_hosts_of, git_sut, tmp_path):
     from otto.coverage.capture.model import Capture
 
-    project = _repo(
+    project = _project(
         {
             "tiers": {
                 "manual": {"kind": "manual", "precedence": 1},

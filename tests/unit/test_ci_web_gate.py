@@ -17,11 +17,11 @@ from pathlib import Path
 import pytest
 import yaml
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
 
-_REPO = PROJECT_ROOT
+_REPO = CHECKOUT_ROOT
 _MAKEFILE = (_REPO / "Makefile").read_text()
 
 

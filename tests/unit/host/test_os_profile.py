@@ -467,14 +467,14 @@ def _fresh_catalog(prelude: str) -> dict:
     import subprocess
     import sys
 
-    from tests.e2e._otto_subprocess import PROJECT_ROOT, coverage_subprocess_env
+    from tests.e2e._otto_subprocess import CHECKOUT_ROOT, coverage_subprocess_env
 
     result = subprocess.run(
         [sys.executable, "-c", prelude + _CATALOG],
         env=coverage_subprocess_env(),
         capture_output=True,
         text=True,
-        cwd=str(PROJECT_ROOT),
+        cwd=str(CHECKOUT_ROOT),
         timeout=120,
         check=False,
     )

@@ -492,9 +492,9 @@ def _docker(log: LogMode = LogMode.NORMAL) -> DockerContainerHost:
     return DockerContainerHost(
         parent=_unix(),
         container_id="abc123def456",
-        project="repo1",
+        project="project1",
         service="api",
-        compose_project="otto-repo1-vagrant",
+        compose_project="otto-project1-vagrant",
         log=log,
     )
 
@@ -1426,7 +1426,7 @@ class TestADryRunNeitherRebootsNorPowersOffAHost:
         """The deadline is not burned because the WAIT NEVER STARTS.
 
         Asserted as a CALL COUNT on the probe seam, never as elapsed time: a
-        timing assertion would be a wall-clock-bound test, which this repo
+        timing assertion would be a wall-clock-bound test, which this repository
         bans, and it would also pass against a dry run that dialled once
         quickly. Zero dials is the property; the minutes of wall clock a real
         host would have cost are a consequence of it.
@@ -1853,9 +1853,9 @@ class TestADryRunOpensNoSessionOnAnyHost:
         host = DockerContainerHost(
             parent=parent,
             container_id="",  # the declared-but-unresolved placeholder
-            project="repo1",
+            project="project1",
             service="api",
-            compose_project="otto-repo1-vagrant",
+            compose_project="otto-project1-vagrant",
         )
 
         async def recording_open(name: str):
@@ -2055,7 +2055,7 @@ class TestTheDeclinedHandleIsUsableAndNeverMistakenForALiveOne:
         """`async with await host.open_session(...)` must not break under a dry run.
 
         And the exit must not fabricate a teardown: `close` on a handle that
-        never opened has nothing to tear down, and this repo has a history of
+        never opened has nothing to tear down, and this repository has a history of
         teardown paths doing real work on objects that were never live.
 
         The teardown claim is asserted as a CALL COUNT on the transport's own

@@ -72,7 +72,7 @@ def test_refuses_options_with_no_annotated_parameter():
         instruction(options=_Opts)(f)
 
 
-def test_refuses_a_repo_claiming_a_first_party_name():
+def test_refuses_a_project_claiming_a_first_party_name():
     async def install() -> None: ...
 
     with registering_project("widget"), pytest.raises(ValueError, match="project instruction"):

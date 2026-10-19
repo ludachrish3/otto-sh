@@ -1,10 +1,10 @@
-"""The public ``otto.app`` composes otto's repos, as the console script does.
+"""The public ``otto.app`` composes otto's projects, as the console script does.
 
 ``otto.app`` is the command tree under its public name (``otto.cli.app`` behind the
 root alias). A program that drives it, through ``typer.testing.CliRunner`` or by
 calling it, never passes through the console script's ``entry()``, which loads the
 composition root first. A root-level eager option such as ``--list-labs``, and a
-root option's completer, read the repos before the root command's body runs. Resolving
+root option's completer, read the projects before the root command's body runs. Resolving
 ``app`` stays root-free; those callbacks and completers import the root when they are
 called, so the read composes.
 
@@ -21,7 +21,7 @@ from pathlib import Path
 
 from tests._fixtures.paths import TESTS_ROOT
 
-_REPO1 = TESTS_ROOT / "repo1"
+_PROJECT1 = TESTS_ROOT / "project1"
 
 _LIST_LABS = """
 import json
@@ -54,10 +54,10 @@ print(json.dumps([result.exit_code, repr(result.exception), result.output]))
 
 
 def _fresh(tmp_path: Path, source: str) -> "list[object]":
-    """Run *source* in a new interpreter over ``tests/repo1``; return its last JSON line."""
+    """Run *source* in a new interpreter over ``tests/project1``; return its last JSON line."""
     env = {
         **os.environ,
-        "OTTOPATH": str(_REPO1),
+        "OTTOPATH": str(_PROJECT1),
         "OTTO_HOME": str(tmp_path / "home"),
     }
     env.pop("PYTEST_ADDOPTS", None)
@@ -90,5 +90,5 @@ def test_otto_app_completes_the_root_lab_option_with_the_labs(tmp_path: Path) ->
 
 
 def test_selected_tests_composes_when_called_with_no_run_installed(tmp_path: Path) -> None:
-    """Called directly, it composes the repos and gets as far as the unknown name."""
+    """Called directly, it composes the projects and gets as far as the unknown name."""
     assert _fresh(tmp_path, _SELECTED_TESTS) == ["UnknownSelectionError"]

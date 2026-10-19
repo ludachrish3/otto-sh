@@ -62,8 +62,8 @@ def _entry(*, kind="embedded", **params):
         name="cov_ext",
         kind=kind,
         seam="products",
-        owner="repo3",
-        base_dir=Path("/repo"),
+        owner="project3",
+        base_dir=Path("/project"),
         match={},
         params={"artifact": "build/cov_ext.llext", **params},
     )
@@ -108,7 +108,7 @@ async def test_install_loads_then_calls_each_after_load_fn():
     p = _build(board, call_after_load=["cov_init", "warm"])
     assert (await p.install(board)).is_ok
     assert board.calls == [
-        ("load", Path("/repo/build/cov_ext.llext"), "cov_ext"),
+        ("load", Path("/project/build/cov_ext.llext"), "cov_ext"),
         ("exec", "llext call_fn cov_ext cov_init"),
         ("exec", "llext call_fn cov_ext warm"),
     ]
@@ -120,7 +120,7 @@ async def test_install_returns_the_load_failure_and_calls_nothing_after_it():
     result = await _build(board, call_after_load=["cov_init"]).install(board)
     assert not result.is_ok
     assert "return code -8" in result.msg  # the loader's own failure text, unwrapped
-    assert board.calls == [("load", Path("/repo/build/cov_ext.llext"), "cov_ext")]
+    assert board.calls == [("load", Path("/project/build/cov_ext.llext"), "cov_ext")]
 
 
 @pytest.mark.asyncio

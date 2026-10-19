@@ -8,7 +8,7 @@ the lab's passwords among the locals) where one line naming the host belongs.
 
 import socket
 
-from tests._fixtures.generated_repo import BUDGET_SSH_HOST, generate_repo
+from tests._fixtures.generated_project import BUDGET_SSH_HOST, generate_project
 from tests.e2e._otto_subprocess import run_otto
 
 
@@ -21,13 +21,15 @@ def _closed_port() -> int:
 
 def test_a_refused_ssh_connection_prints_one_line_naming_the_host(tmp_path):
     port = _closed_port()
-    project = generate_repo(tmp_path / "repo", files=1, dirs=1, realistic=True, ssh_lab_port=port)
+    project = generate_project(
+        tmp_path / "project", files=1, dirs=1, realistic=True, ssh_lab_port=port
+    )
 
     result = run_otto(
         ["host", BUDGET_SSH_HOST, "exec", "true"],
         xdir=tmp_path,
         roots=project,
-        lab="unix",  # the JSON lab `generate_repo` writes; its second source holds the host
+        lab="unix",  # the JSON lab `generate_project` writes; its second source holds the host
         extra_env={"COLUMNS": "200"},  # so rich cannot fold the one line in two
     )
 

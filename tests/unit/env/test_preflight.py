@@ -5,7 +5,7 @@ requirement and what was found -- so no guard can pass by refusing everything
 or by accepting everything. That symmetry is the point: a preflight that always
 refused would pass a one-armed suite and break every run.
 
-Nothing here creates a venv, reaches an index, or imports a repo. Installed
+Nothing here creates a venv, reaches an index, or imports a project. Installed
 packages are FABRICATED: a ``*.dist-info`` directory with a METADATA file is
 all ``importlib.metadata`` needs, so a whole environment is three lines of
 tmp_path.
@@ -17,7 +17,7 @@ import textwrap
 from pathlib import Path
 
 from otto.env.preflight import Unsatisfied, check_project, preflight, read_project_table
-from tests._fixtures.fake_repo import fake_repo
+from tests._fixtures.fake_project import fake_project
 
 
 def _install(site: Path, name: str, version: str, requires: "list[str] | None" = None) -> None:
@@ -29,11 +29,11 @@ def _install(site: Path, name: str, version: str, requires: "list[str] | None" =
     (info / "METADATA").write_text("\n".join(lines) + "\n")
 
 
-def _repo(tmp_path: Path, name: str, deps: "list[str] | None", *, dynamic: bool = False):
-    """A stand-in repo with a pyproject.
+def _project(tmp_path: Path, name: str, deps: "list[str] | None", *, dynamic: bool = False):
+    """A stand-in project with a pyproject.
 
     Deliberately NOT a real ``Project``: the evaluator reads only ``.name`` and
-    ``.sut_dir``, and pinning that here is what keeps it free of
+    ``.root``, and pinning that here is what keeps it free of
     ``otto.config`` -- and therefore safe to call from anywhere.
     """
     root = tmp_path / name
@@ -56,7 +56,7 @@ def _repo(tmp_path: Path, name: str, deps: "list[str] | None", *, dynamic: bool 
             {body}
             """)
     )
-    project = fake_repo(name, root=root)
+    project = fake_project(name, root=root)
     pyproject_table = read_project_table(project)
     assert pyproject_table is not None, "fixture wrote a pyproject the evaluator cannot read"
     if not dynamic:
@@ -68,30 +68,30 @@ class TestSatisfaction:
     def test_a_satisfied_requirement_is_silent(self, tmp_path):
         site = tmp_path / "site"
         _install(site, "beetroot", "1.2.0")
-        project = _repo(tmp_path, "repo4", ["beetroot >= 0.1"])
+        project = _project(tmp_path, "project4", ["beetroot >= 0.1"])
         assert check_project(project, site_dirs=[site]) == []
 
     def test_an_absent_package_reports_found_none(self, tmp_path):
         site = tmp_path / "site"
         site.mkdir()
-        project = _repo(tmp_path, "repo4", ["beetroot >= 0.1"])
+        project = _project(tmp_path, "project4", ["beetroot >= 0.1"])
         assert check_project(project, site_dirs=[site]) == [
-            Unsatisfied(project="repo4", requirement="beetroot >= 0.1", found="none")
+            Unsatisfied(project="project4", requirement="beetroot >= 0.1", found="none")
         ]
 
     def test_a_too_old_package_reports_the_version_it_found(self, tmp_path):
         """``found: none`` vs ``found: 2.12`` is the whole diagnostic value."""
         site = tmp_path / "site"
         _install(site, "paramiko", "2.12.0")
-        project = _repo(tmp_path, "repo4", ["paramiko >= 3"])
+        project = _project(tmp_path, "project4", ["paramiko >= 3"])
         [bad] = check_project(project, site_dirs=[site])
         assert bad.found == "2.12.0"
 
-    def test_a_repo_with_no_pyproject_is_vacuously_satisfied(self, tmp_path):
-        """repo1-repo3 are this shape, and they must keep working untouched."""
-        root = tmp_path / "repo1"
+    def test_a_project_with_no_pyproject_is_vacuously_satisfied(self, tmp_path):
+        """project1-project3 are this shape, and they must keep working untouched."""
+        root = tmp_path / "project1"
         root.mkdir()
-        project = fake_repo("repo1", root=root)
+        project = fake_project("project1", root=root)
         assert check_project(project, site_dirs=[tmp_path / "site"]) == []
 
     def test_an_unreadable_pyproject_is_vacuously_satisfied(self, tmp_path):
@@ -101,10 +101,10 @@ class TestSatisfaction:
         an installer will refuse it in its own words. Refusing here too would
         put otto's name on a syntax error it did not diagnose.
         """
-        root = tmp_path / "repo4"
+        root = tmp_path / "project4"
         root.mkdir()
         (root / "pyproject.toml").write_text("[project\nname = ")
-        project = fake_repo("repo4", root=root)
+        project = fake_project("project4", root=root)
         assert check_project(project, site_dirs=[tmp_path / "site"]) == []
 
     def test_an_unparseable_installed_version_is_not_judged(self, tmp_path):
@@ -116,7 +116,7 @@ class TestSatisfaction:
         """
         site = tmp_path / "site"
         _install(site, "beetroot", "not-a-version")
-        project = _repo(tmp_path, "repo4", ["beetroot >= 0.1"])
+        project = _project(tmp_path, "project4", ["beetroot >= 0.1"])
         assert check_project(project, site_dirs=[site]) == []
 
     def test_an_unjudgeable_version_never_reaches_the_specifier(self, tmp_path, monkeypatch):
@@ -143,7 +143,7 @@ class TestSatisfaction:
         monkeypatch.setattr(SpecifierSet, "contains", spy)
         site = tmp_path / "site"
         _install(site, "beetroot", "not-a-version")
-        project = _repo(tmp_path, "repo4", ["beetroot >= 0.1"])
+        project = _project(tmp_path, "project4", ["beetroot >= 0.1"])
         assert check_project(project, site_dirs=[site]) == []
         assert asked == [], f"the unjudgeable version was compared anyway: {asked}"
 
@@ -163,7 +163,7 @@ class TestSatisfaction:
         monkeypatch.setattr(SpecifierSet, "contains", spy)
         site = tmp_path / "site"
         _install(site, "beetroot", "0.2")
-        project = _repo(tmp_path, "repo4", ["beetroot >= 0.1"])
+        project = _project(tmp_path, "project4", ["beetroot >= 0.1"])
         assert check_project(project, site_dirs=[site]) == []
         assert [str(item) for item in asked] == ["0.2"]
 
@@ -172,7 +172,7 @@ class TestSatisfaction:
         and it does so better than a gate that only knows the string failed."""
         site = tmp_path / "site"
         site.mkdir()
-        project = _repo(tmp_path, "repo4", ["!!! not a requirement"])
+        project = _project(tmp_path, "project4", ["!!! not a requirement"])
         assert check_project(project, site_dirs=[site]) == []
 
 
@@ -180,13 +180,13 @@ class TestMarkers:
     def test_a_marker_that_excludes_this_interpreter_is_not_checked(self, tmp_path):
         site = tmp_path / "site"
         site.mkdir()
-        project = _repo(tmp_path, "repo4", ['beetroot >= 0.1; sys_platform == "nonesuch"'])
+        project = _project(tmp_path, "project4", ['beetroot >= 0.1; sys_platform == "nonesuch"'])
         assert check_project(project, site_dirs=[site]) == []
 
     def test_a_marker_that_includes_this_interpreter_is_checked(self, tmp_path):
         site = tmp_path / "site"
         site.mkdir()
-        project = _repo(tmp_path, "repo4", ['beetroot >= 0.1; python_version >= "3.0"'])
+        project = _project(tmp_path, "project4", ['beetroot >= 0.1; python_version >= "3.0"'])
         assert len(check_project(project, site_dirs=[site])) == 1
 
 
@@ -206,14 +206,14 @@ class TestExtrasAndTransitives:
             "1.0.0",
             requires=['labjack-driver >= 1; extra == "labjack"'],
         )
-        project = _repo(tmp_path, "repo4", ["beetroot[labjack] >= 0.1"])
+        project = _project(tmp_path, "project4", ["beetroot[labjack] >= 0.1"])
         assert check_project(project, site_dirs=[site]) == []
 
     def test_transitive_requirements_are_not_followed(self, tmp_path):
         """Transitive consistency is the installer's promise, not otto's."""
         site = tmp_path / "site"
         _install(site, "beetroot", "1.0.0", requires=["nonexistent-thing >= 9"])
-        project = _repo(tmp_path, "repo4", ["beetroot >= 0.1"])
+        project = _project(tmp_path, "project4", ["beetroot >= 0.1"])
         assert check_project(project, site_dirs=[site]) == []
 
 
@@ -222,8 +222,8 @@ class TestDynamicDependencies:
         """Installed-dist metadata FIRST: exact, and the only thing that can
         answer for a dynamic pyproject."""
         site = tmp_path / "site"
-        _install(site, "repo4", "0.1.0", requires=["beetroot >= 0.1"])
-        project = _repo(tmp_path, "repo4", None, dynamic=True)
+        _install(site, "project4", "0.1.0", requires=["beetroot >= 0.1"])
+        project = _project(tmp_path, "project4", None, dynamic=True)
         [bad] = check_project(project, site_dirs=[site])
         assert bad.requirement.startswith("beetroot")
 
@@ -232,25 +232,25 @@ class TestDynamicDependencies:
         since gained a requirement reports what is INSTALLED, which is what the
         interpreter will actually import."""
         site = tmp_path / "site"
-        _install(site, "repo4", "0.1.0", requires=["beetroot >= 0.1"])
+        _install(site, "project4", "0.1.0", requires=["beetroot >= 0.1"])
         _install(site, "beetroot", "1.0.0")
-        project = _repo(tmp_path, "repo4", ["nowhere-at-all >= 9"])
+        project = _project(tmp_path, "project4", ["nowhere-at-all >= 9"])
         assert check_project(project, site_dirs=[site]) == []
 
     def test_dynamic_and_not_installed_warns_and_checks_nothing(self, tmp_path):
         site = tmp_path / "site"
         site.mkdir()
-        project = _repo(tmp_path, "repo4", None, dynamic=True)
+        project = _project(tmp_path, "project4", None, dynamic=True)
         result = preflight([project], site_dirs=[site])
         assert result.unsatisfied == []
-        assert any("dynamic" in w and "repo4" in w for w in result.warnings)
+        assert any("dynamic" in w and "project4" in w for w in result.warnings)
 
-    def test_a_checkable_repo_produces_no_warning(self, tmp_path):
-        """The other arm: warnings are for what could not be ASKED, so a repo
+    def test_a_checkable_project_produces_no_warning(self, tmp_path):
+        """The other arm: warnings are for what could not be ASKED, so a project
         that answered must not produce one."""
         site = tmp_path / "site"
         site.mkdir()
-        project = _repo(tmp_path, "repo4", ["beetroot >= 0.1"])
+        project = _project(tmp_path, "project4", ["beetroot >= 0.1"])
         result = preflight([project], site_dirs=[site])
         assert len(result.unsatisfied) == 1
         assert result.warnings == []
@@ -262,8 +262,8 @@ class TestImportFootprint:
         surface runs the CLI preamble -- so the snapshot diff cannot witness a
         module-scope import here. This asks the question directly.
 
-        The rule it protects: every repo without a pyproject returns before the
-        evaluation path, and every sample repo is that shape, so a lazy import
+        The rule it protects: every project without a pyproject returns before the
+        evaluation path, and every sample project is that shape, so a lazy import
         keeps a real run's footprint where it was.
         """
         probe = subprocess.run(

@@ -399,7 +399,7 @@ def _parse_pairs(values: "list[str] | None", *, form: str, flag: str) -> dict[st
 
 
 def _parse_provide(values: "list[str] | None") -> dict[str, str]:
-    """``--provide edge=repo1`` -> ``{"edge": "repo1"}`` (spec §4's tie knob)."""
+    """``--provide edge=project1`` -> ``{"edge": "project1"}`` (spec §4's tie knob)."""
     return _parse_pairs(values, form="CAPABILITY=PROJECT", flag="--provide CAPABILITY=PROJECT")
 
 

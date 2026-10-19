@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.e2e._otto_subprocess import REPO_E2E, assert_output_dir, run_otto
+from tests.e2e._otto_subprocess import PROJECT_E2E, assert_output_dir, run_otto
 
 pytestmark = pytest.mark.hostless
 
@@ -31,7 +31,7 @@ def test_run_passes_through_command_retcode(tmp_path: Path) -> None:
     r = run_otto(
         ["host", "local", "exec", "sh -c 'exit 42'"],
         xdir=tmp_path,
-        roots=REPO_E2E,
+        roots=PROJECT_E2E,
         lab="unix",
     )
     assert r.returncode == 42, r.stderr
@@ -52,7 +52,7 @@ def test_run_success_exits_zero(tmp_path: Path) -> None:
     r = run_otto(
         ["host", "local", "exec", "true"],
         xdir=tmp_path,
-        roots=REPO_E2E,
+        roots=PROJECT_E2E,
         lab="unix",
     )
     assert r.returncode == 0, r.stderr
@@ -66,7 +66,7 @@ def test_failing_get_maps_status(tmp_path: Path) -> None:
     r = run_otto(
         ["host", "local", "get", "/no/such/file", str(dest_dir)],
         xdir=tmp_path,
-        roots=REPO_E2E,
+        roots=PROJECT_E2E,
         lab="unix",
     )
     assert r.returncode == 2, r.stderr  # Status.Error

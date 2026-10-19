@@ -63,7 +63,7 @@ def test_emitted_data_format_matches_the_contract(tmp_path):
     they differ — so a Python-side bump with no TS-side bump ships a report
     that renders nothing, and a TS-side bump alone rejects every report otto
     has ever emitted. The two constants only ever said "bump both together or
-    never" in prose, which is precisely the kind of rule this repo has
+    never" in prose, which is precisely the kind of rule this codebase has
     watched decay. Read off a real emitted payload, not off the constant, so
     an emitter that stops writing the field fails here too.
     """

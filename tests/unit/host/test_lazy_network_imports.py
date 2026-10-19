@@ -25,7 +25,7 @@ import sys
 
 import pytest
 
-from tests.e2e._otto_subprocess import PROJECT_ROOT, coverage_subprocess_env
+from tests.e2e._otto_subprocess import CHECKOUT_ROOT, coverage_subprocess_env
 
 # Importing the host package + a concrete host class is exactly what the
 # dynamic-CLI / registration path does. We then introspect the unix host's
@@ -60,7 +60,7 @@ def _loaded_network_libs() -> dict[str, bool]:
         env=coverage_subprocess_env(),
         capture_output=True,
         text=True,
-        cwd=str(PROJECT_ROOT),
+        cwd=str(CHECKOUT_ROOT),
         timeout=60,
         check=False,
     )

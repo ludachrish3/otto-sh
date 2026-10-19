@@ -1,4 +1,4 @@
-"""``[coverage]`` config resolution from the repo list.
+"""``[coverage]`` config resolution from the project list.
 
 Moved verbatim from ``otto.cli.test`` (library-extraction Task 14): these are
 pure functions over the parsed ``.otto/settings.toml`` dict, with no CLI
@@ -78,23 +78,23 @@ class TestHasCovConfig:
         assert has_cov_config({"embedded": {}, "tiers": {}, "hosts": ""}) is False
 
 
-class TestGetCovRepo:
-    """First repo carrying a non-empty ``[coverage]`` section wins."""
+class TestGetCovProject:
+    """First project carrying a non-empty ``[coverage]`` section wins."""
 
-    def test_no_repos_returns_none(self) -> None:
+    def test_no_projects_returns_none(self) -> None:
         assert get_cov_project([]) is None
 
-    def test_no_repo_has_coverage_returns_none(self) -> None:
+    def test_no_project_has_coverage_returns_none(self) -> None:
         project = MagicMock()
         project.settings = {}
         assert get_cov_project([project]) is None
 
-    def test_repo_with_coverage_section_found(self) -> None:
+    def test_project_with_coverage_section_found(self) -> None:
         project = MagicMock()
         project.settings = {"coverage": {"hosts": "/remote"}}
         assert get_cov_project([project]) is project
 
-    def test_first_matching_repo_wins(self) -> None:
+    def test_first_matching_project_wins(self) -> None:
         unconfigured = MagicMock()
         unconfigured.settings = {}
         configured = MagicMock()
@@ -112,17 +112,17 @@ class TestGetCovRepo:
 
 
 class TestGetCovConfig:
-    """Extracts the ``[coverage]`` dict from the first matching repo."""
+    """Extracts the ``[coverage]`` dict from the first matching project."""
 
-    def test_no_repos_returns_empty_dict(self) -> None:
+    def test_no_projects_returns_empty_dict(self) -> None:
         assert get_cov_config([]) == {}
 
-    def test_no_matching_repo_returns_empty_dict(self) -> None:
+    def test_no_matching_project_returns_empty_dict(self) -> None:
         project = MagicMock()
         project.settings = {}
         assert get_cov_config([project]) == {}
 
-    def test_returns_matching_repo_coverage_dict(self) -> None:
+    def test_returns_matching_project_coverage_dict(self) -> None:
         cov = {"embedded": {}, "hosts": "zephyr37-llext"}
         project = MagicMock()
         project.settings = {"coverage": cov}

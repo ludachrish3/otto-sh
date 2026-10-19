@@ -15,7 +15,7 @@ import pytest
 
 from otto.config.project import clear_discovery, discover
 from otto.config.scope import BootstrapError
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.project_scaffold import make_project
 
 _ENTRY = [sys.executable, "-c", "from otto.cli.main import entry; entry()"]
 _OTTO = [str(Path(sys.executable).parent / "otto")]  # the console script, as a TAB runs it
@@ -46,9 +46,9 @@ def ottopath(monkeypatch):
 def test_two_roots_claiming_one_normalized_name_both_fail(
     tmp_path, ottopath, first, second, normalized
 ):
-    one = make_sut_repo(tmp_path / "one", name=first)
-    two = make_sut_repo(tmp_path / "two", name=second)
-    other = make_sut_repo(tmp_path / "other", name="other")
+    one = make_project(tmp_path / "one", name=first)
+    two = make_project(tmp_path / "two", name=second)
+    other = make_project(tmp_path / "other", name="other")
     ottopath(one, two, other)
     result = discover()
     assert [p.name for p in result.projects] == ["other"]
@@ -62,7 +62,7 @@ def test_two_roots_claiming_one_normalized_name_both_fail(
 
 
 def test_three_roots_are_all_named_in_each_frame(tmp_path, ottopath):
-    roots = [make_sut_repo(tmp_path / d, name=n) for d, n in (("a", "p"), ("b", "P"), ("c", "p"))]
+    roots = [make_project(tmp_path / d, name=n) for d, n in (("a", "p"), ("b", "P"), ("c", "p"))]
     ottopath(*roots)
     result = discover()
     assert result.projects == []
@@ -73,8 +73,8 @@ def test_three_roots_are_all_named_in_each_frame(tmp_path, ottopath):
 
 
 def test_a_twin_whose_settings_fail_to_parse_is_not_a_duplicate(tmp_path, ottopath):
-    good = make_sut_repo(tmp_path / "good", name="twin")
-    bad = make_sut_repo(tmp_path / "bad", name="twin", extra="broken = [")
+    good = make_project(tmp_path / "good", name="twin")
+    bad = make_project(tmp_path / "bad", name="twin", extra="broken = [")
     ottopath(good, bad)
     result = discover()
     assert [p.root for p in result.projects] == [good]
@@ -103,9 +103,9 @@ def _run(tmp_path, roots, *argv, cmd=_ENTRY, extra=None):
 
 def _twins_and_other(tmp_path):
     return [
-        make_sut_repo(tmp_path / "a", name="my-proj"),
-        make_sut_repo(tmp_path / "b", name="my.proj"),
-        make_sut_repo(tmp_path / "c", name="other"),
+        make_project(tmp_path / "a", name="my-proj"),
+        make_project(tmp_path / "b", name="my.proj"),
+        make_project(tmp_path / "c", name="other"),
     ]
 
 
@@ -137,7 +137,7 @@ def test_a_real_command_fails_loudly_whatever_the_switches_say(tmp_path, switche
 
 
 def _requiring(root: Path, name: str, needs: str) -> Path:
-    return make_sut_repo(root, name=name, extra=f'[dependencies]\nrequired = ["{needs}"]')
+    return make_project(root, name=name, extra=f'[dependencies]\nrequired = ["{needs}"]')
 
 
 def _bootstrap_messages() -> list[str]:
@@ -153,8 +153,8 @@ def _bootstrap_messages() -> list[str]:
 def test_a_dependency_on_a_refused_name_says_it_was_refused(tmp_path, ottopath):
     """Red before the fix: the error said "no project named 'twin' in OTTOPATH",
     false when two roots name it."""
-    one = make_sut_repo(tmp_path / "one", name="twin")
-    two = make_sut_repo(tmp_path / "two", name="Twin")
+    one = make_project(tmp_path / "one", name="twin")
+    two = make_project(tmp_path / "two", name="Twin")
     app = _requiring(tmp_path / "app", "app", "twin")
     ottopath(one, two, app)
     messages = _bootstrap_messages()

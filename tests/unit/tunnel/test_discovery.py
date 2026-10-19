@@ -234,9 +234,9 @@ def _container_placeholder(ps_out: str, exec_ps_text: str = ""):
     ctr = DockerContainerHost(
         parent=parent,
         container_id="",
-        project="repo1",
+        project="project1",
         service="api",
-        compose_project="otto-repo1-x",
+        compose_project="otto-project1-x",
     )
     return ctr, calls
 

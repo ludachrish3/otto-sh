@@ -215,7 +215,7 @@ def test_a_suppressed_context_is_not_read_as_the_failure():
 
 @pytest.mark.asyncio
 async def test_a_refused_port_is_closed_and_the_copy_is_closed(monkeypatch):
-    """Loopback:1 refuses in milliseconds (the repo's own no-real-transport pattern)."""
+    """Loopback:1 refuses in milliseconds (the repository's own no-real-transport pattern)."""
     closed = []
     orig_close = UnixHost.close
 
@@ -341,7 +341,7 @@ async def test_an_attempt_cancelled_by_the_outer_budget_still_closes_its_copy(
     from OUTSIDE. `CancelledError` is not an `Exception`, so the ordinary
     close was skipped and the copy -- with a possibly-established transport to
     the target -- was dropped unreferenced: a half-logged-in session left on
-    the device, and an unclosed-transport ResourceWarning that this repo turns
+    the device, and an unclosed-transport ResourceWarning that this repository turns
     into a hard error.
 
     Mutation: delete the `except asyncio.CancelledError` arm and `closed` is

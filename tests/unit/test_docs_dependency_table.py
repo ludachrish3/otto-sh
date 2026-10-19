@@ -1,8 +1,8 @@
 import importlib.util
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-_MODULE_PATH = PROJECT_ROOT / "scripts" / "check_docs_dependency_table.py"
+_MODULE_PATH = CHECKOUT_ROOT / "scripts" / "check_docs_dependency_table.py"
 
 
 def _load():
@@ -85,7 +85,7 @@ def test_extra_table_row_is_drift():
     assert any("left-pad" in p for p in problems)
 
 
-def test_live_repo_is_in_sync():
+def test_live_checkout_is_in_sync():
     mod = _load()
     assert mod.main([]) == 0
 

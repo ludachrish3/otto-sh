@@ -8,9 +8,9 @@ standing counterexample where accept != shell (todo/chaos-reboot-followups.md
 Section 4).
 
 Target: `zephyr37_fat` (fat board, 192.0.2.1, zephyr 3.7, FAT-on-RAM), reached via
-the `test4` SSH hop -> telnet 192.0.2.1:23. The repo_e2e SUT's own
+the `test4` SSH hop -> telnet 192.0.2.1:23. The project_e2e SUT's own
 `embedded` lab does NOT load here (its `zephyr27_fat` entry declares
-`command_frame: 'zephyr-inline'`, not a registered frame in this repo), so
+`command_frame: 'zephyr-inline'`, not a registered frame in this repository), so
 this module generates its OWN minimal SUT scoped to just `test4` + `zephyr37_fat`
 from `tests/_fixtures/lab_data/tech1/lab.json` -- mirrors
 `tests.integration.chaos._target.make_loopback_target`'s shape (a private
@@ -83,7 +83,7 @@ from pathlib import Path
 import pytest
 
 from tests._fixtures.labdata import flat_hosts, lab_json_v2
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.project_scaffold import make_project
 from tests.integration.chaos._driver import spawn_otto
 from tests.integration.chaos._target import ChaosTarget
 
@@ -132,7 +132,7 @@ _SETTLE_INTERVAL = 1.0
 def _make_console_target(root: Path) -> ChaosTarget:
     """Generate a scoped SUT containing ONLY test4 + zephyr37_fat, each host's
     `labs` rewritten to a private lab name -- avoids the full `embedded` lab
-    (repo_e2e's copy fails to load here: `zephyr27_fat` declares
+    (project_e2e's copy fails to load here: `zephyr27_fat` declares
     `command_frame: 'zephyr-inline'`, not a registered frame). Mirrors
     ``tests.integration.chaos._target.make_loopback_target``'s shape
     (private ``labs/<name>/tech1/lab.json`` + matching ``settings.toml``).
@@ -163,7 +163,7 @@ def _make_console_target(root: Path) -> ChaosTarget:
         entry["resources"] = [h["element"] for h in hosts if name in h["labs"]]
     (tech_dir / "lab.json").write_text(json.dumps(doc, indent=2))
 
-    sut = make_sut_repo(
+    sut = make_project(
         root / "sut",
         name="console_chaos_harness",
         version="0.1.0",
@@ -180,7 +180,7 @@ paths = [
         root=sut,
         lab=_LAB_NAME,
         host_id=_HOST_ID,
-        ssh_host=test4["ip"],  # unused by spawn_otto (sut_dir/lab only); kept for shape parity
+        ssh_host=test4["ip"],  # unused by spawn_otto (root/lab only); kept for shape parity
         ssh_port=22,
         ssh_username=cred["login"],
         ssh_client_key=None,

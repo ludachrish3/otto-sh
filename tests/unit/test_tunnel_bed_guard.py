@@ -27,7 +27,7 @@ from otto.tunnel.discovery import parse_process_discovery
 from otto.tunnel.model import make_tunnel_id
 from tests._fixtures import tunnel_bed
 from tests._fixtures.labdata import element_of, entry_of, flatten_lab_doc
-from tests._fixtures.tunnel_bed import cli_sut_dir, format_leftover_report, owning_suite
+from tests._fixtures.tunnel_bed import cli_project_root, format_leftover_report, owning_suite
 
 # pid etime args… — the exact shape `ps_scan_command` emits.
 _STABILITY_PS_LINE = (
@@ -158,15 +158,15 @@ async def test_final_sweep_blames_this_module(monkeypatch) -> None:
     assert "leaked" in str(exc.value).lower()
 
 
-def test_cli_sut_dir_ranks_test2_as_the_one_docker_parent(tmp_path: Path) -> None:
-    """The CLI bed's generated repo loads, and the one parent rule picks test2.
+def test_cli_project_ranks_test2_as_the_one_docker_parent(tmp_path: Path) -> None:
+    """The CLI bed's generated project loads, and the one parent rule picks test2.
 
     Both bed hosts are ``docker_capable``, so without a priority on test2 the
     rule ties and no placeholders register (issue #139's trigger would vanish
     silently). The settings may not carry the removed ``role``/``placement``
-    keys, which fail the repo load by name.
+    keys, which fail the project load by name.
     """
-    sut = cli_sut_dir(tmp_path)
+    sut = cli_project_root(tmp_path)
     settings = tomli.loads((sut / ".otto" / "settings.toml").read_text())
     (use_case,) = settings["docker"]["use_cases"]
     assert "role" not in use_case

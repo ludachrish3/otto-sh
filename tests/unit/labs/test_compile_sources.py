@@ -9,7 +9,7 @@ from otto.labs.errors import LabRepositoryError, LabSourceConstructionError
 from otto.labs.sources import PendingLabSource, compile_lab_sources, prepare_lab_sources
 from otto.models.settings import LabConfigSpec
 
-SUT = Path("/repo")
+PROJECT_ROOT = Path("/project")
 
 
 def _cfg(*entries: dict) -> LabConfigSpec:
@@ -17,10 +17,10 @@ def _cfg(*entries: dict) -> LabConfigSpec:
 
 
 def _compile(cfg) -> list[PendingLabSource]:
-    return compile_lab_sources(cfg, project_name="r1", root=SUT)
+    return compile_lab_sources(cfg, project_name="r1", root=PROJECT_ROOT)
 
 
-def _prepared(entry: dict, root: Path = SUT):
+def _prepared(entry: dict, root: Path = PROJECT_ROOT):
     (state,) = prepare_lab_sources(
         compile_lab_sources(_cfg(entry), project_name="r1", root=root),
         profiles=ProfileContext.empty(),
@@ -44,7 +44,7 @@ def test_explicit_name_used_in_label() -> None:
     assert src.label == "r1/global"
 
 
-def test_duplicate_labels_within_repo_rejected() -> None:
+def test_duplicate_labels_within_project_rejected() -> None:
     with pytest.raises(ValueError, match="unique"):
         _compile(
             _cfg(
@@ -57,8 +57,8 @@ def test_duplicate_labels_within_repo_rejected() -> None:
 def test_compile_keeps_the_options_raw_and_names_the_settings_file() -> None:
     (src,) = _compile(_cfg({"backend": "cmdb", "server": "db", "paths": ["not-anchored"]}))
     assert src.raw.thaw_json() == {"server": "db", "paths": ["not-anchored"]}
-    assert src.project_root == SUT
-    assert src.origin == str(SUT / ".otto" / "settings.toml")
+    assert src.project_root == PROJECT_ROOT
+    assert src.origin == str(PROJECT_ROOT / ".otto" / "settings.toml")
 
 
 def test_compile_accepts_a_json_source_without_paths() -> None:
@@ -84,7 +84,7 @@ def test_json_unknown_key_rejected() -> None:
 def test_json_paths_anchored_relative_absolute_passthrough() -> None:
     state = _prepared({"backend": "json", "paths": ["lab", "/abs/global.json"]})
     assert state.prepared is not None
-    assert state.prepared.facts.file_inputs == (SUT / "lab", Path("/abs/global.json"))
+    assert state.prepared.facts.file_inputs == (PROJECT_ROOT / "lab", Path("/abs/global.json"))
 
 
 def test_lab_files_file_vs_directory(tmp_path: Path) -> None:

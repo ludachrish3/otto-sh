@@ -130,7 +130,7 @@ def test_a_library_refusal_from_scaffold_reaches_the_user_in_flag_spelling(tmp_p
     """The one translation site covers the library calls, not only the config build."""
     from otto.init import InitInputError
 
-    refusal = InitInputError("'x' must stay inside the repo", field="kmodcov_dir")
+    refusal = InitInputError("'x' must stay inside the project", field="kmodcov_dir")
     with (
         patch("otto.init.scaffolder.scaffold_candidates", return_value=["kmodcov"]),
         patch("otto.init.scaffolder.scaffold", side_effect=refusal),

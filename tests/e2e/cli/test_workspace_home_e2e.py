@@ -7,12 +7,12 @@ workspace home and leaves the xdir clean.
 
 import pytest
 
-from tests.e2e._otto_subprocess import REPO1, run_otto
+from tests.e2e._otto_subprocess import PROJECT1, run_otto
 
 pytestmark = pytest.mark.hostless
 
 
-def _run(argv, *, home, xdir, roots=REPO1):
+def _run(argv, *, home, xdir, roots=PROJECT1):
     return run_otto(
         argv,
         xdir=xdir,
@@ -22,7 +22,7 @@ def _run(argv, *, home, xdir, roots=REPO1):
     )
 
 
-def _run_root_help(*, home, xdir, roots=REPO1):
+def _run_root_help(*, home, xdir, roots=PROJECT1):
     """Seed/refresh the cache through root ``--help``, one of the two readers.
 
     Migrated off ``run --list-instructions`` (spec §4.2): ordinary dispatch no
@@ -67,9 +67,9 @@ class TestCacheLandsInTheWorkspaceHome:
         """The deduplication the relocation buys, and could not be tested before.
 
         The cache's content was always a pure function of the workspace --
-        the names digest hashes each repo's settings, init modules and lab
+        the names digest hashes each project's settings, init modules and lab
         files and nothing else -- but its LOCATION was the xdir, so invoking otto from N
-        directories against the same repos maintained N byte-identical caches.
+        directories against the same projects maintained N byte-identical caches.
         Keyed by the workspace instead, two xdirs share one cache.
 
         Not a restatement of the unit tests: those pin the key as a pure

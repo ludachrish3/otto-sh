@@ -40,8 +40,8 @@ def test_z_last():
 """
 
 
-def test_no_random_runs_in_collection_order(sut_repo, tmp_path):
-    project = sut_repo(files={"tests/test_order.py": _ORDERED})
+def test_no_random_runs_in_collection_order(one_project, tmp_path):
+    project = one_project(files={"tests/test_order.py": _ORDERED})
     result = run_tests(
         ["TestB", "TestA", "test_z_last"],
         run_options=RunOptions(random_order=False),
@@ -51,8 +51,8 @@ def test_no_random_runs_in_collection_order(sut_repo, tmp_path):
     assert (project / "tests/order.json").read_text() == '["B2", "B1", "A2", "A1"]'
 
 
-def test_a_class_name_selects_its_tests(sut_repo, tmp_path):
-    sut_repo(
+def test_a_class_name_selects_its_tests(one_project, tmp_path):
+    one_project(
         files={
             "tests/test_c.py": (
                 "class TestC:\n    def test_1(self): pass\n    def test_2(self): pass\n"
@@ -64,8 +64,8 @@ def test_a_class_name_selects_its_tests(sut_repo, tmp_path):
     assert _passed_count(result) == 2
 
 
-def test_unknown_names_suggest(sut_repo, tmp_path):
-    sut_repo(files={"tests/test_c.py": "def test_reboot(): pass\n"})
+def test_unknown_names_suggest(one_project, tmp_path):
+    one_project(files={"tests/test_c.py": "def test_reboot(): pass\n"})
     with pytest.raises(UnknownSelectionError, match=r"test_rebot.*did you mean: test_reboot"):
         run_tests(["test_rebot"], output_dir=tmp_path / "out")
 
@@ -75,19 +75,19 @@ def test_names_or_markers_are_required(tmp_path):
         run_tests(output_dir=tmp_path / "out")
 
 
-def test_a_marker_that_matches_nothing_raises(sut_repo, tmp_path):
-    sut_repo(files={"tests/test_m.py": "def test_m(): pass\n"})
+def test_a_marker_that_matches_nothing_raises(one_project, tmp_path):
+    one_project(files={"tests/test_m.py": "def test_m(): pass\n"})
     with pytest.raises(NoTestsMatchedError):
         run_tests(run_options=RunOptions(markers="nosuchmarker"), output_dir=tmp_path / "out")
 
 
-def test_options_reach_ctx_options_and_unregistered_instances_refuse(sut_repo, tmp_path):
+def test_options_reach_ctx_options_and_unregistered_instances_refuse(one_project, tmp_path):
     @options
     class FirmwareOpts:
         firmware: str = "latest"
 
     register_options(FirmwareOpts, verbs=["test"])
-    sut_repo(
+    one_project(
         files={
             "tests/test_o.py": (
                 "from otto.params import verb_option_classes\n"
@@ -114,16 +114,16 @@ def test_options_reach_ctx_options_and_unregistered_instances_refuse(sut_repo, t
     ("names", "markers"), [(["test_ok"], ""), ([], "not slow")], ids=["by-name", "by-marker"]
 )
 def test_a_broken_nested_file_does_not_block_the_selected_test(
-    sut_repo, tmp_path, caplog, names, markers
+    one_project, tmp_path, caplog, names, markers
 ):
     """The selected test runs and the broken file is logged; the run exits 1, as pytest does.
 
-    The first run of a repo collects the whole tree, so the broken file is
+    The first run of a project collects the whole tree, so the broken file is
     reached, and so is it on every marker-only run;
     ``--continue-on-collection-errors`` keeps it from stopping the selected
     test, and pytest's verdict for a run with a collection error is 1.
     """
-    sut_repo(
+    one_project(
         files={
             "tests/sub/conftest.py": (
                 "import pytest\n@pytest.fixture\ndef nested_fixture():\n    return 7\n"
@@ -141,7 +141,7 @@ def test_a_broken_nested_file_does_not_block_the_selected_test(
 
 
 @pytest.mark.parametrize("where", ["tests/test_reg.py", "tests/conftest.py"])
-def test_registering_from_a_test_file_or_conftest_is_refused(sut_repo, tmp_path, where):
+def test_registering_from_a_test_file_or_conftest_is_refused(one_project, tmp_path, where):
     body = (
         "from otto import options, register_options\n"
         "@options\nclass Late:\n    x: int = 0\n"
@@ -152,12 +152,12 @@ def test_registering_from_a_test_file_or_conftest_is_refused(sut_repo, tmp_path,
         files["tests/test_reg.py"] = "def test_reg(): pass\n"
     else:
         files["tests/test_reg.py"] = body + "def test_reg(): pass\n"
-    sut_repo(files=files)
+    one_project(files=files)
     with pytest.raises(RegistrationRefused, match="init module"):
         run_tests(["test_reg"], output_dir=tmp_path / "out")
 
 
-def test_a_test_file_that_first_imports_an_otto_module_is_not_refused(sut_repo, tmp_path):
+def test_a_test_file_that_first_imports_an_otto_module_is_not_refused(one_project, tmp_path):
     """otto's own import-time registration is otto's, even when a test file triggers it.
 
     A registry's defining module registers its built-ins (by reference) when
@@ -182,7 +182,7 @@ def test_a_test_file_that_first_imports_an_otto_module_is_not_refused(sut_repo, 
     import otto.host.binary_loader as original
     from otto import registry as reg
 
-    sut_repo(
+    one_project(
         files={"tests/test_first.py": "import otto.host.binary_loader\ndef test_first(): pass\n"}
     )
     # Its own patch context, so the original module is back in sys.modules and on
@@ -204,12 +204,12 @@ def test_a_test_file_that_first_imports_an_otto_module_is_not_refused(sut_repo, 
     assert loaders == [original.LOADER_CLASSES]
 
 
-def test_two_repos_get_a_repo_layer(two_sut_repos, tmp_path):
-    two_sut_repos(
+def test_two_projects_get_a_project_layer(two_projects, tmp_path):
+    two_projects(
         a={"tests/test_a.py": "def test_same(test_dir):\n    (test_dir / 'f').write_text('a')\n"},
         b={"tests/test_b.py": "def test_same(test_dir):\n    (test_dir / 'f').write_text('b')\n"},
     )
     out = tmp_path / "out"
     assert run_tests(["test_same"], output_dir=out).exit_code == 0
-    assert (out / "repo_a/test_a/test_same/f").read_text() == "a"
-    assert (out / "repo_b/test_b/test_same/f").read_text() == "b"
+    assert (out / "project_a/test_a/test_same/f").read_text() == "a"
+    assert (out / "project_b/test_b/test_same/f").read_text() == "b"

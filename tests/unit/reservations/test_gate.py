@@ -14,7 +14,7 @@ Every case installs a REAL ``OttoContext``: since spec 2026-08-28
 three-level-reservations §5 the gate computes its requirement over
 ``OttoContext.admissible_ids()``, and it reads that set and the lab off the
 active run (spec 2026-10-11 placement-and-phases §3.8). A case that needs a
-narrower fleet declares one through a repo's ``[project]`` table, never by
+narrower fleet declares one through a project's ``[project]`` table, never by
 patching the read, so each case pins what the gate sees through every reader.
 """
 
@@ -33,7 +33,7 @@ from otto.reservations import (
     ResolvedIdentity,
 )
 from tests._fixtures.fleet import _lab as fleet_lab
-from tests._fixtures.fleet import _repo, add_builtin_local, install_scoped_context
+from tests._fixtures.fleet import _project, add_builtin_local, install_scoped_context
 from tests._fixtures.run_state import cleared_run_state
 from tests.conftest import make_host
 
@@ -197,7 +197,7 @@ def _slot_lab():
 def test_gate_requires_only_the_fleet_in_play(tmp_path):
     """Mutation: make evaluate() pass host_ids=None and this goes red — slot-2 would be demanded."""
     lab = _slot_lab()
-    install_scoped_context(lab, [_repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])])
+    install_scoped_context(lab, [_project(tmp_path, "r1", labs=["rig"], hosts=["slot1"])])
     gate = ReservationGate(
         backend=_FakeBackend({"slot-1": "chris"}, username="chris"),
         identity=ResolvedIdentity(username="chris", source="$USER"),
@@ -209,10 +209,10 @@ def test_gate_requires_only_the_fleet_in_play(tmp_path):
     )
 
 
-def test_gate_demands_every_host_when_no_repo_declares_a_fleet(tmp_path):
+def test_gate_demands_every_host_when_no_project_declares_a_fleet(tmp_path):
     """The whole-lab fallback is unchanged: no declaration, no narrowing."""
     lab = _slot_lab()
-    install_scoped_context(lab, [_repo(tmp_path, "r1")])
+    install_scoped_context(lab, [_project(tmp_path, "r1")])
     gate = ReservationGate(
         backend=_FakeBackend({"slot-1": "chris"}, username="chris"),
         identity=ResolvedIdentity(username="chris", source="$USER"),
@@ -225,7 +225,7 @@ def test_gate_demands_every_host_when_no_repo_declares_a_fleet(tmp_path):
 def test_skip_warning_lists_the_in_play_requirement(tmp_path):
     """-R must announce the SAME requirement the check would have made, not a wider one."""
     lab = _slot_lab()
-    install_scoped_context(lab, [_repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])])
+    install_scoped_context(lab, [_project(tmp_path, "r1", labs=["rig"], hosts=["slot1"])])
 
     result = ReservationGate(
         skip_check=True, identity=ResolvedIdentity(username="chris", source="$USER")
@@ -245,9 +245,9 @@ def _three_level_lab():
     return lab
 
 
-def _empty_fleet_repo(tmp_path):
-    """A repo whose ``[project]`` declaration admits no host in the loaded lab."""
-    return _repo(tmp_path, "r1", labs=["rig"], hosts=["nothing-matches"])
+def _empty_fleet_project(tmp_path):
+    """A project whose ``[project]`` declaration admits no host in the loaded lab."""
+    return _project(tmp_path, "r1", labs=["rig"], hosts=["nothing-matches"])
 
 
 def test_empty_declared_fleet_requires_the_lab_level_only_under_skip(tmp_path):
@@ -263,7 +263,7 @@ def test_empty_declared_fleet_requires_the_lab_level_only_under_skip(tmp_path):
     ``ProjectScopeError``.
     """
     lab = _three_level_lab()
-    install_scoped_context(lab, [_empty_fleet_repo(tmp_path)])
+    install_scoped_context(lab, [_empty_fleet_project(tmp_path)])
 
     result = ReservationGate(
         skip_check=True, identity=ResolvedIdentity(username="chris", source="$USER")
@@ -279,7 +279,7 @@ def test_empty_declared_fleet_requires_the_lab_level_only_under_skip(tmp_path):
 def test_empty_declared_fleet_checks_the_lab_level_only(tmp_path):
     """The checked path reaches a verdict too: hold the lab's set and the gate passes."""
     lab = _three_level_lab()
-    install_scoped_context(lab, [_empty_fleet_repo(tmp_path)])
+    install_scoped_context(lab, [_empty_fleet_project(tmp_path)])
     gate = ReservationGate(
         backend=_FakeBackend({"rack-1": "chris"}, username="chris"),
         identity=ResolvedIdentity(username="chris", source="$USER"),
@@ -488,7 +488,7 @@ def test_gate_does_not_warn_about_a_resource_outside_the_fleet_requirement(caplo
     import logging
 
     lab = _slot_lab()
-    install_scoped_context(lab, [_repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])])
+    install_scoped_context(lab, [_project(tmp_path, "r1", labs=["rig"], hosts=["slot1"])])
     gate = ReservationGate(
         backend=_FakeBackend(
             {"slot-1": "chris", "slot-2": "chris"},
@@ -582,9 +582,9 @@ def test_an_empty_requirement_never_reaches_the_expiry_helper(caplog):
     assert "expires" not in caplog.text.lower()
 
 
-def _h_in_repo(tmp_path):
-    """A repo whose ``[project]`` declaration puts ``h-in`` alone in play, in lab ``a``."""
-    return _repo(tmp_path, "r1", labs=["a"], hosts=["h-in"])
+def _h_in_project(tmp_path):
+    """A project whose ``[project]`` declaration puts ``h-in`` alone in play, in lab ``a``."""
+    return _project(tmp_path, "r1", labs=["a"], hosts=["h-in"])
 
 
 class TestGateReportAndHosts:
@@ -670,7 +670,7 @@ class TestGateReportAndHosts:
         lab = fleet_lab(("h-in", "a"), ("h-bare", "a"))
         lab.hosts["h-in"].resources = frozenset({"slot-in"})
         lab.resources = {"rack1"}  # a real requirement, so a stray query would reach the backend
-        install_scoped_context(lab, [_h_in_repo(tmp_path)])
+        install_scoped_context(lab, [_h_in_project(tmp_path)])
         gate, backend = self._gate({})
         assert gate.check_hosts(lab, [lab.hosts["h-in"], lab.hosts["h-bare"]]) is None
         assert backend.fetches == 0
@@ -684,7 +684,7 @@ class TestGateReportAndHosts:
         lab = fleet_lab(("h-in", "a"), ("h-out", "a"))
         lab.resources = {"rack1"}
         lab.hosts["h-out"].resources = frozenset({"slot-out"})
-        install_scoped_context(lab, [_h_in_repo(tmp_path)])
+        install_scoped_context(lab, [_h_in_project(tmp_path)])
         backend = _FakeBackend(
             owners={"rack1": "alice"}, username="alice", ends={"rack1": _soon(1)}
         )
@@ -707,7 +707,7 @@ class TestGateReportAndHosts:
         lab = fleet_lab(("h-in", "a"), ("h-a", "a"), ("h-b", "a"))
         lab.hosts["h-a"].resources = frozenset({"slot-a"})
         lab.hosts["h-b"].resources = frozenset({"slot-b"})
-        install_scoped_context(lab, [_h_in_repo(tmp_path)])
+        install_scoped_context(lab, [_h_in_project(tmp_path)])
         gate, backend = self._gate({})
         with pytest.raises(MissingReservationError) as exc:
             gate.check_hosts(lab, [lab.hosts["h-a"], lab.hosts["h-b"]])
@@ -727,7 +727,9 @@ class TestGateReportAndHosts:
         # play leaves it outside the fleet, and its slot is checked.
         own = fleet_lab(("local", "a"))
         own.hosts["local"].resources = frozenset({"x"})
-        install_scoped_context(own, [_repo(tmp_path, "r1", labs=["a"], hosts=["nothing-matches"])])
+        install_scoped_context(
+            own, [_project(tmp_path, "r1", labs=["a"], hosts=["nothing-matches"])]
+        )
         with pytest.raises(MissingReservationError):
             gate.check_hosts(own, [own.hosts["local"]])
 
@@ -753,7 +755,7 @@ class TestGateReportAndHosts:
         lab = fleet_lab(("h-in", "a"), ("h-out", "a"))
         lab.resources = {"rack1"}
         lab.hosts["h-out"].resources = frozenset({"slot"})
-        install_scoped_context(lab, [_h_in_repo(tmp_path)])
+        install_scoped_context(lab, [_h_in_project(tmp_path)])
         backend = _FakeBackend(
             owners={"rack1": "alice", "slot": "alice"}, username="alice", ends={"rack1": end}
         )

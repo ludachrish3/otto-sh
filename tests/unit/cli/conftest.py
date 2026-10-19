@@ -31,12 +31,12 @@ from otto.config.project import Project
 from otto.result import CommandResult, Results
 from otto.utils import Status
 from tests._fixtures.labdata import write_lab_json
-from tests._fixtures.sut_repos import (  # noqa: F401 — fixtures, shared with tests/unit/suite
+from tests._fixtures.project_scaffold import make_project
+from tests._fixtures.run_projects import (  # noqa: F401 — fixtures, shared with tests/unit/suite
     _generated_modules_evicted,
-    sut_repo,
-    two_sut_repos,
+    one_project,
+    two_projects,
 )
-from tests._fixtures.sutrepo import make_sut_repo
 
 
 @pytest.fixture(autouse=True)
@@ -175,31 +175,31 @@ HOSTS_DATA = [
 
 
 def _make_lab_fs(tmp_path: Path) -> tuple[Path, Path]:
-    """Create a minimal SUT repo and lab data directory in *tmp_path*.
+    """Create a minimal project and lab data directory in *tmp_path*.
 
-    Returns ``(sut_dir, lab_data_dir)`` so callers can reference both.
+    Returns ``(project_root, lab_data_dir)`` so callers can reference both.
     """
     lab_data_dir = tmp_path / "lab_data"
     lab_data_dir.mkdir()
     write_lab_json(lab_data_dir / "lab.json", HOSTS_DATA)
 
-    root = make_sut_repo(
+    root = make_project(
         tmp_path / "sut",
-        name="test_repo",
+        name="test_project",
         extra='[[lab.sources]]\nbackend = "json"\npaths = ["../lab_data"]',
     )
 
     return root, lab_data_dir
 
 
-def _with_repos(real_bootstrap, project):
-    """Run the real composition root, then hand back its result holding only *repo*.
+def _with_projects(real_bootstrap, project):
+    """Run the real composition root, then hand back its result holding only *project*.
 
-    Both ``repos`` and ``ordered_projects``: the context's readers take either,
-    and a walk over the real result's order would reach repos this fixture
-    never declared. The result is published to the composed-repos catalog
+    Both ``projects`` and ``ordered_projects``: the context's readers take either,
+    and a walk over the real result's order would reach projects this fixture
+    never declared. The result is published to the composed-projects catalog
     too, over the real one, so the readers below the root (the declared
-    entries a lab load applies) see the same one repo.
+    entries a lab load applies) see the same one project.
     """
     from otto.declared import publish_composed
 
@@ -220,8 +220,8 @@ def real_main_mocks(tmp_path):
     What is mocked (I/O boundaries only):
       - ``management.remove_old_logs`` — filesystem listing + deletion
       - ``_ConsoleHandler`` (otto's ``RichHandler``) — console I/O
-      - ``otto.bootstrap.bootstrap``'s repos — the real composition root
-        runs, and its result's ``repos`` and ``ordered_projects`` are one real
+      - ``otto.bootstrap.bootstrap``'s projects — the real composition root
+        runs, and its result's ``projects`` and ``ordered_projects`` are one real
         ``Project``
       - ``LocalHost.run`` — subprocess for git commands
     """
@@ -269,9 +269,11 @@ def real_main_mocks(tmp_path):
             side_effect=lambda *args, **kwargs: logging.NullHandler(),
         ) as p_rich,
         # The REAL composition root runs (its registrations are part of what
-        # runs for real), and only its result's repos are this one repo: the
+        # runs for real), and only its result's projects are this one project: the
         # CLI's lab load takes the result whole and hands it to the context.
-        patch("otto.bootstrap.bootstrap", side_effect=lambda: _with_repos(real_bootstrap, project)),
+        patch(
+            "otto.bootstrap.bootstrap", side_effect=lambda: _with_projects(real_bootstrap, project)
+        ),
         patch(
             "otto.host.local_host.LocalHost.run",
             new_callable=AsyncMock,
@@ -291,7 +293,7 @@ def real_main_mocks(tmp_path):
             "tmp_path": tmp_path,
             "root": root,
             "lab_data_dir": lab_data_dir,
-            "repo": project,
+            "project": project,
             "remove_old_logs": p_remove,
             "RichHandler": p_rich,
         }
@@ -299,7 +301,7 @@ def real_main_mocks(tmp_path):
     # Teardown: restore the root logger to its pre-test state (membership AND
     # order, then level). The per-logger levels the real ``init_cli_logging``
     # pins (the spec §4 noise floor: asyncssh/asyncio/aiosqlite, plus anything
-    # a test's repo table names) are NOT handed back here: that state is
+    # a test's project table names) are NOT handed back here: that state is
     # module-global on ``management._state.floored_loggers``, so the guard for
     # it lives with the state, in ``tests/conftest.py``'s autouse
     # ``_restore_otto_logger_state`` — which covers every venue, not just this
@@ -438,8 +440,8 @@ def _lib_ok_result():
     )
 
 
-def _repo_with_tickets_configured():
-    """A repo whose settings satisfy the --cov-tickets-json preflight gate."""
+def _project_with_tickets_configured():
+    """A project whose settings satisfy the --cov-tickets-json preflight gate."""
     project = MagicMock()
     project.settings = {
         "coverage": {

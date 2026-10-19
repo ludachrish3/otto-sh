@@ -1,0 +1,79 @@
+name = "project5"
+version = "1.0.0"
+libs = ["pylib"]
+tests = ["tests"]
+init = ["project5_instructions"]
+
+# The kernel-module and container-image coverage fixture. Its products are
+# the kinds under test; the suites drive them through the products' own verbs.
+[project]
+lab_patterns = [".*"]
+
+[[lab.sources]]
+backend = "json"
+paths = ["../_fixtures/lab_data/tech1"]
+
+# The library builds out of tree into build/lib/ (git-ignored) from this
+# project's vendored copy, third_party/otto_kmodcov/ (an `otto cov kmodcov export`,
+# held current against the installed otto by a guard), by this project's own
+# build.sh. It is a DEV TOOL, not a product: nothing measures it, and the
+# demo below loads it on demand at install — `install-tools` beforehand
+# costs nothing, and `cleanup` removes it after the products. One entry per
+# kernel; both bed hosts run the same one.
+[[dev_tools]]
+name = "otto_kmodcov"
+kind = "kmodcov"
+artifact = "build/lib/otto_kmodcov.ko"
+source = "third_party/otto_kmodcov"
+match = { id = "test[12]" }
+
+# The demo builds IN PLACE under kmod/demo/, alongside its committed sources:
+# a capture anchors every measured file to a committed git blob under this
+# project, so the demo's .c/.h files (and the .gcno files gcc emits beside
+# them) must live here rather than in a git-ignored copy.
+[[products]]
+name = "otto_kmod_demo"
+kind = "kmod"
+artifact = "kmod/demo/otto_kmod_demo.ko"
+coverage = "module"
+cov_dir = "/var/cov/otto_kmod_demo"
+match = { id = "test[12]" }
+
+# The container-image products, both on the daemon host (test3). The
+# tarball form is built by docker/build.sh on the dev VM (git-ignored
+# artifact); it bakes its own GCOV_PREFIX_STRIP into the image (see
+# docker/build.sh and docker/Dockerfile) rather than fixing a number here —
+# the strip count depends on the build directory's own absolute path,
+# which differs between a worktree and the main checkout. The reference
+# form runs the image the tarball loaded, so it is declared AFTER it and
+# needs no pull. An archive scans unknown, hence `instrumented = true`.
+[[products]]
+name = "cov_container"
+kind = "docker_image"
+image = "docker/otto-cov-demo.tar"
+instrumented = true
+cov_dir = "/var/cov/cov_container"
+run_args = "-e GCOV_PREFIX={cov_dir}"
+match = { id = "test3" }
+
+[[products]]
+name = "cov_container_ref"
+kind = "docker_image"
+image = "otto-cov-demo:e2e"
+pull = false
+instrumented = true
+cov_dir = "/var/cov/cov_container_ref"
+run_args = "-e GCOV_PREFIX={cov_dir}"
+match = { id = "test3" }
+
+# All three unix hosts are eligible for [coverage], though each suite's own
+# products only match a subset (see each [[products]] entry's `match`
+# above): otto test never installs/uninstalls a product itself (each
+# suite's own fixture does, on the hosts it selects), so no suite ever
+# touches the other family's hosts. --cov-clean and the post-run fetch DO
+# still walk every instrumented, matched product on every host here
+# regardless of which suite ran — harmless .gcda housekeeping (nothing to
+# clean or fetch where nothing was ever installed) — which is why each
+# e2e's own fetch tree is exactly, and only, the hosts its own suite drove.
+[coverage]
+hosts = "test[1-3]"

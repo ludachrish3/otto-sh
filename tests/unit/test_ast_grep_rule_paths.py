@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
 
@@ -49,7 +49,7 @@ def missing_paths(root: Path) -> "list[str]":
 
 
 def test_every_literal_path_a_rule_names_exists() -> None:
-    missing = missing_paths(PROJECT_ROOT)
+    missing = missing_paths(CHECKOUT_ROOT)
     assert not missing, (
         "these ast-grep rules name a path that does not exist, so they no longer check "
         "it; re-point each to the file's new home:\n  " + "\n  ".join(missing)
@@ -71,7 +71,7 @@ def test_the_scan_reads_paths_and_skips_globs(tmp_path: Path) -> None:
 
 def test_the_rules_name_the_moved_loader_by_path() -> None:
     """Anti-vacuity: the tree's rules name files by path, the lab loader among them."""
-    named = all_literal_paths(PROJECT_ROOT)
+    named = all_literal_paths(CHECKOUT_ROOT)
     assert any(label.endswith(": src/otto/labs/loader.py") for label in named)
     # Sits below today's count only so that a scan that finds nothing fails.
     assert len(named) >= 10, named

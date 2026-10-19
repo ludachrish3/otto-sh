@@ -77,7 +77,7 @@ class TestLabRepositoryConformance:
         # Must not raise.
         assert_lab_repository_conforms(repository, expected_labs=["alpha", "beta"])
 
-    def test_non_conforming_repo_raises_with_aggregate(self):
+    def test_non_conforming_repository_raises_with_aggregate(self):
         class Broken:
             def load_lab(self, name, preferences=None, inventory=None):
                 return "not a lab"  # wrong type
@@ -168,7 +168,7 @@ class TestLabRepositoryConformance:
         assert calls == [None]
 
     def test_missing_list_labs_raises_assertion_not_attribute_error(self):
-        """A repo with no list_labs at all must aggregate an AssertionError,
+        """A repository with no list_labs at all must aggregate an AssertionError,
         not propagate an AttributeError before raise_if_failures()."""
 
         class NoListLabs:
@@ -680,7 +680,7 @@ def _per_user_only():
     return PerUserOnly(username="alice")
 
 
-def _lab_repo(*, summaries=True, ghost_id=False):
+def _lab_repository(*, summaries=True, ghost_id=False):
     """A conforming repository, optionally without ``list_host_summaries``.
 
     *ghost_id* makes the capability itself violate the "every id you offer must
@@ -748,11 +748,11 @@ class TestExpectedCapabilities:
 
     def test_host_summaries_present_and_expected_passes(self):
         assert_lab_repository_conforms(
-            _lab_repo(), expected_labs=["mylab"], expect_host_summaries=True
+            _lab_repository(), expected_labs=["mylab"], expect_host_summaries=True
         )
 
     def test_host_summaries_absent_and_expected_is_a_conformance_failure(self):
-        repository = _lab_repo(summaries=False)
+        repository = _lab_repository(summaries=False)
         assert not isinstance(repository, SupportsHostSummaries)
         with pytest.raises(
             AssertionError,
@@ -765,8 +765,8 @@ class TestExpectedCapabilities:
 
     def test_host_summaries_absent_and_not_expected_still_skips(self):
         """The default must be byte-for-byte today's behaviour."""
-        assert_lab_repository_conforms(_lab_repo(summaries=False))  # must not raise
+        assert_lab_repository_conforms(_lab_repository(summaries=False))  # must not raise
 
     def test_host_summaries_present_and_not_expected_still_runs_the_rules(self):
         with pytest.raises(AssertionError, match=r"but no load_lab\(\) produces them"):
-            assert_lab_repository_conforms(_lab_repo(ghost_id=True))
+            assert_lab_repository_conforms(_lab_repository(ghost_id=True))

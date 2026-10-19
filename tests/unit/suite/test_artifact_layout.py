@@ -124,8 +124,8 @@ def test_module_dir_falls_back_to_the_stem_with_no_test_roots(tmp_path):
     """No ``test_roots`` at all keeps the pre-fix-round-1 flat ``<root>/<stem>`` shape."""
     from otto.suite.layout import ArtifactLayout
 
-    layout = ArtifactLayout(root=tmp_path / "repo_a")
-    assert layout.module_dir(tmp_path / "tests" / "test_x.py") == tmp_path / "repo_a" / "test_x"
+    layout = ArtifactLayout(root=tmp_path / "project_a")
+    assert layout.module_dir(tmp_path / "tests" / "test_x.py") == tmp_path / "project_a" / "test_x"
 
 
 # ── module_dir / test_roots (controller ruling, fix round 1) ─────────────────

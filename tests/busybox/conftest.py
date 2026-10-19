@@ -41,7 +41,7 @@ which is exactly the redundancy that makes the marks look like noise.
 
 Three reasons, in order of how expensive they are to rediscover:
 
-1. This hook's effect depends on collection-hook ORDER, which in this repo
+1. This hook's effect depends on collection-hook ORDER, which in this repository
    varies with the invocation shape (a directory-targeted run makes this an
    *initial* conftest). The stamp was measured working in six shapes, but that
    is evidence, not a contract; the decorator is shape-independent, so it is

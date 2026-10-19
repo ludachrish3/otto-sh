@@ -9,9 +9,9 @@ say the refusal tracks the ENVIRONMENT rather than a hard-wired verdict:
 2. after ``otto env sync -- --find-links tests/_fixtures/wheels`` -> the SAME
    instruction, run from the environment that sync built, succeeds.
 
-repo4 is COPIED into tmp_path rather than used in place -- see
-``tests._fixtures.sutrepo.copy_sample_repo`` for why, and
-``tests/unit/test_sample_repo_hygiene.py`` for the gate that catches a
+project4 is COPIED into tmp_path rather than used in place -- see
+``tests._fixtures.project_scaffold.copy_sample_project`` for why, and
+``tests/unit/test_sample_projects_hygiene.py`` for the gate that catches a
 regression. The consequence HERE is that the requirement string is
 deterministic: read from the pyproject (spaced, ``otto-fixture-beetroot >=
 0.1``) rather than from a leftover ``.egg-info``'s ``Requires-Dist``
@@ -27,20 +27,20 @@ import subprocess
 
 import pytest
 
-from tests._fixtures.paths import PROJECT_ROOT, WHEELS_DIR
-from tests._fixtures.sutrepo import copy_sample_repo
-from tests.e2e._otto_subprocess import OTTO_BIN, REPO1, otto_subprocess_env
+from tests._fixtures.paths import CHECKOUT_ROOT, WHEELS_DIR
+from tests._fixtures.project_scaffold import copy_sample_project
+from tests.e2e._otto_subprocess import OTTO_BIN, PROJECT1, otto_subprocess_env
 
 pytestmark = pytest.mark.hostless
 
-REPO4 = PROJECT_ROOT / "tests" / "repo4"
+PROJECT4 = CHECKOUT_ROOT / "tests" / "project4"
 
 BUILD_TIMEOUT = 300
 """A real installer run. Measured at ~1.5s warm; a cold wheel cache on CI is
 much slower, and a timeout that fires there reads as a otto bug."""
 
 REQUIREMENT = "otto-fixture-beetroot >= 0.1"
-"""As repo4's pyproject spells it -- which is what the copied repo guarantees."""
+"""As project4's pyproject spells it -- which is what the copied project guarantees."""
 
 BODY_MARKER = "the fixture package says"
 """The instruction body's own log line. Its ABSENCE is how a test says the run
@@ -48,20 +48,20 @@ stopped before the body, and the body is the only thing in this fixture that
 could reach a host."""
 
 
-def _repo4(tmp_path, *, eager: bool = False):
-    """A private copy of repo4, free of any build artifact from a prior run.
+def _project4(tmp_path, *, eager: bool = False):
+    """A private copy of project4, free of any build artifact from a prior run.
 
-    *eager* moves ``repo4_lib`` -- the module that imports the dependency at
+    *eager* moves ``project4_lib`` -- the module that imports the dependency at
     module scope -- into ``init``, which is the shape bootstrap loads.
     """
-    dst = copy_sample_repo(REPO4, tmp_path / "repo4")
+    dst = copy_sample_project(PROJECT4, tmp_path / "project4")
     if eager:
         settings = dst / ".otto" / "settings.toml"
-        eager_init = settings.read_text().replace("init = [", "init = [\n    'repo4_lib',")
-        # An in-place edit of a COPIED sample repo's own settings, not a
+        eager_init = settings.read_text().replace("init = [", "init = [\n    'project4_lib',")
+        # An in-place edit of a COPIED sample project's own settings, not a
         # hand-rolled scaffold: the point of the fixture is that this is
-        # repo4's real file with one init entry added.
-        settings.write_text(eager_init)  # sutrepo-exempt: in-place edit of a copied sample repo
+        # project4's real file with one init entry added.
+        settings.write_text(eager_init)  # scaffold-exempt: in-place edit of a copied sample project
     return dst
 
 
@@ -75,7 +75,7 @@ def _run(argv, *, home, roots, binary=None, timeout=60):
         ),
         capture_output=True,
         text=True,
-        cwd=str(PROJECT_ROOT),
+        cwd=str(CHECKOUT_ROOT),
         timeout=timeout,
         check=False,
     )
@@ -97,11 +97,11 @@ class TestTheAcceptancePair:
         result = _run(
             ["--lab", "unix", "run", "use-beetroot"],
             home=tmp_path / "home",
-            roots=f"{REPO1}{os.pathsep}{_repo4(tmp_path)}",
+            roots=f"{PROJECT1}{os.pathsep}{_project4(tmp_path)}",
         )
         assert result.returncode == 1, result.stdout + result.stderr
         blob = result.stdout + result.stderr
-        assert f"error: project 'repo4' requires '{REQUIREMENT}'" in blob
+        assert f"error: project 'project4' requires '{REQUIREMENT}'" in blob
         assert "not satisfied in this environment (found: none)" in blob
         assert "fix: otto env sync" in blob
         assert f"or:  uv pip install '{REQUIREMENT}'" in blob
@@ -116,7 +116,7 @@ class TestTheAcceptancePair:
         work from the environment it built.
         """
         home = tmp_path / "home"
-        roots = f"{REPO1}{os.pathsep}{_repo4(tmp_path)}"
+        roots = f"{PROJECT1}{os.pathsep}{_project4(tmp_path)}"
         sync = _run(
             ["env", "sync", "--", "--find-links", str(WHEELS_DIR)],
             home=home,
@@ -150,35 +150,35 @@ class TestTheAcceptancePair:
         result = _run(
             ["env", "show"],
             home=tmp_path / "home",
-            roots=f"{REPO1}{os.pathsep}{_repo4(tmp_path)}",
+            roots=f"{PROJECT1}{os.pathsep}{_project4(tmp_path)}",
         )
         assert result.returncode == 0, result.stdout + result.stderr
-        assert "error: project 'repo4'" not in result.stdout + result.stderr
+        assert "error: project 'project4'" not in result.stdout + result.stderr
 
 
 def test_an_eager_import_fails_at_bootstrap_before_the_preflight_can_speak(tmp_path):
     """F7's cost, pinned as known behaviour rather than left to be discovered.
 
-    The preflight runs after the lab session, and ``bootstrap()``'s per-repo
-    init loop runs long before that -- so a repo whose init module imports a
+    The preflight runs after the lab session, and ``bootstrap()``'s per-project
+    init loop runs long before that -- so a project whose init module imports a
     missing package at MODULE scope is already a ``BootstrapError`` by the time
     the gate would speak. The operator gets "failed to load", not "run otto env
     sync". Moving the gate earlier is what would fix this, and moving it
     earlier is what makes ``active()`` unavailable; that trade is the whole of
     F7.
 
-    Same repo, same missing package, same command as the acceptance pair above
+    Same project, same missing package, same command as the acceptance pair above
     -- only the failure SHAPE differs, which is what makes the pair of tests a
     comparison rather than two unrelated cases.
     """
     result = _run(
         ["--lab", "unix", "run", "use-beetroot"],
         home=tmp_path / "home",
-        roots=f"{REPO1}{os.pathsep}{_repo4(tmp_path, eager=True)}",
+        roots=f"{PROJECT1}{os.pathsep}{_project4(tmp_path, eager=True)}",
     )
     assert result.returncode == 1
     blob = result.stdout + result.stderr
-    assert "failed to load repo4_lib" in blob
+    assert "failed to load project4_lib" in blob
     assert "No module named 'otto_fixture_beetroot'" in blob
     assert "Cannot run commands while a project fails to load" in blob
     assert "fix: otto env sync" not in blob

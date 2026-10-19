@@ -1,11 +1,11 @@
 """End-to-end CLI tests for `otto docker` and the `otto host <container>` family.
 
 These tests invoke the installed ``otto`` entrypoint as a subprocess so the
-**full** dispatch path runs — repo discovery, lab loading, declared-container
+**full** dispatch path runs — project discovery, lab loading, declared-container
 synthesis, the docker subcommand, and the host subcommand — exactly as the
 user runs it. This is what catches CLI/library-seam bugs that mocked unit
 tests miss (e.g. a missing build step before compose, or a missing lab
-filter when multiple repos are loaded).
+filter when multiple projects are loaded).
 
 Requirements:
     vagrant up test1 test2 test3
@@ -27,14 +27,14 @@ import uuid
 
 import pytest
 
-from tests.e2e._otto_subprocess import REPO1, assert_no_output_dir, assert_output_dir
+from tests.e2e._otto_subprocess import PROJECT1, assert_no_output_dir, assert_output_dir
 
 from ._cli import (
     _DEFAULT_PARENT,
     _MERGED_USE_CASE,
-    _REPO1_USE_CASE,
+    _PROJECT1_USE_CASE,
     _WIDE,
-    REPO2,
+    PROJECT2,
     _flat,
     _run_otto,
 )
@@ -70,7 +70,7 @@ def test_e2e_up_then_down(teardown_after, docker_host, tmp_path):
         "docker",
         "compose",
         "up",
-        _REPO1_USE_CASE,
+        _PROJECT1_USE_CASE,
         "--parent",
         docker_host,
         "--build",
@@ -81,7 +81,7 @@ def test_e2e_up_then_down(teardown_after, docker_host, tmp_path):
         f"`docker up` should succeed end-to-end\nstdout:\n{up.stdout}\nstderr:\n{up.stderr}"
     )
     assert "container(s) registered" in up.stdout
-    assert f"{docker_host}.repo1.api" in up.stdout
+    assert f"{docker_host}.project1.api" in up.stdout
     assert "pull access denied" not in (up.stdout + up.stderr), (
         "`--build` must build before composing — a pull error means it did not"
     )
@@ -90,14 +90,14 @@ def test_e2e_up_then_down(teardown_after, docker_host, tmp_path):
         "docker",
         "compose",
         "down",
-        _REPO1_USE_CASE,
+        _PROJECT1_USE_CASE,
         "--parent",
         docker_host,
         xdir=tmp_path,
         compose_suffix=suffix,
     )
     assert down.returncode == 0, down.stderr
-    assert f"{docker_host}: {_REPO1_USE_CASE} torn down" in down.stdout, down.stdout
+    assert f"{docker_host}: {_PROJECT1_USE_CASE} torn down" in down.stdout, down.stdout
     # docker orchestration runs on a docker host → docker output dir created
     assert_output_dir(tmp_path, "docker")
 
@@ -116,7 +116,7 @@ def test_e2e_host_run_against_running_container(
         "docker",
         "compose",
         "up",
-        _REPO1_USE_CASE,
+        _PROJECT1_USE_CASE,
         "--parent",
         docker_host,
         "--build",
@@ -127,9 +127,9 @@ def test_e2e_host_run_against_running_container(
 
     run = _run_otto(
         "host",
-        f"{docker_host}.repo1.api",
+        f"{docker_host}.project1.api",
         "exec",
-        "cat /etc/repo1-marker.txt",
+        "cat /etc/project1-marker.txt",
         xdir=tmp_path,
         compose_suffix=suffix,
     )
@@ -137,7 +137,7 @@ def test_e2e_host_run_against_running_container(
         f"`otto host <container> exec` should reach the running container\n"
         f"stdout:\n{run.stdout}\nstderr:\n{run.stderr}"
     )
-    assert "repo1-fixture" in run.stdout, run.stdout
+    assert "project1-fixture" in run.stdout, run.stdout
     # docker orchestration runs on a docker host → docker output dir created
     assert_output_dir(tmp_path, "docker")
 
@@ -154,7 +154,7 @@ def test_e2e_host_put_get_roundtrip(teardown_default_parent_after, default_paren
         "docker",
         "compose",
         "up",
-        _REPO1_USE_CASE,
+        _PROJECT1_USE_CASE,
         "--parent",
         docker_host,
         "--build",
@@ -168,7 +168,7 @@ def test_e2e_host_put_get_roundtrip(teardown_default_parent_after, default_paren
 
     put = _run_otto(
         "host",
-        f"{docker_host}.repo1.api",
+        f"{docker_host}.project1.api",
         "put",
         str(payload),
         "/tmp",
@@ -187,7 +187,7 @@ def test_e2e_host_put_get_roundtrip(teardown_default_parent_after, default_paren
     # end-to-end — decimal 755 would show as 1363.
     stat = _run_otto(
         "host",
-        f"{docker_host}.repo1.api",
+        f"{docker_host}.project1.api",
         "exec",
         "stat -c %a /tmp/payload.bin",
         xdir=tmp_path,
@@ -200,7 +200,7 @@ def test_e2e_host_put_get_roundtrip(teardown_default_parent_after, default_paren
     out_dir.mkdir()
     get = _run_otto(
         "host",
-        f"{docker_host}.repo1.api",
+        f"{docker_host}.project1.api",
         "get",
         "/tmp/payload.bin",
         str(out_dir),
@@ -228,7 +228,7 @@ def test_e2e_up_is_idempotent(teardown_after, docker_host, tmp_path):
         "docker",
         "compose",
         "up",
-        _REPO1_USE_CASE,
+        _PROJECT1_USE_CASE,
         "--parent",
         docker_host,
         "--build",
@@ -241,7 +241,7 @@ def test_e2e_up_is_idempotent(teardown_after, docker_host, tmp_path):
         "docker",
         "compose",
         "up",
-        _REPO1_USE_CASE,
+        _PROJECT1_USE_CASE,
         "--parent",
         docker_host,
         xdir=tmp_path,
@@ -255,12 +255,12 @@ def test_e2e_up_is_idempotent(teardown_after, docker_host, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Multi-repo build (host-wide, ignores use-cases)
+# Multi-project build (host-wide, ignores use-cases)
 # ---------------------------------------------------------------------------
 
 
-def test_e2e_multi_repo_build_builds_every_loaded_repo_on_the_host(docker_host, tmp_path):
-    """`otto docker build --parent HOST` builds every loaded repo's declared
+def test_e2e_multi_project_build_builds_every_loaded_project_on_the_host(docker_host, tmp_path):
+    """`otto docker build --parent HOST` builds every loaded project's declared
     images on that host, whatever use-cases they take part in.
     """
     result = _run_otto(
@@ -268,27 +268,29 @@ def test_e2e_multi_repo_build_builds_every_loaded_repo_on_the_host(docker_host, 
         "build",
         "--parent",
         docker_host,
-        roots=f"{REPO1}{os.pathsep}{REPO2}",
+        roots=f"{PROJECT1}{os.pathsep}{PROJECT2}",
         xdir=tmp_path,
     )
     assert result.returncode == 0, (
-        f"multi-repo `build` should build every loaded repo\n"
+        f"multi-project `build` should build every loaded project\n"
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
-    # `_render_build_report` prints "<repo>/<image>: built <refs>  <id>  (<host>)"
+    # `_render_build_report` prints "<project>/<image>: built <refs>  <id>  (<host>)"
     # for every image it builds.
-    assert "repo1/repo1-api: built " in result.stdout, result.stdout
-    assert "repo2/repo2-worker: built " in result.stdout, result.stdout
+    assert "project1/project1-api: built " in result.stdout, result.stdout
+    assert "project2/project2-worker: built " in result.stdout, result.stdout
 
 
-def test_e2e_multi_repo_up_composes_only_the_named_use_case(teardown_after, docker_host, tmp_path):
-    """With both repos loaded, `otto docker compose up repo1` must touch repo1 alone.
+def test_e2e_multi_project_up_composes_only_the_named_use_case(
+    teardown_after, docker_host, tmp_path
+):
+    """With both projects loaded, `otto docker compose up project1` must touch project1 alone.
 
     A use-case is the unit of deployment now, so the narrowing is by NAME:
-    only repo1 declares ``repo1``, so repo2 contributes no fragment and no
+    only project1 declares ``project1``, so project2 contributes no fragment and no
     container. Checking only the leased host's id would miss a regression
-    where ``--parent <host>`` wrongly pulled repo2's stack onto that host as
-    ``<host>.repo2.worker`` — the pre-b466020 bug that leaked an otto-repo2
+    where ``--parent <host>`` wrongly pulled project2's stack onto that host as
+    ``<host>.project2.worker`` — the pre-b466020 bug that leaked an otto-project2
     network every run until docker's address pool was exhausted.
     """
     suffix = teardown_after
@@ -296,39 +298,39 @@ def test_e2e_multi_repo_up_composes_only_the_named_use_case(teardown_after, dock
         "docker",
         "compose",
         "up",
-        _REPO1_USE_CASE,
+        _PROJECT1_USE_CASE,
         "--parent",
         docker_host,
         "--build",
-        roots=f"{REPO1}{os.pathsep}{REPO2}",
+        roots=f"{PROJECT1}{os.pathsep}{PROJECT2}",
         xdir=tmp_path,
         compose_suffix=suffix,
     )
     assert up.returncode == 0, (
-        f"multi-repo `up <use-case>` should deploy just that use-case\n"
+        f"multi-project `up <use-case>` should deploy just that use-case\n"
         f"stdout:\n{up.stdout}\nstderr:\n{up.stderr}"
     )
     assert "not in lab" not in (up.stdout + up.stderr)
-    # repo1's stack came up on the leased host, under the use-case's own id.
-    assert f"{docker_host}.repo1.api" in up.stdout
+    # project1's stack came up on the leased host, under the use-case's own id.
+    assert f"{docker_host}.project1.api" in up.stdout
     not_composed = (
-        f"use-case {_REPO1_USE_CASE!r} has no repo2 fragment, so nothing of "
-        f"repo2's may have been composed:\n{up.stdout}"
+        f"use-case {_PROJECT1_USE_CASE!r} has no project2 fragment, so nothing of "
+        f"project2's may have been composed:\n{up.stdout}"
     )
-    # The exact id repo2's only service would register under if its fragment
+    # The exact id project2's only service would register under if its fragment
     # had been pulled into this use-case: `<parent>.<usecase>.<service>`.
-    assert f"{docker_host}.{_REPO1_USE_CASE}.worker" not in up.stdout, not_composed
-    assert ".repo2." not in up.stdout, not_composed
+    assert f"{docker_host}.{_PROJECT1_USE_CASE}.worker" not in up.stdout, not_composed
+    assert ".project2." not in up.stdout, not_composed
 
 
-def test_e2e_multi_repo_down_no_traceback(docker_host, tmp_path):
-    """With both repos in SUT_DIRS, `otto docker compose down` must not raise a
+def test_e2e_multi_project_down_no_traceback(docker_host, tmp_path):
+    """With both projects in OTTOPATH, `otto docker compose down` must not raise a
     Python traceback for the unrelated lab.
 
-    The bug (pre-b466020) let repo2, whose host lives in another lab, take part
+    The bug (pre-b466020) let project2, whose host lives in another lab, take part
     in the unix lab's teardown and raise
     ``ValueError("Docker host 'alt3' is not in lab 'unix'")``.
-    Selecting by use-case name keeps repo2 out of ``down repo1`` entirely.
+    Selecting by use-case name keeps project2 out of ``down project1`` entirely.
     ``--parent`` names the specific leased host, which must be in the active
     lab for the explicit-parent check to accept it.
     """
@@ -336,10 +338,10 @@ def test_e2e_multi_repo_down_no_traceback(docker_host, tmp_path):
         "docker",
         "compose",
         "down",
-        _REPO1_USE_CASE,
+        _PROJECT1_USE_CASE,
         "--parent",
         docker_host,
-        roots=f"{REPO1}{os.pathsep}{REPO2}",
+        roots=f"{PROJECT1}{os.pathsep}{PROJECT2}",
         xdir=tmp_path,
     )
     # Even if nothing is up, the command must exit cleanly without a traceback.
@@ -362,7 +364,7 @@ def test_e2e_list_hosts_includes_declared_container(tmp_path):
     Placeholder registration walks USE-CASES now (spec §9), and mints their ids
     under the lab's default parent — the one host ``docker_priority`` ranks in
     the fixture lab. So the ids are exact rather than "one of the
-    docker-capable hosts", and BOTH of repo1's use-cases contribute, which is
+    docker-capable hosts", and BOTH of project1's use-cases contribute, which is
     what proves the walk is per-fragment.
     """
     result = _run_otto("--list-hosts", "host", xdir=tmp_path)
@@ -370,7 +372,7 @@ def test_e2e_list_hosts_includes_declared_container(tmp_path):
     # accept either rc as long as the declared container ids appear.
     output = result.stdout + result.stderr
     declared = [
-        f"{_DEFAULT_PARENT}.{_REPO1_USE_CASE}.api",
+        f"{_DEFAULT_PARENT}.{_PROJECT1_USE_CASE}.api",
         f"{_DEFAULT_PARENT}.{_MERGED_USE_CASE}.api",
         f"{_DEFAULT_PARENT}.{_MERGED_USE_CASE}.edge",
     ]
@@ -398,7 +400,7 @@ def test_e2e_run_against_unstarted_container_fails_fast(
     """
     suffix = teardown_default_parent_after
     docker_host = default_parent_host
-    container = f"{docker_host}.{_REPO1_USE_CASE}.api"
+    container = f"{docker_host}.{_PROJECT1_USE_CASE}.api"
     result = _run_otto(
         "host",
         container,
@@ -413,9 +415,9 @@ def test_e2e_run_against_unstarted_container_fails_fast(
     assert "Traceback" not in output, output
     flat = _flat(output)
     assert f"Container '{container}' is not running" in flat, output
-    assert f"`otto docker compose up {_REPO1_USE_CASE}`" in flat, output
+    assert f"`otto docker compose up {_PROJECT1_USE_CASE}`" in flat, output
 
-    project = f"unix-{_REPO1_USE_CASE}-{suffix}"
+    project = f"unix-{_PROJECT1_USE_CASE}-{suffix}"
     # `docker ps` runs on its own, so its exit status is the command's: a daemon
     # that cannot answer fails the probe instead of being counted as "none".
     ids = f"ids=$(docker ps -aq --filter label=com.docker.compose.project={project})"
@@ -443,7 +445,7 @@ def test_e2e_run_against_unstarted_container_fails_fast(
 def test_e2e_up_unknown_host_clear_error(tmp_path):
     """`otto docker compose up --parent <unknown>` exits cleanly with a clear message."""
     result = _run_otto(
-        "docker", "compose", "up", _REPO1_USE_CASE, "--parent", "no_such_host", xdir=tmp_path
+        "docker", "compose", "up", _PROJECT1_USE_CASE, "--parent", "no_such_host", xdir=tmp_path
     )
     output = result.stdout + result.stderr
     assert result.returncode != 0
@@ -454,7 +456,7 @@ def test_e2e_up_unknown_host_clear_error(tmp_path):
 def test_e2e_up_with_no_use_case_names_the_declared_ones(tmp_path):
     """A bare `otto docker compose up` is ambiguous now, and says so (spec §10).
 
-    Both sample repos declare two use-cases each, so omitting the positional
+    Both sample projects declare two use-cases each, so omitting the positional
     is a hard error listing them — never a silent pick, and never a no-op.
     No host is leased: the refusal is settled from configuration, above the
     first device touch, so this test contacts no daemon.
@@ -463,13 +465,13 @@ def test_e2e_up_with_no_use_case_names_the_declared_ones(tmp_path):
         "docker",
         "compose",
         "up",
-        roots=f"{REPO1}{os.pathsep}{REPO2}",
+        roots=f"{PROJECT1}{os.pathsep}{PROJECT2}",
         xdir=tmp_path,
     )
     output = " ".join((result.stdout + result.stderr).split())
     assert result.returncode == 1, output
     assert "use-cases are declared" in output, output
-    for name in (_REPO1_USE_CASE, _MERGED_USE_CASE, "repo2"):
+    for name in (_PROJECT1_USE_CASE, _MERGED_USE_CASE, "project2"):
         assert name in output, f"the refusal must name {name!r}:\n{output}"
     assert "Traceback" not in output, f"unexpected traceback:\n{output}"
 
@@ -481,7 +483,7 @@ def test_e2e_ps_lists_running_containers(teardown_after, docker_host, tmp_path):
         "docker",
         "compose",
         "up",
-        _REPO1_USE_CASE,
+        _PROJECT1_USE_CASE,
         "--parent",
         docker_host,
         "--build",
@@ -492,7 +494,9 @@ def test_e2e_ps_lists_running_containers(teardown_after, docker_host, tmp_path):
     assert ps.returncode == 0, ps.stderr
     # The compose project is `<lab>-<usecase>-<suffix>` (spec §9) — no
     # `otto-` prefix any more: the deployment belongs to the product.
-    assert f"unix-{_REPO1_USE_CASE}-{suffix}" in ps.stdout or "repo1-api" in ps.stdout, ps.stdout
+    assert f"unix-{_PROJECT1_USE_CASE}-{suffix}" in ps.stdout or "project1-api" in ps.stdout, (
+        ps.stdout
+    )
 
 
 def test_e2e_default_parent_serves_up_ps_and_logs_with_no_flag(
@@ -550,20 +554,20 @@ def test_e2e_default_parent_serves_up_ps_and_logs_with_no_flag(
 # ---------------------------------------------------------------------------
 # Use-cases: the merged displacement pair (spec §4, §9, §10, §12)
 #
-# repo1 provides the REAL `edge` at priority 10; repo2 provides a mock at 0
-# and stands down. Both repos also contribute an unconditional fragment, so a
+# project1 provides the REAL `edge` at priority 10; project2 provides a mock at 0
+# and stands down. Both projects also contribute an unconditional fragment, so a
 # full `integration` deployment is `api` + `worker` + `edge` in ONE compose
 # project — the merge these tests exist to drive through the actual binary.
 # ---------------------------------------------------------------------------
 
-_BOTH_REPOS = f"{REPO1}{os.pathsep}{REPO2}"
+_BOTH_REPOS = f"{PROJECT1}{os.pathsep}{PROJECT2}"
 
 
 def test_e2e_use_cases_reports_the_displacement(tmp_path):
     """`otto docker use-cases` is the inventory view (spec §10).
 
     Read-only: it resolves selection and the parent and reports them, contacts
-    nothing, and creates no output dir. Both repos' fragments must appear,
+    nothing, and creates no output dir. Both projects' fragments must appear,
     and the loser must be annotated as displaced — the whole point of the
     verb is that you can see who won a capability before deploying.
     """
@@ -578,29 +582,29 @@ def test_e2e_use_cases_reports_the_displacement(tmp_path):
     out = _flat(result.stdout + result.stderr)
     assert result.returncode == 0, out
     assert f"use-case {_MERGED_USE_CASE}" in out, out
-    # Every candidate fragment is listed — both repos, winners and losers.
+    # Every candidate fragment is listed — both projects, winners and losers.
     #
     # Asserted through the `provides` column, NOT the `fragment` one: the
-    # fragment cell is built as `<repo>[<handles>]`, and while that cell is now
+    # fragment cell is built as `<project>[<handles>]`, and while that cell is now
     # escape()d (T16 — unescaped, rich ate the bracketed half as console markup
-    # and a repo's two fragments rendered identically), it is also the cell most
+    # and a project's two fragments rendered identically), it is also the cell most
     # likely to WRAP at whatever width the e2e subprocess console picks. The
     # bracket rendering is pinned width-independently by
     # tests/unit/docker/test_cli.py; the columns asserted here are the ones that
     # prove what this verb is FOR.
-    assert "edge (priority 10)" in out, f"repo1's winning provider is missing:\n{out}"
-    assert "edge (priority 0)" in out, f"repo2's mock provider is missing:\n{out}"
+    assert "edge (priority 10)" in out, f"project1's winning provider is missing:\n{out}"
+    assert "edge (priority 0)" in out, f"project2's mock provider is missing:\n{out}"
     assert "EDGE_ADDR" in out, f"the env KEY names must be listed (never values):\n{out}"
     assert "displaced" in out, out
     # The sentence under the table names who won, at what priority, and who
     # stood down — and calls NEITHER priority the higher one.
-    assert "edge goes to repo1 (priority 10); repo2 (priority 0) stands down" in out, out
+    assert "edge goes to project1 (priority 10); project2 (priority 0) stands down" in out, out
     # Read-only verbs produce no per-invocation output dir.
     assert_no_output_dir(tmp_path)
 
 
 def test_e2e_merged_use_case_up_then_down(teardown_after, docker_host, tmp_path):
-    """`up integration` merges both repos into one stack; `down` reverses it."""
+    """`up integration` merges both projects into one stack; `down` reverses it."""
     suffix = teardown_after
     up = _run_otto(
         "docker",
@@ -617,9 +621,10 @@ def test_e2e_merged_use_case_up_then_down(teardown_after, docker_host, tmp_path)
     out = up.stdout + up.stderr
     assert up.returncode == 0, out
     assert "pull access denied" not in out, (
-        "`--build` must build both repos' images before composing — a pull error means one wasn't"
+        "`--build` must build both projects' images before composing — "
+        "a pull error means one wasn't"
     )
-    # One project, one report line, three services from two repos.
+    # One project, one report line, three services from two projects.
     assert f"{_MERGED_USE_CASE} on {docker_host} (unix-{_MERGED_USE_CASE}-{suffix})" in up.stdout, (
         up.stdout
     )
@@ -628,7 +633,9 @@ def test_e2e_merged_use_case_up_then_down(teardown_after, docker_host, tmp_path)
             f"{service!r} is missing from the merged stack:\n{up.stdout}"
         )
     # The competition's outcome is reported on the way up, not only by `use-cases`.
-    assert "edge goes to repo1 (priority 10); repo2 (priority 0) stands down" in _flat(up.stdout)
+    assert "edge goes to project1 (priority 10); project2 (priority 0) stands down" in _flat(
+        up.stdout
+    )
 
     down = _run_otto(
         "docker",
@@ -652,12 +659,12 @@ def test_e2e_merged_use_case_up_then_down(teardown_after, docker_host, tmp_path)
 
 
 def test_e2e_provide_flips_the_winner(teardown_after, docker_host, tmp_path):
-    """`--provide edge=repo2` hands the capability to the mock (spec §4).
+    """`--provide edge=project2` hands the capability to the mock (spec §4).
 
     Two things are asserted, and the second is the sharper one: the winner
     can carry a LOWER priority than the fragment it displaced (the override
-    narrows the field to one repo BEFORE ranking), and a loser is excluded
-    WHOLE — repo1's `core` goes with its `edge`, so `api` is not deployed at
+    narrows the field to one project BEFORE ranking), and a loser is excluded
+    WHOLE — project1's `core` goes with its `edge`, so `api` is not deployed at
     all.
     """
     suffix = teardown_after
@@ -667,7 +674,7 @@ def test_e2e_provide_flips_the_winner(teardown_after, docker_host, tmp_path):
         "up",
         _MERGED_USE_CASE,
         "--provide",
-        "edge=repo2",
+        "edge=project2",
         "--parent",
         docker_host,
         "--build",
@@ -677,14 +684,16 @@ def test_e2e_provide_flips_the_winner(teardown_after, docker_host, tmp_path):
     )
     out = up.stdout + up.stderr
     assert up.returncode == 0, out
-    assert "edge goes to repo2 (priority 0); repo1 (priority 10) stands down" in _flat(up.stdout), (
+    assert "edge goes to project2 (priority 0); project1 (priority 10) stands down" in _flat(
+        up.stdout
+    ), (
         f"the report must render the record as it IS — an override can seat a "
         f"lower-priority winner:\n{up.stdout}"
     )
     for service in ("worker", "edge"):
         assert f"{docker_host}.{_MERGED_USE_CASE}.{service}" in up.stdout, up.stdout
     assert f"{docker_host}.{_MERGED_USE_CASE}.api" not in up.stdout, (
-        f"repo1 lost the capability, so its whole fragment — `core` included — "
+        f"project1 lost the capability, so its whole fragment — `core` included — "
         f"must be excluded:\n{up.stdout}"
     )
 
@@ -721,10 +730,10 @@ def test_e2e_dry_run_prints_the_plan_and_starts_nothing(docker_host, tmp_path):
     out = _flat(dry.stdout + dry.stderr)
     assert dry.returncode == 0, f"a dry run is an answer, not a failure:\n{out}"
     assert "Traceback" not in out, out
-    assert f"Resolved plan: {docker_host} <- repo1[core,edge], repo2[core]" in out, out
-    assert "Displaced: edge goes to repo1 (priority 10); repo2 (priority 0) stands down." in out, (
-        out
-    )
+    assert f"Resolved plan: {docker_host} <- project1[core,edge], project2[core]" in out, out
+    assert (
+        "Displaced: edge goes to project1 (priority 10); project2 (priority 0) stands down." in out
+    ), out
     assert "Fragment env keys: ['EDGE_ADDR']" in out, out
     # Spec §12: the EXACT command, not a description of one.
     assert f"docker compose -p unix-{_MERGED_USE_CASE}-{suffix}" in out, out

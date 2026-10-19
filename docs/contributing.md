@@ -921,13 +921,13 @@ never select.
 ### Standing in for a Project
 
 A test that needs a {class}`~otto.config.project.Project` without a project root on disk builds
-one with `fake_repo(name, **overrides)` from `tests/_fixtures/fake_repo.py`,
+one with `fake_project(name, **overrides)` from `tests/_fixtures/fake_project.py`,
 never a hand-built `SimpleNamespace`. The factory returns a real `Project` with
 every field at its declared default, so a reader added to `src/` tomorrow finds
 the attribute it reads; a namespace carries only what its author's code path
 read the day it was written, and breaks the test for an unrelated reason the
 first time a patch reaches further. The module docstring records the two
-incidents that made this the rule; `tests/unit/test_fake_repo_fixture.py` pins
+incidents that made this the rule; `tests/unit/test_fake_project_fixture.py` pins
 the factory against a parsed `Project`.
 
 ### Embedded coverage bed

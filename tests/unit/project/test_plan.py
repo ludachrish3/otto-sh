@@ -14,7 +14,7 @@ from otto.registry import registering_project
 from otto.result import Result
 from otto.utils import Status
 from tests._fixtures.bootstrap_seam import seed_scope_verdicts
-from tests._fixtures.fake_repo import fake_repo
+from tests._fixtures.fake_project import fake_project
 
 
 class _Planned:
@@ -47,7 +47,7 @@ class _Overriding(_Host):
 
 
 class _Ctx:
-    """OttoContext double: the lab's hosts, the repos and the repo view seam the walk uses."""
+    """OttoContext double: the lab's hosts, the projects and the project view seam the walk uses."""
 
     for_project = OttoContext.for_project
     _resolve_scopes = OttoContext._resolve_scopes  # what scopes_of(ctx) reads; seeded below
@@ -58,7 +58,7 @@ class _Ctx:
         seed_scope_verdicts(self, {})
         self.include_projects = ()
         self.exclude_projects = tuple(exclude_projects)
-        # {repo: [host ids]}: the repo view's fleet, narrower than the lab's.
+        # {project: [host ids]}: the project view's fleet, narrower than the lab's.
         self.fleets = fleets or {}
 
     def all_hosts(self, _scope_owner=None, **kw):
@@ -69,7 +69,7 @@ class _Ctx:
 
 
 def _wire(monkeypatch, project_names, ctx):
-    ordered = [fake_repo(n) for n in project_names]
+    ordered = [fake_project(n) for n in project_names]
     ctx.projects = ordered
     ctx.ordered_projects = ordered
     monkeypatch.setattr("otto.run_context.get_context", lambda: ctx)
@@ -105,7 +105,7 @@ def test_install_lists_every_owned_product_in_declaration_order_and_lifts_its_ga
     ]
 
 
-def test_uninstall_walks_repos_in_reverse(monkeypatch):
+def test_uninstall_walks_projects_in_reverse(monkeypatch):
     ctx = _Ctx([_Host("h1")])
     _wire(monkeypatch, ["r1", "r2"], ctx)
     assert [p.project for p in plan_instruction("uninstall", ctx, {})] == ["r2", "r1"]
@@ -129,7 +129,7 @@ def _override_gap(cls):
     ]
 
 
-def test_an_overriding_repo_body_is_a_gap_not_a_guess(monkeypatch):
+def test_an_overriding_project_body_is_a_gap_not_a_guess(monkeypatch):
     from otto.cli.run import instruction
 
     with registering_project("r1"):
@@ -150,7 +150,7 @@ def test_an_overriding_repo_body_is_a_gap_not_a_guess(monkeypatch):
 
 def test_an_unmarked_override_is_a_gap_too(monkeypatch):
     # The subclass overrides ``install`` WITHOUT ``@instruction``: no body is attributed to
-    # the repo (``body_for`` finds otto's own), yet the real run dispatches to the override.
+    # the project (``body_for`` finds otto's own), yet the real run dispatches to the override.
     class _Unmarked(ProjectActions):
         async def install(self, opts):  # pragma: no cover
             return Result(Status.Success)
@@ -193,7 +193,7 @@ _ENSURE_OVER_PARTIAL = (
 )
 
 
-def test_ensure_is_a_repo_gap_on_every_repo(monkeypatch):
+def test_ensure_is_a_project_gap_on_every_project(monkeypatch):
     ctx = _Ctx([_Host("h1")])
     _wire(monkeypatch, ["r1", "r2"], ctx)
     plans = plan_instruction("install", ctx, {"ensure": True})
@@ -208,7 +208,7 @@ def test_ensure_without_recover_partial_installs_over_a_partial_lab(monkeypatch)
     assert project.gaps == [_ENSURE_OVER_PARTIAL]
 
 
-def test_ensure_covers_a_repo_whose_body_is_overridden(monkeypatch):
+def test_ensure_covers_a_project_whose_body_is_overridden(monkeypatch):
     class _Unmarked(ProjectActions):
         async def install(self, opts):  # pragma: no cover
             return Result(Status.Success)
@@ -261,7 +261,7 @@ def test_a_host_override_does_not_claim_the_default_log_haul(monkeypatch):
     assert gap_debug == "debug logs: /g are swept once after every project"
 
 
-def test_the_debug_sweep_is_named_even_for_an_overridden_repo(monkeypatch):
+def test_the_debug_sweep_is_named_even_for_an_overridden_project(monkeypatch):
     class _Unmarked(ProjectActions):
         async def uninstall(self, opts):  # pragma: no cover
             return Result(Status.Success)
@@ -297,7 +297,7 @@ def test_install_tools_toolchain_is_a_host_gap(monkeypatch):
     assert quiet.hosts[0].gaps == []
 
 
-def test_each_repo_is_previewed_on_its_own_view_of_the_fleet(monkeypatch):
+def test_each_project_is_previewed_on_its_own_view_of_the_fleet(monkeypatch):
     ctx = _Ctx([_Host("h1"), _Host("h2")], fleets={"r2": ["h2"]})
     _wire(monkeypatch, ["r1", "r2"], ctx)
     r1, r2 = plan_instruction("install", ctx, {})
@@ -350,13 +350,13 @@ def test_a_host_overriding_stage_and_install_names_stage_first(monkeypatch):
     assert gap.startswith(f"`{host_cls.__module__}.{host_cls.__qualname__}.stage`")
 
 
-def test_install_tools_walks_repos_forward(monkeypatch):
+def test_install_tools_walks_projects_forward(monkeypatch):
     ctx = _Ctx([_Host("h1")])
     _wire(monkeypatch, ["r1", "r2"], ctx)
     assert [p.project for p in plan_instruction("install-tools", ctx, {})] == ["r1", "r2"]
 
 
-def test_a_switched_off_repo_is_skipped_without_a_warning(monkeypatch, caplog):
+def test_a_switched_off_project_is_skipped_without_a_warning(monkeypatch, caplog):
     ctx = _Ctx([_Host("h1")], exclude_projects=["r2"])
     _wire(monkeypatch, ["r1", "r2"], ctx)
     with caplog.at_level("WARNING"):

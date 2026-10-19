@@ -15,7 +15,7 @@ import pytest
 
 from otto.config.coverage_settings import CoverageConfigError, load_hosts_pattern
 from otto.coverage.collect import collect_coverage
-from tests._fixtures.fake_repo import fake_repo
+from tests._fixtures.fake_project import fake_project
 
 
 class TestLoadHostsPattern:
@@ -41,6 +41,6 @@ class TestLoadHostsPattern:
 async def test_collect_coverage_refuses_a_non_string_selector(tmp_path):
     # The caller-level contract: the loader's refusal propagates out of
     # collect_coverage as the CoverageConfigError its callers already print.
-    project = fake_repo(settings={"coverage": {"hosts": ["host1", "host2"]}})
+    project = fake_project(settings={"coverage": {"hosts": ["host1", "host2"]}})
     with pytest.raises(CoverageConfigError, match="hosts must be a string"):
         await collect_coverage(tmp_path, projects=[project])

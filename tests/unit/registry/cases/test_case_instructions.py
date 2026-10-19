@@ -29,7 +29,7 @@ COVERS = [
     "otto.instruction_catalog:INSTRUCTIONS",
 ]
 
-_REPO = "case-repo"
+_PROJECT = "case-project"
 
 
 def _handler(i: int):
@@ -94,9 +94,9 @@ def test_the_decorator_credits_the_decorating_module():
 def test_project_actions_raw_case():
     conformance.assert_raw_registry(
         PROJECT_ACTIONS,
-        make=lambda i: (_REPO, ProjectActionsEntry(_CLASSES[i], ())),
-        invalid=("case-other-repo", ProjectActionsEntry(_CLASSES[0], ())),
-        require_repo=_REPO,
+        make=lambda i: (_PROJECT, ProjectActionsEntry(_CLASSES[i], ())),
+        invalid=("case-other-project", ProjectActionsEntry(_CLASSES[0], ())),
+        require_project=_PROJECT,
     )
 
 
@@ -135,18 +135,18 @@ def test_first_party_actions_raw_case():
 
 def test_project_actions_wrapper_case():
     cls = _actions_class(20, "__c-body")
-    with registering_project(_REPO):
+    with registering_project(_PROJECT):
         conformance.assert_wrapper_matches_raw(
             PROJECT_ACTIONS,
             via_wrapper=functools.partial(register_project_actions, cls),
-            record_for=lambda: ProjectActionsEntry(cls, _bodies_of(cls, _REPO)),
+            record_for=lambda: ProjectActionsEntry(cls, _bodies_of(cls, _PROJECT)),
         )
         register_project_actions(cls)
-        (body,) = PROJECT_ACTIONS.get(_REPO).bodies
-        assert (body.name, body.owner_class, body.project) == ("__c-body", cls, _REPO)
+        (body,) = PROJECT_ACTIONS.get(_PROJECT).bodies
+        assert (body.name, body.owner_class, body.project) == ("__c-body", cls, _PROJECT)
 
 
-def test_project_actions_refuse_a_registration_outside_a_repo():
+def test_project_actions_refuse_a_registration_outside_a_project():
     from otto.registry import RegistrationRefused
 
     with pytest.raises(RegistrationRefused):
@@ -159,7 +159,7 @@ def test_the_instructions_view_case():
         STANDALONE_INSTRUCTIONS.register(name, _standalone(name, 4))
 
     def clash() -> None:
-        with registering_project(_REPO):
+        with registering_project(_PROJECT):
             STANDALONE_INSTRUCTIONS.register("install", _standalone("install", 5))
 
     conformance.assert_view(
@@ -172,11 +172,11 @@ def test_the_instructions_view_case():
 
 def test_the_project_instructions_view_case():
     def contribute(name: str) -> None:
-        with registering_project(_REPO):
+        with registering_project(_PROJECT):
             register_project_actions(_actions_class(30, name))
 
     def clash() -> None:
-        # A second repo restating __v_one's walk differently: a derivation conflict.
+        # A second project restating __v_one's walk differently: a derivation conflict.
         @instruction(name="__v_one", walk="reverse")
         async def run(self) -> None: ...
 

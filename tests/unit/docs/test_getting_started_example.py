@@ -20,11 +20,11 @@ from otto.testing import assert_reservation_backend_conforms
 from tests._fixtures.gs_example import EXAMPLE, load_example_lab
 from tests._fixtures.gs_example import LIBS as _LIBS
 from tests._fixtures.gs_example import import_gs_example as _import_gs_example
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-TWIN = PROJECT_ROOT / "docs" / "examples" / "getting-started-inventory"
-_MIRROR_SOURCE = PROJECT_ROOT / "tests" / "custom_hosts" / "custom_hosts" / "zephyr_inline.py"
-_API_SAMPLE = PROJECT_ROOT / "src" / "otto" / "examples" / "session_setup.py"
+TWIN = CHECKOUT_ROOT / "docs" / "examples" / "getting-started-inventory"
+_MIRROR_SOURCE = CHECKOUT_ROOT / "tests" / "custom_hosts" / "custom_hosts" / "zephyr_inline.py"
+_API_SAMPLE = CHECKOUT_ROOT / "src" / "otto" / "examples" / "session_setup.py"
 _UNIX = ["test1", "test2", "test3"]
 _ATTRS = [
     "id",
@@ -45,7 +45,7 @@ _ATTRS = [
 ]
 
 
-def test_settings_parse_as_a_real_repo() -> None:
+def test_settings_parse_as_a_real_project() -> None:
     project = Project(root=EXAMPLE)
     assert project.name == "gs"
     assert [s.backend for s in project.lab_sources] == ["json"]
@@ -171,7 +171,7 @@ def twin_inventory():
     # The twin's `[inventory]`/`[creds]` tables are a per-project override
     # (spec §8, the same TOML the `.otto/settings.toml` file's own
     # `name`/`version`/`[[lab.sources]]` live in) -- read the way
-    # `otto.inventory.config.build_inventory` reads any active repo's
+    # `otto.inventory.config.build_inventory` reads any active project's
     # declaration, not `load_user_settings` (that model is `extra="forbid"`
     # for a standalone `~/.otto/settings.toml` and would reject this file's
     # other top-level keys). The `[creds]` table rides along -- the twin's
@@ -254,7 +254,7 @@ def test_the_example_reservation_backend_reports_open_ended_rows() -> None:
     assert all(r.start is None and r.end is None for r in rows)
 
 
-def test_the_twin_is_a_real_repo_that_shares_the_examples_project_code() -> None:
+def test_the_twin_is_a_real_project_that_shares_the_examples_project_code() -> None:
     project = Project(root=TWIN)
     assert project.init == ["gs_example"]
     assert [p.name for p in project.libs] == ["libs"]  # ../getting-started/libs, anchored

@@ -164,7 +164,7 @@ def test_detect_for_lab_with_coverage_config_passes_pattern_and_containers(monke
     host = _host("h1", _product("app", True))
 
     def fake_get_cov_config(projects):
-        assert projects == ["repo"]
+        assert projects == ["proj"]
         return {"hosts": "sensor.*"}
 
     def fake_load_hosts_pattern(cov_config):
@@ -176,7 +176,7 @@ def test_detect_for_lab_with_coverage_config_passes_pattern_and_containers(monke
         calls["include_containers"] = include_containers
         return [host]
 
-    patch_bootstrap(monkeypatch, ["repo"])
+    patch_bootstrap(monkeypatch, ["proj"])
     monkeypatch.setattr("otto.config.coverage_settings.get_cov_config", fake_get_cov_config)
     monkeypatch.setattr("otto.config.coverage_settings.load_hosts_pattern", fake_load_hosts_pattern)
     monkeypatch.setattr("otto.fleet.all_hosts", fake_all_hosts)

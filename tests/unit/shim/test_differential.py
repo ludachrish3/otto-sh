@@ -22,7 +22,7 @@ from otto.cli.main import _completion_collectors
 from otto.config import completion_cache as cc
 from otto.config.completion_tree import build_shim_payload
 from otto.config.project import PYTEST_CONFIG_NAMES
-from tests._fixtures.shim_repo import make_shim_repo
+from tests._fixtures.shim_project import make_shim_project
 
 EXPECTED_HANDOVER_REASONS = {
     "live",  # a completer that must run product code (a live source)
@@ -124,16 +124,16 @@ def _seed_observed(projects) -> None:
 
 
 def _seed_matching_tables(projects) -> None:
-    """A current per-file table, as a whole-tree collection of this SUT records it.
+    """A current per-file table, as a whole-tree collection of this project records it.
 
     Both sides answer a test-name or ``-m`` TAB from it: the shim by its own
     stat pass, Typer through ``completion_view``. ``test_gen`` stands for a
     generated test, which no reading of the source could find. The registered
-    markers are what pytest registers here: the SUT's declared ``slow`` and
+    markers are what pytest registers here: the project's declared ``slow`` and
     ``smoke``, and otto's own (``OTTO_MARKERS``), which its plugin registers
     in every session. Built by hand rather than collected: this process's
-    marker registry is otto-sh's own, and importing the SUT's test files here
-    would warn about the SUT's markers.
+    marker registry is otto-sh's own, and importing the project's test files here
+    would warn about the project's markers.
     """
     from otto.config import collected_tests as ct
     from otto.suite.markers import OTTO_MARKERS
@@ -184,7 +184,7 @@ warm key Typer's TAB sees (see ``_typer``); ``None`` outside a ``world``."""
 
 @pytest.fixture
 def world(tmp_path, monkeypatch):
-    """Bootstrapped repo + written cache + Typer's command tree, once per test.
+    """Bootstrapped project + written cache + Typer's command tree, once per test.
 
     The Typer side runs BOOTSTRAPPED and COLD (``set_completion_names(None)``),
     plus ONE warm key on docker lines: ``docker_default_parent_by_lab``, the
@@ -196,18 +196,18 @@ def world(tmp_path, monkeypatch):
     explicitly NOT it — a warm-side difference would be a stub defect, not a
     shim one.
     """
-    project = make_shim_repo(tmp_path)
+    project = make_shim_project(tmp_path)
     monkeypatch.setenv("OTTOPATH", str(project))
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     monkeypatch.delenv("OTTO_LAB", raising=False)
     bs._reset()  # the bracket tests/unit/cli/test_default_instructions.py:198-202 uses
     try:
         with warnings.catch_warnings():
-            # Should anything import the SUT's test files inside THIS pytest process,
+            # Should anything import the project's test files inside THIS pytest process,
             # whose marker registry is otto-sh's own, `pytest.mark.slow`/`.smoke`
-            # (registered in the SUT's pyproject exactly as a real repo registers
-            # them) would warn, and this repo's `filterwarnings=["error"]` would turn
-            # a foreign repo's valid marker into a BootstrapError. Scoped to that one
+            # (registered in the project's pyproject exactly as a real project registers
+            # them) would warn, and this checkout's `filterwarnings=["error"]` would turn
+            # a foreign project's valid marker into a BootstrapError. Scoped to that one
             # warning class around the bootstrap; nothing else is muted. The cache
             # write below never imports a test file: it reads no test file at all.
             warnings.filterwarnings("ignore", category=pytest.PytestUnknownMarkWarning)
@@ -284,7 +284,7 @@ def _typer(cli, words: str, cword: int, env: dict[str, str], monkeypatch) -> str
     # Typer reads it from the names snapshot — the one key made warm here, read from the
     # cache the real collector wrote; every docker completer sees a miss on any other key
     # and answers live. Only docker lines get it: a warm snapshot also turns ``otto test``'s
-    # option stubs from live to cached (the SUT's own options vanish), which is the warm-stub
+    # option stubs from live to cached (the project's own options vanish), which is the warm-stub
     # path this differential deliberately does not compare.
     saved = registry.get_completion_names()
     if _TYPER_DEFAULT_PARENTS is not None and _subcommand_word(words) == "docker":
@@ -651,7 +651,7 @@ def test_the_decode_memo_refuses_a_tab_that_mutates_what_it_was_handed(tmp_path,
 @pytest.mark.timeout(600)
 @pytest.mark.parametrize("chunk", range(CHUNKS))
 def test_shim_equals_typer_over_the_generated_corpus(world, monkeypatch, chunk):
-    _repo, cli = world
+    _project, cli = world
     cases = _generated_corpus(world)[chunk::CHUNKS]
     answered, reasons = _compare(cli, cases, monkeypatch)
     assert answered >= MIN_ANSWERED_PER_CHUNK, (answered, reasons)
@@ -665,7 +665,7 @@ def test_shim_equals_typer_over_the_generated_corpus(world, monkeypatch, chunk):
 
 
 def test_shim_equals_typer_over_the_hand_written_lines(world, monkeypatch):
-    _repo, cli = world
+    _project, cli = world
     _answered, reasons = _compare(cli, HAND_WRITTEN, monkeypatch)
     assert set(reasons) <= EXPECTED_HANDOVER_REASONS, reasons
     unknowns = {r: n for r, n in reasons.items() if r.startswith("unknown ")}
@@ -673,13 +673,13 @@ def test_shim_equals_typer_over_the_hand_written_lines(world, monkeypatch):
 
 
 def test_the_merged_test_flags_complete_from_the_shim(world, monkeypatch):
-    """``otto test --de<TAB>`` offers ``--depth``, a flag the repo registered for ``test``.
+    """``otto test --de<TAB>`` offers ``--depth``, a flag the project registered for ``test``.
 
     Pins that the differential is not vacuous for the verb-wide flags: both
     sides answer, and the answer holds the registered flag, not just whatever
     the two happen to agree on.
     """
-    _repo, cli = world
+    _project, cli = world
     got, reason = _shim("otto test --de", 2, {})
     assert got is not None, reason
     assert "--depth" in got.split("\n")
@@ -732,7 +732,7 @@ def _age_the_check(seconds: float) -> None:
 
 def test_a_current_table_answers_every_tests_site_and_asks_for_no_check(world, monkeypatch):
     """A table written inside the check window: answered, and no background check."""
-    _repo, cli = world
+    _project, cli = world
     outcomes = _answers_like_typer(cli, monkeypatch)
     assert not any(out.refresh for out in outcomes)
     names = _outcome("otto test ", 2).items
@@ -901,7 +901,7 @@ def test_pytest_config_names_are_pytests_own():
 
 @pytest.mark.parametrize("name", PYTEST_CONFIG_NAMES)
 def test_every_pytest_config_name_sends_the_table_back_to_a_whole_tree(world, name):
-    """Adding (or, for one the SUT already has, editing) any of pytest's config
+    """Adding (or, for one the project already has, editing) any of pytest's config
     files makes ``classify`` want a whole-tree collection and the shim hand a
     tests site over as stale: either may change what pytest collects."""
     from otto.config import collected_tests as ct
@@ -956,7 +956,7 @@ def test_the_docker_sites_are_answered_with_the_seeded_values(
     world, monkeypatch, line, cword, expected
 ):
     """Pins the docker differential lines as non-vacuous: answered, and holding the seed."""
-    _repo, cli = world
+    _project, cli = world
     got, reason = _shim(line, cword, {})
     assert got is not None, reason
     assert got.split("\n") == expected if expected else got == ""

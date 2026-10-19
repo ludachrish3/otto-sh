@@ -68,7 +68,7 @@ def pytest_collection_modifyitems(config, items):
     silently ignored.
 
     Measured on this tree with the real instrument, ``pytest -v
-    tests/integration/busybox_bed/`` under the repo's default ``-n auto
+    tests/integration/busybox_bed/`` under the repository's default ``-n auto
     --dist loadgroup``: WITHOUT the decorator, zero of fifteen nodeids
     carried an ``@busybox_bed`` suffix and the guests were driven from four
     workers at once; WITH it, all fifteen carry the suffix on gw0. Note

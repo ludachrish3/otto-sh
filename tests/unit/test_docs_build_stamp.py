@@ -5,15 +5,15 @@ wrong is asymmetric: a missing banner on dev docs is a small loss, but a "this i
 development documentation" banner on the *released* docs actively misinforms. So
 the no-signal fallback is asserted here as explicitly as the happy paths.
 
-Git-backed cases build a throwaway repo under tmp_path — never the dev checkout.
+Git-backed cases build a throwaway git repository under tmp_path — never the dev checkout.
 """
 
 import importlib.util
 
 from tests._fixtures.gitrepo import TmpGitRepo
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-_MODULE_PATH = PROJECT_ROOT / "scripts" / "docs_build_stamp.py"
+_MODULE_PATH = CHECKOUT_ROOT / "scripts" / "docs_build_stamp.py"
 
 
 def _load_stamp_module():
@@ -23,19 +23,19 @@ def _load_stamp_module():
     return module
 
 
-def _make_repo(tmp_path, *, tag=None, extra_commits=0, dirty=False):
-    """A minimal git repo, optionally tagged and/or advanced past the tag."""
-    repo = TmpGitRepo(tmp_path / "repo")
-    repo.write("f.txt", "one\n")
-    repo.commit("one")
+def _make_git_repo(tmp_path, *, tag=None, extra_commits=0, dirty=False):
+    """A minimal git repository, optionally tagged and/or advanced past the tag."""
+    git_repo = TmpGitRepo(tmp_path / "git_repo")
+    git_repo.write("f.txt", "one\n")
+    git_repo.commit("one")
     if tag is not None:
-        repo.git("tag", tag)
+        git_repo.git("tag", tag)
     for n in range(extra_commits):
-        repo.write("f.txt", f"more {n}\n")
-        repo.commit(f"more {n}")
+        git_repo.write("f.txt", f"more {n}\n")
+        git_repo.commit(f"more {n}")
     if dirty:
-        repo.write("f.txt", "uncommitted\n")
-    return repo.root
+        git_repo.write("f.txt", "uncommitted\n")
+    return git_repo.root
 
 
 # -- Tier 1: Read the Docs environment ----------------------------------------
@@ -49,7 +49,7 @@ def test_rtd_tag_build_is_a_release(tmp_path):
             "READTHEDOCS_VERSION": "v0.9.0",
             "READTHEDOCS_GIT_COMMIT_HASH": "ded87ca6deadbeef",
         },
-        repo=_make_repo(tmp_path),
+        repo=_make_git_repo(tmp_path),
     )
     assert stamp.is_release is True
     assert stamp.base_tag == "v0.9.0"
@@ -63,7 +63,7 @@ def test_rtd_branch_build_is_not_a_release(tmp_path):
             "READTHEDOCS_VERSION": "latest",
             "READTHEDOCS_GIT_COMMIT_HASH": "ded87ca6deadbeef",
         },
-        repo=_make_repo(tmp_path),
+        repo=_make_git_repo(tmp_path),
     )
     assert stamp.is_release is False
     assert stamp.commit == "ded87ca6"
@@ -74,7 +74,7 @@ def test_rtd_external_build_is_not_a_release(tmp_path):
     mod = _load_stamp_module()
     stamp = mod.build_stamp(
         env={"READTHEDOCS_VERSION_TYPE": "external", "READTHEDOCS_VERSION": "271"},
-        repo=_make_repo(tmp_path),
+        repo=_make_git_repo(tmp_path),
     )
     assert stamp.is_release is False
 
@@ -84,7 +84,7 @@ def test_rtd_env_wins_over_git(tmp_path):
     mod = _load_stamp_module()
     stamp = mod.build_stamp(
         env={"READTHEDOCS_VERSION_TYPE": "branch", "READTHEDOCS_VERSION": "latest"},
-        repo=_make_repo(tmp_path, tag="v0.9.0"),
+        repo=_make_git_repo(tmp_path, tag="v0.9.0"),
     )
     assert stamp.is_release is False
 
@@ -94,7 +94,7 @@ def test_rtd_env_wins_over_git(tmp_path):
 
 def test_git_exactly_on_tag_is_a_release(tmp_path):
     mod = _load_stamp_module()
-    stamp = mod.build_stamp(env={}, repo=_make_repo(tmp_path, tag="v0.9.0"))
+    stamp = mod.build_stamp(env={}, repo=_make_git_repo(tmp_path, tag="v0.9.0"))
     assert stamp.is_release is True
     assert stamp.base_tag == "v0.9.0"
     assert stamp.commits_since == 0
@@ -102,7 +102,7 @@ def test_git_exactly_on_tag_is_a_release(tmp_path):
 
 def test_git_past_tag_reports_distance(tmp_path):
     mod = _load_stamp_module()
-    stamp = mod.build_stamp(env={}, repo=_make_repo(tmp_path, tag="v0.9.0", extra_commits=3))
+    stamp = mod.build_stamp(env={}, repo=_make_git_repo(tmp_path, tag="v0.9.0", extra_commits=3))
     assert stamp.is_release is False
     assert stamp.base_tag == "v0.9.0"
     assert stamp.commits_since == 3
@@ -112,21 +112,21 @@ def test_git_past_tag_reports_distance(tmp_path):
 def test_git_dirty_on_tag_is_not_a_release(tmp_path):
     """Uncommitted edits mean the build does not match the tag it sits on."""
     mod = _load_stamp_module()
-    stamp = mod.build_stamp(env={}, repo=_make_repo(tmp_path, tag="v0.9.0", dirty=True))
+    stamp = mod.build_stamp(env={}, repo=_make_git_repo(tmp_path, tag="v0.9.0", dirty=True))
     assert stamp.is_release is False
 
 
 # -- Tier 3: no signal ---------------------------------------------------------
 
 
-def test_untagged_repo_falls_back_to_silence(tmp_path):
+def test_untagged_git_repo_falls_back_to_silence(tmp_path):
     mod = _load_stamp_module()
-    stamp = mod.build_stamp(env={}, repo=_make_repo(tmp_path))
+    stamp = mod.build_stamp(env={}, repo=_make_git_repo(tmp_path))
     assert stamp.is_release is True
     assert stamp.base_tag is None
 
 
-def test_missing_repo_falls_back_to_silence(tmp_path):
+def test_missing_git_repo_falls_back_to_silence(tmp_path):
     """An sdist build has no .git at all — stay quiet rather than warn falsely."""
     mod = _load_stamp_module()
     stamp = mod.build_stamp(env={}, repo=tmp_path / "nope")

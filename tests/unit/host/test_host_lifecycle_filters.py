@@ -1,6 +1,6 @@
 """Owner-scoped product lifecycle, ``cleanup``, and ``is_clean``.
 
-The owner filter is what keeps one repo's default actions off another repo's
+The owner filter is what keeps one project's default actions off another project's
 products on a shared host: every lifecycle verb takes ``owner=None`` (the
 pre-owner behavior — all products) and narrows to ``Product.owner == owner``
 when asked. ``is_installed``'s empty-list rule applies to the FILTERED list,
@@ -144,15 +144,15 @@ async def test_owner_none_keeps_the_pre_owner_behavior(recording_host):
 async def test_is_installed_with_owner_and_no_owned_products_is_false(recording_host):
     # Mirrors the empty-products rule: nothing that could be installed is not
     # "installed". Kills: all([]) vacuous truth on the FILTERED list, which
-    # would report a repo installed on every host it never deployed to.
+    # would report a project installed on every host it never deployed to.
     recording_host.products = [_ScriptedProduct("b", owner="other", installed=True)]
     assert await recording_host.is_installed(owner="acme") is False
 
 
 @pytest.mark.asyncio
-async def test_is_installed_ignores_another_repos_missing_product(recording_host):
-    # Kills: the filter being dropped on the read verbs — repo A would report
-    # "not installed" because repo B has not deployed here.
+async def test_is_installed_ignores_another_projects_missing_product(recording_host):
+    # Kills: the filter being dropped on the read verbs — project A would report
+    # "not installed" because project B has not deployed here.
     recording_host.products = [
         _ScriptedProduct("a", owner="acme", installed=True),
         _ScriptedProduct("b", owner="other", installed=False),
@@ -175,7 +175,7 @@ async def test_is_uninstalled_carries_the_owner_through(recording_host):
 # Owner filter on the dev-tool lifecycle
 #
 # The twin of the product filter above, and it exists for the same reason: the
-# per-repo project actions drive these two verbs owner-scoped, so the filter
+# per-project actions drive these two verbs owner-scoped, so the filter
 # has to be IN the verb. It was a pair of module-level walkers in
 # otto.project.actions until the verbs learned ``owner=``; the tests came with
 # it, because the behaviour they pin is the behaviour, wherever it lives.
@@ -184,8 +184,8 @@ async def test_is_uninstalled_carries_the_owner_through(recording_host):
 
 @pytest.mark.asyncio
 async def test_install_dev_tools_owner_filter_touches_only_owned_tools(recording_host):
-    # Kills: forgetting the filter — repo A's install_tools would stage and
-    # install repo B's tooling, the cross-repo bleed the owner scope forbids.
+    # Kills: forgetting the filter — project A's install_tools would stage and
+    # install project B's tooling, the cross-project bleed the owner scope forbids.
     events = []
     recording_host.dev_tools = [
         _ScriptedTool("mine", owner="acme", events=events),
@@ -199,7 +199,7 @@ async def test_install_dev_tools_owner_filter_touches_only_owned_tools(recording
 async def test_install_dev_tools_owner_none_keeps_the_pre_owner_behavior(recording_host):
     # Kills: treating None as a sentinel owner value (matching only unowned
     # tools) — `otto host <id> install-tools` would go silent on every lab
-    # whose tools are attached by a repo.
+    # whose tools are attached by a project.
     events = []
     recording_host.dev_tools = [
         _ScriptedTool("mine", owner="acme", events=events),
@@ -240,7 +240,7 @@ async def test_uninstall_dev_tools_owner_filter_removes_only_owned_tools(recordi
 @pytest.mark.asyncio
 async def test_uninstall_dev_tools_is_best_effort_and_reports_the_first_failure(recording_host):
     # Kills: returning at the first failure — a tool that refuses to go would
-    # strand the rest of the repo's tooling on the board.
+    # strand the rest of the project's tooling on the board.
     events = []
     recording_host.dev_tools = [
         _ScriptedTool("stuck", owner="acme", events=events, fail_on="uninstall"),
@@ -314,7 +314,7 @@ async def test_cleanup_is_best_effort_and_reports_the_first_failure(recording_ho
 
 @pytest.mark.asyncio
 async def test_cleanup_removes_dev_tools_through_the_extracted_verb(recording_host, tmp_path):
-    # Kills: a re-inlined tool loop in cleanup. The per-repo project actions
+    # Kills: a re-inlined tool loop in cleanup. The per-project actions
     # call uninstall_dev_tools(owner=…) for their half of the same teardown, so
     # a second copy here drifts from it the moment either changes -- exactly
     # the reason remove_toolchain_tools was extracted below.
@@ -338,7 +338,7 @@ async def test_cleanup_removes_dev_tools_through_the_extracted_verb(recording_ho
 @pytest.mark.asyncio
 async def test_cleanup_forwards_the_log_flags_to_uninstall(recording_host, tmp_path):
     # Kills: flags accepted at the cleanup seam and dropped one level down —
-    # the per-repo walk turns debug logs off exactly this way.
+    # the per-project walk turns debug logs off exactly this way.
     seen = {}
 
     async def _uninstall(get_product_logs=True, get_debug_logs=True, owner=None):
@@ -418,7 +418,7 @@ async def test_is_clean_refuses_under_a_dry_run(recording_host):
 #
 # Extracted from cleanup/is_clean because the orchestrator needs exactly these
 # two steps ON THEIR OWN: one toolchain serves every owner on a host, so the
-# per-repo walk must not touch it and the lab-level verb sweeps it once. Two
+# per-project walk must not touch it and the lab-level verb sweeps it once. Two
 # copies of "which path is the tool at" is the drift this extraction prevents,
 # so the tests below pin BOTH the helpers and the fact that cleanup/is_clean
 # go through them.

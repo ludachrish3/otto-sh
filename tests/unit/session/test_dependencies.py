@@ -10,7 +10,7 @@ from otto.env.preflight import PreflightResult, Unsatisfied
 from otto.labs.loader import Lab
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result, seed_scope_verdicts
 from tests._fixtures.bootstrapstub import bootstrap_stub
-from tests._fixtures.fake_repo import fake_repo
+from tests._fixtures.fake_project import fake_project
 from tests._fixtures.scoping import verdict
 
 _BAD = Unsatisfied(project="acme", requirement="x>=1", found="0.1")
@@ -28,19 +28,19 @@ def _ctx(
     ctx = OttoContext(
         lab=Lab(name="t"),
         exclude_projects=exclude,
-        bootstrap=fake_bootstrap_result([], ordered=_REPOS),
+        bootstrap=fake_bootstrap_result([], ordered=_PROJECTS),
     )
     seed_scope_verdicts(ctx, scopes or {})
     return ctx
 
 
-_REPOS = [fake_repo("acme"), fake_repo("beta")]
+_PROJECTS = [fake_project("acme"), fake_project("beta")]
 
 
 def _preflight(monkeypatch: pytest.MonkeyPatch, *, unsatisfied, warnings) -> "list[Any]":
-    """Stub the preflight; the returned list records each repos argument.
+    """Stub the preflight; the returned list records each projects argument.
 
-    The composition root answers OTHER repos than the context carries, so a
+    The composition root answers OTHER projects than the context carries, so a
     check that read it instead of the context is caught.
     """
     seen: list[Any] = []
@@ -50,7 +50,7 @@ def _preflight(monkeypatch: pytest.MonkeyPatch, *, unsatisfied, warnings) -> "li
         return PreflightResult(unsatisfied=list(unsatisfied), warnings=list(warnings))
 
     monkeypatch.setattr(
-        "otto.bootstrap.bootstrap", lambda: bootstrap_stub([], ordered=[fake_repo("elsewhere")])
+        "otto.bootstrap.bootstrap", lambda: bootstrap_stub([], ordered=[fake_project("elsewhere")])
     )
     monkeypatch.setattr("otto.env.preflight.preflight", stub)
     return seen
@@ -63,15 +63,15 @@ def test_nothing_unmet_returns_the_preflight_warnings(monkeypatch):
     assert check_dependencies(_ctx()) == ["could not check beta"]
 
 
-def test_the_preflight_checks_the_contexts_ordered_repos(monkeypatch):
+def test_the_preflight_checks_the_contexts_ordered_projects(monkeypatch):
     from otto.session import check_dependencies
 
     seen = _preflight(monkeypatch, unsatisfied=[], warnings=[])
     check_dependencies(_ctx())
-    assert seen == [_REPOS]
+    assert seen == [_PROJECTS]
 
 
-def test_an_active_repos_unmet_requirement_refuses(monkeypatch):
+def test_an_active_projects_unmet_requirement_refuses(monkeypatch):
     from otto.session import DependencyRefusedError, check_dependencies
 
     _preflight(monkeypatch, unsatisfied=[_BAD], warnings=["could not check beta"])
@@ -81,7 +81,7 @@ def test_an_active_repos_unmet_requirement_refuses(monkeypatch):
     assert exc.value.warnings == ["could not check beta"]
 
 
-def test_an_excluded_repos_unmet_requirement_warns(monkeypatch):
+def test_an_excluded_projects_unmet_requirement_warns(monkeypatch):
     from otto.session import check_dependencies
 
     _preflight(monkeypatch, unsatisfied=[_BAD], warnings=["could not check beta"])
@@ -89,7 +89,7 @@ def test_an_excluded_repos_unmet_requirement_warns(monkeypatch):
     assert warnings == ["could not check beta", _WARNING]
 
 
-def test_a_host_starved_repo_is_inactive_here_so_it_warns(monkeypatch):
+def test_a_host_starved_project_is_inactive_here_so_it_warns(monkeypatch):
     from otto.session import check_dependencies
 
     _preflight(monkeypatch, unsatisfied=[_BAD], warnings=[])
@@ -97,7 +97,7 @@ def test_a_host_starved_repo_is_inactive_here_so_it_warns(monkeypatch):
     assert check_dependencies(ctx) == [_WARNING]
 
 
-def test_a_lab_excluded_repo_warns(monkeypatch):
+def test_a_lab_excluded_project_warns(monkeypatch):
     from otto.session import check_dependencies
 
     _preflight(monkeypatch, unsatisfied=[_BAD], warnings=[])
@@ -105,7 +105,7 @@ def test_a_lab_excluded_repo_warns(monkeypatch):
     assert check_dependencies(ctx) == [_WARNING]
 
 
-def test_an_inactive_repo_does_not_suppress_an_active_one(monkeypatch):
+def test_an_inactive_project_does_not_suppress_an_active_one(monkeypatch):
     from otto.session import DependencyRefusedError, check_dependencies
 
     other = Unsatisfied(project="beta", requirement="y>=2", found="none")

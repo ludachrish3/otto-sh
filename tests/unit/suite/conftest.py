@@ -1,16 +1,16 @@
 """Shared fixtures for the ``tests/unit/suite`` package.
 
 The ``otto_plugins`` family builds the two plugins ``otto test`` hands its
-inner pytest session; the SUT-repo fixtures are shared with ``tests/unit/cli``.
+inner pytest session; the project fixtures are shared with ``tests/unit/cli``.
 """
 
 import pytest
 
-from tests._fixtures.sut_repos import (  # noqa: F401 — fixtures, shared with tests/unit/cli
+from tests._fixtures.run_projects import (  # noqa: F401 — fixtures, shared with tests/unit/cli
     _generated_modules_evicted,
-    one_repo_double,
-    sut_repo,
-    two_sut_repos,
+    one_project,
+    one_project_double,
+    two_projects,
 )
 
 
@@ -25,7 +25,7 @@ def otto_plugins(otto_output_dir):
     """The two plugins ``otto test`` hands its inner session, under an installed context.
 
     Built as ``otto.suite.run._run_pytest_session`` builds them for a run with
-    no stability, monitor or SUT-directory options. The context's
+    no stability, monitor or project-root options. The context's
     ``output_dir`` (and the plugin's ``ArtifactLayout``) live under
     ``otto_output_dir``, and the context stays installed for the whole test,
     so a test can inspect it after the inner session returns.
@@ -108,11 +108,11 @@ def real_shell_bytecode(monkeypatch):
 
     from otto.suite import run
 
-    real_outside_the_repo = run._outside_the_project_root
+    real_outside_the_project = run._outside_the_project_root
 
     @contextlib.contextmanager
     def writing_inside_the_session(**kwargs):
-        with real_outside_the_repo(**kwargs) as args:
+        with real_outside_the_project(**kwargs) as args:
             sys.dont_write_bytecode = False
             try:
                 yield args

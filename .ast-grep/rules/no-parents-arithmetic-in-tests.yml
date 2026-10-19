@@ -1,12 +1,12 @@
 id: no-parents-arithmetic-in-tests
 language: python
 severity: error
-message: import TESTS_ROOT / PROJECT_ROOT from tests/_fixtures/paths.py (or the lab-data paths from tests/_fixtures/labdata.py) — Path(__file__).parents[N] depth arithmetic breaks silently when a file moves.
+message: import TESTS_ROOT / CHECKOUT_ROOT from tests/_fixtures/paths.py (or the lab-data paths from tests/_fixtures/labdata.py) — Path(__file__).parents[N] depth arithmetic breaks silently when a file moves.
 note: >
   A parents[N] count encodes the file's own depth in the tree; moving the
   file one directory deeper silently re-anchors every path built from it
   (2026-08-06 review, gate G9). tests/_fixtures/paths.py exports
-  TESTS_ROOT and PROJECT_ROOT and is the one sanctioned place that derives
+  TESTS_ROOT and CHECKOUT_ROOT and is the one sanctioned place that derives
   them; tests/_fixtures/labdata.py exports the lab-data paths (three of
   the baseline sites were direct bypasses of lab_data_path).
 
@@ -30,11 +30,11 @@ files:
 ignores:
 # Fixture projects + firmware: user-example input data, not otto's tests
 # (sgconfig.yml discipline for tests-scoped rules).
-- tests/repo1/**
-- tests/repo2/**
-- tests/repo3/**
-- tests/repo_broken/**
-- tests/repo_e2e/**
+- tests/project1/**
+- tests/project2/**
+- tests/project3/**
+- tests/project_broken/**
+- tests/project_e2e/**
 - tests/firmware/**
 # The two sanctioned derivation points the rule's message directs to.
 - tests/_fixtures/paths.py

@@ -105,4 +105,4 @@ def fresh_project() -> str:
     survive a bug are reaper-coverable (matches the ``-e2e-`` convention the
     rest of the e2e docker suites use for the same reason).
     """
-    return f"otto-repo1-e2e-{uuid.uuid4().hex[:8]}"
+    return f"otto-project1-e2e-{uuid.uuid4().hex[:8]}"

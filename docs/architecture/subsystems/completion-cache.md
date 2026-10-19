@@ -570,7 +570,7 @@ pins these on a generated project shaped like a real one:
   `test_a_test_name_tab_does_not_scale_with_corpus_size` (a bash test-name
   TAB the shim answers) and `test_cold_rebuild_does_not_scale_with_corpus_size`
   (a cold rebuild; its `workspace` count only).
-- The `test_repo` surface gates a repeated `otto test TestTop0`: its seed is
+- The `test_project` surface gates a repeated `otto test TestTop0`: its seed is
   the same command, so the measured run finds a current table, and its
   session imports the whole generated tree, as every run does.
 

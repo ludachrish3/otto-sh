@@ -109,7 +109,7 @@ class TestInstallerArgv:
     def test_pip_appends_the_passthrough_verbatim_and_last(self, exec_seam, tmp_path):
         """Last is the contract: the operator's tokens must be able to override otto's."""
         env = tmp_path / "env"
-        result = install("pip", env, ["-e", "/repo4"], ["--find-links", "/wheels"])
+        result = install("pip", env, ["-e", "/project4"], ["--find-links", "/wheels"])
 
         assert len(exec_seam) == 1, exec_seam
         argv = exec_seam[0]
@@ -119,7 +119,7 @@ class TestInstallerArgv:
             "pip",
             "install",
             "-e",
-            "/repo4",
+            "/project4",
             "--find-links",
             "/wheels",
         ]
@@ -127,7 +127,7 @@ class TestInstallerArgv:
 
     def test_uv_appends_the_passthrough_verbatim_and_last(self, exec_seam, tmp_path):
         env = tmp_path / "env"
-        install("uv", env, ["-e", "/repo4"], ["--find-links", "/wheels"])
+        install("uv", env, ["-e", "/project4"], ["--find-links", "/wheels"])
 
         assert len(exec_seam) == 1, exec_seam
         assert exec_seam[0] == [
@@ -137,7 +137,7 @@ class TestInstallerArgv:
             "--python",
             str(venv_python(env)),
             "-e",
-            "/repo4",
+            "/project4",
             "--find-links",
             "/wheels",
         ]
@@ -145,7 +145,7 @@ class TestInstallerArgv:
     @pytest.mark.parametrize("backend", ["uv", "pip"])
     def test_no_passthrough_adds_nothing(self, exec_seam, tmp_path, backend):
         """An empty passthrough must not leave a stray token in the argv."""
-        install(backend, tmp_path / "env", ["-e", "/repo4"], [])
+        install(backend, tmp_path / "env", ["-e", "/project4"], [])
 
         assert len(exec_seam) == 1, exec_seam
-        assert exec_seam[0][-2:] == ["-e", "/repo4"]
+        assert exec_seam[0][-2:] == ["-e", "/project4"]

@@ -53,7 +53,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from scripts.collate_support_matrix import FAILURE_SUMMARY_LIMIT
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 from tests._fixtures.support_matrix import (
     MATRIX_PATH,
     SURFACES,
@@ -72,7 +72,7 @@ if TYPE_CHECKING:
 
     from otto.host.capability_grid import HostCapabilities
 
-PAGE_PATH = PROJECT_ROOT / "docs" / "architecture" / "support-matrix.md"
+PAGE_PATH = CHECKOUT_ROOT / "docs" / "architecture" / "support-matrix.md"
 """The rendered page.
 
 GIT-IGNORED and regenerated on every Sphinx build (``docs/conf.py``'s
@@ -81,7 +81,7 @@ GIT-IGNORED and regenerated on every Sphinx build (``docs/conf.py``'s
 in the tree, and the copy that goes stale is the one nothing runs.
 """
 
-FAMILIES_PAGE_PATH = PROJECT_ROOT / "docs" / "cli" / "host" / "families.md"
+FAMILIES_PAGE_PATH = CHECKOUT_ROOT / "docs" / "cli" / "host" / "families.md"
 """The rendered host-families page.
 
 COMMITTED, unlike :data:`PAGE_PATH`, and for the opposite reason. Its source is
@@ -1110,7 +1110,7 @@ def narrowing_mismatch(matrix: dict) -> "list[str]":
         voice = VOICE.get(surface.id)
         if voice is None:
             continue  # `axes_mismatch` owns the missing-entry report.
-        module = PROJECT_ROOT / surface.contract.split("::")[0]
+        module = CHECKOUT_ROOT / surface.contract.split("::")[0]
         rule = _domain_rule(module)
         spans = code_spans(voice.narrowed)
         if rule is None:
@@ -1186,7 +1186,7 @@ def promise_mismatch(matrix: dict) -> "list[str]":
         voice = VOICE.get(surface.id)
         if voice is None or not voice.branches:
             continue  # `axes_mismatch` owns the missing-entry report.
-        module = PROJECT_ROOT / surface.contract.split("::")[0]
+        module = CHECKOUT_ROOT / surface.contract.split("::")[0]
         source = module.read_text(encoding="utf-8")
         for branch in voice.branches:
             if branch.marker not in source:

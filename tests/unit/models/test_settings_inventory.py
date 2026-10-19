@@ -86,7 +86,7 @@ def test_backend_is_required():
         InventoryConfigSpec()
 
 
-def test_user_settings_model_forbids_repo_only_tables():
+def test_user_settings_model_forbids_project_only_tables():
     assert UserSettingsModel().inventory is None
     model = UserSettingsModel.model_validate({"inventory": {"backend": "json", "path": "i.json"}})
     assert model.inventory is not None

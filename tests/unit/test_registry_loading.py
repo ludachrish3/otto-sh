@@ -80,7 +80,7 @@ def test_a_ref_resolved_while_test_files_load_may_register_on_import(tmp_path, m
     )
     monkeypatch.syspath_prepend(str(tmp_path))
     monkeypatch.delitem(sys.modules, "late_widget_mod", raising=False)
-    _from_module("repo_init", home.register, "w", LazyWidget(reg.Ref("late_widget_mod:WIDGET")))
+    _from_module("project_init", home.register, "w", LazyWidget(reg.Ref("late_widget_mod:WIDGET")))
     with reg.loading_test_files():
         assert home.get("w").value == 1
         assert reg.is_loading_test_files()
@@ -153,9 +153,9 @@ def _import_every_module_that_builds_a_registry() -> "list[Construction]":
     """
     import importlib
 
-    from tests._fixtures.paths import PROJECT_ROOT
+    from tests._fixtures.paths import CHECKOUT_ROOT
 
-    rows = _scan_constructions(PROJECT_ROOT / "src" / "otto", "otto")
+    rows = _scan_constructions(CHECKOUT_ROOT / "src" / "otto", "otto")
     for module in sorted({row.module for row in rows}):
         importlib.import_module(module)
     return rows

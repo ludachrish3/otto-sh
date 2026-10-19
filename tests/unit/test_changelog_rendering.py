@@ -11,9 +11,9 @@ the same file: deleting seven of the twelve `commit_parsers` rows silently
 drops 193 of CHANGELOG.md's 649 bullets into the terminal `.*` skip, and a
 test naming only three sections would not notice.
 
-Driven through the REAL renderer against a synthetic repo built in `tmp_path`,
+Driven through the REAL renderer against a synthetic git repository built in `tmp_path`,
 not against otto's own history: the point is to pin the template, and a test
-reading this repo's log would change its own subject matter every commit.
+reading this repository's log would change its own subject matter every commit.
 """
 
 import shutil
@@ -22,9 +22,9 @@ import subprocess
 import pytest
 
 from tests._fixtures.gitrepo import TmpGitRepo
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-CLIFF = PROJECT_ROOT / "cliff.toml"
+CLIFF = CHECKOUT_ROOT / "cliff.toml"
 
 # One commit per shape the config has to tell apart.
 COMMITS = [
@@ -39,7 +39,7 @@ COMMITS = [
     "chore(deps): bump a dependency",
     "chore(deps-dev): bump a dev dependency",
     "build(deps): bump a build dependency",
-    "chore(repo): tidy a thing",
+    "chore(tooling): tidy a thing",
     "chore(release): bump version 1 -> 2",
     "test(link): a test-only change",
     "ci(gha): a workflow change",
@@ -86,9 +86,9 @@ COMMIT_DATE = "2026-01-01T00:00:00Z"
 
 @pytest.fixture(scope="module")
 def rendered(tmp_path_factory) -> str:
-    """CHANGELOG text git-cliff produces for COMMITS under the repo's own config.
+    """CHANGELOG text git-cliff produces for COMMITS under the repository's own config.
 
-    Module-scoped to build the repo once per xdist worker — with `-n auto` the
+    Module-scoped to build the git repository once per xdist worker — with `-n auto` the
     tests are distributed, so this really does run several times; the scope is
     a cost reduction, not an isolation claim. The fixture yields an immutable
     string, so no test can affect another.
@@ -101,16 +101,16 @@ def rendered(tmp_path_factory) -> str:
         "git-cliff is a declared dev dependency (pyproject [dependency-groups] dev) "
         "and this test drives the real renderer — run `uv sync` rather than skipping"
     )
-    repo = TmpGitRepo(tmp_path_factory.mktemp("cliffrepo"), dates=COMMIT_DATE)
+    git_repo = TmpGitRepo(tmp_path_factory.mktemp("cliff_git_repo"), dates=COMMIT_DATE)
     # A prior tag is required, not scenery: the footer template reads
     # `releases[0].previous.version` to build the Unreleased compare link, and
-    # git-cliff fails the whole render on a repo that has never been tagged.
-    repo.write("seed", "x")
-    repo.commit("feat: the released past")
-    repo.git("tag", "v0.1.0")
+    # git-cliff fails the whole render on a git repository that has never been tagged.
+    git_repo.write("seed", "x")
+    git_repo.commit("feat: the released past")
+    git_repo.git("tag", "v0.1.0")
     for i, subject in enumerate(COMMITS):
-        repo.write(f"f{i}", "x")
-        repo.commit(subject)
+        git_repo.write(f"f{i}", "x")
+        git_repo.commit(subject)
     # --offline is not optional. git-cliff fetches api.github.com whenever the
     # config declares a `[remote.*]` section, and PANICS (exit 101, and it
     # writes the reason to a stderr this call used to discard) on any failure
@@ -121,7 +121,7 @@ def rendered(tmp_path_factory) -> str:
     # from silently turning a unit test into a network test.
     proc = subprocess.run(
         [cliff, "--config", str(CLIFF), "--offline", "--unreleased"],
-        cwd=repo.root,
+        cwd=git_repo.root,
         capture_output=True,
         text=True,
         check=False,
@@ -231,22 +231,22 @@ def test_a_correction_lists_the_original_subject_under_its_own_entry(tmp_path) -
     """
     cliff = shutil.which("git-cliff")
     assert cliff, "git-cliff is a declared dev dependency -- run `uv sync` rather than skipping"
-    repo = TmpGitRepo(tmp_path, dates=COMMIT_DATE)
-    repo.write("seed", "x")
-    repo.commit("feat: the released past")
-    repo.git("tag", "v0.1.0")
-    repo.write("beta", "x")
-    target = repo.commit("feat(api): drop Beta quietly")
-    repo.git("tag", "v0.1.1")
-    repo.write("fix", "x")
-    repo.commit(
+    git_repo = TmpGitRepo(tmp_path, dates=COMMIT_DATE)
+    git_repo.write("seed", "x")
+    git_repo.commit("feat: the released past")
+    git_repo.git("tag", "v0.1.0")
+    git_repo.write("beta", "x")
+    target = git_repo.commit("feat(api): drop Beta quietly")
+    git_repo.git("tag", "v0.1.1")
+    git_repo.write("fix", "x")
+    git_repo.commit(
         "fix(api)!: record that dropping Beta broke callers\n\n"
         f"BREAKING CHANGE: Beta is gone.\nCorrects: {target} feat(api): drop Beta quietly"
     )
 
     proc = subprocess.run(
         [cliff, "--config", str(CLIFF), "--offline", "--unreleased"],
-        cwd=repo.root,
+        cwd=git_repo.root,
         capture_output=True,
         text=True,
         check=False,

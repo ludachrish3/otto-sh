@@ -8,7 +8,7 @@ import pytest
 from otto import registry
 from otto.cli import docker as docker_cli
 from otto.config import completion_cache as cc
-from tests._fixtures.sutrepo import touch_settings
+from tests._fixtures.project_scaffold import touch_settings
 
 
 @pytest.fixture

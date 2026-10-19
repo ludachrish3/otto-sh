@@ -9,9 +9,9 @@ paths never swept their hosts). AST-based: docstring example snippets (e.g.
 import ast
 from pathlib import Path
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-SRC = PROJECT_ROOT / "src" / "otto"
+SRC = CHECKOUT_ROOT / "src" / "otto"
 
 # The two modules allowed to call asyncio.run.
 #

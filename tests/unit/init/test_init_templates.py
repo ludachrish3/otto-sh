@@ -137,7 +137,7 @@ def test_lab_readme_documents_the_v2_shape_and_the_migration() -> None:
     for field in ("`resources`", "`metadata`", "`labs`", "`name`", "`id`", "`hosts`"):
         assert field in LAB_README_TEMPLATE
     # The hard cutover has to be named, not implied — a reader arriving from a
-    # v1 repo needs to be told where their `hosts` array went.
+    # v1 project needs to be told where their `hosts` array went.
     assert "Migrating from the hosts array" in LAB_README_TEMPLATE
     assert "are NOT host fields" in LAB_README_TEMPLATE
     for phrase in ("inventory.json", "creds.json", "inventory key", "lab.json over"):

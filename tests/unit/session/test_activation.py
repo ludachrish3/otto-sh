@@ -1,4 +1,4 @@
-"""``otto.session.check_instruction_active`` — a repo-owned instruction needs an active repo."""
+"""``otto.session.check_instruction_active``: a project's instruction needs an active project."""
 
 import pytest
 

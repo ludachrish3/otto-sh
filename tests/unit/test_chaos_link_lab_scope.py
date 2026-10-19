@@ -39,7 +39,7 @@ def test_the_link_chaos_lab_is_closed_and_still_declares_the_unix_link(tmp_path:
     out of the lab (so an honest ``repair --all`` has nothing to fail on).
 
     The SUT's docker use-case also declares local-endpoint placeholder edges
-    (``local--test2.repo1.api``); they are deliberately out of this pin's
+    (``local--test2.project1.api``); they are deliberately out of this pin's
     scope. ``load_lab`` here carries no docker config, so it never sees them,
     and ``repair --all`` skips every local-endpoint edge by its own rule
     (proved on the bed: repaired 1, skipped 3, exit 0)."""

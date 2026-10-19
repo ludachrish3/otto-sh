@@ -17,14 +17,14 @@ from scripts import gate_scope as gs
 from scripts import gate_tip as gt
 from scripts.gate_stamp_common import tree_hash
 from tests._fixtures.gitrepo import git_env
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 from tests.unit.scripts.test_gate_fresh import _published, _stamp_tip
 from tests.unit.scripts.test_gate_scope import _head_paths
 from tests.unit.test_tier_marker_invariants import _makefile_recipes
 
 pytestmark = pytest.mark.interpreter_agnostic
 
-MAKEFILE = (PROJECT_ROOT / "Makefile").read_text()
+MAKEFILE = (CHECKOUT_ROOT / "Makefile").read_text()
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -987,7 +987,7 @@ class TestRunner:
         completed = subprocess.run(
             [
                 sys.executable,
-                str(PROJECT_ROOT / "scripts/gate_tip.py"),
+                str(CHECKOUT_ROOT / "scripts/gate_tip.py"),
                 "--repo",
                 str(repo),
                 "--dry-run",
@@ -1011,7 +1011,7 @@ def _census_scopes():
     head = _head_paths()
 
     def real(rev, path):
-        file = PROJECT_ROOT / path
+        file = CHECKOUT_ROOT / path
         return file.read_text(encoding="utf-8") if file.is_file() else None
 
     def scope(path, *, status="M", texts=None, extra=()):

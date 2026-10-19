@@ -129,18 +129,18 @@ def test_known_surfaces_is_import_budget_s_list_in_order():
 
 
 def test_repo_surfaces_are_every_surface_that_carries_the_generated_repo():
-    assert [s.key for s in import_budget.SURFACES if s.sut_files is not None] == REPO_SURFACES
+    assert [s.key for s in import_budget.SURFACES if s.project_files is not None] == REPO_SURFACES
 
 
 def test_the_fixture_canaries_are_the_repo_surfaces_that_dispatch_its_noop():
     """The canary dispatches the fixture's own `noop`: if that fails, the repo does not run."""
-    from tests._fixtures import generated_repo
+    from tests._fixtures import generated_project
 
-    assert "async def noop(" in generated_repo._REALISTIC_INIT
+    assert "async def noop(" in generated_project._REALISTIC_INIT
     dispatching = [
         s.key
         for s in import_budget.SURFACES
-        if s.sut_files is not None and s.real_entry and s.argv[-2:] == ["run", "noop"]
+        if s.project_files is not None and s.real_entry and s.argv[-2:] == ["run", "noop"]
     ]
     assert dispatching == FIXTURE_CANARIES
     assert set(FIXTURE_CANARIES) <= set(REPO_SURFACES)
@@ -461,8 +461,8 @@ def test_a_canary_the_base_cannot_run_lists_every_repo_surface(tmp_path: Path, c
     assert main(["judge", "--pair", str(base), str(tip), "--minors", "3.10"]) == 0
     out = capsys.readouterr().out
     assert f"not measurable at base:\n  {min(REPO_SURFACES)}: " in out
-    assert f"  help_repo: {because}" in out
-    assert "| help_repo |" not in out, "an unmeasurable surface is not tabled"
+    assert f"  help_project: {because}" in out
+    assert "| help_project |" not in out, "an unmeasurable surface is not tabled"
 
 
 # --- reproduced, decide, stale -----------------------------------------------
@@ -857,7 +857,7 @@ def _repo(tmp_path: Path) -> "tuple[TmpGitRepo, str, str]":
     """A repo with a tagged base commit and a tip commit; returns (repo, base sha, tip sha)."""
     repo = TmpGitRepo(tmp_path / "repo")
     repo.write("scripts/import_budget.py", "# base\n")
-    repo.write("tests/_fixtures/generated_repo.py", "# fixtures v1\n")
+    repo.write("tests/_fixtures/generated_project.py", "# fixtures v1\n")
     base = repo.commit("base")
     repo.git("tag", "v1.0.0")
     repo.write("scripts/import_budget.py", "# tip\n")
@@ -1062,7 +1062,7 @@ def test_a_base_cache_that_is_not_the_base_or_not_this_instrument_is_measured_ag
         again = FakeRunner(versions={"3.10": "3.10.15"})
     elif break_it == "other_instrument":
         # The instrument changed, the subject did not.
-        repo.write("tests/_fixtures/generated_repo.py", "# fixtures v2\n")
+        repo.write("tests/_fixtures/generated_project.py", "# fixtures v2\n")
         repo.commit("fixture change")
     else:
         _edit(base / "3.10.json", _drop(PLAIN))

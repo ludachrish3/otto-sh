@@ -1,0 +1,17 @@
+name = "project_e2e"
+version = "0.1.0"
+libs = [
+    "pylib",
+]
+tests = [
+    "tests",
+]
+init = [
+    "project_e2e_instructions",
+]
+
+[[lab.sources]]
+backend = "json"
+paths = [
+    "../_fixtures/lab_data/tech1",
+]

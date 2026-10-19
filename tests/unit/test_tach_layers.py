@@ -28,7 +28,7 @@ anything". What tach cannot check, this file does:
 import pytest
 
 from scripts import render_module_graph as rmg
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
 
@@ -67,7 +67,7 @@ def owners(modules: "list[str]", files: "list[str]") -> "dict[str, str | None]":
 
 
 def _otto_files() -> "list[str]":
-    src = PROJECT_ROOT / "src"
+    src = CHECKOUT_ROOT / "src"
     return [file.relative_to(src).as_posix() for file in sorted((src / "otto").rglob("*.py"))]
 
 

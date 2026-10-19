@@ -7,7 +7,7 @@ import pytest
 from otto.config.scope import MonitorSettings
 from otto.monitor.errors import MonitorTlsError, ReviewSourceError
 from otto.monitor.review import load_review_document, serve_review
-from tests._fixtures.fake_repo import fake_repo
+from tests._fixtures.fake_project import fake_project
 
 
 def test_unsupported_suffix_is_refused_naming_the_suffix(tmp_path):
@@ -39,10 +39,10 @@ def test_unsupported_db_is_refused(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_serve_review_resolves_tls_from_the_given_repos_before_serving(tmp_path):
+async def test_serve_review_resolves_tls_from_the_given_projects_before_serving(tmp_path):
     src = tmp_path / "x.json"
     src.write_text('{"format": 1, "sessions": []}')
-    bad = fake_repo("r", monitor_settings=MonitorSettings(tls_cert=tmp_path / "missing.pem"))
+    bad = fake_project("r", monitor_settings=MonitorSettings(tls_cert=tmp_path / "missing.pem"))
     with (
         patch("otto.monitor.server.MonitorServer") as server_cls,
         pytest.raises(MonitorTlsError),
@@ -85,7 +85,7 @@ async def test_serve_review_hands_the_server_the_declared_cert_and_key(tmp_path,
     cert, key = tls_pair
     src = tmp_path / "x.json"
     src.write_text('{"format": 1, "sessions": []}')
-    project = fake_repo("r", monitor_settings=MonitorSettings(tls_cert=cert, tls_key=key))
+    project = fake_project("r", monitor_settings=MonitorSettings(tls_cert=cert, tls_key=key))
     server = MagicMock(serve=AsyncMock())
     with patch("otto.monitor.server.MonitorServer", return_value=server) as server_cls:
         await serve_review(src, projects=[project])

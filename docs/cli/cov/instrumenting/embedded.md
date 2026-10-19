@@ -27,7 +27,7 @@ below.
 **The coverage runtime ships inside your extension, not in the base
 image**: an instrumented extension is self-contained — it carries its
 product code, the embedded-gcov runtime, and the entry points otto calls.
-The complete working example in the otto repository is `tests/repo3/product/`
+The complete working example in the otto repository is `tests/project3/product/`
 (build script, CMake, and extension source).
 
 ### One extension, one translation unit
@@ -66,7 +66,7 @@ GCC 12+, and the stock runtime miscompiles against them in two ways**:
 
 The otto repository ships a patch covering both (plus routing the runtime's
 serial output through `printk`) that supports GCC 12 through 14:
-`tests/repo3/third_party/patches/embedded-gcov-zephyr-gcc12plus.patch`.
+`tests/project3/third_party/patches/embedded-gcov-zephyr-gcc12plus.patch`.
 Apply it to your vendored copy:
 
 ```bash
@@ -230,7 +230,7 @@ if stamp not in stamps:
     )
 ```
 
-`tests/repo3/product/build.sh` runs exactly this check on every build; copy
+`tests/project3/product/build.sh` runs exactly this check on every build; copy
 it. It converts a silent wrong-coverage report into an immediate,
 actionable build failure.
 

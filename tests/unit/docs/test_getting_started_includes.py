@@ -8,9 +8,9 @@ and is testable against a scratch tree so it is known to fail.
 import re
 from pathlib import Path
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-_DOCS = PROJECT_ROOT / "docs"
+_DOCS = CHECKOUT_ROOT / "docs"
 _PAGES = _DOCS / "getting-started"
 _INCLUDE = re.compile(
     r"^[ \t]*(?:```|:::)\{literalinclude\}[ \t]+(?P<target>\S+)[ \t]*\n"

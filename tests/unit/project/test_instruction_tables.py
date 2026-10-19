@@ -1,7 +1,7 @@
 """Three writable sources, one constraint, two derived views.
 
 ``STANDALONE_INSTRUCTIONS`` (``@instruction()`` on a plain function),
-``PROJECT_ACTIONS`` (one ``ProjectActions`` class per repo, carrying its
+``PROJECT_ACTIONS`` (one ``ProjectActions`` class per project, carrying its
 bodies) and ``FIRST_PARTY_ACTIONS`` (otto's own class, which
 ``otto.project.actions`` declares) are the only tables anything writes.
 ``PROJECT_INSTRUCTIONS`` and ``INSTRUCTIONS`` are derived from them, with
@@ -30,7 +30,7 @@ from otto.instruction_catalog import (
 from otto.instructions import instruction
 from otto.project import InstallOptions, ProjectActions, register_project_actions
 from otto.registry import DuplicateRegistration, registering_project
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.project_scaffold import make_project
 
 
 def _actions(name: str, method: str = "smoke", **shape):
@@ -45,8 +45,8 @@ def _bare(name: str):
     return type(name, (ProjectActions,), {})
 
 
-def test_otto_s_bodies_come_from_their_own_table_not_a_repo_s():
-    assert PROJECT_ACTIONS.names() == []  # no repo registered anything
+def test_otto_s_bodies_come_from_their_own_table_not_a_project_s():
+    assert PROJECT_ACTIONS.names() == []  # no project registered anything
     assert "install" in PROJECT_INSTRUCTIONS  # derived from FIRST_PARTY_ACTIONS
 
 
@@ -56,7 +56,7 @@ def test_the_views_have_no_mutation_method():
         assert not hasattr(view, "unregister")
 
 
-def test_a_project_instruction_s_entry_has_no_repo_and_the_first_declarer_s_module():
+def test_a_project_instruction_s_entry_has_no_project_and_the_first_declarer_s_module():
     with registering_project("a"):
         register_project_actions(_actions("A"))
     assert INSTRUCTIONS.project("smoke") is None
@@ -97,7 +97,7 @@ def test_a_rejected_contribution_changes_neither_source_nor_view():
     ) == before
 
 
-def test_a_project_declared_over_a_repo_s_standalone_instruction_names_its_owner():
+def test_a_project_declared_over_a_project_s_standalone_instruction_names_its_owner():
     async def smoke() -> None: ...
 
     with registering_project("s"):
@@ -114,7 +114,9 @@ def test_a_project_declared_over_a_repo_s_standalone_instruction_names_its_owner
 
 
 def test_a_standalone_instruction_over_a_project_instruction_is_refused():
-    """From a repo's init import it is the ProjectActions advice; from anywhere else, the clash."""
+    """From a project's init import it is the ProjectActions advice;
+    from anywhere else, the clash.
+    """
     with registering_project("a"):
         register_project_actions(_actions("A"))
 
@@ -214,7 +216,7 @@ def test_two_bodies_for_one_owner_and_name_are_refused():
         PROJECT_ACTIONS.register("a", ProjectActionsEntry(single, (body, body)), overwrite=True)
 
 
-def test_one_class_registered_by_two_repos_is_refused_naming_both():
+def test_one_class_registered_by_two_projects_is_refused_naming_both():
     shared = _actions("Shared")
     with registering_project("a"):
         register_project_actions(shared)
@@ -230,7 +232,7 @@ def test_one_class_registered_by_two_repos_is_refused_naming_both():
     assert "b" not in PROJECT_ACTIONS
 
 
-def test_a_repo_claiming_install_through_the_decorator_gets_today_s_message(monkeypatch):
+def test_a_project_claiming_install_through_the_decorator_gets_today_s_message(monkeypatch):
     monkeypatch.delitem(sys.modules, "otto.project.actions", raising=False)
 
     async def install() -> None: ...
@@ -241,7 +243,7 @@ def test_a_repo_claiming_install_through_the_decorator_gets_today_s_message(monk
     assert "install" not in STANDALONE_INSTRUCTIONS
 
 
-def test_check_project_instruction_options_names_both_repos_on_a_clash():
+def test_check_project_instruction_options_names_both_projects_on_a_clash():
     from otto.params import OptionsCollisionError
     from otto.project.commands import check_project_instruction_options
 
@@ -304,7 +306,7 @@ def test_post_loop_options_check_is_idempotent(tmp_path, monkeypatch):
     for project, cls, field in (("tables-a", "TablesA", "alpha"), ("tables-b", "TablesB", "beta")):
         module = f"{cls.lower()}_init"
         dirs.append(
-            make_sut_repo(
+            make_project(
                 tmp_path / project,
                 name=project,
                 extra=f'libs = ["lib"]\ninit = ["{module}"]\n',
@@ -353,7 +355,7 @@ def test_the_run_group_serves_a_replaced_instruction():
 
 
 @pytest.mark.asyncio
-async def test_run_instruction_refuses_an_inactive_owner_through_the_view_s_repo():
+async def test_run_instruction_refuses_an_inactive_owner_through_the_view_s_project():
     from otto.context import OttoContext
     from otto.instructions import run_instruction
     from otto.labs.loader import Lab
@@ -378,14 +380,14 @@ def test_actions_for_returns_the_registered_class():
     from otto.context import OttoContext
     from otto.labs.loader import Lab
     from otto.project import actions_for
-    from tests._fixtures.fake_repo import fake_repo
+    from tests._fixtures.fake_project import fake_project
 
     cls = _actions("A")
     with registering_project("a"):
         register_project_actions(cls)
     ctx = OttoContext(lab=Lab(name="t"))
-    assert type(actions_for(fake_repo("a"), ctx)) is cls
-    assert type(actions_for(fake_repo("other"), ctx)) is ProjectActions
+    assert type(actions_for(fake_project("a"), ctx)) is cls
+    assert type(actions_for(fake_project("other"), ctx)) is ProjectActions
 
 
 def test_a_registry_check_imports_nothing_from_the_project_layer_in_a_fresh_process():

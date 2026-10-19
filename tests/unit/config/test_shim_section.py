@@ -3,21 +3,21 @@
 import json
 from pathlib import Path
 
-import otto.config.project as config_repo
+import otto.config.project as config_project
 from otto import bootstrap
 from otto.cli.main import PENDING_SUBCMD_ARGS_KEY, _completion_collectors, app
 from otto.config import completion_cache as cc
 from otto.config.cache_sections import SECTIONS, section_by_name, writer_key_paths
 from otto.config.completion_tree import build_shim_payload, inventory_block, stat_triple
-from tests._fixtures.generated_repo import generate_repo
+from tests._fixtures.generated_project import generate_project
 
 
-def _repos(tmp_path, monkeypatch):
-    project = generate_repo(tmp_path, files=4, dirs=1, top_level=1)
+def _projects(tmp_path, monkeypatch):
+    project = generate_project(tmp_path, files=4, dirs=1, top_level=1)
     monkeypatch.setenv("OTTOPATH", str(project))
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     bootstrap.invalidate()
-    return project, config_repo.discover().projects
+    return project, config_project.discover().projects
 
 
 def test_stat_triple_records_a_file_and_a_missing_path(tmp_path: Path):
@@ -29,7 +29,7 @@ def test_stat_triple_records_a_file_and_a_missing_path(tmp_path: Path):
 
 
 def test_payload_keys_mirror_the_names_key_set(tmp_path, monkeypatch):
-    _, projects = _repos(tmp_path, monkeypatch)
+    _, projects = _projects(tmp_path, monkeypatch)
     payload = build_shim_payload(projects, app=app, pending_key=PENDING_SUBCMD_ARGS_KEY)
     names = section_by_name("names")
     keys = writer_key_paths(names, projects)
@@ -64,7 +64,7 @@ def test_a_section_declares_exactly_one_key_source():
 
 
 def test_write_cache_stores_the_shim_section_when_given(tmp_path, monkeypatch):
-    _, projects = _repos(tmp_path, monkeypatch)
+    _, projects = _projects(tmp_path, monkeypatch)
     cc.write_cache(
         projects,
         [],
@@ -82,17 +82,17 @@ def test_the_section_collects_exactly_what_the_writer_stores(tmp_path, monkeypat
     """The Section and `entry()` both build the tree from `_completion_collectors()`.
 
     One source of the app and the dispatch key: this guards against either side
-    growing an argument of its own (another app, a different repo list) — the
+    growing an argument of its own (another app, a different project list) — the
     two would then drift silently.
     """
-    _, projects = _repos(tmp_path, monkeypatch)
+    _, projects = _projects(tmp_path, monkeypatch)
     assert section_by_name("shim").collect(
         projects, _completion_collectors()
     ) == build_shim_payload(projects, app=app, pending_key=PENDING_SUBCMD_ARGS_KEY)
 
 
 def test_a_missing_shim_section_makes_a_rebuild_worthwhile(tmp_path, monkeypatch):
-    _, projects = _repos(tmp_path, monkeypatch)
+    _, projects = _projects(tmp_path, monkeypatch)
     cc.write_cache(
         projects,
         [],
@@ -132,7 +132,7 @@ def test_require_widens_validation_never_the_merged_view(tmp_path, monkeypatch):
     from otto.config import cache_sections as cs
     from otto.config.completion_tree import SHIM_SECTION
 
-    _, projects = _repos(tmp_path, monkeypatch)
+    _, projects = _projects(tmp_path, monkeypatch)
     cc.write_cache(
         projects,
         [{"name": "real", "options": []}],

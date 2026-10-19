@@ -135,7 +135,7 @@ parametrization is listed:
 
 ```text
 $ otto test --list-tests TestDevice
-repo1 1.0.0
+project1 1.0.0
 └── test_device.py
     └── TestDevice
         ├── test_device_reachable
@@ -168,7 +168,7 @@ dry run: no command body was run and no device was contacted
     DeviceTestOptions: firmware='latest', check_interfaces=True
   lab: unix (7 hosts)
 dry run: pytest collected these tests; nothing ran
-repo1 1.0.0
+project1 1.0.0
 └── test_device.py
     └── TestDevice
         ├── test_device_reachable

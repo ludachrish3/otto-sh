@@ -56,12 +56,12 @@ from tests._fixtures.busybox import (
     require_interpreter,
     upstream_drift_report,
 )
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-# The repo root. Sourced from tests/_fixtures/paths.py rather than derived
+# The checkout root. Sourced from tests/_fixtures/paths.py rather than derived
 # with Path(__file__).parents[N] here, so a move of this file cannot
 # silently re-anchor it.
-_REPO_ROOT = PROJECT_ROOT
+_REPO_ROOT = CHECKOUT_ROOT
 
 _MATRIX_PARAMS = [
     pytest.param(
@@ -876,7 +876,7 @@ def test_the_budget_and_backoff_are_the_makefiles(tmp_path, monkeypatch):
     assert attempts == [1, 2, 3], f"the budget is three attempts, saw {attempts}"
     assert slept == [5, 10], (
         f"backoff must be 5s then 10s, matching the Makefile's web-install "
-        f"retry loop — one retry convention in this repo, not two. Got {slept}"
+        f"retry loop — one retry convention in this repository, not two. Got {slept}"
     )
 
 
@@ -939,7 +939,7 @@ def test_the_fetch_budget_fits_inside_both_timeouts():
 # longer serves. It forces `OTTO_BUSYBOX_SOURCE=upstream`.
 #
 # It runs NIGHTLY, not on push, and that placement is the point. Upstream drift
-# cannot affect a single byte this repo tests or ships: every consumer fetches
+# cannot affect a single byte this repository tests or ships: every consumer fetches
 # mirror-first and `_verify`s against `busybox_pins.json`, so the pins — not the
 # host — decide what runs. Detection is therefore a MONITORING signal, and a
 # monitoring signal enforced as a merge gate fails when a third party is down
@@ -1153,7 +1153,7 @@ def test_upstream_drift_detection_is_a_nightly_job_and_never_a_push_gate():
 
     The three assertions are one rule seen from three sides: reading upstream's
     bytes is the only way to see a rebuild-in-place, and it must never be able
-    to fail a push, because the pins — not the host — decide what this repo
+    to fail a push, because the pins — not the host — decide what this repository
     runs. A busybox.net outage reddened main on 2026-08-26 for a push it had
     nothing to do with; that is the regression this pins shut.
 
@@ -1168,9 +1168,9 @@ def test_upstream_drift_detection_is_a_nightly_job_and_never_a_push_gate():
         job_env = job.get("env", {}) or {}
         assert _SOURCE_ENV not in job_env, (
             f"ci.yml `{name}` sets {_SOURCE_ENV}={job_env[_SOURCE_ENV]!r}. NO job on the push "
-            f"gate may pin the source: upstream drift cannot affect a byte this repo tests or "
-            f"ships (every consumer verifies against busybox_pins.json), so pinning upstream "
-            f"here only lets a third-party outage fail a push. Drift detection belongs in "
+            f"gate may pin the source: upstream drift cannot affect a byte this repository "
+            f"tests or ships (every consumer verifies against busybox_pins.json), so pinning "
+            f"upstream here only lets a third-party outage fail a push. Drift detection belongs in "
             f"nightly.yml, where it opens an issue instead of blocking main."
         )
 
@@ -1181,7 +1181,7 @@ def test_upstream_drift_detection_is_a_nightly_job_and_never_a_push_gate():
         if (job.get("env", {}) or {}).get(_SOURCE_ENV) == "upstream"
     ]
     assert detectors, (
-        f"no nightly.yml job sets {_SOURCE_ENV}=upstream, so nothing in this repo ever reads "
+        f"no nightly.yml job sets {_SOURCE_ENV}=upstream, so nothing in this repository ever reads "
         f"upstream's own bytes again — a rebuild-in-place at busybox.net would go unnoticed "
         f"forever, since every other lane fetches the mirror and reports 'still matches'"
     )
@@ -1473,7 +1473,7 @@ def test_the_drift_check_refuses_to_run_against_the_mirror(monkeypatch, capsys):
     monkeypatch.setenv(_SOURCE_ENV, "upsteam")
     assert drift_main([]) == 2, (
         "a typo'd source policy did not exit 2. Any other code is a lie about what was "
-        "measured, and exit 1 in particular files the loudest ticket this repo can file"
+        "measured, and exit 1 in particular files the loudest ticket this repository can file"
     )
 
 
@@ -1698,7 +1698,7 @@ def test_the_busybox_doc_is_reachable_from_the_architecture_toctree():
 # rests entirely on the other half still going to the network.
 # ---------------------------------------------------------------------------
 
-_WORKFLOWS = PROJECT_ROOT / ".github" / "workflows"
+_WORKFLOWS = CHECKOUT_ROOT / ".github" / "workflows"
 _ARTIFACT_CACHE_PATH = "~/.cache/otto/busybox"
 # The invocations that select `tests/unit/test_support_matrix.py`, whose
 # `_run_conformance` spawns a real hermetic conformance run with BusyBox cells
@@ -1903,7 +1903,7 @@ def test_preflight_probes_exactly_one_artifact_not_the_whole_matrix(tmp_path, mo
 
 @pytest.mark.usefixtures("_fresh_preflight")
 def test_preflight_reraises_its_verdict_without_a_second_probe(tmp_path, monkeypatch):
-    """A whole-repo `pytest` collects BOTH lanes, so both hooks call this.
+    """A whole-checkout `pytest` collects BOTH lanes, so both hooks call this.
 
     Without the memo that is two independent 60s stalls against a dead mirror
     in one process, and the second one proves nothing the first did not. The

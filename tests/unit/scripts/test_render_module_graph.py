@@ -7,7 +7,7 @@ import pytest
 
 from scripts import render_module_graph as rmg
 from tests._fixtures.docs_conf import assert_conf_renders
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
 
@@ -144,16 +144,16 @@ def test_the_docs_build_renders_the_page_and_fails_when_the_renderer_does() -> N
 
 
 def test_the_page_is_build_output_listed_in_the_overview_and_rebuilt_on_a_tach_edit() -> None:
-    ignored = (PROJECT_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+    ignored = (CHECKOUT_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
     assert "docs/architecture/modules.md" in [line.strip() for line in ignored]
-    assert rmg.PAGE_PATH.relative_to(PROJECT_ROOT).as_posix() == "docs/architecture/modules.md"
-    index = (PROJECT_ROOT / "docs" / "architecture" / "index.rst").read_text(encoding="utf-8")
+    assert rmg.PAGE_PATH.relative_to(CHECKOUT_ROOT).as_posix() == "docs/architecture/modules.md"
+    index = (CHECKOUT_ROOT / "docs" / "architecture" / "index.rst").read_text(encoding="utf-8")
     entries = [line.strip() for line in index.splitlines()]
     overview = entries[
         entries.index(":caption: Overview") : entries.index(":caption: Design by area")
     ]
     assert "modules" in overview
-    makefile = (PROJECT_ROOT / "Makefile").read_text(encoding="utf-8")
+    makefile = (CHECKOUT_ROOT / "Makefile").read_text(encoding="utf-8")
     srcs = re.search(r"^SPHINX_SRCS :=.*?\n((?:.*\\\n)*.*)", makefile, re.MULTILINE)
     assert srcs, "no SPHINX_SRCS assignment found in the Makefile (guard misparse?)"
     assert "tach.toml" in srcs.group(0)

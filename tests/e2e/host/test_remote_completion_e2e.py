@@ -31,8 +31,8 @@ from otto.config.home import workspace_key
 from tests._fixtures._host_pool import UNIX_POOL as _UNIX_POOL
 from tests._fixtures._host_pool import lease_unix_host
 from tests._fixtures.labdata import lab_json_v2
-from tests._fixtures.sutrepo import make_sut_repo
-from tests.e2e._otto_subprocess import REPO1, run_otto
+from tests._fixtures.project_scaffold import make_project
+from tests.e2e._otto_subprocess import PROJECT1, run_otto
 
 # ---------------------------------------------------------------------------
 # Constants (mirroring tests/e2e/host/test_host_transfer_e2e.py)
@@ -61,7 +61,7 @@ def _run_on_host(host_id: str, command: str, xdir: Path) -> subprocess.Completed
     return run_otto(
         ["host", host_id, "exec", command],
         xdir=xdir,
-        roots=REPO1,
+        roots=PROJECT1,
         lab=_LAB,
         extra_argv_prefix=["-R"],
         timeout=180,
@@ -130,12 +130,12 @@ def test_remote_completion_lists_live_host(monkeypatch, tmp_path: Path, unix_hos
     """
     from otto.cli.remote_completion import remote_path_completer
 
-    monkeypatch.setenv("OTTOPATH", str(REPO1))
+    monkeypatch.setenv("OTTOPATH", str(PROJECT1))
     # The sidecar cache lives in the WORKSPACE HOME now, keyed by OTTOPATH
     # -- pinning OTTO_XDIR no longer relocates it, and without OTTO_HOME this
     # test would read and write the developer's real ~/.otto.
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "otto-home"))
-    cache_file = tmp_path / "otto-home" / workspace_key([REPO1]) / "remote_completion_cache.json"
+    cache_file = tmp_path / "otto-home" / workspace_key([PROJECT1]) / "remote_completion_cache.json"
 
     nonce = f"otto-completion-{uuid.uuid4().hex[:8]}"
     remote_dir = f"/tmp/{nonce}"
@@ -211,20 +211,20 @@ def test_remote_completion_lists_live_host(monkeypatch, tmp_path: Path, unix_hos
 # ---------------------------------------------------------------------------
 
 
-def _reservation_repo(root: Path, holder: str) -> Path:
-    """Write a SUT repo whose lab's resources are booked to *holder* in a JSON file.
+def _reservation_project(root: Path, holder: str) -> Path:
+    """Write a project whose lab's resources are booked to *holder* in a JSON file.
 
     Minimal ``.otto/settings.toml`` + a one-host ``unix`` lab + a
     ``version: 1`` reservation file, mirroring the fixture construction in
     ``tests/unit/reservations/test_wiring.py`` / ``test_json_backend.py``.
     """
-    make_sut_repo(
+    make_project(
         root,
         name="reservation_fixture",
         extra=(
             "[[lab.sources]]\n"
             'backend = "json"\n'
-            'paths = ["lab_data"]\n'  # search paths anchor at the repo root
+            'paths = ["lab_data"]\n'  # search paths anchor at the project root
             "\n"
             "[reservations]\n"
             'backend = "json"\n'
@@ -257,7 +257,7 @@ def _reservation_repo(root: Path, holder: str) -> Path:
 
 
 def _write_reservations(root: Path, holder: str) -> None:
-    """(Re)write the repo's reservation file, booking ``test1`` to *holder*."""
+    """(Re)write the project's reservation file, booking ``test1`` to *holder*."""
     (root / "reservations.json").write_text(
         json.dumps({"version": 1, "reservations": [{"user": holder, "resources": ["test1"]}]})
     )
@@ -276,7 +276,9 @@ def test_completion_without_reservation_is_empty(monkeypatch, tmp_path: Path) ->
     import otto.cli.remote_completion as rc
     from otto.reservations.identity import resolve_username
 
-    project = _reservation_repo(tmp_path / "repo", holder=f"someone-else-{uuid.uuid4().hex[:8]}")
+    project = _reservation_project(
+        tmp_path / "project", holder=f"someone-else-{uuid.uuid4().hex[:8]}"
+    )
     monkeypatch.setenv("OTTOPATH", str(project))
 
     touched: list[str] = []

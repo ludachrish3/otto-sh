@@ -23,7 +23,7 @@ from otto.registry import (
     RequireProject,
     resolved,
 )
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 
 @dataclass(frozen=True)
@@ -95,7 +95,7 @@ def test_the_engine_never_imports_pydantic():
 
     Red: add ``from pydantic import BaseModel`` inside any engine function.
     """
-    tree = ast.parse((PROJECT_ROOT / "src" / "otto" / "registry.py").read_text())
+    tree = ast.parse((CHECKOUT_ROOT / "src" / "otto" / "registry.py").read_text())
     imported = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -128,7 +128,7 @@ def test_the_engine_never_imports_pydantic():
         [sys.executable, "-c", code],
         capture_output=True,
         text=True,
-        cwd=str(PROJECT_ROOT),
+        cwd=str(CHECKOUT_ROOT),
         timeout=60,
         check=False,
     )

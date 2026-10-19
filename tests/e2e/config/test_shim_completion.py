@@ -10,7 +10,7 @@ from otto.config.cache_maintenance import MARKER_FILENAMES
 from otto.config.completion_cache import CACHE_FILENAME
 from otto.config.home import workspace_key
 from tests._fixtures.labdata import write_lab_json
-from tests._fixtures.shim_repo import CREDS, HOSTS, LINKS, make_shim_repo
+from tests._fixtures.shim_project import CREDS, HOSTS, LINKS, make_shim_project
 from tests.e2e._otto_subprocess import run_otto
 
 pytestmark = pytest.mark.hostless
@@ -37,7 +37,7 @@ def _cache(project: Path, xdir: Path) -> Path:
 
 
 def test_cold_writes_warm_answers_edit_hands_over(tmp_path: Path) -> None:
-    project = make_shim_repo(tmp_path)
+    project = make_shim_project(tmp_path)
     xdir = tmp_path / "xdir"
     xdir.mkdir()
     (xdir / "otto-home").mkdir()

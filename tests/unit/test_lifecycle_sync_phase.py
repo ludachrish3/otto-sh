@@ -4,7 +4,7 @@ Signal delivery is proven against a REAL child process signalled by PID
 (never pattern-matched kills), with mid-flight positive controls inside the
 child so a vacuously-green assertion cannot hide a never-installed handler.
 
-Placement (deliberate): the repo's convention sends real signal DELIVERY to
+Placement (deliberate): the repository's convention sends real signal DELIVERY to
 tier-2 subprocess coverage, and each of these tests spawns exactly such a
 fresh-interpreter subprocess — they live in the unit tier because they are
 fast, bed-free, and the primitive they pin is correctness-critical enough

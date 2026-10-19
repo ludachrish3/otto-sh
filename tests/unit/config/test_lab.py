@@ -97,7 +97,7 @@ def test_load_lab_forwards_preferences(tmp_path):
 
     captured: dict[str, object] = {}
 
-    class FakeRepo:
+    class FakeRepository:
         """A json backend stand-in, wrapped by the composite ``load_lab`` builds.
 
         It must DECLARE the lab and contribute a member: the composite owns
@@ -130,7 +130,7 @@ def test_load_lab_forwards_preferences(tmp_path):
     # the root isolation fixture restores the built-in afterwards.
     entry = LAB_REPOSITORIES.peek("json")
     register_lab_repository(
-        "json", config=entry.config, factory=lambda c: FakeRepo(), overwrite=True
+        "json", config=entry.config, factory=lambda c: FakeRepository(), overwrite=True
     )
     load_lab("x", [tmp_path], preferences={".*": {"transfer": ["scp"]}})
     assert captured["preferences"] == {".*": {"transfer": ["scp"]}}

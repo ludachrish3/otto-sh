@@ -60,9 +60,9 @@ def _docker():
     return DockerContainerHost(
         parent=parent,
         container_id="abc123def456",
-        project="repo1",
+        project="project1",
         service="api",
-        compose_project="otto-repo1-vagrant",
+        compose_project="otto-project1-vagrant",
     )
 
 

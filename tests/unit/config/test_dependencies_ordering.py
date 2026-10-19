@@ -2,13 +2,13 @@
 
 from otto.config.dependencies import resolve_dependencies
 from otto.config.project import Project
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.project_scaffold import make_project
 
 
-def _repo(tmp_path, name, version="1.0.0", *, required=(), optional=(), dirname=None):
+def _project(tmp_path, name, version="1.0.0", *, required=(), optional=(), dirname=None):
     req = ", ".join(f'"{e}"' for e in required)
     opt = ", ".join(f'"{e}"' for e in optional)
-    root = make_sut_repo(
+    root = make_project(
         tmp_path / (dirname or name),
         name=name,
         version=version,
@@ -21,8 +21,8 @@ def _names(projects):
     return [r.name for r in projects]
 
 
-def test_dep_free_setup_keeps_sut_dir_order(tmp_path):
-    projects = [_repo(tmp_path, n) for n in ("c", "a", "b")]
+def test_dep_free_setup_keeps_ottopath_order(tmp_path):
+    projects = [_project(tmp_path, n) for n in ("c", "a", "b")]
     out = resolve_dependencies(projects)
     assert _names(out.ordered) == ["c", "a", "b"]
     assert out.errors == []
@@ -30,24 +30,24 @@ def test_dep_free_setup_keeps_sut_dir_order(tmp_path):
 
 
 def test_required_dep_registers_provider_first(tmp_path):
-    b = _repo(tmp_path, "b", required=["a >= 1"])
-    a = _repo(tmp_path, "a")
-    out = resolve_dependencies([b, a])  # b listed first in sut dirs
+    b = _project(tmp_path, "b", required=["a >= 1"])
+    a = _project(tmp_path, "a")
+    out = resolve_dependencies([b, a])  # b listed first in OTTOPATH
     assert _names(out.ordered) == ["a", "b"]
 
 
 def test_stable_tiebreak_among_ready(tmp_path):
-    # z and m both depend on a; among simultaneously-ready repos sut-dir order holds
-    z = _repo(tmp_path, "z", required=["a"])
-    m = _repo(tmp_path, "m", required=["a"])
-    a = _repo(tmp_path, "a")
+    # z and m both depend on a; among simultaneously-ready projects OTTOPATH order holds
+    z = _project(tmp_path, "z", required=["a"])
+    m = _project(tmp_path, "m", required=["a"])
+    a = _project(tmp_path, "a")
     out = resolve_dependencies([z, m, a])
     assert _names(out.ordered) == ["a", "z", "m"]
 
 
 def test_skip_propagates_to_dependents(tmp_path):
-    a = _repo(tmp_path, "a", required=["b"])
-    b = _repo(tmp_path, "b", required=["ghost"])
+    a = _project(tmp_path, "a", required=["b"])
+    b = _project(tmp_path, "b", required=["ghost"])
     out = resolve_dependencies([a, b])
     assert out.ordered == []
     msgs = [str(e) for e in out.errors]
@@ -61,15 +61,15 @@ def test_skip_propagates_to_dependents(tmp_path):
 
 def test_propagation_is_dependency_only_not_import_errors(tmp_path):
     # covered again at bootstrap level; here: a healthy dep graph never skips
-    a = _repo(tmp_path, "a", required=["b"])
-    b = _repo(tmp_path, "b")
+    a = _project(tmp_path, "a", required=["b"])
+    b = _project(tmp_path, "b")
     out = resolve_dependencies([a, b])
     assert _names(out.ordered) == ["b", "a"]
 
 
 def test_required_cycle_errors_and_skips_members(tmp_path):
-    a = _repo(tmp_path, "a", required=["b"])
-    b = _repo(tmp_path, "b", required=["a"])
+    a = _project(tmp_path, "a", required=["b"])
+    b = _project(tmp_path, "b", required=["a"])
     out = resolve_dependencies([a, b])
     assert out.ordered == []
     cyc = [str(e) for e in out.errors if "cycle" in str(e)]
@@ -90,9 +90,9 @@ def test_three_node_cycle_renders_requires_direction(tmp_path):
     # a requires b, b requires c, c requires a: must read "a -> b -> c -> a"
     # (or a rotation thereof) under the natural "X -> Y means X requires Y"
     # reading -- NOT the reversed "a -> c -> b -> a" family.
-    a = _repo(tmp_path, "a", required=["b"])
-    b = _repo(tmp_path, "b", required=["c"])
-    c = _repo(tmp_path, "c", required=["a"])
+    a = _project(tmp_path, "a", required=["b"])
+    b = _project(tmp_path, "b", required=["c"])
+    c = _project(tmp_path, "c", required=["a"])
     out = resolve_dependencies([a, b, c])
     assert out.ordered == []
     cyc = [str(e) for e in out.errors if "required dependency cycle:" in str(e)]
@@ -106,9 +106,9 @@ def test_three_node_cycle_renders_requires_direction(tmp_path):
 
 
 def test_downstream_of_cycle_skipped_with_pointer(tmp_path):
-    a = _repo(tmp_path, "a", required=["b"])
-    b = _repo(tmp_path, "b", required=["a"])
-    c = _repo(tmp_path, "c", required=["a"])
+    a = _project(tmp_path, "a", required=["b"])
+    b = _project(tmp_path, "b", required=["a"])
+    c = _project(tmp_path, "c", required=["a"])
     out = resolve_dependencies([a, b, c])
     assert out.ordered == []
     downstream = [str(e) for e in out.errors if "part of a dependency cycle" in str(e)]
@@ -117,34 +117,34 @@ def test_downstream_of_cycle_skipped_with_pointer(tmp_path):
 
 
 def test_soft_edge_orders_optional_provider_first(tmp_path):
-    b = _repo(tmp_path, "b", optional=["a >= 1"])
-    a = _repo(tmp_path, "a")
+    b = _project(tmp_path, "b", optional=["a >= 1"])
+    a = _project(tmp_path, "a")
     out = resolve_dependencies([b, a])
     assert _names(out.ordered) == ["a", "b"]
 
 
 def test_soft_edge_dropped_on_cycle_no_error(tmp_path):
     # required a->b plus optional b->a: the soft edge would close a cycle — dropped
-    a = _repo(tmp_path, "a", required=["b"])
-    b = _repo(tmp_path, "b", optional=["a"])
+    a = _project(tmp_path, "a", required=["b"])
+    b = _project(tmp_path, "b", optional=["a"])
     out = resolve_dependencies([a, b])
     assert _names(out.ordered) == ["b", "a"]  # required edge wins
     assert out.errors == []
 
 
 def test_absent_optional_contributes_no_edge(tmp_path):
-    b = _repo(tmp_path, "b", optional=["ghost"])
-    a = _repo(tmp_path, "a")
+    b = _project(tmp_path, "b", optional=["ghost"])
+    a = _project(tmp_path, "a")
     out = resolve_dependencies([b, a])
-    assert _names(out.ordered) == ["b", "a"]  # sut-dir order preserved
+    assert _names(out.ordered) == ["b", "a"]  # OTTOPATH order preserved
 
 
 def test_satisfied_optional_warns_when_provider_skipped(tmp_path):
     # d optionally depends on e (present, compatible -> soft edge, "satisfied").
     # e requires a missing "ghost" -> e is skipped. d still registers (its own
     # deps are fine), but the feature it thinks it has is a lie unless we warn.
-    d = _repo(tmp_path, "d", optional=["e >= 1"])
-    e = _repo(tmp_path, "e", required=["ghost"])
+    d = _project(tmp_path, "d", optional=["e >= 1"])
+    e = _project(tmp_path, "e", required=["ghost"])
     out = resolve_dependencies([d, e])
     assert _names(out.ordered) == ["d"]
     assert len(out.warnings) == 1
@@ -158,12 +158,12 @@ def test_satisfied_optional_warns_when_provider_skipped(tmp_path):
     assert dep.status == "satisfied"
 
 
-def test_partially_failed_repo_edge_to_survivor_is_dropped(tmp_path):
-    """A repo with one satisfied and one missing required dep is skipped; the
+def test_partially_failed_project_edge_to_survivor_is_dropped(tmp_path):
+    """A project with one satisfied and one missing required dep is skipped; the
     satisfied edge from its surviving provider must not corrupt the sort
     (pins the alive-node guards in _stable_topo_order / _skip_required_cycles)."""
-    b = _repo(tmp_path, "b")
-    a = _repo(tmp_path, "a", required=["b >= 1", "ghost"])
+    b = _project(tmp_path, "b")
+    a = _project(tmp_path, "a", required=["b >= 1", "ghost"])
     out = resolve_dependencies([b, a])
     assert _names(out.ordered) == ["b"]
     assert len(out.errors) == 1
@@ -177,11 +177,11 @@ def test_partially_failed_repo_edge_to_survivor_is_dropped(tmp_path):
 def test_disjoint_required_cycles_each_reported_separately(tmp_path):
     """Two independent required cycles each get their own cycle errors, naming
     only their own members (pins _find_cycles over disjoint cycles)."""
-    a = _repo(tmp_path, "a", required=["b"])
-    b = _repo(tmp_path, "b", required=["a"])
-    c = _repo(tmp_path, "c", required=["d"])
-    d = _repo(tmp_path, "d", required=["c"])
-    e = _repo(tmp_path, "e")
+    a = _project(tmp_path, "a", required=["b"])
+    b = _project(tmp_path, "b", required=["a"])
+    c = _project(tmp_path, "c", required=["d"])
+    d = _project(tmp_path, "d", required=["c"])
+    e = _project(tmp_path, "e")
     out = resolve_dependencies([a, b, c, d, e])
     assert _names(out.ordered) == ["e"]
     cycle_paths = [str(err).split("cycle: ")[1] for err in out.errors if "cycle: " in str(err)]

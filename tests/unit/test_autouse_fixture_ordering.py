@@ -31,7 +31,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._fixtures.paths import PROJECT_ROOT, TESTS_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT, TESTS_ROOT
 
 try:
     import tomllib  # Python 3.11+
@@ -66,8 +66,8 @@ def autouse_fixtures_requesting_monkeypatch(source: str, label: str) -> "list[st
 
 
 def _scanned_files() -> "list[Path]":
-    ini = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())
-    roots = [PROJECT_ROOT / p for p in ini["tool"]["pytest"]["ini_options"]["testpaths"]]
+    ini = tomllib.loads((CHECKOUT_ROOT / "pyproject.toml").read_text())
+    roots = [CHECKOUT_ROOT / p for p in ini["tool"]["pytest"]["ini_options"]["testpaths"]]
     files = [TESTS_ROOT / "conftest.py"]
     for root in roots:
         files += sorted(root.rglob("conftest.py"))
@@ -79,7 +79,7 @@ def test_no_autouse_fixture_requests_the_shared_monkeypatch() -> None:
     offenders: "list[str]" = []
     for path in _scanned_files():
         offenders += autouse_fixtures_requesting_monkeypatch(
-            path.read_text(), str(path.relative_to(PROJECT_ROOT))
+            path.read_text(), str(path.relative_to(CHECKOUT_ROOT))
         )
     assert not offenders, (
         f"autouse fixtures requesting the shared `monkeypatch`: {offenders}. That pins the "

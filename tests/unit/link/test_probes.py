@@ -31,7 +31,7 @@ def echo_server() -> Iterator[int]:
 
     Plain blocking sockets in a background thread — this is test-double
     infrastructure, not product code, so it isn't the threads-plus-asyncio
-    combination the repo avoids there.
+    combination the repository avoids there.
     """
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

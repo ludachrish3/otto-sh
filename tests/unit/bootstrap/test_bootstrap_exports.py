@@ -1,4 +1,4 @@
-"""``otto.bootstrap``'s declared surface, and the repo accessors folded into it.
+"""``otto.bootstrap``'s declared surface, and the project accessors folded into it.
 
 Spec ``docs/superpowers/specs/2026-10-06-repo-and-scope-inputs-design.md``
 §2 and §2.1, and appendix F of the 2026-10-04 manifest spec: twelve names
@@ -15,7 +15,7 @@ import pytest
 
 from otto import bootstrap as bs
 from otto import registry
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.project_scaffold import make_project
 
 APPENDIX_F = [
     "BootstrapError",
@@ -49,7 +49,7 @@ def test_otto_bootstrap_declares_exactly_appendix_f():
 
 
 def test_the_accessors_read_the_composition_root(tmp_path, monkeypatch):
-    project = make_sut_repo(tmp_path / "r", name="r")
+    project = make_project(tmp_path / "r", name="r")
     monkeypatch.setenv("OTTOPATH", str(project))
     monkeypatch.setenv("OTTO_TEARDOWN_DEADLINE", "7.5")
 

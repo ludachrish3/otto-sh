@@ -1,8 +1,8 @@
 import importlib.util
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-_MODULE_PATH = PROJECT_ROOT / "scripts" / "lint_docs_versions.py"
+_MODULE_PATH = CHECKOUT_ROOT / "scripts" / "lint_docs_versions.py"
 
 
 def _load_linter():
@@ -67,7 +67,7 @@ def test_prefixed_version_assignment_is_clean(tmp_path):
 
 def test_live_docs_tree_is_clean():
     mod = _load_linter()
-    assert mod.main([str(PROJECT_ROOT / "docs")]) == 0
+    assert mod.main([str(CHECKOUT_ROOT / "docs")]) == 0
 
 
 def test_main_flags_offense_in_scanned_tree(tmp_path):

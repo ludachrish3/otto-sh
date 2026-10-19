@@ -79,14 +79,14 @@ Verified on a real daemon (dev VM, docker 29.1.3):
 
 ```text
 REPOSITORY   TAG                IMAGE ID
-repo1-api    a7c8217f18991996   cbd8571d4b6e
-repo1-api    latest             cbd8571d4b6e
+project1-api    a7c8217f18991996   cbd8571d4b6e
+project1-api    latest             cbd8571d4b6e
 ```
 
 - `a7c8217f18991996` is otto's **context hash** (sha256 of Dockerfile, context
   files, build args, target; `src/otto/docker/_context_hash.py`), truncated to
   16 hex and used as the image **tag** (`src/otto/docker/build.py:40-42`).
-  `otto docker build` prints `built → repo1-api:a7c8217f18991996`. It looks
+  `otto docker build` prints `built → project1-api:a7c8217f18991996`. It looks
   like a docker id and matches no image id, layer digest or container id.
   This is almost certainly the "hashes that map to nothing" report.
 - The image **name** is `<repo name>-<image name>` (`build.py:26-37`), so

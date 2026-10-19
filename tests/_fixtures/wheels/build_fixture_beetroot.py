@@ -10,7 +10,7 @@ and the result installs offline under both otto env backends (verified with
 THE NAME IS LOAD-BEARING AND WAS WRONG ONCE. This fixture exists to be a
 requirement that CANNOT be satisfied from an index, so the name must be one no
 index carries. The first cut used a bare ``beetroot``, which is a REAL PyPI
-project (1.1.7.4) -- `uv pip install -e tests/repo4` cheerfully fetched it, and
+project (1.1.7.4) -- `uv pip install -e tests/project4` cheerfully fetched it, and
 every test resting on "this cannot resolve" would have passed for the wrong
 reason. ``otto-fixture-beetroot`` was checked against the live index and is
 absent; keep any replacement equally unmistakable, and re-check it.

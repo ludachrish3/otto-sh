@@ -218,7 +218,7 @@ instead of `kind = "shell"` — but a module has no process to write
 (`src/otto/kmodcov/`), does that job instead. A product links against it
 and declares `coverage = "module"`:
 
-```{literalinclude} ../../tests/repo5/.otto/settings.toml
+```{literalinclude} ../../tests/project5/.otto/settings.toml
 :language: toml
 :start-at: "[[dev_tools]]"
 :end-before: "# The container-image products"
@@ -255,7 +255,7 @@ A container image run by a docker daemon is a product too, declared with
 (from a tarball, here) and runs it with `docker run -d`, the product's
 `cov_dir` bind-mounted at the same path inside the container:
 
-```{literalinclude} ../../tests/repo5/.otto/settings.toml
+```{literalinclude} ../../tests/project5/.otto/settings.toml
 :language: toml
 :start-after: "# needs no pull. An archive scans unknown, hence `instrumented = true`."
 :end-at: "match = { id = \"test3\" }"

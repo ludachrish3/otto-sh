@@ -3,7 +3,7 @@
 The test-names cache serves tab completion. It must never narrow what a run
 collects: a test whose existence changed without any Python file the cache
 watches changing (a JSON file, an environment variable, a plain value
-imported from another module, a new same-named test in another repo) must
+imported from another module, a new same-named test in another project) must
 run on the next warm run, exactly as native pytest would run it.
 
 Every scenario primes the cache with an unfiltered ``--list-tests``, changes
@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.project_scaffold import make_project
 from tests.e2e._otto_subprocess import run_otto
 from tests.e2e._selection_fixtures import LAB_DATA_DIR, SETTINGS_EXTRA
 
@@ -57,10 +57,10 @@ if FLAG:
 """
 
 
-def _repo(root: Path, name: str, files: dict[str, str], *, with_lab: bool = True) -> Path:
+def _project(root: Path, name: str, files: dict[str, str], *, with_lab: bool = True) -> Path:
     extra = SETTINGS_EXTRA.format(lab_data_dir=LAB_DATA_DIR) if with_lab else ""
     files = {"enabled.json": "false", **files}
-    return make_sut_repo(root / name, name=name, tests=["tests"], extra=extra, files=files)
+    return make_project(root / name, name=name, tests=["tests"], extra=extra, files=files)
 
 
 def _executed(junit_files: list[Path]) -> set[tuple[str, str]]:
@@ -92,7 +92,7 @@ def _prime(xdir: Path, projects: list[Path], extra_env: dict[str, str] | None = 
 def _native(
     projects: list[Path], name: str, tmp_path: Path, extra_env: dict[str, str] | None = None
 ) -> tuple[int, set[tuple[str, str]]]:
-    """What plain pytest executes for ``-k name`` over each repo's tests."""
+    """What plain pytest executes for ``-k name`` over each project's tests."""
     rc, executed = 0, set()
     for project in projects:
         junit = tmp_path / f"native-{project.name}.xml"
@@ -134,7 +134,7 @@ def _xdir(tmp_path: Path) -> Path:
 
 def test_a_same_named_test_external_data_adds_runs_warm(tmp_path: Path) -> None:
     """The issue's reproduction: JSON turns on a failing test_probe beside a passing one."""
-    project = _repo(
+    project = _project(
         tmp_path,
         "sut",
         {
@@ -153,20 +153,20 @@ def test_a_same_named_test_external_data_adds_runs_warm(tmp_path: Path) -> None:
     assert (rc, executed) == (native_rc, native) == (1, native)
 
 
-def test_a_same_named_test_in_another_repo_runs_warm(tmp_path: Path) -> None:
-    """A name the cache places in one repo still runs where another repo now holds it."""
-    repo_a = _repo(tmp_path, "repoA", {"tests/test_static_a.py": _STATIC})
-    repo_b = _repo(
+def test_a_same_named_test_in_another_project_runs_warm(tmp_path: Path) -> None:
+    """A name the cache places in one project still runs where another project now holds it."""
+    project_a = _project(tmp_path, "projA", {"tests/test_static_a.py": _STATIC})
+    project_b = _project(
         tmp_path,
-        "repoB",
+        "projB",
         {"tests/test_generated_b.py": _FROM_JSON.format(name="test_probe")},
         with_lab=False,
     )
     xdir = _xdir(tmp_path)
-    _prime(xdir, [repo_a, repo_b])
-    (repo_b / "enabled.json").write_text("true")
+    _prime(xdir, [project_a, project_b])
+    (project_b / "enabled.json").write_text("true")
 
-    rc, executed = _otto_run(xdir, [repo_a, repo_b], "test_probe")
+    rc, executed = _otto_run(xdir, [project_a, project_b], "test_probe")
 
     assert executed == {("test_static_a", "test_probe"), ("test_generated_b", "test_probe")}
     assert rc == 1
@@ -176,7 +176,7 @@ def test_a_name_the_cache_never_saw_runs_where_external_data_generates_it(
     tmp_path: Path,
 ) -> None:
     """A generated name no fresh record holds is found, not refused as unknown."""
-    project = _repo(
+    project = _project(
         tmp_path,
         "sut",
         {
@@ -196,7 +196,7 @@ def test_a_name_the_cache_never_saw_runs_where_external_data_generates_it(
 
 def test_an_environment_driven_test_runs_warm(tmp_path: Path) -> None:
     """A test an environment variable turns on runs once it is set, as in native pytest."""
-    project = _repo(
+    project = _project(
         tmp_path,
         "sut",
         {"tests/test_static.py": _STATIC, "tests/test_generated.py": _FROM_ENV},
@@ -214,7 +214,7 @@ def test_an_environment_driven_test_runs_warm(tmp_path: Path) -> None:
 
 def test_a_test_a_plain_imported_value_turns_on_runs_warm(tmp_path: Path) -> None:
     """``from cfg import FLAG``: editing cfg turns on a test in an unchanged test file."""
-    project = _repo(
+    project = _project(
         tmp_path,
         "sut",
         {

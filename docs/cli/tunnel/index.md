@@ -147,12 +147,12 @@ either side of it connect *to* that address — so a dry run has no argv to show
 for any hop, not just for the container. It says so rather than guessing:
 
 ```console
-$ otto -n --lab unix tunnel add --hosts test1.repo1.api,test1@eth2,test2@eth2 --port 8080
-dry run test1.repo1.api <-> test2: no device was contacted — nothing was read and nothing was changed
-  would: build tun-6e3f6629afc2-8080: test1.repo1.api -> test1@eth2 -> test2@eth2,
+$ otto -n --lab unix tunnel add --hosts test1.project1.api,test1@eth2,test2@eth2 --port 8080
+dry run test1.project1.api <-> test2: no device was contacted — nothing was read and nothing was changed
+  would: build tun-6e3f6629afc2-8080: test1.project1.api -> test1@eth2 -> test2@eth2,
     tcp:8080, delivering to 127.0.0.1 on test2
   would: carry fwd traffic on port 49152 and rev on 49153 — PROVISIONAL …
-  not checked: every process argv, because 'test1.repo1.api' is a container endpoint …
+  not checked: every process argv, because 'test1.project1.api' is a container endpoint …
 ```
 
 Programmatically, a dry run is visible on the return value:

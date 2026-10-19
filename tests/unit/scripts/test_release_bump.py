@@ -36,9 +36,9 @@ from scripts.release_bump import (
 )
 from scripts.release_events import Commit, Event, Events, Refusal
 from tests._fixtures.gitrepo import TmpGitRepo
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-CLIFF = PROJECT_ROOT / "cliff.toml"
+CLIFF = CHECKOUT_ROOT / "cliff.toml"
 
 
 # ---------------------------------------------------------------------------

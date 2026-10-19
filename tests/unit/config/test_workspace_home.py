@@ -73,9 +73,9 @@ class TestWorkspaceKey:
         assert slug == "myrepo", key
 
     def test_the_slug_is_pep503_normalized(self, tmp_path):
-        a = tmp_path / "My_Repo.Name"
+        a = tmp_path / "My_Project.Name"
         a.mkdir()
-        assert workspace_key([a]).endswith("-my-repo-name")
+        assert workspace_key([a]).endswith("-my-project-name")
 
     def test_the_slug_joins_multiple_basenames(self, tmp_path):
         a, b = tmp_path / "alpha", tmp_path / "beta"
@@ -85,24 +85,24 @@ class TestWorkspaceKey:
 
     def test_two_sets_sharing_a_slug_still_differ_by_hash(self, tmp_path):
         """The slug is for humans; the hash is what makes the key correct."""
-        one = tmp_path / "x" / "repo"
-        two = tmp_path / "y" / "repo"
+        one = tmp_path / "x" / "proj"
+        two = tmp_path / "y" / "proj"
         one.mkdir(parents=True)
         two.mkdir(parents=True)
-        assert workspace_key([one]).endswith("-repo")
-        assert workspace_key([two]).endswith("-repo")
+        assert workspace_key([one]).endswith("-proj")
+        assert workspace_key([two]).endswith("-proj")
         assert workspace_key([one]) != workspace_key([two])
 
 
 class TestWorkspaceHome:
     def test_it_is_the_key_under_the_home(self, monkeypatch, tmp_path):
         monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
-        project = tmp_path / "repo"
+        project = tmp_path / "proj"
         project.mkdir()
         assert workspace_home([project]) == tmp_path / "home" / workspace_key([project])
 
     def test_it_reads_the_env_when_given_nothing(self, monkeypatch, tmp_path):
-        project = tmp_path / "repo"
+        project = tmp_path / "proj"
         project.mkdir()
         monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
         monkeypatch.setenv("OTTOPATH", str(project))
@@ -145,7 +145,7 @@ class TestCacheRelocation:
     def test_the_main_cache_lands_in_the_workspace_home(self, monkeypatch, tmp_path):
         from otto.config.completion_cache import _cache_path
 
-        project = tmp_path / "repo"
+        project = tmp_path / "proj"
         project.mkdir()
         monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
         monkeypatch.setenv("OTTOPATH", str(project))
@@ -156,7 +156,7 @@ class TestCacheRelocation:
         passes while the main cache moved, the single-source rule held."""
         from otto.config.remote_completion_cache import _path
 
-        project = tmp_path / "repo"
+        project = tmp_path / "proj"
         project.mkdir()
         monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
         monkeypatch.setenv("OTTOPATH", str(project))

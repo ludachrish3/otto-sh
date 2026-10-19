@@ -33,7 +33,7 @@ the hermetic lane 2026-08-26: 112 cell items over 8 cells, so fourteen items
 per cell), and under ``-n auto`` those fourteen scatter across workers and
 open the same console at once.
 
-THE MECHANISM: an EXCLUSIVE hold of the repo's writer-fair console lock
+THE MECHANISM: an EXCLUSIVE hold of the suite's writer-fair console lock
 (``tests/_fixtures/_console_lock.py``) around every console cell's item, taken
 in an autouse fixture so it spans the whole window the test can have a console
 open. EXCLUSIVE and not the SHARED hold the integration tree's per-device

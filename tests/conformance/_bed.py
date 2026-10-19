@@ -434,7 +434,7 @@ def _opener_for(cell: "Cell") -> "Callable[[], AbstractAsyncContextManager[BaseH
     of sharing it. It brackets `build_bed_host` as well as the open, which is
     what the integration tree's module-scoped install also does -- a host
     built outside a context and opened inside one would be a third
-    construction condition nothing else in the repo uses.
+    construction condition nothing else in the suite uses.
     """
 
     @contextlib.asynccontextmanager

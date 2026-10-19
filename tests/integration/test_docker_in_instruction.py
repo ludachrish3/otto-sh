@@ -20,9 +20,9 @@ from otto.utils import Status
 from tests._fixtures._host_pool import lease_unix_host
 from tests._fixtures.paths import TESTS_ROOT
 
-REPO1_DIR = TESTS_ROOT / "repo1"
+PROJECT1_DIR = TESTS_ROOT / "project1"
 
-# All docker integration tests share /tmp/otto-docker/repo1/ on test3
+# All docker integration tests share /tmp/otto-docker/project1/ on test3
 # (compose staging dir). Pin them to one xdist worker so concurrent
 # `rm -rf` calls during compose_up don't race.
 pytestmark = [
@@ -63,11 +63,11 @@ async def parent_lab(test3_lease):
 async def test_instruction_uses_composed_context_manager(parent_lab):
     """Simulate an instruction using composed() as its lifecycle scope."""
     parent, lab = parent_lab
-    project = Project(root=REPO1_DIR)
-    container_id = f"{parent.id}.repo1.api"
+    project = Project(root=PROJECT1_DIR)
+    container_id = f"{parent.id}.project1.api"
 
     build_results = await build_images(project, parent)
-    assert build_results["repo1-api"].is_ok, build_results
+    assert build_results["project1-api"].is_ok, build_results
 
     # Mimic: @instruction async def my_workflow(): async with composed(...) as ...
     async def my_workflow() -> str:
@@ -88,11 +88,11 @@ async def test_instruction_uses_composed_context_manager(parent_lab):
 async def test_session_fixture_holds_stack_for_inner_users(parent_lab):
     """A suite-level fixture using own=True should not be torn down by an inner own=False call."""
     parent, lab = parent_lab
-    project = Project(root=REPO1_DIR)
-    container_id = f"{parent.id}.repo1.api"
+    project = Project(root=PROJECT1_DIR)
+    container_id = f"{parent.id}.project1.api"
 
     build_results = await build_images(project, parent)
-    assert build_results["repo1-api"].is_ok, build_results
+    assert build_results["project1-api"].is_ok, build_results
 
     async with composed(project, lab, parent=parent.id, own=True) as outer_hosts:
         outer_id = outer_hosts["api"].container_id

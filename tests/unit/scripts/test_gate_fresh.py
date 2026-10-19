@@ -30,7 +30,7 @@ from scripts.gate_fresh import (
     tree_state,
 )
 from tests._fixtures.gitrepo import TmpGitRepo, git_env
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 from tests.unit.scripts.test_check_breaking_marks import GOLDEN_HEADER, _seed
 
 pytestmark = pytest.mark.interpreter_agnostic
@@ -656,7 +656,7 @@ class TestPrePushHook:
     the check is correct no matter where pytest is invoked from.
     """
 
-    _REPO_ROOT = PROJECT_ROOT
+    _REPO_ROOT = CHECKOUT_ROOT
 
     def test_hook_is_committed_executable(self, tmp_path: Path):
         # Checked via `git ls-files -s` (the INDEX/committed mode), not a

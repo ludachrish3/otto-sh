@@ -25,7 +25,7 @@ def test_json_builtin_builds_a_json_repository_over_anchored_paths(tmp_path):
 
 
 def test_register_and_build(tmp_path):
-    class MyRepo:
+    class MyRepository:
         def load_lab(self, name, preferences=None, inventory=None):
             raise NotImplementedError
 
@@ -40,10 +40,10 @@ def test_register_and_build(tmp_path):
         def model_dump(self, mode="python"):
             return {}
 
-    register_lab_repository("mine-test", config=MyConfig, factory=lambda c: MyRepo())
+    register_lab_repository("mine-test", config=MyConfig, factory=lambda c: MyRepository())
     try:
         prepared = LAB_REPOSITORIES.prepare("mine-test", {}, _env(tmp_path))
-        assert isinstance(LAB_REPOSITORIES.build(prepared), MyRepo)
+        assert isinstance(LAB_REPOSITORIES.build(prepared), MyRepository)
     finally:
         LAB_REPOSITORIES.unregister("mine-test")
 

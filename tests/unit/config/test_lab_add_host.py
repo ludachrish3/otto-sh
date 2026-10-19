@@ -70,12 +70,14 @@ def test_a_container_registered_twice_is_refused_naming_it():
     lab.add_host(parent)
     # A dotted ELEMENT name slugs to hyphens: a different id from the container's
     # dotted id, so it is not a collision (pins the seam argument).
-    lab.add_host(make_remote_host(element="test3.repo1.api", board=None, slot=None, ip="10.0.0.9"))
-    lab.add_host(make_container_host(parent=parent, project="repo1", service="api"))
+    lab.add_host(
+        make_remote_host(element="test3.project1.api", board=None, slot=None, ip="10.0.0.9")
+    )
+    lab.add_host(make_container_host(parent=parent, project="project1", service="api"))
     with pytest.raises(LabRepositoryError) as exc:
-        lab.add_host(make_container_host(parent=parent, project="repo1", service="api"))
+        lab.add_host(make_container_host(parent=parent, project="project1", service="api"))
     text = str(exc.value)
-    assert "container repo1/api on test3 collides with container repo1/api on test3" in text
+    assert "container project1/api on test3 collides with container project1/api on test3" in text
     assert "Give the elements" not in text
 
 

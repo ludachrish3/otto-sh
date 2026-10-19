@@ -37,7 +37,7 @@ from pathlib import Path
 import pytest
 
 from scripts import render_module_graph as rmg
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 # Nothing a verb's `--help` needs, and so nothing its command module may load
 # at import: each was cut from a command module's import graph with a measured
@@ -68,7 +68,7 @@ _NO_COMMAND_MODULE_LOADS = [
 
 IMPORT_CONTRACTS: dict[str, list[str]] = {
     # --- Each gated verb's command module (its `--help` imports it). ---
-    # The root command tree: no help reads a repo or validates options.
+    # The root command tree: no help reads a project or validates options.
     "import otto.cli.main": _NO_COMMAND_MODULE_LOADS,
     "import otto.cli.run": _NO_COMMAND_MODULE_LOADS,
     # The verb menu comes from the resolved host's class, not this module.
@@ -93,10 +93,10 @@ IMPORT_CONTRACTS: dict[str, list[str]] = {
     "import otto.cli.link": ["otto.fleet", "rich.table"],
     "import otto.cli.tunnel": ["otto.fleet", "rich.table"],
     # --- Shared modules every command imports. ---
-    # The command tree imports otto.config for every `--help`; none reads a repo.
+    # The command tree imports otto.config for every `--help`; none reads a project.
     "import otto.config": ["otto.config.project", "otto.config.version"],
-    # The repo loader reads the settings types from the foundation module
-    # otto.config.scope, so importing it (`from otto.config import Repo`) loads
+    # The project loader reads the settings types from the foundation module
+    # otto.config.scope, so importing it (`from otto.config import Project`) loads
     # no settings model and no pydantic. Discovery lives here, below the
     # composition root, so reading it never loads the root.
     "import otto.config.project": ["otto.bootstrap", "otto.models.settings", "pydantic"],
@@ -222,7 +222,7 @@ IMPORT_CONTRACTS: dict[str, list[str]] = {
     # otto.bootstrap loads neither the settings parsers nor the host classes. It
     # does load otto.config.scope, the foundation module that owns the error
     # types it re-exports, and otto.declared, whose initiator slot it fills.
-    # Of discovery it re-exports only get_env, lazily, from otto.config.repo.
+    # Of discovery it re-exports only get_env, lazily, from otto.config.project.
     "import otto.bootstrap": [
         "otto.config.project",
         "otto.config.version",
@@ -254,9 +254,9 @@ IMPORT_CONTRACTS: dict[str, list[str]] = {
     "from otto.docker import compose_up": ["otto.labs.loader"],
     "from otto.lab import EmptySelectionError": ["otto.fleet", "otto.host"],
     # The run context's facade is lazy, and only the two names that compose the
-    # run's repos with no run in hand load the composition root (spec 2026-10-11
+    # run's projects with no run in hand load the composition root (spec 2026-10-11
     # placement-and-phases §3.12). The run layer itself never loads the root: it
-    # composes through the initiator the root installs. The repo-aware logging
+    # composes through the initiator the root installs. The project-aware logging
     # install imports the root when called, not when resolved.
     "import otto.context": ["otto.bootstrap", "otto.invocation", "otto.run_context"],
     "from otto.context import get_context": ["otto.bootstrap"],
@@ -311,10 +311,10 @@ IMPORT_ONLY_DECLARED: dict[str, list[str]] = {
     # The leaf otto.host and otto.models share: OttoModel, CredSpec, Cred.
     "otto.models.base": [],
     # The scope predicate, the composition root's error types and the runtime
-    # settings types, below every layer; it normalizes repo names inside its
+    # settings types, below every layer; it normalizes project names inside its
     # functions.
     "otto.config.scope": ["otto.models.dependencies"],
-    # The declared-entry core and the composed-repos catalog. It never loads
+    # The declared-entry core and the composed-projects catalog. It never loads
     # otto.bootstrap: the root fills its initiator slot from above.
     "otto.declared": ["otto.config.scope", "otto.invocation"],
     "otto.models.dependencies": [],
@@ -398,8 +398,8 @@ print(json.dumps({
 
 
 def _shorten(line: str) -> str:
-    """Show a frame's path relative to the repo, or from site-packages on."""
-    root = f"{PROJECT_ROOT}/"
+    """Show a frame's path relative to the checkout, or from site-packages on."""
+    root = f"{CHECKOUT_ROOT}/"
     if line.startswith(root):
         return line[len(root) :]
     marker = "site-packages/"
@@ -553,7 +553,7 @@ def ancestor_eager_imports(module: str, src: "Path | None" = None) -> "list[str]
     Only a top-level relative import counts: one under ``if TYPE_CHECKING:`` or
     inside a function runs later, if ever.
     """
-    root = PROJECT_ROOT / "src" if src is None else src
+    root = CHECKOUT_ROOT / "src" if src is None else src
     parts = module.split(".")
     found: "list[str]" = []
     for depth in range(1, len(parts)):
@@ -582,7 +582,7 @@ def unloaded_eager_dependencies(
 
 def otto_modules() -> "list[str]":
     """Every module a file under ``src/otto`` defines."""
-    src = PROJECT_ROOT / "src"
+    src = CHECKOUT_ROOT / "src"
     return sorted(
         rmg.module_of(path.relative_to(src).as_posix())
         for path in src.joinpath("otto").rglob("*.py")

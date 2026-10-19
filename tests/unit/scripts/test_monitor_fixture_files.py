@@ -13,9 +13,9 @@ someone adds — which is the whole defect class this file used to have.
 import pytest
 
 from scripts.gen_monitor_fixtures import build_all, dumps
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-_FIXTURE_DIR = PROJECT_ROOT / "web" / "fixtures"
+_FIXTURE_DIR = CHECKOUT_ROOT / "web" / "fixtures"
 
 
 @pytest.mark.parametrize("stem", sorted(build_all()))

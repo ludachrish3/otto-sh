@@ -1,6 +1,6 @@
 """Host connections across pytest event loops, against the unix lab (spec §6.1, §6.6, §9 item 1).
 
-Each case writes a scratch repo, runs a real ``otto --lab unix test``, and
+Each case writes a scratch project, runs a real ``otto --lab unix test``, and
 reads the outcome. Unpinned, every test and async fixture runs on the one
 session loop, so a host is shared by the whole run. Each loop closes the hosts
 it owns before it ends, and a host used from the wrong live loop fails fast
@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from tests._fixtures.paths import PROJECT_ROOT
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.paths import CHECKOUT_ROOT
+from tests._fixtures.project_scaffold import make_project
 from tests.e2e._otto_subprocess import run_otto
 
 pytestmark = pytest.mark.integration
@@ -22,12 +22,12 @@ pytestmark = pytest.mark.integration
 _LAB_SOURCE = f'''
 [[lab.sources]]
 backend = "json"
-paths = ["{PROJECT_ROOT / "tests/_fixtures/lab_data/tech1"}"]
+paths = ["{CHECKOUT_ROOT / "tests/_fixtures/lab_data/tech1"}"]
 '''
 
 
 def _run(tmp_path: Path, body: str, *names: str, timeout: int = 90):
-    project = make_sut_repo(
+    project = make_project(
         tmp_path / "probe",
         name="probe",
         tests=["tests"],

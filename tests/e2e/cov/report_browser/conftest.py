@@ -17,11 +17,11 @@ from tests._fixtures._browser_guard import browser_tests_could_run
 from tests._fixtures._report_fixture import build_fixture_report
 from tests._fixtures._ts_bundle_filter import bundle_filter_drift_reason
 from tests._fixtures._ts_coverage import ts_coverage, write_ts_coverage
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 _COVAPP_INDEX = _webassets.COVAPP / "index.html"
 
-_WEB_SRC = PROJECT_ROOT / "web" / "src"
+_WEB_SRC = CHECKOUT_ROOT / "web" / "src"
 
 
 def _stale_dist_reason() -> str | None:
@@ -52,7 +52,7 @@ def _stale_dist_reason() -> str | None:
         return None
     return (
         f"The built coverage-report (covapp) bundle is STALE: "
-        f"{newest_path.relative_to(PROJECT_ROOT)} is newer than the bundle these tests "
+        f"{newest_path.relative_to(CHECKOUT_ROOT)} is newer than the bundle these tests "
         f"serve. pytest does not build the web dist — run `make web` first, or you "
         f"will be testing the previous bundle (see issue #131)."
     )

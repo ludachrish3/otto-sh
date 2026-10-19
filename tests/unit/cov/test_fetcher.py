@@ -131,7 +131,7 @@ class TestGcdaFetcher:
         from otto.host.docker_host import DockerContainerHost
 
         host = MagicMock(spec=DockerContainerHost)  # isinstance-true double
-        host.id = "p.repo.api"
+        host.id = "p.proj.api"
         host.products = [_product("app")]
         host.exec = AsyncMock()
         host.get = AsyncMock()
@@ -143,7 +143,7 @@ class TestGcdaFetcher:
 
         result = await GcdaFetcher(tmp_path / "staging").fetch_all()
 
-        assert ("p.repo.api", "app") in result
+        assert ("p.proj.api", "app") in result
 
     @pytest.mark.asyncio
     async def test_a_failed_product_does_not_stop_the_others(self, tmp_path, fake_config_module):

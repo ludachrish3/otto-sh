@@ -1,0 +1,241 @@
+"""Tests for the sample C coverage product.
+
+Compiles the product with ``--coverage``, deploys to remote hosts,
+runs operations that exercise different code paths, and cleans up
+on teardown.  Designed to be run with ``otto test --cov`` to collect
+``.gcda`` files for coverage reporting.
+
+Usage::
+
+    otto test --cov TestCoverageProduct
+    otto cov report <output_dir> --dir ./report
+
+The product exercises different code paths on each host so that
+merged coverage across hosts is greater than any single host's
+coverage alone.
+"""
+
+import logging
+import re
+from pathlib import Path
+
+import pytest
+import pytest_asyncio
+
+from otto.fleet import (
+    all_hosts,
+    do_for_all_hosts,
+)
+from otto.host import LocalHost
+from otto.host.unix_host import UnixHost
+from otto.utils import Status
+
+logger = logging.getLogger(__name__)
+
+PRODUCT_DIR = Path(__file__).resolve().parent.parent / "product"
+REMOTE_INSTALL_DIR = "/opt/coverage_product"
+
+PRODUCT_NAME = "product"
+"""The ``[[products]]`` entry this suite deploys — the name otto keys the run
+tree's ``cov/<host>/<product>/`` segment and each capture's ``product`` by."""
+
+# Match bare UnixHost ids (e.g. ``test3``) and exclude the
+# dotted ``<parent>.<project>.<service>`` ids of DockerContainerHost
+# placeholders that ``register_declared_container_hosts`` synthesizes
+# at lab-load time. Coverage runs target compile-and-run hosts only —
+# placeholders fail exec until ``otto docker compose up`` populates them.
+_REAL_HOSTS = re.compile(r"^[^.]+$")
+
+
+async def _compile_product() -> None:
+    """Build the C product with --coverage on the local host (incremental).
+
+    Deliberately NOT ``make clean all``: make's dependency tracking is the
+    build cache that decouples building from test running. Unchanged sources
+    are a no-op — the binary and its ``.gcno`` stamps are reused across every
+    ``otto test`` invocation; changed sources rebuild consistently. (Stale
+    data against a NEWER build is caught downstream: gcov's stamp mismatch
+    surfaces as CoverageDataMismatchError at ``otto cov report`` time.)
+    """
+    localhost = LocalHost()
+    try:
+        result = await localhost.exec(f"make -C {PRODUCT_DIR} all", timeout=30)
+        if result.status != Status.Success:
+            raise RuntimeError(f"Product compilation failed:\n{result.value}")
+        logger.info("Product build up to date")
+    finally:
+        await localhost.close()
+
+
+def _cov_dir(host: UnixHost) -> str:
+    """The host-side coverage directory *host*'s ``product`` entry declares.
+
+    The single source of truth for ``GCOV_PREFIX``: otto's collector discovers
+    ``.gcda`` under exactly this directory (``Product.cov_dir``, stamped
+    concrete at lab ingest), so the suite must write them there rather than
+    keep its own copy of the path. A project-level constant is how the two halves
+    silently stop agreeing.
+    """
+    product = next(p for p in host.products if p.name == PRODUCT_NAME)
+    assert product.cov_dir is not None, f"{host.id}: {PRODUCT_NAME} cov_dir was not stamped"
+    return product.cov_dir
+
+
+async def _install_on_host(host: UnixHost) -> None:
+    """Deploy the compiled product binary to a remote host."""
+    # Create directories on remote
+    cov_dir = _cov_dir(host)
+    await host.exec(f"sudo mkdir -p {REMOTE_INSTALL_DIR} {cov_dir}", timeout=10)
+    await host.exec(f"sudo chmod 777 {REMOTE_INSTALL_DIR} {cov_dir}", timeout=10)
+
+    # Upload the binary
+    binary = PRODUCT_DIR / "product"
+    put_result = await host.put(
+        src_files=[binary],
+        dest_dir=Path(REMOTE_INSTALL_DIR),
+    )
+    if not put_result.is_ok:
+        raise RuntimeError(f"Failed to deploy to {host.id}: {put_result.msg}")
+
+    await host.exec(f"chmod +x {REMOTE_INSTALL_DIR}/product", timeout=10)
+    logger.info("Installed product on %s", host.id)
+
+
+async def _uninstall_from_host(host: UnixHost) -> None:
+    """Remove the product and coverage data from a remote host."""
+    await host.exec(f"sudo rm -rf {REMOTE_INSTALL_DIR} {_cov_dir(host)}", timeout=10)
+    logger.info("Uninstalled product from %s", host.id)
+
+
+async def _run_product(host: UnixHost, op: str, *args: int) -> str:
+    """Run the product on a remote host with GCOV_PREFIX set.
+
+    Returns the stdout output from the product.
+    """
+    # Compute GCOV_PREFIX_STRIP: strip all path components from the
+    # build directory so .gcda files land flat in the product's cov_dir.
+    strip = len(PRODUCT_DIR.parts) - 1  # -1 for root '/'
+
+    str_args = " ".join(str(a) for a in args)
+    cmd = (
+        f"GCOV_PREFIX={_cov_dir(host)} "
+        f"GCOV_PREFIX_STRIP={strip} "
+        f"{REMOTE_INSTALL_DIR}/product {op} {str_args}"
+    )
+    result = await host.exec(cmd, timeout=10)
+    if result.status != Status.Success:
+        raise RuntimeError(f"Product run failed on {host.id}: {result.value}")
+    return result.value.strip()
+
+
+class TestCoverageProduct:
+    """Exercise the sample C product across multiple hosts for coverage testing.
+
+    Different hosts exercise different code paths so that merged
+    coverage is greater than any individual host's coverage.
+    """
+
+    @pytest_asyncio.fixture(autouse=True, scope="class")
+    @classmethod
+    async def _deploy_product(cls, ctx):
+        """Compile and deploy the product to all remote hosts; uninstall on teardown.
+
+        A classmethod on the run's session loop (no ``loop_scope`` pin: under
+        ``otto test`` the session loop is the default and every test shares it).
+        """
+        await _compile_product()
+
+        cls._hosts = list(all_hosts(_REAL_HOSTS))
+
+        install_results = await do_for_all_hosts(_install_on_host, pattern=_REAL_HOSTS)
+        failed = {h: r for h, r in install_results.items() if isinstance(r, BaseException)}
+        if failed:
+            # do_for_all_hosts collects exceptions as VALUES — an unchecked
+            # result dict silently turns a broken install into missing
+            # coverage downstream. Fail the suite loudly instead.
+            raise RuntimeError(f"Product install failed on: {failed}")
+
+        yield
+
+        cov_active = ctx.cov
+        if cov_active:
+            # Only remove the binary; leave .gcda files for post-test fetch.
+            await do_for_all_hosts(
+                UnixHost.exec,
+                f"sudo rm -rf {REMOTE_INSTALL_DIR}",
+                timeout=10,
+                pattern=_REAL_HOSTS,
+            )
+        else:
+            await do_for_all_hosts(_uninstall_from_host, pattern=_REAL_HOSTS)
+
+    @staticmethod
+    def _assert_all(
+        results: dict[str, str | BaseException],
+        expected: str,
+    ) -> None:
+        """Fail the test if any host didn't produce the expected output."""
+        for host_id, output in results.items():
+            assert not isinstance(output, BaseException), (
+                f"Error running product on {host_id}: {output}"
+            )
+            assert output == expected, f"Expected {expected}, got {output!r} on {host_id}"
+
+    @pytest.mark.integration
+    async def test_add(self) -> None:
+        """Run 'add' on all hosts — exercises add() and the 'add' branch in main."""
+        results = await do_for_all_hosts(_run_product, "add", 2, 3, pattern=_REAL_HOSTS)
+        self._assert_all(results, "5")
+
+    @pytest.mark.integration
+    async def test_subtract(self) -> None:
+        """Run 'sub' on all hosts — exercises subtract() and the 'sub' branch."""
+        results = await do_for_all_hosts(_run_product, "sub", 10, 4, pattern=_REAL_HOSTS)
+        self._assert_all(results, "6")
+
+    @pytest.mark.integration
+    async def test_multiply(self) -> None:
+        """Run 'mul' on all hosts — exercises multiply() and the 'mul' branch."""
+        results = await do_for_all_hosts(_run_product, "mul", 3, 7, pattern=_REAL_HOSTS)
+        self._assert_all(results, "21")
+
+    @pytest.mark.integration
+    async def test_divide(self) -> None:
+        """Run 'div' on all hosts — exercises divide() success path."""
+        results = await do_for_all_hosts(_run_product, "div", 20, 4, pattern=_REAL_HOSTS)
+        self._assert_all(results, "5")
+
+    @pytest.mark.integration
+    async def test_divide_by_zero(self) -> None:
+        """Run 'div 1 0' on the first host only — exercises divide() error branch.
+
+        Only running on one host means this branch is only covered
+        when coverage from multiple hosts is merged.
+        """
+        host = self._hosts[0]
+        result = await host.exec(
+            f"GCOV_PREFIX={_cov_dir(host)} "
+            f"GCOV_PREFIX_STRIP={len(PRODUCT_DIR.parts) - 1} "
+            f"{REMOTE_INSTALL_DIR}/product div 1 0",
+            timeout=10,
+        )
+        # The program should exit with code 1 and print an error
+        assert "Division by zero" in result.value
+
+    @pytest.mark.integration
+    async def test_clamp(self) -> None:
+        """Run 'clamp' on the last host only — exercises clamp() branches.
+
+        Only running on one host means clamp coverage is host-specific
+        until merged.
+        """
+        host = self._hosts[-1]
+        # value < lo
+        output = await _run_product(host, "clamp", 1, 5, 10)
+        assert output == "5"
+        # value > hi
+        output = await _run_product(host, "clamp", 15, 5, 10)
+        assert output == "10"
+        # value in range
+        output = await _run_product(host, "clamp", 7, 5, 10)
+        assert output == "7"

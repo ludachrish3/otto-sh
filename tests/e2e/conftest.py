@@ -83,7 +83,7 @@ _BROWSER_SUITE_GROUPS: dict[str, str] = {
 # (playwright/_impl/_assertions.py: `expect_options["timeout"] = self._timeout
 # or 5_000`) and is read only from `expect.set_options()` — never from
 # `page.set_default_timeout()`. Nothing here called it, so all 202 assertions
-# across both suites ran at 5s: 6x tighter than the default this repo had
+# across both suites ran at 5s: 6x tighter than the default this repository had
 # already judged insufficient, and 12x tighter than what it chose instead.
 #
 # That is the shape worth naming: wherever a bound was written down it got
@@ -208,7 +208,7 @@ def pytest_runtest_setup(item):  # type: ignore[no-untyped-def]
     Enforcement is split across collection and setup because the obvious
     single-site spelling — ``raise pytest.UsageError`` from
     ``pytest_collection_modifyitems`` — crashes the xdist CONTROLLER under
-    this repo's default ``-n auto``: any exception from a hook that fires
+    this repository's default ``-n auto``: any exception from a hook that fires
     after a worker's ``pytest_sessionstart`` (every collection-time hook
     does) dies as ``INTERNALERROR`` / ``AssertionError`` in
     ``xdist/dsession.py``, and the crash blames whichever innocent item the

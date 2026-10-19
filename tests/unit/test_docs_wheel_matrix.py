@@ -3,15 +3,15 @@
 The gate under test answers one question: would the documented download
 recipe actually place, inside the air gap, a wheel for every non-pure runtime
 dependency on every Python otto claims to support? Every hostile condition
-here is INJECTED into a synthetic lock/table — inheriting the real repo's
+here is INJECTED into a synthetic lock/table — inheriting the real checkout's
 (currently healthy) state would score green no matter what the gate did.
 """
 
 import importlib.util
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-_MODULE_PATH = PROJECT_ROOT / "scripts" / "check_docs_wheel_matrix.py"
+_MODULE_PATH = CHECKOUT_ROOT / "scripts" / "check_docs_wheel_matrix.py"
 
 
 def _load_gate():
@@ -323,6 +323,6 @@ def test_audit_flags_a_dependency_with_no_wheel_for_a_supported_python():
 # --------------------------------------------------------------------------
 
 
-def test_live_repo_passes_the_gate():
+def test_live_checkout_passes_the_gate():
     mod = _load_gate()
     assert mod.main([]) == 0

@@ -21,12 +21,12 @@ from tests._fixtures.paths import TESTS_ROOT
 
 
 @options
-class RepoOptions:
+class ProjectOptions:
     lab_env: Annotated[str, typer.Option(help="Lab environment.")] = "staging"
 
 
 @options
-class InstallOptions(RepoOptions):
+class InstallOptions(ProjectOptions):
     debug: bool = False
 
 
@@ -36,55 +36,55 @@ class RivalOptions:
 
 
 @pytest.fixture
-def repo1_cli(monkeypatch, run_cli):
-    """``run_cli`` over the real ``tests/repo1``, bootstrapped as ``otto`` would.
+def project1_cli(monkeypatch, run_cli):
+    """``run_cli`` over the real ``tests/project1``, bootstrapped as ``otto`` would.
 
-    ``OTTOPATH`` points at repo1 and ``bootstrap()`` imports its init
+    ``OTTOPATH`` points at project1 and ``bootstrap()`` imports its init
     modules, so its instructions and its ``register_options`` calls are the
-    ones the command sees. repo1's init package is evicted first (and put back
+    ones the command sees. project1's init package is evicted first (and put back
     after), so a copy another test cached cannot turn the import into a no-op.
     """
     from otto import bootstrap as bs
 
     evicted = {
-        m: sys.modules.pop(m) for m in list(sys.modules) if m.startswith("repo1_instructions")
+        m: sys.modules.pop(m) for m in list(sys.modules) if m.startswith("project1_instructions")
     }
     monkeypatch.setattr(sys, "path", list(sys.path))
-    monkeypatch.setenv("OTTOPATH", str(TESTS_ROOT / "repo1"))
+    monkeypatch.setenv("OTTOPATH", str(TESTS_ROOT / "project1"))
     bs._reset()
     try:
         assert bs.bootstrap().errors == []
         yield run_cli
     finally:
         bs._reset()
-        for name in [m for m in sys.modules if m.startswith("repo1_instructions")]:
+        for name in [m for m in sys.modules if m.startswith("project1_instructions")]:
             sys.modules.pop(name)
         sys.modules.update(evicted)
 
 
-def test_repo1_install_has_one_lab_env_flag(repo1_cli):
-    help_text = repo1_cli(["run", "install", "--help"]).output
+def test_project1_install_has_one_lab_env_flag(project1_cli):
+    help_text = project1_cli(["run", "install", "--help"]).output
     assert help_text.count("--lab-env") == 1
 
 
 @pytest.mark.parametrize("command", ["test-instruction", "nc-smoke"])
-def test_repo1_own_options_inheriting_repo_options_share_its_flags(repo1_cli, command):
-    """repo1's own ``_Options(RepoOptions)`` classes meet the registered ``RepoOptions``.
+def test_project1_own_options_inheriting_project_options_share_its_flags(project1_cli, command):
+    """project1's own ``_Options(ProjectOptions)`` classes meet the registered ``ProjectOptions``.
 
     The inherited fields are one flag each, not a collision and not doubled.
     """
-    result = repo1_cli(["run", command, "--help"])
+    result = project1_cli(["run", command, "--help"])
     assert result.exit_code == 0, result.output
     assert result.output.count("--lab-env") == 1
     assert result.output.count("--device-type") == 1
 
 
 def test_every_instruction_gains_the_run_flags(run_cli):
-    register_options(RepoOptions, verbs=["run"])
+    register_options(ProjectOptions, verbs=["run"])
     seen = {}
 
     @instruction()
-    async def smoke(opts: RepoOptions) -> None:
+    async def smoke(opts: ProjectOptions) -> None:
         seen["lab_env"] = opts.lab_env
 
     result = run_cli(["run", "smoke", "--lab-env", "prod"])
@@ -93,11 +93,11 @@ def test_every_instruction_gains_the_run_flags(run_cli):
 
 
 def test_own_options_inheriting_a_registered_base_share_one_flag(run_cli):
-    register_options(RepoOptions, verbs=["run"])
+    register_options(ProjectOptions, verbs=["run"])
     seen = {}
 
     @instruction(options=InstallOptions)
-    async def provision(opts: InstallOptions, project: RepoOptions) -> None:
+    async def provision(opts: InstallOptions, project: ProjectOptions) -> None:
         seen.update(own=(opts.lab_env, opts.debug), project=project.lab_env)
 
     help_text = run_cli(["run", "provision", "--help"]).output
@@ -108,12 +108,12 @@ def test_own_options_inheriting_a_registered_base_share_one_flag(run_cli):
 
 
 def test_ctx_options_works_inside_an_instruction(run_cli):
-    register_options(RepoOptions, verbs=["run"])
+    register_options(ProjectOptions, verbs=["run"])
     seen = {}
 
     @instruction()
     async def peek(ctx: OttoContext) -> None:
-        seen["lab_env"] = ctx.options(RepoOptions).lab_env
+        seen["lab_env"] = ctx.options(ProjectOptions).lab_env
 
     assert run_cli(["run", "peek", "--lab-env", "qa"]).exit_code == 0
     assert seen == {"lab_env": "qa"}
@@ -121,7 +121,7 @@ def test_ctx_options_works_inside_an_instruction(run_cli):
 
 def test_an_unhashable_annotation_is_an_ordinary_parameter(run_cli):
     """A registered class is matched by identity: metadata that cannot be hashed is fine."""
-    register_options(RepoOptions, verbs=["run"])
+    register_options(ProjectOptions, verbs=["run"])
     seen = {}
 
     @instruction()
@@ -185,7 +185,7 @@ def test_validation_exits_2_before_the_body(run_cli):
 
 
 def test_project_instructions_gain_run_flags_too(run_cli):
-    register_options(RepoOptions, verbs=["run"])
+    register_options(ProjectOptions, verbs=["run"])
     assert "--lab-env" in run_cli(["run", "install", "--help"]).output
 
 
@@ -194,11 +194,11 @@ def test_a_project_instruction_binds_the_run_flags(run_cli, monkeypatch):
     from otto.context import get_context
     from otto.project import orchestrator
 
-    register_options(RepoOptions, verbs=["run"])
+    register_options(ProjectOptions, verbs=["run"])
     seen = {}
 
     async def _install(source):
-        seen["lab_env"] = get_context().options(RepoOptions).lab_env
+        seen["lab_env"] = get_context().options(ProjectOptions).lab_env
 
     monkeypatch.setattr(orchestrator, "install", _install)
     result = run_cli(["run", "install", "--lab-env", "prod"])
@@ -229,7 +229,7 @@ def test_registering_and_publishing_resolve_no_run_class():
 
 
 def test_the_completion_payload_lists_run_flags():
-    register_options(RepoOptions, verbs=["run"])
+    register_options(ProjectOptions, verbs=["run"])
 
     @instruction()
     async def smoke() -> None: ...
@@ -482,17 +482,17 @@ class TestDryRunBuildsAndShowsOptions:
         assert "Two: a='override', b='default-b'" in out
 
     def test_own_class_and_a_verb_class_both_show_own_first(self, run_cli):
-        register_options(RepoOptions, verbs=["run"])
+        register_options(ProjectOptions, verbs=["run"])
 
         @instruction(options=InstallOptions)
-        async def provision(opts: InstallOptions, project: RepoOptions) -> None: ...
+        async def provision(opts: InstallOptions, project: ProjectOptions) -> None: ...
 
         dry = run_cli(["run", "provision", "--lab-env", "prod", "--debug"], dry_run=True)
         assert dry.exit_code == 0, dry.output
         out = flat(dry.output)
         assert "InstallOptions: lab_env='prod', debug=True" in out
-        assert "RepoOptions: lab_env='prod'" in out
-        assert out.index("InstallOptions:") < out.index("RepoOptions:"), (
+        assert "ProjectOptions: lab_env='prod'" in out
+        assert out.index("InstallOptions:") < out.index("ProjectOptions:"), (
             "the own class must be listed before the verb's own registered class"
         )
 
@@ -579,7 +579,7 @@ class TestDryRunBuildsAndShowsOptions:
         AND built here, not skipped by the seam) rather than dropping coverage
         entirely.
         """
-        register_options(RepoOptions, verbs=["run"])
+        register_options(ProjectOptions, verbs=["run"])
         ran = []
 
         @instruction()

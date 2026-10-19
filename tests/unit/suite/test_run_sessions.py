@@ -1,15 +1,15 @@
-"""``run_tests`` resolves names inside the run's own pytest session, one per repo.
+"""``run_tests`` resolves names inside the run's own pytest session, one per project.
 
-Every session collects its repo's whole tree: the collected-tests tables are
+Every session collects its project's whole tree: the collected-tests tables are
 a hint, never a narrowing of what pytest collects (#592). They decide the
-order of the sessions and how early a name no repo holds is refused: one repo
+order of the sessions and how early a name no project holds is refused: one project
 searches for a name no record places, its session runs first and must find
 it, and a name found nowhere is a did-you-mean before any test runs. Every
 session writes back what it collected. Design:
 ``docs/superpowers/specs/2026-09-27-test-name-cache-design.md`` §3.3, §3.5, §8,
 §11 and §12, as amended by #592.
 
-Each test module in these repos appends its name to an import log when it is
+Each test module in these projects appends its name to an import log when it is
 imported, and each test appends its own name to a run log when it runs, so
 "which files did the run import" and "did anything run" are read from disk.
 Between two runs in one test the generated modules are evicted from
@@ -25,9 +25,9 @@ import pytest
 from otto.config import completion_cache as cc
 from otto.config.collected_tests import classify, read_table, write_tables
 from otto.suite import NoTestsMatchedError, RunOptions, UnknownSelectionError, run_tests
-from tests._fixtures.import_log_repo import ImportLogRepo, logged_lines, logged_test
+from tests._fixtures.import_log_project import ImportLogProject, logged_lines, logged_test
 
-_Repo = ImportLogRepo
+_Project = ImportLogProject
 _test = logged_test
 
 
@@ -37,10 +37,10 @@ _C = _test("test_c1")
 
 
 @pytest.fixture
-def project(sut_repo, tmp_path) -> _Repo:
-    """One repo: ``tests/test_a.py`` (``TestA``), ``tests/test_b.py``, ``tests/sub/test_c.py``."""
-    shell = _Repo(tmp_path / "sut")
-    shell.root = sut_repo(
+def project(one_project, tmp_path) -> _Project:
+    """Holds ``tests/test_a.py`` (``TestA``), ``tests/test_b.py``, ``tests/sub/test_c.py``."""
+    shell = _Project(tmp_path / "sut")
+    shell.root = one_project(
         files={
             "tests/test_a.py": shell.module("test_a", _A),
             "tests/test_b.py": shell.module("test_b", _B),
@@ -75,14 +75,14 @@ def sessions(monkeypatch) -> list:
     return seen
 
 
-def _the_repo():
+def _the_project():
     from otto.bootstrap import get_projects
 
     [only] = get_projects()
     return only
 
 
-def _warm(project: _Repo, tmp_path: Path, sessions: list) -> None:
+def _warm(project: _Project, tmp_path: Path, sessions: list) -> None:
     """Run once so the table holds what pytest collected; then forget the run."""
     assert run_tests(["test_b1"], output_dir=tmp_path / "warm").exit_code == 0
     project.next_run()
@@ -117,12 +117,12 @@ def test_a_cold_run_seeds_the_table_from_its_own_session(project, tmp_path, monk
     assert result.exit_code == 0
     assert len(main_calls) == 1, "one pytest session for the run and the seed"
     assert "--collect-only" not in main_calls[0]
-    table = read_table(_the_repo())
+    table = read_table(_the_project())
     assert table is not None
     assert {"TestA", "test_a1", "test_b1", "test_c1"} <= set(table.names)
     tests = project.root / "tests"
     assert set(table.dirs) == {str(tests), str(tests / "sub")}
-    assert classify(_the_repo(), table).is_current
+    assert classify(_the_project(), table).is_current
 
 
 def test_a_warm_run_collects_the_whole_tree_and_runs_only_the_name(project, tmp_path, sessions):
@@ -160,7 +160,7 @@ def test_a_new_file_is_collected_in_the_first_session(project, tmp_path, session
 
 
 def test_a_file_saved_as_a_pruned_session_starts_is_not_vouched_for(
-    sut_repo, tmp_path, sessions, monkeypatch, real_shell_bytecode
+    one_project, tmp_path, sessions, monkeypatch, real_shell_bytecode
 ):
     """A file created after the table's stat, before pytest lists a directory it passes through.
 
@@ -168,9 +168,9 @@ def test_a_file_saved_as_a_pruned_session_starts_is_not_vouched_for(
     ignores the new file; the table keeps the stat it took before the file
     appeared, and the next run takes ``tests/`` in full.
     """
-    shell = _Repo(tmp_path / "sut")
+    shell = _Project(tmp_path / "sut")
     new_file = shell.module("test_new", "def test_alpha():\n    _ran('new::test_alpha')\n")
-    shell.root = sut_repo(
+    shell.root = one_project(
         files={
             "tests/conftest.py": (
                 "import os, pathlib\n"
@@ -200,7 +200,7 @@ def test_a_file_saved_as_a_pruned_session_starts_is_not_vouched_for(
 
 
 def test_a_file_deleted_and_saved_again_as_the_session_starts_keeps_its_record(
-    sut_repo, tmp_path, sessions, monkeypatch, real_shell_bytecode
+    one_project, tmp_path, sessions, monkeypatch, real_shell_bytecode
 ):
     """The table saw the file gone; pytest, starting, saw it back and collected it.
 
@@ -208,9 +208,9 @@ def test_a_file_deleted_and_saved_again_as_the_session_starts_keeps_its_record(
     keeps a record, stamped with the stat taken just before pytest read it,
     so later runs find its tests without collecting it every time.
     """
-    shell = _Repo(tmp_path / "sut")
+    shell = _Project(tmp_path / "sut")
     again = shell.module("test_old", "def test_alpha():\n    _ran('old::test_alpha')\n")
-    shell.root = sut_repo(
+    shell.root = one_project(
         files={
             "tests/conftest.py": (
                 "import os, pathlib\n"
@@ -234,12 +234,12 @@ def test_a_file_deleted_and_saved_again_as_the_session_starts_keeps_its_record(
     monkeypatch.delenv("SAVE_DURING_STARTUP")
     shell.next_run()
 
-    table = read_table(_the_repo())
+    table = read_table(_the_project())
     assert table is not None
     old = str(shell.root / "tests" / "test_old.py")
     assert old in table.files
     assert table.files[old].stat is not None, "stat'ed before pytest read it"
-    assert classify(_the_repo(), table).is_current
+    assert classify(_the_project(), table).is_current
 
     sessions.clear()
     assert run_tests(["test_alpha"], output_dir=tmp_path / "after").exit_code == 0
@@ -283,7 +283,7 @@ def test_an_edited_conftest_is_read_again_and_recorded(project, tmp_path, sessio
 
     assert result.exit_code == 0
     assert sessions == [None]
-    table = read_table(_the_repo())
+    table = read_table(_the_project())
     assert table is not None
     assert "edited_mine" in table.registered_markers
 
@@ -306,8 +306,8 @@ def test_a_run_records_what_it_collected(project, tmp_path, sessions):
 
     from otto.bootstrap import get_projects
 
-    [the_repo] = get_projects()
-    table = read_table(the_repo)
+    [the_project] = get_projects()
+    table = read_table(the_project)
     assert table is not None
     record = table.files[str(project.root / "tests" / "test_b.py")]
     assert [t.name for t in record.tests] == ["test_b1", "test_b2"]
@@ -415,7 +415,7 @@ def test_a_typo_runs_nothing_and_says_nothing_else(project, tmp_path, sessions, 
     assert "ERROR" not in captured.err
     assert "generated xml file" not in captured.out
     assert not out.exists() or sorted(p.name for p in out.iterdir()) == []
-    table = read_table(_the_repo())
+    table = read_table(_the_project())
     assert table is not None
     assert "test_b2" in table.names, "what the session collected is recorded"
 
@@ -436,9 +436,9 @@ def test_a_typo_names_the_file_that_did_not_collect(project, tmp_path, sessions)
     assert project.ran_tests() == []
 
 
-def test_a_name_in_a_repo_where_nothing_collects_names_the_broken_file(sut_repo, tmp_path):
+def test_a_name_in_a_project_where_nothing_collects_names_the_broken_file(one_project, tmp_path):
     """No test is known at all, but a file failed to collect: that is what the error says."""
-    sut_repo(files={"tests/test_only.py": "def test_only(:\n"})
+    one_project(files={"tests/test_only.py": "def test_only(:\n"})
 
     with pytest.raises(UnknownSelectionError, match=r"tests/test_only\.py did not collect"):
         run_tests(["test_only"], output_dir=tmp_path / "out")
@@ -459,7 +459,7 @@ _DERIVED = "from helpers.base import Base\n\n\nclass TestDerived(Base):\n    pas
 
 
 @pytest.fixture
-def inherited(project, tmp_path, sessions) -> _Repo:
+def inherited(project, tmp_path, sessions) -> _Project:
     """``tests/test_derived.py`` inherits its tests from a helper no stat watches; warm."""
     project.write("tests/helpers/__init__.py", "")
     project.write("tests/helpers/base.py", _BASE)
@@ -501,9 +501,9 @@ _SLOW_DECLARED = (
 )
 
 
-def test_a_name_the_marker_expression_excludes_matches_nothing(sut_repo, tmp_path):
-    shell = _Repo(tmp_path / "sut")
-    sut_repo(
+def test_a_name_the_marker_expression_excludes_matches_nothing(one_project, tmp_path):
+    shell = _Project(tmp_path / "sut")
+    one_project(
         files={
             "tests/conftest.py": _SLOW_DECLARED,
             "tests/test_m.py": shell.module("test_m", _MARKED),
@@ -518,9 +518,9 @@ def test_a_name_the_marker_expression_excludes_matches_nothing(sut_repo, tmp_pat
     assert shell.ran_tests() == []
 
 
-def test_a_marker_alone_runs_one_whole_tree_session_per_repo(two_sut_repos, tmp_path, sessions):
-    shell = _Repo(tmp_path / "repo_a")
-    two_sut_repos(
+def test_a_marker_alone_runs_one_whole_tree_session_per_project(two_projects, tmp_path, sessions):
+    shell = _Project(tmp_path / "project_a")
+    two_projects(
         a={
             "tests/conftest.py": _SLOW_DECLARED,
             "tests/test_m.py": shell.module("test_m", _MARKED),
@@ -536,8 +536,8 @@ def test_a_marker_alone_runs_one_whole_tree_session_per_repo(two_sut_repos, tmp_
     assert result.exit_code == 0
     assert sessions == [None, None]
     assert shell.ran_tests() == ["test_slow"]
-    assert [p.name for p in result.junit_paths] == ["junit_repo_a.xml"]
-    assert not (tmp_path / "out" / "junit_repo_b.xml").exists()
+    assert [p.name for p in result.junit_paths] == ["junit_project_a.xml"]
+    assert not (tmp_path / "out" / "junit_project_b.xml").exists()
 
 
 # ── a file that fails to collect ─────────────────────────────────────────────
@@ -560,11 +560,11 @@ def test_a_broken_file_does_not_stop_the_named_tests_and_fails_every_run_as_in_p
         caplog.clear()
 
 
-# ── several repos ────────────────────────────────────────────────────────────
+# ── several projects ────────────────────────────────────────────────────────────
 
 
-def test_a_name_in_one_repo_runs_there_only(two_sut_repos, tmp_path):
-    two_sut_repos(
+def test_a_name_in_one_project_runs_there_only(two_projects, tmp_path):
+    two_projects(
         a={"tests/test_a.py": "def test_in_a():\n    pass\n"},
         b={"tests/test_b.py": "def test_in_b():\n    pass\n"},
     )
@@ -572,13 +572,13 @@ def test_a_name_in_one_repo_runs_there_only(two_sut_repos, tmp_path):
     result = run_tests(["test_in_b"], output_dir=tmp_path / "out")
 
     assert result.exit_code == 0
-    assert [p.name for p in result.junit_paths] == ["junit_repo_b.xml"]
-    assert not (tmp_path / "out" / "junit_repo_a.xml").exists()
+    assert [p.name for p in result.junit_paths] == ["junit_project_b.xml"]
+    assert not (tmp_path / "out" / "junit_project_a.xml").exists()
 
 
-def test_an_unknown_name_across_repos_runs_nothing(two_sut_repos, tmp_path):
-    shell = _Repo(tmp_path / "repo_a")
-    two_sut_repos(
+def test_an_unknown_name_across_projects_runs_nothing(two_projects, tmp_path):
+    shell = _Project(tmp_path / "project_a")
+    two_projects(
         a={"tests/test_a.py": shell.module("test_a", _test("test_in_a"))},
         b={"tests/test_b.py": "def test_in_b():\n    pass\n"},
     )
@@ -589,10 +589,10 @@ def test_an_unknown_name_across_repos_runs_nothing(two_sut_repos, tmp_path):
     assert shell.ran_tests() == []
 
 
-def test_names_split_across_repos_each_run_where_they_live(two_sut_repos, tmp_path):
-    shell_a = _Repo(tmp_path / "repo_a")
-    shell_b = _Repo(tmp_path / "repo_b")
-    two_sut_repos(
+def test_names_split_across_projects_each_run_where_they_live(two_projects, tmp_path):
+    shell_a = _Project(tmp_path / "project_a")
+    shell_b = _Project(tmp_path / "project_b")
+    two_projects(
         a={"tests/test_a.py": shell_a.module("test_a", _test("test_in_a"))},
         b={"tests/test_b.py": shell_b.module("test_b", _test("test_in_b"))},
     )
@@ -602,12 +602,12 @@ def test_names_split_across_repos_each_run_where_they_live(two_sut_repos, tmp_pa
     assert result.exit_code == 0
     assert shell_a.ran_tests() == ["test_in_a"]
     assert shell_b.ran_tests() == ["test_in_b"]
-    assert [p.name for p in result.junit_paths] == ["junit_repo_a.xml", "junit_repo_b.xml"]
+    assert [p.name for p in result.junit_paths] == ["junit_project_a.xml", "junit_project_b.xml"]
 
 
 @pytest.fixture
 def kinds(monkeypatch) -> list:
-    """Each pytest session a run starts, as ``(repo dir name, "collect" or "run")``."""
+    """Each pytest session a run starts, as ``(project dir name, "collect" or "run")``."""
     import otto.suite.run as run_module
 
     seen: list = []
@@ -621,10 +621,10 @@ def kinds(monkeypatch) -> list:
     return seen
 
 
-def _two_warm(two_sut_repos, tmp_path) -> list[_Repo]:
-    """``repo_a`` holds ``test_in_a`` and ``repo_b`` ``test_in_b``; both tables written."""
-    shells = [_Repo(tmp_path / "repo_a"), _Repo(tmp_path / "repo_b")]
-    two_sut_repos(
+def _two_warm(two_projects, tmp_path) -> list[_Project]:
+    """``project_a`` holds ``test_in_a`` and ``project_b`` ``test_in_b``; both tables written."""
+    shells = [_Project(tmp_path / "project_a"), _Project(tmp_path / "project_b")]
+    two_projects(
         a={"tests/test_ra.py": shells[0].module("test_ra", _test("test_in_a"))},
         b={"tests/test_rb.py": shells[1].module("test_rb", _test("test_in_b"))},
     )
@@ -635,10 +635,10 @@ def _two_warm(two_sut_repos, tmp_path) -> list[_Repo]:
 
 
 def test_an_unplaced_name_is_searched_first_where_a_test_was_just_written(
-    two_sut_repos, tmp_path, kinds
+    two_projects, tmp_path, kinds
 ):
-    """No collect-only pass: the changed repo's run session finds it, then the other runs."""
-    a, b = _two_warm(two_sut_repos, tmp_path)
+    """No collect-only pass: the changed project's run session finds it, then the other runs."""
+    a, b = _two_warm(two_projects, tmp_path)
     kinds.clear()
     a.write(
         "tests/test_ra.py", a.module("test_ra", _test("test_in_a") + "\n\n" + _test("test_new"))
@@ -648,14 +648,14 @@ def test_an_unplaced_name_is_searched_first_where_a_test_was_just_written(
     result = run_tests(["test_new"], output_dir=tmp_path / "out")
 
     assert result.exit_code == 0
-    assert kinds == [("repo_a", "run"), ("repo_b", "run")]
+    assert kinds == [("project_a", "run"), ("project_b", "run")]
     assert a.ran_tests() == ["test_new"]
     assert b.ran_tests() == []
 
 
-def test_a_name_a_new_base_class_brings_is_found_by_the_search(two_sut_repos, tmp_path, kinds):
-    """The search is the run session of the repo whose file changed: it finds and runs it."""
-    a, b = _two_warm(two_sut_repos, tmp_path)
+def test_a_name_a_new_base_class_brings_is_found_by_the_search(two_projects, tmp_path, kinds):
+    """The search is the run session of the project whose file changed: it finds and runs it."""
+    a, b = _two_warm(two_projects, tmp_path)
     kinds.clear()
     a.write("tests/newbase.py", a.module("newbase", "class NewBase:\n" + _method("test_new")))
     a.write(
@@ -671,19 +671,19 @@ def test_a_name_a_new_base_class_brings_is_found_by_the_search(two_sut_repos, tm
     result = run_tests(["test_new"], output_dir=tmp_path / "out")
 
     assert result.exit_code == 0
-    assert kinds == [("repo_a", "run"), ("repo_b", "run")]
+    assert kinds == [("project_a", "run"), ("project_b", "run")]
     assert a.ran_tests() == ["TestRa::test_new"]
 
 
-def test_two_cold_repos_read_each_file_once_and_start_no_empty_session(
-    two_sut_repos, tmp_path, kinds
+def test_two_cold_projects_read_each_file_once_and_start_no_empty_session(
+    two_projects, tmp_path, kinds
 ):
-    """``repo_a`` searches first and lacks the name: it ran nothing, and holds none, so it is done.
+    """``project_a`` searches first and lacks the name: it ran nothing, holds none, so it is done.
 
-    ``repo_b`` then searches, finds and runs it.
+    ``project_b`` then searches, finds and runs it.
     """
-    a, b = _Repo(tmp_path / "repo_a"), _Repo(tmp_path / "repo_b")
-    two_sut_repos(
+    a, b = _Project(tmp_path / "project_a"), _Project(tmp_path / "project_b")
+    two_projects(
         a={
             "tests/base.py": a.module("base", "class Base:\n" + _method("test_inherited")),
             "tests/test_ra.py": a.module(
@@ -698,17 +698,17 @@ def test_two_cold_repos_read_each_file_once_and_start_no_empty_session(
     result = run_tests(["test_in_b"], output_dir=tmp_path / "out")
 
     assert result.exit_code == 0
-    assert kinds == [("repo_a", "run"), ("repo_b", "run")]
+    assert kinds == [("project_a", "run"), ("project_b", "run")]
     assert a.imported() == ["base", "test_ra"], "read once"
     assert b.ran_tests() == ["test_in_b"]
     assert a.ran_tests() == []
 
 
 def test_a_session_that_must_find_a_missing_name_runs_none_of_its_tests(
-    two_sut_repos, tmp_path, kinds
+    two_projects, tmp_path, kinds
 ):
-    """``repo_b`` searches for ``test_nowhere`` first and lacks it: it runs neither name."""
-    a, b = _two_warm(two_sut_repos, tmp_path)
+    """``project_b`` searches for ``test_nowhere`` first and lacks it: it runs neither name."""
+    a, b = _two_warm(two_projects, tmp_path)
     assert a.ran_tests() == []
     kinds.clear()
     b.write("tests/test_rb.py", b.module("test_rb", _test("test_in_b") + "\n\n" + _test("test_b2")))
@@ -716,13 +716,13 @@ def test_a_session_that_must_find_a_missing_name_runs_none_of_its_tests(
     with pytest.raises(UnknownSelectionError, match="test_nowhere"):
         run_tests(["test_in_b", "test_nowhere"], output_dir=tmp_path / "out")
 
-    assert kinds == [("repo_b", "run"), ("repo_a", "run")]
+    assert kinds == [("project_b", "run"), ("project_a", "run")]
     assert a.ran_tests() == b.ran_tests() == []
 
 
-def test_a_typo_beside_a_new_dependency_runs_no_test(two_sut_repos, tmp_path, kinds):
-    """Each repo searches in turn, its run session stopping before any test."""
-    a, b = _two_warm(two_sut_repos, tmp_path)
+def test_a_typo_beside_a_new_dependency_runs_no_test(two_projects, tmp_path, kinds):
+    """Each project searches in turn, its run session stopping before any test."""
+    a, b = _two_warm(two_projects, tmp_path)
     kinds.clear()
     a.write("tests/newbase.py", a.module("newbase", "class NewBase:\n" + _method("test_new")))
     a.write(
@@ -738,28 +738,28 @@ def test_a_typo_beside_a_new_dependency_runs_no_test(two_sut_repos, tmp_path, ki
     with pytest.raises(UnknownSelectionError, match="test_nowhere"):
         run_tests(["test_nowhere"], output_dir=tmp_path / "out")
 
-    assert kinds == [("repo_a", "run"), ("repo_b", "run")]
+    assert kinds == [("project_a", "run"), ("project_b", "run")]
     assert a.ran_tests() == b.ran_tests() == []
 
 
-def test_an_unknown_name_with_one_uncertain_repo_runs_nothing_in_any_repo(
-    two_sut_repos, tmp_path, kinds
+def test_an_unknown_name_with_one_uncertain_project_runs_nothing_in_any_project(
+    two_projects, tmp_path, kinds
 ):
-    """The changed repo searches first, then the other: neither runs a test."""
-    a, b = _two_warm(two_sut_repos, tmp_path)
+    """The changed project searches first, then the other: neither runs a test."""
+    a, b = _two_warm(two_projects, tmp_path)
     kinds.clear()
     b.write("tests/test_rb.py", b.module("test_rb", _test("test_in_b") + "\n\n" + _test("test_b2")))
 
     with pytest.raises(UnknownSelectionError, match="test_nowhere"):
         run_tests(["test_in_a", "test_nowhere"], output_dir=tmp_path / "out")
 
-    assert kinds == [("repo_b", "run"), ("repo_a", "run")]
+    assert kinds == [("project_b", "run"), ("project_a", "run")]
     assert a.ran_tests() == []
     assert b.ran_tests() == []
 
 
-def test_an_unknown_name_across_two_uncertain_repos_runs_nothing(two_sut_repos, tmp_path, kinds):
-    a, b = _two_warm(two_sut_repos, tmp_path)
+def test_an_unknown_name_across_two_uncertain_projects_runs_nothing(two_projects, tmp_path, kinds):
+    a, b = _two_warm(two_projects, tmp_path)
     kinds.clear()
     a.write("tests/test_ra.py", a.module("test_ra", _test("test_in_a") + "\n\n" + _test("test_a2")))
     b.write("tests/test_rb.py", b.module("test_rb", _test("test_in_b") + "\n\n" + _test("test_b2")))
@@ -767,13 +767,13 @@ def test_an_unknown_name_across_two_uncertain_repos_runs_nothing(two_sut_repos, 
     with pytest.raises(UnknownSelectionError, match=r"test_nowhere"):
         run_tests(["test_in_a", "test_nowhere"], output_dir=tmp_path / "out")
 
-    assert kinds == [("repo_a", "run"), ("repo_b", "run")]
+    assert kinds == [("project_a", "run"), ("project_b", "run")]
     assert a.ran_tests() == b.ran_tests() == []
 
 
-def test_a_cold_repo_beside_a_warm_one_runs_the_name_in_both(two_sut_repos, tmp_path, kinds):
-    """``repo_b``'s pytest config changed: it is searched whole though repo_a holds the name."""
-    a, b = _two_warm(two_sut_repos, tmp_path)
+def test_a_cold_project_beside_a_warm_one_runs_the_name_in_both(two_projects, tmp_path, kinds):
+    """``project_b``'s pytest config changed: searched whole though project_a holds the name."""
+    a, b = _two_warm(two_projects, tmp_path)
     kinds.clear()
     b.write(
         "tests/test_rb.py", b.module("test_rb", _test("test_in_b") + "\n\n" + _test("test_in_a"))
@@ -783,15 +783,15 @@ def test_a_cold_repo_beside_a_warm_one_runs_the_name_in_both(two_sut_repos, tmp_
     result = run_tests(["test_in_a"], output_dir=tmp_path / "out")
 
     assert result.exit_code == 0
-    assert kinds == [("repo_a", "run"), ("repo_b", "run")]
+    assert kinds == [("project_a", "run"), ("project_b", "run")]
     assert a.ran_tests() == ["test_in_a"]
     assert b.ran_tests() == ["test_in_a"]
 
 
 def test_a_name_a_fresh_record_holds_also_runs_where_a_changed_file_now_holds_it(
-    two_sut_repos, tmp_path, kinds
+    two_projects, tmp_path, kinds
 ):
-    a, b = _two_warm(two_sut_repos, tmp_path)
+    a, b = _two_warm(two_projects, tmp_path)
     kinds.clear()
     b.write(
         "tests/test_rb.py", b.module("test_rb", _test("test_in_b") + "\n\n" + _test("test_in_a"))
@@ -800,7 +800,7 @@ def test_a_name_a_fresh_record_holds_also_runs_where_a_changed_file_now_holds_it
     result = run_tests(["test_in_a"], output_dir=tmp_path / "out")
 
     assert result.exit_code == 0
-    assert kinds == [("repo_a", "run"), ("repo_b", "run")]
+    assert kinds == [("project_a", "run"), ("project_b", "run")]
     assert a.ran_tests() == ["test_in_a"]
     assert b.ran_tests() == ["test_in_a"]
 
@@ -825,38 +825,36 @@ def _claim(project_root: Path, rel: str, name: str) -> None:
     tr.write_tables([dataclasses.replace(table, files={**table.files, key: lying})])
 
 
-def test_a_name_every_holder_only_claims_is_an_error_after_the_run(two_sut_repos, tmp_path, kinds):
+def test_a_name_every_holder_only_claims_is_an_error_after_the_run(two_projects, tmp_path, kinds):
     """Both records say ``test_ghost`` is there and neither file has it.
 
-    Neither session had to find it (two repos hold it), so the run says so
+    Neither session had to find it (two projects hold it), so the run says so
     once both are done: loud, never a silent run of fewer tests.
     """
-    _two_warm(two_sut_repos, tmp_path)
+    _two_warm(two_projects, tmp_path)
     kinds.clear()
-    _claim(tmp_path / "repo_a", "tests/test_ra.py", "test_ghost")
-    _claim(tmp_path / "repo_b", "tests/test_rb.py", "test_ghost")
+    _claim(tmp_path / "project_a", "tests/test_ra.py", "test_ghost")
+    _claim(tmp_path / "project_b", "tests/test_rb.py", "test_ghost")
 
     with pytest.raises(UnknownSelectionError, match="test_ghost"):
         run_tests(["test_ghost"], output_dir=tmp_path / "out")
 
-    assert kinds == [("repo_a", "run"), ("repo_b", "run")]
+    assert kinds == [("project_a", "run"), ("project_b", "run")]
 
 
-def test_a_name_its_one_holder_only_claims_is_an_error_after_the_run(
-    two_sut_repos, tmp_path, kinds
-):
-    """Placed in ``repo_a`` by a wrong record, it might be in ``repo_b`` too: neither must find it.
+def test_a_name_its_one_holder_only_claims_is_an_error_after_the_run(two_projects, tmp_path, kinds):
+    """Placed in ``project_a`` by a wrong record, maybe in ``project_b`` too: neither must find it.
 
     So the run says so once both are done: loud, never a silent run of fewer tests.
     """
-    a, b = _two_warm(two_sut_repos, tmp_path)
+    a, b = _two_warm(two_projects, tmp_path)
     kinds.clear()
-    _claim(tmp_path / "repo_a", "tests/test_ra.py", "test_ghost")
+    _claim(tmp_path / "project_a", "tests/test_ra.py", "test_ghost")
 
     with pytest.raises(UnknownSelectionError, match="test_ghost"):
         run_tests(["test_ghost", "test_in_b"], output_dir=tmp_path / "out")
 
-    assert kinds == [("repo_a", "run"), ("repo_b", "run")]
+    assert kinds == [("project_a", "run"), ("project_b", "run")]
     assert a.ran_tests() == []
     assert b.ran_tests() == ["test_in_b"]
 
@@ -865,10 +863,10 @@ _STOPS_THE_SESSION = "import pytest\n\npytest.exit('the lab is not configured')\
 
 
 def test_a_search_that_cannot_finish_ends_the_run_with_its_exit_code_and_why(
-    two_sut_repos, tmp_path, kinds, caplog
+    two_projects, tmp_path, kinds, caplog
 ):
-    """``repo_b`` was never searched: no later session starts, no name is called unknown."""
-    a, b = _two_warm(two_sut_repos, tmp_path)
+    """``project_b`` was never searched: no later session starts, no name is called unknown."""
+    a, b = _two_warm(two_projects, tmp_path)
     kinds.clear()
     a.write("tests/test_ra.py", a.module("test_ra", _test("test_in_a") + "\n\n" + _test("test_a2")))
     b.write("tests/conftest.py", _STOPS_THE_SESSION)
@@ -877,9 +875,9 @@ def test_a_search_that_cannot_finish_ends_the_run_with_its_exit_code_and_why(
 
     assert result.exit_code == pytest.ExitCode.USAGE_ERROR
     assert result.junit_paths == []
-    assert kinds == [("repo_a", "run"), ("repo_b", "run")]
+    assert kinds == [("project_a", "run"), ("project_b", "run")]
     [error] = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
-    assert "'repo_b'" in error
+    assert "'project_b'" in error
     assert "the lab is not configured" in error
     assert a.ran_tests() == b.ran_tests() == []
 
@@ -893,10 +891,10 @@ _EXITS_WHEN_COLLECTING_ONLY = (
 
 
 def test_a_typo_is_searched_for_by_run_sessions_never_a_collect_only_one(
-    two_sut_repos, tmp_path, kinds
+    two_projects, tmp_path, kinds
 ):
     """A run's search is the run sessions themselves, each stopping before its tests."""
-    a, b = _two_warm(two_sut_repos, tmp_path)
+    a, b = _two_warm(two_projects, tmp_path)
     kinds.clear()
     a.write("tests/conftest.py", _EXITS_WHEN_COLLECTING_ONLY)
     b.write("tests/conftest.py", _EXITS_WHEN_COLLECTING_ONLY)
@@ -904,15 +902,15 @@ def test_a_typo_is_searched_for_by_run_sessions_never_a_collect_only_one(
     with pytest.raises(UnknownSelectionError, match="test_typo"):
         run_tests(["test_in_a", "test_typo"], output_dir=tmp_path / "out")
 
-    assert kinds == [("repo_a", "run"), ("repo_b", "run")]
+    assert kinds == [("project_a", "run"), ("project_b", "run")]
     assert a.ran_tests() == b.ran_tests() == []
 
 
-def test_the_one_uncertain_repo_that_cannot_finish_ends_the_run_before_any_test(
-    two_sut_repos, tmp_path, kinds, caplog
+def test_the_one_uncertain_project_that_cannot_finish_ends_the_run_before_any_test(
+    two_projects, tmp_path, kinds, caplog
 ):
-    """``test_new`` could only be in ``repo_a``, which never got through collection."""
-    a, b = _two_warm(two_sut_repos, tmp_path)
+    """``test_new`` could only be in ``project_a``, which never got through collection."""
+    a, b = _two_warm(two_projects, tmp_path)
     kinds.clear()
     a.write("tests/conftest.py", _STOPS_THE_SESSION)
 
@@ -920,46 +918,46 @@ def test_the_one_uncertain_repo_that_cannot_finish_ends_the_run_before_any_test(
 
     assert result.exit_code == pytest.ExitCode.USAGE_ERROR
     assert result.junit_paths == []
-    assert kinds == [("repo_a", "run")]
+    assert kinds == [("project_a", "run")]
     [error] = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
-    assert "'repo_a'" in error
+    assert "'project_a'" in error
     assert "the lab is not configured" in error
     assert a.ran_tests() == b.ran_tests() == []
 
 
-def test_a_marker_run_goes_on_past_a_repo_that_cannot_finish(
-    two_sut_repos, tmp_path, kinds, caplog
+def test_a_marker_run_goes_on_past_a_project_that_cannot_finish(
+    two_projects, tmp_path, kinds, caplog
 ):
-    """No name was left for that repo to find: the next repo still runs, and the run fails."""
-    a, b = _two_warm(two_sut_repos, tmp_path)
+    """No name was left for that project to find: the next project still runs, and the run fails."""
+    a, b = _two_warm(two_projects, tmp_path)
     kinds.clear()
     a.write("tests/conftest.py", _STOPS_THE_SESSION)
 
     result = run_tests(run_options=RunOptions(markers="not slow"), output_dir=tmp_path / "out")
 
     assert result.exit_code == pytest.ExitCode.USAGE_ERROR
-    assert kinds == [("repo_a", "run"), ("repo_b", "run")]
+    assert kinds == [("project_a", "run"), ("project_b", "run")]
     assert b.ran_tests() == ["test_in_b"]
     [error] = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
-    assert "Could not collect the tests of project 'repo_a'" in error
+    assert "Could not collect the tests of project 'project_a'" in error
     assert "the lab is not configured" in error
 
 
-def test_a_changed_repo_whose_conftest_raises_is_logged_by_name(
-    two_sut_repos, tmp_path, kinds, caplog
+def test_a_changed_project_whose_conftest_raises_is_logged_by_name(
+    two_projects, tmp_path, kinds, caplog
 ):
-    """``repo_b`` only had its changed files to re-read; its failure still names it."""
-    a, b = _two_warm(two_sut_repos, tmp_path)
+    """``project_b`` only had its changed files to re-read; its failure still names it."""
+    a, b = _two_warm(two_projects, tmp_path)
     kinds.clear()
     b.write("tests/conftest.py", "raise RuntimeError('boom conftest')\n")
 
     result = run_tests(["test_in_a"], output_dir=tmp_path / "out")
 
     assert result.exit_code == pytest.ExitCode.USAGE_ERROR
-    assert kinds == [("repo_a", "run"), ("repo_b", "run")]
+    assert kinds == [("project_a", "run"), ("project_b", "run")]
     assert a.ran_tests() == ["test_in_a"]
     [error] = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
-    assert "Could not collect the tests of project 'repo_b'" in error
+    assert "Could not collect the tests of project 'project_b'" in error
     assert "RuntimeError: boom conftest" in error
 
 
@@ -967,7 +965,7 @@ def test_a_run_that_learns_nothing_new_leaves_the_cache_file_alone(project, tmp_
     """Not even to date what it read again: the table was written a minute ago."""
 
     _warm(project, tmp_path, sessions)
-    table = read_table(_the_repo())
+    table = read_table(_the_project())
     assert table is not None
     earlier = {
         k: dataclasses.replace(r, collected_at=r.collected_at - 60) for k, r in table.files.items()
@@ -1003,13 +1001,13 @@ def test_a_run_finds_the_workspace_home_once(project, tmp_path, sessions, monkey
     assert len(calls) == 1
 
 
-def test_a_broken_file_in_another_repo_is_reported_once_and_fails_the_run(
-    two_sut_repos, tmp_path, sessions, caplog
+def test_a_broken_file_in_another_project_is_reported_once_and_fails_the_run(
+    two_projects, tmp_path, sessions, caplog
 ):
-    """``repo_b``'s session reads its broken file once: logged once, and pytest's exit 1 stands."""
-    shell_a = _Repo(tmp_path / "repo_a")
-    shell_b = _Repo(tmp_path / "repo_b")
-    root_a, root_b = two_sut_repos(
+    """``project_b``'s session reads its broken file once: logged once; pytest's exit 1 stands."""
+    shell_a = _Project(tmp_path / "project_a")
+    shell_b = _Project(tmp_path / "project_b")
+    root_a, root_b = two_projects(
         a={"tests/test_ra.py": shell_a.module("test_ra", _test("test_in_a"))},
         b={"tests/test_rb.py": shell_b.module("test_rb", _test("test_in_b"))},
     )
@@ -1041,7 +1039,7 @@ def test_a_broken_file_in_another_repo_is_reported_once_and_fails_the_run(
 # without its own stat moving.
 
 
-def _holders(project: _Repo) -> dict[str, str]:
+def _holders(project: _Project) -> dict[str, str]:
     base = project.module(
         "test_base",
         "class TestBase:\n"
@@ -1055,10 +1053,10 @@ def _holders(project: _Repo) -> dict[str, str]:
     return {"tests/test_base.py": base, "tests/test_d.py": derived, "tests/test_p.py": plain}
 
 
-def test_a_name_a_base_class_gains_runs_in_every_file_holding_it(sut_repo, tmp_path, sessions):
-    shell = _Repo(tmp_path / "sut")
+def test_a_name_a_base_class_gains_runs_in_every_file_holding_it(one_project, tmp_path, sessions):
+    shell = _Project(tmp_path / "sut")
     files = _holders(shell)
-    root = sut_repo(files=files)
+    root = one_project(files=files)
     assert run_tests(["test_x"], output_dir=tmp_path / "warm").exit_code == 0
     shell.next_run()
     sessions.clear()
@@ -1079,12 +1077,12 @@ def test_a_name_a_base_class_gains_runs_in_every_file_holding_it(sut_repo, tmp_p
 def test_a_name_a_library_base_class_gains_runs_where_it_is_inherited(
     tmp_path, monkeypatch, sessions
 ):
-    from tests._fixtures.sut_repos import _wire_repos
-    from tests._fixtures.sutrepo import make_sut_repo
+    from tests._fixtures.project_scaffold import make_project
+    from tests._fixtures.run_projects import _wire_projects
 
-    shell = _Repo(tmp_path / "sut")
+    shell = _Project(tmp_path / "sut")
     lib_base = "class LibBase:\n    def test_x(self):\n        pass\n"
-    make_sut_repo(
+    make_project(
         shell.root,
         tests=["tests"],
         extra='libs = ["pylib"]\n',
@@ -1098,7 +1096,7 @@ def test_a_name_a_library_base_class_gains_runs_where_it_is_inherited(
         },
     )
     monkeypatch.syspath_prepend(str(shell.root / "pylib"))
-    _wire_repos(monkeypatch, [shell.root])
+    _wire_projects(monkeypatch, [shell.root])
     assert run_tests(["test_x"], output_dir=tmp_path / "warm").exit_code == 0
     shell.next_run()
     sessions.clear()
@@ -1129,7 +1127,9 @@ def _plain() -> str:
     return _test("test_x") + "\n\n" + _test("test_y")
 
 
-def _warm_then_cold(shell: _Repo, tmp_path: Path, monkeypatch, sessions, edit) -> list[list[str]]:
+def _warm_then_cold(
+    shell: _Project, tmp_path: Path, monkeypatch, sessions, edit
+) -> list[list[str]]:
     """Warm the table, apply *edit*, run ``test_y``; then run it again on an empty table."""
     assert run_tests(["test_x"], output_dir=tmp_path / "warm").exit_code == 0
     shell.next_run()
@@ -1148,10 +1148,10 @@ def _method(name: str) -> str:
 
 
 def test_a_class_that_collected_nothing_runs_the_first_test_its_base_gains(
-    sut_repo, tmp_path, monkeypatch, sessions
+    one_project, tmp_path, monkeypatch, sessions
 ):
-    shell = _Repo(tmp_path / "sut")
-    sut_repo(
+    shell = _Project(tmp_path / "sut")
+    one_project(
         files={
             "tests/helpers_base.py": shell.module("helpers_base", "class Base:\n    pass\n"),
             "tests/test_d.py": shell.module(
@@ -1174,9 +1174,11 @@ def test_a_class_that_collected_nothing_runs_the_first_test_its_base_gains(
     assert warm == cold == ["TestD::test_y", "test_y"]
 
 
-def test_a_test_a_star_imported_helper_module_gains_runs(sut_repo, tmp_path, monkeypatch, sessions):
-    shell = _Repo(tmp_path / "sut")
-    sut_repo(
+def test_a_test_a_star_imported_helper_module_gains_runs(
+    one_project, tmp_path, monkeypatch, sessions
+):
+    shell = _Project(tmp_path / "sut")
+    one_project(
         files={
             "tests/common.py": shell.module("common", "def helper():\n    pass\n"),
             "tests/test_s.py": shell.module(
@@ -1199,17 +1201,17 @@ def test_a_test_a_star_imported_helper_module_gains_runs(sut_repo, tmp_path, mon
     assert warm == cold == ["common::test_y", "test_y"]
 
 
-def test_a_base_class_outside_the_repo_and_site_packages_is_tracked(
-    sut_repo, tmp_path, monkeypatch, sessions
+def test_a_base_class_outside_the_project_and_site_packages_is_tracked(
+    one_project, tmp_path, monkeypatch, sessions
 ):
     """An editable install or a ``PYTHONPATH`` dir: its edits reach no ``env`` stat."""
-    shell = _Repo(tmp_path / "sut")
+    shell = _Project(tmp_path / "sut")
     shared = tmp_path / "shared_src"
     shared.mkdir()
     base = shell.module("sharedbase", "class SharedBase:\n" + _method("test_x"))
     (shared / "sharedbase.py").write_text(base)
     monkeypatch.syspath_prepend(str(shared))
-    sut_repo(
+    one_project(
         files={
             "tests/test_d.py": shell.module(
                 "test_d",
@@ -1228,11 +1230,11 @@ def test_a_base_class_outside_the_repo_and_site_packages_is_tracked(
 
 
 def test_a_test_a_constant_in_an_imported_module_enables_runs(
-    sut_repo, tmp_path, monkeypatch, sessions
+    one_project, tmp_path, monkeypatch, sessions
 ):
     """``import featcfg`` makes ``featcfg.py`` a dependency: flipping its flag re-collects."""
-    shell = _Repo(tmp_path / "sut")
-    sut_repo(
+    shell = _Project(tmp_path / "sut")
+    one_project(
         files={
             "tests/featcfg.py": "FEATURE = False\n",
             "tests/test_d.py": shell.module(
@@ -1254,7 +1256,7 @@ def test_a_test_a_constant_in_an_imported_module_enables_runs(
 
 
 def test_a_sourceless_library_is_followed_through_its_pyc(
-    sut_repo, tmp_path, monkeypatch, sessions
+    one_project, tmp_path, monkeypatch, sessions
 ):
     """A ``.pyc``-only base class: its ``.pyc`` is the dependency, not the missing ``.py``.
 
@@ -1267,7 +1269,7 @@ def test_a_sourceless_library_is_followed_through_its_pyc(
     import otto.bootstrap
     from otto.config import collected_tests as tr
 
-    shell = _Repo(tmp_path / "sut")
+    shell = _Project(tmp_path / "sut")
     lib = tmp_path / "pyconly"
     lib.mkdir()
     source = tmp_path / "srcs" / "pycbase.py"
@@ -1281,7 +1283,7 @@ def test_a_sourceless_library_is_followed_through_its_pyc(
 
     compile_lib(base)
     monkeypatch.syspath_prepend(str(lib))
-    sut_repo(
+    one_project(
         files={
             "tests/test_d.py": shell.module(
                 "test_d", "from pycbase import PycBase\n\n\nclass TestD(PycBase):\n    pass\n"
@@ -1296,26 +1298,26 @@ def test_a_sourceless_library_is_followed_through_its_pyc(
     warm, cold = _warm_then_cold(shell, tmp_path, monkeypatch, sessions, edit)
 
     assert warm == cold == ["TestD::test_y", "test_y"]
-    [the_repo] = otto.bootstrap.get_projects()
-    table = tr.read_table(the_repo)
+    [the_project] = otto.bootstrap.get_projects()
+    table = tr.read_table(the_project)
     assert table is not None
     assert list(table.deps) == [str(lib / "pycbase.pyc")]
     shell.next_run()
     assert run_tests(["test_y"], output_dir=tmp_path / "third").exit_code == 0
-    table = tr.read_table(the_repo)
+    table = tr.read_table(the_project)
     assert table is not None
-    fresh = tr.classify(the_repo, table).fresh
+    fresh = tr.classify(the_project, table).fresh
     assert shell.root / "tests" / "test_d.py" in fresh
 
 
-def test_a_global_whose_class_raises_never_stops_the_run(sut_repo, tmp_path):
+def test_a_global_whose_class_raises_never_stops_the_run(one_project, tmp_path):
     """The namespace walk reads each value's ``type()``, never its ``__class__``.
 
     Before, ``isinstance`` on such a global ended the session in an
     INTERNALERROR. (That a lazy proxy is never set up by the walk is pinned in
     ``test_plugin_names.py``: pytest's own collection probes every global.)
     """
-    shell = _Repo(tmp_path / "sut")
+    shell = _Project(tmp_path / "sut")
     hostile = (
         "class _Hostile:\n"
         "    @property\n"
@@ -1323,7 +1325,7 @@ def test_a_global_whose_class_raises_never_stops_the_run(sut_repo, tmp_path):
         "        raise RuntimeError('lazy settings not configured')\n\n\n"
         "settings = _Hostile()\n"
     )
-    sut_repo(
+    one_project(
         files={
             "tests/lazyset.py": hostile,
             "tests/test_d.py": shell.module(
@@ -1390,9 +1392,11 @@ def test_a_typo_the_session_finds_never_touches_the_remote_coverage(
     run_module._post_run_coverage.assert_not_awaited()
 
 
-def test_a_name_the_marker_excludes_never_cleans_the_remote_coverage(sut_repo, tmp_path, pre_clean):
-    shell = _Repo(tmp_path / "sut")
-    sut_repo(
+def test_a_name_the_marker_excludes_never_cleans_the_remote_coverage(
+    one_project, tmp_path, pre_clean
+):
+    shell = _Project(tmp_path / "sut")
+    one_project(
         files={
             "tests/conftest.py": _SLOW_DECLARED,
             "tests/test_m.py": shell.module("test_m", _MARKED),
@@ -1408,13 +1412,13 @@ def test_a_name_the_marker_excludes_never_cleans_the_remote_coverage(sut_repo, t
 
 
 def test_the_remote_coverage_is_cleaned_once_before_the_first_test(
-    two_sut_repos, tmp_path, pre_clean
+    two_projects, tmp_path, pre_clean
 ):
     from otto.coverage.reports import CleanReport
 
-    shell_a = _Repo(tmp_path / "repo_a")
-    shell_b = _Repo(tmp_path / "repo_b")
-    two_sut_repos(
+    shell_a = _Project(tmp_path / "project_a")
+    shell_b = _Project(tmp_path / "project_b")
+    two_projects(
         a={"tests/test_a.py": shell_a.module("test_a", _test("test_in_a"))},
         b={"tests/test_b.py": shell_b.module("test_b", _test("test_in_b"))},
     )
@@ -1444,11 +1448,11 @@ def test_a_failing_pre_clean_stops_the_run_with_its_own_error(project, tmp_path,
 # ── one seed per run; JUnit only from a session that ran ─────────────────────
 
 
-def test_every_session_of_a_run_uses_the_one_seed(two_sut_repos, tmp_path, monkeypatch, caplog):
+def test_every_session_of_a_run_uses_the_one_seed(two_projects, tmp_path, monkeypatch, caplog):
 
-    shell_a = _Repo(tmp_path / "repo_a")
-    shell_b = _Repo(tmp_path / "repo_b")
-    two_sut_repos(
+    shell_a = _Project(tmp_path / "project_a")
+    shell_b = _Project(tmp_path / "project_b")
+    two_projects(
         a={"tests/test_ra.py": shell_a.module("test_ra", _test("test_in_a"))},
         b={"tests/test_rb.py": shell_b.module("test_rb", _test("test_in_b"))},
     )
@@ -1501,7 +1505,7 @@ def test_a_run_names_the_junit_file_where_it_ends_up(project, tmp_path, capfd):
     assert sorted(p.name for p in out.iterdir()) == ["junit.xml"]
 
 
-# ── a refusal after another repo's tests ran ─────────────────────────────────
+# ── a refusal after another project's tests ran ─────────────────────────────────
 
 _REFUSING = (
     "from otto.registry import RegistrationRefused\n"
@@ -1509,52 +1513,52 @@ _REFUSING = (
 )
 
 
-def _refusing_after_a_warm_run(two_sut_repos, tmp_path) -> Path:
-    """Two warm repos; then repo_b's test file registers something as it loads.
+def _refusing_after_a_warm_run(two_projects, tmp_path) -> Path:
+    """Two warm projects; then project_b's test file registers something as it loads.
 
-    The name lives in repo_a, so nothing needs a refresh: repo_a's session
-    runs first and repo_b's (its changed file) refuses afterwards.
+    The name lives in project_a, so nothing needs a refresh: project_a's session
+    runs first and project_b's (its changed file) refuses afterwards.
     """
     import otto.suite.run as run_module
 
-    two_sut_repos(
+    two_projects(
         a={"tests/test_a.py": "def test_in_a():\n    pass\n"},
         b={"tests/test_b.py": "def test_in_b():\n    pass\n"},
     )
     assert run_tests(["test_in_a", "test_in_b"], output_dir=tmp_path / "warm").exit_code == 0
-    _Repo(tmp_path / "repo_a").next_run()
+    _Project(tmp_path / "project_a").next_run()
     run_module._post_run_coverage.reset_mock()
-    test_b = tmp_path / "repo_b" / "tests" / "test_b.py"
+    test_b = tmp_path / "project_b" / "tests" / "test_b.py"
     test_b.write_text(_REFUSING)
     return test_b
 
 
-def test_a_refusal_in_a_later_repo_still_collects_the_earlier_repos_coverage(
-    two_sut_repos, tmp_path, pre_clean
+def test_a_refusal_in_a_later_project_still_collects_the_earlier_projects_coverage(
+    two_projects, tmp_path, pre_clean
 ):
     import otto.suite.run as run_module
     from otto.registry import RegistrationRefused
 
-    _refusing_after_a_warm_run(two_sut_repos, tmp_path)
+    _refusing_after_a_warm_run(two_projects, tmp_path)
     out = tmp_path / "out"
 
     with pytest.raises(RegistrationRefused):
         run_tests(["test_in_a"], output_dir=out)
 
     run_module._post_run_coverage.assert_awaited_once()
-    assert (out / "junit_repo_a.xml").exists()
-    assert not (out / "junit_repo_b.xml").exists()
+    assert (out / "junit_project_a.xml").exists()
+    assert not (out / "junit_project_b.xml").exists()
 
 
 def test_a_refusal_a_search_finds_stops_the_run_before_any_test(
-    two_sut_repos, tmp_path, pre_clean, sessions
+    two_projects, tmp_path, pre_clean, sessions
 ):
-    """Both repos cold and the name placed nowhere: ``repo_a`` searches first and loads it."""
+    """Both projects cold and the name placed nowhere: ``project_a`` searches first and loads it."""
     import otto.suite.run as run_module
     from otto.registry import RegistrationRefused
 
-    shell = _Repo(tmp_path / "repo_b")
-    two_sut_repos(
+    shell = _Project(tmp_path / "project_b")
+    two_projects(
         a={"tests/test_a.py": _REFUSING},
         b={"tests/test_b.py": shell.module("test_b", _test("test_in_b"))},
     )
@@ -1569,14 +1573,14 @@ def test_a_refusal_a_search_finds_stops_the_run_before_any_test(
 
 
 def test_a_coverage_failure_after_a_refusal_never_hides_the_refusal(
-    two_sut_repos, tmp_path, pre_clean, monkeypatch, caplog
+    two_projects, tmp_path, pre_clean, monkeypatch, caplog
 ):
     from unittest.mock import AsyncMock
 
     import otto.suite.run as run_module
     from otto.registry import RegistrationRefused
 
-    _refusing_after_a_warm_run(two_sut_repos, tmp_path)
+    _refusing_after_a_warm_run(two_projects, tmp_path)
     monkeypatch.setattr(
         run_module, "_post_run_coverage", AsyncMock(side_effect=RuntimeError("no gcda"))
     )
@@ -1586,7 +1590,7 @@ def test_a_coverage_failure_after_a_refusal_never_hides_the_refusal(
 
     run_module._post_run_coverage.assert_awaited_once()
     [record] = [r for r in caplog.records if "coverage collection" in r.getMessage()]
-    assert "repo_a" in record.getMessage()
+    assert "project_a" in record.getMessage()
     assert record.exc_info is not None
     assert str(record.exc_info[1]) == "no gcda"
 
@@ -1610,15 +1614,15 @@ def test_a_coverage_failure_with_nothing_else_wrong_is_raised(
 
 
 def test_a_broken_file_a_stopped_search_read_still_fails_the_run(
-    two_sut_repos, tmp_path, sessions, caplog
+    two_projects, tmp_path, sessions, caplog
 ):
-    """``repo_a`` searches first, lacks the name and holds none: no session of its runs again.
+    """``project_a`` searches first, lacks the name and holds none: no session of its runs again.
 
     Its collection error is still the run's, logged once: pytest over both
     trees exits 1.
     """
-    shell_b = _Repo(tmp_path / "repo_b")
-    two_sut_repos(
+    shell_b = _Project(tmp_path / "project_b")
+    two_projects(
         a={"tests/test_broken.py": "def test_broken(:\n"},
         b={"tests/test_rb.py": shell_b.module("test_rb", _test("test_in_b"))},
     )
@@ -1632,13 +1636,13 @@ def test_a_broken_file_a_stopped_search_read_still_fails_the_run(
     assert len(failures) == 1
 
 
-def test_a_broken_file_a_search_read_is_logged_once_though_its_repo_runs_again(
-    two_sut_repos, tmp_path, sessions, caplog
+def test_a_broken_file_a_search_read_is_logged_once_though_its_project_runs_again(
+    two_projects, tmp_path, sessions, caplog
 ):
-    """``repo_a`` searches for ``test_in_b`` and stops; it runs again for ``test_in_a``."""
-    shell_a = _Repo(tmp_path / "repo_a")
-    shell_b = _Repo(tmp_path / "repo_b")
-    two_sut_repos(
+    """``project_a`` searches for ``test_in_b`` and stops; it runs again for ``test_in_a``."""
+    shell_a = _Project(tmp_path / "project_a")
+    shell_b = _Project(tmp_path / "project_b")
+    two_projects(
         a={
             "tests/test_ra.py": shell_a.module("test_ra", _test("test_in_a")),
             "tests/test_broken.py": "def test_broken(:\n",
@@ -1683,36 +1687,38 @@ def test_a_search_a_conftest_stops_while_collecting_keeps_the_earlier_results(
 
 
 @pytest.mark.usefixtures("_generated_modules_evicted")
-def test_split_names_on_cold_repos_collect_each_repo_at_most_twice(tmp_path, monkeypatch, kinds):
-    """Refusing a typo before any test costs a stopped search per repo but the last: 2N - 1.
+def test_split_names_on_cold_projects_collect_each_project_at_most_twice(
+    tmp_path, monkeypatch, kinds
+):
+    """Refusing a typo before any test costs a stopped search per project but the last: 2N - 1.
 
-    Cold, the names one per repo: a and b search and stop, c finds its
+    Cold, the names one per project: a and b search and stop, c finds its
     name and runs, then a and b run.
     """
-    from tests._fixtures.sut_repos import _wire_repos
-    from tests._fixtures.sutrepo import make_sut_repo
+    from tests._fixtures.project_scaffold import make_project
+    from tests._fixtures.run_projects import _wire_projects
 
     roots = []
-    for name in ("repo_a", "repo_b", "repo_c"):
-        shell = _Repo(tmp_path / name)
-        make_sut_repo(
+    for name in ("project_a", "project_b", "project_c"):
+        shell = _Project(tmp_path / name)
+        make_project(
             shell.root,
             name=name,
             tests=["tests"],
             files={f"tests/test_{name}.py": shell.module(f"test_{name}", _test(f"test_in_{name}"))},
         )
         roots.append(shell.root)
-    _wire_repos(monkeypatch, roots)
+    _wire_projects(monkeypatch, roots)
 
     result = run_tests(
-        ["test_in_repo_a", "test_in_repo_b", "test_in_repo_c"], output_dir=tmp_path / "out"
+        ["test_in_project_a", "test_in_project_b", "test_in_project_c"], output_dir=tmp_path / "out"
     )
 
     assert result.exit_code == 0
     assert kinds == [
-        ("repo_a", "run"),
-        ("repo_b", "run"),
-        ("repo_c", "run"),
-        ("repo_a", "run"),
-        ("repo_b", "run"),
+        ("project_a", "run"),
+        ("project_b", "run"),
+        ("project_c", "run"),
+        ("project_a", "run"),
+        ("project_b", "run"),
     ]

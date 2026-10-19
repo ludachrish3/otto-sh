@@ -29,8 +29,8 @@ COV = {
 SPEC = build_ticket_spec("#(?P<n>[0-9]+)", None)
 
 
-def _mk_repo(tmp_path: Path):
-    """An empty hermetic repo on `main`, plus its bound git runner."""
+def _mk_git_repo(tmp_path: Path):
+    """An empty hermetic git repository on `main`, plus its bound git runner."""
     sut = TmpGitRepo(tmp_path / "sut")
     return sut.root, sut.git
 
@@ -77,7 +77,7 @@ def _file_rec(store, name: str):
 
 @pytest.mark.asyncio
 async def test_asserted_lines_count_in_their_tier_and_carry_provenance(tmp_path):
-    project, git = _mk_repo(tmp_path)
+    project, git = _mk_git_repo(tmp_path)
     (project / "a.c").write_text("l1\nl2\nl3\n")
     git("add", "-A")
     git("commit", "-qm", "work #1")
@@ -96,7 +96,7 @@ async def test_asserted_lines_count_in_their_tier_and_carry_provenance(tmp_path)
 
 @pytest.mark.asyncio
 async def test_commit_after_as_of_under_same_ticket_stays_uncovered(tmp_path):
-    project, git = _mk_repo(tmp_path)
+    project, git = _mk_git_repo(tmp_path)
     (project / "a.c").write_text("l1\nl2\n")
     git("add", "-A")
     git("commit", "-qm", "work #1")
@@ -115,7 +115,7 @@ async def test_commit_after_as_of_under_same_ticket_stays_uncovered(tmp_path):
 
 @pytest.mark.asyncio
 async def test_rewritten_line_drops_out_whitespace_edit_survives(tmp_path):
-    project, git = _mk_repo(tmp_path)
+    project, git = _mk_git_repo(tmp_path)
     (project / "a.c").write_text("l1\nl2\n")
     git("add", "-A")
     git("commit", "-qm", "work #1")
@@ -132,7 +132,7 @@ async def test_rewritten_line_drops_out_whitespace_edit_survives(tmp_path):
 
 @pytest.mark.asyncio
 async def test_reattribution_reaches_store_tickets(tmp_path):
-    project, git = _mk_repo(tmp_path)
+    project, git = _mk_git_repo(tmp_path)
     (project / "a.c").write_text("l1\n")
     git("add", "-A")
     git("commit", "-qm", "fix #1")
@@ -150,7 +150,7 @@ async def test_reattribution_reaches_store_tickets(tmp_path):
 
 @pytest.mark.asyncio
 async def test_real_manual_run_clears_the_asserted_mark(tmp_path):
-    project, git = _mk_repo(tmp_path)
+    project, git = _mk_git_repo(tmp_path)
     (project / "a.c").write_text("l1\nl2\n")
     git("add", "-A")
     git("commit", "-qm", "work #1")
@@ -176,7 +176,7 @@ async def test_real_manual_run_clears_the_asserted_mark(tmp_path):
 
 @pytest.mark.asyncio
 async def test_absent_file_and_key_is_identical(tmp_path):
-    project, git = _mk_repo(tmp_path)
+    project, git = _mk_git_repo(tmp_path)
     (project / "a.c").write_text("l1\n")
     git("add", "-A")
     git("commit", "-qm", "work #1")
@@ -204,7 +204,7 @@ async def test_overrides_active_true_for_reattribute_only_file_false_with_none(t
     reattribution never appends an `OverrideRecord`). No file at all must
     still read false.
     """
-    project, git = _mk_repo(tmp_path)
+    project, git = _mk_git_repo(tmp_path)
     (project / "a.c").write_text("l1\n")
     git("add", "-A")
     git("commit", "-qm", "fix #1")
@@ -241,7 +241,7 @@ async def test_reattribute_only_file_never_spawns_the_first_parent_walk(tmp_path
     """
     from otto.coverage.capture import gitio
 
-    project, git = _mk_repo(tmp_path)
+    project, git = _mk_git_repo(tmp_path)
     (project / "a.c").write_text("l1\n")
     git("add", "-A")
     git("commit", "-qm", "fix #1")
@@ -273,7 +273,7 @@ async def test_fully_aged_ticket_entry_is_inert_not_fatal(tmp_path, caplog):
     owners), so the ticket is still found (as_of resolves fine) and the
     empty *current* line set falls through to the existing aged-out path.
     """
-    project, git = _mk_repo(tmp_path)
+    project, git = _mk_git_repo(tmp_path)
     (project / "a.c").write_text("l1\n")
     git("add", "-A")
     git("commit", "-qm", "work #1")
@@ -297,7 +297,7 @@ async def test_fully_aged_ticket_entry_is_inert_not_fatal(tmp_path, caplog):
 
 @pytest.mark.asyncio
 async def test_prune_signal_reaches_the_report_log(tmp_path, caplog):
-    project, git = _mk_repo(tmp_path)
+    project, git = _mk_git_repo(tmp_path)
     (project / "a.c").write_text("l1\n")
     git("add", "-A")
     git("commit", "-qm", "work #1")

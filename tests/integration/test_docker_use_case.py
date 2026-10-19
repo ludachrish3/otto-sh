@@ -1,13 +1,13 @@
 """Use-case deployment against the real bed (spec §4, §6, §8, §9).
 
-Where ``test_docker_compose.py`` drives ONE repo's stack through the per-repo
+Where ``test_docker_compose.py`` drives ONE project's stack through the per-project
 primitives, this module drives the layer above them: ``deploy`` / ``teardown``
-merging TWO repos' fragments into one compose project on test3, with a
+merging TWO projects' fragments into one compose project on test3, with a
 real/mock provider pair competing for the ``edge`` capability.
 
 What only a real daemon can prove, and why each case is here:
 
-* **Selection is not merge.** repo1 and repo2 both declare a service named
+* **Selection is not merge.** project1 and project2 both declare a service named
   ``edge``. If the loser's compose file joined the ``-f`` set, the merge would
   decide the winner by file order — silently. The container's IMAGE and the
   marker file baked into it are what say which fragment actually ran.
@@ -44,10 +44,10 @@ from tests._fixtures.labdata import element_for, host_data
 from tests._fixtures.paths import TESTS_ROOT
 from tests.conftest import active_context
 
-REPO1_DIR = TESTS_ROOT / "repo1"
-REPO2_DIR = TESTS_ROOT / "repo2"
+PROJECT1_DIR = TESTS_ROOT / "project1"
+PROJECT2_DIR = TESTS_ROOT / "project2"
 
-#: The use-case both sample repos contribute a fragment to (spec §4's worked
+#: The use-case both sample projects contribute a fragment to (spec §4's worked
 #: example, as committed in their ``.otto/settings.toml``).
 USE_CASE = "integration"
 
@@ -107,8 +107,8 @@ def lab(parent) -> Lab:
 
 @pytest.fixture
 def projects() -> list[Project]:
-    """The two sample repos, parsed from their committed settings.toml."""
-    return [Project(root=REPO1_DIR), Project(root=REPO2_DIR)]
+    """The two sample projects, parsed from their committed settings.toml."""
+    return [Project(root=PROJECT1_DIR), Project(root=PROJECT2_DIR)]
 
 
 @pytest.fixture
@@ -131,18 +131,18 @@ def project(suffix) -> str:
 
 @pytest.fixture(autouse=True)
 def _deployment_config(monkeypatch, lab, projects, suffix):
-    """Point ``deploy``/``teardown`` at THIS module's lab, repos and suffix.
+    """Point ``deploy``/``teardown`` at THIS module's lab, projects and suffix.
 
     A run on THIS module's lab is installed and the composition root is
     patched rather than bootstrapped: ``deploy`` reads the lab off the active
-    run and the run's repos from its context, which composes them through the
+    run and the run's projects from its context, which composes them through the
     root (``otto.bootstrap.bootstrap``), and bootstrapping here would import
-    the sample repos' ``init`` modules into
-    the test process (they register process-global providers) to obtain repos
+    the sample projects' ``init`` modules into
+    the test process (they register process-global providers) to obtain projects
     this fixture already holds.
 
     ``scope_for_project`` is patched to its TRUTHFUL answer, not a convenient
-    one: neither sample repo declares a ``[project]`` table, so the real
+    one: neither sample project declares a ``[project]`` table, so the real
     lookup returns ``None`` for both — it just reaches it through the same
     lazy bootstrap.
     """
@@ -202,8 +202,8 @@ async def _env_of(parent, container_id: str) -> dict[str, str]:
 async def test_merged_stack_displaces_mock(parent, project):
     """One project, three services, and the WINNER's image on the edge.
 
-    The two repos' fragments merge into a single compose project; the mock
-    edge stands down whole, so nothing of repo2's ``mock-edge.yml`` reaches
+    The two projects' fragments merge into a single compose project; the mock
+    edge stands down whole, so nothing of project2's ``mock-edge.yml`` reaches
     the daemon. Both of spec §6's consumption points are then read out of the
     running container.
     """
@@ -215,25 +215,25 @@ async def test_merged_stack_displaces_mock(parent, project):
         )
         assert stack.projects == {parent.id: project}, stack.projects
 
-        # The competition's record, as it IS: repo1 won at 10, repo2 stood
+        # The competition's record, as it IS: project1 won at 10, project2 stood
         # down at 0. Both priorities, neither described as "the higher one".
         (displacement,) = stack.selection.displaced
         assert displacement.capability == "edge"
-        assert (displacement.winner_project, displacement.winner_priority) == ("repo1", 10)
-        assert (displacement.loser_project, displacement.loser_priority) == ("repo2", 0)
+        assert (displacement.winner_project, displacement.winner_priority) == ("project1", 10)
+        assert (displacement.loser_project, displacement.loser_priority) == ("project2", 0)
 
         edge = await _container_of(parent, project, "edge")
         assert edge, f"no running `edge` container in project {project}"
-        assert await _image_of(parent, edge) == "repo1-api:latest", (
+        assert await _image_of(parent, edge) == "project1-api:latest", (
             "the edge container came from the MOCK's image — the loser's compose "
             "file reached the -f merge instead of being excluded whole"
         )
         # Belt and braces, from inside the container: the two images differ
         # only by the marker they bake in, so this is the same claim made
         # without trusting the image tag the daemon reports.
-        marker = await parent.exec(f"docker exec {shlex.quote(edge)} cat /etc/repo1-marker.txt")
+        marker = await parent.exec(f"docker exec {shlex.quote(edge)} cat /etc/project1-marker.txt")
         assert marker.is_ok, marker.value
-        assert "repo1-fixture" in marker.value, marker.value
+        assert "project1-fixture" in marker.value, marker.value
 
         env = await _env_of(parent, edge)
         assert env.get("EDGE_ADDR") == parent.ip, (
@@ -263,7 +263,7 @@ async def test_additive_up_converges_and_removes_orphans(parent, project):
     1. ``services=["api"]`` starts just that service.
     2. A full deploy adds ``worker`` and ``edge`` and leaves ``api``'s
        container ID untouched — compose converged rather than recreated.
-    3. ``provide={"edge": "repo2"}`` seats the mock. repo1 loses the
+    3. ``provide={"edge": "project2"}`` seats the mock. project1 loses the
        capability and is excluded WHOLE, so its ``core`` goes too: ``api``
        and the real edge are both orphans of the new file set, and
        ``--remove-orphans`` reaps them inside this project.
@@ -285,27 +285,27 @@ async def test_additive_up_converges_and_removes_orphans(parent, project):
         )
         real_edge = await _container_of(parent, project, "edge")
         assert real_edge, f"no running `edge` container in {project} after the full deploy"
-        assert await _image_of(parent, real_edge) == "repo1-api:latest"
+        assert await _image_of(parent, real_edge) == "project1-api:latest"
 
-        flipped = await deploy(USE_CASE, parent=parent.id, provide={"edge": "repo2"})
+        flipped = await deploy(USE_CASE, parent=parent.id, provide={"edge": "project2"})
         assert sorted(flipped.hosts) == ["edge", "worker"], (
-            f"repo1 lost `edge`, so its whole fragment — `core` included — must be "
+            f"project1 lost `edge`, so its whole fragment — `core` included — must be "
             f"excluded: {sorted(flipped.hosts)}"
         )
         mock_edge = await _container_of(parent, project, "edge")
         assert mock_edge, f"no running `edge` container in {project} after the flip"
-        assert await _image_of(parent, mock_edge) == "repo2-worker:latest", (
+        assert await _image_of(parent, mock_edge) == "project2-worker:latest", (
             "`provide` did not seat the mock"
         )
         assert mock_edge != real_edge, "the real edge container was reused for the mock"
         assert not await _container_of(parent, project, "api"), (
-            "--remove-orphans left the excluded repo's api container running"
+            "--remove-orphans left the excluded project's api container running"
         )
         # The override seats a LOWER priority than what it displaced, and the
         # record says exactly that rather than claiming the winner ranked higher.
         (displacement,) = flipped.selection.displaced
-        assert (displacement.winner_project, displacement.winner_priority) == ("repo2", 0)
-        assert (displacement.loser_project, displacement.loser_priority) == ("repo1", 10)
+        assert (displacement.winner_project, displacement.winner_priority) == ("project2", 0)
+        assert (displacement.loser_project, displacement.loser_priority) == ("project1", 10)
     finally:
         await _reap(parent, project)
 

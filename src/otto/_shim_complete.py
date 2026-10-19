@@ -8,7 +8,7 @@ and ``typing`` (already loaded by ``otto/__init__``, so free) and nothing else: 
 syscalls per TAB on an NFS home) and not ``pathlib`` (``os.path`` by design;
 ``.ruff.toml`` exempts this file from ``PTH``). ``subprocess`` is imported only by
 :func:`spawn_refresh`, after the answer is written. ``tests/unit/test_shim.py`` pins
-the warm module set; the ``completion_repo_warm`` budget surface denies typer, click,
+the warm module set; the ``completion_project_warm`` budget surface denies typer, click,
 rich and pydantic. Every function that mirrors product code names what it mirrors;
 change both or neither: ``tests/unit/shim/test_differential.py`` is the net.
 

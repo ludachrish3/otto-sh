@@ -12,7 +12,7 @@ import contextvars
 import pytest
 
 from otto import invocation as inv
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 from tests._fixtures.run_state import cleared_run_state
 
 
@@ -148,7 +148,7 @@ def test_set_context_installs_the_run_and_reset_context_restores_it():
 
 
 def test_the_active_run_protocol_is_the_four_names_the_context_provides():
-    """``lab``, ``repos``, ``ordered_projects`` and ``admissible_ids(require_nonempty=...)``.
+    """``lab``, ``projects``, ``ordered_projects`` and ``admissible_ids(require_nonempty=...)``.
 
     The protocol a reader below the run layer may use, and each member as the
     context defines it. ty checks the full shapes where ``set_context`` hands
@@ -175,7 +175,7 @@ def test_the_active_run_protocol_is_the_four_names_the_context_provides():
 
 
 def test_the_leaf_imports_no_otto_module_at_runtime():
-    tree = ast.parse((PROJECT_ROOT / "src" / "otto" / "invocation.py").read_text())
+    tree = ast.parse((CHECKOUT_ROOT / "src" / "otto" / "invocation.py").read_text())
     assert _runtime_otto_imports(tree.body) == []
 
 

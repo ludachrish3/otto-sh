@@ -14,7 +14,7 @@ def _compile(table: dict, anchor: Path, *, origin: str = "o.toml"):
     return compile_creds_table(table, anchor_dir=anchor, origin=origin)
 
 
-def test_two_repos_naming_one_creds_file_from_their_own_roots_are_the_same(tmp_path):
+def test_two_projects_naming_one_creds_file_from_their_own_roots_are_the_same(tmp_path):
     (tmp_path / "a").mkdir()
     (tmp_path / "b").mkdir()
     a = _compile({"backend": "json", "path": "creds.json"}, tmp_path / "a")

@@ -25,7 +25,7 @@ collide; the bed's scratch directory is a FIXED path on a SHARED guest, so
 two workers transferring ``payload.bin`` into ``/tmp`` on ``test1`` would
 overwrite each other's file -- one of them reading back bytes, or a mode, that
 the other wrote. ``tests/conftest.py``'s :func:`~tests.conftest.remote_name`
-is the repo's existing answer to exactly that -- ``tests/integration/host/``
+is the suite's existing answer to exactly that -- ``tests/integration/host/``
 transfers under it into ``/tmp`` on ``test1`` and on all five BusyBox guests
 -- and it is reused rather than restated. What it does NOT cover is a second
 pytest SESSION on this box, which is the same gap the console lock carries

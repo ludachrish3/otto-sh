@@ -11,7 +11,7 @@ later argument's target. That later argument lands on nodes the fixture
 manager has never seen, and each conftest below the re-collected parent is
 silently gone.
 
-That is not a hypothetical: three real arguments reproduced it in this repo::
+That is not a hypothetical: three real arguments reproduced it in this repository::
 
     pytest tests/unit/cli/test_listing.py \\
            tests/unit/test_tuple_return_debt.py \\
@@ -20,7 +20,7 @@ That is not a hypothetical: three real arguments reproduced it in this repo::
 ``tests/unit/cli/conftest.py``'s autouse ``no_logger_output_dir`` — the fixture
 that installs the stub ``OttoContext`` — never ran for ``test_cov.py``, so
 three ``otto cov get`` validation tests exited 1 down an unrelated
-``No active OttoContext`` path. With the bare sibling in the repo root
+``No active OttoContext`` path. With the bare sibling in the checkout root
 (``noxfile.py``), even ``tests/conftest.py``'s process-global guards vanish
 for the third argument's items. Every PAIR of those files passes, so the
 loadgroup gates (which never co-schedule that shape) cannot see it — hence a
@@ -150,7 +150,7 @@ BARE_ROOT_CONFTEST = """\
 def _probe_tree(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch, conftest: str):
     """Build the probe rootdir and return the three arguments, in order."""
     # The inner session must not inherit the outer one's env-based config, and
-    # the rebind leg's root conftest imports the REAL module from the repo.
+    # the rebind leg's root conftest imports the REAL module from the checkout.
     isolate_inner_session(pytester, monkeypatch)
     root: Path = pytester.path
     (root / "conftest.py").write_text(conftest)

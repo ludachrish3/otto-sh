@@ -24,7 +24,7 @@ def _entry(**params):
         kind="kmod",
         seam="products",
         owner="r",
-        base_dir=Path("/repo"),
+        base_dir=Path("/project"),
         match={},
         params=params,
     )
@@ -85,7 +85,7 @@ def _attach_kmodcov(host, tmp_path: Path, *, version=None):
         kind="kmodcov",
         seam="dev_tools",
         owner="r",
-        base_dir=Path("/repo"),
+        base_dir=Path("/project"),
         match={},
         params={"artifact": str(ko)},
     )
@@ -158,7 +158,7 @@ def test_kmod_is_registered_in_both_seams_with_its_own_factory_each():
 
 def test_kmod_defaults_module_name_to_the_stem_with_underscores():
     p = _build(artifact="build/my-driver.ko")
-    assert p.artifact == Path("/repo/build/my-driver.ko")
+    assert p.artifact == Path("/project/build/my-driver.ko")
     assert p.module_name == "my_driver"
     assert p.coverage == "none"
     assert p.params == ""
@@ -231,7 +231,7 @@ async def test_kmod_stage_is_a_noop_and_install_loads_with_params():
     assert (await p.stage(host)).is_ok
     assert (await p.install(host)).is_ok
     host.load.assert_awaited_once_with(
-        Path("/repo/build/demo/otto_kmod_demo.ko"),
+        Path("/project/build/demo/otto_kmod_demo.ko"),
         "otto_kmod_demo",
         params="debug=1",
         dest_dir=Path("/home/tester"),  # no host default: the login home
@@ -282,7 +282,7 @@ async def test_kmod_module_install_loads_the_library_first_when_absent(tmp_path)
     assert (await p.install(host)).is_ok
     calls = host.load.await_args_list
     assert calls[0].args == (tool.artifact, "otto_kmodcov")
-    assert calls[1].args == (Path("/repo/build/demo/otto_kmod_demo.ko"), "otto_kmod_demo")
+    assert calls[1].args == (Path("/project/build/demo/otto_kmod_demo.ko"), "otto_kmod_demo")
     assert calls[1].kwargs["params"] == "cov_dir=/var/cov/demo"
 
 
@@ -385,7 +385,7 @@ async def test_kmod_module_install_propagates_a_dry_run_decline_from_the_library
     assert result.status is Status.NotRun
     assert host.load.await_count == 2
     assert host.load.await_args.args == (
-        Path("/repo/build/demo/otto_kmod_demo.ko"),
+        Path("/project/build/demo/otto_kmod_demo.ko"),
         "otto_kmod_demo",
     )
     assert host.load.await_args.kwargs["params"] == "cov_dir=/var/cov/demo"
@@ -762,7 +762,7 @@ async def test_kmod_install_falls_back_to_the_hosts_transfer_default():
 
 @pytest.mark.asyncio
 async def test_kmod_install_falls_back_to_the_login_home():
-    host = _KmodHost()  # the repo-wide case: no default_dest_dir at all
+    host = _KmodHost()  # the project-wide case: no default_dest_dir at all
     assert (await _build(host).install(host)).is_ok
     assert host.load.await_args.kwargs["dest_dir"] == Path("/home/tester")
 

@@ -635,9 +635,9 @@ class TestTestPreview:
     """
 
     def test_dry_run_lists_the_static_tests_and_never_reaches_run_tests(
-        self, otto_test_cli: Any, sut_repo: Any
+        self, otto_test_cli: Any, one_project: Any
     ) -> None:
-        sut_repo(files={"tests/test_p.py": "def test_alpha(): pass\ndef test_beta(): pass\n"})
+        one_project(files={"tests/test_p.py": "def test_alpha(): pass\ndef test_beta(): pass\n"})
         ran: list[Any] = []
 
         def spy_run_tests(names: Any, **kw: Any) -> Any:

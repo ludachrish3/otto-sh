@@ -11,13 +11,13 @@ extra thing to prove -- that the subprocess and the oracle, which reach the
 guest by two entirely different routes, land on the same device.
 
 ``-R`` (``--skip-reservation-check``) decision: NOT prepended. The unix
-SUT (``tests/repo_e2e/.otto/settings.toml``) declares no ``[reservations]``
+SUT (``tests/project_e2e/.otto/settings.toml``) declares no ``[reservations]``
 section at all, so ``ReservationConfigSpec.backend`` defaults to ``"none"``
 and ``check_reservations``/``ReservationGate.evaluate`` resolve to a silent
 no-op (same as the loopback tier-2 suite) — confirmed by running
 ``test_clean_run_on_leased_host`` against the live bed without the flag and
 observing a clean exit 0, no reservation-gate error. If a future SUT change
-adds a real backend to ``tests/repo_e2e``, add ``-R`` to the ``spawn_otto``
+adds a real backend to ``tests/project_e2e``, add ``-R`` to the ``spawn_otto``
 argv here (and to every other bed-target module in this lane).
 """
 

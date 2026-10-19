@@ -1,15 +1,15 @@
-"""Dependency resolution: statuses, cross-repo satisfiability, skip set."""
+"""Dependency resolution: statuses, cross-project satisfiability, skip set."""
 
 from otto.bootstrap import BootstrapWarning, DependencyError
 from otto.config.dependencies import _resolve_statuses
 from otto.config.project import Project
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.project_scaffold import make_project
 
 
-def _repo(tmp_path, name, version="1.0.0", *, required=(), optional=(), dirname=None):
+def _project(tmp_path, name, version="1.0.0", *, required=(), optional=(), dirname=None):
     req = ", ".join(f'"{e}"' for e in required)
     opt = ", ".join(f'"{e}"' for e in optional)
-    root = make_sut_repo(
+    root = make_project(
         tmp_path / (dirname or name),
         name=name,
         version=version,
@@ -19,8 +19,8 @@ def _repo(tmp_path, name, version="1.0.0", *, required=(), optional=(), dirname=
 
 
 def test_satisfied_required(tmp_path):
-    a = _repo(tmp_path, "a", required=["b >= 1"])
-    b = _repo(tmp_path, "b", version="1.2.0")
+    a = _project(tmp_path, "a", required=["b >= 1"])
+    b = _project(tmp_path, "b", version="1.2.0")
     out = _resolve_statuses([a, b])
     assert out.errors == []
     assert out.warnings == []
@@ -32,7 +32,7 @@ def test_satisfied_required(tmp_path):
 
 
 def test_missing_required_errors_and_skips(tmp_path):
-    a = _repo(tmp_path, "a", required=["ghost"])
+    a = _project(tmp_path, "a", required=["ghost"])
     out = _resolve_statuses([a])
     (err,) = out.errors
     assert isinstance(err, DependencyError)
@@ -44,8 +44,8 @@ def test_missing_required_errors_and_skips(tmp_path):
 
 
 def test_incompatible_required(tmp_path):
-    a = _repo(tmp_path, "a", required=["b >= 2"])
-    _b = _repo(tmp_path, "b", version="1.2.0")
+    a = _project(tmp_path, "a", required=["b >= 2"])
+    _b = _project(tmp_path, "b", version="1.2.0")
     out = _resolve_statuses([a, _b])
     (err,) = out.errors
     assert "not satisfied: found b 1.2.0" in str(err)
@@ -54,23 +54,23 @@ def test_incompatible_required(tmp_path):
 
 
 def test_case_and_punctuation_insensitive_match(tmp_path):
-    a = _repo(tmp_path, "a", required=["My_Lib >= 1"])
-    _b = _repo(tmp_path, "My.Lib", version="1.0.0", dirname="mylib")
+    a = _project(tmp_path, "a", required=["My_Lib >= 1"])
+    _b = _project(tmp_path, "My.Lib", version="1.0.0", dirname="mylib")
     out = _resolve_statuses([a, _b])
     assert out.errors == []
     assert a.dependencies[0].status == "satisfied"
 
 
 def test_extra_tag_ignored_by_constraints(tmp_path):
-    a = _repo(tmp_path, "a", required=["b == 1.2.3"])
-    _b = _repo(tmp_path, "b", version="1.2.3-rc1")
+    a = _project(tmp_path, "a", required=["b == 1.2.3"])
+    _b = _project(tmp_path, "b", version="1.2.3-rc1")
     out = _resolve_statuses([a, _b])
     assert out.errors == []
     assert a.dependencies[0].status == "satisfied"
 
 
 def test_optional_absent_is_silent(tmp_path):
-    a = _repo(tmp_path, "a", optional=["ghost"])
+    a = _project(tmp_path, "a", optional=["ghost"])
     out = _resolve_statuses([a])
     assert out.errors == []
     assert out.warnings == []
@@ -79,8 +79,8 @@ def test_optional_absent_is_silent(tmp_path):
 
 
 def test_optional_incompatible_warns_only(tmp_path):
-    a = _repo(tmp_path, "a", optional=["metrics >= 1.4"])
-    _m = _repo(tmp_path, "metrics", version="1.2.0")
+    a = _project(tmp_path, "a", optional=["metrics >= 1.4"])
+    _m = _project(tmp_path, "metrics", version="1.2.0")
     out = _resolve_statuses([a, _m])
     assert out.errors == []
     assert out.skip_reason == {}
@@ -95,19 +95,19 @@ def test_optional_incompatible_warns_only(tmp_path):
 
 
 def test_optional_satisfied_soft_edge(tmp_path):
-    a = _repo(tmp_path, "a", optional=["metrics >= 1"])
-    _m = _repo(tmp_path, "metrics", version="1.4.0")
+    a = _project(tmp_path, "a", optional=["metrics >= 1"])
+    _m = _project(tmp_path, "metrics", version="1.4.0")
     out = _resolve_statuses([a, _m])
     assert out.soft_edges == [(1, 0)]
 
 
-def test_cross_repo_unsatisfiable_errors_all_participants(tmp_path):
-    a = _repo(tmp_path, "a", required=["x >= 2"])
-    b = _repo(tmp_path, "b", required=["x < 2"])
-    _x = _repo(tmp_path, "x", version="2.5.0")
+def test_cross_project_unsatisfiable_errors_all_participants(tmp_path):
+    a = _project(tmp_path, "a", required=["x >= 2"])
+    b = _project(tmp_path, "b", required=["x < 2"])
+    _x = _project(tmp_path, "x", version="2.5.0")
     out = _resolve_statuses([a, b, _x])
     unsat = [e for e in out.errors if "no possible version" in str(e)]
-    assert len(unsat) == 2  # one per participating repo
+    assert len(unsat) == 2  # one per participating project
     for err in unsat:
         assert "a requires" in str(err)
         assert "b requires" in str(err)
@@ -117,10 +117,10 @@ def test_cross_repo_unsatisfiable_errors_all_participants(tmp_path):
     assert any("not satisfied: found x 2.5.0" in str(e) for e in out.errors)
 
 
-def test_cross_repo_unsat_within_one_repo_two_entries(tmp_path):
-    a = _repo(tmp_path, "a", required=["x >= 2", "x < 2"])
-    _x = _repo(tmp_path, "x", version="2.5.0")
+def test_cross_project_unsat_within_one_project_two_entries(tmp_path):
+    a = _project(tmp_path, "a", required=["x >= 2", "x < 2"])
+    _x = _project(tmp_path, "x", version="2.5.0")
     out = _resolve_statuses([a, _x])
     unsat = [e for e in out.errors if "no possible version" in str(e)]
-    assert len(unsat) == 1  # deduped per repo
+    assert len(unsat) == 1  # deduped per project
     assert 0 in out.skip_reason

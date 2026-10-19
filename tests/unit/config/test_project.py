@@ -8,77 +8,77 @@ import pytest
 from otto.config import DockerSettings, MonitorSettings
 from otto.config.project import CompiledSettings, Project
 from otto.host.element import Element
-from tests._fixtures.mockrepo import MockRepo
+from tests._fixtures.mock_project import MockProject
 from tests._fixtures.paths import TESTS_ROOT
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.project_scaffold import make_project
 
-mock_repo: MockRepo = None
+mock_project: MockProject = None
 tests_root = TESTS_ROOT
 
 
-def _write_repo(tmp_path: Path, settings_body: str) -> Path:
-    """Materialize a minimal SUT repo at *tmp_path* with the given TOML body
+def _write_project(tmp_path: Path, settings_body: str) -> Path:
+    """Materialize a minimal project at *tmp_path* with the given TOML body
     appended after the required ``name`` / ``version`` fields.
     """
-    return make_sut_repo(tmp_path, name="tmp_repo", extra=settings_body)
+    return make_project(tmp_path, name="tmp_project", extra=settings_body)
 
 
-def _repo_with_settings(tmp_path: Path, settings_body: str) -> "Project":
-    """Materialize a minimal SUT repo (named ``p``) and return the parsed Repo.
+def _project_with_settings(tmp_path: Path, settings_body: str) -> "Project":
+    """Materialize a minimal project (named ``p``) and return the parsed Project.
 
     *settings_body* is TOML appended after the generated ``name``/``version``.
     """
-    return Project(root=make_sut_repo(tmp_path, name="p", extra=textwrap.dedent(settings_body)))
+    return Project(root=make_project(tmp_path, name="p", extra=textwrap.dedent(settings_body)))
 
 
 @pytest.fixture(autouse=False)
-def default_mock_repo():
+def default_mock_project():
 
-    global mock_repo  # noqa: PLW0603 — module-level singleton/cache
+    global mock_project  # noqa: PLW0603 — module-level singleton/cache
 
-    mock_repo = MockRepo(tests_root / "repo1")
-
-
-def test_repo_config_location(default_mock_repo):
-
-    repo_settings_file = mock_repo.root / ".otto" / "settings.toml"
-    assert repo_settings_file.exists()
+    mock_project = MockProject(tests_root / "project1")
 
 
-def test_repo_settings_tests_sut_dir_variable(default_mock_repo):
+def test_project_config_location(default_mock_project):
 
-    assert mock_repo.tests == [mock_repo.root / "tests"]
-
-
-def test_repo_settings_init_sut_dir_variable(default_mock_repo):
-
-    assert mock_repo.init == ["repo1_instructions", "custom_hosts", "repo1_monitor_uptime"]
+    project_settings_file = mock_project.root / ".otto" / "settings.toml"
+    assert project_settings_file.exists()
 
 
-def test_bootstrap_registers_repo1_instructions_and_options(monkeypatch):
+def test_project_settings_tests_under_the_root(default_mock_project):
+
+    assert mock_project.tests == [mock_project.root / "tests"]
+
+
+def test_project_settings_init_modules(default_mock_project):
+
+    assert mock_project.init == ["project1_instructions", "custom_hosts", "project1_monitor_uptime"]
+
+
+def test_bootstrap_registers_project1_instructions_and_options(monkeypatch):
     """``bootstrap()`` is the granular replacement for the deleted
-    ``Project.apply_settings()`` / ``apply_repo_settings()``: per repo it adds libs
-    to ``sys.path`` and imports init modules — which register repo1's
+    ``Project.apply_settings()`` / ``apply_project_settings()``: per project it adds libs
+    to ``sys.path`` and imports init modules — which register project1's
     instructions and its verb-wide options classes into the shared
     ``STANDALONE_INSTRUCTIONS``/``PROJECT_ACTIONS``/``OPTIONS`` registries
     (module-level, process-wide), which the ``INSTRUCTIONS`` view derives from.
 
     Isolation: Python's import cache couples this test to any earlier test in
-    the same worker that imported repo1's modules — the cached modules make
+    the same worker that imported project1's modules — the cached modules make
     bootstrap's imports no-ops, the registrations never re-run, and the delta
     assertions see "sets are equal" (deterministically reproducible by running
-    this test twice in one process). So: park any repo1-originated registry
+    this test twice in one process). So: park any project1-originated registry
     entries, evict the cached modules, and restore both afterwards.
     """
     from otto import bootstrap as bs
     from otto.instruction_catalog import INSTRUCTIONS, PROJECT_ACTIONS, STANDALONE_INSTRUCTIONS
     from otto.params import OPTIONS
 
-    repo1 = tests_root / "repo1"
-    pylib = str(repo1 / "pylib")
-    repo1_options = [
-        "repo1_common.options:DeviceTestOptions",
-        "repo1_common.options:RepoOptions",
+    project1 = tests_root / "project1"
+    pylib = str(project1 / "pylib")
+    project1_options = [
+        "project1_common.options:DeviceTestOptions",
+        "project1_common.options:ProjectOptions",
     ]
 
     # Remove any prior entries so the precondition holds even if another
@@ -91,21 +91,24 @@ def test_bootstrap_registers_repo1_instructions_and_options(monkeypatch):
     def _park(registry) -> list:
         # The raw snapshot, so parking never resolves a lazy ``Ref``. Park by
         # ORIGIN and by NAME: an earlier test in this worker may have left one
-        # of repo1's option names registered under another origin, and an
+        # of project1's option names registered under another origin, and an
         # entry that is already present makes the delta below come out empty.
         state = registry._snapshot()
         for name in registry.names():
-            if registry.origin(name).startswith("repo1_instructions") or name in repo1_options:
+            if (
+                registry.origin(name).startswith("project1_instructions")
+                or name in project1_options
+            ):
                 registry.unregister(name)
         return state
 
     registries = [STANDALONE_INSTRUCTIONS, PROJECT_ACTIONS, OPTIONS]
     parked = {registry: _park(registry) for registry in registries}
-    evicted = {m: sys.modules.pop(m) for m in list(sys.modules) if m.startswith("repo1_")}
+    evicted = {m: sys.modules.pop(m) for m in list(sys.modules) if m.startswith("project1_")}
     before_instructions = set(INSTRUCTIONS.names())
     before_options = set(OPTIONS.names())
 
-    monkeypatch.setenv("OTTOPATH", str(repo1))
+    monkeypatch.setenv("OTTOPATH", str(project1))
     bs._reset()
     try:
         result = bs.bootstrap()
@@ -113,8 +116,8 @@ def test_bootstrap_registers_repo1_instructions_and_options(monkeypatch):
 
         assert pylib in sys.path
         assert set(INSTRUCTIONS.names()) > before_instructions
-        assert sorted(set(OPTIONS.names()) - before_options) == repo1_options
-        assert [OPTIONS.origin(name) for name in repo1_options] == ["repo1_instructions"] * 2
+        assert sorted(set(OPTIONS.names()) - before_options) == project1_options
+        assert [OPTIONS.origin(name) for name in project1_options] == ["project1_instructions"] * 2
     finally:
         bs._reset()
         # Restore the exact pre-test world: sys.path, this test's
@@ -123,14 +126,14 @@ def test_bootstrap_registers_repo1_instructions_and_options(monkeypatch):
             sys.path.remove(pylib)
         for registry in registries:
             registry._restore(parked[registry])
-        for mod in [m for m in sys.modules if m.startswith("repo1_")]:
+        for mod in [m for m in sys.modules if m.startswith("project1_")]:
             sys.modules.pop(mod, None)
         sys.modules.update(evicted)
 
 
 def test_logging_levels_parse_and_default_empty(tmp_path):
-    """Spec §4.2: ``[logging.levels]`` lands on the Repo; absent means empty."""
-    project = _repo_with_settings(
+    """Spec §4.2: ``[logging.levels]`` lands on the Project; absent means empty."""
+    project = _project_with_settings(
         tmp_path,
         """
         [logging.levels]
@@ -139,7 +142,7 @@ def test_logging_levels_parse_and_default_empty(tmp_path):
         """,
     )
     assert project.logging_levels == {"asyncssh": "DEBUG", "vendor": "ERROR"}
-    bare = _repo_with_settings(tmp_path / "bare", "")
+    bare = _project_with_settings(tmp_path / "bare", "")
     assert bare.logging_levels == {}
 
 
@@ -150,7 +153,7 @@ def test_removed_capture_key_is_a_hard_cutover_error(tmp_path):
     instead, so the model carries an explicit before-validator.
     """
     with pytest.raises(ValueError, match=r"\[logging\.levels\]") as exc:
-        _repo_with_settings(
+        _project_with_settings(
             tmp_path,
             """
             [logging]
@@ -164,7 +167,7 @@ def test_removed_capture_key_is_a_hard_cutover_error(tmp_path):
 def test_logging_levels_reject_otto_names_and_bad_levels(tmp_path):
     """Spec §4.2: otto's own verbosity is --log-level's job; levels must be levels."""
     with pytest.raises(ValueError, match="--log-level"):
-        _repo_with_settings(
+        _project_with_settings(
             tmp_path,
             """
             [logging.levels]
@@ -172,7 +175,7 @@ def test_logging_levels_reject_otto_names_and_bad_levels(tmp_path):
             """,
         )
     with pytest.raises(ValueError, match="LOUD"):
-        _repo_with_settings(
+        _project_with_settings(
             tmp_path / "bad_level",
             """
             [logging.levels]
@@ -183,7 +186,7 @@ def test_logging_levels_reject_otto_names_and_bad_levels(tmp_path):
 
 def test_logging_levels_accept_the_warn_crit_aliases(tmp_path):
     """Spec §4.2: otto's own short aliases are levels too, and values normalize."""
-    project = _repo_with_settings(
+    project = _project_with_settings(
         tmp_path,
         """
         [logging.levels]
@@ -197,8 +200,8 @@ def test_logging_levels_accept_the_warn_crit_aliases(tmp_path):
 # TODO: Test various settings fields and the recording of arbitrary additional data
 
 
-def test_repo_parses_unified_host_preferences(tmp_path):
-    project = _repo_with_settings(
+def test_project_parses_unified_host_preferences(tmp_path):
+    project = _project_with_settings(
         tmp_path,
         """
         [host_preferences.".*"]
@@ -215,12 +218,12 @@ class TestHostPreferencesParsing:
     """Tests for unified ``[host_preferences]`` parsing in ``Project.parse_settings``."""
 
     def test_absent_section_yields_empty_dict(self, tmp_path):
-        sut = _write_repo(tmp_path, "")
+        sut = _write_project(tmp_path, "")
         project = Project(root=sut)
         assert project.host_preferences == {}
 
     def test_selections_and_option_tables_parsed(self, tmp_path):
-        sut = _write_repo(
+        sut = _write_project(
             tmp_path,
             textwrap.dedent("""
             [host_preferences.".*"]
@@ -239,7 +242,7 @@ class TestHostPreferencesParsing:
         }
 
     def test_legacy_host_defaults_rejected(self, tmp_path):
-        sut = _write_repo(
+        sut = _write_project(
             tmp_path,
             textwrap.dedent("""
             [host_defaults.ssh_options]
@@ -250,7 +253,7 @@ class TestHostPreferencesParsing:
             Project(root=sut)
 
     def test_unknown_preference_key_raises(self, tmp_path):
-        sut = _write_repo(
+        sut = _write_project(
             tmp_path,
             textwrap.dedent("""
             [host_preferences.".*"]
@@ -265,14 +268,14 @@ class TestOsProfilesParsing:
     """Tests for ``[os_profiles]`` parsing in ``Project.parse_settings``."""
 
     def test_absent_section_yields_empty_dict(self, tmp_path):
-        sut = _write_repo(tmp_path, "")
+        sut = _write_project(tmp_path, "")
         project = Project(root=sut)
         assert project.os_profiles == {}
 
     def test_profile_parsed_and_kept_as_data(self, tmp_path):
         from otto.host.os_profile import OS_PROFILES, ProfileContext, build_os_profile
 
-        sut = _write_repo(
+        sut = _write_project(
             tmp_path,
             textwrap.dedent("""
             [os_profiles.zephyr-3_7]
@@ -286,7 +289,7 @@ class TestOsProfilesParsing:
         )
         project = Project(root=sut)
         assert "zephyr-3_7" in project.os_profiles
-        # Data, never registered: it resolves through the repos' context.
+        # Data, never registered: it resolves through the projects' context.
         assert "zephyr-3_7" not in OS_PROFILES
         prof = build_os_profile("zephyr-3_7", data=ProfileContext.from_projects([project]))
         assert prof.base == "embedded"
@@ -296,7 +299,7 @@ class TestOsProfilesParsing:
         assert "base" not in prof.fields.defaults
 
     def test_missing_base_raises(self, tmp_path):
-        sut = _write_repo(
+        sut = _write_project(
             tmp_path,
             textwrap.dedent("""
             [os_profiles.broken]
@@ -309,7 +312,7 @@ class TestOsProfilesParsing:
             Project(root=sut)
 
     def test_invalid_base_raises(self, tmp_path):
-        sut = _write_repo(
+        sut = _write_project(
             tmp_path,
             textwrap.dedent("""
             [os_profiles.broken]
@@ -317,7 +320,7 @@ class TestOsProfilesParsing:
         """),
         )
         # Parsing keeps the table; the after-init check refuses the base,
-        # naming the table and the repo.
+        # naming the table and the project.
         from otto.host.os_profile import check_data_profiles
 
         project = Project(root=sut)
@@ -328,7 +331,7 @@ class TestOsProfilesParsing:
             check_data_profiles([project])
 
     def test_unknown_default_field_raises(self, tmp_path):
-        sut = _write_repo(
+        sut = _write_project(
             tmp_path,
             textwrap.dedent("""
             [os_profiles.broken]
@@ -344,12 +347,12 @@ class TestOsProfilesParsing:
 
 
 class TestOsProfilesIntegration:
-    """End-to-end: the repo1 fixture's ``[os_profiles]`` tables flow through
+    """End-to-end: the project1 fixture's ``[os_profiles]`` tables flow through
     settings parse → profile context → factory, including a data-defined
     profile that references a *code-registered* command frame.
     """
 
-    def test_repo1_profile_resolves_code_registered_frame(self):
+    def test_project1_profile_resolves_code_registered_frame(self):
         import sys
 
         from otto.host.embedded_filesystem import FatRamFileSystem
@@ -357,8 +360,8 @@ class TestOsProfilesIntegration:
         from otto.host.factory import create_host_from_dict
         from otto.host.os_profile import ProfileContext
 
-        # Constructing the repo parses settings, keeping the data profiles.
-        project = MockRepo(tests_root / "repo1")
+        # Constructing the project parses settings, keeping the data profiles.
+        project = MockProject(tests_root / "project1")
         assert {"zephyr-3.7", "zephyr-2.7", "zephyr-4.4"} <= set(project.os_profiles)
 
         # Importing the init modules registers the `zephyr-inline` frame the
@@ -398,7 +401,7 @@ class TestOsProfilesIntegration:
 
 @pytest.mark.parametrize("cls", [Project, CompiledSettings], ids=lambda cls: cls.__name__)
 def test_settings_field_annotations_resolve_at_runtime(cls):
-    """``typing.get_type_hints`` resolves the settings fields of the repo dataclasses.
+    """``typing.get_type_hints`` resolves the settings fields of the project dataclasses.
 
     The settings types the fields name live in another module, and the loader
     binds them at module scope, so a tool that reads the annotations at runtime

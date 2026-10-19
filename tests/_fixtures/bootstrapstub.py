@@ -28,10 +28,10 @@ def bootstrap_stub(
 ) -> SimpleNamespace:
     """A ``bootstrap()`` return value carrying every field the CLI preamble reads.
 
-    *ordered* defaults to EMPTY rather than to *repos*, so the dependency
+    *ordered* defaults to EMPTY rather than to *projects*, so the dependency
     preflight sees nothing unless a test hands it something on purpose. Most
-    callers here stub ``repos`` only to satisfy a name lookup, with stand-ins
-    that carry no ``sut_dir`` -- feeding those to the preflight would fail on a
+    callers here stub ``projects`` only to satisfy a name lookup, with stand-ins
+    that carry no ``root`` -- feeding those to the preflight would fail on a
     detail the test is not about.
     """
     return SimpleNamespace(

@@ -18,7 +18,7 @@ the failure mode that would leave the gate firing in exactly the lanes this
 pins. Parsing real argv is what makes ``collectonly`` a checked name.
 
 The ``-c`` in ``make_config`` is load-bearing, not tidiness. Parsing argv
-inside the repo root makes pytest apply this project's ``addopts``, which
+inside the checkout root makes pytest apply this project's ``addopts``, which
 carry ``--cov=otto --cov-context=test -n auto`` — so a bare ``get_config()``
 here starts a SECOND coverage session inside the xdist worker running this
 test, which corrupts that worker's data file (``no such table: context``) and
@@ -40,7 +40,7 @@ ConfigFactory = Callable[..., pytest.Config]
 
 @pytest.fixture(scope="module")
 def make_config(tmp_path_factory: pytest.TempPathFactory) -> ConfigFactory:
-    """Build a real ``pytest.Config`` that carries none of this repo's addopts."""
+    """Build a real ``pytest.Config`` that carries none of this repository's addopts."""
     ini: Path = tmp_path_factory.mktemp("browser_guard") / "pytest.ini"
     ini.write_text("[pytest]\n")
 
@@ -54,11 +54,11 @@ def make_config(tmp_path_factory: pytest.TempPathFactory) -> ConfigFactory:
         # anyway, this fails here instead of as unattributable coverage-DB
         # corruption in whichever worker happened to run this module.
         assert not getattr(config.option, "cov_source", None), (
-            "the throwaway ini leaked this repo's --cov addopts into a parsed "
+            "the throwaway ini leaked this repository's --cov addopts into a parsed "
             "config — it would start a second coverage session in this worker"
         )
         assert getattr(config.option, "numprocesses", None) is None, (
-            "the throwaway ini leaked this repo's -n auto into a parsed config"
+            "the throwaway ini leaked this repository's -n auto into a parsed config"
         )
         return config
 

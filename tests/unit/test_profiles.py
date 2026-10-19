@@ -42,7 +42,7 @@ def test_userland_raises_rather_than_inventing_a_version(data: dict) -> None:
 def test_userland_keys_on_family_not_on_the_profile_name() -> None:
     """`os_type` is a profile SELECTOR; the factory picks the class from
     `profile.base` (factory.py:154-157), so the name and the family are
-    different layers. repo1 ships profiles named `zephyr-3.7`/`-2.7`/`-4.4`,
+    different layers. project1 ships profiles named `zephyr-3.7`/`-2.7`/`-4.4`,
     all `base = "embedded"`. No bed host trips this today -- every Zephyr
     guest declares `os_type: "zephyr"` -- so it is pinned before one does.
     """

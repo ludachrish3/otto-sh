@@ -48,7 +48,7 @@ def test_load_rejects_missing_format(tmp_path: Path) -> None:
 
 
 @pytest.fixture
-def repo(tmp_path: Path) -> Path:
+def git_repo(tmp_path: Path) -> Path:
     root = tmp_path / "sut"
     root.mkdir()
 
@@ -114,31 +114,31 @@ def test_parse_info_a_mixed_file_yields_only_the_untagged_branches(tmp_path: Pat
     assert branches[3] == [(0, 0, 4), (0, 1, None)]
 
 
-def test_build_capture_clean(repo: Path, tmp_path: Path) -> None:
-    info = _write_info(tmp_path, repo / "f.c")
+def test_build_capture_clean(git_repo: Path, tmp_path: Path) -> None:
+    info = _write_info(tmp_path, git_repo / "f.c")
     cap = build_capture(
         info_path=info,
         tier="system",
-        project_root=repo,
+        project_root=git_repo,
         board="board1",
         product="app",
         labs=["lab1"],
     )
-    assert cap.base_commit == head_commit(repo)
+    assert cap.base_commit == head_commit(git_repo)
     assert cap.dirty_remap is False
     fc = cap.files["f.c"]
     assert fc.lines == {1: 5, 2: 0, 3: 7}
-    assert fc.blob == blob_sha(repo, Path("f.c"))
+    assert fc.blob == blob_sha(git_repo, Path("f.c"))
 
 
-def test_build_capture_dirty_remaps(repo: Path, tmp_path: Path) -> None:
+def test_build_capture_dirty_remaps(git_repo: Path, tmp_path: Path) -> None:
     # Insert a printf as new line 1; old line N is now N+1 in the working tree.
-    (repo / "f.c").write_text("printf();\nint a;\nint b;\nint c;\n")
-    info = _write_info(tmp_path, repo / "f.c")  # DA lines are worktree coords
+    (git_repo / "f.c").write_text("printf();\nint a;\nint b;\nint c;\n")
+    info = _write_info(tmp_path, git_repo / "f.c")  # DA lines are worktree coords
     cap = build_capture(
         info_path=info,
         tier="manual",
-        project_root=repo,
+        project_root=git_repo,
         board="b",
         product="app",
         labs=["lab1"],
@@ -149,16 +149,18 @@ def test_build_capture_dirty_remaps(repo: Path, tmp_path: Path) -> None:
     assert cap.files["f.c"].lines == {1: 0, 2: 7}
 
 
-def test_build_capture_dirty_whitespace_only_keeps_all_lines(repo: Path, tmp_path: Path) -> None:
+def test_build_capture_dirty_whitespace_only_keeps_all_lines(
+    git_repo: Path, tmp_path: Path
+) -> None:
     # A whitespace-only reindent of the working tree is dirty byte-wise but
     # carries no code change: -w hides it, so every DA line maps verbatim to
     # base_commit coordinates instead of being dropped as "changed".
-    (repo / "f.c").write_text("    int a;\n\tint b;\n  int c;\n")
-    info = _write_info(tmp_path, repo / "f.c")  # DA lines are worktree coords
+    (git_repo / "f.c").write_text("    int a;\n\tint b;\n  int c;\n")
+    info = _write_info(tmp_path, git_repo / "f.c")  # DA lines are worktree coords
     cap = build_capture(
         info_path=info,
         tier="manual",
-        project_root=repo,
+        project_root=git_repo,
         board="b",
         product="app",
         labs=["lab1"],
@@ -166,25 +168,25 @@ def test_build_capture_dirty_whitespace_only_keeps_all_lines(repo: Path, tmp_pat
     )
     assert cap.dirty_remap is True  # tree is dirty (byte-wise)
     assert cap.files["f.c"].lines == {1: 5, 2: 0, 3: 7}  # nothing dropped
-    assert cap.files["f.c"].blob == blob_sha(repo, Path("f.c"))
+    assert cap.files["f.c"].blob == blob_sha(git_repo, Path("f.c"))
 
 
-def test_build_capture_nested_sut_dir(repo: Path, tmp_path: Path) -> None:
-    # The sut repo may be a subdirectory of a larger git repo (the e2e bed:
-    # tests/repo1 inside otto-sh).  Blob anchoring must then still resolve —
+def test_build_capture_nested_project_root(git_repo: Path, tmp_path: Path) -> None:
+    # The project root may be a subdirectory of a larger git repository (the e2e bed:
+    # tests/project1 inside otto-sh).  Blob anchoring must then still resolve —
     # a bare "HEAD:<rel>" lookup misses because git resolves it against the
-    # repo toplevel, silently producing an empty (useless) capture.
-    nested = repo / "nested" / "sut" / "product"
+    # checkout toplevel, silently producing an empty (useless) capture.
+    nested = git_repo / "nested" / "sut" / "product"
     nested.mkdir(parents=True)
     # No toplevel product/main.c exists, and the content differs from every
     # toplevel file — so a toplevel-relative lookup can neither find it nor
     # accidentally anchor a same-content blob.
     (nested / "main.c").write_text("int nested_only;\nint b;\nint c;\n")
-    _git(repo, tmp_path, "add", "nested")
-    _git(repo, tmp_path, "-c", "user.name=t", "-c", "user.email=t@x", "commit", "-qm", "nest")
+    _git(git_repo, tmp_path, "add", "nested")
+    _git(git_repo, tmp_path, "-c", "user.name=t", "-c", "user.email=t@x", "commit", "-qm", "nest")
 
     info = _write_info(tmp_path, nested / "main.c")
-    root = repo / "nested" / "sut"
+    root = git_repo / "nested" / "sut"
     cap = build_capture(
         info_path=info,
         tier="system",
@@ -196,20 +198,20 @@ def test_build_capture_nested_sut_dir(repo: Path, tmp_path: Path) -> None:
 
     fc = cap.files["product/main.c"]
     assert fc.lines == {1: 5, 2: 0, 3: 7}
-    assert fc.blob == blob_sha(repo, Path("nested/sut/product/main.c"))
+    assert fc.blob == blob_sha(git_repo, Path("nested/sut/product/main.c"))
 
 
 def test_untracked_file_skipped(
-    repo: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    git_repo: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    (repo / "untracked.c").write_text("int z;\n")
+    (git_repo / "untracked.c").write_text("int z;\n")
     info = tmp_path / "x.info"
-    info.write_text(INFO.format(src=repo / "f.c") + INFO.format(src=repo / "untracked.c"))
+    info.write_text(INFO.format(src=git_repo / "f.c") + INFO.format(src=git_repo / "untracked.c"))
     with caplog.at_level("WARNING"):
         cap = build_capture(
             info_path=info,
             tier="system",
-            project_root=repo,
+            project_root=git_repo,
             board="b",
             product="app",
             labs=["lab1"],
@@ -220,26 +222,31 @@ def test_untracked_file_skipped(
     assert any("no committed version" in r.message for r in caplog.records)
 
 
-def test_gitignored_file_skipped(repo: Path, tmp_path: Path) -> None:
-    (repo / ".gitignore").write_text("gen.c\n")
-    _git(repo, tmp_path, "add", ".gitignore")
-    _git(repo, tmp_path, "commit", "-qm", "ignore gen.c")
-    (repo / "gen.c").write_text("int g;\n")
+def test_gitignored_file_skipped(git_repo: Path, tmp_path: Path) -> None:
+    (git_repo / ".gitignore").write_text("gen.c\n")
+    _git(git_repo, tmp_path, "add", ".gitignore")
+    _git(git_repo, tmp_path, "commit", "-qm", "ignore gen.c")
+    (git_repo / "gen.c").write_text("int g;\n")
 
     info = tmp_path / "x.info"
-    info.write_text(INFO.format(src=repo / "f.c") + INFO.format(src=repo / "gen.c"))
+    info.write_text(INFO.format(src=git_repo / "f.c") + INFO.format(src=git_repo / "gen.c"))
     cap = build_capture(
-        info_path=info, tier="system", project_root=repo, board="b", product="app", labs=["lab1"]
+        info_path=info,
+        tier="system",
+        project_root=git_repo,
+        board="b",
+        product="app",
+        labs=["lab1"],
     )
     assert "gen.c" not in cap.files
     assert "f.c" in cap.files
     assert cap.dirty_remap is False
 
 
-def test_roundtrip_and_strictness(repo: Path, tmp_path: Path) -> None:
-    info = _write_info(tmp_path, repo / "f.c")
+def test_roundtrip_and_strictness(git_repo: Path, tmp_path: Path) -> None:
+    info = _write_info(tmp_path, git_repo / "f.c")
     cap = build_capture(
-        info_path=info, tier="system", project_root=repo, board="b", product="app", labs=[]
+        info_path=info, tier="system", project_root=git_repo, board="b", product="app", labs=[]
     )
     assert cap.files["f.c"].branches[3] == [(0, 0, 4), (0, 1, None)]
     out = tmp_path / "capture.json"
@@ -258,12 +265,14 @@ def test_roundtrip_and_strictness(repo: Path, tmp_path: Path) -> None:
         Capture.load(out)
 
 
-def test_build_capture_annotates_display_name_and_roundtrips(repo: Path, tmp_path: Path) -> None:
-    info = _write_info(tmp_path, repo / "f.c")
+def test_build_capture_annotates_display_name_and_roundtrips(
+    git_repo: Path, tmp_path: Path
+) -> None:
+    info = _write_info(tmp_path, git_repo / "f.c")
     cap = build_capture(
         info_path=info,
         tier="system",
-        project_root=repo,
+        project_root=git_repo,
         board="rack2-slot4-id",
         product="app",
         labs=["lab1"],
@@ -275,11 +284,16 @@ def test_build_capture_annotates_display_name_and_roundtrips(repo: Path, tmp_pat
     assert Capture.load(out).display_name == "Rack 2 Slot 4"
 
 
-def test_capture_display_name_defaults_none_for_old_files(repo: Path, tmp_path: Path) -> None:
+def test_capture_display_name_defaults_none_for_old_files(git_repo: Path, tmp_path: Path) -> None:
     # A capture serialized before the field existed must load with None.
-    info = _write_info(tmp_path, repo / "f.c")
+    info = _write_info(tmp_path, git_repo / "f.c")
     cap = build_capture(
-        info_path=info, tier="system", project_root=repo, board="b", product="app", labs=["lab1"]
+        info_path=info,
+        tier="system",
+        project_root=git_repo,
+        board="b",
+        product="app",
+        labs=["lab1"],
     )
     out = tmp_path / "cap.json"
     cap.save(out)
@@ -289,16 +303,16 @@ def test_capture_display_name_defaults_none_for_old_files(repo: Path, tmp_path: 
     assert Capture.load(out).display_name is None
 
 
-def test_capture_requires_product(repo: Path, tmp_path: Path) -> None:
+def test_capture_requires_product(git_repo: Path, tmp_path: Path) -> None:
     with pytest.raises(ValidationError, match="product"):
         Capture(tier="e2e", base_commit="x")  # no product
 
 
-def test_build_capture_annotates_product_and_roundtrips(repo: Path, tmp_path: Path) -> None:
+def test_build_capture_annotates_product_and_roundtrips(git_repo: Path, tmp_path: Path) -> None:
     info = tmp_path / "b.info"
-    info.write_text(INFO.format(src=repo / "f.c"))
+    info.write_text(INFO.format(src=git_repo / "f.c"))
     cap = build_capture(
-        info_path=info, tier="e2e", project_root=repo, board="h1", product="app", labs=["lab"]
+        info_path=info, tier="e2e", project_root=git_repo, board="h1", product="app", labs=["lab"]
     )
     assert cap.product == "app"
     out = tmp_path / "capture.json"

@@ -21,7 +21,7 @@ WITHOUT the posix file-ops family, i.e. with no ``glob`` at all.
 
 Every test that calls a log verb without an explicit ``dest`` installs an
 ``active_context(output_dir=tmp_path)`` — the fallback is the CWD, and a test
-that leaked the tree into the repo would be doing exactly the thing the design
+that leaked the tree into the project would be doing exactly the thing the design
 prevents in production.
 """
 
@@ -277,9 +277,11 @@ async def test_product_log_failure_does_not_stop_the_remaining_products(recordin
 
 
 @pytest.mark.asyncio
-async def test_get_product_logs_owner_filter_skips_another_repos_products(recording_host, tmp_path):
-    # Kills: an owner argument that is accepted and ignored — repo A's
-    # `get-logs` would haul repo B's product logs into its own tree.
+async def test_get_product_logs_owner_filter_skips_another_projects_products(
+    recording_host, tmp_path
+):
+    # Kills: an owner argument that is accepted and ignored — project A's
+    # `get-logs` would haul project B's product logs into its own tree.
     events = []
     recording_host.products = [
         _LoggingProduct("a", events, owner="acme"),
@@ -620,8 +622,8 @@ async def test_uninstall_owner_filter_scopes_the_log_haul_too(recording_host, tm
 async def test_uninstall_debug_logs_stay_unscoped_when_an_owner_is_given(recording_host, tmp_path):
     """``owner`` narrows the product halves and NOTHING ELSE.
 
-    Debug logs are host-level: the globs belong to the host, no repo stamps
-    them, and there is nothing on them an owner could filter. The per-repo
+    Debug logs are host-level: the globs belong to the host, no project stamps
+    them, and there is nothing on them an owner could filter. The per-project
     layer therefore turns them OFF explicitly (``get_debug_logs=False``) rather
     than relying on the scope to do it — which is only a real decision if this
     verb would in fact sweep them when scoped.

@@ -1,10 +1,10 @@
 """End-to-end: container-image coverage on the bed's daemon host (test3).
 
-    otto -l unix test --cov --cov-clean TestCovContainer      (repo5)
+    otto -l unix test --cov --cov-clean TestCovContainer      (project5)
     otto -l unix cov report <run> --dir <report>
 
 Prerequisites: test3 up with docker; docker and gcc on the dev VM (the
-tarball is built here, by tests/repo5/docker/build.sh directly, when
+tarball is built here, by tests/project5/docker/build.sh directly, when
 missing or stale — no kernel headers needed, since TestCovContainer's own
 fixture only installs the two container products, on test3, itself; `otto
 test` never touches a product verb). Pinned to one xdist worker:
@@ -15,8 +15,8 @@ import pytest
 
 from otto.coverage.capture.model import Capture
 from otto.coverage.store.model import CoverageStore
-from tests.e2e._otto_subprocess import REPO5, run_otto
-from tests.e2e.cov._repo5_build import TARBALL, _hits, _line_of, _record, ensure_image_artifacts
+from tests.e2e._otto_subprocess import PROJECT5, run_otto
+from tests.e2e.cov._project5_build import TARBALL, _hits, _line_of, _record, ensure_image_artifacts
 
 PRODUCTS = {"cov_container", "cov_container_ref"}
 _LAB = "unix"
@@ -30,7 +30,7 @@ def built_image(tmp_path_factory):
 
 
 def _run_otto(argv, *, xdir, timeout):
-    result = run_otto(argv, xdir=xdir, roots=REPO5, lab=_LAB, timeout=timeout)
+    result = run_otto(argv, xdir=xdir, roots=PROJECT5, lab=_LAB, timeout=timeout)
     if result.returncode != 0:
         raise AssertionError(
             f"otto --lab {_LAB} {' '.join(argv)} exited {result.returncode}\n"
@@ -70,7 +70,7 @@ class TestDockerImageCoverage:
     def test_each_container_contributed_its_own_paths(self, coverage_run):
         store, *_ = coverage_run
         rec = _record(store, "math_ops.c")
-        src = REPO5 / "docker" / "src" / "math_ops.c"
+        src = PROJECT5 / "docker" / "src" / "math_ops.c"
         # tarball container
         assert _hits(rec, _line_of(src, "return a + b;")) == 1
         # reference container

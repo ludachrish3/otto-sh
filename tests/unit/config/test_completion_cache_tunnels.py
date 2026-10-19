@@ -4,27 +4,27 @@ from collections import Counter
 
 import otto.config.completion_cache as cc
 from otto.config.project import Project
-from tests._fixtures.fake_repo import fake_repo
+from tests._fixtures.fake_project import fake_project
 from tests._fixtures.labdata import write_lab_json
-from tests._fixtures.sutrepo import make_sut_repo, touch_settings
+from tests._fixtures.project_scaffold import make_project, touch_settings
 
 
-def _repos(tmp_path):
-    # one repo whose fingerprint sources exist under tmp_path/.otto
+def _projects(tmp_path):
+    # one project whose fingerprint sources exist under tmp_path/.otto
     touch_settings(tmp_path)
-    return [fake_repo(root=tmp_path)]
+    return [fake_project(root=tmp_path)]
 
 
-def _repo_with_corpus_and_lab(tmp_path):
+def _project_with_corpus_and_lab(tmp_path):
     """A real ``Project`` with nested test files AND a json ``[[lab.sources]]``.
 
     Built (not a ``SimpleNamespace``) so ``lab_sources`` is compiled the same
-    way a real repo's is, and ``tests`` resolves through settings — the shape
+    way a real project's is, and ``tests`` resolves through settings — the shape
     both the corpus-walk-avoidance test and the lab-vs-test invalidation test
-    need in one repo.
+    need in one project.
     """
     root = tmp_path / "sut"
-    make_sut_repo(
+    make_project(
         root,
         tests=["tests"],
         extra='[[lab.sources]]\nbackend = "json"\npaths = ["lab"]\n',
@@ -39,14 +39,14 @@ def _repo_with_corpus_and_lab(tmp_path):
 
 def test_record_and_read_roundtrip(tmp_path, monkeypatch):
     monkeypatch.setattr(cc, "_cache_path", lambda: tmp_path / ".otto" / "completion_cache.json")
-    projects = _repos(tmp_path)
+    projects = _projects(tmp_path)
     cc.record_tunnel_ids(projects, ["tun-abc123def456-161", "tun-def456abc123-53"])
     assert cc.read_tunnel_ids(projects) == ["tun-abc123def456-161", "tun-def456abc123-53"]
 
 
 def test_read_expired_returns_none(tmp_path, monkeypatch):
     monkeypatch.setattr(cc, "_cache_path", lambda: tmp_path / ".otto" / "completion_cache.json")
-    projects = _repos(tmp_path)
+    projects = _projects(tmp_path)
     cc.record_tunnel_ids(projects, ["tun-abc123def456-161"])
     # Capture the frozen "future" timestamp before patching: cc.time is the
     # same module object as this file's `import time` (modules are process-
@@ -65,12 +65,12 @@ def test_record_and_read_never_hash_a_test_source(tmp_path, monkeypatch):
     test source under ``project.tests`` on every ``otto tunnel list``/``remove``
     — exactly the corpus-proportional cost ordinary commands must not pay
     (spec 2026-09-25-dispatch-startup-cost-design.md §4.2). Counting
-    ``hash_file`` calls by path and asserting none falls under the repo's
+    ``hash_file`` calls by path and asserting none falls under the project's
     ``tests`` dir proves the new tunnel-scope digest never walks it, whether
     or not a rebuild ever ran.
     """
     monkeypatch.setattr(cc, "_cache_path", lambda: tmp_path / ".otto" / "completion_cache.json")
-    project = _repo_with_corpus_and_lab(tmp_path)
+    project = _project_with_corpus_and_lab(tmp_path)
 
     counts: Counter = Counter()
     real_hash_file = cc.hash_file
@@ -100,7 +100,7 @@ def test_editing_a_nested_test_file_does_not_invalidate_cached_tunnel_ids(tmp_pa
     shows a lab edit still does.
     """
     monkeypatch.setattr(cc, "_cache_path", lambda: tmp_path / ".otto" / "completion_cache.json")
-    project = _repo_with_corpus_and_lab(tmp_path)
+    project = _project_with_corpus_and_lab(tmp_path)
 
     cc.record_tunnel_ids([project], ["tun-abc123def456-161"])
     nested = project.root / "tests" / "sub" / "test_nested.py"
@@ -112,7 +112,7 @@ def test_editing_a_nested_test_file_does_not_invalidate_cached_tunnel_ids(tmp_pa
 def test_editing_a_lab_file_invalidates_cached_tunnel_ids(tmp_path, monkeypatch):
     """The counterpart to the nested-test-edit test: lab files DO scope tunnel ids."""
     monkeypatch.setattr(cc, "_cache_path", lambda: tmp_path / ".otto" / "completion_cache.json")
-    project = _repo_with_corpus_and_lab(tmp_path)
+    project = _project_with_corpus_and_lab(tmp_path)
 
     cc.record_tunnel_ids([project], ["tun-abc123def456-161"])
     lab_json = project.root / "lab" / "lab.json"

@@ -67,7 +67,7 @@ import pytest
 
 from otto.host.host import BaseHost
 from otto.result import CommandResult
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 from tests._fixtures.profiles import Cell
 from tests.conformance._vocabulary import Vocabulary
 
@@ -75,12 +75,12 @@ CONTROL_MARK = "positive_control"
 """The marker a positive control carries, with the surface id it vouches for.
 
 Spelled ``@pytest.mark.positive_control("exec-exit-code")``. Registered in
-``pyproject.toml`` like every other marker in this repo -- ``filterwarnings =
+``pyproject.toml`` like every other marker in this repository -- ``filterwarnings =
 ["error"]`` turns an unregistered one into a collection error, so the
 registration is load-bearing rather than documentation.
 """
 
-CONFORMANCE_ROOT = PROJECT_ROOT / "tests" / "conformance"
+CONFORMANCE_ROOT = CHECKOUT_ROOT / "tests" / "conformance"
 
 
 @dataclass(frozen=True)
@@ -176,7 +176,7 @@ def walk_test_functions(
     (:func:`_parsed`), so an edit is always seen and an unchanged file is never
     parsed twice: the support-matrix tests ask thousands of times.
     """
-    rel = path.relative_to(PROJECT_ROOT).as_posix()
+    rel = path.relative_to(CHECKOUT_ROOT).as_posix()
 
     def visit(
         body: "list[ast.stmt]", prefix: str

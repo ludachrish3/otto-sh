@@ -5,7 +5,7 @@ single-pass e2e module and tests/e2e/tunnel_stability/ share ONE source of
 truth for bed hygiene. See that module's docstring for the unix topology
 and the management-ip resolution story.
 
-The CLI-cycle harness (``cli_sut_dir``, ``run_tunnel_cli``) was added
+The CLI-cycle harness (``cli_project_root``, ``run_tunnel_cli``) was added
 2026-07-17 so stability tests can drive the real ``otto tunnel`` CLI against
 the same unix bed, not just the library API.
 """
@@ -26,8 +26,8 @@ from otto.tunnel.discovery import DISCOVERY_PS_COMMAND, parse_process_discovery
 from otto.utils import wait_for_async
 from tests._fixtures.bed_hygiene import argv_pattern
 from tests._fixtures.labdata import flat_hosts, host_data, lab_json_v2, make_host
-from tests._fixtures.sutrepo import make_sut_repo
-from tests.e2e._otto_subprocess import REPO1, run_otto
+from tests._fixtures.project_scaffold import make_project
+from tests.e2e._otto_subprocess import PROJECT1, run_otto
 
 UNIX = ("test1", "test2", "test3")
 
@@ -106,7 +106,7 @@ def _format_age(seconds: float | None) -> str:
 
 
 def _reap_recipe(tunnel_ids: list[str]) -> str:
-    """A copy-pasteable reaper. The CLI needs ``--lab`` and the repo ships no
+    """A copy-pasteable reaper. The CLI needs ``--lab`` and the checkout ships no
     lab.json, so the Python path over this module's own bed helpers is the one
     that actually runs."""
     ids = ", ".join(repr(t) for t in tunnel_ids)
@@ -406,11 +406,11 @@ def random_outfile() -> str:
     return f"/tmp/otto_tunnel_e2e_{uuid.uuid4().hex}.out"
 
 
-def cli_sut_dir(tmp_path: Path, *, links: Iterable[dict[str, Any]] = ()) -> Path:
-    """Scaffold a sut dir for CLI-driven tunnel tests: real unix lab + declared containers.
+def cli_project_root(tmp_path: Path, *, links: Iterable[dict[str, Any]] = ()) -> Path:
+    """Scaffold a project for CLI-driven tunnel tests: real unix lab + declared containers.
 
     Extracted verbatim (2026-07-17) from
-    ``tests/e2e/test_tunnel_e2e.py::_cli_cycle_sut_dir`` so
+    the CLI-cycle scaffold in ``tests/e2e/test_tunnel_e2e.py`` so
     ``tests/e2e/tunnel_stability/`` can reuse the same CLI-facing SUT without
     duplicating it. *links* are raw ``lab.json`` link entries written into the
     document as declared; the default declares none, because a tunnel is
@@ -427,8 +427,8 @@ def cli_sut_dir(tmp_path: Path, *, links: Iterable[dict[str, Any]] = ()) -> Path
       also guards the bed contract that ``192.168.1.x`` is provisioned on the
       peers (Vagrantfile: the dedicated ``eth2`` data-plane NIC); an
       unprovisioned bed fails loudly at the post-add verify.
-    - The repo is named ``repo1`` and declares the same ``api`` compose as
-      ``tests/repo1``, so lab load registers container-host placeholders —
+    - The project is named ``project1`` and declares the same ``api`` compose as
+      ``tests/project1``, so lab load registers container-host placeholders —
       the exact issue #139 trigger. Every tunnel command must leave them
       alone: probe liveness quietly, never compose the stack.
     """
@@ -442,7 +442,7 @@ def cli_sut_dir(tmp_path: Path, *, links: Iterable[dict[str, Any]] = ()) -> Path
     # Both hosts are ``docker_capable``, so the one parent rule needs a
     # strictly higher ``docker_priority`` on one of them or it ties and no
     # placeholders register. test2 is the parent: the placeholders are
-    # ``test2.repo1.api`` (issue #139's trigger).
+    # ``test2.project1.api`` (issue #139's trigger).
     for host in hosts:
         if host["element"] == "test2":
             host["docker_priority"] = 10
@@ -456,9 +456,9 @@ def cli_sut_dir(tmp_path: Path, *, links: Iterable[dict[str, Any]] = ()) -> Path
     # hoist is v1 semantics, and this bed wants the v1 union either way).
     for name, entry in doc["labs"].items():
         entry["resources"] = [h["element"] for h in hosts if name in h["labs"]]
-    return make_sut_repo(
+    return make_project(
         sut,
-        name="repo1",
+        name="project1",
         extra=(
             f"[[lab.sources]]\n"
             f'backend = "json"\n'
@@ -466,11 +466,11 @@ def cli_sut_dir(tmp_path: Path, *, links: Iterable[dict[str, Any]] = ()) -> Path
             f"\n"
             f"[[docker.composes]]\n"
             f'name = "core"\n'
-            f'path = "{REPO1 / "docker" / "compose.yml"}"\n'
+            f'path = "{PROJECT1 / "docker" / "compose.yml"}"\n'
             f'services = ["api"]\n'
             f"\n"
             f"[[docker.use_cases]]\n"
-            f'name = "repo1"\n'
+            f'name = "project1"\n'
             f'composes = ["core"]\n'
         ),
         files={"lab_data/lab.json": json.dumps(doc)},
@@ -478,7 +478,7 @@ def cli_sut_dir(tmp_path: Path, *, links: Iterable[dict[str, Any]] = ()) -> Path
 
 
 def run_tunnel_cli(root: Path, *args: str) -> str:
-    """Invoke the real ``otto tunnel`` CLI against *sut_dir* and return stdout.
+    """Invoke the real ``otto tunnel`` CLI against *root* and return stdout.
 
     Same invocation mechanism as
     ``tests/e2e/test_tunnel_e2e.py::test_cli_cycle_add_list_remove_list_docker_free``

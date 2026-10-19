@@ -162,6 +162,6 @@ once it is `CHECK_WINDOW_SECONDS` (ten minutes) old ({doc}`completion-cache`,
 - `otto.config.cache_maintenance` — the marker filenames and the `names`
   window constant, and the `clear`/`prune` walk that removes them.
 - `tests/unit/shim/test_differential.py` — the equality proof.
-- `scripts/import_budget.py` — `completion_repo_warm` gates the file
-  operations of a warm TAB the shim answers, and `completion_repo_handover`
+- `scripts/import_budget.py` — `completion_project_warm` gates the file
+  operations of a warm TAB the shim answers, and `completion_project_handover`
   those of a TAB the resolver hands over ({doc}`../startup-performance`).

@@ -1,4 +1,4 @@
-"""Real repos, real hosts, a real lab, and the one lazy seam that scopes them.
+"""Real projects, real hosts, a real lab, and the one lazy seam that scopes them.
 
 Lifted out of ``tests/unit/fleet/test_fleet_scoping.py`` when a second module
 (the reservation gate, which now computes its requirement over
@@ -15,7 +15,7 @@ from otto.context import OttoContext, set_context
 from otto.host.element import Element
 from otto.labs.loader import Lab
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.project_scaffold import make_project
 
 
 def _toml_list(patterns):
@@ -23,11 +23,11 @@ def _toml_list(patterns):
     return "[" + ", ".join(f"'{p}'" for p in patterns) + "]"
 
 
-def _repo(tmp_path, name, *, labs=None, hosts=None):
+def _project(tmp_path, name, *, labs=None, hosts=None):
     """A real ``Project`` whose ``[project]`` block declares *labs* / *hosts*.
 
-    Both ``None`` writes no ``[project]`` table at all — the undeclared repo the
-    whole-lab fallback is built on, which is a different thing from a repo that
+    Both ``None`` writes no ``[project]`` table at all — the undeclared project the
+    whole-lab fallback is built on, which is a different thing from a project that
     declared an empty list.
     """
     body = ""
@@ -38,7 +38,7 @@ def _repo(tmp_path, name, *, labs=None, hosts=None):
         if hosts is not None:
             lines.append(f"host_patterns = {_toml_list(hosts)}")
         body = "\n".join(lines)
-    return Project(root=make_sut_repo(tmp_path / name, name=name, extra=textwrap.dedent(body)))
+    return Project(root=make_project(tmp_path / name, name=name, extra=textwrap.dedent(body)))
 
 
 def _host(element, lab_name, octet):
@@ -82,14 +82,14 @@ def add_builtin_local(lab, *, resources=frozenset()):
 
 
 def install_scoped_context(lab, projects, *, exclude_projects=()):
-    """Build and install an ``OttoContext`` whose scopes resolve over *repos*.
+    """Build and install an ``OttoContext`` whose scopes resolve over *projects*.
 
     *exclude_projects* is the run's ``-E`` list, as the CLI would set it.
 
-    The context is handed one bootstrap result holding *repos* (``bootstrap=``,
+    The context is handed one bootstrap result holding *projects* (``bootstrap=``,
     :func:`~tests._fixtures.bootstrap_seam.fake_bootstrap_result`), which is
     what lets a unit test declare a fleet of interest without standing up a
-    bootstrap. An empty *repos* list is the whole-lab fallback — no
+    bootstrap. An empty *projects* list is the whole-lab fallback — no
     declaration, no narrowing.
 
     Installation is not undone here: the root conftest's autouse

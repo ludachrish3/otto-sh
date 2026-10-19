@@ -6,7 +6,7 @@ Imported by name (the leading underscore keeps pytest from collecting this).
 import subprocess
 from pathlib import Path
 
-from tests.e2e._otto_subprocess import PROJECT_ROOT, REPO1, run_otto
+from tests.e2e._otto_subprocess import CHECKOUT_ROOT, PROJECT1, run_otto
 
 # The lab's default parent: the host every docker verb resolves to without
 # `--parent`. The `unix` fixture lab has three docker-capable hosts, and test3
@@ -15,25 +15,25 @@ from tests.e2e._otto_subprocess import PROJECT_ROOT, REPO1, run_otto
 # registration therefore only ever mints ``test3.<usecase>.<service>`` ids, so
 # any test that addresses a container id in a SEPARATE otto process — `otto host
 # <id> ...`, `otto run --on <id>` — must run against this host and no other:
-# `--parent test1` registers `test1.repo1.api` inside the invocation that
+# `--parent test1` registers `test1.project1.api` inside the invocation that
 # deployed it, and the next process knows nothing about it. Tests that only
 # drive `docker up/down/build/ps --parent <host>` keep the two-daemon pool of
 # docker_host.
 _DEFAULT_PARENT = "test3"
 
-# The use-cases the sample repos declare (spec §14's "name the fragment after
-# the repo and container ids stay literally unchanged"): repo1 declares `repo1`
-# and `integration`, repo2 declares `repo2` and `integration`. Two or more
+# The use-cases the sample projects declare (spec §14's "name the fragment after
+# the project and container ids stay literally unchanged"): project1 declares `project1`
+# and `integration`, project2 declares `project2` and `integration`. Two or more
 # declared use-cases make a bare `otto docker compose up` ambiguous — it refuses,
 # naming them — so every invocation in the docker e2e modules names the one it means.
-_REPO1_USE_CASE = "repo1"
+_PROJECT1_USE_CASE = "project1"
 _MERGED_USE_CASE = "integration"
 
 
-REPO2 = PROJECT_ROOT / "tests" / "repo2"
+PROJECT2 = CHECKOUT_ROOT / "tests" / "project2"
 
 # rich sizes its tables to the terminal; a subprocess has none, so it falls
-# back to 80 columns and truncates cells like `repo1[core,edge]` mid-word.
+# back to 80 columns and truncates cells like `project1[core,edge]` mid-word.
 # Pin a wide one so the assertions below read the values, not the ellipsis.
 _WIDE = {"COLUMNS": "200"}
 
@@ -45,7 +45,7 @@ def _flat(text: str) -> str:
 
 def _run_otto(
     *args: str,
-    roots: str = str(REPO1),
+    roots: str = str(PROJECT1),
     lab: str = "unix",
     xdir: Path | None = None,
     compose_suffix: str | None = None,
@@ -56,13 +56,13 @@ def _run_otto(
 
     *compose_suffix* gets baked into ``OTTO_COMPOSE_SUFFIX`` so every test
     can use a unique docker compose project name (e.g.
-    ``unix-repo1-<uuid>``) and never collide with concurrent runs on the
+    ``unix-project1-<uuid>``) and never collide with concurrent runs on the
     same docker host. *env* merges last, for the few tests that need to pin
     something else about the child (``COLUMNS``, a ``pass_env`` value).
 
     ``OTTOPATH`` goes through ``extra_env`` rather than the runner's
-    ``roots=``: the multi-repo tests pass an ``os.pathsep``-joined *string*
-    of two repo roots, which is not a single path.
+    ``roots=``: the multi-project tests pass an ``os.pathsep``-joined *string*
+    of two project roots, which is not a single path.
     """
     extra_env: dict[str, str] = {"OTTOPATH": roots}
     if compose_suffix is not None:

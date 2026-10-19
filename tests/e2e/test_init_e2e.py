@@ -1,8 +1,8 @@
-"""``otto init --all`` produces a repo that otto immediately accepts end-to-end.
+"""``otto init --all`` produces a project that otto immediately accepts end-to-end.
 
 Runs the real ``otto`` binary via the shared subprocess harness
-(:mod:`tests.e2e._otto_subprocess`) against a freshly scaffolded repo — no
-mocking, no hand-authored fixture repo. This is the durable proof that the
+(:mod:`tests.e2e._otto_subprocess`) against a freshly scaffolded project — no
+mocking, no hand-authored fixture project. This is the durable proof that the
 scaffolded settings.toml / lab.json / tests / instructions module are
 all mutually consistent with what otto's bootstrap actually expects, closing
 out narrative-only "it works" claims from earlier tasks.
@@ -24,14 +24,14 @@ def test_init_then_full_verification_flow(tmp_path: Path) -> None:
     xdir = tmp_path / "xdir"
     xdir.mkdir()
 
-    # otto init is lab_free and repo-free: it operates purely on --path, never
-    # on OTTOPATH/get_repos, so no `lab=` / `sut_dirs=` is needed here.
+    # otto init is lab_free and project-free: it operates purely on --path, never
+    # on OTTOPATH/get_projects, so no `lab=` / `roots=` is needed here.
     r = run_otto(["init", "--all", "--name", "widget", "--path", str(project)], xdir=xdir)
     assert r.returncode == 0, r.stdout + r.stderr
     assert "settings.toml" not in r.stderr  # sanity: no accidental error path
 
     # Every subsequent command needs OTTOPATH pointing at the scaffolded
-    # repo (init itself needed none) and --lab (otto test / otto run are NOT
+    # project (init itself needed none) and --lab (otto test / otto run are NOT
     # lab_free — see otto.cli.invoke.ensure_lab_context — even though the
     # scaffolded tests/instruction never touch a real host).
     r = run_otto(["test", "--list-tests"], xdir=xdir, roots=project, lab="example_lab")
@@ -42,7 +42,7 @@ def test_init_then_full_verification_flow(tmp_path: Path) -> None:
     assert r.returncode == 0, r.stdout + r.stderr
     assert "example-device" in r.stdout, r.stdout + r.stderr
 
-    # Hostless tests exercised via the repo-root conftest.py fixture
+    # Hostless tests exercised via the project-root conftest.py fixture
     # (project_marker) — proves the scaffolded conftest is discovered, not just
     # present on disk.
     r = run_otto(["test", "TestExample"], xdir=xdir, roots=project, lab="example_lab")
@@ -62,7 +62,7 @@ def test_init_then_full_verification_flow(tmp_path: Path) -> None:
     assert r.returncode == 0, r.stdout + r.stderr
     assert "hello from widget" in (r.stdout + r.stderr)
 
-    # The repo-wide RepoOptions flag rides BOTH verbs (the init module
+    # The project-wide ProjectOptions flag rides BOTH verbs (the init module
     # registers it for run and test): an unknown flag would exit 2 at parse
     # time, and the test writes the value it read via ctx.options into its
     # test_dir, so the flag demonstrably reached the test.
@@ -102,7 +102,7 @@ def test_init_then_full_verification_flow(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("area", ["--tests", "--instructions"])
 def test_a_single_area_scaffold_runs(tmp_path: Path, area: str) -> None:
-    """Every ``otto init`` flag alone leaves a repo whose sample runs.
+    """Every ``otto init`` flag alone leaves a project whose sample runs.
 
     The example tests read ``ProjectOptions`` through ``ctx.options``, which only
     the instructions (init) module registers, so ``--tests`` scaffolds that

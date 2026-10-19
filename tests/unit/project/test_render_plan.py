@@ -17,7 +17,7 @@ LOGIN_HOME_GAP = (
 )
 REPLACED_GAP = "`x.Host.install` replaces the default; its steps are not previewed"
 TOOLCHAIN_GAP = (
-    "toolchain tools: installed on this host once after every repo (--toolchain); not previewed"
+    "toolchain tools: installed on this host once after every project (--toolchain); not previewed"
 )
 
 
@@ -35,9 +35,9 @@ def test_install_prints_every_stage_line_before_any_install_line():
             "rm -f '<login home>/kcov.ko'",
         ],
     )
-    plans = [ProjectPlan("repo1", [HostPlan("test1", [agent, kcov], [LOGIN_HOME_GAP])])]
+    plans = [ProjectPlan("project1", [HostPlan("test1", [agent, kcov], [LOGIN_HOME_GAP])])]
     lines = [
-        "repo1",
+        "project1",
         "  test1",
         "    stage    agent  PUT build/agent.tar.gz -> /opt/stage",
         "    install  agent  tar -xzf /opt/stage/agent.tar.gz -C /opt",
@@ -95,7 +95,7 @@ def test_a_multi_line_command_keeps_its_extra_lines_in_the_step_column():
     ]
 
 
-def test_repo_gaps_come_before_host_gaps_and_a_host_without_steps_prints_only_its_line():
+def test_project_gaps_come_before_host_gaps_and_a_host_without_steps_prints_only_its_line():
     plans = [ProjectPlan("r", [HostPlan("h", [], [REPLACED_GAP])], [ENSURE])]
     lines = ["r", "  h", "  not checked:", f"    {ENSURE}", f"    h: {REPLACED_GAP}"]
     assert render_plan("install", plans) == "\n".join(lines)
@@ -106,7 +106,7 @@ def test_nothing_unchecked_prints_no_block():
     assert "not checked" not in render_plan("install", plans)
 
 
-def test_a_lab_wide_gap_prints_once_under_the_first_repo():
+def test_a_lab_wide_gap_prints_once_under_the_first_project():
     plans = [
         ProjectPlan(
             "first", [HostPlan("h", [_entry("a", install=["sh a"])], [TOOLCHAIN_GAP])], [ENSURE]

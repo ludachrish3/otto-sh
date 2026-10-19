@@ -42,22 +42,22 @@ import pytest
 from otto import _webassets
 from otto.coverage.capture.model import Capture
 from otto.coverage.store.model import CoverageStore, FileRecord
-from tests.e2e._otto_subprocess import REPO1, output_dirs, run_otto
+from tests.e2e._otto_subprocess import PROJECT1, output_dirs, run_otto
 
-PRODUCT_DIR = REPO1 / "product"
+PRODUCT_DIR = PROJECT1 / "product"
 
-# repo1's `[[products]]` entry — the `<product>` segment of every run tree
+# project1's `[[products]]` entry — the `<product>` segment of every run tree
 # below, and the name each capture.json records.
 PRODUCT = "product"
 
 # Every otto invocation in this module targets the unix lab (test1 /
-# test2 / test3) against the repo1 fixture SUT.
+# test2 / test3) against the project1 fixture project.
 _LAB = "unix"
 
 
 @pytest.fixture(scope="module", autouse=True)
 def built_product():
-    """Build ``tests/repo1/product/product`` before any otto invocation.
+    """Build ``tests/project1/product/product`` before any otto invocation.
 
     ``product/product`` is git-ignored and normally built by the suite's own
     class fixture — i.e. INSIDE the run. That is too late now: whether
@@ -92,7 +92,7 @@ def _run_otto(
     timeout: int,
 ) -> subprocess.CompletedProcess[str]:
     """Run ``otto --lab unix ARGV`` and fail loudly if it exits non-zero."""
-    result = run_otto(argv, xdir=xdir, roots=REPO1, lab=_LAB, timeout=timeout)
+    result = run_otto(argv, xdir=xdir, roots=PROJECT1, lab=_LAB, timeout=timeout)
     if result.returncode != 0:
         raise AssertionError(
             f"otto --lab {_LAB} {' '.join(argv)} exited {result.returncode}\n"
@@ -659,7 +659,7 @@ def auto_cov_run(tmp_path_factory):
 
     The absence of ``--cov`` is now load-bearing twice over: it is still the
     plain-``otto test`` path, and it is the auto-on case — the hosts carry an
-    instrumented product and the repo declares ``[coverage]``, so retrieval
+    instrumented product and the project declares ``[coverage]``, so retrieval
     switches itself on. Returns ``(result, xdir)``.
     """
     tmp_dir = tmp_path_factory.mktemp("suite_runner")
@@ -669,7 +669,7 @@ def auto_cov_run(tmp_path_factory):
     result = run_otto(
         ["test", "TestCoverageProduct"],
         xdir=xdir,
-        roots=REPO1,
+        roots=PROJECT1,
         lab=_LAB,
         timeout=600,
     )
@@ -726,7 +726,7 @@ class TestSuiteRunnerIntegration:
 class TestCoverageSwitchesItselfOn:
     """A plain ``otto test`` collects coverage when the fleet is instrumented.
 
-    Nobody typed ``--cov``. The hosts carry an instrumented product and repo1
+    Nobody typed ``--cov``. The hosts carry an instrumented product and project1
     declares a ``[coverage]`` table, so retrieval is on — the whole point of
     the tri-state: ``--cov`` becomes a way to *force* a decision (and to fail
     loudly when it cannot be honoured), not the only way to get coverage.
@@ -757,10 +757,10 @@ class TestCoverageSwitchesItselfOn:
 
 @pytest.fixture(scope="module")
 def refusal(tmp_path_factory):
-    """``otto --lab embedded test --cov`` from repo1: a forced-on refusal.
+    """``otto --lab embedded test --cov`` from project1: a forced-on refusal.
 
-    repo1 declares its product only for the unix bed (``test[1-3]``), so the
-    same repo pointed at the ``embedded`` lab is a fleet otto has nothing to
+    project1 declares its product only for the unix bed (``test[1-3]``), so the
+    same project pointed at the ``embedded`` lab is a fleet otto has nothing to
     collect from. Returns ``(result, xdir)``. Nothing is contacted — the
     decision is taken before the first connection — so this costs no bed time.
     """
@@ -770,7 +770,7 @@ def refusal(tmp_path_factory):
     result = run_otto(
         ["test", "--cov", "TestCoverageProduct"],
         xdir=xdir,
-        roots=REPO1,
+        roots=PROJECT1,
         lab="embedded",
         timeout=120,
     )
@@ -880,7 +880,7 @@ class TestPollutedBuildTree:
         result = run_otto(
             ["cov", "report", str(legacy_dir), "--dir", str(tmp_path / "report")],
             xdir=xdir,
-            roots=REPO1,
+            roots=PROJECT1,
             lab=_LAB,
             timeout=120,
         )

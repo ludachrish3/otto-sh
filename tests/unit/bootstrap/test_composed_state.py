@@ -15,7 +15,7 @@ import textwrap
 import pytest
 
 from otto import bootstrap, declared
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.project_scaffold import make_project
 
 
 @pytest.fixture(autouse=True)
@@ -25,8 +25,8 @@ def _nothing_composed():
     bootstrap.invalidate()
 
 
-def _repo(tmp_path, body: str, later: "str | None" = None) -> str:
-    """A SUT repo whose init module ``composed_state_probe`` runs *body*.
+def _project(tmp_path, body: str, later: "str | None" = None) -> str:
+    """A project whose init module ``composed_state_probe`` runs *body*.
 
     With *later*, a second init module, ``composed_state_later``, runs it next.
     """
@@ -35,9 +35,9 @@ def _repo(tmp_path, body: str, later: "str | None" = None) -> str:
     if later:
         files["pylib/composed_state_later.py"] = textwrap.dedent(later)
     return str(
-        make_sut_repo(
-            tmp_path / "repo",
-            name="repo",
+        make_project(
+            tmp_path / "proj",
+            name="proj",
             extra=f'init = [{inits}]\nlibs = ["pylib"]\n',
             files=files,
         )
@@ -98,21 +98,21 @@ def test_an_init_module_reading_the_state_mid_composition_gets_the_result_being_
         """
     later = 'raise ValueError("a later init fails, contained")\n'
     calls = _counted_passes(monkeypatch)
-    monkeypatch.setenv("OTTOPATH", _repo(tmp_path, body, later))
+    monkeypatch.setenv("OTTOPATH", _project(tmp_path, body, later))
     result = bootstrap.bootstrap()
 
     import composed_state_probe
 
-    assert composed_state_probe.SEEN == [["repo"], ["repo"], ["repo"], ["repo"], True]
+    assert composed_state_probe.SEEN == [["proj"], ["proj"], ["proj"], ["proj"], True]
     # The result being built, never a second, nested composition: a nested one
-    # would carry an errors list of its own (discovery's repos list is shared),
+    # would carry an errors list of its own (discovery's projects list is shared),
     # and run a second dependency pass.
     assert composed_state_probe.BUILDING.errors is result.errors
     assert composed_state_probe.ERRORS_THEN == 0
     assert any(
         "a later init fails, contained" in str(e) for e in composed_state_probe.BUILDING.errors
     )
-    assert calls == [["repo"]]
+    assert calls == [["proj"]]
     assert declared.compose() is result
 
 
@@ -120,7 +120,7 @@ def test_a_failed_composition_publishes_nothing_and_the_next_read_composes_again
     tmp_path, monkeypatch
 ):
     calls = _counted_passes(monkeypatch)
-    monkeypatch.setenv("OTTOPATH", _repo(tmp_path, 'raise KeyboardInterrupt("uncontainable")\n'))
+    monkeypatch.setenv("OTTOPATH", _project(tmp_path, 'raise KeyboardInterrupt("uncontainable")\n'))
     with pytest.raises(KeyboardInterrupt) as first:
         declared.get_projects()
     assert declared.published_result() is None
@@ -132,11 +132,11 @@ def test_a_failed_composition_publishes_nothing_and_the_next_read_composes_again
     assert declared.published_result() is None
     assert declared.is_bootstrapped() is False
     assert [type(first.value), str(first.value)] == [type(second.value), str(second.value)]
-    assert calls == [["repo"], ["repo"]]
+    assert calls == [["proj"], ["proj"]]
 
 
 def test_invalidation_withdraws_what_was_published_and_keeps_the_initiator(tmp_path, monkeypatch):
-    monkeypatch.setenv("OTTOPATH", _repo(tmp_path, "X = 1\n"))
+    monkeypatch.setenv("OTTOPATH", _project(tmp_path, "X = 1\n"))
     first = declared.compose()
     assert declared.published_result() is first
 
@@ -146,4 +146,4 @@ def test_invalidation_withdraws_what_was_published_and_keeps_the_initiator(tmp_p
 
     second = declared.compose()
     assert second is not first
-    assert [r.name for r in second.projects] == ["repo"]
+    assert [r.name for r in second.projects] == ["proj"]

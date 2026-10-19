@@ -1,17 +1,17 @@
 """Tests for cached --holder usernames + the best-effort collector."""
 
 import otto.config.completion_cache as cc
-from tests._fixtures.fake_repo import fake_repo
+from tests._fixtures.fake_project import fake_project
 
 
 def test_usernames_round_trip(tmp_path, monkeypatch):
     cache_file = tmp_path / "cache.json"
     monkeypatch.setattr(cc, "_cache_path", lambda: cache_file)
-    # The section digests enumerate real repo attributes (sut_dir, init,
+    # The section digests enumerate real project attributes (root, init,
     # libs, tests, lab_sources), and `_fingerprint_is_ephemeral` reads
     # `inventory_settings` — absent, that raises, the digest is treated as
-    # ephemeral, and the write silently stands down. A real Repo has them all.
-    projects = [fake_repo(root=tmp_path / "sut")]
+    # ephemeral, and the write silently stands down. A real Project has them all.
+    projects = [fake_project(root=tmp_path / "sut")]
 
     cc.write_cache(projects, [], [], usernames=["alice", "bob"])
     result = cc.read_cache(projects)
@@ -36,22 +36,22 @@ def test_collect_usernames_from_capable_backend(tmp_path):
     register_reservation_backend(
         "uc-test", config=NoneReservationConfig, factory=lambda c: UCBackend()
     )
-    project = fake_repo(root=tmp_path, settings={"reservations": {"backend": "uc-test"}})
+    project = fake_project(root=tmp_path, settings={"reservations": {"backend": "uc-test"}})
     assert cc.collect_reservation_usernames([project]) == ["alice", "bob"]
 
 
 def test_collect_usernames_empty_when_capability_absent(tmp_path):
-    project = fake_repo(root=tmp_path, settings={"reservations": {"backend": "none"}})
+    project = fake_project(root=tmp_path, settings={"reservations": {"backend": "none"}})
     assert cc.collect_reservation_usernames([project]) == []
 
 
 def test_collect_usernames_empty_when_no_reservation_settings(tmp_path):
-    project = fake_repo(root=tmp_path)
+    project = fake_project(root=tmp_path)
     assert cc.collect_reservation_usernames([project]) == []
 
 
 def test_collect_usernames_swallows_build_errors(tmp_path):
     # An unknown backend name makes build_backend raise ValueError; the collector
     # must swallow it and return [] (best-effort, never block the slow path).
-    project = fake_repo(root=tmp_path, settings={"reservations": {"backend": "no-such-backend"}})
+    project = fake_project(root=tmp_path, settings={"reservations": {"backend": "no-such-backend"}})
     assert cc.collect_reservation_usernames([project]) == []

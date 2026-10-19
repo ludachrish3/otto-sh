@@ -19,7 +19,7 @@ note: >
   The marker itself stays supported: it exists for USER suites, where a
   management-plane blip on real hardware is an environmental fact the test
   cannot fix. That is why the fixture projects (user-example input data,
-  not otto's tests) are ignored — tests/repo1's sample documents the
+  not otto's tests) are ignored — tests/project1's sample documents the
   feature, including the idempotent-body requirement its docstring states.
 
   Scoped to tests/** rather than repo-wide so the implementation
@@ -35,11 +35,11 @@ files:
 ignores:
 # Fixture projects + firmware: user-example input data, not otto's tests
 # (sgconfig.yml discipline for tests-scoped rules).
-- tests/repo1/**
-- tests/repo2/**
-- tests/repo3/**
-- tests/repo_broken/**
-- tests/repo_e2e/**
+- tests/project1/**
+- tests/project2/**
+- tests/project3/**
+- tests/project_broken/**
+- tests/project_e2e/**
 - tests/firmware/**
 rule:
   pattern: pytest.mark.retry

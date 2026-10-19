@@ -23,7 +23,7 @@ import sys
 import pytest
 
 from otto import registry as reg
-from tests.e2e._otto_subprocess import PROJECT_ROOT, coverage_subprocess_env
+from tests.e2e._otto_subprocess import CHECKOUT_ROOT, coverage_subprocess_env
 from tests.unit.test_registry_loading import (
     _import_every_module_that_builds_a_registry,
     _otto_registries,
@@ -110,7 +110,7 @@ def _run_python(code: str) -> object:
         env=coverage_subprocess_env(),
         capture_output=True,
         text=True,
-        cwd=str(PROJECT_ROOT),
+        cwd=str(CHECKOUT_ROOT),
         timeout=120,
         check=False,
     )

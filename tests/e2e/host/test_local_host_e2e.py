@@ -1,13 +1,13 @@
 """End-to-end tests for ``otto host local exec/put/get/login`` (no bed required).
 
 ``LocalHost`` spawns local subprocesses and copies files on the local
-filesystem, so the full CLI dispatch path runs end-to-end — repo discovery,
+filesystem, so the full CLI dispatch path runs end-to-end — project discovery,
 lab loading, host resolution, command execution, file transfer — without any
 network transport or remote VM.
 
 The ``local`` host ID is a built-in host: :func:`otto.labs.loader.load_lab`
 injects a ``LocalHost()`` into every lab it returns, on any backend, so
-``otto host local`` resolves without a custom lab-repository. This fixture repo
+``otto host local`` resolves without a custom lab-repository. This fixture project
 uses the standard ``json`` backend (``[[lab.sources]] backend = "json"`` in
 ``.otto/settings.toml``); the ``local`` host comes from the built-in injection.
 
@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 from tests.e2e._otto_subprocess import (
-    REPO_E2E,
+    PROJECT_E2E,
     assert_no_output_dir,
     assert_output_dir,
     run_otto,
@@ -40,7 +40,7 @@ def test_local_run_echo(tmp_path: Path) -> None:
     r = run_otto(
         ["host", "local", "exec", "echo hello-e2e"],
         xdir=tmp_path,
-        roots=REPO_E2E,
+        roots=PROJECT_E2E,
         lab="unix",
     )
     assert r.returncode == 0, r.stderr
@@ -65,7 +65,7 @@ def test_local_put_get_roundtrip(tmp_path: Path) -> None:
     put = run_otto(
         ["host", "local", "put", str(src), str(dest_dir)],
         xdir=tmp_path,
-        roots=REPO_E2E,
+        roots=PROJECT_E2E,
         lab="unix",
     )
     assert put.returncode == 0, put.stderr
@@ -79,7 +79,7 @@ def test_local_put_get_roundtrip(tmp_path: Path) -> None:
     get = run_otto(
         ["host", "local", "get", str(dest_file), str(back_dir)],
         xdir=tmp_path,
-        roots=REPO_E2E,
+        roots=PROJECT_E2E,
         lab="unix",
     )
     assert get.returncode == 0, get.stderr
@@ -104,7 +104,7 @@ def test_local_login_exits_cleanly(tmp_path: Path) -> None:
     r = run_otto(
         ["host", "local", "login"],
         xdir=tmp_path,
-        roots=REPO_E2E,
+        roots=PROJECT_E2E,
         lab="unix",
     )
     combined = r.stdout + r.stderr
@@ -127,7 +127,7 @@ def test_local_exists_creates_no_output_dir(tmp_path: Path) -> None:
     r = run_otto(
         ["host", "local", "exists", str(tmp_path)],
         xdir=tmp_path,
-        roots=REPO_E2E,
+        roots=PROJECT_E2E,
         lab="unix",
     )
     assert r.returncode == 0, r.stderr

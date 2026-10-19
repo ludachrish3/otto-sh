@@ -7,7 +7,7 @@ from otto.config.project import Project
 from otto.host.element import Element
 from otto.host.os_profile import ProfileContext
 from otto.labs import HostSummary, LoginSummary
-from tests._fixtures.fake_repo import fake_repo
+from tests._fixtures.fake_project import fake_project
 from tests._fixtures.labdata import json_lab_sources, write_lab_json
 
 _CREDS = [
@@ -17,11 +17,11 @@ _CREDS = [
 ]
 
 
-def _repo(tmp_path: Path, hosts: list[dict]) -> Project:
+def _project(tmp_path: Path, hosts: list[dict]) -> Project:
     lab = tmp_path / "lab"
     lab.mkdir()
     write_lab_json(lab / "lab.json", hosts)
-    return fake_repo(lab_sources=json_lab_sources(tmp_path, [lab]), root=tmp_path)
+    return fake_project(lab_sources=json_lab_sources(tmp_path, [lab]), root=tmp_path)
 
 
 def _summaries(project) -> dict[str, HostSummary]:
@@ -41,7 +41,9 @@ EXPECTED = [
 
 
 def test_json_backend_records_login_identities_only(tmp_path):
-    project = _repo(tmp_path, [{"ip": "1.1.1.1", "element": "u1", "labs": ["e"], "creds": _CREDS}])
+    project = _project(
+        tmp_path, [{"ip": "1.1.1.1", "element": "u1", "labs": ["e"], "creds": _CREDS}]
+    )
     assert _summaries(project)["u1"].logins == EXPECTED
 
 
@@ -57,7 +59,9 @@ def test_the_field_defaults_empty_for_backends_that_do_not_know():
 def test_composite_carries_logins_across_sources(tmp_path):
     from otto.labs import build_lab_sources
 
-    project = _repo(tmp_path, [{"ip": "1.1.1.1", "element": "u1", "labs": ["e"], "creds": _CREDS}])
+    project = _project(
+        tmp_path, [{"ip": "1.1.1.1", "element": "u1", "labs": ["e"], "creds": _CREDS}]
+    )
     composite = build_lab_sources([project])
     got = {s.id: s.logins for s in composite.list_host_summaries()}
     assert got == {"u1": EXPECTED}
@@ -68,7 +72,7 @@ def test_load_lab_fallback_records_the_built_hosts_logins():
     from otto.labs import host_summaries
     from otto.labs.loader import Lab
 
-    class _MinimalRepo:
+    class _MinimalRepository:
         def load_lab(self, name, preferences=None, inventory=None):
             lab = Lab(name=name)
             lab.add_host(
@@ -79,7 +83,7 @@ def test_load_lab_fallback_records_the_built_hosts_logins():
         def list_labs(self):
             return ["only"]
 
-    summaries = {s.id: s for s in host_summaries(_MinimalRepo())}
+    summaries = {s.id: s for s in host_summaries(_MinimalRepository())}
     assert summaries["u1"].logins == EXPECTED
 
 

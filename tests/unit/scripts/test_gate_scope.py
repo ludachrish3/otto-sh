@@ -14,7 +14,7 @@ from _pytest.mark.expression import Expression
 from scripts import gate_scope as gs
 from scripts.gate_fresh import GATED_TARGETS
 from tests._fixtures.gitrepo import git_env
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 from tests.unit import test_lane_invariants as _lane_invariants
 from tests.unit.test_lane_invariants import (
     _PATHS_TOKEN,
@@ -59,7 +59,7 @@ collect_marker_sets = _lane_invariants.collect_marker_sets
         ("tests/unit/cli/test_expose.py", gs.TESTS_LEAF),
         ("tests/unit/test_make_quick.py", gs.TESTS_LEAF),
         ("tests/e2e/cli/test_run.py", gs.TESTS_LEAF),
-        ("tests/e2e/test_repo_wide_conftest.py", gs.TESTS_LEAF),
+        ("tests/e2e/test_project_wide_conftest.py", gs.TESTS_LEAF),
         ("tests/unit/cli/conftest.py", gs.ESCALATE),
         ("tests/conftest.py", gs.ESCALATE),
         ("tests/integration/chaos/conftest.py", gs.ESCALATE),
@@ -95,7 +95,7 @@ def test_a_single_star_crosses_directories_where_the_tables_rely_on_it():
     assert gs._match("tests/_fixtures/a/b.py", ("tests/_fixtures/*",))
     assert gs._match("src/otto/host/survey/__init__.py", ("src/otto/*/__init__.py",))
     assert gs._match("docs/superpowers/specs/a/b.md", gs.NONE_GLOBS)
-    assert not gs._match("tests/e2e/test_repo_wide_conftest.py", gs.TRIGGER_GLOBS)
+    assert not gs._match("tests/e2e/test_project_wide_conftest.py", gs.TRIGGER_GLOBS)
 
 
 def test_identities_are_class_qualified_and_classes_carry_identity():
@@ -380,7 +380,7 @@ def test_a_module_whose_every_test_carries_the_family_mark_runs_the_guards():
 
 
 def test_quicks_exclusions_are_the_recipes():
-    makefile = (PROJECT_ROOT / "Makefile").read_text()
+    makefile = (CHECKOUT_ROOT / "Makefile").read_text()
     clauses = _makefile_marker_variables(makefile)["M_QUICK"].split(" and ")
     assert all(clause.startswith("not ") for clause in clauses), clauses
     assert {clause.removeprefix("not ") for clause in clauses} == gs.QUICK_EXCLUDED
@@ -809,11 +809,11 @@ def _tracked(prefix: str) -> "list[str]":
     """Tracked paths under *prefix*, NUL-delimited, with the suite's hermetic git env."""
     out = subprocess.run(
         ["git", "ls-files", "-z", "--", prefix],
-        cwd=PROJECT_ROOT,
+        cwd=CHECKOUT_ROOT,
         capture_output=True,
         text=True,
         check=True,
-        env=git_env(PROJECT_ROOT),
+        env=git_env(CHECKOUT_ROOT),
     ).stdout
     return [p for p in out.split("\0") if p]
 
@@ -828,7 +828,7 @@ def _at_head(changed: str, text: str):
     def read(_rev: str, path: str) -> "str | None":
         if path == changed:
             return text
-        target = PROJECT_ROOT / path
+        target = CHECKOUT_ROOT / path
         return target.read_text(encoding="utf-8") if target.is_file() else None
 
     return read
@@ -910,8 +910,15 @@ def test_a_fleet_change_runs_its_direct_tests():
 
 
 def test_a_project_change_runs_its_direct_tests():
+    # the row's interpreter-agnostic test_project_scaffold_policy.py is quick-guards', not quick's
     assert _src_leaf_quick("src/otto/project/actions.py") == sorted(
-        ["tests/unit/project", "tests/unit/test_project_instruction_table.py", *_RIDERS]
+        [
+            "tests/unit/project",
+            "tests/unit/test_fake_project_fixture.py",
+            "tests/unit/test_project_instruction_table.py",
+            "tests/unit/test_project_scaffold_fixture.py",
+            *_RIDERS,
+        ]
     )
 
 
@@ -939,7 +946,7 @@ def test_every_tracked_test_module_classifies_to_a_runnable_scope():
     for path in _tracked("tests"):
         if not gs._is_test_module(path):
             continue
-        text = (PROJECT_ROOT / path).read_text(encoding="utf-8")
+        text = (CHECKOUT_ROOT / path).read_text(encoding="utf-8")
         scope = gs.classify([gs.Change(path, "M")], _at_head(path, text), "base", "head", head)
         runs = scope.quick_paths or scope.guard_files or scope.special or scope.full_at_commit
         if not runs or any(not gs._holds_a_test(p, head) for p in scope.quick_paths):
@@ -978,9 +985,9 @@ def test_every_path_and_lane_the_tables_name_exists():
         | set(gs.GUARD_RIDERS)
         | set(gs.STABILITY_FILES)
     )
-    missing = sorted(p for p in paths if not (PROJECT_ROOT / p).exists())
+    missing = sorted(p for p in paths if not (CHECKOUT_ROOT / p).exists())
     assert missing == [], f"rows naming paths that do not exist: {missing}"
-    makefile = (PROJECT_ROOT / "Makefile").read_text()
+    makefile = (CHECKOUT_ROOT / "Makefile").read_text()
     commands = [
         *(c for lanes in gs.STABILITY_FILES.values() for c in lanes),
         *gs.LANE_MARKERS.values(),
@@ -1317,7 +1324,7 @@ def test_the_union_composes_every_class_before_deduplication():
 # check-ts is the TypeScript gate). `check-python` and `lint-arch` DO reach pytest (the
 # ast-grep rule tests, `lint-arch`) and are walked like any lane.
 _OUT_OF_SCOPE_LINES = frozenset({"check-breaking", "docs", "gate-fresh", "check-ts"})
-_CANARY = _string_constants(ast.parse((PROJECT_ROOT / "noxfile.py").read_text()))["CANARY_PYTHON"]
+_CANARY = _string_constants(ast.parse((CHECKOUT_ROOT / "noxfile.py").read_text()))["CANARY_PYTHON"]
 _HOSTLESS_LINE = f"nox -s tests_hostless-{_CANARY}"
 # The emitted lines that run no pytest: the type checker and the linter over changed files.
 _NO_PYTEST_PREFIXES = ("uv run ty check ", "uv run ruff check ")
@@ -1359,7 +1366,7 @@ def _oracle_legs(lines: "list[str]", makefile: str) -> "list[_Leg]":
             legs += _legs_including_markerless(
                 f"noxfile.py:tests_hostless@{_CANARY}",
                 _python_pytest_invocations(
-                    PROJECT_ROOT / "noxfile.py",
+                    CHECKOUT_ROOT / "noxfile.py",
                     resolve_names=True,
                     scope="tests_hostless",
                     python=_CANARY,
@@ -1400,12 +1407,12 @@ def test_every_collected_item_is_selected_by_the_oracles_commit_lanes(collect_ma
     """THE CENSUS. For every tracked test module changed alone, the commit column's
     legs — the full gate's included — select every item pytest collects in it."""
     head = _head_paths()
-    makefile = (PROJECT_ROOT / "Makefile").read_text()
+    makefile = (CHECKOUT_ROOT / "Makefile").read_text()
     gaps = []
     for path in _tracked("tests"):
         if not gs._is_test_module(path):
             continue
-        text = (PROJECT_ROOT / path).read_text(encoding="utf-8")
+        text = (CHECKOUT_ROOT / path).read_text(encoding="utf-8")
         scope = gs.classify([gs.Change(path, "M")], _at_head(path, text), "base", "head", head)
         lines = gs.commands(scope, tip=False, base="origin/main")
         gaps += [
@@ -1427,9 +1434,9 @@ def test_the_census_reddens_when_a_lane_row_is_removed(collect_marker_sets, monk
         gs, "LANE_MARKERS", {k: v for k, v in gs.LANE_MARKERS.items() if k != "busybox"}
     )
     head = _head_paths()
-    makefile = (PROJECT_ROOT / "Makefile").read_text()
+    makefile = (CHECKOUT_ROOT / "Makefile").read_text()
     path = next(p for p in _tracked("tests/busybox") if gs._is_test_module(p))
-    text = (PROJECT_ROOT / path).read_text(encoding="utf-8")
+    text = (CHECKOUT_ROOT / path).read_text(encoding="utf-8")
     scope = gs.classify([gs.Change(path, "M")], _at_head(path, text), "base", "head", head)
     lines = gs.commands(scope, tip=False, base="origin/main")
     assert any(line.startswith("make quick PATHS") for line in lines)
@@ -1448,9 +1455,9 @@ def test_the_busybox_tree_row_and_the_mark_route_are_redundant_on_purpose(
         gs, "SPECIAL_TREES", [r for r in gs.SPECIAL_TREES if not r[0].startswith("tests/busybox/")]
     )
     head = _head_paths()
-    makefile = (PROJECT_ROOT / "Makefile").read_text()
+    makefile = (CHECKOUT_ROOT / "Makefile").read_text()
     path = next(p for p in _tracked("tests/busybox") if gs._is_test_module(p))
-    text = (PROJECT_ROOT / path).read_text(encoding="utf-8")
+    text = (CHECKOUT_ROOT / path).read_text(encoding="utf-8")
     scope = gs.classify([gs.Change(path, "M")], _at_head(path, text), "base", "head", head)
     lines = gs.commands(scope, tip=False, base="origin/main")
     assert "make busybox" in lines
@@ -1469,9 +1476,9 @@ def test_the_census_reddens_when_a_full_column_hides_a_lane(collect_marker_sets,
         [r for r in gs.SPECIAL_TREES if not r[0].startswith("tests/e2e/chaos/")],
     )
     head = _head_paths()
-    makefile = (PROJECT_ROOT / "Makefile").read_text()
+    makefile = (CHECKOUT_ROOT / "Makefile").read_text()
     path = "tests/e2e/chaos/test_console_chaos.py"
-    text = (PROJECT_ROOT / path).read_text(encoding="utf-8")
+    text = (CHECKOUT_ROOT / path).read_text(encoding="utf-8")
     scope = gs.classify([gs.Change(path, "M")], _at_head(path, text), "base", "head", head)
     lines = gs.commands(scope, tip=False, base="origin/main")
     assert "make coverage" in lines, lines
@@ -1482,7 +1489,7 @@ def test_the_census_reddens_when_a_full_column_hides_a_lane(collect_marker_sets,
 
 def _quick_routed(path: str) -> "list[str]":
     """The commit column for a one-module change, read from disk like the census."""
-    text = (PROJECT_ROOT / path).read_text(encoding="utf-8")
+    text = (CHECKOUT_ROOT / path).read_text(encoding="utf-8")
     scope = gs.classify([gs.Change(path, "M")], _at_head(path, text), "base", "head", _head_paths())
     return gs.commands(scope, tip=False, base="origin/main")
 
@@ -1498,7 +1505,7 @@ def test_the_census_reads_quicks_recipe_not_a_copy_of_it(collect_marker_sets):
     leaves the module's items uncovered; a narrowing flag (`-k`) is refused outright."""
     lines = _quick_routed(_QUICK_CONTROL)
     assert any(line.startswith('make quick PATHS="') for line in lines), lines
-    makefile = (PROJECT_ROOT / "Makefile").read_text()
+    makefile = (CHECKOUT_ROOT / "Makefile").read_text()
     assert _PARALLEL_SELECTOR in makefile
     assert _uncovered(_QUICK_CONTROL, lines, collect_marker_sets, makefile) == []
     emptied = makefile.replace(
@@ -1513,7 +1520,7 @@ def test_the_census_reads_quicks_recipe_not_a_copy_of_it(collect_marker_sets):
 
 def test_the_census_refuses_a_line_it_cannot_read():
     """Only the ty and ruff lines run no pytest; any other `uv run` line is unknown."""
-    makefile = (PROJECT_ROOT / "Makefile").read_text()
+    makefile = (CHECKOUT_ROOT / "Makefile").read_text()
     assert _oracle_legs(["uv run ty check x.py", "uv run ruff check x.py"], makefile) == []
     with pytest.raises(AssertionError, match="does not know"):
         _oracle_legs(["uv run pytest tests/unit"], makefile)
@@ -1541,7 +1548,7 @@ def test_the_full_gate_is_pinned_literally():
 
 def test_the_full_gates_hostless_session_runs_on_the_canary():
     """A canary bump in noxfile.py renames the session: the oracle must follow it."""
-    canary = _string_constants(ast.parse((PROJECT_ROOT / "noxfile.py").read_text()))[
+    canary = _string_constants(ast.parse((CHECKOUT_ROOT / "noxfile.py").read_text()))[
         "CANARY_PYTHON"
     ]
     assert [c for c in gs.FULL_GATE if c.startswith("nox -s tests_hostless-")] == [
@@ -1558,7 +1565,7 @@ def test_no_special_tree_is_ever_handed_to_quick():
     for path in _tracked("tests"):
         if not gs._is_test_module(path):
             continue
-        text = (PROJECT_ROOT / path).read_text(encoding="utf-8")
+        text = (CHECKOUT_ROOT / path).read_text(encoding="utf-8")
         scope = gs.classify([gs.Change(path, "M")], _at_head(path, text), "base", "head", head)
         quick_lines = [
             c
@@ -1581,7 +1588,7 @@ def test_the_browser_trees_route_by_source_marks_not_by_a_tree_row():
     head = _head_paths()
     browser_path = "tests/e2e/monitor/dashboard/test_marking.py"
     plain_path = "tests/e2e/monitor/dashboard/test_harness.py"
-    texts = {p: (PROJECT_ROOT / p).read_text(encoding="utf-8") for p in (browser_path, plain_path)}
+    texts = {p: (CHECKOUT_ROOT / p).read_text(encoding="utf-8") for p in (browser_path, plain_path)}
 
     def scope_of(path):
         return gs.classify(
@@ -1630,10 +1637,10 @@ def test_every_guard_family_is_reached_by_a_src_leaf_commit():
     assert "make quick-guards" in lines
     unreached = []
     for family in families:
-        target = PROJECT_ROOT / family
+        target = CHECKOUT_ROOT / family
         modules = sorted(target.rglob("test_*.py")) if target.is_dir() else [target]
         for module in modules:
-            rel = str(module.relative_to(PROJECT_ROOT))
+            rel = str(module.relative_to(CHECKOUT_ROOT))
             rides = (
                 any(rel == r or rel.startswith(r + "/") for r in gs.GUARD_RIDERS)
                 and family in quick
@@ -1745,7 +1752,7 @@ _RANGED_TARGET_LINES = [
 def test_the_ranged_targets_are_the_ones_that_reach_check_breaking():
     """`gate-fresh` reaches lint-arch through scripts/gate_fresh.py's own make, which inherits
     a command-line RANGE through MAKEFLAGS; the rest reach check-breaking as a prerequisite."""
-    makefile = (PROJECT_ROOT / "Makefile").read_text()
+    makefile = (CHECKOUT_ROOT / "Makefile").read_text()
     emitted = {line.split()[1] for line in gs.FULL_GATE if line.startswith("make ")}
     emitted |= {"check-breaking", "lint-arch", "quick", "quick-guards", "nox-unit-repeat"}
     reaching = {t for t in emitted if "check-breaking" in make_reachable(t, makefile)}
@@ -1774,8 +1781,8 @@ def test_the_script_runs_as_a_file_from_the_repo_root(tmp_path: Path):
     with HOME confined it would rebuild its cache."""
     repo = _repo(tmp_path)
     completed = subprocess.run(
-        [sys.executable, str(PROJECT_ROOT / "scripts/gate_scope.py"), "--repo", str(repo)],
-        cwd=PROJECT_ROOT,
+        [sys.executable, str(CHECKOUT_ROOT / "scripts/gate_scope.py"), "--repo", str(repo)],
+        cwd=CHECKOUT_ROOT,
         capture_output=True,
         text=True,
         timeout=120,
@@ -1787,7 +1794,7 @@ def test_the_script_runs_as_a_file_from_the_repo_root(tmp_path: Path):
 
 
 def _real_reader_sources() -> "dict[tuple[str, str], str]":
-    return {("head", p): (PROJECT_ROOT / p).read_text() for p in gs.MATRIX_READERS}
+    return {("head", p): (CHECKOUT_ROOT / p).read_text() for p in gs.MATRIX_READERS}
 
 
 def test_a_measured_matrix_routes_its_readers_as_tests_leaf_changes():
@@ -1800,7 +1807,7 @@ def test_a_measured_matrix_routes_its_readers_as_tests_leaf_changes():
     )
     assert scope.classes == [gs.TESTS_LEAF]
     family = [
-        p for p in gs.MATRIX_READERS if gs.carries_family_mark((PROJECT_ROOT / p).read_text())
+        p for p in gs.MATRIX_READERS if gs.carries_family_mark((CHECKOUT_ROOT / p).read_text())
     ]
     assert scope.guard_files == family
     assert scope.quick_paths == [p for p in gs.MATRIX_READERS if p not in family]
@@ -1851,7 +1858,7 @@ def test_the_matrix_reader_census_separates_readers_from_gate_pins():
 def test_the_matrix_readers_row_is_every_reader_in_the_test_tree():
     """A new reader of either matrix must join the row, or the row under-gates it."""
     sources = {
-        p: (PROJECT_ROOT / p).read_text()
+        p: (CHECKOUT_ROOT / p).read_text()
         for p in _head_paths()
         if p.startswith("tests/") and p.endswith(".py")
     }

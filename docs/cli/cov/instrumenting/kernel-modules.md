@@ -107,7 +107,7 @@ registration, so an `insmod` that succeeds has both files.
 
 ## Instrumenting a module
 
-The worked example throughout this page is `tests/repo5/kmod/demo/`, a
+The worked example throughout this page is `tests/project5/kmod/demo/`, a
 small bounded queue driven from a debugfs control file, living inside the
 project that declares it as a product. A project that reports coverage for a
 module must own that module's sources and build them in place: coverage
@@ -131,7 +131,7 @@ sentinels has those run by `KMODCOV_INIT()` too, which is what a
 `CONFIG_CONSTRUCTORS` kernel would have done for them. The same Kbuild also
 applies the flags step below to each instrumented object:
 
-```{literalinclude} ../../../../tests/repo5/kmod/demo/Kbuild
+```{literalinclude} ../../../../tests/project5/kmod/demo/Kbuild
 :language: make
 ```
 
@@ -158,7 +158,7 @@ freed, and `insmod` or `rmmod` waits forever:
 The demo applies all three at the call sites they describe. Declaring the
 parameter, at file scope:
 
-```{literalinclude} ../../../../tests/repo5/kmod/demo/demo_main.c
+```{literalinclude} ../../../../tests/project5/kmod/demo/demo_main.c
 :language: c
 :start-at: "KMODCOV_DECLARE();"
 :end-at: "KMODCOV_DECLARE();"
@@ -167,7 +167,7 @@ parameter, at file scope:
 Registering, first in the init routine, failing the module load if it
 fails:
 
-```{literalinclude} ../../../../tests/repo5/kmod/demo/demo_main.c
+```{literalinclude} ../../../../tests/project5/kmod/demo/demo_main.c
 :language: c
 :start-at: "int err = KMODCOV_INIT();"
 :end-at: "return err;"
@@ -177,7 +177,7 @@ And unregistering, as the last statement of the exit routine — so the exit
 dump `kmodcov_unregister` performs sees everything the exit routine did
 before it:
 
-```{literalinclude} ../../../../tests/repo5/kmod/demo/demo_main.c
+```{literalinclude} ../../../../tests/project5/kmod/demo/demo_main.c
 :language: c
 :start-at: "demo_queue_free(&queue);"
 :end-at: "KMODCOV_EXIT();"
@@ -212,14 +212,14 @@ tree (see below). The library builds **out of tree**: it is never itself a
 measured product, so `build.sh` copies its sources into a scratch directory
 and builds them there against `/lib/modules/<release>/build`. The consumer
 builds **in place**, next to its own committed sources, for the reason
-given above. `tests/repo5/kmod/build.sh` does both, library first, and
+given above. `tests/project5/kmod/build.sh` does both, library first, and
 checks the resulting `vermagic` before calling either build a success:
 
-```{literalinclude} ../../../../tests/repo5/kmod/build.sh
+```{literalinclude} ../../../../tests/project5/kmod/build.sh
 :language: bash
 ```
 
-`tests/repo5/build.sh` is the human entry point: it runs that script and
+`tests/project5/build.sh` is the human entry point: it runs that script and
 then the container image's own `docker/build.sh`.
 
 A product project's own module follows the same shape: build `otto_kmodcov` out
@@ -458,7 +458,7 @@ kind `kmodcov` — project tooling nothing measures, one entry per kernel, point
 at the hosts running it by its `match` table — and the consumer is an
 ordinary `kmod` product with `coverage = "module"`:
 
-```{literalinclude} ../../../../tests/repo5/.otto/settings.toml
+```{literalinclude} ../../../../tests/project5/.otto/settings.toml
 :language: toml
 :start-at: "[[dev_tools]]"
 :end-before: "# The container-image products"
@@ -473,7 +473,7 @@ host and the kind, and so is a host matching two of them. `cleanup` unloads
 the library after the products, which is the order dev tools always come
 down in; a test module that drives the products itself and never runs
 `cleanup` unloads it in its own teardown, the way
-`tests/repo5/tests/test_kmod_demo.py` does.
+`tests/project5/tests/test_kmod_demo.py` does.
 
 `otto_kmod_demo` sets `coverage = "module"` and a `cov_dir` for `otto_kmodcov`
 to write under. A module built with the sentinel/macro snippet above refuses

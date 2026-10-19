@@ -31,7 +31,7 @@ bulk library ports yet. Only do work that tolerates or *informs* otto's churn:
   - [ ] Config: the **decomposed** pieces — `get_lab()` / `get_host()` /
         `all_hosts()` / `Lab` for lab+host data (the old `getConfigModule()`
         bundle was removed in WS#1); `get_repos()` for repos (import-time
-        environment, not per-invocation); a project-owned `RepoOptions`
+        environment, not per-invocation); a project-owned `ProjectOptions`
         dataclass for repo-wide options; the suite/instruction `Options`
         dataclass for per-invocation CLI values. There is **no single config
         object** in the contract. The per-invocation runtime is `OttoContext`
@@ -47,7 +47,7 @@ bulk library ports yet. Only do work that tolerates or *informs* otto's churn:
         `install_otto_bridge()` helper for mixed processes.
   - [ ] Config decomposition adapter — **not** a 1:1 wrapper; fans the old
         god-object configmodule out into otto shapes (`Lab` / host registry,
-        the project `RepoOptions`, CLI values). Per-project mapping.
+        the project `ProjectOptions`, CLI values). Per-project mapping.
 - [ ] Pilot **one** representative leaf library end-to-end. Treat pilot friction
       as a signal to fix **otto's interface**, not the library — this is the
       point of piloting before the freeze.
@@ -84,7 +84,7 @@ Per valuable library, make it dual-platform:
 - [ ] **Config usage (the thorniest)** — classify *each* old-configmodule access
       and re-home it:
   - lab/host data → `get_host()` / `all_hosts()` or an injected `Host`;
-  - repo-wide option → injected `RepoOptions` (or the field);
+  - repo-wide option → injected `ProjectOptions` (or the field);
   - CLI argument → threaded down from the suite/instruction `Options` dataclass;
   - maps to nothing → flag as dead config or a real otto modelling gap.
   - This needs human judgement per access site; not codemoddable.

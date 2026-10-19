@@ -11,11 +11,11 @@ import tomli
 
 from otto.config.project import Project, compile_settings, validate_settings
 from otto.host.os_profile import OS_PROFILES
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.project_scaffold import make_project
 
 
 def _write(root: Path, body: str) -> Path:
-    make_sut_repo(root, name="acme", version="1.0.0", extra=textwrap.dedent(body))
+    make_project(root, name="acme", version="1.0.0", extra=textwrap.dedent(body))
     return root / ".otto" / "settings.toml"
 
 
@@ -54,7 +54,7 @@ def test_an_unknown_settings_key_renders_compactly(tmp_path: Path) -> None:
 
 def test_settings_that_are_not_toml_fail_with_the_parse_error(tmp_path: Path) -> None:
     (tmp_path / ".otto").mkdir()
-    (tmp_path / ".otto" / "settings.toml").write_text(  # sutrepo-exempt: malformed TOML under test
+    (tmp_path / ".otto" / "settings.toml").write_text(  # scaffold-exempt: malformed TOML under test
         'name = "acme\n'
     )
     (problem,) = validate_settings(tmp_path)
@@ -65,7 +65,7 @@ def test_settings_that_are_not_toml_fail_with_the_parse_error(tmp_path: Path) ->
 def test_settings_that_are_not_utf8_fail_instead_of_raising(tmp_path: Path) -> None:
     (tmp_path / ".otto").mkdir()
     path = tmp_path / ".otto" / "settings.toml"
-    path.write_bytes(b"\xff\xfe")  # sutrepo-exempt: non-UTF-8 settings under test
+    path.write_bytes(b"\xff\xfe")  # scaffold-exempt: non-UTF-8 settings under test
     (problem,) = validate_settings(tmp_path)
     assert problem.startswith(f"{path}: ")
 
@@ -74,7 +74,7 @@ def test_a_relative_root_is_reported_by_its_absolute_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     (tmp_path / ".otto").mkdir()
-    (tmp_path / ".otto" / "settings.toml").write_text(  # sutrepo-exempt: malformed TOML under test
+    (tmp_path / ".otto" / "settings.toml").write_text(  # scaffold-exempt: malformed TOML under test
         'name = "acme\n'
     )
     monkeypatch.chdir(tmp_path)
@@ -90,7 +90,7 @@ def test_valid_settings_have_no_problems(tmp_path: Path) -> None:
 def test_compile_settings_matches_what_the_loader_assigns(
     tmp_path: Path,
 ) -> None:
-    """The differential: every CompiledSettings field equals the Repo attribute of the same name."""
+    """The differential: each CompiledSettings field equals the same-named Project attribute."""
     _write(
         tmp_path,
         """
@@ -148,7 +148,7 @@ def test_the_loader_reads_settings_as_utf8_under_an_ascii_locale(tmp_path: Path)
     otto_dir = tmp_path / ".otto"
     otto_dir.mkdir()
     settings = otto_dir / "settings.toml"
-    settings.write_text(  # sutrepo-exempt: non-ASCII bytes the helper cannot write
+    settings.write_text(  # scaffold-exempt: non-ASCII bytes the helper cannot write
         'name = "café"\nversion = "1.0.0"\n', encoding="utf-8"
     )
     script = (

@@ -18,14 +18,14 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = [
     pytest.mark.hostless,
     pytest.mark.browser,
 ]
 
-FIXTURES = PROJECT_ROOT / "web" / "fixtures"
+FIXTURES = CHECKOUT_ROOT / "web" / "fixtures"
 
 
 def _import_fixture(page, name: str) -> None:
@@ -868,7 +868,7 @@ def test_link_less_edges_do_not_open_the_inspector(shell_dash, page):
     _click_edge(page, "reports:mgmt-01~chassis-a")
 
     # A negative assertion needs a barrier, or it passes trivially by running
-    # before the click is even processed. NOT a sleep (no TEST in this repo
+    # before the click is even processed. NOT a sleep (no TEST in this repository
     # uses wait_for_timeout — scripts/capture_docs_media.py does, but that
     # is media capture, not an assertion; an arbitrary budget in a test is a
     # flake waiting to happen). The barrier is sound because `page.mouse.click()`

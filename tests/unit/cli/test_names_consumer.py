@@ -1,7 +1,7 @@
 """Root help is served from the ``names`` section — cache-or-load, never degraded.
 
 Every test here runs the REAL console entry (``otto._shim:main``) in a
-subprocess against a generated repo with a private ``OTTO_HOME``. In-process
+subprocess against a generated project with a private ``OTTO_HOME``. In-process
 would prove nothing: ``entry()``'s decision is made from ``sys.argv`` before
 Typer parses anything, the caches are keyed on a workspace home, and bootstrap
 is a process-global singleton.
@@ -16,12 +16,12 @@ from pathlib import Path
 import pytest
 
 from otto.config.env import is_otto_env_var
-from tests._fixtures.generated_repo import generate_repo
+from tests._fixtures.generated_project import generate_project
 
 _ENTRY = [sys.executable, "-c", "from otto._shim import main; main()"]
 
 _PLUGIN_INIT = '''
-"""Init module for the generated repo: registers third-party CLI commands."""
+"""Init module for the generated project: registers third-party CLI commands."""
 
 import typer
 
@@ -57,7 +57,7 @@ otto.register_cli_command("plug", plug)
 # registrations survived. Costs the shared fixture nothing: the decorator
 # lives in the already-imported otto.cli.registry, so bootstrap's module set
 # is unchanged — measured by hand at implementation time (2026-09-02) by
-# counting sys.modules after a cold bootstrap of this fixture's repo with
+# counting sys.modules after a cold bootstrap of this fixture's project with
 # and without the decorated leaf: 629 == 629. No test pins this; re-measure
 # the same way before hanging anything heavier off the shared init.
 @otto.cli_command(name="dec-leaf", help="Decorated plugin leaf.", lab_free=True)
@@ -78,7 +78,7 @@ otto.register_cli_command("mutegroup", "genrepo_lazy:mute_app")
 '''
 
 _PLUGIN_LAZY = '''
-"""The lazily-imported half of the generated repo's plugin."""
+"""The lazily-imported half of the generated project's plugin."""
 
 from typing import Annotated
 
@@ -153,33 +153,33 @@ def _run(env: dict, *argv: str) -> subprocess.CompletedProcess:
 
 
 @pytest.fixture
-def plugin_repo(tmp_path):
-    """A generated repo whose init module registers third-party CLI commands."""
-    project = generate_repo(tmp_path, files=20, dirs=3)
-    (project / "pylib" / "genrepo_instructions.py").write_text(_PLUGIN_INIT)
+def plugin_project(tmp_path):
+    """A generated project whose init module registers third-party CLI commands."""
+    project = generate_project(tmp_path, files=20, dirs=3)
+    (project / "pylib" / "genproject_instructions.py").write_text(_PLUGIN_INIT)
     (project / "pylib" / "genrepo_lazy.py").write_text(_PLUGIN_LAZY)
     return project, _env(project, tmp_path / "home")
 
 
 def _arm_marker(project: Path) -> Path:
-    """Make the repo's init module touch a marker file when it is imported.
+    """Make the project's init module touch a marker file when it is imported.
 
     The marker is the bootstrap detector these tests use: it appears if and
-    only if phase 2 ran. It sits at the SUT root, which keys no section — a
+    only if phase 2 ran. It sits at the project root, which keys no section — a
     file the digests can see would invalidate the very cache under test.
     """
     marker = project / "init-ran"
-    (project / "pylib" / "genrepo_instructions.py").write_text(
+    (project / "pylib" / "genproject_instructions.py").write_text(
         _PLUGIN_INIT + f"\nopen({str(marker)!r}, 'a').close()\n"
     )
     return marker
 
 
 @pytest.fixture
-def broken_repo(tmp_path):
-    """A generated repo whose init module raises after registering one command."""
-    project = generate_repo(tmp_path, files=10, dirs=2)
-    (project / "pylib" / "genrepo_instructions.py").write_text(_BROKEN_INIT)
+def broken_project(tmp_path):
+    """A generated project whose init module raises after registering one command."""
+    project = generate_project(tmp_path, files=10, dirs=2)
+    (project / "pylib" / "genproject_instructions.py").write_text(_BROKEN_INIT)
     return project, _env(project, tmp_path / "home")
 
 
@@ -189,29 +189,29 @@ def _cache_file(home: Path) -> Path:
     return found[0]
 
 
-def test_cold_cache_help_still_lists_third_party_commands(plugin_repo):
+def test_cold_cache_help_still_lists_third_party_commands(plugin_project):
     """Cache-or-load: a cold cache must fall back to a full load, never degrade.
 
     The FIRST run has nothing to read, so the only way ``plug`` can appear on
-    the screen is that ``entry()`` bootstrapped and the repo's init module
+    the screen is that ``entry()`` bootstrapped and the project's init module
     actually ran. A fast path that answered from an empty cache would print a
     help screen missing every third-party command and still exit 0.
     """
-    _repo, env = plugin_repo
+    _project, env = plugin_project
     result = _run(env, "--help")
     assert result.returncode == 0, result.stderr
     assert "plug" in result.stdout
     assert "A plugin group registered directly" in result.stdout
 
 
-def test_warm_help_is_byte_identical_to_cold_help(plugin_repo):
+def test_warm_help_is_byte_identical_to_cold_help(plugin_project):
     """The cached screen is the SAME screen, not an approximation of it.
 
     Command names AND their one-line helps, including the placeholder a
     command with no declared help gets — which the two stub builders spell
     from one helper precisely so this can hold.
     """
-    _repo, env = plugin_repo
+    _project, env = plugin_project
     cold = _run(env, "--help")
     assert cold.returncode == 0, cold.stderr
     warm = _run(env, "--help")
@@ -230,27 +230,27 @@ def test_warm_help_is_byte_identical_to_cold_help(plugin_repo):
         assert f"(run `otto {name} -h` for details)" in warm.stdout
 
 
-def test_warm_help_runs_no_user_code(plugin_repo):
+def test_warm_help_runs_no_user_code(plugin_project):
     """The point of the section: a warm root help never bootstraps.
 
     Proven by a side effect the init module leaves in the filesystem rather
     than by counting I/O — this is the correctness half; the import-budget
     harness owns the cost half.
     """
-    project, env = plugin_repo
+    project, env = plugin_project
     marker = _arm_marker(project)
     _run(env, "--help")
     assert marker.is_file(), "the cold run did not import the init module at all"
     marker.unlink()
 
     _run(env, "--help")
-    assert not marker.exists(), "warm root help still imported the repo's init module"
+    assert not marker.exists(), "warm root help still imported the project's init module"
 
 
 @pytest.mark.parametrize("argv", [(), ("--help",), ("-h",)])
-def test_every_root_help_spelling_takes_the_fast_path(plugin_repo, argv):
+def test_every_root_help_spelling_takes_the_fast_path(plugin_project, argv):
     """Bare ``otto``, ``--help`` and ``-h`` all render the root screen."""
-    project, env = plugin_repo
+    project, env = plugin_project
     marker = _arm_marker(project)
     _run(env, "--help")  # seed
     marker.unlink()
@@ -261,14 +261,14 @@ def test_every_root_help_spelling_takes_the_fast_path(plugin_repo, argv):
 
 
 @pytest.mark.parametrize("argv", [("run", "--help"), ("--help", "extra"), ("host", "-h")])
-def test_subcommand_help_still_takes_the_full_path(plugin_repo, argv):
+def test_subcommand_help_still_takes_the_full_path(plugin_project, argv):
     """Only the EXACT root-help argv family is fast — never a membership test.
 
     ``otto run --help`` has to resolve the real ``run`` group to list the
-    instructions the repo registered, and a scan for a help token anywhere in
+    instructions the project registered, and a scan for a help token anywhere in
     argv would hand it a name list instead.
     """
-    project, env = plugin_repo
+    project, env = plugin_project
     marker = _arm_marker(project)
     _run(env, "--help")  # seed the cache so the fast path is available at all
     marker.unlink()
@@ -277,7 +277,7 @@ def test_subcommand_help_still_takes_the_full_path(plugin_repo, argv):
     assert marker.is_file(), f"{argv} took the root-help fast path"
 
 
-def test_a_broken_init_module_writes_a_tainted_cache(broken_repo):
+def test_a_broken_init_module_writes_a_tainted_cache(broken_project):
     """Bootstrap errors must not be cached away.
 
     A contained init failure means the collected names are partial. The
@@ -287,10 +287,10 @@ def test_a_broken_init_module_writes_a_tainted_cache(broken_repo):
     and the NEXT run consequently takes the full path (which is observable
     because the full path re-prints the framed warning).
     """
-    _repo, env = broken_repo
+    _project, env = broken_project
     first = _run(env, "--help")
     assert first.returncode == 0, first.stderr
-    assert "failed to load genrepo_instructions" in first.stderr
+    assert "failed to load genproject_instructions" in first.stderr
 
     data = json.loads(_cache_file(Path(env["OTTO_HOME"])).read_text())
     assert data["sections"]["names"]["tainted"] is True
@@ -298,7 +298,7 @@ def test_a_broken_init_module_writes_a_tainted_cache(broken_repo):
 
     second = _run(env, "--help")
     assert second.returncode == 0, second.stderr
-    assert "failed to load genrepo_instructions" in second.stderr, (
+    assert "failed to load genproject_instructions" in second.stderr, (
         "the tainted names section was served — the warning went silent"
     )
     # And the screen stayed complete: the command registered before the raise
@@ -309,7 +309,7 @@ def test_a_broken_init_module_writes_a_tainted_cache(broken_repo):
 def _corrupt_names(env: dict, key: str, value) -> None:
     """Seed the cache, then replace one key of its ``names`` payload.
 
-    The digest is over the repo's FILES, so editing the payload leaves the
+    The digest is over the project's FILES, so editing the payload leaves the
     section perfectly valid — which is the point: the shape check is the only
     thing standing between a corrupt entry and click's help/completion
     pipeline.
@@ -331,7 +331,7 @@ def _corrupt_names(env: dict, key: str, value) -> None:
         pytest.param(["plug", "other"], id="list-of-non-dicts"),
     ],
 )
-def test_a_corrupt_names_payload_falls_back_to_the_full_load(plugin_repo, commands):
+def test_a_corrupt_names_payload_falls_back_to_the_full_load(plugin_project, commands):
     """A malformed ``commands`` must cost a bootstrap, not a traceback.
 
     The root group iterates ``commands`` — and indexes into each entry — deep
@@ -344,7 +344,7 @@ def test_a_corrupt_names_payload_falls_back_to_the_full_load(plugin_repo, comman
     that passes whatever the guard does. Its home is the completion test
     below.
     """
-    _repo, env = plugin_repo
+    _project, env = plugin_project
     _corrupt_names(env, "commands", commands)
 
     result = _run(env, "--help")
@@ -370,7 +370,15 @@ def _complete(env: dict, comp_words: str, comp_cword: str) -> subprocess.Complet
 
 
 @pytest.mark.parametrize(
-    ("key", "value", "comp_words", "comp_cword", "expected", "compare_to_control", "repo_fixture"),
+    (
+        "key",
+        "value",
+        "comp_words",
+        "comp_cword",
+        "expected",
+        "compare_to_control",
+        "project_fixture",
+    ),
     [
         pytest.param(
             "commands",
@@ -379,7 +387,7 @@ def _complete(env: dict, comp_words: str, comp_cword: str) -> subprocess.Complet
             "1",
             "plug",
             False,
-            "plugin_repo",
+            "plugin_project",
             id="commands-not-a-list",
         ),
         pytest.param(
@@ -389,7 +397,7 @@ def _complete(env: dict, comp_words: str, comp_cword: str) -> subprocess.Complet
             "1",
             "plug",
             False,
-            "plugin_repo",
+            "plugin_project",
             id="commands-list-of-non-dicts",
         ),
         # `instructions` reaches `_attach_cached_stubs`, which iterates it
@@ -406,13 +414,13 @@ def _complete(env: dict, comp_words: str, comp_cword: str) -> subprocess.Complet
             "2",
             "install",
             True,
-            "plugin_repo",
+            "plugin_project",
             id="instructions-not-a-list",
         ),
     ],
 )
 def test_a_corrupt_names_payload_never_tracebacks_into_the_shell(
-    request, key, value, comp_words, comp_cword, expected, compare_to_control, repo_fixture
+    request, key, value, comp_words, comp_cword, expected, compare_to_control, project_fixture
 ):
     """THE SIBLING SITE. Completion must fall through, never crash the shell.
 
@@ -424,7 +432,7 @@ def test_a_corrupt_names_payload_never_tracebacks_into_the_shell(
     completion list, mid-TAB.
 
     Parametrized over EVERY key the fast path hands to a raw iterator, each
-    on the argv that reaches it, against the repo named by *repo_fixture*.
+    on the argv that reaches it, against the project named by *project_fixture*.
     *expected* is the name the fallback bootstrap must then produce. For
     ``instructions``, *compare_to_control* proves the stronger
     property directly: the corrupted run's stdout is BYTE-IDENTICAL to a clean
@@ -436,7 +444,7 @@ def test_a_corrupt_names_payload_never_tracebacks_into_the_shell(
     only catch a name appearing, never a name being lost, and losing names is
     the regression direction a degraded serve produces.
     """
-    _repo, env = request.getfixturevalue(repo_fixture)
+    _project, env = request.getfixturevalue(project_fixture)
     control = None
     if compare_to_control:
         _run(env, "--help")  # warm the cache before it is corrupted
@@ -459,7 +467,7 @@ def test_a_corrupt_names_payload_never_tracebacks_into_the_shell(
         )
 
 
-def test_a_tainted_cache_is_not_rewritten_on_every_invocation(broken_repo):
+def test_a_tainted_cache_is_not_rewritten_on_every_invocation(broken_project):
     """A tainted entry is never served, so rewriting it is pure cost.
 
     And it is not a one-off: the entry the write replaces is byte-for-byte
@@ -469,7 +477,7 @@ def test_a_tainted_cache_is_not_rewritten_on_every_invocation(broken_repo):
     filesystem needs a commit and invalidates client cache), at exactly the
     moment a user is TABbing repeatedly to work out what broke.
     """
-    _repo, env = broken_repo
+    _project, env = broken_project
     _run(env, "--help")
     cache = _cache_file(Path(env["OTTO_HOME"]))
     first = cache.stat().st_mtime_ns
@@ -477,11 +485,11 @@ def test_a_tainted_cache_is_not_rewritten_on_every_invocation(broken_repo):
     second = _run(env, "--help")
     # The warning still prints — the taint keeps the FULL PATH, and only the
     # redundant write is skipped.
-    assert "failed to load genrepo_instructions" in second.stderr
+    assert "failed to load genproject_instructions" in second.stderr
     assert cache.stat().st_mtime_ns == first, "a tainted entry was rewritten unchanged"
 
 
-def test_editing_the_broken_init_still_rewrites_the_tainted_cache(broken_repo):
+def test_editing_the_broken_init_still_rewrites_the_tainted_cache(broken_project):
     """...and the skip must not defeat invalidation.
 
     The other direction of the pair, mirroring Task 5's. Touching the broken
@@ -489,19 +497,19 @@ def test_editing_the_broken_init_still_rewrites_the_tainted_cache(broken_repo):
     stored entry is no longer current and the write has to land — otherwise
     fixing the file could never take effect.
     """
-    project, env = broken_repo
+    project, env = broken_project
     _run(env, "--help")
     cache = _cache_file(Path(env["OTTO_HOME"]))
     first = cache.stat().st_mtime_ns
 
-    init = project / "pylib" / "genrepo_instructions.py"
+    init = project / "pylib" / "genproject_instructions.py"
     init.write_text(init.read_text() + "\n# edited, still broken\n")
 
     _run(env, "--help")
     assert cache.stat().st_mtime_ns != first, "a moved digest did not rewrite the tainted entry"
 
 
-def test_completion_serves_names_despite_a_stale_tests_section(plugin_repo):
+def test_completion_serves_names_despite_a_stale_tests_section(plugin_project):
     """A TAB must not validate the corpus to answer ``otto <TAB>``.
 
     THE STALE CORPUS IS THE POINT. Before the split, the completion fast path
@@ -515,7 +523,7 @@ def test_completion_serves_names_despite_a_stale_tests_section(plugin_repo):
     derives the completion env-var name from ``sys.argv[0]``, so its
     completion machinery only fires under the real ``otto`` name.
     """
-    project, env = plugin_repo
+    project, env = plugin_project
     marker = _arm_marker(project)
     _run(env, "--help")  # seed
     assert marker.is_file()
@@ -560,9 +568,9 @@ def test_the_typer_fast_path_completes_the_test_verbs_flags(tmp_path):
     ``otto run``; without them the fast path built ``otto test`` with the run
     flags alone.
     """
-    project = generate_repo(tmp_path, files=4, dirs=1)
+    project = generate_project(tmp_path, files=4, dirs=1)
     marker = project / "init-ran"
-    (project / "pylib" / "genrepo_instructions.py").write_text(
+    (project / "pylib" / "genproject_instructions.py").write_text(
         _TEST_VERB_INIT + f"\nopen({str(marker)!r}, 'a').close()\n"
     )
     env = _env(project, tmp_path / "home")

@@ -25,7 +25,7 @@ from otto.host.unix_host import UnixHost
 from otto.labs.loader import Lab
 from otto.logger.mode import LogMode
 from tests._fixtures.labdata import element_for, flatten_lab_doc, host_data, lab_data_path
-from tests._fixtures.paths import default_sut_dir
+from tests._fixtures.paths import default_project_root
 from tests._fixtures.run_state import preserved_run_state
 from tests.conftest import BUSYBOX_BED_GROUP, BUSYBOX_PARAM_TOKENS
 
@@ -68,10 +68,10 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker("integration")
 
 
-def _default_sut_dirs_env_impl():
-    """``OTTOPATH`` -> the ``repo1`` fixture SUT for this tree, at RUNTIME.
+def _default_ottopath_env_impl():
+    """``OTTOPATH`` -> the ``project1`` fixture project for this tree, at RUNTIME.
 
-    History: this was a module-scope ``ensure_sut_dirs()`` call justified by
+    History: this was a module-scope env-writing call justified by
     a "config reads OTTOPATH at import time" comment that stopped being
     true — every reader (``bootstrap()``/``OttoEnvSettings``, spawned otto
     subprocesses) reads the env lazily at call time, which a write made before
@@ -85,7 +85,7 @@ def _default_sut_dirs_env_impl():
     pin can drive set-and-restore directly.
     """
     prior = os.environ.get(OTTOPATH_ENV_VAR)
-    os.environ.setdefault(OTTOPATH_ENV_VAR, default_sut_dir())
+    os.environ.setdefault(OTTOPATH_ENV_VAR, default_project_root())
     yield
     if prior is None:
         os.environ.pop(OTTOPATH_ENV_VAR, None)
@@ -94,32 +94,32 @@ def _default_sut_dirs_env_impl():
 
 
 @pytest.fixture(autouse=True)
-def _default_sut_dirs_env():
+def _default_ottopath_env():
     """FUNCTION-scoped: the SUT env belongs to the test that needs it, not to the worker.
 
     It was session-scoped, and ``make coverage`` runs every tier in ONE xdist
     session: the first integration test on a worker set
-    ``OTTOPATH=tests/repo1`` and left it set for the rest of that worker's
+    ``OTTOPATH=tests/project1`` and left it set for the rest of that worker's
     life. A unit test scheduled there afterwards that builds an ``OttoContext``
     over a hand-made ``Lab`` resolves its project scopes through
-    ``get_ordered_projects()``, which bootstrapped repo1 out of that ambient env —
-    harmless only for as long as repo1 declared no ``[project]`` table. Once it
+    ``get_ordered_projects()``, which bootstrapped project1 out of that ambient env —
+    harmless only for as long as project1 declared no ``[project]`` table. Once it
     did, those unit tests raised ``ProjectScopeError`` (or a ``TypeError``
     fullmatching a mock's ``source_lab``): 50 failures under ``make coverage``,
     every one of the files green on its own.
 
     Per test, the root conftest's ``_restore_composition_state`` also drops
-    whatever repo1 the memo picked up while the test ran, so nothing this
+    whatever project1 the memo picked up while the test ran, so nothing this
     fixture enables survives the test that asked for it. Autouse stays — every
     test under this tree still gets the SUT — but the scope must never widen
     back to one that outlives a test. A module-scoped fixture that needs the env
-    BEFORE function fixtures run asks :func:`sut_dirs_env_module` for it by name.
+    BEFORE function fixtures run asks :func:`ottopath_env_module` for it by name.
     """
-    yield from _default_sut_dirs_env_impl()
+    yield from _default_ottopath_env_impl()
 
 
 @pytest.fixture(scope="module")
-def sut_dirs_env_module():
+def ottopath_env_module():
     """``OTTOPATH`` for a MODULE-scoped fixture, which is set up before the
     function-scoped autouse above can run.
 
@@ -127,29 +127,29 @@ def sut_dirs_env_module():
     tree that reach otto's config themselves — ``test_docker_run_get_put.stack``
     is the live case: its ``compose_up`` walks ``get_projects()``. The others take
     a flock or hand-build a ``UnixHost``/``Lab``, neither of which reads the env
-    or bootstraps (a context reads its repos lazily), so they do not ask.
+    or bootstraps (a context reads its projects lazily), so they do not ask.
 
     Brackets the composition state too, at both of its owners: the discovery
-    cache ``otto.config.project`` holds and the composed-repos catalog the root
+    cache ``otto.config.project`` holds and the composed-projects catalog the root
     publishes to ``otto.declared``, and
     the CLI's completion-cache snapshot on ``otto.registry``. A
     module fixture primes them BEFORE the root conftest's per-test
     ``_restore_composition_state`` takes its snapshot, so without this restore
-    a repo1 discovered during module setup would outlive the module on that
+    a project1 discovered during module setup would outlive the module on that
     worker — the same leak through a different door.
     """
     import dataclasses
 
-    import otto.config.project as config_repo
+    import otto.config.project as config_project
     from otto import declared, registry
 
-    saved_discovery = dataclasses.replace(config_repo._discovery)
+    saved_discovery = dataclasses.replace(config_project._discovery)
     saved_composition = dataclasses.replace(declared._composition)
     saved_names = registry._COMPLETION_SNAPSHOT.names
     try:
-        yield from _default_sut_dirs_env_impl()
+        yield from _default_ottopath_env_impl()
     finally:
-        config_repo._discovery = saved_discovery
+        config_project._discovery = saved_discovery
         declared._composition = saved_composition
         registry._COMPLETION_SNAPSHOT.names = saved_names
 
@@ -164,7 +164,7 @@ _DOCKER_HOST_IP = "10.10.200.13"
 # survive the use-case cutover (spec §9) unchanged: a compose project is
 # ``<lab>-<usecase>-<suffix>`` now — no ``otto-`` prefix — and the e2e
 # modules' ``fresh_suffix`` still yields ``e2e-<hex>`` / ``run-e2e-<hex>``, so
-# ``unix-repo1-e2e-1a2b3c4d`` still carries ``-e2e-``.
+# ``unix-project1-e2e-1a2b3c4d`` still carries ``-e2e-``.
 # ``tests/unit/test_docker_reaper_scope.py`` pins that agreement in the
 # default lane, where this tree never runs.
 #

@@ -24,7 +24,7 @@ def _git(cwd: Path, *args: str) -> str:
 
 
 @pytest.fixture
-def repo(tmp_path: Path):
+def git_repo(tmp_path: Path):
     root = tmp_path / "r"
     root.mkdir()
     _git(root, "init", "-q", "-b", "main")
@@ -37,13 +37,13 @@ def repo(tmp_path: Path):
 
 
 class TestTreeDiffPath:
-    def test_unchanged_file_is_verbatim(self, repo):
-        root, base, fc = repo
+    def test_unchanged_file_is_verbatim(self, git_repo):
+        root, base, fc = git_repo
         r = AnchorResolver(root, base).resolve(Path("a.c"), fc)
         assert (r.new_relpath, r.hunks, r.verifiable) == (Path("a.c"), [], True)
 
-    def test_clean_rename_redirects_path(self, repo):
-        root, base, fc = repo
+    def test_clean_rename_redirects_path(self, git_repo):
+        root, base, fc = git_repo
         _git(root, "mv", "a.c", "moved.c")
         _git(root, "commit", "-qm", "mv")
         r = AnchorResolver(root, base).resolve(Path("a.c"), fc)
@@ -51,15 +51,15 @@ class TestTreeDiffPath:
         assert r.verifiable
         assert r.hunks == []
 
-    def test_edit_produces_hunks(self, repo):
-        root, base, fc = repo
+    def test_edit_produces_hunks(self, git_repo):
+        root, base, fc = git_repo
         (root / "a.c").write_text("l1\nCHANGED\nl3\nl4\n")
         r = AnchorResolver(root, base).resolve(Path("a.c"), fc)
         assert r.verifiable
         assert len(r.hunks) == 1
 
-    def test_deleted_file_is_unverifiable(self, repo):
-        root, base, fc = repo
+    def test_deleted_file_is_unverifiable(self, git_repo):
+        root, base, fc = git_repo
         _git(root, "rm", "-q", "a.c")
         _git(root, "commit", "-qm", "rm")
         r = AnchorResolver(root, base).resolve(Path("a.c"), fc)
@@ -68,21 +68,21 @@ class TestTreeDiffPath:
 
 
 class TestFallbackPath:
-    def test_missing_base_with_matching_blob_is_verbatim(self, repo):
+    def test_missing_base_with_matching_blob_is_verbatim(self, git_repo):
         # Squash-merge shape: base commit gone, file content unchanged.
-        root, _base, fc = repo
+        root, _base, fc = git_repo
         r = AnchorResolver(root, "0" * 40).resolve(Path("a.c"), fc)
         assert (r.new_relpath, r.hunks, r.verifiable) == (Path("a.c"), [], True)
 
-    def test_missing_base_and_changed_blob_diffs_via_blob(self, repo):
-        root, _base, fc = repo
+    def test_missing_base_and_changed_blob_diffs_via_blob(self, git_repo):
+        root, _base, fc = git_repo
         (root / "a.c").write_text("l1\nCHANGED\nl3\nl4\n")
         r = AnchorResolver(root, "0" * 40).resolve(Path("a.c"), fc)
         assert r.verifiable
         assert len(r.hunks) == 1
 
-    def test_missing_base_and_missing_blob_is_unverifiable(self, repo):
-        root, _base, _ = repo
+    def test_missing_base_and_missing_blob_is_unverifiable(self, git_repo):
+        root, _base, _ = git_repo
         fc = CaptureFileCov(blob="1" * 40, lines={1: 1})
         (root / "a.c").write_text("different\n")
         r = AnchorResolver(root, "0" * 40).resolve(Path("a.c"), fc)
@@ -90,11 +90,11 @@ class TestFallbackPath:
 
 
 class TestHostileGlobalGitConfig:
-    """``git diff --no-index`` runs outside any repo but still reads ``~/.gitconfig``.
+    """``git diff --no-index`` runs outside any git repository but still reads ``~/.gitconfig``.
 
     The two ``--no-index`` calls behind the blob fallback were originally
-    left unpinned on the reasoning that they "run outside any repo on
-    throwaway anchor files", so no repo config could reach them. That
+    left unpinned on the reasoning that they "run outside any git repository on
+    throwaway anchor files", so no repository config could reach them. That
     reasoning is wrong: git still loads the invoking user's **global**
     config, and two common settings each corrupt the output these paths
     parse.
@@ -104,8 +104,8 @@ class TestHostileGlobalGitConfig:
       :func:`~otto.coverage.capture.treediff.parse_multifile_u0` and
       :func:`~otto.coverage.capture.remap.parse_u0_hunks`.
     - ``diff.mnemonicPrefix = true`` renders ``1/``/``2/`` path prefixes
-      here — note the *different letters* from the ``c/``/``w/`` a repo
-      diff emits, so the pin added for repo-side diffs does not cover
+      here — note the *different letters* from the ``c/``/``w/`` a checkout
+      diff emits, so the pin added for checkout-side diffs does not cover
       this — and the batched index's ``<dir_a.name>/`` lookup then misses.
 
     Both corruptions land on the same branch: a diff that fails to parse
@@ -115,9 +115,9 @@ class TestHostileGlobalGitConfig:
     so a silent degradation reports stale manual coverage as still valid.
 
     The hostile settings are **global** (``GIT_CONFIG_GLOBAL``), not
-    repo-local, because that is the only channel that reaches a
+    repository-local, because that is the only channel that reaches a
     ``--no-index`` invocation. ``_git`` keeps its own hermetic env, so the
-    fixture repo is still built under clean config — only the production
+    fixture checkout is still built under clean config — only the production
     calls under test see the hostile file.
 
     Asserting on hunk counts rather than lazy/batched parity is
@@ -144,8 +144,8 @@ class TestHostileGlobalGitConfig:
         monkeypatch.setenv("GIT_CONFIG_SYSTEM", "/dev/null")
 
     @pytest.mark.parametrize("hostile", SETTINGS, indirect=True)
-    def test_lazy_blob_chain_still_finds_the_edit(self, repo, hostile):
-        root, _base, fc = repo
+    def test_lazy_blob_chain_still_finds_the_edit(self, git_repo, hostile):
+        root, _base, fc = git_repo
         (root / "a.c").write_text("l1\nCHANGED\nl3\nl4\n")
 
         r = AnchorResolver(root, self.UNRESOLVABLE_BASE).resolve(Path("a.c"), fc)
@@ -154,8 +154,8 @@ class TestHostileGlobalGitConfig:
         assert len(r.hunks) == 1, "hostile global config emptied the per-file blob diff"
 
     @pytest.mark.parametrize("hostile", SETTINGS, indirect=True)
-    def test_batched_fallback_index_still_finds_the_edit(self, repo, hostile):
-        root, _base, fc = repo
+    def test_batched_fallback_index_still_finds_the_edit(self, git_repo, hostile):
+        root, _base, fc = git_repo
         (root / "a.c").write_text("l1\nCHANGED\nl3\nl4\n")
 
         r = AnchorResolver(root, self.UNRESOLVABLE_BASE, files={"a.c": fc}).resolve(Path("a.c"), fc)
@@ -188,33 +188,33 @@ class TestBatchedVsLazyParity:
         assert lazy == batched
         return lazy
 
-    def test_unchanged_is_verbatim(self, repo):
-        root, _base, fc = repo
+    def test_unchanged_is_verbatim(self, git_repo):
+        root, _base, fc = git_repo
         r = self._assert_parity(root, fc)
         assert (r.new_relpath, r.hunks, r.verifiable) == (Path("a.c"), [], True)
 
-    def test_whitespace_only_is_verbatim(self, repo):
-        root, _base, fc = repo
+    def test_whitespace_only_is_verbatim(self, git_repo):
+        root, _base, fc = git_repo
         (root / "a.c").write_text("l1\n    l2\nl3\nl4\n")  # reindent only
         r = self._assert_parity(root, fc)
         assert r.verifiable
         assert r.hunks == []
 
-    def test_modified_yields_same_hunks(self, repo):
-        root, _base, fc = repo
+    def test_modified_yields_same_hunks(self, git_repo):
+        root, _base, fc = git_repo
         (root / "a.c").write_text("l1\nCHANGED\nl3\nl4\n")
         r = self._assert_parity(root, fc)
         assert r.verifiable
         assert len(r.hunks) == 1
 
-    def test_deleted_current_is_unverifiable(self, repo):
-        root, _base, fc = repo
+    def test_deleted_current_is_unverifiable(self, git_repo):
+        root, _base, fc = git_repo
         (root / "a.c").unlink()
         r = self._assert_parity(root, fc)
         assert not r.verifiable
 
-    def test_absent_base_blob_is_unverifiable(self, repo):
-        root, _base, _fc = repo
+    def test_absent_base_blob_is_unverifiable(self, git_repo):
+        root, _base, _fc = git_repo
         fc = CaptureFileCov(blob="1" * 40, lines={1: 1})
         (root / "a.c").write_text("different\n")
         r = self._assert_parity(root, fc)

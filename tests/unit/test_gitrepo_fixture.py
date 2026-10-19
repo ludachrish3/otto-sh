@@ -15,7 +15,7 @@ def test_commits_survive_a_poisoned_global_gitconfig(tmp_path):
     fails every commit with an opaque CalledProcessError.  ``git_env`` points
     HOME into the sandbox, so the poison is planted exactly where git would
     look — the pin goes red if GIT_CONFIG_GLOBAL stops being neutered."""
-    git_repo = TmpGitRepo(tmp_path / "repo")
+    git_repo = TmpGitRepo(tmp_path / "git_repo")
     (git_repo.root / ".gitconfig").write_text("[commit]\n\tgpgsign = true\n")
     git_repo.write("f.txt", "x\n")
     sha = git_repo.commit("survives poison")
@@ -24,7 +24,7 @@ def test_commits_survive_a_poisoned_global_gitconfig(tmp_path):
 
 def test_env_is_closed_nothing_ambient_leaks(tmp_path, monkeypatch):
     """The dict is COMPLETE: a GIT_DIR/GIT_WORK_TREE leaking from the test
-    runner's own environment would silently redirect every repo operation."""
+    runner's own environment would silently redirect every git operation."""
     monkeypatch.setenv("GIT_DIR", "/nonexistent")
     assert set(git_env(tmp_path)) == {
         "GIT_AUTHOR_NAME",
@@ -41,8 +41,8 @@ def test_env_is_closed_nothing_ambient_leaks(tmp_path, monkeypatch):
         "GIT_AUTHOR_DATE",
         "GIT_COMMITTER_DATE",
     }
-    # And the repo still works while the ambient poison is set.
-    git_repo = TmpGitRepo(tmp_path / "repo")
+    # And the git repository still works while the ambient poison is set.
+    git_repo = TmpGitRepo(tmp_path / "git_repo")
     git_repo.write("f.txt", "x\n")
     git_repo.commit()
 
@@ -61,7 +61,7 @@ def test_default_dates_are_real_time_not_pinned(tmp_path):
     files create real-time commits, and the age-sensitive consumers among
     them (coverage validity aging) would change meaning under a silently
     pinned 2026-01-01 clock."""
-    git_repo = TmpGitRepo(tmp_path / "repo")
+    git_repo = TmpGitRepo(tmp_path / "git_repo")
     git_repo.write("f.txt", "x\n")
     git_repo.commit()
     # %at (epoch seconds), not %aI: git 2.45 made iso-strict render a
@@ -79,6 +79,6 @@ def test_default_dates_are_real_time_not_pinned(tmp_path):
 
 
 def test_command_failure_is_loud(tmp_path):
-    git_repo = TmpGitRepo(tmp_path / "repo")
+    git_repo = TmpGitRepo(tmp_path / "git_repo")
     with pytest.raises(subprocess.CalledProcessError):
         git_repo.git("rev-parse", "--verify", "refs/heads/nonexistent-branch")

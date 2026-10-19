@@ -1,0 +1,126 @@
+name = "project1"
+version = "1.0.0"
+libs = [
+    "pylib",
+    # Shared, third-party-style module providing the Zephyr 2.7 `zephyr-inline`
+    # frame the `embedded` lab's zephyr27_fat declares (see tests/custom_hosts).
+    "../custom_hosts",
+]
+tests = [
+    "tests"
+]
+init = [
+    'project1_instructions',
+    'custom_hosts',
+    'project1_monitor_uptime',
+]
+
+# Declaring [[products]] makes project1 a providing project, and bootstrap refuses a
+# providing project without a [project] scope. project1 is the general-purpose fixture
+# project — every lab in ../_fixtures/lab_data is fair game — so match-all is
+# spelled out here; it is never a default that quietly widens a fleet.
+[project]
+lab_patterns = [".*"]
+
+[[lab.sources]]
+backend = "json"
+paths = [
+    "../_fixtures/lab_data/tech1",
+]
+
+# Named OS profiles: bundle each Zephyr version's common attributes once so a
+# host entry only declares its identity + filesystem instead of repeating
+# os_name / os_version / command_frame / transfer / max_filename_len. The 2.7
+# profile names the `zephyr-inline` dialect (registered by the shared
+# custom_hosts module this project pulls in via libs/init), proving a data-defined
+# profile can reference a code-registered command frame.
+[os_profiles."zephyr-3.7"]
+base = "embedded"
+os_name = "Zephyr"
+os_version = "3.7"
+command_frame = "zephyr"
+transfer = "console"
+max_filename_len = 32
+
+[os_profiles."zephyr-2.7"]
+base = "embedded"
+os_name = "Zephyr"
+os_version = "2.7"
+command_frame = "zephyr-inline"
+transfer = "console"
+max_filename_len = 32
+
+[os_profiles."zephyr-4.4"]
+base = "embedded"
+os_name = "Zephyr"
+os_version = "4.4"
+command_frame = "zephyr"
+transfer = "console"
+max_filename_len = 32
+
+# The sample C product TestCoverageProduct deploys (product/, built by the
+# suite itself with --coverage). The entry earns its keep twice over: it names
+# `cov_dir`, the host-side GCOV_PREFIX directory the suite and the collector
+# have to agree on, and it is what the instrumentation scan reads to decide
+# whether coverage retrieval runs at all. `instrumented` is deliberately NOT
+# set, so the verdict comes from the built binary's own .gcda strings — a tree
+# with no build yet is honestly "unknown", not a claimed coverage build.
+#
+# `install` stays unset: the suite's fixture does the privileged `sudo mkdir` /
+# `chmod` that a bare `put` cannot, so otto only needs to know WHERE the
+# counters land, not how the binary gets there.
+#
+# The match names the three real unix-lab hosts, narrower than "every bare host
+# id": `test4` is the embedded lab's SSH hop, and a product hung on it would
+# make `--lab embedded` look like an instrumented fleet. Host ids are FULLY
+# matched, so the dotted `<parent>.<project>.<service>` container placeholders
+# are excluded as well.
+[[products]]
+name = "product"
+kind = "shell"
+artifact = "product/product"
+stage_dir = "/opt/coverage_product"
+cov_dir = "/var/coverage/product"
+check = "test -x /opt/coverage_product/product"
+match = { id = "test[1-3]" }
+
+[coverage]
+# Which hosts contribute coverage: a host-id regex FULLY matched against each
+# id, mirroring the TestCoverageProduct suite's own `_REAL_HOSTS`. Bare
+# UnixHost ids only — the dotted `<parent>.<project>.<service>` ids of the
+# DockerContainerHost placeholders `register_declared_container_hosts`
+# synthesizes fail exec until `otto docker compose up` populates them, so they are no
+# more a coverage target than they are a test target.
+hosts = "[^.]+"
+
+[docker]
+
+[[docker.images]]
+name = "project1-api"
+dockerfile = "docker/Dockerfile"
+context = "docker"
+
+[[docker.composes]]
+name = "core"
+path = "docker/compose.yml"
+services = ["api"]
+
+[[docker.use_cases]]
+name = "project1"
+composes = ["core"]
+
+# The displacement pair's winner (spec §4). project1 provides a REAL `edge` at
+# priority 10; project2's mock sits at 0 and stands down. Losing is whole-fragment,
+# so a `--provide edge=project2` invocation excludes `core` here too — which is
+# what makes the pair a usable --remove-orphans fixture.
+[[docker.composes]]
+name = "edge"
+path = "docker/edge.yml"
+services = ["edge"]
+
+[[docker.use_cases]]
+name = "integration"
+composes = ["core", "edge"]
+provides = "edge"
+priority = 10
+env = { EDGE_ADDR = "${otto:parent.addr}" }

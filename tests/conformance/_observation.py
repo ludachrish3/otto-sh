@@ -20,7 +20,7 @@ close the question:
   ``tests/conftest.py`` STRIPS it at import. A run cannot be pointed at an
   xdir even deliberately.
 * MEASURED 2026-08-24: one hermetic contract over all 8 cells (0.73s) added
-  ZERO paths to the repo tree -- a ``find -maxdepth 3`` listing diffed before
+  ZERO paths to the checkout's tree -- a ``find -maxdepth 3`` listing diffed before
   and after came back identical. The ``run/`` and ``logs/`` directories a dev
   checkout carries are an otto CLI invocation's leavings from the e2e tree
   (``<xdir>/<command>/<stamp>/`` per ``create_output_dir``, and
@@ -28,9 +28,9 @@ close the question:
 
 So the run output directory is CHOSEN here rather than inherited:
 :func:`observations_dir`, ``reports/conformance-observations/`` under
-``PROJECT_ROOT``. ``reports/`` is where every lane already writes its
+``CHECKOUT_ROOT``. ``reports/`` is where every lane already writes its
 machine-readable output (``Makefile``'s ``JUNIT_DIR``), it is git-ignored, and
-``make clean`` removes it. Anchored at ``PROJECT_ROOT`` and not at CWD: a
+``make clean`` removes it. Anchored at ``CHECKOUT_ROOT`` and not at CWD: a
 lane invoked from a subdirectory would otherwise scatter records where the
 collator does not look.
 
@@ -107,7 +107,7 @@ from typing import TypeVar
 import pytest
 
 from tests._ambient_env import ambient
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 from tests._fixtures.support_matrix import SURFACES, Surface, discover_profiles
 from tests.conformance._controls import control_surface_of_item, marks_a_positive_control
 from tests.conformance._observable import observable_of
@@ -132,7 +132,7 @@ OBSERVATIONS_ENV_VAR = "OTTO_CONFORMANCE_OBSERVATIONS"
 ``tests/conftest.py`` would strip it and every run would silently write to the
 default -- issue #192's shape exactly."""
 
-DEFAULT_OBSERVATIONS_DIR = PROJECT_ROOT / "reports" / "conformance-observations"
+DEFAULT_OBSERVATIONS_DIR = CHECKOUT_ROOT / "reports" / "conformance-observations"
 
 RECORD_SUMMARY_LIMIT = 2400
 """Cap on ONE record's failure summary. The nodeid a record also carries is how
@@ -542,7 +542,7 @@ What gates the exclusion records. An exclusion says "this run exercised
 contract C, and cell X was outside its domain"; a process that ran none of C's
 items has not earned that sentence -- and ``make coverage``'s path-less legs
 collect this tree and then deselect every item of it, so the ungated version
-would have every unit lane in the repo writing conformance evidence.
+would have every unit lane in the suite writing conformance evidence.
 """
 
 

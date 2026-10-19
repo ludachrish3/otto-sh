@@ -95,7 +95,7 @@ _SOURCE_ORDERS: "dict[str, tuple[str, ...]]" = {
 # Sleep before each RETRY, so the tuple's length is the number of retries and
 # `len + 1` is the attempt budget. 3 attempts at 5s then 10s, mirroring the
 # `web-install` npm-ci loop in the Makefile — same policy, same numbers, so
-# there is one retry convention in the repo rather than two.
+# there is one retry convention in the repository rather than two.
 #
 # This became load-bearing when the tier turned into a blocking CI job that is
 # also in `report-failure.needs`: without it a single transient blip from
@@ -606,7 +606,7 @@ def upstream_drift_report(
 
     *workdir* is a caller-owned throwaway directory and never :func:`cache_dir`.
     A drifted byte must not land where a later lane would find it cached and
-    skip its own fetch — and neither should an upstream byte, in a repo whose
+    skip its own fetch — and neither should an upstream byte, in a repository whose
     consumers are supposed to prefer the mirror.
 
     Consumes no memo and sets none: `_PREFLIGHT` records whether THIS process

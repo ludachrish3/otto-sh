@@ -287,7 +287,7 @@ def test_relative_bind_sources_refuses_non_yaml():
 
 
 def test_warn_is_silent_on_unparseable_yaml(caplog):
-    # The warning is ADVISORY. `stage_compose_files` ships repo-authored files
+    # The warning is ADVISORY. `stage_compose_files` ships project-authored files
     # verbatim and has never parsed them, so a compose file otto cannot read
     # must not become a staging refusal that did not exist before -- docker is
     # the one that reports it. The use-case path's own _collect_env_file_refs
@@ -298,14 +298,14 @@ def test_warn_is_silent_on_unparseable_yaml(caplog):
 
 def test_warn_names_the_resolved_staging_path(caplog):
     text = "services:\n  api:\n    volumes:\n      - ./data:/var/lib/app\n"
-    warn_relative_bind_sources("api.yaml", text, Path("/tmp/otto/repo1/compose/0"))
-    assert "/tmp/otto/repo1/compose/0/data" in caplog.text
+    warn_relative_bind_sources("api.yaml", text, Path("/tmp/otto/project1/compose/0"))
+    assert "/tmp/otto/project1/compose/0/data" in caplog.text
     assert "./data" in caplog.text
 
 
 def test_warn_is_silent_with_no_relative_sources(caplog):
     text = "services:\n  api:\n    volumes:\n      - /srv/data:/var/lib/app\n"
-    warn_relative_bind_sources("api.yaml", text, Path("/tmp/otto/repo1/compose/0"))
+    warn_relative_bind_sources("api.yaml", text, Path("/tmp/otto/project1/compose/0"))
     assert caplog.text == ""
 
 

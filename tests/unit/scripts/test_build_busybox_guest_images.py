@@ -22,7 +22,7 @@ from scripts.build_busybox_guest_images import (
     build_initramfs_bytes,
     main,
 )
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 
 def _parse_newc(blob: bytes) -> dict[str, dict]:
@@ -422,7 +422,7 @@ _PROVISIONER_BINDINGS = re.compile(
 
 def _busybox_provisioner_text() -> str:
     """The body of the Vagrantfile's ``provision_busybox_bed``, as committed."""
-    text = (PROJECT_ROOT / "Vagrantfile").read_text()
+    text = (CHECKOUT_ROOT / "Vagrantfile").read_text()
     start = text.index("def provision_busybox_bed(vm)")
     return text[start : text.index("\n    end\n", start)]
 
@@ -602,7 +602,7 @@ def test_the_builder_imports_under_bare_python3(tmp_path):
     import subprocess
     import sys
 
-    repo_root = PROJECT_ROOT
+    repo_root = CHECKOUT_ROOT
     code = (
         "import sys; sys.path = [p for p in sys.path if 'site-packages' not in p]; "
         f"sys.path.insert(0, {str(repo_root)!r}); "

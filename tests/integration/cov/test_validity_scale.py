@@ -5,11 +5,11 @@ deterministic. 200 files keeps this test <1s everywhere.
 """
 
 from otto.coverage.capture import gitio
-from tests._fixtures._repo_timeline import RepoTimeline
+from tests._fixtures._git_timeline import GitTimeline
 
 
 def test_fold_200_files_is_batched(tmp_path, monkeypatch):
-    tl = RepoTimeline(tmp_path / "repo")
+    tl = GitTimeline(tmp_path / "checkout")
     for i in range(200):
         tl.write(f"f{i:03}.c", f"int f{i}(void)\n{{\n    return {i};\n}}\n")
     tl.commit("base")
@@ -29,7 +29,7 @@ def test_fold_200_files_is_batched(tmp_path, monkeypatch):
 
 
 def test_fold_gcd_base_is_batched(tmp_path, monkeypatch):
-    tl = RepoTimeline(tmp_path / "repo")
+    tl = GitTimeline(tmp_path / "checkout")
     for i in range(100):
         tl.write(f"f{i:03}.c", f"int f{i}(void)\n{{\n    return {i};\n}}\n")
     tl.commit("base")
@@ -60,7 +60,7 @@ def test_fold_gcd_base_is_batched(tmp_path, monkeypatch):
     tl.fold()
     # 7, was 6: the GC'd base makes diff_tree_u0 fail, and failure
     # classification now spends one extra spawn (`rev-parse
-    # --is-inside-work-tree`) deciding not-a-repo vs command-failed —
+    # --is-inside-work-tree`) deciding not-a-git-repository vs command-failed —
     # through the counted chokepoint, so this budget SEES it (a failure-path
     # spawn the instrument cannot see is a spawn no budget bounds).
     assert len(calls) <= 7, [" ".join(c) for c in calls]

@@ -30,15 +30,15 @@ from otto.host.os_profile import (
 )
 from otto.host.unix_host import UnixHost
 from otto.registry import DuplicateRegistration, FrozenMap
-from tests._fixtures.paths import PROJECT_ROOT
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.paths import CHECKOUT_ROOT
+from tests._fixtures.project_scaffold import make_project
 
-SRC = PROJECT_ROOT / "src" / "otto"
+SRC = CHECKOUT_ROOT / "src" / "otto"
 
 
 def _data(**profiles: OsProfile) -> ProfileContext:
     return ProfileContext(
-        profiles=FrozenMap(profiles), owners=FrozenMap(dict.fromkeys(profiles, "repo-a"))
+        profiles=FrozenMap(profiles), owners=FrozenMap(dict.fromkeys(profiles, "proj-a"))
     )
 
 
@@ -107,32 +107,32 @@ def test_spec_is_keyword_only():
         register_host_class("pos", UnixHost, object)  # type: ignore[misc]
 
 
-# --- repo data tables, checked after init -------------------------------------
+# --- project data tables, checked after init -------------------------------------
 
 
-def _repo(tmp_path: Path, name: str, body: str) -> Project:
-    """A real repo named *name* under *tmp_path* whose settings append *body*."""
-    return Project(root=make_sut_repo(tmp_path / name, name=name, extra=textwrap.dedent(body)))
+def _project(tmp_path: Path, name: str, body: str) -> Project:
+    """A real project named *name* under *tmp_path* whose settings append *body*."""
+    return Project(root=make_project(tmp_path / name, name=name, extra=textwrap.dedent(body)))
 
 
-def test_check_data_profiles_names_the_repo_and_table_for_an_unknown_base(tmp_path):
-    project = _repo(tmp_path, "repo-a", '[os_profiles.broken]\nbase = "windows"\n')
+def test_check_data_profiles_names_the_project_and_table_for_an_unknown_base(tmp_path):
+    project = _project(tmp_path, "proj-a", '[os_profiles.broken]\nbase = "windows"\n')
     with pytest.raises(
-        ValueError, match=r"\[os_profiles\.broken\] in project 'repo-a': .*base must"
+        ValueError, match=r"\[os_profiles\.broken\] in project 'proj-a': .*base must"
     ):
         check_data_profiles([project])
 
 
-def test_check_data_profiles_names_the_repo_and_table_for_an_unknown_defaults_key(tmp_path):
-    project = _repo(tmp_path, "repo-a", '[os_profiles.broken]\nbase = "unix"\nosTyp = "unix"\n')
+def test_check_data_profiles_names_the_project_and_table_for_an_unknown_defaults_key(tmp_path):
+    project = _project(tmp_path, "proj-a", '[os_profiles.broken]\nbase = "unix"\nosTyp = "unix"\n')
     with pytest.raises(
-        ValueError, match=r"\[os_profiles\.broken\] in project 'repo-a': .*unknown default field"
+        ValueError, match=r"\[os_profiles\.broken\] in project 'proj-a': .*unknown default field"
     ):
         check_data_profiles([project])
 
 
 def test_check_data_profiles_twice_is_idempotent(tmp_path):
-    project = _repo(tmp_path, "repo-a", '[os_profiles.fine]\nbase = "unix"\nhas_bash = false\n')
+    project = _project(tmp_path, "proj-a", '[os_profiles.fine]\nbase = "unix"\nhas_bash = false\n')
     revisions = (HOST_CLASSES.revision, OS_PROFILES.revision)
     check_data_profiles([project])
     check_data_profiles([project])
@@ -142,8 +142,8 @@ def test_check_data_profiles_twice_is_idempotent(tmp_path):
 
 def test_a_data_profile_over_a_custom_host_class_resolves(tmp_path):
     # Parsed BEFORE the class is registered, as settings are parsed before init.
-    project = _repo(
-        tmp_path, "repo-a", '[os_profiles.mine-v1]\nbase = "custom-late"\nhas_bash = false\n'
+    project = _project(
+        tmp_path, "proj-a", '[os_profiles.mine-v1]\nbase = "custom-late"\nhas_bash = false\n'
     )
 
     class CustomLate(UnixHost):
@@ -158,16 +158,16 @@ def test_a_data_profile_over_a_custom_host_class_resolves(tmp_path):
 
 def test_the_resolver_checks_a_data_profile_it_selects():
     data = _data(bad=OsProfile("bad", "unix", ProfileFields(FrozenMap({"osTyp": "unix"}))))
-    with pytest.raises(ValueError, match=r"\[os_profiles\.bad\] in project 'repo-a'"):
+    with pytest.raises(ValueError, match=r"\[os_profiles\.bad\] in project 'proj-a'"):
         resolve_os_profile("bad", data=data)
 
 
-def test_the_later_repo_wins_a_same_named_table(tmp_path):
-    a = _repo(tmp_path, "repo-a", '[os_profiles.x]\nbase = "unix"\nhas_bash = true\n')
-    b = _repo(tmp_path, "repo-b", '[os_profiles.x]\nbase = "unix"\nhas_bash = false\n')
+def test_the_later_project_wins_a_same_named_table(tmp_path):
+    a = _project(tmp_path, "proj-a", '[os_profiles.x]\nbase = "unix"\nhas_bash = true\n')
+    b = _project(tmp_path, "proj-b", '[os_profiles.x]\nbase = "unix"\nhas_bash = false\n')
     context = ProfileContext.from_projects([a, b])
     assert dict(context.profiles["x"].fields.defaults) == {"has_bash": False}
-    assert context.owners["x"] == "repo-b"
+    assert context.owners["x"] == "proj-b"
     assert dict(ProfileContext.from_projects([b, a]).profiles["x"].fields.defaults) == {
         "has_bash": True
     }
@@ -182,7 +182,7 @@ _DIGEST_CONTEXT = (
     "    profiles=FrozenMap(\n"
     "        {'x': OsProfile('x', 'unix', fields), 'a': OsProfile('a', 'embedded')}\n"
     "    ),\n"
-    "    owners=FrozenMap({'x': 'repo-a', 'a': 'repo-b'}),\n"
+    "    owners=FrozenMap({'x': 'proj-a', 'a': 'proj-b'}),\n"
     ")\n"
 )
 
@@ -330,7 +330,7 @@ def test_no_host_copy_bypasses_copy_host():
 
 
 def test_settings_parse_does_not_import_os_profile(tmp_path):
-    sut = make_sut_repo(tmp_path / "p", name="p", extra='[os_profiles.x]\nbase = "unix"\n')
+    sut = make_project(tmp_path / "p", name="p", extra='[os_profiles.x]\nbase = "unix"\n')
     probe = textwrap.dedent(f"""
         import sys
         import tomli

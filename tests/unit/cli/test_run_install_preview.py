@@ -7,7 +7,7 @@ import pytest
 from otto.host.product import ProductPlan
 from otto.project.plan import HostPlan, ProductPlanEntry, ProjectPlan
 from tests._fixtures.bootstrap_seam import patch_bootstrap
-from tests._fixtures.fake_repo import fake_repo
+from tests._fixtures.fake_project import fake_project
 from tests.unit.cli.conftest import _flat
 
 LONG_COMMAND = "tar -xzf /opt/stage/agent.tar.gz -C /opt/agent && " + "/opt/agent/install.sh " * 6
@@ -18,7 +18,7 @@ def _canned(name, ctx, kwargs):
     del ctx, kwargs
     return [
         ProjectPlan(
-            "repo1",
+            "project1",
             [
                 HostPlan(
                     "test1",
@@ -52,7 +52,7 @@ def test_dry_run_install_prints_the_plan_then_the_standard_block(run_cli):
     # Verbatim: no markup read, no emoji, no hard wrap of a long line.
     assert "echo [bold]x[/bold] :fire:" in out
     assert f"  {LONG_COMMAND}\n" in out
-    assert out.index("repo1") < out.index("dry run: no command body was run")
+    assert out.index("project1") < out.index("dry run: no command body was run")
     # The harness has no ``otto`` root group, so the command path starts at ``run``.
     assert "would run: run install" in _flat(out)
 
@@ -78,7 +78,7 @@ def test_a_real_run_never_plans(run_cli):
     planned.assert_not_called()
 
 
-def test_no_repo_applying_prints_no_blank_line_before_the_block(run_cli):
+def test_no_project_applying_prints_no_blank_line_before_the_block(run_cli):
     with patch("otto.project.plan.plan_instruction", return_value=[]):
         dry = run_cli(["run", "install"], dry_run=True)
     assert dry.exit_code == 0, dry.output
@@ -114,7 +114,7 @@ def test_the_leaf_drives_the_real_planner_over_a_lab_without_contacting_the_host
     product.owner = "r1"
     host.products = [product]
     ctx = OttoContext(lab=Lab(name="bench", hosts={host.id: host}), policy=RunPolicy(dry_run=True))
-    projects = [fake_repo("r1", project_scope=None, root=tmp_path)]
+    projects = [fake_project("r1", project_scope=None, root=tmp_path)]
     patch_bootstrap(monkeypatch, projects)
     token = set_context(ctx)
     try:

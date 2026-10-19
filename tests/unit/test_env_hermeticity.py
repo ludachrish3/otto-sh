@@ -1,11 +1,11 @@
 """The test suite must be hermetic against ambient otto configuration.
 
 A developer shell with ``OTTOPATH`` exported (say, pointing at another
-checkout's ``tests/repo1``) leaks into every test that exercises a CLI path
+checkout's ``tests/project1``) leaks into every test that exercises a CLI path
 whose callback calls ``bootstrap()`` without monkeypatching the env: the
-ambient repo's init modules load into the process-wide registries under
-foreign file paths, where they once collided with the real ``tests/repo1``
-imports in ``test_repo.py``'s bootstrap test (``already registered``
+ambient project's init modules load into the process-wide registries under
+foreign file paths, where they once collided with the real ``tests/project1``
+imports in ``test_project.py``'s bootstrap test (``already registered``
 failures, worker-order dependent under xdist). ``tests/conftest.py``
 therefore strips all ``OTTO_*`` variables (minus explicit harness toggles) at
 import time; these tests pin that guard.
@@ -21,7 +21,7 @@ import pytest
 from otto.config.env import is_otto_env_var
 from tests._ambient_env import AMBIENT_OPT_INS as AMBIENT_OPT_IN_NOTES
 from tests._ambient_env import ambient, ambient_opt_ins
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
 
@@ -101,14 +101,14 @@ def test_ambient_otto_env_cannot_leak_into_a_pytest_run():
             **os.environ,
             PROBE_FLAG: "1",
             # Product configuration: must be stripped.
-            "OTTOPATH": "/somewhere/else/tests/repo1",
+            "OTTOPATH": "/somewhere/else/tests/project1",
             "OTTO_XDIR": "/somewhere/else/xdir",
             # Stripped AND replaced by the per-worker hermetic home.
             "OTTO_HOME": _AMBIENT_HOME,
             # Every declared harness opt-in: must survive.
             **_PROBE_VALUES,
         },
-        cwd=str(PROJECT_ROOT),
+        cwd=str(CHECKOUT_ROOT),
         capture_output=True,
         text=True,
         timeout=120,
@@ -145,11 +145,11 @@ def test_conftest_chain_writes_no_ambient_env_at_collection(tree):
     ``--collect-only`` imports every conftest in the tree but runs no
     session fixture — so integration's sanctioned runtime ``OTTOPATH``
     fixture stays invisible, while the banned import-time spelling (the
-    pre-Wave-4 ``ensure_sut_dirs()`` module call) trips the probe. The
+    pre-Wave-4 module-scope ``OTTOPATH`` write) trips the probe. The
     polluted vars in the env prove the root strip still runs first on every
     chain.
     """
-    target = PROJECT_ROOT / _TREE_COLLECT_TARGETS[tree]
+    target = CHECKOUT_ROOT / _TREE_COLLECT_TARGETS[tree]
     assert target.exists(), f"collect target for {tree!r} moved — update _TREE_COLLECT_TARGETS"
     result = subprocess.run(
         [
@@ -168,10 +168,10 @@ def test_conftest_chain_writes_no_ambient_env_at_collection(tree):
         ],
         env={
             **os.environ,
-            "OTTOPATH": "/polluted/tests/repo1",
+            "OTTOPATH": "/polluted/tests/project1",
             "OTTO_XDIR": "/polluted/xdir",
         },
-        cwd=str(PROJECT_ROOT),
+        cwd=str(CHECKOUT_ROOT),
         capture_output=True,
         text=True,
         timeout=120,
@@ -190,25 +190,25 @@ def test_conftest_chain_writes_no_ambient_env_at_collection(tree):
     )
 
 
-def test_integration_sut_dirs_fixture_sets_scoped_and_restores(monkeypatch):
+def test_integration_ottopath_fixture_sets_scoped_and_restores(monkeypatch):
     """The sanctioned runtime replacement for the banned import-time write:
     set at fixture setup, gone (or restored) at teardown — the property that
     makes a fixture write hermetic where a module-scope write is not, and what
     lets the integration tree bracket the env per TEST rather than per session.
     Drives the impl generator directly (the ``_impl`` pattern)."""
-    from tests.integration.conftest import _default_sut_dirs_env_impl
+    from tests.integration.conftest import _default_ottopath_env_impl
 
     monkeypatch.delenv("OTTOPATH", raising=False)
-    gen = _default_sut_dirs_env_impl()
+    gen = _default_ottopath_env_impl()
     next(gen)
-    assert os.environ.get("OTTOPATH", "").endswith("repo1"), "default not applied"
+    assert os.environ.get("OTTOPATH", "").endswith("project1"), "default not applied"
     with pytest.raises(StopIteration):
         next(gen)
     assert "OTTOPATH" not in os.environ, "teardown must remove what setup added"
 
     # A pre-set value (another harness layer) stays authoritative and survives.
     monkeypatch.setenv("OTTOPATH", "/pre-set/by/harness")
-    gen = _default_sut_dirs_env_impl()
+    gen = _default_ottopath_env_impl()
     next(gen)
     assert os.environ["OTTOPATH"] == "/pre-set/by/harness"
     with pytest.raises(StopIteration):
@@ -247,7 +247,7 @@ def test_bootstrap_state_cannot_leak_between_tests():
 
     ``bootstrap()`` memoizes into module globals and folds the append-only
     ``_discovery_errors`` into every later result, so a test that drives the CLI
-    with ``OTTOPATH`` pointed at a scratch repo leaves a framed discovery
+    with ``OTTOPATH`` pointed at a scratch project leaves a framed discovery
     error behind after ``monkeypatch`` restores the variable. Every later test
     on that worker then hits ``fail_loud_on_bootstrap_errors()`` and exits 1
     before Click reports the missing ``--lab`` — the "must exit 2" tests below
@@ -258,7 +258,9 @@ def test_bootstrap_state_cannot_leak_between_tests():
 
     Ordered pair, so ``-p no:randomly``: the leak is order-dependent by nature.
     """
-    poisoner = "tests/unit/cli/test_init_prompts.py::test_epilogue_skips_sut_dirs_when_already_set"
+    poisoner = (
+        "tests/unit/cli/test_init_prompts.py::test_epilogue_skips_project_roots_when_already_set"
+    )
     victim = (
         "tests/unit/cli/test_main.py::TestArgumentValidation"
         "::test_lab_needing_path_without_lab_reports_missing_option"
@@ -278,7 +280,7 @@ def test_bootstrap_state_cannot_leak_between_tests():
             "-p",
             "no:cacheprovider",
         ],
-        cwd=str(PROJECT_ROOT),
+        cwd=str(CHECKOUT_ROOT),
         # The ordered pair above is the whole experiment, so the child must be
         # driven by these argv and nothing else. An ambient PYTEST_ADDOPTS is
         # inherited otherwise, and it does not merely add noise: this run

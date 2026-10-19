@@ -37,7 +37,7 @@ what actually ran.
 Common ways to land here:
 
 1. **Concurrent test runs racing on the same source tree.** Two `otto test
-   --cov` runs compiling `tests/repo1/product/` (or any shared SUT) at the
+   --cov` runs compiling `tests/project1/product/` (or any shared SUT) at the
    same time will clobber each other's `.gcno` files, so whichever `.gcda`
    set you then try to report against may be stale. This is exactly how
    the e2e coverage tests were failing under xdist until

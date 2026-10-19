@@ -39,9 +39,9 @@ def inventory():
     user = load_user_settings(settings_file)
     assert user is not None
     assert user.inventory is not None
-    # [] repo declarations: nothing overrides the user file, so both
+    # [] project declarations: nothing overrides the user file, so both
     # [inventory] and [creds] resolve from it, exactly as build_inventory
-    # resolves a real process with no repo of its own declaring either.
+    # resolves a real process with no project of its own declaring either.
     return build_inventory_from_declarations(
         [], user_settings=user, user_settings_file=settings_file
     )

@@ -140,7 +140,7 @@ subsystem behind the pluggable seams already started.
   directories nor filenames.
 - Rename misleading files to match their tier.
 - Secondary: consolidate the scattered conftests + fixture repos
-  (`repo1/2/3`, `custom_hosts`, `lab_data`, `mockrepo.py`) under a discoverable
+  (`project1/2/3`, `custom_hosts`, `lab_data`, `mock_project.py`) under a discoverable
   `tests/_fixtures/`.
 
 ### 6. Reservations — stay server-less (JSON/DB protocol check only)

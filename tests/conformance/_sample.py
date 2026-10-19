@@ -21,7 +21,7 @@ lowest ranks is taken -- the standard min-hash sample, uniform over subsets
 and without replacement.
 
 THE REASON IS THE REPRODUCE HANDLE'S SHELF LIFE, and it is about Python
-versions rather than about processes. This repo supports five interpreters
+versions rather than about processes. This repository supports five interpreters
 and gates on all of them (``.python-versions``, and ci.yml's matrix: 3.10
 through 3.14), while the seed a failing run prints carries no interpreter
 with it -- so the run that redraws those cells may well be a different Python
@@ -44,7 +44,7 @@ busiest is 1.26x its expected share.
 
 Secondary, and NOT the reason: ``random.Random(seed)`` also trips ruff's
 S311, whose subject is cryptographic suitability -- irrelevant to a seeded
-test sampler, and a call this repo has already made at each of the ten sites
+test sampler, and a call this repository has already made at each of the ten sites
 carrying ``# noqa: S311`` (six in ``scripts/gen_monitor_fixtures.py``, four
 under ``tests/``, two of those the chaos lane's own seeded ``Random``,
 commented "reproducibility, not security"). That noqa
@@ -129,7 +129,7 @@ def root_seed(config: pytest.Config) -> "int | None":
     ``None`` covers exactly one case: ``-p no:randomly`` UNREGISTERS the
     option, and ``Config.getoption`` raises ``ValueError`` on an undeclared
     name UNLESS the caller passes a ``default`` -- so ``default=None`` here is
-    load-bearing, not decoration. That shape is really run in this repo
+    load-bearing, not decoration. That shape is really run in this repository
     (``tests/unit/test_env_hermeticity.py`` drives a ``-p no:randomly``
     subprocess), and this tree sits in ``testpaths``, so a path-less run of it
     would collect this suite and a raise here would turn "no seed to sample

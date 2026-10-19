@@ -5,7 +5,7 @@ The completion caches live in the user-level workspace home
 ``OTTO_HOME`` reads the developer's real cache — and writes its fixture
 corpus back into it. That is not hypothetical: before the harness pinned
 the home, thousands of tmp-path-keyed workspace dirs accumulated under the
-developer's ``~/.otto``, and the stable ``repo_e2e`` workspace stayed WARM
+developer's ``~/.otto``, and the stable ``project_e2e`` workspace stayed WARM
 across whole test sessions, which is how a cache-content bug produced an
 e2e failure that only reproduced on the second-ever run on a machine.
 """

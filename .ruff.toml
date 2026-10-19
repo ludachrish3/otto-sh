@@ -1,7 +1,7 @@
 target-version = "py310"
 line-length = 100
 indent-width = 4
-extend-exclude = [".vscode", ".idea", "__pycache__", ".python-version", ".ruff.toml", "ruff.toml", "setup.cfg", "pyproject.toml", "tests/repo_broken"]
+extend-exclude = [".vscode", ".idea", "__pycache__", ".python-version", ".ruff.toml", "ruff.toml", "setup.cfg", "pyproject.toml", "tests/project_broken"]
 
 [format]
 # ruff formats Python code blocks inside Markdown (0.16.0+). The published docs

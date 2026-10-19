@@ -1,8 +1,8 @@
 """THE SPLIT-BRAIN GUARD for the docker verbs: each leaf hands its library function
 exactly the parsed flags and reports exactly the library's refusal in flag spelling.
 No rule may live in a leaf.
-Verified red when written: making `_build` pass `repo=None` regardless of --repo fails
-the build/--repo row; replacing `_run_docker`'s `except DockerVerbError` arm with
+Verified red when written: making `_build` pass `project=None` regardless of --project fails
+the build/--project row; replacing `_run_docker`'s `except DockerVerbError` arm with
 `return _DECLINED` failed all four REFUSALS rows on `assert result.exit_code == 2`
 (`assert 0 == 2`).
 """

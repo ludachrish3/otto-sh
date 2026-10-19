@@ -5,28 +5,28 @@ from pathlib import Path
 
 import pytest
 
-from tests._fixtures.sutrepo import make_sut_repo
-from tests.e2e._otto_subprocess import PROJECT_ROOT, REPO_E2E, assert_no_output_dir, run_otto
+from tests._fixtures.project_scaffold import make_project
+from tests.e2e._otto_subprocess import CHECKOUT_ROOT, PROJECT_E2E, assert_no_output_dir, run_otto
 
-REPO_BROKEN = PROJECT_ROOT / "tests" / "repo_broken"
+PROJECT_BROKEN = CHECKOUT_ROOT / "tests" / "project_broken"
 
 pytestmark = pytest.mark.hostless
 
 
 class TestPluginCommands:
     def test_plugin_leaf_dispatches(self, tmp_path: Path) -> None:
-        r = run_otto(["e2e-hello", "--who", "otto"], xdir=tmp_path, roots=REPO_E2E)
+        r = run_otto(["e2e-hello", "--who", "otto"], xdir=tmp_path, roots=PROJECT_E2E)
         assert r.returncode == 0, r.stderr
         assert "hello otto" in r.stdout
         assert_no_output_dir(tmp_path)  # lab_free + no output dir declared
 
     def test_plugin_group_dispatches(self, tmp_path: Path) -> None:
-        r = run_otto(["e2etool", "ping"], xdir=tmp_path, roots=REPO_E2E)
+        r = run_otto(["e2etool", "ping"], xdir=tmp_path, roots=PROJECT_E2E)
         assert r.returncode == 0, r.stderr
         assert "pong" in r.stdout
 
     def test_plugin_commands_listed_in_root_help(self, tmp_path: Path) -> None:
-        cold = run_otto(["--help"], xdir=tmp_path, roots=REPO_E2E)
+        cold = run_otto(["--help"], xdir=tmp_path, roots=PROJECT_E2E)
         assert cold.returncode == 0
         assert "e2e-hello" in cold.stdout
         assert "e2etool" in cold.stdout
@@ -34,15 +34,15 @@ class TestPluginCommands:
         # not a fresh bootstrap. The WARM screen must keep the @cli_command
         # leaf, not just the group — a collector that misclassifies decorated
         # leaves as built-ins passes the cold run and fails only here.
-        warm = run_otto(["--help"], xdir=tmp_path, roots=REPO_E2E)
+        warm = run_otto(["--help"], xdir=tmp_path, roots=PROJECT_E2E)
         assert warm.returncode == 0
         assert "e2e-hello" in warm.stdout
         assert "e2etool" in warm.stdout
 
 
 class TestBootstrapContainment:
-    def test_broken_repo_degrades_help_with_framed_warning(self, tmp_path: Path) -> None:
-        r = run_otto(["--help"], xdir=tmp_path, roots=f"{REPO_E2E}{os.pathsep}{REPO_BROKEN}")
+    def test_broken_project_degrades_help_with_framed_warning(self, tmp_path: Path) -> None:
+        r = run_otto(["--help"], xdir=tmp_path, roots=f"{PROJECT_E2E}{os.pathsep}{PROJECT_BROKEN}")
         assert r.returncode == 0  # help still renders
         # A test file is never imported to build help (or the cache it seeds):
         # test names come from a static parse, and nothing registers from one.
@@ -58,7 +58,7 @@ class TestBootstrapContainment:
         r = run_otto(
             ["run", "noop"],
             xdir=tmp_path,
-            roots=f"{REPO_E2E}{os.pathsep}{REPO_BROKEN}",
+            roots=f"{PROJECT_E2E}{os.pathsep}{PROJECT_BROKEN}",
             lab="unix",
             extra_argv_prefix=["-R"],
         )
@@ -69,7 +69,7 @@ class TestBootstrapContainment:
 
     def test_broken_test_file_does_not_block_show_lab_or_list_hosts(self, tmp_path: Path) -> None:
         for flag in ("--show-lab", "--list-hosts"):
-            r = run_otto([flag], xdir=tmp_path, roots=f"{REPO_E2E}{os.pathsep}{REPO_BROKEN}")
+            r = run_otto([flag], xdir=tmp_path, roots=f"{PROJECT_E2E}{os.pathsep}{PROJECT_BROKEN}")
             assert "Cannot run commands while a project fails to load" not in r.stdout + r.stderr, (
                 flag
             )
@@ -78,20 +78,20 @@ class TestBootstrapContainment:
         r = run_otto(
             ["schema", "export", "--out", str(tmp_path / "schema")],
             xdir=tmp_path,
-            roots=f"{REPO_E2E}{os.pathsep}{REPO_BROKEN}",
+            roots=f"{PROJECT_E2E}{os.pathsep}{PROJECT_BROKEN}",
         )
         assert r.returncode == 0, r.stdout + r.stderr
 
     def test_broken_test_file_is_a_collection_error_the_run_survives(self, tmp_path: Path) -> None:
         """The broken file is logged and the named tests still run; the run exits 1, as pytest's.
 
-        Every repo's session collects its whole tree, since any repo may hold
-        a name (#592), so ``repo_broken``'s collection error is the run's too.
+        Every project's session collects its whole tree, since any project may hold
+        a name (#592), so ``project_broken``'s collection error is the run's too.
         """
         r = run_otto(
             ["test", "TestE2EFixture"],
             xdir=tmp_path,
-            roots=f"{REPO_E2E}{os.pathsep}{REPO_BROKEN}",
+            roots=f"{PROJECT_E2E}{os.pathsep}{PROJECT_BROKEN}",
             lab="unix",
             extra_argv_prefix=["-R"],
         )
@@ -103,7 +103,7 @@ class TestBootstrapContainment:
 
     def test_broken_test_file_does_not_block_otto_test_help(self, tmp_path: Path) -> None:
         r = run_otto(
-            ["test", "--help"], xdir=tmp_path, roots=f"{REPO_E2E}{os.pathsep}{REPO_BROKEN}"
+            ["test", "--help"], xdir=tmp_path, roots=f"{PROJECT_E2E}{os.pathsep}{PROJECT_BROKEN}"
         )
         assert r.returncode == 0, r.stdout + r.stderr
         assert "failed to load test_syntax_error.py" not in r.stderr, r.stderr
@@ -113,34 +113,38 @@ class TestDiscoveryContainment:
     """Phase-1 containment: malformed config DATA degrades like broken user CODE."""
 
     @pytest.fixture
-    def bad_toml_repo(self, tmp_path: Path) -> Path:
-        project = tmp_path / "repo_bad_toml"
+    def bad_toml_project(self, tmp_path: Path) -> Path:
+        project = tmp_path / "project_bad_toml"
         (project / ".otto").mkdir(parents=True)
-        # The unparseable settings.toml IS this fixture's subject — make_sut_repo
+        # The unparseable settings.toml IS this fixture's subject — make_project
         # only ever emits well-formed TOML, so the raw write has to stay.
-        (project / ".otto" / "settings.toml").write_text(  # sutrepo-exempt: malformed TOML
+        (project / ".otto" / "settings.toml").write_text(  # scaffold-exempt: malformed TOML
             "this is [not valid toml\n",
         )
         return project
 
     def test_malformed_settings_degrades_help_with_framed_warning(
-        self, tmp_path: Path, bad_toml_repo: Path
+        self, tmp_path: Path, bad_toml_project: Path
     ) -> None:
-        r = run_otto(["--help"], xdir=tmp_path, roots=f"{REPO_E2E}{os.pathsep}{bad_toml_repo}")
+        r = run_otto(
+            ["--help"], xdir=tmp_path, roots=f"{PROJECT_E2E}{os.pathsep}{bad_toml_project}"
+        )
         assert r.returncode == 0  # help still renders
         assert "Traceback" not in r.stderr
         assert "settings.toml" in r.stderr  # framed warning names the culprit
         assert "run" in r.stdout  # first-party intact
-        assert "e2e-hello" in r.stdout  # healthy repo's plugins intact
+        assert "e2e-hello" in r.stdout  # healthy project's plugins intact
 
     def test_malformed_settings_fails_real_dispatch_loud(
-        self, tmp_path: Path, bad_toml_repo: Path
+        self, tmp_path: Path, bad_toml_project: Path
     ) -> None:
-        r = run_otto(["run", "noop"], xdir=tmp_path, roots=f"{REPO_E2E}{os.pathsep}{bad_toml_repo}")
+        r = run_otto(
+            ["run", "noop"], xdir=tmp_path, roots=f"{PROJECT_E2E}{os.pathsep}{bad_toml_project}"
+        )
         assert r.returncode != 0
         assert "settings.toml" in r.stderr + r.stdout
 
-    def test_missing_sut_dir_fails_clean_one_liner(self, tmp_path: Path) -> None:
+    def test_missing_project_root_fails_clean_one_liner(self, tmp_path: Path) -> None:
         # Env-level failure: nothing user-specific can load, so there is no
         # "degraded help" to offer — fail loud but CLEAN (no traceback).
         r = run_otto(["--help"], xdir=tmp_path, roots=tmp_path / "nope")
@@ -148,7 +152,7 @@ class TestDiscoveryContainment:
         assert "Traceback" not in r.stderr
         assert "does not exist" in r.stderr
 
-    def test_unscoped_provider_repo_refuses_clean(self, tmp_path: Path) -> None:
+    def test_unscoped_provider_project_refuses_clean(self, tmp_path: Path) -> None:
         """D2's refusal is a message to act on, so it must not arrive under a traceback.
 
         The check RAISES out of ``bootstrap()`` rather than joining the
@@ -156,7 +160,7 @@ class TestDiscoveryContainment:
         catching it — the console entry printed a stack trace with the TOML
         block the user is meant to paste buried at the bottom of it.
         """
-        project = make_sut_repo(
+        project = make_project(
             tmp_path / "unscoped",
             name="unscoped",
             extra='libs = ["lib"]\ninit = ["unscoped_init"]\n',
@@ -184,7 +188,7 @@ class TestOttoErrorFraming:
     """
 
     def test_an_uncaught_otto_error_is_framed_not_tracebacked(self, tmp_path: Path) -> None:
-        r = run_otto(["e2e-raises"], xdir=tmp_path, roots=REPO_E2E)
+        r = run_otto(["e2e-raises"], xdir=tmp_path, roots=PROJECT_E2E)
 
         out = r.stdout + r.stderr
         assert r.returncode == 1
@@ -208,7 +212,7 @@ class TestOttoErrorFraming:
         r = run_otto(
             ["e2e-raises"],
             xdir=tmp_path,
-            roots=REPO_E2E,
+            roots=PROJECT_E2E,
             extra_env={"OTTO_LOG_LEVEL": "DEBUG"},
         )
 
@@ -234,7 +238,7 @@ class TestOttoErrorFraming:
         r = run_otto(
             ["--log-level", "debug", "e2e-raises"],
             xdir=tmp_path,
-            roots=REPO_E2E,
+            roots=PROJECT_E2E,
         )
 
         out = r.stdout + r.stderr
@@ -245,7 +249,7 @@ class TestOttoErrorFraming:
 
     def test_a_working_command_is_untouched(self, tmp_path: Path) -> None:
         """The frame must be invisible to every command that does not fail."""
-        r = run_otto(["e2e-hello", "--who", "otto"], xdir=tmp_path, roots=REPO_E2E)
+        r = run_otto(["e2e-hello", "--who", "otto"], xdir=tmp_path, roots=PROJECT_E2E)
 
         assert r.returncode == 0, r.stderr
         assert "hello otto" in r.stdout

@@ -73,9 +73,9 @@ def test_declarations_span_files() -> None:
 
 def test_dead_pattern_names_the_declaring_file_and_the_declared_labs() -> None:
     """The warning must be actionable on its own: which file, which labs exist."""
-    docs = [("repo/lab_data/lab.json", {"unix": LabEntrySpec()}, [_el("t", ["gh.st"])])]
+    docs = [("project/lab_data/lab.json", {"unix": LabEntrySpec()}, [_el("t", ["gh.st"])])]
     (w,) = lab_warnings(docs)
-    assert w.startswith("repo/lab_data/lab.json:")
+    assert w.startswith("project/lab_data/lab.json:")
     assert "['unix']" in w
 
 

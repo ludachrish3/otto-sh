@@ -377,7 +377,7 @@ class TestTunnelSectionsMarkupAndJSON:
 
         The two ``ran:`` commands are otto's real trips scripts — one-liners so
         long that Rich wraps each across many physical lines at width 120.
-        Pinning that wrap character-for-character blows past this repo's
+        Pinning that wrap character-for-character blows past this checkout's
         100-column lint limit on every wrapped fragment (checked: it does,
         with no ``# noqa`` available to silence it), and would really be
         pinning ``trips_script``'s wording, not this task's rendering. So the

@@ -83,7 +83,7 @@ Spec `docs/superpowers/specs/2026-10-06-repo-and-scope-inputs-design.md` §2, §
   has `is_bootstrapped` and `get_completion_names`; keep the wrapper's `get_completion_names`
   docstring) and delete `src/otto/config/bootstrapped.py`. Internal callers and test patch targets
   use `otto.bootstrap` (364 lines in 33 src and 68 test files at `d0839893`, plus
-  `tests/repo3/tests/test_embedded_coverage.py:39` and commit 2's patch target).
+  `tests/project3/tests/test_embedded_coverage.py:39` and commit 2's patch target).
 - [x] ✅ (14caec5b) A static guard refuses any old spelling of the five accessors, relative imports included.
   It is the primary defence for the six swallowed-import sites (spec 4 §2.1): `config/scope.py`
   `scope_for_repo`, `lifecycle.py`, `declared.py`, `context.py` `scopes` and `_detect_cov`, and

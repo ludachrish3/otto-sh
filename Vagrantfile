@@ -61,7 +61,7 @@ def zephyr_sdk_install(toolchain, versions)
 end
 
 # Per-version Zephyr workspaces for *building/testing* against each
-# otto-supported Zephyr version. 3.7 + 4.4 build the repo3 coverage product
+# otto-supported Zephyr version. 3.7 + 4.4 build the project3 coverage product
 # (.llext); 2.7 is for testing only (it predates LLEXT, so it can't do
 # coverage). One (venv, workspace) per version, mirroring the zephyr VM's
 # ZEPHYR_VERSIONS table — but with no QEMU/firmware build (this only builds
@@ -157,8 +157,8 @@ VERS
 
     echo ""
     echo "Zephyr build envs ready: ~/zephyrproject-{v2_7,v3_7,v4_4}."
-    echo "Build the coverage product (3.7/4.4) — see tests/repo3/product/README.md, e.g.:"
-    echo "  tests/repo3/product/build.sh ~/build/cov_ext_app_v3_7 v3_7"
+    echo "Build the coverage product (3.7/4.4) — see tests/project3/product/README.md, e.g.:"
+    echo "  tests/project3/product/build.sh ~/build/cov_ext_app_v3_7 v3_7"
   SHELL
 end
 
@@ -271,7 +271,7 @@ Vagrant.configure("2") do |config|
         dev.vm.provision "shell", name: "dev-root", keep_color: true, inline: <<-SHELL
 
             # GitHub client + coverage tools, plus the Zephyr build dependencies
-            # needed to build the repo3 coverage product (.llext) on this VM
+            # needed to build the project3 coverage product (.llext) on this VM
             # (see the dev-zephyr-sdk / dev-zephyr-workspace provisioners below).
             # wget + xz-utils fetch/unpack the SDK toolchain; cmake .. python3-*
             # are `west build` deps — the QEMU/networking/GUI packages the zephyr
@@ -472,7 +472,7 @@ Vagrant.configure("2") do |config|
             echo 'alias gs="git status"' >> ~/.bashrc
         SHELL
 
-        # Zephyr SDK arm-zephyr-eabi toolchains for the embedded (repo3) coverage
+        # Zephyr SDK arm-zephyr-eabi toolchains for the embedded (project3) coverage
         # bed: the cross-gcov the coverage *report* runs
         # (tests/_fixtures/lab_data/tech1/lab.json -> each host's `toolchain`) and the
         # compiler that builds the mps2_an385 coverage product on this VM. The
@@ -487,7 +487,7 @@ Vagrant.configure("2") do |config|
         dev.vm.provision "shell", name: "dev-zephyr-sdk", privileged: false, keep_color: true,
             inline: zephyr_sdk_install("arm-zephyr-eabi", ["0.16.8", "1.0.1"])
 
-        # Per-version Zephyr workspace matrix (builds the repo3 coverage
+        # Per-version Zephyr workspace matrix (builds the project3 coverage
         # product) — see zephyr_workspace_matrix's own comment for the why/how.
         # Needs the SDKs from dev-zephyr-sdk + the apt build deps above.
         dev.vm.provision "shell", name: "dev-zephyr-workspace", privileged: false, keep_color: true,
@@ -1163,7 +1163,7 @@ EOF
 
         # ARM mps2_an385 Zephyr beds, each driven over a QEMU `-serial telnet:`
         # bridge (NOT the in-guest NIC — the mps2 LAN9118 wedges on a multi-frame
-        # `load_hex` line; see tests/repo3/docs/feasibility.md "pivot to
+        # `load_hex` line; see tests/project3/docs/feasibility.md "pivot to
         # serial-telnet"). Two kinds share this provisioning because they share the
         # serial-telnet transport:
         #   * coverage bases — stock LLEXT shell_loader, one per LLEXT-capable
@@ -1287,7 +1287,7 @@ ARM_INSTANCES
 # to a telnet listener on 127.0.0.1:${port} (the console term tunnels into this
 # VM and forwards localhost:port). Serial-telnet (no NIC): the mps2 LAN9118
 # can't receive a multi-frame load_hex line, and a serial console needs no
-# in-guest networking anyway. See tests/repo3/docs/feasibility.md ("pivot to
+# in-guest networking anyway. See tests/project3/docs/feasibility.md ("pivot to
 # serial-telnet"). A second -serial (raw tcp, binary-safe) bridges uart1 for
 # extension protocols where the instance table defines a pport.
 set -euo pipefail
@@ -1483,13 +1483,13 @@ EOF
                 python3-venv
         SHELL
 
-        # arm-zephyr-eabi toolchains for the embedded (repo3) coverage bed —
+        # arm-zephyr-eabi toolchains for the embedded (project3) coverage bed —
         # same versions/call as the dev VM.
         playground.vm.provision "shell", name: "playground-zephyr-sdk", privileged: false, keep_color: true,
             inline: zephyr_sdk_install("arm-zephyr-eabi", ["0.16.8", "1.0.1"])
 
         # Same per-version Zephyr workspace matrix as the dev VM, so this VM
-        # can build the repo3 coverage product (.llext) locally too.
+        # can build the project3 coverage product (.llext) locally too.
         playground.vm.provision "shell", name: "playground-zephyr-workspace", privileged: false, keep_color: true,
             inline: zephyr_workspace_matrix
 

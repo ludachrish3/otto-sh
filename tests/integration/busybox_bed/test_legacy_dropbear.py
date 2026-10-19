@@ -1,7 +1,7 @@
 """Wire proof: otto negotiates with a SHA-1-only sshd, dropbear 2012.55 on bb1350.
 
 Four handshakes against the real 2012 daemon behind ``test1``, each under
-the repo's ``filterwarnings``, which starts at ``error`` and carries exactly
+the repository's ``filterwarnings``, which starts at ``error`` and carries exactly
 one scoped exemption (the FFDH deprecation from ``asyncssh.crypto.dh``) — so
 any *other* deprecation a legacy key exchange raises is a failure here, not
 noise on a user's terminal:

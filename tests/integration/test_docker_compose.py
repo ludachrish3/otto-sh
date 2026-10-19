@@ -1,6 +1,6 @@
 """End-to-end compose lifecycle integration tests.
 
-Brings up repo1's compose stack on test3, exercises run/get/put
+Brings up project1's compose stack on test3, exercises run/get/put
 against the resulting container host, and tears the stack down again.
 
 Requires:
@@ -29,9 +29,9 @@ from otto.utils import Status
 from tests._fixtures._host_pool import lease_unix_host
 from tests._fixtures.paths import TESTS_ROOT
 
-REPO1_DIR = TESTS_ROOT / "repo1"
+PROJECT1_DIR = TESTS_ROOT / "project1"
 
-# All docker integration tests share /tmp/otto-docker/repo1/ on test3
+# All docker integration tests share /tmp/otto-docker/project1/ on test3
 # (compose staging dir). Pin them to one xdist worker so concurrent
 # `rm -rf` calls during compose_up don't race.
 pytestmark = [
@@ -67,8 +67,8 @@ async def parent(test3_lease):
 
 
 @pytest.fixture
-def repo1():
-    return Project(root=REPO1_DIR)
+def project1():
+    return Project(root=PROJECT1_DIR)
 
 
 @pytest_asyncio.fixture
@@ -80,16 +80,16 @@ async def lab_with_parent(parent):
 
 
 @pytest_asyncio.fixture
-async def built_image(parent, repo1):
-    """Ensure the repo1 image is built once for tests in this file."""
-    results = await build_images(repo1, parent)
-    assert results["repo1-api"].is_ok, results
+async def built_image(parent, project1):
+    """Ensure the project1 image is built once for tests in this file."""
+    results = await build_images(project1, parent)
+    assert results["project1-api"].is_ok, results
     return results
 
 
 @pytest.mark.asyncio
-async def test_compose_up_registers_container_host(parent, lab_with_parent, repo1, built_image):
-    hosts = await compose_up(repo1, lab_with_parent, parent=parent.id)
+async def test_compose_up_registers_container_host(parent, lab_with_parent, project1, built_image):
+    hosts = await compose_up(project1, lab_with_parent, parent=parent.id)
     try:
         assert "api" in hosts
         api = hosts["api"]
@@ -98,21 +98,23 @@ async def test_compose_up_registers_container_host(parent, lab_with_parent, repo
         # The container id must be a real docker id, not the placeholder marker.
         assert len(api.container_id) >= 12
     finally:
-        await compose_down(repo1, lab_with_parent, parent=parent.id)
+        await compose_down(project1, lab_with_parent, parent=parent.id)
 
 
 @pytest.mark.asyncio
-async def test_compose_down_unregisters(parent, lab_with_parent, repo1, built_image):
-    hosts = await compose_up(repo1, lab_with_parent, parent=parent.id)
+async def test_compose_down_unregisters(parent, lab_with_parent, project1, built_image):
+    hosts = await compose_up(project1, lab_with_parent, parent=parent.id)
     api_id = hosts["api"].id
-    await compose_down(repo1, lab_with_parent, parent=parent.id)
+    await compose_down(project1, lab_with_parent, parent=parent.id)
     assert api_id not in lab_with_parent.hosts
 
 
 @pytest.mark.asyncio
-async def test_composed_context_manager_owns_lifecycle(parent, lab_with_parent, repo1, built_image):
+async def test_composed_context_manager_owns_lifecycle(
+    parent, lab_with_parent, project1, built_image
+):
     seen_id = None
-    async with composed(repo1, lab_with_parent, parent=parent.id, own=True) as hosts:
+    async with composed(project1, lab_with_parent, parent=parent.id, own=True) as hosts:
         seen_id = hosts["api"].id
         assert seen_id in lab_with_parent.hosts
     # After exit, the host must be gone (own=True forces teardown).
@@ -120,21 +122,21 @@ async def test_composed_context_manager_owns_lifecycle(parent, lab_with_parent, 
 
 
 @pytest.mark.asyncio
-async def test_compose_up_idempotent(parent, lab_with_parent, repo1, built_image):
+async def test_compose_up_idempotent(parent, lab_with_parent, project1, built_image):
     """Running compose_up twice in a row reuses the same stack."""
-    first = await compose_up(repo1, lab_with_parent, parent=parent.id)
+    first = await compose_up(project1, lab_with_parent, parent=parent.id)
     try:
         cid_first = first["api"].container_id
-        second = await compose_up(repo1, lab_with_parent, parent=parent.id)
+        second = await compose_up(project1, lab_with_parent, parent=parent.id)
         cid_second = second["api"].container_id
         assert cid_first == cid_second, "second compose_up must reuse the running container"
     finally:
-        await compose_down(repo1, lab_with_parent, parent=parent.id)
+        await compose_down(project1, lab_with_parent, parent=parent.id)
 
 
 @pytest.mark.asyncio
 async def test_bind_mount_reachable_through_parent(
-    parent, lab_with_parent, repo1, built_image, tmp_path
+    parent, lab_with_parent, project1, built_image, tmp_path
 ):
     """Prove the mount table docker inspect built is REAL, not merely mocked.
 
@@ -170,16 +172,16 @@ async def test_bind_mount_reachable_through_parent(
     compose_yaml.write_text(
         "services:\n"
         "  mountcheck:\n"
-        "    image: repo1-api:latest\n"
+        "    image: project1-api:latest\n"
         '    command: ["sh", "-c", "while sleep 3600; do :; done"]\n'
         "    volumes:\n"
         f"      - {host_dir}:/var/lib/app\n"
     )
-    # In-memory only, on this test's own `repo1` instance (function-scoped —
-    # a fresh Repo per test) -- the committed settings.toml and its shared
+    # In-memory only, on this test's own `project1` instance (function-scoped —
+    # a fresh Project per test) -- the committed settings.toml and its shared
     # docker/compose.yml are never touched.
-    repo1.docker_settings = replace(
-        repo1.docker_settings,
+    project1.docker_settings = replace(
+        project1.docker_settings,
         composes=(DockerCompose(path=compose_yaml, services=("mountcheck",), name="mounts_e2e"),),
     )
 
@@ -190,7 +192,7 @@ async def test_bind_mount_reachable_through_parent(
         assert mkdir.status.is_ok, mkdir.value
 
         hosts = await compose_up(
-            repo1, lab_with_parent, parent=parent.id, project_name=project, build=False
+            project1, lab_with_parent, parent=parent.id, project_name=project, build=False
         )
         ctr = hosts["mountcheck"]
 
@@ -213,5 +215,5 @@ async def test_bind_mount_reachable_through_parent(
             f"expected 'hi' through the parent-side mount, got {landed!r}"
         )
     finally:
-        await compose_down(repo1, lab_with_parent, parent=parent.id, project_name=project)
+        await compose_down(project1, lab_with_parent, parent=parent.id, project_name=project)
         await parent.exec(f"rm -rf {shlex.quote(str(host_dir))}")

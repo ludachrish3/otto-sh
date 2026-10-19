@@ -1,13 +1,13 @@
 """Every public route to composition composes as it always did, the root never loaded first.
 
-The composition root, ``otto.bootstrap``, composes the repos; the layers below it read
+The composition root, ``otto.bootstrap``, composes the projects; the layers below it read
 what it published and start it only through the initiator that importing the root
-installs. So a public route that can reach a read of the repos with no run in hand
+installs. So a public route that can reach a read of the projects with no run in hand
 must have the root loaded by the time it reads (spec 2026-10-11 placement-and-phases
-§3.9, §3.12, §3.13). Each case here runs in a fresh interpreter over a scratch repo
+§3.9, §3.12, §3.13). Each case here runs in a fresh interpreter over a scratch project
 that has not imported the root, and counts compositions by their dependency passes
 (``tests/_fixtures/fresh_composition.py``): a context opened, a hand-built context's
-first read, the library ``run_tests`` reached through the root facade, the repo-aware
+first read, the library ``run_tests`` reached through the root facade, the project-aware
 logging install, the conformance harness's dry-run context. Each composes once and
 answers as it always did; a context handed a result, a name resolved and a discovery
 read compose nothing. Every case that counts nothing arms the counting hook
@@ -138,12 +138,12 @@ try:
 except Exception as exc:
     print(json.dumps([type(exc).__name__, str(exc)]))
 else:
-    print(json.dumps(["no error", "get_repos returned"]))
+    print(json.dumps(["no error", "get_projects returned"]))
 """
 
 # Settings that make composition refuse: a declared product entry with no
 # `[project] lab_patterns` (spec 2026-08-18 D2), which the root raises after the
-# repos' init modules ran.
+# projects' init modules ran.
 _UNSCOPED_PROVIDER = '\n[[products]]\nname = "pin-entry"\nkind = "noop"\n'
 
 
@@ -200,16 +200,16 @@ def test_resolving_a_composing_name_composes_nothing(
     ["from otto.context import open_context", "from otto import open_context"],
     ids=["otto.context", "otto"],
 )
-def test_open_context_composes_once_and_opens_the_run_on_its_repos(
+def test_open_context_composes_once_and_opens_the_run_on_its_projects(
     spelling: str, tmp_path: Path
 ) -> None:
-    assert run_fresh(tmp_path, _OPEN.format(spelling=spelling)) == [["repo"], ["repo"], 7.5]
+    assert run_fresh(tmp_path, _OPEN.format(spelling=spelling)) == [["project"], ["project"], 7.5]
     assert armed(tmp_path)
     assert compositions(tmp_path) == 1
 
 
 def test_the_conformance_harness_context_composes_on_its_first_read(tmp_path: Path) -> None:
-    assert run_fresh(tmp_path, _HARNESS) == ["repo"]
+    assert run_fresh(tmp_path, _HARNESS) == ["project"]
     assert armed(tmp_path)
     assert compositions(tmp_path) == 1
 
@@ -232,9 +232,9 @@ def test_a_hand_built_context_composes_on_its_first_read_and_only_then(
     spelling: str, tmp_path: Path
 ) -> None:
     assert run_fresh(tmp_path, _HAND_BUILT.format(spelling=spelling)) == [
-        ["repo"],
-        ["repo"],
-        ["repo"],
+        ["project"],
+        ["project"],
+        ["project"],
     ]
     assert armed(tmp_path)
     assert compositions(tmp_path) == 1
@@ -256,15 +256,15 @@ def test_a_context_handed_a_result_never_composes(tmp_path: Path) -> None:
     assert compositions(tmp_path) == 1, "only the control's bootstrap() composes"
 
 
-def test_the_repo_aware_logging_install_composes_once(tmp_path: Path) -> None:
+def test_the_project_aware_logging_install_composes_once(tmp_path: Path) -> None:
     assert run_fresh(tmp_path, _LOGGING.format(init=INIT)) == [True]
     assert armed(tmp_path)
     assert compositions(tmp_path) == 1
 
 
-def test_discovery_reads_the_repos_and_composes_nothing(tmp_path: Path) -> None:
+def test_discovery_reads_the_projects_and_composes_nothing(tmp_path: Path) -> None:
     source = _DISCOVERY.format(init=INIT) + _ARM
-    assert run_fresh(tmp_path, source) == [["repo"], False, False]
+    assert run_fresh(tmp_path, source) == [["project"], False, False]
     assert armed(tmp_path)
     assert compositions(tmp_path) == 1, "only the control's bootstrap() composes"
 

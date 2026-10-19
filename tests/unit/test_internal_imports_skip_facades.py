@@ -26,11 +26,11 @@ lazy table, so a ``from otto.lab import`` fails both tests.
 import pytest
 
 from scripts.facade_sweep import FIX_COMMANDS, find_sites, lazy_bindings, owner
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
 
-SRC_ROOT = PROJECT_ROOT / "src"
+SRC_ROOT = CHECKOUT_ROOT / "src"
 
 FIX = " && ".join(FIX_COMMANDS)
 

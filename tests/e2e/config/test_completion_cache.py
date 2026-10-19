@@ -18,7 +18,7 @@ import pytest
 from otto.config.completion_cache import SCHEMA_VERSION
 from otto.config.home import workspace_key
 from otto.config.remote_completion_cache import REMOTE_CACHE_FILENAME
-from tests.e2e._otto_subprocess import REPO1, REPO_E2E, assert_no_output_dir, run_otto
+from tests.e2e._otto_subprocess import PROJECT1, PROJECT_E2E, assert_no_output_dir, run_otto
 
 pytestmark = [pytest.mark.hostless, pytest.mark.xdist_group("completion_cache")]
 
@@ -31,7 +31,7 @@ def _run_otto(
     comp_cword: str | None = None,
     extra_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    """Run ``otto ARGV`` against the repo1 fixture, optionally in completion mode.
+    """Run ``otto ARGV`` against the project1 fixture, optionally in completion mode.
 
     *comp_words* / *comp_cword* add the trio a completing shell would export;
     everything else (clean env, subprocess coverage, ``OTTO_XDIR``) comes from
@@ -50,7 +50,7 @@ def _run_otto(
     # every test here would read and write the developer's real ~/.otto.
     if xdir is not None:
         env.setdefault("OTTO_HOME", str(_home(xdir)))
-    return run_otto(argv, xdir=xdir, roots=REPO1, extra_env=env)
+    return run_otto(argv, xdir=xdir, roots=PROJECT1, extra_env=env)
 
 
 def _home(xdir: Path) -> Path:
@@ -59,13 +59,13 @@ def _home(xdir: Path) -> Path:
 
 
 def _cache_file(xdir: Path) -> Path:
-    """Where the cache lands: the workspace home, keyed by the SUT-dir set.
+    """Where the cache lands: the workspace home, keyed by the project-root set.
 
     Derived through ``workspace_key`` rather than spelled out, so this helper
     cannot drift from the product's own keying -- which is the whole reason the
     cache moved out of the xdir.
     """
-    return _home(xdir) / workspace_key([REPO1]) / "completion_cache.json"
+    return _home(xdir) / workspace_key([PROJECT1]) / "completion_cache.json"
 
 
 def _read_cache(xdir: Path) -> dict:
@@ -113,12 +113,12 @@ def test_slow_path_seeds_cache_with_option_schemas(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
 
     payload = _read_cache(tmp_path)["sections"]["names"]["payload"]
-    # An instruction we know has an own options class — repo1's test-instruction.
+    # An instruction we know has an own options class — project1's test-instruction.
     instruction = next(i for i in payload["instructions"] if i["name"] == "test-instruction")
     opts = instruction["options"]
     assert opts, "expected test-instruction to have cached options"
     option_names = {o["name"] for o in opts}
-    # Its own field plus the inherited RepoOptions ones.
+    # Its own field plus the inherited ProjectOptions ones.
     assert {"debug", "lab_env"} <= option_names
     # `otto test`'s run flags belong to that command, not an instruction.
     assert option_names.isdisjoint(
@@ -255,7 +255,7 @@ def test_touching_a_test_file_leaves_the_names_section_valid(tmp_path: Path) -> 
     before = _read_cache(tmp_path)["sections"]
 
     # Bump mtime of a tracked file (the digests use path|mtime_ns|size).
-    tracked = REPO1 / "tests" / "test_example.py"
+    tracked = PROJECT1 / "tests" / "test_example.py"
     st = tracked.stat()
     new_mtime = st.st_mtime_ns + 1_000_000_000  # +1s in ns
     os.utime(tracked, ns=(st.st_atime_ns, new_mtime))
@@ -312,8 +312,8 @@ def test_fast_path_completes_plugin_group_children(tmp_path: Path) -> None:
     child metadata (closing the boundary previously documented in
     extending-cli.md).
     """
-    plugin_repo = {"OTTOPATH": str(REPO_E2E)}
-    seed = _run_otto(["--help"], xdir=tmp_path, extra_env=plugin_repo)
+    plugin_project = {"OTTOPATH": str(PROJECT_E2E)}
+    seed = _run_otto(["--help"], xdir=tmp_path, extra_env=plugin_project)
     assert seed.returncode == 0, seed.stderr
 
     result = _run_otto(
@@ -321,7 +321,7 @@ def test_fast_path_completes_plugin_group_children(tmp_path: Path) -> None:
         xdir=tmp_path,
         comp_words="otto e2etool ",
         comp_cword="2",
-        extra_env=plugin_repo,
+        extra_env=plugin_project,
     )
     assert result.returncode == 0, result.stderr
     assert "ping" in result.stdout
@@ -397,7 +397,7 @@ def test_fast_path_returns_host_ids_for_host_subcommand(tmp_path: Path) -> None:
     """`otto host <TAB>` must complete host IDs from the configured lab.json.
 
     The completer in ``otto.cli.host`` runs during completion before
-    :func:`otto.bootstrap.bootstrap` registers repo init modules — this test
+    :func:`otto.bootstrap.bootstrap` registers project init modules — this test
     proves host IDs reach the shell.
     """
     _run_otto(["--help"], xdir=tmp_path)
@@ -409,7 +409,7 @@ def test_fast_path_returns_host_ids_for_host_subcommand(tmp_path: Path) -> None:
         comp_cword="2",
     )
     assert result.returncode == 0, result.stderr
-    # tech1/lab.json in repo1 defines test1, test2, test3.
+    # tech1/lab.json in project1 defines test1, test2, test3.
     blob = result.stdout
     for host_id in ("test1", "test2", "test3"):
         assert host_id in blob, f"{host_id!r} missing from: {blob!r}"

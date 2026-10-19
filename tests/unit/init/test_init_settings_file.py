@@ -1,4 +1,4 @@
-"""The raw-settings readers are tolerant: a repo otto has not scaffolded yet is not an error."""
+"""The raw-settings readers are tolerant: a project otto has not scaffolded yet is not an error."""
 
 from pathlib import Path
 
@@ -10,7 +10,7 @@ from otto.init.settings_file import declared_init, existing_settings_name
 def _write(root: Path, text: str) -> None:
     (root / ".otto").mkdir(exist_ok=True)
     settings = root / ".otto" / "settings.toml"
-    settings.write_text(text)  # sutrepo-exempt: raw text the readers must tolerate
+    settings.write_text(text)  # scaffold-exempt: raw text the readers must tolerate
 
 
 def test_declared_init_is_none_without_a_settings_file(tmp_path: Path) -> None:

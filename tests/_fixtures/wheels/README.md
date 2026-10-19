@@ -9,13 +9,13 @@ network that should not have.
 
 **The name is load-bearing, and the first attempt got it wrong.** This started
 out as a bare `beetroot`, which is a *real* PyPI project (1.1.7.4): `uv pip
-install -e tests/repo4` fetched it happily, and every test resting on "this
+install -e tests/project4` fetched it happily, and every test resting on "this
 cannot resolve" would have passed for the wrong reason. `otto-fixture-beetroot`
 was checked against the live index and is absent. If you ever rename it, check
 the replacement the same way.
 
-`tests/repo4` declares it in its `pyproject.toml`, which makes repo4 the sample
-repo whose environment is *incomplete until installed* — the shape the
+`tests/project4` declares it in its `pyproject.toml`, which makes project4 the sample
+project whose environment is *incomplete until installed* — the shape the
 `otto env` and preflight suites need.
 
 The wheel is **committed**, not built at test time. A test run therefore needs

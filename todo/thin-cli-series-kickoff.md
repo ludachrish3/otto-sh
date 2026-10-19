@@ -132,7 +132,7 @@ renders its report, and translates field-named errors at the one
   reset to call a `reset_fn` (default `cov_reset`, mirroring `dump_fn`)
   that wraps embedded-gcov's `__gcov_clear()`, so clean walks embedded
   boards like any other host. A product that does not export it fails its
-  reset with a message naming the fix. The `tests/repo3` demo product gains
+  reset with a message naming the fix. The `tests/project3` demo product gains
   the export and the `GCOV_OPT_PROVIDE_CLEAR_COUNTERS` build define.
 - The product kind `llext` is renamed `embedded` in the same squash: it is
   already loader-agnostic (Zephyr's `llext-hex` is only the first

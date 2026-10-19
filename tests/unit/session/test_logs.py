@@ -1,4 +1,4 @@
-"""The repo-aware logging install, decided by the library."""
+"""The project-aware logging install, decided by the library."""
 
 import io
 import logging
@@ -12,8 +12,8 @@ from otto.logger.formatters import format_log_time
 from otto.session import LoggingLevelsConflictError, install_logging, merge_logging_levels
 
 
-class _LevelsRepo:
-    """A repo double carrying only what ``merge_logging_levels`` and ``install_logging`` read."""
+class _LevelsProject:
+    """A project double carrying only what ``merge_logging_levels`` and ``install_logging`` read."""
 
     def __init__(self, name: str, levels: dict[str, str]) -> None:
         self.name = name
@@ -21,33 +21,33 @@ class _LevelsRepo:
 
 
 class TestLoggingLevelsMerge:
-    """Design 2026-08-30 §4.2: repo tables union; a disagreement is an error."""
+    """Design 2026-08-30 §4.2: project tables union; a disagreement is an error."""
 
-    def test_tables_union_across_repos(self):
+    def test_tables_union_across_projects(self):
         merged = merge_logging_levels(
             [
-                _LevelsRepo("alpha", {"asyncssh": "DEBUG"}),
-                _LevelsRepo("beta", {"vendor": "ERROR"}),
+                _LevelsProject("alpha", {"asyncssh": "DEBUG"}),
+                _LevelsProject("beta", {"vendor": "ERROR"}),
             ]
         )
         assert merged == {"asyncssh": "DEBUG", "vendor": "ERROR"}
 
     def test_the_same_level_twice_is_not_a_conflict(self):
-        """A shared vendor SDK quieted by two repos must not error."""
+        """A shared vendor SDK quieted by two projects must not error."""
         merged = merge_logging_levels(
             [
-                _LevelsRepo("alpha", {"vendor": "ERROR"}),
-                _LevelsRepo("beta", {"vendor": "ERROR"}),
+                _LevelsProject("alpha", {"vendor": "ERROR"}),
+                _LevelsProject("beta", {"vendor": "ERROR"}),
             ]
         )
         assert merged == {"vendor": "ERROR"}
 
-    def test_a_conflict_names_both_repos_and_the_logger(self):
+    def test_a_conflict_names_both_projects_and_the_logger(self):
         with pytest.raises(LoggingLevelsConflictError) as exc:
             merge_logging_levels(
                 [
-                    _LevelsRepo("alpha", {"vendor": "DEBUG"}),
-                    _LevelsRepo("beta", {"vendor": "ERROR"}),
+                    _LevelsProject("alpha", {"vendor": "DEBUG"}),
+                    _LevelsProject("beta", {"vendor": "ERROR"}),
                 ]
             )
         message = str(exc.value)
@@ -58,26 +58,26 @@ class TestLoggingLevelsMerge:
         assert "DEBUG" in message
         assert "ERROR" in message
 
-    def test_the_conflict_names_the_repo_that_established_the_value(self):
+    def test_the_conflict_names_the_project_that_established_the_value(self):
         """The operator has to be sent to the file that actually set it.
 
-        With A and B agreeing and C differing, crediting the LAST agreeing repo
+        With A and B agreeing and C differing, crediting the LAST agreeing project
         would point at B — the operator edits B, and the same error re-fires
-        naming A and C. The middle repo is the discriminator, so it is here.
+        naming A and C. The middle project is the discriminator, so it is here.
         """
         with pytest.raises(LoggingLevelsConflictError) as exc:
             merge_logging_levels(
                 [
-                    _LevelsRepo("alpha", {"vendor": "DEBUG"}),
-                    _LevelsRepo("beta", {"vendor": "DEBUG"}),
-                    _LevelsRepo("gamma", {"vendor": "ERROR"}),
+                    _LevelsProject("alpha", {"vendor": "DEBUG"}),
+                    _LevelsProject("beta", {"vendor": "DEBUG"}),
+                    _LevelsProject("gamma", {"vendor": "ERROR"}),
                 ]
             )
         message = str(exc.value)
         assert "alpha" in message
         assert "gamma" in message
         assert "beta" not in message, (
-            "the message credited a repo that merely agreed with the established value"
+            "the message credited a project that merely agreed with the established value"
         )
 
 
@@ -88,8 +88,8 @@ def _clean_logging():
     management.reset()
 
 
-def _repos(monkeypatch, *tables):
-    projects = [_LevelsRepo(f"r{i}", dict(table)) for i, table in enumerate(tables)]
+def _projects(monkeypatch, *tables):
+    projects = [_LevelsProject(f"r{i}", dict(table)) for i, table in enumerate(tables)]
     monkeypatch.setattr("otto.declared.get_projects", lambda: projects)
     return projects
 
@@ -123,23 +123,23 @@ def _render_through_console_handler() -> str:
 
 
 @pytest.mark.usefixtures("_clean_logging")
-def test_install_logging_applies_every_repos_levels(monkeypatch):
-    _repos(monkeypatch, {"vendor.sdk": "ERROR"}, {"other": "WARNING"})
+def test_install_logging_applies_every_projects_levels(monkeypatch):
+    _projects(monkeypatch, {"vendor.sdk": "ERROR"}, {"other": "WARNING"})
     install_logging()
     assert logging.getLogger("vendor.sdk").level == logging.ERROR
     assert logging.getLogger("other").level == logging.WARNING
 
 
 @pytest.mark.usefixtures("_clean_logging")
-def test_an_explicit_override_wins_over_a_repo(monkeypatch):
-    _repos(monkeypatch, {"vendor.sdk": "ERROR"})
+def test_an_explicit_override_wins_over_a_project(monkeypatch):
+    _projects(monkeypatch, {"vendor.sdk": "ERROR"})
     install_logging(overrides={"vendor.sdk": "DEBUG"})
     assert logging.getLogger("vendor.sdk").level == logging.DEBUG
 
 
 @pytest.mark.usefixtures("_clean_logging")
-def test_two_repos_disagreeing_refuse_before_anything_is_installed(monkeypatch):
-    _repos(monkeypatch, {"x": "ERROR"}, {"x": "INFO"})
+def test_two_projects_disagreeing_refuse_before_anything_is_installed(monkeypatch):
+    _projects(monkeypatch, {"x": "ERROR"}, {"x": "INFO"})
     with pytest.raises(LoggingLevelsConflictError, match="r0 says ERROR, r1 says INFO"):
         install_logging()
     assert management._state.console_handler is None
@@ -149,7 +149,7 @@ def test_two_repos_disagreeing_refuse_before_anything_is_installed(monkeypatch):
 def test_the_host_filter_goes_on_the_console_only(monkeypatch, tmp_path):
     from otto.host import HostFilter
 
-    _repos(monkeypatch)
+    _projects(monkeypatch)
     install_logging(output_dir=tmp_path)
     console = management._state.console_handler
     assert any(isinstance(f, HostFilter) for f in console.filters)
@@ -160,7 +160,7 @@ def test_the_host_filter_goes_on_the_console_only(monkeypatch, tmp_path):
 
 @pytest.mark.usefixtures("_clean_logging")
 def test_log_level_and_show_time_reach_the_console_handler(monkeypatch):
-    _repos(monkeypatch)
+    _projects(monkeypatch)
     install_logging(log_level="DEBUG", show_time=True)
     assert management._state.console_handler.level == logging.DEBUG
     line = _render_through_console_handler()
@@ -170,7 +170,7 @@ def test_log_level_and_show_time_reach_the_console_handler(monkeypatch):
 
 @pytest.mark.usefixtures("_clean_logging")
 def test_the_console_has_no_timestamp_by_default(monkeypatch):
-    _repos(monkeypatch)
+    _projects(monkeypatch)
     install_logging()
     line = _render_through_console_handler()
     assert "probe-message" in line
@@ -181,7 +181,7 @@ def test_the_console_has_no_timestamp_by_default(monkeypatch):
 def test_a_prior_cli_install_leaves_exactly_one_host_filter(monkeypatch):
     from otto.host import HostFilter
 
-    _repos(monkeypatch)
+    _projects(monkeypatch)
     management.install("INFO")
     management.attach_console_suppress_filter(HostFilter())
     install_logging()

@@ -12,11 +12,11 @@ import sys
 
 import pytest
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
 
-SCRIPTS = PROJECT_ROOT / "scripts"
+SCRIPTS = CHECKOUT_ROOT / "scripts"
 ROOTS = sorted(
     [p.stem for p in SCRIPTS.glob("api_*.py")]
     + ["check_breaking_marks", "release_bump", "release_events"],
@@ -92,7 +92,7 @@ def test_the_cycle_finder_finds_a_planted_cycle():
 def test_each_api_script_imports_alone_in_a_fresh_interpreter(module):
     proc = subprocess.run(
         [sys.executable, "-c", f"import scripts.{module}"],
-        cwd=PROJECT_ROOT,
+        cwd=CHECKOUT_ROOT,
         capture_output=True,
         text=True,
         check=False,

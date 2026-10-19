@@ -165,7 +165,7 @@ def test_two_records_deriving_one_id_keep_the_first_with_its_whole_membership(tm
     assert sorted(summary.lab_patterns) == ["e", "w"]
 
 
-def _two_file_repo(tmp_path, first: dict, second: dict) -> JsonFileLabRepository:
+def _two_file_repository(tmp_path, first: dict, second: dict) -> JsonFileLabRepository:
     """One source holding two lab files: *first* in ``a/``, *second* in ``b/``."""
     a, b = tmp_path / "a", tmp_path / "b"
     for d in (a, b):
@@ -214,7 +214,7 @@ def test_two_elements_composing_one_id_record_a_drop_naming_both(
     """
     from otto.labs.drops import collecting_drops
 
-    repository = _two_file_repo(tmp_path, {**first, "labs": ["e"]}, {**second, "labs": ["w"]})
+    repository = _two_file_repository(tmp_path, {**first, "labs": ["e"]}, {**second, "labs": ["w"]})
     assert "x-cpu-1" in repository.load_lab("e").hosts
     assert "x-cpu-1" in repository.load_lab("w").hosts
 
@@ -239,7 +239,7 @@ def test_two_elements_at_one_address_are_one_machine_in_both_labs(tmp_path):
     """
     from otto.labs.drops import collecting_drops
 
-    repository = _two_file_repo(
+    repository = _two_file_repository(
         tmp_path,
         {"ip": "10.0.0.1", "element": "a-b", "labs": ["e"], "creds": _CREDS},
         {"ip": "10.0.0.1", "element": "a", "board": "b", "labs": ["w"], "creds": _CREDS},

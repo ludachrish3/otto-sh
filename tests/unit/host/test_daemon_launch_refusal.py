@@ -18,7 +18,7 @@ bash-less host and observes the refusal end to end, and
 the ``--dry-run`` planner, which asks the same guard the same question BEFORE
 anything is mutated (it launches nothing, so it is a second caller and not a
 second path to the gapped surface). The two halves are deliberately not in one
-file: a guard that fires correctly at a place nothing reaches is this repo's
+file: a guard that fires correctly at a place nothing reaches is this repository's
 most common defect, so "it fires" and "something gets here" are asserted
 separately.
 

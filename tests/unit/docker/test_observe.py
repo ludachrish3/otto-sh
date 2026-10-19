@@ -40,7 +40,7 @@ from otto.result import CommandNotRunError, CommandResult, NotRunResult
 from otto.utils import Status
 from tests.conftest import active_context
 
-from .test_deploy import _compose_file, _host, _lab, _repo
+from .test_deploy import _compose_file, _host, _lab, _project
 
 
 def _plain(host_id: str, ip: str):
@@ -214,7 +214,7 @@ def _placed(lab, tmp_path, *host_ids, services=("api", "db"), per_host=None):
     placed = {}
     for hid in host_ids:
         declared = per_host[hid] if per_host else services
-        project = _repo("r1", composes=(_compose_file(tmp_path, "core", services=declared),))
+        project = _project("r1", composes=(_compose_file(tmp_path, "core", services=declared),))
         frag = DockerUseCase(name="integration", composes=("core",))
         placed[hid] = [SelectedFragment(project=project, fragment=frag)]
     return placed
@@ -611,12 +611,13 @@ async def test_observed_images_parses_the_format_lines_and_drops_dangling_rows(l
     parent = lab.hosts["test3"]
     parent.exec = AsyncMock(
         return_value=_ok(
-            "repo1-api:latest\tsha256:aa\n<none>:<none>\tsha256:bb\nalpine:3.19\tcc\n", IMAGES_PROBE
+            "project1-api:latest\tsha256:aa\n<none>:<none>\tsha256:bb\nalpine:3.19\tcc\n",
+            IMAGES_PROBE,
         )
     )
     seen = await observed_images("test3")
     assert seen == ObservedImages(
-        refs=["repo1-api:latest", "alpine:3.19"], ids=["sha256:aa", "cc"], answered=True
+        refs=["project1-api:latest", "alpine:3.19"], ids=["sha256:aa", "cc"], answered=True
     )
     assert parent.exec.await_args.args[0] == IMAGES_PROBE
     assert parent.exec.await_args.kwargs["log"] is LogMode.QUIET
@@ -673,7 +674,7 @@ async def test_an_answer_with_no_parsable_row_is_not_an_answer(lab, two_hosts):
     # A PTY expanding the tab to spaces, or a --format regression: the daemon said
     # something otto cannot read, which must not replace good hints with none.
     lab.hosts["test3"].exec = AsyncMock(
-        return_value=_ok("repo1-api:latest    sha256:aa\n", IMAGES_PROBE)
+        return_value=_ok("project1-api:latest    sha256:aa\n", IMAGES_PROBE)
     )
     assert await observed_images("test3") == ObservedImages([], [], answered=False)
     lab.hosts["test3"].exec = AsyncMock(

@@ -7,7 +7,7 @@ the install stamp so the next make run retries the install.
 
 Each case runs the REAL Makefile's web-install target (``make -f``) from a
 throwaway directory, with a fake ``npm`` first on PATH, so no install ever
-runs and nothing under the repo's own web/ is touched.
+runs and nothing under the checkout's own web/ is touched.
 """
 
 import os
@@ -18,11 +18,11 @@ from pathlib import Path
 
 import pytest
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
 
-_MAKEFILE = PROJECT_ROOT / "Makefile"
+_MAKEFILE = CHECKOUT_ROOT / "Makefile"
 
 # Directories the Makefile `find`s at parse time; created empty so the parse
 # is quiet in the throwaway directory.

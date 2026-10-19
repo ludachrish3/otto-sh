@@ -45,7 +45,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - 3.10 only, otto's floor
     import tomli as tomllib
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 from tests._fixtures.ssh_algorithm_matrix import (
     CIPHER,
     COMPRESSION,
@@ -241,7 +241,7 @@ def test_the_pytest_configuration_carries_the_same_filter():
     """The bed cell runs under ``filterwarnings = ["error"]``; the moment the
     lock moves to cryptography 50 it needs this ini line or it reds on the
     first legacy handshake."""
-    filters = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())["tool"]["pytest"][
+    filters = tomllib.loads((CHECKOUT_ROOT / "pyproject.toml").read_text())["tool"]["pytest"][
         "ini_options"
     ]["filterwarnings"]
     assert filters[0] == "error"

@@ -6,7 +6,7 @@ import pytest
 
 from otto.errors import FieldError
 from otto.init import InitConfig, InitInputError
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.project_scaffold import make_project
 
 
 def test_a_root_that_is_not_a_directory_is_refused_naming_root(tmp_path: Path) -> None:
@@ -40,18 +40,18 @@ def test_init_input_error_is_a_field_error() -> None:
     assert issubclass(InitInputError, FieldError)
 
 
-def test_for_repo_defaults_the_name_to_the_settings_name(tmp_path: Path) -> None:
-    make_sut_repo(tmp_path, name="acme", version="1.0.0")
+def test_for_project_defaults_the_name_to_the_settings_name(tmp_path: Path) -> None:
+    make_project(tmp_path, name="acme", version="1.0.0")
     assert InitConfig.for_project(tmp_path).name == "acme"
 
 
-def test_for_repo_defaults_the_name_to_the_directory_without_settings(tmp_path: Path) -> None:
+def test_for_project_defaults_the_name_to_the_directory_without_settings(tmp_path: Path) -> None:
     project = tmp_path / "widget"
     project.mkdir()
     assert InitConfig.for_project(project).name == "widget"
 
 
-def test_for_repo_prefers_an_explicit_name_and_resolves_the_root(
+def test_for_project_prefers_an_explicit_name_and_resolves_the_root(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
@@ -59,7 +59,7 @@ def test_for_repo_prefers_an_explicit_name_and_resolves_the_root(
     assert (cfg.root, cfg.name, cfg.version) == (tmp_path.resolve(), "given", "2.0.0")
 
 
-def test_for_repo_still_refuses_a_missing_root(tmp_path: Path) -> None:
+def test_for_project_still_refuses_a_missing_root(tmp_path: Path) -> None:
     with pytest.raises(InitInputError) as caught:
         InitConfig.for_project(tmp_path / "nope")
     assert caught.value.field == "root"

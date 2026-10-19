@@ -6,7 +6,7 @@ user actually watches: one row per file, a bar that reaches full, and a
 byte counter that ends at the file's own size.
 
 Three rendering assumptions are load-bearing for the single-line assertions
-below; all three were measured against this repo's Rich (15.0.0) INSIDE a
+below; all three were measured against this repository's Rich (15.0.0) INSIDE a
 pytest run on 2026-08-26 rather than assumed:
 
 * the console really is 100 columns, which fits description + 40-glyph bar +

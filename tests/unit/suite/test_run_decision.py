@@ -1,13 +1,13 @@
-"""Which repos run a session for the names, and which names each must find.
+"""Which projects run a session for the names, and which names each must find.
 
 ``otto.suite.run._decide`` reads only the tables and what ``classify`` found,
-and never narrows a collection: every session collects its repo's whole
+and never narrows a collection: every session collects its project's whole
 tree, because a table is a hint (a test can appear without any file it
 watches changing, #592). The tables decide the order of the sessions and how
-early a name no repo holds is refused: a name no record places is searched
-for by one repo not yet searched in this run (one whose table is stale
+early a name no project holds is refused: a name no record places is searched
+for by one project not yet searched in this run (one whose table is stale
 first), whose session runs first and must find it, and a name still unplaced
-once every repo is searched is unknown before any session runs.
+once every project is searched is unknown before any session runs.
 
 Every table here is synthetic: no file is read, no pytest runs.
 """
@@ -31,9 +31,9 @@ def _known(
     deleted: tuple[str, ...] = (),
     found: tuple[str, ...] | None = None,
 ) -> _Known:
-    """A repo under *root* whose records hold *files* (name -> tests), classified as given.
+    """A project under *root* whose records hold *files* (name -> tests), classified as given.
 
-    *found*: the repo was searched in this run, and its session matched these names.
+    *found*: the project was searched in this run, and its session matched these names.
     """
     table = ProjectTable(
         root=root,
@@ -62,7 +62,7 @@ def _known(
 
 
 def _sessions(decision) -> list[tuple[int, list[str]]]:
-    """Each planned session as (repo index, must_match); every one collects the whole tree."""
+    """Each planned session as (project index, must_match); every one collects the whole tree."""
     assert all(s.candidates is None for s in decision.sessions.values())
     return [(i, s.must_match) for i, s in decision.sessions.items()]
 
@@ -78,8 +78,8 @@ def test_a_session_collects_the_whole_tree_even_where_a_record_places_the_name(t
     assert _sessions(decision) == [(0, ["test_x"])]
 
 
-def test_one_repo_must_find_every_name_it_may_hold(tmp_path):
-    """Placed or not, a name in a one-repo run can only be there: its session searches."""
+def test_one_project_must_find_every_name_it_may_hold(tmp_path):
+    """Placed or not, a name in a one-project run can only be there: its session searches."""
     a = tmp_path / "a"
     known = [_known(a, {"test_a.py": ["test_x"]})]
 
@@ -103,7 +103,7 @@ def test_an_unplaced_name_is_searched_first_where_a_test_was_just_written(tmp_pa
     assert _sessions(decision) == [(1, ["test_new"]), (0, [])]
 
 
-def test_an_unplaced_name_with_nothing_stale_is_searched_by_the_first_repo(tmp_path):
+def test_an_unplaced_name_with_nothing_stale_is_searched_by_the_first_project(tmp_path):
     a, b = tmp_path / "a", tmp_path / "b"
     known = [_known(a, {"test_a.py": ["test_x"]}), _known(b, {"test_b.py": ["test_y"]})]
 
@@ -113,7 +113,7 @@ def test_an_unplaced_name_with_nothing_stale_is_searched_by_the_first_repo(tmp_p
     assert _sessions(decision) == [(0, ["test_generated"]), (1, [])]
 
 
-def test_a_cold_repo_searches_for_an_unplaced_name(tmp_path):
+def test_a_cold_project_searches_for_an_unplaced_name(tmp_path):
     a, b = tmp_path / "a", tmp_path / "b"
     known = [_known(a, {"test_a.py": ["test_x"]}), _known(b, {}, cold=True)]
 
@@ -122,7 +122,7 @@ def test_a_cold_repo_searches_for_an_unplaced_name(tmp_path):
     assert _sessions(decision) == [(1, ["test_new"]), (0, [])]
 
 
-def test_a_name_another_repo_may_hold_is_required_of_neither(tmp_path):
+def test_a_name_another_project_may_hold_is_required_of_neither(tmp_path):
     """Records place test_x in a and test_y in b, but either may now be in the other."""
     a, b = tmp_path / "a", tmp_path / "b"
     known = [_known(a, {"test_a.py": ["test_x"]}), _known(b, {"test_b.py": ["test_y"]})]
@@ -133,7 +133,7 @@ def test_a_name_another_repo_may_hold_is_required_of_neither(tmp_path):
     assert _sessions(decision) == [(0, []), (1, [])]
 
 
-def test_every_repo_runs_even_one_whose_records_hold_none_of_the_names(tmp_path):
+def test_every_project_runs_even_one_whose_records_hold_none_of_the_names(tmp_path):
     a, b = tmp_path / "a", tmp_path / "b"
     known = [_known(a, {"test_a.py": ["test_x"]}), _known(b, {"test_b.py": ["test_y"]})]
 
@@ -142,7 +142,7 @@ def test_every_repo_runs_even_one_whose_records_hold_none_of_the_names(tmp_path)
     assert list(decision.sessions) == [0, 1]
 
 
-def test_a_repo_searched_whole_that_holds_none_of_the_names_gets_no_session(tmp_path):
+def test_a_project_searched_whole_that_holds_none_of_the_names_gets_no_session(tmp_path):
     a, b = tmp_path / "a", tmp_path / "b"
     known = [
         _known(a, {"test_a.py": ["test_x"]}, found=()),
@@ -154,7 +154,7 @@ def test_a_repo_searched_whole_that_holds_none_of_the_names_gets_no_session(tmp_
     assert _sessions(decision) == [(1, ["test_y"])]
 
 
-def test_after_a_search_misses_the_next_unsearched_repo_searches(tmp_path):
+def test_after_a_search_misses_the_next_unsearched_project_searches(tmp_path):
     a, b, c = tmp_path / "a", tmp_path / "b", tmp_path / "c"
     known = [
         _known(a, {"test_a.py": ["test_x"]}, found=("test_x",)),
@@ -169,7 +169,7 @@ def test_after_a_search_misses_the_next_unsearched_repo_searches(tmp_path):
 
 
 def test_what_a_search_read_places_a_name_for_certain(tmp_path):
-    """A searched repo holding the name is the only place it can be once the rest are searched."""
+    """A searched project holding the name is its only place once the rest are searched."""
     a, b = tmp_path / "a", tmp_path / "b"
     known = [
         _known(a, {"test_a.py": ["test_new"]}, found=("test_new",)),
@@ -182,7 +182,7 @@ def test_what_a_search_read_places_a_name_for_certain(tmp_path):
     assert _sessions(decision) == [(0, ["test_new"])]
 
 
-def test_a_name_unplaced_once_every_repo_is_searched_is_unknown(tmp_path):
+def test_a_name_unplaced_once_every_project_is_searched_is_unknown(tmp_path):
     a, b = tmp_path / "a", tmp_path / "b"
     known = [
         _known(a, {"test_a.py": ["test_x"]}, found=()),
@@ -195,7 +195,7 @@ def test_a_name_unplaced_once_every_repo_is_searched_is_unknown(tmp_path):
     assert decision.sessions == {}
 
 
-def test_a_searched_repo_trusts_only_what_its_session_matched(tmp_path):
+def test_a_searched_project_trusts_only_what_its_session_matched(tmp_path):
     """A record the session did not bear out (pytest no longer collects it) places nothing."""
     a = tmp_path / "a"
     known = [_known(a, {"test_a.py": ["test_x"], "test_gone.py": ["test_y"]}, found=())]

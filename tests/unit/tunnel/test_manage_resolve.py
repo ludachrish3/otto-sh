@@ -200,7 +200,7 @@ def _container(
 class TestContainerRules:
     def _setup(self):
         parent = FakeUnix("test1", ip="10.10.200.11")
-        ctr = _container("test1.repo2.oldos", parent)
+        ctr = _container("test1.project2.oldos", parent)
         other = FakeUnix("test2-soil", ip="10.10.200.12")
         return _lab(**{parent.id: parent, ctr.id: ctr, other.id: other}), parent, ctr, other
 
@@ -233,7 +233,7 @@ class TestContainerRules:
         converts ``CommandResult.timed_out`` rather than catching a raised
         ``asyncio.TimeoutError`` (the host call no longer raises one)."""
         parent = FakeUnix("test1", ip="10.10.200.11")
-        ctr = _container("test1.repo2.oldos", parent, inspect_timeout=True)
+        ctr = _container("test1.project2.oldos", parent, inspect_timeout=True)
         other = FakeUnix("test2-soil", ip="10.10.200.12")
         lab = _lab(**{parent.id: parent, ctr.id: ctr, other.id: other})
 
@@ -270,9 +270,9 @@ def _real_placeholder(running_cid: str = "", inspect_ip: str = "172.17.0.2"):
     return DockerContainerHost(
         parent=parent,
         container_id="",
-        project="repo1",
+        project="project1",
         service="api",
-        compose_project="otto-repo1-x",
+        compose_project="otto-project1-x",
     )
 
 
@@ -472,7 +472,7 @@ class TestPlannedChainRefusesFromLabDataAlone:
 
     def test_a_container_hop_is_named_but_its_address_is_left_unread(self) -> None:
         parent = FakeUnix("test1", ip="10.10.200.11")
-        ctr = _container("test1.repo2.oldos", parent)
+        ctr = _container("test1.project2.oldos", parent)
         other = FakeUnix("test2-soil", ip="10.10.200.12")
         lab = _lab(**{parent.id: parent, ctr.id: ctr, other.id: other})
 
@@ -494,7 +494,7 @@ class TestPlannedChainRefusesFromLabDataAlone:
 
     def test_the_container_interface_refusal_still_fires(self) -> None:
         parent = FakeUnix("test1", ip="10.10.200.11")
-        ctr = _container("test1.repo2.oldos", parent)
+        ctr = _container("test1.project2.oldos", parent)
         other = FakeUnix("test2-soil", ip="10.10.200.12")
         lab = _lab(**{parent.id: parent, ctr.id: ctr, other.id: other})
         with active_context(dry_run=True), pytest.raises(ValueError, match="no @interface"):
@@ -527,7 +527,7 @@ class TestTheBackstopGuardsResolutionToo:
 
     def test_container_ip_raises_instead_of_returning_the_banner(self) -> None:
         parent = FakeUnix("test1", ip="10.10.200.11")
-        ctr = _container("test1.repo2.oldos", parent)
+        ctr = _container("test1.project2.oldos", parent)
 
         # POSITIVE CONTROL: outside a dry run it really does read an address.
         assert asyncio.run(_container_ip(ctr)) == "172.17.0.2"

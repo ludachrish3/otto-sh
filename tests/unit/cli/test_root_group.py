@@ -69,14 +69,14 @@ def test_the_hand_maintained_group_counts_track_the_registry():
     """
     import importlib.util
 
-    from tests._fixtures.paths import PROJECT_ROOT
+    from tests._fixtures.paths import CHECKOUT_ROOT
 
     names = _builtin_command_names()
     count = len(names)
     assert count in _NUMBER_WORDS, f"extend _NUMBER_WORDS: {count} groups registered ({names})"
     word = _NUMBER_WORDS[count]
 
-    guide = (PROJECT_ROOT / "docs" / "cli" / "index.md").read_text()
+    guide = (CHECKOUT_ROOT / "docs" / "cli" / "index.md").read_text()
     assert (
         _one_match(r"`otto` is one command with (\w+) subcommand groups", guide, "count sentence")
         == word
@@ -89,7 +89,7 @@ def test_the_hand_maintained_group_counts_track_the_registry():
         == word
     )
 
-    script = PROJECT_ROOT / "scripts" / "capture_docs_termynal.py"
+    script = CHECKOUT_ROOT / "scripts" / "capture_docs_termynal.py"
     assert _one_match(r"# The (\w+) first-party commands", script.read_text(), "comment") == word
     spec = importlib.util.spec_from_file_location("capture_docs_termynal", script)
     module = importlib.util.module_from_spec(spec)
@@ -99,10 +99,10 @@ def test_the_hand_maintained_group_counts_track_the_registry():
 
 def test_the_cli_guide_lists_every_group_in_its_table_and_toctree():
     """A group with a page nobody links to is a page nobody reads."""
-    from tests._fixtures.paths import PROJECT_ROOT
+    from tests._fixtures.paths import CHECKOUT_ROOT
 
     names = _builtin_command_names()
-    guide = (PROJECT_ROOT / "docs" / "cli" / "index.md").read_text()
+    guide = (CHECKOUT_ROOT / "docs" / "cli" / "index.md").read_text()
 
     rows = re.findall(r"^\| \[`otto (\S+)`\]", guide, re.MULTILINE)
     assert sorted(rows) == sorted(names), "the Commands table and the registry disagree"

@@ -18,7 +18,7 @@ from pathlib import Path
 from otto.config import completion_cache as _cc
 from otto.config.cache_sections import section_by_name, section_digest, writer_key_paths
 from tests._fixtures.labdata import write_lab_json
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.project_scaffold import make_project
 
 _CREDS = [{"login": "u", "password": "p"}]
 
@@ -41,10 +41,10 @@ def _hash_path(path: Path) -> str:
     return h.hexdigest()
 
 
-def _repo(tmp_path: Path):
+def _project(tmp_path: Path):
     from otto.config.project import Project
 
-    root = make_sut_repo(
+    root = make_project(
         tmp_path / "sut",
         tests=["tests"],
         extra=SETTINGS,
@@ -78,7 +78,7 @@ def test_walkers_report_visited_directories(tmp_path):
     parent, glob root, and glob-match parent — four distinct directories,
     four distinct code paths, none of them redundant with another.
     """
-    project = _repo(tmp_path)
+    project = _project(tmp_path)
     names = set(writer_key_paths(section_by_name("names"), [project]))
     assert {
         project.root / "lab",  # bare directory entry
@@ -98,7 +98,7 @@ def test_a_new_lab_file_in_a_globbed_directory_moves_the_names_digest(tmp_path):
     change: `extra/nested` was untouched, and every other key path is
     unrelated to this write.
     """
-    project = _repo(tmp_path)
+    project = _project(tmp_path)
     # Backdate `extra`'s mtime 2s: Linux stamps directory mtimes off a coarse
     # clock, so the fixture's `mkdir` (of `extra/nested`) and this write below
     # can land in the same tick, leaving the mtime unchanged despite the entry
@@ -119,7 +119,7 @@ def test_a_new_nested_test_file_moves_no_digest(tmp_path):
     directory — so a new one moves nothing: test names live in the per-file
     tables, which see it through its directory's stat.
     """
-    project = _repo(tmp_path)
+    project = _project(tmp_path)
     names_before = section_digest(section_by_name("names"), [project])
     (project.root / "tests" / "sub" / "test_new.py").write_text("def test_c():\n    pass\n")
     assert section_digest(section_by_name("names"), [project]) == names_before

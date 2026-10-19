@@ -15,11 +15,11 @@ import textwrap
 import pytest
 
 from otto.suite.run import RunOptions, run_tests
-from tests._fixtures.sut_repos import DOUBLE_TEST_NAME
+from tests._fixtures.run_projects import DOUBLE_TEST_NAME
 
 
 @pytest.fixture(autouse=True)
-def _one_repo(one_repo_double):
+def _one_project(one_project_double):
     """Every run here selects the double's one test; the session itself is stubbed."""
 
 

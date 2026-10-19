@@ -1071,7 +1071,7 @@ class TestAddDryRunWithAContainerEndpoint:
         from tests.unit.tunnel.test_manage_resolve import _container
 
         parent = FakeHost("test1", ip="10.10.200.11")
-        ctr = _container("test1.repo2.oldos", parent)
+        ctr = _container("test1.project2.oldos", parent)
         other = FakeHost("test2-soil", ip="10.10.200.12")
         return _lab_from(parent, ctr, other), parent, ctr, other
 

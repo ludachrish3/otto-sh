@@ -221,7 +221,7 @@ def test_export_treats_sentinel_tickets_as_ordinary_entries_in_sorted_position(t
     entries (the shipped compatibility-policy bullet says so verbatim) —
     sorted alongside real ids, not appended/prepended specially. Both
     sentinel strings start with `(` (0x28), which sorts before any
-    alphanumeric ticket id, so on a repo with poor ticket discipline they
+    alphanumeric ticket id, so on a codebase with poor ticket discipline they
     legitimately float to the top — asserted here via plain `sorted()`,
     not a hardcoded position, so this would catch a future change to
     either literal string just as readily as an ordering bug."""
@@ -254,7 +254,7 @@ def test_export_treats_sentinel_tickets_as_ordinary_entries_in_sorted_position(t
 def test_export_succeeds_when_only_sentinel_tickets_attributed(tmp_path):
     """Task 14 changes the loud-fail gate's meaning: `store.tickets` is now
     non-empty whenever attribution ran at all (even if every commit matched
-    no real ticket), not only when a real ticket was found. A repo with
+    no real ticket), not only when a real ticket was found. A project with
     zero ticket-referencing commits must still export successfully —
     raising here would be the exact regression the brief warns about."""
     store = CoverageStore(tier_order=["unit"])
@@ -316,12 +316,12 @@ def test_export_totals_dedupe_a_line_owned_by_two_tickets(tmp_path):
     assert by_id["PROJ-2"]["lines"]["owned"] == 2
 
 
-def test_export_paths_are_repo_relative(tmp_path):
-    """Public-export paths must be repo-relative posix, not absolute: two CI
+def test_export_paths_are_project_relative(tmp_path):
+    """Public-export paths must be project-root-relative posix, not absolute: two CI
     runners with different workspace roots must emit identical bytes for
     identical coverage, and an external consumer has no way to map an
     absolute, machine-specific path onto their own checkout."""
-    project_root = tmp_path / "repo"
+    project_root = tmp_path / "proj"
     (project_root / "src").mkdir(parents=True)
     store = CoverageStore(tier_order=["unit"])
     rec = store.get_or_create_file(project_root / "src" / "a.c")

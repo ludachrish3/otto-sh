@@ -1,10 +1,10 @@
 """``fleet_of_interest`` answers what a fleet walk would walk, without walking it.
 
-Spec ``docs/superpowers/specs/2026-10-06-repo-and-scope-inputs-design.md`` §3
+Spec ``docs/superpowers/specs/2026-10-06-project-and-scope-inputs-design.md`` §3
 and §8. The ORACLE is the walk itself: ``ctx.all_hosts(...)`` for the union and
-``ctx.for_project(owner).all_hosts(...)`` for one repo, on a non-sentinel context
-built on the same lab, repos and ``-E``, and handed one bootstrap result
-(``bootstrap=fake_bootstrap_result(...)``) holding those same repos. Over
+``ctx.for_project(owner).all_hosts(...)`` for one project, on a non-sentinel context
+built on the same lab, projects and ``-E``, and handed one bootstrap result
+(``bootstrap=fake_bootstrap_result(...)``) holding those same projects. Over
 every generated case the query must equal the walk's ids, in the lab's
 order. The three places the two differ on purpose are tested on their own
 below.
@@ -32,7 +32,7 @@ from otto.fleet import fleet_of_interest
 from otto.models.dependencies import normalize_name
 from otto.run_context import LIBRARY_LAB_NAME, OttoContext, set_context
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result
-from tests._fixtures.fleet import _lab, _repo, add_builtin_local, install_scoped_context
+from tests._fixtures.fleet import _lab, _project, add_builtin_local, install_scoped_context
 
 
 def _container(parent, service, source_lab):
@@ -51,7 +51,7 @@ def _container(parent, service, source_lab):
 
 @dataclasses.dataclass(frozen=True)
 class _World:
-    """One lab and a pool of repos, built once per module."""
+    """One lab and a pool of projects, built once per module."""
 
     lab: object
     projects: dict
@@ -59,11 +59,11 @@ class _World:
 
 @pytest.fixture(scope="module")
 def world(tmp_path_factory):
-    """Hosts ``h1 h2 h3 h1.r1.api local`` (in that lab order) and eight repos.
+    """Hosts ``h1 h2 h3 h1.r1.api local`` (in that lab order) and eight projects.
 
     ``h1``/``h2`` sit in lab ``a``, ``h3`` in lab ``b``; the container joins
     lab ``a``; ``local`` is stamped ``a`` (``add_builtin_local`` stamps the
-    first component). The repos are chosen so each §8 axis has a case that
+    first component). The projects are chosen so each §8 axis has a case that
     tells a right answer from a wrong one:
 
     * ``plain`` declares nothing;
@@ -79,14 +79,14 @@ def world(tmp_path_factory):
     lab.add_host(_container(lab.hosts["h1"], "api", "a"))
     add_builtin_local(lab)
     projects = {
-        "plain": _repo(base, "plain"),
-        "alpha": _repo(base, "alpha", labs=["a"], hosts=["h1", r"h1\.r1\.api"]),
-        "beta": _repo(base, "beta", labs=["a"], hosts=["h2"]),
-        "every-a": _repo(base, "every-a", labs=["a"], hosts=[".*"]),
-        "bravo": _repo(base, "bravo", labs=["b"], hosts=[".*"]),
-        "ghost": _repo(base, "ghost", labs=["z"], hosts=[".*"]),
-        "dup-first": _repo(base / "first", "dup", labs=["a"], hosts=["h2"]),
-        "dup-second": _repo(base / "second", "dup", labs=["b"], hosts=[".*"]),
+        "plain": _project(base, "plain"),
+        "alpha": _project(base, "alpha", labs=["a"], hosts=["h1", r"h1\.r1\.api"]),
+        "beta": _project(base, "beta", labs=["a"], hosts=["h2"]),
+        "every-a": _project(base, "every-a", labs=["a"], hosts=[".*"]),
+        "bravo": _project(base, "bravo", labs=["b"], hosts=[".*"]),
+        "ghost": _project(base, "ghost", labs=["z"], hosts=[".*"]),
+        "dup-first": _project(base / "first", "dup", labs=["a"], hosts=["h2"]),
+        "dup-second": _project(base / "second", "dup", labs=["b"], hosts=[".*"]),
     }
     assert list(lab.hosts) == ["h1", "h2", "h3", "h1.r1.api", "local"]
     return _World(lab=lab, projects=projects)
@@ -94,9 +94,9 @@ def world(tmp_path_factory):
 
 @dataclasses.dataclass(frozen=True)
 class _Case:
-    """One generated input: which pool repos, in which order, and the knobs."""
+    """One generated input: which pool projects, in which order, and the knobs."""
 
-    repo_keys: list
+    project_keys: list
     owner: object
     exclude_projects: object
     include_containers: bool
@@ -113,10 +113,10 @@ _DUPLICATE_LISTS = [
 
 
 def _cases(world):
-    """Every repo list of up to three unique repos, plus the duplicate-name lists.
+    """Every project list of up to three unique projects, plus the duplicate-name lists.
 
     For each list: owner unset and set to each name; ``-E`` unset, naming no
-    repo, naming each declaring repo, and (with ``every-a`` present) spelled
+    project, naming each declaring project, and (with ``every-a`` present) spelled
     ``Every_A``; and the four flag combinations.
     """
     lists = [
@@ -164,11 +164,11 @@ def oracle(world):
         # is not under test here.
         mp.setattr(logging.getLogger("otto.context"), "disabled", True)
         for case in _cases(world):
-            # The context reads its repos from the one result it is handed.
+            # The context reads its projects from the one result it is handed.
             ctx = OttoContext(
                 lab=world.lab,
                 exclude_projects=tuple(case.exclude_projects or ()),
-                bootstrap=fake_bootstrap_result([world.projects[key] for key in case.repo_keys]),
+                bootstrap=fake_bootstrap_result([world.projects[key] for key in case.project_keys]),
             )
             surface = ctx if case.owner is None else ctx.for_project(case.owner)
             try:
@@ -194,7 +194,7 @@ def _mismatches(candidate, world, oracle):
         try:
             got = candidate(
                 world.lab,
-                [world.projects[key] for key in case.repo_keys],
+                [world.projects[key] for key in case.project_keys],
                 owner=case.owner,
                 exclude_projects=(
                     None if case.exclude_projects is None else list(case.exclude_projects)
@@ -227,14 +227,14 @@ def _declares(project):
 
 
 def _mutant_no_declaration_is_empty(lab, projects, **kw):
-    """Axis: no repo declared. Answers nothing instead of the whole lab."""
+    """Axis: no project declared. Answers nothing instead of the whole lab."""
     if not any(_declares(project) for project in projects):
         return []
     return fleet_of_interest(lab, projects, **kw)
 
 
 def _mutant_union_is_the_first_declarer(lab, projects, **kw):
-    """Axis: several repos declared. The union keeps only the first declarer."""
+    """Axis: several projects declared. The union keeps only the first declarer."""
     if kw["owner"] is None:
         first = next((project for project in projects if _declares(project)), None)
         projects = [project for project in projects if not _declares(project) or project is first]
@@ -242,7 +242,7 @@ def _mutant_union_is_the_first_declarer(lab, projects, **kw):
 
 
 def _mutant_undeclared_widens_the_union(lab, projects, **kw):
-    """Axis: a declared repo beside an undeclared one. The undeclared one restores the lab."""
+    """Axis: a declared project beside an undeclared one. The undeclared one restores the lab."""
     declaring = [project for project in projects if _declares(project)]
     if kw["owner"] is None and declaring and len(declaring) < len(projects):
         projects = [project for project in projects if not _declares(project)]
@@ -255,12 +255,12 @@ def _mutant_owner_ignored(lab, projects, **kw):
 
 
 def _mutant_exclude_ignored(lab, projects, **kw):
-    """Axis: ``-E`` on a declaring repo, without an owner. The switch does nothing."""
+    """Axis: ``-E`` on a declaring project, without an owner. The switch does nothing."""
     return fleet_of_interest(lab, projects, **{**kw, "exclude_projects": None})
 
 
 def _mutant_exclude_binds_the_owner(lab, projects, **kw):
-    """Axis: ``-E`` on a declaring repo, with that repo as owner. The switch empties it."""
+    """Axis: ``-E`` on a declaring project, with that project as owner. The switch empties it."""
     switched = {normalize_name(name) for name in kw["exclude_projects"] or []}
     if kw["owner"] is not None and normalize_name(kw["owner"]) in switched:
         return []
@@ -275,7 +275,7 @@ def _mutant_exclude_not_normalized(lab, projects, **kw):
 
 
 def _mutant_unknown_exclude_refused(lab, projects, **kw):
-    """Axis: an ``-E`` name that matches no repo. The query validates it."""
+    """Axis: an ``-E`` name that matches no project. The query validates it."""
     known = {normalize_name(project.name) for project in projects}
     if any(normalize_name(name) not in known for name in kw["exclude_projects"] or []):
         raise ValueError("unknown --exclude-projects name")
@@ -301,7 +301,7 @@ def _mutant_local_flag_bypasses_scope(lab, projects, **kw):
 
 
 def _mutant_first_duplicate_wins(lab, projects, **kw):
-    """Axis: two repos with the same name. The first one wins instead of the last."""
+    """Axis: two projects with the same name. The first one wins instead of the last."""
     seen = set()
     kept = []
     for project in projects:
@@ -312,14 +312,14 @@ def _mutant_first_duplicate_wins(lab, projects, **kw):
 
 
 _MUTANTS = {
-    "no repo declared": _mutant_no_declaration_is_empty,
+    "no project declared": _mutant_no_declaration_is_empty,
     "several declared": _mutant_union_is_the_first_declarer,
     "declared beside undeclared": _mutant_undeclared_widens_the_union,
     "owner set": _mutant_owner_ignored,
     "-E without owner": _mutant_exclude_ignored,
     "-E with owner": _mutant_exclude_binds_the_owner,
     "-E spelling": _mutant_exclude_not_normalized,
-    "-E matching no repo": _mutant_unknown_exclude_refused,
+    "-E matching no project": _mutant_unknown_exclude_refused,
     "include_containers": _mutant_containers_flag_ignored,
     "include_local": _mutant_local_flag_ignored,
     "local outside the scope": _mutant_local_flag_bypasses_scope,
@@ -351,7 +351,7 @@ def test_an_unknown_owner_is_refused_even_where_the_walk_falls_back(world):
     ctx = install_scoped_context(world.lab, [])
     # The walk: no scope resolved, so an unknown owner falls back to the whole lab.
     assert [host.id for host in ctx.for_project("x").all_hosts()] == ["h1", "h2", "h3"]
-    # The query: the caller handed the repos over, so the whole lab would widen.
+    # The query: the caller handed the projects over, so the whole lab would widen.
     with pytest.raises(
         ProjectScopeError, match=r"none of the projects\s+it was\s+given is named 'x'"
     ):

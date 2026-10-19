@@ -1,14 +1,14 @@
-"""The project-instruction table: one spec per name, one body per repo, loud rules.
+"""The project-instruction table: one spec per name, one body per project, loud rules.
 
-Declaration order is bootstrap's: otto's own bodies first (repo ``None``,
-declared in ``FIRST_PARTY_ACTIONS``), then each repo's actions in registration
+Declaration order is bootstrap's: otto's own bodies first (project ``None``,
+declared in ``FIRST_PARTY_ACTIONS``), then each project's actions in registration
 (dependency) order. The FIRST declaration of a name fixes its walk shape; a
 later declaration may restate a keyword identically but never differently. An
 override of a first-party name must inherit that name's first-party options
 class. ``PROJECT_INSTRUCTIONS`` is derived from ``PROJECT_ACTIONS``, which the
 root conftest's ``_isolate_registries`` rolls back after each test.
 
-The repo-declared synthetic names are ``provision`` and ``deploy``, never one
+The project-declared synthetic names are ``provision`` and ``deploy``, never one
 of otto's six; the first-party rules use ``install`` itself, since otto's
 bodies are declared when ``otto.project.actions`` loads, which this module imports.
 """
@@ -41,7 +41,7 @@ class Foreign:
 
 
 def _declare(project: str, name: str = "provision", options_cls=ProvisionOptions, **shape):
-    """Register, as *repo*, a ``ProjectActions`` subclass whose one method declares *name*."""
+    """Register, as *project*, a ``ProjectActions`` subclass whose one method declares *name*."""
     if options_cls is None:
 
         @instruction(name, help="h", **shape)
@@ -125,7 +125,7 @@ class TestSecondDeclaration:
         assert [b.project for b in entry.bodies] == [None, "widget"]
         assert entry.first_party_options is InstallOptions
 
-    def test_repo_added_name_has_no_inheritance_rule(self) -> None:
+    def test_project_added_name_has_no_inheritance_rule(self) -> None:
         _declare("a", "deploy", None)
         _declare("b", "deploy", Foreign)
         assert len(PROJECT_INSTRUCTIONS.get("deploy").bodies) == 2

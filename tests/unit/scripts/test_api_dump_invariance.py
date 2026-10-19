@@ -12,9 +12,9 @@ import pytest
 from scripts import api_records, api_regen
 from tests._fixtures.api_dump import write_tree
 from tests._fixtures.api_dump_surface import DRIFT_FILES, FILES, NAMESPACES, drift_expected
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-EXPECTED = PROJECT_ROOT / "tests" / "_fixtures" / "api_dump_surface_expected.txt"
+EXPECTED = CHECKOUT_ROOT / "tests" / "_fixtures" / "api_dump_surface_expected.txt"
 
 
 def render(

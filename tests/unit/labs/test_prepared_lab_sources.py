@@ -10,14 +10,14 @@ from otto.labs.errors import LabSourceConstructionError
 from otto.labs.sources import build_lab_sources, prepared_lab_sources
 from otto.registry import registering_project
 from tests._fixtures.labdata import write_lab_json
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.project_scaffold import make_project
 
 
-def _repo(tmp_path, body: str):
-    """A parsed Repo whose settings declare *body* under [lab]."""
+def _project(tmp_path, body: str):
+    """A parsed Project whose settings declare *body* under [lab]."""
     from otto.config.project import Project
 
-    make_sut_repo(tmp_path, name="r", extra=body)
+    make_project(tmp_path, name="r", extra=body)
     project = Project(root=tmp_path)
     project.parse_settings()
     return project
@@ -25,25 +25,25 @@ def _repo(tmp_path, body: str):
 
 def test_settings_parse_validates_only_the_envelope(tmp_path):
     """A json source without paths parses; the shape error comes at preparation."""
-    project = _repo(tmp_path, '[[lab.sources]]\nbackend = "json"\n')
+    project = _project(tmp_path, '[[lab.sources]]\nbackend = "json"\n')
     with pytest.raises(LabSourceConstructionError, match="parse"):
         prepared_lab_sources(project)
 
 
 def test_an_unknown_json_key_is_a_preparation_error_naming_the_key(tmp_path):
-    project = _repo(tmp_path, '[[lab.sources]]\nbackend = "json"\npaths = ["d"]\nbogus = 1\n')
+    project = _project(tmp_path, '[[lab.sources]]\nbackend = "json"\npaths = ["d"]\nbogus = 1\n')
     with pytest.raises(LabSourceConstructionError, match="bogus"):
         prepared_lab_sources(project)
 
 
 def test_parse_imports_no_backend_config_model(tmp_path, monkeypatch):
     monkeypatch.delitem(sys.modules, "otto.labs.json_repository", raising=False)
-    _repo(tmp_path, '[[lab.sources]]\nbackend = "json"\npaths = ["lab_data"]\n')
+    _project(tmp_path, '[[lab.sources]]\nbackend = "json"\npaths = ["lab_data"]\n')
     assert "otto.labs.json_repository" not in sys.modules
 
 
 def test_an_unregistered_backend_is_unknown_not_unfiled(tmp_path):
-    project = _repo(tmp_path, '[[lab.sources]]\nbackend = "nowhere"\n')
+    project = _project(tmp_path, '[[lab.sources]]\nbackend = "nowhere"\n')
     (state,) = prepared_lab_sources(project)
     assert not state.is_known()
     with pytest.raises(LabSourceConstructionError, match="lookup") as err:
@@ -53,7 +53,7 @@ def test_an_unregistered_backend_is_unknown_not_unfiled(tmp_path):
 
 def test_a_json_source_is_file_backed_and_reads_its_anchored_files(tmp_path):
     write_lab_json(tmp_path / "lab_data" / "lab.json", [])
-    project = _repo(tmp_path, '[[lab.sources]]\nbackend = "json"\npaths = ["lab_data"]\n')
+    project = _project(tmp_path, '[[lab.sources]]\nbackend = "json"\npaths = ["lab_data"]\n')
     (state,) = prepared_lab_sources(project)
     assert state.is_known()
     assert state.is_file_backed()
@@ -61,7 +61,7 @@ def test_a_json_source_is_file_backed_and_reads_its_anchored_files(tmp_path):
 
 
 def test_preparation_is_cached_per_revision(tmp_path, monkeypatch):
-    project = _repo(tmp_path, '[[lab.sources]]\nbackend = "json"\npaths = ["lab_data"]\n')
+    project = _project(tmp_path, '[[lab.sources]]\nbackend = "json"\npaths = ["lab_data"]\n')
     from otto.labs import json_repository
 
     calls = []
@@ -85,11 +85,11 @@ def test_preparation_is_cached_per_revision(tmp_path, monkeypatch):
     assert state.prepared.generation == LAB_REPOSITORIES._generation("json")
 
 
-def test_a_reparsed_repo_prepares_its_new_sources(tmp_path):
+def test_a_reparsed_project_prepares_its_new_sources(tmp_path):
     """The memo is keyed by the declarations too: a settings edit is never served stale."""
-    project = _repo(tmp_path, '[[lab.sources]]\nbackend = "json"\npaths = ["one"]\n')
+    project = _project(tmp_path, '[[lab.sources]]\nbackend = "json"\npaths = ["one"]\n')
     (before,) = prepared_lab_sources(project)
-    (tmp_path / ".otto" / "settings.toml").write_text(  # sutrepo-exempt: a reparse
+    (tmp_path / ".otto" / "settings.toml").write_text(  # scaffold-exempt: a reparse
         'name = "r"\nversion = "1.0.0"\n[[lab.sources]]\nbackend = "json"\npaths = ["two"]\n'
     )
     project.parse_settings()
@@ -99,15 +99,15 @@ def test_a_reparsed_repo_prepares_its_new_sources(tmp_path):
     assert after.prepared.facts.file_inputs == (tmp_path / "two",)
 
 
-def test_a_reparsed_repo_keeps_one_memo_entry(tmp_path):
-    """A re-parse REPLACES the repo's prepared sources: the memo stays one entry per repo."""
+def test_a_reparsed_project_keeps_one_memo_entry(tmp_path):
+    """A re-parse REPLACES the project's prepared sources: the memo stays one entry per project."""
     from otto.labs import sources
 
-    project = _repo(tmp_path, '[[lab.sources]]\nbackend = "json"\npaths = ["one"]\n')
+    project = _project(tmp_path, '[[lab.sources]]\nbackend = "json"\npaths = ["one"]\n')
     held = len(sources._PREPARED)
     prepared_lab_sources(project)
     for paths in ('["two"]', '["three"]'):
-        (tmp_path / ".otto" / "settings.toml").write_text(  # sutrepo-exempt: a reparse
+        (tmp_path / ".otto" / "settings.toml").write_text(  # scaffold-exempt: a reparse
             f'name = "r"\nversion = "1.0.0"\n[[lab.sources]]\nbackend = "json"\npaths = {paths}\n'
         )
         project.parse_settings()
@@ -126,7 +126,7 @@ def test_the_json_config_model_validated_without_its_env_is_a_validation_error()
 
 
 def test_preparation_and_build_refuse_during_an_init_import(tmp_path):
-    project = _repo(tmp_path, '[[lab.sources]]\nbackend = "json"\npaths = ["lab_data"]\n')
+    project = _project(tmp_path, '[[lab.sources]]\nbackend = "json"\npaths = ["lab_data"]\n')
     with registering_project("r"):
         with pytest.raises(LabRepositoryError, match="init import"):
             prepared_lab_sources(project)
@@ -138,7 +138,7 @@ def test_otto_session_build_lab_refuses_during_an_init_import(tmp_path):
     from otto.session import LabBuildError, build_lab
 
     write_lab_json(tmp_path / "lab_data" / "lab.json", [])
-    project = _repo(tmp_path, '[[lab.sources]]\nbackend = "json"\npaths = ["lab_data"]\n')
+    project = _project(tmp_path, '[[lab.sources]]\nbackend = "json"\npaths = ["lab_data"]\n')
     with registering_project("r"), pytest.raises(LabBuildError, match="init import"):
         build_lab([project], ["lab"])
 

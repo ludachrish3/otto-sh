@@ -116,13 +116,13 @@ body calling `pytest.fail()`/`pytest.skip()` escapes the loop mid-iteration.
 the body *again*, and that final run is decisive — probe showed `retry(3)` passing on
 attempt 3 ran the body 4 times. `tests/conftest.py:203-206` documents this exact trap; the
 harness copy works around a bug the shipped, user-facing copy (`plugin.py:21`, advertised
-in `tests/repo1`) still has. Under `otto test` on `tests/repo1` both implementations are
+in `tests/project1`) still has. Under `otto test` on `tests/project1` both implementations are
 on the conftest chain, so attempts multiply.
 
 **2e. Zero test coverage; the sample repo normalizes the pattern** — **medium**. Neither
 implementation has a single test (`grep -rn "retry" tests/unit/` → no hits); the only
-"exercise" is `tests/repo1`'s `assert True` placeholder. And
-`tests/repo1/tests/test_device.py:64-66` — the reference example — teaches otto users
+"exercise" is `tests/project1`'s `assert True` placeholder. And
+`tests/project1/tests/test_device.py:64-66` — the reference example — teaches otto users
 retry-on-flaky-link as normal practice, on the code path that double-runs.
 
 **2f. The retry currently shields a documented product defect** — **high**.
@@ -352,7 +352,7 @@ Fix: one leading `assert items` each.
 ### 4.5 Environment-dependent skips that retire a lane — medium
 
 `tests/e2e/cov/test_embedded_coverage_e2e.py:58,:168` and
-`tests/repo3/tests/test_embedded_coverage.py:182`: build-artifact / build-config absence
+`tests/project3/tests/test_embedded_coverage.py:182`: build-artifact / build-config absence
 ⇒ the embedded-coverage e2e lane vanishes into a green run. Internally inconsistent: the
 same file's `clean_zephyr37_llext` (`:113`) hard-fails with "a dead bed can't hide behind a
 green run" — the same argument applies to a missing build artifact. Also
@@ -369,7 +369,7 @@ anywhere — every live-host candidate fails loud and host-named.
 ### 5.1 `OTTOPATH` re-injected process-wide after the strip *(verified)* — high
 
 `tests/integration/conftest.py:32` (`ensure_sut_dirs()` →
-`os.environ.setdefault("OTTOPATH", <tests/repo1>)`, at import time, "before any otto
+`os.environ.setdefault("OTTOPATH", <tests/project1>)`, at import time, "before any otto
 imports" because config reads it at import to build the module-level `_repos` singleton).
 Confirmed live: with an ambient `OTTOPATH=/ambient/leak/path` exported, the root
 strip removes it and the integration conftest then sets its own, process-wide, in every
@@ -592,7 +592,7 @@ Fix: delete all ten; extend `run_otto` with `extra_argv_prefix` + `cwd` (~180 li
 
 ### 7.2 Hand-rolled git-repo harness ×20 files, hermeticity diverging — high
 
-`tests/_fixtures/_repo_timeline.py:18` plus 19 test modules re-type `_GIT_ENV` +
+`tests/_fixtures/_git_timeline.py:18` plus 19 test modules re-type `_GIT_ENV` +
 `git()`/`_git()` wrappers. Measured: only 6 of 19 env dicts set
 `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM` — the other 13 leave `/etc/gitconfig` live (a
 global `commit.gpgsign` or `core.hooksPath` ⇒ opaque `CalledProcessError`;
@@ -632,7 +632,7 @@ on_timeout=…)` + async twin (~180 lines deleted, three semantics → one param
 `mkdir(.otto)` → write `settings.toml` literal → `Repo(sut_dir=…)`, everywhere from
 `tests/unit/config/test_repo.py:386` to `tests/e2e/chaos/test_console_chaos.py:124`.
 Every new config field currently means 27 edits. Proposed
-`tests/_fixtures/sutrepo.py::make_sut_repo(tmp_path, **sections)` (~200-260 lines); folds
+`tests/_fixtures/project_scaffold.py::make_project(tmp_path, **sections)` (~200-260 lines); folds
 in the triplicated `_repo(...)` at `test_dependencies_{resolution,ordering}.py` /
 `test_repo_deps_panel.py`.
 
@@ -793,12 +793,12 @@ module (named-host lease, per the `test_docker_chaos.py` test3 idiom, since
 | tests/unit/test_lab_data_hops.py:37 | skip | no embedded hosts | **suspicious** — §4.1; already firing for tech2 |
 | tests/e2e/cov/test_embedded_coverage_e2e.py:58 | skip | build_dir not configured | **suspicious** — config absence retires the lane |
 | tests/e2e/cov/test_embedded_coverage_e2e.py:168 | skip | product not built | **suspicious** — §4.5 |
-| tests/repo3/tests/test_embedded_coverage.py:182 | skip | no embedded coverage hosts in active lab | **suspicious** |
+| tests/project3/tests/test_embedded_coverage.py:182 | skip | no embedded coverage hosts in active lab | **suspicious** |
 | tests/integration/host/test_host_contract.py:140,:177,:225,:273,:325 | skip | no-FS / has-FS branches | ok — exhaustive declared-capability pairs |
 | tests/integration/host/test_host_stability_contract.py:120,:189 | skip | no-FS branches | ok |
 | tests/unit/bootstrap/test_bootstrap.py:142,:143,:271 | skip (in generated fixture source) | simulated repos | ok — input data, not tests |
 | tests/unit/config/test_completion_cache_unit.py:1373 | importorskip (fixture text) | optional-dep simulation | ok |
-| tests/repo1/tests/test_device.py:75 | skip | opt-out flag | ok — fixture SUT repo |
+| tests/project1/tests/test_device.py:75 | skip | opt-out flag | ok — fixture SUT repo |
 
 Web suite: zero skip/todo/fails/only, zero `skipIf`/`runIf`, zero snapshot tests, zero
 retries, zero real-time sleeps.

@@ -8,7 +8,7 @@
 # exist (todo/test-infra-remediation-plan-2026-08-06.md, gate G0). Discipline
 # that keeps the widening safe: every rule carries an explicit `files:` scope,
 # and rules scoped to tests/** must ignore the fixture projects
-# (tests/repo1..repo3, repo_broken, repo_e2e) and tests/firmware — those are
+# (tests/project1..project3, project_broken, project_e2e) and tests/firmware — those are
 # user-example input data, not otto's tests.
 ruleDirs:
 - .ast-grep/rules

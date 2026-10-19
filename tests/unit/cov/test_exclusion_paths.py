@@ -50,8 +50,8 @@ def test_glob_is_anchored_at_both_ends() -> None:
 
 def test_relative_glob_matches_relative_to_the_root() -> None:
     rule = _path_rule("vendor/**")
-    assert path_rule_matches(Path("/repo/vendor/a.c"), Path("/repo"), rule)
-    assert not path_rule_matches(Path("/repo/src/a.c"), Path("/repo"), rule)
+    assert path_rule_matches(Path("/proj/vendor/a.c"), Path("/proj"), rule)
+    assert not path_rule_matches(Path("/proj/src/a.c"), Path("/proj"), rule)
 
 
 def test_a_file_outside_the_root_never_matches_a_relative_glob() -> None:
@@ -65,13 +65,13 @@ def test_a_file_outside_the_root_never_matches_a_relative_glob() -> None:
     keeping an outside file out.
     """
     rule = _path_rule("**")
-    assert path_rule_matches(Path("/repo/deep/a.c"), Path("/repo"), rule)
-    assert not path_rule_matches(Path("/elsewhere/a.c"), Path("/repo"), rule)
+    assert path_rule_matches(Path("/proj/deep/a.c"), Path("/proj"), rule)
+    assert not path_rule_matches(Path("/elsewhere/a.c"), Path("/proj"), rule)
 
 
 def test_an_absolute_glob_matches_the_absolute_path() -> None:
     rule = _path_rule("/opt/vendor/**")
-    assert path_rule_matches(Path("/opt/vendor/a.c"), Path("/repo"), rule)
+    assert path_rule_matches(Path("/opt/vendor/a.c"), Path("/proj"), rule)
 
 
 def test_regex_rule_excludes_matching_lines() -> None:

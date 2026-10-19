@@ -2,7 +2,7 @@
 
 Migrated from the retired artifact-tier harness: its codec-contract module
 (codec facts inside a chroot, no transport) and its dropbear-backed
-shell-transfer module (a real transfer, but over an ssh daemon this repo
+shell-transfer module (a real transfer, but over an ssh daemon this repository
 grafted onto that chroot). Both were deleted with the harness; git history
 holds their names.
 

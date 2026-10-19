@@ -292,7 +292,7 @@ async def compose_up(
 
     from .staging import stage_compose_files
 
-    # Stage under the compose-project key (e.g. ``otto-repo1-vagrant`` or a
+    # Stage under the compose-project key (e.g. ``otto-project1-vagrant`` or a
     # ``OTTO_COMPOSE_SUFFIX``-suffixed variant) rather than ``project.name`` so
     # concurrent ``otto docker compose up`` invocations with different suffixes
     # don't ``rm -rf`` each other's compose dir mid-stage.

@@ -37,12 +37,12 @@ from pathlib import Path
 import pytest
 import yaml
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
 
-_CI_WORKFLOW = PROJECT_ROOT / ".github" / "workflows" / "ci.yml"
-_MAKEFILE = PROJECT_ROOT / "Makefile"
+_CI_WORKFLOW = CHECKOUT_ROOT / ".github" / "workflows" / "ci.yml"
+_MAKEFILE = CHECKOUT_ROOT / "Makefile"
 _SCRIPTS = ("build_web_no_warnings.sh", "gen_web_types.sh", "typecheck_web.sh")
 
 # The npm-script argument build_web_no_warnings.sh needs; the fake npm ignores
@@ -90,7 +90,7 @@ def _makefile_sanitized_vars() -> set[str]:
 
 def _script_sanitized_vars(script: str) -> set[str]:
     """The names ``scripts/<script>`` unsets before it starts a child."""
-    body = (PROJECT_ROOT / "scripts" / script).read_text()
+    body = (CHECKOUT_ROOT / "scripts" / script).read_text()
     loop = re.search(r"^\s*for _var in ([^;]+); do$", body, re.MULTILINE)
     assert loop, (
         f"scripts/{script} no longer has the `for _var in <names>; do` loop "
@@ -213,13 +213,13 @@ def _run_recipe(tmp_path: Path, **overrides: str) -> subprocess.CompletedProcess
 def _run_script(tmp_path: Path, script: str, **overrides: str) -> subprocess.CompletedProcess[str]:
     """A COPY of the real script in a throwaway root, with recorders for the
     npm/npx/uv it would otherwise run (gen_web_types.sh and typecheck_web.sh
-    resolve the repo from their own location, so the copy needs the layout)."""
+    resolve the checkout from their own location, so the copy needs the layout)."""
     if script == "typecheck_web.sh" and shutil.which("jq") is None:
         pytest.fail("scripts/typecheck_web.sh needs `jq` on PATH; install it")
     root = tmp_path / "root"
     (root / "scripts").mkdir(parents=True)
     (root / "web").mkdir()
-    shutil.copy(PROJECT_ROOT / "scripts" / script, root / "scripts" / script)
+    shutil.copy(CHECKOUT_ROOT / "scripts" / script, root / "scripts" / script)
     (root / "web" / "untitledui.lock.json").write_text('{"paths": ["src/components/**"]}\n')
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()

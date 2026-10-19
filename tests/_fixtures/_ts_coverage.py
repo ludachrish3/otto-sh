@@ -25,9 +25,9 @@ from playwright.sync_api import CDPSession, Page
 
 from tests._ambient_env import ambient
 from tests._fixtures._ts_bundle_filter import bundle_url_matches
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-_REPO_ROOT = PROJECT_ROOT
+_REPO_ROOT = CHECKOUT_ROOT
 RAW_DIR = _REPO_ROOT / "reports" / "ts-e2e-cov" / "raw"
 
 

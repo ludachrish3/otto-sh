@@ -14,8 +14,8 @@ from otto.host import dev_tool as dev_tool_mod
 from otto.host import product as product_mod
 from otto.host.element import Element
 from otto.registry import resolved
-from tests._fixtures.bootstrap_seam import publish_repos
-from tests._fixtures.fake_repo import fake_repo
+from tests._fixtures.bootstrap_seam import publish_projects
+from tests._fixtures.fake_project import fake_project
 
 SEAMS = [
     pytest.param(
@@ -66,7 +66,7 @@ def _entry(name, seam, kind="toy", match=None, **params):
         kind=kind,
         seam=seam,
         owner="declrepo",
-        base_dir=Path("/repo"),
+        base_dir=Path("/project"),
         match=match or {},
         params=params,
     )
@@ -145,8 +145,8 @@ def test_a_declared_name_also_returned_by_a_provider_is_refused_at_the_chokepoin
 
 
 def test_two_declared_entries_same_name_first_in_order_wins(seam):
-    # Cross-repo ordering is load-bearing: declared_for_host concatenates
-    # repos in a fixed order, and KindBuilder.build's first-match-wins must
+    # Cross-project ordering is load-bearing: declared_for_host concatenates
+    # projects in a fixed order, and KindBuilder.build's first-match-wins must
     # respect that order, not e.g. registration/kind order or last-wins.
     first = _entry("fw", seam.seam)
     second = DeclaredEntry(
@@ -204,7 +204,7 @@ def test_shell_kind_is_registered_in_both_seams(registry):
 
 def test_shell_kind_anchors_the_artifact_and_names_the_entry():
     built = resolved(product_mod.PRODUCT_KINDS.get("shell").factory)(_shell_entry(), _host())
-    assert built.artifact == Path("/repo/build/fw.bin")  # base_dir-anchored
+    assert built.artifact == Path("/project/build/fw.bin")  # base_dir-anchored
     assert built.name == "fw"
     assert built.stage_dir == Path()
 
@@ -239,7 +239,7 @@ async def test_shell_kind_stage_puts_the_artifact():
     host = _RunHost()
     result = await built.stage(host)
     assert result.status is Status.Success
-    assert host.put_calls == [(Path("/repo/build/fw.bin"), Path("/opt"))]
+    assert host.put_calls == [(Path("/project/build/fw.bin"), Path("/opt"))]
 
 
 @pytest.mark.asyncio
@@ -278,14 +278,14 @@ async def test_shell_kind_commands_run_on_the_host():
 
 
 def _factory_world():
-    """A scoped fake repo declaring one product and one dev tool for ``probe-box.*``."""
+    """A scoped fake project declaring one product and one dev tool for ``probe-box.*``."""
 
     product_entry = DeclaredEntry(
         name="fw",
         kind="shell",
         seam="products",
         owner="declrepo",
-        base_dir=Path("/repo"),
+        base_dir=Path("/project"),
         match={"id": "probe-box.*"},
         params={"artifact": "build/fw.bin"},
     )
@@ -294,17 +294,17 @@ def _factory_world():
         kind="shell",
         seam="dev_tools",
         owner="declrepo",
-        base_dir=Path("/repo"),
+        base_dir=Path("/project"),
         match={"id": "probe-box.*"},
         params={"artifact": "tools/probe.sh"},
     )
-    project = fake_repo(
+    project = fake_project(
         "declrepo",
         project_scope=_scope_for_factory(["somelab"]),
         declared_products=[product_entry],
         declared_dev_tools=[dev_tool_entry],
     )
-    publish_repos([project])
+    publish_projects([project])
 
 
 def _factory_host():
@@ -322,12 +322,12 @@ def _factory_host():
 
 
 def test_factory_applies_declared_entries_alongside_providers_after_the_lab_stamp(monkeypatch):
-    """End to end: a fake repo's [[products]]/[[dev_tools]] entries land on a
+    """End to end: a fake project's [[products]]/[[dev_tools]] entries land on a
     factory-built host next to differently-named provider instances on BOTH
     seams, and the gate saw the stamped lab.
 
     Kills: (a) omitting either apply_declared_* call; (c) placing either above
-    the source_lab stamp (the gate would judge "" and this scoped repo would be
+    the source_lab stamp (the gate would judge "" and this scoped project would be
     skipped, attaching nothing). Symmetric over both seams.
     """
     from otto.registry import registering_project
@@ -348,13 +348,13 @@ def test_factory_applies_declared_entries_alongside_providers_after_the_lab_stam
         ("fw", "declrepo"),
         ("extra", "coderepo"),
     ]
-    assert fw.artifact == Path("/repo/build/fw.bin")
+    assert fw.artifact == Path("/project/build/fw.bin")
     probe, extra_tool = host.dev_tools
     assert [(probe.name, probe.owner), (extra_tool.name, extra_tool.owner)] == [
         ("probe", "declrepo"),
         ("extra-tool", "coderepo"),
     ]
-    assert probe.artifact == Path("/repo/tools/probe.sh")
+    assert probe.artifact == Path("/project/tools/probe.sh")
 
 
 @pytest.mark.parametrize(("seam_name", "name"), [("products", "fw"), ("dev_tools", "probe")])

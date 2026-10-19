@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.e2e._otto_subprocess import PROJECT_ROOT, REPO_E2E, otto_subprocess_env
+from tests.e2e._otto_subprocess import CHECKOUT_ROOT, PROJECT_E2E, otto_subprocess_env
 
 pytestmark = pytest.mark.hostless
 
@@ -36,8 +36,8 @@ from otto.suite import run_tests
 output_dir = Path(os.environ["OTTO_TEST_OUTPUT_DIR"])
 
 bootstrap()
-# Importable once bootstrap() has put the repo's libs on sys.path.
-from repo_e2e_instructions.options import E2EFixtureOptions
+# Importable once bootstrap() has put the project's libs on sys.path.
+from project_e2e_instructions.options import E2EFixtureOptions
 
 r = run_tests(
     ["TestE2EFixture"],
@@ -73,7 +73,7 @@ def _run_library_script(
     script_path.write_text(_SCRIPT)
 
     env = otto_subprocess_env(
-        roots=REPO_E2E,
+        roots=PROJECT_E2E,
         extra_env={"OTTO_TEST_OUTPUT_DIR": str(output_dir), **(extra_env or {})},
     )
 
@@ -82,7 +82,7 @@ def _run_library_script(
         env=env,
         capture_output=True,
         text=True,
-        cwd=str(PROJECT_ROOT),
+        cwd=str(CHECKOUT_ROOT),
         timeout=timeout,
         check=False,
     )

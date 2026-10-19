@@ -49,7 +49,7 @@ def test_kernel_virtual_filesystems_are_excluded():
 
 def test_workspace_is_the_subset_under_the_fixture_root_and_home():
     ops = _parse(
-        f'100 newfstatat(AT_FDCWD, "{WS}genrepo/tests", {{...}}, 0) = 0\n'
+        f'100 newfstatat(AT_FDCWD, "{WS}genproject/tests", {{...}}, 0) = 0\n'
         "100 newfstatat(AT_FDCWD, "
         '"/venv/lib/python3.10/site-packages/asyncssh/__init__.py", {...}, 0) = 0\n'
     )
@@ -98,7 +98,7 @@ def test_a_bytecode_cache_path_is_charged_as_the_source_it_mirrors():
     ops = harness.parse_file_ops(
         f'100 openat(AT_FDCWD, "{prefix}/venv/lib/python3.10/site-packages/rich/'
         'console.cpython-310.pyc", O_RDONLY) = 3\n'
-        f'100 openat(AT_FDCWD, "{prefix}{WS}genrepo/pylib/m.cpython-310.pyc", O_RDONLY) = -1\n'
+        f'100 openat(AT_FDCWD, "{prefix}{WS}genproject/pylib/m.cpython-310.pyc", O_RDONLY) = -1\n'
         f'100 openat(AT_FDCWD, "{prefix}-other/x.pyc", O_RDONLY) = 3\n',
         workspace_prefixes=[WS],
         buckets=harness.PathBuckets(
@@ -120,7 +120,7 @@ def test_missing_strace_fails_by_name(monkeypatch):
 
 
 def test_measure_file_ops_counts_a_real_surface():
-    ops = harness.measure_file_ops(harness.surface_by_key("version_repo"))
+    ops = harness.measure_file_ops(harness.surface_by_key("version_project"))
     assert isinstance(ops, harness.FileOps)
     assert ops.total > 0
     assert ops.by_process == {"python": ops.total}
@@ -189,7 +189,7 @@ def test_a_report_row_carries_the_harness_s_ending_verdict():
 
 
 def test_an_unexpected_exception_is_named_in_the_violation():
-    surface = harness.surface_by_key("version_repo")
+    surface = harness.surface_by_key("version_project")
     crashed = {"exit_code": 1, "exception": "builtins.KeyError: 'boom'"}
     [violation] = harness.check_exit(surface, crashed)
     assert "builtins.KeyError: 'boom'" in violation
@@ -202,12 +202,12 @@ def test_ceiling_is_ten_percent_with_a_small_absolute_floor():
 
 
 def test_a_gated_surface_over_its_ceiling_fails_with_a_breakdown(tmp_path, monkeypatch):
-    surface = harness.surface_by_key("dispatch_repo_warm")
+    surface = harness.surface_by_key("dispatch_project_warm")
     monkeypatch.setattr(
         harness,
         "read_ceilings",
         lambda: {
-            "dispatch_repo_warm": {
+            "dispatch_project_warm": {
                 "file_ops": 1000,
                 "workspace": 20,
                 "by_bucket": {"stdlib": 900, "workspace": 20},
@@ -239,12 +239,12 @@ def test_a_tracked_surface_is_never_gated():
 
 
 def test_shrinking_is_an_advisory_never_a_failure(monkeypatch):
-    surface = harness.surface_by_key("dispatch_repo_warm")
+    surface = harness.surface_by_key("dispatch_project_warm")
     monkeypatch.setattr(
         harness,
         "read_ceilings",
         lambda: {
-            "dispatch_repo_warm": {
+            "dispatch_project_warm": {
                 "file_ops": 1000,
                 "workspace": 20,
                 "by_bucket": {},
@@ -272,14 +272,14 @@ def _ops(total: int, *, by_bucket: dict | None = None, by_process: dict | None =
 def _gate_pair(
     monkeypatch, *, floor_total: int, surface_total: int, baseline_total: int | None = None
 ) -> None:
-    """Make ``--check`` see ``version_repo`` and ``dispatch_repo_warm`` measure as given.
+    """Make ``--check`` see ``version_project`` and ``dispatch_project_warm`` measure as given.
 
     Listed surface first, floor second, so the test also proves ``main``
     measures the floor before any surface whose target divides by it. Each
     baseline is its own measurement unless *baseline_total* overrides both.
     """
     floor = harness.surface_by_key(harness.RATIO_FLOOR)
-    surface = harness.surface_by_key("dispatch_repo_warm")
+    surface = harness.surface_by_key("dispatch_project_warm")
 
     def baseline(total: int) -> dict:
         total = total if baseline_total is None else baseline_total
@@ -302,16 +302,16 @@ def _gate_pair(
 def test_a_surface_over_its_target_ratio_fails_check_and_under_it_passes(monkeypatch, capsys):
     """Through ``--check``: the same surface, red over its target and green under it.
 
-    Against a floor of 1000, ``dispatch_repo_warm``'s target admits exactly
+    Against a floor of 1000, ``dispatch_project_warm``'s target admits exactly
     ``target * 1000`` file operations; one more fails.
     """
-    target = harness.surface_by_key("dispatch_repo_warm").target_ratio
+    target = harness.surface_by_key("dispatch_project_warm").target_ratio
     limit = int(target * 1000)
     _gate_pair(monkeypatch, floor_total=1000, surface_total=limit + 1)
     assert harness.main(["--check"]) == 1
     out = capsys.readouterr().out
     fail = next(line for line in out.splitlines() if "FAIL" in line)
-    for fact in ["`dispatch_repo_warm`", f"file_ops {limit + 1}", "version_repo's 1000"]:
+    for fact in ["`dispatch_project_warm`", f"file_ops {limit + 1}", "version_project's 1000"]:
         assert fact in fail, (fact, fail)
     assert f"over its target of {target:g}x (at most {limit})" in fail, fail
 
@@ -324,7 +324,7 @@ def test_a_surface_over_its_target_ratio_fails_check_and_under_it_passes(monkeyp
 
 def test_a_ratio_failure_names_its_largest_buckets_and_its_child_processes():
     """A ratio breach need not be a ceiling breach, so it carries its own breakdown."""
-    surface = harness.surface_by_key("dispatch_repo_warm")
+    surface = harness.surface_by_key("dispatch_project_warm")
     ops = _ops(
         5000,
         by_bucket={"stdlib": 3000, "site:asyncssh": 600, "otto:host": 200},
@@ -342,8 +342,8 @@ def test_a_ratio_failure_names_its_largest_buckets_and_its_child_processes():
 
 def test_a_target_ratio_without_its_floor_is_the_callers_mistake():
     """A surface with a target is never checked against nothing: it raises, naming the floor."""
-    surface = harness.surface_by_key("dispatch_repo_warm")
-    with pytest.raises(ValueError, match="version_repo's file_ops"):
+    surface = harness.surface_by_key("dispatch_project_warm")
+    with pytest.raises(ValueError, match="version_project's file_ops"):
         harness.check_ratio(surface, _ops(10**6), None)
     assert harness.check_ratio(harness.surface_by_key("run"), _ops(10**6), None) == []
 
@@ -353,7 +353,7 @@ def test_a_stale_ceiling_prints_a_note_and_still_passes_check(monkeypatch, capsy
     _gate_pair(monkeypatch, floor_total=400, surface_total=400, baseline_total=1000)
     assert harness.main(["--check"]) == 0
     out = capsys.readouterr().out
-    assert "  NOTE `dispatch_repo_warm`: file_ops 400" in out, out
+    assert "  NOTE `dispatch_project_warm`: file_ops 400" in out, out
     assert "FAIL" not in out, out
     assert "import budget: OK" in out, out
 
@@ -362,7 +362,7 @@ def test_a_counter_at_its_baseline_earns_no_note(monkeypatch):
     """The absolute floor puts a small counter under 80% of its ceiling by itself.
 
     A ``workspace`` of 1 has a ceiling of 6; measuring 1 again is the floor at
-    work, not a stale baseline, so it must stay silent or every non-repo
+    work, not a stale baseline, so it must stay silent or every non-project
     surface would print a NOTE on every run.
     """
     surface = harness.surface_by_key("run")
@@ -378,7 +378,7 @@ def test_a_counter_at_its_baseline_earns_no_note(monkeypatch):
 def test_a_missing_baseline_fails_by_name(monkeypatch):
     """The message must carry the file, the interpreter, and the fix; never a skip."""
     monkeypatch.setattr(harness, "interpreter_tag", lambda: "9.99")
-    surface = harness.surface_by_key("version_repo")
+    surface = harness.surface_by_key("version_project")
     result = {
         "exit_code": 0,
         "exception": None,
@@ -388,7 +388,7 @@ def test_a_missing_baseline_fails_by_name(monkeypatch):
     assert "9.99.json" in message
     assert "CPython 9.99" in message
     assert "make import-snapshot" in message
-    assert "version_repo" in message
+    assert "version_project" in message
 
 
 def test_ceilings_round_trip_gated_surfaces_only(tmp_path, monkeypatch):

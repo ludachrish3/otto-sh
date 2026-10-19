@@ -23,14 +23,14 @@ import tempfile
 from pathlib import Path
 
 from otto.logger.management import _LOG_DIR_NAME_RE
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-REPO1 = PROJECT_ROOT / "tests" / "repo1"
-REPO2 = PROJECT_ROOT / "tests" / "repo2"
-REPO5 = PROJECT_ROOT / "tests" / "repo5"
-REPO_E2E = PROJECT_ROOT / "tests" / "repo_e2e"
-COVERAGERC = PROJECT_ROOT / ".coveragerc"
-COVERAGE_BOOTSTRAP = PROJECT_ROOT / "tests" / "_coverage_bootstrap"
+PROJECT1 = CHECKOUT_ROOT / "tests" / "project1"
+PROJECT2 = CHECKOUT_ROOT / "tests" / "project2"
+PROJECT5 = CHECKOUT_ROOT / "tests" / "project5"
+PROJECT_E2E = CHECKOUT_ROOT / "tests" / "project_e2e"
+COVERAGERC = CHECKOUT_ROOT / ".coveragerc"
+COVERAGE_BOOTSTRAP = CHECKOUT_ROOT / "tests" / "_coverage_bootstrap"
 OTTO_BIN = Path(sys.executable).parent / "otto"
 
 
@@ -80,7 +80,7 @@ def _fallback_otto_home() -> Path:
 
     Created lazily (and cached) so importing this module allocates nothing.
     Shared within a process (one dir per xdist worker) rather than fresh per
-    call: the workspace key inside it already separates SUT-dir sets, and a
+    call: the workspace key inside it already separates project-root sets, and a
     fresh home per call would make every child permanently cold, masking
     warm-path regressions the same way pointing at the real ``~/.otto``
     masked cold ones. Removed at interpreter exit — without that, one
@@ -95,14 +95,14 @@ def _fallback_otto_home() -> Path:
 def otto_subprocess_env(
     *,
     xdir: Path | None = None,
-    roots: Path | None = REPO_E2E,
+    roots: Path | None = PROJECT_E2E,
     term: str | None = None,
     extra_env: dict[str, str] | None = None,
 ) -> dict[str, str]:
     """Build the controlled environment for an ``otto`` child process.
 
     The coverage dance plus the otto keys: ``OTTOPATH`` (omitted when
-    *sut_dirs* is None), ``OTTO_XDIR`` (omitted when *xdir* is None), ``TERM``
+    *roots* is None), ``OTTO_XDIR`` (omitted when *xdir* is None), ``TERM``
     (omitted when *term* is None — PTY drivers need one), ``OTTO_HOME`` (see
     below), and the #193 scar:
 
@@ -139,7 +139,7 @@ def run_otto(
     argv: list[str],
     *,
     xdir: Path | None = None,
-    roots: Path | None = REPO_E2E,
+    roots: Path | None = PROJECT_E2E,
     lab: str | None = None,
     extra_argv_prefix: list[str] | None = None,
     extra_env: dict[str, str] | None = None,
@@ -159,9 +159,9 @@ def run_otto(
     xdir:
         Path to an existing directory for otto's ``--xdir`` output.  When
         ``None`` the ``OTTO_XDIR`` variable is omitted.
-    sut_dirs:
-        Path to the SUT repo root passed as ``OTTOPATH``.  Defaults to
-        the dedicated e2e fixture repo :data:`REPO_E2E`; ``None`` omits the
+    roots:
+        Path to the project root passed as ``OTTOPATH``.  Defaults to
+        the dedicated e2e fixture project :data:`PROJECT_E2E`; ``None`` omits the
         variable entirely.
     lab:
         Lab token prepended as ``--lab <lab>`` before *argv*.  When ``None``
@@ -193,7 +193,7 @@ def run_otto(
         env=otto_subprocess_env(xdir=xdir, roots=roots, extra_env=extra_env),
         capture_output=True,
         text=True,
-        cwd=str(cwd if cwd is not None else PROJECT_ROOT),
+        cwd=str(cwd if cwd is not None else CHECKOUT_ROOT),
         timeout=timeout,
         check=False,
     )

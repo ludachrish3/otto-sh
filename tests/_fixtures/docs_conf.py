@@ -6,7 +6,7 @@ at ``builder-inited``. Every renderer goes through the one hook,
 tests ask the same three questions of that table and that hook.
 """
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 
 def assert_conf_renders(module: str, page: str) -> None:
@@ -16,7 +16,7 @@ def assert_conf_renders(module: str, page: str) -> None:
     builder ``make docs`` also runs has to find it on disk. A non-zero exit
     raises, so a failed render is a build failure and not a warning.
     """
-    conf = (PROJECT_ROOT / "docs" / "conf.py").read_text(encoding="utf-8")
+    conf = (CHECKOUT_ROOT / "docs" / "conf.py").read_text(encoding="utf-8")
     table = conf[conf.index("_RENDERED_PAGES = {") :]
     table = table[: table.index("\n}")]
     assert f'"{module}": "{page}"' in table, f"{module} is not in _RENDERED_PAGES"

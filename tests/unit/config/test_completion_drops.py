@@ -22,22 +22,22 @@ from types import SimpleNamespace
 
 import otto.config.completion_cache as cc
 from otto.labs.drops import HostDrop, collecting_drops, record_drop
-from tests._fixtures.fake_repo import fake_repo
+from tests._fixtures.fake_project import fake_project
 from tests._fixtures.labdata import json_lab_sources, write_lab_json
-from tests._fixtures.sutrepo import touch_settings
+from tests._fixtures.project_scaffold import touch_settings
 
 _CREDS = [{"login": "u", "password": "p"}]
 _RECORD = {"dut-1": {"ip": "10.0.0.1"}}
 
 
-def _repo(tmp_path: Path, inventory_settings: dict, *, hosts: list[dict], name: str = "sut"):
-    """A Repo stand-in: one json lab source over ``<name>/lab``, the given ``[inventory]``."""
+def _project(tmp_path: Path, inventory_settings: dict, *, hosts: list[dict], name: str = "sut"):
+    """A Project stand-in: one json lab source over ``<name>/lab``, the given ``[inventory]``."""
     sut = tmp_path / name
     lab = sut / "lab"
     lab.mkdir(parents=True, exist_ok=True)
     touch_settings(sut)
     write_lab_json(lab / "lab.json", hosts, declare_labs=True)
-    return fake_repo(
+    return fake_project(
         name,
         root=sut,
         lab_sources=json_lab_sources(sut, [lab]),
@@ -90,7 +90,7 @@ def test_an_entry_whose_reference_cannot_resolve_is_dropped_by_place(tmp_path, m
     """
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     table = _json_inventory(tmp_path, _RECORD)
-    project = _repo(tmp_path, table, hosts=[_ref("dut-1", "dut"), _ref("ghost", "phantom")])
+    project = _project(tmp_path, table, hosts=[_ref("dut-1", "dut"), _ref("ghost", "phantom")])
 
     ids = cc.collect_host_ids([project])
     drops = cc.collect_host_drops([project])
@@ -110,8 +110,8 @@ def test_a_broken_inventory_declaration_is_the_inventory_line_not_a_drop(tmp_pat
     line), with the blocker the standing line is worded on."""
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     broken = {"backend": "json"}  # no path
-    first = _repo(tmp_path, broken, hosts=[_ref("dut-1", "dut")], name="first")
-    second = _repo(tmp_path, {}, hosts=[_ref("dut-1", "dut")], name="second")
+    first = _project(tmp_path, broken, hosts=[_ref("dut-1", "dut")], name="first")
+    second = _project(tmp_path, {}, hosts=[_ref("dut-1", "dut")], name="second")
 
     assert cc.collect_host_drops([first, second]) == []
     described = cc.describe_inventory([first, second])
@@ -128,7 +128,9 @@ def test_a_malformed_lab_file_is_dropped_by_name(tmp_path, monkeypatch):
     ``lab files`` line, not a drop.
     """
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
-    project = _repo(tmp_path, {}, hosts=[{"ip": "10.0.0.9", "element": "plain", "creds": _CREDS}])
+    project = _project(
+        tmp_path, {}, hosts=[{"ip": "10.0.0.9", "element": "plain", "creds": _CREDS}]
+    )
     broken = project.root / "broken.json"
     broken.write_text("{not json")
     project.lab_sources = json_lab_sources(project.root, [project.root / "lab", broken])
@@ -144,7 +146,7 @@ def test_a_malformed_lab_file_is_dropped_by_name(tmp_path, monkeypatch):
 def test_a_stalled_host_source_is_dropped_with_the_deadline(tmp_path, monkeypatch):
     """The deadline wrapper's give-up is a drop too, not just a warning."""
     monkeypatch.setenv(cc.HOST_SUMMARY_DEADLINE_ENV_VAR, "0.05")
-    project = fake_repo(root=tmp_path / "slow")
+    project = fake_project(root=tmp_path / "slow")
 
     def _stalls(abandoned: threading.Event) -> cc.ProjectEnumeration:
         abandoned.wait(5)  # returns as soon as the wrapper gives up on us
@@ -159,11 +161,11 @@ def test_a_stalled_host_source_is_dropped_with_the_deadline(tmp_path, monkeypatc
     assert cc.HOST_SUMMARY_DEADLINE_ENV_VAR in result.drops[0].reason
 
 
-def test_an_enumeration_that_raises_is_dropped_for_the_repo(tmp_path, monkeypatch):
+def test_an_enumeration_that_raises_is_dropped_for_the_project(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
-    project = _repo(tmp_path, {}, hosts=[])
+    project = _project(tmp_path, {}, hosts=[])
 
-    def _explodes(_repos, *, profiles):
+    def _explodes(_projects, *, profiles):
         raise RuntimeError("backend on fire")
 
     monkeypatch.setattr("otto.labs.sources.build_lab_sources", _explodes)
@@ -179,7 +181,7 @@ def test_an_enumeration_that_raises_is_dropped_for_the_repo(tmp_path, monkeypatc
 
 def test_host_drops_ride_the_names_payload(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
-    project = _repo(tmp_path, {}, hosts=[])
+    project = _project(tmp_path, {}, hosts=[])
     recorded = [{"project": "sut", "where": "somewhere", "reason": "some reason"}]
 
     cc.write_cache([project], instructions=[], hosts=["dut"], host_drops=recorded)
@@ -190,7 +192,7 @@ def test_host_drops_ride_the_names_payload(tmp_path, monkeypatch):
 def test_a_names_payload_missing_host_drops_still_reads_as_an_empty_list(tmp_path, monkeypatch):
     """Older payload shape without the key: empty, not a miss and not a crash."""
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
-    project = _repo(tmp_path, {}, hosts=[])
+    project = _project(tmp_path, {}, hosts=[])
     cc.write_cache([project], instructions=[], hosts=["dut"])
     path = cc._cache_path()
     assert path is not None
@@ -206,7 +208,7 @@ def test_a_names_payload_missing_host_drops_still_reads_as_an_empty_list(tmp_pat
 
 def test_inspect_reports_fresh_with_the_payload(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
-    project = _repo(tmp_path, {}, hosts=[])
+    project = _project(tmp_path, {}, hosts=[])
     cc.write_cache([project], instructions=[], hosts=["dut"])
 
     status = cc.inspect_section([project], "names")
@@ -220,7 +222,7 @@ def test_inspect_reports_fresh_with_the_payload(tmp_path, monkeypatch):
 
 def test_inspect_reports_stale_after_a_key_file_moves_and_keeps_the_payload(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
-    project = _repo(tmp_path, {}, hosts=[])
+    project = _project(tmp_path, {}, hosts=[])
     cc.write_cache([project], instructions=[], hosts=["dut"])
     lab_file = project.root / "lab" / "lab.json"
     later = lab_file.stat().st_mtime + 10
@@ -235,7 +237,7 @@ def test_inspect_reports_stale_after_a_key_file_moves_and_keeps_the_payload(tmp_
 
 def test_inspect_reports_expired_tainted_outdated_unreadable_and_missing(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
-    project = _repo(tmp_path, {}, hosts=[])
+    project = _project(tmp_path, {}, hosts=[])
     assert cc.inspect_section([project], "names").state == "missing"
 
     cc.write_cache([project], instructions=[], hosts=["dut"], tainted=True)
@@ -263,10 +265,10 @@ def test_inspect_reports_expired_tainted_outdated_unreadable_and_missing(tmp_pat
 
 def test_describe_inventory_names_each_case(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
-    none = _repo(tmp_path, {}, hosts=[], name="none")
+    none = _project(tmp_path, {}, hosts=[], name="none")
     assert cc.describe_inventory([none]) == cc.InventoryDescription(text="none declared")
 
-    broken = _repo(tmp_path, {"backend": "json"}, hosts=[], name="broken")
+    broken = _project(tmp_path, {"backend": "json"}, hosts=[], name="broken")
     described = cc.describe_inventory([broken])
     assert described.text.startswith("BROKEN")
     assert "parse failed: path: Field required" in described.text
@@ -274,7 +276,7 @@ def test_describe_inventory_names_each_case(tmp_path, monkeypatch):
     assert described.blocker == "is broken"
 
     table = _json_inventory(tmp_path, _RECORD, name="declared")
-    declared = _repo(tmp_path, table, hosts=[], name="declared")
+    declared = _project(tmp_path, table, hosts=[], name="declared")
     described = cc.describe_inventory([declared])
     assert "inventory.json" in described.text
     assert "freshness" not in described.text
@@ -283,9 +285,9 @@ def test_describe_inventory_names_each_case(tmp_path, monkeypatch):
 
 def test_describe_inventory_says_when_completion_can_never_cache(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
-    project = _repo(tmp_path, {}, hosts=[])
+    project = _project(tmp_path, {}, hosts=[])
     unfingerprinted = SimpleNamespace(label="probe:live", fingerprint=lambda: None)
-    monkeypatch.setattr("otto.inventory.config.build_inventory", lambda _repos: unfingerprinted)
+    monkeypatch.setattr("otto.inventory.config.build_inventory", lambda _projects: unfingerprinted)
 
     described = cc.describe_inventory([project])
 

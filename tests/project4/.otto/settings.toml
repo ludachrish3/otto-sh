@@ -1,0 +1,17 @@
+name = "project4"
+version = "0.1.0"
+libs = [
+    "pylib",
+]
+init = [
+    'project4_instructions',
+]
+
+# project4 is the INSTALLABLE sample: unlike project1-project3 it carries a
+# pyproject.toml, so `otto env` has something to install editable and the
+# preflight has a declared Python requirement (beetroot) to check. It is
+# OPT-IN — no default fixture names it — so project-count assertions and the
+# import-budget snapshots stay where they are.
+[dependencies]
+required = ["project1"]
+optional = ["project3"]

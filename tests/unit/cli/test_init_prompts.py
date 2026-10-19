@@ -63,7 +63,7 @@ def test_tests_pull_in_the_init_module_that_registers_their_options(tmp_path: Pa
     """``--tests`` alone also scaffolds the instructions module, with a note.
 
     The example tests import ``ProjectOptions`` from the init module, which
-    declares and registers it, so a tests-only repo would fail at run time.
+    declares and registers it, so a tests-only project would fail at run time.
     """
     result = _invoke(["--tests", "--name", "widget", "--path", str(tmp_path)])
     assert result.exit_code == 0, result.output
@@ -100,15 +100,15 @@ def test_tests_beside_an_existing_instructions_area_name_the_registration(tmp_pa
 
 
 def test_tests_beside_an_init_module_of_another_name_import_from_it(tmp_path: Path) -> None:
-    """The example tests import ``ProjectOptions`` from the repo's real init module.
+    """The example tests import ``ProjectOptions`` from the project's real init module.
 
     ``init = ["foo"]`` already exists, so the instructions area is found and
     not scaffolded: the tests must import from ``foo``, and the note must name
-    ``foo`` and what to add to it, never a module the repo does not have.
+    ``foo`` and what to add to it, never a module the project does not have.
     """
-    from tests._fixtures.sutrepo import make_sut_repo
+    from tests._fixtures.project_scaffold import make_project
 
-    make_sut_repo(
+    make_project(
         tmp_path,
         name="widget",
         tests=["tests"],
@@ -139,7 +139,7 @@ def test_existing_area_is_never_rewritten(tmp_path: Path) -> None:
     _invoke(["--all", "--name", "widget", "--path", str(tmp_path)])
     settings = tmp_path / ".otto" / "settings.toml"
     before = settings.read_text() + "# user edit\n"
-    settings.write_text(  # sutrepo-exempt: user-edit of a scaffolded file IS the subject
+    settings.write_text(  # scaffold-exempt: user-edit of a scaffolded file IS the subject
         before
     )
     result = _invoke(["--all", "--name", "other", "--path", str(tmp_path)])
@@ -175,7 +175,7 @@ def test_epilogue_prints_next_steps(tmp_path: Path) -> None:
     assert "otto --lab example_lab run smoke" in result.output
 
 
-def test_epilogue_skips_sut_dirs_when_already_set(tmp_path: Path, monkeypatch) -> None:
+def test_epilogue_skips_project_roots_when_already_set(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("OTTOPATH", str(tmp_path))
     result = _invoke(["--all", "--name", "widget", "--path", str(tmp_path)])
     assert "export OTTOPATH" not in result.output
@@ -193,7 +193,7 @@ def test_second_run_is_pure_report(tmp_path: Path) -> None:
     assert "scaffolded" not in result.output  # nothing new was written
 
 
-def test_epilogue_skips_sut_dirs_when_pathsep_separated(tmp_path: Path, monkeypatch) -> None:
+def test_epilogue_skips_project_roots_when_pathsep_separated(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("OTTOPATH", f"/somewhere/else{os.pathsep}{tmp_path}")
     result = _invoke(["--all", "--name", "widget", "--path", str(tmp_path)])
     assert "export OTTOPATH" not in result.output
@@ -201,14 +201,14 @@ def test_epilogue_skips_sut_dirs_when_pathsep_separated(tmp_path: Path, monkeypa
     assert "source ~/.bash_completions/otto.sh" in result.output
 
 
-def test_epilogue_keeps_sut_dirs_when_comma_separated(tmp_path: Path, monkeypatch) -> None:
-    """A comma does not separate: ``/somewhere/else,<root>`` is one path, not the repo."""
+def test_epilogue_keeps_project_roots_when_comma_separated(tmp_path: Path, monkeypatch) -> None:
+    """A comma does not separate: ``/somewhere/else,<root>`` is one path, not the project."""
     monkeypatch.setenv("OTTOPATH", f"/somewhere/else,{tmp_path}")
     result = _invoke(["--all", "--name", "widget", "--path", str(tmp_path)])
     assert f"export OTTOPATH={tmp_path.resolve()}" in result.output
 
 
-def test_epilogue_keeps_sut_dirs_when_the_entry_has_a_leading_space(
+def test_epilogue_keeps_project_roots_when_the_entry_has_a_leading_space(
     tmp_path: Path, monkeypatch
 ) -> None:
     """The loader reads ``<sep> <root>`` as ``" <root>"``, a path that does not exist."""

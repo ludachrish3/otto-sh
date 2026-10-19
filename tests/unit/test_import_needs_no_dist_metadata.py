@@ -16,7 +16,7 @@ import sys
 
 from scripts.api_manifest import load_manifest
 from tests._fixtures._lazy_exports import lazy_facade_names
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 _CHILD = """\
 import importlib
@@ -41,7 +41,7 @@ for package in sys.argv[1:]:
 
 
 def test_no_public_or_lazy_name_reads_otto_distribution_metadata_at_import():
-    declared = set(load_manifest(PROJECT_ROOT / "api" / "public.toml"))
+    declared = set(load_manifest(CHECKOUT_ROOT / "api" / "public.toml"))
     lazy = set(lazy_facade_names())
     packages = sorted(declared | lazy)
     assert "otto" in packages

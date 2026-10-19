@@ -12,12 +12,12 @@ import pytest
 import yaml
 
 from scripts import api_regen
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
 
-CI = PROJECT_ROOT / ".github" / "workflows" / "ci.yml"
-NOXFILE = PROJECT_ROOT / "noxfile.py"
+CI = CHECKOUT_ROOT / ".github" / "workflows" / "ci.yml"
+NOXFILE = CHECKOUT_ROOT / "noxfile.py"
 
 
 def _jobs() -> "dict":

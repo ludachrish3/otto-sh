@@ -10,7 +10,7 @@ and never masks a NEW leftover of the same kind.
 
 Docker probes run on Plan 5 scenarios; they tolerate docker-less hosts by
 collapsing to empty sets. Local-side leaks (transports, loops, fds) stay with
-the existing repo-wide detectors; this module is remote-state only.
+the existing suite-wide detectors; this module is remote-state only.
 """
 
 import dataclasses

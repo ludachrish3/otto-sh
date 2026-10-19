@@ -3,7 +3,7 @@
 Each test materializes a tiny pytest tree in ``tmp_path`` — its conftest
 registers the shared :func:`otto.suite._retry.retry_hookwrapper` exactly the
 way the two real sites do — and runs it as a subprocess with its own rootdir,
-so no repo ini or plugin state leaks in. The inner ini mirrors the dev
+so no project ini or plugin state leaks in. The inner ini mirrors the dev
 suite's ``timeout_func_only = true`` because that setting is what makes
 pytest-timeout's alarm *cancelled* by the time the retry loop runs — the
 shape under which the old implementation retried hanging tests unbounded.
@@ -44,7 +44,7 @@ from textwrap import dedent
 
 import pytest
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 # filterwarnings=error makes an exception ESCAPING the retry wrapper loud
 # (pluggy's PluggyTeardownRaisedWarning) — the dev suite runs that strict,
@@ -376,7 +376,7 @@ def test_pytest_fail_retries_like_any_failure(tmp_path):
 
 
 def test_an_async_test_body_can_be_retried(tmp_path):
-    """Every real retry user in this repo is a pytest-asyncio test —
+    """Every real retry user in this repository is a pytest-asyncio test —
     ``item.runtest()`` must re-enter the async machinery (the plugin's sync
     wrapper and its function-scoped loop), not merely re-call a sync body."""
     result, _ = _run_inner(
@@ -486,7 +486,7 @@ def test_otto_plugin_wires_retry_as_a_hookwrapper():
 def test_the_dev_conftest_wires_retry_as_a_hookwrapper():
     """The real bare-``pytest`` site, checked structurally (importing the
     root conftest outside a pytest session has side effects)."""
-    tree = ast.parse((PROJECT_ROOT / "tests" / "conftest.py").read_text())
+    tree = ast.parse((CHECKOUT_ROOT / "tests" / "conftest.py").read_text())
     hooks = {
         node.name: node
         for node in tree.body

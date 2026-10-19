@@ -4,7 +4,7 @@
 Both paths decide through :mod:`otto.session`. The CLI preamble renders each
 decision in today's words and exit codes; ``open_context`` raises the typed
 error or logs the demotion. This module proves the two agree, in three parts,
-each over repo layouts built with ``make_sut_repo`` + ``Project`` and installed as
+each over project layouts built with ``make_project`` + ``Project`` and installed as
 ``bootstrap()``'s result:
 
 1. **Lab parity.** For each layout, the CLI's lab (``ensure_lab_context`` on
@@ -34,7 +34,7 @@ each over repo layouts built with ``make_sut_repo`` + ``Project`` and installed 
    carries its demotions and its required projects (an inactive broken
    project an active one requires), which the CLI prints before its frame,
    each in the library's sentence with the flags spelled in; a
-   ``DependencyRefusedError`` names the repo and requirement the preflight
+   ``DependencyRefusedError`` names the project and requirement the preflight
    reported. The cases that do not refuse are the counterpart: the library
    does not raise, its dependency warnings are the CLI's ``warning:`` lines,
    and the CLI exits 0 at the dry-run seam. The CLI cases run ``-n ... cov
@@ -46,7 +46,7 @@ each over repo layouts built with ``make_sut_repo`` + ``Project`` and installed 
    ``entry()`` never runs inside a live loop.
 3. **Demotion parity.** For the two demotion layouts, the library's
    ``check_projects(...).demoted`` match the CLI's stderr ``warning:`` lines one
-   for one, in order: the same repo spelling, and the same reason with
+   for one, in order: the same project spelling, and the same reason with
    ``exclude_projects x`` spelled ``--exclude-projects x`` and the lab list
    ``[lab1, lab2]`` compared separator and order alike.
 
@@ -68,20 +68,20 @@ the CLI printed the demotion line and exited 0 at the seam.
 
 (iii) printing ``d.name.lower()`` in ``otto/cli/invoke.py``
 ``_echo_demotions``: demotion parity failed for both layouts
-(``'broken_repo'`` against ``'Broken_Repo'``).
+(``'broken_project'`` against ``'Broken_Project'``).
 
 (iv) dropping ``_echo_demotions(e.demoted)`` before the frame in
 ``fail_loud_on_bootstrap_errors``: refusal parity's ``demoted-and-fatal``
-case failed (``assert [] == [('Broken_Repo', 'not applicable to lab(s)
+case failed (``assert [] == [('Broken_Project', 'not applicable to lab(s)
 [lab1]')]``): the library carried the demotion, the CLI never printed it.
 Moving that echo to after the frame failed the same case on the order
 (``assert 421 < 343``: the demotion line landed after the frame).
 
-(v) comparing the RAW repo name against the switches in
+(v) comparing the RAW project name against the switches in
 ``otto.config.scope.active`` (``name = project_name``): refusal parity's
 ``unmet-dependency-excluded`` case failed on both sides at once,
-``assert ('DependencyRefusedError', 1) == (None, 0)``: ``-E Sibling_Repo``
-normalises to ``sibling-repo`` and no longer matched ``Sibling_Repo``.
+``assert ('DependencyRefusedError', 1) == (None, 0)``: ``-E Sibling_Project``
+normalises to ``sibling-project`` and no longer matched ``Sibling_Project``.
 
 (vi) assigning instead of updating an option table in
 ``merge_host_preferences`` (``dest[key] = dict(val)``): lab parity's
@@ -101,7 +101,7 @@ it — switch it off too"): refusal parity failed both required cases, on
 ``who`` and ``whom`` for ``required-out-of-scope`` (``"active project
 'Needs_Broken', 'Also_Needs' requires it", 'it'`` against ``"active projects
 ... require it", 'them'``). Dropping ``_echo_required(e.required)`` failed both
-(``assert [] == [("'Broken_Repo'", ...)]``). A wording fault inside the shared
+(``assert [] == [("'Broken_Project'", ...)]``). A wording fault inside the shared
 ``_required_sentence`` moves both sides together and stays green here, as
 predicted; the exact-sentence pins in ``test_load_error_classifier.py`` and
 ``test_bootstrap_gate.py`` catch it.
@@ -127,15 +127,15 @@ from otto.config.project import Project
 from otto.config.scope import TOML_SETTINGS_PATH
 from otto.declared import publish_composed
 from tests._fixtures.labdata import lab_data_dir, write_lab_json
+from tests._fixtures.project_scaffold import make_project
 from tests._fixtures.rootoptions import make_root_options
-from tests._fixtures.sutrepo import make_sut_repo
 from tests.unit.cli.conftest import _flat, _squashed
 
 _CI_ENV = {"GITHUB_ACTIONS": "true", "TERM": "dumb", "FORCE_COLOR": ""}
 """CI's console: a forced terminal at a fixed 80 columns, no colour."""
 
 _SOURCES = '[[lab.sources]]\nbackend = "json"\npaths = ["lab"]\n'
-"""One json ``[[lab.sources]]`` entry reading the repo's own ``lab/`` directory."""
+"""One json ``[[lab.sources]]`` entry reading the project's own ``lab/`` directory."""
 
 
 @pytest.fixture(autouse=True)
@@ -157,9 +157,9 @@ def _hermetic_env(tmp_path, monkeypatch):
 
 
 def _install(monkeypatch, projects: "list[Any]", errors: "list[bs.BootstrapError] | None" = None):
-    """Make *repos* and *errors* what ``bootstrap()`` returns for this test.
+    """Make *projects* and *errors* what ``bootstrap()`` returns for this test.
 
-    Published to the composed-repos catalog too, as ``bootstrap()`` does: the
+    Published to the composed-projects catalog too, as ``bootstrap()`` does: the
     declared entries the lab's hosts get are read there. The root conftest
     restores both owners after the test.
     """
@@ -185,7 +185,7 @@ def _host(element: str, ip: str, lab: str = "lab1", **fields: Any) -> dict:
     }
 
 
-def _repo(
+def _project(
     root: Path,
     name: str,
     *,
@@ -193,9 +193,9 @@ def _repo(
     hosts: "list[dict] | None" = None,
     files: "dict[str, str] | None" = None,
 ) -> Project:
-    """A real SUT repo; with *hosts*, it also declares a json source holding them."""
+    """A real project; with *hosts*, it also declares a json source holding them."""
     settings = (_SOURCES + extra) if hosts is not None else extra
-    sut = make_sut_repo(root / name, name=name, extra=settings, files=files)
+    sut = make_project(root / name, name=name, extra=settings, files=files)
     if hosts is not None:
         write_lab_json(sut / "lab" / "lab.json", hosts)
     return Project(sut)
@@ -266,7 +266,7 @@ def _facts(lab: Any) -> LabFacts:
 
 @dataclasses.dataclass(frozen=True)
 class Layout:
-    """A matrix row: build the repos, name the lab, and say what must be true of it."""
+    """A matrix row: build the projects, name the lab, and say what must be true of it."""
 
     id: str
     build: "Callable[[Path], list[Project]]"
@@ -276,8 +276,8 @@ class Layout:
 
 def _two_sources(root: Path) -> "list[Project]":
     return [
-        _repo(root, "Acme", hosts=[_host("alpha", "10.0.0.1")]),
-        _repo(root, "Beta", hosts=[_host("beta", "10.0.0.2")]),
+        _project(root, "Acme", hosts=[_host("alpha", "10.0.0.1")]),
+        _project(root, "Beta", hosts=[_host("beta", "10.0.0.2")]),
     ]
 
 
@@ -287,23 +287,23 @@ def _two_sources_witness(facts: LabFacts) -> None:
 
 def _override(root: Path) -> "list[Project]":
     return [
-        _repo(root, "Acme", hosts=[_host("alpha", "10.0.0.1")]),
-        _repo(root, "Beta", hosts=[_host("alpha", "10.0.0.99")]),
+        _project(root, "Acme", hosts=[_host("alpha", "10.0.0.1")]),
+        _project(root, "Beta", hosts=[_host("alpha", "10.0.0.99")]),
     ]
 
 
 def _override_witness(facts: LabFacts) -> None:
-    assert facts.addresses["alpha"] == "10.0.0.99"  # the LATER repo's record
+    assert facts.addresses["alpha"] == "10.0.0.99"  # the LATER project's record
 
 
 def _preferences(root: Path) -> "list[Project]":
-    """Both repos set the SAME option table under the SAME selector, each a different key.
+    """Both projects set the SAME option table under the SAME selector, each a different key.
 
     So the merge must update the table per key: a merge that replaced it would
     keep only Beta's key.
     """
     return [
-        _repo(
+        _project(
             root,
             "Acme",
             hosts=[_host("alpha", "10.0.0.1")],
@@ -312,7 +312,7 @@ def _preferences(root: Path) -> "list[Project]":
                 '[host_preferences."alpha".ssh_options]\nport = 2222\n'
             ),
         ),
-        _repo(
+        _project(
             root, "Beta", extra='[host_preferences."alpha".ssh_options]\nconnect_timeout = 7.5\n'
         ),
     ]
@@ -327,7 +327,7 @@ def _preferences_witness(facts: LabFacts) -> None:
 
 def _two_labs(root: Path) -> "list[Project]":
     return [
-        _repo(
+        _project(
             root,
             "Acme",
             hosts=[_host("alpha", "10.0.0.1", lab="lab1"), _host("beta", "10.0.0.2", lab="lab2")],
@@ -342,7 +342,7 @@ def _two_labs_witness(facts: LabFacts) -> None:
 
 def _containers(root: Path) -> "list[Project]":
     return [
-        _repo(
+        _project(
             root,
             "Acme",
             hosts=[_host("dockhost", "10.0.0.1", docker_capable=True)],
@@ -367,7 +367,7 @@ def _inventory(root: Path) -> "list[Project]":
     as ``test_open_context_loads_the_lab_with_the_process_inventory`` does.
     """
     fixture = lab_data_dir() / "tech1-inventory"
-    project = _repo(root, "Acme", extra=_SOURCES)
+    project = _project(root, "Acme", extra=_SOURCES)
     (project.root / "lab").mkdir()
     shutil.copy(fixture / "lab.json", project.root / "lab" / "lab.json")
     user_settings = (
@@ -378,7 +378,7 @@ def _inventory(root: Path) -> "list[Project]":
         f'\n[creds]\nbackend = "json"\npath = "{fixture / "creds.json"}"\n'
     )
     home = Path(os.environ["OTTO_HOME"])
-    (home / "settings.toml").write_text(user_settings)  # sutrepo-exempt: the user ~/.otto file
+    (home / "settings.toml").write_text(user_settings)  # scaffold-exempt: the user ~/.otto file
     return [project]
 
 
@@ -388,7 +388,7 @@ def _inventory_witness(facts: LabFacts) -> None:
 
 LAYOUTS = [
     Layout("two-sources", _two_sources, "lab1", _two_sources_witness),
-    Layout("later-repo-overrides", _override, "lab1", _override_witness),
+    Layout("later-project-overrides", _override, "lab1", _override_witness),
     Layout("preferences", _preferences, "lab1", _preferences_witness),
     Layout("plus-combined-labs", _two_labs, "lab1+lab2", _two_labs_witness),
     Layout("containers", _containers, "lab1", _containers_witness),
@@ -408,7 +408,7 @@ def _variants(root: Path) -> "list[Project]":
         f'artifact = "build/fw-{v}.bin"\n'
         for v in ["debug", "field"]
     )
-    return [_repo(root, "Acme", hosts=[_host("alpha", "10.0.0.1")], extra=products)]
+    return [_project(root, "Acme", hosts=[_host("alpha", "10.0.0.1")], extra=products)]
 
 
 def _field_witness(facts: LabFacts) -> None:
@@ -479,11 +479,11 @@ def test_otto_field_and_open_context_variant_field_build_the_same_lab(tmp_path, 
 
 # ── 2. Refusal parity ────────────────────────────────────────────────────────
 
-_BROKEN = "Broken_Repo"
-"""Mixed case on purpose: a renderer that re-spells the repo name shows up."""
+_BROKEN = "Broken_Project"
+"""Mixed case on purpose: a renderer that re-spells the project name shows up."""
 
-_FATAL = "Fatal_Repo"
-"""A second broken repo, active, so one run carries a fatal error AND a demotion."""
+_FATAL = "Fatal_Project"
+"""A second broken project, active, so one run carries a fatal error AND a demotion."""
 
 _NEEDS = "Needs_Broken"
 """An active project with a required dependency on :data:`_BROKEN`."""
@@ -491,21 +491,21 @@ _NEEDS = "Needs_Broken"
 _ALSO_NEEDS = "Also_Needs"
 """A second active requirer of :data:`_BROKEN`, so the refusal names several."""
 
-_SIBLING = "Sibling_Repo"
-"""A healthy repo whose requirement goes unmet; mixed case, so ``-E`` must normalise."""
+_SIBLING = "Sibling_Project"
+"""A healthy project whose requirement goes unmet; mixed case, so ``-E`` must normalise."""
 
 
 @dataclasses.dataclass(frozen=True)
 class World:
-    """The repos a case installs as ``bootstrap()``'s result, and its load errors."""
+    """The projects a case installs as ``bootstrap()``'s result, and its load errors."""
 
     projects: "list[Any]"
     errors: "list[bs.BootstrapError]" = dataclasses.field(default_factory=list)
 
 
 def _healthy(root: Path) -> Project:
-    """The repo that supplies ``lab1`` and ``lab2``, so a run that gets that far has a lab."""
-    return _repo(
+    """The project that supplies ``lab1`` and ``lab2``, so a run that gets that far has a lab."""
+    return _project(
         root,
         "Healthy",
         hosts=[_host("alpha", "10.0.0.1", lab="lab1"), _host("beta", "10.0.0.2", lab="lab2")],
@@ -515,13 +515,13 @@ def _healthy(root: Path) -> Project:
 def _broken(
     root: Path, name: str, *, lab_patterns: "list[str] | None" = None
 ) -> "tuple[Project, bs.BootstrapError]":
-    """A repo whose settings parsed (so its scope is known) but whose init module failed."""
+    """A project whose settings parsed (so its scope is known) but whose init module failed."""
     scope = (
         ""
         if lab_patterns is None
         else "[project]\nlab_patterns = [" + ", ".join(f'"{p}"' for p in lab_patterns) + "]\n"
     )
-    project = _repo(root, name, extra=scope)
+    project = _project(root, name, extra=scope)
     error = bs.BootstrapError(project.root, "broken_init", ImportError("No module named 'missing'"))
     return project, error
 
@@ -537,7 +537,7 @@ def _out_of_scope_broken(root: Path) -> World:
 
 
 def _demoted_and_fatal(root: Path) -> World:
-    """One out-of-scope broken repo (demoted) and one active broken repo (fatal)."""
+    """One out-of-scope broken project (demoted) and one active broken project (fatal)."""
     demoted, demoted_error = _broken(root, _BROKEN, lab_patterns=["elsewhere"])
     fatal, fatal_error = _broken(root, _FATAL)
     return World(projects=[_healthy(root), demoted, fatal], errors=[demoted_error, fatal_error])
@@ -545,7 +545,7 @@ def _demoted_and_fatal(root: Path) -> World:
 
 def _requirer(root: Path, name: str) -> Project:
     """A healthy project whose ``[dependencies]`` require :data:`_BROKEN`."""
-    return _repo(root, name, extra=f'[dependencies]\nrequired = ["{_BROKEN}"]\n')
+    return _project(root, name, extra=f'[dependencies]\nrequired = ["{_BROKEN}"]\n')
 
 
 def _required_broken(
@@ -570,11 +570,11 @@ def _required_out_of_scope(root: Path) -> World:
 
 
 def _unparsable(root: Path) -> World:
-    """A ``settings.toml`` that does not parse: no ``Project``, so no repo to attribute it to.
+    """A ``settings.toml`` that does not parse: no ``Project``, so no project to attribute it to.
 
     The error is framed exactly as discovery frames it, from the real parse failure.
     """
-    sut = make_sut_repo(root / "garbled", name="Garbled", extra="this is = = not toml")
+    sut = make_project(root / "garbled", name="Garbled", extra="this is = = not toml")
     try:
         Project(sut)
     except Exception as e:  # noqa: BLE001 — discovery contains ANY failure the same way
@@ -589,7 +589,7 @@ def _just_healthy(root: Path) -> World:
 
 
 def _with_sibling(root: Path) -> World:
-    return World(projects=[_healthy(root), _repo(root, _SIBLING)])
+    return World(projects=[_healthy(root), _project(root, _SIBLING)])
 
 
 _UNMET_REQUIREMENT = "acme-lib[extra]>=2"
@@ -608,13 +608,13 @@ class Case:
     include: list[str] = dataclasses.field(default_factory=list)
     exclude: list[str] = dataclasses.field(default_factory=list)
     fatal: list[str] = dataclasses.field(default_factory=list)
-    """The repo directories a ``ProjectLoadError`` must name, in order."""
+    """The project directories a ``ProjectLoadError`` must name, in order."""
     demoted: list[str] = dataclasses.field(default_factory=list)
-    """The repos the library demotes, in order."""
+    """The projects the library demotes, in order."""
     required: list[str] = dataclasses.field(default_factory=list)
     """The inactive projects a ``ProjectLoadError`` says active ones require, in order."""
     unmet: "str | None" = None
-    """The repo whose requirement the preflight finds unmet."""
+    """The project whose requirement the preflight finds unmet."""
 
 
 def _cases() -> "list[Case]":
@@ -710,7 +710,7 @@ CASES = _cases()
 
 
 def _arm_unmet_dependency(monkeypatch: pytest.MonkeyPatch, project_name: str) -> None:
-    """The preflight finds *repo_name*'s requirement unmet — if it is among the repos it checks."""
+    """The preflight finds *project_name*'s requirement unmet, if it is among those it checks."""
     from otto.env.preflight import PreflightResult, Unsatisfied
 
     def preflight(projects, site_dirs=None):
@@ -803,7 +803,7 @@ def _argv(case: Case) -> "list[str]":
 
 
 _DEMOTION = re.compile(
-    r"project (?P<repo>'[^']*') failed to load, but is inactive for this run "
+    r"project (?P<project>'[^']*') failed to load, but is inactive for this run "
     r"\((?P<why>.*)\) — continuing without it"
 )
 """The demotion sentence both sides share; the CLI's carries ``warning: `` in front."""
@@ -820,7 +820,7 @@ def _in_flag_spelling(why: str) -> str:
 
 
 def _library_demotions(demoted: "list[Any]") -> "list[tuple[str, str]]":
-    """``(repo, reason in flag spelling)`` for each of the library's ``DemotedProject``."""
+    """``(project, reason in flag spelling)`` for each of the library's ``DemotedProject``."""
     out = []
     for d in demoted:
         match = _DEMOTION.fullmatch(d.message)
@@ -830,9 +830,9 @@ def _library_demotions(demoted: "list[Any]") -> "list[tuple[str, str]]":
 
 
 def _cli_demotions(stderr: str) -> "list[tuple[str, str]]":
-    """``(repo, reason)`` for each demotion ``warning:`` line the CLI printed."""
+    """``(project, reason)`` for each demotion ``warning:`` line the CLI printed."""
     return [
-        (ast.literal_eval(match["repo"]), match["why"])
+        (ast.literal_eval(match["project"]), match["why"])
         for line in stderr.splitlines()
         if line.startswith("warning: ") and (match := _DEMOTION.fullmatch(line[len("warning: ") :]))
     ]
@@ -891,7 +891,7 @@ def _assert_cli_says(case: Case, verdict: Exception, run: CliRun) -> None:
 
     out = run.stdout + run.stderr
     if isinstance(verdict, ProjectLoadError):
-        # The payload first: the fatal repos and the demotions the error carries.
+        # The payload first: the fatal projects and the demotions the error carries.
         assert [Path(error.root).name for error in verdict.errors] == case.fatal
         assert [d.name for d in verdict.demoted] == case.demoted
         assert [r.name for r in verdict.required] == case.required

@@ -50,7 +50,7 @@ Semantics, each pinned by ``tests/unit/suite/test_retry_semantics.py``:
 - **The test body alone is re-run.** Fixtures keep the failed attempt's
   state (``item.runtest()`` re-enters only the call phase), so retry is
   sound only for tests whose body is idempotent — the user-facing guidance
-  lives on ``tests/repo1``'s retry example.
+  lives on ``tests/project1``'s retry example.
 """
 
 import logging

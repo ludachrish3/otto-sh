@@ -15,19 +15,19 @@ from tests._fixtures._ts_bundle_filter import bundle_filter_drift_reason, bundle
 
 class TestBundleUrlMatches:
     def test_current_dashboard_shape_matches(self):
-        assert bundle_url_matches("file:///repo/web/dist/assets/index-B3xk9a2f.js")
+        assert bundle_url_matches("file:///checkout/web/dist/assets/index-B3xk9a2f.js")
         assert bundle_url_matches("http://127.0.0.1:8321/assets/index-B3xk9a2f.js")
 
     def test_current_covapp_shape_matches(self):
-        assert bundle_url_matches("file:///repo/web/dist-covapp/covapp.js")
+        assert bundle_url_matches("file:///checkout/web/dist-covapp/covapp.js")
         assert bundle_url_matches("http://127.0.0.1:8321/covapp.js")
 
     def test_drifted_layouts_do_not_match(self):
         # A vite outDir/assetsDir change is the regression this predicate exists
         # to catch — both halves of it must read as drift, not silently pass.
-        assert not bundle_url_matches("file:///repo/web/dist/js/index-B3xk9a2f.js")
-        assert not bundle_url_matches("file:///repo/web/dist-covapp/covapp2.js")
-        assert not bundle_url_matches("file:///repo/web/dist/index.html")
+        assert not bundle_url_matches("file:///checkout/web/dist/js/index-B3xk9a2f.js")
+        assert not bundle_url_matches("file:///checkout/web/dist-covapp/covapp2.js")
+        assert not bundle_url_matches("file:///checkout/web/dist/index.html")
 
 
 class TestBundleFilterDriftReason:

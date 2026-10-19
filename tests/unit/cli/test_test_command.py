@@ -56,8 +56,8 @@ def captured_run(monkeypatch):
 # ── Names, flags and the usage rule ─────────────────────────────────────────
 
 
-def test_names_run_and_flags_mix_freely(otto_test_cli, sut_repo):
-    sut_repo(files={"tests/test_a.py": "def test_one(): pass\ndef test_two(): pass\n"})
+def test_names_run_and_flags_mix_freely(otto_test_cli, one_project):
+    one_project(files={"tests/test_a.py": "def test_one(): pass\ndef test_two(): pass\n"})
     result = otto_test_cli(["test", "test_one", "--no-random", "test_two"])
     assert result.exit_code == 0, result.output
 
@@ -100,13 +100,13 @@ def preamble_calls(monkeypatch):
     return calls
 
 
-def test_the_preamble_spy_sees_a_real_run(otto_test_cli, sut_repo, captured_run, preamble_calls):
+def test_the_preamble_spy_sees_a_real_run(otto_test_cli, one_project, captured_run, preamble_calls):
     """The control for the two parse-time tests below: a run DOES reach the preamble.
 
     (The harness's spec is lab-free, so the preamble itself skips
     ``ensure_lab_session`` here; the preamble call is the one that matters.)
     """
-    sut_repo(files={"tests/test_d.py": "def test_d(): pass\n"})
+    one_project(files={"tests/test_d.py": "def test_d(): pass\n"})
     assert otto_test_cli(["test", "test_d"]).exit_code == 0
     assert "command_preamble" in preamble_calls
 
@@ -119,8 +119,8 @@ def test_the_usage_error_needs_no_lab(otto_test_cli, preamble_calls):
     assert preamble_calls == []
 
 
-def test_list_tests_never_reaches_the_preamble(otto_test_cli, sut_repo, preamble_calls):
-    sut_repo(files={"tests/test_d.py": "def test_d(): pass\n"})
+def test_list_tests_never_reaches_the_preamble(otto_test_cli, one_project, preamble_calls):
+    one_project(files={"tests/test_d.py": "def test_d(): pass\n"})
     result = otto_test_cli(["test", "--list-tests"], lab=None)
     assert result.exit_code == 0, result.output
     assert preamble_calls == []
@@ -141,8 +141,8 @@ def test_no_cov_with_a_coverage_destination_is_a_usage_error(otto_test_cli, capt
     assert captured_run == []
 
 
-def test_unknown_name_suggests(otto_test_cli, sut_repo):
-    sut_repo(files={"tests/test_u.py": "def test_reboot(): pass\n"})
+def test_unknown_name_suggests(otto_test_cli, one_project):
+    one_project(files={"tests/test_u.py": "def test_reboot(): pass\n"})
     result = otto_test_cli(["test", "test_rebot"])
     assert result.exit_code == 2
     rendered = " ".join(line.strip("│ ") for line in result.output.splitlines())
@@ -171,7 +171,7 @@ def test_a_failing_run_exits_with_its_code(otto_test_cli, monkeypatch):
     assert otto_test_cli(["test", "test_x"]).exit_code == 1
 
 
-def test_a_monitor_refusal_at_run_time_exits_4(otto_test_cli, sut_repo, monkeypatch):
+def test_a_monitor_refusal_at_run_time_exits_4(otto_test_cli, one_project, monkeypatch):
     """``--monitor`` over a lab with nothing to sample stops the run with pytest's usage code.
 
     The whole chain is real: the plugin's session fixture refuses through
@@ -179,7 +179,7 @@ def test_a_monitor_refusal_at_run_time_exits_4(otto_test_cli, sut_repo, monkeypa
     folds it into the run's exit code and the command hands that to typer.
     Only the fleet walk is stubbed, to an empty lab.
     """
-    sut_repo(files={"tests/test_m.py": "def test_m(): pass\n"})
+    one_project(files={"tests/test_m.py": "def test_m(): pass\n"})
     monkeypatch.setattr("otto.fleet.all_hosts", lambda *a, **kw: iter([]))
     result = otto_test_cli(["test", "test_m", "--monitor"])
     assert result.exit_code == pytest.ExitCode.USAGE_ERROR == 4, result.output
@@ -204,13 +204,13 @@ def test_the_run_goes_to_the_contexts_output_dir(otto_test_cli, captured_run, tm
 # ── Test-verb options ────────────────────────────────────────────────────────
 
 
-def test_a_verb_option_is_a_flag_and_reaches_ctx_options(otto_test_cli, sut_repo):
+def test_a_verb_option_is_a_flag_and_reaches_ctx_options(otto_test_cli, one_project):
     @options
     class FirmwareOpts:
         firmware: str = "latest"
 
     register_options(FirmwareOpts, verbs=["test"])
-    sut_repo(
+    one_project(
         files={
             "tests/test_f.py": (
                 "from otto.params import verb_option_classes\n"
@@ -286,8 +286,8 @@ def test_a_verb_option_named_names_collides(otto_test_cli):
 # ── --list-tests ─────────────────────────────────────────────────────────────
 
 
-def test_list_tests_groups_and_needs_no_lab(otto_test_cli, sut_repo, tmp_path):
-    sut_repo(
+def test_list_tests_groups_and_needs_no_lab(otto_test_cli, one_project, tmp_path):
+    one_project(
         files={
             "tests/test_g.py": "class TestG:\n    def test_1(self): pass\ndef test_plain(): pass\n"
         }
@@ -300,8 +300,8 @@ def test_list_tests_groups_and_needs_no_lab(otto_test_cli, sut_repo, tmp_path):
     assert not list(tmp_path.glob("**/test/*"))
 
 
-def test_list_tests_keeps_nested_directories_and_classes(otto_test_cli, sut_repo):
-    sut_repo(
+def test_list_tests_keeps_nested_directories_and_classes(otto_test_cli, one_project):
+    one_project(
         files={
             "tests/router/test_basic.py": (
                 "class TestOuter:\n    class TestInner:\n        def test_deep(self): pass\n"
@@ -317,9 +317,9 @@ def test_list_tests_keeps_nested_directories_and_classes(otto_test_cli, sut_repo
     assert order == sorted(order)
 
 
-def test_list_tests_with_an_unknown_name_suggests_like_a_run(otto_test_cli, sut_repo):
+def test_list_tests_with_an_unknown_name_suggests_like_a_run(otto_test_cli, one_project):
     """A typo'd name is refused with the run's did-you-mean, not answered with an empty tree."""
-    sut_repo(files={"tests/test_h.py": "def test_alpha(): pass\ndef test_beta(): pass\n"})
+    one_project(files={"tests/test_h.py": "def test_alpha(): pass\ndef test_beta(): pass\n"})
     result = otto_test_cli(["test", "--list-tests", "test_alhpa", "test_beta"], lab=None)
     assert result.exit_code == 2
     flat = " ".join(result.output.replace("│", " ").split())
@@ -327,8 +327,8 @@ def test_list_tests_with_an_unknown_name_suggests_like_a_run(otto_test_cli, sut_
     assert "test_h.py" not in _lines(result.output)
 
 
-def test_list_tests_filters_by_names_and_markers(otto_test_cli, sut_repo):
-    sut_repo(
+def test_list_tests_filters_by_names_and_markers(otto_test_cli, one_project):
+    one_project(
         files={
             "tests/test_h.py": (
                 "import pytest\n"
@@ -351,8 +351,8 @@ def test_list_tests_filters_by_names_and_markers(otto_test_cli, sut_repo):
     assert "test_c" not in marked
 
 
-def test_list_tests_never_reaches_run_tests(otto_test_cli, sut_repo, captured_run):
-    sut_repo(files={"tests/test_l.py": "def test_l(): pass\n"})
+def test_list_tests_never_reaches_run_tests(otto_test_cli, one_project, captured_run):
+    one_project(files={"tests/test_l.py": "def test_l(): pass\n"})
     assert otto_test_cli(["test", "--list-tests", "test_l"]).exit_code == 0
     assert captured_run == []
 
@@ -360,8 +360,8 @@ def test_list_tests_never_reaches_run_tests(otto_test_cli, sut_repo, captured_ru
 # ── The dry run ──────────────────────────────────────────────────────────────
 
 
-def test_dry_run_never_reaches_run_tests(otto_test_cli, sut_repo, captured_run):
-    sut_repo(files={"tests/test_d.py": "def test_d(): pass\n"})
+def test_dry_run_never_reaches_run_tests(otto_test_cli, one_project, captured_run):
+    one_project(files={"tests/test_d.py": "def test_d(): pass\n"})
     result = otto_test_cli(["-n", "test", "test_d"])
     assert result.exit_code == 0, result.output
     assert captured_run == []
@@ -370,10 +370,10 @@ def test_dry_run_never_reaches_run_tests(otto_test_cli, sut_repo, captured_run):
 
 @pytest.mark.parametrize("flag", ["--cov-dir", "--cov-report-dir"])
 def test_a_dry_run_neither_clears_nor_creates_a_destination(
-    otto_test_cli, sut_repo, tmp_path, flag
+    otto_test_cli, one_project, tmp_path, flag
 ):
     """`-n` validates a destination as a run would, and never touches it."""
-    sut_repo(files={"tests/test_d.py": "def test_d(): pass\n"})
+    one_project(files={"tests/test_d.py": "def test_d(): pass\n"})
     full = tmp_path / "full"
     full.mkdir()
     (full / "keep.txt").write_text("keep")
@@ -389,8 +389,10 @@ def test_a_dry_run_neither_clears_nor_creates_a_destination(
 
 
 @pytest.mark.parametrize("flag", ["--cov-dir", "--cov-report-dir"])
-def test_a_dry_run_refuses_a_full_destination_like_a_run(otto_test_cli, sut_repo, tmp_path, flag):
-    sut_repo(files={"tests/test_d.py": "def test_d(): pass\n"})
+def test_a_dry_run_refuses_a_full_destination_like_a_run(
+    otto_test_cli, one_project, tmp_path, flag
+):
+    one_project(files={"tests/test_d.py": "def test_d(): pass\n"})
     full = tmp_path / "full"
     full.mkdir()
     (full / "keep.txt").write_text("keep")
@@ -400,8 +402,8 @@ def test_a_dry_run_refuses_a_full_destination_like_a_run(otto_test_cli, sut_repo
     assert (full / "keep.txt").exists()
 
 
-def test_a_dry_run_writes_no_results_or_monitor_file(otto_test_cli, sut_repo, tmp_path):
-    sut_repo(files={"tests/test_d.py": "def test_d(): pass\n"})
+def test_a_dry_run_writes_no_results_or_monitor_file(otto_test_cli, one_project, tmp_path):
+    one_project(files={"tests/test_d.py": "def test_d(): pass\n"})
     results = tmp_path / "out" / "junit.xml"
     monitor = tmp_path / "mon" / "m.json"
     result = otto_test_cli(
@@ -412,29 +414,29 @@ def test_a_dry_run_writes_no_results_or_monitor_file(otto_test_cli, sut_repo, tm
     assert not (tmp_path / "mon").exists()
 
 
-def test_dry_run_echoes_an_off_switch(otto_test_cli, sut_repo):
+def test_dry_run_echoes_an_off_switch(otto_test_cli, one_project):
     """`--no-random` turns a default-on flag off; the echo must say so, not drop it."""
-    sut_repo(files={"tests/test_d.py": "def test_d(): pass\n"})
+    one_project(files={"tests/test_d.py": "def test_d(): pass\n"})
     result = otto_test_cli(["-n", "test", "test_d", "--no-random"])
     assert result.exit_code == 0, result.output
     assert "would run: otto test test_d --no-random" in result.output
 
 
-def test_dry_run_shows_every_resolved_verb_option(otto_test_cli, sut_repo):
+def test_dry_run_shows_every_resolved_verb_option(otto_test_cli, one_project):
     @options
     class FirmwareOpts:
         firmware: str = "latest"
         retries: int = 3
 
     register_options(FirmwareOpts, verbs=["test"])
-    sut_repo(files={"tests/test_d.py": "def test_d(): pass\n"})
+    one_project(files={"tests/test_d.py": "def test_d(): pass\n"})
     result = otto_test_cli(["-n", "test", "test_d", "--firmware", "2.1"])
     assert result.exit_code == 0, result.output
     assert "options:" in result.output
     assert "FirmwareOpts: firmware='2.1', retries=3" in result.output
 
 
-def test_dry_run_validates_verb_options_as_a_run_would(otto_test_cli, sut_repo):
+def test_dry_run_validates_verb_options_as_a_run_would(otto_test_cli, one_project):
     """The options class's own constraint, not click's type check, refuses under -n too."""
 
     @options
@@ -442,14 +444,14 @@ def test_dry_run_validates_verb_options_as_a_run_would(otto_test_cli, sut_repo):
         count: int = pydantic.Field(default=1, gt=0)
 
     register_options(CountOpts, verbs=["test"])
-    sut_repo(files={"tests/test_d.py": "def test_d(): pass\n"})
+    one_project(files={"tests/test_d.py": "def test_d(): pass\n"})
     result = otto_test_cli(["-n", "test", "test_d", "--count", "0"])
     assert result.exit_code == 2
     assert "greater than 0" in " ".join(result.output.replace("│", " ").split())
     assert "pytest collected these tests" not in result.output
 
 
-def test_dry_run_masks_secret_and_repr_false_fields(otto_test_cli, sut_repo):
+def test_dry_run_masks_secret_and_repr_false_fields(otto_test_cli, one_project):
     import click
 
     @options
@@ -460,7 +462,7 @@ def test_dry_run_masks_secret_and_repr_false_fields(otto_test_cli, sut_repo):
         note: Annotated[str, typer.Option()] = pydantic.Field(default="", repr=False)
 
     register_options(Creds, verbs=["test"])
-    sut_repo(files={"tests/test_d.py": "def test_d(): pass\n"})
+    one_project(files={"tests/test_d.py": "def test_d(): pass\n"})
     result = otto_test_cli(["-n", "test", "test_d", "--token", "hunter2", "--note", "sekrit"])
     assert result.exit_code == 0, result.output
     assert "hunter2" not in result.output
@@ -483,11 +485,11 @@ def _secret_default_class():
     return Vault
 
 
-def test_a_secret_default_reaches_the_test_as_its_value(otto_test_cli, sut_repo, captured_run):
+def test_a_secret_default_reaches_the_test_as_its_value(otto_test_cli, one_project, captured_run):
     """Typer used to render the default through str(): the test got '**********'."""
     vault = _secret_default_class()
     register_options(vault, verbs=["test"])
-    sut_repo(files={"tests/test_d.py": "def test_d(): pass\n"})
+    one_project(files={"tests/test_d.py": "def test_d(): pass\n"})
     result = otto_test_cli(["test", "test_d"])
     assert result.exit_code == 0, result.output
     [call] = captured_run
@@ -501,9 +503,9 @@ def test_a_secret_default_reaches_the_test_as_its_value(otto_test_cli, sut_repo,
     assert inst.token.get_secret_value() == "typed"
 
 
-def test_an_untyped_secret_flag_is_not_echoed(otto_test_cli, sut_repo):
+def test_an_untyped_secret_flag_is_not_echoed(otto_test_cli, one_project):
     register_options(_secret_default_class(), verbs=["test"])
-    sut_repo(files={"tests/test_d.py": "def test_d(): pass\n"})
+    one_project(files={"tests/test_d.py": "def test_d(): pass\n"})
     result = otto_test_cli(["-n", "test", "test_d"])
     assert result.exit_code == 0, result.output
     assert "would run: otto test test_d\n" in result.output
@@ -514,12 +516,12 @@ def test_an_untyped_secret_flag_is_not_echoed(otto_test_cli, sut_repo):
     assert "*****" not in help_text
 
 
-def test_dry_run_probe_announces_even_with_no_hosts(otto_test_cli, sut_repo, monkeypatch):
+def test_dry_run_probe_announces_even_with_no_hosts(otto_test_cli, one_project, monkeypatch):
     """A previewing leaf never drops ``--probe``: its announcement prints, no hosts included."""
     from otto.cli.probe import PROBE_NO_HOSTS
 
     monkeypatch.setattr("otto.cli.invoke.probe_requested", lambda ctx: True)
-    sut_repo(files={"tests/test_d.py": "def test_d(): pass\n"})
+    one_project(files={"tests/test_d.py": "def test_d(): pass\n"})
     result = otto_test_cli(["-n", "test", "test_d"])
     assert result.exit_code == 0, result.output
     assert PROBE_NO_HOSTS in result.output
@@ -628,9 +630,9 @@ def test_a_colliding_test_verb_caches_no_flags():
     ],
     ids=["no-name", "seed-no-random", "no-cov-contradiction", "list-unknown"],
 )
-def test_a_parse_time_usage_error_prints_usage_and_try(otto_test_cli, sut_repo, argv):
+def test_a_parse_time_usage_error_prints_usage_and_try(otto_test_cli, one_project, argv):
     """Like click's own usage errors: the Usage line and the Try-help hint, not the panel alone."""
-    sut_repo(files={"tests/test_d.py": "def test_d(): pass\n"})
+    one_project(files={"tests/test_d.py": "def test_d(): pass\n"})
     result = otto_test_cli(argv, lab=None)
     assert result.exit_code == 2
     flat = " ".join(result.output.replace("│", " ").split())

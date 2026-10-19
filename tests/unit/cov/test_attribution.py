@@ -140,16 +140,16 @@ def _head(git_repo: Path) -> str:
     return _git(git_repo, "rev-parse", "HEAD").strip()
 
 
-def _make_ticket_repo(tmp_path: Path, message: str) -> Path:
-    """Create a repo with a single commit touching a.c line 1, with the given message."""
+def _make_ticket_git_repo(tmp_path: Path, message: str) -> Path:
+    """Create a git repository with a single commit touching a.c line 1, with the given message."""
     git_repo = _git_repo(tmp_path)
     (git_repo / "a.c").write_text("one\n")
     _commit(git_repo, message)
     return git_repo
 
 
-def _make_two_commit_ticket_repo(tmp_path: Path) -> Path:
-    """Create a repo with two commits: c1 touches line 1, c2 touches line 2."""
+def _make_two_commit_ticket_git_repo(tmp_path: Path) -> Path:
+    """Create a git repository with two commits: c1 touches line 1, c2 touches line 2."""
     git_repo = _git_repo(tmp_path)
     (git_repo / "a.c").write_text("one\ntwo\n")
     _commit(git_repo, "fix #1")
@@ -328,11 +328,11 @@ def _sign_with_ssh(git_repo: Path, tmp_path: Path) -> None:
     _git(git_repo, "config", "user.signingkey", f"{key}.pub")
 
 
-def test_attribution_survives_hostile_repo_local_git_config(tmp_path):
-    """Final-review blocker 1: repo-local git config must not corrupt attribution.
+def test_attribution_survives_hostile_local_git_config(tmp_path):
+    """Final-review blocker 1: local git config must not corrupt attribution.
 
-    Three real reproductions found in review, all against config a SUT
-    repo (or the invoking user's ``~/.gitconfig``) can set with otto having
+    Three real reproductions found in review, all against config a project
+    checkout (or the invoking user's ``~/.gitconfig``) can set with otto having
     no say in it:
 
     - ``diff.mnemonicprefix = true`` (a common dotfiles setting) makes
@@ -340,7 +340,7 @@ def test_attribution_survives_hostile_repo_local_git_config(tmp_path):
       instead of ``a.c``, so ``_apply_worktree_overlay`` silently skips
       the file and the uncommitted line below would inherit ``second``'s
       sha instead of getting :data:`UNCOMMITTED`.
-    - ``log.showSignature = true`` on a repo with signed commits
+    - ``log.showSignature = true`` on a checkout with signed commits
       interleaves gpg/ssh signature-check text (``No signature`` here,
       since verification has no ``allowedSignersFile`` to check against)
       into the metadata stream ``gitio.log_walk_u0`` parses, corrupting
@@ -351,8 +351,8 @@ def test_attribution_survives_hostile_repo_local_git_config(tmp_path):
       subprocess hard fail with ``gitio.GitUnavailableError`` instead of
       running git's own diff engine.
 
-    All three are set repo-locally below (not via a hermetic test-only
-    env) precisely because that is what a real SUT checkout can do to
+    All three are set in the local git config below (not via a hermetic test-only
+    env) precisely because that is what a real project checkout can do to
     otto with zero cooperation from otto's own test harness — pinning
     them via CLI flags on every git invocation this module makes
     (``otto.coverage.capture.gitio._pin``) is what survives it.
@@ -442,7 +442,7 @@ def test_attribute_tickets_exposes_owning_sha_so_callers_can_tell_uncommitted_fr
 
 
 def test_reattribution_replaces_the_parsed_ticket_set(tmp_path):
-    git_repo = _make_ticket_repo(tmp_path, "fix #1")
+    git_repo = _make_ticket_git_repo(tmp_path, "fix #1")
     sha = _head(git_repo)
     spec = build_ticket_spec("#(?P<n>[0-9]+)", None)
     lines, commits, _ = attribute_tickets(git_repo, {"a.c": 1}, spec, reattributions={sha: ["#9"]})
@@ -452,7 +452,7 @@ def test_reattribution_replaces_the_parsed_ticket_set(tmp_path):
 
 
 def test_reattribution_to_empty_list_means_no_ticket(tmp_path):
-    git_repo = _make_ticket_repo(tmp_path, "fix #1")
+    git_repo = _make_ticket_git_repo(tmp_path, "fix #1")
     sha = _head(git_repo)
     spec = build_ticket_spec("#(?P<n>[0-9]+)", None)
     lines, commits, _ = attribute_tickets(git_repo, {"a.c": 1}, spec, reattributions={sha: []})
@@ -461,7 +461,7 @@ def test_reattribution_to_empty_list_means_no_ticket(tmp_path):
 
 
 def test_reattribution_leaves_other_commits_alone(tmp_path):
-    git_repo = _make_two_commit_ticket_repo(tmp_path)
+    git_repo = _make_two_commit_ticket_git_repo(tmp_path)
     c2 = _head(git_repo)
     spec = build_ticket_spec("#(?P<n>[0-9]+)", None)
     lines, _, _ = attribute_tickets(git_repo, {"a.c": 2}, spec, reattributions={c2: ["#7"]})
@@ -551,7 +551,7 @@ def _unrestricted_lines(
 
 def test_bounded_walk_matches_unrestricted_walk_exactly_on_synthetic_history(tmp_path):
     """The acceptance bar: bounded output must equal unrestricted output, not
-    merely look plausible. Builds one repo mixing every case the brief
+    merely look plausible. Builds one git repository mixing every case the brief
     calls out — a never-renamed file, a renamed-then-edited file, a double
     rename, and a plain creation — and compares the *entire* result dict
     between the bounded engine (``attribute_lines``'s real ``_fetch_walk``)

@@ -370,7 +370,7 @@ async def test_unreferenced_flat_extra_file_ships_under_compose_root(tmp_path):
 
 @pytest.mark.asyncio
 async def test_extra_files_key_that_escapes_is_refused(tmp_path):
-    """I2's guard also covers extra_files keys, not just repo env_file refs."""
+    """I2's guard also covers extra_files keys, not just project env_file refs."""
     text = "services: {api: {image: x}}\n"
     with pytest.raises(UseCaseResolutionError, match="escapes its staging root"):
         await stage_use_case(

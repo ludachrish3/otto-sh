@@ -7,14 +7,14 @@
 with the cross build.) For each compiler the kernel-module fixture is rebuilt
 for the running kernel — CC=<name> for a gcc, with the older-gcc overrides
 when the kernel was configured for a newer one; LLVM=1 with the gcc-kernel
-overrides for clang (tests/e2e/cov/_repo5_build.py has both) — the demo's
+overrides for clang (tests/e2e/cov/_project5_build.py has both) — the demo's
 .init_array bracket is checked in the .ko, and the routine kmod e2e's
 compiler-independent assertions run through the shared helpers on a real
 ``otto test --cov`` run. otto reads each host's counters with the gcov the
 counters' own stamp names (``gcov-N`` for a gcc, ``llvm-cov`` for clang, from
 PATH), so the bed hosts are left unconfigured for every gcc and the run's
-green is that discovery's proof; clang's arm alone layers an overlay SUT repo
-over repo5 with OTTOPATH (tests/e2e/cov/_repo5_build.py) naming an lcov
+green is that discovery's proof; clang's arm alone layers an overlay project
+over project5 with OTTOPATH (tests/e2e/cov/_project5_build.py) naming an lcov
 wrapper that ignores the kernel headers llvm-cov reports relative to the
 kernel tree. Unset or empty, the variable means the system's
 default compiler, so this module never collects an empty, skipped parameter
@@ -37,7 +37,7 @@ from otto.coverage.store.model import CoverageStore
 from otto.host.factory import create_host_from_dict
 from tests._ambient_env import ambient
 from tests._fixtures.labdata import element_for, host_data
-from tests.e2e._otto_subprocess import REPO5, run_otto
+from tests.e2e._otto_subprocess import PROJECT5, run_otto
 from tests.e2e.cov._kmod_assertions import (
     assert_exit_routine_lines_are_hit_once_per_host,
     assert_mid_suite_dump_does_not_double_count,
@@ -49,7 +49,7 @@ from tests.e2e.cov._kmod_assertions import (
     assert_store_has_the_three_demo_files,
     assert_three_gcda_per_host,
 )
-from tests.e2e.cov._repo5_build import (
+from tests.e2e.cov._project5_build import (
     BUILD,
     DEMO_SRC,
     build_foreign_demo,
@@ -57,7 +57,7 @@ from tests.e2e.cov._repo5_build import (
     foreign_toolchain,
     init_array_symbols,
     note_toolchain,
-    overlay_repo,
+    overlay_project,
     toolchain,
 )
 
@@ -173,12 +173,12 @@ async def _refusal_on_the_bed(foreign_ko) -> "tuple[bool, str, list[str]]":
 
 
 def _run_otto(argv, *, xdir, timeout, overlay=None):
-    # `sut_dirs` takes one Path; the two-repo layout goes through extra_env,
-    # which run_otto merges last. repo5 FIRST and the overlay second: the
+    # `roots` takes one Path; the two-project layout goes through extra_env,
+    # which run_otto merges last. project5 FIRST and the overlay second: the
     # composite reads lab sources in OTTOPATH order and the later one's
     # elements win, which is the whole point of the overlay.
-    env = {"OTTOPATH": os.pathsep.join([str(REPO5), str(overlay)])} if overlay else None
-    result = run_otto(argv, xdir=xdir, roots=REPO5, lab=_LAB, timeout=timeout, extra_env=env)
+    env = {"OTTOPATH": os.pathsep.join([str(PROJECT5), str(overlay)])} if overlay else None
+    result = run_otto(argv, xdir=xdir, roots=PROJECT5, lab=_LAB, timeout=timeout, extra_env=env)
     if result.returncode != 0:
         raise AssertionError(
             f"otto --lab {_LAB} {' '.join(argv)} exited {result.returncode}\n"
@@ -193,7 +193,7 @@ def coverage_run(built_with, tmp_path_factory):
     xdir = tmp / "xdir"
     xdir.mkdir()
     report_dir = tmp / "report"
-    overlay = overlay_repo(built_with, tmp / "overlay")
+    overlay = overlay_project(built_with, tmp / "overlay")
     _run_otto(
         ["test", "--cov", "--cov-clean", "TestKmodDemo"],
         xdir=xdir,

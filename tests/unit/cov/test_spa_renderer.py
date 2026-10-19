@@ -187,7 +187,7 @@ class TestExcludedLinesRoundTripThroughReporter:
     async def test_settings_driven_collection_path_renders_spa_and_saves_store(
         self, tmp_path, monkeypatch, hermetic_covapp_bundle
     ):
-        """Mirrors ``test_cov.py``'s settings-driven (repo_root + tier_configs)
+        """Mirrors ``test_cov.py``'s settings-driven (project_root + tier_configs)
         collection-model wiring end to end: the real ``run_coverage_report``
         entry point, through ``CoverageReporter.run()``, must land on the SPA
         artifacts (not the retired Jinja ones) and still save store.json last."""

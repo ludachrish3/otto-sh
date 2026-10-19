@@ -8,11 +8,11 @@ is read from pytest's phase reports at the TEARDOWN report, never from a
 test body (a record written inside a test reports success for a test that
 then fails); a skip is its own outcome, which no collation reads as
 evidence; the record's provenance — compiler version and kernel release —
-is taken from the :class:`~tests.e2e.cov._repo5_build.Toolchain` the
+is taken from the :class:`~tests.e2e.cov._project5_build.Toolchain` the
 fixture already measured, through ``config.stash``, never probed again.
 
 The records go to :func:`observations_dir`, ``reports/kmodcov-observations/``
-under ``PROJECT_ROOT`` (git-ignored; ``make clean`` removes ``reports/``).
+under ``CHECKOUT_ROOT`` (git-ignored; ``make clean`` removes ``reports/``).
 The first write of a session clears the directory, so a fold is never
 contaminated by an earlier run's leftovers; records of one session share a
 ``run_id``, which is how the collate step requires a column's control and
@@ -33,13 +33,13 @@ from pathlib import Path
 import pytest
 
 from tests._fixtures.kmodcov_matrix import BED, BUILD, surface_for
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 from tests.conformance._observation import failure_summary, outcome_of, today
-from tests.e2e.cov._repo5_build import TOOLCHAINS_KEY
+from tests.e2e.cov._project5_build import TOOLCHAINS_KEY
 
 FORMAT = 1
 OBSERVATION = "observation"
-DEFAULT_OBSERVATIONS_DIR = PROJECT_ROOT / "reports" / "kmodcov-observations"
+DEFAULT_OBSERVATIONS_DIR = CHECKOUT_ROOT / "reports" / "kmodcov-observations"
 
 BED_PARAM = "built_with"
 BUILD_FIXTURE = "kernel_build"

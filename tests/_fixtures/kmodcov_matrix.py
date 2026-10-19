@@ -46,13 +46,13 @@ from pathlib import Path
 
 from jsonschema import Draft202012Validator
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-SCHEMA_PATH = PROJECT_ROOT / "schemas" / "kmodcov-matrix.schema.json"
-MATRIX_PATH = PROJECT_ROOT / "schemas" / "kmodcov_matrix.json"
-PAGE_PATH = PROJECT_ROOT / "docs" / "cli" / "cov" / "instrumenting" / "kmodcov-matrix.md"
-MAKEFILE_PATH = PROJECT_ROOT / "Makefile"
-KMODCOV_TESTS = sorted((PROJECT_ROOT / "tests" / "e2e" / "cov").glob("test_kmodcov_*.py"))
+SCHEMA_PATH = CHECKOUT_ROOT / "schemas" / "kmodcov-matrix.schema.json"
+MATRIX_PATH = CHECKOUT_ROOT / "schemas" / "kmodcov_matrix.json"
+PAGE_PATH = CHECKOUT_ROOT / "docs" / "cli" / "cov" / "instrumenting" / "kmodcov-matrix.md"
+MAKEFILE_PATH = CHECKOUT_ROOT / "Makefile"
+KMODCOV_TESTS = sorted((CHECKOUT_ROOT / "tests" / "e2e" / "cov").glob("test_kmodcov_*.py"))
 
 FORMAT = 1
 BED = "bed"
@@ -284,7 +284,7 @@ def _fixtures_of(node: "ast.FunctionDef | ast.AsyncFunctionDef") -> "set[str]":
 def _walk(path: Path):
     """Every ``test*`` function *path* defines, as ``(nodeid, node)``, classes included."""
     tree = ast.parse(path.read_text(encoding="utf-8"))
-    rel = path.relative_to(PROJECT_ROOT).as_posix()
+    rel = path.relative_to(CHECKOUT_ROOT).as_posix()
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith(
             "test"

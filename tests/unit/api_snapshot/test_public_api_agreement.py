@@ -16,9 +16,9 @@ import pytest
 
 from scripts.api_agreement import agreement_failures, namespace_reports
 from scripts.api_manifest import load_manifest
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-MANIFEST = PROJECT_ROOT / "api" / "public.toml"
+MANIFEST = CHECKOUT_ROOT / "api" / "public.toml"
 
 
 class MovedBinding(NamedTuple):
@@ -55,7 +55,7 @@ MOVED_BINDINGS = [
 
 def test_every_declared_namespace_agrees_with_its_runtime_bindings():
     names = sorted(load_manifest(MANIFEST))
-    assert agreement_failures(names, namespace_reports(names, PROJECT_ROOT)) == []
+    assert agreement_failures(names, namespace_reports(names, CHECKOUT_ROOT)) == []
 
 
 @pytest.mark.parametrize(

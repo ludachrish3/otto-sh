@@ -34,10 +34,10 @@ _SHORT_ID = re.compile(r"[0-9a-f]{12}")
 
 @dataclass(frozen=True)
 class BuiltLine:
-    """One ``<repo>/<image>: built <refs>  <id>  (<host>)`` report line."""
+    """One ``<project>/<image>: built <refs>  <id>  (<host>)`` report line."""
 
     image: str
-    """``<repo>/<image>``."""
+    """``<project>/<image>``."""
     refs: "list[str]"
     """The references the line names."""
     image_id: str
@@ -47,7 +47,7 @@ class BuiltLine:
 
 
 def parse_built_line(text: str, image: str) -> "BuiltLine | None":
-    """Return the report line for *image* (``<repo>/<image>``) in *text*, or ``None``.
+    """Return the report line for *image* (``<project>/<image>``) in *text*, or ``None``.
 
     Whitespace between fields is matched as any run, so the raw console text and
     the same text with its wrapping collapsed both parse.
@@ -62,7 +62,7 @@ def parse_daemon_rows(text: str) -> "dict[str, str]":
     """Return ``reference -> short id`` from the rows :data:`DAEMON_LIST_COMMAND` printed in *text*.
 
     The passthrough relays the daemon's output through the console logger, so a
-    row arrives as ``INFO     @test3 > | OTTO-HONESTY repo1-api:latest cbd8571d4b6e``
+    row arrives as ``INFO     @test3 > | OTTO-HONESTY project1-api:latest cbd8571d4b6e``
     (and as ``         @test3 > | OTTO-HONESTY ...`` for the lines after the
     first), and the echo of the command itself carries the mark too. A row is
     what follows the mark and has docker's id shape; the echo's unexpanded
@@ -162,7 +162,7 @@ def names_a_missing_image(text: str) -> bool:
 
 
 _PS_ID = re.compile(r"^(?P<id>[0-9a-f]{12})\s")
-_IMAGE_ROW = re.compile(r"^(?P<repo>\S+)\s+(?P<tag>\S+)\s+(?P<id>[0-9a-f]{12})\s")
+_IMAGE_ROW = re.compile(r"^(?P<repository>\S+)\s+(?P<tag>\S+)\s+(?P<id>[0-9a-f]{12})\s")
 _IMAGE_REF_ROW = re.compile(r"^(?P<ref>\S*:\S*)\s+(?P<id>[0-9a-f]{12})\s")
 
 
@@ -186,9 +186,9 @@ def parse_images_rows(text: str) -> "dict[str, dict[str, str]]":
     """``host id -> {reference: short id}`` from an ``otto docker images`` fan-out.
 
     Reads both layouts docker prints under a ``== host ==`` header. The classic
-    one is ``REPOSITORY  TAG  IMAGE ID  ...``, a row being ``<repo> <tag> <12-hex id>``,
-    keyed ``repo:tag``. The newer one is ``IMAGE  ID  DISK USAGE  ...`` (preceded by a
-    ``WARNING:`` line), a row being ``<repo:tag> <12-hex id>``, keyed by its first field.
+    one is ``REPOSITORY  TAG  IMAGE ID  ...``, a row being ``<repository> <tag> <12-hex id>``,
+    keyed ``repository:tag``. The newer one is ``IMAGE  ID  DISK USAGE  ...`` (preceded by a
+    ``WARNING:`` line), a row being ``<repository:tag> <12-hex id>``, keyed by its first field.
     Anything matching neither (the warning, the header rows, blank lines) is ignored,
     and a dangling ``<none>:<none>`` row is skipped in both layouts.
     """
@@ -201,7 +201,7 @@ def parse_images_rows(text: str) -> "dict[str, dict[str, str]]":
             continue
         classic = _IMAGE_ROW.match(line)
         if classic:
-            key, short_id = f"{classic['repo']}:{classic['tag']}", classic["id"]
+            key, short_id = f"{classic['repository']}:{classic['tag']}", classic["id"]
         else:
             by_ref = _IMAGE_REF_ROW.match(line)
             if not by_ref:

@@ -7,17 +7,17 @@ from otto.config.project import Project
 from otto.host.element import Element
 from otto.host.os_profile import ProfileContext
 from otto.labs import HostSummary
-from tests._fixtures.fake_repo import fake_repo
+from tests._fixtures.fake_project import fake_project
 from tests._fixtures.labdata import json_lab_sources, write_lab_json
 
 _CREDS = [{"login": "u", "password": "p"}]
 
 
-def _repo(tmp_path: Path, hosts: list[dict]) -> Project:
+def _project(tmp_path: Path, hosts: list[dict]) -> Project:
     lab = tmp_path / "lab"
     lab.mkdir()
     write_lab_json(lab / "lab.json", hosts)
-    return fake_repo(lab_sources=json_lab_sources(tmp_path, [lab]), root=tmp_path)
+    return fake_project(lab_sources=json_lab_sources(tmp_path, [lab]), root=tmp_path)
 
 
 def _summaries(project) -> dict[str, HostSummary]:
@@ -30,7 +30,7 @@ def _summaries(project) -> dict[str, HostSummary]:
 
 
 def test_json_backend_records_the_declared_os_type(tmp_path):
-    project = _repo(
+    project = _project(
         tmp_path,
         [{"ip": "1.1.1.1", "element": "z1", "labs": ["e"], "creds": _CREDS, "os_type": "zephyr"}],
     )
@@ -38,7 +38,9 @@ def test_json_backend_records_the_declared_os_type(tmp_path):
 
 
 def test_json_backend_applies_the_factory_default_when_none_is_declared(tmp_path):
-    project = _repo(tmp_path, [{"ip": "1.1.1.1", "element": "u1", "labs": ["e"], "creds": _CREDS}])
+    project = _project(
+        tmp_path, [{"ip": "1.1.1.1", "element": "u1", "labs": ["e"], "creds": _CREDS}]
+    )
     assert _summaries(project)["u1"].os_type == "unix"
 
 
@@ -49,7 +51,7 @@ def test_the_field_defaults_to_none_for_backends_that_do_not_know():
 def test_composite_copies_os_type_across_sources(tmp_path):
     from otto.labs import build_lab_sources
 
-    project = _repo(
+    project = _project(
         tmp_path,
         [{"ip": "1.1.1.1", "element": "z1", "labs": ["e"], "creds": _CREDS, "os_type": "zephyr"}],
     )
@@ -91,7 +93,7 @@ def test_load_lab_fallback_records_the_built_hosts_os_type():
     from otto.labs import host_summaries
     from otto.labs.loader import Lab
 
-    class _MinimalRepo:
+    class _MinimalRepository:
         """A LabRepository with only the two required methods (no fast path)."""
 
         def load_lab(self, name, preferences=None, inventory=None):
@@ -104,5 +106,5 @@ def test_load_lab_fallback_records_the_built_hosts_os_type():
         def list_labs(self):
             return ["only"]
 
-    summaries = {s.id: s for s in host_summaries(_MinimalRepo())}
+    summaries = {s.id: s for s in host_summaries(_MinimalRepository())}
     assert summaries["u1"].os_type == "unix"

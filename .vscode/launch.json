@@ -32,7 +32,7 @@
             "env": {
                 "OTTO_LAB": "unix",
                 "OTTO_LOG_DAYS": "7",
-                "OTTOPATH": "${workspaceFolder}/tests/repo1",
+                "OTTOPATH": "${workspaceFolder}/tests/project1",
                 "OTTO_XDIR": "${userHome}/xdir",
             },
         }

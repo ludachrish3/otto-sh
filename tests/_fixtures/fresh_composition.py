@@ -1,4 +1,4 @@
-"""Run a snippet in a fresh interpreter over a scratch repo and count what it composed.
+"""Run a snippet in a fresh interpreter over a scratch project and count what it composed.
 
 A composition is counted by its dependency pass, which every composition runs exactly
 once: the child wraps ``otto.config.dependencies.resolve_dependencies`` the moment that
@@ -18,10 +18,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.project_scaffold import make_project
 
 INIT = "compose_marker"
-"""The scratch repo's one init module; a composition imports it."""
+"""The scratch project's one init module; a composition imports it."""
 
 _COUNT = """
 import importlib.abc, importlib.machinery, sys
@@ -53,25 +53,25 @@ sys.meta_path.insert(0, _CountPasses())
 """
 
 
-def scratch_repo(tmp_path: Path, *, extra: str = "") -> Path:
-    """The scratch repo ``repo``, with one init module, so a composition imports user code.
+def scratch_project(tmp_path: Path, *, extra: str = "") -> Path:
+    """The scratch project ``project``, with one init module, so a composition imports user code.
 
     *extra* is more settings TOML, appended after the init module's lines.
     """
-    return make_sut_repo(
-        tmp_path / "repo",
-        name="repo",
+    return make_project(
+        tmp_path / "project",
+        name="project",
         extra=f'libs = ["lib"]\ninit = ["{INIT}"]\n' + extra,
         files={f"lib/{INIT}.py": "MARKED = True\n"},
     )
 
 
 def run_fresh(tmp_path: Path, source: str, *, extra: str = "") -> "list[object]":
-    """Run *source* in a new interpreter over the scratch repo, compositions counted.
+    """Run *source* in a new interpreter over the scratch project, compositions counted.
 
-    *extra* is passed to :func:`scratch_repo`. Returns the source's last JSON line.
+    *extra* is passed to :func:`scratch_project`. Returns the source's last JSON line.
     """
-    project = scratch_repo(tmp_path, extra=extra)
+    project = scratch_project(tmp_path, extra=extra)
     source = _COUNT.format(log=str(tmp_path / "passes.log")) + source
     env = {
         **os.environ,

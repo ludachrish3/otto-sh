@@ -30,7 +30,7 @@ def _lab(name: str, elements: list[str]) -> Lab:
     return lab
 
 
-class _UnstampedRepo:
+class _UnstampedRepository:
     """A backend that builds hosts without ``lab_name`` AND bypasses ``add_host``.
 
     Deliberately the worst case: nothing but ``load_lab``'s own per-component
@@ -91,7 +91,7 @@ def test_merge_preserves_per_host_attribution_and_component_names():
 
 
 def test_load_lab_backstop_stamps_the_component_not_the_composite():
-    lab = load_lab("a+b", repository=_UnstampedRepo())
+    lab = load_lab("a+b", repository=_UnstampedRepository())
 
     assert lab.name == "a+b"
     stamps = sorted(h.source_lab for h in lab.hosts.values() if h.id != "local")
@@ -99,7 +99,7 @@ def test_load_lab_backstop_stamps_the_component_not_the_composite():
 
 
 def test_load_lab_attributes_the_injected_local_host_to_the_first_component():
-    lab = load_lab("a+b", repository=_UnstampedRepo())
+    lab = load_lab("a+b", repository=_UnstampedRepository())
 
     assert lab.hosts["local"].source_lab == "a"
 

@@ -6,7 +6,7 @@ CANARY (3.14, the newest), and a hostless leg on the versions between.
 Measured on 2026-09-11, that hostless leg cost ~1,420 s of CPU per interior
 Python, and 65 % of it was work whose subject is not otto-under-THIS-
 interpreter at all: the ``tests/e2e`` tier (real ``otto`` subprocesses,
-real ``pip`` venv builds) and the repo-policy guards that re-collect the
+real ``pip`` venv builds) and the repository-policy guards that re-collect the
 whole tree in a subprocess. Those tests prove the same thing on every
 Python, so the PRIMARY runs everything; every other interpreter, the 3.14
 canary included, deselects the ``interpreter_agnostic`` family (#566 Q2:
@@ -35,7 +35,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - 3.10 only, otto's floor
     import tomli as tomllib
 
-from tests._fixtures.paths import PROJECT_ROOT, TESTS_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT, TESTS_ROOT
 from tests.unit.test_tier_marker_invariants import (
     _module_pytestmark_names,
     _python_pytest_invocations,
@@ -44,7 +44,7 @@ from tests.unit.test_tier_marker_invariants import (
 
 pytestmark = pytest.mark.interpreter_agnostic
 
-_NOXFILE = PROJECT_ROOT / "noxfile.py"
+_NOXFILE = CHECKOUT_ROOT / "noxfile.py"
 _MARKER = "interpreter_agnostic"
 _BOOKEND_PAIR = ("HOSTLESS_TEST_ARGS", "HOSTLESS_SERIAL_ARGS")
 _CANARY_PAIR = ("HOSTLESS_CANARY_TEST_ARGS", "HOSTLESS_CANARY_SERIAL_ARGS")
@@ -126,7 +126,7 @@ def noxfile_tree() -> ast.Module:
 
 
 def test_the_marker_is_registered() -> None:
-    ini = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())
+    ini = tomllib.loads((CHECKOUT_ROOT / "pyproject.toml").read_text())
     names = [m.split(":", 1)[0].strip() for m in ini["tool"]["pytest"]["ini_options"]["markers"]]
     assert _MARKER in names, f"`{_MARKER}` is not registered in pyproject.toml (strict markers)"
 
@@ -678,13 +678,13 @@ def test_the_isolation_repeat_deselects_the_marker_and_ignores_the_differential(
 def test_the_shim_tests_are_not_in_the_family() -> None:
     """Both results depend on the interpreter — the opposite of the marker's meaning."""
     for rel in (_DIFFERENTIAL, "tests/unit/shim/test_refresh_spawn.py"):
-        names = _module_pytestmark_names(ast.parse((PROJECT_ROOT / rel).read_text()))
+        names = _module_pytestmark_names(ast.parse((CHECKOUT_ROOT / rel).read_text()))
         assert _MARKER not in names, f"{rel} carries `{_MARKER}` again"
 
 
 def test_the_make_nox_target_keeps_the_middle_on_the_hostless_session() -> None:
     """``make nox`` is where the trim pays: its interior legs must stay tests_hostless."""
-    text = (PROJECT_ROOT / "Makefile").read_text()
+    text = (CHECKOUT_ROOT / "Makefile").read_text()
     live = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
     recipe = re.search(r"^nox:.*?\n((?:\t.*\n)+)", live, re.MULTILINE)
     assert recipe is not None, "Makefile has no `nox` recipe"
@@ -701,7 +701,7 @@ def test_the_make_nox_release_target_runs_no_primary_session() -> None:
     so the target runs the canary's ``tests_all`` and the middle versions'
     ``tests_hostless`` and nothing on ``$(NOX_PRIMARY)`` (#566 ruling 4).
     """
-    text = (PROJECT_ROOT / "Makefile").read_text()
+    text = (CHECKOUT_ROOT / "Makefile").read_text()
     live = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
     recipe = re.search(r"^nox-release:.*?\n((?:\t.*\n)+)", live, re.MULTILINE)
     assert recipe is not None, "Makefile has no `nox-release` recipe"
@@ -716,11 +716,11 @@ def test_the_make_nox_release_target_runs_no_primary_session() -> None:
 
 
 def test_every_carrier_declares_the_marker_at_module_level_under_tests_unit() -> None:
-    # Walk pytest's own roots, not all of tests/: the fixture repos beside
-    # them (tests/repo_broken) hold test_*.py files that do not parse, on
+    # Walk pytest's own roots, not all of tests/: the fixture projects beside
+    # them (tests/project_broken) hold test_*.py files that do not parse, on
     # purpose, and no lane ever collects them.
-    ini = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())
-    roots = [PROJECT_ROOT / p for p in ini["tool"]["pytest"]["ini_options"]["testpaths"]]
+    ini = tomllib.loads((CHECKOUT_ROOT / "pyproject.toml").read_text())
+    roots = [CHECKOUT_ROOT / p for p in ini["tool"]["pytest"]["ini_options"]["testpaths"]]
     carriers = {
         path
         for root in roots

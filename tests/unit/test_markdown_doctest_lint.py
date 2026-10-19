@@ -1,8 +1,8 @@
 import importlib.util
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-_MODULE_PATH = PROJECT_ROOT / "scripts" / "lint_markdown_doctests.py"
+_MODULE_PATH = CHECKOUT_ROOT / "scripts" / "lint_markdown_doctests.py"
 
 
 def _load_linter():

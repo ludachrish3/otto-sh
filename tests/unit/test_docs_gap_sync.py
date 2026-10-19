@@ -12,7 +12,7 @@ reads a page that says everything is fine and gets a refusal anyway. A docs row
 with no registry entry is the reverse and is the worse of the two: the gap was
 CLOSED in code and the page still tells people it is open, so they keep working
 around something that works. A one-directional sync test catches one of those
-and reports green for the other, which is the shape of half-guard this repo
+and reports green for the other, which is the shape of half-guard this repository
 keeps paying for.
 
 The status is pinned as well as the surface, because "open" versus "closed" is
@@ -60,9 +60,9 @@ from otto.host.userland import (
     gap_path_totals,
     table_guards,
 )
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-DOCS_PAGE = PROJECT_ROOT / GAP_DOCS_PAGE
+DOCS_PAGE = CHECKOUT_ROOT / GAP_DOCS_PAGE
 """Resolved through the constant, never spelled out here.
 
 ``GAP_DOCS_PAGE`` is what every rendered error message points at, so a page
@@ -71,7 +71,7 @@ page move while the error kept pointing at the old path — and this test would
 still be green, having checked the wrong file.
 """
 
-DOCS_ROOT = PROJECT_ROOT / "docs"
+DOCS_ROOT = CHECKOUT_ROOT / "docs"
 
 _TABLE_HEADER = "| Surface | Status | What it means for you |"
 """The exact header row of the table under test.

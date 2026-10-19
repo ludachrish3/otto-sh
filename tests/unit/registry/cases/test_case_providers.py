@@ -1,4 +1,4 @@
-"""Providers are subscriptions: order kept, repo captured, test load refused."""
+"""Providers are subscriptions: order kept, project captured, test load refused."""
 
 import pytest
 
@@ -26,7 +26,7 @@ COVERS = ["otto.host.product:PRODUCT_PROVIDERS", "otto.host.dev_tool:DEV_TOOL_PR
         (DEV_TOOL_PROVIDERS, register_dev_tool_provider, registered_dev_tool_providers),
     ],
 )
-def test_the_wrapper_keeps_order_repo_and_attribution(table, wrapper, reader):
+def test_the_wrapper_keeps_order_project_and_attribution(table, wrapper, reader):
     def a(host): ...
 
     def b(host): ...

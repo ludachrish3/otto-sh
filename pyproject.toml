@@ -382,7 +382,7 @@ markers = [
     "interpreter_agnostic: the test's subject is the repository, its build files or a generated corpus — not otto running under THIS interpreter — so it proves the same thing on every Python. It runs ONCE per gate set, on the PRIMARY interpreter (noxfile.py PRIMARY_PYTHON, the 3.10 floor, where `make coverage` also runs it instrumented); every other interpreter deselects it (the *_NONPRIMARY_* and HOSTLESS_CANARY_*/HOSTLESS_MIDDLE_* bundles). Declared at MODULE level (pytestmark) under tests/unit, never per function — pinned by tests/unit/test_python_matrix_tiering.py",
     "browser: needs a Playwright browser binary (make browsers) — additive resource refinement, deselect with -m 'not browser'",
     "timeout(seconds): fail the test if it exceeds the given number of seconds",
-    "retry(n): re-run a failed test body until it passes, n TOTAL attempts (retry(2) = one retry); body must be idempotent — see tests/repo1 sample",
+    "retry(n): re-run a failed test body until it passes, n TOTAL attempts (retry(2) = one retry); body must be idempotent — see tests/project1 sample",
     "stability: heavy stability/soak tests — excluded from `make coverage`; run via `make stability` / `make stability-embedded`",
     "chaos: tier-3 chaos-lane scenario (tests/e2e/chaos) — bed-hostile (reboots, SSH blackholes), excluded from every default gate like stability; opt-in via make chaos / make chaos-embedded",
     "concurrency: fast, no-VM SessionManager concurrency/soak tests — run via `make stability-unit`; stays in coverage",

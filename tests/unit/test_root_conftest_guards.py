@@ -23,7 +23,7 @@ what loaded it.
 
 ``tests/unit/test_lazy_packages.py`` tests the check's functions directly;
 what this module pins is the WIRING. Each test runs an inner session with the
-repo's root conftest registered as a plugin
+checkout's root conftest registered as a plugin
 (``tests/_fixtures/root_conftest_pytester.py``): one probe test leaves the
 state behind, and the next probe test asserts it was put back. Deleting the
 restore line, the check call, or the eviction on the failure path, or moving
@@ -572,7 +572,7 @@ def test_only_a_held_boundary_exempts_a_wider_runner_loop(inner: pytest.Pytester
     assert "unheld-host" in errors["test_unheld_a"], combined
 
 
-# Both legs: single-process, and under xdist (the repo default), where the
+# Both legs: single-process, and under xdist (the repository default), where the
 # worker's own exit status and terminal never reach the user, so the worker
 # hands its leftovers to the controller.
 @pytest.mark.parametrize("workers", [[], ["-n", "1"]], ids=["single-process", "xdist"])

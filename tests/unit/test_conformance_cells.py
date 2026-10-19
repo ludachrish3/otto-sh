@@ -16,7 +16,7 @@ from types import SimpleNamespace
 import pytest
 
 from otto.host.element import Element
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 from tests._fixtures.profiles import Cell
 from tests.conformance import _cells
 from tests.conformance._bed import BED_BUSYBOX, BED_UNIX, BED_ZEPHYR, bed_space
@@ -25,7 +25,7 @@ from tests.conformance._resolved import ResolvedCell
 from tests.conformance._sample import cell_label
 from tests.conformance._vocabulary import POSIX
 
-_CONFORMANCE_CONFTEST = PROJECT_ROOT / "tests" / "conformance" / "conftest.py"
+_CONFORMANCE_CONFTEST = CHECKOUT_ROOT / "tests" / "conformance" / "conftest.py"
 
 
 def _never_opened():
@@ -45,7 +45,7 @@ def _load_conformance_conftest():
     What this does NOT prove: that pytest surfaces the failure as a run-ending
     error. That is pytest's own handling of an exception raised while
     importing a conftest, and reproducing it here would cost a subprocess run
-    for a behaviour no edit in this repo can change.
+    for a behaviour no edit in this repository can change.
     """
     spec = importlib.util.spec_from_file_location(
         "otto_conformance_conftest_probe", _CONFORMANCE_CONFTEST

@@ -5,7 +5,7 @@ doc page."""
 import re
 
 from otto.cli.docker import _GROUPS, _VERBS, compose_app, docker_app
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 
 def _registered(app):
@@ -60,7 +60,7 @@ def test_every_rows_markers_survive_resolution_to_the_command_callback():
 def test_every_row_has_a_doc_page():
     for verb in _VERBS:
         sub = "" if verb.group == "docker" else "compose/"
-        page = PROJECT_ROOT / "docs" / "cli" / "docker" / f"{sub}{verb.name}.md"
+        page = CHECKOUT_ROOT / "docs" / "cli" / "docker" / f"{sub}{verb.name}.md"
         assert page.exists(), page
 
 
@@ -73,8 +73,8 @@ _OLD = re.compile(r"otto docker (?:(?:up|down)\b|build\s+(?!-)(?!\[)(?:<TAB>|\w+
 
 def test_no_source_string_names_the_old_top_level_verbs():
     offenders = []
-    for path in (PROJECT_ROOT / "src" / "otto").rglob("*.py"):
+    for path in (CHECKOUT_ROOT / "src" / "otto").rglob("*.py"):
         for n, line in enumerate(path.read_text().splitlines(), 1):
             if _OLD.search(line):
-                offenders.append(f"{path.relative_to(PROJECT_ROOT)}:{n}: {line.strip()}")
+                offenders.append(f"{path.relative_to(CHECKOUT_ROOT)}:{n}: {line.strip()}")
     assert not offenders, "\n".join(offenders)

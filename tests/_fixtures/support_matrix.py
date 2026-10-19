@@ -1,7 +1,7 @@
 """The support matrix's two axes, DERIVED FROM THE TREE rather than tabulated.
 
 ``schemas/support_matrix.json`` is a ``{surface} x {profile}`` grid (spec
-2026-08-22 §5). Both axes are answers this repo already holds, so this module
+2026-08-22 §5). Both axes are answers this repository already holds, so this module
 reads them rather than restating them:
 
 ``profiles``
@@ -68,7 +68,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 from tests._fixtures.profiles import axes_for, axis_space
 from tests.conformance._bed import BED_LABS, bed_space
 from tests.conformance._controls import (
@@ -78,21 +78,21 @@ from tests.conformance._controls import (
 )
 from tests.conformance._sample import cell_label
 
-SCHEMA_PATH = PROJECT_ROOT / "schemas" / "support-matrix.schema.json"
+SCHEMA_PATH = CHECKOUT_ROOT / "schemas" / "support-matrix.schema.json"
 """The contract ``schemas/support_matrix.json`` validates against."""
 
-MATRIX_PATH = PROJECT_ROOT / "schemas" / "support_matrix.json"
+MATRIX_PATH = CHECKOUT_ROOT / "schemas" / "support_matrix.json"
 """The committed artifact.
 
 Under ``schemas/`` because spec §4 and §5 both name that path. That directory
 is otherwise the git-ignored output of ``make schema``, so ``.gitignore``
 re-includes these two files by name -- and it had to switch from ``/schemas/``
 to ``/schemas/*`` to do it, because git never descends into an excluded
-DIRECTORY and a re-include under one is inert (measured, in a throwaway repo,
+DIRECTORY and a re-include under one is inert (measured, in a throwaway git repository,
 both spellings).
 """
 
-CONFORMANCE_ROOT = PROJECT_ROOT / "tests" / "conformance"
+CONFORMANCE_ROOT = CHECKOUT_ROOT / "tests" / "conformance"
 
 FORMAT = 1
 """The artifact's document version, spelled the way ``monitor-export`` spells
@@ -640,7 +640,7 @@ def collect_conformance_nodeids(*, bed: bool) -> "set[str]":
 
     A SUBPROCESS, and not ``pytest.main`` in this process, for the reason
     ``tests/unit/test_pytest_addopts.py`` records about in-process configs:
-    this repo's ``addopts`` (``--cov``, ``-n auto``)
+    this repository's ``addopts`` (``--cov``, ``-n auto``)
     ride any Config built here, and the venue is selected by an environment
     variable that ``tests/conftest.py`` has already stripped from THIS
     process. A child gets a clean answer to a clean question.
@@ -662,7 +662,7 @@ def collect_conformance_nodeids(*, bed: bool) -> "set[str]":
     result = subprocess.run(
         [sys.executable, "-m", "pytest", str(CONFORMANCE_ROOT), *_COLLECT_ARGS],
         env=env,
-        cwd=str(PROJECT_ROOT),
+        cwd=str(CHECKOUT_ROOT),
         capture_output=True,
         text=True,
         timeout=300,

@@ -16,23 +16,23 @@ def test_project_selection_error_carries_kind_names_and_suggestion():
     from otto.session import ProjectSelectionError
 
     err = ProjectSelectionError(
-        "no project 'repp' — did you mean 'repo'?",
+        "no project 'prj' — did you mean 'proj'?",
         field="include_projects",
         kind="unknown",
-        names=["repp"],
-        suggestion="repo",
+        names=["prj"],
+        suggestion="proj",
     )
     assert isinstance(err, FieldError)
     assert isinstance(err, ValueError)
     assert (err.field, err.kind, err.names, err.suggestion) == (
         "include_projects",
         "unknown",
-        ["repp"],
-        "repo",
+        ["prj"],
+        "proj",
     )
 
 
-def test_repo_load_error_lists_every_fatal_error_and_keeps_the_demotions():
+def test_project_load_error_lists_every_fatal_error_and_keeps_the_demotions():
     from otto.bootstrap import BootstrapError
     from otto.session import ProjectLoadError
 
@@ -95,15 +95,17 @@ def test_dependency_refused_error_keeps_one_line_per_requirement():
 def test_instruction_inactive_error_message_names_fields_not_flags():
     from otto.session import InstructionInactiveError
 
-    err = InstructionInactiveError("blink", "Acme_Repo", project="acme-repo", reason="excluded")
+    err = InstructionInactiveError(
+        "blink", "Acme_Project", project="acme-project", reason="excluded"
+    )
     assert "exclude_projects" in str(err)
     assert "include_projects" in str(err)
     assert "--" not in str(err)
     assert "-I" not in str(err)
     assert (err.instruction, err.owner, err.project, err.reason) == (
         "blink",
-        "Acme_Repo",
-        "acme-repo",
+        "Acme_Project",
+        "acme-project",
         "excluded",
     )
 

@@ -18,11 +18,11 @@ from pathlib import Path
 
 import pytest
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
 
-_SCRIPT = PROJECT_ROOT / "scripts" / "gen_web_types.sh"
+_SCRIPT = CHECKOUT_ROOT / "scripts" / "gen_web_types.sh"
 
 # The fake npx: records the update-notifier setting it was handed, then writes
 # the scripted stderr and exits 0.

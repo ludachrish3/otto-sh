@@ -1,12 +1,12 @@
 """The shared ``custom_hosts`` module (``tests/custom_hosts``) registers the
 ``zephyr-inline`` command frame.
 
-``custom_hosts`` emulates a third-party package that SUT repos depend on for
-extra shell dialects, pulled in via each repo's ``settings.toml`` ``libs`` +
-``init``. Importing it must register ``ZephyrInlineRetcodeFrame`` so *any* repo
-(not just repo1) can construct the shared ``embedded`` lab's Zephyr 2.7 host
+``custom_hosts`` emulates a third-party package that projects depend on for
+extra shell dialects, pulled in via each project's ``settings.toml`` ``libs`` +
+``init``. Importing it must register ``ZephyrInlineRetcodeFrame`` so *any* project
+(not just project1) can construct the shared ``embedded`` lab's Zephyr 2.7 host
 (``zephyr27_fat``, ``command_frame: "zephyr-inline"``) — the regression that the
-embedded-lab fold surfaced for repo3.
+embedded-lab fold surfaced for project3.
 """
 
 import pytest

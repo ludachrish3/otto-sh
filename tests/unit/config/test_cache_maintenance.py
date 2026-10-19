@@ -11,7 +11,7 @@ def test_matcher_accepts_a_real_workspace_key(tmp_path):
     """Couples the matcher to the LIVE key format — format drift breaks loudly."""
     from otto.config.cache_maintenance import prune
 
-    real_key = workspace_key([tmp_path / "some-repo"])
+    real_key = workspace_key([tmp_path / "some-project"])
     ws = _mk_workspace(tmp_path, real_key)
     report = prune(tmp_path)
     assert ws / "completion_cache.json" in report.files_removed
@@ -55,7 +55,7 @@ def test_prune_ignores_non_matching_names(tmp_path):
     trap = tmp_path / "inventory-cache"
     trap.mkdir()
     (trap / "completion_cache.json").write_text("{}")
-    (tmp_path / "settings.toml").write_text("")  # sutrepo-exempt: decoy prune must not touch
+    (tmp_path / "settings.toml").write_text("")  # scaffold-exempt: decoy prune must not touch
     report = prune(tmp_path, age_blind=True)
     assert (trap / "completion_cache.json").is_file()
     assert (tmp_path / "settings.toml").is_file()

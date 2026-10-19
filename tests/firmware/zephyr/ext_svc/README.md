@@ -2,7 +2,7 @@
 
 An out-of-tree Zephyr module compiled into the ARM loader bases (`cov`,
 `cov44`) via `-DEXTRA_ZEPHYR_MODULES` (see the `zephyr-qemu-cov-build` step in
-the repo `Vagrantfile`). Gated by `CONFIG_OTTO_EXT_SVC`, set only in
+the checkout's `Vagrantfile`). Gated by `CONFIG_OTTO_EXT_SVC`, set only in
 `configs/cov_an385/overlay.conf` — configs that don't set it (`no_fs_arm`,
 every x86 config) compile nothing from here.
 
@@ -29,9 +29,9 @@ clears a flag and/or calls `ext_svc_abort()`.
 
 - **Any gcov/coverage runtime.** Policy (Chris, 2026-07-20): otto applications
   that want on-target coverage ship the gcov instrumentation *and* emission
-  runtime inside their own extension. `tests/repo3/product/` is the working
+  runtime inside their own extension. `tests/project3/product/` is the working
   example (single-TU `#include` of the patched embedded-gcov, Approach A in
-  `tests/repo3/docs/feasibility.md`); the base stays product-agnostic.
+  `tests/project3/docs/feasibility.md`); the base stays product-agnostic.
 - **Shell verbs.** Extensions can't register shell commands (link-time
   iterable sections), and the `llext` shell's `call_fn` already covers
   start/stop semantics.

@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 from tests.e2e._otto_subprocess import (
-    REPO_E2E,
+    PROJECT_E2E,
     assert_no_output_dir,
     assert_output_dir,
     run_otto,
@@ -31,7 +31,7 @@ def test_suite_pass_exits_zero(tmp_path: Path) -> None:
     r = run_otto(
         ["--lab", "unix", "test", "TestE2EFixture"],
         xdir=tmp_path,
-        roots=REPO_E2E,
+        roots=PROJECT_E2E,
     )
     assert r.returncode == 0, r.stdout + r.stderr
     assert_output_dir(tmp_path, "test")  # a real suite run produces results — output dir created
@@ -42,7 +42,7 @@ def test_suite_fail_exits_nonzero(tmp_path: Path) -> None:
     r = run_otto(
         ["--lab", "unix", "test", "TestE2EFixture"],
         xdir=tmp_path,
-        roots=REPO_E2E,
+        roots=PROJECT_E2E,
         extra_env={"OTTO_E2E_FAIL": "1"},
     )
     assert r.returncode != 0, r.stdout + r.stderr
@@ -59,7 +59,7 @@ def test_unknown_name_clean_usage_error(tmp_path: Path) -> None:
     r = run_otto(
         ["--lab", "unix", "test", "NoSuchTest"],
         xdir=tmp_path,
-        roots=REPO_E2E,
+        roots=PROJECT_E2E,
     )
     assert r.returncode == 2, r.stdout + r.stderr
     assert "Traceback (most recent call last)" not in (r.stdout + r.stderr)
@@ -67,6 +67,6 @@ def test_unknown_name_clean_usage_error(tmp_path: Path) -> None:
 
 def test_no_name_is_a_usage_error_before_any_run(tmp_path: Path) -> None:
     """``otto test`` with neither a name nor ``-m`` exits 2 and makes no run directory."""
-    r = run_otto(["--lab", "unix", "test"], xdir=tmp_path, roots=REPO_E2E)
+    r = run_otto(["--lab", "unix", "test"], xdir=tmp_path, roots=PROJECT_E2E)
     assert r.returncode == 2, r.stdout + r.stderr
     assert_no_output_dir(tmp_path)

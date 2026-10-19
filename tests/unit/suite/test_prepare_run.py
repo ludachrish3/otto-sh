@@ -12,7 +12,7 @@ from otto.suite.run import RunOptions, prepare_run
 from tests._fixtures.bootstrap_seam import patch_bootstrap
 
 
-def _repo_with_tickets(monkeypatch, tickets: bool) -> None:
+def _project_with_tickets(monkeypatch, tickets: bool) -> None:
     cov = (
         {
             "tiers": {"system": {"kind": "e2e", "precedence": 1}},
@@ -72,7 +72,7 @@ def test_a_read_only_report_dir_is_refused_as_unwritable(tmp_path):
 
 
 def test_tickets_json_without_a_tickets_table_is_refused(monkeypatch, tmp_path):
-    _repo_with_tickets(monkeypatch, tickets=False)
+    _project_with_tickets(monkeypatch, tickets=False)
     with pytest.raises(
         OptionsValidationError, match=r"cov_tickets_json requires \[coverage.tickets\]"
     ):
@@ -80,12 +80,14 @@ def test_tickets_json_without_a_tickets_table_is_refused(monkeypatch, tmp_path):
 
 
 def test_tickets_json_with_a_tickets_table_passes(monkeypatch, tmp_path):
-    _repo_with_tickets(monkeypatch, tickets=True)
+    _project_with_tickets(monkeypatch, tickets=True)
     prepare_run(RunOptions(cov_tickets_json=tmp_path / "t.json"))
 
 
 def test_no_destinations_means_no_work(tmp_path, monkeypatch):
-    monkeypatch.setattr("otto.bootstrap.bootstrap", lambda: pytest.fail("repos must not be read"))
+    monkeypatch.setattr(
+        "otto.bootstrap.bootstrap", lambda: pytest.fail("projects must not be read")
+    )
     prepare_run(RunOptions())
 
 
@@ -105,7 +107,7 @@ def test_a_bad_cov_dir_short_circuits_before_the_report_dir_is_touched(tmp_path)
     assert not report_dir.exists()
 
 
-def test_tickets_json_with_no_repos_is_refused(monkeypatch, tmp_path):
+def test_tickets_json_with_no_projects_is_refused(monkeypatch, tmp_path):
     patch_bootstrap(monkeypatch, [])
     with pytest.raises(
         OptionsValidationError, match=r"cov_tickets_json requires \[coverage.tickets\]"

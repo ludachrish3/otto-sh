@@ -40,13 +40,13 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - 3.10 only, otto's floor
     import tomli as tomllib
 
-from tests._fixtures.paths import PROJECT_ROOT, TESTS_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT, TESTS_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
 
 _UNIT = TESTS_ROOT / "unit"
-_NOXFILE = PROJECT_ROOT / "noxfile.py"
-_STABILITY_CAMPAIGN = PROJECT_ROOT / "scripts" / "stability_campaign.py"
+_NOXFILE = CHECKOUT_ROOT / "noxfile.py"
+_STABILITY_CAMPAIGN = CHECKOUT_ROOT / "scripts" / "stability_campaign.py"
 
 # Markers that mean "needs a VM" — must never appear on a unit-tier test.
 _VM_MARKERS = {"integration", "embedded", "hops"}
@@ -132,7 +132,7 @@ def test_every_busybox_test_declares_the_marker_it_is_also_stamped_with():
     unenforced "do not" is a comment with a countdown on it.
 
     The reasons are the conftest's, and each survives only while the decorators
-    do: the stamp's effect depends on collection-hook ORDER, which in this repo
+    do: the stamp's effect depends on collection-hook ORDER, which in this repository
     varies with the invocation shape, while a decorator does not; and the stamp
     cannot survive its own file, so deleting or renaming that conftest silently
     returns every test here to the catch-all lanes that fetch from busybox.net.
@@ -199,7 +199,7 @@ def _string_constants(tree: ast.Module) -> "dict[str, str]":
 
     Walks the whole tree rather than only ``tree.body``, so a constant
     assigned inside a function is resolved too; every such name in this
-    repo's build files is in fact module-level (``DASHBOARD_MARKER_EXPR``,
+    repository's build files is in fact module-level (``DASHBOARD_MARKER_EXPR``,
     ``PRIMARY_PYTHON``, ``DEEP_PYTHON``).
     """
     return {
@@ -342,7 +342,7 @@ def test_stability_make_legs_exclude_chaos():
     catch-all in the same sense as noxfile's G4 targets and needs the same
     exclusion.
     """
-    makefile = (PROJECT_ROOT / "Makefile").read_text()
+    makefile = (CHECKOUT_ROOT / "Makefile").read_text()
     for leg in ("stability-unix", "stability-embedded", "repeat"):
         recipe = makefile.split(f"\n{leg}:", 1)[1].split("\n\n", 1)[0]
         m_exprs = re.findall(r'-m\s+"([^"]+)"', recipe)
@@ -366,7 +366,7 @@ def test_resource_slice_legs_exclude_stability_and_chaos():
     G4's ``_nox_marker_expressions()`` scraper) — both hand-editable
     surfaces, so both need their own pin.
     """
-    makefile = (PROJECT_ROOT / "Makefile").read_text()
+    makefile = (CHECKOUT_ROOT / "Makefile").read_text()
     for var in ("M_UNIX", "M_EMBEDDED"):
         m = re.search(rf"^{var} := (.+)$", makefile, re.MULTILINE)
         assert m, f"{var} definition not found in Makefile (reshaped? update G7)"
@@ -445,7 +445,7 @@ def test_catchall_lanes_exclude_busybox():
     reasoning about the shape of its expression; this guard keeps only the
     catch-all half, whose message names the failure precisely.
     """
-    makefile = _makefile_marker_expressions((PROJECT_ROOT / "Makefile").read_text())
+    makefile = _makefile_marker_expressions((CHECKOUT_ROOT / "Makefile").read_text())
     nox = _nox_marker_expressions()
     for label, exprs in (("Makefile", makefile), ("noxfile.py", nox)):
         catchall = _catchall(exprs)
@@ -465,7 +465,7 @@ def test_the_busybox_tier_still_has_a_lane():
     failure the fixture's raise-don't-skip rule exists to prevent, arrived at
     from the other side. Pin the opt-in lane that G8 presupposes.
     """
-    makefile = (PROJECT_ROOT / "Makefile").read_text()
+    makefile = (CHECKOUT_ROOT / "Makefile").read_text()
     positive = [e for e in _makefile_marker_expressions(makefile) if "busybox" in e.split(" and ")]
     assert positive, (
         "no Makefile lane positively selects `-m busybox`, so the tier G8 "
@@ -568,7 +568,7 @@ def test_no_lane_but_the_busybox_lane_can_select_the_busybox_tier():
     """
     tier = _marker_sets_of_modules_carrying("busybox")
     surfaces = (
-        ("Makefile", _makefile_marker_expressions((PROJECT_ROOT / "Makefile").read_text())),
+        ("Makefile", _makefile_marker_expressions((CHECKOUT_ROOT / "Makefile").read_text())),
         ("noxfile.py", _nox_marker_expressions()),
     )
     offenders = []
@@ -616,14 +616,14 @@ def test_the_busybox_tier_is_visible_to_a_pathless_run():
     lane can reach. Derived from where the marked modules actually live, so a
     directory that starts carrying marked modules is covered the day it lands.
     """
-    ini = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())
-    roots = [PROJECT_ROOT / p for p in ini["tool"]["pytest"]["ini_options"]["testpaths"]]
+    ini = tomllib.loads((CHECKOUT_ROOT / "pyproject.toml").read_text())
+    roots = [CHECKOUT_ROOT / p for p in ini["tool"]["pytest"]["ini_options"]["testpaths"]]
     assert roots, "no testpaths in pyproject.toml (guard misparse?)"
 
     directories = _directories_carrying("busybox")
     assert directories, "no directory holds a busybox-marked module (guard misparse?)"
     invisible = sorted(
-        str(d.relative_to(PROJECT_ROOT))
+        str(d.relative_to(CHECKOUT_ROOT))
         for d in directories
         if not any(root == d or root in d.parents for root in roots)
     )
@@ -641,7 +641,7 @@ def test_the_busybox_tier_is_visible_to_a_pathless_run():
 # reports/playwright`) would turn a PATH-LESS invocation — which collects all
 # of `testpaths`, the widest reach there is — into one that looks scoped to a
 # harmless directory. That is the one error that hides an offender, so the
-# list is of every such option this repo's lanes actually pass.
+# list is of every such option this repository's lanes actually pass.
 _VALUE_FLAGS = frozenset(
     {
         "-c",
@@ -895,7 +895,7 @@ def _selected_roots(tokens: "list[str]") -> "list[Path]":
             f"`{token}` holds an unexpanded variable where a path goes in "
             f"`{' '.join(tokens)}` — substitute it before reading the roots"
         )
-        candidate = PROJECT_ROOT / token
+        candidate = CHECKOUT_ROOT / token
         if candidate.exists():
             roots.append(candidate)
     return roots
@@ -972,15 +972,15 @@ def test_a_lane_that_selects_by_path_cannot_reach_the_busybox_tier():
     Widening the surface to the workflows is the obvious next step if a
     marked tier ever needs to run there.
     """
-    ini = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())
-    testpaths = [PROJECT_ROOT / p for p in ini["tool"]["pytest"]["ini_options"]["testpaths"]]
+    ini = tomllib.loads((CHECKOUT_ROOT / "pyproject.toml").read_text())
+    testpaths = [CHECKOUT_ROOT / p for p in ini["tool"]["pytest"]["ini_options"]["testpaths"]]
     assert testpaths, "no testpaths in pyproject.toml (guard misparse?)"
 
     carrying = _modules_carrying("busybox")
     assert carrying, "no module carries the busybox marker (tier deleted? guard misparse?)"
 
     surfaces = (
-        ("Makefile", _makefile_pytest_invocations((PROJECT_ROOT / "Makefile").read_text())),
+        ("Makefile", _makefile_pytest_invocations((CHECKOUT_ROOT / "Makefile").read_text())),
         ("noxfile.py", _python_pytest_invocations(_NOXFILE)),
     )
     markerless: "list[tuple[str, list[str]]]" = []
@@ -1001,7 +1001,7 @@ def test_a_lane_that_selects_by_path_cannot_reach_the_busybox_tier():
     # one failure mode a scanner-based rule really has. Two `-m`-less lanes
     # exist today after the collect-only exemption (both `pytest ... src/otto`
     # doctest runs), so an empty result
-    # means the parse stopped seeing invocations, not that the repo stopped
+    # means the parse stopped seeing invocations, not that the repository stopped
     # having them.
     assert markerless, (
         "no `-m`-less pytest invocation found in any surface (guard misparse?) — "
@@ -1014,7 +1014,7 @@ def test_a_lane_that_selects_by_path_cannot_reach_the_busybox_tier():
         roots = _selected_roots(tokens) or testpaths
         reached = sorted(
             {
-                str(module.relative_to(PROJECT_ROOT))
+                str(module.relative_to(CHECKOUT_ROOT))
                 for module in carrying
                 for root in roots
                 if root == module or root in module.parents
@@ -1034,7 +1034,7 @@ def test_a_lane_that_selects_by_path_cannot_reach_the_busybox_tier():
 
 def _makefile_recipes() -> "dict[str, str]":
     """Target name -> its recipe text, for every Makefile target with a recipe."""
-    makefile = (PROJECT_ROOT / "Makefile").read_text()
+    makefile = (CHECKOUT_ROOT / "Makefile").read_text()
     blocks = re.finditer(r"^([a-zA-Z0-9_.-]+):[^\n]*\n((?:\t[^\n]*\n)+)", makefile, re.MULTILINE)
     return {block.group(1): block.group(2) for block in blocks}
 
@@ -1073,7 +1073,7 @@ def _makefile_targets_selecting(marker: str) -> "list[str]":
 
 def _workflows() -> "dict[str, dict]":
     """Every workflow under `.github/workflows/`, by filename."""
-    root = PROJECT_ROOT / ".github" / "workflows"
+    root = CHECKOUT_ROOT / ".github" / "workflows"
     return {path.name: yaml.safe_load(path.read_text()) for path in sorted(root.glob("*.yml"))}
 
 
@@ -1287,7 +1287,7 @@ def test_every_conformance_test_declares_the_marker_it_is_also_stamped_with():
     stamp, and its reasons survive only while they are there: the stamp cannot
     outlive its own file, so deleting or renaming that conftest silently returns
     every contract here to the catch-all lanes; and the stamp's effect depends
-    on collection-hook ORDER, which in this repo varies with the invocation
+    on collection-hook ORDER, which in this repository varies with the invocation
     shape, while a `pytestmark` is attached at item construction and does not.
     G9b exists because the same request went unenforced for the BusyBox tier and
     deleting the decorators left it green.
@@ -1343,7 +1343,7 @@ def test_catchall_lanes_exclude_conformance():
     Pythons in CI, so a clause present in the Makefile and missing from
     noxfile.py is an escape that only CI would find.
     """
-    makefile = _makefile_marker_expressions((PROJECT_ROOT / "Makefile").read_text())
+    makefile = _makefile_marker_expressions((CHECKOUT_ROOT / "Makefile").read_text())
     nox = _nox_marker_expressions()
     for label, exprs in (("Makefile", makefile), ("noxfile.py", nox)):
         catchall = _catchall(exprs)
@@ -1363,7 +1363,7 @@ def test_the_conformance_tier_still_has_a_lane():
     ever RUNS that lane is a separate question with a separate failure mode,
     and G11c is what asks it.
     """
-    makefile = (PROJECT_ROOT / "Makefile").read_text()
+    makefile = (CHECKOUT_ROOT / "Makefile").read_text()
     positive = [
         e for e in _makefile_marker_expressions(makefile) if "conformance" in e.split(" and ")
     ]
@@ -1445,7 +1445,7 @@ def test_no_lane_but_the_conformance_lane_can_select_the_conformance_tier():
     """
     tier = _marker_sets_of_modules_carrying("conformance")
     surfaces = (
-        ("Makefile", _makefile_marker_expressions((PROJECT_ROOT / "Makefile").read_text())),
+        ("Makefile", _makefile_marker_expressions((CHECKOUT_ROOT / "Makefile").read_text())),
         ("noxfile.py", _nox_marker_expressions()),
     )
     offenders = []
@@ -1483,14 +1483,14 @@ def test_the_conformance_tier_is_visible_to_a_pathless_run():
     modules actually live, so a new directory carrying them is covered the day
     it lands.
     """
-    ini = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())
-    roots = [PROJECT_ROOT / p for p in ini["tool"]["pytest"]["ini_options"]["testpaths"]]
+    ini = tomllib.loads((CHECKOUT_ROOT / "pyproject.toml").read_text())
+    roots = [CHECKOUT_ROOT / p for p in ini["tool"]["pytest"]["ini_options"]["testpaths"]]
     assert roots, "no testpaths in pyproject.toml (guard misparse?)"
 
     directories = _directories_carrying("conformance")
     assert directories, "no directory holds a conformance-marked module (guard misparse?)"
     invisible = sorted(
-        str(d.relative_to(PROJECT_ROOT))
+        str(d.relative_to(CHECKOUT_ROOT))
         for d in directories
         if not any(root == d or root in d.parents for root in roots)
     )
@@ -1514,15 +1514,15 @@ def test_a_lane_that_selects_by_path_cannot_reach_the_conformance_tier():
     `pytest` written into a GitHub workflow step or one buried inside
     `bash -c "..."`.
     """
-    ini = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())
-    testpaths = [PROJECT_ROOT / p for p in ini["tool"]["pytest"]["ini_options"]["testpaths"]]
+    ini = tomllib.loads((CHECKOUT_ROOT / "pyproject.toml").read_text())
+    testpaths = [CHECKOUT_ROOT / p for p in ini["tool"]["pytest"]["ini_options"]["testpaths"]]
     assert testpaths, "no testpaths in pyproject.toml (guard misparse?)"
 
     carrying = _modules_carrying("conformance")
     assert carrying, "no module carries the conformance marker (tier deleted? guard misparse?)"
 
     surfaces = (
-        ("Makefile", _makefile_pytest_invocations((PROJECT_ROOT / "Makefile").read_text())),
+        ("Makefile", _makefile_pytest_invocations((CHECKOUT_ROOT / "Makefile").read_text())),
         ("noxfile.py", _python_pytest_invocations(_NOXFILE)),
     )
     markerless: "list[tuple[str, list[str]]]" = []
@@ -1550,7 +1550,7 @@ def test_a_lane_that_selects_by_path_cannot_reach_the_conformance_tier():
         roots = _selected_roots(tokens) or testpaths
         reached = sorted(
             {
-                str(module.relative_to(PROJECT_ROOT))
+                str(module.relative_to(CHECKOUT_ROOT))
                 for module in carrying
                 for root in roots
                 if root == module or root in module.parents
@@ -1577,7 +1577,7 @@ def test_the_hostless_catchall_collects_the_conformance_tree_and_deselects_it():
     *initial* conftest under any path-less run (it is reached through
     `testpaths`), initial conftests register early and therefore run LATE among
     same-hook plugins, and the mark plugin's deselection is one of those hooks.
-    The conftest's own note records that this repo's collection-hook order
+    The conftest's own note records that this repository's collection-hook order
     varies with the invocation shape, which is why it refuses to stamp
     `xdist_group`.
 
@@ -1591,7 +1591,7 @@ def test_the_hostless_catchall_collects_the_conformance_tree_and_deselects_it():
 
     Both, because "excluded" and "invisible" are the same green from one side.
     Dropping `tests/conformance` from `testpaths` would satisfy the first
-    assertion alone while deleting the tier from the repo; G11e catches that
+    assertion alone while deleting the tier from the repository; G11e catches that
     statically and this catches it in the shape the lane actually runs.
 
     A subprocess and not an in-process `Config`: this suite's own `addopts`
@@ -1601,7 +1601,7 @@ def test_the_hostless_catchall_collects_the_conformance_tree_and_deselects_it():
     the draw line on a worker whose log never reaches this pipe. `-n0` for the
     same reason.
     """
-    variables = _makefile_marker_variables((PROJECT_ROOT / "Makefile").read_text())
+    variables = _makefile_marker_variables((CHECKOUT_ROOT / "Makefile").read_text())
     hostless = variables.get("M_HOSTLESS")
     assert hostless, "M_HOSTLESS not found in the Makefile (renamed? update G11g)"
 
@@ -1619,7 +1619,7 @@ def test_the_hostless_catchall_collects_the_conformance_tree_and_deselects_it():
             "-p",
             "no:cacheprovider",
         ],
-        cwd=str(PROJECT_ROOT),
+        cwd=str(CHECKOUT_ROOT),
         env={**os.environ, "PYTEST_ADDOPTS": ""},
         capture_output=True,
         text=True,
@@ -1715,7 +1715,7 @@ def test_no_labless_lane_can_select_the_bed_marked_conformance_tests():
 # still resolve the BED space at collection: `tests/conformance/conftest.py`
 # calls `resolve_space()` at import, which under the knob reads the bed's lab
 # data and builds a host per element through otto's factory. That is on the collection
-# path of every path-less run in the repo, so a stray knob makes `make
+# path of every path-less run in the suite, so a stray knob makes `make
 # coverage` depend on lab data it has no business reading, and a CI job that
 # set it would fail collection for a reason that says nothing about otto.
 
@@ -1786,7 +1786,7 @@ def _makefile_targets_setting(variable: str) -> "dict[str, str]":
     EXPANDED recipe, so a lane that set the knob through a shared variable —
     the way ``LEAK_DETECT`` arms the leak detector — is seen as setting it.
     """
-    variables = _makefile_simple_variables((PROJECT_ROOT / "Makefile").read_text())
+    variables = _makefile_simple_variables((CHECKOUT_ROOT / "Makefile").read_text())
     return {
         target: recipe
         for target, recipe in _makefile_recipes().items()
@@ -1875,7 +1875,7 @@ def test_only_a_conformance_lane_may_set_the_bed_venue_knob():
     The marker guards above cannot make this statement. `not conformance`
     deselects every item in the tree, so a catch-all that ALSO set
     `OTTO_CONFORMANCE_BED` would run nothing from it and stay green — while
-    every path-less run in the repo paid for a bed-venue `resolve_space()` at
+    every path-less run in the suite paid for a bed-venue `resolve_space()` at
     collection, because `tests/conformance/conftest.py` resolves the space at
     IMPORT and `testpaths` puts that import on the collection path of `make
     coverage`. Measured under the knob: the bed space reads the bed's lab data
@@ -1899,7 +1899,7 @@ def test_only_a_conformance_lane_may_set_the_bed_venue_knob():
     """
     knob = "OTTO_CONFORMANCE_BED"
 
-    makefile = (PROJECT_ROOT / "Makefile").read_text()
+    makefile = (CHECKOUT_ROOT / "Makefile").read_text()
     variables = _makefile_simple_variables(makefile)
     offenders = [
         f"Makefile: {target}"
@@ -1911,7 +1911,7 @@ def test_only_a_conformance_lane_may_set_the_bed_venue_knob():
         )
     ]
 
-    workflows = sorted((PROJECT_ROOT / ".github" / "workflows").glob("*.yml"))
+    workflows = sorted((CHECKOUT_ROOT / ".github" / "workflows").glob("*.yml"))
     assert workflows, "no workflows found under .github/workflows (guard misparse?)"
     for label, path in (
         ("noxfile.py", _NOXFILE),
@@ -2004,7 +2004,7 @@ def test_the_bed_lane_collects_the_bed_venue():
     """
     lanes = _makefile_targets_setting("OTTO_CONFORMANCE_BED")
     assert lanes, "no Makefile lane sets OTTO_CONFORMANCE_BED (G11i covers this)"
-    variables = _makefile_simple_variables((PROJECT_ROOT / "Makefile").read_text())
+    variables = _makefile_simple_variables((CHECKOUT_ROOT / "Makefile").read_text())
     for target, recipe in sorted(lanes.items()):
         _assert_lane_collects_the_bed_venue(target, recipe, variables)
 
@@ -2048,7 +2048,7 @@ def _assert_lane_collects_the_bed_venue(
             "-p",
             "no:cacheprovider",
         ],
-        cwd=str(PROJECT_ROOT),
+        cwd=str(CHECKOUT_ROOT),
         env={**os.environ, "PYTEST_ADDOPTS": "", **lane_env},
         capture_output=True,
         text=True,
@@ -2119,7 +2119,7 @@ def _assert_lane_collects_the_bed_venue(
 
 def test_catchall_lanes_exclude_kmodcov():
     """G12: no default lane may rebuild the kernel-module fixture per compiler."""
-    makefile = _makefile_marker_expressions((PROJECT_ROOT / "Makefile").read_text())
+    makefile = _makefile_marker_expressions((CHECKOUT_ROOT / "Makefile").read_text())
     nox = _nox_marker_expressions()
     for label, exprs in (("Makefile", makefile), ("noxfile.py", nox)):
         catchall = _catchall(exprs)
@@ -2134,7 +2134,7 @@ def test_catchall_lanes_exclude_kmodcov():
 
 def test_the_kmodcov_tier_still_has_a_lane():
     """G12b: excluding a tier everywhere and running it nowhere is not a fix."""
-    makefile = (PROJECT_ROOT / "Makefile").read_text()
+    makefile = (CHECKOUT_ROOT / "Makefile").read_text()
     positive = [e for e in _makefile_marker_expressions(makefile) if "kmodcov" in e.split(" and ")]
     assert positive, (
         "no Makefile lane positively selects `-m kmodcov`, so the tier G12 excludes "
@@ -2291,7 +2291,7 @@ def test_no_lane_but_the_kmodcov_lane_can_select_the_kmodcov_tier():
     tier = _marker_sets_of_modules_carrying("kmodcov")
     assert tier, "no module carries the kmodcov marker (tier deleted? guard misparse?)"
     surfaces = (
-        ("Makefile", _makefile_marker_expressions((PROJECT_ROOT / "Makefile").read_text())),
+        ("Makefile", _makefile_marker_expressions((CHECKOUT_ROOT / "Makefile").read_text())),
         ("noxfile.py", _nox_marker_expressions()),
     )
     offenders = []
@@ -2310,12 +2310,12 @@ def test_no_lane_but_the_kmodcov_lane_can_select_the_kmodcov_tier():
 
 def test_the_kmodcov_tier_is_visible_to_a_pathless_run():
     """G12e: `make kmodcov` is a path-less `-m kmodcov`; the tier must sit under testpaths."""
-    ini = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())
-    roots = [PROJECT_ROOT / p for p in ini["tool"]["pytest"]["ini_options"]["testpaths"]]
+    ini = tomllib.loads((CHECKOUT_ROOT / "pyproject.toml").read_text())
+    roots = [CHECKOUT_ROOT / p for p in ini["tool"]["pytest"]["ini_options"]["testpaths"]]
     directories = _directories_carrying("kmodcov")
     assert directories, "no directory holds a kmodcov-marked module (guard misparse?)"
     invisible = sorted(
-        str(d.relative_to(PROJECT_ROOT))
+        str(d.relative_to(CHECKOUT_ROOT))
         for d in directories
         if not any(root == d or root in d.parents for root in roots)
     )
@@ -2324,12 +2324,12 @@ def test_the_kmodcov_tier_is_visible_to_a_pathless_run():
 
 def test_a_lane_that_selects_by_path_cannot_reach_the_kmodcov_tier():
     """G12f: a lane with no `-m` at all is judged by the paths it names."""
-    ini = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())
-    testpaths = [PROJECT_ROOT / p for p in ini["tool"]["pytest"]["ini_options"]["testpaths"]]
+    ini = tomllib.loads((CHECKOUT_ROOT / "pyproject.toml").read_text())
+    testpaths = [CHECKOUT_ROOT / p for p in ini["tool"]["pytest"]["ini_options"]["testpaths"]]
     carrying = _modules_carrying("kmodcov")
     assert carrying, "no module carries the kmodcov marker (tier deleted? guard misparse?)"
     surfaces = (
-        ("Makefile", _makefile_pytest_invocations((PROJECT_ROOT / "Makefile").read_text())),
+        ("Makefile", _makefile_pytest_invocations((CHECKOUT_ROOT / "Makefile").read_text())),
         ("noxfile.py", _python_pytest_invocations(_NOXFILE)),
     )
     offenders: "list[str]" = []
@@ -2339,7 +2339,7 @@ def test_a_lane_that_selects_by_path_cannot_reach_the_kmodcov_tier():
                 continue
             roots = _selected_roots(tokens) or testpaths
             reached = sorted(
-                str(module.relative_to(PROJECT_ROOT))
+                str(module.relative_to(CHECKOUT_ROOT))
                 for module in carrying
                 for root in roots
                 if root == module or root in module.parents

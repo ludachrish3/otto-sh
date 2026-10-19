@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-import otto.config.project as config_repo
+import otto.config.project as config_project
 from otto import bootstrap as bs
 from otto import lifecycle
 from otto.invocation import RunPolicy, install_policy, reset_binding
@@ -99,7 +99,7 @@ def test_preparation_reads_the_deadline_through_the_env_settings(monkeypatch):
         teardown_deadline = 3.5
 
     monkeypatch.setattr("otto.config.project.get_env", _Env)
-    assert config_repo.discovered_teardown_deadline() == 3.5
+    assert config_project.discovered_teardown_deadline() == 3.5
 
 
 def test_preparation_reads_no_deadline_when_discovery_is_unavailable(monkeypatch):
@@ -107,14 +107,14 @@ def test_preparation_reads_no_deadline_when_discovery_is_unavailable(monkeypatch
         raise FileNotFoundError("no OTTOPATH")
 
     monkeypatch.setattr("otto.config.project.get_env", _boom)
-    assert config_repo.discovered_teardown_deadline() is None
+    assert config_project.discovered_teardown_deadline() is None
 
 
 def test_discovery_fills_the_prepared_deadline(monkeypatch):
     from otto.run_context import fill_teardown_deadline, prepared_policy
 
     monkeypatch.setenv("OTTO_TEARDOWN_DEADLINE", "7.5")
-    assert config_repo.discovered_teardown_deadline() == 7.5
+    assert config_project.discovered_teardown_deadline() == 7.5
     policy = prepared_policy()
     assert policy.teardown_deadline == 10.0  # nothing read before the fill
     fill_teardown_deadline(policy)
@@ -127,7 +127,7 @@ def test_failed_discovery_leaves_ten_seconds_even_under_an_ambient_policy(monkey
     monkeypatch.setenv("OTTOPATH", str(tmp_path / "missing"))
     ambient = install_policy(RunPolicy(teardown_deadline=3.0))  # an outer run's deadline
     try:
-        assert config_repo.discovered_teardown_deadline() is None
+        assert config_project.discovered_teardown_deadline() is None
         policy = prepared_policy()
         fill_teardown_deadline(policy)
         assert policy.teardown_deadline == 10.0  # never the ambient 3.0

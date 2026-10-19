@@ -1,7 +1,7 @@
 {
   "interpreter": "3.14",
   "surfaces": {
-    "bootstrap_repo": {
+    "bootstrap_project": {
       "by_bucket": {
         "fd": 113,
         "other": 307,
@@ -68,7 +68,7 @@
       "file_ops": 2271,
       "workspace": 12
     },
-    "completion_repo_handover": {
+    "completion_project_handover": {
       "by_bucket": {
         "fd": 116,
         "other": 193,
@@ -142,7 +142,7 @@
       "file_ops": 2392,
       "workspace": 38
     },
-    "completion_repo_warm": {
+    "completion_project_warm": {
       "by_bucket": {
         "fd": 24,
         "other": 117,
@@ -288,7 +288,7 @@
       "file_ops": 2755,
       "workspace": 35
     },
-    "dispatch_repo_warm": {
+    "dispatch_project_warm": {
       "by_bucket": {
         "fd": 126,
         "other": 202,
@@ -444,7 +444,7 @@
       "file_ops": 1249,
       "workspace": 0
     },
-    "help_repo": {
+    "help_project": {
       "by_bucket": {
         "fd": 144,
         "other": 311,
@@ -523,7 +523,7 @@
       "file_ops": 3414,
       "workspace": 48
     },
-    "help_repo_warm": {
+    "help_project_warm": {
       "by_bucket": {
         "fd": 134,
         "other": 229,
@@ -1320,7 +1320,7 @@
       "file_ops": 1257,
       "workspace": 0
     },
-    "test_repo": {
+    "test_project": {
       "by_bucket": {
         "fd": 264,
         "other": 344,
@@ -1513,7 +1513,7 @@
       "file_ops": 7362,
       "workspace": 1150
     },
-    "version_repo": {
+    "version_project": {
       "by_bucket": {
         "fd": 48,
         "other": 125,

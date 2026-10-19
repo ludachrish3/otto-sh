@@ -303,7 +303,7 @@ class TestTheCatchIsNarrowerThanEveryWayAnSftpSessionFails:
     session: ``asyncssh.misc.ChannelOpenError: Session refused``. It is a real
     way an sftp session fails to start — and it is also what an sshd at its
     ``MaxSessions`` ceiling answers, on any host, sftp-server or not. This
-    repo has already paid for that confusion once, in the nc bulk-put channel
+    project has already paid for that confusion once, in the nc bulk-put channel
     budget. Catching it here would tell an operator whose device serves sftp
     perfectly well that their userland cannot.
     """

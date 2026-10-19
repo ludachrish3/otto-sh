@@ -76,7 +76,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 from tests.conformance._controls import mark_string_argument, walk_test_functions
 from tests.conformance._resolved import ResolvedCell
 
@@ -84,12 +84,12 @@ OBSERVABLE_MARK = "observable"
 """The marker a CONTRACT carries, holding the template of what it watches.
 
 Spelled ``@pytest.mark.observable("...")``. Registered in ``pyproject.toml``
-like every other marker in this repo -- ``filterwarnings = ["error"]`` turns an
+like every other marker in this repository -- ``filterwarnings = ["error"]`` turns an
 unregistered one into a collection error, so the registration is load-bearing
 rather than documentation.
 """
 
-CONFORMANCE_ROOT = PROJECT_ROOT / "tests" / "conformance"
+CONFORMANCE_ROOT = CHECKOUT_ROOT / "tests" / "conformance"
 
 
 @dataclass(frozen=True)

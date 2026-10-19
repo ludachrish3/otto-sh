@@ -215,7 +215,7 @@ the reading that recovers a ticket id reliably.
 ## Testing: `git blame` as oracle, never as engine
 
 `tests/integration/cov/test_attribution_oracle.py` builds a real git
-repository (`RepoTimeline`-adjacent, table-driven commits) and asserts the
+repository (`GitTimeline`-adjacent, table-driven commits) and asserts the
 replay engine's output matches `git blame -w -M --porcelain` **line for
 line** — turning "this is blame's algorithm without blame's process
 model" from a comment into a standing invariant, on the linear histories

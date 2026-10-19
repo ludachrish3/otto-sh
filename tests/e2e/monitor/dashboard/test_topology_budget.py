@@ -37,14 +37,14 @@ layout work ratchets them down (Task 7) rather than rewriting this test.
 
 import pytest
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = [
     pytest.mark.hostless,
     pytest.mark.browser,
 ]
 
-FIXTURES = PROJECT_ROOT / "web" / "fixtures"
+FIXTURES = CHECKOUT_ROOT / "web" / "fixtures"
 
 # Sample density for both the "swallowed" containment check and crossing
 # detection -- matches measure.ts's own CROSSING_SAMPLES constant and the

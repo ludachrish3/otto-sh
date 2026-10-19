@@ -52,17 +52,17 @@ listing anything. The host column is the parent the rule picks in that lab
 
 ```console
 $ otto --lab unix docker use-cases integration
-                          use-case integration
-┏━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┓
-┃ fragment         ┃ provides         ┃ host  ┃ env keys  ┃ status    ┃
-┡━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━┩
-│ repo1[core,edge] │ edge (priority   │ test3 │ EDGE_ADDR │           │
-│                  │ 10)              │       │           │           │
-│ repo2[core]      │ -                │ test3 │ -         │           │
-│ repo2[mock-edge] │ edge (priority   │ -     │ -         │ displaced │
-│                  │ 0)               │       │           │           │
-└──────────────────┴──────────────────┴───────┴───────────┴───────────┘
-docker: edge goes to repo1 (priority 10); repo2 (priority 0) stands down
+                           use-case integration
+┏━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━┓
+┃ fragment            ┃ provides         ┃ host  ┃ env keys  ┃ status    ┃
+┡━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━┩
+│ project1[core,edge] │ edge (priority   │ test3 │ EDGE_ADDR │           │
+│                     │ 10)              │       │           │           │
+│ project2[core]      │ -                │ test3 │ -         │           │
+│ project2[mock-edge] │ edge (priority   │ -     │ -         │ displaced │
+│                     │ 0)               │       │           │           │
+└─────────────────────┴──────────────────┴───────┴───────────┴───────────┘
+docker: edge goes to project1 (priority 10); project2 (priority 0) stands down
 ```
 
 A `<project>[<handles>]` cell names one fragment: the project that declared it and
@@ -216,7 +216,7 @@ whatever your compose version.
 ## Provider competition: swapping a mock for the real thing
 
 The examples from here on are a different deployment from the templating
-walkthrough above — `repo1` and `repo2`, rather than the walkthrough's
+walkthrough above — `project1` and `project2`, rather than the walkthrough's
 `project-a`. Read each half on its own.
 
 Two projects can offer the same thing. A project that owns the real edge service
@@ -226,14 +226,14 @@ never both run.
 A fragment may declare `provides` (a capability name) and `priority`:
 
 ```toml
-# repo1 — the real edge
+# project1 — the real edge
 [[docker.use_cases]]
 name = "integration"
 composes = ["core", "edge"]
 provides = "edge"
 priority = 10
 
-# repo2 — the mock
+# project2 — the mock
 [[docker.use_cases]]
 name = "integration"
 composes = ["mock-edge"]
@@ -247,7 +247,7 @@ The rules:
 - Fragments sharing a `provides` capability compete; the highest `priority`
   wins and **every loser is excluded whole**.
 - An exact tie is a hard error naming both fragments. Break it for one
-  invocation with `--provide edge=repo1` (repeatable), or fix the priorities.
+  invocation with `--provide edge=project1` (repeatable), or fix the priorities.
   A tie between two fragments of the *same* project is always a config error —
   there is no knob for it.
 
@@ -262,29 +262,29 @@ lab/project combination merely changes who shows up.
 
 ### Losing is whole-fragment — a worked example
 
-Repo1's fragment above contributes *two* compose handles, `core` and `edge`,
-and it is the one carrying `provides = "edge"`. Deployed normally, repo1 wins
+Project1's fragment above contributes *two* compose handles, `core` and `edge`,
+and it is the one carrying `provides = "edge"`. Deployed normally, project1 wins
 and both of its files are in the merged stack:
 
 ```console
 $ otto --lab unix --dry-run docker compose up integration
-… Resolved plan: test3 <- repo1[core,edge], repo2[core].
-  Displaced: edge goes to repo1 (priority 10); repo2 (priority 0) stands down. …
+… Resolved plan: test3 <- project1[core,edge], project2[core].
+  Displaced: edge goes to project1 (priority 10); project2 (priority 0) stands down. …
 ```
 
 Now hand the capability to the mock:
 
 ```console
-$ otto --lab unix --dry-run docker compose up integration --provide edge=repo2
-… Resolved plan: test3 <- repo2[core], repo2[mock-edge].
-  Displaced: edge goes to repo2 (priority 0); repo1 (priority 10) stands down. …
+$ otto --lab unix --dry-run docker compose up integration --provide edge=project2
+… Resolved plan: test3 <- project2[core], project2[mock-edge].
+  Displaced: edge goes to project2 (priority 0); project1 (priority 10) stands down. …
 ```
 
-Repo1's `core` file — and the `api` service in it — is **gone**, not just its
+Project1's `core` file — and the `api` service in it — is **gone**, not just its
 `edge` file: a fragment is the atomic unit of participation, and losing means
-the fragment stands down entirely. If repo1's `api` must survive a mock swap,
+the fragment stands down entirely. If project1's `api` must survive a mock swap,
 it belongs in a *separate* fragment that declares no `provides`, exactly as
-repo2 splits its own `core` from its `mock-edge`.
+project2 splits its own `core` from its `mock-edge`.
 
 `--provide` narrows the field to one project *before* ranking, so the winner can
 carry a lower priority than the fragment it displaced — as it does above. The
@@ -434,8 +434,8 @@ includes the **exact** compose command on the parent, not a description of one:
 ```console
 $ otto --lab unix --dry-run docker compose up integration
 'deploy(integration)' was not run on host 'test3': this is a dry run, which
-contacts no device. … Resolved plan: test3 <- repo1[core,edge], repo2[core].
-Displaced: edge goes to repo1 (priority 10); repo2 (priority 0) stands down.
+contacts no device. … Resolved plan: test3 <- project1[core,edge], project2[core].
+Displaced: edge goes to project1 (priority 10); project2 (priority 0) stands down.
 Fragment env keys: ['EDGE_ADDR']. No image was built, no file was staged and
 no container was started. The adapters ran (plain data; the only thing one may
 write is its own scratch dir), so this is the command itself, not a

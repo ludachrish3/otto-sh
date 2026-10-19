@@ -1,0 +1,5 @@
+name = "project_broken"
+version = "0.1.0"
+tests = [
+    "tests",
+]

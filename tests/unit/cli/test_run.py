@@ -785,8 +785,8 @@ class TestInstructionOnAMethod:
     def test_explicit_help_wins_over_the_docstring(self) -> None:
         """A project instruction's `--help` summary is the lab-wide one, not the body's.
 
-        The method docstring describes what ONE repo's body does; the published
-        command walks every repo. So `help=` overrides it -- and must not
+        The method docstring describes what ONE project's body does; the published
+        command walks every project. So `help=` overrides it -- and must not
         rewrite the docstring, which is still what a reader of the class sees.
         """
         from otto.cli.run import instruction
@@ -795,10 +795,10 @@ class TestInstructionOnAMethod:
         class Actions:
             @instruction(help="Lab-wide.")
             async def provision(self):
-                """Provision this repo's own products."""
+                """Provision this project's own products."""
 
         assert getattr(Actions.provision, MARK_ATTR).help == "Lab-wide."
-        assert Actions.provision.__doc__ == "Provision this repo's own products."
+        assert Actions.provision.__doc__ == "Provision this project's own products."
 
     def test_explicit_name_wins_and_underscores_dash(self) -> None:
         from otto.cli.run import instruction

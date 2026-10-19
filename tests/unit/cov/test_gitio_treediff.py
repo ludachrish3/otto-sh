@@ -22,7 +22,7 @@ def _git(cwd: Path, *args: str) -> str:
 
 
 @pytest.fixture
-def repo(tmp_path: Path) -> tuple[Path, str]:
+def git_repo(tmp_path: Path) -> tuple[Path, str]:
     root = tmp_path / "r"
     root.mkdir()
     _git(root, "init", "-q", "-b", "main")
@@ -34,30 +34,30 @@ def repo(tmp_path: Path) -> tuple[Path, str]:
 
 
 class TestDiffTreeU0:
-    def test_clean_tree_diffs_empty(self, repo):
-        root, base = repo
+    def test_clean_tree_diffs_empty(self, git_repo):
+        root, base = git_repo
         assert parse_multifile_u0(gitio.diff_tree_u0(root, base)) == {}
 
-    def test_rename_is_detected(self, repo):
-        root, base = repo
+    def test_rename_is_detected(self, git_repo):
+        root, base = git_repo
         _git(root, "mv", "a.c", "renamed.c")
         _git(root, "commit", "-qm", "mv")
         fd = parse_multifile_u0(gitio.diff_tree_u0(root, base))["a.c"]
         assert fd.new_path == "renamed.c"
         assert fd.hunks == []
 
-    def test_whitespace_only_change_is_invisible(self, repo):
-        root, base = repo
+    def test_whitespace_only_change_is_invisible(self, git_repo):
+        root, base = git_repo
         (root / "a.c").write_text("int a(void)\n{\n        return 1;\n}\n")  # re-indent
         assert "a.c" not in parse_multifile_u0(gitio.diff_tree_u0(root, base))
 
-    def test_worktree_edit_visible_without_commit(self, repo):
-        root, base = repo
+    def test_worktree_edit_visible_without_commit(self, git_repo):
+        root, base = git_repo
         (root / "b.c").write_text("int b(void)\n{\n    return 3;\n}\n")
         assert "b.c" in parse_multifile_u0(gitio.diff_tree_u0(root, base))
 
-    def test_subdir_of_larger_repo_paths_are_relative_and_scoped(self, tmp_path):
-        # sut_dir is a plain subdirectory of ONE larger repo (shared .git):
+    def test_subdir_of_larger_git_repo_paths_are_relative_and_scoped(self, tmp_path):
+        # the project root is a plain subdirectory of ONE larger checkout (shared .git):
         # --relative must scope the diff to the subdir AND re-root its paths.
         outer = tmp_path / "outer"
         (outer / "sub").mkdir(parents=True)
@@ -72,19 +72,19 @@ class TestDiffTreeU0:
         out = parse_multifile_u0(gitio.diff_tree_u0(outer / "sub", base))
         assert set(out) == {"x.c"}
 
-    def test_unknown_base_raises(self, repo):
-        root, _ = repo
+    def test_unknown_base_raises(self, git_repo):
+        root, _ = git_repo
         with pytest.raises(gitio.GitUnavailableError):
             gitio.diff_tree_u0(root, "0" * 40)
 
 
 class TestIsShallow:
-    def test_full_repo_is_not_shallow(self, repo):
-        root, _ = repo
+    def test_full_git_repo_is_not_shallow(self, git_repo):
+        root, _ = git_repo
         assert gitio.is_shallow(root) is False
 
-    def test_depth1_clone_is_shallow(self, repo, tmp_path):
-        root, _ = repo
+    def test_depth1_clone_is_shallow(self, git_repo, tmp_path):
+        root, _ = git_repo
         _git(root, "commit", "-qm", "second", "--allow-empty")
         clone = tmp_path / "shallow"
         _git(tmp_path, "clone", "-q", "--depth", "1", f"file://{root}", str(clone))

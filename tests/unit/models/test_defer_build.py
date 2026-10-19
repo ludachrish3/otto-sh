@@ -43,7 +43,7 @@ def _import_all_otto_modules():
 # `warnings.catch_warnings()` block that only covers an EAGER build. A
 # deferred model's real build happens later, on the request path, outside
 # that suppression window, turning a harmless pydantic warning into a hard
-# error under this repo's warnings-as-errors test config. See each class's
+# error under this checkout's warnings-as-errors test config. See each class's
 # own docstring in ``otto.models.monitor`` for the full mechanism. Matched by
 # identity (not name): a rename would otherwise silently drop the class out
 # of this set while leaving the string behind, exempting nothing.

@@ -27,7 +27,7 @@ def test_review_source_error_always_names_source():
     assert exc.field == "source"
 
 
-def test_tls_error_carries_setting_and_repos():
+def test_tls_error_carries_setting_and_projects():
     exc = MonitorTlsError("bad", setting="tls_key", projects=["a", "b"])
     assert isinstance(exc, OttoError)
     assert not isinstance(exc, FieldError)

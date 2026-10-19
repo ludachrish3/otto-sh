@@ -32,7 +32,7 @@ def test_remove_old_logs_ignores_non_output_entries():
     """Stray files and non-output directories must never be pruned.
 
     Regression guard: with a misconfigured ``xdir`` (e.g. left pointing at the
-    repo root by a leaked global), the old code walked real content and called
+    project root by a leaked global), the old code walked real content and called
     ``rmtree('docs/conf.py')`` → NotADirectoryError. Only timestamped output
     directories may be pruned, even when the strays are older than the cutoff.
     """

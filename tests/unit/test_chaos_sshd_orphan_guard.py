@@ -29,7 +29,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from otto.utils import WaitTimeoutError, wait_for
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 from tests.integration.chaos._sshd import _die_with_parent
 
 # Generous on purpose: a runaway guard, not a discriminator. The kernel
@@ -79,12 +79,12 @@ def _parent_with_child(*, guarded: bool) -> "Iterator[tuple[subprocess.Popen[str
     """
     src = textwrap.dedent(
         _SPAWNER.format(
-            # The spawned parent is a bare interpreter, so it needs the repo on
-            # sys.path to import the helper under test. PROJECT_ROOT rather than
+            # The spawned parent is a bare interpreter, so it needs the checkout on
+            # sys.path to import the helper under test. CHECKOUT_ROOT rather than
             # the cwd (pytest can be invoked from anywhere) and rather than
             # `parents[N]` off this file (G9: depth arithmetic breaks silently
             # when a file moves).
-            root=str(PROJECT_ROOT),
+            root=str(CHECKOUT_ROOT),
             preexec_import=(
                 "from tests.integration.chaos._sshd import _die_with_parent" if guarded else ""
             ),

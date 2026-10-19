@@ -616,7 +616,7 @@ class ZephyrSerialFrame(ZephyrFrame):
     once, up front — ``shell echo off`` is a stock builtin. The readiness marker
     (rejected as an unknown command) still comes back via the shell's error
     handler, which is shell *output*, not input echo, so the probe is
-    unaffected. Mirrors ``repo1's ZephyrInlineRetcodeFrame`` for 2.7.
+    unaffected. Mirrors ``project1's ZephyrInlineRetcodeFrame`` for 2.7.
     """
 
     type_name = "zephyr-serial"

@@ -32,7 +32,7 @@ from otto.registry import (
     Subscription,
     configured_backend,
 )
-from tests.e2e._otto_subprocess import PROJECT_ROOT, coverage_subprocess_env
+from tests.e2e._otto_subprocess import CHECKOUT_ROOT, coverage_subprocess_env
 from tests.unit.registry import conformance
 
 CASES = pathlib.Path(__file__).parent / "cases"
@@ -100,15 +100,15 @@ def test_the_raw_case_holds_with_a_lazy_record_under_the_case_name(monkeypatch, 
     assert table.names() == []
 
 
-def test_the_raw_case_holds_for_a_require_repo_registry():
+def test_the_raw_case_holds_for_a_require_project_registry():
     table = Registry(
-        "conformance per-repo thing",
+        "conformance per-project thing",
         entry=Rec,
         register_hint="register_thing()",
-        capabilities=[Justified(RequireProject(), reason="one per repo")],
+        capabilities=[Justified(RequireProject(), reason="one per project")],
     )
     conformance.assert_raw_registry(
-        table, make=lambda i: ("thing", Rec(i)), require_repo="conformance_repo"
+        table, make=lambda i: ("thing", Rec(i)), require_project="conformance_project"
     )
 
 
@@ -262,7 +262,7 @@ def _built_in_pairs() -> "set[tuple[str, str]]":
         env=coverage_subprocess_env(),
         capture_output=True,
         text=True,
-        cwd=str(PROJECT_ROOT),
+        cwd=str(CHECKOUT_ROOT),
         timeout=120,
         check=False,
     )

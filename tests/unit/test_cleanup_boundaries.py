@@ -31,8 +31,8 @@ async def _noop():
 
 
 @pytest.fixture
-def lab_without_repos(monkeypatch):
-    """A lab for open_context, with bootstrap installed as no repos (as test_context.py does).
+def lab_without_projects(monkeypatch):
+    """A lab for open_context, with bootstrap installed as no projects (as test_context.py does).
 
     Discovery stays real, so OTTO_TEARDOWN_DEADLINE still reaches the run's policy.
     """
@@ -67,11 +67,11 @@ def test_a_finished_command_leaves_no_registry_behind():
 
 
 @pytest.mark.asyncio
-async def test_an_inner_open_context_exit_leaves_the_outer_contexts_host_open(lab_without_repos):
+async def test_an_inner_open_context_exit_leaves_the_outer_contexts_host_open(lab_without_projects):
     loop = asyncio.get_running_loop()
-    async with open_context(lab=lab_without_repos):
+    async with open_context(lab=lab_without_projects):
         shared = DuckHost("shared")
-        async with open_context(lab=lab_without_repos):
+        async with open_context(lab=lab_without_projects):
             shared.claim(loop)
         assert shared.closes_finished == 0
         assert registered_ids(loop) == ["shared"]
@@ -99,7 +99,7 @@ def test_a_command_boundary_records_the_explicit_deadline_over_the_policy(monkey
 
 @pytest.mark.asyncio
 async def test_a_lone_open_context_records_its_environment_derived_deadline(
-    monkeypatch, lab_without_repos
+    monkeypatch, lab_without_projects
 ):
     recorded: list = []
     real = inv.acquire_boundary_waiting
@@ -110,14 +110,14 @@ async def test_a_lone_open_context_records_its_environment_derived_deadline(
 
     monkeypatch.setattr("otto.invocation.acquire_boundary_waiting", spy)
     monkeypatch.setenv("OTTO_TEARDOWN_DEADLINE", "7.5")
-    async with open_context(lab=lab_without_repos):
+    async with open_context(lab=lab_without_projects):
         pass
     assert recorded == [7.5]
 
 
 @pytest.mark.asyncio
-async def test_sweep_loop_inside_open_context_is_refused(lab_without_repos):
-    async with open_context(lab=lab_without_repos) as ctx:
+async def test_sweep_loop_inside_open_context_is_refused(lab_without_projects):
+    async with open_context(lab=lab_without_projects) as ctx:
         DuckHost("h").claim(asyncio.get_running_loop())
         with pytest.raises(RuntimeError, match="cleanup boundary holds it"):
             await ctx.sweep_loop(asyncio.get_running_loop(), label="t")
@@ -133,7 +133,7 @@ async def _enter_and_use(lab, host, admitted: asyncio.Event, go: asyncio.Event):
 
 @pytest.mark.asyncio
 async def test_open_context_on_a_draining_loop_waits_then_reconnects_what_the_drain_closed(
-    lab_without_repos,
+    lab_without_projects,
 ):
     loop = asyncio.get_running_loop()
     blocker = DuckHost("blocker", block=True)
@@ -143,7 +143,7 @@ async def test_open_context_on_a_draining_loop_waits_then_reconnects_what_the_dr
     drain = asyncio.ensure_future(inv.sweep_unheld(loop, label="t", deadline=5))
     await blocker.entered.wait()
     admitted, go = asyncio.Event(), asyncio.Event()
-    entering = asyncio.ensure_future(_enter_and_use(lab_without_repos, reused, admitted, go))
+    entering = asyncio.ensure_future(_enter_and_use(lab_without_projects, reused, admitted, go))
     registry = inv._REGISTRIES[loop]  # the waiter queue is the handshake
 
     async def queued() -> None:
@@ -176,7 +176,7 @@ async def test_open_context_on_a_draining_loop_waits_then_reconnects_what_the_dr
 
 @pytest.mark.asyncio
 async def test_a_close_that_enters_open_context_mid_sweep_is_refused(
-    lab_without_repos, monkeypatch
+    lab_without_projects, monkeypatch
 ):  # B6 wiring
     from otto import bootstrap as bs
     from otto.context import try_get_context
@@ -194,7 +194,7 @@ async def test_a_close_that_enters_open_context_mid_sweep_is_refused(
 
     async def enter_a_context():
         try:
-            async with open_context(lab=lab_without_repos):
+            async with open_context(lab=lab_without_projects):
                 pass
         except RuntimeError as exc:
             refusals.append(str(exc))

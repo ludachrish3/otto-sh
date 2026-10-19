@@ -70,8 +70,8 @@ def test_a_preexisting_product_is_never_stamped_by_a_provider_run():
     # Kills: stamping the host's WHOLE product list rather than the instances
     # this run attached — a sweep like `for p in host.products: p.owner = ...`
     # after the loop. That hands a product the host already carried (lab data,
-    # a host class's own construction, an earlier repo's ingest) to whichever
-    # repo happened to register a provider, and every owner-scoped verb then
+    # a host class's own construction, an earlier project's ingest) to whichever
+    # project happened to register a provider, and every owner-scoped verb then
     # acts on it. The dedup test above cannot see this: the NAMES are identical
     # either way, so only the owner stamp distinguishes them.
     #
@@ -120,7 +120,7 @@ def test_public_reexports_available():
     assert hasattr(host_pkg, "ProductProvider")
 
 
-def test_products_are_stamped_with_registering_repo():
+def test_products_are_stamped_with_registering_project():
     # Kills: capturing the marker at APPLY time instead of REGISTER time —
     # apply runs at lab ingest, long after init imports, when the marker is
     # None, so every product would be unowned.
@@ -133,7 +133,7 @@ def test_products_are_stamped_with_registering_repo():
     assert host.products[0].owner == "acme"
 
 
-def test_products_registered_outside_any_repo_stay_unowned():
+def test_products_registered_outside_any_project_stay_unowned():
     register_product_provider(lambda host: [_prod("app")])
     host = _host()
     apply_product_providers(host)
@@ -142,7 +142,7 @@ def test_products_registered_outside_any_repo_stay_unowned():
 
 def test_explicit_owner_is_not_clobbered():
     # Kills: unconditional stamping, which would erase a provider that
-    # deliberately hands one repo's product to another's ownership.
+    # deliberately hands one project's product to another's ownership.
     from otto.registry import registering_project
 
     explicit = _prod("app")
@@ -155,10 +155,10 @@ def test_explicit_owner_is_not_clobbered():
 
 
 # --------------------------------------------------------------------------
-# Ingest gating (spec §5): a repo's products stop at its declared universe.
+# Ingest gating (spec §5): a project's products stop at its declared universe.
 #
 # The gate is the ADMISSION half of the design — the fleet walks bound what a
-# repo may *reach*, this bounds what it may *attach*. Without it a repo scoped
+# project may *reach*, this bounds what it may *attach*. Without it a project scoped
 # to lab `a` still hangs its products on every host of lab `b` the moment both
 # labs are loaded, and every owner-scoped verb then acts on them.
 # --------------------------------------------------------------------------
@@ -178,11 +178,11 @@ def _scope(labs, hosts=(".*",)):
 
 @pytest.fixture
 def scope_table(monkeypatch):
-    """An owner -> declaration table the gate reads instead of the composed repos.
+    """An owner -> declaration table the gate reads instead of the composed projects.
 
     Patched on ``otto.declared``, the module that defines the lookup: the gate
     imports it from there when it runs. An owner absent from the table resolves
-    to ``None``, which is exactly the real lookup's "no such repo / no
+    to ``None``, which is exactly the real lookup's "no such project / no
     ``[project]``" answer.
     """
     from otto import declared as declared_mod
@@ -192,10 +192,10 @@ def scope_table(monkeypatch):
     return table
 
 
-def test_provider_not_invoked_outside_its_repos_universe(scope_table):
+def test_provider_not_invoked_outside_its_projects_universe(scope_table):
     # Kills: gating AFTER the call — filtering the returned products instead of
     # skipping the provider. A provider that ran has already been handed a host
-    # its repo never declared: providers probe host attributes and some keep
+    # its project never declared: providers probe host attributes and some keep
     # their own per-host registries, so "called and discarded" still leaks the
     # fleet. `host.products` alone cannot tell the two apart, which is why the
     # invocation list is asserted as well.
@@ -218,7 +218,7 @@ def test_provider_not_invoked_outside_its_repos_universe(scope_table):
     assert host.products == []
 
 
-def test_provider_invoked_inside_its_repos_universe(scope_table):
+def test_provider_invoked_inside_its_projects_universe(scope_table):
     # The other half: the gate must not be a blanket refusal. Same declaration,
     # same provider — only the host's lab differs.
     from otto.registry import registering_project
@@ -241,8 +241,8 @@ def test_provider_invoked_inside_its_repos_universe(scope_table):
 
 
 def test_the_host_axis_gates_as_well_as_the_lab(scope_table):
-    # Kills: gating on the lab alone. A repo declared for lab `a` shares that
-    # lab with every other repo's hosts, so the host axis is what keeps its
+    # Kills: gating on the lab alone. A project declared for lab `a` shares that
+    # lab with every other project's hosts, so the host axis is what keeps its
     # products off the gateways sitting next to its sensors.
     from otto.registry import registering_project
 
@@ -263,7 +263,7 @@ def test_the_host_axis_gates_as_well_as_the_lab(scope_table):
     assert host.products == []
 
 
-def test_one_repos_exclusion_does_not_gate_another(scope_table):
+def test_one_projects_exclusion_does_not_gate_another(scope_table):
     # Kills: gating on ANY registered declaration rather than the registering
     # one — a single per-apply verdict, or reading the wrong element of the
     # (provider, owner) pair. Both providers run on the same host in the same
@@ -313,11 +313,11 @@ def test_an_unstamped_host_admits_without_consulting_any_declaration(monkeypatch
     assert lookups == [], "an unattributed host has no lab axis to be judged on"
 
 
-def test_a_registration_made_outside_any_repo_admits(monkeypatch):
+def test_a_registration_made_outside_any_project_admits(monkeypatch):
     # Owner None, through the REAL lookup: a provider registered by library
     # code (or by a test) has no declaration to be bounded by, and refusing it
     # would break every such use. Composition is made hostile so a lookup that
-    # consulted the repos for a None owner cannot pass this quietly.
+    # consulted the projects for a None owner cannot pass this quietly.
     fail_composition(monkeypatch)
     register_product_provider(lambda host: [_prod("app")])
     host = _host(source_lab="b")
@@ -328,8 +328,8 @@ def test_a_registration_made_outside_any_repo_admits(monkeypatch):
 
 
 def test_an_owner_config_cannot_resolve_admits(monkeypatch):
-    # REAL `scope_for_repo` here, with composition injected to raise: an
-    # ingest that ran where the repos cannot be composed must attach exactly
+    # REAL `scope_for_project` here, with composition injected to raise: an
+    # ingest that ran where the projects cannot be composed must attach exactly
     # what it attached before this gate existed. A gate that let the lookup's
     # failure propagate would turn an uncomposed process into an ingest crash.
     from otto.registry import registering_project

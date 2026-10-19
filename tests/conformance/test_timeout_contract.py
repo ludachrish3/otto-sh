@@ -96,7 +96,7 @@ def applicable_cell(resolved: ResolvedCell) -> bool:
     (``test_hop_integration.py:528``) -- no file under
     ``tests/integration/host/`` ASSERTS ``timed_out``. That file's contracts
     are run/exec, transfer round-trip and transfer progress.
-    The only bed-side timeout assertion in the repo is
+    The only bed-side timeout assertion in the suite is
     ``tests/integration/busybox_bed/test_session_frame.py``'s
     ``test_a_timed_out_command_leaves_no_orphan_process``, and its target is a
     BusyBox guest, not a Zephyr one. So what an embedded backend does with a

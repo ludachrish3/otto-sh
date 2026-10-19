@@ -26,7 +26,7 @@ pushes that in the safe direction, never toward a false red.
 
 The ``@pytest.mark.timeout(N)`` marks below are runaway guards, and nothing
 here passes or fails because of where they sit — so they are held at the 60 s
-floor ``tests/unit/test_declared_harness_bounds.py`` declares for this repo,
+floor ``tests/unit/test_declared_harness_bounds.py`` declares for this repository,
 rather than at a multiple of what a test costs when nothing else is running.
 They used to sit at 5 s and 10 s, and issue #305 is what that cost:
 ``test_exec_pool_high_fanout`` costs 0.05 s (0.14 s worst of 300 consecutive

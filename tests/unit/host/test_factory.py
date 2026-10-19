@@ -174,7 +174,7 @@ class TestToolchainDeserialization:
         assert host.toolchain.lcov_bin == "/usr/bin/lcov"
 
 
-class TestRepoLevelOptionDefaults:
+class TestProjectLevelOptionDefaults:
     """Tests for option-value defaults via unified ``preferences=`` on
     ``create_host_from_dict``.  (Formerly tested the removed ``defaults=``
     parameter; updated to the unified [host_preferences] path in Task 2.)

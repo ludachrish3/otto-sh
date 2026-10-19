@@ -8,13 +8,13 @@ the sentence in what the code actually produced: the rich output the leaf
 printed plus the log records the library emitted. A mock's call list would
 count what the test arranged.
 
-Stubbed: the lab and its host's ``exec``/``put`` transport, the repo tables,
+Stubbed: the lab and its host's ``exec``/``put`` transport, the project tables,
 ``scope_for_project`` (no ``[project]`` scope narrows anything), the container-id
 backoff, and, in the live ``compose build`` test only, ``_build_plan`` (no
 image is built). Everything else, selection through rendering, is the shipped
 code.
 
-The counted token is the loser's repo plus priority (``a (priority 10)``), so
+The counted token is the loser's project plus priority (``a (priority 10)``), so
 the count does not move when the sentence is reworded and a second report
 phrased another way is still counted; the wording itself is pinned on
 :meth:`~otto.docker.resolve.Displacement.describe`, and a sentinel patched over
@@ -40,8 +40,8 @@ from tests._fixtures.bootstrap_seam import fake_bootstrap_result
 from tests._fixtures.dispatch import DispatchRunner
 from tests.conftest import active_context
 
-from .test_cli import _uc, _uc_repo
-from .test_deploy import _compose_file, _frag, _host, _lab, _repo, _wire
+from .test_cli import _uc, _uc_project
+from .test_deploy import _compose_file, _frag, _host, _lab, _project, _wire
 
 _LOSER = "a (priority 10)"
 _SENTINEL = "SENTINEL-FROM-DESCRIBE"
@@ -73,18 +73,18 @@ def _console_text(result, caplog) -> str:
 def _two_providers(tmp_path, *, images=()):
     """``a`` (priority 10) is displaced by ``b`` (priority 5) via ``--provide edge=b``."""
     compose = _compose_file(tmp_path, "core")
-    a = _repo("a", _frag(provides="edge", priority=10), composes=[compose], images=images)
-    b = _repo("b", _frag(provides="edge", priority=5), composes=[compose], images=images)
+    a = _project("a", _frag(provides="edge", priority=10), composes=[compose], images=images)
+    b = _project("b", _frag(provides="edge", priority=5), composes=[compose], images=images)
     host = _wire(_host("test3", "10.10.200.13"))
     return a, b, _lab(host)
 
 
 @contextmanager
 def _run_over(lab, projects, *, dry_run=False):
-    """Install a context over *lab* whose run's repos are *repos*, for one dispatched command.
+    """Install a context over *lab* whose run's projects are *projects*, for one dispatched command.
 
     The dry-run variants need an installed context anyway (its policy carries
-    ``dry_run``), so every variant gets one and the run's repos ride on it
+    ``dry_run``), so every variant gets one and the run's projects ride on it
     (``bootstrap=``), as they do on the CLI's context: one seam for both
     shapes.
     """
@@ -185,8 +185,8 @@ def test_compose_build_dry_run_shows_a_displacement_once(tmp_path, caplog):
 
 
 def test_use_cases_shows_a_displacement_once(caplog):
-    winner = _uc_repo("b", _uc(provides="edge", priority=10))
-    loser = _uc_repo("a", _uc(provides="edge", priority=5))
+    winner = _uc_project("b", _uc(provides="edge", priority=10))
+    loser = _uc_project("a", _uc(provides="edge", priority=5))
     lab = Lab(name="unix")
     lab.add_host(UnixHost(ip="10.0.0.1", creds=[], element=Element("test3"), docker_capable=True))
     with (
@@ -266,8 +266,8 @@ def test_the_build_dry_run_plan_renders_through_describe(tmp_path, sentinel):
 
 
 def test_use_cases_renders_through_describe(sentinel):
-    winner = _uc_repo("b", _uc(provides="edge", priority=10))
-    loser = _uc_repo("a", _uc(provides="edge", priority=5))
+    winner = _uc_project("b", _uc(provides="edge", priority=10))
+    loser = _uc_project("a", _uc(provides="edge", priority=5))
     lab = Lab(name="unix")
     lab.add_host(UnixHost(ip="10.0.0.1", creds=[], element=Element("test3"), docker_capable=True))
     with (
@@ -280,27 +280,27 @@ def test_use_cases_renders_through_describe(sentinel):
     assert _SENTINEL in result.output
 
 
-def _one_repo_two_losers(tmp_path):
+def _one_project_two_losers(tmp_path):
     """``a`` holds two ``edge`` fragments (priority 1 and 10); ``b`` holds one at 5.
 
     ``--provide edge=b`` narrows the field to ``b``, so BOTH of a's fragments
     stand down: two displacements in one plan.
     """
     compose = _compose_file(tmp_path, "core")
-    a = _repo(
+    a = _project(
         "a",
         _frag(provides="edge", priority=1),
         _frag(provides="edge", priority=10),
         composes=[compose],
         images=("api",),
     )
-    b = _repo("b", _frag(provides="edge", priority=5), composes=[compose], images=("api",))
+    b = _project("b", _frag(provides="edge", priority=5), composes=[compose], images=("api",))
     return a, b, _lab(_wire(_host("test3", "10.10.200.13")))
 
 
 @pytest.mark.parametrize("argv", [_UP, _BUILD], ids=["up", "build"])
 def test_a_dry_run_plan_joins_two_displacements_as_sentences(tmp_path, argv):
-    a, b, lab = _one_repo_two_losers(tmp_path)
+    a, b, lab = _one_project_two_losers(tmp_path)
     with _run_over(lab, [a, b], dry_run=True):
         result = _invoke(*argv)
 
@@ -314,7 +314,7 @@ def test_a_dry_run_plan_joins_two_displacements_as_sentences(tmp_path, argv):
 
 
 def test_the_log_line_keeps_markup_looking_names_literal(caplog):
-    """A `[x]` in a repo or capability name is data, not a rich style tag."""
+    """A `[x]` in a project or capability name is data, not a rich style tag."""
     from rich.text import Text
 
     from otto.docker.deployment import _log_displacements

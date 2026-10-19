@@ -30,7 +30,7 @@ from otto.reservations import Reservation, ReservationBackendBase
 from otto.result import CommandResult, Result
 from otto.utils import Status
 from tests._fixtures.dispatch import DispatchRunner
-from tests._fixtures.fake_repo import fake_repo
+from tests._fixtures.fake_project import fake_project
 from tests._fixtures.labdata import json_lab_sources, write_lab_json
 
 # The dynamic verbs are plain ``async def`` leaves bridged by the leaf-invoke
@@ -360,12 +360,12 @@ class _SlotBackend(ReservationBackendBase):
 def _slot_fleet(tmp_path):
     """A two-host lab whose declared fleet is ``slot1`` alone; each host owns a slot."""
     from tests._fixtures.fleet import _lab as fleet_lab
-    from tests._fixtures.fleet import _repo, install_scoped_context
+    from tests._fixtures.fleet import _project, install_scoped_context
 
     lab = fleet_lab(("slot1", "rig"), ("slot2", "rig"))
     lab.hosts["slot1"].resources = frozenset({"slot-1"})
     lab.hosts["slot2"].resources = frozenset({"slot-2"})
-    install_scoped_context(lab, [_repo(tmp_path, "r1", labs=["rig"], hosts=["slot1"])])
+    install_scoped_context(lab, [_project(tmp_path, "r1", labs=["rig"], hosts=["slot1"])])
     return lab
 
 
@@ -831,19 +831,19 @@ def _write_hosts_json(path: Path, hosts: list[dict]) -> Path:
     return write_lab_json(path / "lab.json", hosts)
 
 
-def _fake_repo(*lab_paths: Path) -> Project:
+def _fake_project(*lab_paths: Path) -> Project:
     """Stand-in for :class:`Project` whose ``[[lab.sources]]`` are *lab_paths*.
 
     ``lab_sources`` is the compiled ``[[lab.sources]]`` list the host source is
     built from."""
     root = lab_paths[0].parent if lab_paths else Path()
-    return fake_repo(lab_sources=json_lab_sources(root, list(lab_paths)), root=root)
+    return fake_project(lab_sources=json_lab_sources(root, list(lab_paths)), root=root)
 
 
 class TestHostIdCompleter:
     """``_host_id_completer`` runs during tab completion, before
-    :func:`otto.bootstrap.bootstrap` registers repo init modules.  It must
-    therefore derive host IDs straight from the lab files each repo's
+    :func:`otto.bootstrap.bootstrap` registers project init modules.  It must
+    therefore derive host IDs straight from the lab files each project's
     ``[[lab.sources]]`` json entries name."""
 
     def test_returns_all_host_ids(self, tmp_path):
@@ -865,8 +865,8 @@ class TestHostIdCompleter:
                 },
             ],
         )
-        # _host_id_completer lazy-imports get_repos from otto.config.
-        with patch("otto.declared.get_projects", return_value=[_fake_repo(lab)]):
+        # _host_id_completer lazy-imports get_projects from otto.config.
+        with patch("otto.declared.get_projects", return_value=[_fake_project(lab)]):
             result = _host_id_completer(ctx=MagicMock(), incomplete="")
         # collect_host_ids also surfaces the built-in `local` host (sorted).
         assert result == ["local", "test1", "test2"]
@@ -890,7 +890,7 @@ class TestHostIdCompleter:
                 },
             ],
         )
-        with patch("otto.declared.get_projects", return_value=[_fake_repo(lab)]):
+        with patch("otto.declared.get_projects", return_value=[_fake_project(lab)]):
             result = _host_id_completer(ctx=MagicMock(), incomplete="test2")
         assert result == ["test2"]
         # A STRICT prefix must narrow too. Since the rename, `test1` and `test2`
@@ -898,7 +898,7 @@ class TestHostIdCompleter:
         # satisfied by an `==` filter as well as a `startswith` one. `loc` is a
         # genuine strict prefix of exactly one offered id, and an `==` filter
         # returns [] for it.
-        with patch("otto.declared.get_projects", return_value=[_fake_repo(lab)]):
+        with patch("otto.declared.get_projects", return_value=[_fake_project(lab)]):
             strict = _host_id_completer(ctx=MagicMock(), incomplete="loc")
         assert strict == ["local"]
 
@@ -928,7 +928,7 @@ class TestHostIdCompleter:
                 },
             ],
         )
-        with patch("otto.declared.get_projects", return_value=[_fake_repo(lab1, lab2)]):
+        with patch("otto.declared.get_projects", return_value=[_fake_project(lab1, lab2)]):
             result = _host_id_completer(ctx=MagicMock(), incomplete="")
         assert result == ["beet-seed", "local", "test1"]  # + built-in local
 
@@ -944,13 +944,13 @@ class TestHostIdCompleter:
         }
         _write_hosts_json(lab1, [dup])
         _write_hosts_json(lab2, [dup])
-        with patch("otto.declared.get_projects", return_value=[_fake_repo(lab1, lab2)]):
+        with patch("otto.declared.get_projects", return_value=[_fake_project(lab1, lab2)]):
             result = _host_id_completer(ctx=MagicMock(), incomplete="")
         assert result == ["local", "test1"]  # + built-in local
 
     def test_skips_missing_path(self, tmp_path):
         """Non-existent search path must not raise; completer is best-effort."""
-        with patch("otto.declared.get_projects", return_value=[_fake_repo(tmp_path / "nope")]):
+        with patch("otto.declared.get_projects", return_value=[_fake_project(tmp_path / "nope")]):
             result = _host_id_completer(ctx=MagicMock(), incomplete="")
         assert result == ["local"]  # only the built-in local (no lab.json to scan)
 
@@ -958,7 +958,7 @@ class TestHostIdCompleter:
         lab = tmp_path / "bad"
         lab.mkdir()
         (lab / "lab.json").write_text("{not json")
-        with patch("otto.declared.get_projects", return_value=[_fake_repo(lab)]):
+        with patch("otto.declared.get_projects", return_value=[_fake_project(lab)]):
             result = _host_id_completer(ctx=MagicMock(), incomplete="")
         assert result == ["local"]  # malformed json skipped; built-in local remains
 
@@ -977,7 +977,7 @@ class TestHostIdCompleter:
                 },
             ],
         )
-        with patch("otto.declared.get_projects", return_value=[_fake_repo(lab)]):
+        with patch("otto.declared.get_projects", return_value=[_fake_project(lab)]):
             result = _host_id_completer(ctx=MagicMock(), incomplete="")
         assert result == ["local", "test1"]  # invalid entry skipped; built-in local remains
 
@@ -997,7 +997,7 @@ class TestHostIdCompleter:
             patch("otto.registry.get_completion_names", return_value=fake_cache),
             patch(
                 "otto.declared.get_projects",
-                return_value=[_fake_repo(tmp_path / "does-not-exist")],
+                return_value=[_fake_project(tmp_path / "does-not-exist")],
             ),
         ):
             result = _host_id_completer(ctx=MagicMock(), incomplete="r")
@@ -1020,7 +1020,7 @@ class TestHostIdCompleter:
         )
         with (
             patch("otto.registry.get_completion_names", return_value=None),
-            patch("otto.declared.get_projects", return_value=[_fake_repo(lab)]),
+            patch("otto.declared.get_projects", return_value=[_fake_project(lab)]),
         ):
             result = _host_id_completer(ctx=MagicMock(), incomplete="")
         assert result == ["local", "test1"]  # live scan + built-in local
@@ -1080,7 +1080,7 @@ class TestHostIdCompleterLabFilter:
         )
         with (
             patch("otto.registry.get_completion_names", return_value=None),
-            patch("otto.declared.get_projects", return_value=[_fake_repo(lab)]),
+            patch("otto.declared.get_projects", return_value=[_fake_project(lab)]),
         ):
             result = _host_id_completer(ctx=_ctx_with_labs(["unix"]), incomplete="")
         # test1 (unix) + built-in local; alt2 (unix_alt) excluded.
@@ -1099,7 +1099,7 @@ class TestHostIdCompleterLabFilter:
             patch("otto.registry.get_completion_names", return_value=fake_cache),
             patch(
                 "otto.declared.get_projects",
-                return_value=[_fake_repo(tmp_path / "does-not-exist")],
+                return_value=[_fake_project(tmp_path / "does-not-exist")],
             ),
         ):
             result = _host_id_completer(ctx=_ctx_with_labs(["unix_alt"]), incomplete="")

@@ -5,7 +5,7 @@ from otto.host.host import BaseHost
 from otto.labs.loader import Lab, load_lab
 
 
-class _StubRepo:
+class _StubRepository:
     """Minimal LabRepository stand-in: returns a lab with the given hosts."""
 
     def __init__(self, hosts: list[BaseHost]) -> None:
@@ -22,7 +22,7 @@ class _StubRepo:
 
 
 def test_load_lab_injects_local_when_absent() -> None:
-    lab = load_lab(["any"], repository=_StubRepo(hosts=[]))
+    lab = load_lab(["any"], repository=_StubRepository(hosts=[]))
     assert BUILTIN_LOCAL_HOST_ID in lab.hosts
     assert isinstance(lab.hosts[BUILTIN_LOCAL_HOST_ID], BaseHost)
 
@@ -30,5 +30,5 @@ def test_load_lab_injects_local_when_absent() -> None:
 def test_load_lab_does_not_override_user_local() -> None:
     # Stand in for a user-defined host with id="local" using the LocalHost type.
     mine = make_builtin_local_host()
-    lab = load_lab(["any"], repository=_StubRepo(hosts=[mine]))
+    lab = load_lab(["any"], repository=_StubRepository(hosts=[mine]))
     assert lab.hosts[BUILTIN_LOCAL_HOST_ID] is mine  # user's instance, not a fresh injection

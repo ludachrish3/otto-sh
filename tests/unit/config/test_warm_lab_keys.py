@@ -22,7 +22,7 @@ from otto.config.cache_sections import write_section
 from otto.config.project import Project
 from otto.host.os_profile import ProfileContext
 from tests._fixtures.labdata import write_lab_json
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.project_scaffold import make_project
 
 _PAYLOAD = {"instructions": [], "hosts": ["dut"]}
 
@@ -33,10 +33,10 @@ def _home(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
 
 
-def _glob_repo(tmp_path: Path) -> Project:
-    """A real Repo whose one json source reads ``labs/*.json``."""
+def _glob_project(tmp_path: Path) -> Project:
+    """A real Project whose one json source reads ``labs/*.json``."""
     root = tmp_path / "sut"
-    make_sut_repo(root, extra='[[lab.sources]]\nbackend = "json"\npaths = ["labs/*.json"]\n')
+    make_project(root, extra='[[lab.sources]]\nbackend = "json"\npaths = ["labs/*.json"]\n')
     write_lab_json(root / "labs" / "a.json", [], declare_labs=True)
     return Project(root=root)
 
@@ -75,7 +75,7 @@ def _rewrite(data: dict) -> None:
 
 
 def test_the_warm_reader_never_prepares_or_globs(tmp_path, monkeypatch):
-    project = _glob_repo(tmp_path)
+    project = _glob_project(tmp_path)
     write_section([project], "names", _PAYLOAD)
     _poison(monkeypatch)
     payloads = cc.read_sections([project], ["names"])
@@ -83,7 +83,7 @@ def test_the_warm_reader_never_prepares_or_globs(tmp_path, monkeypatch):
 
 
 def test_the_writer_stores_the_lab_key_paths_and_the_ttl_class(tmp_path):
-    project = _glob_repo(tmp_path)
+    project = _glob_project(tmp_path)
     write_section([project], "names", _PAYLOAD)
     entry = _cache_data()["sections"]["names"]
     labs = project.root / "labs"
@@ -92,7 +92,7 @@ def test_the_writer_stores_the_lab_key_paths_and_the_ttl_class(tmp_path):
 
 
 def test_a_new_glob_match_invalidates(tmp_path):
-    project = _glob_repo(tmp_path)
+    project = _glob_project(tmp_path)
     write_section([project], "names", _PAYLOAD)
     assert cc.read_sections([project], ["names"]) is not None
     _new_match(project)
@@ -111,7 +111,7 @@ def test_a_not_file_backed_source_stores_its_ttl_class(tmp_path, monkeypatch):
 
     register_lab_repository("no-files", config=NoFilesConfig, factory=no_files)
     root = tmp_path / "sut"
-    make_sut_repo(root, extra='[[lab.sources]]\nbackend = "no-files"\n')
+    make_project(root, extra='[[lab.sources]]\nbackend = "no-files"\n')
     project = Project(root=root)
     write_section([project], "names", _PAYLOAD)
     entry = _cache_data()["sections"]["names"]
@@ -137,7 +137,7 @@ def test_cache_info_describes_each_source_by_what_it_reads(tmp_path):
 
     register_lab_repository("no-files", config=NoFilesConfig, factory=lambda c: None)
     root = tmp_path / "sut"
-    make_sut_repo(
+    make_project(
         root,
         name="r",
         extra='[[lab.sources]]\nbackend = "json"\npaths = ["labs/*.json"]\n'
@@ -156,7 +156,7 @@ def test_cache_info_names_a_source_that_does_not_prepare(tmp_path):
     from otto.config.cache_sections import describe_lab_sources
 
     root = tmp_path / "sut"
-    make_sut_repo(root, name="r", extra='[[lab.sources]]\nbackend = "json"\n')
+    make_project(root, name="r", extra='[[lab.sources]]\nbackend = "json"\n')
     ((label, text),) = describe_lab_sources(Project(root=root), profiles=ProfileContext.empty())
     assert label == "r/json#1"
     assert text.startswith("cannot prepare — ")
@@ -164,21 +164,21 @@ def test_cache_info_names_a_source_that_does_not_prepare(tmp_path):
 
 
 def test_the_tunnel_id_reader_never_prepares_or_globs(tmp_path, monkeypatch):
-    project = _glob_repo(tmp_path)
+    project = _glob_project(tmp_path)
     cc.record_tunnel_ids([project], ["tun-abc123def456-22"])
     _poison(monkeypatch)
     assert cc.read_tunnel_ids([project]) == ["tun-abc123def456-22"]
 
 
 def test_cache_info_never_prepares_or_globs(tmp_path, monkeypatch):
-    project = _glob_repo(tmp_path)
+    project = _glob_project(tmp_path)
     write_section([project], "names", _PAYLOAD)
     _poison(monkeypatch)
     assert cc.inspect_section([project], "names").state == "fresh"
 
 
 def test_a_new_glob_match_invalidates_tunnel_ids(tmp_path):
-    project = _glob_repo(tmp_path)
+    project = _glob_project(tmp_path)
     cc.record_tunnel_ids([project], ["tun-abc123def456-22"])
     assert cc.read_tunnel_ids([project]) == ["tun-abc123def456-22"]
     _new_match(project)
@@ -191,7 +191,7 @@ def test_registering_an_unknown_source_s_backend_moves_the_tunnel_key(tmp_path):
     from otto.models.base import OttoModel
 
     root = tmp_path / "sut"
-    make_sut_repo(root, name="r", extra='[[lab.sources]]\nbackend = "later"\n')
+    make_project(root, name="r", extra='[[lab.sources]]\nbackend = "later"\n')
     project = Project(root=root)
     cc.record_tunnel_ids([project], ["tun-abc123def456-22"])
     assert cc.read_tunnel_ids([project]) == ["tun-abc123def456-22"]
@@ -206,7 +206,7 @@ def test_registering_an_unknown_source_s_backend_moves_the_tunnel_key(tmp_path):
 @pytest.mark.parametrize("dropped", ["lab_key_paths", "ttl_seconds"])
 def test_an_entry_without_stored_lab_keys_is_a_miss(tmp_path, dropped):
     """A cache written by the previous otto stores no lab keys: a miss, never a traceback."""
-    project = _glob_repo(tmp_path)
+    project = _glob_project(tmp_path)
     write_section([project], "names", _PAYLOAD)
     data = _cache_data()
     del data["sections"]["names"][dropped]
@@ -219,7 +219,7 @@ def test_an_entry_without_stored_lab_keys_is_a_miss(tmp_path, dropped):
     ("field", "value"), [("lab_key_paths", "labs"), ("lab_key_paths", [1]), ("ttl_seconds", "1")]
 )
 def test_an_entry_with_ill_typed_lab_keys_is_a_miss(tmp_path, field, value):
-    project = _glob_repo(tmp_path)
+    project = _glob_project(tmp_path)
     write_section([project], "names", _PAYLOAD)
     data = _cache_data()
     data["sections"]["names"][field] = value
@@ -228,7 +228,7 @@ def test_an_entry_with_ill_typed_lab_keys_is_a_miss(tmp_path, field, value):
 
 
 def test_a_cache_at_the_previous_schema_is_a_miss(tmp_path):
-    project = _glob_repo(tmp_path)
+    project = _glob_project(tmp_path)
     write_section([project], "names", _PAYLOAD)
     data = _cache_data()
     data["schema"] = cc.SCHEMA_VERSION - 1
@@ -238,7 +238,7 @@ def test_a_cache_at_the_previous_schema_is_a_miss(tmp_path):
 
 @pytest.mark.parametrize("dropped", ["lab_key_paths", "lab_digest"])
 def test_a_tunnel_entry_without_stored_lab_keys_is_a_miss(tmp_path, dropped):
-    project = _glob_repo(tmp_path)
+    project = _glob_project(tmp_path)
     cc.record_tunnel_ids([project], ["tun-abc123def456-22"])
     data = _cache_data()
     (entry,) = data[cc.DYNAMIC_TUNNELS_KEY].values()
@@ -248,7 +248,7 @@ def test_a_tunnel_entry_without_stored_lab_keys_is_a_miss(tmp_path, dropped):
 
 
 def test_a_tunnel_entry_at_the_previous_schema_is_a_miss(tmp_path):
-    project = _glob_repo(tmp_path)
+    project = _glob_project(tmp_path)
     cc.record_tunnel_ids([project], ["tun-abc123def456-22"])
     data = _cache_data()
     (entry,) = data[cc.DYNAMIC_TUNNELS_KEY].values()

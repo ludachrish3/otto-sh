@@ -49,29 +49,29 @@ def _priorities(summaries) -> dict[str, int]:
 
 
 @pytest.fixture
-def json_repo(tmp_path: Path) -> JsonFileLabRepository:
+def json_repository(tmp_path: Path) -> JsonFileLabRepository:
     write_lab_json(tmp_path / "lab.json", _HOSTS, links=[])
     return JsonFileLabRepository(search_paths=[tmp_path])
 
 
-def test_json_backend_summaries_carry_the_rank(json_repo):
-    assert _priorities(json_repo.list_host_summaries()) == _EXPECTED
+def test_json_backend_summaries_carry_the_rank(json_repository):
+    assert _priorities(json_repository.list_host_summaries()) == _EXPECTED
 
 
-def test_composite_summaries_carry_the_rank(json_repo):
-    composite = CompositeLabRepository([LabSource(label="json", repository=json_repo)])
+def test_composite_summaries_carry_the_rank(json_repository):
+    composite = CompositeLabRepository([LabSource(label="json", repository=json_repository)])
     assert _priorities(composite.list_host_summaries()) == _EXPECTED
 
 
-def test_fallback_summaries_over_a_loaded_lab_carry_the_rank(json_repo):
+def test_fallback_summaries_over_a_loaded_lab_carry_the_rank(json_repository):
     """A backend with no ``list_host_summaries`` is summarised from the built hosts."""
 
     class _NoFastPath:
         def list_labs(self):
-            return json_repo.list_labs()
+            return json_repository.list_labs()
 
         def load_lab(self, name, preferences=None, inventory=None):
-            return json_repo.load_lab(name, inventory=inventory)
+            return json_repository.load_lab(name, inventory=inventory)
 
     assert _priorities(host_summaries(_NoFastPath())) == _EXPECTED
 

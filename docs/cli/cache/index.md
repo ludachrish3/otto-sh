@@ -56,25 +56,25 @@ was.
 ```console
 $ otto cache info
 home: ~/.otto (default)
-╭──────────────────────┬────────────┬───────────┬──────┬───────────────╮
-│ key                  │ cache size │ cache age │ env? │ extra entries │
-├──────────────────────┼────────────┼───────────┼──────┼───────────────┤
-│ a1b2c3d4-repo1-repo2 │        28B │       74d │      │             0 │
-│ 9c0d1e2f-repo4       │        28B │       12d │      │             0 │
-│ e5f6a7b8-repo3       │        14B │        3h │ yes  │             0 │
-╰──────────────────────┴────────────┴───────────┴──────┴───────────────╯
+╭────────────────────────────┬────────────┬───────────┬──────┬───────────────╮
+│ key                        │ cache size │ cache age │ env? │ extra entries │
+├────────────────────────────┼────────────┼───────────┼──────┼───────────────┤
+│ a1b2c3d4-project1-project2 │        28B │       74d │      │             0 │
+│ 9c0d1e2f-project4          │        28B │       12d │      │             0 │
+│ e5f6a7b8-project3          │        14B │        3h │ yes  │             0 │
+╰────────────────────────────┴────────────┴───────────┴──────┴───────────────╯
 3 workspace(s), 70B total, 1 older than 60d
-this workspace: e5f6a7b8-repo3
+this workspace: e5f6a7b8-project3
   completion names: fresh — TAB is served from it (written 3h ago)
   shim: served (validated 12s ago)
   test names: served (42 names; checked 95s ago, the next check is due in 505s)
   collect child: idle
   docker observed: images on test3; containers on test3
   inventory: json:/home/me/.otto/inventory.json
-  lab files (repo3/local): /home/me/repo3/lab/lab.json, /home/me/repo3/hosts.json
+  lab files (project3/local): /home/me/project3/lab/lab.json, /home/me/project3/hosts.json
   hosts offered: 3 — dut1 dut2 local
   dropped: 1 — not offered, and why:
-    [repo3] /home/me/repo3/hosts.json: element 'dut3' hosts[0]: inventory key 'dut-3' ...
+    [project3] /home/me/project3/hosts.json: element 'dut3' hosts[0]: inventory key 'dut-3' ...
 ```
 
 The home line names the resolved path and says whether `$OTTO_HOME` decided it
@@ -145,10 +145,10 @@ Without a workspace (no `OTTOPATH`) the listing above is all there is.
 
 ```console
 $ otto cache clear
-removed ~/.otto/13739bf0-repo1/completion_cache.json
-removed ~/.otto/13739bf0-repo1/remote_completion_cache.json
-removed ~/.otto/13739bf0-repo1/pycache
-removed ~/.otto/13739bf0-repo1/pytest-cache
+removed ~/.otto/13739bf0-project1/completion_cache.json
+removed ~/.otto/13739bf0-project1/remote_completion_cache.json
+removed ~/.otto/13739bf0-project1/pycache
+removed ~/.otto/13739bf0-project1/pytest-cache
 ```
 
 Bare, `clear` acts on exactly one workspace — the one the current
@@ -159,11 +159,11 @@ directory itself. The next `otto test` compiles its test files again.
 
 ```console
 $ otto cache clear --all
-removed ~/.otto/9c0d1e2f-repo4/completion_cache.json
-removed ~/.otto/9c0d1e2f-repo4/remote_completion_cache.json
-removed ~/.otto/a1b2c3d4-repo1-repo2/completion_cache.json
-removed ~/.otto/a1b2c3d4-repo1-repo2/remote_completion_cache.json
-removed ~/.otto/e5f6a7b8-repo3/completion_cache.json
+removed ~/.otto/9c0d1e2f-project4/completion_cache.json
+removed ~/.otto/9c0d1e2f-project4/remote_completion_cache.json
+removed ~/.otto/a1b2c3d4-project1-project2/completion_cache.json
+removed ~/.otto/a1b2c3d4-project1-project2/remote_completion_cache.json
+removed ~/.otto/e5f6a7b8-project3/completion_cache.json
 5 file(s), 70B freed, 2 dir(s) removed, 1 workspace(s) kept: 1 non-empty
 ```
 
@@ -177,8 +177,8 @@ directory removed with it. The one workspace kept above is the one with an
 
 ```console
 $ otto cache prune --dry-run
-would remove ~/.otto/a1b2c3d4-repo1-repo2/completion_cache.json
-would remove ~/.otto/a1b2c3d4-repo1-repo2/remote_completion_cache.json
+would remove ~/.otto/a1b2c3d4-project1-project2/completion_cache.json
+would remove ~/.otto/a1b2c3d4-project1-project2/remote_completion_cache.json
 2 file(s), would free 28B, 1 dir(s) would be removed, 2 workspace(s) kept: 2 young
 ```
 

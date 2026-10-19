@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from otto.config.env import is_otto_env_var
-from tests._fixtures.generated_repo import generate_repo
+from tests._fixtures.generated_project import generate_project
 
 _ENTRY = [sys.executable, "-c", "from otto.cli.main import entry; entry()"]
 
@@ -34,8 +34,8 @@ def _run(env, argv=None) -> "subprocess.CompletedProcess[str]":
 
 
 @pytest.fixture
-def repo_env(tmp_path):
-    project = generate_repo(tmp_path, files=30, dirs=3)
+def project_env(tmp_path):
+    project = generate_project(tmp_path, files=30, dirs=3)
     env = {k: v for k, v in os.environ.items() if not is_otto_env_var(k)}
     env["OTTOPATH"] = str(project)
     env["OTTO_HOME"] = str(tmp_path / "home")
@@ -48,7 +48,7 @@ def _cache_file(env) -> Path:
     return caches[0]
 
 
-def test_ordinary_dispatch_writes_no_cache(repo_env):
+def test_ordinary_dispatch_writes_no_cache(project_env):
     """Ordinary dispatch (spec §4.2) performs no completion-cache I/O at all.
 
     Migrated from ``test_second_invocation_does_not_rewrite_the_cache``: that
@@ -58,14 +58,14 @@ def test_ordinary_dispatch_writes_no_cache(repo_env):
     invariant directly: a single ordinary dispatch leaves no cache file at
     all.
     """
-    _repo, env = repo_env
+    _project, env = project_env
     _run(env)  # `otto host --help`: a subcommand, not root help
     assert not list(Path(env["OTTO_HOME"]).rglob("completion_cache.json")), (
         "ordinary dispatch wrote the completion cache"
     )
 
 
-def test_ordinary_dispatch_leaves_a_stale_cache_alone(repo_env):
+def test_ordinary_dispatch_leaves_a_stale_cache_alone(project_env):
     """Ordinary dispatch never repairs a stale cache either.
 
     Migrated from ``test_editing_a_test_file_still_rebuilds_the_cache``: that
@@ -77,7 +77,7 @@ def test_ordinary_dispatch_leaves_a_stale_cache_alone(repo_env):
     stale bash TAB (``test_stale_tab_repair.py``); repair for an init-module
     edit is the next root ``--help``.
     """
-    project, env = repo_env
+    project, env = project_env
     _run(env, argv=_ROOT_HELP)
     cache = _cache_file(env)
     first = cache.stat().st_mtime_ns
@@ -87,7 +87,7 @@ def test_ordinary_dispatch_leaves_a_stale_cache_alone(repo_env):
     assert cache.stat().st_mtime_ns == first, "ordinary dispatch rebuilt the cache"
 
 
-def test_second_root_help_does_not_rewrite_the_cache(repo_env):
+def test_second_root_help_does_not_rewrite_the_cache(project_env):
     """A valid entry read by root help must not be rebuilt.
 
     Migrated from ``test_second_invocation_does_not_rewrite_the_cache``,
@@ -96,7 +96,7 @@ def test_second_root_help_does_not_rewrite_the_cache(repo_env):
     seeds and re-checks through root ``--help`` instead, one of the two
     surviving readers (spec §4.2).
     """
-    _repo, env = repo_env
+    _project, env = project_env
     _run(env, argv=_ROOT_HELP)
     cache = _cache_file(env)
     first = cache.stat().st_mtime_ns
@@ -104,7 +104,7 @@ def test_second_root_help_does_not_rewrite_the_cache(repo_env):
     assert cache.stat().st_mtime_ns == first, "cache was rewritten on a valid hit"
 
 
-def test_root_help_does_not_rebuild_after_a_nested_corpus_edit(repo_env):
+def test_root_help_does_not_rebuild_after_a_nested_corpus_edit(project_env):
     """Root help is O(names): a nested test file is not its business.
 
     The counterpart to the test above, and the reason that one had to move off
@@ -114,7 +114,7 @@ def test_root_help_does_not_rebuild_after_a_nested_corpus_edit(repo_env):
     section is refreshed by a stale TAB on ``otto test``'s NAMES, whose
     completer reads that section itself.
     """
-    project, env = repo_env
+    project, env = project_env
     _run(env, _ROOT_HELP)
     cache = _cache_file(env)
     first = cache.stat().st_mtime_ns
@@ -126,7 +126,7 @@ def test_root_help_does_not_rebuild_after_a_nested_corpus_edit(repo_env):
     assert cache.stat().st_mtime_ns == first, "root help rebuilt for a corpus it never reads"
 
 
-def test_editing_a_top_level_test_file_does_not_rebuild_for_root_help(repo_env):
+def test_editing_a_top_level_test_file_does_not_rebuild_for_root_help(project_env):
     """...and a TOP-LEVEL test file is no different: no test file keys ``names``.
 
     Test files are never imported to register anything, so no edit to one can
@@ -134,7 +134,7 @@ def test_editing_a_top_level_test_file_does_not_rebuild_for_root_help(repo_env):
     move the ``names`` digest: without it, "root help ignores a test edit"
     would be indistinguishable from "root help ignores every edit".
     """
-    project, env = repo_env
+    project, env = project_env
     _run(env, _ROOT_HELP)
     cache = _cache_file(env)
     first = cache.stat().st_mtime_ns
@@ -144,13 +144,13 @@ def test_editing_a_top_level_test_file_does_not_rebuild_for_root_help(repo_env):
     _run(env, _ROOT_HELP)
     assert cache.stat().st_mtime_ns == first, "a top-level test edit invalidated names"
 
-    init = project / "pylib" / "genrepo_instructions.py"
+    init = project / "pylib" / "genproject_instructions.py"
     init.write_text(init.read_text() + "\n# edited\n")
     _run(env, _ROOT_HELP)
     assert cache.stat().st_mtime_ns != first, "an init-module edit did not invalidate names"
 
 
-def test_a_rebuild_writes_no_test_table(repo_env):
+def test_a_rebuild_writes_no_test_table(project_env):
     """Root help's rebuild never reads a test file: the per-file test table stays unwritten.
 
     Only a pytest collection writes the table (a run, or the collect child a
@@ -160,13 +160,13 @@ def test_a_rebuild_writes_no_test_table(repo_env):
 
     from otto.config.completion_cache import COLLECTED_TESTS_KEY
 
-    project_root, env = repo_env
+    project_root, env = project_env
     _run(env, argv=_ROOT_HELP)
     namespace = json.loads(_cache_file(env).read_text()).get(COLLECTED_TESTS_KEY, {})
     assert str(project_root) not in namespace
 
 
-def test_the_collect_child_seeds_a_table_this_process_finds_current(repo_env):
+def test_the_collect_child_seeds_a_table_this_process_finds_current(project_env):
     """The collect child's table is one any other otto process on this install trusts.
 
     The ``env`` it stored (python, pytest and otto versions, the
@@ -179,7 +179,7 @@ def test_the_collect_child_seeds_a_table_this_process_finds_current(repo_env):
     from otto.config.completion_cache import COLLECTED_TESTS_KEY, DUMP_TESTS_ENV_VAR
     from otto.config.project import Project
 
-    project_root, env = repo_env
+    project_root, env = project_env
     _run(env, argv=_ROOT_HELP)  # a cache home for the child to write into
     child = _run({**env, DUMP_TESTS_ENV_VAR: "1"}, argv=[])
     assert child.stdout == ""
@@ -192,10 +192,10 @@ def test_the_collect_child_seeds_a_table_this_process_finds_current(repo_env):
     assert ct.classify(project, table).is_current
 
 
-def test_the_collect_child_collects_as_a_run_does(repo_env):
-    """The child sets the repo up as ``otto test`` does before collecting.
+def test_the_collect_child_collects_as_a_run_does(project_env):
+    """The child sets the project up as ``otto test`` does before collecting.
 
-    A test module that imports a module from the repo's ``libs`` is collected
+    A test module that imports a module from the project's ``libs`` is collected
     like any other, not recorded as a ``ModuleNotFoundError``: the table must
     hold what a run would find.
     """
@@ -203,7 +203,7 @@ def test_the_collect_child_collects_as_a_run_does(repo_env):
 
     from otto.config.completion_cache import COLLECTED_TESTS_KEY, DUMP_TESTS_ENV_VAR
 
-    project_root, env = repo_env
+    project_root, env = project_env
     (project_root / "pylib" / "genrepo_helpers.py").write_text("GREETING = 'hi'\n")
     uses_lib = project_root / "tests" / "test_uses_lib.py"
     uses_lib.write_text("from genrepo_helpers import GREETING\n\n\ndef test_greets():\n    pass\n")
@@ -225,11 +225,11 @@ def test_a_cold_rebuild_never_imports_a_broken_test_file(tmp_path):
     """
     import json
 
-    from tests._fixtures.paths import PROJECT_ROOT
+    from tests._fixtures.paths import CHECKOUT_ROOT
 
     env = {k: v for k, v in os.environ.items() if not is_otto_env_var(k)}
     env.update(
-        OTTOPATH=str(PROJECT_ROOT / "tests" / "repo_broken"),
+        OTTOPATH=str(CHECKOUT_ROOT / "tests" / "project_broken"),
         OTTO_HOME=str(tmp_path / "home"),
     )
     p = _run(env, argv=_ROOT_HELP)
@@ -238,7 +238,7 @@ def test_a_cold_rebuild_never_imports_a_broken_test_file(tmp_path):
     assert data["sections"]["names"]["tainted"] is False
 
 
-def test_a_rebuild_writes_no_bytecode_into_the_tests_tree(repo_env):
+def test_a_rebuild_writes_no_bytecode_into_the_tests_tree(project_env):
     """A root-help rebuild never imports a test file, so it creates no ``tests/__pycache__``.
 
     With bytecode writing on (a real shell; see
@@ -250,9 +250,9 @@ def test_a_rebuild_writes_no_bytecode_into_the_tests_tree(repo_env):
     """
     import shutil
 
-    from tests._fixtures.generated_repo import argv_writing_test_file_bytecode
+    from tests._fixtures.generated_project import argv_writing_test_file_bytecode
 
-    project, env = repo_env
+    project, env = project_env
     env = {k: v for k, v in env.items() if k != "PYTHONDONTWRITEBYTECODE"}
     entry = "from otto.cli.main import entry; entry()"
     argv = [*argv_writing_test_file_bytecode(entry), *_ROOT_HELP]
@@ -267,7 +267,7 @@ def test_a_rebuild_writes_no_bytecode_into_the_tests_tree(repo_env):
     for pycache in (project / "tests").rglob("__pycache__"):
         shutil.rmtree(pycache)
 
-    init = project / "pylib" / "genrepo_instructions.py"
+    init = project / "pylib" / "genproject_instructions.py"
     init.write_text(init.read_text() + "\n# edited\n")
     root_help()  # stale names: rebuilds
     assert cache.stat().st_mtime_ns != first, "the init edit did not rebuild the cache"
@@ -312,13 +312,13 @@ def test_root_help_never_imports_test_files(tmp_path, cacheable):
     can, root help rebuilds. Neither imports a test file (or pytest): names
     come from a static parse, and nothing registers from a test file.
     """
-    from tests._fixtures.sutrepo import make_sut_repo
+    from tests._fixtures.project_scaffold import make_project
 
     sentinel = tmp_path / "imported"
     extra = 'libs = ["pylib"]\ninit = ["uninit"]\n'
     if not cacheable:
         extra += '\n[inventory]\nbackend = "uncacheable"\n'
-    project = make_sut_repo(
+    project = make_project(
         tmp_path / "unrepo",
         name="unrepo",
         version="0.1.0",
@@ -360,14 +360,14 @@ finally:
 """
 
 
-def test_a_cold_rebuild_opens_and_lists_nothing_under_the_tests_dirs(repo_env, tmp_path):
+def test_a_cold_rebuild_opens_and_lists_nothing_under_the_tests_dirs(project_env, tmp_path):
     """The rebuild does no corpus I/O: test names come only from pytest's collections.
 
     Root help on a cold home rebuilds every section; not one of them reads a
     test file or lists a tests directory. (Stats are not audited; the tests
     site's cost is pinned in the import-budget tests.)
     """
-    project, env = repo_env
+    project, env = project_env
     seen_file = tmp_path / "audit.txt"
     argv = [sys.executable, "-c", _AUDITED_ENTRY.format(out=str(seen_file)), *_ROOT_HELP]
     p = subprocess.run(argv, env=env, capture_output=True, text=True, check=False)

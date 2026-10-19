@@ -95,7 +95,7 @@ class _ConstructedEntry:
 
     A real ``CredSpec.model_construct(login="root", password=123)`` reaches
     the same broken dict, but its OWN ``model_dump`` warns on the type
-    mismatch mid-serialization — a warning this repo's suite promotes to an
+    mismatch mid-serialization — a warning this repository's suite promotes to an
     error (``filterwarnings = ["error"]``), which would fail the test before
     it ever reached the overlay's compose step. A plain stand-in with a
     hand-written ``model_dump`` reaches the identical merged dict without

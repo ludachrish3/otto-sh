@@ -2,7 +2,7 @@
 
 ``build_inventory`` is what bootstrap and the completion handover call; a
 backend registered over a built-in name with ``overwrite=True`` must be what
-it builds for a repo whose ``[inventory]``/``[creds]`` names it. The root
+it builds for a project whose ``[inventory]``/``[creds]`` names it. The root
 isolation fixture restores both tables.
 """
 
@@ -13,7 +13,7 @@ from otto.inventory.config import build_inventory
 from otto.inventory.creds import CredsOverlay
 from otto.inventory.registry import INVENTORY_BACKENDS, register_inventory_backend
 from otto.models.base import OttoModel
-from tests._fixtures.fake_repo import fake_repo
+from tests._fixtures.fake_project import fake_project
 
 REPLACES = [
     ("otto.inventory.registry:INVENTORY_BACKENDS", "json"),
@@ -80,14 +80,14 @@ def test_a_replaced_inventory_backend_is_what_build_inventory_builds(tmp_path, n
     register_inventory_backend(
         name, config=_Config, factory=lambda c: spy, snapshot_cache=snapshot, overwrite=True
     )
-    project = fake_repo("r", root=tmp_path, settings={"inventory": table})
+    project = fake_project("r", root=tmp_path, settings={"inventory": table})
     assert build_inventory([project]) is spy
 
 
 def test_a_replaced_creds_store_is_what_build_inventory_overlays(tmp_path):
     store = _SpyStore()
     register_creds_backend("json", config=_Config, factory=lambda c: store, overwrite=True)
-    project = fake_repo(
+    project = fake_project(
         "r",
         root=tmp_path,
         settings={

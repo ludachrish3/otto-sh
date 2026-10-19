@@ -276,14 +276,14 @@ def make_console_host(ne: str, **kwargs: Any) -> UnixHost:
 def json_lab_sources(
     root: Path, paths: list[Path], *, name: str = "fake"
 ) -> list[PendingLabSource]:
-    """The ``[[lab.sources]]`` list a Repo STAND-IN must carry.
+    """The ``[[lab.sources]]`` list a Project STAND-IN must carry.
 
-    Repo stand-ins (``SimpleNamespace``/``MagicMock``) that only set the old
+    Project stand-ins (``SimpleNamespace``/``MagicMock``) that only set the old
     ``labs`` list model a ``Project`` that no longer exists: ``build_lab_sources``
     and the completion cache read :attr:`~otto.config.project.Project.lab_sources`,
     so such a double contributes no host source at all and silently completes
     nothing. One home for the shape, so the doubles cannot drift from what
-    :func:`~otto.labs.sources.compile_lab_sources` actually produces for a repo
+    :func:`~otto.labs.sources.compile_lab_sources` actually produces for a project
     whose only host source is json files under *paths*.
     """
     return [

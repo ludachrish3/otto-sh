@@ -13,13 +13,13 @@ from tempfile import TemporaryDirectory
 from otto.coverage.capture import gitio
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tests"))
-from _fixtures._repo_timeline import RepoTimeline
+from _fixtures._git_timeline import GitTimeline
 
 
 def bench(n_files: int) -> None:
     """Benchmark the fold operation on a repo with n_files, measuring wall-clock and git spawns."""
     with TemporaryDirectory() as td:
-        tl = RepoTimeline(Path(td) / "repo")
+        tl = GitTimeline(Path(td) / "repo")
         for i in range(n_files):
             tl.write(f"src/f{i:04}.c", f"int f{i}(void)\n{{\n    return {i};\n}}\n")
         tl.commit("base")

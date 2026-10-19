@@ -37,12 +37,12 @@ class TestRegisterAndGet:
 
     def test_duplicate_raises_naming_both_origins(self):
         r = _make()
-        _from_module("repo_a.init", r.register, "ssh", Backend("A"))
+        _from_module("project_a.init", r.register, "ssh", Backend("A"))
         with pytest.raises(
-            DuplicateRegistration, match=r"already registered by 'repo_a.init'"
+            DuplicateRegistration, match=r"already registered by 'project_a.init'"
         ) as ei:
-            _from_module("repo_b.init", r.register, "ssh", Backend("B"))
-        assert "repo_b.init" in str(ei.value)
+            _from_module("project_b.init", r.register, "ssh", Backend("B"))
+        assert "project_b.init" in str(ei.value)
 
     def test_default_collision_message_mentions_overwrite(self):
         r = _make()

@@ -64,8 +64,8 @@ def test_docker_image_spec_builds_runtime_with_sorted_tupled_build_args():
             "images": [
                 {
                     "name": "api",
-                    "dockerfile": "/repo/docker/Dockerfile",
-                    "context": "/repo/docker",
+                    "dockerfile": "/project/docker/Dockerfile",
+                    "context": "/project/docker",
                     "target": "prod",
                     "build_args": {"B": "2", "A": "1"},
                 }
@@ -76,8 +76,8 @@ def test_docker_image_spec_builds_runtime_with_sorted_tupled_build_args():
     assert isinstance(rt.images[0], DockerImage)
     img = rt.images[0]
     assert img.name == "api"
-    assert img.dockerfile == Path("/repo/docker/Dockerfile")
-    assert img.context == Path("/repo/docker")
+    assert img.dockerfile == Path("/project/docker/Dockerfile")
+    assert img.context == Path("/project/docker")
     assert img.target == "prod"
     assert img.build_args == (("A", "1"), ("B", "2"))
 
@@ -87,7 +87,7 @@ def test_docker_compose_spec_builds_runtime():
         {
             "composes": [
                 {
-                    "path": "/repo/compose.yml",
+                    "path": "/project/compose.yml",
                     "services": ["api", "worker"],
                 }
             ],
@@ -95,7 +95,7 @@ def test_docker_compose_spec_builds_runtime():
     )
     rt = spec.to_runtime()
     assert isinstance(rt.composes[0], DockerCompose)
-    assert rt.composes[0].path == Path("/repo/compose.yml")
+    assert rt.composes[0].path == Path("/project/compose.yml")
     assert rt.composes[0].services == ("api", "worker")
 
 
@@ -273,12 +273,12 @@ def test_reservation_file_rejects_non_string_resources():
 
 
 def _minimal() -> dict:
-    return {"name": "repo1", "version": "1.0.0"}
+    return {"name": "project1", "version": "1.0.0"}
 
 
 def test_settings_requires_name_and_version():
     with pytest.raises(ValidationError, match=r"(?m)^version\n\s+Field required") as exc:
-        SettingsModel.model_validate({"name": "repo1"})  # no version
+        SettingsModel.model_validate({"name": "project1"})  # no version
     assert "version" in str(exc.value)
 
 
@@ -469,7 +469,7 @@ def test_settings_validates_every_in_tree_fixture():
         import tomllib
     except ModuleNotFoundError:  # py3.10
         import tomli as tomllib
-    for name in ("repo1", "repo2", "repo3"):
+    for name in ("project1", "project2", "project3"):
         raw = (Path("tests") / name / ".otto" / "settings.toml").read_text()
         SettingsModel.model_validate(tomllib.loads(raw))
 
@@ -582,7 +582,7 @@ def test_otto_env_settings_reads_prefixed_vars(clean_otto_env, tmp_path):
     assert env.compose_suffix == "ci"
 
 
-def test_otto_env_settings_splits_sut_dirs_on_pathsep_only(clean_otto_env, tmp_path):
+def test_otto_env_settings_splits_ottopath_on_pathsep_only(clean_otto_env, tmp_path):
     a = tmp_path / "a"
     b = tmp_path / "b"
     a.mkdir()
@@ -804,7 +804,7 @@ def test_project_block_invalid_host_regex_fails_at_validation():
 
 
 def test_project_block_regex_error_names_the_pattern():
-    """The message must carry the offending pattern; Repo adds the repo name."""
+    """The message must carry the offending pattern; Project adds the project name."""
     from otto.models.settings import ProjectScopeSpec
 
     with pytest.raises(ValidationError, match=r"'gw-\['"):
@@ -825,11 +825,11 @@ def test_project_block_unknown_key_fails():
         ProjectScopeSpec.model_validate({"labs": ["a"]})
 
 
-def test_lab_sources_parse_and_reach_repo(tmp_path):
+def test_lab_sources_parse_and_reach_project(tmp_path):
     from otto.config.project import Project
-    from tests._fixtures.sutrepo import make_sut_repo
+    from tests._fixtures.project_scaffold import make_project
 
-    sut = make_sut_repo(
+    sut = make_project(
         tmp_path / "sut",
         name="srcrepo",
         extra='[[lab.sources]]\nbackend = "json"\npaths = ["lab_data"]\n',
@@ -853,9 +853,14 @@ def test_declared_entry_minimal_and_extras_become_params():
     spec = DeclaredEntrySpec.model_validate(
         {"name": "fw", "kind": "file", "artifact": "build/fw.bin", "dest_dir": "/opt"}
     )
-    entry = spec.to_runtime(owner="repo1", base_dir=Path("/repo"), seam="products")
-    assert (entry.name, entry.kind, entry.seam, entry.owner) == ("fw", "file", "products", "repo1")
-    assert entry.base_dir == Path("/repo")
+    entry = spec.to_runtime(owner="project1", base_dir=Path("/project"), seam="products")
+    assert (entry.name, entry.kind, entry.seam, entry.owner) == (
+        "fw",
+        "file",
+        "products",
+        "project1",
+    )
+    assert entry.base_dir == Path("/project")
     assert entry.params == {"artifact": "build/fw.bin", "dest_dir": "/opt"}
     assert entry.match == {}
 
@@ -916,8 +921,8 @@ def test_settings_model_defaults_to_empty_declared_arrays():
 
 
 def test_an_archive_context_keeps_the_dockerfile_as_a_path_inside_it(tmp_path):
-    # With a repo root in the validation context, `dockerfile` is anchored to
-    # the repo like any settings path; the path INSIDE the archive must still
+    # With a project root in the validation context, `dockerfile` is anchored to
+    # the project like any settings path; the path INSIDE the archive must still
     # be the string the user wrote.
     spec = DockerImageSpec.model_validate(
         {"name": "api", "dockerfile": "docker/Dockerfile", "context": "build/ctx.tar.gz"},
@@ -952,7 +957,7 @@ def _image_entry(name: str) -> dict:
     return {"name": name, "dockerfile": "/d/Dockerfile", "context": "/d"}
 
 
-def test_two_images_of_one_repo_may_not_share_a_name():
+def test_two_images_of_one_project_may_not_share_a_name():
     with pytest.raises(ValidationError, match=r"\[\[docker\.images\]\] names must be unique") as e:
         DockerSettingsSpec.model_validate(
             {"images": [_image_entry("api"), _image_entry("web"), _image_entry("api")]}
@@ -993,7 +998,7 @@ def test_a_class_entry_parses_and_keeps_its_other_keys_as_params():
     spec = DeclaredEntrySpec.model_validate(
         {"name": "fw", "class": "acme.products:Firmware", "artifact": "build/fw.bin"}
     )
-    entry = spec.to_runtime(owner="acme", base_dir=Path("/repo"), seam="products")
+    entry = spec.to_runtime(owner="acme", base_dir=Path("/project"), seam="products")
     assert (entry.kind, entry.cls, entry.variant) == (None, "acme.products:Firmware", None)
     assert entry.params == {"artifact": "build/fw.bin"}
     assert entry.kind_label == "acme.products:Firmware"

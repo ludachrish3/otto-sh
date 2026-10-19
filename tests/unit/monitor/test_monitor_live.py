@@ -23,7 +23,7 @@ from tests._fixtures.bootstrap_seam import (
     patch_bootstrap,
     seed_scope_verdicts,
 )
-from tests._fixtures.fake_repo import fake_repo
+from tests._fixtures.fake_project import fake_project
 
 
 def _unix(name: str) -> UnixHost:
@@ -44,7 +44,7 @@ def _console(name: str, *, snmp: bool = False):
 
 @pytest.fixture
 def lab(monkeypatch):
-    """Stand in for the active lab: all_hosts honours the pattern; no repos; no scope."""
+    """Stand in for the active lab: all_hosts honours the pattern; no projects; no scope."""
     hosts = [_unix("web1"), _console("z1"), _console("s1", snmp=True)]
 
     def all_hosts(pattern=None):
@@ -110,7 +110,7 @@ class TestRunLiveRefusesBeforeAnyFile:
         else refuses could not tell run_live's own check from the builder's.
         """
         db = tmp_path / "m.db"
-        bad = fake_repo("r", monitor_settings=MonitorSettings(tls_cert=tmp_path / "missing.pem"))
+        bad = fake_project("r", monitor_settings=MonitorSettings(tls_cert=tmp_path / "missing.pem"))
         patch_bootstrap(monkeypatch, [bad])
         with pytest.raises(MonitorInputError, match="at least") as e:
             await run_live(hosts="z.*", interval=0.5, db=db)
@@ -127,7 +127,7 @@ class TestRunLiveRefusesBeforeAnyFile:
     @pytest.mark.asyncio
     async def test_tls(self, lab, tmp_path, monkeypatch):
         db = tmp_path / "m.db"
-        bad = fake_repo("r", monitor_settings=MonitorSettings(tls_cert=tmp_path / "missing.pem"))
+        bad = fake_project("r", monitor_settings=MonitorSettings(tls_cert=tmp_path / "missing.pem"))
         patch_bootstrap(monkeypatch, [bad])
         with pytest.raises(MonitorTlsError):
             await run_live(db=db)
@@ -158,7 +158,7 @@ async def test_run_live_hands_the_server_the_declared_cert_and_key(
     lab, served, tls_pair, monkeypatch
 ):
     cert, key = tls_pair
-    project = fake_repo("r", monitor_settings=MonitorSettings(tls_cert=cert, tls_key=key))
+    project = fake_project("r", monitor_settings=MonitorSettings(tls_cert=cert, tls_key=key))
     patch_bootstrap(monkeypatch, [project])
     await run_live(hosts="web1")
     kwargs = served.call_args.kwargs
@@ -233,23 +233,23 @@ async def test_tunnel_discovery_covers_the_whole_lab_not_the_selection(lab):
 
 
 def _context_over(projects):
-    """A real context whose repos are *repos*, from one result handed to it."""
+    """A real context whose projects are *projects*, from one result handed to it."""
     return OttoContext(lab=Lab(name="rig"), bootstrap=fake_bootstrap_result(projects))
 
 
-class TestDrivingRepoScopeGate:
+class TestDrivingProjectScopeGate:
     """D3 fires at the monitor fleet build, not only at ``otto run``'s verbs.
 
-    The gap this closes is invisible in a single-repo world — there the union
+    The gap this closes is invisible in a single-project world — there the union
     is empty too, and ``require_nonempty_fleet`` refuses. With a DEPENDENCY
     admitting hosts, the union is healthy and a live run happily dashboards
     the dependency's machines while the driving project's own declaration
     says this lab is not its world.
 
-    Every fixture below gives the driving repo and the dependency DIFFERENT
-    verdicts, and the context's ``repos`` hands back bootstrap's order (driving first)
+    Every fixture below gives the driving project and the dependency DIFFERENT
+    verdicts, and the context's ``projects`` hands back bootstrap's order (driving first)
     while the walk order elsewhere heads with a dependency — so a gate asking
-    about the wrong repo is visible in both directions.
+    about the wrong project is visible in both directions.
     """
 
     @staticmethod
@@ -263,7 +263,7 @@ class TestDrivingRepoScopeGate:
             applicable_labs=frozenset() if excluded else frozenset({"bench"}),
             universe=frozenset() if excluded else frozenset({"box"}),
             excluded=excluded,
-            root=f"/repos/{name}",
+            root=f"/projects/{name}",
             loaded_labs=("bench",),
             lab_patterns=(f"{name}-lab",),
             host_patterns=(".*",),
@@ -271,7 +271,7 @@ class TestDrivingRepoScopeGate:
 
     @classmethod
     def _world(cls, monkeypatch, excluded):
-        """Wire a two-repo world (driving ``app``, dependency ``base``) and record contacts.
+        """Wire a two-project world (driving ``app``, dependency ``base``) and record contacts.
 
         The fleet build is RECORDED, never made to raise: a probe that raised
         would be captured by any surrounding handler and read as the gate's own
@@ -290,8 +290,8 @@ class TestDrivingRepoScopeGate:
             "base": cls._scope("base", excluded=excluded == "base"),
         }
         projects = [
-            fake_repo("app", monitor_settings=MonitorSettings()),
-            fake_repo("base", monitor_settings=MonitorSettings()),
+            fake_project("app", monitor_settings=MonitorSettings()),
+            fake_project("base", monitor_settings=MonitorSettings()),
         ]
         monkeypatch.setattr("otto.fleet.all_hosts", _all_hosts)
         patch_bootstrap(monkeypatch, projects)
@@ -301,10 +301,10 @@ class TestDrivingRepoScopeGate:
         return contacted
 
     @pytest.mark.asyncio
-    async def test_the_driving_repos_unusable_scope_refuses_the_fleet_build(
+    async def test_the_driving_projects_unusable_scope_refuses_the_fleet_build(
         self, lab, served, monkeypatch
     ):
-        """Raised naming the driving repo — and nothing walked.
+        """Raised naming the driving project — and nothing walked.
 
         The contact list is what makes this more than "it refused": a gate
         that fired after the fleet was built would still refuse, having already
@@ -325,12 +325,12 @@ class TestDrivingRepoScopeGate:
         served.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_the_driving_repo_is_the_contexts_not_the_composition_roots(
+    async def test_the_driving_project_is_the_contexts_not_the_composition_roots(
         self, lab, served, monkeypatch
     ):
-        """The gate reads ``ctx.projects``; a composition root listing repos otherwise is ignored.
+        """The gate reads ``ctx.projects``; a composition root listing others is ignored.
 
-        The context's first repo is ``app``, whose scope is unusable; the
+        The context's first project is ``app``, whose scope is unusable; the
         composition root lists the healthy ``base`` first. A gate that read
         the accessor instead of the context would let the monitor run.
         """
@@ -338,8 +338,8 @@ class TestDrivingRepoScopeGate:
 
         contacted = self._world(monkeypatch, excluded="app")
         reordered = [
-            fake_repo("base", monitor_settings=MonitorSettings()),
-            fake_repo("app", monitor_settings=MonitorSettings()),
+            fake_project("base", monitor_settings=MonitorSettings()),
+            fake_project("app", monitor_settings=MonitorSettings()),
         ]
         patch_bootstrap(monkeypatch, reordered)
 
@@ -350,7 +350,7 @@ class TestDrivingRepoScopeGate:
 
     @pytest.mark.asyncio
     async def test_an_excluded_dependency_does_not_stop_the_monitor(self, lab, served, monkeypatch):
-        """D3's asymmetry, and the mirror that kills a gate pointed at the wrong repo.
+        """D3's asymmetry, and the mirror that kills a gate pointed at the wrong project.
 
         ``ctx.projects[0]`` is the driving project; the walk order's first entry
         is a dependency (``get_ordered_projects`` is a topological reorder). A gate
@@ -369,7 +369,7 @@ class TestDrivingRepoScopeGate:
 
         A library lab: no context is installed (the unit tree's default, asserted
         below), so the gate returns at its context lookup with no verdict to
-        enforce, before it reads any repo.
+        enforce, before it reads any project.
         """
         from otto.context import get_context
 
@@ -382,10 +382,10 @@ class TestDrivingRepoScopeGate:
         assert report.hosts == ["web1", "s1"]
 
     @pytest.mark.asyncio
-    async def test_a_context_with_no_repos_is_untouched(self, lab, served, monkeypatch):
-        """A checkout with no ``OTTOPATH``, under a context: no current repo to refuse.
+    async def test_a_context_with_no_projects_is_untouched(self, lab, served, monkeypatch):
+        """A checkout with no ``OTTOPATH``, under a context: no current project to refuse.
 
-        The context's verdicts are empty and its ``repos`` is ``[]``, so the
+        The context's verdicts are empty and its ``projects`` is ``[]``, so the
         gate must not invent a verdict (nor die indexing an empty list).
         """
         patch_bootstrap(monkeypatch, [])
@@ -411,7 +411,7 @@ class TestDrivingRepoScopeGate:
         def _boom():
             raise RuntimeError("no bootstrap here")
 
-        patch_bootstrap(monkeypatch, [fake_repo("app", monitor_settings=MonitorSettings())])
+        patch_bootstrap(monkeypatch, [fake_project("app", monitor_settings=MonitorSettings())])
         monkeypatch.setattr("otto.run_context.get_context", _boom)
 
         report = await run_live()
@@ -419,8 +419,8 @@ class TestDrivingRepoScopeGate:
         assert report.hosts == ["web1", "s1"]
 
     @staticmethod
-    def _unreachable_repos(monkeypatch):
-        """Make every repo read raise and record the fleet build; return the record."""
+    def _unreachable_projects(monkeypatch):
+        """Make every project read raise and record the fleet build; return the record."""
         contacted = []
 
         def _boom():
@@ -431,22 +431,24 @@ class TestDrivingRepoScopeGate:
             contacted.append("walked")
             return iter([_unix("box")])
 
-        # The run's own TLS read and a context's first repos read both ask it.
+        # The run's own TLS read and a context's first projects read both ask it.
         monkeypatch.setattr("otto.bootstrap.bootstrap", _boom)
         monkeypatch.setattr("otto.fleet.all_hosts", _all_hosts)
         return contacted
 
     @pytest.mark.asyncio
-    async def test_unreachable_repos_without_a_context_stop_at_tls(self, lab, served, monkeypatch):
-        """With no context installed, the gate returns before it reads any repo.
+    async def test_unreachable_projects_without_a_context_stop_at_tls(
+        self, lab, served, monkeypatch
+    ):
+        """With no context installed, the gate returns before it reads any project.
 
-        The run itself still needs the repos to resolve the declared dashboard
+        The run itself still needs the projects to resolve the declared dashboard
         TLS — the library always resolves it — so the lookup's own error
         surfaces from there, after the walk, never as a scope refusal.
         """
         from otto.context import get_context
 
-        contacted = self._unreachable_repos(monkeypatch)
+        contacted = self._unreachable_projects(monkeypatch)
         with pytest.raises(RuntimeError):
             get_context()
 
@@ -457,17 +459,19 @@ class TestDrivingRepoScopeGate:
         served.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_unreachable_repos_under_a_context_stop_the_gate(self, lab, served, monkeypatch):
-        """Under a context, only the context lookup is guarded: the repo read is not.
+    async def test_unreachable_projects_under_a_context_stop_the_gate(
+        self, lab, served, monkeypatch
+    ):
+        """Under a context, only the context lookup is guarded: the project read is not.
 
-        The context's ``repos`` error propagates out of the gate itself, before
-        any host is walked, so a guard widened around the repo read (which would
+        The context's ``projects`` error propagates out of the gate itself, before
+        any host is walked, so a guard widened around the project read (which would
         let the walk run and fail later, at the TLS lookup) turns this red. The
-        context is built without a result, so its first ``repos`` read asks the
+        context is built without a result, so its first ``projects`` read asks the
         raising composition root; its verdicts are seeded, so that read is the
         one under test.
         """
-        contacted = self._unreachable_repos(monkeypatch)
+        contacted = self._unreachable_projects(monkeypatch)
         ctx = OttoContext(lab=Lab(name="rig"))
         seed_scope_verdicts(ctx, {})
         monkeypatch.setattr("otto.run_context.get_context", lambda: ctx)

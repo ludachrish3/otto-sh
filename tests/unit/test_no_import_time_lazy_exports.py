@@ -59,9 +59,9 @@ import functools
 from pathlib import Path
 from typing import NamedTuple
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-SRC_ROOT = PROJECT_ROOT / "src" / "otto"
+SRC_ROOT = CHECKOUT_ROOT / "src" / "otto"
 
 GUARDED_PACKAGES = ["otto", "otto.config", "otto.logger"]
 
@@ -70,9 +70,9 @@ GUARDED_PACKAGES = ["otto", "otto.config", "otto.logger"]
 GUARDED_ATTRS_PACKAGES = ["otto.lab", "otto.bootstrap", "otto.context"]
 
 # Getters that no lazy table exports, read at their defining module: patched
-# there, read at call time, never bound at import (spec 2026-10-06
-# repo-and-scope-inputs §9, the lazy-getter guard). otto.bootstrap is its
-# getters' public home; otto.config.repo defines discovery, which the root
+# there, read at call time, never bound at import (spec
+# 2026-10-06-repo-and-scope-inputs-design §9, the lazy-getter guard). otto.bootstrap is its
+# getters' public home; otto.config.project defines discovery, which the root
 # re-exports in part (its _LAZY_ATTRS table). otto.invocation has no public path, but the host layer
 # reads the run's policy and peer-host resolver there, and a module-level
 # binding of either would go stale across runs just the same (spec 2026-10-06

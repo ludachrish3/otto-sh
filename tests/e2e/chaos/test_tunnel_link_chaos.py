@@ -31,7 +31,7 @@ from otto.logger.mode import LogMode
 from otto.utils import WaitTimeoutError, wait_for
 from tests._fixtures.bed_hygiene import argv_pattern
 from tests._fixtures.labdata import host_data
-from tests._fixtures.tunnel_bed import cli_sut_dir, observe_tunnel_processes
+from tests._fixtures.tunnel_bed import cli_project_root, observe_tunnel_processes
 from tests.e2e.chaos._bed import (
     assert_eth2_netem_free,
     closed_unix_link_target,
@@ -87,7 +87,7 @@ _HOLD_MARKER = "otto-chaos-portblock"
 # stream `_wait_for_stdout` polls.
 #
 # That stream is rendered through rich's Console, which -- with no tty and no
-# `COLUMNS` env var -- wraps at a detected-or-default width (this repo's own
+# `COLUMNS` env var -- wraps at a detected-or-default width (this repository's own
 # `otto/cli/link.py::list_links` hits the identical issue: "rich's global
 # console otherwise wraps at its detected width (80 cols under CliRunner/
 # no-tty, since COLUMNS isn't set in CI)"), which measurably corrupts a long
@@ -158,7 +158,7 @@ def test_sigkill_mid_tunnel_recovers_via_remove_all(tmp_path):
     """SIGKILL an `otto tunnel add` mid-launch; assert `tunnel remove --all
     --yes` reaps whatever daemons survived and the trio ends clean.
     """
-    sut = cli_sut_dir(tmp_path)
+    sut = cli_project_root(tmp_path)
     target = tunnel_target(sut)
     p = spawn_otto(
         [
@@ -293,7 +293,7 @@ def test_interrupt_during_rollback_still_reaps(tmp_path):
     belt-and-suspenders bed proof the brief asks for; the tier-1 test above
     is the precise one.
     """
-    sut = cli_sut_dir(tmp_path)
+    sut = cli_project_root(tmp_path)
     target = tunnel_target(sut)
     test1_ip = host_data("test1")["interfaces"]["eth2"]["ip"]
     p = None  # bound inside the try; finally must not assume it got there

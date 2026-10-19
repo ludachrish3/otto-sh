@@ -2,7 +2,7 @@
 
 ONE rule, stated in full: the vitest configs, the browser lane's ``expect()``
 ceiling, pytest's per-test ``timeout``, and the Makefile's session-wide
-``PYTEST_TIMEOUT`` wrap must each be written down in this repo, at or above a
+``PYTEST_TIMEOUT`` wrap must each be written down in this repository, at or above a
 floor. Nothing here inspects test bodies or reasons about assertions — "What
 this does NOT cover" below is exhaustive.
 
@@ -22,13 +22,13 @@ replaced.
 
 The vitest configs are DISCOVERED (any ``web/vite*.config.ts`` carrying a
 ``test:`` block) rather than listed, which is the direct lesson of the
-``expect()`` finding: the repo's real decision lived in one of two suites'
+``expect()`` finding: the repository's real decision lived in one of two suites'
 conftests and had no way to reach the other.
 
 **What this does NOT cover, deliberately.** The other half of this class is a
 *discriminator* — a bound written INTO an assertion to prove a property, as
 in ``assert elapsed < 5.0``. Those cannot be found by requiring a
-declaration, and no gate in this repo looks for them. An earlier draft
+declaration, and no gate in this repository looks for them. An earlier draft
 carried a scanner that inferred them from the AST by modelling the clock
 domain; it worked, and it is what grew the ``serial_timing`` roster from 4
 tests to 25 — but as a standing rule it was a heuristic needing a written
@@ -45,7 +45,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._fixtures.paths import PROJECT_ROOT, TESTS_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT, TESTS_ROOT
 
 # ── Part A: every lane declares its own runaway guard ───────────────────────
 #
@@ -63,7 +63,7 @@ from tests._fixtures.paths import PROJECT_ROOT, TESTS_ROOT
 # was, and the numbers do not transfer: the ~10x slowdown recorded in
 # tests/e2e/conftest.py (one dashboard run at ~340s against a ~33s norm) was
 # measured over a WHOLE RUN, while this bound ceilings a single assertion's
-# poll. 30s here is the value the repo already chose for Playwright's action
+# poll. 30s here is the value the repository already chose for Playwright's action
 # timeout, held as a floor so `expect()` cannot silently fall back below the
 # default that same conftest had already rejected as too tight. Python's 180s
 # is the one bound that was always a decision; its floor sits well below it so
@@ -152,12 +152,12 @@ def ts_test_configs() -> list[Path]:
     Discovered, not listed. ``vite.covapp.config.ts`` is build-only today and
     is skipped because it declares no ``test:`` block; if it ever grows one it
     inherits the requirement automatically. That generalization is the direct
-    lesson of the ``expect()`` finding, where the repo's decision was real but
+    lesson of the ``expect()`` finding, where the repository's decision was real but
     lived in one of the two suites' conftests and could not reach the other.
     """
     return [
         path
-        for path in sorted((PROJECT_ROOT / "web").glob("vite*.config.ts"))
+        for path in sorted((CHECKOUT_ROOT / "web").glob("vite*.config.ts"))
         if ts_test_block(path.read_text()) is not None
     ]
 
@@ -273,7 +273,7 @@ def test_browser_lane_declares_its_expect_ceiling() -> None:
     ``playwright/_impl/_assertions.py`` resolves it as
     ``self._timeout or 5_000``, and ``self._timeout`` is populated only by
     ``expect.set_options`` — never by ``page.set_default_timeout``. That is how
-    this repo ran 202 assertions at 5000ms while its own conftest recorded, in
+    this repository ran 202 assertions at 5000ms while its own conftest recorded, in
     a comment, that Playwright's 30s default was already too tight for a loaded
     gate host. The call has to exist at the shared parent of both browser
     suites, which is why the pin names ``tests/e2e/conftest.py`` and not a
@@ -321,7 +321,7 @@ def pytest_ini_section(text: str) -> str:
 
 
 def test_python_lane_declares_its_per_test_timeout() -> None:
-    text = pytest_ini_section((PROJECT_ROOT / "pyproject.toml").read_text())
+    text = pytest_ini_section((CHECKOUT_ROOT / "pyproject.toml").read_text())
     match = re.search(r"^timeout\s*=\s*(\d+)", text, re.MULTILINE)
     assert match is not None, (
         "pyproject.toml no longer sets pytest-timeout's `timeout` — a hung test "
@@ -370,7 +370,7 @@ def makefile_session_cap(text: str) -> int:
 
 
 def test_make_declares_a_session_cap_far_above_the_leg() -> None:
-    cap = makefile_session_cap((PROJECT_ROOT / "Makefile").read_text())
+    cap = makefile_session_cap((CHECKOUT_ROOT / "Makefile").read_text())
     assert cap >= _MAKE_SESSION_CAP_FLOOR_S, (
         f"PYTEST_TIMEOUT is {cap}s, below the {_MAKE_SESSION_CAP_FLOOR_S}s floor. "
         f"The coverage-python leg runs 800-900s on the dev VM; a cap inside that band is "
@@ -418,7 +418,7 @@ def workflow_jobs_invoking(targets: "set[str]") -> "list[tuple[str, str, int, st
     import yaml
 
     hits: "list[tuple[str, str, int, str]]" = []
-    for path in sorted((PROJECT_ROOT / ".github" / "workflows").glob("*.yml")):
+    for path in sorted((CHECKOUT_ROOT / ".github" / "workflows").glob("*.yml")):
         jobs = (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("jobs", {})
         for name, job in jobs.items():
             runs = "\n".join(str(step.get("run", "")) for step in job.get("steps", []) or [])
@@ -438,8 +438,8 @@ def test_ci_jobs_that_invoke_a_wrapped_lane_outlast_the_cap() -> None:
     busybox.net stall would never be seen. The relation is what matters, not
     either number, so it is pinned as a relation.
     """
-    cap = makefile_session_cap((PROJECT_ROOT / "Makefile").read_text())
-    wrapped = makefile_wrapped_targets((PROJECT_ROOT / "Makefile").read_text())
+    cap = makefile_session_cap((CHECKOUT_ROOT / "Makefile").read_text())
+    wrapped = makefile_wrapped_targets((CHECKOUT_ROOT / "Makefile").read_text())
     assert wrapped, "premise: no Makefile target reaches $(TIMEOUT_CMD) — the parser is broken"
     hits = workflow_jobs_invoking(wrapped)
     assert hits, "premise: no CI job invokes a wrapped lane — the workflow parser is broken"
@@ -590,7 +590,7 @@ def _is_given(node: ast.expr) -> bool:
     """True for a ``@given(...)`` decorator, by the name as written.
 
     An aliased import (``from hypothesis import given as g``) is out of scope:
-    the repo does not spell it that way, and following aliases means resolving
+    the repository does not spell it that way, and following aliases means resolving
     imports, which this file deliberately does not do.
     """
     call = _decorator_call(node)
@@ -705,7 +705,7 @@ def test_every_hypothesis_campaign_declares_a_campaign_sized_timeout() -> None:
             continue
         campaigns += len(hypothesis_campaign_names(text))
         offenders.extend(
-            f"{path.relative_to(PROJECT_ROOT)}::{gap}" for gap in hypothesis_campaign_gaps(text)
+            f"{path.relative_to(CHECKOUT_ROOT)}::{gap}" for gap in hypothesis_campaign_gaps(text)
         )
     # The premise counts what the SCANNER found, not what the files mention: 77
     # modules contain the word "given" and one holds an actual `@given` test, so

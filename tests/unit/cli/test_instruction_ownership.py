@@ -1,6 +1,6 @@
-"""An instruction's owning repo and the ``otto run`` dispatch gate (spec §5).
+"""An instruction's owning project and the ``otto run`` dispatch gate (spec §5).
 
-An instruction's owner is the repo whose init modules registered it
+An instruction's owner is the project whose init modules registered it
 (``INSTRUCTIONS.project(name)``), and dispatch refuses one whose owner is inactive
 for this invocation. Three things this module is deliberate about, each of
 them a defect this branch already ate once:
@@ -112,7 +112,7 @@ def _hard_wrapped_lines(text: str, width: int = _NARROW_WIDTH) -> int:
 #
 # Every case FOLDS at 80 columns without the fix, and each cell asserts that
 # before asserting the fix undid it — so none of them can quietly go inert.
-# The name lengths are measured, not guessed: per shape, the shortest repo name
+# The name lengths are measured, not guessed: per shape, the shortest project name
 # whose hint reaches the wrap column is
 #
 #   switch hint           name >= 15    `firmware-integration` (20) -> 92 chars
@@ -123,10 +123,10 @@ def _hard_wrapped_lines(text: str, width: int = _NARROW_WIDTH) -> int:
 # The single-pattern lab hint is why the previous version of this table could
 # not fail: the shared `verdict` fixture only ever produced ONE lab_pattern,
 # capping that hint at 73 characters for a 20-char name, and the host-starved
-# hint at 62. A repo declaring three labs is ordinary, and is the shape that
+# hint at 62. A project declaring three labs is ordinary, and is the shape that
 # folds in the field.
 #
-# Short names are deliberately NOT included. At 80 columns `repo2` fits in every
+# Short names are deliberately NOT included. At 80 columns `project2` fits in every
 # shape whatever the renderer does, so a short-name width cell asserts nothing;
 # the short-name copy is already pinned by `TestRefusal`, at a wide console.
 _SWITCH_OWNER = "firmware-integration"
@@ -204,15 +204,15 @@ def _dispatch_ctx(instruction_name: str) -> Any:
 class TestOwner:
     """Who owns an instruction, and where that is read from."""
 
-    def test_decorator_records_the_registering_repo(self) -> None:
+    def test_decorator_records_the_registering_project(self) -> None:
         from otto.cli.run import instruction
 
-        with registering_project("repo9"):
+        with registering_project("project9"):
 
             @instruction()
             async def probe_owner() -> None: ...
 
-        assert INSTRUCTIONS.project("probe-owner") == "repo9"
+        assert INSTRUCTIONS.project("probe-owner") == "project9"
 
     def test_first_party_registration_records_none(self) -> None:
         from otto.cli.run import instruction
@@ -222,13 +222,13 @@ class TestOwner:
 
         assert INSTRUCTIONS.project("probe-first-party") is None
 
-    def test_a_hand_built_entry_is_owned_by_the_repo_that_registers_it(self) -> None:
+    def test_a_hand_built_entry_is_owned_by_the_project_that_registers_it(self) -> None:
         """Ownership is the registration's, not a field a hand-built entry can omit."""
-        _install_entry("hand", "repo3")
-        assert INSTRUCTIONS.project("hand") == "repo3"
+        _install_entry("hand", "project3")
+        assert INSTRUCTIONS.project("hand") == "project3"
 
     def test_a_project_instruction_has_no_owner(self) -> None:
-        """Otto's six derive with no owner: a body per repo, not one owning repo."""
+        """Otto's six derive with no owner: a body per project, not one owning project."""
         assert INSTRUCTIONS.project("install") is None
 
     def test_a_registration_here_does_not_leak(self) -> None:
@@ -261,18 +261,18 @@ class TestRefusal:
     def test_switched_off_owner_refuses_exit_1(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        _install_entry("flash-b", "repo2")
-        self._wire_context(monkeypatch, exclude=("repo2",))
+        _install_entry("flash-b", "project2")
+        self._wire_context(monkeypatch, exclude=("project2",))
         with pytest.raises(typer.Exit) as excinfo:
             refuse_inactive_instruction(_dispatch_ctx("flash-b"))
         assert excinfo.value.exit_code == 1
         out = capsys.readouterr().out
-        assert "'flash-b' belongs to project 'repo2'" in out
-        assert "which was switched off for this run (--exclude-projects repo2)" in out
-        assert "activate it: remove --exclude-projects repo2    or: -I repo2" in out
+        assert "'flash-b' belongs to project 'project2'" in out
+        assert "which was switched off for this run (--exclude-projects project2)" in out
+        assert "activate it: remove --exclude-projects project2    or: -I project2" in out
 
     def test_active_owner_passes(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        _install_entry("flash-b", "repo2")
+        _install_entry("flash-b", "project2")
         self._wire_context(monkeypatch)
         refuse_inactive_instruction(_dispatch_ctx("flash-b"))  # must not raise
 
@@ -283,14 +283,14 @@ class TestRefusal:
     def test_lab_excluded_owner_names_both_fixes(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        _install_entry("flash-b", "repo2")
-        self._wire_context(monkeypatch, scopes={"repo2": verdict("repo2", excluded=True)})
+        _install_entry("flash-b", "project2")
+        self._wire_context(monkeypatch, scopes={"project2": verdict("project2", excluded=True)})
         with pytest.raises(typer.Exit) as excinfo:
             refuse_inactive_instruction(_dispatch_ctx("flash-b"))
         assert excinfo.value.exit_code == 1
         out = capsys.readouterr().out
-        assert "inactive for the loaded lab(s) [bench] (lab_patterns: repo2-lab)" in out
-        assert "activate it: -l repo2-lab    or: -I repo2" in out
+        assert "inactive for the loaded lab(s) [bench] (lab_patterns: project2-lab)" in out
+        assert "activate it: -l project2-lab    or: -I project2" in out
 
     def test_host_starved_owner_names_its_host_patterns(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -301,34 +301,34 @@ class TestRefusal:
         matches your host_patterns" send the reader to different places, and a
         gate that rendered one message for both would send half of them wrong.
         """
-        _install_entry("flash-b", "repo2")
-        self._wire_context(monkeypatch, scopes={"repo2": verdict("repo2", universe=())})
+        _install_entry("flash-b", "project2")
+        self._wire_context(monkeypatch, scopes={"project2": verdict("project2", universe=())})
         with pytest.raises(typer.Exit) as excinfo:
             refuse_inactive_instruction(_dispatch_ctx("flash-b"))
         assert excinfo.value.exit_code == 1
         out = capsys.readouterr().out
         assert "its [project] host_patterns (.*) match no host" in out
         assert "in the loaded lab(s) [bench]" in out
-        assert "activate it: widen host_patterns, or: -I repo2" in out
+        assert "activate it: widen host_patterns, or: -I project2" in out
         assert "inactive for the loaded lab(s)" not in out
 
     def test_an_undeclared_owner_is_never_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """The whole-lab fallback (scoping spec §6) stays active — no ``[project]``, no gate."""
-        _install_entry("flash-b", "repo2")
+        _install_entry("flash-b", "project2")
         self._wire_context(
-            monkeypatch, scopes={"repo2": verdict("repo2", declared=False, universe=())}
+            monkeypatch, scopes={"project2": verdict("project2", declared=False, universe=())}
         )
         refuse_inactive_instruction(_dispatch_ctx("flash-b"))  # must not raise
 
     def test_include_rescues_an_owner_its_lab_verdict_excluded(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The hint the refusal prints has to WORK: ``-I repo2`` beats the lab verdict."""
-        _install_entry("flash-b", "repo2")
+        """The hint the refusal prints has to WORK: ``-I project2`` beats the lab verdict."""
+        _install_entry("flash-b", "project2")
         self._wire_context(
             monkeypatch,
-            include=("repo2",),
-            scopes={"repo2": verdict("repo2", excluded=True)},
+            include=("project2",),
+            scopes={"project2": verdict("project2", excluded=True)},
         )
         refuse_inactive_instruction(_dispatch_ctx("flash-b"))  # must not raise
 
@@ -336,7 +336,7 @@ class TestRefusal:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A statically-declared ``run`` child (not in the registry) has no owner to judge."""
-        self._wire_context(monkeypatch, exclude=("repo2",))
+        self._wire_context(monkeypatch, exclude=("project2",))
         refuse_inactive_instruction(_dispatch_ctx("not-an-instruction"))  # must not raise
 
     def test_non_run_leaves_pass_untouched(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -346,8 +346,8 @@ class TestRefusal:
         excluded), so a walk that stopped at any parent rather than the ``run``
         group would exit 1 here.
         """
-        _install_entry("get", "repo2")
-        self._wire_context(monkeypatch, exclude=("repo2",))
+        _install_entry("get", "project2")
+        self._wire_context(monkeypatch, exclude=("project2",))
         refuse_inactive_instruction(chain("otto", "host", "get"))  # must not raise
 
     def test_a_sub_group_under_run_is_judged_by_the_group_name(
@@ -359,12 +359,12 @@ class TestRefusal:
         between ``run`` and the leaf, which is why the walk climbs to the child
         of ``run`` instead of reading the leaf it was handed.
         """
-        _install_entry("flash-b", "repo2")
-        self._wire_context(monkeypatch, exclude=("repo2",))
+        _install_entry("flash-b", "project2")
+        self._wire_context(monkeypatch, exclude=("project2",))
         with pytest.raises(typer.Exit) as excinfo:
             refuse_inactive_instruction(chain("otto", "run", "flash-b", "sub"))
         assert excinfo.value.exit_code == 1
-        assert "'flash-b' belongs to project 'repo2'" in capsys.readouterr().out
+        assert "'flash-b' belongs to project 'project2'" in capsys.readouterr().out
 
 
 class TestRefusalRendering:
@@ -375,7 +375,7 @@ class TestRefusalRendering:
         monkeypatch: pytest.MonkeyPatch,
         scope: Any = None,
         *,
-        owner: str = "repo2",
+        owner: str = "project2",
         excluded_by_switch: bool = False,
     ) -> None:
         _install_entry("flash-b", owner)
@@ -398,14 +398,14 @@ class TestRefusalRendering:
         ``lab(s) )``. ``fail`` escapes, so this passes; a hand-rolled
         ``rprint(f"[red]{msg}[/red]")`` would not.
         """
-        self._refuse(monkeypatch, verdict("repo2", excluded=True))
+        self._refuse(monkeypatch, verdict("project2", excluded=True))
         assert "[bench]" in capsys.readouterr().out
 
     def test_the_project_table_name_survives_rendering(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """``[project]`` names a TOML table; eaten, the sentence tells the reader nothing."""
-        self._refuse(monkeypatch, verdict("repo2", universe=()))
+        self._refuse(monkeypatch, verdict("project2", universe=()))
         assert "[project]" in capsys.readouterr().out
 
     def test_the_refusal_lands_on_stdout_and_not_stderr(
@@ -419,9 +419,9 @@ class TestRefusalRendering:
         this line — that is the shipped trade-off for consistency, and this
         cell is where it changes if that is ever revisited.
         """
-        self._refuse(monkeypatch, verdict("repo2", excluded=True))
+        self._refuse(monkeypatch, verdict("project2", excluded=True))
         captured = capsys.readouterr()
-        assert "belongs to project 'repo2'" in captured.out
+        assert "belongs to project 'project2'" in captured.out
         assert captured.err == ""
 
     @pytest.mark.parametrize(
@@ -517,10 +517,10 @@ class TestPreambleWiring:
         monkeypatch.setattr(invoke, "stop_at_dry_run_seam", lambda ctx, spec: None)
 
     def _excluded_context(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        _install_entry("flash-b", "repo2")
+        _install_entry("flash-b", "project2")
         monkeypatch.setattr(
             "otto.run_context.get_context",
-            lambda: _context(exclude=("repo2",)),
+            lambda: _context(exclude=("project2",)),
         )
 
     def test_the_preamble_refuses_an_inactive_owner(
@@ -533,7 +533,7 @@ class TestPreambleWiring:
         with pytest.raises(typer.Exit) as excinfo:
             invoke.command_preamble(_PreambleCtx("flash-b", spec))  # ty: ignore[invalid-argument-type]
         assert excinfo.value.exit_code == 1
-        assert "belongs to project 'repo2'" in capsys.readouterr().out
+        assert "belongs to project 'project2'" in capsys.readouterr().out
 
     def test_the_gate_runs_after_the_lab_session_exists(
         self, monkeypatch: pytest.MonkeyPatch
@@ -546,7 +546,7 @@ class TestPreambleWiring:
         stylistic detail here — before the session there are no lab verdicts,
         so every owner would resolve ACTIVE and the gate would never refuse.
         """
-        _install_entry("flash-b", "repo2")
+        _install_entry("flash-b", "project2")
         state = {"session": False}
 
         def _session(ctx: Any, spec: Any) -> None:
@@ -555,7 +555,7 @@ class TestPreambleWiring:
         def _get_context() -> Any:
             if not state["session"]:
                 raise RuntimeError("the gate ran before ensure_lab_session")
-            return _context(exclude=("repo2",))
+            return _context(exclude=("project2",))
 
         monkeypatch.setattr(invoke, "ensure_lab_session", _session)
         monkeypatch.setattr("otto.run_context.get_context", _get_context)
@@ -567,7 +567,7 @@ class TestPreambleWiring:
     def test_the_gate_runs_before_the_reservation_gate(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """An excluded repo's instruction must not first warn about a reservation.
+        """An excluded project's instruction must not first warn about a reservation.
 
         The reservation gate speaks about a run that is about to happen; this
         one is not going to.

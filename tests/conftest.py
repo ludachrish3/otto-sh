@@ -126,7 +126,7 @@ from pathlib import Path
 # 5fc5c97b made the MEASUREMENT tolerant (listdir counts directories, not
 # calls; open left the goldens entirely). This closes the same hole at the
 # WRITER instead: point every test process's bytecode cache at a tree outside
-# the repo, and no package directory's mtime moves during a run at all.
+# the checkout, and no package directory's mtime moves during a run at all.
 #
 # WHY HERE, and not in the Makefile or nox:
 # * This block runs at conftest IMPORT — during pytest's initial-conftest load
@@ -179,9 +179,9 @@ sys.pycache_prefix = _PYCACHE_PREFIX
 # imports only sys and pathlib, so nothing coloured is pulled in early. An
 # otto import growing into paths.py would break that — move this line (and
 # the two below) under the colour block if it ever does.
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-_SRC_OTTO = PROJECT_ROOT / "src" / "otto"
+_SRC_OTTO = CHECKOUT_ROOT / "src" / "otto"
 
 
 def _src_otto_pycache_dirs() -> "frozenset[Path]":
@@ -217,9 +217,9 @@ for _var in ("FORCE_COLOR", "CLICOLOR_FORCE", "PY_COLORS", "CLICOLOR"):
 
 # Hermetic otto env: ambient otto configuration must never leak into the
 # suite. A developer shell with OTTOPATH exported (e.g. pointing at
-# another checkout's tests/repo1) makes every ambient-env bootstrap() in a
-# CLI test load that repo's init modules under foreign file paths, where they
-# once collided with the real tests/repo1 imports in test_repo.py's bootstrap
+# another checkout's tests/project1) makes every ambient-env bootstrap() in a
+# CLI test load that project's init modules under foreign file paths, where they
+# once collided with the real tests/project1 imports in test_project.py's bootstrap
 # test ("already registered", xdist worker-order dependent).
 # Strip everything OTTO_-prefixed at import time — this runs in the
 # controller and every xdist worker before any test code. Tests that need
@@ -1043,7 +1043,7 @@ def _hermetic_otto_home(_hermetic_otto_home_dir: Path) -> Iterator[None]:
     own home sets it over this one (``monkeypatch.setenv``) exactly as before;
     a test that deliberately UNSETS it to exercise the default must pin
     ``HOME`` as well. One directory per worker rather than per test: the
-    workspace key already isolates tests that use distinct SUT dirs, and ten
+    workspace key already isolates tests that use distinct project roots, and ten
     thousand ``mkdir``s per run is real cost on a network filesystem. Pinned
     by tests/unit/test_otto_home_hermeticity.py.
 
@@ -1162,7 +1162,7 @@ def _restore_otto_logger_state():
     THIRD-LOGGER LEVELS are restored too, and that half is load-bearing rather
     than belt-and-braces: since the noise floor landed (spec 2026-08-30 §4),
     ``install_console`` pins ``asyncssh``/``asyncio``/``aiosqlite`` — plus
-    whatever a repo's ``[logging.levels]`` names — on EVERY install, and four
+    whatever a project's ``[logging.levels]`` names — on EVERY install, and four
     test venues run ``init_cli_logging`` without ``management.reset()``
     afterwards. Restoring only ``'otto'`` and root would leave those loggers
     quieted at WARNING for the rest of the xdist worker, under random
@@ -1290,7 +1290,7 @@ def _restore_composition_state():
     and the initiator slot the root fills when it is imported, on one record,
     ``_composition`` (spec 2026-10-11 placement-and-phases §3.5, §3.9,
     §3.13). So one test that drives the
-    CLI with ``OTTOPATH`` pointing at a scratch repo —
+    CLI with ``OTTOPATH`` pointing at a scratch project —
     ``test_init_prompts``'s epilogue tests do exactly that — records a framed
     "no .otto/settings.toml" error that outlives the ``monkeypatch.setenv``
     restoring the var. Every later test on that worker then trips
@@ -1344,12 +1344,14 @@ def _restore_composition_state():
 
     bootstrap = sys.modules.get("otto.bootstrap")
     declared = sys.modules.get("otto.declared")
-    config_repo = sys.modules.get("otto.config.project")
+    config_project = sys.modules.get("otto.config.project")
     # Read unconditionally on a loaded owner: a renamed cache or record fails
     # here, at setup (AttributeError). The teardown's assignment alone would
     # silently mint new attributes, so this read is the guard (fable's
     # final-review find).
-    saved_discovery = None if config_repo is None else dataclasses.replace(config_repo._discovery)
+    saved_discovery = (
+        None if config_project is None else dataclasses.replace(config_project._discovery)
+    )
     saved_composition = None if declared is None else dataclasses.replace(declared._composition)
     saved_initiate = None if bootstrap is None else bootstrap._initiate
     saved_names = otto_registry._COMPLETION_SNAPSHOT.names
@@ -1357,11 +1359,11 @@ def _restore_composition_state():
     otto_registry._COMPLETION_SNAPSHOT.names = saved_names
     bootstrap = sys.modules.get("otto.bootstrap")
     declared = sys.modules.get("otto.declared")
-    config_repo = sys.modules.get("otto.config.project")
+    config_project = sys.modules.get("otto.config.project")
     left_initiate = None if bootstrap is None else bootstrap._initiate
-    if config_repo is not None:
-        config_repo._discovery = (
-            type(config_repo._discovery)() if saved_discovery is None else saved_discovery
+    if config_project is not None:
+        config_project._discovery = (
+            type(config_project._discovery)() if saved_discovery is None else saved_discovery
         )
     # Put a replaced ``_initiate`` back before failing, so the leak fails only
     # the test that left it, not every later test on the worker.
@@ -2355,12 +2357,12 @@ def _clirunner_live_log_capture_guard():
 def _isolate_sys_path():
     """Snapshot ``sys.path`` before each test; restore it in place after.
 
-    ``Project.add_libs_to_pythonpath()`` appends each repo's ``libs`` dirs to
+    ``Project.add_libs_to_pythonpath()`` appends each project's ``libs`` dirs to
     ``sys.path`` with no cleanup of its own — a one-shot, startup-time call in
     production, fine there. In-process tests trigger it from several trees:
     ``bootstrap()`` registration (``tests/unit/bootstrap``,
-    ``tests/e2e/suite``) and direct calls (``tests/unit/config/test_repo.py``).
-    When tests reuse generic repo/init-module names (two tests both writing a repo named ``b``
+    ``tests/e2e/suite``) and direct calls (``tests/unit/config/test_project.py``).
+    When tests reuse generic project/init-module names (two tests both writing a project named ``b``
     with ``init = ["b_init"]``), an earlier test's still-on-disk ``tmp_path``
     entry sits ahead of the current test's own entry, and the import machinery
     resolves the freshly-purged module name against the *earlier* directory —
@@ -2370,7 +2372,7 @@ def _isolate_sys_path():
     Lives in the ROOT conftest per the #132/#133 rule (see
     ``_isolate_registries`` below): ``sys.path`` is process-global and its
     mutators span trees. Higher-scoped fixtures that extend ``sys.path``
-    (e.g. ``tests/repo1/conftest.py``'s import-time append) run before each
+    (e.g. ``tests/project1/conftest.py``'s import-time append) run before each
     function-scoped snapshot, so their entries are captured and survive the
     restore — only additions made during a test body are rolled back.
     """
@@ -2513,7 +2515,7 @@ def _restore_tables(
 ) -> None:
     """Restore every snapshot, drop a new table's non-otto entries, evict side-effect origins.
 
-    A test that imports an extension module listed in a repo's ``init`` (e.g.
+    A test that imports an extension module listed in a project's ``init`` (e.g.
     ``custom_hosts``, which calls ``register_command_frame`` at import) registers
     into a table as an **import side effect**. Restoring the table is not enough:
     the origin module stays in ``sys.modules``, so a later

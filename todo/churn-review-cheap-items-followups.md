@@ -421,8 +421,8 @@ to `otto run` and `@cli_command` rather than applied to every leaf:
   `_otto_suite_{stem}`, and it returns early when that name is already in
   `sys.modules` — so two repos that both have `tests/test_device.py` silently
   register only the first one's suites, and in-process test runs inherit
-  whichever ran earlier. It bit the new test here (a tmp copy of repo1 whose
-  `test_device.py` was a no-op because repo1's own had already been imported
+  whichever ran earlier. It bit the new test here (a tmp copy of project1 whose
+  `test_device.py` was a no-op because project1's own had already been imported
   in that worker) and it is the same hazard
   `test_import_and_register.clean_registry` was written for. A path-derived
   name would fix it; the early return is load-bearing for idempotence, so it

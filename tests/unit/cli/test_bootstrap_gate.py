@@ -11,7 +11,7 @@ from otto import bootstrap as bs
 from otto.cli.invoke import fail_loud_on_bootstrap_errors
 from otto.config.scope import ProjectScopeConfig
 from tests._fixtures.bootstrap_seam import install_composed
-from tests._fixtures.fake_repo import fake_repo
+from tests._fixtures.fake_project import fake_project
 from tests._fixtures.rootoptions import make_root_options
 
 
@@ -39,8 +39,8 @@ def _fake_ctx(*, labs=None, include=(), exclude=()):
     return SimpleNamespace(meta={"_otto_root_options": opts})
 
 
-def _broken_repo(name, *, lab_patterns=None):
-    """A discovered repo whose init failed: settings parsed, so [project] is known."""
+def _broken_project(name, *, lab_patterns=None):
+    """A discovered project whose init failed: settings parsed, so [project] is known."""
     scope = (
         None
         if lab_patterns is None
@@ -48,7 +48,7 @@ def _broken_repo(name, *, lab_patterns=None):
             lab_patterns=[re.compile(p) for p in lab_patterns], host_patterns=[]
         )
     )
-    return fake_repo(name, root=Path(f"/repos/{name}"), project_scope=scope)
+    return fake_project(name, root=Path(f"/projects/{name}"), project_scope=scope)
 
 
 def test_gate_ignores_warnings(monkeypatch):
@@ -104,7 +104,7 @@ def test_emit_renders_errors_then_warnings(capsys):
 
 
 class TestDemotion:
-    """A repo that is inactive for THIS invocation cannot fail the invocation.
+    """A project that is inactive for THIS invocation cannot fail the invocation.
 
     The gate runs before the lab is built, so activation here is the pre-lab
     projection: the explicit -I/-E switches plus lab-name inference. Each arm
@@ -121,23 +121,23 @@ class TestDemotion:
     a line the operator never sees. Output is the exit criterion.
     """
 
-    def test_excluded_repos_errors_demote_to_warnings(self, monkeypatch, capsys):
-        project = _broken_repo("repo2")
+    def test_excluded_projects_errors_demote_to_warnings(self, monkeypatch, capsys):
+        project = _broken_project("project2")
         _install_result(
             monkeypatch,
-            errors=[bs.BootstrapError(project.root, "repo2_init", ImportError("paramiko"))],
+            errors=[bs.BootstrapError(project.root, "project2_init", ImportError("paramiko"))],
             projects=[project],
         )
-        fail_loud_on_bootstrap_errors(_fake_ctx(exclude=("repo2",)))  # must not raise
+        fail_loud_on_bootstrap_errors(_fake_ctx(exclude=("project2",)))  # must not raise
         err_out = capsys.readouterr().err
         assert "inactive for this run" in err_out
-        assert "repo2" in err_out
+        assert "project2" in err_out
 
-    def test_lab_inactive_repos_errors_demote(self, monkeypatch, capsys):
-        project = _broken_repo("repo2", lab_patterns=["unix_alt"])
+    def test_lab_inactive_projects_errors_demote(self, monkeypatch, capsys):
+        project = _broken_project("project2", lab_patterns=["unix_alt"])
         _install_result(
             monkeypatch,
-            errors=[bs.BootstrapError(project.root, "repo2_init", ImportError("paramiko"))],
+            errors=[bs.BootstrapError(project.root, "project2_init", ImportError("paramiko"))],
             projects=[project],
         )
         fail_loud_on_bootstrap_errors(_fake_ctx(labs=["unix"]))  # must not raise
@@ -150,13 +150,13 @@ class TestDemotion:
         to stderr for the same error; the explanation belongs on the same
         stream, or a redirect separates the scary line from its retraction.
         """
-        project = _broken_repo("repo2")
+        project = _broken_project("project2")
         _install_result(
             monkeypatch,
-            errors=[bs.BootstrapError(project.root, "repo2_init", ImportError("paramiko"))],
+            errors=[bs.BootstrapError(project.root, "project2_init", ImportError("paramiko"))],
             projects=[project],
         )
-        fail_loud_on_bootstrap_errors(_fake_ctx(exclude=("repo2",)))
+        fail_loud_on_bootstrap_errors(_fake_ctx(exclude=("project2",)))
         captured = capsys.readouterr()
         assert "inactive for this run" in captured.err
         assert captured.out == ""
@@ -170,20 +170,20 @@ class TestDemotion:
         detail the operator needs. Pins the plain-text render against a
         well-meaning "make it pretty" edit.
         """
-        project = _broken_repo("repo2", lab_patterns=["unix_alt"])
+        project = _broken_project("project2", lab_patterns=["unix_alt"])
         _install_result(
             monkeypatch,
-            errors=[bs.BootstrapError(project.root, "repo2_init", ImportError("paramiko"))],
+            errors=[bs.BootstrapError(project.root, "project2_init", ImportError("paramiko"))],
             projects=[project],
         )
         fail_loud_on_bootstrap_errors(_fake_ctx(labs=["unix"]))
         assert "not applicable to lab(s) [unix]" in capsys.readouterr().err
 
-    def test_active_repos_errors_stay_fatal(self, monkeypatch):
-        project = _broken_repo("repo2", lab_patterns=["unix"])
+    def test_active_projects_errors_stay_fatal(self, monkeypatch):
+        project = _broken_project("project2", lab_patterns=["unix"])
         _install_result(
             monkeypatch,
-            errors=[bs.BootstrapError(project.root, "repo2_init", ImportError("paramiko"))],
+            errors=[bs.BootstrapError(project.root, "project2_init", ImportError("paramiko"))],
             projects=[project],
         )
         with pytest.raises(typer.Exit) as excinfo:
@@ -191,22 +191,22 @@ class TestDemotion:
         assert excinfo.value.exit_code == 1
 
     def test_include_forces_the_error_fatal(self, monkeypatch):
-        project = _broken_repo("repo2", lab_patterns=["unix_alt"])
+        project = _broken_project("project2", lab_patterns=["unix_alt"])
         _install_result(
             monkeypatch,
-            errors=[bs.BootstrapError(project.root, "repo2_init", ImportError("paramiko"))],
+            errors=[bs.BootstrapError(project.root, "project2_init", ImportError("paramiko"))],
             projects=[project],
         )
         with pytest.raises(typer.Exit) as excinfo:
-            fail_loud_on_bootstrap_errors(_fake_ctx(labs=["unix"], include=("repo2",)))
+            fail_loud_on_bootstrap_errors(_fake_ctx(labs=["unix"], include=("project2",)))
         assert excinfo.value.exit_code == 1
 
     def test_discovery_errors_are_never_demoted(self, monkeypatch):
-        # No Repo object exists for a settings.toml that failed to parse —
+        # No Project object exists for a settings.toml that failed to parse —
         # there is nothing to attribute activation to.
         _install_result(
             monkeypatch,
-            errors=[bs.BootstrapError(Path("/repos/ghost"), "settings.toml", ValueError("bad"))],
+            errors=[bs.BootstrapError(Path("/projects/ghost"), "settings.toml", ValueError("bad"))],
             projects=[],
         )
         with pytest.raises(typer.Exit) as excinfo:
@@ -214,46 +214,46 @@ class TestDemotion:
         assert excinfo.value.exit_code == 1
 
     def test_no_ctx_keeps_the_strict_gate(self, monkeypatch):
-        project = _broken_repo("repo2")
+        project = _broken_project("project2")
         _install_result(
             monkeypatch,
-            errors=[bs.BootstrapError(project.root, "repo2_init", ImportError("x"))],
+            errors=[bs.BootstrapError(project.root, "project2_init", ImportError("x"))],
             projects=[project],
         )
         with pytest.raises(typer.Exit) as excinfo:
             fail_loud_on_bootstrap_errors()
         assert excinfo.value.exit_code == 1
 
-    def test_the_repo_name_is_normalized_before_the_switch_is_matched(self, monkeypatch, capsys):
-        """``-E repo-2`` must demote a repo whose declared name is ``Repo_2``.
+    def test_the_project_name_is_normalized_before_the_switch_is_matched(self, monkeypatch, capsys):
+        """``-E proj-2`` must demote a project whose declared name is ``Proj_2``.
 
         The switch values are PEP-503-normalized at parse time, so a raw
         ``project.name`` on the other side of the comparison would never match
         the only spelling the CLI can hand this gate.
         """
-        project = _broken_repo("Repo_2")
+        project = _broken_project("Proj_2")
         _install_result(
             monkeypatch,
-            errors=[bs.BootstrapError(project.root, "repo2_init", ImportError("paramiko"))],
+            errors=[bs.BootstrapError(project.root, "project2_init", ImportError("paramiko"))],
             projects=[project],
         )
-        fail_loud_on_bootstrap_errors(_fake_ctx(exclude=("repo-2",)))  # must not raise
+        fail_loud_on_bootstrap_errors(_fake_ctx(exclude=("proj-2",)))  # must not raise
         assert "inactive for this run" in capsys.readouterr().err
 
-    def test_one_active_repos_error_is_still_fatal_beside_a_demoted_one(self, monkeypatch):
+    def test_one_active_projects_error_is_still_fatal_beside_a_demoted_one(self, monkeypatch):
         """Demotion is per error, not per run: one surviving fatal still exits."""
-        dead = _broken_repo("repo2")
-        alive = _broken_repo("repo3")
+        dead = _broken_project("project2")
+        alive = _broken_project("project3")
         _install_result(
             monkeypatch,
             errors=[
-                bs.BootstrapError(dead.root, "repo2_init", ImportError("paramiko")),
-                bs.BootstrapError(alive.root, "repo3_init", ImportError("asyncssh")),
+                bs.BootstrapError(dead.root, "project2_init", ImportError("paramiko")),
+                bs.BootstrapError(alive.root, "project3_init", ImportError("asyncssh")),
             ],
             projects=[dead, alive],
         )
         with pytest.raises(typer.Exit) as excinfo:
-            fail_loud_on_bootstrap_errors(_fake_ctx(exclude=("repo2",)))
+            fail_loud_on_bootstrap_errors(_fake_ctx(exclude=("project2",)))
         assert excinfo.value.exit_code == 1
 
 
@@ -270,12 +270,12 @@ def _requiring(name, *, needs):
         status="satisfied",
         provider_version=Version("1.0.0"),
     )
-    return fake_repo(name, root=Path(f"/repos/{name}"), dependencies=[dep])
+    return fake_project(name, root=Path(f"/projects/{name}"), dependencies=[dep])
 
 
 def test_the_refusal_says_why_a_switched_off_project_still_counts(monkeypatch, capsys):
     """#630: switching off fw does not excuse it while active app requires it."""
-    app, fw = _requiring("app", needs="fw"), _broken_repo("fw")
+    app, fw = _requiring("app", needs="fw"), _broken_project("fw")
     _install_result(
         monkeypatch,
         errors=[bs.BootstrapError(fw.root, "fw_init", ImportError("paramiko"))],
@@ -296,7 +296,7 @@ def test_the_refusal_says_why_a_switched_off_project_still_counts(monkeypatch, c
 def test_the_refusal_names_every_requirer_of_an_out_of_scope_project(monkeypatch, capsys):
     """#630: several active requirers are named, and the lab scope is the reason."""
     app, cli = _requiring("app", needs="fw"), _requiring("cli", needs="fw")
-    fw = _broken_repo("fw", lab_patterns=["elsewhere"])
+    fw = _broken_project("fw", lab_patterns=["elsewhere"])
     _install_result(
         monkeypatch,
         errors=[bs.BootstrapError(fw.root, "fw_init", ImportError("paramiko"))],

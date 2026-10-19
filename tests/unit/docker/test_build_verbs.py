@@ -18,7 +18,7 @@ from otto.docker.resolve import Displacement, SelectedFragment, Selection, UseCa
 from otto.result import CommandNotRunError, CommandResult
 from otto.utils import Status
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result
-from tests._fixtures.fake_repo import fake_repo
+from tests._fixtures.fake_project import fake_project
 from tests.conftest import active_context
 
 from .test_deploy import _frag, _host, _lab
@@ -44,8 +44,8 @@ def _image(name, *, is_archive=False, context=None):
     )
 
 
-def _repo(name, *, images=(), composes=("core",)):
-    return fake_repo(
+def _project(name, *, images=(), composes=("core",)):
+    return fake_project(
         name,
         docker_settings=SimpleNamespace(
             images=tuple(_image(n) for n in images), composes=tuple(composes), use_cases=()
@@ -60,7 +60,7 @@ def lab():
 
 @pytest.fixture
 def install(lab):
-    """Install a run on the lab and patch the root; takes the repo list (dependency order)."""
+    """Install a run on the lab and patch the root; takes the project list (dependency order)."""
 
     @contextmanager
     def _install(projects, ordered=None):
@@ -78,7 +78,7 @@ def install(lab):
 
 @pytest.fixture
 def builds():
-    """Fake build_images recording (repo name, host id, image_names, options) per call."""
+    """Fake build_images recording (project name, host id, image_names, options) per call."""
     calls = []
 
     async def _build_images(project, parent, *, image_names=None, options=None):
@@ -94,8 +94,8 @@ def builds():
 
 
 @pytest.mark.asyncio
-async def test_two_selected_repos_declaring_one_image_name_are_refused(install, builds):
-    projects = [_repo("a", images=("api",)), _repo("b", images=("api", "db"))]
+async def test_two_selected_projects_declaring_one_image_name_are_refused(install, builds):
+    projects = [_project("a", images=("api",)), _project("b", images=("api", "db"))]
     with install(projects), pytest.raises(DockerVerbError) as excinfo:
         await build_on("test3")
     message = str(excinfo.value)
@@ -108,8 +108,8 @@ async def test_two_selected_repos_declaring_one_image_name_are_refused(install, 
 
 
 @pytest.mark.asyncio
-async def test_narrowing_to_one_repo_lifts_the_refusal(install, builds):
-    projects = [_repo("a", images=("api",)), _repo("b", images=("api",))]
+async def test_narrowing_to_one_project_lifts_the_refusal(install, builds):
+    projects = [_project("a", images=("api",)), _project("b", images=("api",))]
     with install(projects):
         await build_on("test3", project="a")
     assert [call[0] for call in builds] == ["a"]
@@ -117,15 +117,15 @@ async def test_narrowing_to_one_repo_lifts_the_refusal(install, builds):
 
 @pytest.mark.asyncio
 async def test_a_clash_outside_the_selected_images_is_not_this_builds_problem(install, builds):
-    projects = [_repo("a", images=("api", "x")), _repo("b", images=("api", "y"))]
+    projects = [_project("a", images=("api", "x")), _project("b", images=("api", "y"))]
     with install(projects):
         await build_on("test3", images=["x", "y"])
     assert len(builds) == 2
 
 
 @pytest.mark.asyncio
-async def test_two_images_of_one_repo_sharing_a_staging_key_are_refused(install, builds):
-    projects = [_repo("a", images=("team/api", "team_api"))]
+async def test_two_images_of_one_project_sharing_a_staging_key_are_refused(install, builds):
+    projects = [_project("a", images=("team/api", "team_api"))]
     with install(projects), pytest.raises(DockerVerbError) as excinfo:
         await build_on("test3")
     message = str(excinfo.value)
@@ -140,15 +140,15 @@ async def test_two_images_of_one_repo_sharing_a_staging_key_are_refused(install,
 
 @pytest.mark.asyncio
 async def test_narrowing_the_selection_lifts_a_staging_key_refusal(install, builds):
-    projects = [_repo("a", images=("team/api", "team_api"))]
+    projects = [_project("a", images=("team/api", "team_api"))]
     with install(projects):
         await build_on("test3", images=["team/api"])
     assert [call[0] for call in builds] == ["a"]
 
 
 @pytest.mark.asyncio
-async def test_two_repos_may_declare_names_that_share_a_staging_key(install, builds):
-    projects = [_repo("a", images=("team/api",)), _repo("b", images=("team_api",))]
+async def test_two_projects_may_declare_names_that_share_a_staging_key(install, builds):
+    projects = [_project("a", images=("team/api",)), _project("b", images=("team_api",))]
     with install(projects):
         await build_on("test3")
     assert [call[0] for call in builds] == ["a", "b"]
@@ -162,7 +162,7 @@ async def test_a_dry_run_names_the_exact_docker_build_per_image(install, builds,
     df = tmp_path / "Dockerfile"
     df.write_text("FROM alpine\n")
     image = DockerImage(name="api", dockerfile=df, context=tmp_path)
-    project = fake_repo(
+    project = fake_project(
         "a", docker_settings=SimpleNamespace(images=(image,), composes=("core",), use_cases=())
     )
     with (
@@ -179,8 +179,8 @@ async def test_a_dry_run_names_the_exact_docker_build_per_image(install, builds,
 
 
 @pytest.mark.asyncio
-async def test_builds_every_docker_repo_on_the_named_host_in_dependency_order(install, builds):
-    a, b = _repo("a", images=("api",)), _repo("b", images=("db",))
+async def test_builds_every_docker_project_on_the_named_host_in_dependency_order(install, builds):
+    a, b = _project("a", images=("api",)), _project("b", images=("db",))
     with install([a, b], ordered=[b, a]):
         report = await build_on("test3")
     assert isinstance(report, BuildReport)
@@ -196,7 +196,7 @@ async def test_builds_every_docker_repo_on_the_named_host_in_dependency_order(in
 @pytest.mark.asyncio
 async def test_no_host_named_applies_the_default_rule_and_a_tie_refuses(install):
     with (
-        install([_repo("a", images=("api",))]),
+        install([_project("a", images=("api",))]),
         pytest.raises(
             DockerVerbError, match=r"2 docker-capable hosts at priority 0 \(alt2, test3\)"
         ) as e,
@@ -209,21 +209,21 @@ async def test_no_host_named_applies_the_default_rule_and_a_tie_refuses(install)
 async def test_a_host_outside_the_lab_or_not_docker_capable_is_refused(install, lab):
     lab.hosts["test3"].docker_capable = False
     with (
-        install([_repo("a", images=("api",))]),
+        install([_project("a", images=("api",))]),
         pytest.raises(DockerVerbError, match=r"'ghost' is not a docker-capable") as e,
     ):
         await build_on("ghost")
     assert e.value.field == "parent"
     with (
-        install([_repo("a", images=("api",))]),
+        install([_project("a", images=("api",))]),
         pytest.raises(DockerVerbError, match=r"'test3' is not a docker-capable.*\['alt2'\]"),
     ):
         await build_on("test3")
 
 
 @pytest.mark.asyncio
-async def test_repo_narrows_and_an_unknown_repo_is_refused(install, builds):
-    a, b = _repo("a", images=("api",)), _repo("b", images=("db",))
+async def test_project_narrows_and_an_unknown_project_is_refused(install, builds):
+    a, b = _project("a", images=("api",)), _project("b", images=("db",))
     with install([a, b]):
         report = await build_on("test3", project="b")
     assert [rb.project for rb in report.projects] == ["b"]
@@ -238,8 +238,8 @@ async def test_repo_narrows_and_an_unknown_repo_is_refused(install, builds):
 
 
 @pytest.mark.asyncio
-async def test_each_repo_builds_the_subset_of_images_it_declares(install, builds):
-    a, b = _repo("a", images=("api", "worker")), _repo("b", images=("db",))
+async def test_each_project_builds_the_subset_of_images_it_declares(install, builds):
+    a, b = _project("a", images=("api", "worker")), _project("b", images=("db",))
     with install([a, b]):
         report = await build_on("test3", images=["api", "db"])
     assert [(c[0], c[2]) for c in builds] == [("a", ["api"]), ("b", ["db"])]
@@ -247,9 +247,9 @@ async def test_each_repo_builds_the_subset_of_images_it_declares(install, builds
 
 
 @pytest.mark.asyncio
-async def test_a_repo_with_none_of_the_requested_images_is_left_out(install, builds):
+async def test_a_project_with_none_of_the_requested_images_is_left_out(install, builds):
     """b declares db, not api: narrowing to api alone must not add an empty b entry."""
-    a, b = _repo("a", images=("api",)), _repo("b", images=("db",))
+    a, b = _project("a", images=("api",)), _project("b", images=("db",))
     with install([a, b]):
         report = await build_on("test3", images=["api"])
     assert [rb.project for rb in report.projects] == ["a"]
@@ -268,15 +268,15 @@ async def test_a_repo_with_none_of_the_requested_images_is_left_out(install, bui
 
 @pytest.mark.asyncio
 async def test_a_duplicated_image_name_builds_once(install, builds):
-    with install([_repo("a", images=("api",))]):
+    with install([_project("a", images=("api",))]):
         await build_on("test3", images=["api", "api"])
     assert builds[0][2] == ["api"]
 
 
 @pytest.mark.asyncio
-async def test_an_image_no_selected_repo_declares_is_refused(install):
+async def test_an_image_no_selected_project_declares_is_refused(install):
     with (
-        install([_repo("a", images=("api",))]),
+        install([_project("a", images=("api",))]),
         pytest.raises(DockerVerbError, match=r"'apo'.*declared: \['api'\]") as e,
     ):
         await build_on("test3", images=["apo"])
@@ -284,8 +284,8 @@ async def test_an_image_no_selected_repo_declares_is_refused(install):
 
 
 @pytest.mark.asyncio
-async def test_a_repo_declaring_no_images_is_a_no_images_entry(install, builds):
-    a, b = _repo("a", images=("api",)), _repo("b")
+async def test_a_project_declaring_no_images_is_a_no_images_entry(install, builds):
+    a, b = _project("a", images=("api",)), _project("b")
     with install([a, b]):
         report = await build_on("test3")
     assert [(rb.project, rb.kind) for rb in report.projects] == [("a", "built"), ("b", "no_images")]
@@ -296,7 +296,7 @@ async def test_a_repo_declaring_no_images_is_a_no_images_entry(install, builds):
 @pytest.mark.asyncio
 async def test_nothing_to_build_is_refused_before_any_host_is_touched(install, builds):
     with (
-        install([_repo("a"), _repo("b")]),
+        install([_project("a"), _project("b")]),
         pytest.raises(DockerVerbError, match=r"nothing to build.*\['a', 'b'\]") as e,
     ):
         await build_on("test3")
@@ -310,7 +310,7 @@ async def test_a_failed_image_makes_the_report_not_ok(install):
         return {"api": ImageBuild("api", [], None, _fail("syntax error"))}
 
     with (
-        install([_repo("a", images=("api",))]),
+        install([_project("a", images=("api",))]),
         patch.object(verbs_mod, "build_images", AsyncMock(side_effect=_build_images)),
     ):
         report = await build_on("test3")
@@ -321,7 +321,7 @@ async def test_a_failed_image_makes_the_report_not_ok(install):
 
 @pytest.mark.asyncio
 async def test_dry_run_declines_with_the_whole_plan_and_builds_nothing(install, builds):
-    a, b = _repo("a", images=("api", "worker")), _repo("b", images=("db",))
+    a, b = _project("a", images=("api", "worker")), _project("b", images=("db",))
     with (
         install([a, b]),
         patch.object(verbs_mod, "is_dry_run", return_value=True),
@@ -334,8 +334,8 @@ async def test_dry_run_declines_with_the_whole_plan_and_builds_nothing(install, 
     assert builds == []
 
 
-def _uc_repo(name, *fragments, images=()):
-    return fake_repo(
+def _uc_project(name, *fragments, images=()):
+    return fake_project(
         name,
         docker_settings=SimpleNamespace(
             images=tuple(_image(n) for n in images), composes=("core",), use_cases=tuple(fragments)
@@ -364,8 +364,8 @@ def _resolved(lab, placed, *, displaced=(), order=None):
 
 @pytest.mark.asyncio
 async def test_compose_build_builds_the_winners_per_host_in_dependency_order(lab, builds):
-    a = _uc_repo("a", _frag(), images=("api",))
-    b = _uc_repo("b", _frag(), images=("db",))
+    a = _uc_project("a", _frag(), images=("api",))
+    b = _uc_project("b", _frag(), images=("db",))
     placed = {
         "test3": [SelectedFragment(a, a.docker_settings.use_cases[0])],
         "alt2": [SelectedFragment(b, b.docker_settings.use_cases[0])],
@@ -382,7 +382,7 @@ async def test_compose_build_builds_the_winners_per_host_in_dependency_order(lab
 @pytest.mark.asyncio
 async def test_compose_build_shares_resolve_with_deploy(lab):
     """The placement call is deployment.resolve_use_case with the same on/provide."""
-    a = _uc_repo("a", _frag(), images=("api",))
+    a = _uc_project("a", _frag(), images=("api",))
     placed = {"test3": [SelectedFragment(a, a.docker_settings.use_cases[0])]}
     with (
         _resolved(lab, placed) as resolve,
@@ -400,7 +400,7 @@ async def test_compose_build_shares_resolve_with_deploy(lab):
 
 @pytest.mark.asyncio
 async def test_compose_build_carries_displacements_on_the_report(lab, builds):
-    a = _uc_repo("a", _frag(), images=("api",))
+    a = _uc_project("a", _frag(), images=("api",))
     placed = {"test3": [SelectedFragment(a, a.docker_settings.use_cases[0])]}
     d = Displacement("db", "mock", 0, "real", 1)
     with _resolved(lab, placed, displaced=[d]):
@@ -409,8 +409,8 @@ async def test_compose_build_carries_displacements_on_the_report(lab, builds):
 
 
 @pytest.mark.asyncio
-async def test_an_image_only_a_displaced_repo_declares_is_refused(lab, builds):
-    a = _uc_repo("a", _frag(), images=("api",))
+async def test_an_image_only_a_displaced_project_declares_is_refused(lab, builds):
+    a = _uc_project("a", _frag(), images=("api",))
     placed = {"test3": [SelectedFragment(a, a.docker_settings.use_cases[0])]}
     with (
         _resolved(lab, placed),
@@ -423,8 +423,8 @@ async def test_an_image_only_a_displaced_repo_declares_is_refused(lab, builds):
 
 @pytest.mark.asyncio
 async def test_a_winner_without_images_is_a_no_images_entry_and_the_other_host_builds(lab, builds):
-    a = _uc_repo("a", _frag(), images=("api",))
-    b = _uc_repo("b", _frag())
+    a = _uc_project("a", _frag(), images=("api",))
+    b = _uc_project("b", _frag())
     placed = {
         "test3": [SelectedFragment(a, a.docker_settings.use_cases[0])],
         "alt2": [SelectedFragment(b, b.docker_settings.use_cases[0])],
@@ -453,8 +453,8 @@ async def test_compose_build_placement_refusal_is_the_engines(lab):
 
 @pytest.mark.asyncio
 async def test_compose_build_dry_run_declines_with_every_host(lab, builds):
-    a = _uc_repo("a", _frag(), images=("api",))
-    b = _uc_repo("b", _frag(), images=("db",))
+    a = _uc_project("a", _frag(), images=("api",))
+    b = _uc_project("b", _frag(), images=("db",))
     placed = {
         "test3": [SelectedFragment(a, a.docker_settings.use_cases[0])],
         "alt2": [SelectedFragment(b, b.docker_settings.use_cases[0])],
@@ -472,7 +472,7 @@ async def test_compose_build_dry_run_declines_with_every_host(lab, builds):
 @pytest.mark.asyncio
 async def test_compose_build_dry_run_names_the_displacements(lab, builds):
     """Spec §6: the dry run's plan carries the provider competition's losers."""
-    a = _uc_repo("a", _frag(), images=("api",))
+    a = _uc_project("a", _frag(), images=("api",))
     placed = {"test3": [SelectedFragment(a, a.docker_settings.use_cases[0])]}
     d = Displacement("db", "mock", 0, "real", 1)
     with (
@@ -487,7 +487,7 @@ async def test_compose_build_dry_run_names_the_displacements(lab, builds):
 
 @pytest.mark.asyncio
 async def test_build_on_hands_the_flags_to_every_build(install, builds):
-    projects = [_repo("a", images=("api",))]
+    projects = [_project("a", images=("api",))]
     with install(projects):
         await build_on(
             "test3",
@@ -505,7 +505,7 @@ async def test_build_on_hands_the_flags_to_every_build(install, builds):
 
 @pytest.mark.asyncio
 async def test_a_tag_with_two_selected_images_is_refused_before_anything_runs(install, builds):
-    projects = [_repo("a", images=("api", "db"))]
+    projects = [_project("a", images=("api", "db"))]
     with install(projects), pytest.raises(DockerVerbError) as excinfo:
         await build_on("test3", tags=["x:1"])
     assert excinfo.value.field == "tag"
@@ -516,7 +516,7 @@ async def test_a_tag_with_two_selected_images_is_refused_before_anything_runs(in
 
 @pytest.mark.asyncio
 async def test_a_tag_with_one_image_named_is_fine(install, builds):
-    projects = [_repo("a", images=("api", "db"))]
+    projects = [_project("a", images=("api", "db"))]
     with install(projects):
         await build_on("test3", images=["api"], tags=["x:1"])
     assert builds[0][2] == ["api"]
@@ -524,7 +524,7 @@ async def test_a_tag_with_one_image_named_is_fine(install, builds):
 
 @pytest.mark.asyncio
 async def test_compose_build_hands_the_flags_to_every_build(lab, builds):
-    a = _uc_repo("a", _frag(), images=("api",))
+    a = _uc_project("a", _frag(), images=("api",))
     placed = {"test3": [SelectedFragment(a, a.docker_settings.use_cases[0])]}
     with _resolved(lab, placed):
         await compose_build("integration", no_cache=True, pull=True, build_args={"K": "v"})
@@ -534,7 +534,7 @@ async def test_compose_build_hands_the_flags_to_every_build(lab, builds):
 @pytest.mark.asyncio
 async def test_a_missing_archive_context_is_refused_before_any_host_is_touched(install, builds):
     missing = SimpleNamespace(name="api", is_archive=True, context=Path("/nonexistent/ctx.tar"))
-    project = fake_repo(
+    project = fake_project(
         "a", docker_settings=SimpleNamespace(images=(missing,), composes=(), use_cases=())
     )
     with install([project]), pytest.raises(DockerVerbError, match=r"/nonexistent/ctx\.tar") as e:

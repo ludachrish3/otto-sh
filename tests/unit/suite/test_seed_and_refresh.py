@@ -1,7 +1,7 @@
 """Only pytest ever learns a test name: the table's seed and its per-file refresh.
 
 ``_refresh_tables`` is how a reader of test names (the collect child,
-``--list-markers``) brings a repo's collected-tests table up to date, through
+``--list-markers``) brings a project's collected-tests table up to date, through
 the run's own refresh: a cold table (none, another ``env``, past its TTL) is
 seeded by one whole-tree ``--collect-only`` session, a current one is left
 alone, and a warm one collects only what moved: the changed files, and each
@@ -10,7 +10,7 @@ what in it is a test file. Design:
 ``docs/superpowers/specs/2026-09-27-test-name-cache-design.md`` §9.
 
 Every session here is a real in-process pytest session over a generated
-repo. Each test module logs its import (:mod:`tests._fixtures.import_log_repo`),
+project. Each test module logs its import (:mod:`tests._fixtures.import_log_project`),
 so "which files did the collection import" is read from disk, and each test
 logs its run, so "nothing ran" is too.
 """
@@ -25,7 +25,7 @@ import pytest
 from otto.config import collected_tests as tr
 from otto.config import completion_cache as cc
 from otto.suite.run import _refresh_tables
-from tests._fixtures.import_log_repo import ImportLogRepo, logged_test
+from tests._fixtures.import_log_project import ImportLogProject, logged_test
 
 _A = "class TestA:\n" + logged_test("test_a1", "    ") + "\n" + logged_test("test_a2", "    ")
 
@@ -36,7 +36,7 @@ def _bump(path: Path, seconds: int = 5) -> None:
     os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + seconds * 1_000_000_000))
 
 
-def _the_repo():
+def _the_project():
     from otto.bootstrap import get_projects
 
     [project] = get_projects()
@@ -44,10 +44,10 @@ def _the_repo():
 
 
 @pytest.fixture
-def project(sut_repo, tmp_path) -> ImportLogRepo:
+def project(one_project, tmp_path) -> ImportLogProject:
     """``tests/test_a.py`` (``TestA``), ``tests/test_b.py``, ``tests/sub/test_c.py``, a conftest."""
-    shell = ImportLogRepo(tmp_path / "sut")
-    shell.root = sut_repo(
+    shell = ImportLogProject(tmp_path / "sut")
+    shell.root = one_project(
         files={
             "tests/test_a.py": shell.module("test_a", _A),
             "tests/test_b.py": shell.module("test_b", logged_test("test_b1")),
@@ -85,12 +85,12 @@ _WHOLE_TREE = {"files": None, "dirs": [], "collect_only": True}
 
 
 def _refresh() -> "tr.ProjectTable | None":
-    [table] = _refresh_tables([_the_repo()])
+    [table] = _refresh_tables([_the_project()])
     return table
 
 
-def _seed(project: ImportLogRepo, sessions: list) -> tr.ProjectTable:
-    assert tr.read_table(_the_repo()) is None, "it was cold"
+def _seed(project: ImportLogProject, sessions: list) -> tr.ProjectTable:
+    assert tr.read_table(_the_project()) is None, "it was cold"
     table = _refresh()
     assert table is not None, "and it is seeded"
     assert sessions == [_WHOLE_TREE]
@@ -110,13 +110,13 @@ def test_a_cold_table_is_seeded_by_one_whole_tree_collection(project, sessions, 
     assert project.imported() == ["test_a", "test_b", "test_c"]
     assert project.ran_tests() == [], "a collection runs nothing"
     assert capfd.readouterr().out == "", "and prints nothing"
-    table = tr.read_table(_the_repo())
+    table = tr.read_table(_the_project())
     assert table == seeded
     assert {"TestA", "TestA::test_a1", "test_a2", "test_b1", "test_c1"} <= set(table.names)
     tests = project.root / "tests"
     assert set(table.dirs) == {str(tests), str(tests / "sub")}
     assert str(tests / "sub" / "conftest.py") in table.files
-    assert tr.classify(_the_repo(), table).is_current
+    assert tr.classify(_the_project(), table).is_current
 
 
 def test_a_current_table_is_returned_without_a_collection(project, sessions):
@@ -127,7 +127,7 @@ def test_a_current_table_is_returned_without_a_collection(project, sessions):
     assert project.imported() == []
 
 
-def test_the_seed_writes_nothing_into_the_repo(project, sessions, real_shell_bytecode):
+def test_the_seed_writes_nothing_into_the_project(project, sessions, real_shell_bytecode):
     """No ``__pycache__`` beside a test file, no ``.pytest_cache``: a TAB must not move the tree."""
     before = sorted(p.relative_to(project.root) for p in project.root.rglob("*"))
 
@@ -167,7 +167,7 @@ def test_a_seed_whose_collection_cannot_finish_writes_nothing(project, sessions)
     assert _refresh() is None
 
     assert sessions == [_WHOLE_TREE]
-    assert tr.read_table(_the_repo()) is None
+    assert tr.read_table(_the_project()) is None
 
 
 def test_a_cold_table_whose_seed_cannot_finish_is_not_offered(project, sessions):
@@ -182,18 +182,18 @@ def test_a_cold_table_whose_seed_cannot_finish_is_not_offered(project, sessions)
 
 
 @pytest.mark.parametrize("tests", [[], ["tests"]], ids=["none configured", "one not there"])
-def test_a_repo_with_no_test_directory_collects_nothing_wherever_otto_runs(
+def test_a_project_with_no_test_directory_collects_nothing_wherever_otto_runs(
     tmp_path, monkeypatch, tests
 ):
-    """pytest given no path collects its cwd: such a repo never starts a session.
+    """pytest given no path collects its cwd: such a project never starts a session.
 
     Its table is seeded empty, and warm: a directory that later appears is
     read by the next refresh.
     """
     from otto.config.project import Project
-    from tests._fixtures.sutrepo import make_sut_repo
+    from tests._fixtures.project_scaffold import make_project
 
-    sut = make_sut_repo(tmp_path / "sut", name="sut", tests=tests)
+    sut = make_project(tmp_path / "sut", name="sut", tests=tests)
     shell = tmp_path / "shell"
     shell.mkdir()
     imported = tmp_path / "imported"
@@ -219,7 +219,7 @@ def test_a_repo_with_no_test_directory_collects_nothing_wherever_otto_runs(
     assert not tr.classify(project, table).whole_tree
     if tests:
         monkeypatch.setattr(pytest, "main", real_main)
-        ImportLogRepo(sut).write("tests/test_late.py", logged_test("test_late"))
+        ImportLogProject(sut).write("tests/test_late.py", logged_test("test_late"))
         [late] = _refresh_tables([project])
         assert late is not None
         assert "test_late" in late.names
@@ -242,8 +242,8 @@ def test_a_deleted_file_is_dropped_without_a_session(project, sessions):
     assert project.imported() == []
     assert table is not None
     assert "test_b1" not in table.names
-    assert tr.read_table(_the_repo()) == table
-    assert tr.classify(_the_repo(), table).is_current
+    assert tr.read_table(_the_project()) == table
+    assert tr.classify(_the_project(), table).is_current
 
 
 def test_cold_only_leaves_a_warm_table_whose_files_moved_alone(project, sessions):
@@ -251,7 +251,7 @@ def test_cold_only_leaves_a_warm_table_whose_files_moved_alone(project, sessions
     project.write("tests/test_b.py", project.module("test_b", logged_test("test_b9")))
     _bump(project.root / "tests" / "test_b.py")
 
-    assert _refresh_tables([_the_repo()], cold_only=True) == [seeded]
+    assert _refresh_tables([_the_project()], cold_only=True) == [seeded]
     assert sessions == []
     assert project.imported() == []
 
@@ -264,7 +264,7 @@ def test_a_refresh_collects_exactly_the_edited_file(project, sessions):
     )
     _bump(project.root / "tests" / "test_b.py")
 
-    classification = tr.classify(_the_repo(), tr.read_table(_the_repo()))
+    classification = tr.classify(_the_project(), tr.read_table(_the_project()))
     assert [p.name for p in classification.changed] == ["test_b.py"]
     table = _refresh()
 
@@ -272,15 +272,15 @@ def test_a_refresh_collects_exactly_the_edited_file(project, sessions):
     assert project.imported() == ["test_b"]
     assert table is not None
     assert "test_b2" in table.names
-    assert tr.read_table(_the_repo()) == table
-    assert tr.classify(_the_repo(), table).is_current
+    assert tr.read_table(_the_project()) == table
+    assert tr.classify(_the_project(), table).is_current
 
 
 def test_an_added_file_sends_its_directory_and_pytest_keeps_its_ignores(
-    sut_repo, tmp_path, sessions
+    one_project, tmp_path, sessions
 ):
-    shell = ImportLogRepo(tmp_path / "sut")
-    shell.root = sut_repo(
+    shell = ImportLogProject(tmp_path / "sut")
+    shell.root = one_project(
         files={
             "tests/test_a.py": shell.module("test_a", _A),
             "tests/sub/conftest.py": 'collect_ignore = ["test_ignored.py"]\n',
@@ -293,7 +293,7 @@ def test_an_added_file_sends_its_directory_and_pytest_keeps_its_ignores(
     shell.write("tests/sub/test_d.py", shell.module("test_d", logged_test("test_d1")))
     _bump(sub)
 
-    classification = tr.classify(_the_repo(), tr.read_table(_the_repo()))
+    classification = tr.classify(_the_project(), tr.read_table(_the_project()))
     assert classification.candidate_dirs == [sub]
     assert classification.new == [], "no listing: the directory is the candidate"
     table = _refresh()
@@ -303,17 +303,17 @@ def test_an_added_file_sends_its_directory_and_pytest_keeps_its_ignores(
     assert table is not None
     assert "test_d1" in table.names
     assert "test_i1" not in table.names
-    assert tr.classify(_the_repo(), table).is_current
+    assert tr.classify(_the_project(), table).is_current
 
 
-def test_python_files_is_pytests_to_apply(sut_repo, tmp_path, sessions, monkeypatch):
-    """A ``python_files = check_*.py`` repo is collected as pytest reads it.
+def test_python_files_is_pytests_to_apply(one_project, tmp_path, sessions, monkeypatch):
+    """A ``python_files = check_*.py`` project is collected as pytest reads it.
 
     otto has no ``python_files`` parser of its own: the collect child asks
     pytest, so the table holds exactly the files pytest would collect.
     """
-    shell = ImportLogRepo(tmp_path / "sut")
-    shell.root = sut_repo(
+    shell = ImportLogProject(tmp_path / "sut")
+    shell.root = one_project(
         files={
             "pytest.ini": "[pytest]\npython_files = check_*.py\n",
             "tests/check_a.py": shell.module("check_a", logged_test("test_a1")),
@@ -336,10 +336,10 @@ def test_python_files_is_pytests_to_apply(sut_repo, tmp_path, sessions, monkeypa
     assert "test_b" not in shell.imported()
 
 
-def test_a_file_edited_while_pytest_reads_it_is_stamped_stale(sut_repo, tmp_path, sessions):
+def test_a_file_edited_while_pytest_reads_it_is_stamped_stale(one_project, tmp_path, sessions):
     """The record carries the stat from before pytest imported the file: the missed edit shows."""
-    shell = ImportLogRepo(tmp_path / "sut")
-    shell.root = sut_repo(
+    shell = ImportLogProject(tmp_path / "sut")
+    shell.root = one_project(
         files={
             "tests/test_self.py": (
                 "with open(__file__, 'a') as _me:\n"
@@ -353,7 +353,7 @@ def test_a_file_edited_while_pytest_reads_it_is_stamped_stale(sut_repo, tmp_path
 
     assert table is not None
     assert "test_s1" in table.names
-    after = tr.classify(_the_repo(), table)
+    after = tr.classify(_the_project(), table)
     assert [p.name for p in after.changed] == ["test_self.py"]
 
 
@@ -365,10 +365,10 @@ def test_a_directory_whose_conftest_breaks_is_tried_again_once_it_is_fixed(proje
 
     assert _refresh() is None, "a directory it set out to list is still to be listed"
 
-    first = tr.read_table(_the_repo())
+    first = tr.read_table(_the_project())
     assert first is not None
     assert "test_n1" not in first.names
-    still = tr.classify(_the_repo(), first)
+    still = tr.classify(_the_project(), first)
     assert project.root / "tests" in still.candidate_dirs, "its listing did not complete"
 
     project.write("tests/new/conftest.py", "")
@@ -377,7 +377,7 @@ def test_a_directory_whose_conftest_breaks_is_tried_again_once_it_is_fixed(proje
 
     assert second is not None
     assert "test_n1" in second.names
-    assert tr.classify(_the_repo(), second).is_current
+    assert tr.classify(_the_project(), second).is_current
 
 
 def test_the_table_has_no_source_field(project, sessions):

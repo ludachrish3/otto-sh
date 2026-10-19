@@ -10,7 +10,7 @@ exactly what moved. Design:
 
 The child's process boundary is replaced by a fake ``subprocess.run`` that
 runs :func:`~otto.config.collected_tests.collect_child_main` in this process,
-so every pytest session it starts is a real one over a generated repo whose
+so every pytest session it starts is a real one over a generated project whose
 modules log their import. The end-to-end test at the bottom runs the real
 ``otto`` console script, detached child included.
 """
@@ -30,7 +30,7 @@ from otto.config import completion_cache as cc
 from otto.config.env import is_otto_env_var
 from otto.suite import run_tests
 from otto.suite.run import _refresh_tables
-from tests._fixtures.import_log_repo import ImportLogRepo, logged_test
+from tests._fixtures.import_log_project import ImportLogProject, logged_test
 
 _A = "class TestA:\n" + logged_test("test_a1", "    ") + "\n" + logged_test("test_a2", "    ")
 _B = logged_test("test_b1")
@@ -42,7 +42,7 @@ def _bump(path: Path, seconds: int = 5) -> None:
     os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + seconds * 1_000_000_000))
 
 
-def _repos():
+def _projects():
     from otto.bootstrap import get_projects
 
     return get_projects()
@@ -59,9 +59,9 @@ def _own_home(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def project(sut_repo, tmp_path) -> ImportLogRepo:
-    shell = ImportLogRepo(tmp_path / "sut")
-    shell.root = sut_repo(
+def project(one_project, tmp_path) -> ImportLogProject:
+    shell = ImportLogProject(tmp_path / "sut")
+    shell.root = one_project(
         files={
             "tests/test_a.py": shell.module("test_a", _A),
             "tests/test_b.py": shell.module("test_b", _B),
@@ -108,7 +108,7 @@ def child(monkeypatch) -> list:
     def run(argv, **kwargs):
         calls.append({"argv": argv, **kwargs})
         assert kwargs["env"][cc.DUMP_TESTS_ENV_VAR] == "1"
-        code = tr.collect_child_main(_repos, _refresh_tables)
+        code = tr.collect_child_main(_projects, _refresh_tables)
         return subprocess.CompletedProcess(argv, code)
 
     monkeypatch.setattr(subprocess, "run", run)
@@ -221,7 +221,7 @@ def _exit_raises(monkeypatch) -> None:
 
 
 def test_a_hanging_bootstrap_is_stopped_by_the_deadline(project, monkeypatch):
-    """The lock and the deadline come before the repos are loaded: an init module that hangs
+    """The lock and the deadline come before the projects are loaded: an init module that hangs
     is stopped like a collection that hangs, and the next TABs cool down."""
     _exit_raises(monkeypatch)
     monkeypatch.setattr(cc, "COLLECT_TIMEOUT_SECONDS", 0.2)
@@ -230,7 +230,7 @@ def test_a_hanging_bootstrap_is_stopped_by_the_deadline(project, monkeypatch):
     def hanging_bootstrap():
         held.append(_lock().exists())
         time.sleep(30)
-        return _repos()
+        return _projects()
 
     started = time.monotonic()
     with pytest.raises(SystemExit) as exited:
@@ -335,7 +335,7 @@ def test_a_refresh_that_leaves_the_table_behind_cools_down(
     _age(_check_marker(), 3600)
 
     _tab()
-    assert tr.collect_child_main(_repos, _refresh_tables) == 1
+    assert tr.collect_child_main(_projects, _refresh_tables) == 1
     assert cc.collect_cooldown_active()
 
     _tab()
@@ -344,20 +344,20 @@ def test_a_refresh_that_leaves_the_table_behind_cools_down(
     assert popen == [], "the cooldown holds the next refresh back"
 
 
-def test_a_refresh_that_finds_a_new_dependency_succeeds(sut_repo, tmp_path, monkeypatch):
+def test_a_refresh_that_finds_a_new_dependency_succeeds(one_project, tmp_path, monkeypatch):
     """A record's first-seen dependency has no stat until the next read: that is not a failure.
 
     The table is one refresh short of current by design; the child exits 0,
     no cooldown is stamped, and the names are right.
     """
-    root = sut_repo(
+    root = one_project(
         files={
             "tests/base.py": "class Base:\n    def test_x(self):\n        pass\n",
             "tests/helper2.py": "class Other:\n    def test_z(self):\n        pass\n",
             "tests/test_d.py": "from base import Base\n\n\nclass TestD(Base):\n    pass\n",
         }
     )
-    assert tr.collect_child_main(_repos, _refresh_tables) == 0
+    assert tr.collect_child_main(_projects, _refresh_tables) == 0
     test_d = root / "tests" / "test_d.py"
     test_d.write_text(
         "from base import Base\nfrom helper2 import Other\n\n\n"
@@ -367,10 +367,10 @@ def test_a_refresh_that_finds_a_new_dependency_succeeds(sut_repo, tmp_path, monk
     for name in ["base", "helper2", "test_d"]:
         sys.modules.pop(name, None)
 
-    assert tr.collect_child_main(_repos, _refresh_tables) == 0
+    assert tr.collect_child_main(_projects, _refresh_tables) == 0
 
     assert not cc.collect_cooldown_active()
-    [project] = _repos()
+    [project] = _projects()
     table = tr.read_table(project)
     assert table is not None
     assert {"TestD::test_x", "TestE::test_z"} <= set(table.names)
@@ -434,12 +434,12 @@ def test_two_detached_children_in_a_row_collect_once(tmp_path, monkeypatch):
     file this test writes), so the lock is certainly held when the second
     child starts: it exits 0 without bootstrapping, and a TAB spawns none.
     """
-    from tests._fixtures.generated_repo import generate_repo
+    from tests._fixtures.generated_project import generate_project
 
-    project = generate_repo(tmp_path, files=4, dirs=2)
+    project = generate_project(tmp_path, files=4, dirs=2)
     loads = tmp_path / "bootstraps.log"
     release = tmp_path / "release"
-    init = project / "pylib" / "genrepo_instructions.py"
+    init = project / "pylib" / "genproject_instructions.py"
     init.write_text(
         init.read_text()
         + "\nimport pathlib, time\n"
@@ -484,14 +484,14 @@ def test_two_detached_children_in_a_row_collect_once(tmp_path, monkeypatch):
 # ── a warm table: answer at once, refresh behind ──────────────────────────────
 
 
-def _warm(project: ImportLogRepo, tmp_path: Path, sessions: list) -> None:
+def _warm(project: ImportLogProject, tmp_path: Path, sessions: list) -> None:
     """Run once, so the table holds what pytest collected; then forget the run."""
     assert run_tests(["test_b1"], output_dir=tmp_path / "warm").exit_code == 0
     project.next_run()
     sessions.clear()
 
 
-def _save(project: ImportLogRepo, rel: str, source: str) -> Path:
+def _save(project: ImportLogProject, rel: str, source: str) -> Path:
     path = project.write(rel, source)
     _bump(path)
     return path
@@ -528,7 +528,7 @@ def test_a_tab_after_a_save_answers_at_once_and_checks_behind(
     assert not tr.tables_check_due(_check_marker().parent), "the spawn restarted the window"
 
     # The child, as the detached process runs it: exactly the saved file.
-    assert tr.collect_child_main(_repos, _refresh_tables) == 0
+    assert tr.collect_child_main(_projects, _refresh_tables) == 0
     assert sessions == [{"files": ["test_b.py"], "dirs": [], "collect_only": True}]
     assert project.imported() == ["test_b"]
 
@@ -544,7 +544,7 @@ def test_a_new_file_is_found_by_its_directory(project, tmp_path, sessions, child
 
     assert "test_d1" not in _tab(), "an omission until the refresh, never a phantom"
     assert cc._collect_refresh_requested
-    assert tr.collect_child_main(_repos, _refresh_tables) == 0
+    assert tr.collect_child_main(_projects, _refresh_tables) == 0
 
     assert sessions == [{"files": [], "dirs": ["sub"], "collect_only": True}]
     assert project.imported() == ["test_c", "test_d"]
@@ -563,7 +563,7 @@ def test_a_deleted_files_names_stay_until_the_check(project, tmp_path, sessions,
     _age(_check_marker(), 3600)
     assert "test_b1" in _tab()
     assert cc._collect_refresh_requested
-    assert tr.collect_child_main(_repos, _refresh_tables) == 0
+    assert tr.collect_child_main(_projects, _refresh_tables) == 0
 
     assert "test_b1" not in _tab()
     assert child == []
@@ -689,8 +689,8 @@ def test_a_run_restarts_the_check_window_and_the_ttl(project, tmp_path, sessions
 
     assert sessions == [{"files": None, "dirs": [], "collect_only": False}]
     assert time.time() - _check_marker().stat().st_mtime < 60, "the window restarted"
-    [repo_] = _repos()
-    table = tr.read_table(repo_)
+    [project_] = _projects()
+    table = tr.read_table(project_)
     assert table is not None
     assert table.generated_at > dated, "a run that collected the whole tree dates it"
 
@@ -701,12 +701,12 @@ _BASE = "class Base:\n    def test_x(self):\n        pass\n"
 
 
 @pytest.fixture
-def checked(sut_repo, tmp_path, sessions) -> Path:
-    """A repo whose table is current, the check marker aged past its window, sessions cleared.
+def checked(one_project, tmp_path, sessions) -> Path:
+    """A project whose table is current, the check marker aged past its window, sessions cleared.
 
     ``tests/test_d.py``'s tests come from ``tests/base.py``: a dependency.
     """
-    root = sut_repo(
+    root = one_project(
         files={
             "tests/base.py": _BASE,
             "tests/test_a.py": "def test_a1():\n    pass\n",
@@ -716,9 +716,9 @@ def checked(sut_repo, tmp_path, sessions) -> Path:
     )
     for _ in range(3):  # the seed, then the read that stamps the first-seen dependency
         _forget_test_modules()
-        assert tr.collect_child_main(_repos, _refresh_tables) == 0
-        [repo_] = _repos()
-        if tr.classify(repo_, tr.read_table(repo_)).is_current:
+        assert tr.collect_child_main(_projects, _refresh_tables) == 0
+        [project_] = _projects()
+        if tr.classify(project_, tr.read_table(project_)).is_current:
             break
     else:
         raise AssertionError("the table never became current")
@@ -734,11 +734,11 @@ def _forget_test_modules() -> None:
 
 
 def _check(sessions) -> tuple[list, "tr.ProjectTable"]:
-    assert tr.collect_child_main(_repos, _refresh_tables) == 0
-    [repo_] = _repos()
-    table = tr.read_table(repo_)
+    assert tr.collect_child_main(_projects, _refresh_tables) == 0
+    [project_] = _projects()
+    table = tr.read_table(project_)
     assert table is not None
-    assert tr.classify(repo_, table).is_current, "the check leaves the table current"
+    assert tr.classify(project_, table).is_current, "the check leaves the table current"
     return list(sessions), table
 
 
@@ -884,9 +884,9 @@ def _wait_for(predicate, seconds: float = 60) -> None:
 
 
 def test_the_console_script_seeds_once_then_checks_behind_the_answer(tmp_path):
-    from tests._fixtures.generated_repo import generate_repo
+    from tests._fixtures.generated_project import generate_project
 
-    project = generate_repo(tmp_path, files=4, dirs=2)
+    project = generate_project(tmp_path, files=4, dirs=2)
     env = _env(project, tmp_path / "home")
     cache = tmp_path / "home"
 

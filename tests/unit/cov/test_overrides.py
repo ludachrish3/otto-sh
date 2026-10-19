@@ -25,7 +25,7 @@ def _git(root: Path, *args: str) -> str:
     ).stdout
 
 
-def _repo(tmp_path: Path) -> tuple[Path, str]:
+def _git_repo(tmp_path: Path) -> tuple[Path, str]:
     root = tmp_path / "sut"
     root.mkdir()
     _git(root, "init", "-q", "-b", "main")
@@ -49,26 +49,26 @@ def _write(root: Path, text: str) -> None:
 
 
 def test_absent_default_file_and_absent_key_is_none(tmp_path):
-    root, _ = _repo(tmp_path)
+    root, _ = _git_repo(tmp_path)
     assert load_override_config(_TICKETS_CFG, root, [_manual_tier()]) is None
 
 
 def test_explicit_key_with_missing_file_fails_loud(tmp_path):
-    root, _ = _repo(tmp_path)
+    root, _ = _git_repo(tmp_path)
     cfg = {**_TICKETS_CFG, "overrides": {"file": "nope.toml"}}
     with pytest.raises(OverrideConfigError, match=r"nope\.toml"):
         load_override_config(cfg, root, [_manual_tier()])
 
 
 def test_file_without_coverage_tickets_fails_loud(tmp_path):
-    root, sha = _repo(tmp_path)
+    root, sha = _git_repo(tmp_path)
     _write(root, f'[[bench]]\ncommit = "{sha}"\nreason = "r"\n')
     with pytest.raises(OverrideConfigError, match=r"\[coverage.tickets\]"):
         load_override_config({}, root, [_manual_tier()])
 
 
 def test_commit_entry_loads_with_resolved_full_sha(tmp_path):
-    root, sha = _repo(tmp_path)
+    root, sha = _git_repo(tmp_path)
     _write(root, f'[[bench]]\ncommit = "{sha[:8]}"\nreason = "hand-tested"\n')
     cfg = load_override_config(_TICKETS_CFG, root, [_manual_tier()])
     assert cfg is not None
@@ -79,13 +79,13 @@ def test_commit_entry_loads_with_resolved_full_sha(tmp_path):
 
 def test_tilde_overrides_file_expands_via_home(tmp_path, monkeypatch):
     """A ``~``-prefixed ``[coverage.overrides] file`` expands against ``HOME``
-    before repo-anchoring (path-resolution convention, docs/configuration/settings.md).
+    before project-root anchoring (path-resolution convention, docs/configuration/settings.md).
 
     Without the fix, ``~`` is never expanded and the path is anchored
-    literally under ``sut_dir / "~" / "coverage-overrides.toml"``, which never
+    literally under ``project_root / "~" / "coverage-overrides.toml"``, which never
     exists — an explicitly configured path that doesn't exist is a loud error.
     """
-    root, sha = _repo(tmp_path)
+    root, sha = _git_repo(tmp_path)
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
@@ -99,14 +99,14 @@ def test_tilde_overrides_file_expands_via_home(tmp_path, monkeypatch):
 
 
 def test_ticket_entry_requires_as_of(tmp_path):
-    root, _ = _repo(tmp_path)
+    root, _ = _git_repo(tmp_path)
     _write(root, '[[bench]]\nticket = "#1"\nreason = "r"\n')
     with pytest.raises(OverrideConfigError, match="as_of"):
         load_override_config(_TICKETS_CFG, root, [_manual_tier()])
 
 
 def test_ticket_entry_loads_with_resolved_as_of(tmp_path):
-    root, sha = _repo(tmp_path)
+    root, sha = _git_repo(tmp_path)
     _write(root, f'[[bench]]\nticket = "#1"\nas_of = "{sha[:8]}"\nreason = "r"\n')
     cfg = load_override_config(_TICKETS_CFG, root, [_manual_tier()])
     (entry,) = cfg.asserted
@@ -114,7 +114,7 @@ def test_ticket_entry_loads_with_resolved_as_of(tmp_path):
 
 
 def test_commit_entry_with_as_of_fails(tmp_path):
-    root, sha = _repo(tmp_path)
+    root, sha = _git_repo(tmp_path)
     _write(root, f'[[bench]]\ncommit = "{sha}"\nas_of = "{sha}"\nreason = "r"\n')
     with pytest.raises(OverrideConfigError, match="as_of"):
         load_override_config(_TICKETS_CFG, root, [_manual_tier()])
@@ -131,21 +131,21 @@ def test_commit_entry_with_as_of_fails(tmp_path):
     ],
 )
 def test_malformed_asserted_entries_fail_loud(tmp_path, body):
-    root, _ = _repo(tmp_path)
+    root, _ = _git_repo(tmp_path)
     _write(root, body)
     with pytest.raises(OverrideConfigError):
         load_override_config(_TICKETS_CFG, root, [_manual_tier()])
 
 
 def test_unknown_table_name_fails_loud(tmp_path):
-    root, sha = _repo(tmp_path)
+    root, sha = _git_repo(tmp_path)
     _write(root, f'[[bnech]]\ncommit = "{sha}"\nreason = "r"\n')  # typo'd tier
     with pytest.raises(OverrideConfigError, match="bnech"):
         load_override_config(_TICKETS_CFG, root, [_manual_tier()])
 
 
 def test_non_manual_tier_table_fails_loud(tmp_path):
-    root, sha = _repo(tmp_path)
+    root, sha = _git_repo(tmp_path)
     _write(root, f'[[system]]\ncommit = "{sha}"\nreason = "r"\n')
     tiers = [_manual_tier(), TierConfig(name="system", kind="e2e", precedence=1, color="green")]
     with pytest.raises(OverrideConfigError, match="manual"):
@@ -153,35 +153,35 @@ def test_non_manual_tier_table_fails_loud(tmp_path):
 
 
 def test_manual_tier_named_reattribute_is_reserved(tmp_path):
-    root, _ = _repo(tmp_path)
+    root, _ = _git_repo(tmp_path)
     _write(root, "")
     with pytest.raises(OverrideConfigError, match="reserved"):
         load_override_config(_TICKETS_CFG, root, [_manual_tier("reattribute")])
 
 
 def test_unresolvable_sha_fails_loud(tmp_path):
-    root, _ = _repo(tmp_path)
+    root, _ = _git_repo(tmp_path)
     _write(root, '[[bench]]\ncommit = "deadbeef"\nreason = "r"\n')
     with pytest.raises(OverrideConfigError, match="deadbeef"):
         load_override_config(_TICKETS_CFG, root, [_manual_tier()])
 
 
 def test_reattribute_entry_loads(tmp_path):
-    root, sha = _repo(tmp_path)
+    root, sha = _git_repo(tmp_path)
     _write(root, f'[[reattribute]]\ncommit = "{sha[:8]}"\ntickets = ["#9"]\nreason = "wrong id"\n')
     cfg = load_override_config(_TICKETS_CFG, root, [_manual_tier()])
     assert cfg.reattributions == {sha: ["#9"]}
 
 
 def test_reattribute_empty_tickets_is_legal(tmp_path):
-    root, sha = _repo(tmp_path)
+    root, sha = _git_repo(tmp_path)
     _write(root, f'[[reattribute]]\ncommit = "{sha}"\ntickets = []\nreason = "none"\n')
     cfg = load_override_config(_TICKETS_CFG, root, [_manual_tier()])
     assert cfg.reattributions == {sha: []}
 
 
 def test_reattribute_duplicate_commit_fails(tmp_path):
-    root, sha = _repo(tmp_path)
+    root, sha = _git_repo(tmp_path)
     _write(
         root,
         f'[[reattribute]]\ncommit = "{sha}"\ntickets = ["#9"]\nreason = "a"\n'
@@ -192,14 +192,14 @@ def test_reattribute_duplicate_commit_fails(tmp_path):
 
 
 def test_reserved_sentinel_ticket_id_fails(tmp_path):
-    root, sha = _repo(tmp_path)
+    root, sha = _git_repo(tmp_path)
     _write(root, f'[[reattribute]]\ncommit = "{sha}"\ntickets = ["(no ticket)"]\nreason = "r"\n')
     with pytest.raises(OverrideConfigError, match="reserved"):
         load_override_config(_TICKETS_CFG, root, [_manual_tier()])
 
 
 def test_entry_ids_are_file_order_across_tiers(tmp_path):
-    root, sha = _repo(tmp_path)
+    root, sha = _git_repo(tmp_path)
     _write(
         root,
         f'[[bench]]\ncommit = "{sha}"\nreason = "a"\n'
@@ -211,28 +211,28 @@ def test_entry_ids_are_file_order_across_tiers(tmp_path):
 
 
 def test_toml_syntax_error_fails_loud(tmp_path):
-    root, _ = _repo(tmp_path)
+    root, _ = _git_repo(tmp_path)
     _write(root, "[[bench]\ncommit = \n")
     with pytest.raises(OverrideConfigError):
         load_override_config(_TICKETS_CFG, root, [_manual_tier()])
 
 
 def test_top_level_table_not_a_list_fails_loud(tmp_path):
-    root, sha = _repo(tmp_path)
+    root, sha = _git_repo(tmp_path)
     _write(root, f'[bench]\ncommit = "{sha}"\nreason = "r"\n')
     with pytest.raises(OverrideConfigError, match="array of tables"):
         load_override_config(_TICKETS_CFG, root, [_manual_tier()])
 
 
 def test_non_table_entry_in_array_fails_loud(tmp_path):
-    root, _ = _repo(tmp_path)
+    root, _ = _git_repo(tmp_path)
     _write(root, 'bench = ["x"]\n')
     with pytest.raises(OverrideConfigError, match="table"):
         load_override_config(_TICKETS_CFG, root, [_manual_tier()])
 
 
 def test_reattribute_entry_unknown_key_fails_loud(tmp_path):
-    root, sha = _repo(tmp_path)
+    root, sha = _git_repo(tmp_path)
     _write(
         root,
         f'[[reattribute]]\ncommit = "{sha}"\ntickets = ["#1"]\nreason = "r"\nbogus = 1\n',
@@ -242,7 +242,7 @@ def test_reattribute_entry_unknown_key_fails_loud(tmp_path):
 
 
 def test_reattribute_entry_missing_key_fails_loud(tmp_path):
-    root, sha = _repo(tmp_path)
+    root, sha = _git_repo(tmp_path)
     _write(root, f'[[reattribute]]\ncommit = "{sha}"\ntickets = ["#1"]\n')
     with pytest.raises(OverrideConfigError, match="missing required key"):
         load_override_config(_TICKETS_CFG, root, [_manual_tier()])
@@ -256,14 +256,14 @@ def test_reattribute_entry_missing_key_fails_loud(tmp_path):
     ],
 )
 def test_reattribute_malformed_tickets_fails_loud(tmp_path, tickets_toml):
-    root, sha = _repo(tmp_path)
+    root, sha = _git_repo(tmp_path)
     _write(root, f'[[reattribute]]\ncommit = "{sha}"\n{tickets_toml}reason = "r"\n')
     with pytest.raises(OverrideConfigError, match="tickets"):
         load_override_config(_TICKETS_CFG, root, [_manual_tier()])
 
 
 def test_asserted_reserved_sentinel_ticket_id_fails(tmp_path):
-    root, sha = _repo(tmp_path)
+    root, sha = _git_repo(tmp_path)
     _write(root, f'[[bench]]\nticket = "(no ticket)"\nas_of = "{sha}"\nreason = "r"\n')
     with pytest.raises(OverrideConfigError, match="reserved"):
         load_override_config(_TICKETS_CFG, root, [_manual_tier()])
@@ -284,7 +284,7 @@ def test_non_ascii_reason_loads_regardless_of_locale(tmp_path, monkeypatch):
         raise AssertionError("read_text (locale-dependent decode) must not be used")
 
     monkeypatch.setattr(Path, "read_text", _boom)
-    root, sha = _repo(tmp_path)
+    root, sha = _git_repo(tmp_path)
     reason = "Vérifié à la main — 手動確認済み"
     path = root / DEFAULT_OVERRIDES_RELPATH
     path.parent.mkdir(exist_ok=True)

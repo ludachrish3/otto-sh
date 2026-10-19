@@ -7,15 +7,15 @@ Spec 2 §3.5: a TYPE_CHECKING-only import is allowed; any runtime one is not.
 
 import ast
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-HOST = PROJECT_ROOT / "src" / "otto" / "host"
+HOST = CHECKOUT_ROOT / "src" / "otto" / "host"
 _CONTEXT = ("otto.context", "otto.run_context")
 """The run context: its public facade and its home."""
 
 
 def _runtime_imports_of_context(path) -> list[str]:
-    package = ["otto", *path.relative_to(PROJECT_ROOT / "src" / "otto").parent.parts]
+    package = ["otto", *path.relative_to(CHECKOUT_ROOT / "src" / "otto").parent.parts]
     return _context_imports(path.read_text(), package, path.name)
 
 

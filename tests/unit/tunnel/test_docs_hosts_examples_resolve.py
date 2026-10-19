@@ -27,9 +27,9 @@ import pytest
 
 from otto.host.remote_host import make_host_id
 from tests._fixtures.labdata import flat_hosts
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-DOCS = PROJECT_ROOT / "docs"
+DOCS = CHECKOUT_ROOT / "docs"
 # Scan every ``*.md`` page under docs/ rather than an enumerated list of
 # trees, so this guard cannot go stale the next time a tree is renamed,
 # promoted, or a new one grows a ``--hosts`` example — only the paths Sphinx
@@ -41,7 +41,7 @@ _HOSTS_RE = re.compile(r"--hosts\s+(\S+)")
 
 # The e2e tests spawn otto with an argv LIST, so the value is the next string
 # literal after ``"--hosts"``: ``["tunnel", "add", "--hosts", "test1,test2", ...]``.
-E2E = PROJECT_ROOT / "tests" / "e2e"
+E2E = CHECKOUT_ROOT / "tests" / "e2e"
 _ARGV_HOSTS_RE = re.compile(r'"--hosts",\s*"([^"]+)"')
 
 # Entries that name something other than a plain lab host, so the interface
@@ -117,7 +117,7 @@ def test_a_multi_homed_host_is_never_named_without_its_interface() -> None:
         count = counts.get(entry)
         if count is not None and count > 1:
             offenders.append(
-                f"{source.relative_to(PROJECT_ROOT)}: --hosts {value} (entry {entry!r})"
+                f"{source.relative_to(CHECKOUT_ROOT)}: --hosts {value} (entry {entry!r})"
             )
     assert not offenders, (
         "these documented or spawned commands name a multi-homed host without an "

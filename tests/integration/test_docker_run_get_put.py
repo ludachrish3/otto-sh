@@ -22,9 +22,9 @@ from tests._fixtures._host_pool import lease_unix_host
 from tests._fixtures.paths import TESTS_ROOT
 from tests._fixtures.scope_boundary import held_for_scope
 
-REPO1_DIR = TESTS_ROOT / "repo1"
+PROJECT1_DIR = TESTS_ROOT / "project1"
 
-# All docker integration tests share /tmp/otto-docker/repo1/ on test3
+# All docker integration tests share /tmp/otto-docker/project1/ on test3
 # (compose staging dir). Pin them to one xdist worker so concurrent
 # `rm -rf` calls during compose_up don't race.
 pytestmark = [
@@ -45,8 +45,8 @@ def test3_lease(tmp_path_factory):
 
 
 @pytest_asyncio.fixture(scope="module", loop_scope="module")
-async def stack(test3_lease, sut_dirs_env_module):
-    """Bring up repo1's compose stack on test3 once per module, yield the api
+async def stack(test3_lease, ottopath_env_module):
+    """Bring up project1's compose stack on test3 once per module, yield the api
     container host to all tests, then tear down. Module scope avoids paying
     ~10s of compose_up overhead for each of the 10+ tests in this file —
     the tests are written to be order-independent (each one explicitly sets
@@ -57,8 +57,8 @@ async def stack(test3_lease, sut_dirs_env_module):
     creating test under (the default ``function`` loop_scope would close
     after the first test and corrupt the cached SSH connection).
 
-    ``sut_dirs_env_module`` because this fixture runs at MODULE scope, ahead of
-    the function-scoped ``_default_sut_dirs_env``: ``compose_up`` walks
+    ``ottopath_env_module`` because this fixture runs at MODULE scope, ahead of
+    the function-scoped ``_default_ottopath_env``: ``compose_up`` walks
     ``get_projects()``, which needs the SUT env, and the module-scoped bracket also
     keeps the bootstrap memo it primes from outliving this module.
 
@@ -79,12 +79,12 @@ async def stack(test3_lease, sut_dirs_env_module):
             transfer="scp",
             docker_capable=True,
         )
-        project = Project(root=REPO1_DIR)
+        project = Project(root=PROJECT1_DIR)
         lab = Lab(name="docker_run_test")
         lab.hosts[parent.id] = parent
 
         build_results = await build_images(project, parent)
-        assert build_results["repo1-api"].is_ok, build_results
+        assert build_results["project1-api"].is_ok, build_results
         hosts = await compose_up(project, lab, parent=parent.id)
         try:
             yield hosts["api"]
@@ -109,10 +109,10 @@ async def test_exec_failing_command_reports_nonzero(stack):
 
 @pytest.mark.asyncio(loop_scope="module")
 async def test_marker_file_present(stack):
-    """The Dockerfile bakes in /etc/repo1-marker.txt — it should be readable."""
-    result = await stack.exec("cat /etc/repo1-marker.txt")
+    """The Dockerfile bakes in /etc/project1-marker.txt — it should be readable."""
+    result = await stack.exec("cat /etc/project1-marker.txt")
     assert result.status is Status.Success
-    assert "repo1-fixture" in result.value
+    assert "project1-fixture" in result.value
 
 
 @pytest.mark.asyncio(loop_scope="module")

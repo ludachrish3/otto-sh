@@ -78,12 +78,13 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 KNOWN_SURFACES = [
     "import_otto", "help", "run", "host", "reservation", "docker", "schema", "monitor", "test",
-    "cov", "run_bootstrapped", "version_repo", "help_repo", "help_repo_warm", "bootstrap_repo",
-    "dispatch_repo_warm", "completion_repo_warm", "completion_repo_handover", "test_repo",
-    "host_local_exec", "host_local_put", "host_local_get", "host_ssh_exec", "host_ssh_login",
-    "dispatch_local_warm", "tracked_init", "tracked_env", "tracked_cache", "tracked_docker",
-    "tracked_link", "tracked_tunnel", "tracked_monitor", "tracked_cov", "tracked_reservation",
-    "tracked_inventory", "tracked_schema", "tracked_host_probe", "tracked_host_power",
+    "cov", "run_bootstrapped", "version_project", "help_project", "help_project_warm",
+    "bootstrap_project", "dispatch_project_warm", "completion_project_warm",
+    "completion_project_handover", "test_project", "host_local_exec", "host_local_put",
+    "host_local_get", "host_ssh_exec", "host_ssh_login", "dispatch_local_warm", "tracked_init",
+    "tracked_env", "tracked_cache", "tracked_docker", "tracked_link", "tracked_tunnel",
+    "tracked_monitor", "tracked_cov", "tracked_reservation", "tracked_inventory", "tracked_schema",
+    "tracked_host_probe", "tracked_host_power",
 ]  # fmt: skip
 """The surfaces scripts/import_budget.py measures, literally: every record must hold each once.
 
@@ -94,21 +95,22 @@ tests/unit/scripts/test_import_budget_delta.py pins it to import_budget.SURFACES
 """
 
 REPO_SURFACES = [
-    "version_repo", "help_repo", "help_repo_warm", "bootstrap_repo", "dispatch_repo_warm",
-    "completion_repo_warm", "completion_repo_handover", "test_repo", "host_local_exec",
-    "host_local_put", "host_local_get", "host_ssh_exec", "host_ssh_login", "dispatch_local_warm",
-    "tracked_init", "tracked_env", "tracked_cache", "tracked_docker", "tracked_link",
-    "tracked_tunnel", "tracked_monitor", "tracked_cov", "tracked_reservation",
-    "tracked_inventory", "tracked_schema", "tracked_host_probe", "tracked_host_power",
+    "version_project", "help_project", "help_project_warm", "bootstrap_project",
+    "dispatch_project_warm", "completion_project_warm", "completion_project_handover",
+    "test_project", "host_local_exec", "host_local_put", "host_local_get", "host_ssh_exec",
+    "host_ssh_login", "dispatch_local_warm", "tracked_init", "tracked_env", "tracked_cache",
+    "tracked_docker", "tracked_link", "tracked_tunnel", "tracked_monitor", "tracked_cov",
+    "tracked_reservation", "tracked_inventory", "tracked_schema", "tracked_host_probe",
+    "tracked_host_power",
 ]  # fmt: skip
-"""The surfaces that run inside the harness's generated repo (a `sut_files` surface).
+"""The surfaces that run inside the harness's generated repo (a `project_files` surface).
 
 The generated repo is one fixture: when it cannot run at the base, none of
 these surfaces' base measurements is evidence, whatever its exit.
 Pinned to import_budget.SURFACES by the tests.
 """
 
-FIXTURE_CANARIES = ["dispatch_repo_warm"]
+FIXTURE_CANARIES = ["dispatch_project_warm"]
 """The repo surfaces that dispatch the fixture's own `noop` instruction.
 
 When one of them did not end as expected at the base, the generated repo does

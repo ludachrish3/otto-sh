@@ -58,8 +58,8 @@ class ProbeProduct(Product):
 
 @pytest.fixture
 def listing_world(real_main_mocks):
-    """The real lab's one repo, which each test gives its declared entries."""
-    return real_main_mocks["repo"]
+    """The real lab's one project, which each test gives its declared entries."""
+    return real_main_mocks["project"]
 
 
 def _invoke(*args, env=None):
@@ -76,7 +76,7 @@ def _declare_two(project):
     ]
 
 
-# ── Without --lab: what the repo declares ─────────────────────────────────────
+# ── Without --lab: what the project declares ─────────────────────────────────────
 
 
 def test_list_products_without_lab_exits_zero_and_prints_the_declared_table(listing_world):
@@ -101,7 +101,7 @@ def test_list_products_without_lab_exits_zero_and_prints_the_declared_table(list
         "shell",
         "any",
         "missing",
-        "test_repo",
+        "test_project",
         "any host",
         "build/agent.tar.gz",
     ]
@@ -134,7 +134,8 @@ def test_a_registered_provider_gets_a_note_naming_module_and_qualname(listing_wo
     result = _invoke("--list-products")
     assert result.exit_code == 0, result.output
     assert (
-        f"test_repo also registers a product provider ({supply.__module__}.{supply.__qualname__}); "
+        "test_project also registers a product provider "
+        f"({supply.__module__}.{supply.__qualname__}); "
         "what it supplies depends on the host, so it is listed only with --lab."
     ) in result.output
 
@@ -179,7 +180,7 @@ def test_list_products_with_lab_shows_hosts_stage_dir_and_not_used(listing_world
         "shell",
         "any",
         "missing",
-        "test_repo",
+        "test_project",
         "host1, host2",
         "build/agent.tar.gz",
         "/opt/stage",
@@ -187,7 +188,7 @@ def test_list_products_with_lab_shows_hosts_stage_dir_and_not_used(listing_world
     kcov = next(line for line in lines if "kcov" in line)
     assert kcov.strip("│").split("│")[-1].strip() == "login home"
     assert "not used in this lab:" in lines
-    assert "  fw (embedded, test_repo): no host matches" in lines
+    assert "  fw (embedded, test_project): no host matches" in lines
 
 
 def test_the_not_used_section_is_absent_when_everything_landed(listing_world):
@@ -203,7 +204,7 @@ def test_outside_scope_reason_prints_its_brackets_literally(listing_world):
     project.project_scope = ProjectScopeConfig([re.compile("other")], [re.compile(".*")])
     result = _invoke("--lab", "test_lab", "--list-products")
     assert result.exit_code == 0, result.output
-    assert "  agent (shell, test_repo): outside test_repo's [project] scope" in result.output
+    assert "  agent (shell, test_project): outside test_project's [project] scope" in result.output
 
 
 def test_a_provider_product_row_reads_code_and_its_class(listing_world):
@@ -220,7 +221,7 @@ def test_a_provider_product_row_reads_code_and_its_class(listing_world):
         "code (ProbeProduct)",
         "any",
         "unknown",
-        "test_repo",
+        "test_project",
         "host1",
     ]
 
@@ -349,5 +350,5 @@ def test_a_name_defined_in_data_and_by_a_provider_fails_the_lab_load_naming_both
     result = _invoke("--lab", "test_lab", "--list-products")
     assert result.exit_code != 0
     text = result.output + str(result.exception or "")
-    assert "[[products]] 'agent' (project test_repo) is also defined by provider" in text
+    assert "[[products]] 'agent' (project test_project) is also defined by provider" in text
     assert f"{products.__module__}:{products.__qualname__}" in text

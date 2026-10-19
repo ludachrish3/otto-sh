@@ -9,11 +9,11 @@ placement-and-phases §2.1, §3.2). These tests pin what that must keep:
 * a view read before the slot is filled derives the six once it is filled;
 * declaring is idempotent and atomic, and a second class is refused;
 * with the slot empty, the six names are still refused to a standalone
-  instruction, and no repo's actions class qualifies;
+  instruction, and no project's actions class qualifies;
 * ``run_instruction`` and ``bootstrap()`` declare before they read, and
-  ``bootstrap()`` before any repo's init runs;
-* the slot is otto's (repo ``None``) even when a repo's init import is what
-  first imports the installer, and a raw write under a repo's marker is refused.
+  ``bootstrap()`` before any project's init runs;
+* the slot is otto's (project ``None``) even when a project's init import is what
+  first imports the installer, and a raw write under a project's marker is refused.
 """
 
 import dataclasses
@@ -42,7 +42,7 @@ from otto.instructions import instruction, run_instruction
 from otto.labs.loader import Lab
 from otto.project.actions import ProjectActions, declare, register_project_actions
 from otto.registry import DuplicateRegistration, get_registering_project, registering_project
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.project_scaffold import make_project
 
 SIX = sorted(FIRST_PARTY_INSTRUCTIONS)
 
@@ -83,7 +83,7 @@ def test_a_view_read_early_derives_the_six_once_otto_declares_them(initialize, t
     """The acceptance case: read early, initialize, read again, in a fresh process."""
     env = {
         **os.environ,
-        "OTTOPATH": str(make_sut_repo(tmp_path / "repo", name="repo")),
+        "OTTOPATH": str(make_project(tmp_path / "proj", name="proj")),
         "OTTO_HOME": str(tmp_path / "home"),
     }
     out = subprocess.run(
@@ -98,7 +98,7 @@ def test_a_view_read_early_derives_the_six_once_otto_declares_them(initialize, t
     assert out.stdout.split("\n")[0] == f"[] {SIX} None otto.project.actions"
 
 
-def test_otto_s_class_is_declared_by_its_installer_outside_any_repo():
+def test_otto_s_class_is_declared_by_its_installer_outside_any_project():
     entry = FIRST_PARTY_ACTIONS.peek("otto")
     assert entry.cls is ProjectActions
     assert sorted(body.name for body in entry.bodies) == SIX
@@ -107,7 +107,7 @@ def test_otto_s_class_is_declared_by_its_installer_outside_any_repo():
     assert FIRST_PARTY_ACTIONS.project("otto") is None
 
 
-def test_redeclaring_inside_a_repo_s_import_keeps_the_slot_otto_s():
+def test_redeclaring_inside_a_project_s_import_keeps_the_slot_otto_s():
     _empty_the_slot()
     with registering_project("acme"):
         declare()
@@ -160,8 +160,8 @@ print(FIRST_PARTY_ACTIONS.project('otto'), inside)
 """
 
 
-def test_a_first_import_inside_a_repo_s_import_keeps_the_slot_otto_s(tmp_path):
-    """A fresh process whose first import of the installer runs under a repo's marker."""
+def test_a_first_import_inside_a_project_s_import_keeps_the_slot_otto_s(tmp_path):
+    """A fresh process whose first import of the installer runs under a project's marker."""
     out = subprocess.run(
         [sys.executable, "-c", _FIRST_IMPORT_IN_A_REPO],
         capture_output=True,
@@ -174,7 +174,7 @@ def test_a_first_import_inside_a_repo_s_import_keeps_the_slot_otto_s(tmp_path):
     assert out.stdout.split() == ["None", "acme"]
 
 
-def test_a_raw_write_under_a_repo_s_marker_is_refused():
+def test_a_raw_write_under_a_project_s_marker_is_refused():
     """The table's own check keeps the row otto's when a write goes around the writer."""
     _empty_the_slot()
     entry = ProjectActionsEntry(ProjectActions, _bodies_of(ProjectActions, None))
@@ -224,7 +224,7 @@ def test_the_views_follow_the_slot():
     assert INSTRUCTIONS.get("install").project.spec.declared_by is None
 
 
-@pytest.mark.parametrize("project", [None, "acme"], ids=["outside-a-repo", "from-a-repo"])
+@pytest.mark.parametrize("project", [None, "acme"], ids=["outside-a-project", "from-a-project"])
 def test_an_empty_slot_still_refuses_the_six_to_a_standalone_instruction(project):
     _empty_the_slot()
     register = instruction(name="install")
@@ -237,7 +237,7 @@ def test_an_empty_slot_still_refuses_the_six_to_a_standalone_instruction(project
     assert "install" not in STANDALONE_INSTRUCTIONS
 
 
-def test_an_empty_slot_refuses_every_repo_actions_class():
+def test_an_empty_slot_refuses_every_project_actions_class():
     _empty_the_slot()
     with (
         registering_project("acme"),
@@ -295,16 +295,16 @@ class OrderActions(ProjectActions):
 """
 
 
-def test_bootstrap_declares_before_any_repo_init(tmp_path, monkeypatch):
-    """The repo's actions class qualifies only if otto's class was declared before its init ran.
+def test_bootstrap_declares_before_any_project_init(tmp_path, monkeypatch):
+    """The project's actions class qualifies only if otto's class was declared before its init ran.
 
-    With the slot empty every repo actions class is refused, and bootstrap
-    contains that refusal as the repo's init error; so a declare that moved
-    after the repo loop fails here, not only one that went missing.
+    With the slot empty every project actions class is refused, and bootstrap
+    contains that refusal as the project's init error; so a declare that moved
+    after the project loop fails here, not only one that went missing.
     """
-    project = make_sut_repo(
-        tmp_path / "repo",
-        name="repo",
+    project = make_project(
+        tmp_path / "proj",
+        name="proj",
         extra=f'libs = ["lib"]\ninit = ["{_ORDER_INIT_MODULE}"]\n',
         files={f"lib/{_ORDER_INIT_MODULE}.py": _ORDER_INIT},
     )
@@ -320,5 +320,5 @@ def test_bootstrap_declares_before_any_repo_init(tmp_path, monkeypatch):
         sys.modules.pop(_ORDER_INIT_MODULE, None)
     assert FIRST_PARTY_ACTIONS.peek("otto").cls is ProjectActions
     assert result.errors == []
-    assert PROJECT_ACTIONS.names() == ["repo"]
-    assert PROJECT_ACTIONS.peek("repo").cls.__name__ == "OrderActions"
+    assert PROJECT_ACTIONS.names() == ["proj"]
+    assert PROJECT_ACTIONS.peek("proj").cls.__name__ == "OrderActions"

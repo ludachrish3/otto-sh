@@ -11,7 +11,7 @@ the leaker.
 The pure decision lives in ``running_loop_leak_reason`` and is unit-tested in
 ``test_loop_reaper.py``; what this module pins is the WIRING — that the hook is
 still installed and still reaches that decision. So it runs a real inner pytest
-session (the repo's root conftest registered as a plugin, exactly as an xdist
+session (the checkout's root conftest registered as a plugin, exactly as an xdist
 worker gets it) over a test that parks a ``run_until_complete`` in a greenlet —
 Playwright's mechanism, reproduced without Playwright. Deleting the hook from
 ``tests/conftest.py`` turns this red.

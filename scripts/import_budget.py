@@ -25,7 +25,7 @@ its ceiling earns an advisory NOTE (:func:`advisories`). A tracked surface is
 measured and printed, never enforced.
 
 THE RUN, HOST AND TEST SURFACES ALSO CARRY A TARGET: a ceiling on their
-``file_ops`` as a multiple of ``otto --version``'s (``version_repo``) measured
+``file_ops`` as a multiple of ``otto --version``'s (``version_project``) measured
 in the same run (:attr:`Surface.target_ratio`, :func:`check_ratio`). A ceiling
 pins today's cost; the ratio says how far above an interpreter start plus the
 shim a command may sit, and it survives a dependency update that makes every
@@ -87,7 +87,7 @@ directory-listing wobble (a ``FileFinder`` re-listing a directory whose mtime a
 sibling process moved: #360, #361, #428) is worth one or two operations on any
 surface. Without a floor that wobble alone would trip a low counter."""
 
-RATIO_FLOOR = "version_repo"
+RATIO_FLOOR = "version_project"
 """The surface every :attr:`Surface.target_ratio` divides by: ``otto --version``.
 
 The shim answers it without importing the CLI, so it is an interpreter start
@@ -123,14 +123,14 @@ class Surface:
     ``otto.cli.main.entry`` calls ``bootstrap()`` before argv is parsed.
     """
 
-    sut_files: int | None = None
+    project_files: int | None = None
     """Generate a project with this many NESTED test files and measure against it.
 
     None keeps the historical behaviour: no projects, otto-core only.
     """
 
-    sut_dirs_count: int = 1
-    """Subdirectory count, scaled independently of ``sut_files``: a stat-only
+    project_dirs_count: int = 1
+    """Subdirectory count, scaled independently of ``project_files``: a stat-only
     walk is visible only per directory."""
 
     real_entry: bool = False
@@ -175,7 +175,7 @@ class Surface:
     to open, not that dispatch declines to open it. Seeding with root
     ``otto --help`` instead puts a real cache beside the measured run.
     ``otto test`` is the exception among the verbs: it reads and writes the
-    collected-tests tables (never a section), so ``test_repo`` names its own
+    collected-tests tables (never a section), so ``test_project`` names its own
     argv here, and its seed leaves exactly the table a repeated run finds.
     """
 
@@ -225,7 +225,7 @@ class Surface:
     ssh_lab: bool = False
     """Generate the project with a second lab source holding one SSH host on a closed port.
 
-    See ``generate_repo``'s ``ssh_lab_port``. The harness picks the port and
+    See ``generate_project``'s ``ssh_lab_port``. The harness picks the port and
     proves it refuses a connection before every measured run, so the surface
     measures one refused attempt rather than whatever a stray listener says.
     """
@@ -278,16 +278,16 @@ def _verb_surface(
     Every verb surface shares one shape, so the numbers compare across verbs:
     the real console entry against a realistic generated project, WARM (seeded
     with root help, which writes the cache an ordinary command then finds
-    beside it, as ``dispatch_repo_warm`` explains), with ``OTTO_LAB`` naming
+    beside it, as ``dispatch_project_warm`` explains), with ``OTTO_LAB`` naming
     the JSON lab the project declares so no command needs a real host.
     *seed_argv* replaces root help for a verb whose own warm state is
-    something else (``test_repo``).
+    something else (``test_project``).
     """
     return Surface(
         key,
         argv,
-        sut_files=50,
-        sut_dirs_count=5,
+        project_files=50,
+        project_dirs_count=5,
         real_entry=True,
         warm=True,
         seed_argv=seed_argv or ["otto", "--help"],
@@ -351,15 +351,21 @@ SURFACES: list[Surface] = [
     #
     # The surfaces below carry a GENERATED project (deterministic by
     # construction, so they stay as host-independent as the rest of the table)
-    # and — `bootstrap_repo`, which drives the composition root directly, aside
+    # and — `bootstrap_project`, which drives the composition root directly, aside
     # — run the REAL entry path, so they observe bootstrap and cache
     # behaviour no other surface can see.
     #
     # `--version` is answered by `otto._shim` without importing the CLI, so
     # this surface is the floor every other command is compared against: an
     # interpreter start plus the shim and `otto.version`.
-    Surface("version_repo", ["otto", "--version"], sut_files=50, sut_dirs_count=5, real_entry=True),
-    # THE HELP PAIR. `help_repo` is COLD — a fresh OTTO_HOME per measurement,
+    Surface(
+        "version_project",
+        ["otto", "--version"],
+        project_files=50,
+        project_dirs_count=5,
+        real_entry=True,
+    ),
+    # THE HELP PAIR. `help_project` is COLD — a fresh OTTO_HOME per measurement,
     # so it is the fallback path: cache miss → full bootstrap → collect →
     # write, which is what cache-or-load promises and must keep costing what
     # a complete answer costs. It is therefore also the surface that PROVES
@@ -367,16 +373,18 @@ SURFACES: list[Surface] = [
     # project-less run of the same command by every `names` key path), which is
     # why it stays in the table unchanged.
     #
-    # `help_repo_warm` is the same surface measured on its SECOND run against
+    # `help_project_warm` is the same surface measured on its SECOND run against
     # one home, i.e. the cached path: root help resolves the command list
     # from the `names` section and never walks the corpus. The scaling test
     # keys on this one.
-    Surface("help_repo", ["otto", "--help"], sut_files=50, sut_dirs_count=5, real_entry=True),
     Surface(
-        "help_repo_warm",
+        "help_project", ["otto", "--help"], project_files=50, project_dirs_count=5, real_entry=True
+    ),
+    Surface(
+        "help_project_warm",
         ["otto", "--help"],
-        sut_files=50,
-        sut_dirs_count=5,
+        project_files=50,
+        project_dirs_count=5,
         real_entry=True,
         warm=True,
     ),
@@ -390,11 +398,11 @@ SURFACES: list[Surface] = [
     # a surface. Same argv for the same reason the original chose it: the
     # verbs bootstrap registers are `otto run`'s.
     Surface(
-        "bootstrap_repo",
+        "bootstrap_project",
         ["otto", "run", "--help"],
         bootstrap=True,
-        sut_files=50,
-        sut_dirs_count=5,
+        project_files=50,
+        project_dirs_count=5,
     ),
     # THE COMMON CASE: a real command, dispatched through the real entry with
     # a warm cache. Every other real-entry surface above is `--version`, root
@@ -409,10 +417,10 @@ SURFACES: list[Surface] = [
     # leaves a real cache behind, and the measured run shows dispatch
     # ignoring a cache that is really there.
     Surface(
-        "dispatch_repo_warm",
+        "dispatch_project_warm",
         ["otto", "-R", "run", "noop"],
-        sut_files=50,
-        sut_dirs_count=5,
+        project_files=50,
+        project_dirs_count=5,
         real_entry=True,
         warm=True,
         seed_argv=["otto", "--help"],
@@ -425,17 +433,17 @@ SURFACES: list[Surface] = [
     # protocol in the environment (see `Surface.env_extra`), which is why no
     # `argv`-only surface could reach it.
     #
-    # WARM, like `help_repo_warm` and for the same reason: a cold cache means
+    # WARM, like `help_project_warm` and for the same reason: a cold cache means
     # a miss, and a miss is a full bootstrap by design — completion never
     # degrades to a wrong answer. The seed run leaves the `shim` section, and
     # the measured run is the shim's stat pass plus one JSON read: `otto._shim`
     # answers the TAB from the cache without ever importing `otto.cli`,
     # `otto.config`, typer, click, or rich.
     Surface(
-        "completion_repo_warm",
+        "completion_project_warm",
         ["otto"],
-        sut_files=50,
-        sut_dirs_count=5,
+        project_files=50,
+        project_dirs_count=5,
         real_entry=True,
         warm=True,
         env_extra=(
@@ -447,7 +455,7 @@ SURFACES: list[Surface] = [
     # THE FALLBACK'S TAB COST. `otto tunnel remove <TAB>` (COMP_CWORD=3) is a
     # `live` site: the resolver hands over rather than answering, and the shim
     # falls through to the unchanged full CLI path. This is a DIFFERENT site
-    # than `completion_repo_warm`'s — that one completes top-level command
+    # than `completion_project_warm`'s — that one completes top-level command
     # NAMES (COMP_CWORD=1), which never resolves a specific command's module;
     # this one resolves three levels deep into `tunnel remove`'s own argument
     # completer, which imports `otto.cli.tunnel` and, transitively, all of
@@ -457,10 +465,10 @@ SURFACES: list[Surface] = [
     # here; the shim's own part is a cache read, the stat pass, and a marker
     # touch, which always happen before it can decide to hand over.
     Surface(
-        "completion_repo_handover",
+        "completion_project_handover",
         ["otto"],
-        sut_files=50,
-        sut_dirs_count=5,
+        project_files=50,
+        project_dirs_count=5,
         real_entry=True,
         warm=True,
         env_extra=(
@@ -491,7 +499,7 @@ SURFACES: list[Surface] = [
     # the table used to narrow to one file. The cost of a verdict pytest
     # would agree with (#592).
     _verb_surface(
-        "test_repo",
+        "test_project",
         ["otto", "test", "TestTop0"],
         target_ratio=11.66,
         seed_argv=["otto", "test", "TestTop0"],
@@ -541,11 +549,11 @@ SURFACES: list[Surface] = [
         expect_loaded="asyncssh.connection",
         target_ratio=7.7,
     ),
-    # `dispatch_repo_warm`'s own sibling, dispatching `local_true` instead of
+    # `dispatch_project_warm`'s own sibling, dispatching `local_true` instead of
     # `noop`: `local_true` opens a persistent `LocalHost` session and runs one
-    # command through it (tests/_fixtures/generated_repo.py), so this surface
+    # command through it (tests/_fixtures/generated_project.py), so this surface
     # is the one that can see what a session's own connection-lost choke
-    # points cost. `dispatch_repo_warm` never opens a host session at all, so
+    # points cost. `dispatch_project_warm` never opens a host session at all, so
     # it never could.
     # Typer renders an underscored Python name with hyphens on the command
     # line ("local_true" -> "local-true"); the argv must say what a user
@@ -901,7 +909,7 @@ class PathBuckets:
         A root directory ITSELF belongs to its root: the import system stats
         each ``sys.path`` directory once per import to check its mtime, and
         that is the stdlib's, otto's or site-packages' cost, not "other".
-        Measured on ``version_repo``, 72 of its ~700 operations are stats of
+        Measured on ``version_project``, 72 of its ~700 operations are stats of
         the stdlib directory alone. Such a stat names no module, so under
         ``otto`` and ``site`` it is charged to the pseudo-name ``*``.
         """
@@ -1205,7 +1213,7 @@ def _quiet_cwd() -> Path:
     shared cwd charges the child for whoever else writes there. Inheriting
     the caller's cwd handed the child the repo root, which every other test
     process in the run writes into; one such write mid-measurement cost the
-    child an extra listing (``help_repo_warm`` on 3.14, issue #428).
+    child an extra listing (``help_project_warm`` on 3.14, issue #428).
 
     Nothing writes here — the child writes only into its ``OTTO_HOME`` — so
     this directory's mtime never moves while a child is importing from it.
@@ -1232,7 +1240,7 @@ def _generated_repo_for(key: str, files: int, dirs: int, ssh_lab_port: int | Non
     # never mutates sys.path.
     if str(REPO_ROOT) not in sys.path:
         sys.path.insert(0, str(REPO_ROOT))
-    from tests._fixtures.generated_repo import generate_repo
+    from tests._fixtures.generated_project import generate_project
 
     root = Path(tempfile.mkdtemp(prefix=f"otto-budget-{key}-"))
     _FIXTURE_ROOTS.append(root)
@@ -1242,7 +1250,7 @@ def _generated_repo_for(key: str, files: int, dirs: int, ssh_lab_port: int | Non
     # lab source is declared — so every project-bearing surface's count shows
     # what a real project actually costs, rather than an empty init module nobody
     # ships.
-    return generate_repo(root, files=files, dirs=dirs, realistic=True, ssh_lab_port=ssh_lab_port)
+    return generate_project(root, files=files, dirs=dirs, realistic=True, ssh_lab_port=ssh_lab_port)
 
 
 @functools.cache
@@ -1276,10 +1284,10 @@ def _prove_port_closed(port: int) -> None:
 
 def _surface_repo(surface: Surface) -> Path:
     """Return *surface*'s generated project, built once per process."""
-    if surface.sut_files is None:
+    if surface.project_files is None:
         raise ValueError(f"surface {surface.key!r} carries no generated project")
     port = _budget_ssh_port() if surface.ssh_lab else None
-    return _generated_repo_for(surface.key, surface.sut_files, surface.sut_dirs_count, port)
+    return _generated_repo_for(surface.key, surface.project_files, surface.project_dirs_count, port)
 
 
 def fixture_root(surface: Surface) -> Path:
@@ -1371,7 +1379,7 @@ def surface_env(surface: Surface) -> dict[str, str]:
     whose ``.pyc`` is missing costs one more file operation than a cached one
     (the failed probe, then the source read), and a child that may write
     adds the write too, so the count otherwise follows whatever bytecode the
-    machine happens to hold: measured on ``bootstrap_repo`` under CPython
+    machine happens to hold: measured on ``bootstrap_project`` under CPython
     3.10, deleting the venv's and ``src/otto``'s in-tree ``.pyc`` files, as a
     fresh CI checkout has them (``uv`` compiles none at install), moved
     ``file_ops`` from 2738 to 3030, over a 10% ceiling on unchanged product
@@ -1383,7 +1391,7 @@ def surface_env(surface: Surface) -> dict[str, str]:
     workspace (:func:`parse_file_ops`).
     """
     env = _sanitized_env()
-    if surface.sut_files is not None:
+    if surface.project_files is not None:
         project = _surface_repo(surface)
         env["OTTOPATH"] = str(project)
         env[FIXTURE_ROOT_ENV_VAR] = str(project.parent)

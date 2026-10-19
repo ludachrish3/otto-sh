@@ -46,16 +46,16 @@ def configured_hosts(*hosts):
     return active_context(lab=lab)
 
 
-REPO1 = TESTS_ROOT / "repo1"
-PRODUCT_DIR = REPO1 / "product"
+PROJECT1 = TESTS_ROOT / "project1"
+PRODUCT_DIR = PROJECT1 / "product"
 REMOTE_INSTALL_DIR = "/opt/coverage_product"
 PRODUCT_NAME = "product"
 
 
 def _declared_entry():
-    """repo1's ``[[products]]`` entry for the C product, in runtime form.
+    """project1's ``[[products]]`` entry for the C product, in runtime form.
 
-    Read from the fixture repo's own ``settings.toml`` rather than restated
+    Read from the fixture project's own ``settings.toml`` rather than restated
     here. These tests build their hosts directly (no lab loader, so no ingest
     and no declared-product pass), and a second copy of ``cov_dir`` in this
     file is exactly the drift the per-product model exists to remove: the
@@ -63,21 +63,21 @@ def _declared_entry():
     here and the declaration there ever disagreed, the fetch would come back
     empty and every assertion below would read as a transport failure.
     """
-    settings = tomli.loads((REPO1 / ".otto" / "settings.toml").read_text())
+    settings = tomli.loads((PROJECT1 / ".otto" / "settings.toml").read_text())
     raw = next(e for e in settings["products"] if e["name"] == PRODUCT_NAME)
     spec = DeclaredEntrySpec.model_validate(raw)
-    return spec.to_runtime(owner="repo1", base_dir=REPO1, seam="products")
+    return spec.to_runtime(owner="project1", base_dir=PROJECT1, seam="products")
 
 
 def attach_product(host: UnixHost) -> None:
-    """Give *host* repo1's declared product, the way lab ingest would.
+    """Give *host* project1's declared product, the way lab ingest would.
 
     ``PRODUCT_KIND_BUILDER.build`` applies the entry's match table, so a host these
-    tests point at that repo1 does not declare fails here — loudly — instead
+    tests point at that project1 does not declare fails here — loudly — instead
     of silently fetching nothing.
     """
     built = PRODUCT_KIND_BUILDER.build([_declared_entry()], host)
-    assert built, f"repo1's {PRODUCT_NAME!r} entry does not match host {host.id}"
+    assert built, f"project1's {PRODUCT_NAME!r} entry does not match host {host.id}"
     for product in built:
         stamp_cov_dir(product)
     host.products.extend(built)

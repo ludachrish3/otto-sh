@@ -131,7 +131,7 @@ class TestConstructor:
         assert backend.project_root is None
         assert backend.username is None
 
-    def test_repo_dir_is_kept_as_a_path(self, tmp_path):
+    def test_project_root_is_kept_as_a_path(self, tmp_path):
         backend = _Complete(project_root=str(tmp_path))
         assert isinstance(backend.project_root, Path)
 
@@ -152,7 +152,7 @@ class TestReservationsProperty:
         assert first is second
         assert backend.calls == ["alice"]
 
-    def test_username_is_stored_like_repo_dir(self):
+    def test_username_is_stored_like_project_root(self):
         backend = RecordingBackend(username="alice")
         assert backend.username == "alice"
 

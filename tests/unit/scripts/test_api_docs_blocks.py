@@ -9,7 +9,7 @@ from scripts.api_docs_blocks import (
     rst_blocks,
     teaching_corpus,
 )
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
 
@@ -83,8 +83,8 @@ def test_literal_includes_resolve_relative_and_docs_rooted_targets(tmp_path):
 
 
 def test_teaching_corpus_covers_the_boundary_and_skips_archives():
-    corpus = teaching_corpus(PROJECT_ROOT)
-    rel = {p.relative_to(PROJECT_ROOT).as_posix() for p in corpus}
+    corpus = teaching_corpus(CHECKOUT_ROOT)
+    rel = {p.relative_to(CHECKOUT_ROOT).as_posix() for p in corpus}
     assert "README.md" in rel
     assert "docs/cookbook/python-library.md" in rel
     assert "src/otto/examples/lab_repository.py" in rel

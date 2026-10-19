@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from scripts import refresh_docs_captures as rdc
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.project_scaffold import make_project
 
 pytestmark = pytest.mark.interpreter_agnostic
 
@@ -384,7 +384,7 @@ def _project_with_settings(ctx: rdc.RunContext) -> tuple[Path, str]:
     re-typed here. The committed bytes come back with it: the restore
     assertions compare against what the builder wrote, not a literal.
     """
-    src = make_sut_repo(ctx.examples_root / "p", name="p")
+    src = make_project(ctx.examples_root / "p", name="p")
     (src / "extra.toml").write_text('[reservations]\nbackend = "json"\n')
     return src, (src / ".otto" / "settings.toml").read_text()
 

@@ -19,7 +19,7 @@ from otto.logger.mode import LogMode
 from otto.tunnel import add_tunnel, discover_tunnels, remove_tunnel
 from otto.tunnel.discovery import _TUNNEL_HOST_TIMEOUT
 from tests._fixtures.labdata import host_data
-from tests._fixtures.tunnel_bed import build_bed_host, cli_sut_dir, run_tunnel_cli
+from tests._fixtures.tunnel_bed import build_bed_host, cli_project_root, run_tunnel_cli
 from tests.e2e.tunnel_stability._harness import (
     ARM_SECONDS,
     EXIT,
@@ -147,7 +147,7 @@ def _fresh_two_host_lab() -> Lab:
 
 
 def _cli_sut_pinned_to_ssh(tmp_path: Path) -> Path:
-    """``cli_sut_dir`` verbatim, then pin every host's active term to ``ssh``.
+    """``cli_project_root`` verbatim, then pin every host's active term to ``ssh``.
 
     test2's raw lab data lists ``valid_terms: ["telnet", "ssh"]`` (telnet
     first — it's documented as a telnet/netcat test host). With no pin,
@@ -158,7 +158,7 @@ def _cli_sut_pinned_to_ssh(tmp_path: Path) -> Path:
     whether sshd is actually stopped. Pinning ``term`` in the host dict
     (`UnixHostSpec.term`, resolved ahead of `valid_terms[0]`) forces the same
     SSH connection this test wedges."""
-    sut = cli_sut_dir(tmp_path)
+    sut = cli_project_root(tmp_path)
     lab_json_path = sut / "lab_data" / "lab.json"
     lab_data = json.loads(lab_json_path.read_text())
     for element in lab_data["elements"]:

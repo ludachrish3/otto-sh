@@ -27,7 +27,7 @@ What the scan cannot see, none of it present today:
   widening fail loudly instead.
 
 And what it can flag needlessly: a wider-loop fixture that holds no hosts, or
-one in a SUT repo under ``tests/repo*`` that only ``otto test`` runs, where
+one in a project under ``tests/project*`` that only ``otto test`` runs, where
 the suite plugin already holds the boundary (and ``tests._fixtures`` may not
 be importable). Neither exists today; if one appears, narrow the scan rather
 than add a boundary the fixture does not need.
@@ -38,7 +38,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 from tests._fixtures.root_conftest_pytester import INNER_ARGS, root_conftest_session
 
 pytest_plugins = ["pytester"]
@@ -78,7 +78,7 @@ def _holds_a_boundary(node: ast.AsyncFunctionDef) -> bool:
 def _wider_loop_fixtures() -> dict[str, bool]:
     """Each wider-loop async fixture under ``tests/`` (``path::name``), and whether it holds."""
     found: dict[str, bool] = {}
-    for path in sorted((PROJECT_ROOT / "tests").rglob("*.py")):
+    for path in sorted((CHECKOUT_ROOT / "tests").rglob("*.py")):
         source = path.read_text(encoding="utf-8")
         if "loop_scope=" not in source:
             continue
@@ -86,7 +86,7 @@ def _wider_loop_fixtures() -> dict[str, bool]:
             if isinstance(node, ast.AsyncFunctionDef) and any(
                 _wider_loop_scope(d) for d in node.decorator_list
             ):
-                found[f"{path.relative_to(PROJECT_ROOT)}::{node.name}"] = _holds_a_boundary(node)
+                found[f"{path.relative_to(CHECKOUT_ROOT)}::{node.name}"] = _holds_a_boundary(node)
     return found
 
 

@@ -24,7 +24,7 @@ from tests.e2e.cov._kmodcov_observation import (
     record_phase,
     run_id,
 )
-from tests.e2e.cov._repo5_build import TOOLCHAINS_KEY, Toolchain
+from tests.e2e.cov._project5_build import TOOLCHAINS_KEY, Toolchain
 
 pytestmark = pytest.mark.interpreter_agnostic
 
@@ -494,9 +494,9 @@ def test_a_record_of_another_format_is_discarded():
 
 
 def test_rule_5_the_collator_holds_no_version_control_vocabulary():
-    from tests._fixtures.paths import PROJECT_ROOT
+    from tests._fixtures.paths import CHECKOUT_ROOT
 
-    module = PROJECT_ROOT / "scripts" / "collate_kmodcov_matrix.py"
+    module = CHECKOUT_ROOT / "scripts" / "collate_kmodcov_matrix.py"
     source = module.read_text(encoding="utf-8")
     body = "\n".join(line for line in source.splitlines() if not line.lstrip().startswith("#"))
     assert "git" not in body.replace("git-ignored", "").replace("Git", "")

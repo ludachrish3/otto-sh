@@ -39,7 +39,7 @@ counted out without writing down:
 - 5 module-scope `pytestmark = pytest.mark.timeout(30|45)` in
   `tests/integration/host/` (a different AST shape, and arguably a lane bound
   rather than a per-test one),
-- 1 in `tests/repo1/` — a **fixture project**, test *data*, not this suite,
+- 1 in `tests/project1/` — a **fixture project**, test *data*, not this suite,
 - 1 `timeout(0.25)` in `tests/unit/suite/test_timeout_enforcement.py` — the
   **subject under test**, since `otto test` must honor the marker it is being
   asked to enforce.
@@ -106,7 +106,7 @@ same trade. (a) is the one that survives it.
 | 3 | `test_gate_fresh.py:408` `timeout(20)` | **raise to 60.** Spawns real subprocesses and relays interrupts; a hang is the failure mode, so the guard only ever fires on one. |
 | 4 | `test_gate_fresh.py:456` `timeout(20)` | **raise to 60**, same reason. |
 | 5-9 | `tests/integration/host/*` module-scope `pytestmark` 30/45 s | **raise to 60+, and decide whether module-scope is in scope at all.** These bound live lab-VM tests, where the standing rule is already "never kill a live-bed run at a tight timeout". Needs a call on whether `pytestmark` counts as a per-test bound or a lane bound. |
-| 10 | `tests/repo1/tests/test_device.py:58` `timeout(30)` | **exclude by path.** A fixture project consumed as test data; its marks are not this suite's guards. |
+| 10 | `tests/project1/tests/test_device.py:58` `timeout(30)` | **exclude by path.** A fixture project consumed as test data; its marks are not this suite's guards. |
 | 11 | `test_timeout_enforcement.py:32` `timeout(0.25)` | **exclude, explicitly.** Subject under test — the tight value *is* the assertion. Needs a named, commented exemption, not a silent path skip. |
 
 Items 1-4 are mechanical and could land in one commit today. Items 5-9 need one

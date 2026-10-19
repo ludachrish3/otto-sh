@@ -328,9 +328,17 @@ def test_argv_pattern_is_total_by_contract():
 
 _LANE_FIXTURE = TESTS_ROOT / "_fixtures" / "bed_hygiene.py"
 
-# Fixture SUT repos + firmware: user-example input data, not otto's tests —
+# Fixture projects + firmware: user-example input data, not otto's tests —
 # the same carve-out every tests-scoped structural rule makes.
-_EXCLUDED_TREES = ("repo1", "repo2", "repo3", "repo4", "repo_broken", "repo_e2e", "firmware")
+_EXCLUDED_TREES = (
+    "project1",
+    "project2",
+    "project3",
+    "project4",
+    "project_broken",
+    "project_e2e",
+    "firmware",
+)
 
 
 def _lane_sources():
@@ -359,7 +367,7 @@ def _parsed_or_fail(path: Path) -> ast.AST:
     except SyntaxError as e:
         pytest.fail(
             f"{path.relative_to(TESTS_ROOT)} is unparseable ({e.msg} at line "
-            f"{e.lineno}) — if this is deliberate fixture SUT data, add its "
+            f"{e.lineno}) — if this is deliberate fixture project data, add its "
             f"tree to _EXCLUDED_TREES in {Path(__file__).name}"
         )
 
@@ -609,11 +617,11 @@ def test_unix_link_id_skips_unresolvable_records(tmp_path, monkeypatch):
 def test_unix_link_id_propagates_non_validation_errors(tmp_path, monkeypatch):
     """A record that breaks for a NON-validation reason is a broken fixture
     file, not an unregistered profile — swallowing it hides real corruption
-    behind the skip meant for cross-repo records.
+    behind the skip meant for cross-project records.
 
     The poison differs from the control above in ONE character class: an
     ``os_type`` that is not a string at all. A string naming an unknown
-    profile is the skippable cross-repo case; a number is corruption. Both
+    profile is the skippable cross-project case; a number is corruption. Both
     reach the SAME registry lookup, so the only thing separating them is the
     branch this test exists to pin — ``build_os_profile`` misses, then raises
     ``TypeError: 'int' object is not iterable`` composing its did-you-mean

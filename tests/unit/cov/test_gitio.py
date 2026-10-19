@@ -1,4 +1,4 @@
-"""Git plumbing used by coverage captures. All repos live in tmp_path."""
+"""Git plumbing used by coverage captures. All git repositories live in tmp_path."""
 
 import ast
 import subprocess
@@ -27,8 +27,8 @@ from otto.coverage.capture.gitio import (
 from tests._fixtures.gitrepo import git_env
 
 
-def _make_repo(tmp_path: Path) -> tuple[Path, str]:
-    """Initialize a repo with one commit, return (path, full_sha)."""
+def _make_git_repo(tmp_path: Path) -> tuple[Path, str]:
+    """Initialize a git repository with one commit, return (path, full_sha)."""
     root = tmp_path / "sut"
     root.mkdir()
 
@@ -71,7 +71,7 @@ def _commit_all(project_root: Path) -> str:
 
 
 @pytest.fixture
-def repo(tmp_path: Path) -> Path:
+def git_repo(tmp_path: Path) -> Path:
     root = tmp_path / "sut"
     root.mkdir()
 
@@ -91,74 +91,74 @@ def repo(tmp_path: Path) -> Path:
     return root
 
 
-def test_head_and_dirty(repo: Path) -> None:
-    sha = head_commit(repo)
+def test_head_and_dirty(git_repo: Path) -> None:
+    sha = head_commit(git_repo)
     assert len(sha) == 40
-    assert is_dirty(repo) is False
-    (repo / "a.c").write_text("line1\nX\nline3\n")
-    assert is_dirty(repo) is True
+    assert is_dirty(git_repo) is False
+    (git_repo / "a.c").write_text("line1\nX\nline3\n")
+    assert is_dirty(git_repo) is True
 
 
-def test_blob_roundtrip(repo: Path) -> None:
-    sha = blob_sha(repo, Path("a.c"))
+def test_blob_roundtrip(git_repo: Path) -> None:
+    sha = blob_sha(git_repo, Path("a.c"))
     assert sha is not None
-    assert blob_exists(repo, sha)
-    assert cat_blob(repo, sha) == b"line1\nline2\nline3\n"
-    assert hash_object(repo, repo / "a.c") == sha
-    assert blob_sha(repo, Path("missing.c")) is None
+    assert blob_exists(git_repo, sha)
+    assert cat_blob(git_repo, sha) == b"line1\nline2\nline3\n"
+    assert hash_object(git_repo, git_repo / "a.c") == sha
+    assert blob_sha(git_repo, Path("missing.c")) is None
 
 
-def test_blob_sha_from_nested_subdir(repo: Path) -> None:
-    # git resolves "REV:<path>" against the repo TOPLEVEL, not the cwd, so a
-    # sut_dir nested inside a larger repo (the e2e bed: tests/repo1 inside
+def test_blob_sha_from_nested_subdir(git_repo: Path) -> None:
+    # git resolves "REV:<path>" against the checkout TOPLEVEL, not the cwd, so a
+    # project root nested inside a larger checkout (the e2e bed: tests/project1 inside
     # otto-sh) must still anchor its sources.  The cwd-relative "REV:./<path>"
     # spelling is required for this to work.
-    nested = repo / "nested" / "sut"
+    nested = git_repo / "nested" / "sut"
     product = nested / "product"
     product.mkdir(parents=True)
     (product / "main.c").write_text("int main;\n")
     subprocess.run(
         ["git", "add", "nested"],
-        cwd=repo,
+        cwd=git_repo,
         check=True,
         capture_output=True,
-        env=git_env(repo.parent),
+        env=git_env(git_repo.parent),
     )
     subprocess.run(
         ["git", "-c", "user.name=t", "-c", "user.email=t@x", "commit", "-qm", "nest"],
-        cwd=repo,
+        cwd=git_repo,
         check=True,
         capture_output=True,
-        env=git_env(repo.parent),
+        env=git_env(git_repo.parent),
     )
 
     sha = blob_sha(nested, Path("product/main.c"))
 
-    assert sha == hash_object(repo, product / "main.c")
+    assert sha == hash_object(git_repo, product / "main.c")
     assert blob_sha(nested, Path("product/missing.c")) is None
 
 
-def test_worktree_diff_u0(repo: Path) -> None:
-    (repo / "a.c").write_text("line1\nADDED\nline2\nline3\n")
-    out = diff_worktree_file_u0(repo, Path("a.c"))
+def test_worktree_diff_u0(git_repo: Path) -> None:
+    (git_repo / "a.c").write_text("line1\nADDED\nline2\nline3\n")
+    out = diff_worktree_file_u0(git_repo, Path("a.c"))
     assert "@@" in out
     assert "+ADDED" in out
 
 
-def test_worktree_diff_ignores_whitespace_only_change(repo: Path) -> None:
+def test_worktree_diff_ignores_whitespace_only_change(git_repo: Path) -> None:
     # A reindent of an untouched line produces no hunk: -w hides
     # whitespace-only modifications so the remapper never stales the line.
-    (repo / "a.c").write_text("line1\n    line2\nline3\n")
-    assert diff_worktree_file_u0(repo, Path("a.c")) == ""
+    (git_repo / "a.c").write_text("line1\n    line2\nline3\n")
+    assert diff_worktree_file_u0(git_repo, Path("a.c")) == ""
 
 
-def test_worktree_diff_ignores_whitespace_but_keeps_real_change(repo: Path) -> None:
+def test_worktree_diff_ignores_whitespace_but_keeps_real_change(git_repo: Path) -> None:
     # Whitespace-only reindent of line 2 PLUS a real insertion: only the
     # insertion survives, with count-accurate coordinates for the remapper.
     # (line2 may appear in a hunk's @@ section-context header; what must NOT
     # appear is a +/- content line touching it.)
-    (repo / "a.c").write_text("line1\n\tline2\nADDED\nline3\n")
-    out = diff_worktree_file_u0(repo, Path("a.c"))
+    (git_repo / "a.c").write_text("line1\n\tline2\nADDED\nline3\n")
+    out = diff_worktree_file_u0(git_repo, Path("a.c"))
     assert "+ADDED" in out
     changed = [ln for ln in out.splitlines() if ln[:1] in "+-" and ln[:3] not in ("+++", "---")]
     assert changed == ["+ADDED"]  # the reindented line is not reported as changed
@@ -182,34 +182,34 @@ def test_no_index_diff_ignores_whitespace_only(tmp_path: Path) -> None:
     assert diff_no_index_u0(a, b) == ""
 
 
-def test_not_a_repo_raises(tmp_path: Path) -> None:
+def test_not_a_git_repo_raises(tmp_path: Path) -> None:
     with pytest.raises(GitUnavailableError):
         head_commit(tmp_path)
 
 
-def test_blob_sha_not_a_repo_raises(tmp_path: Path) -> None:
+def test_blob_sha_not_a_git_repo_raises(tmp_path: Path) -> None:
     with pytest.raises(GitUnavailableError):
         blob_sha(tmp_path, Path("a.c"))
 
 
-def test_blob_exists_not_a_repo_raises(tmp_path: Path) -> None:
+def test_blob_exists_not_a_git_repo_raises(tmp_path: Path) -> None:
     with pytest.raises(GitUnavailableError):
         blob_exists(tmp_path, "0" * 40)
 
 
 def test_rev_parse_commit_resolves_abbreviated_sha(tmp_path: Path) -> None:
-    path, full = _make_repo(tmp_path)
+    path, full = _make_git_repo(tmp_path)
     assert rev_parse_commit(path, full[:8]) == full
 
 
 def test_rev_parse_commit_unresolvable_raises(tmp_path: Path) -> None:
-    path, _ = _make_repo(tmp_path)
+    path, _ = _make_git_repo(tmp_path)
     with pytest.raises(GitUnavailableError):
         rev_parse_commit(path, "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
 
 
 def test_rev_parse_commit_non_commit_raises(tmp_path: Path) -> None:
-    path, _ = _make_repo(tmp_path)
+    path, _ = _make_git_repo(tmp_path)
     with pytest.raises(GitUnavailableError):
         rev_parse_commit(path, "not-a-ref")
 
@@ -233,8 +233,10 @@ class TestFailureClassification:
         with pytest.raises(NotAGitRepoError):
             head_commit(tmp_path)
 
-    def test_failing_command_inside_a_repo_is_gitcommandfailederror(self, tmp_path: Path) -> None:
-        root, _ = _make_repo(tmp_path)
+    def test_failing_command_inside_a_git_repo_is_gitcommandfailederror(
+        self, tmp_path: Path
+    ) -> None:
+        root, _ = _make_git_repo(tmp_path)
         with pytest.raises(GitCommandFailedError):
             rev_parse_commit(root, "no-such-ref")
 
@@ -245,7 +247,7 @@ class TestFailureClassification:
         there" — so folding an unrunnable git into None reported every file
         in the tree as new, with no message anywhere.
         """
-        root, _ = _make_repo(tmp_path)
+        root, _ = _make_git_repo(tmp_path)
         monkeypatch.setenv("PATH", str(tmp_path))
         with pytest.raises(GitMissingError):
             blob_sha(root, Path("a.txt"))
@@ -257,23 +259,23 @@ class TestFailureClassification:
 
         Merely misleading while every caller swallowed it; a propagating lie
         once blob_sha started re-raising GitMissingError, since a typo'd
-        repo_root would now abort a capture claiming git is not installed.
+        checkout root would now abort a capture claiming git is not installed.
         """
         missing = tmp_path / "no-such-dir"
         with pytest.raises(NotAGitRepoError, match="is not a directory"):
             head_commit(missing)
 
     def test_blob_sha_still_returns_none_for_a_path_absent_at_the_rev(self, tmp_path: Path) -> None:
-        root, _ = _make_repo(tmp_path)
+        root, _ = _make_git_repo(tmp_path)
         assert blob_sha(root, Path("never-existed.c")) is None
 
     def test_blob_exists_still_returns_false_for_an_unknown_sha(self, tmp_path: Path) -> None:
-        root, _ = _make_repo(tmp_path)
+        root, _ = _make_git_repo(tmp_path)
         assert blob_exists(root, "0" * 40) is False
 
 
 def test_rev_list_first_parent_newest_first(tmp_path: Path) -> None:
-    path, first = _make_repo(tmp_path)
+    path, first = _make_git_repo(tmp_path)
     (path / "b.txt").write_text("x")
     second = _commit_all(path)
     assert rev_list_first_parent(path) == [second, first]
@@ -347,17 +349,17 @@ class TestEveryPorcelainCallIsPinned:
 # ── config_value ──────────────────────────────────────────────────────────────
 
 
-def test_config_value_reads_repo_local_config(tmp_path: Path) -> None:
-    root, _ = _make_repo(tmp_path)
+def test_config_value_reads_repository_local_config(tmp_path: Path) -> None:
+    root, _ = _make_git_repo(tmp_path)
     subprocess.run(
-        ["git", "config", "user.email", "repo@example.com"],
+        ["git", "config", "user.email", "checkout@example.com"],
         cwd=root,
         check=True,
         env=git_env(tmp_path),
     )
-    assert gitio_module.config_value(root, "user.email") == "repo@example.com"
+    assert gitio_module.config_value(root, "user.email") == "checkout@example.com"
 
 
 def test_config_value_unset_key_is_none_not_error(tmp_path: Path) -> None:
-    root, _ = _make_repo(tmp_path)
+    root, _ = _make_git_repo(tmp_path)
     assert gitio_module.config_value(root, "otto.no-such-key") is None

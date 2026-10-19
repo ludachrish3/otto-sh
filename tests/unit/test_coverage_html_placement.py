@@ -24,7 +24,7 @@ import shlex
 
 import pytest
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 try:
     import tomllib  # Python 3.11+
@@ -80,7 +80,7 @@ def coverage_targets_last_pytest_leg(makefile_text: str) -> "dict[str, str]":
 
 
 def test_addopts_prints_the_console_report_and_writes_no_html() -> None:
-    kinds = addopts_report_kinds((PROJECT_ROOT / "pyproject.toml").read_text())
+    kinds = addopts_report_kinds((CHECKOUT_ROOT / "pyproject.toml").read_text())
     assert "term-missing" in kinds, f"addopts lost the console report: {kinds}"
     assert not [k for k in kinds if k.startswith("html")], (
         f"addopts writes an html report ({kinds}) — every pytest invocation in the tree "
@@ -89,7 +89,7 @@ def test_addopts_prints_the_console_report_and_writes_no_html() -> None:
 
 
 def test_every_coverage_target_writes_html_on_its_last_leg() -> None:
-    legs = coverage_targets_last_pytest_leg((PROJECT_ROOT / "Makefile").read_text())
+    legs = coverage_targets_last_pytest_leg((CHECKOUT_ROOT / "Makefile").read_text())
     assert len(legs) >= 5, f"expected the coverage-* python lanes, found {sorted(legs)}"
     missing = sorted(t for t, line in legs.items() if "--cov-report=html" not in line)
     assert not missing, (

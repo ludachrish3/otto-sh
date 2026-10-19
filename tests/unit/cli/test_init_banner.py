@@ -16,7 +16,7 @@ from rich.console import Console
 from otto.cli.init import next_steps_panel
 
 # Reuse the rendering suite's harness: same DispatchRunner wiring, and the
-# same "scaffold a whole repo first" helper.
+# same "scaffold a whole project first" helper.
 from tests.unit.cli.test_init_render import _invoke, _scaffold_all
 
 _EXPORTS_WHEN_INACTIVE = 3

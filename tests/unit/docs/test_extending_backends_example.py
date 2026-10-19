@@ -23,9 +23,9 @@ import pytest
 from otto.host.transfer import registry as registry_mod
 from otto.testing import assert_transfer_backend_conforms
 from otto.utils import Status
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-_PAGE = PROJECT_ROOT / "docs" / "cookbook" / "extending" / "extending-backends.md"
+_PAGE = CHECKOUT_ROOT / "docs" / "cookbook" / "extending" / "extending-backends.md"
 _FENCE = re.compile(r"^```python\n(?P<body>.*?)^```$", re.MULTILINE | re.DOTALL)
 
 

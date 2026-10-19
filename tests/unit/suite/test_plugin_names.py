@@ -2,7 +2,7 @@
 
 The run's own pytest session does all three (design
 ``docs/superpowers/specs/2026-09-27-test-name-cache-design.md`` §3.3): the
-targets stay the repo's test directories, ``pytest_ignore_collect`` narrows
+targets stay the project's test directories, ``pytest_ignore_collect`` narrows
 them to the candidate files, ``pytest_collection_modifyitems`` records every
 collected item per file and keeps the ones a requested name selects, and a
 failed module report becomes that file's ``error``.
@@ -176,7 +176,7 @@ def test_a_collect_ignored_candidate_stays_ignored_with_the_dirs_as_targets(
 
 def test_candidate_pruning_decides_by_path_alone() -> None:
     """The hook's answers, path by path, with no stat of the path itself."""
-    tests = Path("/sut/repo/tests")
+    tests = Path("/sut/project/tests")
     plugin = OttoPlugin(
         project_test_dirs=[tests],
         candidates=[tests / "a" / "test_x.py", tests / "conftest.py"],
@@ -189,11 +189,11 @@ def test_candidate_pruning_decides_by_path_alone() -> None:
     assert ignored(tests / "a") is None
     assert ignored(tests / "conftest.py") is None
     assert ignored(tests) is None
-    assert ignored(tests.parent) is None  # above the test dir: the SUT-dir rule's call
+    assert ignored(tests.parent) is None  # above the test dir: the project-root rule's call
     assert ignored(tests / "a" / "test_y.py") is True
     assert ignored(tests / "b") is True
     assert ignored(tests / "b" / "test_x.py") is True
-    assert ignored(Path("/elsewhere/test_x.py")) is True  # the SUT-dir rule still applies
+    assert ignored(Path("/elsewhere/test_x.py")) is True  # the project-root rule still applies
 
 
 # ── matching ─────────────────────────────────────────────────────────────────

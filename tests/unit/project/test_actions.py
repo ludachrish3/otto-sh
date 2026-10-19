@@ -1,11 +1,11 @@
-"""Per-repo ``ProjectActions`` — owner-scoped defaults, tri-state status, registration.
+"""Per-project ``ProjectActions`` — owner-scoped defaults, tri-state status, registration.
 
 NO LOCAL REGISTRY-ISOLATION FIXTURE HERE, deliberately. ``PROJECT_ACTIONS`` is
 an ``otto.registry.Registry``, and the root conftest's autouse
 ``_isolate_registries`` discovers every ``Registry`` reachable from a loaded
 ``otto.*`` module dynamically — this one included, from the import above.
 Pinned by ``test_registration_survives_a_repeat_run`` below, which registers
-the same repo name a second time in the same process.
+the same project name a second time in the same process.
 """
 
 import pytest
@@ -34,10 +34,10 @@ from otto.project import (
 from otto.registry import registering_project
 from otto.result import Result
 from otto.utils import Status
-from tests._fixtures.fake_repo import fake_repo
+from tests._fixtures.fake_project import fake_project
 
-PROJECT = fake_repo("acme")
-OTHER_REPO = fake_repo("other")
+PROJECT = fake_project("acme")
+OTHER_REPO = fake_project("other")
 
 
 def _fail(msg):
@@ -132,7 +132,7 @@ class _FakeCtx:
     the project layer's walks are BOUND as well as stamped.
     """
 
-    # The real seam, applied to the double: `for_repo` only wraps, so borrowing
+    # The real seam, applied to the double: `for_project` only wraps, so borrowing
     # OttoContext's own method keeps a second copy of the wiring out of the
     # tests that exist to certify it.
     for_project = OttoContext.for_project
@@ -178,8 +178,8 @@ def _fake_ctx(n=2, **host_kwargs):
 def _actions(ctx, project=PROJECT, cls=ProjectActions):
     """Build actions the way production does — around ``ctx.for_project(project.name)``.
 
-    ``actions_for`` is the only constructor a user's repo ever reaches, and the
-    repo-scoped view it supplies is what carries the owner scope now that no
+    ``actions_for`` is the only constructor a user's project ever reaches, and the
+    project-scoped view it supplies is what carries the owner scope now that no
     ``ProjectActions`` body spells ``owner=``. Constructing around the plain
     double instead would exercise an unscoped instance nothing produces, and
     every ``{"owner": "acme"}`` assertion below would be measuring the absence
@@ -189,7 +189,7 @@ def _actions(ctx, project=PROJECT, cls=ProjectActions):
 
 
 def _ctx_with_products(owner, installed_flags, other_flags=()):
-    """One host carrying *owner*'s products plus another repo's, per flag list."""
+    """One host carrying *owner*'s products plus another project's, per flag list."""
     products = [_FakeItem(f"p{i}", owner, installed=f) for i, f in enumerate(installed_flags)]
     products += [_FakeItem(f"o{i}", "other", installed=f) for i, f in enumerate(other_flags)]
     host = _FakeHost("h0", products=products)
@@ -201,8 +201,8 @@ def _ctx_with_products(owner, installed_flags, other_flags=()):
 
 @pytest.mark.asyncio
 async def test_default_install_dispatches_owner_scoped_to_all_hosts():
-    # Kills: forgetting the owner filter — repo A's actions would install
-    # repo B's products (the exact cross-repo bleed the design forbids).
+    # Kills: forgetting the owner filter — project A's actions would install
+    # project B's products (the exact cross-project bleed the design forbids).
     ctx, hosts = _fake_ctx(n=2)
     result = await _actions(ctx).install(InstallOptions())
     assert result.is_ok
@@ -211,8 +211,8 @@ async def test_default_install_dispatches_owner_scoped_to_all_hosts():
 
 
 @pytest.mark.asyncio
-async def test_every_project_walk_is_bound_to_its_own_repos_universe():
-    """The view's OTHER half: this layer's walks name their repo as well as stamp it.
+async def test_every_project_walk_is_bound_to_its_own_projects_universe():
+    """The view's OTHER half: this layer's walks name their project as well as stamp it.
 
     Every ``{"owner": "acme"}`` assertion in this file reads the stamp, which
     the host verbs record. The universe binding is a second, separate override
@@ -257,8 +257,8 @@ async def test_install_reduces_a_captured_host_exception():
 
 @pytest.mark.asyncio
 async def test_uninstall_hardwires_debug_logs_off():
-    # THE spec §5 rule at the repo layer: host debug logs belong to no repo,
-    # so a per-repo uninstall must never gather them (N repos would each sweep,
+    # THE spec §5 rule at the project layer: host debug logs belong to no project,
+    # so a per-project uninstall must never gather them (N projects would each sweep,
     # overwriting the last). Kills: forwarding get_debug_logs, or omitting it
     # and inheriting the host default of True.
     ctx, hosts = _fake_ctx(n=1)
@@ -278,7 +278,7 @@ async def test_uninstall_forwards_get_product_logs_false():
 @pytest.mark.asyncio
 async def test_cleanup_uninstalls_then_removes_owner_scoped_dev_tools():
     # Kills: cleanup that skips the tools (leaving probes behind), that drops
-    # the owner scope (removing another repo's tools), or that removes tools
+    # the owner scope (removing another project's tools), or that removes tools
     # BEFORE the products that may need them.
     #
     # The tool WALK is the host verb's -- filter, order and best-effort rule
@@ -337,25 +337,25 @@ async def test_cleanup_still_removes_dev_tools_after_a_failed_uninstall():
 
 
 @pytest.mark.asyncio
-async def test_cleanup_hands_a_repo_override_an_instance_of_its_own_class():
-    """``cleanup``'s product half honours a repo's ``uninstall``, with the repo's class.
+async def test_cleanup_hands_a_project_override_an_instance_of_its_own_class():
+    """``cleanup``'s product half honours a project's ``uninstall``, with the project's class.
 
-    THE HEADLINE USE CASE IS THE TRIGGER: a repo adds a flag to one of the
+    THE HEADLINE USE CASE IS THE TRIGGER: a project adds a flag to one of the
     six. ``cleanup``'s product half is ``self.uninstall(...)``, which resolves
-    through the MRO to the repo's body -- and used to hand it an instance of
-    OTTO's class, so the first read of the repo's own field raised
+    through the MRO to the project's body -- and used to hand it an instance of
+    OTTO's class, so the first read of the project's own field raised
     ``AttributeError`` out of ``otto run cleanup`` and out of every
     ``ensure("clean")`` marker. The instance is rebuilt as the registered
     body's class now.
 
     Two claims, and the second is the one a name-matching rebuild would get
-    wrong: the repo's own ``soft`` takes its DEFAULT, and ``product_logs``
+    wrong: the project's own ``soft`` takes its DEFAULT, and ``product_logs``
     ARRIVES -- ``cleanup``'s caller asked to skip the log haul and the
     override has to hear it, which it does because the field is shared by
     declaring class.
 
     Kills: handing over the base instance (``AttributeError`` on ``soft``),
-    and building the repo's class from defaults only (``product_logs`` comes
+    and building the project's class from defaults only (``product_logs`` comes
     back True).
     """
     from typing import Annotated
@@ -396,14 +396,14 @@ async def test_cleanup_refuses_an_uninstall_override_with_a_required_field():
     """A field with NO default cannot be built from otto's class, so ``cleanup`` refuses.
 
     The one shape the rebuild cannot serve. ``cleanup`` holds a
-    ``CleanupOptions``; a required field on the repo's ``uninstall`` class was
+    ``CleanupOptions``; a required field on the project's ``uninstall`` class was
     never asked for on ``otto run cleanup``'s command line and has no default
     to fall back on, so there is no value to pass and no way to invent one.
 
     REFUSED BY NAME, up front, rather than left to the constructor: a pydantic
     options class would raise ``ValidationError`` (rendered as a CLI
     ``BadParameter``) and a plain dataclass a bare ``TypeError``, and neither
-    mentions ``cleanup`` -- which is the only place the repo can fix it.
+    mentions ``cleanup`` -- which is the only place the project can fix it.
     """
     from typing import Annotated
 
@@ -435,7 +435,7 @@ async def test_cleanup_refuses_an_uninstall_override_with_a_required_field():
     message = str(caught.value)
     assert "drain" in message
     assert "DrainUninstall" in message
-    assert "cleanup" in message  # names the method the repo must override too
+    assert "cleanup" in message  # names the method the project must override too
     assert ran == []
     assert hosts[0].calls == []  # refused BEFORE the teardown started
 
@@ -498,7 +498,7 @@ async def test_dev_tool_walks_dispatch_through_the_host_instance():
 
 @pytest.mark.asyncio
 async def test_install_tools_dispatches_the_owner_scoped_dev_tool_install():
-    # Kills: dropping the owner scope (this repo's install_tools would place a
+    # Kills: dropping the owner scope (this project's install_tools would place a
     # neighbour's tooling), and kills re-walking the tools here -- the walk's
     # order and stop-on-first-failure rule belong to the host verb, and a copy
     # at this layer drifts from it (it did, until the verb learned owner=).
@@ -536,9 +536,9 @@ async def test_install_tools_dev_false_touches_nothing():
 
 
 @pytest.mark.asyncio
-async def test_install_tools_toolchain_is_a_repo_level_noop_by_design():
+async def test_install_tools_toolchain_is_a_project_level_noop_by_design():
     # Toolchain artifacts are HOST-global (one toolchain, all owners), so the
-    # orchestrator places them once; a repo's actions own no part of that.
+    # orchestrator places them once; a project's actions own no part of that.
     # Pinned rather than left implicit: silently doing nothing must be the
     # DECLARED contract of this seam, not an oversight a reader has to guess at.
     mine = _FakeItem("probe", "acme")
@@ -582,7 +582,7 @@ async def test_get_logs_dispatches_owner_scoped_product_haul():
 @pytest.mark.asyncio
 async def test_get_logs_product_false_gathers_nothing():
     # There is no debug half here on purpose (host debug logs belong to no
-    # repo), so product=False leaves this action with nothing to do.
+    # project), so product=False leaves this action with nothing to do.
     ctx, hosts = _fake_ctx(n=1)
     assert (await _actions(ctx).get_logs(GetLogsOptions(product_logs=False))).is_ok
     assert hosts[0].calls == []
@@ -630,11 +630,11 @@ async def test_get_logs_require_product_logs_fails_when_an_owning_host_retrieved
 
 
 @pytest.mark.asyncio
-async def test_get_logs_require_product_logs_only_asks_hosts_this_repo_owns(tmp_path):
-    # Kills: demanding a haul from EVERY fleet host. A repo whose products live
+async def test_get_logs_require_product_logs_only_asks_hosts_this_project_owns(tmp_path):
+    # Kills: demanding a haul from EVERY fleet host. A project whose products live
     # on part of the fleet (firmware on the embedded target, say) can retrieve
     # everything it owns and still be failed — named after an innocent host it
-    # never deploys to — which makes the flag unusable for that whole repo class.
+    # never deploys to — which makes the flag unusable for that whole project class.
     mine = _log_dir(tmp_path, "mine", "h0", delivered=True)
     owner_host = _FakeHost("h0", products=[_FakeItem("app", "acme")], log_dir=mine)
     bare_host = _FakeHost(
@@ -723,9 +723,9 @@ async def test_status_is_partial_across_hosts_not_only_within_one():
 
 
 @pytest.mark.asyncio
-async def test_status_ignores_another_repos_products():
-    # Kills: counting the whole fleet's products — another repo's half-install
-    # would drag this repo to PARTIAL and its full install would fake ours.
+async def test_status_ignores_another_projects_products():
+    # Kills: counting the whole fleet's products — another project's half-install
+    # would drag this project to PARTIAL and its full install would fake ours.
     ctx, _ = _ctx_with_products("acme", [True, True], other_flags=[False, False])
     assert await _actions(ctx).status(StatusOptions()) is InstallState.INSTALLED
 
@@ -741,7 +741,7 @@ async def test_status_with_no_owned_products_is_uninstalled():
 @pytest.mark.asyncio
 async def test_is_uninstalled_is_false_at_partial_not_only_at_installed():
     # THE BOUNDARY, and the reason this is not spelled `not is_installed()`: a
-    # half-installed repo is neither installed nor uninstalled, and a boolean
+    # half-installed project is neither installed nor uninstalled, and a boolean
     # that answered True here would let a converge skip the teardown over
     # remnants still on the fleet.
     for flags, expected in [
@@ -755,10 +755,10 @@ async def test_is_uninstalled_is_false_at_partial_not_only_at_installed():
 
 @pytest.mark.asyncio
 async def test_is_uninstalled_reads_status_rather_than_counting_again():
-    # ONE AUTHORITY. A repo whose install state comes from something otto
+    # ONE AUTHORITY. A project whose install state comes from something otto
     # cannot see overrides status() and nothing else; a boolean built from its
     # own product walk would ignore that override entirely and answer for a
-    # fleet the repo has already said not to read.
+    # fleet the project has already said not to read.
     class _Opinionated(ProjectActions):
         async def status(self, opts):
             return InstallState.UNINSTALLED
@@ -768,14 +768,14 @@ async def test_is_uninstalled_reads_status_rather_than_counting_again():
 
 
 @pytest.mark.asyncio
-async def test_is_uninstalled_hands_a_repo_override_an_instance_of_its_own_class():
-    """The probe honours a repo's ``status``, with the repo's own options class.
+async def test_is_uninstalled_hands_a_project_override_an_instance_of_its_own_class():
+    """The probe honours a project's ``status``, with the project's own options class.
 
     The same seam as :meth:`cleanup`'s product half, and the same failure it
     had: ``self.status(StatusOptions())`` resolves through the MRO to the
-    repo's body, so handing over otto's instance raised ``AttributeError`` on
-    the first field the repo declared. The instance is rebuilt as the
-    registered body's class now, and the repo's own field takes its default --
+    project's body, so handing over otto's instance raised ``AttributeError`` on
+    the first field the project declared. The instance is rebuilt as the
+    registered body's class now, and the project's own field takes its default --
     there is no ``--full`` equivalent for it to inherit, because
     ``is_uninstalled`` holds a bare ``StatusOptions``.
 
@@ -813,7 +813,7 @@ async def test_is_uninstalled_refuses_a_status_override_with_a_required_field():
     """No default, nothing to build it from, so the probe refuses by name.
 
     ``is_uninstalled`` takes no arguments at all, so a required field on the
-    repo's ``status`` class has no possible source. Such a repo overrides
+    project's ``status`` class has no possible source. Such a project overrides
     ``is_uninstalled`` itself -- which the message says.
     """
     from typing import Annotated
@@ -853,17 +853,17 @@ async def test_is_uninstalled_refuses_a_status_override_with_a_required_field():
 def test_no_is_installed_boolean_on_project_actions():
     # DELIBERATE ASYMMETRY, and this is the note to whoever comes to "fix" it.
     # A host carries the is_installed/is_uninstalled pair because its answer is
-    # per product; a repo's is an aggregate over the fleet, and an aggregate is
+    # per product; a project's is an aggregate over the fleet, and an aggregate is
     # where PARTIAL appears -- which False would bury alongside UNINSTALLED,
     # the exact ambiguity the tri-state status() exists to resolve.
     assert not hasattr(ProjectActions, "is_installed")
 
 
-def test_owns_products_sees_only_this_repos_products():
+def test_owns_products_sees_only_this_projects_products():
     ctx, _ = _ctx_with_products("acme", [False], other_flags=[True])
     assert _actions(ctx).owns_products is True
     assert _actions(ctx, OTHER_REPO).owns_products is True
-    assert _actions(ctx, fake_repo("docs")).owns_products is False
+    assert _actions(ctx, fake_project("docs")).owns_products is False
 
 
 def test_owns_products_is_false_for_an_empty_fleet():
@@ -879,7 +879,7 @@ async def test_is_clean_is_false_while_an_owned_product_is_installed():
 
 @pytest.mark.asyncio
 async def test_is_clean_is_false_while_an_owned_dev_tool_is_installed():
-    # Kills: an is_clean that only asks about products — a repo's probe left on
+    # Kills: an is_clean that only asks about products — a project's probe left on
     # the board is exactly what cleanup() removes and is_clean() must see.
     tool = _FakeItem("probe", "acme", installed=True)
     ctx, _ = _fake_ctx(n=1, dev_tools=[tool])
@@ -887,7 +887,7 @@ async def test_is_clean_is_false_while_an_owned_dev_tool_is_installed():
 
 
 @pytest.mark.asyncio
-async def test_is_clean_ignores_another_repos_leftovers():
+async def test_is_clean_ignores_another_projects_leftovers():
     host = _FakeHost(
         "h0",
         products=[_FakeItem("p", "other", installed=True)],
@@ -911,19 +911,19 @@ async def test_is_clean_is_true_when_owned_products_and_tools_are_gone():
 
 def test_register_project_actions_requires_init_import_context():
     # Kills: allowing ad-hoc registration with no attribution — the class
-    # would be unkeyable and shadow every repo.
+    # would be unkeyable and shadow every project.
     with pytest.raises(ValueError, match="init module"):
         register_project_actions(ProjectActions)
 
 
-def test_register_twice_from_same_repo_fails_loud():
+def test_register_twice_from_same_project_fails_loud():
     with registering_project("acme"):
         register_project_actions(ProjectActions)
         with pytest.raises(ValueError, match="acme"):
             register_project_actions(ProjectActions)
 
 
-def test_two_repos_each_registering_is_the_intended_composition():
+def test_two_projects_each_registering_is_the_intended_composition():
     class Mine(ProjectActions):
         pass
 
@@ -947,7 +947,7 @@ def test_register_project_actions_returns_the_class_so_it_decorates():
 
 
 def test_registration_survives_a_repeat_run():
-    # Twin of test_register_twice_from_same_repo_fails_loud, and the reason
+    # Twin of test_register_twice_from_same_project_fails_loud, and the reason
     # this file needs no isolation fixture of its own: if the root conftest's
     # _isolate_registries did not reach PROJECT_ACTIONS, the entry left by the
     # test above would make THIS registration the loud duplicate.
@@ -964,15 +964,15 @@ def test_actions_for_prefers_registered_class_else_default():
         register_project_actions(Custom)
     ctx, _ = _fake_ctx(n=0)
     assert type(actions_for(PROJECT, ctx)) is Custom
-    assert type(actions_for(fake_repo("unregistered"), ctx)) is ProjectActions
+    assert type(actions_for(fake_project("unregistered"), ctx)) is ProjectActions
 
 
-def test_actions_for_hands_the_instance_a_view_bound_to_its_own_repo():
-    """THE ONE LINE that scopes a repo's whole lifecycle (spec §7).
+def test_actions_for_hands_the_instance_a_view_bound_to_its_own_project():
+    """THE ONE LINE that scopes a project's whole lifecycle (spec §7).
 
     Not ``actions.ctx is ctx`` any more, and the difference is the feature: an
     instance handed the plain context walks the union and stamps no owner —
-    which, at the host layer, means *every* repo's products. Nothing else in
+    which, at the host layer, means *every* project's products. Nothing else in
     this file can catch that, because every test above builds its actions
     through the same view ``actions_for`` does.
     """
@@ -1049,7 +1049,7 @@ def test_the_cleanliness_aggregate_keeps_a_dirty_row_over_an_unreadable_one():
     assert CleanlinessReport().overall is Cleanliness.CLEAN
 
 
-def test_project_status_defaults_to_an_empty_per_repo_map():
+def test_project_status_defaults_to_an_empty_per_project_map():
     status = ProjectStatus(overall=InstallState.UNINSTALLED)
     assert status.projects == {}
     assert ProjectStatus(

@@ -13,13 +13,13 @@ from pathlib import Path
 
 import pytest
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 from tests.unit.test_lane_invariants import collect_marker_sets  # noqa: F401 - fixture
 from tests.unit.test_make_release_lanes import _phony_targets, _rule
 
 pytestmark = pytest.mark.interpreter_agnostic
 
-_MAKEFILE = (PROJECT_ROOT / "Makefile").read_text()
+_MAKEFILE = (CHECKOUT_ROOT / "Makefile").read_text()
 
 M_QUICK = (
     "not stability and not busybox and not conformance and not kmodcov and not browser"
@@ -143,7 +143,7 @@ def _make(tmp_path: Path, *args: str, env_extra: "dict[str, str] | None" = None)
     ]
     with subprocess.Popen(
         argv,
-        cwd=PROJECT_ROOT,
+        cwd=CHECKOUT_ROOT,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,

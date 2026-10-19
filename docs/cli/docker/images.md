@@ -22,8 +22,8 @@ An illustrative listing — your daemon's columns and rows are what you will see
 ```text
 $ otto docker images
 == test3 ==
-REPOSITORY   TAG       IMAGE ID       CREATED          SIZE
-repo1-api    latest    cbd8571d4b6e   2 minutes ago    148MB
+REPOSITORY     TAG       IMAGE ID       CREATED          SIZE
+project1-api   latest    cbd8571d4b6e   2 minutes ago    148MB
 
 == test1 ==
 REPOSITORY   TAG       IMAGE ID       CREATED          SIZE

@@ -32,7 +32,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 # The frozen rename inventory, spelled literally: this guard never reads the JSON.
 RENAMES = [
@@ -115,16 +115,16 @@ def _member(path: str) -> str:
 
 OLD = {_member(e["old"]) for e in RENAMES}
 # This file names the old spellings to explain them.
-TEXT_EXCEPTIONS[Path(__file__).resolve().relative_to(PROJECT_ROOT).as_posix()] = OLD
+TEXT_EXCEPTIONS[Path(__file__).resolve().relative_to(CHECKOUT_ROOT).as_posix()] = OLD
 
 
 def _files(roots: "list[str]") -> "list[Path]":
     out: list[Path] = []
     for root in roots:
-        base = PROJECT_ROOT / root
+        base = CHECKOUT_ROOT / root
         candidates = [base] if base.is_file() else base.rglob("*")
         for path in candidates:
-            rel = path.relative_to(PROJECT_ROOT).as_posix()
+            rel = path.relative_to(CHECKOUT_ROOT).as_posix()
             if path.is_file() and path.suffix in SUFFIXES and not rel.startswith(NOT_SCANNED):
                 out.append(path)
     return sorted(out)
@@ -230,7 +230,7 @@ def test_an_old_hook_spelling_fails_loudly(definer):
 def test_no_docs_page_or_example_spells_an_old_hook_name():
     pattern = _word(OLD)
     hits = [
-        f"{path.relative_to(PROJECT_ROOT)}:{no}: {m.group(1)}"
+        f"{path.relative_to(CHECKOUT_ROOT)}:{no}: {m.group(1)}"
         for path in _files(DOC_ROOTS)
         for no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
         for m in pattern.finditer(line)
@@ -242,7 +242,7 @@ def test_no_code_file_spells_an_unambiguous_old_hook_name():
     names = OLD - AMBIGUOUS
     hits = []
     for path in _files(CODE_ROOTS):
-        rel = path.relative_to(PROJECT_ROOT).as_posix()
+        rel = path.relative_to(CHECKOUT_ROOT).as_posix()
         allowed = TEXT_EXCEPTIONS.get(rel, set())
         for no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             hits += [f"{rel}:{no}: {n}" for n in _word(names).findall(line) if n not in allowed]
@@ -286,12 +286,12 @@ def _rebinds(tree: ast.AST) -> "list[tuple[int, str]]":
 def test_no_code_rebinds_or_patches_an_old_hook_name():
     hits = []
     for path in _files(CODE_ROOTS):
-        rel = path.relative_to(PROJECT_ROOT).as_posix()
+        rel = path.relative_to(CHECKOUT_ROOT).as_posix()
         if path.suffix != ".py" or rel in TEXT_EXCEPTIONS:
             continue
         try:
             tree = ast.parse(path.read_text(encoding="utf-8"))
         except SyntaxError:
-            continue  # deliberately broken fixture sources (tests/repo_broken)
+            continue  # deliberately broken fixture sources (tests/project_broken)
         hits += [f"{rel}:{no}: {name}" for no, name in _rebinds(tree)]
     assert hits == [], "a spy or patch still targets a renamed hook:\n" + "\n".join(hits)

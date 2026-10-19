@@ -2,7 +2,7 @@
 
 Docker-specific chaos scenarios (Tasks 5-7 append to this module) share this
 harness: a docker-capable SSH parent (``docker_parent`` — test3 by default,
-or the hermetic loopback sshd via ``OTTO_CHAOS_DOCKER=loopback``), repo1's
+or the hermetic loopback sshd via ``OTTO_CHAOS_DOCKER=loopback``), project1's
 one-service compose stack staged under a fresh, uniquely-named project per
 scenario (``api_host``), and a module-local hygiene bracket that snapshots
 the DOCKER parent rather than the lane's leased unix bed host — this
@@ -66,7 +66,7 @@ pytestmark = [
     pytest.mark.timeout(300),
 ]
 
-REPO1_DIR = TESTS_ROOT / "repo1"
+PROJECT1_DIR = TESTS_ROOT / "project1"
 
 
 # Every host this module has live at any given moment: `docker_parent`
@@ -91,7 +91,7 @@ def _run(coro):
 
     There is also no safe way to close the stale connection from a LATER
     call — anything that touches it needs the very loop that is already
-    gone, and this repo's session-wide orphaned-loop reaper
+    gone, and this suite's session-wide orphaned-loop reaper
     (``tests/_fixtures/_loop_reaper.py``, wired into every test's teardown
     via ``tests/conftest.py``) actively closes any loop a test leaves open
     at its own boundary, so keeping ONE loop alive for the whole module
@@ -167,8 +167,8 @@ def docker_parent(tmp_path_factory) -> "Iterator[UnixHost]":
 
 
 @pytest.fixture(scope="module")
-def docker_repo() -> Project:
-    return Project(root=REPO1_DIR)
+def docker_project() -> Project:
+    return Project(root=PROJECT1_DIR)
 
 
 @pytest.fixture
@@ -179,10 +179,10 @@ def docker_lab(docker_parent) -> Lab:
 
 
 @pytest.fixture(scope="module")
-def built_image(docker_parent, docker_repo):
-    """Ensure the repo1 ``api`` image is built once for this module."""
-    results = _run(build_images(docker_repo, docker_parent))
-    assert results["repo1-api"].is_ok, results
+def built_image(docker_parent, docker_project):
+    """Ensure the project1 ``api`` image is built once for this module."""
+    results = _run(build_images(docker_project, docker_parent))
+    assert results["project1-api"].is_ok, results
     return results
 
 
@@ -199,12 +199,14 @@ async def _teardown(project: Project, lab: Lab, parent: UnixHost, compose_projec
 
 
 @pytest.fixture
-def api_host(docker_parent, docker_repo, docker_lab, built_image):
-    """A running repo1 ``api`` container host with a unique ``-e2e-`` project;
+def api_host(docker_parent, docker_project, docker_lab, built_image):
+    """A running project1 ``api`` container host with a unique ``-e2e-`` project;
     always composed down + staging cleaned, whatever the scenario did."""
     proj = fresh_project()
     hosts = _run(
-        compose_up(docker_repo, docker_lab, parent=docker_parent.id, project_name=proj, build=False)
+        compose_up(
+            docker_project, docker_lab, parent=docker_parent.id, project_name=proj, build=False
+        )
     )
     api = hosts["api"]
     _active_hosts.append(api)
@@ -212,7 +214,7 @@ def api_host(docker_parent, docker_repo, docker_lab, built_image):
         yield api
     finally:
         try:
-            _run(_teardown(docker_repo, docker_lab, docker_parent, proj))
+            _run(_teardown(docker_project, docker_lab, docker_parent, proj))
         finally:
             _active_hosts.remove(api)
 
@@ -262,7 +264,7 @@ def test_harness_docker_ready(docker_parent):
 
 
 def test_compose_roundtrip_is_hygiene_clean(api_host):
-    result = _run(api_host.run("cat /etc/repo1-marker.txt", timeout=30))
+    result = _run(api_host.run("cat /etc/project1-marker.txt", timeout=30))
     assert result.status == Status.Success
     # the autouse bracket certifies zero container/network/staging residue
 
@@ -405,7 +407,7 @@ def test_exec_never_returns_then_interrupt(api_host, chaos_rng):
 def test_daemon_restart_under_open_session(api_host, docker_parent):
     """Restart the docker daemon while a container session is open: the next
     command errors truthfully; after the daemon returns and the container is
-    started, the same host object serves again. repo1's compose sets no
+    started, the same host object serves again. project1's compose sets no
     restart policy, so the container stays stopped after the daemon bounce —
     that is part of the characterized contract."""
 
@@ -436,7 +438,7 @@ def test_daemon_restart_under_open_session(api_host, docker_parent):
 
 
 def test_composed_pileup_leaves_zero_accumulation(
-    docker_parent, docker_repo, docker_lab, built_image, chaos_rng
+    docker_parent, docker_project, docker_lab, built_image, chaos_rng
 ):
     """5 interrupted ``composed(..., own=True)`` flows in a row: after
     per-round recovery, zero container accumulation, zero network
@@ -453,7 +455,7 @@ def test_composed_pileup_leaves_zero_accumulation(
 
     async def one_flow(entered: dict[str, bool]) -> None:
         async with composed(
-            docker_repo,
+            docker_project,
             docker_lab,
             parent=docker_parent.id,
             project_name=proj,
@@ -490,7 +492,7 @@ def test_composed_pileup_leaves_zero_accumulation(
             # legitimately strands a half-up stack (composed()'s finally never
             # armed); down must reconcile any half-state, idempotently.
             down = await compose_down(
-                docker_repo, docker_lab, parent=docker_parent.id, project_name=proj
+                docker_project, docker_lab, parent=docker_parent.id, project_name=proj
             )
             # compose_down logs-and-returns on failure rather than raising --
             # if the daemon itself died mid-pileup (it runs right after the

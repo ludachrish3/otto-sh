@@ -21,16 +21,16 @@ from otto.suite.layout import ArtifactLayout
 from otto.suite.plugin import OttoPlugin
 from otto.suite.run import ASYNCIO_LOOP_ARGS
 from otto.utils import Status
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 # None of the tests in this file request module_dir/test_dir — the ensure
 # marker and the ctx fixture are what is under test here — so every
 # OttoFixturesPlugin() below is built with this placeholder layout, never
 # resolved against the filesystem. An absolute path under the real system
 # temp dir (not a bare relative "unused"), so a stray resolution wouldn't
-# silently write under the repo's own cwd.
+# silently write under the project's own cwd.
 _LAYOUT = ArtifactLayout(root=Path(tempfile.gettempdir()) / "otto-fixtures-plugin-unused-layout")
-_SRC = PROJECT_ROOT / "src"
+_SRC = CHECKOUT_ROOT / "src"
 
 
 class _Runner:

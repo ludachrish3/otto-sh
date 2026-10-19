@@ -38,9 +38,9 @@ import pytest
 from otto.utils import WaitTimeoutError, wait_for
 from tests._fixtures._host_pool import UNIX_POOL, lease_unix_host
 from tests.e2e._otto_subprocess import (
+    CHECKOUT_ROOT,
     OTTO_BIN,
-    PROJECT_ROOT,
-    REPO1,
+    PROJECT1,
     assert_output_dir,
     otto_subprocess_env,
 )
@@ -62,7 +62,7 @@ def _start_monitor(
     *,
     lab: str = "unix",
     xdir: Path,
-    roots: Path = REPO1,
+    roots: Path = PROJECT1,
     extra_env: dict[str, str] | None = None,
 ) -> subprocess.Popen[str]:
     """Start ``otto --lab <lab> monitor <argv>`` as a non-blocking Popen.
@@ -81,7 +81,7 @@ def _start_monitor(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        cwd=str(PROJECT_ROOT),
+        cwd=str(CHECKOUT_ROOT),
         # Isolate from the xdist worker's process group so that pytest's own
         # SIGINT (e.g. KeyboardInterrupt on Ctrl+C) does not propagate to the
         # monitor subprocess before we are ready to stop it ourselves.
@@ -179,7 +179,7 @@ def _run_monitor_briefly(
     # per-tick command budget: at interval=5 a flat 6 s left the first tick's
     # whole batch (SSH connect + ~10 parser commands + DB write) 1.2x of its
     # own interval to finish in. That is thinner than any other margin in this
-    # repo, and it duly false-failed a gate run under concurrent load
+    # suite, and it duly false-failed a gate run under concurrent load
     # (`test_per_host_parser_scoping_via_init_module`, zero Uptime rows).
     #
     # This is a RUNAWAY GUARD, not a discriminator: nothing passes or fails
@@ -354,12 +354,12 @@ def _uptime_rows(db_path: Path, host: str) -> int:
 
 
 def test_per_host_parser_scoping_via_init_module(monitor_host: str, tmp_path: Path) -> None:
-    """UptimeParser registered (via repo1's init module) for the leased host id
+    """UptimeParser registered (via project1's init module) for the leased host id
     produces Uptime rows; registered for a non-existent id, the same host gets
     only defaults. Two runs = both halves of the scoping guarantee through the
     real subprocess path (settings.toml init -> registry -> collector -> DB).
     """
-    # repo1_monitor_uptime.py's register_host_parsers() call keys on the exact
+    # project1_monitor_uptime.py's register_host_parsers() call keys on the exact
     # host *id* (otto/monitor/factory.py: get_host_parsers(host.id)), not the
     # short pool element --hosts fullmatches (with a trailing wildcard). The
     # tech1 lab fixture (see tests/_fixtures/lab_data/tech1/lab.json) gives

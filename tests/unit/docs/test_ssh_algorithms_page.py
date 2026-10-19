@@ -13,7 +13,7 @@ row missing from the page entirely means a user has no way to discover it.
 
 import re
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 from tests._fixtures.ssh_algorithm_matrix import (
     CIPHER,
     COMPRESSION,
@@ -24,7 +24,7 @@ from tests._fixtures.ssh_algorithm_matrix import (
     SshAlgorithm,
 )
 
-_PAGE = PROJECT_ROOT / "docs" / "architecture" / "ssh-algorithms.md"
+_PAGE = CHECKOUT_ROOT / "docs" / "architecture" / "ssh-algorithms.md"
 
 _HEADING_TO_FAMILY = {
     "Key exchange": KEX,

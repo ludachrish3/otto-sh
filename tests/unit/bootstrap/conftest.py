@@ -1,7 +1,7 @@
 """Shared fixtures for the ``tests/unit/bootstrap`` package.
 
-Every test here drives ``bootstrap()`` discovery against a SUT repo written into
-``tmp_path``, which imports that repo's init modules into ``sys.modules``.
+Every test here drives ``bootstrap()`` discovery against a project written into
+``tmp_path``, which imports that project's init modules into ``sys.modules``.
 Those imports outlive the test, so under the nightly
 ``--count=N --repeat-scope=session`` repeat the second pass re-imports the same
 module *name* and gets pass 1's cached copy — a stale valid module shadows a

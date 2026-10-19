@@ -335,7 +335,7 @@ pinned.
 **Target ratios.** A ceiling pins today's cost; it does not say how low a
 verb should go. A gated surface may also carry a `target_ratio`: its
 `file_ops` may be at most that multiple of `otto --version`'s (the
-`version_repo` surface, an interpreter start plus the shim: the least any
+`version_project` surface, an interpreter start plus the shim: the least any
 command can cost), with both measured in the same run. A ratio survives a
 dependency update that makes every import cheaper or dearer, because both
 sides move together, so one target serves every interpreter. Each target is

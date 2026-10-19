@@ -10,12 +10,12 @@ patching ``ensure_cli_session`` out by name. The defect this guard was
 originally written against was invisible to all of them and took out the
 whole ``otto host`` surface under ``-n``:
 
-    CommandNotRunError: 'git -C <sut_dir> log -1 --format=%H' was not run on
+    CommandNotRunError: 'git -C <root> log -1 --format=%H' was not run on
     host 'localhost': this is a dry run, which contacts no device.
 
 ``HostGroup.get_command`` installs the dry-run ``OttoContext`` at PARSE time
 (the soft lab probe that scopes the verb menu to the host's class), so by the
-time the preamble ran, the decline was already armed — it was the per-repo git
+time the preamble ran, the decline was already armed — it was the per-project git
 provenance query that used to live in ``ensure_cli_session`` (deleted; spec
 2026-09-26 §5.2) that raised. That query is gone, but what this test still
 guards is the ordering that made it dangerous: the real, unstubbed preamble
@@ -34,7 +34,7 @@ import pytest
 
 from otto.utils import DRY_RUN_HEADLINE
 from tests._fixtures.labdata import lab_data_dir
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.project_scaffold import make_project
 from tests.e2e._otto_subprocess import run_otto
 
 pytestmark = pytest.mark.hostless
@@ -48,9 +48,9 @@ paths = ["{lab_data_dir}"]
 """
 
 
-def _make_repo(root: Path) -> Path:
-    """A throwaway SUT repo wired to otto's own ``unix`` lab fixture."""
-    return make_sut_repo(
+def _make_project(root: Path) -> Path:
+    """A throwaway project wired to otto's own ``unix`` lab fixture."""
+    return make_project(
         root,
         name="dryrunrepo",
         version="0.1.0",
@@ -78,7 +78,7 @@ def test_a_host_verb_under_dry_run_exits_0_and_runs_no_body(tmp_path: Path) -> N
     in the dry run's own output; only the ``touch``'s effect distinguishes
     "announced" from "executed".
     """
-    project = _make_repo(tmp_path / "dryrunrepo")
+    project = _make_project(tmp_path / "dryrunproject")
     xdir = tmp_path / "xdir"
     xdir.mkdir()
     marker = tmp_path / "body-ran.marker"

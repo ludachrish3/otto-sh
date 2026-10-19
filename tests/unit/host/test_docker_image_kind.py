@@ -23,7 +23,7 @@ def _entry(**params):
         kind="docker_image",
         seam="products",
         owner="r",
-        base_dir=Path("/repo"),
+        base_dir=Path("/project"),
         match={},
         params=params,
     )
@@ -96,7 +96,7 @@ def test_docker_image_is_a_product_kind_only():
 def test_a_tarball_image_is_anchored_both_forms_are_unknown_until_declared():
     tar = _build(image="docker/app.tar")
     assert tar.is_tarball
-    assert tar.artifact == Path("/repo/docker/app.tar")
+    assert tar.artifact == Path("/project/docker/app.tar")
     # Both forms override instrumented() to never scan `artifact` at all
     # (see test_reference_instrumented_never_scans_the_cwd below for proof).
     assert tar.instrumented() is None
@@ -168,7 +168,7 @@ def test_requires_an_image_param():
         kind="docker_image",
         seam="products",
         owner="r",
-        base_dir=Path("/repo"),
+        base_dir=Path("/project"),
         match={},
         params={},
     )
@@ -201,7 +201,7 @@ async def test_tarball_install_stages_loads_then_runs_with_the_bind_mount():
         run_args="-e GCOV_PREFIX={cov_dir}",
     )
     assert (await p.stage(host)).is_ok
-    host.put.assert_awaited_once_with(Path("/repo/docker/app.tar"), Path("/tmp"))
+    host.put.assert_awaited_once_with(Path("/project/docker/app.tar"), Path("/tmp"))
     assert (await p.install(host)).is_ok
     assert p.loaded_ref == "app:1.2"
     assert "docker load -i /tmp/app.tar" in host.exec_calls[1]
@@ -560,7 +560,7 @@ async def test_tarball_stage_dir_moves_the_put_the_load_and_the_cleanup_together
     p = _build(host, image="docker/app.tar", stage_dir="/srv/images")
     assert p.stage_dir == Path("/srv/images")
     assert (await p.stage(host)).is_ok
-    host.put.assert_awaited_once_with(Path("/repo/docker/app.tar"), Path("/srv/images"))
+    host.put.assert_awaited_once_with(Path("/project/docker/app.tar"), Path("/srv/images"))
     assert (await p.install(host)).is_ok
     assert "docker load -i /srv/images/app.tar" in host.exec_calls[1]
     assert host.exec_calls[2] == "rm -f /srv/images/app.tar"
@@ -574,7 +574,7 @@ async def test_tarball_stage_falls_back_to_the_hosts_transfer_default():
     )
     p = _build(host, image="docker/app.tar")
     assert (await p.stage(host)).is_ok
-    host.put.assert_awaited_once_with(Path("/repo/docker/app.tar"), Path("/srv/stage"))
+    host.put.assert_awaited_once_with(Path("/project/docker/app.tar"), Path("/srv/stage"))
     assert (await p.install(host)).is_ok
     assert "docker load -i /srv/stage/app.tar" in host.exec_calls[1]
     assert host.exec_calls[2] == "rm -f /srv/stage/app.tar"
@@ -596,7 +596,7 @@ async def test_tarball_put_and_load_name_one_absolute_path_on_a_host_with_no_def
     )
     p = _build(host, image="docker/app.tar")
     assert (await p.stage(host)).is_ok
-    host.put.assert_awaited_once_with(Path("/repo/docker/app.tar"), Path("/home/tester"))
+    host.put.assert_awaited_once_with(Path("/project/docker/app.tar"), Path("/home/tester"))
     assert (await p.install(host)).is_ok
     assert "docker load -i /home/tester/app.tar" in host.exec_calls[1]
     assert host.exec_calls[2] == "rm -f /home/tester/app.tar"

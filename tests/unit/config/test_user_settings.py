@@ -8,12 +8,12 @@ from otto.config.user_settings import load_user_settings, user_settings_path
 def _user_file(dir_, body=""):
     """Write the USER-level settings file — the subject of every test here.
 
-    Not a SUT repo: ``make_sut_repo`` writes ``<root>/.otto/settings.toml``
+    Not a project: ``make_project`` writes ``<root>/.otto/settings.toml``
     inside a project, which is a different file that happens to share a
     basename. One writer, so the scaffold-policy exemption is stated once.
     """
     settings_file = dir_ / "settings.toml"
-    settings_file.write_text(body)  # sutrepo-exempt: user-level ~/.otto file, not a SUT repo
+    settings_file.write_text(body)  # scaffold-exempt: user-level ~/.otto file, not a project
     return settings_file
 
 
@@ -49,7 +49,7 @@ def test_an_empty_file_parses_to_a_model_with_no_inventory(tmp_path):
     assert model.inventory is None
 
 
-def test_a_repo_only_table_errors_naming_the_key_and_file(tmp_path):
+def test_a_project_only_table_errors_naming_the_key_and_file(tmp_path):
     p = _user_file(tmp_path, '[reservations]\nbackend = "none"\n')
     with pytest.raises(
         ValueError,

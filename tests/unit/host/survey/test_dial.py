@@ -79,7 +79,7 @@ async def _close(server) -> None:
     connect+read already finished is a pending task pytest-asyncio's
     per-test loop would otherwise tear down uncancelled — leaking its
     socket to a bare ``__del__`` that turns into a hard error under this
-    repo's ``filterwarnings = ["error"]``. Same shape as
+    project's ``filterwarnings = ["error"]``. Same shape as
     ``tests/unit/host/test_console_quiesce.py``'s fake server.
     """
     server.close()

@@ -1,11 +1,11 @@
 """End-to-end: kernel-module coverage through otto_kmodcov on the unix bed.
 
-    otto -l unix test --cov TestKmodDemo      (repo5)
+    otto -l unix test --cov TestKmodDemo      (project5)
     otto -l unix cov report <run> --dir <report>
 
 Prerequisites: test1/test2 up (6.8.0-86-generic), the headers for that
 release on the dev VM, gcc and lcov on the dev VM. The modules are built by
-``tests/repo5/kmod/build.sh`` when missing. Pinned to one xdist worker: both
+``tests/project5/kmod/build.sh`` when missing. Pinned to one xdist worker: both
 hosts' modules and /var/cov/otto_kmod_demo are shared bed state.
 """
 
@@ -14,7 +14,7 @@ import subprocess
 import pytest
 
 from otto.coverage.store.model import CoverageStore
-from tests.e2e._otto_subprocess import REPO5, run_otto
+from tests.e2e._otto_subprocess import PROJECT5, run_otto
 from tests.e2e.cov._kmod_assertions import (
     DEMO,
     assert_exit_routine_lines_are_hit_once_per_host,
@@ -27,7 +27,7 @@ from tests.e2e.cov._kmod_assertions import (
     assert_store_has_the_three_demo_files,
     assert_three_gcda_per_host,
 )
-from tests.e2e.cov._repo5_build import BUILD, DEMO_SRC, _line_of, _record, ensure_kmod_artifacts
+from tests.e2e.cov._project5_build import BUILD, DEMO_SRC, _line_of, _record, ensure_kmod_artifacts
 
 _LAB = "unix"
 
@@ -58,7 +58,7 @@ def built_modules(tmp_path_factory):
 
 
 def _run_otto(argv, *, xdir, timeout):
-    result = run_otto(argv, xdir=xdir, roots=REPO5, lab=_LAB, timeout=timeout)
+    result = run_otto(argv, xdir=xdir, roots=PROJECT5, lab=_LAB, timeout=timeout)
     if result.returncode != 0:
         raise AssertionError(
             f"otto --lab {_LAB} {' '.join(argv)} exited {result.returncode}\n"
@@ -99,7 +99,7 @@ class TestKmodFetchTree:
 class TestKmodLineAndBranchHits:
     """Exact counts: both hosts run COMMON; test1 adds TEST1_ONLY, test2 TEST2_ONLY.
 
-    Both hosts' mixes end with one more ``enqueue`` (repo5's suite), so the
+    Both hosts' mixes end with one more ``enqueue`` (project5's suite), so the
     queue is non-empty when the suite's teardown unloads the module — the
     exit-time drain and its ``pr_info`` line run once per host, not zero.
     """

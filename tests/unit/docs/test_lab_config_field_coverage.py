@@ -30,9 +30,9 @@ import pytest
 from otto.host.os_profile import registered_host_specs
 from otto.models.inventory import InventoryRecord
 from otto.models.lab import HOISTED_HOST_KEYS, ElementSpec, LabEntrySpec
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-_CONFIG = PROJECT_ROOT / "docs" / "configuration"
+_CONFIG = CHECKOUT_ROOT / "docs" / "configuration"
 _PAGE = _CONFIG / "lab-config.md"
 _INVENTORY_PAGE = _CONFIG / "inventory.md"
 _RECORD_FIELDS = "## Record fields"

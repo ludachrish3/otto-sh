@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 from otto.host.host import BaseHost
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 from tests._fixtures.profiles import Cell
 from tests.conformance._resolved import ResolvedCell
 from tests.conformance._sample import cell_label, draw, log_draw, root_seed
@@ -313,7 +313,7 @@ def test_a_real_run_collects_the_cells_its_log_says_it_drew() -> None:
             "no:cacheprovider",
             "--randomly-seed=99",
         ],
-        cwd=str(PROJECT_ROOT),
+        cwd=str(CHECKOUT_ROOT),
         # The child must be driven by this argv and this budget alone: an
         # ambient PYTEST_ADDOPTS would re-add `-n auto` (whose workers do not
         # surface the live log this parses) and an ambient
@@ -341,8 +341,8 @@ def test_a_real_run_collects_the_cells_its_log_says_it_drew() -> None:
     # means (an item drawn from the space) instead of as a filename this test
     # would have to be told about again next time.
     cell_modules = sorted(
-        str(module.relative_to(PROJECT_ROOT))
-        for module in (PROJECT_ROOT / "tests" / "conformance").glob("test_*.py")
+        str(module.relative_to(CHECKOUT_ROOT))
+        for module in (CHECKOUT_ROOT / "tests" / "conformance").glob("test_*.py")
         if _requests_resolved_cell(module)
     )
     assert cell_modules, "no conformance module takes `resolved_cell` (guard misparse?)"

@@ -181,7 +181,7 @@ raising. The single case re-raised instead of degraded is "not a git
 repository" — a wrong project root is a caller bug, not a repository that has moved
 on.
 
-**RepoTimeline** (`tests/_fixtures/_repo_timeline.py`) is the executable
+**GitTimeline** (`tests/_fixtures/_git_timeline.py`) is the executable
 spec for anchor and aging behavior: it scripts a real git repository through
 `commit → capture → mutate → fold` and asserts the resulting per-line
 disposition, table-driven across renames, squash-merge/GC, shallow

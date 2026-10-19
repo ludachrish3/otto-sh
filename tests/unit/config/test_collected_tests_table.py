@@ -1,6 +1,6 @@
 """The per-file ``__collected_tests__`` table: its store, and ``classify``'s one stat per path.
 
-Every test builds a real SUT repo in ``tmp_path`` and a table shaped as a
+Every test builds a real project in ``tmp_path`` and a table shaped as a
 whole-tree pytest collection of it would leave it (:func:`_table`: the
 records and directory stats pytest's plugin hands :func:`updated_table`, no
 pytest session), then moves the filesystem and asks ``classify`` what
@@ -29,7 +29,7 @@ import pytest
 from otto.config import collected_tests as tr
 from otto.config import completion_cache as cc
 from otto.config.scope import TOML_SETTINGS_PATH
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.project_scaffold import make_project
 
 _T = tr.RecordedTest
 
@@ -74,7 +74,7 @@ def fake_install(tmp_path, monkeypatch):
 def project(tmp_path, fake_install):
     from otto.config.project import Project
 
-    root = make_sut_repo(
+    root = make_project(
         tmp_path / "sut",
         tests=["tests"],
         files={
@@ -108,7 +108,7 @@ def _stat(path: Path) -> list[int] | None:
 
 
 def _table(project):
-    """The table a whole-tree pytest collection of *repo* writes, from scratch.
+    """The table a whole-tree pytest collection of *project* writes, from scratch.
 
     The plugin's records (a stat taken before each read, the tests, the
     markers), a record for every conftest, and the stat of every directory
@@ -265,18 +265,18 @@ def test_a_table_from_another_schema_or_malformed_reads_as_empty(project, mangle
 
 
 def test_writing_a_table_keeps_everything_else_in_the_file(project, tmp_path):
-    """Other sections, other namespaces and a live repo's table ride along untouched."""
+    """Other sections, other namespaces and a live project's table ride along untouched."""
     path = cc._cache_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     other = tmp_path / "other-sut"
     other.mkdir()
-    other_repo = {"schema_version": 5, "files": {}}
+    other_project = {"schema_version": 5, "files": {}}
     path.write_text(
         json.dumps(
             {
                 "schema": cc.SCHEMA_VERSION,
                 "sections": {"names": {"payload": {}}},
-                cc.COLLECTED_TESTS_KEY: {str(other): other_repo},
+                cc.COLLECTED_TESTS_KEY: {str(other): other_project},
                 cc.DYNAMIC_TUNNELS_KEY: {"x": 1},
             }
         )
@@ -286,7 +286,7 @@ def test_writing_a_table_keeps_everything_else_in_the_file(project, tmp_path):
     assert data["sections"] == {"names": {"payload": {}}}
     assert data[cc.DYNAMIC_TUNNELS_KEY] == {"x": 1}
     namespace = data[cc.COLLECTED_TESTS_KEY]
-    assert namespace[str(other)] == other_repo
+    assert namespace[str(other)] == other_project
     assert str(project.root) in namespace
 
 
@@ -304,12 +304,12 @@ def test_writing_a_table_starts_the_check_window(project):
     assert time.time() - marker.stat().st_mtime < 60
 
 
-def test_writing_a_table_prunes_the_tables_of_repos_that_are_gone(project, tmp_path):
-    """The shim parses the whole file on every TAB: a table no repo can use is dropped.
+def test_writing_a_table_prunes_the_tables_of_projects_that_are_gone(project, tmp_path):
+    """The shim parses the whole file on every TAB: a table no project can use is dropped.
 
-    A key that is no directory now (a SUT dir removed or renamed) and a key
+    A key that is no directory now (a project root removed or renamed) and a key
     that is no path at all (a whole-corpus entry an older otto stored under a
-    digest) both go at the next write; a live repo's table stays.
+    digest) both go at the next write; a live project's table stays.
     """
     path = cc._cache_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -326,7 +326,7 @@ def test_writing_a_table_prunes_the_tables_of_repos_that_are_gone(project, tmp_p
     assert sorted(kept) == sorted([str(live), str(project.root)])
 
 
-def test_read_tables_reads_every_repo_from_one_open(project, tmp_path, monkeypatch):
+def test_read_tables_reads_every_project_from_one_open(project, tmp_path, monkeypatch):
     tr.write_tables([_table(project)])
     opened: list[str] = []
     real = Path.read_text
@@ -353,7 +353,7 @@ def test_the_installation_is_where_pytest_really_is():
 # --- classify ----------------------------------------------------------------
 
 
-def test_an_unchanged_repo_is_all_fresh_at_one_stat_per_path(project, spy_io, fake_install):
+def test_an_unchanged_project_is_all_fresh_at_one_stat_per_path(project, spy_io, fake_install):
     table = _table(project)
     spy_io["stats"].clear()
     spy_io["scans"].clear()

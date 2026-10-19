@@ -22,13 +22,13 @@ from otto.inventory import (
 )
 from otto.models.base import OttoModel
 from otto.models.settings import CredsConfigSpec, InventoryConfigSpec, UserSettingsModel
-from tests._fixtures.fake_repo import fake_repo
+from tests._fixtures.fake_project import fake_project
 
 
-def _repo(tmp_path, name, table, creds=None):
+def _project(tmp_path, name, table, creds=None):
     root = tmp_path / name
     root.mkdir()
-    return fake_repo(name, root=root, settings={"inventory": table, "creds": creds or {}})
+    return fake_project(name, root=root, settings={"inventory": table, "creds": creds or {}})
 
 
 def _inventory_file(dir_: Path, name="inventory.json"):
@@ -38,14 +38,14 @@ def _inventory_file(dir_: Path, name="inventory.json"):
 
 
 def _user_file(dir_: Path, body: str) -> Path:
-    """Write a USER-level ``settings.toml`` — not a SUT repo's.
+    """Write a USER-level ``settings.toml`` — not a project's.
 
-    ``make_sut_repo`` writes ``<root>/.otto/settings.toml`` inside a project;
+    ``make_project`` writes ``<root>/.otto/settings.toml`` inside a project;
     this is the per-user file that happens to share a basename. One writer, so
     the scaffold-policy exemption is stated once.
     """
     settings_file = dir_ / "settings.toml"
-    settings_file.write_text(body)  # sutrepo-exempt: user-level ~/.otto file, not a SUT repo
+    settings_file.write_text(body)  # scaffold-exempt: user-level ~/.otto file, not a project
     return settings_file
 
 
@@ -85,8 +85,8 @@ def test_json_supplies_must_be_a_list_of_field_names(tmp_path):
 def test_relative_paths_anchor_to_the_declaring_dir_and_tilde_expands(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     cfg = InventoryConfigSpec(backend="json", path="lab/i.json")
-    out = compile_inventory(cfg, anchor_dir=tmp_path / "repo", origin="o")
-    assert out.prepared.config == JsonInventoryConfig(path=tmp_path / "repo" / "lab" / "i.json")
+    out = compile_inventory(cfg, anchor_dir=tmp_path / "project", origin="o")
+    assert out.prepared.config == JsonInventoryConfig(path=tmp_path / "project" / "lab" / "i.json")
     assert out.creds is None
     assert out.cache_ttl.total_seconds() == 24 * 3600
 
@@ -302,7 +302,7 @@ def test_same_as_ignores_origin_but_not_the_anchored_kwargs_or_the_ttl(tmp_path)
     assert not a.same_as(never)  # the "24h" default differs from "0" too
 
 
-def test_two_repos_differing_only_in_cache_ttl_are_a_conflict(tmp_path):
+def test_two_projects_differing_only_in_cache_ttl_are_a_conflict(tmp_path):
     """R13: otherwise declaration order silently decides whether the process caches."""
     inv_path = _inventory_file(tmp_path)
     table = {"backend": "json", "path": str(inv_path)}
@@ -412,9 +412,9 @@ def test_construct_resolves_the_json_path_for_the_fingerprint(tmp_path):
 
 
 def test_project_override_wins_over_the_user_file(tmp_path):
-    repo_inv = _inventory_file(tmp_path, "repo.json")
+    project_inv = _inventory_file(tmp_path, "project.json")
     user_inv = _inventory_file(tmp_path, "user.json")
-    project = _repo(tmp_path, "r1", {"backend": "json", "path": str(repo_inv)})
+    project = _project(tmp_path, "r1", {"backend": "json", "path": str(project_inv)})
     user = UserSettingsModel(inventory=InventoryConfigSpec(backend="json", path=str(user_inv)))
     inv = build_inventory_from_declarations(
         [
@@ -425,10 +425,10 @@ def test_project_override_wins_over_the_user_file(tmp_path):
         user_settings=user,
     )
     assert isinstance(inv, JsonInventory)
-    assert inv.path == repo_inv.resolve()
+    assert inv.path == project_inv.resolve()
 
 
-def test_user_file_when_no_repo_declares_and_none_when_nobody_does(tmp_path):
+def test_user_file_when_no_project_declares_and_none_when_nobody_does(tmp_path):
     user_inv = _inventory_file(tmp_path, "user.json")
     user = UserSettingsModel(inventory=InventoryConfigSpec(backend="json", path=str(user_inv)))
     inv = build_inventory_from_declarations([], user_settings=user)
@@ -438,7 +438,7 @@ def test_user_file_when_no_repo_declares_and_none_when_nobody_does(tmp_path):
     assert build_inventory_from_declarations([], user_settings=None) is None
 
 
-def test_two_repos_must_agree(tmp_path):
+def test_two_projects_must_agree(tmp_path):
     a = _inventory_file(tmp_path, "a.json")
     b = _inventory_file(tmp_path, "b.json")
     same = [
@@ -559,7 +559,7 @@ def test_a_creds_table_missing_backend_is_an_inventory_error(tmp_path):
 
 
 def test_creds_resolve_independently_of_the_inventory(tmp_path):
-    """Spec §4.2: a repo overriding only [inventory] still gets the user file's [creds]."""
+    """Spec §4.2: a project overriding only [inventory] still gets the user file's [creds]."""
     inv_path = _inventory_file(tmp_path)
     creds = tmp_path / "creds.json"
     creds.write_text(json.dumps({"k": [{"login": "u", "password": "p"}]}))
@@ -577,7 +577,7 @@ def test_creds_resolve_independently_of_the_inventory(tmp_path):
     )
     assert isinstance(inv, CredsOverlay)
     assert inv.lookup("k").creds[0].login == "u"
-    # ...and the other way round: the repo declares only [creds], the user file the inventory.
+    # ...and the other way round: the project declares only [creds], the user file the inventory.
     both = build_inventory_from_declarations(
         [
             InventoryDeclaration(
@@ -594,13 +594,13 @@ def test_creds_resolve_independently_of_the_inventory(tmp_path):
     assert isinstance(both, CredsOverlay)
 
 
-def test_creds_resolve_independently_across_two_repos(tmp_path):
-    """Spec §4.2, repo vs. REPO: repo A's [inventory] and repo B's [creds] both resolve.
+def test_creds_resolve_independently_across_two_projects(tmp_path):
+    """Spec §4.2, project vs. REPO: project A's [inventory] and project B's [creds] both resolve.
 
-    ``test_creds_resolve_independently_of_the_inventory`` covers repo-vs-user
+    ``test_creds_resolve_independently_of_the_inventory`` covers project-vs-user
     -file only; each table's walk (``build_inventory_from_declarations`` /
     ``_resolve_creds``) considers a declaration only when it carries THAT
-    table, so two repos splitting the tables between them is the same
+    table, so two projects splitting the tables between them is the same
     independence one level up — no user file involved at all.
     """
     inv_path = _inventory_file(tmp_path)
@@ -625,7 +625,7 @@ def test_creds_resolve_independently_across_two_repos(tmp_path):
     assert inv.lookup("k").creds[0].login == "u"
 
 
-def test_two_repos_must_agree_on_creds(tmp_path):
+def test_two_projects_must_agree_on_creds(tmp_path):
     inv_path = _inventory_file(tmp_path)
     table = {"backend": "json", "path": str(inv_path)}
     with pytest.raises(
@@ -652,42 +652,42 @@ def test_two_repos_must_agree_on_creds(tmp_path):
         )
 
 
-def test_build_inventory_reads_a_repo_that_declares_only_creds(tmp_path):
+def test_build_inventory_reads_a_project_that_declares_only_creds(tmp_path):
     inv_path = _inventory_file(tmp_path)
     creds = tmp_path / "creds.json"
     creds.write_text(json.dumps({"k": [{"login": "u", "password": "p"}]}))
     user_file = _user_file(tmp_path, f'[inventory]\nbackend = "json"\npath = "{inv_path}"\n')
-    projects = [_repo(tmp_path, "r1", {}, creds={"backend": "json", "path": str(creds)})]
+    projects = [_project(tmp_path, "r1", {}, creds={"backend": "json", "path": str(creds)})]
     inv = build_inventory(projects, user_settings_path=user_file)
     assert isinstance(inv, CredsOverlay)
     assert inv.store.label == f"json:{creds.resolve()}"
 
 
-def test_build_inventory_reads_repos_and_the_user_file(tmp_path):
+def test_build_inventory_reads_projects_and_the_user_file(tmp_path):
     inv_path = _inventory_file(tmp_path)
     user_file = _user_file(tmp_path, f'[inventory]\nbackend = "json"\npath = "{inv_path}"\n')
-    projects = [_repo(tmp_path, "r1", {})]
+    projects = [_project(tmp_path, "r1", {})]
     inv = build_inventory(projects, user_settings_path=user_file)
     assert isinstance(inv, JsonInventory)
     assert inv.path == inv_path.resolve()
     assert build_inventory(projects, user_settings_path=tmp_path / "absent.toml") is None
 
 
-def test_build_inventory_prefers_a_declaring_repo_and_anchors_to_its_root(tmp_path):
+def test_build_inventory_prefers_a_declaring_project_and_anchors_to_its_root(tmp_path):
     """The origin is pinned by the test below, which reaches it through an error."""
-    projects = [_repo(tmp_path, "r1", {"backend": "json", "path": "repo.json"})]
-    # The repo's own root is the anchor, so a relative path resolves there.
-    (projects[0].root / "repo.json").write_text(json.dumps({"k": {"ip": "10.0.0.2"}}))
+    projects = [_project(tmp_path, "r1", {"backend": "json", "path": "project.json"})]
+    # The project's own root is the anchor, so a relative path resolves there.
+    (projects[0].root / "project.json").write_text(json.dumps({"k": {"ip": "10.0.0.2"}}))
     inv = build_inventory(projects, user_settings_path=tmp_path / "absent.toml")
     assert isinstance(inv, JsonInventory)
-    assert inv.path == (projects[0].root / "repo.json").resolve()
+    assert inv.path == (projects[0].root / "project.json").resolve()
     assert inv.lookup("k").ip == "10.0.0.2"
 
 
-def test_build_inventory_names_each_repos_settings_file_as_its_origin(tmp_path):
-    """The origin is ``<sut_dir>/.otto/settings.toml``, spelled by ``TOML_SETTINGS_PATH``.
+def test_build_inventory_names_each_projects_settings_file_as_its_origin(tmp_path):
+    """The origin is ``<project_root>/.otto/settings.toml``, spelled by ``TOML_SETTINGS_PATH``.
 
-    Pinned through the two-repos-disagree error, which is the only place the
+    Pinned through the two-projects-disagree error, which is the only place the
     origin reaches a user. The test that merely *promised* this in its name
     never checked it — mutating the origin to ``str(project.root)`` stayed
     green.
@@ -697,8 +697,8 @@ def test_build_inventory_names_each_repos_settings_file_as_its_origin(tmp_path):
     a = _inventory_file(tmp_path, "a.json")
     b = _inventory_file(tmp_path, "b.json")
     projects = [
-        _repo(tmp_path, "r1", {"backend": "json", "path": str(a)}),
-        _repo(tmp_path, "r2", {"backend": "json", "path": str(b)}),
+        _project(tmp_path, "r1", {"backend": "json", "path": str(a)}),
+        _project(tmp_path, "r2", {"backend": "json", "path": str(b)}),
     ]
     expected = [re.escape(str(r.root / TOML_SETTINGS_PATH)) for r in projects]
     with pytest.raises(
@@ -708,7 +708,7 @@ def test_build_inventory_names_each_repos_settings_file_as_its_origin(tmp_path):
     ):
         build_inventory(projects, user_settings_path=tmp_path / "absent.toml")
     # Anti-vacuity: the path the pattern demands is the one that exists on disk
-    # for a real repo, not just a string this test made up.
+    # for a real project, not just a string this test made up.
     assert str(TOML_SETTINGS_PATH) == ".otto/settings.toml"
 
 
@@ -726,17 +726,17 @@ def test_build_inventory_names_the_user_file_as_the_origin(tmp_path):
         build_inventory([], user_settings_path=user_file)
 
 
-def test_build_inventory_over_a_real_repo_reads_the_inventory_table(tmp_path):
+def test_build_inventory_over_a_real_project_reads_the_inventory_table(tmp_path):
     """End-to-end through ``Project.inventory_settings``, not a stand-in namespace.
 
-    A ``SimpleNamespace`` repo cannot tell us the property exists, is named
+    A ``SimpleNamespace`` project cannot tell us the property exists, is named
     ``inventory``, and returns the raw sub-dict — that is exactly the seam
     this test covers.
     """
     from otto.config.project import Project
-    from tests._fixtures.sutrepo import make_sut_repo
+    from tests._fixtures.project_scaffold import make_project
 
-    sut = make_sut_repo(
+    sut = make_project(
         tmp_path / "p", name="p", extra='[inventory]\nbackend = "json"\npath = "lab/i.json"\n'
     )
     (sut / "lab").mkdir()
@@ -749,11 +749,11 @@ def test_build_inventory_over_a_real_repo_reads_the_inventory_table(tmp_path):
     assert inv.lookup("k").ip == "10.0.0.9"
 
 
-def test_a_repo_without_an_inventory_table_declares_nothing(tmp_path):
+def test_a_project_without_an_inventory_table_declares_nothing(tmp_path):
     from otto.config.project import Project
-    from tests._fixtures.sutrepo import make_sut_repo
+    from tests._fixtures.project_scaffold import make_project
 
-    project = Project(root=make_sut_repo(tmp_path / "p", name="p"))
+    project = Project(root=make_project(tmp_path / "p", name="p"))
     assert project.inventory_settings == {}
     assert build_inventory([project], user_settings_path=tmp_path / "absent.toml") is None
 

@@ -61,7 +61,7 @@ module therefore never touches shared lab data:
   ``tests._fixtures.labdata.host_data``) — never its ``creds``.
 - Test 6 (the ``login --user`` bridge) drives a real ``otto``
   subprocess, which needs its OWN registration (it never imports this test
-  module) — it scaffolds a throwaway, fully self-contained SUT directory
+  module) — it scaffolds a throwaway, fully self-contained project
   under ``tmp_path`` with its own init module and its own single-host
   ``lab.json``, again built from the leased IP.
 
@@ -94,7 +94,7 @@ from otto.utils import Status
 from tests._fixtures._host_pool import UNIX_POOL as _UNIX_POOL
 from tests._fixtures._host_pool import lease_unix_host
 from tests._fixtures.labdata import host_data, lab_json_v2
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.project_scaffold import make_project
 from tests.e2e.host._pty_driver import InteractiveOttoSession
 
 pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("login_proxy_e2e")]
@@ -354,12 +354,12 @@ register_login_proxy("sudo-su-shell", _sudo_su_shell, undo=_sudo_su_shell_undo, 
 """
 
 
-def _scaffold_sut_dir(root: Path, ip: str, element: str) -> str:
-    """Build a throwaway, fully self-contained SUT dir for the CLI subprocess.
+def _scaffold_project(root: Path, ip: str, element: str) -> str:
+    """Build a throwaway, fully self-contained project for the CLI subprocess.
 
     The child ``otto`` process never imports this test module, so it needs
     its OWN ``sudo-su-shell`` registration — wired via an ``init`` module
-    (mirrors how real SUT repos register custom login proxies). Returns the
+    (mirrors how real projects register custom login proxies). Returns the
     host id (``"<element>"``) the single host in the scaffolded
     ``lab.json`` will resolve to.
     """
@@ -371,7 +371,7 @@ def _scaffold_sut_dir(root: Path, ip: str, element: str) -> str:
             "labs": [_LP_E2E_LAB],
         }
     ]
-    make_sut_repo(
+    make_project(
         root,
         name="lp_e2e",
         extra=(
@@ -391,13 +391,13 @@ def test_login_user_over_bridge(leased_host: tuple[str, str], tmp_path: Path) ->
     """``otto host <id> login --user mysql`` must bridge the human directly onto mysql.
 
     Drives the real interactive PTY bridge (Task 9) through a throwaway,
-    self-contained SUT directory — see :func:`_scaffold_sut_dir` — so the
+    self-contained project — see :func:`_scaffold_project` — so the
     subprocess has its own login-proxy registration and its own single-host
     lab, with zero shared lab-data mutation.
     """
     element, ip = leased_host
     root = tmp_path / "sut"
-    host_id = _scaffold_sut_dir(root, ip, element)
+    host_id = _scaffold_project(root, ip, element)
     xdir = tmp_path / "xdir"
 
     with InteractiveOttoSession(

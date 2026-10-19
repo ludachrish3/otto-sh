@@ -3,7 +3,7 @@
 Three things this module is deliberate about:
 
 * **The evaluator is REAL.** Only ``bootstrap`` and the runtime context are
-  stubbed; the repos are written to disk with real pyprojects and checked
+  stubbed; the projects are written to disk with real pyprojects and checked
   against the live interpreter. A fake ``preflight`` would let the gate agree
   with a verdict nothing produced.
 * **Both arms, every time.** A gate that refused unconditionally passes every
@@ -33,7 +33,7 @@ from otto.context import OttoContext
 from otto.labs.loader import Lab
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result, seed_scope_verdicts
 from tests._fixtures.clickctx import chain
-from tests._fixtures.fake_repo import fake_repo
+from tests._fixtures.fake_project import fake_project
 from tests._fixtures.rootoptions import make_root_options
 from tests._fixtures.scoping import verdict
 
@@ -56,15 +56,15 @@ def _wide_console(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("COLUMNS", "300")
 
 
-def _repo(tmp_path, name: str, requirement: str) -> Any:
-    """A repo on disk declaring exactly one Python requirement."""
+def _project(tmp_path, name: str, requirement: str) -> Any:
+    """A project on disk declaring exactly one Python requirement."""
     root = tmp_path / name
     root.mkdir(parents=True, exist_ok=True)
     (root / "pyproject.toml").write_text(
         f'[project]\nname = "otto-sample-{name}"\nversion = "0.1.0"\n'
         f"dependencies = ['{requirement}']\n"
     )
-    return fake_repo(name, root=root)
+    return fake_project(name, root=root)
 
 
 def _wire(
@@ -75,7 +75,7 @@ def _wire(
     exclude: "tuple[str, ...]" = (),
     scopes: "dict[str, Any] | None" = None,
 ) -> None:
-    """Install *repos* as the discovered set and a context with these switches."""
+    """Install *projects* as the discovered set and a context with these switches."""
     monkeypatch.setattr(
         "otto.bootstrap.bootstrap",
         lambda: types.SimpleNamespace(ordered_projects=projects, errors=[], projects=projects),
@@ -106,104 +106,106 @@ def test_the_absent_package_really_is_absent() -> None:
 class TestSeverity:
     """Active refuses, inactive warns -- and each is paired with its opposite."""
 
-    def test_an_active_repo_refuses_with_all_three_lines(
+    def test_an_active_project_refuses_with_all_three_lines(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path
     ) -> None:
-        _wire(monkeypatch, [_repo(tmp_path, "repo4", f"{ABSENT} >= 0.1")])
+        _wire(monkeypatch, [_project(tmp_path, "project4", f"{ABSENT} >= 0.1")])
         with pytest.raises(typer.Exit) as excinfo:
             refuse_unsatisfied_dependencies()
         assert excinfo.value.exit_code == 1
         out = capsys.readouterr().out
-        assert f"error: project 'repo4' requires '{ABSENT} >= 0.1'" in out
+        assert f"error: project 'project4' requires '{ABSENT} >= 0.1'" in out
         assert "not satisfied in this environment (found: none)" in out
         assert "fix: otto env sync" in out
         assert f"or:  uv pip install '{ABSENT} >= 0.1'" in out
 
-    def test_a_satisfied_repo_is_silent(
+    def test_a_satisfied_project_is_silent(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path
     ) -> None:
         """The other arm. Without it every cell above passes against a gate
         that refuses unconditionally."""
-        _wire(monkeypatch, [_repo(tmp_path, "repo4", f"{PRESENT} >= 1")])
+        _wire(monkeypatch, [_project(tmp_path, "project4", f"{PRESENT} >= 1")])
         refuse_unsatisfied_dependencies()  # must not raise
         captured = capsys.readouterr()
         assert captured.out == ""
         assert captured.err == ""
 
-    def test_a_switched_off_repo_warns_instead_of_refusing(
+    def test_a_switched_off_project_warns_instead_of_refusing(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path
     ) -> None:
-        _wire(monkeypatch, [_repo(tmp_path, "repo4", f"{ABSENT} >= 0.1")], exclude=("repo4",))
+        _wire(
+            monkeypatch, [_project(tmp_path, "project4", f"{ABSENT} >= 0.1")], exclude=("project4",)
+        )
         refuse_unsatisfied_dependencies()  # must not raise
         captured = capsys.readouterr()
-        assert "repo4 is inactive for this run" in captured.err
+        assert "project4 is inactive for this run" in captured.err
         assert "error:" not in captured.out
 
-    def test_a_lab_excluded_repo_warns_instead_of_refusing(
+    def test_a_lab_excluded_project_warns_instead_of_refusing(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path
     ) -> None:
         _wire(
             monkeypatch,
-            [_repo(tmp_path, "repo4", f"{ABSENT} >= 0.1")],
-            scopes={"repo4": verdict("repo4", excluded=True)},
+            [_project(tmp_path, "project4", f"{ABSENT} >= 0.1")],
+            scopes={"project4": verdict("project4", excluded=True)},
         )
         refuse_unsatisfied_dependencies()  # must not raise
         assert "continuing without it" in capsys.readouterr().err
 
-    def test_a_host_starved_repo_warns_because_the_gate_runs_after_the_lab(
+    def test_a_host_starved_project_warns_because_the_gate_runs_after_the_lab(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path
     ) -> None:
         """F7's whole dividend, in one cell.
 
-        A repo whose labs match but whose ``host_patterns`` select no host is
+        A project whose labs match but whose ``host_patterns`` select no host is
         inactive -- and that shape is INVISIBLE before the lab is built, so the
-        pre-lab projection ``inactive_before_lab`` would have called this repo
+        pre-lab projection ``inactive_before_lab`` would have called this project
         active and refused the run over a dependency nobody was going to use.
         Running after the lab session is what buys the correct answer, and this
         is the cell that goes red if the gate is ever hoisted above it.
         """
         _wire(
             monkeypatch,
-            [_repo(tmp_path, "repo4", f"{ABSENT} >= 0.1")],
-            scopes={"repo4": verdict("repo4", universe=())},
+            [_project(tmp_path, "project4", f"{ABSENT} >= 0.1")],
+            scopes={"project4": verdict("project4", universe=())},
         )
         refuse_unsatisfied_dependencies()  # must not raise
-        assert "repo4 is inactive for this run" in capsys.readouterr().err
+        assert "project4 is inactive for this run" in capsys.readouterr().err
 
     def test_include_beats_a_lab_verdict_and_refuses(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path
     ) -> None:
-        """``-I`` says the repo IS part of this run, so its dependency is too."""
+        """``-I`` says the project IS part of this run, so its dependency is too."""
         _wire(
             monkeypatch,
-            [_repo(tmp_path, "repo4", f"{ABSENT} >= 0.1")],
-            include=("repo4",),
-            scopes={"repo4": verdict("repo4", excluded=True)},
+            [_project(tmp_path, "project4", f"{ABSENT} >= 0.1")],
+            include=("project4",),
+            scopes={"project4": verdict("project4", excluded=True)},
         )
         with pytest.raises(typer.Exit) as excinfo:
             refuse_unsatisfied_dependencies()
         assert excinfo.value.exit_code == 1
 
-    def test_an_inactive_repo_does_not_suppress_an_active_one(
+    def test_an_inactive_project_does_not_suppress_an_active_one(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path
     ) -> None:
-        """Mixed worlds are the ordinary case: one repo warns, the other stops
+        """Mixed worlds are the ordinary case: one project warns, the other stops
         the run, and neither decides for the other."""
         _wire(
             monkeypatch,
             [
-                _repo(tmp_path, "repo3", f"{ABSENT} >= 0.1"),
-                _repo(tmp_path, "repo4", f"{ABSENT} >= 0.2"),
+                _project(tmp_path, "project3", f"{ABSENT} >= 0.1"),
+                _project(tmp_path, "project4", f"{ABSENT} >= 0.2"),
             ],
-            exclude=("repo3",),
+            exclude=("project3",),
         )
         with pytest.raises(typer.Exit) as excinfo:
             refuse_unsatisfied_dependencies()
         assert excinfo.value.exit_code == 1
         captured = capsys.readouterr()
-        assert "repo3 is inactive for this run" in captured.err
-        assert "error: project 'repo4'" in captured.out
-        assert "error: project 'repo3'" not in captured.out
+        assert "project3 is inactive for this run" in captured.err
+        assert "error: project 'project4'" in captured.out
+        assert "error: project 'project3'" not in captured.out
 
 
 class TestRendering:
@@ -217,7 +219,7 @@ class TestRendering:
         WRONG package. ``fail`` escapes; a hand-rolled ``[red]`` f-string would
         not -- which is what the ``error-render-through-helper`` rule enforces.
         """
-        _wire(monkeypatch, [_repo(tmp_path, "repo4", f"{ABSENT}[labjack] >= 0.1")])
+        _wire(monkeypatch, [_project(tmp_path, "project4", f"{ABSENT}[labjack] >= 0.1")])
         with pytest.raises(typer.Exit) as excinfo:
             refuse_unsatisfied_dependencies()
         assert excinfo.value.exit_code == 1
@@ -230,16 +232,16 @@ class TestRendering:
         _wire(
             monkeypatch,
             [
-                _repo(tmp_path, "repo3", f"{ABSENT} >= 0.1"),
-                _repo(tmp_path, "repo4", f"{ABSENT} >= 0.2"),
+                _project(tmp_path, "project3", f"{ABSENT} >= 0.1"),
+                _project(tmp_path, "project4", f"{ABSENT} >= 0.2"),
             ],
         )
         with pytest.raises(typer.Exit) as excinfo:
             refuse_unsatisfied_dependencies()
         assert excinfo.value.exit_code == 1
         out = capsys.readouterr().out
-        assert "error: project 'repo3'" in out
-        assert "error: project 'repo4'" in out
+        assert "error: project 'project3'" in out
+        assert "error: project 'project4'" in out
         assert out.count("fix: otto env sync") == 1
         assert f"or:  uv pip install '{ABSENT} >= 0.1' '{ABSENT} >= 0.2'" in out
 
@@ -248,33 +250,33 @@ class TestRendering:
     ) -> None:
         """``fail`` renders through rich to STDOUT, like every other otto
         refusal. Pinned here so a stream change is a decision, not a surprise."""
-        _wire(monkeypatch, [_repo(tmp_path, "repo4", f"{ABSENT} >= 0.1")])
+        _wire(monkeypatch, [_project(tmp_path, "project4", f"{ABSENT} >= 0.1")])
         with pytest.raises(typer.Exit) as excinfo:
             refuse_unsatisfied_dependencies()
         assert excinfo.value.exit_code == 1
         captured = capsys.readouterr()
-        assert "error: project 'repo4'" in captured.out
+        assert "error: project 'project4'" in captured.out
         assert captured.err == ""
 
-    def test_an_uncheckable_repo_warns_on_stderr_and_does_not_refuse(
+    def test_an_uncheckable_project_warns_on_stderr_and_does_not_refuse(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path
     ) -> None:
         """A dynamic, uninstalled pyproject says the check could not be MADE.
 
-        That is not a verdict about the repo, so it warns whatever the repo's
+        That is not a verdict about the project, so it warns whatever the project's
         activation -- and it never stops a run over a requirement nobody
         declared.
         """
-        root = tmp_path / "repo4"
+        root = tmp_path / "project4"
         root.mkdir()
         (root / "pyproject.toml").write_text(
             '[project]\nname = "nothing-installed-anywhere"\n'
             'version = "0.1.0"\ndynamic = ["dependencies"]\n'
         )
-        _wire(monkeypatch, [fake_repo("repo4", root=root)])
+        _wire(monkeypatch, [fake_project("project4", root=root)])
         refuse_unsatisfied_dependencies()  # must not raise
         captured = capsys.readouterr()
-        assert "cannot preflight repo4" in captured.err
+        assert "cannot preflight project4" in captured.err
         assert captured.out == ""
 
 
@@ -303,11 +305,11 @@ class TestPreambleWiring:
         monkeypatch.setattr(invoke, "refuse_inactive_instruction", lambda ctx: None)
         monkeypatch.setattr(invoke, "stop_at_dry_run_seam", lambda ctx, spec: None)
 
-    def test_the_preamble_refuses_an_unsatisfied_active_repo(
+    def test_the_preamble_refuses_an_unsatisfied_active_project(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path
     ) -> None:
         """Delete the call from ``command_preamble`` and this cell goes red."""
-        _wire(monkeypatch, [_repo(tmp_path, "repo4", f"{ABSENT} >= 0.1")])
+        _wire(monkeypatch, [_project(tmp_path, "project4", f"{ABSENT} >= 0.1")])
         spec = CommandSpec(name="run", loader=None, gate=False)
         with pytest.raises(typer.Exit) as excinfo:
             invoke.command_preamble(_PreambleCtx("flash", spec))  # ty: ignore[invalid-argument-type]
@@ -340,7 +342,7 @@ class TestPreambleWiring:
                 reset_context(token)
 
         request.addfinalizer(_reset)
-        project = _repo(tmp_path, "repo4", f"{ABSENT} >= 0.1")
+        project = _project(tmp_path, "project4", f"{ABSENT} >= 0.1")
         monkeypatch.setattr(
             "otto.bootstrap.bootstrap",
             lambda: types.SimpleNamespace(
@@ -351,12 +353,12 @@ class TestPreambleWiring:
             invoke,
             "ensure_lab_session",
             lambda ctx, spec: tokens.append(
-                set_context(OttoContext(lab=Lab(name="flash"), exclude_projects=("repo4",)))
+                set_context(OttoContext(lab=Lab(name="flash"), exclude_projects=("project4",)))
             ),
         )
         spec = CommandSpec(name="run", loader=None, gate=False)
         invoke.command_preamble(_PreambleCtx("flash", spec))  # ty: ignore[invalid-argument-type]
-        assert "repo4 is inactive for this run" in capsys.readouterr().err
+        assert "project4 is inactive for this run" in capsys.readouterr().err
 
     def test_a_lab_free_command_is_not_refused(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path
@@ -366,7 +368,7 @@ class TestPreambleWiring:
         gate -- structurally, rather than by a hand-maintained exemption list
         that a future command would have to remember to join.
         """
-        _wire(monkeypatch, [_repo(tmp_path, "repo4", f"{ABSENT} >= 0.1")])
+        _wire(monkeypatch, [_project(tmp_path, "project4", f"{ABSENT} >= 0.1")])
         spec = CommandSpec(name="env", loader=None, lab_free=True, gate=False)
         invoke.command_preamble(_PreambleCtx("sync", spec, parent_name="env"))  # ty: ignore[invalid-argument-type]
         assert "error:" not in capsys.readouterr().out

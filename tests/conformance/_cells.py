@@ -49,7 +49,7 @@ exists to catch:
 ALL THREE KINDS SPEAK POSIX, which is why every cell here carries
 :data:`~tests.conformance._vocabulary.POSIX` outright while the bed venue
 derives each cell's vocabulary from its host's userland axis. That is not a
-shortcut: all three stand up a shell this repo controls -- the runner's own
+shortcut: all three stand up a shell this repository controls -- the runner's own
 ``bash`` in two of them and a real ``sshd`` login in the third -- and none of
 them has a lab entry to derive a userland from. It is also the reason the
 contracts' bash spellings were universally true of this venue and broke the

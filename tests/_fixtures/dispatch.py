@@ -15,7 +15,7 @@ command bodies run under the real bridge while the runner's isolation, input
 feeding, and ``Result`` API stay untouched. The spec defaults to
 ``lab_free=True``/``output_dir=False``, which keep the preamble to its
 bootstrap gate — which is stubbed clean here, since most sub-app tests
-exercise command bodies, not repo discovery (the gate has its own tests in
+exercise command bodies, not project discovery (the gate has its own tests in
 ``tests/unit/cli/test_bootstrap_gate.py``). A test that patched the composition
 root itself keeps its own answer. Pass ``invoke(..., lab_free=False)``
 to drive a test through the preamble's lab slice instead — e.g. to exercise a
@@ -35,7 +35,7 @@ from tests._fixtures.bootstrapstub import bootstrap_stub
 
 
 def _clean_bootstrap() -> SimpleNamespace:
-    """A bootstrap result with no repo errors — pass the preamble's loud gate."""
+    """A bootstrap result with no project errors — pass the preamble's loud gate."""
     return bootstrap_stub()
 
 
@@ -43,7 +43,7 @@ def _composition_root_for_the_invoke() -> "Any":
     """The composition root a dispatched command sees: the test's own, else a clean stub.
 
     A test that patched ``otto.bootstrap.bootstrap`` (``patch_bootstrap``, a
-    ``fake_bootstrap_result``) chose the run's repos there, and the library
+    ``fake_bootstrap_result``) chose the run's projects there, and the library
     reads them there too when no context carries them, so its answer stands.
     Only the real composition root is replaced: a sub-app test never runs
     discovery.
@@ -62,7 +62,7 @@ def shipped_dry_run_preview(name: str) -> bool:
     The one dispatch fact this harness must not re-declare. Everything else in
     the synthetic :class:`~otto.cli.registry.CommandSpec` below is a deliberate
     simplification of the preamble (``lab_free``/``output_dir`` keep a sub-app
-    unit test off repo discovery). ``dry_run_preview`` is not: it decides
+    unit test off project discovery). ``dry_run_preview`` is not: it decides
     whether the ``--dry-run`` seam runs the command body at all, so a
     hard-coded copy would let ``tests/unit/link/test_cli.py`` certify a preview
     that only the harness registers. Drop the flag from

@@ -80,11 +80,11 @@ import pytest
 
 from otto.registry import Registry
 from scripts import render_module_graph as rmg
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
 
-SRC = PROJECT_ROOT / "src"
+SRC = CHECKOUT_ROOT / "src"
 
 TABLE_WRITES = ["register", "register_many", "unregister"]
 """``Registry``'s public write methods: a raw call to one bypasses the privileged API."""
@@ -115,7 +115,7 @@ SLOTS = [
         tables=["FIRST_PARTY_ACTIONS"],
     ),
     Slot(
-        name="composed repos",
+        name="composed projects",
         home="otto/declared.py",
         installer="otto/bootstrap.py",
         privileged=["publish_composed", "clear_composed"],
@@ -677,7 +677,7 @@ def test_the_installer_may_use_the_api_but_not_write_the_table_raw(tmp_path: Pat
     assert _scan(tmp_path, {installer: calls_the_api + raw}) == {f"otto/{installer}"}
 
 
-RECORD_SLOTS = [slot for slot in SLOTS if slot.name in {"composed repos", "completion snapshot"}]
+RECORD_SLOTS = [slot for slot in SLOTS if slot.name in {"composed projects", "completion snapshot"}]
 """One slot per plain record (a dataclass, not a ``Registry``): its fields are its table."""
 
 
@@ -785,7 +785,7 @@ def test_the_scan_leaves_same_named_objects_of_other_modules_alone(tmp_path: Pat
         "other_attribute.py": f"import otto.elsewhere as e\ne.{api}(object)\ngetattr(e, {api!r})\n",
         "other_string.py": f"TARGET = 'otto.elsewhere:{api}'\nNAME = {api!r}\n",
         "other_table.py": f"from otto.elsewhere import {table}\n{table}.register('x', None)\n",
-        "reader.py": f"from {home} import {table}\n{table}.peek('otto')\n{table}.repo('otto')\n",
+        "reader.py": f"from {home} import {table}\n{table}.peek('otto')\n{table}.origin('otto')\n",
         "home_module.py": f"from otto import {home.rpartition('.')[2]} as c\nc.{table}.items()\n",
         # A module that defines its own same-named function and is borrowed from.
         "elsewhere.py": f"def {api}(cls):\n    return cls\n\n\n{table} = {{}}\n",

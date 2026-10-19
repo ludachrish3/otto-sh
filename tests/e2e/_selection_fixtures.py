@@ -1,23 +1,23 @@
-"""Shared tmp-repo builder for ``otto test NAMES`` / ``-m`` selection e2e tests.
+"""Shared tmp-project builder for ``otto test NAMES`` / ``-m`` selection e2e tests.
 
-Mirrors the tmp-repo idiom in ``tests/e2e/test_repo_wide_conftest.py``: a
-throwaway SUT repo with ``.otto/settings.toml`` wired to otto's own JSON lab
+Mirrors the tmp-project idiom in ``tests/e2e/test_project_wide_conftest.py``: a
+throwaway project with ``.otto/settings.toml`` wired to otto's own JSON lab
 fixture data, so a mandatory ``--lab`` flag is satisfiable without a real
 host. Two test classes share a marker, plus a plain pytest function —
-exercising selection across classes, repos, and non-class tests.
+exercising selection across classes, projects, and non-class tests.
 """
 
 from pathlib import Path
 
 from tests._fixtures.labdata import lab_data_dir
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.project_scaffold import make_project
 
 # Reuse otto's own JSON lab fixture data (defines the "unix" lab) so a
-# throwaway repo can satisfy the mandatory --lab flag without touching a real
+# throwaway project can satisfy the mandatory --lab flag without touching a real
 # host — none of these fixture suites request a host fixture.
 LAB_DATA_DIR = lab_data_dir() / "tech1"
 
-# Appended verbatim after make_sut_repo's name/version/tests header.
+# Appended verbatim after make_project's name/version/tests header.
 SETTINGS_EXTRA = """\
 [[lab.sources]]
 backend = "json"
@@ -47,45 +47,45 @@ def test_plain_function() -> None:
     assert True
 """
 
-# Class-free fixtures for the multi-repo tests: one plain function per repo,
-# so each repo's selection is exactly one test.
+# Class-free fixtures for the multi-project tests: one plain function per project,
+# so each project's selection is exactly one test.
 PLAIN_SUITE_SRC = """\
 def test_plain_function() -> None:
     assert True
 """
 
-# A single failing plain function, used by the multi-repo worst-exit-code test.
+# A single failing plain function, used by the multi-project worst-exit-code test.
 FAILING_SUITE_SRC = """\
 def test_plain_function() -> None:
     assert False
 """
 
 
-def make_selection_repo(
+def make_selection_project(
     root: Path,
     *,
     name: str = "selrepo",
     suite_src: str = SUITE_SRC,
     with_lab: bool = True,
 ) -> Path:
-    """Build a throwaway SUT repo with ``suite_src`` as its one test module.
+    """Build a throwaway project with ``suite_src`` as its one test module.
 
-    Returns the repo root (``root / name``).
+    Returns the project root (``root / name``).
 
-    ``with_lab`` controls whether this repo contributes ``LAB_DATA_DIR`` to
+    ``with_lab`` controls whether this project contributes ``LAB_DATA_DIR`` to
     the aggregated lab search paths (see ``ensure_lab_context`` in
-    ``otto.cli.invoke``, which concatenates every repo's ``[[lab.sources]]``
-    entries unchanged). Pass ``False`` for every repo but one in a multi-repo
-    test — two repos both pointing at the same lab data dir would load the
+    ``otto.cli.invoke``, which concatenates every project's ``[[lab.sources]]``
+    entries unchanged). Pass ``False`` for every project but one in a multi-project
+    test — two projects both pointing at the same lab data dir would load the
     same ``lab.json`` twice and collide on duplicate host IDs.
 
     The test module is named ``test_selection_<name>.py`` (not a fixed
-    ``test_selection.py``): two repos collected in the same otto process
+    ``test_selection.py``): two projects collected in the same otto process
     otherwise import identically-named, package-less modules under the same
-    ``sys.modules`` key, and the second repo's file loses to the first's
+    ``sys.modules`` key, and the second project's file loses to the first's
     already-cached module — silently collecting zero tests.
     """
-    return make_sut_repo(
+    return make_project(
         root / name,
         name=name,
         version="0.1.0",

@@ -93,7 +93,7 @@ def _no_off_loopback_dials(refuse_off_loopback_dials: list[str]) -> None:
 def purge_tmp_imports(tmp_path_factory):
     """Drop modules a test imported from its tmp dir, so they don't leak onward.
 
-    Tests that write a package/repo into ``tmp_path`` and import it leave those
+    Tests that write a package or project into ``tmp_path`` and import it leave those
     modules in ``sys.modules``. On the nightly ``--repeat-scope=session`` repeat
     the second pass re-imports the same module *name* and gets pass 1's cached
     copy: a stale valid module shadows a freshly-written broken one

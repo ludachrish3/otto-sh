@@ -2,7 +2,7 @@
 
 Runs ``otto test --iterations 3 TestStabilityFixture`` as a subprocess to
 verify that stability iterations do not tear down class-scoped async
-fixtures.  The ``TestStabilityFixture`` suite in repo1 establishes a real
+fixtures.  The ``TestStabilityFixture`` suite in project1 establishes a real
 SSH connection during class setup and reuses it on every iteration.
 
 This catches the bug where ``runtestprotocol`` (called in a loop) destroyed
@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.e2e._otto_subprocess import REPO1, assert_output_dir, run_otto
+from tests.e2e._otto_subprocess import PROJECT1, assert_output_dir, run_otto
 
 
 @pytest.mark.integration
@@ -40,7 +40,7 @@ class TestStabilityE2E:
         result = run_otto(
             ["test", "--iterations", "3", "TestStabilityFixture"],
             xdir=xdir,
-            roots=REPO1,
+            roots=PROJECT1,
             lab="unix",
         )
 
@@ -72,7 +72,7 @@ class TestStabilityE2E:
         result = run_otto(
             ["test", "TestStabilityFixture"],
             xdir=xdir,
-            roots=REPO1,
+            roots=PROJECT1,
             lab="unix",
         )
 

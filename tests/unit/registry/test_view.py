@@ -87,7 +87,7 @@ def test_an_unknown_name_raises_the_rich_error():
     assert "register_left()" in str(err.value)
 
 
-def test_origin_and_repo_come_from_the_derived_rows():
+def test_origin_and_project_come_from_the_derived_rows():
     left, right = _sources()
     left.register("a", Rec(1))
     view = _view(left, right)

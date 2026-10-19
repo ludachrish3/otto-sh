@@ -48,10 +48,18 @@ pytestmark = pytest.mark.interpreter_agnostic
 
 _FIXTURE_MODULE = TESTS_ROOT / "_fixtures" / "gitrepo.py"
 
-# Fixture SUT repos + firmware: user-example input data, not otto's tests —
+# Fixture projects + firmware: user-example input data, not otto's tests —
 # the same carve-out every tests-scoped structural rule makes (the house
 # denylist; see test_bed_oracle_honesty and the tests-scoped ast-grep rules).
-_EXCLUDED_TREES = ("repo1", "repo2", "repo3", "repo4", "repo_broken", "repo_e2e", "firmware")
+_EXCLUDED_TREES = (
+    "project1",
+    "project2",
+    "project3",
+    "project4",
+    "project_broken",
+    "project_e2e",
+    "firmware",
+)
 
 
 def _parsed_or_fail(path: Path) -> ast.AST:

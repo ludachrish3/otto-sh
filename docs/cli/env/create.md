@@ -14,20 +14,20 @@ otto env create [--backend uv|pip] [--force] [-- INSTALLER_ARGS...]
 
 ```console
 $ otto env create
-created ~/.otto/134b91c0-repo1-repo4/env
-  installed (editable): repo4
-  skipped, no pyproject.toml: repo1
+created ~/.otto/134b91c0-project1-project4/env
+  installed (editable): project4
+  skipped, no pyproject.toml: project1
   backend: uv
 
 Activate it with:
-  source ~/.otto/134b91c0-repo1-repo4/env/bin/activate
+  source ~/.otto/134b91c0-project1-project4/env/bin/activate
 ```
 
 ## It refuses an environment that already exists
 
 ```console
 $ otto env create
-error: an environment already exists at ~/.otto/134b91c0-repo1-repo4/env — pass
+error: an environment already exists at ~/.otto/134b91c0-project1-project4/env — pass
 --force to remove and rebuild it, or run `otto env sync` to update it in place
 ```
 
@@ -46,9 +46,9 @@ you were trying to escape.
 
 ```console
 $ otto env create --force --backend pip
-created ~/.otto/134b91c0-repo1-repo4/env
-  installed (editable): repo4
-  skipped, no pyproject.toml: repo1
+created ~/.otto/134b91c0-project1-project4/env
+  installed (editable): project4
+  skipped, no pyproject.toml: project1
   backend: pip
 ```
 

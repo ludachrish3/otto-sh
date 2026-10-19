@@ -16,7 +16,7 @@ import pytest
 
 from tests._fixtures import _gc_freeze
 from tests._fixtures._gc_freeze import FrozenWindow, frozen_outer_heap, install, window_open
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 from tests.unit.suite._inner import INNER_ARGS
 
 pytest_plugins = ["pytester"]
@@ -297,7 +297,9 @@ def test_a_second_top_level_session_in_one_process_runs_unfrozen(tmp_path):
     driver = tmp_path / "driver.py"
     driver.write_text(_SEQUENTIAL_DRIVER)
     env = dict(os.environ)
-    env["PYTHONPATH"] = os.pathsep.join([str(PROJECT_ROOT), *filter(None, [env.get("PYTHONPATH")])])
+    env["PYTHONPATH"] = os.pathsep.join(
+        [str(CHECKOUT_ROOT), *filter(None, [env.get("PYTHONPATH")])]
+    )
     run = subprocess.run(
         [sys.executable, str(driver), str(project)],
         cwd=tmp_path,

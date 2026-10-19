@@ -217,7 +217,7 @@ async def test_collect_embedded_coverage_scopes_hosts_by_pattern(
 ):
     """A coverage host-id ``pattern`` selects which embedded hosts are dumped.
 
-    The collect-from set is repo-declared (a ``[coverage].hosts`` regex), so a
+    The collect-from set is project-declared (a ``[coverage].hosts`` regex), so a
     host that does not match the pattern is never touched.
     """
     import re

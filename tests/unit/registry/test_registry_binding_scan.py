@@ -14,11 +14,11 @@ surface beside an engine table: no ``Any``, no ``Callable[..., Any]``, no bare
 
 import ast
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 ENGINE = {"Registry", "BackendRegistry", "Subscription", "RegistryView"}
 ENGINE_MODULE = "otto.registry"
-SRC = PROJECT_ROOT / "src" / "otto"
+SRC = CHECKOUT_ROOT / "src" / "otto"
 
 
 def _absolute(node: ast.ImportFrom, module: str, is_package: bool) -> str:

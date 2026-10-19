@@ -23,8 +23,8 @@ An illustrative listing — your daemon's columns and rows are what you will see
 ```text
 $ otto docker ps
 == test3 ==
-CONTAINER ID   IMAGE              COMMAND           CREATED         STATUS         PORTS   NAMES
-3f1c2a9b7d10   repo1-api:latest   "python -m api"   2 minutes ago   Up 2 minutes           unix-repo1-e2e-1a2b3c4d-api-1
+CONTAINER ID   IMAGE                 COMMAND           CREATED         STATUS         PORTS   NAMES
+3f1c2a9b7d10   project1-api:latest   "python -m api"   2 minutes ago   Up 2 minutes           unix-project1-e2e-1a2b3c4d-api-1
 
 == test1 ==
 CONTAINER ID   IMAGE     COMMAND   CREATED   STATUS    PORTS     NAMES

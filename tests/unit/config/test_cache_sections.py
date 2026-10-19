@@ -14,25 +14,25 @@ import json
 
 import pytest
 
-import otto.config.project as config_repo
+import otto.config.project as config_project
 from otto import bootstrap
-from tests._fixtures.fake_repo import fake_repo
-from tests._fixtures.generated_repo import generate_repo
+from tests._fixtures.fake_project import fake_project
+from tests._fixtures.generated_project import generate_project
 
 
 @pytest.fixture
 def projects(tmp_path, monkeypatch):
-    """Discovered repos for a generated tree.
+    """Discovered projects for a generated tree.
 
     discover() caches module-globally (bootstrap.py:192-224), so every fixture
-    must invalidate or it silently returns the previous test's repos and the
+    must invalidate or it silently returns the previous test's projects and the
     assertions pass against the wrong tree.
     """
-    project = generate_repo(tmp_path, files=20, dirs=2, top_level=2)
+    project = generate_project(tmp_path, files=20, dirs=2, top_level=2)
     monkeypatch.setenv("OTTOPATH", str(project))
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     bootstrap.invalidate()
-    yield project, config_repo.discover().projects
+    yield project, config_project.discover().projects
     bootstrap.invalidate()
 
 
@@ -95,7 +95,7 @@ def test_names_digest_moves_on_settings_edit(projects):
 
     settings = project / ".otto" / "settings.toml"
     edited = settings.read_text() + "\n# edited\n"
-    settings.write_text(edited)  # sutrepo-exempt: edits a scaffolded file to move a digest
+    settings.write_text(edited)  # scaffold-exempt: edits a scaffolded file to move a digest
 
     assert section_digest(names, discovered) != before
 
@@ -163,7 +163,7 @@ def test_a_miss_then_write_hashes_each_section_key_set_at_most_once(projects, mo
 
     project, discovered = projects
     cc.write_cache(discovered, [], [])
-    init = project / "pylib" / "genrepo_instructions.py"
+    init = project / "pylib" / "genproject_instructions.py"
     init.write_text(init.read_text() + "\n# edited\n")
 
     counts: Counter = Counter()
@@ -217,7 +217,7 @@ def test_shim_digest_moves_iff_the_names_digest_moves(projects):
     nested = next(project.rglob("sub*/test_*.py"))
     nested.write_text("def test_x():\n    pass\n\ndef test_moved():\n    pass\n")
     assert section_digests(discovered, SECTIONS) == before, "a test edit moves neither"
-    init = project / "pylib" / "genrepo_instructions.py"
+    init = project / "pylib" / "genproject_instructions.py"
     init.write_text(init.read_text() + "\n# edit\n")
     after_init = section_digests(discovered, SECTIONS)
     assert after_init["names"] != before["names"]
@@ -229,7 +229,7 @@ def test_a_derived_digest_alone_computes_its_children(projects):
     """`section_digests(projects, [shim])` asks for the shim alone; its children compute inside."""
     from otto.config.cache_sections import SECTIONS, section_by_name, section_digests
 
-    _repo, discovered = projects
+    _project, discovered = projects
     alone = section_digests(discovered, [section_by_name("shim")])
     assert alone["shim"] == section_digests(discovered, SECTIONS)["shim"]
 
@@ -274,7 +274,7 @@ def test_lab_file_edits_move_the_names_digest(tmp_path, monkeypatch):
 
     from otto.config.cache_sections import section_by_name, section_digest
     from tests._fixtures.labdata import json_lab_sources, write_lab_json
-    from tests._fixtures.sutrepo import touch_settings
+    from tests._fixtures.project_scaffold import touch_settings
 
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     sut = tmp_path / "sut"
@@ -283,7 +283,7 @@ def test_lab_file_edits_move_the_names_digest(tmp_path, monkeypatch):
     touch_settings(sut)
     lab_file = lab / "lab.json"
     write_lab_json(lab_file, [], declare_labs=True)
-    project = fake_repo(root=sut, lab_sources=json_lab_sources(sut, [lab]))
+    project = fake_project(root=sut, lab_sources=json_lab_sources(sut, [lab]))
     names = section_by_name("names")
     names_before = section_digest(names, [project])
 

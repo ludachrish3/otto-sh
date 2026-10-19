@@ -32,7 +32,7 @@ import subprocess
 import pytest
 import yaml
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
 
@@ -48,7 +48,7 @@ CHECK = f"uv run python scripts/check_breaking_marks.py {BASE_SHA}..HEAD"
 
 
 def _marking_step_script() -> str:
-    ci = yaml.safe_load((PROJECT_ROOT / ".github" / "workflows" / "ci.yml").read_text())
+    ci = yaml.safe_load((CHECKOUT_ROOT / ".github" / "workflows" / "ci.yml").read_text())
     (step,) = [
         s for s in ci["jobs"]["lint-python"]["steps"] if "check-breaking-marks" in s.get("name", "")
     ]

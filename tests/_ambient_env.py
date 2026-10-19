@@ -87,7 +87,7 @@ AMBIENT_OPT_INS: "dict[str, str]" = {
         "records (tests/conformance/_observation.py); default "
         "reports/conformance-observations/. Set by a CI job that uploads them "
         "as an artifact, and by the unit guards that read them back. Stripped, "
-        "a redirected run writes into the repo's real directory instead and the "
+        "a redirected run writes into the checkout's real directory instead and the "
         "collate step folds records nobody asked it to"
     ),
     "OTTO_BUSYBOX_CACHE": (

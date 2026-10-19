@@ -16,17 +16,17 @@ import pytest
 
 from otto import _webassets
 from otto._webassets import artifacts
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 from tests._fixtures.webassets import CONSUMERS
 
-REPO_ROOT = PROJECT_ROOT
+REPO_ROOT = CHECKOUT_ROOT
 WEBASSETS_GLOB = "src/otto/_webassets/*/"
 
 
 def in_package_ignores(gitignore_text: str) -> list[str]:
     """Non-comment .gitignore entries that point inside src/otto/.
 
-    Normalizes a leading ``/`` (this repo's dominant .gitignore convention —
+    Normalizes a leading ``/`` (this repository's dominant .gitignore convention —
     see ``/test/``, ``/host/``, ``/cov/``, etc.) before the ``startswith``
     test, so an entry written as ``/src/otto/newthing/`` is not invisible to
     this pin merely for following house style.
@@ -136,7 +136,7 @@ def test_every_consumer_is_neutralized_by_default():
     exists on disk), so "does not exist" is a genuine discriminator, not a
     tautology of a clean checkout. Delete the autouse fixture (or its
     ``neutralized_webassets`` request) and this test goes red here, even
-    though every other test in the repo may still pass. The
+    though every other test in the suite may still pass. The
     ``value not in _webassets.ALL.values()`` clause is NOT redundant with the
     existence check above it: on a bare checkout / hostless CI the real
     paths don't exist either, so that clause is the only one still able to

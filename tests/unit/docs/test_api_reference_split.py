@@ -14,11 +14,11 @@ import pytest
 
 from scripts.api_manifest import load_manifest
 from scripts.docs_api_reference import MANIFEST, build_reference, load_namespaces, trackable
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
 
-API = PROJECT_ROOT / "docs" / "api"
+API = CHECKOUT_ROOT / "docs" / "api"
 INTERNALS = API / "internals"
 DECLARED = set(load_manifest(MANIFEST))
 _DIRECTIVE = re.compile(r"^\.\. (auto\w+):: *(\S+)[ \t]*\n((?:[ \t]+:[\w-]+:.*\n)*)", re.MULTILINE)

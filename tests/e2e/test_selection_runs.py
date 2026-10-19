@@ -1,7 +1,7 @@
 """``otto test a b`` and ``-m`` alone: selection runs.
 
 Test names (a test, a class, or ``Class::name``) and/or a marker expression
-select tests inside each repo's own pytest session, and a repo whose session
+select tests inside each project's own pytest session, and a project whose session
 had nothing to run takes no part in the result. Plain pytest functions are first-class runnable
 targets too.
 """
@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from tests.e2e._otto_subprocess import run_otto
-from tests.e2e._selection_fixtures import FAILING_SUITE_SRC, PLAIN_SUITE_SRC, make_selection_repo
+from tests.e2e._selection_fixtures import FAILING_SUITE_SRC, PLAIN_SUITE_SRC, make_selection_project
 
 pytestmark = pytest.mark.hostless
 
@@ -32,7 +32,7 @@ def _junit_files(xdir: Path) -> list[Path]:
 
 
 def test_names_run_named_tests_across_classes(tmp_path: Path) -> None:
-    project = make_selection_repo(tmp_path)
+    project = make_selection_project(tmp_path)
     xdir = tmp_path / "xdir"
     xdir.mkdir()
     r = run_otto(
@@ -47,7 +47,7 @@ def test_names_run_named_tests_across_classes(tmp_path: Path) -> None:
 
 
 def test_plain_function_runs_by_name(tmp_path: Path) -> None:
-    project = make_selection_repo(tmp_path)
+    project = make_selection_project(tmp_path)
     xdir = tmp_path / "xdir"
     xdir.mkdir()
     r = run_otto(
@@ -62,7 +62,7 @@ def test_plain_function_runs_by_name(tmp_path: Path) -> None:
 
 
 def test_qualified_name_selects_one_class(tmp_path: Path) -> None:
-    project = make_selection_repo(tmp_path)
+    project = make_selection_project(tmp_path)
     xdir = tmp_path / "xdir"
     xdir.mkdir()
     r = run_otto(
@@ -77,7 +77,7 @@ def test_qualified_name_selects_one_class(tmp_path: Path) -> None:
 
 
 def test_marker_alone_runs_both_classes(tmp_path: Path) -> None:
-    project = make_selection_repo(tmp_path)
+    project = make_selection_project(tmp_path)
     xdir = tmp_path / "xdir"
     xdir.mkdir()
     r = run_otto(
@@ -92,7 +92,7 @@ def test_marker_alone_runs_both_classes(tmp_path: Path) -> None:
 
 
 def test_unknown_name_is_loud_with_suggestion(tmp_path: Path) -> None:
-    project = make_selection_repo(tmp_path)
+    project = make_selection_project(tmp_path)
     xdir = tmp_path / "xdir"
     xdir.mkdir()
     r = run_otto(
@@ -114,7 +114,7 @@ def test_unknown_name_is_loud_with_suggestion(tmp_path: Path) -> None:
 
 
 def test_a_class_name_selects_every_test_in_it(tmp_path: Path) -> None:
-    project = make_selection_repo(tmp_path)
+    project = make_selection_project(tmp_path)
     xdir = tmp_path / "xdir"
     xdir.mkdir()
     r = run_otto(
@@ -129,7 +129,7 @@ def test_a_class_name_selects_every_test_in_it(tmp_path: Path) -> None:
 
 
 def test_bare_otto_test_is_a_usage_error(tmp_path: Path) -> None:
-    project = make_selection_repo(tmp_path)
+    project = make_selection_project(tmp_path)
     xdir = tmp_path / "xdir"
     xdir.mkdir()
     r = run_otto(
@@ -145,7 +145,7 @@ def test_bare_otto_test_is_a_usage_error(tmp_path: Path) -> None:
 
 
 def test_stability_mode_works_on_selection(tmp_path: Path) -> None:
-    project = make_selection_repo(tmp_path)
+    project = make_selection_project(tmp_path)
     xdir = tmp_path / "xdir"
     xdir.mkdir()
     r = run_otto(
@@ -158,12 +158,14 @@ def test_stability_mode_works_on_selection(tmp_path: Path) -> None:
     assert "Stability Results" in r.stdout
 
 
-def test_multi_repo_selection_runs_one_session_per_repo(tmp_path: Path) -> None:
-    repo_a = make_selection_repo(tmp_path, name="repoA", suite_src=PLAIN_SUITE_SRC)
-    repo_b = make_selection_repo(tmp_path, name="repoB", suite_src=PLAIN_SUITE_SRC, with_lab=False)
+def test_multi_project_selection_runs_one_session_per_project(tmp_path: Path) -> None:
+    project_a = make_selection_project(tmp_path, name="projA", suite_src=PLAIN_SUITE_SRC)
+    project_b = make_selection_project(
+        tmp_path, name="projB", suite_src=PLAIN_SUITE_SRC, with_lab=False
+    )
     xdir = tmp_path / "xdir"
     xdir.mkdir()
-    roots = f"{repo_a}{os.pathsep}{repo_b}"
+    roots = f"{project_a}{os.pathsep}{project_b}"
     r = run_otto(
         ["test", "test_plain_function"],
         xdir=xdir,
@@ -173,20 +175,22 @@ def test_multi_repo_selection_runs_one_session_per_repo(tmp_path: Path) -> None:
     assert r.returncode == 0, r.stdout + r.stderr
     junit_files = _junit_files(xdir)
     names = {p.name for p in junit_files}
-    assert names == {"junit_repoA.xml", "junit_repoB.xml"}
+    assert names == {"junit_projA.xml", "junit_projB.xml"}
     for junit in junit_files:
         assert _testcase_count(junit) == 1
 
 
-def test_multi_repo_explicit_results_fans_out_per_repo(tmp_path: Path) -> None:
-    # An explicit --results path in a multi-repo selection must not have every
-    # repo's session clobber the same file — each participating repo's junit
+def test_multi_project_explicit_results_fans_out_per_project(tmp_path: Path) -> None:
+    # An explicit --results path in a multi-project selection must not have every
+    # project's session clobber the same file — each participating project's junit
     # gets its own name derived from the --results stem.
-    repo_a = make_selection_repo(tmp_path, name="repoA", suite_src=PLAIN_SUITE_SRC)
-    repo_b = make_selection_repo(tmp_path, name="repoB", suite_src=PLAIN_SUITE_SRC, with_lab=False)
+    project_a = make_selection_project(tmp_path, name="projA", suite_src=PLAIN_SUITE_SRC)
+    project_b = make_selection_project(
+        tmp_path, name="projB", suite_src=PLAIN_SUITE_SRC, with_lab=False
+    )
     xdir = tmp_path / "xdir"
     xdir.mkdir()
-    roots = f"{repo_a}{os.pathsep}{repo_b}"
+    roots = f"{project_a}{os.pathsep}{project_b}"
     results_path = xdir / "custom.xml"
     r = run_otto(
         ["test", "test_plain_function", "--results", str(results_path)],
@@ -197,21 +201,23 @@ def test_multi_repo_explicit_results_fans_out_per_repo(tmp_path: Path) -> None:
     assert r.returncode == 0, r.stdout + r.stderr
     custom_files = sorted(xdir.glob("custom*.xml"))
     names = {p.name for p in custom_files}
-    assert names == {"custom_repoA.xml", "custom_repoB.xml"}
+    assert names == {"custom_projA.xml", "custom_projB.xml"}
     for junit in custom_files:
         assert _testcase_count(junit) == 1
 
 
-def test_marker_alone_leaves_nothing_for_a_repo_without_matches(tmp_path: Path) -> None:
-    # repo_a's SUITE_SRC has @pytest.mark.shared tests; repo_b's PLAIN_SUITE_SRC
-    # has none. Both repos are searched, one session each; repo_b's matches
+def test_marker_alone_leaves_nothing_for_a_project_without_matches(tmp_path: Path) -> None:
+    # project_a's SUITE_SRC has @pytest.mark.shared tests; project_b's PLAIN_SUITE_SRC
+    # has none. Both projects are searched, one session each; project_b's matches
     # nothing, which is no match there, not a failure of the run, and leaves
     # no JUnit file behind.
-    repo_a = make_selection_repo(tmp_path, name="repoA")
-    repo_b = make_selection_repo(tmp_path, name="repoB", suite_src=PLAIN_SUITE_SRC, with_lab=False)
+    project_a = make_selection_project(tmp_path, name="projA")
+    project_b = make_selection_project(
+        tmp_path, name="projB", suite_src=PLAIN_SUITE_SRC, with_lab=False
+    )
     xdir = tmp_path / "xdir"
     xdir.mkdir()
-    roots = f"{repo_a}{os.pathsep}{repo_b}"
+    roots = f"{project_a}{os.pathsep}{project_b}"
     r = run_otto(
         ["test", "-m", "shared"],
         xdir=xdir,
@@ -219,16 +225,16 @@ def test_marker_alone_leaves_nothing_for_a_repo_without_matches(tmp_path: Path) 
         extra_env={"OTTOPATH": roots},
     )
     assert r.returncode == 0, r.stdout + r.stderr
-    # Two repos searched -> the per-repo JUnit name, whichever of them matched.
+    # Two projects searched -> the per-project JUnit name, whichever of them matched.
     [junit] = _junit_files(xdir)
-    assert junit.name == "junit_repoA.xml"
+    assert junit.name == "junit_projA.xml"
     assert _testcase_count(junit) == 2
 
 
 def test_a_warm_run_still_finds_the_names(tmp_path: Path) -> None:
     # The second run reads the collected-tests table the first one wrote and
     # collects only the file holding the name.
-    project = make_selection_repo(tmp_path)
+    project = make_selection_project(tmp_path)
     xdir = tmp_path / "xdir"
     xdir.mkdir()
     for _ in range(2):
@@ -238,14 +244,14 @@ def test_a_warm_run_still_finds_the_names(tmp_path: Path) -> None:
         assert _testcase_count(junit) == 2
 
 
-def test_multi_repo_worst_exit_code_wins(tmp_path: Path) -> None:
-    repo_a = make_selection_repo(tmp_path, name="repoA", suite_src=PLAIN_SUITE_SRC)
-    repo_b = make_selection_repo(
-        tmp_path, name="repoB", suite_src=FAILING_SUITE_SRC, with_lab=False
+def test_multi_project_worst_exit_code_wins(tmp_path: Path) -> None:
+    project_a = make_selection_project(tmp_path, name="projA", suite_src=PLAIN_SUITE_SRC)
+    project_b = make_selection_project(
+        tmp_path, name="projB", suite_src=FAILING_SUITE_SRC, with_lab=False
     )
     xdir = tmp_path / "xdir"
     xdir.mkdir()
-    roots = f"{repo_a}{os.pathsep}{repo_b}"
+    roots = f"{project_a}{os.pathsep}{project_b}"
     r = run_otto(
         ["test", "test_plain_function"],
         xdir=xdir,
@@ -255,6 +261,6 @@ def test_multi_repo_worst_exit_code_wins(tmp_path: Path) -> None:
     assert r.returncode != 0
     junit_files = _junit_files(xdir)
     names = {p.name for p in junit_files}
-    assert names == {"junit_repoA.xml", "junit_repoB.xml"}
-    junit_a = next(p for p in junit_files if p.name == "junit_repoA.xml")
+    assert names == {"junit_projA.xml", "junit_projB.xml"}
+    junit_a = next(p for p in junit_files if p.name == "junit_projA.xml")
     assert _testcase_count(junit_a) == 1

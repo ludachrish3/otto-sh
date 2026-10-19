@@ -1,4 +1,4 @@
-"""otto's pytest sessions keep their bytecode and pytest's cache out of the repo.
+"""otto's pytest sessions keep their bytecode and pytest's cache out of the project.
 
 Every session otto starts (a run, a collect-only seed or refresh) writes the
 bytecode of what it imports, assertion-rewritten test files included, under
@@ -26,7 +26,7 @@ from otto.config import collected_tests as tr
 from otto.config.home import PYCACHE_DIRNAME, PYTEST_CACHE_DIRNAME, workspace_home
 from otto.suite import run_tests
 from otto.suite.run import _refresh_tables
-from tests._fixtures.import_log_repo import ImportLogRepo, logged_test
+from tests._fixtures.import_log_project import ImportLogProject, logged_test
 
 
 def _a(seen: Path) -> str:
@@ -49,10 +49,10 @@ def home(tmp_path, monkeypatch, real_shell_bytecode) -> Path:
 
 
 @pytest.fixture
-def project(sut_repo, tmp_path, home) -> ImportLogRepo:
+def project(one_project, tmp_path, home) -> ImportLogProject:
     """``tests/test_a.py`` (``TestA``), ``tests/test_b.py``, ``tests/sub/test_c.py``, a conftest."""
-    shell = ImportLogRepo(tmp_path / "sut")
-    shell.root = sut_repo(
+    shell = ImportLogProject(tmp_path / "sut")
+    shell.root = one_project(
         files={
             "tests/test_a.py": shell.module("test_a", _a(tmp_path / "prefix-seen")),
             "tests/test_b.py": shell.module("test_b", logged_test("test_b1")),
@@ -63,7 +63,7 @@ def project(sut_repo, tmp_path, home) -> ImportLogRepo:
     return shell
 
 
-def _the_repo():
+def _the_project():
     from otto.bootstrap import get_projects
 
     [only] = get_projects()
@@ -93,7 +93,7 @@ def _prefix() -> Path:
     return workspace_home() / PYCACHE_DIRNAME
 
 
-def test_a_first_run_adds_nothing_to_any_directory_of_the_repo(project, tmp_path):
+def test_a_first_run_adds_nothing_to_any_directory_of_the_project(project, tmp_path):
     tests = project.root / "tests"
     before = _listings(project.root)
     stats = {d: _stat(d) for d in [tests, tests / "sub"]}
@@ -102,18 +102,18 @@ def test_a_first_run_adds_nothing_to_any_directory_of_the_repo(project, tmp_path
 
     assert project.ran_tests() == ["test_a1"]
     assert _listings(project.root) == before, "no __pycache__, no .pytest_cache"
-    table = tr.read_table(_the_repo())
+    table = tr.read_table(_the_project())
     assert table is not None
     assert {Path(d): stat for d, stat in table.dirs.items()} == {
         tests: stats[tests],
         tests / "sub": stats[tests / "sub"],
     }, "the stats stored are the ones from before the session"
-    assert tr.classify(_the_repo(), table).is_current
+    assert tr.classify(_the_project(), table).is_current
 
 
 def test_a_run_after_a_collect_only_seed_leaves_the_table_current(project, tmp_path):
-    assert tr.read_table(_the_repo()) is None, "cold"
-    [seeded] = _refresh_tables([_the_repo()])
+    assert tr.read_table(_the_project()) is None, "cold"
+    [seeded] = _refresh_tables([_the_project()])
     assert seeded is not None
     project.next_run()
     before = _listings(project.root)
@@ -122,9 +122,9 @@ def test_a_run_after_a_collect_only_seed_leaves_the_table_current(project, tmp_p
 
     assert project.imported() == ["test_a", "test_b", "test_c"], "a whole-tree session"
     assert _listings(project.root) == before
-    table = tr.read_table(_the_repo())
+    table = tr.read_table(_the_project())
     assert table is not None
-    assert tr.classify(_the_repo(), table).is_current
+    assert tr.classify(_the_project(), table).is_current
 
 
 def test_a_runs_rewritten_bytecode_lands_under_the_workspace_prefix(project, tmp_path):
@@ -140,7 +140,7 @@ def test_a_runs_rewritten_bytecode_lands_under_the_workspace_prefix(project, tmp
 def test_a_collect_only_seed_writes_its_bytecode_under_the_prefix(project):
     before = _listings(project.root)
 
-    _refresh_tables([_the_repo()])
+    _refresh_tables([_the_project()])
 
     assert project.imported() == ["test_a", "test_b", "test_c"]
     assert _listings(project.root) == before

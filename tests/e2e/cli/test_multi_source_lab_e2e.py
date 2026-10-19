@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from tests._fixtures.labdata import lab_json_v2, write_lab_json
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.project_scaffold import make_project
 from tests.e2e._otto_subprocess import run_otto
 
 pytestmark = pytest.mark.hostless
@@ -34,13 +34,13 @@ def _host(element: str, ip: str) -> dict:
     }
 
 
-def _make_repo(root: Path, tmp_path: Path, *, local_hosts: list[dict]) -> Path:
+def _make_project(root: Path, tmp_path: Path, *, local_hosts: list[dict]) -> Path:
     global_file = write_lab_json(tmp_path / "global-hosts.json", [_host("alt1", "10.0.0.1")])
-    return make_sut_repo(
+    return make_project(
         root,
         name="multisrc",
         extra=SETTINGS.format(global_file=global_file),
-        # Only the global source DECLARES `site` (spec §2.1); the repo-local
+        # Only the global source DECLARES `site` (spec §2.1); the project-local
         # file contributes members only. Two declarations would be a second,
         # independent override — the labs-entry one (spec §6, §9) — and it
         # warns in the same words whether or not any element collides. That
@@ -51,7 +51,7 @@ def _make_repo(root: Path, tmp_path: Path, *, local_hosts: list[dict]) -> Path:
 
 
 def test_list_hosts_unions_sources_and_surfaces_the_override(tmp_path: Path) -> None:
-    project = _make_repo(
+    project = _make_project(
         tmp_path / "multisrc",
         tmp_path,
         local_hosts=[_host("alt1", "10.9.9.9"), _host("test2", "10.0.0.2")],
@@ -63,9 +63,9 @@ def test_list_hosts_unions_sources_and_surfaces_the_override(tmp_path: Path) -> 
     combined = result.stdout + result.stderr
 
     assert result.returncode == 0, combined
-    # Union: the repo-only host appears beside the overridden global one.
+    # Union: the project-only host appears beside the overridden global one.
     assert "alt1" in combined  # global record, overridden locally
-    assert "test2" in combined  # repo-local only
+    assert "test2" in combined  # project-local only
     # Transparency (spec §3): the override warning reaches the user, naming
     # both source labels. If this is red because the warning is emitted
     # before logging reaches the console, FIX THE EMISSION PATH — do not
@@ -90,7 +90,7 @@ def test_show_lab_renders_the_winning_record_not_the_shadowed_one(tmp_path: Path
     is needed. The losing ip must be ABSENT, not merely out-ranked — an
     override replaces the record wholesale rather than blending fields.
     """
-    project = _make_repo(
+    project = _make_project(
         tmp_path / "multisrc",
         tmp_path,
         local_hosts=[_host("alt1", "10.9.9.9"), _host("test2", "10.0.0.2")],
@@ -102,17 +102,17 @@ def test_show_lab_renders_the_winning_record_not_the_shadowed_one(tmp_path: Path
     combined = result.stdout + result.stderr
 
     assert result.returncode == 0, combined
-    assert "10.9.9.9" in combined, combined  # repo-local record took effect
+    assert "10.9.9.9" in combined, combined  # project-local record took effect
     assert "10.0.0.1" not in combined, combined  # the global record it shadowed is gone
 
 
 def test_list_hosts_without_a_collision_says_nothing_about_overrides(tmp_path: Path) -> None:
     """Positive control: same two sources, no colliding host id, no override talk.
 
-    Same repo shape, same flags, same banner — only the collision is removed
+    Same project shape, same flags, same banner — only the collision is removed
     (the local source drops its ``alt1`` record). Anything the sibling test
     matches on must therefore come from the override itself and not from
-    startup noise that a two-source repo prints regardless.
+    startup noise that a two-source project prints regardless.
 
     Not "identical records in both sources": a colliding id warns per spec
     §6.1 whether or not the two records agree, and the composite deliberately
@@ -120,7 +120,9 @@ def test_list_hosts_without_a_collision_says_nothing_about_overrides(tmp_path: P
     override taking effect). Removing the collision is the control that keeps
     the product rule intact.
     """
-    project = _make_repo(tmp_path / "multisrc", tmp_path, local_hosts=[_host("test2", "10.0.0.2")])
+    project = _make_project(
+        tmp_path / "multisrc", tmp_path, local_hosts=[_host("test2", "10.0.0.2")]
+    )
     xdir = tmp_path / "xdir"
     xdir.mkdir()
 
@@ -129,7 +131,7 @@ def test_list_hosts_without_a_collision_says_nothing_about_overrides(tmp_path: P
 
     assert result.returncode == 0, combined
     assert "alt1" in combined  # global source
-    assert "test2" in combined  # repo-local source
+    assert "test2" in combined  # project-local source
     assert "overrides" not in combined
 
 
@@ -140,7 +142,7 @@ def test_host_completion_offers_the_union_without_warning_into_the_shell(tmp_pat
     the same, but the override warning must NOT appear — a warning printed
     into a completing shell corrupts the candidate list the shell is parsing.
     """
-    project = _make_repo(
+    project = _make_project(
         tmp_path / "multisrc",
         tmp_path,
         local_hosts=[_host("alt1", "10.9.9.9"), _host("test2", "10.0.0.2")],

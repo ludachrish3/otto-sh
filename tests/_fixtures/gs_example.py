@@ -12,9 +12,9 @@ the one-line lazy import here.
 import sys
 
 from otto.labs.loader import load_lab
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-EXAMPLE = PROJECT_ROOT / "docs" / "examples" / "getting-started"
+EXAMPLE = CHECKOUT_ROOT / "docs" / "examples" / "getting-started"
 LIBS = EXAMPLE / "libs"
 
 

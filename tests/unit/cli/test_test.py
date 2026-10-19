@@ -23,7 +23,7 @@ from otto import options
 from otto.params import register_options
 from tests._fixtures.bootstrap_seam import patch_bootstrap
 from tests._fixtures.gitrepo import TmpGitRepo
-from tests.unit.cli.conftest import _flat, _lib_ok_result, _repo_with_tickets_configured
+from tests.unit.cli.conftest import _flat, _lib_ok_result, _project_with_tickets_configured
 
 runner = CliRunner()
 
@@ -54,7 +54,7 @@ class TestRulesAreTheLibrarys:
     def test_the_cli_hands_run_tests_what_the_class_implies(
         self, capture_cov, tmp_path, flags, expected, monkeypatch
     ):
-        patch_bootstrap(monkeypatch, [_repo_with_tickets_configured()])
+        patch_bootstrap(monkeypatch, [_project_with_tickets_configured()])
         args = [f.format(tmp=tmp_path) for f in flags]
         exit_code, run_options, output = capture_cov(args)
         assert exit_code == 0, output
@@ -418,14 +418,14 @@ class TestInRunReportGeneration:
     """
 
     @pytest.fixture
-    def sut_repo(self, tmp_path):
-        """A real tmp_path git repo standing in for the SUT checkout."""
+    def project_root(self, tmp_path):
+        """A real tmp_path git repository standing in for the project root."""
         project = TmpGitRepo(tmp_path / "sut")
         project.write("f.c", "int a;\nint b;\n")
         project.commit("init")
         return project.root
 
-    def test_in_run_report_uses_configured_tiers(self, tmp_path, sut_repo, monkeypatch):
+    def test_in_run_report_uses_configured_tiers(self, tmp_path, project_root, monkeypatch):
         """``otto test --cov-report`` must render via the collection-model path,
         not the legacy system-only one: the store.json the in-run report writes
         carries the settings-declared tier precedence."""
@@ -451,8 +451,8 @@ class TestInRunReportGeneration:
             }
         }
         project = MagicMock()
-        project.root = sut_repo
-        project.name = "repo"
+        project.root = project_root
+        project.name = "project"
         project.settings = {"coverage": cov_config}
 
         opts = RunOptions(
@@ -570,7 +570,7 @@ class TestCovTicketsJsonOption:
         assert ctx_obj["cov_tickets_json"] is None
 
     def test_cov_tickets_json_recorded(self, capture_cov, tmp_path, monkeypatch):
-        patch_bootstrap(monkeypatch, [_repo_with_tickets_configured()])
+        patch_bootstrap(monkeypatch, [_project_with_tickets_configured()])
         target = tmp_path / "tickets.json"
         exit_code, ctx_obj, output = capture_cov(["--cov-tickets-json", str(target)])
         assert exit_code == 0, f"output={output!r}"
@@ -580,7 +580,7 @@ class TestCovTicketsJsonOption:
         """Mirrors --cov-report-dir: naming a tickets export with no other
         --cov-report flag still implies --cov-report (and --cov) — a bare
         --cov-tickets-json PATH must not silently do nothing."""
-        patch_bootstrap(monkeypatch, [_repo_with_tickets_configured()])
+        patch_bootstrap(monkeypatch, [_project_with_tickets_configured()])
         target = tmp_path / "tickets.json"
         exit_code, ctx_obj, output = capture_cov(["--cov-tickets-json", str(target)])
         assert exit_code == 0, f"output={output!r}"

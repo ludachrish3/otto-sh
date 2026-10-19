@@ -13,13 +13,13 @@ otto env sync [--backend uv|pip] [-- INSTALLER_ARGS...]
 
 ```console
 $ otto env sync
-synced ~/.otto/134b91c0-repo1-repo4/env
-  installed (editable): repo4
-  skipped, no pyproject.toml: repo1
+synced ~/.otto/134b91c0-project1-project4/env
+  installed (editable): project4
+  skipped, no pyproject.toml: project1
   backend: uv
 
 Activate it with:
-  source ~/.otto/134b91c0-repo1-repo4/env/bin/activate
+  source ~/.otto/134b91c0-project1-project4/env/bin/activate
 ```
 
 ## It never destroys anything
@@ -36,7 +36,7 @@ always safe.
 
 ```console
 $ otto env sync
-created ~/.otto/134b91c0-repo1-repo4/env
+created ~/.otto/134b91c0-project1-project4/env
 ```
 
 `sync` with no environment does exactly what {doc}`create` does.

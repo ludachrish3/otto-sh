@@ -169,11 +169,11 @@ def test_ssh_debug_env_malformed_leaves_the_asyncssh_logger_floor_at_warning(mon
         asyncssh.set_debug_level(saved_debug_level)
 
 
-def test_ssh_debug_env_overrides_a_repos_own_asyncssh_logging_level(monkeypatch):
-    """N1: the CLI applies a repo's [logging.levels] once at startup, BEFORE
+def test_ssh_debug_env_overrides_a_projects_own_asyncssh_logging_level(monkeypatch):
+    """N1: the CLI applies a project's [logging.levels] once at startup, BEFORE
     any connect; apply_ssh_debug_level runs on every connect, afterwards, and
     apply_library_levels remembers its override on the state — so a valid
-    OTTO_SSH_DEBUG overrides a repo's own asyncssh entry from the first
+    OTTO_SSH_DEBUG overrides a project's own asyncssh entry from the first
     connect on, not the other way around. This is the ruled behaviour (an
     explicit per-invocation opt-in beats a standing noise-floor entry), not a
     bug: connections.py's docstring, settings.md and the spec all say so."""
@@ -186,7 +186,7 @@ def test_ssh_debug_env_overrides_a_repos_own_asyncssh_logging_level(monkeypatch)
     saved_debug_level = SSHLogger._debug_level
     try:
         management.install_console("DEBUG")
-        management.apply_library_levels({"asyncssh": "ERROR"})  # a repo's [logging.levels]
+        management.apply_library_levels({"asyncssh": "ERROR"})  # a project's [logging.levels]
         assert not logging.getLogger("asyncssh").isEnabledFor(logging.DEBUG)
         apply_ssh_debug_level()
         assert logging.getLogger("asyncssh").isEnabledFor(logging.DEBUG)

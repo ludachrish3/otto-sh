@@ -117,11 +117,11 @@ def test_the_refusal_runs_before_validate():
 def test_unregister_and_restore_and_cancel_skip_the_refusal():
     """Mutations: add REFUSE_DURING_TEST_LOAD to UNREGISTER, RESTORE or CANCEL (one at a time)."""
     r = _reg()
-    _from_module("repo_init", r.register, "w", Rec(1))
+    _from_module("project_init", r.register, "w", Rec(1))
     state = r._snapshot()
-    _from_module("repo_init", r.register, "x", Rec(2))
+    _from_module("project_init", r.register, "x", Rec(2))
     sub = reg.Subscription("hook", register_hint="x")
-    token = _from_module("repo_init", sub.subscribe, len)
+    token = _from_module("project_init", sub.subscribe, len)
     with reg.loading_test_files():
         _from_module("test_widgets", r.unregister, "x")
         r._restore(state)
@@ -134,7 +134,7 @@ def test_publish_skips_the_refusal(monkeypatch, tmp_path):
     """A Ref's first get inside a pytest session publishes. Mutation: add REFUSE to PUBLISH."""
     _module(monkeypatch, "late_value_mod", "VALUE = 7\n", tmp_path)
     r = _lazy()
-    _from_module("repo_init", r.register, "w", LazyRec(Ref("late_value_mod:VALUE")))
+    _from_module("project_init", r.register, "w", LazyRec(Ref("late_value_mod:VALUE")))
     with reg.loading_test_files():
         assert r.get("w").value == 7
     assert r.peek("w").value == 7  # published
@@ -290,7 +290,7 @@ def test_a_check_run_by_the_imported_module_is_still_guarded(monkeypatch, tmp_pa
 # --- step 4: capabilities --------------------------------------------------
 
 
-def test_require_repo_refuses_register_outside_an_init_import():
+def test_require_project_refuses_register_outside_an_init_import():
     """Mutation: remove CAPABILITIES from REGISTER."""
     r = _reg(capabilities=[Justified(RequireProject(), reason="r")])
     with pytest.raises(RegistrationRefused, match="project init module"):
@@ -302,12 +302,12 @@ def test_require_repo_refuses_register_outside_an_init_import():
     assert r.project("w") == "a"
 
 
-def test_require_repo_never_blocks_unregister_restore_or_publish(monkeypatch, tmp_path):
+def test_require_project_never_blocks_unregister_restore_or_publish(monkeypatch, tmp_path):
     """Mutations: add CAPABILITIES to UNREGISTER / RESTORE / PUBLISH (one at a time)."""
-    _module(monkeypatch, "require_repo_mod", "VALUE = 4\n", tmp_path)
+    _module(monkeypatch, "require_project_mod", "VALUE = 4\n", tmp_path)
     r = _lazy(capabilities=[Justified(RequireProject(), reason="r")])
     with reg.registering_project("a"):
-        r.register("w", LazyRec(Ref("require_repo_mod:VALUE")))
+        r.register("w", LazyRec(Ref("require_project_mod:VALUE")))
         state = r._snapshot()
         r.register("x", LazyRec(2))
     r.unregister("x")
@@ -345,13 +345,13 @@ def test_restore_does_not_check_records():
 def test_collisions_raise_naming_both_origins():
     """Mutation: remove COLLISIONS from REGISTER."""
     r = _reg()
-    _from_module("repo_a.init", r.register, "w", Rec(1))
+    _from_module("project_a.init", r.register, "w", Rec(1))
     with pytest.raises(DuplicateRegistration) as err:
-        _from_module("repo_b.init", r.register, "w", Rec(2))
+        _from_module("project_b.init", r.register, "w", Rec(2))
     text = str(err.value)
-    assert "repo_a.init" in text and "repo_b.init" in text  # noqa: PT018
+    assert "project_a.init" in text and "project_b.init" in text  # noqa: PT018
     assert "Pass overwrite=True" in text
-    assert r.get("w") == Rec(1) and r.origin("w") == "repo_a.init" and r.revision == 1  # noqa: PT018
+    assert r.get("w") == Rec(1) and r.origin("w") == "project_a.init" and r.revision == 1  # noqa: PT018
 
 
 def test_overwrite_never_covers_a_repeat_within_one_batch():

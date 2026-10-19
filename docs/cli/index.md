@@ -118,16 +118,16 @@ otto --lab my_lab --list-products
 ```
 
 ```text
-                                              products in lab my_lab
-╭───────┬─────────────────────┬─────────┬──────────────┬─────────┬──────────────┬────────────────────┬────────────╮
-│ name  │ kind                │ variant │ instrumented │ project │ hosts        │ artifact           │ stage dir  │
-├───────┼─────────────────────┼─────────┼──────────────┼─────────┼──────────────┼────────────────────┼────────────┤
-│ agent │ shell               │ any     │ unknown      │ repo1   │ test1, test2 │ build/agent.tar.gz │ /opt/stage │
-│ kcov  │ kmod                │ any     │ yes          │ repo1   │ test1        │ build/kcov.ko      │ login home │
-│ probe │ code (ProbeProduct) │ any     │ unknown      │ repo2   │ test3        │                    │            │
-╰───────┴─────────────────────┴─────────┴──────────────┴─────────┴──────────────┴────────────────────┴────────────╯
+                                               products in lab my_lab
+╭───────┬─────────────────────┬─────────┬──────────────┬──────────┬──────────────┬────────────────────┬────────────╮
+│ name  │ kind                │ variant │ instrumented │ project  │ hosts        │ artifact           │ stage dir  │
+├───────┼─────────────────────┼─────────┼──────────────┼──────────┼──────────────┼────────────────────┼────────────┤
+│ agent │ shell               │ any     │ unknown      │ project1 │ test1, test2 │ build/agent.tar.gz │ /opt/stage │
+│ kcov  │ kmod                │ any     │ yes          │ project1 │ test1        │ build/kcov.ko      │ login home │
+│ probe │ code (ProbeProduct) │ any     │ unknown      │ project2 │ test3        │                    │            │
+╰───────┴─────────────────────┴─────────┴──────────────┴──────────┴──────────────┴────────────────────┴────────────╯
 not used in this lab:
-  fw (embedded, repo2): no host matches
+  fw (embedded, project2): no host matches
 ```
 
 The reasons an entry is not used are `no host matches`, `outside <project>'s

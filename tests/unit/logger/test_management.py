@@ -130,7 +130,7 @@ def test_default_library_levels_quiet_known_noisy_libraries(tmp_path):
 
 
 def test_levels_overrides_unmute_and_extend(tmp_path):
-    """Spec §4.2: a repo entry overrides a default per name, and extends the table."""
+    """Spec §4.2: a project entry overrides a default per name, and extends the table."""
     management.init_cli_logging(xdir=tmp_path, log_level="DEBUG", keep_days=7)
     name = next(iter(management.DEFAULT_LIBRARY_LEVELS))
     management.apply_library_levels({name: "DEBUG", "chatty_sdk": "ERROR"})
@@ -151,17 +151,17 @@ def test_reset_restores_floored_loggers_to_notset(tmp_path):
 def test_a_warn_alias_from_settings_drives_a_real_setlevel(tmp_path):
     """otto's own WARN/CRIT aliases must survive the whole path, not just parsing.
 
-    A repo writes ``vendor = "warn"``; the settings model normalizes it and
+    A project writes ``vendor = "warn"``; the settings model normalizes it and
     ``apply_library_levels`` hands the NAME straight to ``Logger.setLevel``.
-    The parse-only test in ``test_repo.py`` stops before that hand-off, which
+    The parse-only test in ``test_project.py`` stops before that hand-off, which
     is precisely where an alias that stopped being registered would surface —
     as ``ValueError: Unknown level``, at CLI startup, on a config that
     validated.
     """
     from otto.config.project import Project
-    from tests._fixtures.sutrepo import make_sut_repo
+    from tests._fixtures.project_scaffold import make_project
 
-    sut = make_sut_repo(
+    sut = make_project(
         tmp_path / "aliasrepo",
         name="aliasrepo",
         extra='[logging.levels]\nvendor = "warn"\nloud_vendor = "CRIT"\n',
@@ -175,7 +175,7 @@ def test_a_warn_alias_from_settings_drives_a_real_setlevel(tmp_path):
     assert logging.getLogger("loud_vendor").level == logging.CRITICAL
 
 
-def test_a_second_install_console_keeps_the_repo_overrides(tmp_path):
+def test_a_second_install_console_keeps_the_project_overrides(tmp_path):
     """Re-installing the console must not silently undo ``[logging.levels]``.
 
     ``install_console`` re-applies the table on every install. Applying the

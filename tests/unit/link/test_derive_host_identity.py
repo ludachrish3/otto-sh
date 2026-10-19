@@ -87,7 +87,7 @@ def test_a_record_naming_an_unregistered_profile_is_skipped_not_fatal(tmp_path):
     """A record this process cannot resolve must not deny the rest of the lab.
 
     Exactly the shape of a lab file whose hosts use a profile or command frame
-    registered by a SUT repo's init modules — absent in any other process.
+    registered by a project's init modules — absent in any other process.
     """
     write_lab_json(
         tmp_path / "lab.json",

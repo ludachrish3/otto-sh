@@ -10,10 +10,10 @@ moment the script moves or its spec-loading needs change.
 import importlib.util
 from types import ModuleType
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-HARNESS_PATH = PROJECT_ROOT / "scripts" / "import_budget.py"
-"""Path to the harness script. Anchored on ``PROJECT_ROOT`` (G9: no
+HARNESS_PATH = CHECKOUT_ROOT / "scripts" / "import_budget.py"
+"""Path to the harness script. Anchored on ``CHECKOUT_ROOT`` (G9: no
 ``Path(__file__).parents[N]`` arithmetic outside ``paths.py``)."""
 
 

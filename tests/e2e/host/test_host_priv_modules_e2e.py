@@ -33,7 +33,7 @@ import pytest
 
 from tests._fixtures._host_pool import UNIX_POOL as _UNIX_POOL
 from tests._fixtures._host_pool import lease_unix_host
-from tests.e2e._otto_subprocess import REPO1, assert_output_dir, output_dirs, run_otto
+from tests.e2e._otto_subprocess import PROJECT1, assert_output_dir, output_dirs, run_otto
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -52,7 +52,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("host_priv_e2e")]
 
 def _run_otto(
     *args: str,
-    roots: Path = REPO1,
+    roots: Path = PROJECT1,
     lab: str = _LAB,
     xdir: Path | None = None,
     timeout: int = 120,

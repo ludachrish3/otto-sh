@@ -26,7 +26,7 @@ from otto.logger.levels import LEVEL_NAMES
 from otto.result import CommandResult
 from otto.utils import Status
 from tests._fixtures.bootstrapstub import bootstrap_stub
-from tests._fixtures.fake_repo import fake_repo
+from tests._fixtures.fake_project import fake_project
 
 runner = CliRunner()
 
@@ -67,7 +67,7 @@ def _ingest_variant_entries() -> list[str]:
             kind="toy",
             seam="products",
             owner="acme",
-            base_dir=Path("/repo"),
+            base_dir=Path("/project"),
             match={},
             params={"artifact": artifact},
             cls=None,
@@ -106,7 +106,7 @@ def main_mocks(tmp_path):
 
     bs._reset()
     # The lab / session work is lazy (Task 7) and lives in otto.cli.invoke, which
-    # imports get_repos / load_lab from otto.config at call time — patch the
+    # imports get_projects / load_lab from otto.config at call time — patch the
     # source so both the root-callback (--show-lab) and preamble paths see mocks.
     with (
         patch.dict(os.environ, clean_env, clear=True),
@@ -197,18 +197,18 @@ class TestEagerOptions:
         assert "--holder" in result.output
 
     def test_list_labs_exits_zero(self):
-        # get_repos() returns [] in test env; just verifies the flag is accepted
+        # get_projects() returns [] in test env; just verifies the flag is accepted
         result = runner.invoke(app, ["--list-labs"])
         assert result.exit_code == 0
 
-    def test_list_labs_reads_repos_where_they_are_defined(self):
-        # `--list-labs` must look `get_repos` up at call time. A module-level
-        # `from ..bootstrap import get_repos` in otto.cli.main would bind the real
+    def test_list_labs_reads_projects_where_they_are_defined(self):
+        # `--list-labs` must look `get_projects` up at call time. A module-level
+        # `from ..bootstrap import get_projects` in otto.cli.main would bind the real
         # function at import, so this patch — at the defining module, where
         # every other caller sees it — would silently run the real bootstrap.
         from rich.panel import Panel
 
-        project = fake_repo(get_lab_panel=lambda: Panel("sentinel-lab-from-patch"))
+        project = fake_project(get_lab_panel=lambda: Panel("sentinel-lab-from-patch"))
         with patch("otto.declared.get_projects", return_value=[project]):
             result = runner.invoke(app, ["--list-labs"])
         assert result.exit_code == 0, result.output
@@ -363,7 +363,7 @@ class TestLoggerArguments:
 
     # One invocation builds the console handler TWICE since spec 2026-08-30
     # §3.1: the root callback installs it as soon as --log-level is parsed, and
-    # `ensure_cli_session` re-affirms it idempotently once repo settings exist.
+    # `ensure_cli_session` re-affirms it idempotently once project settings exist.
     # So these check the latest call and that every call AGREES — the flag must
     # reach both installs, or the second silently undoes the first.
     # TestEarlyConsoleHandler pins that only one handler survives on root.
@@ -523,20 +523,20 @@ class TestLoggerArguments:
 
 
 class TestLoggingLevelsMerge:
-    """Design 2026-08-30 §4.2: the CLI session applies every repo's table.
+    """Design 2026-08-30 §4.2: the CLI session applies every project's table.
 
     The merge rule itself (union, a disagreement refuses) is
     ``otto.session.merge_logging_levels``'s and is tested beside it.
     """
 
-    def test_a_repo_table_reaches_the_live_logger(self, real_main_mocks):
-        """The WIRING: ensure_cli_session merges repo tables onto otto's floor.
+    def test_a_project_table_reaches_the_live_logger(self, real_main_mocks):
+        """The WIRING: ensure_cli_session merges project tables onto otto's floor.
 
         Without this, the library's merge tests
         (``tests/unit/session/test_logs.py``) would all still pass with the
         call missing from ``ensure_cli_session`` entirely.
         """
-        real_main_mocks["repo"].logging_levels = {
+        real_main_mocks["project"].logging_levels = {
             "vendor_under_test": "ERROR",
             # An override of an otto default, proving the merge order.
             "asyncssh": "DEBUG",
@@ -965,16 +965,16 @@ class TestProjectSwitchWiring:
 
     @pytest.fixture(autouse=True)
     def _world_knows_these_names(self, monkeypatch):
-        """Let discovery find every repo name these tests type.
+        """Let discovery find every project name these tests type.
 
-        The preamble validates ``-I``/``-E`` against the discovered repo set
+        The preamble validates ``-I``/``-E`` against the discovered project set
         and exits 2 on a name nothing declares
         (``otto.cli.invoke.validate_project_switches``). ``main_mocks`` leaves
         that set empty, so without this every test below would stop at the
         validator with exit 2 and witness none of the wiring it exists for.
         Names are the NORMALIZED spellings the validator compares against.
         """
-        projects = [fake_repo(n) for n in ("repo-a", "other-repo", "a", "b", "c")]
+        projects = [fake_project(n) for n in ("proj-a", "other-project", "a", "b", "c")]
         monkeypatch.setattr("otto.bootstrap.bootstrap", lambda: bootstrap_stub(projects))
 
     def _capture_root_options(self, monkeypatch):
@@ -1007,12 +1007,12 @@ class TestProjectSwitchWiring:
         """
         captured = self._capture_root_options(monkeypatch)
 
-        result = _invoke(["-I", "Repo.A", "-E", "other_repo"])
+        result = _invoke(["-I", "Proj.A", "-E", "other_project"])
 
         assert result.exit_code == 0, result.output
         opts = captured["opts"]
-        assert opts.include_projects == ("repo-a",)
-        assert opts.exclude_projects == ("other-repo",)
+        assert opts.include_projects == ("proj-a",)
+        assert opts.exclude_projects == ("other-project",)
 
     def test_long_spellings_reach_root_options_too(self, main_mocks, monkeypatch):
         captured = self._capture_root_options(monkeypatch)
@@ -1040,12 +1040,12 @@ class TestProjectSwitchWiring:
         meets ``otto.config.scope.active``. Dropping the two kwargs leaves every
         other test in the suite green.
         """
-        result = _invoke(["-I", "Repo.A", "-E", "other_repo"])
+        result = _invoke(["-I", "Proj.A", "-E", "other_project"])
 
         assert result.exit_code == 0, result.output
         [ctx] = contexts_at_close
-        assert ctx.include_projects == ("repo-a",)
-        assert ctx.exclude_projects == ("other-repo",)
+        assert ctx.include_projects == ("proj-a",)
+        assert ctx.exclude_projects == ("other-project",)
 
     def test_the_context_sees_the_switches_through_the_predicate(
         self, main_mocks, contexts_at_close
@@ -1057,13 +1057,13 @@ class TestProjectSwitchWiring:
         """
         from otto.config import scope
 
-        result = _invoke(["-E", "other_repo"])
+        result = _invoke(["-E", "other_project"])
 
         assert result.exit_code == 0, result.output
         [ctx] = contexts_at_close
-        assert scope.active("other-repo", ctx) is False
-        assert scope.switched_off("other-repo", ctx) is True
-        assert scope.active("some-other-repo", ctx) is True
+        assert scope.active("other-project", ctx) is False
+        assert scope.switched_off("other-project", ctx) is True
+        assert scope.active("some-other-project", ctx) is True
 
     def test_an_unknown_name_stops_the_real_cli_at_two(self, main_mocks):
         """The preamble really calls the validator — not just a fake ctx in a unit test.
@@ -1088,55 +1088,57 @@ class TestProjectSwitchWiring:
         assert result.exit_code == 2
         assert "no project 'ghost'" in result.output
 
-    def _world_with_one_broken_repo(self, monkeypatch):
-        """Install a discovered world where ``repo-a`` failed to load."""
+    def _world_with_one_broken_project(self, monkeypatch):
+        """Install a discovered world where ``proj-a`` failed to load."""
         from otto.bootstrap import BootstrapError
 
-        broken = fake_repo("repo-a", root=Path("/repos/repo-a"), project_scope=None)
+        broken = fake_project("proj-a", root=Path("/projects/proj-a"), project_scope=None)
         monkeypatch.setattr(
             "otto.bootstrap.bootstrap",
             lambda: bootstrap_stub(
                 [broken],
-                errors=[BootstrapError(broken.root, "repo_a_init", ImportError("paramiko"))],
+                errors=[BootstrapError(broken.root, "project_a_init", ImportError("paramiko"))],
             ),
         )
 
-    def test_an_excluded_repos_bootstrap_error_does_not_fail_the_run(self, main_mocks, monkeypatch):
+    def test_an_excluded_projects_bootstrap_error_does_not_fail_the_run(
+        self, main_mocks, monkeypatch
+    ):
         """The preamble hands *ctx* to the gate — otherwise this run would exit 1.
 
         Dropping the argument at that call site leaves every direct unit test
         of the gate green, because they pass their own ctx.
         """
-        self._world_with_one_broken_repo(monkeypatch)
+        self._world_with_one_broken_project(monkeypatch)
 
-        result = _invoke(["-E", "repo-a"])
+        result = _invoke(["-E", "proj-a"])
 
         assert result.exit_code == 0, result.output
 
-    def test_show_lab_demotes_an_excluded_repos_error_as_well(self, main_mocks, monkeypatch):
+    def test_show_lab_demotes_an_excluded_projects_error_as_well(self, main_mocks, monkeypatch):
         """The ``--show-lab`` branch passes *ctx* to the gate too, not just to the validator."""
-        self._world_with_one_broken_repo(monkeypatch)
+        self._world_with_one_broken_project(monkeypatch)
 
-        result = runner.invoke(app, ["--lab", "test_lab", "-E", "repo-a", "--show-lab"])
+        result = runner.invoke(app, ["--lab", "test_lab", "-E", "proj-a", "--show-lab"])
 
         assert result.exit_code == 0, result.output
 
     def test_contradictory_switches_exit_two(self, main_mocks):
         """The conflict check still runs in the root callback (usage error = 2)."""
-        result = _invoke(["-I", "repo-a", "-E", "repo-a"])
+        result = _invoke(["-I", "proj-a", "-E", "proj-a"])
 
         assert result.exit_code == 2
-        assert "repo-a" in result.output + result.stderr
+        assert "proj-a" in result.output + result.stderr
 
     def test_whitespace_contradiction_exits_two_through_the_real_cli(self, main_mocks):
-        """`-I "repo-a" -E " repo-a"` is one name twice — the CLI must refuse it.
+        """`-I "proj-a" -E " proj-a"` is one name twice — the CLI must refuse it.
 
         Only true while the parse callback strips before the check compares.
         """
-        result = _invoke(["-I", "repo-a", "-E", " repo-a"])
+        result = _invoke(["-I", "proj-a", "-E", " proj-a"])
 
         assert result.exit_code == 2
-        assert "repo-a" in result.output + result.stderr
+        assert "proj-a" in result.output + result.stderr
 
 
 class TestEntryBoundaryRendersTheCoverageRefusal:

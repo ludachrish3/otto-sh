@@ -205,7 +205,16 @@ UNIT_TREES = {
     ],
     "examples": ["tests/unit/examples"],
     "models": ["tests/unit/models"],
-    "project": ["tests/unit/project", "tests/unit/test_project_instruction_table.py"],
+    "project": [
+        "tests/unit/project",
+        "tests/unit/test_project_instruction_table.py",
+        # they test the project helpers in tests/_fixtures, not otto.project; they sit
+        # here because their names carry the project token, which the package-token
+        # rule matches
+        "tests/unit/test_fake_project_fixture.py",
+        "tests/unit/test_project_scaffold_fixture.py",
+        "tests/unit/test_project_scaffold_policy.py",
+    ],
     "reservations": ["tests/unit/reservations"],
     "testing": ["tests/unit/testing"],
     "_webassets": ["tests/unit/monitor", "tests/e2e/monitor"],

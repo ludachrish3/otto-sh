@@ -1,0 +1,96 @@
+"""Collecting a project's tests writes nothing into the project (#456).
+
+An ``otto test`` TAB seeds or refreshes the collected-tests table by running
+a pytest collection in a child process. On a project with no pytest config of its
+own, that collection used to leave ``.pytest_cache/`` and ``__pycache__/`` behind in the user's
+project, from nothing more than pressing TAB, and the new directories moved the
+mtime of a directory the completion cache keys on.
+"""
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+from _pytest.assertion.rewrite import PYC_TAIL
+
+from otto.config.completion_cache import COLLECTED_TESTS_KEY, DUMP_TESTS_ENV_VAR
+from otto.config.env import is_otto_env_var
+from tests._fixtures.generated_project import generate_project
+
+_CHILD = """
+import contextlib
+import sys
+
+# Inside otto's pytest sessions, a real shell: no pycache prefix (tests/conftest.py
+# exports PYTHONPYCACHEPREFIX to every child, so it is taken away here) and
+# bytecode writing on. Outside the sessions bytecode writing is off: otto's
+# own modules must write nothing (a __pycache__ under src/otto would fail the
+# suite). What is imported before any session -- the bootstrap's init modules
+# included -- is deliberately out of this test's scope: it checks what the
+# collection writes, and a project's init modules are the user's to import.
+sys.pycache_prefix = None
+sys.dont_write_bytecode = True
+
+import otto.suite.run as run
+
+real_outside_the_project_root = run._outside_the_project_root
+
+
+@contextlib.contextmanager
+def writing_bytecode(**kwargs):
+    # Writing goes on only once the session's own prefix is set: the lazy
+    # imports _outside_the_project_root makes before setting it are otto's own.
+    with real_outside_the_project_root(**kwargs) as args:
+        sys.dont_write_bytecode = False
+        try:
+            yield args
+        finally:
+            sys.dont_write_bytecode = True
+
+
+run._outside_the_project_root = writing_bytecode
+sys.argv = ["otto"]
+from otto.cli.main import entry
+
+entry()
+"""
+
+
+def _files(root: Path) -> list[str]:
+    return sorted(str(p.relative_to(root)) for p in root.rglob("*"))
+
+
+def test_the_tab_time_collection_leaves_the_project_file_set_unchanged(tmp_path):
+    project = generate_project(tmp_path, files=4, dirs=2)
+    assert not list(project.rglob("pytest.ini")), (
+        "the project must have no pytest config of its own"
+    )
+    before = _files(project)
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if not is_otto_env_var(k) and k != "PYTHONDONTWRITEBYTECODE"
+    }
+    env.update(OTTOPATH=str(project), OTTO_HOME=str(tmp_path / "home"))
+    env[DUMP_TESTS_ENV_VAR] = "1"
+
+    child = subprocess.run(
+        [sys.executable, "-c", _CHILD, str(project)],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+
+    assert child.returncode == 0, child.stderr
+    assert child.stdout == ""
+    [cache] = (tmp_path / "home").rglob("completion_cache.json")
+    table = json.loads(cache.read_text())[COLLECTED_TESTS_KEY][str(project)]
+    names = {name for record in table["files"].values() for _classes, name in record["tests"]}
+    assert "test_x" in names, "the child collected nothing, so it proves nothing"
+    assert _files(project) == before
+    [pycache] = (tmp_path / "home").glob("*/pycache")
+    assert list(pycache.rglob(f"*{PYC_TAIL}")), "the collection wrote its bytecode, under OTTO_HOME"

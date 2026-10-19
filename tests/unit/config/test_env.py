@@ -31,7 +31,7 @@ def test_env_lab_value() -> None:
     assert LAB_ENV_VAR == "OTTO_LAB"
 
 
-def test_env_sutdirs_value() -> None:
+def test_env_ottopath_value() -> None:
     """Notify users if this test fails or if its logic changes because this is an external interface."""  # noqa: E501 — intentional descriptive docstring
 
     assert OTTOPATH_ENV_VAR == "OTTOPATH"
@@ -43,7 +43,7 @@ def test_env_log_days_value() -> None:
     assert LOG_DAYS_ENV_VAR == "OTTO_LOG_DAYS"
 
 
-def test_env_sutdirs_set_to_one_path_that_exists(monkeypatch, tmpdir) -> None:
+def test_env_ottopath_set_to_one_path_that_exists(monkeypatch, tmpdir) -> None:
 
     monkeypatch.setenv(OTTOPATH_ENV_VAR, f"{tmpdir}")
     env = load_otto_env()
@@ -51,7 +51,7 @@ def test_env_sutdirs_set_to_one_path_that_exists(monkeypatch, tmpdir) -> None:
     assert env.ottopath == [tmpdir]
 
 
-def test_env_sutdirs_set_to_one_path_that_does_not_exist(monkeypatch, tmpdir) -> None:
+def test_env_ottopath_set_to_one_path_that_does_not_exist(monkeypatch, tmpdir) -> None:
 
     monkeypatch.setenv(OTTOPATH_ENV_VAR, f"{tmpdir}_typo")
 
@@ -59,18 +59,18 @@ def test_env_sutdirs_set_to_one_path_that_does_not_exist(monkeypatch, tmpdir) ->
         load_otto_env()
 
 
-def test_env_sutdirs_set_to_multiple_paths_that_exist(monkeypatch, tmpdir_factory) -> None:
+def test_env_ottopath_set_to_multiple_paths_that_exist(monkeypatch, tmpdir_factory) -> None:
 
-    sut_dir1 = tmpdir_factory.mktemp("dir1")
-    sut_dir2 = tmpdir_factory.mktemp("dir2")
+    root1 = tmpdir_factory.mktemp("dir1")
+    root2 = tmpdir_factory.mktemp("dir2")
 
-    monkeypatch.setenv(OTTOPATH_ENV_VAR, f"{sut_dir1}{os.pathsep}{sut_dir2}")
+    monkeypatch.setenv(OTTOPATH_ENV_VAR, f"{root1}{os.pathsep}{root2}")
     env = load_otto_env()
 
-    assert env.ottopath == [sut_dir1, sut_dir2]
+    assert env.ottopath == [root1, root2]
 
 
-def test_env_sutdirs_set_to_multiple_paths_one_does_not_exist(monkeypatch, tmpdir) -> None:
+def test_env_ottopath_set_to_multiple_paths_one_does_not_exist(monkeypatch, tmpdir) -> None:
 
     monkeypatch.setenv(OTTOPATH_ENV_VAR, f"{tmpdir}{os.pathsep}{tmpdir}_typo")
 
@@ -100,7 +100,7 @@ def test_the_loader_reads_ottopath_through_its_entries(monkeypatch, tmp_path) ->
 
 
 def test_the_loader_reads_a_comma_list_as_one_path(monkeypatch, tmp_path) -> None:
-    """A comma does not separate: two real repos joined by one name a missing path."""
+    """A comma does not separate: two real projects joined by one name a missing path."""
     one, two = tmp_path / "one", tmp_path / "two"
     one.mkdir()
     two.mkdir()

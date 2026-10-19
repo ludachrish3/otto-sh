@@ -44,7 +44,7 @@ def test_service_completer_offers_nothing_until_a_use_case_is_on_the_line():
     assert docker_cli._service_completer(_ctx(use_case="unknown"), "") == []
 
 
-def test_repo_completer_offers_the_repo_names():
+def test_project_completer_offers_the_project_names():
     assert docker_cli._active_project_completer(_ctx(), "t") == ["two"]
 
 
@@ -61,7 +61,7 @@ def observed():
             "otto.config.completion_cache.read_docker_observed",
             side_effect=lambda _r, h: OBSERVED.get(h, ObservedDockerState([], [], [], [])),
         ),
-        patch("otto.config.project.discover", return_value=SimpleNamespace(projects=["repo"])),
+        patch("otto.config.project.discover", return_value=SimpleNamespace(projects=["project"])),
     ):
         yield
 
@@ -119,7 +119,7 @@ def test_a_cold_cache_offers_nothing_without_a_parent(observed, monkeypatch):
 
 
 def test_the_observed_completers_never_bootstrap_inside_a_tab(observed, monkeypatch):
-    # `get_repos()` is phase-2 bootstrap: it imports the user's init code. A TAB
+    # `get_projects()` is phase-2 bootstrap: it imports the user's init code. A TAB
     # reaches the cache file through discovery (settings + lab data) alone, with or
     # without a parent on the line.
     monkeypatch.setattr(docker_cli, "_selected_labs_for_tab", lambda ctx: ["east"])
@@ -147,7 +147,7 @@ def test_a_cold_cache_falls_back_to_the_collectors_for_declared_names():
     with (
         patch("otto.registry.get_completion_names", return_value=None),
         patch("otto.config.completion_cache.collect_docker_image_names", return_value=["cold"]),
-        patch("otto.declared.get_projects", return_value=["repo"]),
+        patch("otto.declared.get_projects", return_value=["project"]),
     ):
         assert docker_cli._image_completer(_ctx(), "") == ["cold"]
 

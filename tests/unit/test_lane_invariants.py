@@ -58,7 +58,7 @@ Both scanners above audit leg TEXT; neither can see MEMBERSHIP, and an empty
 leg is a hard failure — pytest exits 5 when it collects nothing and make
 aborts on that, after paying for every leg ahead of it in the recipe. That
 gate decides membership from real pytest collection, in a subprocess, because
-a static model of this repo's markers reported a live lane empty; the
+a static model of this repository's markers reported a live lane empty; the
 reasoning is in
 :func:`test_every_lane_leg_selects_at_least_one_test`.
 
@@ -79,7 +79,7 @@ from pathlib import Path
 import pytest
 from _pytest.mark.expression import Expression
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 from tests.unit.test_tier_marker_invariants import (
     _expand_makefile_variables,
     _makefile_marker_variables,
@@ -90,7 +90,7 @@ from tests.unit.test_tier_marker_invariants import (
 
 pytestmark = pytest.mark.interpreter_agnostic
 
-_REPO = PROJECT_ROOT
+_REPO = CHECKOUT_ROOT
 
 _QUOTES = ('"', "'")
 
@@ -199,11 +199,11 @@ def test_doctest_modules_is_passed_where_collection_must_import_helpers() -> Non
     """The flag left addopts (0 doctests under testpaths); the two children that NEED
     it — collect-check, which imports the non-test helpers under testpaths, and the
     sibling-conftest regression, whose defect it triggers — pass it themselves."""
-    pyproject = (PROJECT_ROOT / "pyproject.toml").read_text()
+    pyproject = (CHECKOUT_ROOT / "pyproject.toml").read_text()
     addopts = re.search(r'^addopts = "([^"]*)"', pyproject, re.MULTILINE)
     assert addopts is not None
     assert "--doctest-modules" not in addopts.group(1), addopts.group(1)
-    makefile = (PROJECT_ROOT / "Makefile").read_text()
+    makefile = (CHECKOUT_ROOT / "Makefile").read_text()
     collect = [t for t in _makefile_pytest_invocations(makefile) if "--collect-only" in t]
     assert collect
     assert all("--doctest-modules" in t for t in collect), collect
@@ -604,7 +604,7 @@ def noxfile_session_commands(text: str, session: str) -> list[list[str]]:
     """The literal argv of every ``session.run(...)`` inside *session*.
 
     Only ``session.run`` calls count, and only their CONSTANT string
-    arguments: a docstring that names the command (this repo's ``lint``
+    arguments: a docstring that names the command (this repository's ``lint``
     session has one) and a comment are text, not a leg.
     """
     tree = ast.parse(text)
@@ -715,7 +715,7 @@ _DUMP_PLUGIN_MODULE = "_lane_leg_marker_dump"
 
 # Loaded with `-p` into the collecting child. `pytest_collection_finish` runs
 # after every `pytest_collection_modifyitems` hook, which is the only moment
-# all four of this repo's marker routes have been applied (see the gate's
+# all four of this repository's marker routes have been applied (see the gate's
 # docstring). One line per item, always terminated, so a run that collected
 # nothing is an EMPTY file rather than a file holding one blank line.
 _MARKER_DUMP_PLUGIN = r'''"""Dump every collected item's resolved marker names, one item per line.
@@ -822,7 +822,7 @@ def _is_parametric(leg: _Leg) -> bool:
 
 
 def lane_legs() -> "list[_Leg]":
-    """Every `-m` lane leg in the repo's lane-spelling surfaces."""
+    """Every `-m` lane leg in the repository's lane-spelling surfaces."""
     makefile = (_REPO / _MAKEFILE).read_text()
     legs = _legs_from_invocations(
         _MAKEFILE,
@@ -1702,7 +1702,7 @@ def make_legs(start: str) -> "list[_Leg]":
 
 # The release's test surface, spelled out. Equal to release_legs() — see
 # test_the_manifest_is_exactly_what_the_release_reaches, whose failure message
-# lists the rows to add or drop. Roots are relative to the repo; () means
+# lists the rows to add or drop. Roots are relative to the checkout; () means
 # pyproject's testpaths. A nox surface carries the interpreter the release runs
 # it on ("@3.10"); "@default" is a session whose Python the recipe did not pick.
 _HOSTLESS_MIDDLE = (

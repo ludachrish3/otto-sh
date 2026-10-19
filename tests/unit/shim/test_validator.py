@@ -7,21 +7,21 @@ from pathlib import Path
 
 import pytest
 
-import otto.config.project as config_repo
+import otto.config.project as config_project
 from otto import _shim_complete as sc
 from otto import bootstrap
 from otto.cli.main import PENDING_SUBCMD_ARGS_KEY, app
 from otto.config import completion_cache as cc
 from otto.config.completion_tree import build_shim_payload
-from tests._fixtures.generated_repo import generate_repo
+from tests._fixtures.generated_project import generate_project
 
 
 @pytest.fixture
 def workspace(tmp_path, monkeypatch):
-    project = generate_repo(tmp_path, files=3, dirs=1, top_level=1)
-    # Backdate every path under repo by 2s BEFORE write_cache stat()s them: the
+    project = generate_project(tmp_path, files=3, dirs=1, top_level=1)
+    # Backdate every path under project by 2s BEFORE write_cache stat()s them: the
     # kernel's coarse mtime clock (measured 1ms granularity on this VM) can
-    # otherwise land generate_repo's writes and a later test write in the same
+    # otherwise land generate_project's writes and a later test write in the same
     # tick, so a directory's mtime would not visibly move (see obligation 2,
     # task-9 brief) and stat-pass pins that expect staleness would flake green.
     backdated = time.time_ns() - 2_000_000_000
@@ -33,7 +33,7 @@ def workspace(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTOPATH", str(project))
     monkeypatch.setenv("OTTO_HOME", str(home))
     bootstrap.invalidate()
-    projects = config_repo.discover().projects
+    projects = config_project.discover().projects
     cc.write_cache(
         projects,
         [],
@@ -50,13 +50,13 @@ def _data(cache: Path) -> dict:
     return json.loads(cache.read_text())
 
 
-def test_locate_hands_over_without_sut_dirs(monkeypatch):
+def test_locate_hands_over_without_ottopath_roots(monkeypatch):
     monkeypatch.delenv("OTTOPATH", raising=False)
     with pytest.raises(sc.Handover, match="no OTTOPATH roots"):
         sc.locate_cache({})
 
 
-def test_locate_splits_sut_dirs_on_the_path_separator_only(tmp_path):
+def test_locate_splits_ottopath_on_the_path_separator_only(tmp_path):
     """The shim keys the cache as the loader reads the list: a comma is part of a path."""
     a, b, home = str(tmp_path / "a"), str(tmp_path / "b"), str(tmp_path / "home")
 
@@ -71,7 +71,7 @@ def test_locate_splits_sut_dirs_on_the_path_separator_only(tmp_path):
 
 def test_a_cold_cache_file_hands_over_with_a_plain_reason(tmp_path, monkeypatch):
     # The common first-run case: OTTO_HOME has no completion_cache.json yet.
-    monkeypatch.setenv("OTTOPATH", str(tmp_path / "repo"))
+    monkeypatch.setenv("OTTOPATH", str(tmp_path / "proj"))
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     monkeypatch.setenv("_OTTO_COMPLETE", "complete_bash")
     monkeypatch.setenv("COMP_WORDS", "otto ")
@@ -134,12 +134,12 @@ def test_a_marker_dated_in_the_future_is_not_trusted(workspace):
 
 def test_an_edited_key_file_fails_the_stat_pass_and_the_digest(workspace):
     project, cache = workspace
-    (project / ".otto" / "settings.toml").write_text(  # sutrepo-exempt: the edit under test
+    (project / ".otto" / "settings.toml").write_text(  # scaffold-exempt: the edit under test
         'name = "genrepo"\nversion = "0.1.0"\n\n'
     )
     with pytest.raises(sc.Handover, match="stale"):
         sc.validate_keys(cache, _data(cache), time.time())
-    assert cc.cache_rebuild_is_worthwhile(config_repo.discover().projects) is True
+    assert cc.cache_rebuild_is_worthwhile(config_project.discover().projects) is True
 
 
 def test_a_file_created_in_a_tests_directory_leaves_the_names_key_set_valid(workspace):
@@ -151,7 +151,7 @@ def test_a_file_created_in_a_tests_directory_leaves_the_names_key_set_valid(work
 
 def test_a_stored_missing_path_that_appears_fails(workspace, tmp_path):
     """A key stored as missing (``[path, None, None]``) fails the pass once it exists."""
-    _repo, cache = workspace
+    _project, cache = workspace
     data = _data(cache)
     later = tmp_path / "later.toml"
     data["sections"]["shim"]["payload"]["keys"].append([str(later), None, None])

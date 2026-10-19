@@ -18,15 +18,15 @@ from otto.docker.resolve import (
 from otto.host.unix_host import UnixHost
 from otto.labs.loader import Lab
 
-from .test_resolve_select import _frag, _repo
+from .test_resolve_select import _frag, _project
 
 
 @pytest.fixture(autouse=True)
 def _admit_all_scopes():
     """No `[project]` scope narrows anything.
 
-    build_facts calls the real scope_for_repo/repo_targets; without this,
-    scope_for_repo would reach for otto's config bootstrap, which unit tests
+    build_facts calls the real scope_for_project/project_targets; without this,
+    scope_for_project would reach for otto's config bootstrap, which unit tests
     don't have. Individual tests override this with a nested patch to
     exercise real scoping.
     """
@@ -40,7 +40,7 @@ def _facts(**over):
         "compose_project": "otto-integration-u",
         "parent": {"id": "test3", "addr": "10.10.200.13"},
         "hosts": {"test3": {"addr": "10.10.200.13"}, "test1": {"addr": "10.10.200.11"}},
-        "files": {"core": "/repo/docker/compose.yml"},
+        "files": {"core": "/project/docker/compose.yml"},
         "scratch_dir": "/tmp/scratch",
     }
     base.update(over)
@@ -125,9 +125,9 @@ def test_malformed_otto_ref_is_refused(value):
 
 def test_assemble_env_merges_fragments_then_pass_env():
     frags = [
-        SelectedFragment(_repo("a"), _frag(env={"A": "1", "SHARED": "from-a"})),
+        SelectedFragment(_project("a"), _frag(env={"A": "1", "SHARED": "from-a"})),
         SelectedFragment(
-            _repo("b"), _frag(env={"SHARED": "from-b"}, pass_env=("EDGE_TAG", "MISSING"))
+            _project("b"), _frag(env={"SHARED": "from-b"}, pass_env=("EDGE_TAG", "MISSING"))
         ),
     ]
     got = assemble_env(frags, _facts(), pass_env_source={"EDGE_TAG": "v9"})
@@ -139,7 +139,7 @@ def test_assemble_env_pass_env_overrides_fragment_env_on_same_name():
     """Channel 1b (pass_env) wins over channel 1a (fragment env) — order matters."""
     frags = [
         SelectedFragment(
-            _repo("a"), _frag(env={"EDGE_TAG": "fragment-default"}, pass_env=("EDGE_TAG",))
+            _project("a"), _frag(env={"EDGE_TAG": "fragment-default"}, pass_env=("EDGE_TAG",))
         ),
     ]
     got = assemble_env(frags, _facts(), pass_env_source={"EDGE_TAG": "from-shell"})
@@ -148,8 +148,8 @@ def test_assemble_env_pass_env_overrides_fragment_env_on_same_name():
 
 def test_assemble_env_dedupes_missing_pass_env():
     frags = [
-        SelectedFragment(_repo("a"), _frag(pass_env=("MISSING",))),
-        SelectedFragment(_repo("b"), _frag(pass_env=("MISSING",))),
+        SelectedFragment(_project("a"), _frag(pass_env=("MISSING",))),
+        SelectedFragment(_project("b"), _frag(pass_env=("MISSING",))),
     ]
     got = assemble_env(frags, _facts(), pass_env_source={})
     assert got.missing_pass_env == ["MISSING"]
@@ -160,7 +160,7 @@ def test_build_facts_shape():
     other = _host("test1", "10.10.200.11")
     lab = MagicMock(spec=Lab)
     lab.hosts = {"test3": parent, "test1": other}
-    sf = SelectedFragment(_repo("a"), _frag())
+    sf = SelectedFragment(_project("a"), _frag())
     sel = Selection(use_case="integration", fragments=[sf])
     facts = build_facts(
         sel,
@@ -179,7 +179,7 @@ def test_build_facts_shape():
 def test_build_facts_includes_in_scope_hosts_that_cannot_run_containers():
     """A non-docker in-scope host IS in the namespace; a non-unix host is not.
 
-    Spec §7 defines ``hosts`` as the owning repo's scoped universe with no
+    Spec §7 defines ``hosts`` as the owning project's scoped universe with no
     capability qualifier, and the motivating case is the one a reader tries
     first: a bench DUT that will never run a container, whose address a
     deployed service needs. The parent rule's ``docker_capable`` clause answers a
@@ -196,7 +196,7 @@ def test_build_facts_includes_in_scope_hosts_that_cannot_run_containers():
     not_unix.id = "other"
     lab = MagicMock(spec=Lab)
     lab.hosts = {"test3": edge, "dut1": dut, "other": not_unix}
-    sf = SelectedFragment(_repo("a"), _frag())
+    sf = SelectedFragment(_project("a"), _frag())
     sel = Selection(use_case="integration", fragments=[sf])
     facts = build_facts(
         sel,
@@ -212,19 +212,19 @@ def test_build_facts_includes_in_scope_hosts_that_cannot_run_containers():
     )
 
 
-def test_build_facts_hosts_scoped_to_union_of_participating_repos():
-    """facts["hosts"] is the UNION of every participating repo's scoped universe.
+def test_build_facts_hosts_scoped_to_union_of_participating_projects():
+    """facts["hosts"] is the UNION of every participating project's scoped universe.
 
-    Not lab-wide: a host outside every participating repo's scope must not
-    appear (spec §7: "the owning repo's scoped universe").
+    Not lab-wide: a host outside every participating project's scope must not
+    appear (spec §7: "the owning project's scoped universe").
     """
     t1 = _host("test1", "10.10.200.11")
     t3 = _host("test3", "10.10.200.13")
     t9 = _host("test9", "10.10.200.19")
     lab = MagicMock(spec=Lab)
     lab.hosts = {"test1": t1, "test3": t3, "test9": t9}
-    sf_a = SelectedFragment(_repo("a"), _frag())
-    sf_b = SelectedFragment(_repo("b"), _frag())
+    sf_a = SelectedFragment(_project("a"), _frag())
+    sf_b = SelectedFragment(_project("b"), _frag())
     sel = Selection(use_case="integration", fragments=[sf_a, sf_b])
     with (
         patch.object(resolve_mod, "scope_for_project", side_effect=lambda name: name),
@@ -250,7 +250,7 @@ def test_build_facts_hosts_scoped_to_union_of_participating_repos():
 def test_build_facts_parent_names_unknown_host_refused():
     lab = MagicMock(spec=Lab)
     lab.hosts = {"test3": _host("test3", "10.10.200.13")}
-    sf = SelectedFragment(_repo("a"), _frag())
+    sf = SelectedFragment(_project("a"), _frag())
     sel = Selection(use_case="integration", fragments=[sf])
     with pytest.raises(UseCaseResolutionError, match="is not in the active lab") as e:
         build_facts(
@@ -267,7 +267,7 @@ def test_build_facts_parent_names_unknown_host_refused():
 def test_build_facts_host_with_no_address_refused():
     lab = MagicMock(spec=Lab)
     lab.hosts = {"test9": _host("test9", "")}
-    sf = SelectedFragment(_repo("a"), _frag())
+    sf = SelectedFragment(_project("a"), _frag())
     sel = Selection(use_case="integration", fragments=[sf])
     with pytest.raises(UseCaseResolutionError, match="has no configured address") as e:
         build_facts(

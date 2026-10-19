@@ -1,6 +1,6 @@
 """A fleet walk never widens silently (spec 4 §4; its §8 walk-contract table).
 
-Real SUT trees under ``OTTOPATH`` and a real bootstrap, on hand-built
+Real projects under ``OTTOPATH`` and a real bootstrap, on hand-built
 contexts that never ran ``check_projects``: the case the CLI's own gate does not
 cover. Each test names its row.
 """
@@ -20,7 +20,7 @@ from otto.run_context import LIBRARY_LAB_NAME, OttoContext, set_context
 from otto.session.errors import ProjectLoadError
 from tests._fixtures.bootstrap_seam import patch_bootstrap
 from tests._fixtures.fleet import _lab
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.project_scaffold import make_project
 
 
 @pytest.fixture(autouse=True)
@@ -31,7 +31,7 @@ def _fresh_bootstrap():
 
 
 def _write(tmp_path, name, *, labs=None, hosts="slot1", required=(), init_fails=False, extra=""):
-    """A real repo. *labs* None = no [project]; *init_fails* adds an init module that raises."""
+    """A real project. *labs* None = no [project]; *init_fails* adds an init module that raises."""
     top, files = "", {}
     if init_fails:
         module = f"{name.replace('-', '_')}_init"
@@ -42,11 +42,11 @@ def _write(tmp_path, name, *, labs=None, hosts="slot1", required=(), init_fails=
         body += f'\n[project]\nlab_patterns = ["{labs}"]\nhost_patterns = ["{hosts}"]\n'
     if required:
         body += "\n[dependencies]\nrequired = [" + ", ".join(f'"{r}"' for r in required) + "]\n"
-    return make_sut_repo(tmp_path / name, name=name, extra=body, files=files)
+    return make_project(tmp_path / name, name=name, extra=body, files=files)
 
 
 def _unparseable(tmp_path, name="broken"):
-    return make_sut_repo(tmp_path / name, name=name, extra="this is = = not toml")
+    return make_project(tmp_path / name, name=name, extra="this is = = not toml")
 
 
 def _use(monkeypatch, *dirs):
@@ -90,34 +90,38 @@ def test_row4_a_switched_off_skipped_declarer_keeps_its_declaration(tmp_path, mo
         _walk(ctx)
 
 
-def test_row5_an_active_repo_whose_init_failed_refuses(tmp_path, monkeypatch):
+def test_row5_an_active_project_whose_init_failed_refuses(tmp_path, monkeypatch):
     _use(monkeypatch, _write(tmp_path, "b", labs="rig", init_fails=True))
     with pytest.raises(ProjectLoadError):
         _walk(OttoContext(lab=_rig()))
 
 
 @pytest.mark.parametrize("off", ["excluded", "lab_inactive"])
-def test_row6_an_inactive_broken_repo_is_demoted_and_its_declaration_counts(
+def test_row6_an_inactive_broken_project_is_demoted_and_its_declaration_counts(
     tmp_path, monkeypatch, off
 ):
     labs = "rig" if off == "excluded" else "other"
     _use(monkeypatch, _write(tmp_path, "a"), _write(tmp_path, "b", labs=labs, init_fails=True))
     exclude = ("b",) if off == "excluded" else ()
     ctx = OttoContext(lab=_rig(), exclude_projects=exclude)
-    assert scopes_of(ctx)["b"].declared  # no RepoLoadError, and the declaration is kept
+    assert scopes_of(ctx)["b"].declared  # no ProjectLoadError, and the declaration is kept
     with pytest.raises(ProjectScopeError):
         _walk(ctx)
 
 
-@pytest.mark.parametrize(("include", "exclude"), [((), ("My_Repo",)), (("my-repo",), ("my-repo",))])
+@pytest.mark.parametrize(
+    ("include", "exclude"), [((), ("My_Project",)), (("my-project",), ("my-project",))]
+)
 def test_row7_selection_spelling_is_normalised_and_exclusion_wins(
     tmp_path, monkeypatch, include, exclude
 ):
     _use(
-        monkeypatch, _write(tmp_path, "a"), _write(tmp_path, "my-repo", labs="rig", init_fails=True)
+        monkeypatch,
+        _write(tmp_path, "a"),
+        _write(tmp_path, "my-project", labs="rig", init_fails=True),
     )
     ctx = OttoContext(lab=_rig(), include_projects=include, exclude_projects=exclude)
-    assert "my-repo" in scopes_of(ctx)  # resolved, not refused
+    assert "my-project" in scopes_of(ctx)  # resolved, not refused
 
 
 def test_row8_the_sentinel_lab_resolves_nothing(tmp_path, monkeypatch):
@@ -204,7 +208,7 @@ def test_row15_a_lab_name_is_never_normalised(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("exclude", [(), ("first",)])
-def test_row16_d3_sees_a_skipped_first_repo(tmp_path, monkeypatch, exclude):
+def test_row16_d3_sees_a_skipped_first_project(tmp_path, monkeypatch, exclude):
     from otto.monitor.live import _enforce_driving_project_scope
     from otto.project.orchestrator import _enforce_current_scope
 
@@ -222,12 +226,12 @@ def test_row16_d3_sees_a_skipped_first_repo(tmp_path, monkeypatch, exclude):
 async def test_row17_status_full_shows_a_skipped_declarers_verdict(tmp_path, monkeypatch):
     from otto.project.orchestrator import status
 
-    # The healthy repo is FIRST: D3 judges repos[0], and a lab-inactive first repo would refuse.
+    # The healthy project is FIRST: D3 judges projects[0]; a lab-inactive first one would refuse.
     skipped = _write(tmp_path, "skipped", labs="other", required=["ghost"])  # lab-inactive: demoted
     _use(monkeypatch, _write(tmp_path, "healthy", labs="rig"), skipped)
     set_context(OttoContext(lab=_rig()))
     report = await status()
-    assert list(report.scoping) == ["healthy", "skipped"]  # get_repos() order
+    assert list(report.scoping) == ["healthy", "skipped"]  # get_projects() order
     assert (report.scoping["healthy"].skipped, report.scoping["skipped"].skipped) == (False, True)
 
 

@@ -19,11 +19,11 @@ from pathlib import Path
 
 import pytest
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
 
-_SCRIPT = PROJECT_ROOT / "scripts" / "build_web_no_warnings.sh"
+_SCRIPT = CHECKOUT_ROOT / "scripts" / "build_web_no_warnings.sh"
 
 # The fake npm: records its argv + cwd and the update-notifier setting it was
 # handed, then writes the scripted stdout and stderr and exits with the

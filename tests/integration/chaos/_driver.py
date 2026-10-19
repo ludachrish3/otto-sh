@@ -20,7 +20,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from otto.utils import wait_for
-from tests.e2e._otto_subprocess import OTTO_BIN, PROJECT_ROOT, otto_subprocess_env
+from tests.e2e._otto_subprocess import CHECKOUT_ROOT, OTTO_BIN, otto_subprocess_env
 
 from ._target import ChaosTarget
 
@@ -31,7 +31,7 @@ _POLL = 0.05
 def _otto_env(
     xdir: Path, target: ChaosTarget, extra_env: "dict[str, str] | None"
 ) -> "dict[str, str]":
-    """The canonical otto child env, pointed at this chaos target's SUT repo.
+    """The canonical otto child env, pointed at this chaos target's project.
 
     TERM is inherited so the child sees the same terminal type the suite runs
     under (the root conftest pins it to ``dumb``).
@@ -143,7 +143,7 @@ def spawn_otto(
             stdin=subprocess.DEVNULL,
             stdout=out,
             stderr=err,
-            cwd=PROJECT_ROOT,
+            cwd=CHECKOUT_ROOT,
             env=_otto_env(xdir, target, extra_env),
             start_new_session=True,
         )

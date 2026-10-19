@@ -19,7 +19,7 @@ import pytest
 
 from tests._fixtures import fd_watermark as fdw
 from tests._fixtures.fd_watermark import FD_TOLERANCE, fd_watermark_bracket, open_fd_count
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = pytest.mark.hostless
 
@@ -242,7 +242,7 @@ def test_consumers_import_the_authority_and_own_no_copy(conftest_rel: str) -> No
     if it calls ``fd_watermark_bracket``; a body that re-grows the logic is the
     drift this guard exists to stop (review §5.5).
     """
-    tree = ast.parse((PROJECT_ROOT / conftest_rel).read_text())
+    tree = ast.parse((CHECKOUT_ROOT / conftest_rel).read_text())
     imported = {
         alias.name
         for node in ast.walk(tree)

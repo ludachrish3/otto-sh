@@ -67,7 +67,7 @@ from otto.host.userland import (
     refuse_if_gapped,
     table_guards,
 )
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 _BROKEN = [g for g in GAPS if g.status == MEASURED_BROKEN]
 _UNTESTED = [g for g in GAPS if g.status == UNTESTED]
@@ -139,7 +139,7 @@ class TestTheTableCanAnswerBothWays:
     ``pytest.mark.parametrize`` over an empty sequence produces no failures.
     So a table that lost every untested record would report the "unmeasured
     runs" half as green while proving nothing about it — the same shape of
-    defect this repo keeps finding in guards that cannot fail.
+    defect this repository keeps finding in guards that cannot fail.
     """
 
     def test_the_registry_declares_at_least_one_measured_broken_surface(self) -> None:
@@ -528,7 +528,7 @@ class TestProductLifecycleIsUntestedBecauseOttoShipsNoImplementation:
     why this guard is on the structure rather than on a live run: a test that
     staged a ``Product`` against a real BusyBox root would exercise the
     subclass the test itself wrote, plus a ``for`` loop. It could not fail for
-    a BusyBox reason, which is this repo's recurring defect, not evidence.
+    a BusyBox reason, which is this repository's recurring defect, not evidence.
 
     THE DAY THIS RECORD STOPS BEING TRUE is the day otto ships a concrete
     ``Product.install`` -- one emitting ``opkg``, ``dpkg``, ``tar``, anything --
@@ -755,7 +755,7 @@ class TestEveryPathNamesRealCode:
         when the renamed test itself is passing.
         """
         file_part, *names = path.pinned_by.split("::")
-        test_file = PROJECT_ROOT / file_part
+        test_file = CHECKOUT_ROOT / file_part
         assert test_file.is_file(), (
             f"{gap.surface}: path {path.site!r} names {path.pinned_by!r}, but "
             f"{file_part} does not exist"

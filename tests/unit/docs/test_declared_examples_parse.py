@@ -8,9 +8,9 @@ import pytest
 import tomli
 
 from otto.models.settings import DeclaredEntrySpec
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-SETTINGS = sorted((PROJECT_ROOT / "docs" / "examples").glob("*/.otto/settings.toml"))
+SETTINGS = sorted((CHECKOUT_ROOT / "docs" / "examples").glob("*/.otto/settings.toml"))
 
 
 @pytest.mark.parametrize("path", SETTINGS, ids=lambda p: p.parent.parent.name)

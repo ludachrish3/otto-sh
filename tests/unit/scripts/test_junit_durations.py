@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from scripts.junit_durations import iter_cases, main
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 _XML = """\
 <testsuites>
@@ -226,7 +226,7 @@ def test_outliers_print_a_failure_while_reporting_and_still_exit_0(
 
 def _recipe(target: str) -> list[str]:
     """The recipe lines of the Makefile's *target*."""
-    lines = (PROJECT_ROOT / "Makefile").read_text().splitlines()
+    lines = (CHECKOUT_ROOT / "Makefile").read_text().splitlines()
     start = next(i for i, line in enumerate(lines) if line.startswith(f"{target}:"))
     end = next(i for i in range(start + 1, len(lines)) if not lines[i].startswith("\t"))
     return lines[start + 1 : end]

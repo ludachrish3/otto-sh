@@ -146,22 +146,23 @@ def test_a_malformed_string_raises_at_registration():
 
 def test_a_field_from_one_shared_base_is_one_parameter():
     params = merge_option_params(
-        [OptionsOrigin(ForTestOnly, "repo_a"), OptionsOrigin(RunOnly, "repo_b")], what="otto test"
+        [OptionsOrigin(ForTestOnly, "project_a"), OptionsOrigin(RunOnly, "project_b")],
+        what="otto test",
     )
     assert [p.name for p in params] == ["lab_env", "firmware", "debug"]
     assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in params)
 
 
-def test_the_same_name_from_unrelated_classes_names_both_classes_and_repos():
+def test_the_same_name_from_unrelated_classes_names_both_classes_and_projects():
     with pytest.raises(OptionsCollisionError) as err:
         merge_option_params(
-            [OptionsOrigin(Base, "repo_a"), OptionsOrigin(Rival, "repo_b")], what="otto test"
+            [OptionsOrigin(Base, "project_a"), OptionsOrigin(Rival, "project_b")], what="otto test"
         )
     text = str(err.value)
     assert "otto test" in text
     assert "lab_env" in text
-    assert "project 'repo_a'" in text
-    assert "project 'repo_b'" in text
+    assert "project 'project_a'" in text
+    assert "project 'project_b'" in text
     assert "Base" in text
     assert "Rival" in text
 
@@ -173,7 +174,7 @@ def test_a_field_named_like_an_otto_flag_collides():
 
     with pytest.raises(OptionsCollisionError, match="otto test's --iterations"):
         merge_option_params(
-            [OptionsOrigin(Clash, "repo_a")],
+            [OptionsOrigin(Clash, "project_a")],
             what="otto test",
             reserved={"iterations": "otto test's --iterations"},
         )
@@ -247,7 +248,7 @@ def test_a_class_body_config_is_honored_with_no_warning():
         __pydantic_config__ = pydantic.ConfigDict(str_strip_whitespace=True)
         name: str = ""
 
-    # No pytest.warns / catch_warnings needed: this repo's pytest config
+    # No pytest.warns / catch_warnings needed: this checkout's pytest config
     # turns every warning into an error (filterwarnings = ["error", ...]),
     # so decorating above already proved pydantic's "config set via both
     # the decorator and __pydantic_config__" warning did not fire.

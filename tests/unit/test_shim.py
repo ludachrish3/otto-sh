@@ -16,7 +16,7 @@ import sys
 
 import pytest
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 
 @pytest.fixture(autouse=True)
@@ -323,9 +323,9 @@ def _tab(tmp_path, env, name):
 
 def test_warm_tab_is_answered_without_the_cli_or_config_packages(tmp_path):
     """The whole point: the second TAB loads otto, otto._shim, otto._shim_complete, nothing else."""
-    from tests._fixtures.shim_repo import make_shim_repo
+    from tests._fixtures.shim_project import make_shim_project
 
-    project = make_shim_repo(tmp_path)
+    project = make_shim_project(tmp_path)
     env = {
         "OTTOPATH": str(project),
         "OTTO_HOME": str(tmp_path / "home"),
@@ -363,7 +363,7 @@ def test_warm_tab_is_answered_without_the_cli_or_config_packages(tmp_path):
 # never warms: a `dataclasses` import added to the resolver fails here whatever
 # `logging` happens to drag in that year.
 _SHIM_PACKAGE = "otto"
-_SHIM_SRC = PROJECT_ROOT / "src" / "otto"
+_SHIM_SRC = CHECKOUT_ROOT / "src" / "otto"
 
 
 def _imported_names(node: "ast.Import | ast.ImportFrom", filename: str) -> set:
@@ -502,9 +502,9 @@ def test_a_stale_handover_reaches_entry_as_cache_stale(monkeypatch):
 
 
 def test_a_non_bash_shell_takes_the_full_path(tmp_path):
-    from tests._fixtures.shim_repo import make_shim_repo
+    from tests._fixtures.shim_project import make_shim_project
 
-    project = make_shim_repo(tmp_path)
+    project = make_shim_project(tmp_path)
     env = {
         "OTTOPATH": str(project),
         "OTTO_HOME": str(tmp_path / "home"),
@@ -562,7 +562,7 @@ def test_python_dash_m_keeps_the_working_directory(tmp_path, monkeypatch):
     user may rely on; only the console script's own directory is dropped."""
     from otto import _shim
 
-    monkeypatch.setattr(sys, "argv", [str(PROJECT_ROOT / "src" / "otto" / "__main__.py")])
+    monkeypatch.setattr(sys, "argv", [str(CHECKOUT_ROOT / "src" / "otto" / "__main__.py")])
     sys.path.insert(0, str(tmp_path))
     _shim._drop_script_dir()
     assert sys.path[0] == str(tmp_path)

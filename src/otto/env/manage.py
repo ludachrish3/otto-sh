@@ -97,7 +97,7 @@ def _installable(projects: "list[Project]") -> "tuple[list[Project], list[Projec
 
     Installable means "has a pyproject.toml". A project without one is not an
     error and never has been: its ``libs`` ride ``sys.path`` at bootstrap, and
-    that is still correct. Every sample project but repo4 is in the skipped half,
+    that is still correct. Every sample project but project4 is in the skipped half,
     so a workspace of them must still build a working env.
     """
     installable = [r for r in projects if (r.root / "pyproject.toml").is_file()]

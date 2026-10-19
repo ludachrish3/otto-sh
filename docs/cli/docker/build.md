@@ -74,7 +74,7 @@ After each image builds, otto asks the host's daemon what it holds for that
 image and prints one line:
 
 ```text
-repo1/repo1-api: built repo1-api:latest  cbd8571d4b6e  (test3)
+project1/project1-api: built project1-api:latest  cbd8571d4b6e  (test3)
 ```
 
 That is `<project>/<image>: built <references>  <id>  (<host>)`. The references

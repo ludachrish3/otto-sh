@@ -72,7 +72,7 @@ _CONFORMANCE_ROOT = Path(__file__).parent
 # Resolved once, at conftest import, because the sampler draws from it and
 # pytest needs the parameter list before collection finishes.
 # Cheap enough to sit on the collection path of every path-less run in the
-# repo: measured at 0.01s for the hermetic venue's 8 cells, because
+# suite: measured at 0.01s for the hermetic venue's 8 cells, because
 # `_cells.resolve_space` deliberately starts no daemon and fetches nothing at
 # resolve time. The BED venue's 55 cells resolve in 0.018s once imported
 # (re-measured after the console rows; 0.06s cold and 0.011s warm when the
@@ -110,7 +110,7 @@ def _drawn_cells(config) -> "list[ResolvedCell]":
 
     Memoised on the CONFIG's stash rather than in a module global, so the memo
     cannot outlive the session that made it: a module global would hand a
-    second ``Config`` built in the same process (this repo builds one in
+    second ``Config`` built in the same process (this suite builds one in
     ``tests/unit/test_browser_guard.py``) the first session's draw and seed.
 
     The run's own log is emitted here rather than in
@@ -140,12 +140,12 @@ def pytest_sessionstart(session):
     """Draw and report at session start, per spec §4 — see :func:`_drawn_cells`.
 
     Session start rather than after collection, and the cost is visible: this
-    tree is in ``testpaths``, so EVERY path-less run in the repo logs a draw —
+    tree is in ``testpaths``, so EVERY path-less run in the suite logs a draw —
     including ``make coverage``, whose two path-less legs (``Makefile:600``
     and ``:602``) each log one and then deselect every conformance item
     (measured on a full run: exactly two draw lines, and zero
-    ``tests/conformance/`` node ids selected). No whole-repo deselect count is
-    quoted here on purpose: it drifts with every test the repo gains, and the
+    ``tests/conformance/`` node ids selected). No whole-suite deselect count is
+    quoted here on purpose: it drifts with every test the suite gains, and the
     ``838`` first written in this docstring was the hostless lane's figure
     (``M_HOSTLESS``), not this one's — which is 313 today and will not stay
     313. Conditioning

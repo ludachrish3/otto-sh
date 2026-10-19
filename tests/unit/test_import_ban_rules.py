@@ -21,9 +21,9 @@ import pytest
 import yaml
 
 from tests._fixtures._lazy_exports import lazy_facade_names
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-RULE = PROJECT_ROOT / ".ast-grep" / "rules" / "cli-command-no-module-scope-heavy-import.yml"
+RULE = CHECKOUT_ROOT / ".ast-grep" / "rules" / "cli-command-no-module-scope-heavy-import.yml"
 
 # Every package or module that carries a lazy table, discovered from the source
 # tree (tests/_fixtures/_lazy_exports.py), so a new lazy facade is checked
@@ -146,6 +146,6 @@ def test_every_lazy_name_that_loads_a_denylisted_module_is_banned_too(package):
     )
     assert not missing, (
         f"{package}'s lazy table exports names that load a module "
-        f"{RULE.relative_to(PROJECT_ROOT)} bans, but the rule does not ban the names: "
+        f"{RULE.relative_to(CHECKOUT_ROOT)} bans, but the rule does not ban the names: "
         f"{missing}. Add each to the imported-name regex of the rule's `{package}` arm."
     )

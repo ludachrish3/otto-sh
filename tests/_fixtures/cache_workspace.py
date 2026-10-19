@@ -43,7 +43,7 @@ def _mk_workspace(
         (ws / "env" / "bin").mkdir(parents=True)
         (ws / "env" / "bin" / "python").write_text("")
     if session_dirs:
-        pyc = ws / "pycache" / "home" / "me" / "repo" / "tests"
+        pyc = ws / "pycache" / "home" / "me" / "proj" / "tests"
         pyc.mkdir(parents=True)
         (pyc / "test_a.cpython-310-pytest-9.1.1.pyc").write_bytes(b"x" * 100)
         seed = ws / "pytest-cache" / "v"

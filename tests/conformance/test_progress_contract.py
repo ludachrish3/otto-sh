@@ -159,7 +159,7 @@ def applicable_cell(resolved: ResolvedCell) -> bool:
 # `ShellFileTransfer._fitted_chunk_bytes` has no budget to fit the chunk to;
 # only the pooled-shell (telnet/pty) route reports one. Giving the exec route
 # a per-host budget is a product change that needs a new host field, which
-# needs its own spec (repo rule) -- out of this branch's spec scope. The
+# needs its own spec (the repository's rule) -- out of this branch's spec scope. The
 # follow-up issue the lead files is that spec's trigger: #437.
 _DROPBEAR_SHELL_AT_FULL_STRIDE = (
     "shell put at full stride over the ssh exec channel: dropbear 2012.55 caps any SSH "
@@ -199,7 +199,7 @@ def _payload(size: int) -> bytes:
     Not ``b"x" * size``. A backend that normalises line endings, stops at the
     first NUL or decodes as UTF-8 moves an ASCII payload perfectly and its
     progress events would be measured against a transfer that never exercised
-    the framing this repo has had three real defects in.
+    the framing this repository has had three real defects in.
     """
     pattern = bytes(range(256)) + b"\r\n\x00\xff\xfe"
     return (pattern * (size // len(pattern) + 1))[:size]

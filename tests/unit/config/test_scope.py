@@ -1,4 +1,4 @@
-"""repo_targets is the ONLY membership logic (spec §5); these pin its semantics."""
+"""project_targets is the ONLY membership logic (spec §5); these pin its semantics."""
 
 import re
 import textwrap
@@ -19,8 +19,8 @@ from otto.context import OttoContext
 from otto.host.element import Element
 from otto.labs.loader import Lab
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result, seed_scope_verdicts
+from tests._fixtures.project_scaffold import make_project
 from tests._fixtures.scoping import verdict
-from tests._fixtures.sutrepo import make_sut_repo
 
 
 def _cfg(labs, hosts=(".*",)):
@@ -57,7 +57,7 @@ def test_both_axes_must_pass():
 
 
 def test_none_scope_targets_everything():
-    # An undeclared repo scopes nothing out (fallback feeds off this).
+    # An undeclared project scopes nothing out (fallback feeds off this).
     assert project_targets(None, "any-lab", "any-host")
 
 
@@ -89,18 +89,18 @@ def test_from_spec_none_lab_patterns_compiles_to_empty():
     assert not project_targets(cfg, "any-lab", "any-host")
 
 
-def _repo(tmp_path, settings_body=""):
-    sut = make_sut_repo(tmp_path / "repo", name="tmp_repo", extra=textwrap.dedent(settings_body))
+def _project(tmp_path, settings_body=""):
+    sut = make_project(tmp_path / "proj", name="tmp_project", extra=textwrap.dedent(settings_body))
     return Project(root=sut)
 
 
-def test_repo_without_project_block_has_no_scope(tmp_path):
-    # No `[project]` ⇒ None, which repo_targets reads as "targets everything".
-    assert _repo(tmp_path).project_scope is None
+def test_project_without_project_block_has_no_scope(tmp_path):
+    # No `[project]` ⇒ None, which project_targets reads as "targets everything".
+    assert _project(tmp_path).project_scope is None
 
 
-def test_repo_project_block_compiles_into_scope(tmp_path):
-    project = _repo(
+def test_the_project_block_compiles_into_scope(tmp_path):
+    project = _project(
         tmp_path,
         """
         [project]
@@ -115,8 +115,8 @@ def test_repo_project_block_compiles_into_scope(tmp_path):
     assert not project_targets(project.project_scope, "bench", "gw-7")
 
 
-def test_repo_project_block_defaults_host_patterns_to_all(tmp_path):
-    project = _repo(
+def test_the_project_block_defaults_host_patterns_to_all(tmp_path):
+    project = _project(
         tmp_path,
         """
         [project]
@@ -135,37 +135,37 @@ BAD_LAB_PATTERN = """
     """
 
 
-def test_repo_invalid_pattern_fails_the_parse(tmp_path, monkeypatch):
+def test_project_invalid_pattern_fails_the_parse(tmp_path, monkeypatch):
     """A bad regex must fail settings parse, not surface later as a silent non-match.
 
-    Second leg: and the failure must reach the user carrying the repo it came
+    Second leg: and the failure must reach the user carrying the project it came
     from. Pydantic names the FIELD (``project.lab_patterns``) and nothing else,
-    which in a fleet of a dozen repos leaves the reader hunting; bootstrap's
-    phase-1 repo-load containment is what supplies the frame. The identity it
-    can name is the ``sut_dir`` — the parse died before ``name`` was read out of
+    which in a fleet of a dozen projects leaves the reader hunting; bootstrap's
+    phase-1 project-load containment is what supplies the frame. The identity it
+    can name is the ``root`` — the parse died before ``name`` was read out of
     the same file — so the directory, not the declared name, is what is pinned
     (they are deliberately different here so the assertion cannot pass on the
     wrong one).
     """
     with pytest.raises(ValidationError, match="lab_patterns"):
-        _repo(tmp_path, BAD_LAB_PATTERN)
+        _project(tmp_path, BAD_LAB_PATTERN)
 
     from otto import bootstrap as bs
 
-    sut = make_sut_repo(
-        tmp_path / "sensor-fleet-repo", name="sensors", extra=textwrap.dedent(BAD_LAB_PATTERN)
+    sut = make_project(
+        tmp_path / "sensor-fleet-project", name="sensors", extra=textwrap.dedent(BAD_LAB_PATTERN)
     )
     monkeypatch.setenv("OTTOPATH", str(sut))
     bs.invalidate()  # a prior test's cached discovery would answer instead
     (surfaced,) = bs.bootstrap().errors  # what `otto <anything>` prints at startup
-    assert "sensor-fleet-repo" in str(surfaced)
+    assert "sensor-fleet-project" in str(surfaced)
     assert "lab_patterns" in str(surfaced)
 
 
 # --------------------------------------------------------------------------
 # Resolver (spec §5) and its D3 verdicts.
 #
-# Real ``Repo`` objects and real hosts throughout: the resolver's whole job is
+# Real ``Project`` objects and real hosts throughout: the resolver's whole job is
 # to read what settings parsing and lab loading produced, so a hand-built stub
 # of either would pin the stub's shape rather than the chain's.
 # --------------------------------------------------------------------------
@@ -177,7 +177,7 @@ def _toml_list(patterns):
     return "[" + ", ".join(f"'{p}'" for p in patterns) + "]"
 
 
-def _project_repo(tmp_path, name, *, labs=None, hosts=None):
+def _scoped_project(tmp_path, name, *, labs=None, hosts=None):
     """A real ``Project`` whose ``[project]`` block declares *labs* / *hosts*."""
     body = ""
     if labs is not None or hosts is not None:
@@ -187,7 +187,7 @@ def _project_repo(tmp_path, name, *, labs=None, hosts=None):
         if hosts is not None:
             lines.append(f"host_patterns = {_toml_list(hosts)}")
         body = "\n".join(lines)
-    sut = make_sut_repo(tmp_path / name, name=name, extra=body)
+    sut = make_project(tmp_path / name, name=name, extra=body)
     return Project(root=sut)
 
 
@@ -213,7 +213,7 @@ def _fleet(*pairs):
 def test_declared_and_matching_labs_scopes_to_the_matching_subset(tmp_path):
     from otto.config.scope import resolve_scopes
 
-    project = _project_repo(tmp_path, "sensors", labs=["tech-.*"])
+    project = _scoped_project(tmp_path, "sensors", labs=["tech-.*"])
     hosts = _fleet(("gw-1", "tech-1"), ("sensor-1", "bench"))
 
     scope = resolve_scopes([project], ["tech-1", "bench"], hosts)["sensors"]
@@ -229,7 +229,7 @@ def test_declared_zero_applicable_labs_is_excluded(tmp_path):
     # D3's dependency-exclusion / current-abort condition, as a flag.
     from otto.config.scope import resolve_scopes
 
-    project = _project_repo(tmp_path, "sensors", labs=["sensor-fleet"])
+    project = _scoped_project(tmp_path, "sensors", labs=["sensor-fleet"])
 
     scope = resolve_scopes([project], ["bench"], _fleet(("sensor-1", "bench")))["sensors"]
 
@@ -239,13 +239,13 @@ def test_declared_zero_applicable_labs_is_excluded(tmp_path):
 
 
 def test_declared_labs_with_zero_matching_hosts_is_not_excluded(tmp_path):
-    # The lab applies, so the repo is NOT out of scope for this run — its
+    # The lab applies, so the project is NOT out of scope for this run — its
     # universe is merely empty, which is a different verdict with a different
     # message. Collapsing the two would tell a user to load another lab when
     # the lab was right and the host pattern was wrong.
     from otto.config.scope import resolve_scopes
 
-    project = _project_repo(tmp_path, "sensors", labs=["bench"], hosts=[r"gw-\d+"])
+    project = _scoped_project(tmp_path, "sensors", labs=["bench"], hosts=[r"gw-\d+"])
 
     scope = resolve_scopes([project], ["bench"], _fleet(("sensor-1", "bench")))["sensors"]
 
@@ -254,12 +254,12 @@ def test_declared_labs_with_zero_matching_hosts_is_not_excluded(tmp_path):
     assert scope.universe == frozenset()
 
 
-def test_undeclared_repo_feeds_the_whole_lab_fallback(tmp_path):
-    # §6's fallback: a repo with no `[project]` scopes nothing out, so its
+def test_undeclared_project_feeds_the_whole_lab_fallback(tmp_path):
+    # §6's fallback: a project with no `[project]` scopes nothing out, so its
     # universe is every loaded host — that set is what the fallback iterates.
     from otto.config.scope import resolve_scopes
 
-    project = _project_repo(tmp_path, "plain")
+    project = _scoped_project(tmp_path, "plain")
     hosts = _fleet(("gw-1", "tech-1"), ("sensor-1", "bench"))
 
     scope = resolve_scopes([project], ["tech-1", "bench"], hosts)["plain"]
@@ -272,11 +272,11 @@ def test_undeclared_repo_feeds_the_whole_lab_fallback(tmp_path):
 
 def test_partial_match_in_a_two_lab_combo_keeps_only_the_matching_component(tmp_path):
     # `otto -l a+b` loads one composite Lab whose components are ["a", "b"];
-    # a repo declaring only `a` applies to that component alone, and the host
+    # a project declaring only `a` applies to that component alone, and the host
     # from `b` stays out even though `host_patterns` would admit it.
     from otto.config.scope import resolve_scopes
 
-    project = _project_repo(tmp_path, "sensors", labs=["a"], hosts=[".*"])
+    project = _scoped_project(tmp_path, "sensors", labs=["a"], hosts=[".*"])
     hosts = _fleet(("h-a", "a"), ("h-b", "b"))
 
     scope = resolve_scopes([project], ["a", "b"], hosts)["sensors"]
@@ -302,7 +302,7 @@ def test_exclude_ids_removes_a_host_the_patterns_admit(tmp_path):
     from otto.config.scope import resolve_scopes
     from otto.host.builtin_hosts import BUILTIN_LOCAL_HOST_ID, make_builtin_local_host
 
-    project = _project_repo(tmp_path, "sensors", labs=["bench"], hosts=[".*"])
+    project = _scoped_project(tmp_path, "sensors", labs=["bench"], hosts=[".*"])
     local = make_builtin_local_host()
     local.source_lab = "bench"
     hosts = {**_fleet(("sensor-1", "bench")), local.id: local}
@@ -316,11 +316,11 @@ def test_exclude_ids_removes_a_host_the_patterns_admit(tmp_path):
     assert scoped.universe == frozenset({"sensor-1"})
 
 
-def test_excluded_current_repo_aborts_naming_loaded_labs_and_its_patterns(tmp_path):
+def test_excluded_current_project_aborts_naming_loaded_labs_and_its_patterns(tmp_path):
     from otto.bootstrap import ProjectScopeError
     from otto.config.scope import require_current_scope, resolve_scopes
 
-    project = _project_repo(tmp_path, "sensors", labs=["sensor-fleet", "tech-.*"])
+    project = _scoped_project(tmp_path, "sensors", labs=["sensor-fleet", "tech-.*"])
     scopes = resolve_scopes([project], ["bench", "lab-2"], _fleet(("sensor-1", "bench")))
 
     with pytest.raises(ProjectScopeError) as excinfo:
@@ -335,11 +335,11 @@ def test_excluded_current_repo_aborts_naming_loaded_labs_and_its_patterns(tmp_pa
     assert "settings.toml" in message  # what to change
 
 
-def test_current_repo_with_empty_universe_aborts_naming_the_host_patterns(tmp_path):
+def test_current_project_with_empty_universe_aborts_naming_the_host_patterns(tmp_path):
     from otto.bootstrap import ProjectScopeError
     from otto.config.scope import require_current_scope, resolve_scopes
 
-    project = _project_repo(tmp_path, "sensors", labs=["bench"], hosts=[r"gw-\d+", "cam-.*"])
+    project = _scoped_project(tmp_path, "sensors", labs=["bench"], hosts=[r"gw-\d+", "cam-.*"])
     scopes = resolve_scopes([project], ["bench"], _fleet(("sensor-1", "bench")))
 
     with pytest.raises(ProjectScopeError) as excinfo:
@@ -352,36 +352,36 @@ def test_current_repo_with_empty_universe_aborts_naming_the_host_patterns(tmp_pa
     assert "settings.toml" in message
 
 
-def test_healthy_current_repo_returns_none(tmp_path):
+def test_healthy_current_project_returns_none(tmp_path):
     from otto.config.scope import require_current_scope, resolve_scopes
 
-    project = _project_repo(tmp_path, "sensors", labs=["bench"], hosts=["sensor-.*"])
+    project = _scoped_project(tmp_path, "sensors", labs=["bench"], hosts=["sensor-.*"])
     scopes = resolve_scopes([project], ["bench"], _fleet(("sensor-1", "bench")))
 
     assert require_current_scope(scopes, "sensors") is None
 
 
-def test_undeclared_current_repo_never_aborts_even_with_an_empty_fleet(tmp_path):
-    # The hostile condition injected deliberately: an undeclared repo's
+def test_undeclared_current_project_never_aborts_even_with_an_empty_fleet(tmp_path):
+    # The hostile condition injected deliberately: an undeclared project's
     # universe is empty here because the lab is. That is the fallback's
-    # business (§6), not an abort — a product-less repo must keep working
+    # business (§6), not an abort — a product-less project must keep working
     # exactly as it did before `[project]` existed.
     from otto.config.scope import require_current_scope, resolve_scopes
 
-    project = _project_repo(tmp_path, "plain")
+    project = _scoped_project(tmp_path, "plain")
     scopes = resolve_scopes([project], ["bench"], {})
 
     assert scopes["plain"].universe == frozenset()
     assert require_current_scope(scopes, "plain") is None
 
 
-def test_excluded_dependency_does_not_abort_the_current_repo(tmp_path):
+def test_excluded_dependency_does_not_abort_the_current_project(tmp_path):
     # D3's asymmetry: a dependency out of scope is skipped (the flag the
-    # orchestrator reads), only the CURRENT repo aborts.
+    # orchestrator reads), only the CURRENT project aborts.
     from otto.config.scope import require_current_scope, resolve_scopes
 
-    current = _project_repo(tmp_path, "app", labs=["bench"])
-    dependency = _project_repo(tmp_path, "dep", labs=["nowhere"])
+    current = _scoped_project(tmp_path, "app", labs=["bench"])
+    dependency = _scoped_project(tmp_path, "dep", labs=["nowhere"])
     scopes = resolve_scopes([current, dependency], ["bench"], _fleet(("sensor-1", "bench")))
 
     assert scopes["dep"].excluded is True
@@ -403,7 +403,7 @@ def test_the_abort_and_the_skip_read_one_predicate(
 ):
     """``unusable_scope`` must answer exactly what ``require_current_scope`` aborts on.
 
-    THE TWO SITES ARE A PAIR AND MUST NOT DRIFT. D3 aborts the current repo
+    THE TWO SITES ARE A PAIR AND MUST NOT DRIFT. D3 aborts the current project
     and skips a dependency on the SAME condition — declared, and either no
     loaded lab applies or no host in the applicable ones matches — so the
     orchestrator's skip reads this predicate rather than a second copy of the
@@ -413,13 +413,13 @@ def test_the_abort_and_the_skip_read_one_predicate(
     row-by-row agreement, whichever end it was inlined at.
 
     The last two rows are the carve-out that makes the predicate more than
-    ``not universe``: an undeclared repo is the whole-lab fallback (§6) even
+    ``not universe``: an undeclared project is the whole-lab fallback (§6) even
     when the lab it falls back to is empty.
     """
     from otto.bootstrap import ProjectScopeError
     from otto.config.scope import require_current_scope, resolve_scopes, unusable_scope
 
-    project = _project_repo(tmp_path, name, **declaration)
+    project = _scoped_project(tmp_path, name, **declaration)
     scopes = resolve_scopes([project], ["bench"], _fleet(*lab_hosts))
 
     aborted = False
@@ -432,8 +432,8 @@ def test_the_abort_and_the_skip_read_one_predicate(
     assert aborted is unusable
 
 
-def test_unknown_current_repo_name_returns_none(tmp_path):
-    # No verdict was resolved for that name (a repo bootstrap skipped, say), so
+def test_unknown_current_project_name_returns_none(tmp_path):
+    # No verdict was resolved for that name (a project bootstrap skipped, say), so
     # there is nothing to enforce — and inventing an abort here would turn an
     # already-reported bootstrap failure into a second, more confusing one.
     from otto.config.scope import require_current_scope
@@ -456,45 +456,47 @@ class TestActive:
     """Every cell of (switch state x labs-loaded x scope verdict) — spec section 1."""
 
     def test_exclude_switch_wins_over_everything(self):
-        ctx = _ctx(exclude=("repo-a",), scopes={"repo_a": verdict("repo_a")})
-        assert active("repo_a", ctx) is False
+        ctx = _ctx(exclude=("proj-a",), scopes={"proj_a": verdict("proj_a")})
+        assert active("proj_a", ctx) is False
 
     def test_exclude_matches_pep503_normalized(self):
         # The stored tuple is normalized; the queried name is raw.
-        assert active("Repo.A", _ctx(exclude=("repo-a",))) is False
+        assert active("Proj.A", _ctx(exclude=("proj-a",))) is False
 
     def test_include_switch_overrides_an_excluded_verdict(self):
-        ctx = _ctx(include=("repo-a",), scopes={"repo_a": verdict("repo_a", excluded=True)})
-        assert active("repo_a", ctx) is True
+        ctx = _ctx(include=("proj-a",), scopes={"proj_a": verdict("proj_a", excluded=True)})
+        assert active("proj_a", ctx) is True
 
-    def test_exclude_beats_include_when_both_name_the_repo(self):
+    def test_exclude_beats_include_when_both_name_the_project(self):
         # Branch ORDER, pinned. Task 2's CLI rejects the combination as a usage
         # error, but that is a different layer's rule; nothing should be able to
         # swap these two branches here and stay green.
-        ctx = _ctx(include=("repo-a",), exclude=("repo-a",))
-        assert active("repo-a", ctx) is False
+        ctx = _ctx(include=("proj-a",), exclude=("proj-a",))
+        assert active("proj-a", ctx) is False
 
-    def test_the_verdict_lookup_uses_the_raw_repo_name(self):
-        # `scopes_of(ctx)` is keyed by `Repo.name` as written, so the lookup must NOT
+    def test_the_verdict_lookup_uses_the_raw_project_name(self):
+        # `scopes_of(ctx)` is keyed by `Project.name` as written, so the lookup must NOT
         # normalize — and the name here is deliberately not normalization-invariant
-        # (`repo_a` -> `repo-a`) with no switch set, so the verdict branch is the
+        # (`proj_a` -> `proj-a`) with no switch set, so the verdict branch is the
         # one under test. A normalized lookup misses the verdict entirely and
         # resolves ACTIVE: the silent widening, with the suite otherwise green.
-        ctx = _ctx(scopes={"repo_a": verdict("repo_a", excluded=True)})
-        assert active("repo_a", ctx) is False
+        ctx = _ctx(scopes={"proj_a": verdict("proj_a", excluded=True)})
+        assert active("proj_a", ctx) is False
 
     def test_a_non_normalized_stored_exclude_still_matches(self):
         # Nothing normalizes on WRITE, so `active` must normalize what it READS.
         # An explicit switch that silently does nothing is the fail-open case.
-        ctx = _ctx(exclude=("My_Repo",))
-        assert active("my_repo", ctx) is False
-        assert active("My_Repo", ctx) is False
+        ctx = _ctx(exclude=("My_Project",))
+        assert active("my_project", ctx) is False
+        assert active("My_Project", ctx) is False
 
     def test_a_non_normalized_stored_include_still_matches(self):
         # The include tuple gets the same read-side treatment; without it the
         # switch is ignored and the excluded verdict below wins.
-        ctx = _ctx(include=("My_Repo",), scopes={"my_repo": verdict("my_repo", excluded=True)})
-        assert active("my_repo", ctx) is True
+        ctx = _ctx(
+            include=("My_Project",), scopes={"my_project": verdict("my_project", excluded=True)}
+        )
+        assert active("my_project", ctx) is True
 
     def test_no_labs_loaded_means_everything_active(self):
         assert active("anything", _ctx()) is True
@@ -508,7 +510,7 @@ class TestActive:
     def test_host_starved_verdict_is_inactive(self):
         assert active("r", _ctx(scopes={"r": verdict("r", universe=())})) is False
 
-    def test_undeclared_repo_keeps_the_whole_lab_fallback(self):
+    def test_undeclared_project_keeps_the_whole_lab_fallback(self):
         assert active("r", _ctx(scopes={"r": verdict("r", declared=False, universe=())})) is True
 
     def test_missing_verdict_is_active(self):
@@ -517,24 +519,24 @@ class TestActive:
 
 class TestSwitchedOff:
     def test_true_only_for_excluded_names(self):
-        ctx = _ctx(exclude=("repo-a",))
-        assert switched_off("Repo.A", ctx) is True
-        assert switched_off("repo_b", ctx) is False
+        ctx = _ctx(exclude=("proj-a",))
+        assert switched_off("Proj.A", ctx) is True
+        assert switched_off("proj_b", ctx) is False
 
     def test_a_non_normalized_stored_exclude_still_attributes(self):
         # Same read-side normalization as `active`, and it has to be the same or
-        # a message would name the switch for one repo while the verdict named
+        # a message would name the switch for one project while the verdict named
         # the lab for it.
-        ctx = _ctx(exclude=("My_Repo",))
-        assert switched_off("my_repo", ctx) is True
-        assert switched_off("My_Repo", ctx) is True
+        ctx = _ctx(exclude=("My_Project",))
+        assert switched_off("my_project", ctx) is True
+        assert switched_off("My_Project", ctx) is True
 
 
-#: One repo name per spelling class the two predicates must agree about: one
+#: One project name per spelling class the two predicates must agree about: one
 #: already normalized, and one whose raw form differs. ``active`` keys its
 #: ``scopes_of(ctx)`` lookup RAW while both switch tests normalize — that asymmetry
 #: is the seam where a disagreement between them would hide.
-_INVARIANT_NAMES = ["repo-a", "Repo_A"]
+_INVARIANT_NAMES = ["proj-a", "Proj_A"]
 
 
 class TestInactiveImpliesAttributable:
@@ -582,7 +584,7 @@ class TestInactiveImpliesAttributable:
         for name in _INVARIANT_NAMES:
             for verdict_kind, scope in self._verdicts(name).items():
                 # Both the declared key and a foreign one, so a table that only
-                # ever stored the repo under test cannot hide a missing key.
+                # ever stored the project under test cannot hide a missing key.
                 scope_sets = {"own-key": {} if scope is None else {name: scope}}
                 scope_sets["foreign-key-only"] = {"someone-else": verdict("someone-else")}
                 for switches, (scope_label, scopes) in itertools.product(
@@ -591,8 +593,8 @@ class TestInactiveImpliesAttributable:
                         ((name,), ()),
                         ((), (name,)),
                         ((name,), (name,)),
-                        (("repo-a",), ()),
-                        ((), ("repo-a",)),
+                        (("proj-a",), ()),
+                        ((), ("proj-a",)),
                     ],
                     scope_sets.items(),
                 ):
@@ -629,7 +631,7 @@ class TestInactiveBeforeLab:
         assert inactive_before_lab(self._cfg("unix"), None) is False
         assert inactive_before_lab(self._cfg("unix"), []) is False
 
-    def test_undeclared_repo_never_demotes(self):
+    def test_undeclared_project_never_demotes(self):
         assert inactive_before_lab(None, ["unix"]) is False
 
     def test_non_matching_selection_is_inactive(self):

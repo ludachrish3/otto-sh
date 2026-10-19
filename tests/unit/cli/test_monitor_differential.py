@@ -76,7 +76,7 @@ def test_live_hands_run_live_exactly_its_flags(argv, kwargs, tmp_path):
     assert fake.await_args.kwargs == expected
 
 
-def test_review_hands_serve_review_the_source_and_the_repos(tmp_path, monkeypatch):
+def test_review_hands_serve_review_the_source_and_the_projects(tmp_path, monkeypatch):
     src = tmp_path / "x.json"
     src.write_text("{}")
     projects = [object()]
@@ -121,7 +121,7 @@ def test_a_bad_review_source_is_a_usage_error_naming_source(tmp_path, monkeypatc
 
 FAIL_ROWS = [
     EmptySelectionError("x", 3),
-    ProjectScopeError("/repo", "the [project] scope admits no host here"),
+    ProjectScopeError("/project", "the [project] scope admits no host here"),
     NoMonitorableHostsError(["z1"]),
     MonitorTlsError("[monitor] TLS settings disagree", setting=None, projects=["a", "b"]),
 ]

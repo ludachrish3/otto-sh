@@ -20,8 +20,8 @@ path; only the real CLI does, and only over the real multi-hop transport:
 Requirements (else the test FAILS LOUD, naming what is missing — G12: a
 bed-certifying lane never skips):
     - the zephyr VM up with ``zephyr37_llext`` running (``zephyr-qemu-cov.service``);
-    - the repo3 coverage product built into ``[coverage.embedded].build_dir``
-      (see ``tests/repo3/product/README.md``).
+    - the project3 coverage product built into ``[coverage.embedded].build_dir``
+      (see ``tests/project3/product/README.md``).
 """
 
 from __future__ import annotations
@@ -35,20 +35,20 @@ import tomli
 from otto.coverage.capture.model import Capture
 from otto.logger.mode import LogMode
 from tests._fixtures.labdata import element_for
-from tests.e2e._otto_subprocess import PROJECT_ROOT, assert_output_dir, run_otto
+from tests.e2e._otto_subprocess import CHECKOUT_ROOT, assert_output_dir, run_otto
 
-REPO3 = PROJECT_ROOT / "tests" / "repo3"
+PROJECT3 = CHECKOUT_ROOT / "tests" / "project3"
 
 pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("zephyr37_llext")]
 
 
-def _repo3_settings() -> dict:
-    return tomli.loads((REPO3 / ".otto" / "settings.toml").read_text())
+def _project3_settings() -> dict:
+    return tomli.loads((PROJECT3 / ".otto" / "settings.toml").read_text())
 
 
 def _embedded_products() -> list[dict]:
-    """repo3's ``kind = "embedded"`` ``[[products]]`` entries, in declaration order."""
-    return [e for e in _repo3_settings().get("products", []) if e.get("kind") == "embedded"]
+    """project3's ``kind = "embedded"`` ``[[products]]`` entries, in declaration order."""
+    return [e for e in _project3_settings().get("products", []) if e.get("kind") == "embedded"]
 
 
 PRODUCT = "cov_ext"
@@ -61,7 +61,7 @@ def _extension_artifacts() -> list[Path]:
     entries = _embedded_products()
     if not entries:
         pytest.fail(
-            "no [[products]] entry of kind 'embedded' in tests/repo3/.otto/settings.toml "
+            "no [[products]] entry of kind 'embedded' in tests/project3/.otto/settings.toml "
             "— this lane fails loud rather than retiring behind a skip (G12): declare "
             "the coverage extension or deselect the lane, don't hollow it."
         )
@@ -130,7 +130,7 @@ def clean_zephyr37_llext():
 
 
 def _run_otto(*args: str, xdir: Path, timeout: int = 300) -> subprocess.CompletedProcess[str]:
-    """Run ``otto -R --lab embedded ARGS`` against the repo3 fixture SUT.
+    """Run ``otto -R --lab embedded ARGS`` against the project3 fixture project.
 
     *xdir* keeps otto's run-log dirs under the test's tmp_path (auto-cleaned)
     rather than the default CWD (== the project root).
@@ -138,7 +138,7 @@ def _run_otto(*args: str, xdir: Path, timeout: int = 300) -> subprocess.Complete
     return run_otto(
         list(args),
         xdir=xdir,
-        roots=REPO3,
+        roots=PROJECT3,
         lab="embedded",
         extra_argv_prefix=["-R"],
         timeout=timeout,
@@ -209,7 +209,7 @@ def test_embedded_coverage_cli_e2e(clean_zephyr37_llext, tmp_path):
         if not artifact.exists():
             pytest.fail(
                 f"embedded-coverage product not built: {artifact} — build it per "
-                "tests/repo3/product/README.md; this lane fails loud rather than "
+                "tests/project3/product/README.md; this lane fails loud rather than "
                 "skipping (G12), a skip here certified nothing."
             )
 
@@ -271,7 +271,7 @@ def test_embedded_coverage_cli_e2e(clean_zephyr37_llext, tmp_path):
     capture = Capture.load(cov_dir / "zephyr37-llext" / PRODUCT / "capture.json")
     assert capture.product == PRODUCT, f"capture names product {capture.product!r}"
 
-    # BOTH beds, not just the first. repo3's `[coverage] hosts` selector is
+    # BOTH beds, not just the first. project3's `[coverage] hosts` selector is
     # "zephyr(37|44)-llext" and its alternation is the whole point: the intent is
     # coverage across two Zephyr versions (3.7 and 4.4), whose ids share no
     # distinguishing prefix. Under fullmatch a bare "zephyr37-llext" selects only
@@ -282,7 +282,7 @@ def test_embedded_coverage_cli_e2e(clean_zephyr37_llext, tmp_path):
     staged = sorted(d.name for d in cov_dir.iterdir() if d.is_dir())
     assert staged == ["zephyr37-llext", "zephyr44-llext"], (
         f"expected both Zephyr coverage beds to be collected, got {staged} — "
-        f"check `[coverage] hosts` in tests/repo3/.otto/settings.toml\n"
+        f"check `[coverage] hosts` in tests/project3/.otto/settings.toml\n"
         f"{result.stdout[-2000:]}"
     )
     assert (cov_dir / "zephyr44-llext" / PRODUCT / "cov_ext.c.gcda").exists(), (
@@ -323,7 +323,7 @@ def test_embedded_coverage_cli_e2e(clean_zephyr37_llext, tmp_path):
 def test_embedded_cov_clean_zeroes_the_board_e2e(clean_zephyr37_llext, tmp_path):
     """Exercise, ``otto cov clean``, dump: the board's product counters read zero.
 
-    The repo3 ``TestEmbeddedCounterReset`` class runs every product operation
+    The project3 ``TestEmbeddedCounterReset`` class runs every product operation
     on both boards, cleans them through :func:`otto.coverage.clean_coverage`
     (what ``otto cov clean`` calls), and checks that an unexported
     ``reset_fn`` fails and that a board without the extension is a no-op.
@@ -336,7 +336,7 @@ def test_embedded_cov_clean_zeroes_the_board_e2e(clean_zephyr37_llext, tmp_path)
         if not artifact.exists():
             pytest.fail(
                 f"embedded-coverage product not built: {artifact} — build it per "
-                "tests/repo3/product/README.md; this lane fails loud rather than "
+                "tests/project3/product/README.md; this lane fails loud rather than "
                 "skipping (G12)."
             )
     cov_dir = tmp_path / "cov"

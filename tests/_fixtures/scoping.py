@@ -17,7 +17,7 @@ def verdict(name, *, declared=True, excluded=False, universe=("h0",), lab_patter
     """A real resolver verdict — excluded empties the applicability fields.
 
     *lab_patterns* defaults to the single pattern ``<name>-lab``, which is what
-    every caller before it existed got. Pass a longer tuple for a repo that
+    every caller before it existed got. Pass a longer tuple for a project that
     declares SEVERAL — the ordinary case in a multi-lab tree, and the one that
     makes a rendered ``-l a / -l b / -l c`` hint long enough to reach a
     terminal's wrap column. A default that can only ever produce one pattern
@@ -31,7 +31,7 @@ def verdict(name, *, declared=True, excluded=False, universe=("h0",), lab_patter
         applicable_labs=frozenset() if excluded else frozenset({"bench"}),
         universe=frozenset() if excluded else frozenset(universe),
         excluded=excluded,
-        root=f"/repos/{name}",
+        root=f"/projects/{name}",
         loaded_labs=("bench",),
         lab_patterns=(f"{name}-lab",) if lab_patterns is None else tuple(lab_patterns),
         host_patterns=(".*",),

@@ -12,9 +12,9 @@ parsed at.
 
 import pytest
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-# An inert rootdir config: none of this repo's addopts (--cov, -n auto)
+# An inert rootdir config: none of this repository's addopts (--cov, -n auto)
 # reach the inner session.
 PROBE_INI = """\
 [pytest]
@@ -31,7 +31,7 @@ def pytest_configure(config):
 """
 
 # `-p no:tach`: tach's pytest11 plugin panics on repeated in-tree sessions
-# (issue #193), the same guard the repo addopts use.
+# (issue #193), the same guard the repository's addopts use.
 INNER_ARGS = ["-p", "no:tach", "-p", "no:cacheprovider"]
 
 # What the outer session leaks into a child: pytest-cov's subprocess hooks
@@ -56,13 +56,13 @@ INNER_COLUMNS = "200"
 def isolate_inner_session(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> None:
     """Make *pytester*'s subprocess runs independent of the outer session.
 
-    Drops the outer session's env-based config, puts the repo root on
+    Drops the outer session's env-based config, puts the checkout root on
     ``PYTHONPATH`` (so a probe conftest can import ``tests.*``), fixes the
     report width, and writes the inert ini.
     """
     for var in _OUTER_SESSION_ENV:
         monkeypatch.delenv(var, raising=False)
-    monkeypatch.setenv("PYTHONPATH", str(PROJECT_ROOT))
+    monkeypatch.setenv("PYTHONPATH", str(CHECKOUT_ROOT))
     monkeypatch.setenv("COLUMNS", INNER_COLUMNS)
     pytester.makeini(PROBE_INI)
 
@@ -70,7 +70,7 @@ def isolate_inner_session(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyP
 def root_conftest_session(
     pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
 ) -> pytest.Pytester:
-    """An isolated *pytester* rootdir whose conftest registers the repo's root conftest."""
+    """An isolated *pytester* rootdir whose conftest registers the checkout's root conftest."""
     isolate_inner_session(pytester, monkeypatch)
     (pytester.path / "conftest.py").write_text(ROOT_CONFTEST_AS_PLUGIN)
     return pytester

@@ -6,7 +6,7 @@ import pytest
 
 from otto.check.proven import ProvenEntry, ProvenRange
 from tests._fixtures.docs_conf import assert_conf_renders
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
 
@@ -151,7 +151,7 @@ def test_the_docs_build_renders_the_page_and_fails_when_the_renderer_does() -> N
 
 def test_sphinx_srcs_names_the_proven_range_and_its_renderer() -> None:
     """``make docs`` must re-trigger when ``proven.json`` gains a row, like any page edit."""
-    makefile = (PROJECT_ROOT / "Makefile").read_text(encoding="utf-8")
+    makefile = (CHECKOUT_ROOT / "Makefile").read_text(encoding="utf-8")
     srcs = re.search(r"^SPHINX_SRCS :=.*?\n((?:.*\\\n)*.*)", makefile, re.MULTILINE)
     assert srcs, "no SPHINX_SRCS assignment found in the Makefile (guard misparse?)"
     assert "src/otto/check/proven.json" in srcs.group(0)
@@ -165,11 +165,11 @@ def test_the_rendered_page_is_build_output_and_reachable() -> None:
     """
     from scripts.render_proven_range import PAGE_PATH
 
-    ignored = (PROJECT_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+    ignored = (CHECKOUT_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
     assert "docs/cli/known-good.md" in [line.strip() for line in ignored]
     assert "docs/cli/link/known-good.md" not in [line.strip() for line in ignored]
-    assert PAGE_PATH.relative_to(PROJECT_ROOT).as_posix() == "docs/cli/known-good.md"
-    index = (PROJECT_ROOT / "docs" / "cli" / "index.md").read_text(encoding="utf-8")
+    assert PAGE_PATH.relative_to(CHECKOUT_ROOT).as_posix() == "docs/cli/known-good.md"
+    index = (CHECKOUT_ROOT / "docs" / "cli" / "index.md").read_text(encoding="utf-8")
     assert "known-good" in [line.strip() for line in index.splitlines()]
-    link_index = (PROJECT_ROOT / "docs" / "cli" / "link" / "index.md").read_text(encoding="utf-8")
+    link_index = (CHECKOUT_ROOT / "docs" / "cli" / "link" / "index.md").read_text(encoding="utf-8")
     assert "known-good" not in [line.strip() for line in link_index.splitlines()]

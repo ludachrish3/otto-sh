@@ -7,9 +7,9 @@ where the agent is working. This pins that the instruction cannot vanish in an
 unrelated edit.
 """
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-AGENTS_MD = PROJECT_ROOT / "AGENTS.md"
+AGENTS_MD = CHECKOUT_ROOT / "AGENTS.md"
 
 
 def test_agents_md_tells_agents_to_run_the_fresh_gate():

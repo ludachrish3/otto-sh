@@ -231,7 +231,7 @@ never opens it.
 
 A new `DockerContainerHost` copies its parent's `lab_info` — the lab it was
 registered into, with that lab's declared `resources` — so concurrent test
-runs that both want `test3.repo1.api` serialize
+runs that both want `test3.project1.api` serialize
 through the existing reservation backend. There's no separate
 container-reservation concept — the parent's reservation transitively
 covers its containers. That's also why the `otto docker` command itself

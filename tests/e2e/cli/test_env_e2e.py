@@ -3,7 +3,7 @@
 Parametrized over both backends only where the backend is actually the thing
 under test. ``--backend pip`` forces the stdlib fallback on a uv-equipped host,
 which is the only way that arm is ever exercised here; measured cost is ~1s per
-uv build and ~13s per pip build uncontended (venv bootstrap 1.7s, the repo's
+uv build and ~13s per pip build uncontended (venv bootstrap 1.7s, the project's
 editable install 2.2s, otto's editable install 8.8s — pip's isolated build env
 plus an index round-trip per dependency; 20-30s under coverage and xdist), so
 the cases that exercise otto's own control flow (refusal, delegation, the
@@ -26,13 +26,13 @@ import subprocess
 import pytest
 
 from otto.config.home import workspace_key
-from tests._fixtures.paths import PROJECT_ROOT, WHEELS_DIR
-from tests._fixtures.sutrepo import copy_sample_repo
-from tests.e2e._otto_subprocess import REPO1, run_otto
+from tests._fixtures.paths import CHECKOUT_ROOT, WHEELS_DIR
+from tests._fixtures.project_scaffold import copy_sample_project
+from tests.e2e._otto_subprocess import PROJECT1, run_otto
 
 pytestmark = pytest.mark.hostless
 
-REPO4 = PROJECT_ROOT / "tests" / "repo4"
+PROJECT4 = CHECKOUT_ROOT / "tests" / "project4"
 
 # A real installer run, not otto's own logic: pip needs room (measured 9.5s
 # warm, and a cold wheel cache on CI is slower). MUST STAY UNDER pyproject's
@@ -44,7 +44,7 @@ BUILD_TIMEOUT = 150
 BACKENDS = ("uv", "pip")
 
 
-def _run(argv, *, home, roots=REPO1, timeout=60):
+def _run(argv, *, home, roots=PROJECT1, timeout=60):
     """Run otto with OTTO_HOME pinned, so nothing touches the real ~/.otto."""
     return run_otto(
         argv,
@@ -83,32 +83,34 @@ def _the_env(home):
 
 
 @pytest.fixture
-def repo4(tmp_path):
-    """A PRIVATE copy of repo4, because these tests install it editable.
+def project4(tmp_path):
+    """A PRIVATE copy of project4, because these tests install it editable.
 
     Installing the checked-in tree would write an ``.egg-info`` into
-    ``tests/repo4/pylib/`` — which repo4 puts on ``sys.path`` via its ``libs``,
+    ``tests/project4/pylib/`` — which project4 puts on ``sys.path`` via its ``libs``,
     where ``importlib.metadata`` reads it as an installed distribution and the
     dependency preflight answers differently than it would on a clean clone.
-    ``tests/unit/test_sample_repo_hygiene.py`` is the gate that catches a
+    ``tests/unit/test_sample_projects_hygiene.py`` is the gate that catches a
     regression here.
     """
-    return copy_sample_repo(REPO4, tmp_path / "repo4")
+    return copy_sample_project(PROJECT4, tmp_path / "project4")
 
 
 class TestCreate:
     @pytest.mark.parametrize("backend", BACKENDS)
-    def test_it_builds_an_env_holding_otto_and_the_installable_repo(self, tmp_path, backend, repo4):
-        """repo4's dependency lives on no index, so the find-links is required.
+    def test_it_builds_an_env_holding_otto_and_the_installable_project(
+        self, tmp_path, backend, project4
+    ):
+        """project4's dependency lives on no index, so the find-links is required.
 
-        That is the fixture working as intended, not a workaround: repo4 exists
-        to model a repo whose Python requirements are not simply there.
+        That is the fixture working as intended, not a workaround: project4 exists
+        to model a project whose Python requirements are not simply there.
         """
         home = tmp_path / "home"
         result = _run(
             ["env", "create", "--backend", backend, "--", "--find-links", str(WHEELS_DIR)],
             home=home,
-            roots=f"{REPO1}{os.pathsep}{repo4}",
+            roots=f"{PROJECT1}{os.pathsep}{project4}",
             timeout=BUILD_TIMEOUT,
         )
         assert result.returncode == 0, result.stdout + result.stderr
@@ -116,9 +118,9 @@ class TestCreate:
         env = _the_env(home)
         assert env is not None, f"no env built under {home}"
         assert (env / "bin" / "python").is_file(), sorted(q.name for q in env.iterdir())
-        # repo4 has a pyproject and is installed; repo1 has none and is skipped.
-        assert "installed (editable): repo4" in result.stdout, result.stdout
-        assert "skipped, no pyproject.toml: repo1" in result.stdout, result.stdout
+        # project4 has a pyproject and is installed; project1 has none and is skipped.
+        assert "installed (editable): project4" in result.stdout, result.stdout
+        assert "skipped, no pyproject.toml: project1" in result.stdout, result.stdout
         assert f"source {env / 'bin' / 'activate'}" in result.stdout, result.stdout
         # The metadata names the backend that built it — checked here, on the
         # one create each backend pays for, rather than in a second pip build.
@@ -136,7 +138,7 @@ class TestCreate:
         keying.
         """
         home = tmp_path / "home"
-        (home / workspace_key([REPO1]) / "env").mkdir(parents=True)
+        (home / workspace_key([PROJECT1]) / "env").mkdir(parents=True)
 
         result = _run(["env", "create"], home=home)
         assert result.returncode != 0, result.stdout
@@ -168,7 +170,7 @@ class TestCreate:
         """F5: the lab-free dry-run seam stops env before the body and exits 0.
 
         `otto env create -n` must scaffold no venv, exactly as `otto init -n`
-        scaffolds no repo. Passing dry_run_preview=True at registration would
+        scaffolds no project. Passing dry_run_preview=True at registration would
         opt out of that seam and let -n build.
         """
         home = tmp_path / "home"
@@ -188,10 +190,10 @@ class TestSync:
         assert env is not None, f"sync built nothing under {home}"
         assert (env / ".otto-env.json").is_file()
 
-    def test_passthrough_after_a_double_dash_reaches_the_installer(self, tmp_path, repo4):
+    def test_passthrough_after_a_double_dash_reaches_the_installer(self, tmp_path, project4):
         """The contrast IS the assertion: same command, only the passthrough differs.
 
-        repo4 requires ``otto-fixture-beetroot``, which exists on no index (that
+        project4 requires ``otto-fixture-beetroot``, which exists on no index (that
         was checked against the live one). So the first create must FAIL, and
         the same create with ``-- --find-links`` must succeed -- which is proof
         the arguments after ``--`` travelled all the way to the resolver, not
@@ -209,17 +211,17 @@ class TestSync:
         tokens reach PIP'S argv, verbatim and last -- is pinned offline and in
         milliseconds by ``tests/unit/env/test_backends.py::TestInstallerArgv``,
         and pip's end-to-end build contract stays with
-        ``test_it_builds_an_env_holding_otto_and_the_installable_repo[pip]``.
+        ``test_it_builds_an_env_holding_otto_and_the_installable_project[pip]``.
         """
         home = tmp_path / "home"
         without = _run(
             ["env", "create", "--backend", "uv"],
             home=home,
-            roots=f"{REPO1}{os.pathsep}{repo4}",
+            roots=f"{PROJECT1}{os.pathsep}{project4}",
             timeout=BUILD_TIMEOUT,
         )
         assert without.returncode != 0, (
-            "repo4's requirement is supposed to be unsatisfiable from an index — "
+            "project4's requirement is supposed to be unsatisfiable from an index — "
             f"if this passed, the fixture name is resolvable again:\n{without.stdout}"
         )
 
@@ -235,7 +237,7 @@ class TestSync:
                 str(WHEELS_DIR),
             ],
             home=home,
-            roots=f"{REPO1}{os.pathsep}{repo4}",
+            roots=f"{PROJECT1}{os.pathsep}{project4}",
             timeout=BUILD_TIMEOUT,
         )
         assert with_links.returncode == 0, with_links.stdout + with_links.stderr
@@ -255,22 +257,22 @@ class TestSync:
         assert "otto-fixture-beetroot" in probe.stdout
 
 
-class TestWorkspaceWithoutInstallableRepos:
+class TestWorkspaceWithoutInstallableProjects:
     def test_it_still_builds_and_names_what_it_skipped(self, tmp_path):
-        """Every sample repo but repo4 lacks a pyproject; that must still work.
+        """Every sample project but project4 lacks a pyproject; that must still work.
 
-        A repo without one is not an error and never has been -- its ``libs``
+        A project without one is not an error and never has been -- its ``libs``
         ride sys.path at bootstrap. The env is still worth building, because
         otto itself goes into it.
         """
         home = tmp_path / "home"
-        result = _run(["env", "create"], home=home, roots=REPO1, timeout=BUILD_TIMEOUT)
+        result = _run(["env", "create"], home=home, roots=PROJECT1, timeout=BUILD_TIMEOUT)
         assert result.returncode == 0, result.stderr
 
         env = _the_env(home)
         assert env is not None
         assert (env / "bin" / "otto").is_file(), "otto itself must land in the env"
-        assert "skipped, no pyproject.toml: repo1" in result.stdout, result.stdout
+        assert "skipped, no pyproject.toml: project1" in result.stdout, result.stdout
         assert "installed (editable)" not in result.stdout, result.stdout
 
 
@@ -288,11 +290,11 @@ class TestShow:
         assert "no environment for this workspace" in result.stdout
         assert "otto env create" in result.stdout
 
-    def test_it_reports_the_backend_the_version_and_each_repo(self, tmp_path, repo4):
+    def test_it_reports_the_backend_the_version_and_each_project(self, tmp_path, project4):
         """Both arms of the installed column, because one arm cannot fail.
 
-        Asserting only that an installed repo reads "yes" passes just as well
-        against a column hard-wired to "yes". So the repo is UNINSTALLED from
+        Asserting only that an installed project reads "yes" passes just as well
+        against a column hard-wired to "yes". So the project is UNINSTALLED from
         the env underneath otto and the same query asked again -- the answer
         has to move.
         """
@@ -300,7 +302,7 @@ class TestShow:
         built = _run(
             ["env", "create", "--backend", "uv", "--", "--find-links", str(WHEELS_DIR)],
             home=home,
-            roots=f"{REPO1}{os.pathsep}{repo4}",
+            roots=f"{PROJECT1}{os.pathsep}{project4}",
             timeout=BUILD_TIMEOUT,
         )
         assert built.returncode == 0, built.stdout + built.stderr
@@ -308,14 +310,14 @@ class TestShow:
         shown = _run(
             ["env", "show"],
             home=home,
-            roots=f"{REPO1}{os.pathsep}{repo4}",
+            roots=f"{PROJECT1}{os.pathsep}{project4}",
             timeout=BUILD_TIMEOUT,
         )
         assert shown.returncode == 0, shown.stderr
         assert "backend:     uv" in shown.stdout, shown.stdout
-        # repo1 has no pyproject at all, so it is not installable and says so.
+        # project1 has no pyproject at all, so it is not installable and says so.
         assert "no pyproject" in shown.stdout, shown.stdout
-        assert _cell(shown.stdout, "otto-sample-repo4", 2) == "yes", shown.stdout
+        assert _cell(shown.stdout, "otto-sample-project4", 2) == "yes", shown.stdout
 
         env = _the_env(home)
         removed = subprocess.run(
@@ -325,7 +327,7 @@ class TestShow:
                 "uninstall",
                 "--python",
                 str(env / "bin" / "python"),
-                "otto-sample-repo4",
+                "otto-sample-project4",
             ],
             capture_output=True,
             text=True,
@@ -336,13 +338,13 @@ class TestShow:
         after = _run(
             ["env", "show"],
             home=home,
-            roots=f"{REPO1}{os.pathsep}{repo4}",
+            roots=f"{PROJECT1}{os.pathsep}{project4}",
             timeout=BUILD_TIMEOUT,
         )
         assert after.returncode == 0, after.stderr
-        assert _cell(after.stdout, "otto-sample-repo4", 2) == "no", after.stdout
+        assert _cell(after.stdout, "otto-sample-project4", 2) == "no", after.stdout
 
-    def test_a_repo_touched_after_the_build_reads_as_stale(self, tmp_path, repo4):
+    def test_a_project_touched_after_the_build_reads_as_stale(self, tmp_path, project4):
         """Staleness is an mtime comparison, so it needs no import and no installer.
 
         The hostile condition is INJECTED -- the pyproject is touched after the
@@ -353,23 +355,23 @@ class TestShow:
         built = _run(
             ["env", "create", "--backend", "uv", "--", "--find-links", str(WHEELS_DIR)],
             home=home,
-            roots=f"{REPO1}{os.pathsep}{repo4}",
+            roots=f"{PROJECT1}{os.pathsep}{project4}",
             timeout=BUILD_TIMEOUT,
         )
         assert built.returncode == 0, built.stdout + built.stderr
 
-        fresh = _run(["env", "show"], home=home, roots=f"{REPO1}{os.pathsep}{repo4}")
+        fresh = _run(["env", "show"], home=home, roots=f"{PROJECT1}{os.pathsep}{project4}")
         assert "stale" not in fresh.stdout, fresh.stdout
 
-        # Backdate the env stamp to just BEFORE repo4's pyproject rather than by
-        # some fixed amount: a fixed offset only makes it stale if the repo
+        # Backdate the env stamp to just BEFORE project4's pyproject rather than by
+        # some fixed amount: a fixed offset only makes it stale if the project
         # happens to have been touched inside that window, which is a property
         # of the checkout, not of the code under test.
         env = _the_env(home)
         stamp = env / ".otto-env.json"
-        older = (repo4 / "pyproject.toml").stat().st_mtime - 1
+        older = (project4 / "pyproject.toml").stat().st_mtime - 1
         os.utime(stamp, (older, older))
 
-        stale = _run(["env", "show"], home=home, roots=f"{REPO1}{os.pathsep}{repo4}")
+        stale = _run(["env", "show"], home=home, roots=f"{PROJECT1}{os.pathsep}{project4}")
         assert "stale" in stale.stdout, stale.stdout
         assert "otto env sync" in stale.stdout, stale.stdout

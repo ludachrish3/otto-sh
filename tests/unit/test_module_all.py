@@ -22,9 +22,9 @@ from pathlib import Path
 import pytest
 
 from scripts.api_agreement import NamespaceReport, namespace_reports
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-REPO_ROOT = PROJECT_ROOT
+REPO_ROOT = CHECKOUT_ROOT
 SRC = REPO_ROOT / "src"
 
 # The manifest's first ``__all__`` for each declared module that had none

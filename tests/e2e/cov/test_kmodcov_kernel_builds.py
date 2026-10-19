@@ -6,7 +6,7 @@
 
 (`make kmodcov` sets both from KMODCOV_KERNELS and KMODCOV_KERNELS_DIR and runs this
 together with the bed matrix.) One column per kernel id, the table in
-tests/e2e/cov/_repo5_build.py: ``x86_64-cross`` is the 6.8 source tree at
+tests/e2e/cov/_project5_build.py: ``x86_64-cross`` is the 6.8 source tree at
 OTTO_KMODCOV_CROSS_KDIR built on the host with the VM's cross gcc; every other
 column is a tree scripts/provision_kmodcov_kernels.sh prepared, built under
 ``docker run`` in a container of that kernel's own Ubuntu release with that
@@ -42,7 +42,7 @@ from pathlib import Path
 import pytest
 
 from tests._ambient_env import ambient
-from tests.e2e.cov._repo5_build import (
+from tests.e2e.cov._project5_build import (
     CTORS_SECTION,
     DEFAULT_KERNELS_DIR,
     DEMO_SRC,

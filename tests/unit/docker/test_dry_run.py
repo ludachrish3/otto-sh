@@ -65,7 +65,7 @@ from otto.host.unix_host import UnixHost
 from otto.labs.loader import Lab
 from otto.result import CommandNotRunError, CommandResult, NotRunResult, Result
 from otto.utils import Status
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.project_scaffold import make_project
 from tests.conftest import active_context
 
 # ---------------------------------------------------------------------------
@@ -143,12 +143,12 @@ def _spied_parent() -> UnixHost:
     return parent
 
 
-def _make_repo(tmp: Path) -> Project:
-    """Every caller passes ``parent=`` explicitly, so this repo needs no placement
+def _make_project(tmp: Path) -> Project:
+    """Every caller passes ``parent=`` explicitly, so this project needs no placement
     of its own — [[docker.composes]] is a pure file inventory (spec §14)."""
-    sut = make_sut_repo(
-        tmp / "repo1",
-        name="repo1",
+    sut = make_project(
+        tmp / "project1",
+        name="project1",
         extra=(
             "[docker]\n"
             "\n"
@@ -167,7 +167,7 @@ def _make_repo(tmp: Path) -> Project:
 
 
 def _bed(tmp: Path) -> "tuple[Project, Lab, UnixHost]":
-    project = _make_repo(tmp)
+    project = _make_project(tmp)
     lab = Lab(name="test")
     parent = _spied_parent()
     lab.hosts[parent.id] = parent
@@ -192,11 +192,11 @@ def _call_compose_down(project: Project, lab: Lab, parent: UnixHost) -> Any:
 
 
 def _call_stage_image_context(project: Project, lab: Lab, parent: UnixHost) -> Any:
-    return stage_image_context(parent, "repo1", project.docker_settings.images[0])
+    return stage_image_context(parent, "project1", project.docker_settings.images[0])
 
 
 def _call_stage_compose_files(project: Project, lab: Lab, parent: UnixHost) -> Any:
-    return stage_compose_files(parent, "repo1", list(project.docker_settings.composes))
+    return stage_compose_files(parent, "project1", list(project.docker_settings.composes))
 
 
 _ARMED_VERBS = [
@@ -281,10 +281,10 @@ class TestTheDeviceDrivingVerbsAskTheParentNothing:
         assert down, "the control never tore the stack down, so its `finally` proves nothing"
 
     @pytest.mark.asyncio
-    async def test_a_repo_declaring_no_images_still_answers_honestly(self, tmp_path):
+    async def test_a_project_declaring_no_images_still_answers_honestly(self, tmp_path):
         """The arm is scoped to a real selection, not bolted to the front door.
 
-        ``build_images`` answers ``{}`` when the repo declares no matching
+        ``build_images`` answers ``{}`` when the project declares no matching
         image, and that answer is settled from CONFIGURATION -- equally true
         in a dry run, and not a device fact. A guard that refused here would
         be declining to read a TOML file.
@@ -328,14 +328,14 @@ class TestTheReadProbesRefuseInsteadOfInventing:
         parent.exec = AsyncMock(return_value=await _real_decline())  # type: ignore[method-assign]
 
         with pytest.raises(CommandNotRunError, match="stack_already_up"):
-            await _stack_already_up(parent, "otto-repo1-x")
+            await _stack_already_up(parent, "otto-project1-x")
 
         parent.exec = AsyncMock(return_value=_ok("abc123\n"))  # type: ignore[method-assign]
-        assert await _stack_already_up(parent, "otto-repo1-x") is True
+        assert await _stack_already_up(parent, "otto-project1-x") is True
         parent.exec = AsyncMock(return_value=_ok(""))  # type: ignore[method-assign]
-        assert await _stack_already_up(parent, "otto-repo1-x") is False
+        assert await _stack_already_up(parent, "otto-project1-x") is False
         parent.exec = AsyncMock(return_value=_fail("daemon down"))  # type: ignore[method-assign]
-        assert await _stack_already_up(parent, "otto-repo1-x") is None
+        assert await _stack_already_up(parent, "otto-project1-x") is None
 
     @pytest.mark.asyncio
     async def test_compose_resolve_container_id_refuses_instead_of_polling(self):
@@ -391,9 +391,9 @@ class TestIsRunningStopsAnsweringForAContainerItNeverAskedAbout:
         return DockerContainerHost(
             parent=parent,
             container_id="",  # the declared-but-unresolved placeholder
-            project="repo1",
+            project="project1",
             service="api",
-            compose_project="otto-repo1-vagrant",
+            compose_project="otto-project1-vagrant",
         )
 
     @pytest.mark.asyncio
@@ -643,7 +643,7 @@ class TestEveryPublicDockerExportIsAdjudicated:
         from otto.docker import get_user_compose_project
 
         with active_context(dry_run=True):
-            assert get_user_compose_project("repo1", "ci").startswith("otto-repo1-")
+            assert get_user_compose_project("project1", "ci").startswith("otto-project1-")
 
 
 class TestTheDeployVerbsOwnTheirDryRunPreview:
@@ -668,7 +668,7 @@ class TestTheDeployVerbsOwnTheirDryRunPreview:
         from tests._fixtures.dispatch import DispatchRunner
 
         decline = CommandNotRunError(
-            f"{verb}(integration)", "test3", "Resolved plan: test3 <- repo1[core]."
+            f"{verb}(integration)", "test3", "Resolved plan: test3 <- project1[core]."
         )
         called: "list[str]" = []
 
@@ -711,7 +711,9 @@ class TestTheDeployVerbsOwnTheirDryRunPreview:
         from otto.result import CommandNotRunError
         from tests._fixtures.dispatch import DispatchRunner
 
-        decline = CommandNotRunError("build_on(test3)", "test3", "Build plan: test3 <- repo1[api].")
+        decline = CommandNotRunError(
+            "build_on(test3)", "test3", "Build plan: test3 <- project1[api]."
+        )
         called: "list[str]" = []
 
         async def _spy(*_a, **_kw):

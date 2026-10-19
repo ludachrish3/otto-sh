@@ -32,7 +32,7 @@ arguments 1 and 3 — so ``tests/unit/cli`` is rebuilt between them and
 ``test_cov.py``. That dropped ``no_logger_output_dir``, whose stub
 ``OttoContext`` every ``otto cov get`` validation test depends on, and three
 tests failed with a bogus ``TypeError`` instead of the message they assert.
-With the bare sibling higher up (e.g. ``noxfile.py`` in the repo root), the
+With the bare sibling higher up (e.g. ``noxfile.py`` in the checkout root), the
 ROOT ``tests/conftest.py`` itself is on a rebuilt level and every root guard
 is gone for the third argument's items. Every PAIR of those files passes;
 only the TRIPLE fails, and the loadgroup gates never co-schedule that exact

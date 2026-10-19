@@ -8,11 +8,11 @@ from otto.reservations import (
     build_reservation_gate,
     factory,
 )
-from tests._fixtures.fake_repo import fake_repo
+from tests._fixtures.fake_project import fake_project
 
 
-def _repo(reservation_settings, root):
-    return fake_repo(root=root, settings={"reservations": reservation_settings})
+def _project(reservation_settings, root):
+    return fake_project(root=root, settings={"reservations": reservation_settings})
 
 
 def test_skip_does_not_build_backend(tmp_path, monkeypatch):
@@ -21,7 +21,7 @@ def test_skip_does_not_build_backend(tmp_path, monkeypatch):
 
     monkeypatch.setattr(factory, "build_backend", _spy)
     gate = build_reservation_gate(
-        [_repo({"backend": "none"}, tmp_path)],
+        [_project({"backend": "none"}, tmp_path)],
         holder=None,
         skip_reservation_check=True,
         cwd_fallback=tmp_path,
@@ -33,7 +33,7 @@ def test_skip_does_not_build_backend(tmp_path, monkeypatch):
 
 def test_no_skip_builds_backend(tmp_path):
     gate = build_reservation_gate(
-        [_repo({"backend": "none"}, tmp_path)],
+        [_project({"backend": "none"}, tmp_path)],
         holder=None,
         skip_reservation_check=False,
         cwd_fallback=tmp_path,
@@ -44,7 +44,7 @@ def test_no_skip_builds_backend(tmp_path):
 
 def test_factory_builds_on_demand(tmp_path):
     gate = build_reservation_gate(
-        [_repo({"backend": "none"}, tmp_path)],
+        [_project({"backend": "none"}, tmp_path)],
         holder=None,
         skip_reservation_check=True,
         cwd_fallback=tmp_path,
@@ -59,7 +59,7 @@ def test_factory_passes_resolved_username(tmp_path):
     leave every other test in this file green.
     """
     gate = build_reservation_gate(
-        [_repo({"backend": "none"}, tmp_path)],
+        [_project({"backend": "none"}, tmp_path)],
         holder="bob",
         skip_reservation_check=True,
         cwd_fallback=tmp_path,
@@ -74,7 +74,7 @@ def test_build_failure_propagates(tmp_path, monkeypatch):
     monkeypatch.setattr(factory, "build_backend", _boom)
     with pytest.raises(ReservationBackendError):
         build_reservation_gate(
-            [_repo({"backend": "x"}, tmp_path)],
+            [_project({"backend": "x"}, tmp_path)],
             holder=None,
             skip_reservation_check=False,
             cwd_fallback=tmp_path,
@@ -83,7 +83,7 @@ def test_build_failure_propagates(tmp_path, monkeypatch):
 
 def test_holder_sets_identity(tmp_path):
     gate = build_reservation_gate(
-        [_repo({"backend": "none"}, tmp_path)],
+        [_project({"backend": "none"}, tmp_path)],
         holder="bob",
         skip_reservation_check=False,
         cwd_fallback=tmp_path,
@@ -103,18 +103,18 @@ class TestAPresentTableMustNameItsBackend:
 
     def test_absent_table_means_no_checker(self, tmp_path):
         from otto.config.project import Project
-        from tests._fixtures.sutrepo import make_sut_repo
+        from tests._fixtures.project_scaffold import make_project
 
-        project = Project(root=make_sut_repo(tmp_path))
+        project = Project(root=make_project(tmp_path))
         assert project.reservation_settings == {}
 
     def test_bare_header_refuses_the_load_naming_the_key(self, tmp_path):
         from pydantic import ValidationError
 
         from otto.config.project import Project
-        from tests._fixtures.sutrepo import make_sut_repo
+        from tests._fixtures.project_scaffold import make_project
 
-        sut = make_sut_repo(tmp_path, extra="[reservations]\n")
+        sut = make_project(tmp_path, extra="[reservations]\n")
         with pytest.raises(ValidationError, match=r"reservations\.backend"):
             Project(root=sut)
 
@@ -122,17 +122,17 @@ class TestAPresentTableMustNameItsBackend:
         from pydantic import ValidationError
 
         from otto.config.project import Project
-        from tests._fixtures.sutrepo import make_sut_repo
+        from tests._fixtures.project_scaffold import make_project
 
-        sut = make_sut_repo(tmp_path, extra='[reservations]\nurl = "https://sched.example"\n')
+        sut = make_project(tmp_path, extra='[reservations]\nurl = "https://sched.example"\n')
         with pytest.raises(ValidationError, match=r"reservations\.backend"):
             Project(root=sut)
 
     def test_explicit_none_still_loads(self, tmp_path):
         from otto.config.project import Project
-        from tests._fixtures.sutrepo import make_sut_repo
+        from tests._fixtures.project_scaffold import make_project
 
-        project = Project(root=make_sut_repo(tmp_path, extra='[reservations]\nbackend = "none"\n'))
+        project = Project(root=make_project(tmp_path, extra='[reservations]\nbackend = "none"\n'))
         assert project.reservation_settings == {"backend": "none"}
 
 

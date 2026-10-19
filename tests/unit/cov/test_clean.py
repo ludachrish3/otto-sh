@@ -28,7 +28,7 @@ def _host(host_id, *products, cls=None):
     return h
 
 
-def _repo(cov=True, hosts=".*"):
+def _project(cov=True, hosts=".*"):
     r = MagicMock()
     r.settings = {"coverage": {"hosts": hosts}} if cov else {}
     return r
@@ -84,7 +84,7 @@ def lab(monkeypatch):
 async def test_every_instrumented_product_on_every_host_is_reset_once(lab):
     a, b = _product("app", Result(Status.Success)), _product("ext", Result(Status.Success))
     lab(_host("t1", a), _host("zephyr", b))
-    report = await clean_coverage([_repo()])
+    report = await clean_coverage([_project()])
     assert report.hosts == {
         "t1": {"app": Result(Status.Success)},
         "zephyr": {"ext": Result(Status.Success)},
@@ -96,7 +96,7 @@ async def test_every_instrumented_product_on_every_host_is_reset_once(lab):
 @pytest.mark.asyncio
 async def test_a_failed_reset_is_a_result_not_a_log_line(lab):
     lab(_host("t1", _product("app", Result(Status.Error, msg="denied"))))
-    report = await clean_coverage([_repo()])
+    report = await clean_coverage([_project()])
     assert not report.ok
     assert report.failed[0].reason == "denied"
 
@@ -107,7 +107,7 @@ async def test_a_host_whose_reset_raises_reports_every_product_failed(lab):
     boom.reset_coverage = AsyncMock(side_effect=ConnectionResetError("peer reset"))
     other = _product("lib", Result(Status.Success))
     lab(_host("t1", boom, _product("tool", Result(Status.Success))), _host("t2", other))
-    report = await clean_coverage([_repo()])
+    report = await clean_coverage([_project()])
     assert set(report.hosts["t1"]) == {"app", "tool"}
     assert all("ConnectionResetError: peer reset" in r.msg for r in report.hosts["t1"].values())
     assert report.hosts["t2"] == {"lib": Result(Status.Success)}
@@ -116,7 +116,7 @@ async def test_a_host_whose_reset_raises_reports_every_product_failed(lab):
 @pytest.mark.asyncio
 async def test_no_coverage_section_refuses():
     with pytest.raises(CoverageConfigError):
-        await clean_coverage([_repo(cov=False)])
+        await clean_coverage([_project(cov=False)])
 
 
 @pytest.mark.asyncio
@@ -128,7 +128,7 @@ async def test_a_selector_matching_no_host_refuses_with_the_selection_error_chai
     the selector text (what the reader needs to fix) is never lost."""
     lab(_host("t1", _product("app", Result(Status.Success))))
     with pytest.raises(NoCoverageHostsError, match="nothing to clean") as excinfo:
-        await clean_coverage([_repo(hosts="nope-.*")])
+        await clean_coverage([_project(hosts="nope-.*")])
     assert "nope-.*" in str(excinfo.value)
     assert isinstance(excinfo.value.__cause__, EmptySelectionError)
 
@@ -137,14 +137,14 @@ async def test_a_selector_matching_no_host_refuses_with_the_selection_error_chai
 async def test_host_ids_matching_none_of_the_matched_hosts_refuses(lab):
     lab(_host("t1", _product("app", Result(Status.Success))))
     with pytest.raises(NoCoverageHostsError, match="nothing to clean"):
-        await clean_coverage([_repo()], host_ids=["nope"])
+        await clean_coverage([_project()], host_ids=["nope"])
 
 
 @pytest.mark.asyncio
 async def test_host_ids_narrow_the_walk(lab):
     a, b = _product("app", Result(Status.Success)), _product("lib", Result(Status.Success))
     lab(_host("t1", a), _host("t2", b))
-    report = await clean_coverage([_repo()], host_ids=["t2"])
+    report = await clean_coverage([_project()], host_ids=["t2"])
     assert list(report.hosts) == ["t2"]
     a.reset_coverage.assert_not_awaited()
 
@@ -152,7 +152,7 @@ async def test_host_ids_narrow_the_walk(lab):
 @pytest.mark.asyncio
 async def test_a_declined_reset_is_reported_not_run(lab):
     lab(_host("t1", _product("app", Result(Status.NotRun))))
-    report = await clean_coverage([_repo()])
+    report = await clean_coverage([_project()])
     assert report.ok
     assert report.not_run == [("t1", "app")]
 
@@ -178,7 +178,7 @@ async def test_a_malformed_product_name_never_reaches_the_host(lab):
     bad = _product("../x", Result(Status.Success))
     ok = _product("tool", Result(Status.Success))
     lab(_host("t1", bad, ok))
-    report = await clean_coverage([_repo()])
+    report = await clean_coverage([_project()])
     bad.reset_coverage.assert_not_awaited()
     ok.reset_coverage.assert_not_awaited()
     assert set(report.hosts["t1"]) == {"../x", "tool"}
@@ -191,13 +191,13 @@ async def test_no_hosts_in_the_lab_refuses(lab):
     """A configured lab with no hosts at all has nothing to clean."""
     lab()
     with pytest.raises(NoCoverageHostsError, match="nothing to clean"):
-        await clean_coverage([_repo()])
+        await clean_coverage([_project()])
 
 
 @pytest.mark.asyncio
-async def test_defaults_to_the_runs_repos_when_none_given(lab):
+async def test_defaults_to_the_runs_projects_when_none_given(lab):
     lab(_host("t1", _product("app", Result(Status.Success))))
-    result = fake_bootstrap_result([_repo()])
+    result = fake_bootstrap_result([_project()])
     with patch("otto.bootstrap.bootstrap", return_value=result) as composition_root:
         report = await clean_coverage()
     composition_root.assert_called_once()
@@ -211,7 +211,7 @@ async def test_an_uninstrumented_product_is_never_touched(lab):
     instrumented = _product("app", Result(Status.Success))
     skipped = _product("dbg", Result(Status.Success), instrumented=False)
     lab(_host("t1", instrumented, skipped))
-    report = await clean_coverage([_repo()])
+    report = await clean_coverage([_project()])
     skipped.reset_coverage.assert_not_awaited()
     instrumented.reset_coverage.assert_awaited_once()
     assert set(report.hosts["t1"]) == {"app"}
@@ -229,7 +229,7 @@ async def test_a_host_with_no_returned_outcome_is_reported_failed(lab, monkeypat
 
     monkeypatch.setattr("otto.fleet.do_for_all_hosts", fake_do_for_all_with_a_gap)
 
-    report = await clean_coverage([_repo()])
+    report = await clean_coverage([_project()])
     assert not report.ok
     assert set(report.hosts["t1"]) == {"app"}
     assert "no result" in report.hosts["t1"]["app"].msg

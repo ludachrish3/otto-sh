@@ -16,8 +16,8 @@ here hides behind.
    ``otto host <id> <verb>`` keeps honouring it. The table below asserts the
    override runs, once per walked verb.
 
-2. **Do bootstrap-style owner stamping and per-repo scoping compose?** Spec
-   section 8 asks for the two-repo attribution scenario end to end; the halves
+2. **Do bootstrap-style owner stamping and per-project scoping compose?** Spec
+   section 8 asks for the two-project attribution scenario end to end; the halves
    are pinned apart (marker observation in ``tests/unit/bootstrap``, stamping in
    ``tests/unit/host/test_product_providers.py``, scoping in
    ``test_actions.py``). This is the one place they run together.
@@ -26,7 +26,7 @@ SO THE SEAMS HERE ARE REAL, not doubles: :class:`otto.context.OttoContext` (its
 own ``do_for_all_hosts`` and ``all_hosts``), concrete :class:`BaseHost`
 subclasses (their own lifecycle verbs and owner filter), and
 :func:`~otto.host.product.apply_product_providers` (the ingest chokepoint's own
-stamping). Only the transport, the repo list, and the products' bodies are
+stamping). Only the transport, the project list, and the products' bodies are
 stand-ins — a walk that reaches a transport is a walk that already proved the
 point.
 """
@@ -54,7 +54,7 @@ from otto.registry import registering_project
 from otto.result import CommandResult, Result
 from otto.utils import Status
 from tests._fixtures.bootstrap_seam import patch_bootstrap
-from tests._fixtures.fake_repo import fake_repo
+from tests._fixtures.fake_project import fake_project
 
 # ── doubles ──────────────────────────────────────────────────────────────
 
@@ -125,7 +125,7 @@ class _RecordingProduct(Product):
     """A real :class:`~otto.host.product.Product` whose lifecycle only records.
 
     Deliberately does NOT set ``owner``: the stamping seam is the subject, so
-    the owner has to arrive from the provider's registering-repo marker.
+    the owner has to arrive from the provider's registering-project marker.
     """
 
     def __init__(self, name, events):
@@ -151,45 +151,45 @@ class _RecordingProduct(Product):
 
 
 def _wire_lab(monkeypatch, tmp_path, project_names, hosts, *, declarations=None):
-    """Install a REAL context over *hosts* and point the orchestrator at *repo_names*.
+    """Install a REAL context over *hosts* and point the orchestrator at *project_names*.
 
-    ``repo_names`` is bootstrap's resolved order (dependencies first), which is
+    ``project_names`` is bootstrap's resolved order (dependencies first), which is
     what ``get_ordered_projects`` hands back and what the teardown walks reversed.
     The context is set rather than patched in, so the walks run through the real
     ``all_hosts``/``do_for_all_hosts`` pair; the root conftest's
     ``_reset_otto_context`` restores the ContextVar afterwards. ``output_dir``
     keeps every ``log_dest`` under ``tmp_path``.
 
-    The repo stubs carry ``project_scope=None`` unless *declarations* names one
+    The project stubs carry ``project_scope=None`` unless *declarations* names one
     — no ``[project]`` table is what puts a walk on the whole-lab fallback
     (scoping spec §6), which is the shape most of this file tests: which host
-    CLASS a walk dispatches through, with the fleet unnarrowed. ``sut_dir`` is
+    CLASS a walk dispatches through, with the fleet unnarrowed. ``root`` is
     read by the scope resolver only to name a file in an error message.
 
     Both lists reach otto through one patched ``bootstrap()``
     (:func:`~tests._fixtures.bootstrap_seam.patch_bootstrap`), the one seam
     ``get_projects``, ``get_ordered_projects`` and the context's scopes all read.
     ``get_projects`` answers with the LAST name of the walk order
-    first: bootstrap's own order heads with the DRIVING repo, which is where a
+    first: bootstrap's own order heads with the DRIVING project, which is where a
     dependent sits, while the walk order heads with a dependency. D3 reads the
     first of the former, so a lab wired with one list for both cannot tell a
-    gate pointed at the wrong repo from a right one.
+    gate pointed at the wrong project from a right one.
 
     Args:
         monkeypatch: The test's patcher.
-        tmp_path: Where the context writes, and what the repo stubs claim as
-            their ``sut_dir``.
-        repo_names: Walk order, dependencies first.
+        tmp_path: Where the context writes, and what the project stubs claim as
+            their ``root``.
+        project_names: Walk order, dependencies first.
         hosts: The lab's hosts.
-        declarations: ``{repo name: ProjectScopeConfig}`` for the repos that
-            declare a ``[project]`` scope; every other repo is undeclared.
+        declarations: ``{project name: ProjectScopeConfig}`` for the projects that
+            declare a ``[project]`` scope; every other project is undeclared.
     """
     lab = Lab(name="composed")
     for host in hosts:
         lab.add_host(host)
     set_context(OttoContext(lab=lab, policy=RunPolicy(output_dir=tmp_path)))
     ordered = [
-        fake_repo(name, project_scope=(declarations or {}).get(name), root=tmp_path / name)
+        fake_project(name, project_scope=(declarations or {}).get(name), root=tmp_path / name)
         for name in project_names
     ]
     driving = project_names[-1] if project_names else None
@@ -275,20 +275,20 @@ async def test_every_fleet_walk_runs_the_host_classs_override(
     assert ("h1", f"override:{verb}") in events, f"the walk bypassed {verb}'s override"
 
 
-# ── the composed two-repo lab (spec section 8) ───────────────────────────
+# ── the composed two-project lab (spec section 8) ───────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_two_repos_stamped_at_ingest_tear_down_in_reverse_dependency_order(
+async def test_two_projects_stamped_at_ingest_tear_down_in_reverse_dependency_order(
     monkeypatch, tmp_path
 ):
-    # The whole chain in one test: providers registered under each repo's
-    # bootstrap marker, products stamped with that repo at ingest, a shared
+    # The whole chain in one test: providers registered under each project's
+    # bootstrap marker, products stamped with that project at ingest, a shared
     # fleet, and the lab-level teardown reading those stamps back. Kills: a
     # stamp taken at ingest instead of registration (both providers would come
-    # out unowned, and every repo's walk would touch nothing), an owner filter
-    # dropped anywhere on the path (each repo would tear down the other's
-    # product), a forward teardown order, and a per-repo debug sweep.
+    # out unowned, and every project's walk would touch nothing), an owner filter
+    # dropped anywhere on the path (each project would tear down the other's
+    # product), a forward teardown order, and a per-project debug sweep.
     events = []
     with registering_project("base"):
         register_product_provider(lambda host: [_RecordingProduct(f"base-lib@{host.id}", events)])
@@ -310,13 +310,13 @@ async def test_two_repos_stamped_at_ingest_tear_down_in_reverse_dependency_order
 
     assert result.is_ok, result.msg
     for host in hosts:
-        # Each repo's pass touched only its OWN product, and the dependent came
+        # Each project's pass touched only its OWN product, and the dependent came
         # down before the dependency it was built on.
         assert [e for h, e in events if h == host.id and e.startswith("uninstall")] == [
             f"uninstall:app-svc@{host.id}",
             f"uninstall:base-lib@{host.id}",
         ]
-    # ONE debug sweep, after every repo has torn down — and on h1 it is the host
+    # ONE debug sweep, after every project has torn down — and on h1 it is the host
     # class's journald override that ran, not BaseHost's glob fetch.
     assert events[-1] == ("h1", "journald")
     assert [e for e in events if e == ("h1", "journald")] == [("h1", "journald")]
@@ -327,10 +327,10 @@ async def test_two_repos_stamped_at_ingest_tear_down_in_reverse_dependency_order
 # THE THIRD QUESTION A DOUBLE CANNOT ANSWER. A dependency that declared
 # ``[project]`` and whose host_patterns match nothing in the labs that DO apply
 # has an empty fleet of its own — and the refusal that makes that loud lives in
-# the repo-scoped VIEW (``ctx.for_repo(name).all_hosts()`` →
+# the project-scoped VIEW (``ctx.for_project(name).all_hosts()`` →
 # ``require_nonempty_fleet``), which the duck-typed contexts in
 # ``test_orchestrator.py`` do not have. Under a double the skip merely looks
-# tidier; here, admitting such a repo into the walk RAISES out of the
+# tidier; here, admitting such a project into the walk RAISES out of the
 # dependency's own hop and takes the driving project's verb down with it.
 
 
@@ -344,7 +344,7 @@ def _declared(*patterns):
 
 
 def _starved_lab(monkeypatch, tmp_path, events):
-    """A two-repo lab whose dependency ``base`` applies to the lab and targets no host in it."""
+    """A two-project lab whose dependency ``base`` applies to the lab and targets no host in it."""
     hosts = [_JournaldHost("h1", events)]
     with registering_project("base"):
         register_product_provider(lambda host: [_RecordingProduct(f"base-lib@{host.id}", events)])
@@ -388,9 +388,9 @@ async def test_status_reports_a_starved_dependency_rather_than_raising_out_of_it
 ):
     """``status()`` is a READING verb and must survive a dependency it cannot walk.
 
-    The counted-repo probe (``owns_products``) is itself a fleet walk through
-    the repo-scoped view, so an unskipped ``base`` raises here before any state
-    is folded — the whole report dies over a repo that has nothing to do with
+    The counted-project probe (``owns_products``) is itself a fleet walk through
+    the project-scoped view, so an unskipped ``base`` raises here before any state
+    is folded — the whole report dies over a project that has nothing to do with
     this run.
     """
     events = []

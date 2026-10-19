@@ -16,15 +16,15 @@ from otto.labs.json_repository import JsonFileLabRepository
 from otto.labs.loader import load_lab
 from otto.logger.mode import LogMode
 from tests._fixtures.gs_example import import_gs_example
-from tests._fixtures.paths import PROJECT_ROOT, ensure_custom_hosts_on_path
+from tests._fixtures.paths import CHECKOUT_ROOT, ensure_custom_hosts_on_path
 
 ensure_custom_hosts_on_path()
 
 _ID = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 _CONTAINER_ID = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*\.[a-z0-9_-]+\.[a-z0-9._-]+$")
 _LABS = [
-    PROJECT_ROOT / "tests/_fixtures/lab_data/tech1/lab.json",
-    PROJECT_ROOT / "docs/examples/getting-started/lab_data/lab.json",
+    CHECKOUT_ROOT / "tests/_fixtures/lab_data/tech1/lab.json",
+    CHECKOUT_ROOT / "docs/examples/getting-started/lab_data/lab.json",
 ]
 
 
@@ -55,7 +55,7 @@ def _composed_ids(path: Path) -> list[str]:
     return sorted(ids)
 
 
-@pytest.mark.parametrize("path", _LABS, ids=lambda p: p.relative_to(PROJECT_ROOT).as_posix())
+@pytest.mark.parametrize("path", _LABS, ids=lambda p: p.relative_to(CHECKOUT_ROOT).as_posix())
 def test_every_shipped_lab_id_is_kebab(path):
     ids = _composed_ids(path)
     assert ids, f"{path} composes no ids — the loader built no hosts"
@@ -63,7 +63,7 @@ def test_every_shipped_lab_id_is_kebab(path):
     assert not bad, bad
 
 
-@pytest.mark.parametrize("path", _LABS, ids=lambda p: p.relative_to(PROJECT_ROOT).as_posix())
+@pytest.mark.parametrize("path", _LABS, ids=lambda p: p.relative_to(CHECKOUT_ROOT).as_posix())
 def test_every_link_endpoint_names_a_composed_id(path):
     doc = json.loads(path.read_text())
     ids = set(_composed_ids(path))

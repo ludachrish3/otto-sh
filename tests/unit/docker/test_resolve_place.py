@@ -13,16 +13,16 @@ from otto.docker.resolve import (
 )
 from otto.host.unix_host import UnixHost
 
-from .test_resolve_select import _frag, _repo  # reuse the table builders
+from .test_resolve_select import _frag, _project  # reuse the table builders
 
 
 @pytest.fixture
-def selection_two_repos() -> Selection:
+def selection_two_projects() -> Selection:
     return Selection(
         use_case="integration",
         fragments=[
-            SelectedFragment(_repo("a"), _frag()),
-            SelectedFragment(_repo("b"), _frag()),
+            SelectedFragment(_project("a"), _frag()),
+            SelectedFragment(_project("b"), _frag()),
         ],
     )
 
@@ -35,15 +35,15 @@ def parent_host() -> UnixHost:
     return host
 
 
-def test_place_puts_every_fragment_on_the_parent(selection_two_repos, parent_host):
-    placed = place(selection_two_repos, parent_host)
+def test_place_puts_every_fragment_on_the_parent(selection_two_projects, parent_host):
+    placed = place(selection_two_projects, parent_host)
     assert list(placed) == [parent_host.id]
-    assert placed[parent_host.id] == selection_two_repos.fragments
+    assert placed[parent_host.id] == selection_two_projects.fragments
 
 
-def test_place_hands_back_a_list_the_caller_owns(selection_two_repos, parent_host):
-    placed = place(selection_two_repos, parent_host)
-    assert placed[parent_host.id] is not selection_two_repos.fragments
+def test_place_hands_back_a_list_the_caller_owns(selection_two_projects, parent_host):
+    placed = place(selection_two_projects, parent_host)
+    assert placed[parent_host.id] is not selection_two_projects.fragments
 
 
 def test_a_role_fact_ref_is_refused_with_the_replacement_named():

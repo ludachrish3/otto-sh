@@ -167,7 +167,7 @@ def test_the_e2e_suffix_idiom_still_yields_a_reapable_project_name() -> None:
 
     The reaper filters on INFIXES (``-e2e-``), never on a prefix, which is
     the only reason it survived the use-case cutover: compose projects went
-    from ``otto-<repo>-<suffix>`` to ``<lab>-<usecase>-<suffix>`` and the
+    from ``otto-<project>-<suffix>`` to ``<lab>-<usecase>-<suffix>`` and the
     ``otto-`` prefix is gone for good. Nothing FAILS when a reap stops
     matching — orphans from crashed runs simply accumulate until the docker
     daemon runs out of address pools and every subsequent ``compose up``

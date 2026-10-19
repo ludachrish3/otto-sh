@@ -16,7 +16,7 @@ per host (exact id or ``re.compile`` pattern) or project-wide::
     )
 
 otto's own test suite registers this parser exactly that way (see
-``tests/repo1/pylib/repo1_monitor_uptime.py``), so the example is executed,
+``tests/project1/pylib/project1_monitor_uptime.py``), so the example is executed,
 not just documented.
 """
 

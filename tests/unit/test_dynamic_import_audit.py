@@ -51,11 +51,11 @@ import pytest
 
 from scripts import render_module_graph as rmg
 from scripts.render_module_graph import declared_owner, module_of
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
 
-SRC_ROOT = PROJECT_ROOT / "src"
+SRC_ROOT = CHECKOUT_ROOT / "src"
 
 LAZY_TABLES = ["_LAZY_ATTRS", "_LAZY_EXPORTS"]
 
@@ -69,7 +69,7 @@ FACADE_RESOLVER = "facade resolver"
 """A facade's ``__getattr__`` (a package's or a plain module's) importing an entry of its
 own lazy table."""
 USER_SUPPLIED = "user-supplied"
-"""A target read from a repo's settings or an init module's registration."""
+"""A target read from a project's settings or an init module's registration."""
 CLI_COMMAND_TABLE = "CLI command table"
 """A command's ``"pkg.mod:attr"`` loader, from ``CLI_COMMANDS``."""
 REF_OVER_LITERAL_TABLE = "registry Ref over a literal table"

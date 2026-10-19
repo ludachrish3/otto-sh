@@ -73,7 +73,7 @@ def test_apply_providers_stamps_the_default_cov_dir():
     assert [p.cov_dir for p in host.products] == ["/tmp/app"]
 
 
-def test_ingest_runs_a_subscribed_provider_with_its_repo():
+def test_ingest_runs_a_subscribed_provider_with_its_project():
     from otto.registry import registering_project
 
     with registering_project("acme"):

@@ -1,9 +1,9 @@
-"""Each otto pytest session leaves no module of the repo's tests behind.
+"""Each otto pytest session leaves no module of the project's tests behind.
 
 pytest's default import mode serves a test module, a conftest or a helper
 beside them from ``sys.modules`` when a later session in the same process
 imports the same name: an edit in between goes unseen (and is recorded as
-fresh), and a second repo whose file has the same name collides with the
+fresh), and a second project whose file has the same name collides with the
 first. So a session evicts what it imported from the test directories, by
 its own record of those modules, and nothing else. Nothing here evicts
 anything by hand between two sessions: that is the behaviour under test.
@@ -31,7 +31,7 @@ def _save(path: Path, text: str) -> None:
     os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns + 2_000_000_000))
 
 
-def _repo(name: str | None = None):
+def _project(name: str | None = None):
     import otto.bootstrap
 
     projects = otto.bootstrap.get_projects()
@@ -39,13 +39,13 @@ def _repo(name: str | None = None):
 
 
 def _recorded(root: Path, rel: str) -> list[str]:
-    table = read_table(_repo())
+    table = read_table(_project())
     assert table is not None
     return sorted(t.name for t in table.files[str(root / rel)].tests)
 
 
-def test_a_run_after_an_edit_runs_and_records_the_new_test(sut_repo, tmp_path):
-    root = sut_repo(files={"tests/test_a.py": _ONE})
+def test_a_run_after_an_edit_runs_and_records_the_new_test(one_project, tmp_path):
+    root = one_project(files={"tests/test_a.py": _ONE})
     assert run_tests(["test_one"], output_dir=tmp_path / "o1").exit_code == 0
     _save(root / "tests/test_a.py", _TWO)
 
@@ -55,23 +55,23 @@ def test_a_run_after_an_edit_runs_and_records_the_new_test(sut_repo, tmp_path):
     assert _recorded(root, "tests/test_a.py") == ["test_one", "test_two"]
 
 
-def test_a_listing_after_an_edit_records_and_lists_the_new_test(sut_repo):
-    root = sut_repo(files={"tests/test_a.py": _ONE})
+def test_a_listing_after_an_edit_records_and_lists_the_new_test(one_project):
+    root = one_project(files={"tests/test_a.py": _ONE})
     selected_tests([])
     _save(root / "tests/test_a.py", _TWO)
 
     narrowed = selected_tests(["test_one"])
     assert [t.name for t in narrowed.tests["sut"]] == ["test_one"]
     assert _recorded(root, "tests/test_a.py") == ["test_one", "test_two"]
-    assert classify(_repo(), read_table(_repo())).is_current
+    assert classify(_project(), read_table(_project())).is_current
 
     listed = selected_tests([])
     assert [t.name for t in listed.tests["sut"]] == ["test_one", "test_two"]
 
 
-def test_a_file_that_held_no_test_is_read_again_once_it_does(sut_repo):
+def test_a_file_that_held_no_test_is_read_again_once_it_does(one_project):
     """A module with no test yet leaves no test function to name it: its collection does."""
-    root = sut_repo(files={"tests/test_a.py": _ONE, "tests/test_later.py": "X = 1\n"})
+    root = one_project(files={"tests/test_a.py": _ONE, "tests/test_later.py": "X = 1\n"})
     selected_tests([])
     _save(root / "tests/test_later.py", "X = 1\n\ndef test_later():\n    pass\n")
 
@@ -80,8 +80,8 @@ def test_a_file_that_held_no_test_is_read_again_once_it_does(sut_repo):
     assert [t.name for t in listed.tests["sut"]] == ["test_later"]
 
 
-def test_a_helper_edited_between_two_sessions_is_read_again(sut_repo, tmp_path):
-    root = sut_repo(
+def test_a_helper_edited_between_two_sessions_is_read_again(one_project, tmp_path):
+    root = one_project(
         files={
             "tests/helpers.py": "class Base:\n    def test_h1(self):\n        pass\n",
             "tests/test_x.py": "from helpers import Base\n\nclass TestX(Base):\n    pass\n",
@@ -97,12 +97,12 @@ def test_a_helper_edited_between_two_sessions_is_read_again(sut_repo, tmp_path):
 
     assert [t.name for t in listed.tests["sut"]] == ["test_h1", "test_h2"]
     # Read again as it is now, so recorded at the stat it has now.
-    assert classify(_repo(), read_table(_repo())).is_current
+    assert classify(_project(), read_table(_project())).is_current
 
 
 @pytest.mark.parametrize("package", [False, True], ids=["rootless", "package"])
-def test_two_repos_with_the_same_test_file_name_both_list_and_both_run(
-    two_sut_repos, tmp_path, package
+def test_two_projects_with_the_same_test_file_name_both_list_and_both_run(
+    two_projects, tmp_path, package
 ):
     """Rootless, both are module ``test_dev``.
 
@@ -116,29 +116,29 @@ def test_two_repos_with_the_same_test_file_name_both_list_and_both_run(
         "b": {f"{where}/test_dev.py": "def test_in_b():\n    pass\n"},
     }
     if package:
-        for repo_files in files.values():
-            repo_files[f"{where}/__init__.py"] = ""
-            repo_files[f"{where}/conftest.py"] = "import pytest\n"
-    two_sut_repos(a=files["a"], b=files["b"])
+        for project_files in files.values():
+            project_files[f"{where}/__init__.py"] = ""
+            project_files[f"{where}/conftest.py"] = "import pytest\n"
+    two_projects(a=files["a"], b=files["b"])
 
     listed = selected_tests([])
 
     assert listed.exit_code == 0
     assert {project: [t.name for t in tests] for project, tests in listed.tests.items()} == {
-        "repo_a": ["test_in_a"],
-        "repo_b": ["test_in_b"],
+        "project_a": ["test_in_a"],
+        "project_b": ["test_in_b"],
     }
     result = run_tests(["test_in_a", "test_in_b"], output_dir=tmp_path / "out")
     assert result.exit_code == 0
     assert len(result.junit_paths) == 2
 
 
-def _lib_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, files: dict[str, str]) -> Path:
-    """A repo whose ``pylib`` is a library on ``sys.path``, wired as the only repo."""
+def _lib_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, files: dict[str, str]) -> Path:
+    """A project whose ``pylib`` is a library on ``sys.path``, wired as the only project."""
     from otto.config.project import Project
-    from tests._fixtures.sutrepo import make_sut_repo
+    from tests._fixtures.project_scaffold import make_project
 
-    sut = make_sut_repo(
+    sut = make_project(
         tmp_path / "sut", name="sut", tests=["tests"], extra='libs = ["pylib"]\n', files=files
     )
     project = Project(root=sut)
@@ -153,7 +153,7 @@ def _tag(tmp_path: Path, stem: str) -> str:
 
 
 def test_a_wrapped_function_names_the_module_its_wrapper_is_defined_in(
-    sut_repo, tmp_path, monkeypatch
+    one_project, tmp_path, monkeypatch
 ):
     """``functools.wraps`` copies ``__module__``, so it names the wrapped function's module.
 
@@ -164,7 +164,7 @@ def test_a_wrapped_function_names_the_module_its_wrapper_is_defined_in(
     (tmp_path / "elsewhere").mkdir()
     (tmp_path / "elsewhere" / f"{tag}.py").write_text("def greet():\n    return 1\n")
     monkeypatch.syspath_prepend(str(tmp_path / "elsewhere"))
-    sut_repo(
+    one_project(
         files={
             "tests/wrapping.py": (
                 "import functools\n\n"
@@ -206,7 +206,7 @@ def test_a_library_edited_in_process_leaves_the_record_stale_until_a_new_process
 
     tag = _tag(tmp_path, "lib")
     base = "class LBase:\n    def test_x(self):\n        pass\n"
-    sut = _lib_repo(
+    sut = _lib_project(
         tmp_path,
         monkeypatch,
         {
@@ -221,7 +221,7 @@ def test_a_library_edited_in_process_leaves_the_record_stale_until_a_new_process
         selected_tests([])
 
         assert _recorded(sut, "tests/test_d.py") == ["test_x"]
-        assert not classify(_repo(), read_table(_repo())).is_current
+        assert not classify(_project(), read_table(_project())).is_current
 
         sys.modules.pop(tag, None)
         monkeypatch.setattr(otto.suite.plugin, "_LIB_DEP_STATS", {})
@@ -229,23 +229,23 @@ def test_a_library_edited_in_process_leaves_the_record_stale_until_a_new_process
 
         assert [t.name for t in listed.tests["sut"]] == ["test_x", "test_y"]
         assert _recorded(sut, "tests/test_d.py") == ["test_x", "test_y"]
-        assert classify(_repo(), read_table(_repo())).is_current
+        assert classify(_project(), read_table(_project())).is_current
     finally:
         sys.modules.pop(tag, None)
 
 
 @pytest.mark.usefixtures("_generated_modules_evicted")
 def test_a_session_keeps_what_it_imported_from_outside_the_test_directories(tmp_path, monkeypatch):
-    """A repo library stays imported.
+    """A project library stays imported.
 
     The bootstrap imports the libraries, and what their init modules
     register must stay the one class a test reaches.
     """
     from otto.config.project import Project
-    from tests._fixtures.sutrepo import make_sut_repo
+    from tests._fixtures.project_scaffold import make_project
 
     tag = f"lib{abs(hash(tmp_path)) % 10**8}"
-    sut = make_sut_repo(
+    sut = make_project(
         tmp_path / "sut",
         name="sut",
         tests=["tests"],

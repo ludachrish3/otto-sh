@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from otto.config.env import is_otto_env_var
-from tests._fixtures.generated_repo import generate_repo
+from tests._fixtures.generated_project import generate_project
 
 _OTTO = Path(sys.executable).with_name("otto")
 
@@ -65,11 +65,11 @@ def _table_is_current(project: Path, home: Path) -> bool:
 
 
 def _arm_bootstrap_sentinel(project: Path) -> Path:
-    """Make the repo's init module touch a sentinel file when bootstrap imports it.
+    """Make the project's init module touch a sentinel file when bootstrap imports it.
 
     Only ``otto.config.project.discover()``'s registration pass imports init
     modules; the completion names fast path's ``_cached_names_payload``
-    reads the cached ``names`` section and never runs any repo code at all.
+    reads the cached ``names`` section and never runs any project code at all.
     So the sentinel reappearing is proof a FULL bootstrap ran, not merely
     that a cache was consulted — a cache write's mtime moving is not enough
     on its own, since a cache that was already valid is never rewritten
@@ -78,7 +78,7 @@ def _arm_bootstrap_sentinel(project: Path) -> Path:
     lazily, and bootstrap will keep importing init modules regardless.
     """
     marker = project / "bootstrap-ran"
-    (project / "pylib" / "genrepo_instructions.py").write_text(
+    (project / "pylib" / "genproject_instructions.py").write_text(
         f"open({str(marker)!r}, 'a').close()\n"
     )
     return marker
@@ -93,7 +93,7 @@ def test_a_stale_tests_tab_seeds_the_table(tmp_path):
     into the tracked tests dir, or the table it writes has moved on arrival
     (#456).
     """
-    project = generate_repo(tmp_path, files=12, dirs=3)
+    project = generate_project(tmp_path, files=12, dirs=3)
     env = _env(project, tmp_path / "home")
     seeded = subprocess.run([str(_OTTO), "--help"], env=env, capture_output=True, check=False)
     assert seeded.returncode == 0, seeded.stderr
@@ -126,7 +126,7 @@ def test_a_non_stale_handover_does_not_bootstrap(tmp_path):
     snapshot `entry()`'s fast path installs (see ``_cached_names_payload``), with
     no live completer and so no bootstrap on a cache hit.
     """
-    project = generate_repo(tmp_path, files=4, dirs=2)
+    project = generate_project(tmp_path, files=4, dirs=2)
     marker = _arm_bootstrap_sentinel(project)
     env = _env(project, tmp_path / "home")
     subprocess.run([str(_OTTO), "--help"], env=env, capture_output=True, check=True)
@@ -150,9 +150,9 @@ def test_a_seeding_tab_that_writes_bytecode_stays_current(tmp_path):
     The collect child writes no bytecode, so the table it stores is current
     on arrival and the next test-name TAB asks for no refresh.
     """
-    from tests._fixtures.generated_repo import argv_writing_test_file_bytecode
+    from tests._fixtures.generated_project import argv_writing_test_file_bytecode
 
-    project = generate_repo(tmp_path, files=12, dirs=3)
+    project = generate_project(tmp_path, files=12, dirs=3)
     env = _env(project, tmp_path / "home")
     argv = argv_writing_test_file_bytecode("from otto._shim import main; main()")
     seeded = subprocess.run([*argv, "--help"], env=env, capture_output=True, check=False)

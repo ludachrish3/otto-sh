@@ -18,7 +18,7 @@ from otto.labs import (
 from otto.labs.loader import load_lab
 from otto.labs.registry import LAB_REPOSITORIES
 from tests._fixtures.labdata import write_lab_json
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.project_scaffold import make_project
 
 
 def _lab_json(path: Path, hosts: list[dict]) -> None:
@@ -35,8 +35,8 @@ def _host(element: str, ip: str) -> dict:
     }
 
 
-def _repo(root: Path, name: str, sources_toml: str, labfiles: dict[str, list[dict]]) -> Project:
-    sut = make_sut_repo(root, name=name, extra=sources_toml)
+def _project(root: Path, name: str, sources_toml: str, labfiles: dict[str, list[dict]]) -> Project:
+    sut = make_project(root, name=name, extra=sources_toml)
     for rel, hosts in labfiles.items():
         _lab_json(root / rel, hosts)
     return Project(sut)
@@ -47,10 +47,10 @@ def test_single_json_source_still_goes_through_the_composite(tmp_path: Path) -> 
 
     The composite owns lab existence and the declared-but-memberless rule, so
     returning the bare backend here — which is what this seam used to do —
-    silently exempted the commonest setup of all (one repo, one json source)
+    silently exempted the commonest setup of all (one project, one json source)
     from both. The wrapped backend is still the registry's, unchanged.
     """
-    project = _repo(
+    project = _project(
         tmp_path / "r1",
         "r1",
         '[[lab.sources]]\nbackend = "json"\npaths = ["lab"]\n',
@@ -71,7 +71,7 @@ def test_one_source_gets_the_declared_but_memberless_rule(tmp_path: Path) -> Non
     declaration and no members, and nothing above it objected); through the
     composite it is the loud definition mistake spec §9 requires.
     """
-    project = _repo(
+    project = _project(
         tmp_path / "r1",
         "r1",
         '[[lab.sources]]\nbackend = "json"\npaths = ["lab"]\n',
@@ -86,14 +86,14 @@ def test_one_source_gets_the_declared_but_memberless_rule(tmp_path: Path) -> Non
         build_lab_sources([project]).load_lab("ghost")
 
 
-def test_two_repos_all_sources_live(tmp_path: Path) -> None:
-    r1 = _repo(
+def test_two_projects_all_sources_live(tmp_path: Path) -> None:
+    r1 = _project(
         tmp_path / "r1",
         "r1",
         '[[lab.sources]]\nbackend = "json"\npaths = ["lab"]\n',
         {"lab/lab.json": [_host("alt1", "10.0.0.1")]},
     )
-    r2 = _repo(
+    r2 = _project(
         tmp_path / "r2",
         "r2",
         '[[lab.sources]]\nbackend = "json"\npaths = ["lab"]\n',
@@ -104,14 +104,14 @@ def test_two_repos_all_sources_live(tmp_path: Path) -> None:
     assert set(load_lab("merged", repository=repository).hosts) == {"alt1", "test2", "local"}
 
 
-def test_later_repo_overrides_earlier_with_warning(tmp_path: Path, caplog) -> None:
-    r1 = _repo(
+def test_later_project_overrides_earlier_with_warning(tmp_path: Path, caplog) -> None:
+    r1 = _project(
         tmp_path / "r1",
         "r1",
         '[[lab.sources]]\nname = "global"\nbackend = "json"\npaths = ["lab"]\n',
         {"lab/lab.json": [_host("alt1", "10.0.0.1")]},
     )
-    r2 = _repo(
+    r2 = _project(
         tmp_path / "r2",
         "r2",
         '[[lab.sources]]\nname = "override"\nbackend = "json"\npaths = ["lab"]\n',
@@ -120,7 +120,7 @@ def test_later_repo_overrides_earlier_with_warning(tmp_path: Path, caplog) -> No
     with caplog.at_level(logging.WARNING, logger="otto.labs.composite"):
         lab = build_lab_sources([r1, r2]).load_lab("merged")
     assert lab.hosts["alt1"].ip == "10.9.9.9"
-    # The ELEMENT warning specifically. Both repos also DECLARE `merged`, so a
+    # The ELEMENT warning specifically. Both projects also DECLARE `merged`, so a
     # labs-entry warning naming the same two labels is emitted too — an
     # assertion on the labels alone would be satisfied by that one, and
     # deleting the element warning outright would still pass.
@@ -136,7 +136,7 @@ def test_custom_backend_source_options_inline(tmp_path: Path) -> None:
     """A custom backend's config model parses the entry's inline options; its factory builds."""
     from otto.models.base import OttoModel
 
-    class DictRepo:
+    class DictRepository:
         def __init__(self, project_root, names):
             self.project_root = project_root
             self._names = names
@@ -155,10 +155,10 @@ def test_custom_backend_source_options_inline(tmp_path: Path) -> None:
     register_lab_repository(
         "dict-wiring-test",
         config=DictConfig,
-        factory=lambda c: DictRepo(c.env.project_root, c.config.names),
+        factory=lambda c: DictRepository(c.env.project_root, c.config.names),
     )
     try:
-        project = _repo(
+        project = _project(
             tmp_path / "r1",
             "r1",
             '[[lab.sources]]\nbackend = "dict-wiring-test"\nnames = ["from-custom"]\n',
@@ -168,7 +168,7 @@ def test_custom_backend_source_options_inline(tmp_path: Path) -> None:
         # The composite wraps it (R15); the CONSTRUCTED backend is what the
         # registered factory built from the entry's parsed options.
         built = repository.sources[0].repository
-        assert isinstance(built, DictRepo)
+        assert isinstance(built, DictRepository)
         assert built.project_root == project.root
         assert repository.list_labs() == ["from-custom"]
     finally:
@@ -178,13 +178,13 @@ def test_custom_backend_source_options_inline(tmp_path: Path) -> None:
 def test_reregistering_json_takes_effect(tmp_path: Path) -> None:
     """The built-in name is resolved through the REGISTRY, not hardcoded.
 
-    A repo may replace ``"json"`` (``overwrite=True``) with its own factory
+    A project may replace ``"json"`` (``overwrite=True``) with its own factory
     over the same config model; the composite must build the replacement.
     Ported from the deleted build_lab_repository suite — the bypass it guards
     against is just as reachable through this seam.
     """
 
-    class ReplacementJsonRepo:
+    class ReplacementJsonRepository:
         def __init__(self, search_paths=None):
             self.search_paths = list(search_paths or [])
 
@@ -194,7 +194,7 @@ def test_reregistering_json_takes_effect(tmp_path: Path) -> None:
         def list_labs(self):
             return []
 
-    project = _repo(
+    project = _project(
         tmp_path / "r1",
         "r1",
         '[[lab.sources]]\nbackend = "json"\npaths = ["lab"]\n',
@@ -204,23 +204,23 @@ def test_reregistering_json_takes_effect(tmp_path: Path) -> None:
     register_lab_repository(
         "json",
         config=entry.config,
-        factory=lambda c: ReplacementJsonRepo(search_paths=list(c.config.paths)),
+        factory=lambda c: ReplacementJsonRepository(search_paths=list(c.config.paths)),
         overwrite=True,
     )
     repository = build_lab_sources([project])
     built = repository.sources[0].repository  # the composite wraps it (R15)
-    assert isinstance(built, ReplacementJsonRepo)
+    assert isinstance(built, ReplacementJsonRepository)
     assert built.search_paths == [project.root / "lab"]
 
 
 def test_unknown_backend_raises(tmp_path: Path) -> None:
-    project = _repo(tmp_path / "r1", "r1", '[[lab.sources]]\nbackend = "nope"\n', {})
+    project = _project(tmp_path / "r1", "r1", '[[lab.sources]]\nbackend = "nope"\n', {})
     with pytest.raises(LabRepositoryError, match="Unknown lab repository backend"):
         build_lab_sources([project])
 
 
 def test_no_sources_anywhere_fails_loud_on_demand(tmp_path: Path) -> None:
-    project = Project(make_sut_repo(tmp_path / "bare", name="bare"))
+    project = Project(make_project(tmp_path / "bare", name="bare"))
     repository = build_lab_sources([project])
     assert repository.list_labs() == []
     with pytest.raises(LabNotFoundError, match=r"\[\[lab\.sources\]\]"):

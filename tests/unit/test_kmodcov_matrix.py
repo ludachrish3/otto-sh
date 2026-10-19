@@ -29,7 +29,7 @@ from tests._fixtures.kmodcov_matrix import (
     validation_errors,
     venue_of_contract,
 )
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
 
@@ -65,7 +65,7 @@ def test_exactly_one_bed_surface_is_the_control(committed):
 
 
 def test_the_column_axis_is_the_two_makefile_defaults_bed_then_build(committed):
-    makefile = (PROJECT_ROOT / "Makefile").read_text(encoding="utf-8")
+    makefile = (CHECKOUT_ROOT / "Makefile").read_text(encoding="utf-8")
     bed = re.search(r"^KMODCOV_TOOLCHAINS \?= (.+)$", makefile, re.MULTILINE)
     build = re.search(r"^KMODCOV_KERNELS \?= (.+)$", makefile, re.MULTILINE)
     assert bed, "the Makefile no longer declares KMODCOV_TOOLCHAINS ?= …"
@@ -401,7 +401,7 @@ def test_main_writes_the_page_it_was_pointed_at(tmp_path):
 
 
 def test_the_kmodcov_lane_folds_and_the_release_stage_gates():
-    makefile = (PROJECT_ROOT / "Makefile").read_text(encoding="utf-8")
+    makefile = (CHECKOUT_ROOT / "Makefile").read_text(encoding="utf-8")
     # No re.DOTALL: `.*?` must not cross a newline, or a moved/emptied tab
     # block would let the match run on past it and capture a DIFFERENT
     # target's recipe body instead of failing loudly.
@@ -429,7 +429,7 @@ def test_sphinx_srcs_names_the_kmodcov_matrix_and_its_renderer():
     above them in the Makefile. Without both entries, `docs/_build/html/index.html`
     stays newer than a freshly re-measured artifact and `make docs` no-ops.
     """
-    makefile = (PROJECT_ROOT / "Makefile").read_text(encoding="utf-8")
+    makefile = (CHECKOUT_ROOT / "Makefile").read_text(encoding="utf-8")
     srcs = re.search(r"^SPHINX_SRCS :=.*?\n((?:.*\\\n)*.*)", makefile, re.MULTILINE)
     assert srcs, "no SPHINX_SRCS assignment found in the Makefile (guard misparse?)"
     body = srcs.group(0)
@@ -450,7 +450,7 @@ def test_the_release_refreshes_the_kmodcov_matrix_before_it_builds_the_docs():
     the same release.
     """
     body = (
-        (PROJECT_ROOT / "Makefile")
+        (CHECKOUT_ROOT / "Makefile")
         .read_text(encoding="utf-8")
         .split("\nrelease:", 1)[1]
         .split("\n\n", 1)[0]

@@ -404,7 +404,7 @@ class TestConcurrentEmbeddedTransfer:
     # single console. See the conftest grouping note.
     """Fan-out file transfer across multiple Zephyr targets sharing one
     SSH hop. Reproduces the failure mode hit by ``test_instruction`` in
-    ``tests/repo1/pylib/repo1_instructions/install.py``: every Zephyr
+    ``tests/project1/pylib/project1_instructions/install.py``: every Zephyr
     host's session handshake collapsed with ``IncompleteReadError(0 bytes)``
     when the puts were launched concurrently, leaving every embedded
     transfer dead while test4's SCP put succeeded.

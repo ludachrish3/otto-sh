@@ -29,11 +29,11 @@ from scripts.release_events import (
     kept_by_cliff,
 )
 from tests._fixtures.gitrepo import TmpGitRepo
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
 
-CLIFF_CONFIG = PROJECT_ROOT / "cliff.toml"
+CLIFF_CONFIG = CHECKOUT_ROOT / "cliff.toml"
 DATE = "2026-01-01T00:00:00Z"
 ORIGINAL = "feat(api): drop Beta quietly"
 

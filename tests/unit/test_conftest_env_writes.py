@@ -14,14 +14,14 @@ it, ``otto.config.env``, reads nothing at import time).
 AST, not regex — a docstring mentioning ``os.environ["X"] = ...`` must not
 count (the quoted-annotation lesson). Module-level *calls* are resolved one
 hop into functions defined in the scanned set, because the live offender
-was exactly ``ensure_sut_dirs()`` — a module-level call whose write lives
+was exactly a since-deleted ``paths`` helper — a module-level call whose write lives
 in another file's function body. Aliases are resolved, not stated as blind
 spots: import aliases (``import os as _os``, ``from os import environ as
 e`` — a mutation run walked through that hole by accident) and
 alias-by-assignment (``_env = os.environ`` — the review's escape shape),
 plus ``environb``, ``__setitem__``, ``|=``, annotated assigns, and a bare
 imported ``putenv``. Remaining stated blind spots: attribute/method calls
-(``paths.ensure_sut_dirs()``), transitive helpers deeper than one hop,
+(``module.helper()``), transitive helpers deeper than one hop,
 ``exec``-built writes — and alias resolution covers single-target direct
 assignment only (tuple-unpack and walrus bindings escape it).
 Stated over-approximations (fail-loud, acceptable):
@@ -38,9 +38,17 @@ from pathlib import Path
 
 from tests._fixtures.paths import TESTS_ROOT
 
-# Fixture SUT repos and firmware are user-example INPUT DATA, not harness
+# Fixture projects and firmware are user-example INPUT DATA, not harness
 # code — same exclusion set as the ast-grep tests/ scope (G0).
-_DATA_DIRS = {"repo1", "repo2", "repo3", "repo4", "repo_broken", "repo_e2e", "firmware"}
+_DATA_DIRS = {
+    "project1",
+    "project2",
+    "project3",
+    "project4",
+    "project_broken",
+    "project_e2e",
+    "firmware",
+}
 
 # The one sanctioned module-scope block (see module docstring).
 _SANCTIONED = {TESTS_ROOT / "conftest.py"}
@@ -51,7 +59,7 @@ def _scanned_files() -> list:
         p
         for p in TESTS_ROOT.rglob("conftest.py")
         # Path parts RELATIVE to tests/ — an absolute-parts match would empty
-        # the scan for a checkout living under a directory named e.g. repo1.
+        # the scan for a checkout living under a directory named e.g. project1.
         if not (set(p.relative_to(TESTS_ROOT).parts) & _DATA_DIRS) and p not in _SANCTIONED
     ]
     files += (TESTS_ROOT / "_fixtures").glob("*.py")

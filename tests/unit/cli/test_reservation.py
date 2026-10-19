@@ -21,7 +21,7 @@ from otto.reservations import (
     ReservationGate,
     ResolvedIdentity,
 )
-from tests._fixtures.fleet import _repo, install_scoped_context
+from tests._fixtures.fleet import _project, install_scoped_context
 
 # The raises-checks below catch what the production code raises: typer.Exit.
 # Under typer >= 0.26 that is typer's own vendored exception
@@ -107,7 +107,7 @@ def test_whoami_reports_requested_lab_names_without_loading(capsys):
 
 def test_whoami_is_lab_free(capsys):
     """With no preamble-populated state, whoami resolves identity + backend from
-    repo settings + root options alone — the lab-free path."""
+    project settings + root options alone — the lab-free path."""
     from unittest.mock import patch
 
     identity = ResolvedIdentity(username="alice", source="$USER")
@@ -280,7 +280,7 @@ def test_check_prints_the_requirement_table_before_the_verdict(capsys, monkeypat
 
 
 def test_check_table_covers_only_the_hosts_in_play(capsys, monkeypatch, tmp_path):
-    """A declaring repo narrows the fleet, and the requirement narrows with it."""
+    """A declaring project narrows the fleet, and the requirement narrows with it."""
     monkeypatch.setenv("COLUMNS", "300")
 
     identity = ResolvedIdentity(username="alice", source="$USER")
@@ -291,7 +291,7 @@ def test_check_table_covers_only_the_hosts_in_play(capsys, monkeypatch, tmp_path
         _slot_host("test1", "chassis1", "slot-1"),
         _slot_host("test2", "chassis2", "slot-2"),
     )
-    install_scoped_context(lab, [_repo(tmp_path, "r1", labs=["rig"], hosts=["chassis1"])])
+    install_scoped_context(lab, [_project(tmp_path, "r1", labs=["rig"], hosts=["chassis1"])])
 
     check(ctx)  # must not raise: slot-2 is unheld, but chassis2 is out of play
 
@@ -319,8 +319,8 @@ def test_check_drops_the_hosts_of_an_excluded_project(capsys, monkeypatch, tmp_p
     install_scoped_context(
         lab,
         [
-            _repo(tmp_path, "r1", labs=["rig"], hosts=["chassis1"]),
-            _repo(tmp_path, "r2", labs=["rig"], hosts=["chassis2"]),
+            _project(tmp_path, "r1", labs=["rig"], hosts=["chassis1"]),
+            _project(tmp_path, "r2", labs=["rig"], hosts=["chassis2"]),
         ],
         exclude_projects=["r2"],
     )
@@ -355,7 +355,7 @@ def test_check_under_an_empty_declared_fleet_reports_zero_hosts_in_play(
 
     lab = _rig_lab(_slot_host("test1", "chassis1", "slot-1"))
     lab.resources = {"r1"}
-    install_scoped_context(lab, [_repo(tmp_path, "r1", labs=["rig"], hosts=["nothing-matches"])])
+    install_scoped_context(lab, [_project(tmp_path, "r1", labs=["rig"], hosts=["nothing-matches"])])
 
     check(ctx)
 

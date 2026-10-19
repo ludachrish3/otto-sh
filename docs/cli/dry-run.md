@@ -283,11 +283,11 @@ alone, and then the standard block. A real run is unchanged.
 
 ```text
 [DRY RUN] Commands and file transfers will be skipped. No device will be contacted.
-repo1
+project1
   test1
-    stage    agent  PUT /work/repo1/build/agent.tar.gz -> /opt/stage
+    stage    agent  PUT /work/project1/build/agent.tar.gz -> /opt/stage
     install  agent  tar -xzf /opt/stage/agent.tar.gz -C /opt/agent && /opt/agent/install.sh
-    install  kcov   PUT /work/repo1/build/kcov.ko -> <login home>
+    install  kcov   PUT /work/project1/build/kcov.ko -> <login home>
                     sudo insmod '<login home>/kcov.ko'
                     rm -f '<login home>/kcov.ko'
   not checked:

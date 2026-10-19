@@ -22,7 +22,7 @@ from otto.init import (
     scaffold,
     scaffold_candidates,
 )
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.project_scaffold import make_project
 
 
 def _scaffold(root: Path, *areas: str) -> ScaffoldReport:
@@ -50,7 +50,7 @@ _EXTRA_HOST = {"ip": "192.0.2.2", "creds": [{"login": "admin", "password": "CHAN
 
 
 def _glob_one_source(tmp_path: Path) -> Path:
-    """Point the scaffolded repo's ONE json source at every lab file in lab_data/.
+    """Point the scaffolded project's ONE json source at every lab file in lab_data/.
 
     A multi-file source is what the ``paths`` globs make ordinary, and it is
     the only shape in which an in-source duplicate can exist at all. A split
@@ -60,7 +60,7 @@ def _glob_one_source(tmp_path: Path) -> Path:
     the one these tests are pinning.
     """
     settings = tmp_path / ".otto" / "settings.toml"
-    settings.write_text(  # sutrepo-exempt: retargeting a product-scaffolded source
+    settings.write_text(  # scaffold-exempt: retargeting a product-scaffolded source
         settings.read_text().replace('paths = ["lab_data"]', 'paths = ["lab_data/lab*.json"]')
     )
     return tmp_path / "lab_data"
@@ -69,7 +69,7 @@ def _glob_one_source(tmp_path: Path) -> Path:
 def test_duplicate_lab_declaration_across_files_of_one_source_fails(tmp_path: Path) -> None:
     """The doctor must refuse what the loader refuses — one source, one declaration.
 
-    Otherwise `otto init` reports ✓ on a repo where `otto --lab example_lab`
+    Otherwise `otto init` reports ✓ on a project where `otto --lab example_lab`
     dies at load, which is exactly the drift routing the doctor through the
     loader's own code exists to prevent.
     """
@@ -114,7 +114,7 @@ def test_two_sources_may_each_declare_the_same_lab(tmp_path: Path) -> None:
     """
     _scaffold_all(tmp_path)
     settings = tmp_path / ".otto" / "settings.toml"
-    settings.write_text(  # sutrepo-exempt: adding a second source to a scaffolded repo
+    settings.write_text(  # scaffold-exempt: adding a second source to a scaffolded project
         settings.read_text() + '\n[[lab.sources]]\nbackend = "json"\npaths = ["lab_data_2"]\n'
     )
     second = tmp_path / "lab_data_2" / "lab.json"
@@ -179,7 +179,7 @@ def test_an_old_labs_user_key_reports_the_migration_without_leaking(tmp_path: Pa
     assert "SECRET_XYZ" not in _text(report)
 
 
-def test_valid_repo_reports_all_ok(tmp_path: Path) -> None:
+def test_valid_project_reports_all_ok(tmp_path: Path) -> None:
     _scaffold_all(tmp_path)
     report = check_project(tmp_path)
     assert report.ok, _text(report)
@@ -197,7 +197,7 @@ def test_valid_repo_reports_all_ok(tmp_path: Path) -> None:
 def test_broken_settings_key_fails_with_pydantic_error(tmp_path: Path) -> None:
     _scaffold_all(tmp_path)
     settings = tmp_path / ".otto" / "settings.toml"
-    settings.write_text(  # sutrepo-exempt: in-place corruption of a product-scaffolded file
+    settings.write_text(  # scaffold-exempt: in-place corruption of a product-scaffolded file
         settings.read_text().replace("version =", "verzion =")
     )
     report = check_project(tmp_path)
@@ -240,7 +240,7 @@ def test_non_dict_host_entry_fails_named(tmp_path: Path) -> None:
 
 
 def test_v1_lab_file_reports_the_migration_hint(tmp_path: Path) -> None:
-    """A repo still on the top-level ``hosts`` array is told where hosts moved.
+    """A project still on the top-level ``hosts`` array is told where hosts moved.
 
     The hard cutover (spec §11) means the doctor must not shrug at a v1 file:
     it is the surface a user upgrading otto meets first, and it reports the
@@ -478,7 +478,7 @@ def _drop_table(root: Path, name: str) -> None:
             skipping = False
         if not skipping:
             out.append(line)
-    settings.write_text("".join(out))  # sutrepo-exempt: editing a product-scaffolded settings file
+    settings.write_text("".join(out))  # scaffold-exempt: editing a product-scaffolded settings file
 
 
 def test_dead_reference_is_a_problem_naming_key_and_label(tmp_path, monkeypatch):
@@ -529,7 +529,7 @@ def test_world_readable_creds_file_warns(tmp_path, monkeypatch):
 def test_broken_user_inventory_settings_is_a_problem_not_a_traceback(tmp_path, monkeypatch):
     """A broken ``~/.otto/settings.toml`` is a named problem — the doctor never raises.
 
-    The repo already declares its OWN ``[inventory]``/``[creds]`` (the
+    The project already declares its OWN ``[inventory]``/``[creds]`` (the
     scaffold's live tables), but ``load_user_settings`` is asked regardless —
     a broken user file is a configuration error, not "no inventory", which is
     exactly the case :func:`otto.config.user_settings.load_user_settings`
@@ -541,7 +541,7 @@ def test_broken_user_inventory_settings_is_a_problem_not_a_traceback(tmp_path, m
     _scaffold_all(tmp_path)
     home.mkdir(parents=True, exist_ok=True)
     user_settings = home / "settings.toml"
-    user_settings.write_text("not valid toml [[[")  # sutrepo-exempt: malformed TOML under test
+    user_settings.write_text("not valid toml [[[")  # scaffold-exempt: malformed TOML under test
     report = check_project(tmp_path)
     assert not report.ok
     problems = "\n".join(report.verdict("lab").problems)
@@ -568,7 +568,7 @@ def test_a_null_inventory_key_entry_is_still_validated_when_the_declaration_is_b
     monkeypatch.setenv("OTTO_HOME", str(home))
     _scaffold_all(tmp_path)
     home.mkdir(parents=True, exist_ok=True)
-    (home / "settings.toml").write_text(  # sutrepo-exempt: malformed TOML under test
+    (home / "settings.toml").write_text(  # scaffold-exempt: malformed TOML under test
         "not valid toml [[["
     )
     lab_file = tmp_path / "lab_data" / "lab.json"
@@ -597,7 +597,7 @@ def test_a_referencing_host_is_not_double_reported_when_the_declaration_itself_i
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     _scaffold_all(tmp_path)
     settings = tmp_path / ".otto" / "settings.toml"
-    settings.write_text(  # sutrepo-exempt: breaking the scaffolded [inventory] on purpose
+    settings.write_text(  # scaffold-exempt: breaking the scaffolded [inventory] on purpose
         settings.read_text().replace('path = "lab_data/inventory.json"\n', "")
     )
     report = check_project(tmp_path)
@@ -652,7 +652,7 @@ def test_the_doctor_reports_a_snapshot_it_served_because_the_backend_was_down(
     _drop_table(tmp_path, "creds")
     settings = tmp_path / ".otto" / "settings.toml"
     with NetBoxStub([device(1, "nb1")]) as stub:
-        with settings.open("a") as f:  # sutrepo-exempt: declaring [inventory] post-scaffold
+        with settings.open("a") as f:  # scaffold-exempt: declaring [inventory] post-scaffold
             f.write(f'\n[inventory]\nbackend = "netbox"\nurl = "{stub.base}"\ncache_ttl = "24h"\n')
         primed = check_project(tmp_path)
         assert primed.ok, _text(primed)
@@ -713,7 +713,7 @@ def test_inventory_for_memoises_a_broken_declaration_too(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_HOME", str(home))
     _scaffold_all(tmp_path)
     home.mkdir(parents=True, exist_ok=True)
-    (home / "settings.toml").write_text(  # sutrepo-exempt: malformed TOML under test
+    (home / "settings.toml").write_text(  # scaffold-exempt: malformed TOML under test
         "not valid toml [[["
     )
     cache: dict = {}
@@ -725,7 +725,7 @@ def test_inventory_for_memoises_a_broken_declaration_too(tmp_path, monkeypatch):
     assert cache[tmp_path] is first.value
 
 
-def test_one_check_repo_constructs_the_inventory_only_once(tmp_path, monkeypatch):
+def test_one_check_project_constructs_the_inventory_only_once(tmp_path, monkeypatch):
     """End-to-end proof of the cache: one ``check_project`` builds the inventory ONCE.
 
     A check asks ``_inventory_for`` up to three times (the "lab" area's own
@@ -831,7 +831,7 @@ def test_a_differing_vendored_copy_is_a_warning_not_a_failure(tmp_path: Path) ->
     _scaffold_all(tmp_path)
     _scaffold(tmp_path, "kmodcov")
     settings = tmp_path / ".otto" / "settings.toml"
-    settings.write_text(  # sutrepo-exempt: appends to a settings.toml otto init itself scaffolded
+    settings.write_text(  # scaffold-exempt: appends to a settings.toml otto init itself scaffolded
         settings.read_text() + '\n[[dev_tools]]\nname = "kmodcov-6.8"\nkind = "kmodcov"\n'
         'artifact = "build/otto_kmodcov.ko"\nsource = "third_party/otto_kmodcov"\n'
         'match = { id = ".*" }\n'
@@ -847,7 +847,7 @@ def test_a_differing_vendored_copy_is_a_warning_not_a_failure(tmp_path: Path) ->
 def test_a_declared_source_with_no_library_fails_the_kmodcov_area(tmp_path: Path) -> None:
     _scaffold_all(tmp_path)
     settings = tmp_path / ".otto" / "settings.toml"
-    settings.write_text(  # sutrepo-exempt: appends to a settings.toml otto init itself scaffolded
+    settings.write_text(  # scaffold-exempt: appends to a settings.toml otto init itself scaffolded
         settings.read_text() + '\n[[dev_tools]]\nname = "kmodcov-6.8"\nkind = "kmodcov"\n'
         'artifact = "build/otto_kmodcov.ko"\nsource = "vendor/missing"\nmatch = { id = ".*" }\n'
     )
@@ -858,7 +858,7 @@ def test_a_declared_source_with_no_library_fails_the_kmodcov_area(tmp_path: Path
 
 
 def _settings(root: Path, body: str) -> None:
-    make_sut_repo(root, name="acme", version="1.0.0", extra=body)
+    make_project(root, name="acme", version="1.0.0", extra=body)
 
 
 def test_a_json_source_without_paths_fails_the_lab_area(tmp_path: Path) -> None:
@@ -970,7 +970,7 @@ def test_a_table_over_a_class_whose_module_is_missing_fails_settings(tmp_path: P
 
 def test_unparsable_settings_fail_once_and_block_lab_and_instructions(tmp_path: Path) -> None:
     (tmp_path / ".otto").mkdir()
-    (tmp_path / ".otto" / "settings.toml").write_text(  # sutrepo-exempt: malformed TOML under test
+    (tmp_path / ".otto" / "settings.toml").write_text(  # scaffold-exempt: malformed TOML under test
         'name = "acme\n'
     )
     report = check_project(tmp_path)
@@ -990,7 +990,7 @@ def test_a_settings_file_that_is_not_utf8_fails_settings_and_never_raises(tmp_pa
     """
     (tmp_path / ".otto").mkdir()
     settings = tmp_path / ".otto" / "settings.toml"
-    settings.write_bytes(b'name = "\xff"\n')  # sutrepo-exempt: non-UTF-8 settings under test
+    settings.write_bytes(b'name = "\xff"\n')  # scaffold-exempt: non-UTF-8 settings under test
     report = check_project(tmp_path)
     assert report.verdict("settings").state == "failed"
     assert report.verdict("lab").state == "blocked"
@@ -1064,13 +1064,13 @@ def test_a_declared_init_that_resolves_nowhere_fails(tmp_path: Path) -> None:
     assert str(tmp_path / "pylib") in verdict.problems[-1]
 
 
-def test_check_repo_refuses_a_missing_root(tmp_path: Path) -> None:
+def test_check_project_refuses_a_missing_root(tmp_path: Path) -> None:
     with pytest.raises(InitInputError) as caught:
         check_project(tmp_path / "nope")
     assert caught.value.field == "root"
 
 
-def test_check_repo_never_prints(tmp_path: Path, capsys) -> None:
+def test_check_project_never_prints(tmp_path: Path, capsys) -> None:
     _scaffold_all(tmp_path)
     capsys.readouterr()
     check_project(tmp_path)

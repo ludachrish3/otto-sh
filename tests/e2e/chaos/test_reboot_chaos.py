@@ -39,7 +39,7 @@ import time
 import pytest
 
 from tests._fixtures.bed_hygiene import diff_snapshots, format_hygiene_report, snapshot_host
-from tests._fixtures.tunnel_bed import cli_sut_dir, observe_tunnel_processes
+from tests._fixtures.tunnel_bed import cli_project_root, observe_tunnel_processes
 from tests.e2e.chaos._bed import (
     assert_eth2_netem_free,
     closed_unix_link_target,
@@ -121,7 +121,7 @@ def test_reboot_x_tunnel_survivors_reaped(tmp_path):
     ends clean. Multi-host -> pins test1/test2 directly (no
     chaos_bed lease); reboots ONLY test2.
     """
-    sut = cli_sut_dir(tmp_path)
+    sut = cli_project_root(tmp_path)
     tun_target = tunnel_target(sut)
     add_xdir = tmp_path / "add"
     add_xdir.mkdir()

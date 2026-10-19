@@ -16,7 +16,7 @@ from tests._fixtures.gitrepo import git_env
 
 
 @pytest.fixture
-def repo(tmp_path: Path) -> Path:
+def git_repo(tmp_path: Path) -> Path:
     root = tmp_path / "sut"
     root.mkdir()
 
@@ -39,46 +39,46 @@ def repo(tmp_path: Path) -> Path:
     return root
 
 
-def test_hash_objects_matches_per_file_including_empty(repo: Path) -> None:
-    paths = [repo / "a.c", repo / "empty.c", repo / "sub" / "c.c"]
-    expected = [hash_object(repo, p) for p in paths]
-    assert hash_objects(repo, paths) == expected
+def test_hash_objects_matches_per_file_including_empty(git_repo: Path) -> None:
+    paths = [git_repo / "a.c", git_repo / "empty.c", git_repo / "sub" / "c.c"]
+    expected = [hash_object(git_repo, p) for p in paths]
+    assert hash_objects(git_repo, paths) == expected
 
 
-def test_blobs_exist_partitions_present_and_absent(repo: Path) -> None:
-    present_sha = hash_object(repo, repo / "a.c")
+def test_blobs_exist_partitions_present_and_absent(git_repo: Path) -> None:
+    present_sha = hash_object(git_repo, git_repo / "a.c")
     absent_sha = "1" * 40
-    assert blobs_exist(repo, [present_sha, absent_sha]) == {present_sha}
+    assert blobs_exist(git_repo, [present_sha, absent_sha]) == {present_sha}
 
 
-def test_cat_blobs_roundtrips_embedded_newlines_and_non_utf8(repo: Path) -> None:
-    (repo / "bin.dat").write_bytes(b"line1\nline2\x00\xffmore\n")
+def test_cat_blobs_roundtrips_embedded_newlines_and_non_utf8(git_repo: Path) -> None:
+    (git_repo / "bin.dat").write_bytes(b"line1\nline2\x00\xffmore\n")
     subprocess.run(
         ["git", "add", "bin.dat"],
-        cwd=repo,
+        cwd=git_repo,
         check=True,
         capture_output=True,
-        env=git_env(repo.parent),
+        env=git_env(git_repo.parent),
     )
     subprocess.run(
         ["git", "commit", "-qm", "bin"],
-        cwd=repo,
+        cwd=git_repo,
         check=True,
         capture_output=True,
-        env=git_env(repo.parent),
+        env=git_env(git_repo.parent),
     )
-    sha_a = hash_object(repo, repo / "a.c")
-    sha_bin = hash_object(repo, repo / "bin.dat")
+    sha_a = hash_object(git_repo, git_repo / "a.c")
+    sha_bin = hash_object(git_repo, git_repo / "bin.dat")
 
-    result = cat_blobs(repo, [sha_a, sha_bin])
+    result = cat_blobs(git_repo, [sha_a, sha_bin])
 
     assert result[sha_a] == b"line1\nline2\nline3\n"
     assert result[sha_bin] == b"line1\nline2\x00\xffmore\n"
 
 
-def test_cat_blobs_duplicate_shas_last_write_wins(repo: Path) -> None:
-    sha_a = hash_object(repo, repo / "a.c")
-    result = cat_blobs(repo, [sha_a, sha_a])
+def test_cat_blobs_duplicate_shas_last_write_wins(git_repo: Path) -> None:
+    sha_a = hash_object(git_repo, git_repo / "a.c")
+    result = cat_blobs(git_repo, [sha_a, sha_a])
     assert result[sha_a] == b"line1\nline2\nline3\n"
 
 

@@ -32,7 +32,7 @@ def test_unknown_id_or_unregistered_name_yields_none(monkeypatch):
 
 
 def test_falls_back_to_discovery_when_the_cache_is_cold(monkeypatch):
-    """A cold cache resolves from DISCOVERED repos — never `get_projects()`, which bootstraps."""
+    """A cold cache resolves from DISCOVERED projects — never `get_projects()`, which bootstraps."""
     import otto.config.completion_cache as cc
 
     monkeypatch.setattr(expose_module, "_discovered_host_classes", None)
@@ -42,7 +42,7 @@ def test_falls_back_to_discovery_when_the_cache_is_cold(monkeypatch):
     )
     monkeypatch.setattr(
         "otto.declared.get_projects",
-        lambda: pytest.fail("get_repos() must not run during completion"),
+        lambda: pytest.fail("get_projects() must not run during completion"),
     )
     monkeypatch.setattr(
         cc,

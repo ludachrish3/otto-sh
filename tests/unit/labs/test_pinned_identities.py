@@ -29,8 +29,8 @@ def _zephyr_inline_frame() -> None:
     """Register the frame ``tech1``'s ``zephyr27_fat`` declares.
 
     ``command_frame: "zephyr-inline"`` lives in the shared ``custom_hosts``
-    package, which a real repo pulls in through ``settings.toml``'s ``init``.
-    This suite loads the fixture lab directly (no repo), so nothing imports it
+    package, which a real project pulls in through ``settings.toml``'s ``init``.
+    This suite loads the fixture lab directly (no project), so nothing imports it
     — and the ``embedded`` lab would fail to build. Registered explicitly
     rather than by importing ``custom_hosts`` for its side effect: the root
     conftest's registry isolation can leave that package in ``sys.modules``

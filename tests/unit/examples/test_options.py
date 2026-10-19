@@ -10,14 +10,14 @@ from otto.examples.options import (
 )
 
 
-def test_repo_options_defaults():
+def test_project_options_defaults():
     opts = ProjectOptions()
     assert opts.device_type == "router"
     assert opts.lab_env == "staging"
     assert opts.retries == 3
 
 
-def test_repo_options_accepts_overrides():
+def test_project_options_accepts_overrides():
     opts = ProjectOptions(device_type="switch", lab_env="production", retries=5)
     assert opts.device_type == "switch"
     assert opts.lab_env == "production"
@@ -33,7 +33,7 @@ def test_retries_constraint_rejects_negative():
 
 
 def test_device_test_options_carries_only_its_own_field():
-    # Registered for ``test`` beside RepoOptions, so it repeats none of its flags.
+    # Registered for ``test`` beside ProjectOptions, so it repeats none of its flags.
     opts = DeviceTestOptions()
     assert opts.firmware == "latest"
     assert DeviceTestOptions(firmware="2.1").firmware == "2.1"
@@ -47,7 +47,7 @@ def test_device_test_options_check_interfaces_is_an_on_by_default_bool():
 
 def test_deploy_instruction_options_inherits_and_adds_debug():
     opts = DeployInstructionOptions()
-    # inherited repo-wide flags
+    # inherited project-wide flags
     assert opts.device_type == "router"
     assert opts.lab_env == "staging"
     assert opts.retries == 3

@@ -13,7 +13,7 @@ collector runs, and collection fails with ``import file mismatch``.
 The root ``tests/conftest.py``'s ``pytest_ignore_collect`` repairs it by not
 collecting a doctest-free ``conftest.py`` as a doctest module. These pins run
 the REAL shape — two sibling unit directories with non-package conftests — in
-a child pytest over this repo: once to prove it collects, once to prove both
+a child pytest over this checkout: once to prove it collects, once to prove both
 conftests still load as plugins and serve their fixtures.
 """
 
@@ -23,7 +23,7 @@ import sys
 
 import pytest
 
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 # Two siblings whose conftests both import as the bare module name
 # ``conftest`` (neither directory has an ``__init__.py``). The two smallest
@@ -74,7 +74,7 @@ def _run_child(*args: str) -> tuple[int, str, str]:
     argv = [sys.executable, "-m", "pytest", *_CHILD_ARGS, *args, *_SIBLINGS]
     completed = subprocess.run(
         argv,
-        cwd=PROJECT_ROOT,
+        cwd=CHECKOUT_ROOT,
         env=env,
         capture_output=True,
         text=True,
@@ -92,7 +92,7 @@ def test_the_siblings_conftests_are_bare_modules() -> None:
     the pair stops colliding and the pins pass for free — pick another pair
     of non-package siblings."""
     for sibling in _SIBLINGS:
-        directory = PROJECT_ROOT / sibling
+        directory = CHECKOUT_ROOT / sibling
         assert (directory / "conftest.py").is_file(), f"{sibling} has no conftest.py"
         assert not (directory / "__init__.py").exists(), (
             f"{sibling} is now a package, so its conftest no longer collides with "

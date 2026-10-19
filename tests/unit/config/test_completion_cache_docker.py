@@ -6,15 +6,15 @@ import time
 import pytest
 
 from otto.config import completion_cache as cc
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.project_scaffold import make_project
 
 
 @pytest.fixture
 def projects(tmp_path, monkeypatch):
-    """One bootstrapped repo whose cache file lives under tmp_path."""
+    """One bootstrapped project whose cache file lives under tmp_path."""
     from otto.config.project import discover
 
-    sut = make_sut_repo(tmp_path / "sut", name="sut")
+    sut = make_project(tmp_path / "sut", name="sut")
     monkeypatch.setenv("OTTOPATH", str(sut))
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     monkeypatch.delenv("OTTO_LAB", raising=False)
@@ -26,11 +26,11 @@ def _raw(path):
 
 
 def test_record_then_read_returns_what_was_recorded(projects):
-    cc.record_docker_images(projects, "test3", refs=["repo1-api:latest"], ids=["sha256:ab"])
+    cc.record_docker_images(projects, "test3", refs=["project1-api:latest"], ids=["sha256:ab"])
     cc.record_docker_containers(projects, "test3", names=["unix-x-api-1"], ids=["3f9a"])
     state = cc.read_docker_observed(projects, "test3")
     assert state == cc.ObservedDockerState(
-        image_refs=["repo1-api:latest"],
+        image_refs=["project1-api:latest"],
         image_ids=["sha256:ab"],
         container_names=["unix-x-api-1"],
         container_ids=["3f9a"],
@@ -138,7 +138,7 @@ def test_a_malformed_entry_reads_empty_and_never_raises(projects, broken):
 
 
 def test_an_ephemeral_fingerprint_writes_nothing(projects, monkeypatch):
-    monkeypatch.setattr(cc, "_fingerprint_is_ephemeral", lambda _repos: True)
+    monkeypatch.setattr(cc, "_fingerprint_is_ephemeral", lambda _projects: True)
     cc.record_docker_images(projects, "test3", refs=["a:1"], ids=["i"])
     path = cc._cache_path()
     assert not path.is_file() or cc.DOCKER_OBSERVED_KEY not in _raw(path)

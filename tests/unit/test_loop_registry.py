@@ -112,12 +112,12 @@ async def test_a_registry_forgotten_with_records_is_reported_first(monkeypatch):
 
 async def test_only_forget_registry_removes_a_registry():  # P5
     # async only because the module carries pytestmark = pytest.mark.asyncio, and
-    # pytest-asyncio warns (an error under the repo's filterwarnings) on a marked sync test.
+    # pytest-asyncio warns (an error under the repository's filterwarnings) on a marked sync test.
     import ast
 
-    from tests._fixtures.paths import PROJECT_ROOT
+    from tests._fixtures.paths import CHECKOUT_ROOT
 
-    tree = ast.parse((PROJECT_ROOT / "src" / "otto" / "invocation.py").read_text())
+    tree = ast.parse((CHECKOUT_ROOT / "src" / "otto" / "invocation.py").read_text())
     offenders = []
     for fn in [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]:
         for node in ast.walk(fn):

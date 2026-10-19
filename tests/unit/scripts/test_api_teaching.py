@@ -6,7 +6,7 @@ from scripts import api_teaching
 from scripts.api_manifest import load_manifest
 from scripts.api_teaching import StaticDeclaration, check_corpus, check_file, setup_otto_names
 from scripts.api_teaching import main as teaching_main
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
 
@@ -405,19 +405,21 @@ def test_an_unexpected_error_in_one_file_does_not_stop_the_corpus(tmp_path, monk
 
 
 def test_the_manifest_parses_and_names_no_missing_namespace():
-    namespaces = load_manifest(PROJECT_ROOT / "api" / "public.toml")
+    namespaces = load_manifest(CHECKOUT_ROOT / "api" / "public.toml")
     assert {"otto", "otto.lab", "otto.host", "otto.host.transfer", "otto.cli.registry"} <= set(
         namespaces
     )
     for name in namespaces:
         rel = name.replace(".", "/")
-        assert (PROJECT_ROOT / "src" / f"{rel}.py").exists() or (
-            PROJECT_ROOT / "src" / rel / "__init__.py"
+        assert (CHECKOUT_ROOT / "src" / f"{rel}.py").exists() or (
+            CHECKOUT_ROOT / "src" / rel / "__init__.py"
         ).exists(), name
 
 
 def test_report_mode_always_exits_zero_and_prints_a_summary(capsys):
-    exit_code = teaching_main(["--manifest", str(PROJECT_ROOT / "api" / "public.toml"), "--report"])
+    exit_code = teaching_main(
+        ["--manifest", str(CHECKOUT_ROOT / "api" / "public.toml"), "--report"]
+    )
     out = capsys.readouterr().out
     assert exit_code == 0
     assert "api-surface-report:" in out.splitlines()[-1]

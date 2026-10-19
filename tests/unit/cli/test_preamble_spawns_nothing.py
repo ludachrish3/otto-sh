@@ -16,5 +16,5 @@ def test_a_noop_dispatch_starts_no_shell_or_git():
     subset check by measuring nothing, while pinning the exact set catches
     that too.
     """
-    ops = harness.measure_file_ops(harness.surface_by_key("dispatch_repo_warm"))
+    ops = harness.measure_file_ops(harness.surface_by_key("dispatch_project_warm"))
     assert set(ops.by_process) == {"python"}, ops.by_process

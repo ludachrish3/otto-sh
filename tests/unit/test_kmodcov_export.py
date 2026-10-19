@@ -7,9 +7,9 @@ import pytest
 
 from otto import kmodcov
 from otto.version import get_version
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
-PACKAGE = PROJECT_ROOT / "src" / "otto" / "kmodcov"
+PACKAGE = CHECKOUT_ROOT / "src" / "otto" / "kmodcov"
 
 
 def test_the_interface_number_in_kmodcov_h_is_the_python_one():
@@ -297,7 +297,7 @@ def test_interface_of_parses_the_kmodcov_suffix_only(version, expected):
     assert kmodcov.interface_of(version) == expected
 
 
-REPO5_VENDORED = PROJECT_ROOT / "tests" / "repo5" / "third_party" / "otto_kmodcov"
+PROJECT5_VENDORED = CHECKOUT_ROOT / "tests" / "project5" / "third_party" / "otto_kmodcov"
 
 
 def test_export_into_an_empty_directory_writes_every_shipped_file_and_the_version_header(
@@ -400,9 +400,9 @@ def test_check_reports_absent_where_there_is_no_kmodcov_h(tmp_path: Path):
     assert kmodcov.check_tree(tmp_path / "nowhere").state == "absent"
 
 
-def test_the_demo_repos_vendored_copy_is_current():
+def test_the_demo_projects_vendored_copy_is_current():
     """The two in-tree copies of the library cannot drift apart."""
-    result = kmodcov.check_tree(REPO5_VENDORED)
+    result = kmodcov.check_tree(PROJECT5_VENDORED)
     assert result.state == "current", (result.differing, result.missing)
     assert result.local_override is False
-    assert (REPO5_VENDORED / "build.sh").stat().st_mode & 0o111, "build.sh lost its x bit"
+    assert (PROJECT5_VENDORED / "build.sh").stat().st_mode & 0o111, "build.sh lost its x bit"

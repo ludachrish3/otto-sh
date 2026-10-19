@@ -40,7 +40,7 @@ class _Remote:
         return None
 
 
-def test_two_repos_naming_one_json_file_from_their_own_roots_are_the_same(tmp_path):
+def test_two_projects_naming_one_json_file_from_their_own_roots_are_the_same(tmp_path):
     (tmp_path / "a").mkdir()
     (tmp_path / "b").mkdir()
     a = _compile({"backend": "json", "path": "inv.json"}, tmp_path / "a")  # relative
@@ -115,7 +115,7 @@ def test_snapshot_identity_ignores_provenance(tmp_path, monkeypatch):
 
     Through ``construct_inventory``, so the slug otto really keys the cache by
     is the one compared: a path-taking, snapshot-cached backend declared once
-    relative to repo a and once absolute from repo b.
+    relative to project a and once absolute from project b.
     """
     from otto.inventory.config import JsonInventoryConfig
 
@@ -139,8 +139,8 @@ def test_snapshot_identity_ignores_provenance(tmp_path, monkeypatch):
     assert construct_inventory(a).snapshot_path == construct_inventory(b).snapshot_path
 
 
-def test_one_netbox_declared_from_two_repos_shares_one_snapshot(tmp_path, monkeypatch):
-    """The snapshot otto opens is keyed without the declaring repo or its settings file."""
+def test_one_netbox_declared_from_two_projects_shares_one_snapshot(tmp_path, monkeypatch):
+    """The snapshot otto opens is keyed without the declaring project or its settings file."""
     monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
     table = {"backend": "netbox", "url": "https://nb", "cache_ttl": "7d"}
     a = construct_inventory(_compile(table, tmp_path / "a", origin=str(tmp_path / "a.toml")))

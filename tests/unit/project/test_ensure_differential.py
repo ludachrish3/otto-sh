@@ -1,6 +1,6 @@
 """THE SPLIT-BRAIN GUARD: `otto run install --ensure --lab-env prod` and an
 `ensure("installed")` marker under `otto test --lab-env prod` must hand every
-repo the SAME options instance. The CLI path hands the orchestrator its parsed
+project the SAME options instance. The CLI path hands the orchestrator its parsed
 flags; the marker's converge hands it the `test` verb's parsed flags, as bound
 on the context (`ctx.verb_option_source()`). This is the one test that can
 turn red if either drifts -- and it does turn red if the marker path is
@@ -32,21 +32,21 @@ from otto.registry import registering_project
 from otto.result import Result
 from otto.utils import Status
 from tests._fixtures.bootstrap_seam import seed_scope_verdicts
-from tests._fixtures.fake_repo import fake_repo
+from tests._fixtures.fake_project import fake_project
 
 
 @options
-class RepoBase:
+class ProjectBase:
     lab_env: Annotated[str, typer.Option(help="env")] = "staging"
 
 
 @options
-class WidgetInstall(RepoBase, InstallOptions):
+class WidgetInstall(ProjectBase, InstallOptions):
     variant: Annotated[str, typer.Option(help="v")] = "field"
 
 
 @options
-class SuiteOpts(RepoBase):
+class SuiteOpts(ProjectBase):
     """What `otto test` registers: the shared `lab_env` flag plus a test-only one."""
 
     firmware: Annotated[str, typer.Option(help="fw")] = "latest"
@@ -58,7 +58,7 @@ class _FakeCtx:
     Only the two seams the orchestrator uses: ``for_project`` (the real wrapper,
     borrowed rather than reimplemented) and empty seeded scope verdicts read
     through the real ``_resolve_scopes`` (the whole-lab fallback, the shape
-    this single-repo lab runs under).
+    this single-project lab runs under).
     """
 
     for_project = OttoContext.for_project
@@ -84,14 +84,14 @@ class _FakeCtx:
 
 
 def _wire_lab(monkeypatch, project_names, ctx):
-    """Point the orchestrator's context lookup at *ctx*, carrying *repo_names*.
+    """Point the orchestrator's context lookup at *ctx*, carrying *project_names*.
 
-    Copied from test_orchestrator.py's ``_wire_lab`` (single-repo shape).
-    The doubles are real repos from ``fake_repo``, not Mocks: a Mock's
+    Copied from test_orchestrator.py's ``_wire_lab`` (single-project shape).
+    The doubles are real projects from ``fake_project``, not Mocks: a Mock's
     truthy-but-empty ``inventory_settings`` reads as a broken ``[inventory]``
     declaration.
     """
-    ordered = [fake_repo(name) for name in project_names]
+    ordered = [fake_project(name) for name in project_names]
     ctx.projects = ordered
     ctx.ordered_projects = ordered
     monkeypatch.setattr("otto.run_context.get_context", lambda: ctx)
@@ -99,8 +99,8 @@ def _wire_lab(monkeypatch, project_names, ctx):
 
 
 @pytest.fixture
-def one_repo_lab(monkeypatch):
-    """Wire a one-repo lab (``widget``) around the given actions class."""
+def one_project_lab(monkeypatch):
+    """Wire a one-project lab (``widget``) around the given actions class."""
 
     def wire(name, cls):
         del cls  # already attributed to *name* by ``register_project_actions``
@@ -112,8 +112,8 @@ def one_repo_lab(monkeypatch):
 
 
 @pytest.fixture
-def widget_lab(monkeypatch, one_repo_lab):
-    """One repo 'widget' whose install records the options it was handed."""
+def widget_lab(monkeypatch, one_project_lab):
+    """One project 'widget' whose install records the options it was handed."""
     seen: list = []
 
     with registering_project("widget"):
@@ -125,7 +125,7 @@ def widget_lab(monkeypatch, one_repo_lab):
                 seen.append(opts)
                 return Result(Status.Success)
 
-    one_repo_lab("widget", Widget)
+    one_project_lab("widget", Widget)
 
     async def uninstalled(source):
         return ProjectStatus(
@@ -155,13 +155,13 @@ async def test_cli_and_marker_build_the_same_options(widget_lab) -> None:
     cli_opts, marker_opts = widget_lab
     assert type(cli_opts) is WidgetInstall
     assert type(marker_opts) is WidgetInstall
-    # `ensure`/`recover_partial` are orchestration-ROUTING flags, not per-repo
+    # `ensure`/`recover_partial` are orchestration-ROUTING flags, not per-project
     # content: `_install`'s own docstring says they "reach ensure_installed
     # unchanged" on the CLI path (kwargs flow straight through, `ensure` among
     # them), while the marker path's source is the `test` verb's flags, which
     # never carry them at all -- so the two legitimately disagree there
     # regardless of split-brain. The guard this test exists for is that every
-    # OTHER field -- what a repo's body actually reads -- lands identically,
+    # OTHER field -- what a project's body actually reads -- lands identically,
     # `lab_env` (declared by both paths' shared base) included. Nothing else
     # may be added to this set: any field a body can read must be compared.
     routing_only = {"ensure", "recover_partial"}

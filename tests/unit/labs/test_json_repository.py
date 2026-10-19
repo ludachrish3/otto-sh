@@ -871,9 +871,9 @@ def test_a_referenced_hosts_store_password_never_reaches_the_error_text(tmp_path
 def test_provider_failure_is_wrapped_with_the_entry_that_caused_it(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """A SUT-repo provider blowing up on one host must not escape as a raw traceback.
+    """A project provider blowing up on one host must not escape as a raw traceback.
 
-    ``create_host_from_dict`` runs repo-owned code after validation
+    ``create_host_from_dict`` runs project-owned code after validation
     (``to_host``, then the product and dev-tool providers), which can raise
     ANYTHING. The composite only absorbs ``LabNotFoundError``, so an unwrapped
     ``AttributeError`` reaches the CLI with none of the file/element/index

@@ -98,7 +98,7 @@ from otto.link.placement import parse_ip_addr
 from otto.logger.mode import LogMode
 from tests._fixtures.bed_hygiene import argv_pattern
 from tests._fixtures.labdata import host_data, write_lab_json
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.project_scaffold import make_project
 from tests.e2e.chaos._bed import (
     BUSYBOX_CHAOS_HOST_ID,
     BUSYBOX_GUEST_NETDEV,
@@ -137,7 +137,7 @@ def _make_hop_target(tmp_path) -> ChaosTarget:
     """Build a tiny SUT whose ``test2`` host is reached over eth2 via test1.
 
     Mirrors ``tests/integration/chaos/_target.py::make_bed_target`` /
-    ``tests/_fixtures/tunnel_bed.py::cli_sut_dir``'s shape, but this lab's
+    ``tests/_fixtures/tunnel_bed.py::cli_project_root``'s shape, but this lab's
     ``test2`` entry resolves to its DATA-PLANE address instead of its
     management ip: the real ``tech1`` lab (what ``make_bed_target``/
     ``chaos_bed`` use) gives test2 ``ip=10.10.200.12`` (mgmt, directly
@@ -199,7 +199,7 @@ def _make_hop_target(tmp_path) -> ChaosTarget:
             },
         ],
     )
-    sut = make_sut_repo(
+    sut = make_project(
         tmp_path / "hop_sut",
         name="chaosdrop_harness",
         version="0.1.0",

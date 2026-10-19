@@ -35,10 +35,10 @@ from pathlib import Path
 import pytest
 
 from tests._fixtures._host_pool import lease_unix_host
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 from tests.e2e.host._pty_driver import InteractiveOttoSession
 
-REPO1_DIR = PROJECT_ROOT / "tests" / "repo1"
+PROJECT1_DIR = CHECKOUT_ROOT / "tests" / "project1"
 
 # One source of truth: the element leased and the host driven can never drift.
 ELEMENT = "test1"
@@ -120,7 +120,7 @@ def login_session(request, tmp_path_factory, leased_test1):
     with InteractiveOttoSession(
         _login_argv(term),
         xdir=xdir,
-        roots=REPO1_DIR,
+        roots=PROJECT1_DIR,
     ) as sess:
         banner_seen = sess.expect(
             f"[otto] interactive session with {HOST_NAME} ({term}). Press Ctrl+] to disconnect.".encode(),  # noqa: E501 — long banner string with hostname interpolation
@@ -289,7 +289,7 @@ class TestHostLoginSigwinch:
         with InteractiveOttoSession(
             _login_argv(term),
             xdir=xdir,
-            roots=REPO1_DIR,
+            roots=PROJECT1_DIR,
             cols=80,
             rows=24,
         ) as sess:

@@ -13,7 +13,7 @@ no env at all; a developer's ``commit.gpgsign`` or an ``/etc/gitconfig``
 consumers (coverage validity aging) must keep computing against real clocks
 unless a test opts in.  Pass an ISO-8601 string to pin both author and
 committer dates — that makes commit SHAs fully reproducible (identity and
-message being equal); the changelog test and ``RepoTimeline`` do.
+message being equal); the changelog test and ``GitTimeline`` do.
 """
 
 import subprocess
@@ -87,7 +87,7 @@ class TmpGitRepo:
         """``add -A`` then commit, returning the new HEAD sha.
 
         Two traps, both deliberate: ``add -A`` sweeps EVERYTHING under the
-        repo root into history — a test that writes artifacts into the repo
+        working-tree root into history — a test that writes artifacts into the working tree
         between commits (an ``.otto/`` capture store, a planted
         ``.gitconfig``) must commit via ``self.git("commit", "-aqm", ...)``
         instead; and an empty commit is refused unless *allow_empty* says

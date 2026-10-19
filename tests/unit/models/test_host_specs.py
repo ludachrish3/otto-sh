@@ -610,7 +610,7 @@ def test_spec_unset_power_control_defaults_none():
 
 
 def test_spec_rejects_products_as_lab_data():
-    """``products`` is repo-logic-applied, not lab data — lab.json must not
+    """``products`` is project-logic-applied, not lab data — lab.json must not
     declare it (extra='forbid' rejects the key).
     """
     with pytest.raises(ValidationError, match=r"products\s+Extra inputs are not permitted"):

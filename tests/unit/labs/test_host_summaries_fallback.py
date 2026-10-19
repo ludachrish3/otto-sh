@@ -19,7 +19,7 @@ from otto.labs.loader import Lab
 _CREDS = [{"login": "u", "password": "p"}]
 
 
-class _MinimalRepo:
+class _MinimalRepository:
     """A LabRepository with the two required methods and nothing else."""
 
     def __init__(self, labs: dict[str, list[dict[str, Any]]]) -> None:
@@ -45,8 +45,8 @@ class _MinimalRepo:
 
 
 @pytest.fixture
-def minimal_repo() -> _MinimalRepo:
-    return _MinimalRepo(
+def minimal_repository() -> _MinimalRepository:
+    return _MinimalRepository(
         {
             "east": [
                 {"ip": "10.0.0.1", "element": "router", "creds": _CREDS},
@@ -59,19 +59,19 @@ def minimal_repo() -> _MinimalRepo:
     )
 
 
-def test_minimal_backend_does_not_advertise_the_capability(minimal_repo):
+def test_minimal_backend_does_not_advertise_the_capability(minimal_repository):
     """Positive control: without the method, the fast path must NOT be taken."""
-    assert not isinstance(minimal_repo, SupportsHostSummaries)
+    assert not isinstance(minimal_repository, SupportsHostSummaries)
 
 
-def test_fallback_summarizes_every_host(minimal_repo):
+def test_fallback_summarizes_every_host(minimal_repository):
     """The fallback enumerates through load_lab, so ids are constructed ones.
 
     Exactly the backend's own hosts — a backend's ``load_lab`` returns only
     its data (otto's ``local`` is injected later, by ``labs.loader.load_lab``),
     so nothing is filtered on the way through.
     """
-    summaries = host_summaries(minimal_repo)
+    summaries = host_summaries(minimal_repository)
     assert [s.id for s in summaries] == ["router", "shared"]
 
     shared = next(s for s in summaries if s.id == "shared")
@@ -87,7 +87,7 @@ def test_a_backend_defining_its_own_local_keeps_it():
     a real host's address from tunnel narrowing on this path while the
     capability fast path (which never filtered) kept it.
     """
-    repository = _MinimalRepo(
+    repository = _MinimalRepository(
         {"east": [{"ip": "10.9.9.9", "element": "local", "creds": _CREDS}]},
     )
     (summary,) = host_summaries(repository)
@@ -95,8 +95,8 @@ def test_a_backend_defining_its_own_local_keeps_it():
     assert summary.ip == "10.9.9.9"
 
 
-def test_list_host_ids_is_the_id_only_view(minimal_repo):
-    ids = list_host_ids(minimal_repo)
+def test_list_host_ids_is_the_id_only_view(minimal_repository):
+    ids = list_host_ids(minimal_repository)
     assert "router" in ids
     assert ids == sorted(ids), "ids come back sorted"
 
@@ -104,7 +104,7 @@ def test_list_host_ids_is_the_id_only_view(minimal_repo):
 def test_a_failing_lab_is_skipped_not_raised():
     """One unloadable lab must not deny completion for the rest."""
 
-    class _HalfBroken(_MinimalRepo):
+    class _HalfBroken(_MinimalRepository):
         def load_lab(self, name, preferences=None, inventory=None):
             if name == "broken":
                 raise RuntimeError("backend exploded")

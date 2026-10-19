@@ -93,12 +93,12 @@ def test_the_source_replays_the_parsed_flags(ctx):
 
 
 def test_a_project_view_reaches_the_same_options(ctx):
-    """A repo-scoped ``ProjectContextView`` delegates ``options`` to the live context.
+    """A project-scoped ``ProjectContextView`` delegates ``options`` to the live context.
 
     ``for_project`` builds a facade over the same context (it needs no real,
-    resolved repo — see ``test_for_repo_is_a_facade_over_the_same_context_not_a_copy``
+    resolved project — see ``test_for_project_is_a_facade_over_the_same_context_not_a_copy``
     in ``tests/unit/test_context.py``), so this asserts unconditionally rather
-    than skipping when no repo is configured.
+    than skipping when no project is configured.
     """
     ctx.bind_verb_options("test", {"firmware": "4"})
     view = ctx.for_project("acme")

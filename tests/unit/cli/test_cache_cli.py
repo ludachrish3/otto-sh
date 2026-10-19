@@ -10,7 +10,7 @@ machinery to exercise, and going through the sub-app directly keeps
 ``_mk_workspace``/``OLD``/``YOUNG`` are Task 1's fixture helper, promoted to
 ``tests/_fixtures/cache_workspace.py`` (fix round 1) since it is now shared
 across two DIFFERENT test directories (``tests/unit/config`` and
-``tests/unit/cli``) — the repo convention for that is ``tests/_fixtures/``,
+``tests/unit/cli``) — the repository convention for that is ``tests/_fixtures/``,
 not one test module importing a private helper out of another.
 
 Every presentation assertion below is anchored on the phrase/character the
@@ -38,7 +38,7 @@ def test_clear_bare_clears_only_current_workspace(tmp_path, monkeypatch):
     from otto.config.home import workspace_key
 
     home = _home(monkeypatch, tmp_path)
-    project = tmp_path / "repo"
+    project = tmp_path / "project"
     project.mkdir()
     monkeypatch.setenv("OTTOPATH", str(project))
     current = _mk_workspace(home, workspace_key([project]), cache_age=YOUNG, sidecar=True)
@@ -58,7 +58,7 @@ def test_clear_bare_removes_the_bytecode_and_pytests_cache_too(tmp_path, monkeyp
     from otto.config.home import workspace_key
 
     home = _home(monkeypatch, tmp_path)
-    project = tmp_path / "repo"
+    project = tmp_path / "project"
     project.mkdir()
     monkeypatch.setenv("OTTOPATH", str(project))
     current = _mk_workspace(home, workspace_key([project]), cache_age=YOUNG, session_dirs=True)

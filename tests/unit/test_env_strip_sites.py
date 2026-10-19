@@ -20,7 +20,7 @@ import subprocess
 from pathlib import Path
 
 from tests._fixtures.gitrepo import git_env
-from tests._fixtures.paths import PROJECT_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT
 
 PREFIX_TEST = re.compile(r"""\.startswith\(\s*\(?\s*["']OTTO_["']""")
 THIS_FILE = "tests/unit/test_env_strip_sites.py"
@@ -61,7 +61,7 @@ def offenders(root: Path, files: list[str]) -> list[str]:
 def _tracked_python(home: Path) -> list[str]:
     out = subprocess.run(
         ["git", "ls-files", "-z", "--", "*.py"],
-        cwd=PROJECT_ROOT,
+        cwd=CHECKOUT_ROOT,
         env=git_env(home),
         capture_output=True,
         text=True,
@@ -71,11 +71,13 @@ def _tracked_python(home: Path) -> list[str]:
 
 
 def test_every_prefix_sanitizer_also_strips_ottopath(tmp_path):
-    assert offenders(PROJECT_ROOT, _tracked_python(tmp_path)) == []
+    assert offenders(CHECKOUT_ROOT, _tracked_python(tmp_path)) == []
 
 
 def test_the_sites_that_cannot_import_otto_spell_ottopath():
-    missing = [rel for rel in LITERAL_SITES if '"OTTOPATH"' not in (PROJECT_ROOT / rel).read_text()]
+    missing = [
+        rel for rel in LITERAL_SITES if '"OTTOPATH"' not in (CHECKOUT_ROOT / rel).read_text()
+    ]
     assert missing == []
 
 
@@ -86,6 +88,6 @@ def test_a_prefix_only_sanitizer_is_caught(tmp_path):
 
 def test_the_self_exemption_covers_only_the_planted_line():
     """This file is exempt only because its one prefix test is the planted string."""
-    lines = (PROJECT_ROOT / THIS_FILE).read_text(encoding="utf-8").splitlines()
+    lines = (CHECKOUT_ROOT / THIS_FILE).read_text(encoding="utf-8").splitlines()
     hits = [line.strip() for line in lines if PREFIX_TEST.search(line)]
     assert hits == [f"PLANTED = {PLANTED!r}"]

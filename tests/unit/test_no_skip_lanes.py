@@ -16,8 +16,8 @@ proof system; stated blind spots (all grepped zero in-tree at landing):
 imperative ``pytest.xfail``, and skips inherited from out-of-tree parent
 conftests or fixtures.
 
-``tests/repo3/tests/test_embedded_coverage.py`` keeps its skip: repo3 is
-fixture SUT data (a user-example repo the suite runs *as input*), not otto's
+``tests/project3/tests/test_embedded_coverage.py`` keeps its skip: project3 is
+fixture project data (a user-example project the suite runs *as input*), not otto's
 own tests — the same carve-out every tests-scoped ast-grep rule makes. The
 *runner* of that lane (``tests/e2e/cov/test_embedded_coverage_e2e.py``) is in
 scope and hard-fails on missing config or artifact instead.
@@ -27,7 +27,7 @@ import ast
 
 import pytest
 
-from tests._fixtures.paths import PROJECT_ROOT, TESTS_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT, TESTS_ROOT
 
 pytestmark = pytest.mark.hostless
 
@@ -89,7 +89,9 @@ def test_lane_never_skips(lane: str) -> None:
     # invariants ("not created yet" guarding a tree that has existed for weeks).
     assert files, f"tests/{lane} has no Python files — the no-skip guard is scanning nothing"
     sites = [
-        site for f in files for site in _skip_sites(f.read_text(), str(f.relative_to(PROJECT_ROOT)))
+        site
+        for f in files
+        for site in _skip_sites(f.read_text(), str(f.relative_to(CHECKOUT_ROOT)))
     ]
     assert not sites, (
         f"tests/{lane} must fail loud or pass — a skip there is a retired lane "

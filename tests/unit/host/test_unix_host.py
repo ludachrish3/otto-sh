@@ -3716,7 +3716,7 @@ def _home_probe_host(home="/home/vagrant"):
     from unittest.mock import AsyncMock, MagicMock
 
     host = _unix_host()
-    assert host.default_dest_dir == Path()  # the repo-wide default; no lab sets one
+    assert host.default_dest_dir == Path()  # the project-wide default; no lab sets one
     host._session_mgr = MagicMock()
     host._session_mgr.current_user = "admin"  # non-root: the insmod is sudo'd
     host.exec = AsyncMock(

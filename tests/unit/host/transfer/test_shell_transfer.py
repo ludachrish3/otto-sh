@@ -93,7 +93,7 @@ G2. Staging happens in the destination's own directory, never elsewhere --
     fallback -- it raises ``OSError: [Errno 18] Invalid cross-device link``
     outright when source and destination are on different filesystems
     (measured locally: replacing a file from ``/dev/shm`` (tmpfs) onto this
-    repo's ext4 checkout fails exactly that way) -- so staging in
+    repository's ext4 checkout fails exactly that way) -- so staging in
     ``dest_dir`` specifically, not just "somewhere before the final
     replace," is load bearing for GET even more directly than it is for
     PUT.
@@ -308,7 +308,7 @@ class _ShellExecutingExec:
     absolute and derived from the test's own ``tmp_path``.
 
     No ``timeout=`` is passed to ``subprocess.run`` -- a command that never
-    returns is bounded only by this repo's 180s per-test wall-clock cap
+    returns is bounded only by this repository's 180s per-test wall-clock cap
     (``pyproject.toml``'s ``[tool.pytest.ini_options] timeout``), not by
     anything in this fake.
 
@@ -1760,7 +1760,7 @@ class TestShellPutInterruptRemovesTheStagedTemp:
         ``cancelled_parks`` is the direct observation, not a stand-in for one:
         the parked ``rm`` was CANCELLED, so the bound both fired and took its
         inner task down with it. A bound that merely stopped waiting would
-        leave that task running and trip this repo's asyncio leak detector.
+        leave that task running and trip this repository's asyncio leak detector.
 
         The ``otto.lifecycle`` warning is asserted because WHOSE bound this is
         is part of the contract now: it is :func:`otto.lifecycle.compensate`'s
@@ -2306,7 +2306,7 @@ class TestShellGetStaging:
     temp-then-replace": unlike PUT's remote ``mv``, GET's final step is
     Python's own ``Path.replace()``, which raises outright
     (``OSError: [Errno 18] Invalid cross-device link``, measured locally by
-    replacing a file from ``/dev/shm`` (tmpfs) onto this repo's checkout)
+    replacing a file from ``/dev/shm`` (tmpfs) onto this repository's checkout)
     when source and destination are on different filesystems -- there is no
     silent degrade-to-copy the way some ``mv`` implementations have. That
     makes staging in ``dest_dir`` a correctness requirement for GET, not

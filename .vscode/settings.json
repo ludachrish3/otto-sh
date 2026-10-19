@@ -5,8 +5,8 @@
     "python.analysis.autoFormatStrings": true,
     "python.analysis.autoImportCompletions": true,
     "python.analysis.extraPaths": [
-        "tests/repo1/pylib",
-        "tests/repo2/pylib"
+        "tests/project1/pylib",
+        "tests/project2/pylib"
     ],
     "python.testing.pytestArgs": [
         // pytest does not support both coverage and debugging at the same time. If coverage is desired, comment out the following line

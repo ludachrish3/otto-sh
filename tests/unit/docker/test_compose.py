@@ -50,8 +50,8 @@ from otto.labs.loader import Lab
 from otto.registry import registering_project
 from otto.result import CommandNotRunError, CommandResult, Result
 from otto.utils import Status
-from tests._fixtures.fake_repo import fake_repo
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.fake_project import fake_project
+from tests._fixtures.project_scaffold import make_project
 from tests.conftest import active_context
 
 # ---------------------------------------------------------------------------
@@ -88,21 +88,21 @@ def _daemon_lists_the_built_image():
 # container is Created, then attaching it at "Starting" fails because the
 # just-created network isn't yet visible to the daemon's networking setup.
 _TRANSIENT_NETWORK_RACE_OUTPUT = (
-    " Network otto-repo1-x_default  Created\n"
-    " Container otto-repo1-x-api-1  Starting\n"
+    " Network otto-project1-x_default  Created\n"
+    " Container otto-project1-x-api-1  Starting\n"
     "Error response from daemon: failed to set up container networking: "
-    "network otto-repo1-x_default not found\n"
+    "network otto-project1-x_default not found\n"
 )
 
 
-def _make_repo(
+def _make_project(
     tmp: Path,
     *,
-    name: str = "repo1",
+    name: str = "project1",
     services: tuple = ("api",),
     users: dict | None = None,
 ) -> Project:
-    """A repo with one image, one compose and one use-case fragment named after it.
+    """A project with one image, one compose and one use-case fragment named after it.
 
     The fragment says nothing about where it runs: a use-case deploys on one
     parent (spec §2), which ``_make_lab``'s single docker-capable host is.
@@ -111,7 +111,7 @@ def _make_repo(
     users_toml = (
         "users = {" + ", ".join(f'{k} = "{v}"' for k, v in users.items()) + "}\n" if users else ""
     )
-    sut = make_sut_repo(
+    sut = make_project(
         tmp / name,
         name=name,
         extra=(
@@ -207,13 +207,13 @@ def _product_provider(provider):
 
 def test_compose_project_uses_user_when_no_suffix(monkeypatch):
     monkeypatch.delenv("OTTO_COMPOSE_SUFFIX", raising=False)
-    name = get_user_compose_project("Repo1")
-    assert name == f"otto-repo1-{getpass.getuser().lower()}"
+    name = get_user_compose_project("Project1")
+    assert name == f"otto-project1-{getpass.getuser().lower()}"
 
 
 def test_compose_project_honors_env_override(monkeypatch):
     monkeypatch.setenv("OTTO_COMPOSE_SUFFIX", "ci-7")
-    assert get_user_compose_project("repo1") == "otto-repo1-ci-7"
+    assert get_user_compose_project("project1") == "otto-project1-ci-7"
 
 
 # ---------------------------------------------------------------------------
@@ -403,25 +403,25 @@ async def test_unregister_container_hosts_pops_a_host_that_fails_to_close():
 
 
 # ---------------------------------------------------------------------------
-# _repo_parent_host
+# _project_parent_host
 # ---------------------------------------------------------------------------
 
 
-def test_repo_parent_host_prefers_explicit_parent():
+def test_project_parent_host_prefers_explicit_parent():
     lab = _make_lab()
     lab.hosts["test1"] = _wire_parent_mock(_capable_host("test1", ne="test1"))
     parent = _project_parent_host(lab, parent="test1")
     assert parent.id == "test1"
 
 
-def test_repo_parent_host_falls_back_to_the_default_parent():
+def test_project_parent_host_falls_back_to_the_default_parent():
     """No parent named: the lab's default parent by the one rule (spec §2)."""
     lab = _make_lab()
     parent = _project_parent_host(lab, parent=None)
     assert parent.id == "test3"
 
 
-def test_repo_parent_host_falls_back_to_the_ranked_parent():
+def test_project_parent_host_falls_back_to_the_ranked_parent():
     lab = _make_lab()
     low = _wire_parent_mock(_capable_host("test1", ne="test1"))
     lab.hosts[low.id] = low
@@ -429,7 +429,7 @@ def test_repo_parent_host_falls_back_to_the_ranked_parent():
     assert _project_parent_host(lab, parent=None).id == "test3"
 
 
-def test_repo_parent_host_refuses_a_tie_naming_the_tied_hosts():
+def test_project_parent_host_refuses_a_tie_naming_the_tied_hosts():
     """Two hosts at the default priority: the rule refuses, it never picks by file order."""
     lab = _make_lab()
     lab.hosts["test1"] = _wire_parent_mock(_capable_host("test1", ne="test1"))
@@ -443,7 +443,7 @@ def test_repo_parent_host_refuses_a_tie_naming_the_tied_hosts():
     assert _project_parent_host(lab, parent="test1").id == "test1"
 
 
-def test_repo_parent_host_rejects_non_capable():
+def test_project_parent_host_rejects_non_capable():
     """An explicit parent still enforces docker_capable, regardless of how it got here."""
     lab = _make_lab()
     # Add a host that is NOT docker_capable.
@@ -462,7 +462,7 @@ def test_repo_parent_host_rejects_non_capable():
     assert exc.value.field == "parent"
 
 
-def test_repo_parent_host_errors_when_no_host():
+def test_project_parent_host_errors_when_no_host():
     lab = _make_lab()
     # Use a wholly unknown host.
     with pytest.raises(DockerVerbError, match="'nobody' is not a docker-capable unix host") as exc:
@@ -477,7 +477,7 @@ def test_repo_parent_host_errors_when_no_host():
 
 @pytest.mark.asyncio
 async def test_compose_up_constructs_expected_command(tmp_path):
-    project = _make_repo(tmp_path)
+    project = _make_project(tmp_path)
     lab = _make_lab()
     parent = lab.hosts["test3"]
 
@@ -515,16 +515,16 @@ async def test_compose_up_constructs_expected_command(tmp_path):
     up_cmds = [c for c in call_log if "compose" in c and "up -d" in c]
     assert len(up_cmds) == 1, call_log
     cmd = up_cmds[0]
-    assert " -p otto-repo1-" in cmd
+    assert " -p otto-project1-" in cmd
     assert " -f " in cmd
     assert cmd.rstrip().endswith("up -d --remove-orphans")
 
 
 @pytest.mark.asyncio
 async def test_compose_up_registers_containers_with_their_declared_users(tmp_path):
-    """The legacy path merges `users` over the repo's own composes and hands
+    """The legacy path merges `users` over the project's own composes and hands
     the result to registration — a service with no declaration stays unset."""
-    project = _make_repo(tmp_path, services=("api", "db"), users={"db": "postgres"})
+    project = _make_project(tmp_path, services=("api", "db"), users={"db": "postgres"})
     lab = _make_lab()
     parent = lab.hosts["test3"]
 
@@ -550,7 +550,7 @@ async def test_compose_up_registers_containers_with_their_declared_users(tmp_pat
 @pytest.mark.asyncio
 async def test_compose_up_builds_images_first_when_asked(tmp_path):
     """build=True builds locally-declared images before compose runs; the default builds nothing."""
-    project = _make_repo(tmp_path)
+    project = _make_project(tmp_path)
     lab = _make_lab()
     parent = lab.hosts["test3"]
     call_log: list[str] = []
@@ -576,7 +576,7 @@ async def test_compose_up_builds_images_first_when_asked(tmp_path):
 
 @pytest.mark.asyncio
 async def test_compose_up_builds_nothing_by_default(tmp_path):
-    project = _make_repo(tmp_path)
+    project = _make_project(tmp_path)
     lab = _make_lab()
     parent = lab.hosts["test3"]
     call_log: list[str] = []
@@ -609,7 +609,7 @@ async def test_compose_up_always_reissues_up_when_already_running(tmp_path):
     already-up probe answers ownership for rollback ONLY (see
     test_compose_up_second_call_reregisters_without_raising and
     _rollback_partial_up's ``brought_up_here`` gate)."""
-    project = _make_repo(tmp_path)
+    project = _make_project(tmp_path)
     lab = _make_lab()
     parent = lab.hosts["test3"]
     call_log: list[str] = []
@@ -644,7 +644,7 @@ async def test_compose_up_second_call_reregisters_without_raising(tmp_path):
     pattern in ``compose_up`` (Lab.add_host on its own rejects a duplicate id
     outright; see test_placeholder_id_collision_with_different_host_is_rejected).
     """
-    project = _make_repo(tmp_path)
+    project = _make_project(tmp_path)
     lab = _make_lab()
     parent = lab.hosts["test3"]
     container_ids = iter(["abc111", "def222"])
@@ -675,7 +675,7 @@ async def test_compose_up_retries_once_on_transient_network_race(tmp_path, monke
     retried once; the convergent re-run then starts the already-created
     container and succeeds."""
     monkeypatch.setattr("otto.docker.compose._NETWORK_RACE_RETRY_BACKOFF_S", 0.0, raising=False)
-    project = _make_repo(tmp_path)
+    project = _make_project(tmp_path)
     lab = _make_lab()
     parent = lab.hosts["test3"]
     up_attempts = 0
@@ -711,7 +711,7 @@ async def test_compose_up_does_not_retry_real_compose_failure(tmp_path, monkeypa
     propagates as RuntimeError after a single attempt, so the retry can't
     mask real errors (bad compose file, pull denied, port clash)."""
     monkeypatch.setattr("otto.docker.compose._NETWORK_RACE_RETRY_BACKOFF_S", 0.0, raising=False)
-    project = _make_repo(tmp_path)
+    project = _make_project(tmp_path)
     lab = _make_lab()
     parent = lab.hosts["test3"]
     call_log: list[str] = []
@@ -721,7 +721,7 @@ async def test_compose_up_does_not_retry_real_compose_failure(tmp_path, monkeypa
         if "label=com.docker.compose.project=" in cmd and "service=" not in cmd:
             return _ok("")
         if "compose" in cmd and " up -d" in cmd:
-            return _fail("Error response from daemon: pull access denied for repo1-api")
+            return _fail("Error response from daemon: pull access denied for project1-api")
         return _ok()
 
     parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
@@ -738,7 +738,7 @@ async def test_compose_up_polls_for_container_id_after_start(tmp_path, monkeypat
     daemon; the container-id lookup must poll past that empty first result so
     the service is registered instead of silently skipped (0 containers)."""
     monkeypatch.setattr("otto.docker.compose._CONTAINER_ID_RESOLVE_BACKOFF_S", 0.0, raising=False)
-    project = _make_repo(tmp_path)
+    project = _make_project(tmp_path)
     lab = _make_lab()
     parent = lab.hosts["test3"]
     resolve_calls = 0
@@ -776,7 +776,7 @@ async def test_compose_up_resolve_gives_up_after_bounded_polls(tmp_path, monkeyp
     """
     monkeypatch.setattr("otto.docker.compose._CONTAINER_ID_RESOLVE_BACKOFF_S", 0.0, raising=False)
     monkeypatch.setattr("otto.docker.compose._CONTAINER_ID_RESOLVE_ATTEMPTS", 3, raising=False)
-    project = _make_repo(tmp_path)
+    project = _make_project(tmp_path)
     lab = _make_lab()
     parent = lab.hosts["test3"]
     resolve_calls = 0
@@ -812,7 +812,7 @@ async def test_compose_up_still_skips_one_unresolvable_service_among_several(tmp
     """
     monkeypatch.setattr("otto.docker.compose._CONTAINER_ID_RESOLVE_BACKOFF_S", 0.0, raising=False)
     monkeypatch.setattr("otto.docker.compose._CONTAINER_ID_RESOLVE_ATTEMPTS", 2, raising=False)
-    project = _make_repo(tmp_path, services=("api", "sidecar"))
+    project = _make_project(tmp_path, services=("api", "sidecar"))
     lab = _make_lab()
     parent = lab.hosts["test3"]
 
@@ -837,7 +837,7 @@ async def test_compose_up_still_skips_one_unresolvable_service_among_several(tmp
 
 @pytest.mark.asyncio
 async def test_compose_down_removes_registered_hosts(tmp_path):
-    project = _make_repo(tmp_path)
+    project = _make_project(tmp_path)
     lab = _make_lab()
     parent = lab.hosts["test3"]
     parent.exec.return_value = _ok()  # type: ignore[union-attr]
@@ -846,9 +846,9 @@ async def test_compose_down_removes_registered_hosts(tmp_path):
     fake = DockerContainerHost(
         parent=parent,
         container_id="cid",
-        project="repo1",
+        project="project1",
         service="api",
-        compose_project="otto-repo1-x",
+        compose_project="otto-project1-x",
     )
     lab.hosts[fake.id] = fake  # type: ignore[assignment]
     assert fake.id in lab.hosts
@@ -868,8 +868,8 @@ async def test_compose_down_does_not_emit_the_relative_bind_advisory(tmp_path, c
     than at staging: the `warn` parameter's own test cannot see whether this
     caller passes it.
     """
-    project = _make_repo(tmp_path)
-    (tmp_path / "repo1" / "docker" / "compose.yml").write_text(
+    project = _make_project(tmp_path)
+    (tmp_path / "project1" / "docker" / "compose.yml").write_text(
         "services:\n  api:\n    volumes:\n      - ./data:/var/lib/app\n"
     )
     lab = _make_lab()
@@ -884,7 +884,7 @@ async def test_compose_down_does_not_emit_the_relative_bind_advisory(tmp_path, c
 @pytest.mark.asyncio
 async def test_composed_does_not_teardown_when_already_running(tmp_path):
     """The default own=False contract — nested users don't yank the stack."""
-    project = _make_repo(tmp_path)
+    project = _make_project(tmp_path)
     lab = _make_lab()
     parent = lab.hosts["test3"]
 
@@ -912,7 +912,7 @@ async def test_composed_does_not_teardown_when_already_running(tmp_path):
 @pytest.mark.asyncio
 async def test_composed_builds_nothing_by_default(tmp_path):
     """composed() shares compose_up's meaning of the default: up builds nothing."""
-    project = _make_repo(tmp_path)
+    project = _make_project(tmp_path)
     lab = _make_lab()
     parent = lab.hosts["test3"]
     call_log: list[str] = []
@@ -938,7 +938,7 @@ async def test_composed_builds_nothing_by_default(tmp_path):
 
 @pytest.mark.asyncio
 async def test_composed_tears_down_when_own_true(tmp_path):
-    project = _make_repo(tmp_path)
+    project = _make_project(tmp_path)
     lab = _make_lab()
     parent = lab.hosts["test3"]
 
@@ -967,7 +967,7 @@ async def test_composed_teardown_survives_cancellation(tmp_path):
     """A cancel landing during composed()'s finally must not half-tear the
     stack: compose_down still completes, then the cancel re-raises
     (spec: shielded compensating actions)."""
-    project = _make_repo(tmp_path)
+    project = _make_project(tmp_path)
     lab = _make_lab()
     parent = lab.hosts["test3"]
 
@@ -1082,7 +1082,7 @@ async def test_register_stack_hosts_populates_mounts(monkeypatch):
         AsyncMock(return_value={cid: [Mount(Path("/var/lib/app"), Path("/srv/data"), "bind")]}),
     )
     hosts = await register_stack_hosts(
-        lab, parent, compose_project="p", id_project="repo1", services=["api"]
+        lab, parent, compose_project="p", id_project="project1", services=["api"]
     )
     assert hosts["api"].parent_path("/var/lib/app/x") == Path("/srv/data/x")
 
@@ -1099,7 +1099,7 @@ async def test_register_stack_hosts_inspects_once_for_the_whole_stack(monkeypatc
     spy = AsyncMock(return_value={})
     monkeypatch.setattr("otto.docker.mounts.inspect_mounts", spy)
     await register_stack_hosts(
-        lab, parent, compose_project="p", id_project="repo1", services=["api", "db"]
+        lab, parent, compose_project="p", id_project="project1", services=["api", "db"]
     )
     spy.assert_awaited_once()
     assert len(spy.await_args.args[1]) == 2
@@ -1114,7 +1114,7 @@ async def test_register_stack_hosts_skips_inspect_when_nothing_resolved(monkeypa
     monkeypatch.setattr("otto.docker.mounts.inspect_mounts", spy)
     with pytest.raises(HostCommandError, match="none of compose stack"):
         await register_stack_hosts(
-            lab, parent, compose_project="p", id_project="repo1", services=["api"]
+            lab, parent, compose_project="p", id_project="project1", services=["api"]
         )
     spy.assert_not_awaited()
 
@@ -1154,18 +1154,18 @@ def test_merge_declared_users_of_nothing_is_empty():
 
 
 def test_register_declared_creates_placeholders(tmp_path):
-    project = _make_repo(tmp_path)
+    project = _make_project(tmp_path)
     lab = _make_lab()
 
     n = register_declared_container_hosts(lab, [project])
     assert n == 1
-    placeholder = lab.hosts.get("test3.repo1.api")
+    placeholder = lab.hosts.get("test3.project1.api")
     assert isinstance(placeholder, DockerContainerHost)
     assert placeholder.container_id == ""  # placeholder marker
 
 
 def test_register_declared_skips_existing(tmp_path):
-    project = _make_repo(tmp_path)
+    project = _make_project(tmp_path)
     lab = _make_lab()
     register_declared_container_hosts(lab, [project])  # first registration
     n2 = register_declared_container_hosts(lab, [project])  # second
@@ -1173,21 +1173,21 @@ def test_register_declared_skips_existing(tmp_path):
 
 
 def test_register_declared_noop_without_capable_hosts(tmp_path):
-    project = _make_repo(tmp_path)
+    project = _make_project(tmp_path)
     lab = Lab(name="empty")  # no hosts at all
     n = register_declared_container_hosts(lab, [project])
     assert n == 0
 
 
 def test_register_declared_legacy_walk_registers_under_the_ranked_parent_only():
-    """A repo with `[[docker.composes]]` and no use-cases follows the lab's one
+    """A project with `[[docker.composes]]` and no use-cases follows the lab's one
     rule too: two docker-capable hosts, one ranked, and the placeholder sits
     under the ranked one alone — never under every capable host."""
     lab = _make_lab()
     other = _wire_parent_mock(_capable_host("test1", ne="test1"))
     other.docker_priority = 5
     lab.hosts[other.id] = other
-    project = _uc_repo("a", composes=[_core_compose()])  # composes, no use-cases
+    project = _uc_project("a", composes=[_core_compose()])  # composes, no use-cases
 
     assert register_declared_container_hosts(lab, [project]) == 1
     assert "test1.a.api" in lab.hosts
@@ -1200,7 +1200,7 @@ def test_register_declared_legacy_walk_a_tied_lab_registers_nothing():
     lab = _make_lab()
     other = _wire_parent_mock(_capable_host("test1", ne="test1"))
     lab.hosts[other.id] = other
-    project = _uc_repo("a", composes=[_core_compose()])
+    project = _uc_project("a", composes=[_core_compose()])
 
     assert register_declared_container_hosts(lab, [project]) == 0
     assert not any(isinstance(h, DockerContainerHost) for h in lab.hosts.values())
@@ -1219,7 +1219,7 @@ def test_placeholder_id_collision_with_different_host_is_rejected(tmp_path):
     without_raising) deliberately routes around only for ITS OWN
     re-registrations.
     """
-    project = _make_repo(tmp_path)
+    project = _make_project(tmp_path)
     lab = _make_lab()
     parent = lab.hosts["test3"]
 
@@ -1249,7 +1249,7 @@ def test_register_declared_legacy_placeholder_carries_declared_user():
     an `otto host <id>` against a not-yet-up container already knows which
     identity it will act as."""
     lab = _make_lab()
-    project = _uc_repo("a", composes=[_core_compose(users=(("api", "postgres"),))])
+    project = _uc_project("a", composes=[_core_compose(users=(("api", "postgres"),))])
 
     assert register_declared_container_hosts(lab, [project]) == 1
 
@@ -1276,17 +1276,17 @@ def test_register_declared_legacy_placeholder_reads_the_merged_map_not_one_compo
     gave it `postgres`. The two must not disagree.
     """
     lab = _make_lab()
-    project = _uc_repo("a", composes=_two_composes(users_b=(("db", "postgres"),)))
+    project = _uc_project("a", composes=_two_composes(users_b=(("db", "postgres"),)))
 
     assert register_declared_container_hosts(lab, [project]) == 1
     assert lab.hosts["test3.a.db"].user == "postgres"
 
 
 def test_register_declared_legacy_conflicting_users_refuse():
-    """Same gate as `compose_up` on the same repo: a cross-compose
+    """Same gate as `compose_up` on the same project: a cross-compose
     disagreement refuses rather than silently first-winning."""
     lab = _make_lab()
-    project = _uc_repo(
+    project = _uc_project(
         "a", composes=_two_composes(users_a=(("db", "postgres"),), users_b=(("db", "root"),))
     )
 
@@ -1296,7 +1296,7 @@ def test_register_declared_legacy_conflicting_users_refuse():
 
 def test_register_declared_legacy_placeholder_without_users_is_unset():
     lab = _make_lab()
-    project = _uc_repo("a", composes=[_core_compose()])
+    project = _uc_project("a", composes=[_core_compose()])
 
     assert register_declared_container_hosts(lab, [project]) == 1
     assert lab.hosts["test3.a.api"].user is None
@@ -1327,7 +1327,7 @@ def _merged_lab_with_stamped_parent() -> Lab:
 
 def test_declared_container_inherits_its_parents_lab_not_the_composite(tmp_path):
     """A placeholder container is attributed to its parent's lab, not the merge's name."""
-    project = _make_repo(tmp_path)
+    project = _make_project(tmp_path)
     lab = _merged_lab_with_stamped_parent()
     parent = lab.hosts["test3"]
 
@@ -1359,17 +1359,17 @@ def test_placeholders_receive_product_ingest(tmp_path):
             return None
         return [_IngestProduct(artifact=Path("/a"), name="api")]
 
-    project = _make_repo(tmp_path)
+    project = _make_project(tmp_path)
     lab = _make_lab()
     with _product_provider(provider):
         register_declared_container_hosts(lab, [project])
 
-    placeholder = lab.hosts["test3.repo1.api"]
+    placeholder = lab.hosts["test3.project1.api"]
     assert [p.name for p in placeholder.products] == ["api"]
     # The chokepoint's finishing pass ran, not just the provider loop.
     assert placeholder.products[0].cov_dir == "/tmp/api"
     # The provider judged the CONTAINER, by its own id — not its parent.
-    assert "test3.repo1.api" in seen
+    assert "test3.project1.api" in seen
 
 
 def test_declared_product_entry_matches_a_container_host(tmp_path, monkeypatch):
@@ -1380,19 +1380,19 @@ def test_declared_product_entry_matches_a_container_host(tmp_path, monkeypatch):
         kind="toy",
         seam="products",
         owner="declrepo",
-        base_dir=Path("/repo"),
-        match={"id": "test3.repo1.api"},
+        base_dir=Path("/proj"),
+        match={"id": "test3.project1.api"},
     )
     product_mod.register_product_kind(
         "toy", lambda e, host: _IngestProduct(artifact=Path("/a"), name=e.name)
     )
     monkeypatch.setattr(product_mod, "declared_for_host", lambda host, seam_attr: [entry])
 
-    project = _make_repo(tmp_path)
+    project = _make_project(tmp_path)
     lab = _make_lab()
     register_declared_container_hosts(lab, [project])
 
-    placeholder = lab.hosts["test3.repo1.api"]
+    placeholder = lab.hosts["test3.project1.api"]
     assert [(p.name, p.owner, p.cov_dir) for p in placeholder.products] == [
         ("api", "declrepo", "/tmp/api")
     ]
@@ -1401,12 +1401,14 @@ def test_declared_product_entry_matches_a_container_host(tmp_path, monkeypatch):
 def test_container_host_refuses_a_product_whose_name_is_not_a_path_segment(tmp_path):
     """The chokepoint's name validation covers containers too, and the refusal
     names the container carrying the bad product — a run tree cannot nest."""
-    project = _make_repo(tmp_path)
+    project = _make_project(tmp_path)
     lab = _make_lab()
 
     with (
         _product_provider(lambda h: [_IngestProduct(artifact=Path("/a"), name="bad/name")]),
-        pytest.raises(ValueError, match=re.escape("host test3.repo1.api: product name 'bad/name'")),
+        pytest.raises(
+            ValueError, match=re.escape("host test3.project1.api: product name 'bad/name'")
+        ),
     ):
         register_declared_container_hosts(lab, [project])
 
@@ -1414,13 +1416,13 @@ def test_container_host_refuses_a_product_whose_name_is_not_a_path_segment(tmp_p
 def test_legacy_walk_placeholder_receives_product_ingest():
     """The composes-only walk runs the chokepoint too.
 
-    Its own test, because a repo declaring `[[docker.use_cases]]` (what
-    `_make_repo` builds) takes the use-case branch INSTEAD — so every other
+    Its own test, because a project declaring `[[docker.use_cases]]` (what
+    `_make_project` builds) takes the use-case branch INSTEAD — so every other
     ingest test here exercises the sibling walk, and deleting this branch's
     `apply_providers` call would leave them all green.
     """
     lab = _make_lab()
-    project = _uc_repo("a", composes=[_core_compose()])  # no fragments: the legacy branch
+    project = _uc_project("a", composes=[_core_compose()])  # no fragments: the legacy branch
 
     with _product_provider(lambda h: [_IngestProduct(artifact=Path("/a"), name="api")]):
         assert register_declared_container_hosts(lab, [project]) == 1
@@ -1431,14 +1433,14 @@ def test_legacy_walk_placeholder_receives_product_ingest():
 
 
 def test_ingest_runs_after_the_source_lab_stamp(tmp_path, monkeypatch):
-    """Ingest must run AFTER `source_lab` is stamped, or the §5 repo-targeting
+    """Ingest must run AFTER `source_lab` is stamped, or the §5 project-targeting
     gate cannot judge the container.
 
     An UNSTAMPED host (`source_lab == ""`) takes `apply_product_providers`'
     not-judged carve-out and admits every provider, so a call placed above the
     stamp would silently hang another lab's products on this container. The
     parent here comes from component "a" of a composite lab, and the two
-    providers are owned by repos declared for DIFFERENT labs: only the "a" one
+    providers are owned by projects declared for DIFFERENT labs: only the "a" one
     may attach. Kills: ingest hoisted above the stamp at any of the three sites.
     """
     scopes = {
@@ -1447,7 +1449,7 @@ def test_ingest_runs_after_the_source_lab_stamp(tmp_path, monkeypatch):
     }
     monkeypatch.setattr(declared_mod, "scope_for_project", scopes.get)
 
-    project = _make_repo(tmp_path)
+    project = _make_project(tmp_path)
     lab = _merged_lab_with_stamped_parent()  # parent.source_lab == "a", lab.name == "a+b"
 
     with (
@@ -1458,7 +1460,7 @@ def test_ingest_runs_after_the_source_lab_stamp(tmp_path, monkeypatch):
     ):
         assert register_declared_container_hosts(lab, [project]) == 1
 
-    placeholder = lab.hosts["test3.repo1.api"]
+    placeholder = lab.hosts["test3.project1.api"]
     assert placeholder.source_lab == "a"
     # "offlab" would be here too had the gate seen an unstamped host.
     assert [p.name for p in placeholder.products] == ["api"]
@@ -1469,9 +1471,9 @@ def test_ingest_runs_after_the_source_lab_stamp(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def _uc_repo(name: str, *fragments: DockerUseCase, composes: tuple = ()) -> Project:
-    """A use-case-declaring repo table, in the shape register_declared_container_hosts reads."""
-    return fake_repo(
+def _uc_project(name: str, *fragments: DockerUseCase, composes: tuple = ()) -> Project:
+    """A use-case-declaring project table, in the shape register_declared_container_hosts reads."""
+    return fake_project(
         name, docker_settings=SimpleNamespace(use_cases=tuple(fragments), composes=tuple(composes))
     )
 
@@ -1492,12 +1494,12 @@ def _core_compose(services: tuple = ("api",), users: tuple = ()) -> DockerCompos
     return DockerCompose(path=Path("docker/core.yml"), name="core", services=services, users=users)
 
 
-def test_register_declared_use_case_repo_synthesizes_usecase_ids():
-    """Spec §9: a use-case repo's placeholders carry <parent>.<usecase>.<service>,
-    never <parent>.<repo>.<service>, and their ``project`` names the use-case to
+def test_register_declared_use_case_project_synthesizes_usecase_ids():
+    """Spec §9: a use-case project's placeholders carry <parent>.<usecase>.<service>,
+    never <parent>.<project>.<service>, and their ``project`` names the use-case to
     deploy, which is what the not-running error tells the reader to start."""
     lab = _make_lab()
-    project = _uc_repo("a", _uc_frag(), composes=[_core_compose()])
+    project = _uc_project("a", _uc_frag(), composes=[_core_compose()])
 
     n = register_declared_container_hosts(lab, [project])
 
@@ -1506,7 +1508,7 @@ def test_register_declared_use_case_repo_synthesizes_usecase_ids():
     assert isinstance(placeholder, DockerContainerHost)
     assert placeholder.container_id == ""
     assert placeholder.project == "integration"
-    assert "test3.a.api" not in lab.hosts  # never the legacy repo-scoped id
+    assert "test3.a.api" not in lab.hosts  # never the legacy project-scoped id
     parent = lab.hosts["test3"]
     assert placeholder.compose_project == use_case_project(parent.source_lab, "integration")
 
@@ -1516,7 +1518,7 @@ def test_register_declared_use_case_placeholder_carries_declared_user():
     produced its services, so a fragment's placeholder carries the identity
     its deployed container will carry."""
     lab = _make_lab()
-    project = _uc_repo("a", _uc_frag(), composes=[_core_compose(users=(("api", "postgres"),))])
+    project = _uc_project("a", _uc_frag(), composes=[_core_compose(users=(("api", "postgres"),))])
 
     assert register_declared_container_hosts(lab, [project]) == 1
 
@@ -1531,7 +1533,7 @@ def test_register_declared_use_case_conflicting_users_refuse():
     out placeholders that disagree with the container `deploy` later registers.
     """
     lab = _make_lab()
-    project = _uc_repo(
+    project = _uc_project(
         "a",
         _uc_frag(composes=("acore", "bcore")),
         composes=_two_composes(users_a=(("db", "postgres"),), users_b=(("db", "root"),)),
@@ -1543,7 +1545,7 @@ def test_register_declared_use_case_conflicting_users_refuse():
 
 def test_register_declared_use_case_placeholder_without_users_is_unset():
     lab = _make_lab()
-    project = _uc_repo("a", _uc_frag(), composes=[_core_compose()])
+    project = _uc_project("a", _uc_frag(), composes=[_core_compose()])
 
     assert register_declared_container_hosts(lab, [project]) == 1
 
@@ -1557,7 +1559,7 @@ def test_register_declared_use_case_fragment_with_no_declared_services_is_skippe
     mistaken for a bug."""
     lab = _make_lab()
     empty_compose = DockerCompose(path=Path("docker/core.yml"), name="core", services=())
-    project = _uc_repo("a", _uc_frag(), composes=[empty_compose])
+    project = _uc_project("a", _uc_frag(), composes=[empty_compose])
 
     n = register_declared_container_hosts(lab, [project])
 
@@ -1565,12 +1567,12 @@ def test_register_declared_use_case_fragment_with_no_declared_services_is_skippe
     assert not any(hid.startswith("test3.integration.") for hid in lab.hosts)
 
 
-def test_register_declared_use_case_repo_skips_legacy_composes_walk():
-    """A repo declaring use_cases takes ONLY the use-case branch (spec §9);
-    legacy composes-only repos are unaffected (see
+def test_register_declared_use_case_project_skips_legacy_composes_walk():
+    """A project declaring use_cases takes ONLY the use-case branch (spec §9);
+    legacy composes-only projects are unaffected (see
     test_register_declared_creates_placeholders)."""
     lab = _make_lab()
-    project = _uc_repo("a", _uc_frag(), composes=[_core_compose()])
+    project = _uc_project("a", _uc_frag(), composes=[_core_compose()])
 
     n = register_declared_container_hosts(lab, [project])
 
@@ -1580,10 +1582,10 @@ def test_register_declared_use_case_repo_skips_legacy_composes_walk():
 
 def test_register_declared_use_case_fragment_with_an_unknown_handle_is_skipped():
     """Placeholders are best-effort (spec §9): a fragment naming a compose
-    handle its repo does not define contributes no placeholder, but a sibling
-    fragment of the same repo still registers."""
+    handle its project does not define contributes no placeholder, but a sibling
+    fragment of the same project still registers."""
     lab = _make_lab()
-    project = _uc_repo(
+    project = _uc_project(
         "a",
         _uc_frag(name="integration"),
         _uc_frag(name="ghost-uc", composes=("nope",)),
@@ -1603,7 +1605,7 @@ def test_register_declared_use_case_a_tied_lab_registers_nothing_and_raises_noth
     lab = _make_lab()
     other = _wire_parent_mock(_capable_host("test1", ne="test1"))
     lab.hosts[other.id] = other
-    project = _uc_repo("a", _uc_frag(), composes=[_core_compose()])
+    project = _uc_project("a", _uc_frag(), composes=[_core_compose()])
 
     assert register_declared_container_hosts(lab, [project]) == 0
     assert not any(".integration." in hid for hid in lab.hosts)
@@ -1614,7 +1616,7 @@ def test_register_declared_use_case_a_ranked_lab_registers_under_the_ranked_pare
     other = _wire_parent_mock(_capable_host("test1", ne="test1"))
     other.docker_priority = 5
     lab.hosts[other.id] = other
-    project = _uc_repo("a", _uc_frag(), composes=[_core_compose()])
+    project = _uc_project("a", _uc_frag(), composes=[_core_compose()])
 
     assert register_declared_container_hosts(lab, [project]) == 1
     assert "test1.integration.api" in lab.hosts
@@ -1627,7 +1629,7 @@ def test_register_declared_use_case_skips_existing():
     duplicate id, so deleting the `if placeholder.id in lab.hosts: continue`
     guard turns this red (verified by mutation)."""
     lab = _make_lab()
-    project = _uc_repo("a", _uc_frag(), composes=[_core_compose()])
+    project = _uc_project("a", _uc_frag(), composes=[_core_compose()])
 
     n1 = register_declared_container_hosts(lab, [project])
     n2 = register_declared_container_hosts(lab, [project])
@@ -1641,7 +1643,7 @@ def test_register_declared_use_case_non_resolution_error_propagates():
     broader except would eat a genuine bug silently, forever, on every
     otto invocation — this walk runs in cli/invoke.py's preamble."""
     lab = _make_lab()
-    project = _uc_repo("a", _uc_frag(), composes=[_core_compose()])
+    project = _uc_project("a", _uc_frag(), composes=[_core_compose()])
 
     with (
         patch("otto.docker.deployment._declared", side_effect=TypeError("boom")),
@@ -1655,7 +1657,7 @@ def test_register_declared_use_case_inherits_its_parents_lab_not_the_composite()
     test_declared_container_inherits_its_parents_lab_not_the_composite): a
     use-case placeholder is attributed to its PARENT's lab, not the merge's
     name, and COPIES the parent's LabInfo rather than aliasing it."""
-    project = _uc_repo("a", _uc_frag(), composes=[_core_compose()])
+    project = _uc_project("a", _uc_frag(), composes=[_core_compose()])
     lab = _merged_lab_with_stamped_parent()
     parent = lab.hosts["test3"]
 
@@ -1668,8 +1670,8 @@ def test_register_declared_use_case_inherits_its_parents_lab_not_the_composite()
     assert parent.lab_info.metadata == {"k": 1}
 
 
-def test_register_declared_use_case_real_repo_registers_under_the_ranked_parent(tmp_path):
-    """A repo parsed from settings.toml (not a double) registers its use-case
+def test_register_declared_use_case_real_project_registers_under_the_ranked_parent(tmp_path):
+    """A project parsed from settings.toml (not a double) registers its use-case
     placeholders under the one parent the lab's rule names — the ranked host."""
     extra = (
         "[[docker.composes]]\n"
@@ -1681,7 +1683,7 @@ def test_register_declared_use_case_real_repo_registers_under_the_ranked_parent(
         'name = "integration"\n'
         'composes = ["core"]\n'
     )
-    sut = make_sut_repo(
+    sut = make_project(
         tmp_path / "a", name="a", extra=extra, files={"docker/compose.yml": "services: {}\n"}
     )
     project = Project(root=sut)
@@ -1701,7 +1703,7 @@ def test_register_declared_use_case_real_repo_registers_under_the_ranked_parent(
 @pytest.mark.asyncio
 async def test_compose_up_container_inherits_its_parents_lab_not_the_composite(tmp_path):
     """Same rule on the live registration path: parent's lab wins over the composite."""
-    project = _make_repo(tmp_path)
+    project = _make_project(tmp_path)
     lab = _merged_lab_with_stamped_parent()
     parent = lab.hosts["test3"]
 
@@ -1726,9 +1728,9 @@ async def test_compose_up_container_inherits_its_parents_lab_not_the_composite(t
     assert parent.lab_info.metadata == {"k": 1}
 
 
-def _make_bare_repo(tmp: Path, *, name: str = "bare1") -> Project:
-    """Build a Repo with NO [[docker.composes]] entries."""
-    return Project(root=make_sut_repo(tmp / name, name=name))
+def _make_bare_project(tmp: Path, *, name: str = "bare1") -> Project:
+    """Build a project with NO [[docker.composes]] entries."""
+    return Project(root=make_project(tmp / name, name=name))
 
 
 # ---------------------------------------------------------------------------
@@ -1742,9 +1744,9 @@ def test_get_container_host_success(tmp_path):
     container = DockerContainerHost(
         parent=parent,
         container_id="abc123",
-        project="repo1",
+        project="project1",
         service="api",
-        compose_project="otto-repo1-user",
+        compose_project="otto-project1-user",
     )
     fake_lab = Lab(name="test")
     fake_lab.hosts[container.id] = container  # type: ignore[assignment]
@@ -1777,8 +1779,8 @@ def test_get_container_host_wrong_type_raises(tmp_path):
 
 @pytest.mark.asyncio
 async def test_compose_up_no_composes_raises(tmp_path):
-    """Raises ValueError when the repo has no [[docker.composes]] entries."""
-    project = _make_bare_repo(tmp_path)
+    """Raises ValueError when the project has no [[docker.composes]] entries."""
+    project = _make_bare_project(tmp_path)
     lab = _make_lab()
     with pytest.raises(ValueError, match=r"no .*composes"):
         await compose_up(project, lab)
@@ -1787,7 +1789,7 @@ async def test_compose_up_no_composes_raises(tmp_path):
 @pytest.mark.asyncio
 async def test_compose_up_build_failure_raises(tmp_path):
     """Raises RuntimeError when build_images returns a failed status for an image."""
-    project = _make_repo(tmp_path)
+    project = _make_project(tmp_path)
     lab = _make_lab()
 
     # build_images returns dict[str, ImageBuild]; a non-ok build trips the branch
@@ -1813,11 +1815,11 @@ async def test_compose_up_build_failure_raises(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# _repo_parent_host — error branches
+# _project_parent_host — error branches
 # ---------------------------------------------------------------------------
 
 
-def test_repo_parent_host_no_candidate_raises():
+def test_project_parent_host_no_candidate_raises():
     """No parent= and no docker-capable host in the lab: the rule refuses."""
     lab = Lab(name="test")
 
@@ -1826,7 +1828,7 @@ def test_repo_parent_host_no_candidate_raises():
     assert exc.value.field == "parent"
 
 
-def test_repo_parent_host_non_unixhost_raises():
+def test_project_parent_host_non_unixhost_raises():
     """A host that is not a UnixHost is not a docker parent: the rule refuses it."""
     lab = _make_lab()
 
@@ -1847,8 +1849,8 @@ def test_repo_parent_host_non_unixhost_raises():
 
 @pytest.mark.asyncio
 async def test_compose_down_no_composes_skipped(tmp_path):
-    """Returns a Skipped CommandResult immediately when the repo has no composes."""
-    project = _make_bare_repo(tmp_path)
+    """Returns a Skipped CommandResult immediately when the project has no composes."""
+    project = _make_bare_project(tmp_path)
     lab = _make_lab()
     result = await compose_down(project, lab)
     assert result.status is Status.Skipped
@@ -1858,7 +1860,7 @@ async def test_compose_down_no_composes_skipped(tmp_path):
 @pytest.mark.asyncio
 async def test_compose_down_failure_logs_error(tmp_path, caplog):
     """Logs an ERROR containing 'compose down failed' when the down command fails."""
-    project = _make_repo(tmp_path)
+    project = _make_project(tmp_path)
     lab = _make_lab()
     parent = lab.hosts["test3"]
 
@@ -1882,20 +1884,20 @@ async def test_compose_down_failure_logs_error(tmp_path, caplog):
 @pytest.mark.asyncio
 async def test_compose_down_swallows_host_close_error(tmp_path):
     """Does NOT propagate when a registered container host's close() raises."""
-    project = _make_repo(tmp_path)
+    project = _make_project(tmp_path)
     lab = _make_lab()
     parent = lab.hosts["test3"]
 
     # Wire down command to succeed so we reach the host-close loop
     parent.exec.return_value = _ok()  # type: ignore[union-attr]
 
-    # Register a container host under this parent + repo whose close() raises
+    # Register a container host under this parent + project whose close() raises
     noisy = DockerContainerHost(
         parent=parent,
         container_id="cid99",
         project=project.name,
         service="api",
-        compose_project="otto-repo1-x",
+        compose_project="otto-project1-x",
     )
     noisy.close = AsyncMock(side_effect=Exception("close exploded"))  # type: ignore[method-assign]
     lab.hosts[noisy.id] = noisy  # type: ignore[assignment]
@@ -1932,7 +1934,7 @@ async def test_compose_up_fails_when_services_cannot_be_listed_and_none_declared
     empty, the registration loop never ran, and compose_up returned {} —
     which `otto docker compose up` prints as "0 container(s) registered", exit 0.
     """
-    project = _make_repo(tmp_path, services=())
+    project = _make_project(tmp_path, services=())
     lab = _make_lab()
     parent = lab.hosts["test3"]
 
@@ -1956,7 +1958,7 @@ async def test_compose_up_only_warns_when_the_cross_check_fails(tmp_path, caplog
     Losing it must cost a warning rather than the stack — the declared list is
     authoritative, so registration can proceed on it alone.
     """
-    project = _make_repo(tmp_path, services=("api",))
+    project = _make_project(tmp_path, services=("api",))
     lab = _make_lab()
     parent = lab.hosts["test3"]
 
@@ -1996,7 +1998,7 @@ async def test_stack_already_up_reports_unknown_rather_than_no(caplog):
     parent.exec.return_value = _fail("cannot connect to the docker daemon")  # type: ignore[union-attr]
 
     with caplog.at_level(logging.WARNING, logger="otto.docker.compose"):
-        assert await _stack_already_up(parent, "otto-repo1-vagrant") is None
+        assert await _stack_already_up(parent, "otto-project1-vagrant") is None
     assert any(
         "could not tell whether" in r.message and r.levelno == logging.WARNING
         for r in caplog.records
@@ -2011,7 +2013,7 @@ async def test_composed_refuses_to_guess_whose_stack_it_is(tmp_path):
     means the teardown yanks a stack an outer fixture is holding — precisely
     what the docstring promises not to do.
     """
-    project = _make_repo(tmp_path)
+    project = _make_project(tmp_path)
     lab = _make_lab()
     parent = lab.hosts["test3"]
 
@@ -2035,7 +2037,7 @@ async def test_composed_does_not_even_probe_when_it_owns_the_stack(tmp_path):
     dead. Failing the whole flow on a transient `docker ps` for a value nobody
     reads is the shape this sweep is supposed to remove, not add.
     """
-    project = _make_repo(tmp_path)
+    project = _make_project(tmp_path)
     lab = _make_lab()
     parent = lab.hosts["test3"]
     project_probes = 0
@@ -2085,7 +2087,7 @@ async def test_stage_image_context_fails_when_the_dir_cannot_be_prepared(tmp_pat
     parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
     with pytest.raises(RuntimeError, match="prepare the build-context dir"):
-        await stage_image_context(parent, "repo1", image)
+        await stage_image_context(parent, "project1", image)
 
 
 @pytest.mark.asyncio
@@ -2095,7 +2097,7 @@ async def test_stage_compose_files_fails_when_the_dir_cannot_be_prepared(tmp_pat
 
     compose_path = tmp_path / "compose.yml"
     compose_path.write_text("services: {}\n")
-    compose = _make_repo(tmp_path / "r", services=("api",)).docker_settings.composes[0]
+    compose = _make_project(tmp_path / "r", services=("api",)).docker_settings.composes[0]
     parent = _wire_parent_mock(_capable_host())
 
     async def exec_side_effect(cmd, *_, **__):
@@ -2106,7 +2108,7 @@ async def test_stage_compose_files_fails_when_the_dir_cannot_be_prepared(tmp_pat
     parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
     with pytest.raises(RuntimeError, match="prepare the compose staging dir"):
-        await stage_compose_files(parent, "otto-repo1", [compose])
+        await stage_compose_files(parent, "otto-project1", [compose])
 
 
 @pytest.mark.asyncio
@@ -2115,7 +2117,7 @@ async def test_stage_compose_files_fails_when_a_numbered_subdir_cannot_be_made(t
     subsequent `put` lands somewhere unintended or not at all."""
     from otto.docker.staging import stage_compose_files
 
-    compose = _make_repo(tmp_path / "r", services=("api",)).docker_settings.composes[0]
+    compose = _make_project(tmp_path / "r", services=("api",)).docker_settings.composes[0]
     parent = _wire_parent_mock(_capable_host())
 
     async def exec_side_effect(cmd, *_, **__):
@@ -2126,7 +2128,7 @@ async def test_stage_compose_files_fails_when_a_numbered_subdir_cannot_be_made(t
     parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
     with pytest.raises(RuntimeError, match="failed to create"):
-        await stage_compose_files(parent, "otto-repo1", [compose])
+        await stage_compose_files(parent, "otto-project1", [compose])
 
 
 @pytest.mark.asyncio
@@ -2139,7 +2141,7 @@ async def test_compose_up_rolls_back_a_stack_it_started_before_raising(tmp_path)
     entered the try and tore the stack down — so raising without a rollback
     would strand a definitely-running stack.
     """
-    project = _make_repo(tmp_path)
+    project = _make_project(tmp_path)
     lab = _make_lab()
     parent = lab.hosts["test3"]
     downs = 0
@@ -2166,7 +2168,7 @@ async def test_compose_up_rolls_back_a_stack_it_started_before_raising(tmp_path)
 @pytest.mark.asyncio
 async def test_compose_up_does_not_roll_back_someone_elses_stack(tmp_path):
     """The other half of the rollback rule: only tear down what WE started."""
-    project = _make_repo(tmp_path)
+    project = _make_project(tmp_path)
     lab = _make_lab()
     parent = lab.hosts["test3"]
     downs = 0
@@ -2193,7 +2195,7 @@ async def test_compose_up_does_not_roll_back_someone_elses_stack(tmp_path):
 @pytest.mark.asyncio
 async def test_compose_up_fails_when_the_stack_names_no_services_at_all(tmp_path):
     """`services: {}` with nothing declared: up, and nothing to register."""
-    project = _make_repo(tmp_path, services=())
+    project = _make_project(tmp_path, services=())
     lab = _make_lab()
     parent = lab.hosts["test3"]
 
@@ -2207,7 +2209,7 @@ async def test_compose_up_fails_when_the_stack_names_no_services_at_all(tmp_path
     parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
     # ValueError: nothing on the parent failed — the compose file declares no
-    # services, the same class of refusal as _repo_parent_host's own raises.
+    # services, the same class of refusal as _project_parent_host's own raises.
     with pytest.raises(ValueError, match="names no services"):
         await compose_up(project, lab)
 
@@ -2217,11 +2219,11 @@ async def test_compose_down_returns_a_failure_when_staging_cannot_be_prepared(tm
     """compose_down's contract is that a failed tear-down is RETURNED.
 
     Staging now raises, and letting that propagate would stop
-    `otto docker compose down` mid-sweep with the remaining repos still up — and,
+    `otto docker compose down` mid-sweep with the remaining projects still up — and,
     inside `composed()`'s finally, replace the body's real exception with
     teardown noise.
     """
-    project = _make_repo(tmp_path)
+    project = _make_project(tmp_path)
     lab = _make_lab()
     parent = lab.hosts["test3"]
 

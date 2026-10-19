@@ -23,14 +23,14 @@ from otto.config.env import load_otto_env
 from otto.config.home import workspace_home, workspace_key
 from otto.config.project import discover
 from otto.models.settings import OttoEnvSettings
-from tests._fixtures.sutrepo import make_sut_repo
+from tests._fixtures.project_scaffold import make_project
 
 
 @pytest.fixture
 def world(tmp_path, monkeypatch):
     """Projects a, b, c; ``link`` -> a; ``inner-link`` -> a/inner; cwd and HOME at tmp_path."""
     for name in ("a", "b", "c"):
-        make_sut_repo(tmp_path / name, name=name)
+        make_project(tmp_path / name, name=name)
     (tmp_path / "a" / "inner").mkdir()
     (tmp_path / "link").symlink_to(tmp_path / "a")
     (tmp_path / "inner-link").symlink_to(tmp_path / "a" / "inner")

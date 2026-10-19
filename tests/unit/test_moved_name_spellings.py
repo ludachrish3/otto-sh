@@ -81,9 +81,9 @@ import importlib.util
 import re
 from pathlib import Path
 
-from tests._fixtures.paths import PROJECT_ROOT, TESTS_ROOT
+from tests._fixtures.paths import CHECKOUT_ROOT, TESTS_ROOT
 
-SRC_ROOT = PROJECT_ROOT / "src" / "otto"
+SRC_ROOT = CHECKOUT_ROOT / "src" / "otto"
 THIS_FILE = Path(__file__).resolve()
 
 ACCESSORS = frozenset(
@@ -305,9 +305,9 @@ def _corpus() -> "list[tuple[Path, str | None]]":
 
 def test_the_corpus_is_the_whole_tree():
     """A corpus that came back short would let the check below pass vacuously."""
-    corpus = {path.relative_to(PROJECT_ROOT).as_posix() for path, _ in _corpus()}
+    corpus = {path.relative_to(CHECKOUT_ROOT).as_posix() for path, _ in _corpus()}
     assert "src/otto/bootstrap.py" in corpus
-    assert "tests/repo3/tests/test_embedded_coverage.py" in corpus  # a bed-lane tree
+    assert "tests/project3/tests/test_embedded_coverage.py" in corpus  # a bed-lane tree
     assert "tests/integration/test_docker_use_case.py" in corpus
     assert len(corpus) > 1000
 
@@ -318,8 +318,8 @@ def test_no_otto_code_or_test_names_a_moved_name_at_its_old_home():
         try:
             found = old_spellings(path.read_text(encoding="utf-8"), module)
         except (SyntaxError, UnicodeDecodeError):
-            continue  # a deliberately broken fixture file (tests/repo_broken)
-        rel = path.relative_to(PROJECT_ROOT).as_posix()
+            continue  # a deliberately broken fixture file (tests/project_broken)
+        rel = path.relative_to(CHECKOUT_ROOT).as_posix()
         offenders += [f"{rel}:{line} {what}" for line, what in found]
     assert not offenders, (
         f"{len(offenders)} old spelling(s) of a moved name; import each from its new home "

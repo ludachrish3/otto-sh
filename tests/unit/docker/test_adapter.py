@@ -8,26 +8,26 @@ from otto.registry import DuplicateRegistration, RegistrationRefused, registerin
 
 
 @pytest.fixture
-def _as_repo():
-    with registering_project("repo1"):
+def _as_project():
+    with registering_project("project1"):
         yield
 
 
-@pytest.mark.usefixtures("_as_repo")
+@pytest.mark.usefixtures("_as_project")
 def test_register_and_lookup():
     @register_compose_adapter("integration")
     def render(facts):
         return AdapterResult(env={"X": "1"})
 
-    fn = adapter_for("repo1", "integration")
+    fn = adapter_for("project1", "integration")
     assert fn is render
-    assert adapter_for("repo1", "other") is None
-    assert adapter_for("repo2", "integration") is None
+    assert adapter_for("project1", "other") is None
+    assert adapter_for("project2", "integration") is None
 
 
-@pytest.mark.usefixtures("_as_repo")
+@pytest.mark.usefixtures("_as_project")
 def test_duplicate_registration_is_loud():
-    """A second adapter for one (repo, use case) names the key and the way to replace it."""
+    """A second adapter for one (project, use case) names the key and the way to replace it."""
 
     @register_compose_adapter("integration")
     def one(facts):
@@ -35,7 +35,7 @@ def test_duplicate_registration_is_loud():
 
     with pytest.raises(
         DuplicateRegistration,
-        match=r"compose adapter 'repo1:integration' is already registered.*"
+        match=r"compose adapter 'project1:integration' is already registered.*"
         r"Pass overwrite=True to replace it deliberately\.",
     ):
 
@@ -43,11 +43,11 @@ def test_duplicate_registration_is_loud():
         def two(facts):
             return AdapterResult()
 
-    assert adapter_for("repo1", "integration") is one
+    assert adapter_for("project1", "integration") is one
 
 
-@pytest.mark.usefixtures("_as_repo")
-def test_overwrite_replaces_the_repos_adapter():
+@pytest.mark.usefixtures("_as_project")
+def test_overwrite_replaces_the_projects_adapter():
     @register_compose_adapter("integration")
     def one(facts):
         return AdapterResult()
@@ -56,7 +56,7 @@ def test_overwrite_replaces_the_repos_adapter():
     def two(facts):
         return AdapterResult()
 
-    assert adapter_for("repo1", "integration") is two
+    assert adapter_for("project1", "integration") is two
 
 
 def test_outside_init_module_is_refused():
@@ -70,9 +70,9 @@ def test_outside_init_module_is_refused():
     assert adapter_mod.COMPOSE_ADAPTERS.revision == revision
 
 
-@pytest.mark.usefixtures("_as_repo")
+@pytest.mark.usefixtures("_as_project")
 def test_use_case_containing_colon_is_refused():
-    """A ':' in use_case would collide with the 'repo_name:use_case' key separator."""
+    """A ':' in use_case would collide with the 'project_name:use_case' key separator."""
     with pytest.raises(
         ValueError,
         match=r"register_compose_adapter\(\): use_case 'a:b' must not contain ':'",
@@ -90,4 +90,4 @@ def test_register_hint_names_the_registration_function():
     and untested, even though no current public call site renders it.
     """
     with pytest.raises(ValueError, match=r"otto\.docker\.register_compose_adapter\(\)"):
-        adapter_mod.COMPOSE_ADAPTERS.get("no-such-repo:no-such-use-case")
+        adapter_mod.COMPOSE_ADAPTERS.get("no-such-project:no-such-use-case")
