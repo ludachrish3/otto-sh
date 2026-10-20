@@ -103,13 +103,15 @@ def _project_leaf(project: ProjectInstruction) -> Callable[..., Any]:
             if project.spec.dry_run_preview:
                 from rich import get_console
 
-                from ..project.plan import plan_instruction
+                from ..project.plan import plan_instruction, plan_lab_tail
                 from ..project.render import render_plan
 
                 # Verbatim: a plan line is a host command, so a `[` must not be read
                 # as markup, a `:name:` as an emoji, or a long line hard-wrapped.
-                text = render_plan(name, plan_instruction(name, ctx, kw))
-                if text:  # no project applies: print nothing, not a blank line
+                text = render_plan(
+                    name, plan_instruction(name, ctx, kw), plan_lab_tail(name, ctx, kw)
+                )
+                if text:  # nothing applies: print nothing, not a blank line
                     get_console().print(
                         text, markup=False, emoji=False, highlight=False, soft_wrap=True
                     )

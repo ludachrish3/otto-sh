@@ -277,9 +277,8 @@ dry run core: no device was contacted — nothing was read and nothing was chang
 
 ## The lab-level verbs answer the same way
 
-`otto -n run install`, `uninstall`, `install-tools` and `uninstall-tools` print
-the plan first:
-every step the real run would take, host by host, derived from configuration
+`otto -n run install`, `uninstall`, `cleanup`, `install-tools` and
+`uninstall-tools` print the plan first: every step the real run would take, host by host, derived from configuration
 alone, and then the standard block. A real run is unchanged.
 
 ```text
@@ -306,7 +305,23 @@ dry run: no command body was run and no device was contacted
 lines, the order a host really uses; `install-tools` keeps each tool's two
 phases together, and `uninstall-tools` lists each dev tool's removal as a
 `remove tool` line (with `--toolchain`, the `rm -f` of each toolchain tool
-under `not checked:`). A host with nothing to do prints only its own line (the
+under `not checked:`). `cleanup` lists each project's products (`uninstall`)
+and then its dev tools (`remove tool`), and closes with what it does once
+after every project, whether or not any project applies:
+
+```text
+after every project
+  test1
+    debug logs   fetch /var/log/messages*
+    toolchain    rm -f /usr/bin/gdb
+  lab
+    impairments  would attempt to clear otto-owned impairments on eligible links (live eligibility unchecked)
+    tunnels      would remove otto tunnels on every tunnel-capable host
+```
+
+A project's `uninstall` override replaces `cleanup`'s product half (it calls
+`uninstall`), so only that half goes unpreviewed; a `cleanup` override
+replaces both. A host with nothing to do prints only its own line (the
 example leaves out `bench`'s other two hosts), and a local path is anchored to
 the project that declared it. The lines' vocabulary, `<login home>` included, is
 {ref}`the product-kind contract's <product-kind-plan>`. Everything under `not checked:` is a fact a real run reads off the host (or a
@@ -321,9 +336,8 @@ instructions and every user-defined instruction keep the seam default.
 `otto.project`'s verbs — what `otto run install` and the `ensure` marker's
 steps call — compose the host verbs above, and inherit their answers. Two of
 them have an answer of their own, and both are reached from a *library* caller:
-the `otto run` group keeps the seam default, so `otto -n run cleanup` prints the
-block and runs no body at all, while a test marked `ensure("clean")` calls
-the converge directly.
+`otto -n run cleanup` prints its plan and the block and runs no body at all,
+while a test marked `ensure("clean")` calls the converge directly.
 
 - `cleanup()` finishes with two lab-wide steps, and neither pretends to have
   run: `otto.link.manage.repair_all` reads no netdev and

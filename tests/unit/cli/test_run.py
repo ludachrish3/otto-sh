@@ -857,7 +857,7 @@ class TestInstructionOnAMethod:
         class Opts:
             flag: Annotated[bool, typer.Option(help="f")] = False
 
-        with pytest.raises(ValueError, match="install, uninstall, install-tools") as refused:
+        with pytest.raises(ValueError, match="install, uninstall, cleanup") as refused:
 
             class Actions:
                 @instruction("deploy", options=Opts, dry_run_preview=True)

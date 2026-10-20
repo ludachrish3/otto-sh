@@ -4796,6 +4796,14 @@ call	otto.project:StatusOptions	sync	VP:args:- VK:kwargs:-
 member	otto.project:StatusOptions.__eq__	method	sync	PK:other:-
 member	otto.project:StatusOptions.full	field
 abstract	otto.project:StatusOptions	-
+name	otto.project:TailStep	class
+mro	otto.project:TailStep	-
+call	otto.project:TailStep	sync	PK:label:- PK:line:- PK:host_id:N
+member	otto.project:TailStep.__eq__	method	sync	PK:other:-
+member	otto.project:TailStep.host_id	field
+member	otto.project:TailStep.label	field
+member	otto.project:TailStep.line	field
+abstract	otto.project:TailStep	-
 name	otto.project:UninstallOptions	class
 mro	otto.project:UninstallOptions	-
 call	otto.project:UninstallOptions	sync	VP:args:- VK:kwargs:-
@@ -4836,6 +4844,8 @@ name	otto.project:is_uninstalled	function
 call	otto.project:is_uninstalled	coroutine	-
 name	otto.project:plan_instruction	function
 call	otto.project:plan_instruction	sync	PK:name:- PK:ctx:- PK:kwargs:-
+name	otto.project:plan_lab_tail	function
+call	otto.project:plan_lab_tail	sync	PK:name:- PK:ctx:- PK:kwargs:-
 name	otto.project:register_project_actions	function
 call	otto.project:register_project_actions	sync	PK:cls:- KO:overwrite:B:false
 name	otto.project:status	function

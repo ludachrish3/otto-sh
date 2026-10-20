@@ -89,9 +89,11 @@ the host-global toolchain tools, even after a dev tool refused to go.
 tools, the host-global toolchain tools come off, and the lab's own leftovers go
 with them — netem impairments are reset and every otto tunnel is reaped. See
 [What `cleanup` takes off the lab](#what-cleanup-takes-off-the-lab) for what
-those last two do and do not touch. `--ensure` turns `install` into a converge —
-the lab's current state is read and only the missing work is done — which is
-what an `ensure` marker's steps do before a test.
+those last two do and do not touch, and `otto -n run cleanup` to see every
+removal it would make, host by host ({ref}`dry-run-lab-verbs`). `--ensure`
+turns `install` into a converge — the lab's current state is read and only the
+missing work is done — which is what an `ensure` marker's steps do before a
+test.
 
 ## What a run prints
 
@@ -183,7 +185,7 @@ value fails at init, naming the keyword:
 | `require_dependencies` | `True` refuses to start when a kept project's required dependency was dropped by the loaded lab; `False` walks whatever is present. |
 | `combine_results` | Folds `{project name: that body's return}` into the instruction's single return value; the default reports the first failure with the project name stamped into the message. |
 | `render` | Turns that combined value into what the command prints and exits on; `None` leaves the leaf's ordinary handling in place. |
-| `dry_run_preview` | `True` makes `otto -n run <name>` print the plan of what the instruction would do before the dry-run block ({ref}`the lab-level verbs <dry-run-lab-verbs>`). Honoured only for `install`, `uninstall`, `install-tools` and `uninstall-tools`, otto's own; declaring it on any other name is refused at init. |
+| `dry_run_preview` | `True` makes `otto -n run <name>` print the plan of what the instruction would do before the dry-run block ({ref}`the lab-level verbs <dry-run-lab-verbs>`). Honoured only for `install`, `uninstall`, `cleanup`, `install-tools` and `uninstall-tools`, otto's own; declaring it on any other name is refused at init. |
 
 A project declaring a name otto has never heard of *is* the first declaration, so
 it sets all six, and a second project declaring the same name inherits them.

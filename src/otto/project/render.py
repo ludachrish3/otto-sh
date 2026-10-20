@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from rich.table import Table
 
     from ..params import OptionsSource
-    from .plan import ProjectPlan
+    from .plan import ProjectPlan, TailStep
     from .state import CleanlinessReport, ProjectScopeSummary, ProjectStatus
 
 STATE_ANSWERS: "dict[InstallState, Result]" = {
@@ -225,6 +225,7 @@ _PHASES: dict[str, list[tuple[str, str, str]]] = {
     "uninstall": [("uninstall", "uninstall", "products")],
     "install-tools": [("stage", "stage", "products"), ("install", "install", "products")],
     "uninstall-tools": [("remove tool", "uninstall", "dev_tools")],
+    "cleanup": [("uninstall", "uninstall", "products"), ("remove tool", "uninstall", "dev_tools")],
 }
 """The phases each previewed instruction prints, in the order its steps are listed.
 
@@ -235,7 +236,7 @@ walks.
 """
 
 
-def render_plan(name: str, plans: "list[ProjectPlan]") -> str:
+def render_plan(name: str, plans: "list[ProjectPlan]", tail: "list[TailStep] | None" = None) -> str:
     """Render :func:`~otto.project.plan.plan_instruction`'s answer as indented plain text.
 
     A plan is a step list, not a table. ``install`` prints every product's
@@ -246,7 +247,9 @@ def render_plan(name: str, plans: "list[ProjectPlan]") -> str:
     project under ``not checked:``, project-level ones first. A gap that is true of
     the whole lab arrives under every project, so each fully rendered gap line
     prints once, at its first occurrence, and a project left with none prints no
-    block.
+    block. ``cleanup`` lists each host's products and then its dev tools, and
+    *tail*, :func:`~otto.project.plan.plan_lab_tail`'s steps, closes the plan
+    under ``after every project``: per host, then the lab-wide steps.
     """
     phases = _PHASES[name]
     width = max(len(label) for label, _, _ in phases)
@@ -281,4 +284,19 @@ def render_plan(name: str, plans: "list[ProjectPlan]") -> str:
         if fresh:
             out.append("  not checked:")
             out.extend(f"    {gap}" for gap in fresh)
+    if tail:
+        out += _render_tail(tail)
     return "\n".join(out)
+
+
+def _render_tail(tail: "list[TailStep]") -> list[str]:
+    """Render the lab-wide steps under one heading, grouped by host, the lab's own last."""
+    width = max(len(step.label) for step in tail)
+    out = ["after every project"]
+    scope: object = object()  # matches no host id and not None, so the first step heads
+    for step in tail:
+        if step.host_id != scope:
+            scope = step.host_id
+            out.append(f"  {'lab' if scope is None else scope}")
+        out.append(f"    {step.label:<{width}}  {step.line}")
+    return out

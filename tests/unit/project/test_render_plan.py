@@ -134,3 +134,43 @@ def test_uninstall_tools_prints_each_tools_removal():
         "    remove tool  helper   sudo rmmod helper",
     ]
     assert render_plan("uninstall-tools", plans).splitlines() == lines
+
+
+def test_cleanup_prints_products_then_dev_tools_then_the_lab_tail():
+    from otto.project.plan import TailStep
+
+    agent = _entry("agent", uninstall=["sh /opt/agent/uninstall.sh"])
+    kmodcov = _entry("kmodcov", uninstall=["sudo rmmod otto_kmodcov"])
+    plans = [
+        ProjectPlan("r", [HostPlan("h", [agent], ["product logs: hauled"], [kmodcov])]),
+    ]
+    tail = [
+        TailStep("debug logs", "fetch /var/log/messages*", "h"),
+        TailStep("toolchain", "rm -f /usr/bin/gdb", "h"),
+        TailStep("tunnels", "would remove otto tunnels on every tunnel-capable host"),
+    ]
+    assert render_plan("cleanup", plans, tail).splitlines() == [
+        "r",
+        "  h",
+        "    uninstall    agent    sh /opt/agent/uninstall.sh",
+        "    remove tool  kmodcov  sudo rmmod otto_kmodcov",
+        "  not checked:",
+        "    h: product logs: hauled",
+        "after every project",
+        "  h",
+        "    debug logs  fetch /var/log/messages*",
+        "    toolchain   rm -f /usr/bin/gdb",
+        "  lab",
+        "    tunnels     would remove otto tunnels on every tunnel-capable host",
+    ]
+
+
+def test_a_cleanup_with_no_applicable_project_still_prints_its_tail():
+    from otto.project.plan import TailStep
+
+    tail = [TailStep("impairments", "would attempt to clear otto-owned impairments")]
+    assert render_plan("cleanup", [], tail).splitlines() == [
+        "after every project",
+        "  lab",
+        "    impairments  would attempt to clear otto-owned impairments",
+    ]

@@ -18,7 +18,13 @@ from ..host.product import ProductPlan
 from ..instruction_catalog import PREVIEWABLE_INSTRUCTIONS
 from ..params import OptionsSource
 from .actions import ProjectActions, _owned
-from .options import InstallOptions, InstallToolsOptions, UninstallOptions, UninstallToolsOptions
+from .options import (
+    CleanupOptions,
+    InstallOptions,
+    InstallToolsOptions,
+    UninstallOptions,
+    UninstallToolsOptions,
+)
 from .orchestrator import _walk_order
 
 if TYPE_CHECKING:
@@ -53,6 +59,19 @@ class HostPlan:
 
 
 @dataclass
+class TailStep:
+    """One lab-wide step ``cleanup`` takes once, after every project's body.
+
+    *host_id* names the fleet host the step runs on; ``None`` is a step over
+    the whole lab (the impairment reset, the tunnel reap).
+    """
+
+    label: str
+    line: str
+    host_id: str | None = None
+
+
+@dataclass
 class ProjectPlan:
     """One project's hosts, in lab order, and the project-level gaps."""
 
@@ -66,20 +85,26 @@ _HOST_VERBS: dict[str, list[str]] = {
     "uninstall": ["uninstall"],
     "install-tools": ["install_dev_tools"],
     "uninstall-tools": ["uninstall_dev_tools"],
+    "cleanup": ["uninstall", "uninstall_dev_tools"],
 }
 """The ``BaseHost`` methods a real run of each instruction dispatches to; an
 override of any of them on the host's class is a gap."""
 
 
+def _replaced(host: "Host", verb: str) -> str | None:
+    """Name ``<class>.<verb>`` when *host*'s class overrides that ``BaseHost`` method, else None."""
+    cls = type(host)
+    if getattr(cls, verb) is getattr(BaseHost, verb):
+        return None
+    return f"`{cls.__module__}.{cls.__qualname__}.{verb}` replaces the default"
+
+
 def _host_override(host: "Host", name: str) -> str | None:
     """Name the first dispatch method *host*'s class overrides, or None."""
-    cls = type(host)
     for verb in _HOST_VERBS[name]:
-        if getattr(cls, verb) is not getattr(BaseHost, verb):
-            return (
-                f"`{cls.__module__}.{cls.__qualname__}.{verb}` replaces the default; "
-                "its steps are not previewed"
-            )
+        replaced = _replaced(host, verb)
+        if replaced is not None:
+            return f"{replaced}; its steps are not previewed"
     return None
 
 
@@ -123,19 +148,105 @@ def _debug_log_gap(host: "Host") -> str:
     return f"debug logs: {globs} are swept once after every project"
 
 
+def _toolchain_removals(host: "Host") -> list[str]:
+    """Return each ``rm -f`` that :meth:`~otto.host.host.BaseHost.remove_toolchain_tools` runs."""
+    return [f"rm -f {shlex.quote(str(tool.dest / tool.name))}" for tool in host.toolchain.tools]
+
+
 def _toolchain_removal_gap(host: "Host") -> str:
     """Say what the lab-wide toolchain removal runs on *host*: one ``rm -f`` per declared tool."""
-    cls = type(host)
-    if cls.remove_toolchain_tools is not BaseHost.remove_toolchain_tools:
-        return (
-            f"toolchain tools: `{cls.__module__}.{cls.__qualname__}.remove_toolchain_tools` "
-            "replaces the default; its steps are not previewed"
-        )
-    tools = host.toolchain.tools
-    if not tools:
+    replaced = _replaced(host, "remove_toolchain_tools")
+    if replaced is not None:
+        return f"toolchain tools: {replaced}; its steps are not previewed"
+    removals = _toolchain_removals(host)
+    if not removals:
         return "toolchain tools: none declared; nothing is removed"
-    paths = ", ".join(f"rm -f {shlex.quote(str(tool.dest / tool.name))}" for tool in tools)
-    return f"toolchain tools: removed once after every project (--toolchain): {paths}"
+    return f"toolchain tools: removed once after every project (--toolchain): {', '.join(removals)}"
+
+
+_PRODUCT_LOGS_GAP = (
+    "product logs: each product's get_logs files and its debug_log_globs are "
+    "collected before anything is removed"
+)
+
+
+def _add_entries(
+    host: "Host", items: "list[Product] | list[DevTool]", entries: list[ProductPlanEntry]
+) -> list[str]:
+    """Append each item's plan to *entries*; return its unchecked reads, prefixed with its name."""
+    gaps: list[str] = []
+    for item in items:
+        plan = item.plan(host)
+        entries.append(ProductPlanEntry(item.name, plan))
+        gaps += [f"{item.name}: {line}" for line in plan.unchecked]
+    return gaps
+
+
+def _cleanup_host_plan(
+    host: "Host", owner: str, *, uninstall_replaced: bool, product_logs: bool
+) -> HostPlan:
+    """Plan ``cleanup``'s two halves on *host*: *owner*'s products, then its dev tools.
+
+    The product half is ``self.uninstall(...)``, so a project override of
+    ``uninstall`` (*uninstall_replaced*) leaves it unpreviewed and the project
+    names it; a host class override of either host verb is named on the host,
+    and the other half is still previewed.
+    """
+    host_plan = HostPlan(host.id)
+    if not uninstall_replaced:
+        replaced = _host_override(host, "uninstall")
+        if replaced is not None:
+            host_plan.gaps.append(replaced)
+        else:
+            host_plan.gaps += _add_entries(host, _owned(host.products, owner), host_plan.products)
+            if product_logs:
+                host_plan.gaps.append(_PRODUCT_LOGS_GAP)
+    replaced = _host_override(host, "uninstall-tools")
+    if replaced is not None:
+        host_plan.gaps.append(replaced)
+    else:
+        host_plan.gaps += _add_entries(host, _owned(host.dev_tools, owner), host_plan.dev_tools)
+    return host_plan
+
+
+def plan_lab_tail(name: str, ctx: "OttoContext", kwargs: "dict[str, Any]") -> list[TailStep]:
+    """Return the lab-wide steps *name* takes once after every project, in run order.
+
+    Only ``cleanup`` has them: each fleet host's debug-log sweep (with
+    ``--debug-logs``) and toolchain removal, then the impairment reset and the
+    tunnel reap over the whole lab, each only when its flag is on. They run
+    whether or not any project applies. A host class that replaces a step's
+    host verb is named rather than guessed. Nothing here contacts a host, so
+    which links are impaired and which hosts carry a tunnel stay unchecked.
+    """
+    if name != "cleanup":
+        return []
+    opts = OptionsSource.from_kwargs(kwargs).build(CleanupOptions)
+    steps: list[TailStep] = []
+    for host in ctx.all_hosts():
+        if opts.debug_logs:
+            replaced = _replaced(host, "get_debug_logs")
+            if replaced is not None:
+                steps.append(TailStep("debug logs", f"{replaced}; not previewed", host.id))
+            elif host.debug_log_globs:
+                fetched = ", ".join(host.debug_log_globs)
+                steps.append(TailStep("debug logs", f"fetch {fetched}", host.id))
+        replaced = _replaced(host, "remove_toolchain_tools")
+        if replaced is not None:
+            steps.append(TailStep("toolchain", f"{replaced}; not previewed", host.id))
+        else:
+            steps += [TailStep("toolchain", line, host.id) for line in _toolchain_removals(host)]
+    if opts.reset_impairments:
+        steps.append(
+            TailStep(
+                "impairments",
+                "would attempt to clear otto-owned impairments on eligible links "
+                "(live eligibility unchecked)",
+            )
+        )
+    if opts.remove_tunnels:
+        steps.append(TailStep("tunnels", "would remove otto tunnels on every tunnel-capable host"))
+    return steps
 
 
 def plan_instruction(name: str, ctx: "OttoContext", kwargs: "dict[str, Any]") -> list[ProjectPlan]:
@@ -145,7 +256,9 @@ def plan_instruction(name: str, ctx: "OttoContext", kwargs: "dict[str, Any]") ->
     *kwargs* are the CLI's parsed flags, the same mapping the real run builds
     its options from. ``--ensure``, the two log flags and ``--toolchain``
     become gaps; ``--no-dev`` leaves every host's tool list empty, since the
-    real run installs (or removes) no dev tool then.
+    real run installs (or removes) no dev tool then. ``cleanup`` plans each
+    project's products and then its dev tools; its lab-wide steps after every
+    project are :func:`plan_lab_tail`'s.
 
     Raises:
         ValueError: *name* is not an instruction with a preview.
@@ -155,6 +268,7 @@ def plan_instruction(name: str, ctx: "OttoContext", kwargs: "dict[str, Any]") ->
     source = OptionsSource.from_kwargs(kwargs)
     install = source.build(InstallOptions) if name == "install" else None
     logs = source.build(UninstallOptions) if name == "uninstall" else None
+    cleanup = source.build(CleanupOptions) if name == "cleanup" else None
     tools_cls = {"install-tools": InstallToolsOptions, "uninstall-tools": UninstallToolsOptions}
     tools = source.build(tools_cls[name]) if name in tools_cls else None
     plans: list[ProjectPlan] = []
@@ -164,13 +278,37 @@ def plan_instruction(name: str, ctx: "OttoContext", kwargs: "dict[str, Any]") ->
         if install is not None and install.ensure:
             project_plan.gaps.append(_ensure_gap(install.recover_partial))
         overridden = _body_override(actions, body)
+        cls = type(actions)
         if overridden:
-            cls = type(actions)
             project_plan.gaps.append(
                 f"project `{project.name}`: "
                 f"`{cls.__module__}.{cls.__qualname__}.{body.method_name}` "
                 f"replaces the default {name}; its steps are not previewed"
             )
+        if cleanup is not None:
+            # cleanup's product half is ``self.uninstall(...)``: an uninstall
+            # override replaces those steps, and only those.
+            uninstall_replaced = cls.uninstall is not ProjectActions.uninstall
+            if uninstall_replaced and not overridden:
+                project_plan.gaps.append(
+                    f"project `{project.name}`: `{cls.__module__}.{cls.__qualname__}.uninstall` "
+                    "replaces the default uninstall, which cleanup calls; its steps are not "
+                    "previewed"
+                )
+            if not overridden:
+                project_plan.hosts += [
+                    _cleanup_host_plan(
+                        host,
+                        project.name,
+                        uninstall_replaced=uninstall_replaced,
+                        product_logs=cleanup.product_logs,
+                    )
+                    for host in actions.ctx.all_hosts()
+                ]
+            else:
+                project_plan.hosts += [HostPlan(host.id) for host in actions.ctx.all_hosts()]
+            plans.append(project_plan)
+            continue
         for host in actions.ctx.all_hosts():
             host_plan = HostPlan(host.id)
             # ``--no-dev`` never reaches the host verb, so an override of it would
@@ -195,10 +333,7 @@ def plan_instruction(name: str, ctx: "OttoContext", kwargs: "dict[str, Any]") ->
             # A host or project override says the steps are unknown, so the default
             # contract "collected before anything is removed" is not claimed for it.
             if logs is not None and logs.product_logs and override is None and not overridden:
-                host_plan.gaps.append(
-                    "product logs: each product's get_logs files and its debug_log_globs are "
-                    "collected before anything is removed"
-                )
+                host_plan.gaps.append(_PRODUCT_LOGS_GAP)
             if logs is not None and logs.debug_logs:
                 host_plan.gaps.append(_debug_log_gap(host))
             project_plan.hosts.append(host_plan)

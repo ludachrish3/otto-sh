@@ -97,7 +97,13 @@ MARK_ATTR = "__otto_project_instruction__"
 """Attribute ``@instruction`` sets on a ``ProjectActions`` method it decorated."""
 
 
-PREVIEWABLE_INSTRUCTIONS: list[str] = ["install", "uninstall", "install-tools", "uninstall-tools"]
+PREVIEWABLE_INSTRUCTIONS: list[str] = [
+    "install",
+    "uninstall",
+    "cleanup",
+    "install-tools",
+    "uninstall-tools",
+]
 """The project instructions ``dry_run_preview=True`` is honoured for.
 
 These are the names :func:`otto.project.plan.plan_instruction` can plan; it

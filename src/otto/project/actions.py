@@ -396,6 +396,7 @@ class ProjectActions:
         walk="reverse",
         continue_on_failure=True,
         require_dependencies=False,
+        dry_run_preview=True,
     )
     async def cleanup(self, opts: CleanupOptions) -> Result:
         """Uninstall this project's products, then remove its dev tools.

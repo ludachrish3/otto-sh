@@ -1,4 +1,4 @@
-"""``otto -n run install|uninstall|install-tools|uninstall-tools`` prints the plan first.
+"""``otto -n run install|uninstall|cleanup|install-tools|uninstall-tools`` prints the plan first.
 
 The plan comes before the dry-run block.
 """
@@ -60,7 +60,7 @@ def test_dry_run_install_prints_the_plan_then_the_standard_block(run_cli):
     assert "would run: run install" in _flat(out)
 
 
-@pytest.mark.parametrize("name", ["uninstall", "install-tools", "uninstall-tools"])
+@pytest.mark.parametrize("name", ["uninstall", "cleanup", "install-tools", "uninstall-tools"])
 def test_the_other_previewed_verbs_plan_under_their_own_name(run_cli, name):
     with patch("otto.project.plan.plan_instruction", side_effect=_canned) as planned:
         dry = run_cli(["run", name], dry_run=True)
@@ -128,3 +128,60 @@ def test_the_leaf_drives_the_real_planner_over_a_lab_without_contacting_the_host
     assert f"PUT {tmp_path}/agent.tar.gz -> /opt/stage" in dry.output
     assert "sh install" in dry.output
     assert dry.output.index("test1") < dry.output.index("dry run: no command body was run")
+
+
+def test_a_dry_run_cleanup_previews_every_removal_host_by_host(monkeypatch, tmp_path):
+    """The real planner end to end: products, then dev tools, then the lab's own tail.
+
+    A shell product and a scripted dev tool on a double host that fails if
+    contacted; the cleanup body never runs.
+    """
+    from otto.cli.run import run_app
+    from otto.context import OttoContext, reset_context, set_context
+    from otto.declared import DeclaredEntry
+    from otto.host.product import PRODUCT_KIND_BUILDER
+    from otto.invocation import RunPolicy
+    from otto.labs.loader import Lab
+    from tests._fixtures.dispatch import DispatchRunner
+    from tests.unit.project.test_plan import _Host, _plan, _Planned
+
+    (tmp_path / "agent.tar.gz").write_bytes(b"x")
+    entry = DeclaredEntry(
+        name="agent",
+        kind="shell",
+        seam="products",
+        owner="r1",
+        base_dir=tmp_path,
+        match={},
+        params={
+            "artifact": "agent.tar.gz",
+            "stage_dir": "/opt/stage",
+            "install": "sh install",
+            "uninstall": "sh uninstall",
+        },
+    )
+    host = _Host("test1", globs=["/var/log/agent.log"])
+    product = PRODUCT_KIND_BUILDER.build([entry], host)[0]
+    product.owner = "r1"
+    host.products = [product]
+    host.dev_tools = [_Planned("kmodcov", "r1", _plan(uninstall=["sudo rmmod otto_kmodcov"]))]
+    ctx = OttoContext(lab=Lab(name="bench", hosts={host.id: host}), policy=RunPolicy(dry_run=True))
+    patch_bootstrap(monkeypatch, [fake_project("r1", project_scope=None, root=tmp_path)])
+    token = set_context(ctx)
+    try:
+        dry = DispatchRunner().invoke(run_app, ["cleanup"], async_leaves=True)
+    finally:
+        reset_context(token)
+    assert dry.exit_code == 0, dry.output
+    out = dry.output
+    order = [
+        "uninstall    agent    sh uninstall",
+        "remove tool  kmodcov  sudo rmmod otto_kmodcov",
+        "after every project",
+        "debug logs   fetch /var/log/agent.log",
+        "impairments  would attempt to clear otto-owned impairments",
+        "tunnels      would remove otto tunnels",
+        "dry run: no command body was run",
+    ]
+    positions = [out.index(line) for line in order]
+    assert positions == sorted(positions), out

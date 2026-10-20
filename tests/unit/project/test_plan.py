@@ -7,6 +7,7 @@ import pytest
 from otto.context import OttoContext
 from otto.host.host import BaseHost
 from otto.host.product import ProductPlan
+from otto.host.toolchain import Toolchain
 from otto.project.actions import ProjectActions, register_project_actions
 from otto.project.options import InstallOptions
 from otto.project.plan import HostPlan, ProductPlanEntry, ProjectPlan, plan_instruction
@@ -36,6 +37,7 @@ class _Host(BaseHost):
         self.products = list(products)
         self.dev_tools = list(dev_tools)
         self.debug_log_globs = list(globs)
+        self.toolchain = Toolchain()
 
     async def _exec_one(self, *a, **k):  # pragma: no cover — never reached by a plan
         raise AssertionError("a plan contacted the host")
@@ -313,6 +315,7 @@ def test_each_project_is_previewed_on_its_own_view_of_the_fleet(monkeypatch):
         ("uninstall", "uninstall"),
         ("install-tools", "install_dev_tools"),
         ("uninstall-tools", "uninstall_dev_tools"),
+        ("cleanup", "uninstall"),
     ],
 )
 def test_every_dispatched_host_method_override_is_a_gap(monkeypatch, instruction_name, method):
@@ -446,3 +449,181 @@ def test_the_previewable_names_are_exactly_the_ones_the_planner_walks():
     from otto.project.plan import _HOST_VERBS
 
     assert sorted(PREVIEWABLE_INSTRUCTIONS) == sorted(_HOST_VERBS)
+
+
+# ── cleanup ──────────────────────────────────────────────────────────────
+
+_LOGS_GAP = (
+    "product logs: each product's get_logs files and its debug_log_globs are "
+    "collected before anything is removed"
+)
+
+
+def _cleanup_host(host_cls=None, **kw):
+    product = _Planned("agent", "r1", _plan(uninstall=["sh uninstall"]))
+    tool = _Planned("kmodcov", "r1", _plan(uninstall=["sudo rmmod otto_kmodcov"]))
+    theirs = _Planned("their-tool", "r2", _plan(uninstall=["never"]))
+    return (host_cls or _Host)("h1", products=[product], dev_tools=[tool, theirs], **kw)
+
+
+def test_cleanup_lists_each_projects_products_then_its_dev_tools(monkeypatch):
+    ctx = _Ctx([_cleanup_host()])
+    _wire(monkeypatch, ["r1"], ctx)
+    [project] = plan_instruction("cleanup", ctx, {})
+    [host] = project.hosts
+    assert [e.name for e in host.products] == ["agent"]
+    assert [e.name for e in host.dev_tools] == ["kmodcov"]
+    assert host.gaps == [_LOGS_GAP]
+    assert project.gaps == []
+
+
+def test_cleanup_walks_projects_in_reverse(monkeypatch):
+    ctx = _Ctx([_Host("h1")])
+    _wire(monkeypatch, ["r1", "r2"], ctx)
+    assert [p.project for p in plan_instruction("cleanup", ctx, {})] == ["r2", "r1"]
+
+
+def test_cleanup_no_product_logs_drops_the_haul_gap(monkeypatch):
+    ctx = _Ctx([_cleanup_host()])
+    _wire(monkeypatch, ["r1"], ctx)
+    [project] = plan_instruction("cleanup", ctx, {"product_logs": False})
+    assert project.hosts[0].gaps == []
+
+
+def test_an_uninstall_override_is_cleanups_product_half_only(monkeypatch):
+    # cleanup's product half IS self.uninstall(...), so a project's uninstall
+    # override replaces those steps; its dev-tool half is still otto's.
+    class _OwnUninstall(ProjectActions):
+        async def uninstall(self, opts):  # pragma: no cover
+            return Result(Status.Success)
+
+    with registering_project("r1"):
+        register_project_actions(_OwnUninstall, overwrite=True)
+    ctx = _Ctx([_cleanup_host()])
+    _wire(monkeypatch, ["r1"], ctx)
+    [project] = plan_instruction("cleanup", ctx, {})
+    [host] = project.hosts
+    assert host.products == []
+    assert [e.name for e in host.dev_tools] == ["kmodcov"]
+    assert host.gaps == []  # the override's log haul is its own
+    cls = _OwnUninstall
+    assert project.gaps == [
+        (
+            f"project `r1`: `{cls.__module__}.{cls.__qualname__}.uninstall` replaces the "
+            "default uninstall, which cleanup calls; its steps are not previewed"
+        )
+    ]
+
+
+def test_a_cleanup_override_is_both_halves(monkeypatch):
+    class _OwnCleanup(ProjectActions):
+        async def cleanup(self, opts):  # pragma: no cover
+            return Result(Status.Success)
+
+    with registering_project("r1"):
+        register_project_actions(_OwnCleanup, overwrite=True)
+    ctx = _Ctx([_cleanup_host()])
+    _wire(monkeypatch, ["r1"], ctx)
+    [project] = plan_instruction("cleanup", ctx, {})
+    assert project.hosts == [HostPlan("h1")]
+    cls = _OwnCleanup
+    assert project.gaps == [
+        (
+            f"project `r1`: `{cls.__module__}.{cls.__qualname__}.cleanup` replaces the "
+            "default cleanup; its steps are not previewed"
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    ("method", "previewed"), [("uninstall", "dev_tools"), ("uninstall_dev_tools", "products")]
+)
+def test_a_host_override_of_one_half_leaves_the_other_previewed(monkeypatch, method, previewed):
+    async def _replacement(self, *a, **k):  # pragma: no cover
+        return Result(Status.Success)
+
+    host_cls = type("_OneHalf", (_Host,), {method: _replacement})
+    ctx = _Ctx([_cleanup_host(host_cls)])
+    _wire(monkeypatch, ["r1"], ctx)
+    [project] = plan_instruction("cleanup", ctx, {"product_logs": False})
+    [host] = project.hosts
+    assert [e.name for e in getattr(host, previewed)]
+    replaced = "dev_tools" if previewed == "products" else "products"
+    assert getattr(host, replaced) == []
+    assert host.gaps == [
+        (
+            f"`{host_cls.__module__}.{host_cls.__qualname__}.{method}` replaces the default; "
+            "its steps are not previewed"
+        )
+    ]
+
+
+def _tail_host(host_cls=None):
+    from pathlib import Path
+
+    from otto.host.toolchain import Toolchain, ToolchainTool
+
+    host = (host_cls or _Host)("h1", globs=["/var/log/messages*"])
+    host.toolchain = Toolchain(
+        tools=[ToolchainTool(name="gdb", source=Path("/x/arm-gdb"), dest=Path("/usr/bin"))]
+    )
+    return host
+
+
+def test_cleanup_tail_names_the_lab_wide_steps_in_order(monkeypatch):
+    from otto.project.plan import TailStep, plan_lab_tail
+
+    ctx = _Ctx([_tail_host(), _Host("h2")])
+    _wire(monkeypatch, [], ctx)  # no project applies: the tail still runs
+    assert plan_lab_tail("cleanup", ctx, {}) == [
+        TailStep("debug logs", "fetch /var/log/messages*", "h1"),
+        TailStep("toolchain", "rm -f /usr/bin/gdb", "h1"),
+        TailStep(
+            "impairments",
+            "would attempt to clear otto-owned impairments on eligible links "
+            "(live eligibility unchecked)",
+        ),
+        TailStep("tunnels", "would remove otto tunnels on every tunnel-capable host"),
+    ]
+
+
+def test_cleanup_tail_honours_each_flag(monkeypatch):
+    from otto.project.plan import TailStep, plan_lab_tail
+
+    ctx = _Ctx([_tail_host()])
+    _wire(monkeypatch, [], ctx)
+    flags = {"debug_logs": False, "reset_impairments": False, "remove_tunnels": False}
+    assert plan_lab_tail("cleanup", ctx, flags) == [
+        TailStep("toolchain", "rm -f /usr/bin/gdb", "h1")
+    ]
+
+
+def test_cleanup_tail_names_a_host_override_instead_of_guessing(monkeypatch):
+    from otto.project.plan import TailStep, plan_lab_tail
+
+    async def _replacement(self, *a, **k):  # pragma: no cover
+        return Result(Status.Success)
+
+    host_cls = type(
+        "_OwnTail",
+        (_Host,),
+        {"get_debug_logs": _replacement, "remove_toolchain_tools": _replacement},
+    )
+    ctx = _Ctx([_tail_host(host_cls)])
+    _wire(monkeypatch, [], ctx)
+    flags = {"reset_impairments": False, "remove_tunnels": False}
+    where = f"{host_cls.__module__}.{host_cls.__qualname__}"
+    replaced = "replaces the default; not previewed"
+    assert plan_lab_tail("cleanup", ctx, flags) == [
+        TailStep("debug logs", f"`{where}.get_debug_logs` {replaced}", "h1"),
+        TailStep("toolchain", f"`{where}.remove_toolchain_tools` {replaced}", "h1"),
+    ]
+
+
+def test_only_cleanup_has_a_lab_tail(monkeypatch):
+    from otto.project.plan import plan_lab_tail
+
+    ctx = _Ctx([_tail_host()])
+    _wire(monkeypatch, [], ctx)
+    for name in ("install", "uninstall", "install-tools", "uninstall-tools"):
+        assert plan_lab_tail(name, ctx, {}) == []

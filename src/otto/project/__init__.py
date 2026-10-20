@@ -48,7 +48,9 @@ if TYPE_CHECKING:
     from .plan import HostPlan as HostPlan
     from .plan import ProductPlanEntry as ProductPlanEntry
     from .plan import ProjectPlan as ProjectPlan
+    from .plan import TailStep as TailStep
     from .plan import plan_instruction as plan_instruction
+    from .plan import plan_lab_tail as plan_lab_tail
     from .state import Cleanliness as Cleanliness
     from .state import CleanlinessItem as CleanlinessItem
     from .state import CleanlinessKind as CleanlinessKind
@@ -87,7 +89,9 @@ _LAZY_ATTRS: dict[str, str] = {
     "HostPlan": "otto.project.plan",
     "ProductPlanEntry": "otto.project.plan",
     "ProjectPlan": "otto.project.plan",
+    "TailStep": "otto.project.plan",
     "plan_instruction": "otto.project.plan",
+    "plan_lab_tail": "otto.project.plan",
     "Cleanliness": "otto.project.state",
     "CleanlinessItem": "otto.project.state",
     "CleanlinessKind": "otto.project.state",
@@ -131,6 +135,7 @@ __all__ = [
     "ProjectScopeSummary",
     "ProjectStatus",
     "StatusOptions",
+    "TailStep",
     "UninstallOptions",
     "UninstallToolsOptions",
     "actions_for",
@@ -146,6 +151,7 @@ __all__ = [
     "is_clean",
     "is_uninstalled",
     "plan_instruction",
+    "plan_lab_tail",
     "register_project_actions",
     "status",
     "uninstall",

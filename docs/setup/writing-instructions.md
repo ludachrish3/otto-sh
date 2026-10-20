@@ -465,8 +465,8 @@ What the decorator on a method does differently:
 - The walk-shape keywords — `walk`, `continue_on_failure`,
   `require_dependencies`, `dry_run_preview`, `combine_results` and `render` — are fixed by the
   **first** declaration of the name (`dry_run_preview` is honoured only for
-  otto's `install`, `uninstall`, `install-tools` and `uninstall-tools`, and
-  refused on any other name). otto's seven instructions are fixed before a project can speak; a project restating one of them fails at init, naming the keyword. A project
+  otto's `install`, `uninstall`, `cleanup`, `install-tools` and
+  `uninstall-tools`, and refused on any other name). otto's seven instructions are fixed before a project can speak; a project restating one of them fails at init, naming the keyword. A project
   declaring a new name sets them, and the next project to declare that name
   inherits them. Each keyword's meaning is tabulated under [Your project's flags on
   a default](../cli/run/defaults.md#your-projects-flags-on-a-default).

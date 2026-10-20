@@ -21,7 +21,7 @@ import typer
 from otto import options
 from otto.instruction_catalog import INSTRUCTIONS, PROJECT_INSTRUCTIONS, ProjectInstructionError
 from otto.instructions import instruction
-from otto.project import InstallOptions, ProjectActions, register_project_actions
+from otto.project import CleanupOptions, InstallOptions, ProjectActions, register_project_actions
 from otto.registry import registering_project
 
 
@@ -171,6 +171,15 @@ def test_the_shipped_install_verbs_opt_in_to_the_dry_run_preview():
         "install-tools": True,
         "uninstall-tools": True,
         "status": False,
-        "cleanup": False,
+        "cleanup": True,
         "get-logs": False,
     }
+
+
+def test_a_cleanup_override_restating_the_old_no_preview_is_refused():
+    """``cleanup`` previews now, so an override that still says ``dry_run_preview=False`` fails.
+
+    The remedy is to delete the keyword: an override inherits the walk shape.
+    """
+    with pytest.raises(ProjectInstructionError, match=r"dry_run_preview.*'acme'"):
+        _declare("acme", "cleanup", CleanupOptions, dry_run_preview=False)
