@@ -8,7 +8,7 @@ from otto.declared import DeclaredEntry
 from otto.host import kmod_kind, kmod_tool_kind  # noqa: F401 — imports register the kinds
 from otto.host.dev_tool import DEV_TOOL_KIND_BUILDER
 from otto.host.kmod_kind import KmodProduct
-from otto.host.kmod_tool_kind import KmodTool
+from otto.host.kmod_tool_kind import SUDO_ASSUMED, KmodTool
 from otto.host.product import LOGIN_HOME_PLACEHOLDER, PRODUCT_KIND_BUILDER
 from otto.kmodcov import INTERFACE
 
@@ -233,11 +233,16 @@ def test_module_coverage_without_a_kmodcov_tool_is_a_refusal_not_a_guess(plan_re
     product = _kmod(host, tmp_path, coverage="module")
     plan = product.plan(host)
     assert plan.install == []
+    # The refusal is the install's: a module someone loaded by hand is still
+    # unloaded by uninstall, so the plan still shows that unload.
+    assert plan.uninstall == ["sudo rmmod kcov"]
     assert plan.unchecked == [
         (
             'coverage = "module" needs otto_kmodcov on host h1, and no [[dev_tools]] entry of '
             "kind 'kmodcov' matches that host: the install is refused"
-        )
+        ),
+        "whether kcov is resident on h1 (cat /proc/modules): uninstall runs rmmod only then",
+        SUDO_ASSUMED.format(host="h1"),
     ]
 
 
@@ -441,12 +446,30 @@ def test_a_host_with_no_login_home_refuses_the_load_instead_of_planning_one(tmp_
             "has no login home to fall back on: the install is refused"
         )
     ]
+    # The refusal is the install's: the unload needs no stage dir, so a refused
+    # install still plans the uninstall it really runs.
     for plan in (
         KmodProduct(name="kcov", artifact=tmp_path / "kcov.ko").plan(host),
         KmodProduct(name="kcov", artifact=tmp_path / "kcov.ko", coverage="module").plan(host),
     ):
-        assert plan.stage == plan.install == plan.uninstall == []
-        assert plan.unchecked == refusal
+        assert plan.stage == plan.install == []
+        assert plan.uninstall == ["sudo rmmod kcov"]
+        assert plan.unchecked == [
+            *refusal,
+            (
+                "whether kcov is resident on board1 (cat /proc/modules): "
+                "uninstall runs rmmod only then"
+            ),
+            SUDO_ASSUMED.format(host="board1"),
+        ]
     tool = KmodTool(name="helper", artifact=tmp_path / "helper.ko").plan(host)
-    assert tool.install == tool.uninstall == []
-    assert tool.unchecked == [refusal[0].replace("product 'kcov'", "dev tool 'helper'")]
+    assert tool.install == []
+    assert tool.uninstall == ["sudo rmmod helper"]
+    assert tool.unchecked == [
+        refusal[0].replace("product 'kcov'", "dev tool 'helper'"),
+        (
+            "whether helper is already resident on board1 (cat /proc/modules): "
+            "install skips a resident module, uninstall runs rmmod only for one"
+        ),
+        SUDO_ASSUMED.format(host="board1"),
+    ]

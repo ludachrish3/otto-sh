@@ -196,23 +196,27 @@ class KmodTool(DevTool):
         """
         host_id = getattr(host, "id", "?")
         elevated = elevates(host)
-        where = planned_stage_dir(self.stage_dir, host, who=f"dev tool {self.name!r}")
-        if where.refusal is not None:
-            return ProductPlan(unchecked=[where.refusal])
         resident = (
             f"whether {self.module_name} is already resident on {host_id} (cat /proc/modules): "
         )
+        unchecked = (
+            [resident + "the library is loaded only when it is not"]
+            if as_library
+            else [
+                resident + "install skips a resident module, uninstall runs rmmod only for one",
+                *([SUDO_ASSUMED.format(host=host_id)] if elevated else []),
+            ]
+        )
+        unload = [unload_line(self.module_name, elevated=elevated)]
+        where = planned_stage_dir(self.stage_dir, host, who=f"dev tool {self.name!r}")
+        if where.refusal is not None:
+            # The refusal is the install's: rmmod needs no stage dir, so the
+            # unload uninstall really runs is still planned.
+            return ProductPlan(uninstall=unload, unchecked=[where.refusal, *unchecked])
         plan = ProductPlan(
             install=load_lines(self.artifact, where.directory, self.params, elevated=elevated),
-            uninstall=[unload_line(self.module_name, elevated=elevated)],
-            unchecked=(
-                [resident + "the library is loaded only when it is not"]
-                if as_library
-                else [
-                    resident + "install skips a resident module, uninstall runs rmmod only for one",
-                    *([SUDO_ASSUMED.format(host=host_id)] if elevated else []),
-                ]
-            ),
+            uninstall=unload,
+            unchecked=unchecked,
         )
         if where.unchecked is not None:
             plan.unchecked.insert(0, where.unchecked)

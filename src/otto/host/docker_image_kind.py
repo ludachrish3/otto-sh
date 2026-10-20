@@ -291,9 +291,15 @@ class DockerImageProduct(ShellProduct):
         host_id = getattr(host, "id", "?")
         plan = ProductPlan(unchecked=[f"that docker is on {host_id}'s PATH (command -v docker)"])
         if self.is_tarball:
+            uninstall = [self._rm_command(), self._rmi_command("<image the container ran>")]
+            image_gap = (
+                "the image to remove, read from the container (docker container inspect "
+                f"{self.container_name}); no running container means no `docker rmi`"
+            )
             where = planned_stage_dir(self.stage_dir, host, who=f"product {self.name!r}")
             if where.refusal is not None:
-                return ProductPlan(unchecked=[where.refusal])
+                # The refusal is the install's: uninstall needs no stage dir.
+                return ProductPlan(uninstall=uninstall, unchecked=[where.refusal, image_gap])
             if where.unchecked is not None:
                 plan.unchecked.insert(0, where.unchecked)
             staged = str(PurePosixPath(where.directory) / self.artifact.name)
@@ -303,16 +309,13 @@ class DockerImageProduct(ShellProduct):
                 self._cleanup_command(staged),
                 self._run_command("<loaded image>"),
             ]
-            plan.uninstall = [self._rm_command(), self._rmi_command("<image the container ran>")]
+            plan.uninstall = uninstall
             plan.unchecked += [
                 (
                     "the reference `docker load` prints, which `docker run` then names "
                     "(<loaded image>)"
                 ),
-                (
-                    "the image to remove, read from the container (docker container inspect "
-                    f"{self.container_name}); no running container means no `docker rmi`"
-                ),
+                image_gap,
             ]
             return plan
         if self.pull:

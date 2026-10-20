@@ -213,37 +213,42 @@ class KmodProduct(ShellProduct):
 
         A host with no kmodcov tool refuses the install, so that plan has no load lines. The
         library is embedded with its install only: cleanup, not this product, unloads it.
+
+        A refused install still plans its unload: ``rmmod`` needs no stage dir and no
+        library, and :meth:`uninstall` runs it all the same.
         """
         host_id = getattr(host, "id", "?")
         elevated = elevates(host)
         params = self.params
-        where = planned_stage_dir(self.stage_dir, host, who=f"product {self.name!r}")
-        if where.refusal is not None:
-            return ProductPlan(unchecked=[where.refusal])
-        plan = ProductPlan()
-        if self.coverage == "module":
-            tool = kmodcov_tool_for(host)
-            if tool is None:
-                plan.unchecked.append(
-                    f'coverage = "module" needs otto_kmodcov on host {host_id}, and no '
-                    "[[dev_tools]] entry of kind 'kmodcov' matches that host: "
-                    "the install is refused"
-                )
-                return plan
-            library = tool.plan(host, as_library=True)
-            plan.install += library.install
-            plan.unchecked += library.unchecked
-            # The same one-argument quoting install() applies.
-            params = f"{params} {shlex.quote(f'cov_dir={cov_dir_of(self)}')}".strip()
-        plan.install += load_lines(self.artifact, where.directory, params, elevated=elevated)
-        plan.uninstall = [unload_line(self.module_name, elevated=elevated)]
-        plan.unchecked += [
+        unload = [unload_line(self.module_name, elevated=elevated)]
+        unload_gaps = [
             (
                 f"whether {self.module_name} is resident on {host_id} (cat /proc/modules): "
                 "uninstall runs rmmod only then"
             ),
             *([SUDO_ASSUMED.format(host=host_id)] if elevated else []),
         ]
+        where = planned_stage_dir(self.stage_dir, host, who=f"product {self.name!r}")
+        if where.refusal is not None:
+            return ProductPlan(uninstall=unload, unchecked=[where.refusal, *unload_gaps])
+        plan = ProductPlan()
+        if self.coverage == "module":
+            tool = kmodcov_tool_for(host)
+            if tool is None:
+                refused = (
+                    f'coverage = "module" needs otto_kmodcov on host {host_id}, and no '
+                    "[[dev_tools]] entry of kind 'kmodcov' matches that host: "
+                    "the install is refused"
+                )
+                return ProductPlan(uninstall=unload, unchecked=[refused, *unload_gaps])
+            library = tool.plan(host, as_library=True)
+            plan.install += library.install
+            plan.unchecked += library.unchecked
+            # The same one-argument quoting install() applies.
+            params = f"{params} {shlex.quote(f'cov_dir={cov_dir_of(self)}')}".strip()
+        plan.install += load_lines(self.artifact, where.directory, params, elevated=elevated)
+        plan.uninstall = unload
+        plan.unchecked += unload_gaps
         if where.unchecked is not None:
             plan.unchecked.insert(0, where.unchecked)
         return plan

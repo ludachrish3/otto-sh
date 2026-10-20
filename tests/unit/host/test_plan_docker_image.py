@@ -129,12 +129,21 @@ def test_a_tarball_on_a_host_with_no_login_home_is_a_refusal():
         id = "board1"
 
     plan = _image(_NoHome(), "images/web.tar").plan(_NoHome())
-    assert plan.stage == plan.install == plan.uninstall == []
+    assert plan.stage == plan.install == []
+    # The refusal is the install's: uninstall needs no stage dir and still runs.
+    assert plan.uninstall == [
+        "docker rm -f web",
+        "docker rmi <image the container ran>",
+    ]
     assert plan.unchecked == [
         (
             "product 'web' declares no stage_dir and board1 no default_dest_dir, and board1 "
             "has no login home to fall back on: the install is refused"
-        )
+        ),
+        (
+            "the image to remove, read from the container (docker container inspect web); "
+            "no running container means no `docker rmi`"
+        ),
     ]
 
 
