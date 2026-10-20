@@ -409,8 +409,8 @@ subcommand. A **project instruction** is the other kind — `@instruction` on a
 body *per project*; `otto run <name>` runs every applicable project's body in
 dependency order.
 
-otto's six defaults — `install`, `uninstall`, `cleanup`, `get-logs`,
-`install-tools` and `status` — are project instructions otto declares on
+otto's seven defaults — `install`, `uninstall`, `cleanup`, `get-logs`,
+`install-tools`, `uninstall-tools` and `status` — are project instructions otto declares on
 `ProjectActions` itself, before any project's init module is imported. A project
 overrides one, or adds a project instruction of its own, by the same decorator:
 
@@ -465,14 +465,14 @@ What the decorator on a method does differently:
 - The walk-shape keywords — `walk`, `continue_on_failure`,
   `require_dependencies`, `dry_run_preview`, `combine_results` and `render` — are fixed by the
   **first** declaration of the name (`dry_run_preview` is honoured only for
-  otto's `install`, `uninstall` and `install-tools`, and refused on any other
-  name). otto's six instructions are fixed before a project can speak; a project restating one of them fails at init, naming the keyword. A project
+  otto's `install`, `uninstall`, `install-tools` and `uninstall-tools`, and
+  refused on any other name). otto's seven instructions are fixed before a project can speak; a project restating one of them fails at init, naming the keyword. A project
   declaring a new name sets them, and the next project to declare that name
   inherits them. Each keyword's meaning is tabulated under [Your project's flags on
   a default](../cli/run/defaults.md#your-projects-flags-on-a-default).
 - An override of a first-party name **must** pass an `options=` class that
   inherits the first-party class for that name
-  (`InstallOptions` and its five siblings, all
+  (`InstallOptions` and its six siblings, all
   exported from `otto.project`); registration refuses anything else. A project's
   own new name has no base and declares freely.
 
@@ -484,7 +484,7 @@ cross-project collision looks like, and where a shared base class belongs are in
 ## The collision error
 
 A **standalone** instruction may not take a project instruction's name — any of
-them, otto's six and a project's own alike. Otto refuses it while that project's init
+them, otto's seven and a project's own alike. Otto refuses it while that project's init
 modules are being imported:
 
 ```text

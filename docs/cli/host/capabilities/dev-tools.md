@@ -7,10 +7,10 @@ Tooling is not product: it lives in its own list and is never part of
 `is_installed()`'s answer. The two kinds of tooling are declared and owned
 differently:
 
-| Kind | Declared | Owned by | Installed by |
-|------|----------|----------|--------------|
-| **Dev tool** | in `settings.toml` (`[[dev_tools]]`, {doc}`../../../configuration/declared-products-tools`) or in code, via a provider | the project that declared/registered it | `install-tools` (on by default) |
-| **Toolchain tool** | in lab data, per host | the host — shared by every project | `install-tools --toolchain` |
+| Kind | Declared | Owned by | Installed by | Removed by |
+|------|----------|----------|--------------|------------|
+| **Dev tool** | in `settings.toml` (`[[dev_tools]]`, {doc}`../../../configuration/declared-products-tools`) or in code, via a provider | the project that declared/registered it | `install-tools` (on by default) | `uninstall-tools` (on by default), `cleanup` |
+| **Toolchain tool** | in lab data, per host | the host — shared by every project | `install-tools --toolchain` | `uninstall-tools --toolchain`, `cleanup` |
 
 | Method | Behavior |
 |--------|----------|
@@ -22,4 +22,5 @@ differently:
 | `await host.toolchain_tools_absent()` | True iff none of them is present — the host-wide half of `is_clean()`. |
 
 `install-tools` installs dev tools by default; toolchain tools only when asked
-for with `--toolchain`.
+for with `--toolchain`. `otto run uninstall-tools` is its removal twin across
+the lab; `otto run uninstall` leaves dev tools installed.

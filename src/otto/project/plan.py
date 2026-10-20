@@ -9,6 +9,7 @@ a project whose actions override the body, a host class that overrides the verb,
 ``--ensure``'s "already installed" check, the log hauls.
 """
 
+import shlex
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -17,7 +18,7 @@ from ..host.product import ProductPlan
 from ..instruction_catalog import PREVIEWABLE_INSTRUCTIONS
 from ..params import OptionsSource
 from .actions import ProjectActions, _owned
-from .options import InstallOptions, InstallToolsOptions, UninstallOptions
+from .options import InstallOptions, InstallToolsOptions, UninstallOptions, UninstallToolsOptions
 from .orchestrator import _walk_order
 
 if TYPE_CHECKING:
@@ -38,11 +39,17 @@ class ProductPlanEntry:
 
 @dataclass
 class HostPlan:
-    """What one host would do for one project, and what could not be checked."""
+    """What one host would do for one project, and what could not be checked.
+
+    ``products`` holds what the instruction installs or removes (for
+    ``install-tools``, the dev tools it installs); ``dev_tools`` holds the dev
+    tools a removal takes off (``uninstall-tools``).
+    """
 
     host_id: str
     products: list[ProductPlanEntry] = field(default_factory=list)
     gaps: list[str] = field(default_factory=list)
+    dev_tools: list[ProductPlanEntry] = field(default_factory=list)
 
 
 @dataclass
@@ -58,6 +65,7 @@ _HOST_VERBS: dict[str, list[str]] = {
     "install": ["stage", "install"],
     "uninstall": ["uninstall"],
     "install-tools": ["install_dev_tools"],
+    "uninstall-tools": ["uninstall_dev_tools"],
 }
 """The ``BaseHost`` methods a real run of each instruction dispatches to; an
 override of any of them on the host's class is a gap."""
@@ -85,9 +93,13 @@ def _body_override(actions: ProjectActions, body: "ProjectInstructionBody") -> b
     return getattr(type(actions), body.method_name) is not getattr(ProjectActions, body.method_name)
 
 
+_TOOL_INSTRUCTIONS = ("install-tools", "uninstall-tools")
+"""The previewed instructions that act on dev tools rather than products."""
+
+
 def _attached(host: "Host", name: str, owner: str) -> "list[Product] | list[DevTool]":
-    """Return what *host* attaches for *owner*: dev tools for ``install-tools``, else products."""
-    if name == "install-tools":
+    """Return what *host* attaches for *owner*: dev tools for the tool verbs, else products."""
+    if name in _TOOL_INSTRUCTIONS:
         return _owned(host.dev_tools, owner)
     return _owned(host.products, owner)
 
@@ -111,13 +123,29 @@ def _debug_log_gap(host: "Host") -> str:
     return f"debug logs: {globs} are swept once after every project"
 
 
-def plan_instruction(name: str, ctx: "OttoContext", kwargs: "dict[str, Any]") -> list[ProjectPlan]:
-    """Collect every project's plan for *name* (``install``, ``uninstall`` or ``install-tools``).
+def _toolchain_removal_gap(host: "Host") -> str:
+    """Say what the lab-wide toolchain removal runs on *host*: one ``rm -f`` per declared tool."""
+    cls = type(host)
+    if cls.remove_toolchain_tools is not BaseHost.remove_toolchain_tools:
+        return (
+            f"toolchain tools: `{cls.__module__}.{cls.__qualname__}.remove_toolchain_tools` "
+            "replaces the default; its steps are not previewed"
+        )
+    tools = host.toolchain.tools
+    if not tools:
+        return "toolchain tools: none declared; nothing is removed"
+    paths = ", ".join(f"rm -f {shlex.quote(str(tool.dest / tool.name))}" for tool in tools)
+    return f"toolchain tools: removed once after every project (--toolchain): {paths}"
 
+
+def plan_instruction(name: str, ctx: "OttoContext", kwargs: "dict[str, Any]") -> list[ProjectPlan]:
+    """Collect every project's plan for *name*, an instruction with a preview.
+
+    *name* is one of :data:`~otto.instruction_catalog.PREVIEWABLE_INSTRUCTIONS`.
     *kwargs* are the CLI's parsed flags, the same mapping the real run builds
     its options from. ``--ensure``, the two log flags and ``--toolchain``
-    become gaps; ``--no-dev`` leaves every host's product list empty, since the
-    real run installs no dev tool then.
+    become gaps; ``--no-dev`` leaves every host's tool list empty, since the
+    real run installs (or removes) no dev tool then.
 
     Raises:
         ValueError: *name* is not an instruction with a preview.
@@ -127,7 +155,8 @@ def plan_instruction(name: str, ctx: "OttoContext", kwargs: "dict[str, Any]") ->
     source = OptionsSource.from_kwargs(kwargs)
     install = source.build(InstallOptions) if name == "install" else None
     logs = source.build(UninstallOptions) if name == "uninstall" else None
-    tools = source.build(InstallToolsOptions) if name == "install-tools" else None
+    tools_cls = {"install-tools": InstallToolsOptions, "uninstall-tools": UninstallToolsOptions}
+    tools = source.build(tools_cls[name]) if name in tools_cls else None
     plans: list[ProjectPlan] = []
     for project, actions, body in _walk_order(name, ctx, ctx.ordered_projects, announce=False):
         project_plan = ProjectPlan(project.name)
@@ -144,22 +173,25 @@ def plan_instruction(name: str, ctx: "OttoContext", kwargs: "dict[str, Any]") ->
             )
         for host in actions.ctx.all_hosts():
             host_plan = HostPlan(host.id)
-            # ``install-tools --no-dev`` never reaches the host verb, so an override
-            # of it would name a step that does not run.
+            # ``--no-dev`` never reaches the host verb, so an override of it would
+            # name a step that does not run.
             dispatches = not overridden and (tools is None or tools.dev)
             override = _host_override(host, name) if dispatches else None
+            entries = host_plan.dev_tools if name == "uninstall-tools" else host_plan.products
             if override is not None:
                 host_plan.gaps.append(override)
             elif dispatches:
                 for item in _attached(host, name, project.name):
                     plan = item.plan(host)
-                    host_plan.products.append(ProductPlanEntry(item.name, plan))
+                    entries.append(ProductPlanEntry(item.name, plan))
                     host_plan.gaps += [f"{item.name}: {line}" for line in plan.unchecked]
-            if tools is not None and tools.toolchain:
+            if isinstance(tools, InstallToolsOptions) and tools.toolchain:
                 host_plan.gaps.append(
                     "toolchain tools: installed on this host once after every project "
                     "(--toolchain); not previewed"
                 )
+            if isinstance(tools, UninstallToolsOptions) and tools.toolchain:
+                host_plan.gaps.append(_toolchain_removal_gap(host))
             # A host or project override says the steps are unknown, so the default
             # contract "collected before anything is removed" is not claimed for it.
             if logs is not None and logs.product_logs and override is None and not overridden:

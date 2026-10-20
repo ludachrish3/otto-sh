@@ -75,8 +75,8 @@ acme 0.1.0
 (`@options(verbs=[...])` or `register_options`, see
 {doc}`../setup/options-classes`). Under `run` they sit alongside
 each command's own options: a standalone `@instruction`, and every one of
-otto's six project instructions (`install`, `uninstall`, `cleanup`,
-`get-logs`, `install-tools`, `status`) alike. `otto test` has no options class
+otto's seven project instructions (`install`, `uninstall`, `cleanup`,
+`get-logs`, `install-tools`, `uninstall-tools`, `status`) alike. `otto test` has no options class
 of its own, only the registered ones, as the `otto -n test` example above
 shows. A dry run pays for them exactly as a real run would: the command's own
 options class and every class registered for the verb build and validate from
@@ -277,7 +277,8 @@ dry run core: no device was contacted — nothing was read and nothing was chang
 
 ## The lab-level verbs answer the same way
 
-`otto -n run install`, `uninstall` and `install-tools` print the plan first:
+`otto -n run install`, `uninstall`, `install-tools` and `uninstall-tools` print
+the plan first:
 every step the real run would take, host by host, derived from configuration
 alone, and then the standard block. A real run is unchanged.
 
@@ -303,7 +304,9 @@ dry run: no command body was run and no device was contacted
 
 `install` lists every product's `stage` lines before any product's `install`
 lines, the order a host really uses; `install-tools` keeps each tool's two
-phases together. A host with nothing to do prints only its own line (the
+phases together, and `uninstall-tools` lists each dev tool's removal as a
+`remove tool` line (with `--toolchain`, the `rm -f` of each toolchain tool
+under `not checked:`). A host with nothing to do prints only its own line (the
 example leaves out `bench`'s other two hosts), and a local path is anchored to
 the project that declared it. The lines' vocabulary, `<login home>` included, is
 {ref}`the product-kind contract's <product-kind-plan>`. Everything under `not checked:` is a fact a real run reads off the host (or a

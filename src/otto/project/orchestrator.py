@@ -14,7 +14,7 @@ THREE RULES DECIDE EVERY WALK BELOW, AND THE FIRST TWO ARE THE INSTRUCTION
 TABLE'S -- :data:`otto.instruction_catalog.PROJECT_INSTRUCTIONS` holds one spec per
 name (``walk``, ``continue_on_failure``, ``require_dependencies``,
 ``combine_results``, ``render``), fixed by whoever declared the name first, so
-a project that adds a project instruction gets the same machinery otto's six use.
+a project that adds a project instruction gets the same machinery otto's seven use.
 
 * **Direction.** A ``forward`` walk takes dependencies first
   (:attr:`~otto.context.OttoContext.ordered_projects`' own order); ``reverse``
@@ -65,6 +65,7 @@ from .options import (
     InstallToolsOptions,
     StatusOptions,
     UninstallOptions,
+    UninstallToolsOptions,
 )
 from .state import (
     Cleanliness,
@@ -698,7 +699,7 @@ def project_instruction_body_options(
     (``otto.cli.run._project_leaf``) and from
     :func:`otto.instructions.run_instruction` -- so a bad value in a body's
     own options fails the same way whether or not a dry run was requested.
-    Under ``--dry-run`` the leaf also prints what this returns. The six
+    Under ``--dry-run`` the leaf also prints what this returns. The seven
     first-party entry points (``install``, ...) build their own base options
     class again on the real path, but that class is one of the bodies walked
     here too, so this already validates it.
@@ -1063,6 +1064,28 @@ async def install_tools(opts: "InstallToolsOptions | OptionsSource | None" = Non
     if not installed.is_ok or not base.toolchain:
         return installed
     return _reduce_results(await ctx.do_for_all_hosts(_dispatch_install_toolchain_tools))
+
+
+async def uninstall_tools(opts: "UninstallToolsOptions | OptionsSource | None" = None) -> Result:
+    """Remove every project's dev tools, then (when asked) the host toolchains.
+
+    Best-effort end to end, like :func:`cleanup` and unlike
+    :func:`install_tools`: projects come down in reverse order, each one is
+    asked even after one fails, and the toolchain sweep runs even after a
+    failed dev walk, because a tool that will not unload is no reason to leave
+    the rest of the tooling behind. Products are not touched.
+
+    The toolchain half is only here, for the reason :func:`install_tools`
+    gives.
+    """
+    source = _source(opts, UninstallToolsOptions)
+    base = source.build(UninstallToolsOptions)
+    ctx, projects = _lab()
+    removed = await _walk("uninstall-tools", ctx, projects, source)
+    if not base.toolchain:
+        return removed
+    swept = _reduce_results(await ctx.do_for_all_hosts(_dispatch_remove_toolchain_tools))
+    return _reported(removed, swept)
 
 
 ####################
@@ -1631,9 +1654,10 @@ _ENTRIES: "dict[str, str]" = {
     "cleanup": "cleanup",
     "get-logs": "get_logs",
     "install-tools": "install_tools",
+    "uninstall-tools": "uninstall_tools",
     "status": "status",
 }
-"""The six first-party names → the NAME of the function with that name's lab-wide tail.
+"""The seven first-party names → the NAME of the function with that name's lab-wide tail.
 
 NAMES, NOT THE FUNCTION OBJECTS, and resolved on this module at call time --
 the same late lookup :func:`otto.suite.pytest_plugin._converge` makes on
@@ -1649,7 +1673,7 @@ dispatches through.
 async def run_project_instruction(name: str, kwargs: "dict[str, Any]") -> Any:
     """Dispatch ``otto run <name>``: the parsed flags in, the rendered value out.
 
-    The six first-party names route through their public function, which
+    The seven first-party names route through their public function, which
     carries the lab-wide tail (debug sweep, toolchain, impairments, tunnels)
     no project body may perform; every other project instruction is a plain
     walk. ``render``, when the spec sets one, turns the combined value into

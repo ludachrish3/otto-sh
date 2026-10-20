@@ -312,6 +312,7 @@ def test_each_project_is_previewed_on_its_own_view_of_the_fleet(monkeypatch):
         ("install", "install"),
         ("uninstall", "uninstall"),
         ("install-tools", "install_dev_tools"),
+        ("uninstall-tools", "uninstall_dev_tools"),
     ],
 )
 def test_every_dispatched_host_method_override_is_a_gap(monkeypatch, instruction_name, method):
@@ -374,6 +375,70 @@ def test_no_dev_does_not_name_a_host_override_that_will_not_run(monkeypatch):
     _wire(monkeypatch, ["r1"], ctx)
     [project] = plan_instruction("install-tools", ctx, {"dev": False})
     assert project.hosts == [HostPlan("h1", [], [])]
+
+
+def test_uninstall_tools_lists_dev_tools_removal_not_products(monkeypatch):
+    tool = _Planned("helper", "r1", _plan(uninstall=["sudo rmmod helper"]))
+    theirs = _Planned("their-tool", "r2", _plan(uninstall=["sudo rmmod theirs"]))
+    product = _Planned("agent", "r1", _plan(uninstall=["sh u"]))
+    ctx = _Ctx([_Host("h1", products=[product], dev_tools=[tool, theirs])])
+    _wire(monkeypatch, ["r1"], ctx)
+    [project] = plan_instruction("uninstall-tools", ctx, {})
+    assert [e.name for e in project.hosts[0].dev_tools] == ["helper"]
+    assert project.hosts[0].products == []
+
+
+def test_uninstall_tools_walks_projects_in_reverse(monkeypatch):
+    ctx = _Ctx([_Host("h1")])
+    _wire(monkeypatch, ["r1", "r2"], ctx)
+    assert [p.project for p in plan_instruction("uninstall-tools", ctx, {})] == ["r2", "r1"]
+
+
+def test_uninstall_tools_without_dev_lists_hosts_but_no_tools(monkeypatch):
+    tool = _Planned("helper", "r1", _plan(uninstall=["sudo rmmod helper"]))
+    ctx = _Ctx([_Host("h1", dev_tools=[tool])])
+    _wire(monkeypatch, ["r1"], ctx)
+    [project] = plan_instruction("uninstall-tools", ctx, {"dev": False})
+    assert project.hosts == [HostPlan("h1")]
+
+
+def test_uninstall_tools_toolchain_names_each_rm(monkeypatch):
+    from pathlib import Path
+
+    from otto.host.toolchain import Toolchain, ToolchainTool
+
+    host = _Host("h1")
+    host.toolchain = Toolchain(
+        tools=[ToolchainTool(name="gdb", source=Path("/x/arm-gdb"), dest=Path("/usr/bin"))]
+    )
+    ctx = _Ctx([host])
+    _wire(monkeypatch, ["r1"], ctx)
+    [project] = plan_instruction("uninstall-tools", ctx, {"toolchain": True})
+    assert project.hosts[0].gaps == [
+        "toolchain tools: removed once after every project (--toolchain): rm -f /usr/bin/gdb"
+    ]
+    [quiet] = plan_instruction("uninstall-tools", ctx, {})
+    assert quiet.hosts[0].gaps == []
+
+
+def test_uninstall_tools_toolchain_override_is_named_not_guessed(monkeypatch):
+    from otto.host.toolchain import Toolchain
+
+    async def _replacement(self, *a, **k):  # pragma: no cover
+        return Result(Status.Success)
+
+    host_cls = type("_OwnRemoval", (_Host,), {"remove_toolchain_tools": _replacement})
+    host = host_cls("h1")
+    host.toolchain = Toolchain()
+    ctx = _Ctx([host])
+    _wire(monkeypatch, ["r1"], ctx)
+    [project] = plan_instruction("uninstall-tools", ctx, {"toolchain": True})
+    assert project.hosts[0].gaps == [
+        (
+            f"toolchain tools: `{host_cls.__module__}.{host_cls.__qualname__}."
+            "remove_toolchain_tools` replaces the default; its steps are not previewed"
+        )
+    ]
 
 
 def test_the_previewable_names_are_exactly_the_ones_the_planner_walks():

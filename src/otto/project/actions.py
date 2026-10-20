@@ -28,8 +28,8 @@ orchestrator's to perform once (spec section 5):
   than exposing a flag. N projects each sweeping the same host's debug logs means
   N transfers, each overwriting the last.
 * **toolchain tools** -- one toolchain per host, shared by every owner;
-  ``install_tools`` acts on ``opts.dev`` only; ``opts.toolchain`` is read by
-  the orchestrator, not at this layer.
+  ``install_tools`` and ``uninstall_tools`` act on ``opts.dev`` only;
+  ``opts.toolchain`` is read by the orchestrator, not at this layer.
 """
 
 import dataclasses
@@ -56,6 +56,7 @@ from .options import (
     InstallToolsOptions,
     StatusOptions,
     UninstallOptions,
+    UninstallToolsOptions,
 )
 from .render import render_status
 from .state import InstallState, combine_install_states
@@ -364,7 +365,10 @@ class ProjectActions:
 
     @instruction(
         options=UninstallOptions,
-        help="Uninstall every project in reverse order (best-effort), then sweep debug logs once.",
+        help=(
+            "Uninstall every project in reverse order (best-effort), then sweep debug logs "
+            "once. Dev tools stay installed: `uninstall-tools` or `cleanup` removes them."
+        ),
         walk="reverse",
         continue_on_failure=True,
         require_dependencies=False,
@@ -515,6 +519,28 @@ class ProjectActions:
         if not opts.dev:
             return Result(Status.Success)
         return _reduce_results(await self.ctx.do_for_all_hosts(_dispatch_install_dev_tools))
+
+    @instruction(
+        "uninstall-tools",
+        options=UninstallToolsOptions,
+        help="Remove every project's dev tools, then (when asked) the host toolchains.",
+        walk="reverse",
+        continue_on_failure=True,
+        require_dependencies=False,
+        dry_run_preview=True,
+    )
+    async def uninstall_tools(self, opts: UninstallToolsOptions) -> Result:
+        """Remove this project's dev tools from every fleet host (best-effort).
+
+        The removal twin of :meth:`install_tools`, and the dev-tool half of
+        :meth:`cleanup` on its own: products stay installed. Every host is asked
+        even after one fails, and each host's walk is the host verb's own
+        best-effort removal, so one tool that will not go strands nothing else.
+        *toolchain* is the orchestrator's, as it is for :meth:`install_tools`.
+        """
+        if not opts.dev:
+            return Result(Status.Success)
+        return _reduce_results(await self.ctx.do_for_all_hosts(_dispatch_uninstall_dev_tools))
 
     ####################
     #  Questions

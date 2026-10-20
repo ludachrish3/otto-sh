@@ -103,12 +103,12 @@ A dev tool that needs code names a `DeclaredProduct` subclass the same way —
 the class serves both products and dev tools.
 
 Dev tools go on with `otto run install-tools` and come off with `otto run
-cleanup`, never with `otto run uninstall`, and `otto run status` never counts
-them: a host carrying nothing but a debug probe does not read as installed.
+uninstall-tools` or `otto run cleanup`, never with `otto run uninstall`, and
+`otto run status` never counts them: a host carrying nothing but a debug probe does not read as installed.
 
 ## What you get for free
 
-With products declared and nothing else written, six commands already work
+With products declared and nothing else written, seven commands already work
 against the lab. Each walks every configured project in dependency order:
 
 | Command | What it does |
@@ -118,6 +118,7 @@ against the lab. Each walks every configured project in dependency order:
 | `otto run cleanup` | Uninstall, plus each project's dev tools, each host's shared toolchain tools, and the lab's own leftovers (network impairments, otto's tunnels). |
 | `otto run get-logs` | Gathers every project's product logs, then sweeps each host's debug logs once. |
 | `otto run install-tools` | Installs each project's dev tools (and, when asked, each host's shared toolchain tools). |
+| `otto run uninstall-tools` | Removes each project's dev tools, dependents first, best-effort (and, when asked, each host's shared toolchain tools); products stay. |
 | `otto run status` | Reports each project's install state and the lab's, and exits on it. |
 
 Two of them are worth trying first.
@@ -143,6 +144,6 @@ one; `otto --field run install` picks the field one. See {ref}`product-variants`
 
 ## Next
 
-The six commands above are otto's own bodies for six **project instructions**.
+The seven commands above are otto's own bodies for seven **project instructions**.
 A project can change what any of them do, and add flags of its own — that is
 {doc}`customizing-project-instructions`.

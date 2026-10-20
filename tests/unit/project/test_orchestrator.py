@@ -67,6 +67,7 @@ from otto.project import (
     InstallToolsOptions,
     ProjectActions,
     UninstallOptions,
+    UninstallToolsOptions,
     orchestrator,
     register_project_actions,
 )
@@ -262,6 +263,9 @@ def _recording_actions(events, flags, questions=None, failing=None, state=None, 
 
         async def install_tools(self, opts):
             return await self._note("install_tools", dev=opts.dev, toolchain=opts.toolchain)
+
+        async def uninstall_tools(self, opts):
+            return await self._note("uninstall_tools", dev=opts.dev, toolchain=opts.toolchain)
 
         async def status(self, opts):
             del opts
@@ -1076,6 +1080,60 @@ async def test_install_tools_failed_dev_walk_never_starts_the_toolchain(monkeypa
     assert "install_toolchain_tools" not in _verbs(lab.events)
 
 
+# ── uninstall_tools ──────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_uninstall_tools_walks_reverse_and_is_best_effort(monkeypatch):
+    # Teardown order (a dependent's tools come off before its dependency's) and
+    # best-effort (one tool that will not go must not strand the rest).
+    lab = _wire(monkeypatch, projects=["base", "app"], failing=("app", "uninstall_tools"))
+    result = await project.uninstall_tools()
+    assert [e[0] for e in lab.events if e[1] == "uninstall_tools"] == ["app", "base"]
+    assert not result.is_ok
+    assert "app" in result.msg
+
+
+@pytest.mark.asyncio
+async def test_uninstall_tools_default_leaves_the_toolchain_alone(monkeypatch):
+    lab = _wire(monkeypatch, projects=["app"], hosts=1)
+    assert (await project.uninstall_tools()).is_ok
+    assert _verbs(lab.events) == ["uninstall_tools"]
+    assert lab.flags == [("app", "uninstall_tools", {"dev": True, "toolchain": False})]
+
+
+@pytest.mark.asyncio
+async def test_uninstall_tools_toolchain_removes_it_once_per_host(monkeypatch):
+    lab = _wire(monkeypatch, projects=["app"], hosts=2)
+    assert (await project.uninstall_tools(UninstallToolsOptions(toolchain=True))).is_ok
+    assert _verbs(lab.events) == [
+        "uninstall_tools",
+        "remove_toolchain_tools",
+        "remove_toolchain_tools",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_uninstall_tools_removes_the_toolchain_even_after_a_failed_dev_walk(monkeypatch):
+    # Removal is best-effort end to end, unlike install-tools: a dev tool that
+    # will not unload is no reason to leave the toolchain behind.
+    lab = _wire(monkeypatch, projects=["app"], hosts=1, failing=("app", "uninstall_tools"))
+    result = await project.uninstall_tools(UninstallToolsOptions(toolchain=True))
+    assert ("h0", "remove_toolchain_tools") in lab.events
+    assert not result.is_ok
+    assert "app" in result.msg
+
+
+@pytest.mark.asyncio
+async def test_uninstall_tools_reports_a_failed_toolchain_removal(monkeypatch):
+    lab = _wire(monkeypatch, projects=["app"], hosts=1)
+    lab.hosts[0].script("remove_toolchain_tools", Result(Status.Failed, msg="read-only fs"))
+    result = await project.uninstall_tools(UninstallToolsOptions(toolchain=True))
+    assert not result.is_ok
+    assert "h0" in result.msg
+    assert "read-only fs" in result.msg
+
+
 # ── status ───────────────────────────────────────────────────────────────
 
 
@@ -1776,6 +1834,7 @@ _PUBLIC_VERBS = [
     "cleanup",
     "get_logs",
     "install_tools",
+    "uninstall_tools",
     "status",
     "is_uninstalled",
     "cleanliness",
@@ -1910,7 +1969,9 @@ async def test_a_lab_with_no_projects_has_no_current_scope_to_enforce(monkeypatc
     assert (await project.install()).is_ok
 
 
-@pytest.mark.parametrize("verb", ["install", "uninstall", "cleanup", "get_logs", "install_tools"])
+@pytest.mark.parametrize(
+    "verb", ["install", "uninstall", "cleanup", "get_logs", "install_tools", "uninstall_tools"]
+)
 @pytest.mark.asyncio
 async def test_every_walking_verb_leaves_the_inapplicable_project_alone(monkeypatch, verb):
     """The excluded project's actions record ZERO dispatches, on every walk there is.
@@ -2065,7 +2126,9 @@ def _starved(monkeypatch, **kwargs):
     )
 
 
-@pytest.mark.parametrize("verb", ["install", "uninstall", "cleanup", "get_logs", "install_tools"])
+@pytest.mark.parametrize(
+    "verb", ["install", "uninstall", "cleanup", "get_logs", "install_tools", "uninstall_tools"]
+)
 @pytest.mark.asyncio
 async def test_every_walking_verb_skips_a_dependency_whose_host_patterns_match_nothing(
     monkeypatch, verb
@@ -3084,6 +3147,7 @@ def test_orchestrator_functions_are_reachable_from_the_package():
         "cleanup",
         "get_logs",
         "install_tools",
+        "uninstall_tools",
         "status",
         "is_uninstalled",
         "is_clean",

@@ -12,8 +12,8 @@ CLI options.
 
 ## Instructions you already have
 
-Six of them — `install`, `uninstall`, `cleanup`, `get-logs`, `install-tools`
-and `status` — ship with otto and work in any lab whose projects have declared
+Seven of them — `install`, `uninstall`, `cleanup`, `get-logs`,
+`install-tools`, `uninstall-tools` and `status` — ship with otto and work in any lab whose projects have declared
 products, with no code of your own.  They are **project instructions**: one
 name with one walk across the lab's projects and one body per project, declared on
 `otto.project`'s `ProjectActions` and listed in their own panel by
@@ -89,8 +89,8 @@ otto run --list-instructions
 Each instruction defines its own options via Typer annotations.  Use
 `otto run <instruction> --help` to see them.
 
-The six first-party project instructions (`install`, `uninstall`, `cleanup`,
-`get-logs`, `install-tools`, `status`) walk each project's
+The seven first-party project instructions (`install`, `uninstall`, `cleanup`,
+`get-logs`, `install-tools`, `uninstall-tools`, `status`) walk each project's
 {ref}`fleet of interest <project-scope>` rather than the whole loaded lab.  A
 project whose declaration admits no host in this run — no loaded lab applies to
 it, or none of their hosts match its `host_patterns` — is skipped with a

@@ -1,4 +1,4 @@
-"""The first-party options classes: the flags otto's six project instructions carry.
+"""The first-party options classes: the flags otto's seven project instructions carry.
 
 Each is the base a project's override MUST inherit (the table refuses an override
 that does not), so the first-party flags stay on ``otto run <name>`` however
@@ -75,6 +75,16 @@ class InstallToolsOptions:
     dev: Annotated[bool, typer.Option(help="Install each project's own dev tools.")] = True
     toolchain: Annotated[
         bool, typer.Option(help="Also place each host's shared toolchain tools.")
+    ] = False
+
+
+@options
+class UninstallToolsOptions:
+    """``otto run uninstall-tools``'s flags."""
+
+    dev: Annotated[bool, typer.Option(help="Remove each project's own dev tools.")] = True
+    toolchain: Annotated[
+        bool, typer.Option(help="Also remove each host's shared toolchain tools.")
     ] = False
 
 

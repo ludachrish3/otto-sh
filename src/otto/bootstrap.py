@@ -290,8 +290,8 @@ def bootstrap() -> BootstrapResult:
 
     resolution = resolve_dependencies(projects, refused=refused_names(discovered.errors))
     errors.extend(resolution.errors)
-    # otto's six project instructions (install/uninstall/cleanup/get-logs/
-    # install-tools/status) are declared by `otto.project.actions` into the
+    # otto's seven project instructions (install/uninstall/cleanup/get-logs/
+    # install-tools/uninstall-tools/status) are declared by `otto.project.actions` into the
     # instruction tables' first-party slot (FIRST_PARTY_ACTIONS), which the
     # tables read when they check a registration or derive a view. Declared
     # here, before any project's init runs, so every project's actions class is

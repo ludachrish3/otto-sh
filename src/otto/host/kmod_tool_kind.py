@@ -9,9 +9,9 @@ for the ``kmod`` PRODUCT kind (:mod:`otto.host.kmod_kind`): ``install`` is
 :meth:`~otto.host.unix_host.UnixHost.unload`, ``is_installed`` reads
 :meth:`~otto.host.unix_host.UnixHost.lsmod`. What differs is the lifecycle a
 dev tool has: installed by ``install-tools`` before any product, removed by
-``cleanup`` after every product, never part of the product ``is_installed``
-answer — and no coverage of its own, so none of the product kind's coverage
-params exist here.
+``uninstall-tools`` or by ``cleanup`` after every product, never part of the
+product ``is_installed`` answer — and no coverage of its own, so none of the
+product kind's coverage params exist here.
 
 ``kmodcov`` fixes the module name to ``otto_kmodcov`` and adds the library's
 interface check: a built ``.ko`` reports ``<otto version>+kmodcov<n>`` through

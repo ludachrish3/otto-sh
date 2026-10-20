@@ -1,21 +1,21 @@
 # Default lab actions
 
 Every project with products gets a working `otto run install` — and `uninstall`,
-`cleanup`, `get-logs`, `install-tools` and `status` — for free. Otto declares
-those six itself, before any project's init module is imported, so a lab that has
+`cleanup`, `get-logs`, `install-tools`, `uninstall-tools` and `status` — for
+free. Otto declares those seven itself, before any project's init module is imported, so a lab that has
 only declared its products can already be installed, torn down, and asked what
 state it is in.
 
 They are **project instructions**: an `@instruction(...)` declared on a
 `ProjectActions` method rather than on a free function, which gives one name a
-fixed walk across the lab's projects and **one body per project**. Otto's six are
+fixed walk across the lab's projects and **one body per project**. Otto's seven are
 declared exactly the way a project declares its own — the same decorator, the same
 table. `otto run --list-instructions` shows them in their own panel,
 attributed to otto rather than to a project.
 
 ## The four surfaces, and the one override point
 
-The same six behaviors are available in four places, and all four dispatch
+The same seven behaviors are available in four places, and all four dispatch
 through the same code:
 
 | Surface | Looks like |
@@ -32,7 +32,7 @@ never by defining a standalone instruction of its own named `install`.
 ```
 
 A standalone instruction that tries to claim a project instruction's name — any
-of them, not only otto's six — is refused at registration; see
+of them, not only otto's seven — is refused at registration; see
 [The collision error](../../setup/writing-instructions.md#the-collision-error).
 
 ## Zero effort: one project, one command
@@ -63,7 +63,7 @@ That walk is:
 Because of the `owner=` scope in step 4, on a host shared by two projects one
 project's `install` never touches the other's products.
 
-The other five follow the same shape:
+The other six follow the same shape:
 
 | Instruction | First-party flags (default) | Walk |
 | ----------- | ----------------- | ---- |
@@ -72,12 +72,18 @@ The other five follow the same shape:
 | `cleanup` | `--product-logs` (on), `--debug-logs` (on), `--reset-impairments` (on), `--remove-tunnels` (on) | dependents first, best-effort |
 | `get-logs` | `--product-logs` (on), `--debug-logs` (on), `--require-product-logs` (off) | order immaterial, best-effort |
 | `install-tools` | `--dev` (on), `--toolchain` (off) | dependencies first, fail-fast |
+| `uninstall-tools` | `--dev` (on), `--toolchain` (off) | dependents first, best-effort |
 | `status` | `--full` (off) | reads only; changes nothing |
 
 Every one of those is a `--flag / --no-flag` pair, as usual. A project adds its own
 flags to any of these by overriding the body — see [Your project's flags on a
 default](#your-projects-flags-on-a-default) — and `--help` shows the union across
 every configured project.
+
+`uninstall` takes products off and leaves dev tools installed (a loaded
+`otto_kmodcov` stays loaded). `uninstall-tools` is the other half on its own:
+each project's dev tools come off, products stay, and `--toolchain` also removes
+the host-global toolchain tools, even after a dev tool refused to go.
 
 `cleanup` is strictly more than `uninstall`: each project also gives up its own dev
 tools, the host-global toolchain tools come off, and the lab's own leftovers go
@@ -115,7 +121,7 @@ renders the same way (`skipped: already uninstalled`, `skipped: already clean`).
 
 ## Your project's flags on a default
 
-A project changes what one of the six does — and what it takes on the command
+A project changes what one of the seven does — and what it takes on the command
 line — by declaring that method on its `ProjectActions` subclass, with an
 options class of its own:
 
@@ -177,7 +183,7 @@ value fails at init, naming the keyword:
 | `require_dependencies` | `True` refuses to start when a kept project's required dependency was dropped by the loaded lab; `False` walks whatever is present. |
 | `combine_results` | Folds `{project name: that body's return}` into the instruction's single return value; the default reports the first failure with the project name stamped into the message. |
 | `render` | Turns that combined value into what the command prints and exits on; `None` leaves the leaf's ordinary handling in place. |
-| `dry_run_preview` | `True` makes `otto -n run <name>` print the plan of what the instruction would do before the dry-run block ({ref}`the lab-level verbs <dry-run-lab-verbs>`). Honoured only for `install`, `uninstall` and `install-tools`, otto's own; declaring it on any other name is refused at init. |
+| `dry_run_preview` | `True` makes `otto -n run <name>` print the plan of what the instruction would do before the dry-run block ({ref}`the lab-level verbs <dry-run-lab-verbs>`). Honoured only for `install`, `uninstall`, `install-tools` and `uninstall-tools`, otto's own; declaring it on any other name is refused at init. |
 
 A project declaring a name otto has never heard of *is* the first declaration, so
 it sets all six, and a second project declaring the same name inherits them.
@@ -382,8 +388,8 @@ cross-project subclassing.
   product also loads its host's `otto_kmodcov` dev tool at `install` when it is
   not resident, so `install-tools` before it costs nothing, and `cleanup`'s
   products-then-dev-tools order unloads the library after its consumers.
-- **Teardown walks it reversed.** `uninstall` and `cleanup` bring the dependent
-  down before the thing it depends on.
+- **Teardown walks it reversed.** `uninstall`, `uninstall-tools` and `cleanup`
+  bring the dependent down before the thing it depends on.
 - **Building is fail-fast, tearing down is best-effort.** On teardown every
   project is attempted and the first failure is what gets reported — named:
   `uninstall failed in project 'widget': …`.

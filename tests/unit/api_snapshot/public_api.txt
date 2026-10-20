@@ -4713,8 +4713,9 @@ member	otto.project:GetLogsOptions.require_product_logs	field
 abstract	otto.project:GetLogsOptions	-
 name	otto.project:HostPlan	class
 mro	otto.project:HostPlan	-
-call	otto.project:HostPlan	sync	PK:host_id:- PK:products:O PK:gaps:O
+call	otto.project:HostPlan	sync	PK:host_id:- PK:products:O PK:gaps:O PK:dev_tools:O
 member	otto.project:HostPlan.__eq__	method	sync	PK:other:-
+member	otto.project:HostPlan.dev_tools	field
 member	otto.project:HostPlan.gaps	field
 member	otto.project:HostPlan.host_id	field
 member	otto.project:HostPlan.products	field
@@ -4758,6 +4759,7 @@ member	otto.project:ProjectActions.is_uninstalled	method	coroutine	-
 member	otto.project:ProjectActions.owns_products	property:g--
 member	otto.project:ProjectActions.status	method	coroutine	PK:opts:-
 member	otto.project:ProjectActions.uninstall	method	coroutine	PK:opts:-
+member	otto.project:ProjectActions.uninstall_tools	method	coroutine	PK:opts:-
 abstract	otto.project:ProjectActions	-
 name	otto.project:ProjectPlan	class
 mro	otto.project:ProjectPlan	-
@@ -4801,6 +4803,13 @@ member	otto.project:UninstallOptions.__eq__	method	sync	PK:other:-
 member	otto.project:UninstallOptions.debug_logs	field
 member	otto.project:UninstallOptions.product_logs	field
 abstract	otto.project:UninstallOptions	-
+name	otto.project:UninstallToolsOptions	class
+mro	otto.project:UninstallToolsOptions	-
+call	otto.project:UninstallToolsOptions	sync	VP:args:- VK:kwargs:-
+member	otto.project:UninstallToolsOptions.__eq__	method	sync	PK:other:-
+member	otto.project:UninstallToolsOptions.dev	field
+member	otto.project:UninstallToolsOptions.toolchain	field
+abstract	otto.project:UninstallToolsOptions	-
 name	otto.project:actions_for	function
 call	otto.project:actions_for	sync	PK:project:- PK:ctx:-
 name	otto.project:cleanliness	function
@@ -4833,6 +4842,8 @@ name	otto.project:status	function
 call	otto.project:status	coroutine	PK:opts:N
 name	otto.project:uninstall	function
 call	otto.project:uninstall	coroutine	PK:opts:N
+name	otto.project:uninstall_tools	function
+call	otto.project:uninstall_tools	coroutine	PK:opts:N
 name	otto.registry:BackendRegistry	class
 mro	otto.registry:BackendRegistry	-
 call	otto.registry:BackendRegistry	sync	PK:kind:- KO:register_hint:- KO:error:- KO:describe_parse_error:- KO:result:- KO:validate:N KO:check_resolved:N
@@ -5703,6 +5714,7 @@ member	otto:ProjectActions.is_uninstalled	method	coroutine	-
 member	otto:ProjectActions.owns_products	property:g--
 member	otto:ProjectActions.status	method	coroutine	PK:opts:-
 member	otto:ProjectActions.uninstall	method	coroutine	PK:opts:-
+member	otto:ProjectActions.uninstall_tools	method	coroutine	PK:opts:-
 abstract	otto:ProjectActions	-
 name	otto:Result	class
 mro	otto:Result	-

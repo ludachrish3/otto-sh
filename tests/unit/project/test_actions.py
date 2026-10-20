@@ -28,6 +28,7 @@ from otto.project import (
     ProjectStatus,
     StatusOptions,
     UninstallOptions,
+    UninstallToolsOptions,
     actions_for,
     register_project_actions,
 )
@@ -614,6 +615,43 @@ async def test_install_tools_toolchain_true_does_not_swallow_the_dev_walk():
     result = await _actions(ctx).install_tools(InstallToolsOptions(dev=True, toolchain=True))
     assert result.is_ok
     assert hosts[0].calls == [("install_dev_tools", {"owner": "acme"})]
+
+
+@pytest.mark.asyncio
+async def test_uninstall_tools_removes_only_this_projects_dev_tools_on_every_host():
+    # Kills: dropping the owner scope (a neighbour's tooling removed), touching
+    # products (uninstall-tools is the dev-tool half of cleanup only), and
+    # re-walking the tools here instead of dispatching the host verb.
+    mine = _FakeItem("probe", "acme")
+    theirs = _FakeItem("their-probe", "other")
+    app = _FakeItem("app", "acme")
+    ctx, hosts = _fake_ctx(n=2, products=[app], dev_tools=[mine, theirs])
+    result = await _actions(ctx).uninstall_tools(UninstallToolsOptions())
+    assert result.is_ok
+    for h in hosts:
+        assert h.calls == [("uninstall_dev_tools", {"owner": "acme"})]
+    assert app.calls == mine.calls == theirs.calls == []
+
+
+@pytest.mark.asyncio
+async def test_uninstall_tools_is_best_effort_across_hosts_and_names_the_failing_one():
+    ctx, hosts = _fake_ctx(n=2, dev_tools=[_FakeItem("probe", "acme")])
+    hosts[0].script("uninstall_dev_tools", _fail("module is in use"))
+    result = await _actions(ctx).uninstall_tools(UninstallToolsOptions())
+    assert not result.is_ok
+    assert "h0" in result.msg
+    assert "module is in use" in result.msg
+    assert hosts[1].calls == [("uninstall_dev_tools", {"owner": "acme"})]
+
+
+@pytest.mark.asyncio
+async def test_uninstall_tools_dev_false_touches_nothing():
+    mine = _FakeItem("probe", "acme")
+    ctx, hosts = _fake_ctx(n=1, dev_tools=[mine])
+    result = await _actions(ctx).uninstall_tools(UninstallToolsOptions(dev=False, toolchain=True))
+    assert result.is_ok
+    assert hosts[0].calls == []
+    assert mine.calls == []
 
 
 # ── logs ─────────────────────────────────────────────────────────────────

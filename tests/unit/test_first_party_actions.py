@@ -237,6 +237,23 @@ def test_an_empty_slot_still_refuses_the_six_to_a_standalone_instruction(project
     assert "install" not in STANDALONE_INSTRUCTIONS
 
 
+def test_uninstall_tools_is_reserved_a_project_standalone_of_that_name_is_refused():
+    """``uninstall-tools`` is otto's name now, so a project's own instruction of it is refused.
+
+    The remedy is to rename the standalone instruction, or to override
+    ``ProjectActions.uninstall_tools`` (which the orchestrator tests run).
+    """
+    register = instruction(name="uninstall-tools")
+    with (
+        registering_project("acme"),
+        pytest.raises(
+            ValueError, match=r"'uninstall-tools'.*ProjectActions subclass.*rename the instruction"
+        ),
+    ):
+        register(_handler)
+    assert "uninstall-tools" not in STANDALONE_INSTRUCTIONS
+
+
 def test_an_empty_slot_refuses_every_project_actions_class():
     _empty_the_slot()
     with (

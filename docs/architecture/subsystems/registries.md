@@ -108,9 +108,9 @@ command, derived from `PROJECT_INSTRUCTIONS` (itself a view over
 | `CLI_COMMANDS` | top-level CLI command | {func}`otto.cli.registry.register_cli_command` / {func}`~otto.cli.registry.cli_command` | the fourteen first-party verbs (`run`, `test`, `host`, …) |
 | `STANDALONE_INSTRUCTIONS` | `otto run` subcommand on a plain function | {func}`~otto.instructions.instruction` | — |
 | `PROJECT_ACTIONS` | a project's `ProjectActions` subclass and the bodies it declares, keyed by the project (only from that project's init import) | `otto.project.actions.register_project_actions` | — |
-| `FIRST_PARTY_ACTIONS` | otto's own `ProjectActions` class and its six bodies, one row keyed `otto`: a slot the instruction tables read and never import | only `otto.project.actions`, when it is imported and from its `declare()` | `otto` |
-| `PROJECT_INSTRUCTIONS` (view) | project instruction (a `ProjectActions` method), derived from `FIRST_PARTY_ACTIONS` and `PROJECT_ACTIONS` | {func}`~otto.instructions.instruction` on a `ProjectActions` method | `install`, `uninstall`, `status`, `cleanup`, `get-logs`, `install-tools` |
-| `INSTRUCTIONS` (view) | `otto run` subcommand, derived from `PROJECT_INSTRUCTIONS` and `STANDALONE_INSTRUCTIONS` | — | the six project instructions |
+| `FIRST_PARTY_ACTIONS` | otto's own `ProjectActions` class and its seven bodies, one row keyed `otto`: a slot the instruction tables read and never import | only `otto.project.actions`, when it is imported and from its `declare()` | `otto` |
+| `PROJECT_INSTRUCTIONS` (view) | project instruction (a `ProjectActions` method), derived from `FIRST_PARTY_ACTIONS` and `PROJECT_ACTIONS` | {func}`~otto.instructions.instruction` on a `ProjectActions` method | `install`, `uninstall`, `status`, `cleanup`, `get-logs`, `install-tools`, `uninstall-tools` |
+| `INSTRUCTIONS` (view) | `otto run` subcommand, derived from `PROJECT_INSTRUCTIONS` and `STANDALONE_INSTRUCTIONS` | — | the seven project instructions |
 | `OPTIONS` | options class, with the verbs (`run`, `test`) whose flags it joins | {func}`otto.params.register_options` / `@options(verbs=[...])` | — |
 | `HOST_CLASSES` | host class | `otto.host.os_profile.register_host_class` | `unix`, `embedded`, `zephyr` |
 | `OS_PROFILES` | `os_type` profile registered by code (a project's `[os_profiles]` tables and the host classes' own profiles are separate layers) | `otto.host.os_profile.register_os_profile` | — |

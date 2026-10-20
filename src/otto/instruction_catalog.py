@@ -4,7 +4,7 @@ Three tables are written. :data:`STANDALONE_INSTRUCTIONS` holds what
 ``@instruction()`` registers on a plain async function,
 :data:`PROJECT_ACTIONS` holds one :class:`ProjectActionsEntry` per project: its
 ``ProjectActions`` subclass with the bodies its marked methods declare, and
-:data:`FIRST_PARTY_ACTIONS` holds otto's own class and its six bodies, which
+:data:`FIRST_PARTY_ACTIONS` holds otto's own class and its seven bodies, which
 :mod:`otto.project.actions` declares (:func:`declare_first_party_actions`).
 Two tables are derived from them and are read-only:
 :data:`PROJECT_INSTRUCTIONS` (one :class:`ProjectInstruction` per name, otto's
@@ -77,7 +77,7 @@ class InstructionEntry:
 
 
 FIRST_PARTY_INSTRUCTIONS: frozenset[str] = frozenset(
-    ["install", "uninstall", "cleanup", "get-logs", "install-tools", "status"]
+    ["install", "uninstall", "cleanup", "get-logs", "install-tools", "uninstall-tools", "status"]
 )
 """Names otto's default instructions claim (see :mod:`otto.project.actions`).
 
@@ -97,7 +97,7 @@ MARK_ATTR = "__otto_project_instruction__"
 """Attribute ``@instruction`` sets on a ``ProjectActions`` method it decorated."""
 
 
-PREVIEWABLE_INSTRUCTIONS: list[str] = ["install", "uninstall", "install-tools"]
+PREVIEWABLE_INSTRUCTIONS: list[str] = ["install", "uninstall", "install-tools", "uninstall-tools"]
 """The project instructions ``dry_run_preview=True`` is honoured for.
 
 These are the names :func:`otto.project.plan.plan_instruction` can plan; it
@@ -319,7 +319,7 @@ def _check_tables(
     or replacing it lifts what it fixed; only the keywords a body passed
     explicitly are compared.
 
-    A standalone instruction may not take one of otto's six names
+    A standalone instruction may not take one of otto's seven names
     (:data:`FIRST_PARTY_INSTRUCTIONS`) even while *first_party* is still
     empty, so the refusal never depends on whether otto has declared its
     bodies yet.
@@ -429,7 +429,7 @@ def _check_standalone(
     # differently. Keyed on the registering-project marker, never on the name
     # alone: otto's own registrations run outside any project's init import.
     # FIRST_PARTY_INSTRUCTIONS is tested first, so the guard answers for the
-    # six whether or not FIRST_PARTY_ACTIONS has been filled yet.
+    # seven whether or not FIRST_PARTY_ACTIONS has been filled yet.
     project = get_registering_project()
     first_party = _current_first_party()
     actions = _current_actions()
@@ -481,7 +481,7 @@ def _check_project_actions(
 def _check_first_party_actions(
     name: str, entry: ProjectActionsEntry, proposed: Proposed[ProjectActionsEntry]
 ) -> None:
-    """``FIRST_PARTY_ACTIONS``' validate: otto's one row, keyed ``"otto"``, declaring the six.
+    """``FIRST_PARTY_ACTIONS``' validate: otto's one row, keyed ``"otto"``, declaring the seven.
 
     The row is otto's, never a project's: its writer resets the registering-project
     marker, so a write made under a project's marker went around it.
@@ -543,7 +543,7 @@ FIRST_PARTY_ACTIONS: Registry[ProjectActionsEntry] = Registry(
     register_hint="otto.project.actions.declare()",
     validate=_check_first_party_actions,
 )
-"""Otto's own ``ProjectActions`` class and its six bodies: one row, keyed ``"otto"``.
+"""Otto's own ``ProjectActions`` class and its seven bodies: one row, keyed ``"otto"``.
 
 The class lives in :mod:`otto.project.actions`, a layer above this module, so
 these tables never import it: that module declares it here when it is
@@ -551,8 +551,8 @@ imported (:func:`declare_first_party_actions`), and its ``declare()`` declares
 it again for a caller that must not rely on the import, such as
 :func:`otto.instructions.run_instruction` and ``bootstrap()``. A table, not a
 variable: filling it moves its revision, so :data:`PROJECT_INSTRUCTIONS` and
-:data:`INSTRUCTIONS` derive the six on their next read, however early they
-were first read. Before it is filled, the six names are still refused to a
+:data:`INSTRUCTIONS` derive the seven on their next read, however early they
+were first read. Before it is filled, the seven names are still refused to a
 standalone instruction (:data:`FIRST_PARTY_INSTRUCTIONS`), and no project's
 actions class qualifies, because none can inherit the class yet."""
 
@@ -572,7 +572,7 @@ def declare_first_party_actions(cls: type) -> None:
         otto.registry.DuplicateRegistration: A different class is already declared.
         TypeError: *cls* is not a class.
         ValueError: A body *cls* marks belongs to another class or to a project.
-        ProjectInstructionError: *cls* does not mark exactly the six first-party
+        ProjectInstructionError: *cls* does not mark exactly the seven first-party
             names, or its bodies break a table rule.
     """
     current = _current_first_party().get(FIRST_PARTY_KEY)
@@ -607,7 +607,7 @@ PROJECT_INSTRUCTIONS: RegistryView[ProjectInstruction] = RegistryView(
 )
 """The project instructions by name, derived from otto's bodies and then each project's.
 
-Each name's spec is fixed by its first declarer (otto's for the six)."""
+Each name's spec is fixed by its first declarer (otto's for the seven)."""
 
 
 def _derive_instructions() -> "Iterator[Derived[InstructionEntry]]":
@@ -812,7 +812,7 @@ def instruction(
                     f"{', '.join(PREVIEWABLE_INSTRUCTIONS)}, the verbs a plan can be "
                     f"built for; {cmd_name!r} cannot be previewed"
                 )
-            # An explicit help= wins over the docstring, and the six use it:
+            # An explicit help= wins over the docstring, and the seven use it:
             # a project instruction's METHOD docstring describes what ONE
             # project's body does, while the published command walks every project,
             # so the summary a user reads in `--help` is not the summary the

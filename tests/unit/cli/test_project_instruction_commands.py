@@ -10,7 +10,7 @@ command, and what a cross-project field collision does), the dispatch (every fla
 reaching the orchestrator as an options instance), ``status``' rendering and its
 three exit codes, and the ``otto defaults`` panel.
 
-Otto's six are declared when ``otto.project.actions`` loads, which this module
+Otto's seven are declared when ``otto.project.actions`` loads, which this module
 imports, and the root conftest fills their table again after each test's
 restore; the ``registered`` fixture only says a test relies on them.
 The flag set is only known once every project's init has spoken, so bootstrap
@@ -19,7 +19,7 @@ project loop.
 
 THE ORCHESTRATOR IS PATCHED AT ``orchestrator.<name>``, never at
 ``otto.project.<name>``: :data:`otto.project.orchestrator._ENTRIES` resolves the
-six public functions BY NAME on that module at call time, so the package's
+seven public functions BY NAME on that module at call time, so the package's
 re-exported objects are not what the dispatcher consults.
 
 Real invocations use :class:`~tests._fixtures.dispatch.DispatchRunner` rather
@@ -67,6 +67,7 @@ from otto.project import (
     ProjectScopeSummary,
     ProjectStatus,
     UninstallOptions,
+    UninstallToolsOptions,
     orchestrator,
     register_project_actions,
 )
@@ -86,7 +87,15 @@ from tests._fixtures.dispatch import DispatchRunner
 from tests._fixtures.fake_project import fake_project
 from tests._fixtures.project_scaffold import make_project
 
-SIX = ["install", "uninstall", "cleanup", "get-logs", "install-tools", "status"]
+SEVEN = [
+    "install",
+    "uninstall",
+    "cleanup",
+    "get-logs",
+    "install-tools",
+    "uninstall-tools",
+    "status",
+]
 
 ACTIONS_MODULE = "otto.project.actions"
 """The module every first-party entry is attributed to -- where the bodies live."""
@@ -100,8 +109,8 @@ async def _noop() -> None: ...
 
 @pytest.fixture
 def registered():
-    """The six, declared by ``otto.project.actions``: present whatever ran before."""
-    assert set(SIX) <= set(INSTRUCTIONS.names())
+    """The seven, declared by ``otto.project.actions``: present whatever ran before."""
+    assert set(SEVEN) <= set(INSTRUCTIONS.names())
 
 
 def _render(renderable) -> str:
@@ -153,8 +162,8 @@ class _Recorder:
 # ── Registration ─────────────────────────────────────────────────────────────
 
 
-def test_the_six_are_derived(registered):
-    for name in SIX:
+def test_the_seven_are_derived(registered):
+    for name in SEVEN:
         assert name in INSTRUCTIONS, name
         entry = INSTRUCTIONS.get(name)
         assert entry.module == ACTIONS_MODULE
@@ -162,7 +171,7 @@ def test_the_six_are_derived(registered):
         # instruction whose OWNER is inactive, and a project instruction has a
         # body per project rather than one owner.
         assert INSTRUCTIONS.project(name) is None
-    assert frozenset(SIX) == FIRST_PARTY_INSTRUCTIONS
+    assert frozenset(SEVEN) == FIRST_PARTY_INSTRUCTIONS
 
 
 def test_the_registered_set_is_exactly_the_declared_set(registered):
@@ -426,6 +435,18 @@ def test_install_tools_forwards_dev_and_toolchain(monkeypatch, registered):
 
     assert result.exit_code == 0, result.output
     assert rec.built(InstallToolsOptions) == [InstallToolsOptions(dev=False, toolchain=True)]
+
+
+def test_uninstall_tools_forwards_dev_and_toolchain(monkeypatch, registered):
+    rec = _Recorder()
+    monkeypatch.setattr(orchestrator, "uninstall_tools", rec)
+
+    result = dispatch.invoke(
+        run_app, ["uninstall-tools", "--no-dev", "--toolchain"], async_leaves=True
+    )
+
+    assert result.exit_code == 0, result.output
+    assert rec.built(UninstallToolsOptions) == [UninstallToolsOptions(dev=False, toolchain=True)]
 
 
 @pytest.mark.asyncio
@@ -1051,18 +1072,18 @@ async def test_bare_status_prints_no_fleet_of_interest_section(monkeypatch, regi
 # ── --list-instructions: the first-party panel ───────────────────────────────
 
 
-def test_first_party_panel_lists_the_six(registered):
+def test_first_party_panel_lists_the_seven(registered):
     from otto.cli.run import first_party_instructions_panel
 
     text = _render(first_party_instructions_panel())
 
     assert "otto defaults" in text
-    for name in SIX:
+    for name in SEVEN:
         assert name in text, name
 
 
 class _NoInstructions:
-    """A stand-in for a table with nothing in it (otto's six always derive)."""
+    """A stand-in for a table with nothing in it (otto's seven always derive)."""
 
     def items(self) -> list:
         return []

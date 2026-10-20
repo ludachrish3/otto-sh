@@ -541,13 +541,14 @@ class ProjectOptions:
     ] = "hello from {name}"
 
 
-# `install`, `uninstall`, `cleanup`, `get-logs`, `install-tools` and `status`
-# already exist — otto registers them for every lab, over your registered
-# products. They are PROJECT INSTRUCTIONS: one body per project, walked in
-# dependency order. Do NOT define standalone instructions with those names
-# here: they are refused at startup. To change what one does for this project —
-# or to give it a flag of its own — subclass ProjectActions and register it
-# from this module; the options class MUST inherit otto's for that name:
+# `install`, `uninstall`, `cleanup`, `get-logs`, `install-tools`,
+# `uninstall-tools` and `status` already exist — otto registers them for every
+# lab, over your registered products. They are PROJECT INSTRUCTIONS: one body
+# per project, walked in dependency order. Do NOT define standalone
+# instructions with those names here: they are refused at startup. To change
+# what one does for this project — or to give it a flag of its own — subclass
+# ProjectActions and register it from this module; the options class MUST
+# inherit otto's for that name:
 #
 #     from otto.project import (
 #         InstallOptions,

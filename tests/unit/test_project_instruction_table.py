@@ -155,12 +155,21 @@ def test_the_instructions_view_derives_a_data_entry():
 def test_the_shipped_install_verbs_opt_in_to_the_dry_run_preview():
     previewed = {
         name: PROJECT_INSTRUCTIONS.get(name).spec.dry_run_preview
-        for name in ("install", "uninstall", "install-tools", "status", "cleanup", "get-logs")
+        for name in (
+            "install",
+            "uninstall",
+            "install-tools",
+            "uninstall-tools",
+            "status",
+            "cleanup",
+            "get-logs",
+        )
     }
     assert previewed == {
         "install": True,
         "uninstall": True,
         "install-tools": True,
+        "uninstall-tools": True,
         "status": False,
         "cleanup": False,
         "get-logs": False,

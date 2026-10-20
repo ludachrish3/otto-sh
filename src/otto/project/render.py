@@ -220,12 +220,19 @@ def _cleanliness_table(report: "CleanlinessReport") -> "Table":
     return table
 
 
-_PHASES: dict[str, list[str]] = {
-    "install": ["stage", "install"],
-    "uninstall": ["uninstall"],
-    "install-tools": ["stage", "install"],
+_PHASES: dict[str, list[tuple[str, str, str]]] = {
+    "install": [("stage", "stage", "products"), ("install", "install", "products")],
+    "uninstall": [("uninstall", "uninstall", "products")],
+    "install-tools": [("stage", "stage", "products"), ("install", "install", "products")],
+    "uninstall-tools": [("remove tool", "uninstall", "dev_tools")],
 }
-"""The phases each previewed instruction prints, in the order its steps are listed."""
+"""The phases each previewed instruction prints, in the order its steps are listed.
+
+Each phase is ``(label, plan attribute, HostPlan list)``: the label printed in
+the step column, the :class:`~otto.host.product.ProductPlan` list its lines
+come from, and the :class:`~otto.project.plan.HostPlan` list whose entries it
+walks.
+"""
 
 
 def render_plan(name: str, plans: "list[ProjectPlan]") -> str:
@@ -242,30 +249,30 @@ def render_plan(name: str, plans: "list[ProjectPlan]") -> str:
     block.
     """
     phases = _PHASES[name]
-    width = max(len(phase) for phase in phases)
+    width = max(len(label) for label, _, _ in phases)
     seen: set[str] = set()
     out: list[str] = []
     for project in plans:
         out.append(project.project)
         for host in project.hosts:
             out.append(f"  {host.host_id}")
-            names = max((len(entry.name) for entry in host.products), default=0)
+            names = max((len(entry.name) for entry in [*host.products, *host.dev_tools]), default=0)
             steps = (
                 [(phase, entry) for entry in host.products for phase in phases]
                 if name == "install-tools"
-                else [(phase, entry) for phase in phases for entry in host.products]
+                else [(phase, entry) for phase in phases for entry in getattr(host, phase[2])]
             )
-            for phase, entry in steps:
+            for (label, attr, _), entry in steps:
                 first = True
-                for line in getattr(entry.plan, phase):
+                for line in getattr(entry.plan, attr):
                     # A multi-line command keeps its extra lines in the step column.
                     for physical in line.splitlines() or [""]:
                         if first:
-                            label = f"{phase:<{width}}  {entry.name:<{names}}"
+                            column = f"{label:<{width}}  {entry.name:<{names}}"
                             first = False
                         else:
-                            label = " " * (width + 2 + names)
-                        out.append(f"    {label}  {physical}")
+                            column = " " * (width + 2 + names)
+                        out.append(f"    {column}  {physical}")
         gaps = list(project.gaps) + [
             f"{host.host_id}: {gap}" for host in project.hosts for gap in host.gaps
         ]

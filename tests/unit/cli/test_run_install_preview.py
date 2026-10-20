@@ -1,4 +1,7 @@
-"""``otto -n run install|uninstall|install-tools`` prints the plan before the dry-run block."""
+"""``otto -n run install|uninstall|install-tools|uninstall-tools`` prints the plan first.
+
+The plan comes before the dry-run block.
+"""
 
 from unittest.mock import patch
 
@@ -57,8 +60,8 @@ def test_dry_run_install_prints_the_plan_then_the_standard_block(run_cli):
     assert "would run: run install" in _flat(out)
 
 
-@pytest.mark.parametrize("name", ["uninstall", "install-tools"])
-def test_the_other_two_previewed_verbs_plan_under_their_own_name(run_cli, name):
+@pytest.mark.parametrize("name", ["uninstall", "install-tools", "uninstall-tools"])
+def test_the_other_previewed_verbs_plan_under_their_own_name(run_cli, name):
     with patch("otto.project.plan.plan_instruction", side_effect=_canned) as planned:
         dry = run_cli(["run", name], dry_run=True)
     assert dry.exit_code == 0, dry.output

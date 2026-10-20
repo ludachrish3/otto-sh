@@ -100,7 +100,7 @@ previews can and cannot tell you.
 
 ## A product kind describes its plan
 
-`otto -n run install`, `uninstall` and `install-tools` print each product's
+`otto -n run install`, `uninstall`, `install-tools` and `uninstall-tools` print each product's
 and dev tool's steps ({ref}`dry-run-lab-verbs`). A kind supplies them by
 implementing `plan(host)` on its `Product` or `DevTool` subclass, which returns a
 {class}`~otto.host.product.ProductPlan`: the `stage`, `install` and `uninstall`

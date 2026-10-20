@@ -121,3 +121,16 @@ def test_a_lab_wide_gap_prints_once_under_the_first_project():
     assert out.count(TOOLCHAIN_GAP) == 1
     assert out.index("not checked:") < out.index("second")
     assert out.splitlines()[-1] == "    install  b  sh b"
+
+
+def test_uninstall_tools_prints_each_tools_removal():
+    kmodcov = _entry("kmodcov", uninstall=["sudo rmmod otto_kmodcov"])
+    helper = _entry("helper", uninstall=["sudo rmmod helper"])
+    plans = [ProjectPlan("r", [HostPlan("h", dev_tools=[kmodcov, helper])])]
+    lines = [
+        "r",
+        "  h",
+        "    remove tool  kmodcov  sudo rmmod otto_kmodcov",
+        "    remove tool  helper   sudo rmmod helper",
+    ]
+    assert render_plan("uninstall-tools", plans).splitlines() == lines

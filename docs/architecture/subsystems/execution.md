@@ -224,8 +224,9 @@ artifacts. Options classes registered for both verbs keep the two consistent
 
 ## Project instructions
 
-The six first-party project instructions — `install`, `uninstall`,
-`cleanup`, `get-logs`, `install-tools`, `status` ({doc}`../../cli/run/defaults`)
+The seven first-party project instructions — `install`, `uninstall`,
+`cleanup`, `get-logs`, `install-tools`, `uninstall-tools`, `status`
+({doc}`../../cli/run/defaults`)
 — are declared with the same decorator and table a project uses, so nothing about
 them is special-cased and a project extends the interface by the mechanism otto
 used to write it.
@@ -238,7 +239,7 @@ test converges is the lab a person installed by hand. The first declaration
 of a project instruction also fixes its *walk shape* — the walk direction,
 whether it continues past a failing project, whether it requires dependencies,
 and how results combine and render — and a later declaration may not change
-any of it, so no project can reshape the six first-party instructions.
+any of it, so no project can reshape the seven first-party instructions.
 
 The rest of the design follows from what a walk across many projects must never
 do:

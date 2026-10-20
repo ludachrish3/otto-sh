@@ -353,9 +353,9 @@ example, and how a report reads back what it captured.
 
 A `[[dev_tools]]` entry of `kind = "kmod"` is a kernel module a project places on
 a host as tooling — a tracer, a test driver — rather than as software under
-test: `install-tools` loads it with `insmod` before any product, `cleanup`
-unloads it with `rmmod` after every product, and it is never part of a
-product's `is_installed` answer.
+test: `install-tools` loads it with `insmod` before any product,
+`uninstall-tools` (or `cleanup`, after every product) unloads it with `rmmod`,
+and it is never part of a product's `is_installed` answer.
 
 | Param | Meaning |
 |---|---|

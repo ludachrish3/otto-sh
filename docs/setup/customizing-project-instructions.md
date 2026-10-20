@@ -1,9 +1,10 @@
 # Customizing project instructions
 
-The six commands the previous pages gave you for free — `install`,
-`uninstall`, `cleanup`, `get-logs`, `install-tools` and `status` — are
-**project instructions**: each is one name with one fixed walk across the
-lab's projects, and **one body per project**. otto declares all six and writes the
+The seven commands the previous pages gave you for free — `install`,
+`uninstall`, `cleanup`, `get-logs`, `install-tools`, `uninstall-tools` and
+`status` — are **project instructions**: each is one name with one fixed walk
+across the lab's projects, and **one body per project**. otto declares all
+seven and writes the
 default body for each; a project replaces its own body, and adds flags of its own
 to the command.
 
@@ -69,7 +70,7 @@ or in a library package, never in an optional one. The rule and the error are in
 
 ## A new project instruction
 
-A project is not limited to otto's six. Declaring a method otto has no name for
+A project is not limited to otto's seven. Declaring a method otto has no name for
 adds a project instruction of its own — and because it is the first
 declaration of that name, it sets the walk shape every later declaration
 inherits:
@@ -109,7 +110,7 @@ class BedActions(ProjectActions):  # one registered class per project -- the sam
 dependency order, and stops at the first failure. A second project declaring
 `deploy` supplies its own body and its own options class, and **may not restate
 the walk keywords** — the first declaration fixed them, so a project can never
-reshape otto's own six, which otto declared first. A project's own new instruction has no
+reshape otto's own seven, which otto declared first. A project's own new instruction has no
 first-party class to inherit, so `DeployOpts` above inherits nothing.
 
 ## Tests follow the flags

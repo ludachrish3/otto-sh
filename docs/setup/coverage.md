@@ -227,7 +227,8 @@ and declares `coverage = "module"`:
 The library, `otto_kmodcov`, is not a product — nothing measures it — but a
 `[[dev_tools]]` entry of kind `kmodcov`, one per kernel: otto loads it on
 demand when a consumer installs, and `cleanup` unloads it after the
-products. The consumer module, `otto_kmod_demo`, sets `coverage = "module"`
+products (`uninstall` leaves it loaded; `uninstall-tools` unloads it on its
+own). The consumer module, `otto_kmod_demo`, sets `coverage = "module"`
 and a `cov_dir`: on install, otto appends
 `cov_dir=<cov_dir>` to *its own* `insmod` line — the parameter
 `KMODCOV_DECLARE()` declares on the module — and the module hands that value

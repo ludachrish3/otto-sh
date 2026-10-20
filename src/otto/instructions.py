@@ -126,7 +126,7 @@ async def run_instruction(ctx: "OttoContext", name: str, opts: list[object] | No
 
     # Never relies on otto.project.actions having been imported: a library
     # caller that never bootstrapped, or a table a test emptied, still gets
-    # otto's six. Declaring again is a no-op.
+    # otto's seven. Declaring again is a no-op.
     declare()
     entry = INSTRUCTIONS.get(name)
     from .session.activation import check_instruction_active
