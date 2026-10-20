@@ -7,6 +7,8 @@ default. By default it polls every real host in the lab:
 otto --lab my_lab monitor --live
 ```
 
+The dashboard's keyed URL and its bind address are covered in {doc}`serving`.
+
 Docker container hosts are excluded — they aren't operated on as part of
 the host fleet. Embedded targets without an `snmp` block are also
 excluded: the monitored set is Unix hosts (shell metrics) plus any host

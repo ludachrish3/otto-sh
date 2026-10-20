@@ -2,13 +2,13 @@
 
 What otto samples, and where the numbers come from: the built-in metrics
 every Unix host reports, values otto reads out of files the host already
-writes, and SNMP.
+writes, and SNMP. Your project's own metrics appear here too — see
+[Custom parsers](../../extend/custom-parsers.md#custom-parsers).
 
 ## Built-in metrics
 
 Every Unix host in the monitored set runs `DEFAULT_PARSERS` unless a custom
-registration says otherwise —
-see [Custom parsers](../../extend/custom-parsers.md#custom-parsers).
+registration says otherwise.
 Each chart draws at most `MetricParser.max_series` series at once — 8 by
 default — beyond which the dashboard shows the first `max_series` and notes
 how many were hidden; a parser can raise that cap or set `max_series = None`

@@ -6,7 +6,9 @@ Run one command on a host with `exec`:
 otto --lab my_lab host router1 exec "uname -a"
 ```
 
-The command is one argument: quote it. Steps join the way the host's shell
+The command is one argument: quote it (`otto --lab my_lab host test1 exec 'uname -r'`).
+`--` is accepted but does not lift the one-argument rule: `exec -- uname -r`
+fails, and `exec -- 'uname -r'` works. Steps join the way the host's shell
 joins them — `&&` on a POSIX shell:
 
 ```bash

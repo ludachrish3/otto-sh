@@ -38,7 +38,7 @@ of them, not only otto's six — is refused at registration; see
 ## Zero effort: one project, one command
 
 With products registered (see
-{doc}`Registering products <../../extend/cli-exposed-verbs>`) and nothing else done:
+{doc}`Registering products <../../configuration/declared-products-tools>`) and nothing else done:
 
 ```bash
 otto --lab my_lab run install

@@ -21,10 +21,10 @@ additionally copies the capture into the project's committed store at
 
 ```bash
 # Default: retrieve against the sole e2e-kind tier.
-otto cov get
+otto --lab my_lab cov get
 
 # Manual session: anchor a capture, attach a ticket, commit it.
-otto cov get --tier manual --ticket PROJ-123 --note "verified failover via GDB"
+otto --lab my_lab cov get --tier manual --ticket PROJ-123 --note "verified failover via GDB"
 ```
 
 A successful run prints one line per capture, then the summary; `--clean`

@@ -197,7 +197,7 @@ The report is rendered from those captures. Point `otto cov report` at the
 run directory from the last step and tell it where to write:
 
 ```bash
-otto cov report path/to/run_output/ --dir ./cov_report
+otto --lab my_lab cov report path/to/run_output/ --dir ./cov_report
 ```
 
 That writes a self-contained HTML report into `./cov_report`. Open

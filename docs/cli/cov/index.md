@@ -49,10 +49,10 @@ otto cov kmodcov check DIR
 ## Examples
 
 ```text
-otto cov get --tier manual --ticket PROJ-123 --note "verified failover"
-otto cov report runs/2026-05-16_T1200/ --dir ./report
-otto cov report run_a/ run_b/ run_c/ --dir ./combined
-otto cov report runs/ --tier unit=unit.info --tier system --tier manual=manual.info
+otto --lab my_lab cov get --tier manual --ticket PROJ-123 --note "verified failover"
+otto --lab my_lab cov report runs/2026-05-16_T1200/ --dir ./report
+otto --lab my_lab cov report run_a/ run_b/ run_c/ --dir ./combined
+otto --lab my_lab cov report runs/ --tier unit=unit.info --tier system --tier manual=manual.info
 ```
 
 On success, otto logs the overall coverage percentage, the file count,

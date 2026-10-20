@@ -11,7 +11,8 @@ Two commands live under one binary:
 
 - `otto monitor --live [OPTIONS]` — the only hardware-touching path (it runs
   the reservation gate before touching any host, and needs `--lab` to
-  resolve which hosts to poll). Collects from lab hosts and serves the
+  resolve which hosts to poll; a project's `[project] host_patterns` narrows them,
+see {ref}`project-scope`). Collects from lab hosts and serves the
   dashboard against that live collector. Add `--db PATH` to persist the run
   as a **session**; reusing the same `--db` path on a later run appends
   another session to the same archive rather than overwriting it.

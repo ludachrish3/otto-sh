@@ -1,7 +1,7 @@
 # Running tests
 
 This page works in the project `otto init --all` scaffolded in
-[Project setup](index.md#project-setup), not the bed project: it writes a
+{doc}`shared-setup`, not the bed project: it writes a
 test of your own and runs it with `otto test`.
 
 `otto init --tests` (or `--all`) scaffolds `tests/test_example.py` (a

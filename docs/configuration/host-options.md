@@ -57,7 +57,7 @@ time.
 
 For one-off tuning at the call site (e.g. a single test wants a
 different port), pass an `*_options=` keyword to `get_host()` /
-`all_hosts()`.  See {ref}`per-call-overrides` in the Cookbook.
+`all_hosts()`.  See {ref}`per-call-overrides` under Extend.
 
 ### SSH
 
@@ -454,7 +454,7 @@ after every login-proxy hop, with a real session handle.
 A string selects the hook by name; an object names it in `type` and hands
 every other key to the hook as `ctx.params`. The hook itself is project
 code, registered from an `init` module — {doc}`../extend/extending-backends`
-has the contract and a copyable registration, and the Getting Started
+has the contract and a copyable registration, and the bed case study's
 {doc}`../developing/bed-case-study/customizations` page walks through three.
 
 (session-run-order)=

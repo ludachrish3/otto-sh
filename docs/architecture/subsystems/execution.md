@@ -195,7 +195,7 @@ warm one refreshed, by a disposable, time-bounded child process. What a user
 sees is on {doc}`../../cli/test/selection` ("Tab-completing names"), and how
 the per-file tables, the check window and the child work is on
 {doc}`completion-cache` ("The test-names cache"). The path from `otto init` to a
-first run is in [getting started](../../setup/running-tests.md).
+first run is in {doc}`../../setup/running-tests`.
 
 ## Non-fatal assertions
 

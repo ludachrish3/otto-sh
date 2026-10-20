@@ -16,17 +16,17 @@ collecting performance data.
 
 ## Where to start
 
-- **Install otto and set up your first project** → {doc}`Set up a project
-  <setup/index>`: installs otto, scaffolds a project with `otto init`,
-  and builds it out.
-- **Drive your lab from the CLI** → the {doc}`CLI Reference <cli/index>`,
-  one section per functional area.
-- **Learn what a host can do** → {doc}`otto host <cli/host/index>`: the
-  verbs every host answers and what each host family supports.
-- **Script, author or extend otto from Python** → {doc}`Extend otto <extend/index>`
-  (the {doc}`API reference <api/index>` backs it).
-- **Work on otto itself** → {doc}`Architecture <architecture/index>`, one
-  design page per area, plus {doc}`contributing`.
+- **I'm setting up a project** — new to otto, or adding products, tests and
+  coverage → {doc}`Set up a project <setup/index>`.
+- **I joined a project someone else set up** and want to run it →
+  {doc}`Use a project <use/index>`.
+- **I want to extend otto** — custom products, hosts, metrics, backends, or
+  otto as a Python library → {doc}`Extend otto <extend/index>`.
+- **I'm looking something up** → the {doc}`CLI reference <cli/index>`,
+  {doc}`configuration <configuration/index>` and {doc}`API <api/index>`.
+- **I work on otto itself** → {doc}`Developing otto <developing/index>`.
+
+Install otto first: {doc}`installation`.
 
 ## Two ways to use otto
 
@@ -259,14 +259,10 @@ collects without a dashboard; see
 
 ## Where to go next
 
-- {doc}`setup/index` — Set up a project: install otto, scaffold it, build it out
 - {doc}`installation` — Air-gapped installs, team setup, offline docs
 - {ref}`team-setup-checklist` — One-time team setup (host source, reservations, libs)
-- {doc}`cli/index` — Every `otto` command, one page per verb
-- {doc}`configuration/index` — The project and lab files every command reads
 - {doc}`setup/options-classes` — Options classes shared by instructions and tests
 - {doc}`extend/extending-cli` — Registering your own top-level `otto` commands
-- {doc}`extend/index` — Extend otto: custom products, hosts, parsers, backends and library use
 - {doc}`extend/python-library` — Using otto as a Python library
 - {doc}`architecture/index` — How otto is put together, for contributors and extenders
 - {doc}`api/index` — Full API reference for all otto packages

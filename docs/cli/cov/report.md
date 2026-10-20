@@ -1,7 +1,7 @@
 # otto cov report
 
 ```bash
-otto cov report <output_dir> --dir ./my_report
+otto --lab my_lab cov report <output_dir> --dir ./my_report
 ```
 
 `otto cov report` assembles a store from every source available:
@@ -41,7 +41,7 @@ refusal — including the empty-store case above — exits `1`.
 To combine coverage from separate test runs into a single report:
 
 ```bash
-otto cov report run1_output/ run2_output/ run3_output/ --dir ./combined_report
+otto --lab my_lab cov report run1_output/ run2_output/ run3_output/ --dir ./combined_report
 ```
 
 ## Options
@@ -101,7 +101,8 @@ output.  A working tree that is merely **dirty** at report time (same
 remapped from committed-code coordinates onto the current tree — the
 report-time mirror of the {ref}`dirty-tree remap at retrieval
 <coverage-dirty-remap>` — with a warning, and hits on
-locally-modified lines are omitted rather than misattributed.
+locally-modified lines are omitted rather than misattributed. Untracked files
+in the tree count as dirty too.
 
 (coverage-tier-name-path)=
 ## The `--tier NAME=PATH` escape hatch
@@ -124,7 +125,7 @@ first flag is highest-precedence and wins the row coloring when
 multiple tiers hit the same line.
 
 ```bash
-otto cov report runs/ \
+otto --lab my_lab cov report runs/ \
     --tier unit=u.info \
     --tier system \
     --tier integration=i.info \

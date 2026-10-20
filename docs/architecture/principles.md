@@ -82,8 +82,8 @@ A verb that composes another library composes it inside its own library
 function ({func}`~otto.suite.run.run_tests` calls the public coverage
 functions), never in the CLI leaf, or a Python caller loses the step; the
 other verb's CLI becomes a short sequence of the same public calls.
-({func}`~otto.suite.run.prepare_run` is the preflight example; see the
-cookbook's {doc}`../extend/python-library` "Preflight" section.)
+({func}`~otto.suite.run.prepare_run` is the preflight example; see
+{doc}`../extend/python-library`'s "Preflight" section.)
 
 ## Fail loud, fail framed
 

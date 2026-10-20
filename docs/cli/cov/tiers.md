@@ -109,16 +109,16 @@ and has nothing to say about where the notes were written.
 target, attaching a ticket:
 
 ```bash
-otto cov get --tier manual --ticket PROJ-123 --note "verified failover via GDB"
+otto --lab my_lab cov get --tier manual --ticket PROJ-123 --note "verified failover via GDB"
 git add .otto/coverage/manual/
 git commit -m "cov: manual verification for PROJ-123"
 ```
 
 Then generate a single report covering all three — `--overwrite-dir` because
-the getting-started walkthrough already left a report at `./cov_report`:
+the {doc}`coverage walkthrough <../../setup/coverage>` already left a report at `./cov_report`:
 
 ```bash
-otto cov report path/to/e2e_run_output/ --dir ./cov_report --overwrite-dir
+otto --lab my_lab cov report path/to/e2e_run_output/ --dir ./cov_report --overwrite-dir
 ```
 
 `otto cov report` reads the e2e capture(s) from the given output

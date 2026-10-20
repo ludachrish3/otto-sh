@@ -501,7 +501,7 @@ otto for a team:
    {doc}`../setup/options-classes`.
 5. **Set per-product preferences** — optional `[host_preferences]` /
    `[os_profiles]` (this page, above, and {doc}`lab-config` / {doc}`os-profiles`).
-6. **Enable tab completion** — see {doc}`../setup/index`.
+6. **Enable tab completion** — see {ref}`enabling-tab-completion`.
 7. **(Optional) Add TLS to the dashboard** — plain HTTP plus a per-run
    access key is the default and needs no setup; add TLS only if a lab
    needs it. A team owner creates a CA once and distributes trust to

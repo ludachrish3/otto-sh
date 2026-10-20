@@ -4,8 +4,8 @@ This page covers every supported way to install otto: quick connected installs, 
 recommended project-managed setup for teams, fully air-gapped installation, and how to
 read otto's documentation (and its dependencies' documentation) offline.
 
-If you just want otto on your machine right now, the short version on the
-{doc}`setup/index` page is enough. Come back here when you are setting up a team,
+If you just want otto on your machine right now, **Quick install** below is
+enough. Come back to the rest of this page when you are setting up a team,
 working without internet access, or managing otto alongside other Python dependencies.
 
 ## Requirements
@@ -37,6 +37,34 @@ Verify the result:
 ```bash
 otto --version
 ```
+
+(enabling-tab-completion)=
+## Enabling tab completion
+
+Otto ships with a Typer-generated shell completion script. This is the one
+place completion setup is described; `otto init` ends with the same steps.
+
+**This shell.** Export the path of your project (the one {doc}`setup/index` creates — do that first if you have none yet), install the script, and source it:
+
+```bash
+export OTTOPATH=/path/to/your/project
+otto --install-completion
+source ~/.bash_completions/otto.sh
+```
+
+`--install-completion` writes `~/.bash_completions/otto.sh` and appends a
+`source` line for it to `~/.bashrc`; the `source` command above activates it
+in the shell you are already in. Type `otto ru<Tab>` to check.
+
+**Future shells.**
+
+- `~/.bashrc`: the installer already added the `source` line, so add only the
+  `export OTTOPATH=...` line.
+- `~/.profile` (if your login shell reads it instead of `~/.bashrc`): add both
+  the `export` line and `source ~/.bash_completions/otto.sh`.
+
+Never put `otto --install-completion` itself in a startup file: it rewrites
+`~/.bashrc` every time it runs.
 
 ## Recommended: manage otto as a project dependency
 

@@ -1161,7 +1161,7 @@ every otto name it uses, in its own code: the docs validator
 (`setup-only-name`). The setup's non-otto helpers (`run`, `GS_EXAMPLE`) need
 no import.
 
-### Getting Started captures
+### Setup and bed-case-study captures
 
 The `docs/setup/` and `docs/developing/bed-case-study/` pages `{literalinclude}` what they show, never
 paste it: config and code fragments from the checked-in project
@@ -1233,7 +1233,7 @@ test fixtures, so edit them with the tie in mind:
   byte-for-byte what the tree would generate; edit the renderer or the
   declaration, then run `uv run python -m scripts.render_support_matrix`.
 
-### Cookbook pages
+### Extend pages
 
 Much of `docs/extend/` is executable, so edit it with
 these ties in mind:

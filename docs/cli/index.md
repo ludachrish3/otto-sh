@@ -81,8 +81,13 @@ operator the `Lab` objects themselves use to merge.
 ```bash
 otto --lab my_lab --list-labs      # list all available lab names
 otto --lab my_lab --list-hosts     # list host IDs in the loaded lab
-otto --lab my_lab --show-lab       # full lab details (use -v for expanded output)
+otto --lab my_lab --show-lab       # full lab details (use --lab-depth N for deeper output)
 ```
+
+`--list-hosts` needs `--lab`. Every lab also holds `local`, the built-in host for
+the machine otto runs on: `--show-lab` shows its name, `localhost`, and commands
+address it by its ID, `local`. A hop host is reached first, on the way to the
+host behind it.
 
 (list-products-flag)=
 
@@ -91,6 +96,7 @@ otto --lab my_lab --show-lab       # full lab details (use -v for expanded outpu
 `--list-products` and `--list-tools` print a table of the products or dev tools
 your projects declare in {doc}`../configuration/declared-products-tools`. Neither
 contacts a host, and neither is lab-gated: they work with or without `--lab`.
+A narrow terminal truncates the table's columns; widen it with `COLUMNS=200`.
 
 Without `--lab` the table is what the projects **declare** — one row per
 `[[products]]` (or `[[dev_tools]]`) entry, in project then declaration order, with
@@ -174,6 +180,8 @@ no flag.
 | `PYDANTIC_DISABLE_PLUGINS` | *(no flag)* | pydantic's own switch, which the `otto` command sets to `__all__` when you have not set it. Looking for pydantic plugins opens a file in every installed package on the first model build, a network round trip each when the venv is on NFS, and otto uses no pydantic plugins. It covers everything in the process, including the tests `otto test` runs in-process, and every process otto starts inherits it (a host command on `local`, a subprocess of a test). To use pydantic plugins, set it to the empty string (`PYDANTIC_DISABLE_PLUGINS=`); any value you set is kept. Importing otto as a library leaves it alone |
 
 ## Shell completion
+
+Setting it up is in {ref}`enabling-tab-completion`.
 
 After `otto --install-completion`, tab completion covers the dynamic,
 otto-specific values a static shell script couldn't know: test and
@@ -280,7 +288,9 @@ reports are used for.
 Most commands create a per-invocation output directory under `--xdir`
 before the command body runs; the run's log files and artifacts are
 written there, and the path is printed at the end of the run
-(`Output directory: ...`):
+(`Output directory: ...`). `--xdir` defaults to the current directory, so
+without it (or `OTTO_XDIR`) a run started from a project root writes into the
+project:
 
 ```text
 <xdir>/<command>/<timestamp>_<subcommand>/

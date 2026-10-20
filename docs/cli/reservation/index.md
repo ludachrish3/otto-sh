@@ -163,8 +163,8 @@ service, a database — writes a backend that reads it: two read-only
 methods, registered from an `init` module, selected by name in
 `[reservations]`. {doc}`../../extend/reservation-backends` has the
 contract, the conformance helper that proves a backend against it, and the
-optional holder-lookup and username-completion capabilities. The Getting Started
-section walks through one ({doc}`../../developing/bed-case-study/reservations`).
+optional holder-lookup and username-completion capabilities. The bed case study
+walks through one ({doc}`../../developing/bed-case-study/reservations`).
 
 Already have a backend written against otto 0.10? The contract changed in
 0.11.0 — three methods became two, and every backend now reports times. There

@@ -1,7 +1,7 @@
 # Running instructions
 
 This page works in the project `otto init --all` scaffolded in
-[Project setup](index.md#project-setup), not the bed project: it writes a
+{doc}`shared-setup`, not the bed project: it writes a
 **standalone instruction**, a command of your own under `otto run` (a project
 instruction such as `install` is customized instead — see
 {doc}`customizing-project-instructions`).
@@ -46,7 +46,7 @@ without any lab edit. To run on every host in the lab instead, iterate
 {func}`~otto.fleet.all_hosts`: it yields only the lab's configured hosts
 (`include_local=True` adds `local`), and the scaffolded `example-device`
 cannot be reached until its placeholders are filled in (see
-[Project setup](index.md#project-setup)).
+{doc}`shared-setup`).
 
 Run it:
 

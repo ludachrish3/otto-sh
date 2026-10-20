@@ -85,10 +85,21 @@ otto test --list-markers                              # the markers pytest knows
 otto --lab my_lab -n test TestDevice                  # dry run: what would run, nothing runs
 ```
 
+### Running every test
+
+`otto test` needs a name or a marker expression. To run every collected test,
+give an expression that is always true:
+
+```bash
+otto --lab my_lab test -m "otto_all or not otto_all"
+```
+
+The expression is always true, so every collected test runs.
+
 Names tab-complete; see {doc}`selection`. Tests can also run from Python,
 without the command line; see
 [Running tests from Python](../../extend/python-library.md#running-tests-from-python)
-in the Cookbook.
+under Extend.
 
 ## Options
 

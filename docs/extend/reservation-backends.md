@@ -596,7 +596,7 @@ The example's `--backend` takes only backends that need no configuration
 the example does not pass.
 
 `open_context` applies this same gate for you; see
-{doc}`the library cookbook <python-library>`.
+{doc}`python-library`.
 
 If you're also writing a custom backend for your tool (rather than reusing
 `json` or `none`), see [Verify your backend](#verify-your-backend) above —
