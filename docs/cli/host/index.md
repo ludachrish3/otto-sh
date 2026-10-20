@@ -55,7 +55,7 @@ supports and nothing more.
 See {doc}`capabilities/index` for the capability families and which host types
 expose them, {doc}`netcat` and {doc}`connections` for transport, and
 {doc}`../../configuration/host-options` for per-host tuning. Authoring a verb of
-your own is {doc}`../../cookbook/extending/cli-exposed-verbs`.
+your own is {doc}`../../extend/cli-exposed-verbs`.
 
 ### Persistent and stateless verbs
 
@@ -199,11 +199,11 @@ Custom verbs on third-party host classes may return plain values instead of a
 
 Every verb here is a method on {class}`~otto.host.host.BaseHost` first (see
 {doc}`../../api/host/index`) — calling
-them from an instruction or a test is {doc}`../../cookbook/authoring/writing-instructions`.
+them from an instruction or a test is {doc}`../../setup/writing-instructions`.
 Hosts are also otto's most extensible area: register new connection or transfer
-backends ({doc}`../../cookbook/extending/extending-backends`) and bring up embedded
+backends ({doc}`../../extend/extending-backends`) and bring up embedded
 targets otto doesn't ship support for
-({doc}`../../cookbook/extending/extending-embedded`). The registry machinery behind every
+({doc}`../../extend/extending-embedded`). The registry machinery behind every
 seam is described in
 {doc}`../../architecture/subsystems/extension-points`.
 

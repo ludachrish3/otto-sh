@@ -386,11 +386,11 @@ The top-level CLI is itself registry-backed. A
 First-party commands in `otto/cli/builtin_commands.py` and third-party
 commands both go through {func}`~otto.cli.registry.register_cli_command` (or
 the {func}`~otto.cli.registry.cli_command` decorator) — the symmetry rule
-again. See {doc}`../../cookbook/extending/extending-cli` for the how-to.
+again. See {doc}`../../extend/extending-cli` for the how-to.
 
 A duplicate command name raises `DuplicateRegistration` unless the second
 registration passes `overwrite=True`, as in every other registry; see
-[Collisions](../../cookbook/extending/extending-cli.md#collisions).
+[Collisions](../../extend/extending-cli.md#collisions).
 
 ### Lazy dispatch
 

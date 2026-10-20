@@ -124,7 +124,7 @@ Pushing a `v*` tag fires [`.github/workflows/release.yml`](https://github.com/lu
   the web frontends first (they ship inside the wheel for air-gapped labs),
   runs the air-gap/brand gates, then `uv build` plus embed assertions —
   including that the wheel carries the `py.typed` marker described in the
-  {doc}`library docs <cookbook/python-library>`. The build backend itself refuses an asset-less wheel,
+  {doc}`library docs <extend/python-library>`. The build backend itself refuses an asset-less wheel,
   so a bare `uv build` without the web step fails rather than publishing a
   frontend-less package. The build then goes through `make wheel-smoke`:
   the wheel is installed over otto's locked runtime dependencies alone (no

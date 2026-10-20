@@ -2,7 +2,7 @@
 
 See :mod:`otto.reservations.protocol` for the backend contract and
 ``docs/cli/reservation/`` for the end-user docs and
-``docs/cookbook/extending/reservation-backends.md`` for the implementer contract.
+``docs/extend/reservation-backends.md`` for the implementer contract.
 
 Every name is exported lazily (PEP 562): ``otto reservation --help`` and the
 lab session import the names they use, and neither pays for a backend it

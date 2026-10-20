@@ -228,7 +228,7 @@ Decisions:
    explicit `class = "pkg.mod:Class"` key on the entry.
 2. ✅ (`otto.host.DeclaredProduct`.) A public default-behaviour base (working name `DeclaredProduct`), so a
    custom product is "subclass, override `install`".
-3. ✅ (the cookbook page `docs/cookbook/extending/product-providers.md`.) Programmatic definition for version permutations: providers already do
+3. ✅ (the cookbook page `docs/extend/product-providers.md`.) Programmatic definition for version permutations: providers already do
    this; it needs a documented pattern (the Advanced section, 3.2).
 
 ### 2.2 Debug vs field

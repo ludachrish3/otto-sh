@@ -306,7 +306,7 @@ alone suggests.  When authoring a link endpoint, take the id from `otto host
 naming an id no host answers to fails the lab load.  The profile is resolved
 with every selected project's `[os_profiles]` tables, so a lab in one project may
 name a table another project declares; a custom lab backend receives them as
-`env.profiles` ({doc}`../cookbook/extending/lab-source-backends`).
+`env.profiles` ({doc}`../extend/lab-source-backends`).
 
 Element names are unique per source, compared **by slug**: `Server` and
 `server` are the same element and the load fails naming both entries.  Several
@@ -959,7 +959,7 @@ A project that registers no providers and declares no `[[products]]` or
 - **It can be computed without a run.**
   {func}`otto.lab.fleet_of_interest <otto.fleet.fleet_of_interest>` returns the
   ids a walk would take, from a loaded lab and its projects, without connecting or
-  bootstrapping; {doc}`../getting-started/boards-of-interest` runs it.
+  bootstrapping; {doc}`../developing/bed-case-study/boards-of-interest` runs it.
 - **Providers are gated by it.**  A project's product and dev-tool providers are
   not invoked at all on a host outside its universe, so nothing that project owns
   can attach to a machine it never declared.

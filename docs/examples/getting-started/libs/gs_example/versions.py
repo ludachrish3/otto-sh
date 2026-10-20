@@ -1,6 +1,6 @@
 """Programmatic products: one ``agent`` per version the host's metadata lists.
 
-The page under docs/cookbook/extending/product-providers.md includes this
+The page under docs/extend/product-providers.md includes this
 file. It is not in the example project's ``init`` list — the worked example
 defines ``agent`` in data, and a name is defined in data OR in code.
 """

@@ -498,10 +498,10 @@ otto for a team:
    list them in `init`; that is also where options classes register for
    `otto run` and `otto test`. Tests are plain pytest files under `tests`. See
    {doc}`../cli/run/index`, {doc}`../cli/test/index` and
-   {doc}`../cookbook/authoring/options-classes`.
+   {doc}`../setup/options-classes`.
 5. **Set per-product preferences** — optional `[host_preferences]` /
    `[os_profiles]` (this page, above, and {doc}`lab-config` / {doc}`os-profiles`).
-6. **Enable tab completion** — see {doc}`../getting-started/index`.
+6. **Enable tab completion** — see {doc}`../setup/index`.
 7. **(Optional) Add TLS to the dashboard** — plain HTTP plus a per-run
    access key is the default and needs no setup; add TLS only if a lab
    needs it. A team owner creates a CA once and distributes trust to

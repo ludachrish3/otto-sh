@@ -241,12 +241,13 @@ Hosted documentation: [otto-sh.readthedocs.io](https://otto-sh.readthedocs.io).
 The same content lives under `docs/` and can be built locally with `make docs`
 — the generated HTML is written to `docs/_build/html/`. Key entry points:
 
-- `docs/getting-started/index.md` — installation and first steps
+- `docs/setup/index.md` — install otto, scaffold a project, and build it out
+- `docs/use/index.md` — drive a project someone else set up
 - `docs/installation.md` — air-gapped installs, team setup, offline docs
 - `docs/cli/` — one page per command, mirroring `otto`'s own command tree
 - `docs/cli/host/` — the `otto host` verbs, who a command runs as, per-family support, capabilities and embedded hosts
 - `docs/cli/cov/` — coverage collection & reports (GCC, clang, embedded)
 - `docs/configuration/` — `settings.toml`, `lab.json`, host sources and options
-- `docs/cookbook/` — using otto from Python: library use, authoring, extending, and short recipes
+- `docs/extend/index.md` — custom products, hosts, parsers, backends and library use
 - `docs/api/` — full API reference for all otto packages
 - `docs/architecture/` — how otto is designed, one page per subsystem

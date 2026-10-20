@@ -533,7 +533,7 @@ class ProjectOptions:
     every field is a flag on both. A test reads the values with
     `ctx.options(ProjectOptions)`, importing the class from this module; an
     instruction takes a `ProjectOptions` parameter. See
-    docs/cookbook/authoring/options-classes.md.
+    docs/setup/options-classes.md.
     """
 
     message: Annotated[

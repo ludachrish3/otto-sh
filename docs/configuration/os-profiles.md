@@ -22,7 +22,7 @@ host's own `console_options.login_prompt` / `password_prompt` win over its
 profile's. The two embedded profiles carry none because an RTOS shell has
 no login. A profile of your own carries none either unless its code
 registration passes them
-({doc}`../cookbook/extending/custom-host-classes`) — a data profile cannot
+({doc}`../extend/custom-host-classes`) — a data profile cannot
 — so a console host that logs in under such a profile needs them in its
 `console_options`, or its first connect fails with `no login prompt
 pattern`.
@@ -34,7 +34,7 @@ each, in this order, and the first that has it supplies the **whole**
 profile:
 
 1. **Code** — `register_os_profile()` called from an init module listed in
-   `settings.toml` ({doc}`../cookbook/extending/custom-host-classes`).
+   `settings.toml` ({doc}`../extend/custom-host-classes`).
 2. **Data** — an `[os_profiles.<name>]` table in a selected project's
    `.otto/settings.toml` (below). When two projects declare the same name, the
    later project in `OTTOPATH` wins.
@@ -103,4 +103,4 @@ so it also reports a table whose `base` is a host class only an `init` module
 registers.
 
 Registering a *code* profile — a new host class, or a subclass of one otto
-ships — is a Python author's job; see {doc}`../cookbook/extending/custom-host-classes`.
+ships — is a Python author's job; see {doc}`../extend/custom-host-classes`.

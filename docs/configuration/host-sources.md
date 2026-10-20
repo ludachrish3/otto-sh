@@ -164,7 +164,7 @@ field, and the link entry — lives in {doc}`lab-config`.
 Running `otto init` (or `otto init --lab`) scaffolds a `lab.json` with one
 declared lab and one example element, plus a `lab_data/README.md` walking
 through the three sections — a faster way to see a valid file than building
-one from scratch. See {doc}`../getting-started/index`.
+one from scratch. See {doc}`../setup/index`.
 ```
 
 ### Annotating entries with `_`-prefixed keys
@@ -311,7 +311,7 @@ required `login` and four optional fields:
 |-------|------|--------------|
 | `login` | string | The account name (required). |
 | `password` | string or `null` | Password, or omit/`null` for key/agent auth on SSH (an empty line on telnet). |
-| `proxy` | string | Name of a registered login proxy (see {doc}`../cookbook/extending/extending-backends`) that drives the steps to *become* this login, after authenticating as `via`. Omit for a directly-loginable account — a proxy-less entry still uses the built-in `"su"` proxy when `switch_user`/`as_user` switches to it. |
+| `proxy` | string | Name of a registered login proxy (see {doc}`../extend/extending-backends`) that drives the steps to *become* this login, after authenticating as `via`. Omit for a directly-loginable account — a proxy-less entry still uses the built-in `"su"` proxy when `switch_user`/`as_user` switches to it. |
 | `via` | string | The `login` of another entry in this same list to authenticate as first. Only valid alongside `proxy`. Omit to default to the first proxy-less (directly-loginable) entry. |
 | `params` | object | Free-form data handed to the proxy callable (e.g. a container name, a service name). Otto interprets only two keys: `login_shell` (default `true`) in the built-in `"su"` proxy, and `expect_prompt` for any proxy that declares a prompt — see below. |
 | `protocols` | list of strings | The protocols this entry is **for** — names of self-authenticating backends: `console`, `ftp`, `ssh`, `telnet` (a custom backend that declares `authenticates` joins the list). Omit for an entry that applies to every protocol. See {ref}`cred-protocols`. |
@@ -485,7 +485,7 @@ Any **registered** backend can be named by a source entry. Register yours from
 an `init` module (one of the modules listed in `init = [...]`) with the model
 that parses its options and the factory that builds it, then select it. The
 `LabRepository` protocol the backend must satisfy, and the registration
-contract, are in {doc}`../cookbook/extending/lab-source-backends`; its
+contract, are in {doc}`../extend/lab-source-backends`; its
 {ref}`CMDB example <lab-source-config-model>` registers a `cmdb` backend with
 the config model `CmdbConfig` and the factory `cmdb_source`, which this entry
 selects:

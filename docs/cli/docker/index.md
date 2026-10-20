@@ -149,7 +149,7 @@ otto docker compose up --build integration
 From a test run, deploy it once for the whole run in a session-scoped
 fixture, in the `conftest.py` at the root of your tests directory. The fixture
 runs under `otto test`, whose event loop is session-scoped (see
-{doc}`../../cookbook/host-scopes`):
+{doc}`../../setup/host-scopes`):
 
 ```python
 import pytest_asyncio
@@ -173,7 +173,7 @@ async def test_api_answers(integration):
 
 `deploy` leaves the stack running when the run ends; use
 {func}`~otto.docker.deployment.deployed` instead to tear it down again (see
-{doc}`../../cookbook/test-recipes`). A project whose compose files are not part of
+{doc}`../../setup/test-recipes`). A project whose compose files are not part of
 a use-case starts its own stack with {func}`~otto.docker.compose.compose_up`.
 
 (docker-persistent-shell-state)=

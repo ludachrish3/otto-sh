@@ -185,7 +185,7 @@ deleting an existing event reuses the same panel; deleting requires
 pressing **Delete** twice ("Really delete?") before it takes effect.
 
 **During a test run.** Neither the `monitor` fixture (see [Monitoring from a
-test](../../cookbook/test-recipes.md#monitoring-from-a-test)) nor the run-wide
+test](../../setup/test-recipes.md#monitoring-from-a-test)) nor the run-wide
 `otto test --monitor` serves a dashboard. Events from `monitor.event(...)`, and
 the automatic per-test start/pass/fail marks of `--monitor`, are recorded into
 the archive; see them on the timeline by [reviewing the

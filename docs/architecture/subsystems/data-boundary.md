@@ -29,7 +29,7 @@ Contextual validation issues a readiness record, and only that record builds:
 `to_host` consumes it once, and refuses a record from another spec, from
 validation without preferences, or one already used. A custom spec adds its
 own contextual checks in `check_in`; see
-{doc}`../../cookbook/extending/custom-host-classes`.
+{doc}`../../extend/custom-host-classes`.
 
 That is the readiness guarantee: a host is built only from the record its
 contextual validation issued, with the entry's `power_control` configuration
@@ -39,7 +39,7 @@ it builds; to build again, validate again. One stock builder,
 {meth}`~otto.host.HostSpec.build_kwargs`, walks a spec's fields by kind over
 the record, so every spec — a custom one included — builds with no `to_host`
 of its own; a spec that overrides `to_host` keeps the guarantee by building
-through `build_kwargs`; see {doc}`../../cookbook/extending/custom-host-classes`.
+through `build_kwargs`; see {doc}`../../extend/custom-host-classes`.
 
 Contextual validation runs in one of two modes, and the checks that need the
 selected term or transfer, the host class or the id run in both:
@@ -117,7 +117,7 @@ The coverage rule in {mod}`otto.host.construction` holds the two declarations
 together: `register_host_class` refuses a class field the spec lacks and a spec
 field the class lacks, so the mismatch fails at registration (or at the first
 lookup of a class given by `Ref`), not at load; see
-{doc}`../../cookbook/extending/custom-host-classes`.
+{doc}`../../extend/custom-host-classes`.
 
 ## Settings and environment
 

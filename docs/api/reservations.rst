@@ -28,7 +28,7 @@ it.
 records (``backend_name`` returns a plain ``str``), so every backend reports
 *when* a booking runs.  The rules those times obey — the window predicate, and
 what a ``None`` bound means on the query versus on a row — are stated once,
-under "The query window" in :doc:`../cookbook/extending/reservation-backends`.  Porting a
+under "The query window" in :doc:`../extend/reservation-backends`.  Porting a
 backend written for otto 0.10 is covered in the same page's "Migrating from
 0.10".
 
@@ -38,7 +38,7 @@ inverted "who holds this resource, and until when?" query implements
 ``holders``.  Both are detected structurally with ``isinstance`` — implement
 the method or don't.  Omitting ``holders`` degrades only the refusal message,
 which then reports the holders as unknown;
-:doc:`../cookbook/extending/reservation-backends` is the implementer's guide to both.
+:doc:`../extend/reservation-backends` is the implementer's guide to both.
 
 Extension points for implementers
 ---------------------------------
@@ -56,14 +56,14 @@ sub-table with the config model, then calls the factory with a
 that path raises :class:`~otto.reservations.ReservationConstructionError`.
 :data:`~otto.reservations.RESERVATION_BACKENDS` is the registry itself.
 
-"Selecting it in settings" in :doc:`../cookbook/extending/reservation-backends`
+"Selecting it in settings" in :doc:`../extend/reservation-backends`
 is the one home for that contract: the config model, the factory, the
 environment and the errors.
 
-See :doc:`../getting-started/reservations` for a worked example — a small
+See :doc:`../developing/bed-case-study/reservations` for a worked example — a small
 backend, its ``init`` module registration, its ``[reservations]`` table, and
 the conformance test that proves it — and
-:doc:`../cookbook/extending/reservation-backends` for the full implementer's contract.
+:doc:`../extend/reservation-backends` for the full implementer's contract.
 
 The package
 -----------

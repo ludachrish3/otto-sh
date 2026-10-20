@@ -48,7 +48,7 @@ hosts, about 9.
 | `--port` | The service port you intend to tunnel. It is checked on the first and last hop, and never bound. See [The service port and the scratch port](#the-service-port-and-the-scratch-port). |
 | `--protocol` | `tcp`, `udp`, or `both` (the default, unlike `tunnel add`'s `tcp`). `both` checks TCP, then UDP. Anything else is a usage error (exit 2). |
 | `--dest` | Deliver the far end's traffic to this host instead, as with `tunnel add`. How much of that last leg can be proven depends on the host: see [Checking a `--dest`](#checking-a---dest). |
-| `--carrier` | The carrier the throwaway tunnel is built with; default `socat`. See [Custom carriers](../../cookbook/network-api.md#custom-tunnel-carriers). |
+| `--carrier` | The carrier the throwaway tunnel is built with; default `socat`. See [Custom carriers](../../extend/network-api.md#custom-tunnel-carriers). |
 | `--report` | Also write the full result as JSON to this path. See {doc}`../check-verdicts`. |
 | `--verbose`, `-v` | Also print every probe's raw output. |
 

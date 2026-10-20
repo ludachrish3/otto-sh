@@ -73,7 +73,7 @@ acme 0.1.0
 
 `run` and `test` are the verbs that take *registered* options
 (`@options(verbs=[...])` or `register_options`, see
-{doc}`../cookbook/authoring/options-classes`). Under `run` they sit alongside
+{doc}`../setup/options-classes`). Under `run` they sit alongside
 each command's own options: a standalone `@instruction`, and every one of
 otto's six project instructions (`install`, `uninstall`, `cleanup`,
 `get-logs`, `install-tools`, `status`) alike. `otto test` has no options class
@@ -97,7 +97,7 @@ dry run: no command body was run and no device was contacted
 above this block ({ref}`the lab-level verbs <dry-run-lab-verbs>` shows it; the
 plan is left out of this example to show the options). A project overriding it
 with its own options class (inheriting `InstallOptions`, see
-{doc}`../getting-started/customizing-project-instructions`) shows the same
+{doc}`../setup/customizing-project-instructions`) shows the same
 way, its own fields included.
 
 The command's own options class is listed first, then any classes registered
@@ -156,7 +156,7 @@ metrics from every host in the lab.
 
 If a command of your own should genuinely do work under `-n`, register it
 with `dry_run_preview=True` — see
-{doc}`../cookbook/dry-run-contract`.
+{doc}`../extend/dry-run-contract`.
 
 (dry-run-probe)=
 

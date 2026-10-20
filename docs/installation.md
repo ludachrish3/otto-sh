@@ -5,7 +5,7 @@ recommended project-managed setup for teams, fully air-gapped installation, and 
 read otto's documentation (and its dependencies' documentation) offline.
 
 If you just want otto on your machine right now, the short version on the
-{doc}`getting-started/index` page is enough. Come back here when you are setting up a team,
+{doc}`setup/index` page is enough. Come back here when you are setting up a team,
 working without internet access, or managing otto alongside other Python dependencies.
 
 ## Requirements
@@ -570,7 +570,7 @@ SSH host key verification
   (asyncssh expands `~` itself, so `~/.ssh/known_hosts` works) — only then does that
   file need to be populated on the air-gapped host in advance. Tunnel legs to SSH
   *hop* hosts are always unverified; a hopped host's own connection still honors its
-  `known_hosts`. See [Connection options](cookbook/connection-options.md).
+  `known_hosts`. See [Connection options](extend/connection-options.md).
 
 Log retention
 : Otto stores logs and artifacts under the `--xdir` directory.  On isolated systems

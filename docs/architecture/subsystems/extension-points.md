@@ -15,41 +15,41 @@ inside `otto test`'s pytest session, so they may register nothing
 | You want to add | Register with | Guide |
 | --- | --- | --- |
 | an `otto run` subcommand | {func}`@instruction() <otto.instructions.instruction>` | {doc}`../../cli/run/index` |
-| flags on `otto run` and `otto test` | {func}`otto.register_options <otto.params.register_options>` / `@options(verbs=[...])` | {doc}`../../cookbook/authoring/options-classes` |
-| a top-level `otto` command | {func}`otto.register_cli_command <otto.cli.registry.register_cli_command>` / {func}`@otto.cli_command <otto.cli.registry.cli_command>` | {doc}`../../cookbook/extending/extending-cli` |
-| a CLI verb on a host class | `@cli_exposed` on the method | {doc}`../../cookbook/extending/cli-exposed-verbs` |
-| a host class (new `os_type` base) | `register_host_class` | {doc}`../../cookbook/extending/custom-host-classes` |
+| flags on `otto run` and `otto test` | {func}`otto.register_options <otto.params.register_options>` / `@options(verbs=[...])` | {doc}`../../setup/options-classes` |
+| a top-level `otto` command | {func}`otto.register_cli_command <otto.cli.registry.register_cli_command>` / {func}`@otto.cli_command <otto.cli.registry.cli_command>` | {doc}`../../extend/extending-cli` |
+| a CLI verb on a host class | `@cli_exposed` on the method | {doc}`../../extend/cli-exposed-verbs` |
+| a host class (new `os_type` base) | `register_host_class` | {doc}`../../extend/custom-host-classes` |
 | an OS profile (defaults bundle) | `register_os_profile` or `[[os_profiles]]` in settings | {doc}`../../configuration/os-profiles` |
-| a connection (term) backend | `register_term_backend` | {doc}`../../cookbook/extending/extending-backends` |
-| a file-transfer backend | `register_transfer_backend` | {doc}`../../cookbook/extending/extending-backends` |
-| a shell dialect | `register_command_frame` | {doc}`../../cookbook/extending/extending-embedded` |
-| an embedded binary loader | `register_binary_loader` | {doc}`../../cookbook/extending/extending-embedded` |
-| an embedded filesystem type | `register_filesystem` | {doc}`../../cookbook/extending/extending-embedded` |
+| a connection (term) backend | `register_term_backend` | {doc}`../../extend/extending-backends` |
+| a file-transfer backend | `register_transfer_backend` | {doc}`../../extend/extending-backends` |
+| a shell dialect | `register_command_frame` | {doc}`../../extend/extending-embedded` |
+| an embedded binary loader | `register_binary_loader` | {doc}`../../extend/extending-embedded` |
+| an embedded filesystem type | `register_filesystem` | {doc}`../../extend/extending-embedded` |
 | a power controller | `register_power_controller` | {ref}`power-controllers` |
-| a session setup hook | `register_session_setup` | {doc}`../../cookbook/extending/extending-backends` |
-| a login proxy | `register_login_proxy` | {doc}`../../cookbook/extending/extending-backends` |
+| a session setup hook | `register_session_setup` | {doc}`../../extend/extending-backends` |
+| a login proxy | `register_login_proxy` | {doc}`../../extend/extending-backends` |
 | a settings-declared product kind | `register_product_kind` | {doc}`../../configuration/declared-products-tools` |
 | a settings-declared dev-tool kind | `register_dev_tool_kind` | {doc}`../../configuration/declared-products-tools` |
-| dev tools on hosts | `register_dev_tool_provider` | {doc}`../../cookbook/extending/cli-exposed-verbs` |
-| products on hosts | `register_product_provider` | {doc}`../../cookbook/extending/product-providers` |
-| a host source (lab repository) | {func}`otto.labs.register_lab_repository` | {doc}`../../cookbook/extending/lab-source-backends` |
-| fast completion for a host source | optional {class}`~otto.labs.protocol.SupportsHostSummaries` on the repository | {doc}`../../cookbook/extending/lab-source-backends` |
-| an inventory backend | `register_inventory_backend` | {doc}`../../cookbook/extending/inventory-backends` |
-| a reservation backend | `register_reservation_backend` | {doc}`../../cookbook/extending/reservation-backends` |
-| a creds store | `register_creds_backend` | {doc}`../../cookbook/extending/creds-backends` |
-| a link impairer | `register_impairer` | {doc}`../../cookbook/network-api` |
-| a tunnel carrier | `register_carrier` | {doc}`../../cookbook/network-api` |
+| dev tools on hosts | `register_dev_tool_provider` | {doc}`../../extend/cli-exposed-verbs` |
+| products on hosts | `register_product_provider` | {doc}`../../extend/product-providers` |
+| a host source (lab repository) | {func}`otto.labs.register_lab_repository` | {doc}`../../extend/lab-source-backends` |
+| fast completion for a host source | optional {class}`~otto.labs.protocol.SupportsHostSummaries` on the repository | {doc}`../../extend/lab-source-backends` |
+| an inventory backend | `register_inventory_backend` | {doc}`../../extend/inventory-backends` |
+| a reservation backend | `register_reservation_backend` | {doc}`../../extend/reservation-backends` |
+| a creds store | `register_creds_backend` | {doc}`../../extend/creds-backends` |
+| a link impairer | `register_impairer` | {doc}`../../extend/network-api` |
+| a tunnel carrier | `register_carrier` | {doc}`../../extend/network-api` |
 | a compose adapter (per docker use case) | `register_compose_adapter` | {doc}`../../cli/docker/use-cases` |
-| a project's `ProjectActions` (project instructions) | `register_project_actions` | {doc}`../../cookbook/authoring/writing-instructions` |
-| per-host monitor parsers | `register_host_parsers` | {doc}`../../cookbook/extending/custom-parsers` |
-| project-level monitor parsers | `register_parsers` | {doc}`../../cookbook/extending/custom-parsers` |
-| SNMP metric descriptors | `register_snmp_metric` | {doc}`../../cookbook/extending/custom-parsers` |
+| a project's `ProjectActions` (project instructions) | `register_project_actions` | {doc}`../../setup/writing-instructions` |
+| per-host monitor parsers | `register_host_parsers` | {doc}`../../extend/custom-parsers` |
+| project-level monitor parsers | `register_parsers` | {doc}`../../extend/custom-parsers` |
+| SNMP metric descriptors | `register_snmp_metric` | {doc}`../../extend/custom-parsers` |
 
 Tests are not a seam either: they are plain pytest files in the project's test
 directories, found by pytest and run by `otto test`
-({doc}`../../cookbook/authoring/writing-tests`). A project-wide options class
+({doc}`../../setup/writing-tests`). A project-wide options class
 registered for both `run` and `test` is the standard way to give a whole
-project consistent CLI flags ({doc}`../../cookbook/authoring/options-classes`).
+project consistent CLI flags ({doc}`../../setup/options-classes`).
 
 ## What keeps third-party code honest
 
@@ -98,9 +98,9 @@ converts a mistake that used to pass quietly into one that says so:
 
 Each seam's user-facing how-to lives in the guide:
 
-- Connection & transfer backends — {doc}`../../cookbook/extending/extending-backends`
-- Embedded targets & command frames — {doc}`../../cookbook/extending/extending-embedded`
-- Host classes, OS profiles & host verbs — {doc}`../../cookbook/extending/custom-host-classes`,
+- Connection & transfer backends — {doc}`../../extend/extending-backends`
+- Embedded targets & command frames — {doc}`../../extend/extending-embedded`
+- Host classes, OS profiles & host verbs — {doc}`../../extend/custom-host-classes`,
   {doc}`../../configuration/os-profiles`,
   {doc}`../../cli/host/capabilities/index`
 - Power controllers — {ref}`power-controllers`,
@@ -109,8 +109,8 @@ Each seam's user-facing how-to lives in the guide:
 - Host sources — {doc}`../../configuration/host-sources`
 - Reservation backends — {doc}`../../cli/reservation/index`
 - Monitor parsers & SNMP metrics — {doc}`../../cli/monitor/index`
-- Instructions, tests & options — {doc}`../../cli/run/index`, {doc}`../../cli/test/index`, {doc}`../../cookbook/authoring/options-classes`
-- New top-level commands — {doc}`../../cookbook/extending/extending-cli`
+- Instructions, tests & options — {doc}`../../cli/run/index`, {doc}`../../cli/test/index`, {doc}`../../setup/options-classes`
+- New top-level commands — {doc}`../../extend/extending-cli`
 
 ## Where the code lives
 

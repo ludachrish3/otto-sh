@@ -8,7 +8,7 @@ directories** are the ones that file's `tests` setting lists
 ({doc}`../../configuration/settings`). pytest collects them as it
 always does: by default every `test_*.py` file in them, with its
 `Test`-prefixed classes and `test_`-prefixed functions. Writing those tests
-is {doc}`../../cookbook/authoring/writing-tests`.
+is {doc}`../../setup/writing-tests`.
 
 `otto test` is one command: the tests to run are positional name
 arguments, and `--list-tests` lists what they select.
@@ -87,7 +87,7 @@ otto --lab my_lab -n test TestDevice                  # dry run: what would run,
 
 Names tab-complete; see {doc}`selection`. Tests can also run from Python,
 without the command line; see
-[Running tests from Python](../../cookbook/python-library.md#running-tests-from-python)
+[Running tests from Python](../../extend/python-library.md#running-tests-from-python)
 in the Cookbook.
 
 ## Options
@@ -123,8 +123,8 @@ The implications in this table are the library's:
 `otto test` also takes the flags of every options class a project registers for
 the `test` verb, and `otto test --help` lists them with the rest. A test
 reads their values with
-[`ctx.options(Cls)`](../../cookbook/authoring/writing-tests.md#what-every-test-gets); see
-{doc}`../../cookbook/authoring/options-classes`. A value that fails the
+[`ctx.options(Cls)`](../../setup/writing-tests.md#what-every-test-gets); see
+{doc}`../../setup/options-classes`. A value that fails the
 class's validation stops the run with exit code 2 before any test runs.
 
 ### Listing tests
@@ -218,7 +218,7 @@ Each run writes into its own output directory,
 `<xdir>/test/<timestamp>/` ([Output directories](../index.md#output-directories)),
 called `<run dir>` on this page, and prints the path when it ends. The run's
 logs and `junit.xml` sit at the top. Below them, the directories the
-[`module_dir` and `test_dir` fixtures](../../cookbook/authoring/writing-tests.md#what-every-test-gets)
+[`module_dir` and `test_dir` fixtures](../../setup/writing-tests.md#what-every-test-gets)
 hand out mirror each test's pytest ID:
 
 ```text
@@ -314,7 +314,7 @@ hosts can be sampled, the run samples those.
 
 A single test can also start and stop a monitor of its own through the
 `monitor` fixture (collection only, no dashboard); see
-[Monitoring from a test](../../cookbook/test-recipes.md#monitoring-from-a-test).
+[Monitoring from a test](../../setup/test-recipes.md#monitoring-from-a-test).
 
 ## Markers
 
@@ -351,7 +351,7 @@ run:
 
 `@pytest.mark.ensure("installed")`
 : Converge the lab through the named steps before the test; see
-  [Declaring lab state](../../cookbook/authoring/writing-tests.md#declaring-lab-state-the-ensure-marker).
+  [Declaring lab state](../../setup/writing-tests.md#declaring-lab-state-the-ensure-marker).
 
 `@pytest.mark.parametrize("arg", [values])`
 : Run the test once per value.  Each parameter combination gets its own
@@ -360,7 +360,7 @@ run:
 `@pytest.mark.asyncio(loop_scope="class")`
 : Run a test, class or module on an event loop of its own (`"class"`,
   `"module"` or `"function"`) instead of the run's one loop; see
-  {doc}`../../cookbook/host-scopes`.
+  {doc}`../../setup/host-scopes`.
 
 ```{toctree}
 :caption: Topics

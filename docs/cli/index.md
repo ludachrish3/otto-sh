@@ -303,7 +303,7 @@ read-only host verbs such as `ls`, `exists`, `read-file`, `is-installed`, and
 explicit `--dir`) renders its HTML report to `cov_report/` underneath it, the
 same as `otto test --cov-report`.  Third-party commands control this with the
 `output_dir=` flag at registration — see
-{doc}`../cookbook/extending/extending-cli`.
+{doc}`../extend/extending-cli`.
 
 (run-tree)=
 ### Inside a run directory

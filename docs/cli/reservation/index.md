@@ -161,15 +161,15 @@ such a pair — there is no reservation for the shared element to protect.
 The `json` backend is a file; a team with a scheduler — Jira, a booking
 service, a database — writes a backend that reads it: two read-only
 methods, registered from an `init` module, selected by name in
-`[reservations]`. {doc}`../../cookbook/extending/reservation-backends` has the
+`[reservations]`. {doc}`../../extend/reservation-backends` has the
 contract, the conformance helper that proves a backend against it, and the
 optional holder-lookup and username-completion capabilities. The Getting Started
-section walks through one ({doc}`../../getting-started/reservations`).
+section walks through one ({doc}`../../developing/bed-case-study/reservations`).
 
 Already have a backend written against otto 0.10? The contract changed in
 0.11.0 — three methods became two, and every backend now reports times. There
 is no shim: see
-[Migrating from 0.10](../../cookbook/extending/reservation-backends.md#migrating-from-010)
+[Migrating from 0.10](../../extend/reservation-backends.md#migrating-from-010)
 for the mapping and the checklist.
 
 ## Fail-closed behavior

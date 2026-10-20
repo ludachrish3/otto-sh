@@ -33,12 +33,12 @@ never by defining a standalone instruction of its own named `install`.
 
 A standalone instruction that tries to claim a project instruction's name — any
 of them, not only otto's six — is refused at registration; see
-[The collision error](../../cookbook/authoring/writing-instructions.md#the-collision-error).
+[The collision error](../../setup/writing-instructions.md#the-collision-error).
 
 ## Zero effort: one project, one command
 
 With products registered (see
-{doc}`Registering products <../../cookbook/extending/cli-exposed-verbs>`) and nothing else done:
+{doc}`Registering products <../../extend/cli-exposed-verbs>`) and nothing else done:
 
 ```bash
 otto --lab my_lab run install
@@ -189,7 +189,7 @@ passes `overwrite=True`, which replaces the class and every body it declared:
 a name the new class no longer declares loses that project's body, and when that
 project was the name's first declarer, the walk shape comes from the next
 declarer instead. See
-[Project instructions](../../cookbook/authoring/writing-instructions.md#project-instructions)
+[Project instructions](../../setup/writing-instructions.md#project-instructions)
 for the declaration in full.
 
 (fleet-of-interest)=
@@ -437,7 +437,7 @@ delivered to that `uninstall` or `status` body as well. Give a field the same
 name on two of your own instructions only when it means the same thing. An
 `ensure` marker under `otto test` keys by name the same way, from `otto test`'s
 own flags; see [Which flags reach an install body under `otto
-test`](../../cookbook/authoring/options-classes.md#which-flags-reach-an-install-body-under-otto-test).
+test`](../../setup/options-classes.md#which-flags-reach-an-install-body-under-otto-test).
 
 **Where a shared base lives.** In a project the sharing projects **require**, or in a
 library package — never in an optional project. Bootstrap imports every configured

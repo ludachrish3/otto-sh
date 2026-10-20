@@ -123,8 +123,8 @@ The files:
   `message: str` field.
 - **`tests/conftest.py`** holds a fixture every test under `tests/` can use.
 
-{doc}`../cookbook/authoring/options-classes` covers options classes, and
-{doc}`../cookbook/authoring/writing-tests` covers tests.
+{doc}`../setup/options-classes` covers options classes, and
+{doc}`../setup/writing-tests` covers tests.
 
 ## What it scaffolds: lab files
 
@@ -200,9 +200,9 @@ export` remedy.
 See {doc}`cov/instrumenting/kernel-modules` for how the library attaches to a
 module and how otto loads/removes it around a run.
 
-For a full first-project walkthrough, see {doc}`../getting-started/index`, then
-{doc}`../getting-started/running-instructions` and
-{doc}`../getting-started/running-tests`; for the
+For a full first-project walkthrough, see {doc}`../setup/index`, then
+{doc}`../setup/running-instructions` and
+{doc}`../setup/running-tests`; for the
 one-time team decisions around it, the
 {ref}`team-setup-checklist <team-setup-checklist>`.
 

@@ -125,7 +125,7 @@ when the firmware enforces a tighter limit — for example `32` for a build with
 `CONFIG_FS_FATFS_MAX_LFN=32` or `CONFIG_FS_LITTLEFS_NAME_MAX=32`.
 
 Registering a dialect or a filesystem otto does not ship is a Python
-author's job — see {doc}`../../cookbook/extending/extending-embedded`.
+author's job — see {doc}`../../extend/extending-embedded`.
 
 ## File transfer
 
@@ -195,6 +195,6 @@ Key fields:
 
 - {doc}`../../configuration/lab-config` — full `lab.json` schema reference
 - {doc}`../../configuration/os-profiles` — custom host classes and data profile bundles
-- {doc}`../../cookbook/extending/extending-embedded` — writing custom command frames and filesystems
+- {doc}`../../extend/extending-embedded` — writing custom command frames and filesystems
 - {doc}`../cov/index` — cross-toolchain configuration for embedded coverage
 - {doc}`../monitor/index` — SNMP monitoring configuration

@@ -51,7 +51,7 @@ lifecycle bridge awaited. A returned `Result` supplies its own `exit_code`.
 `None` — what every side-effect-only first-party leaf returns — renders
 **nothing** and exits `0`, unless the leaf installed a `RenderPolicy` with a
 `none_message`; any other value prints as-is and exits `0`
-({doc}`../cookbook/extending/extending-cli`).
+({doc}`../extend/extending-cli`).
 
 The front door looks like this — and every terminal block in these docs is
 **captured from the real CLI at build time** (a scaffolded demo project, real
@@ -179,7 +179,7 @@ run their bodies under `-n` would exempt precisely the command that can still
 reach a device while the user believed nothing would. One rule with no
 exceptions is also the only version a third-party author can hold in their
 head. A command that genuinely should run under `-n` opts in instead, with
-`dry_run_preview=True` ({doc}`../cookbook/dry-run-contract`).
+`dry_run_preview=True` ({doc}`../extend/dry-run-contract`).
 
 **`--probe` permits a connection, never a command.** A connection attempt
 produces no command result, so it feeds no `if result.is_ok:` and no parser —
@@ -239,7 +239,7 @@ invoke wrapper detects the coroutine a plain `async def` leaf returned and
 bridges it through `run_command()`, so a third-party command gets a cleanup
 boundary, the two-stage policy, and the bounded teardown for free — the same
 policy the first-party commands run under
-({doc}`../cookbook/extending/extending-cli`).
+({doc}`../extend/extending-cli`).
 
 A phase that owns its *own* event loop cannot be wrapped that way, and
 {func}`otto.lifecycle.sync_phase` is its sibling: the same two stages, but
@@ -378,7 +378,7 @@ When a loop's hosts close is decided by **cleanup boundaries**
   otto shuts that loop's registry down: every host on it closes whatever the
   count, and the loop refuses new boundaries. So under `otto test` an
   `open_context` inside a test leaves its hosts open until its runner's loop
-  shuts down ({doc}`../cookbook/host-scopes`).
+  shuts down ({doc}`../setup/host-scopes`).
 
 A script that drives a loop itself, with none of these around it, holds no
 boundary; it closes its hosts with {meth}`~otto.context.OttoContext.sweep_loop`
@@ -427,7 +427,7 @@ order:
 5. yield, and on exit release its cleanup boundary (the last release closes
    the loop's hosts) and restore the outer context.
 
-See [Bring-your-own-CLI](../cookbook/python-library.md#bring-your-own-cli-lower-level-primitives)
+See [Bring-your-own-CLI](../extend/python-library.md#bring-your-own-cli-lower-level-primitives)
 in the library guide for each step and what it raises. The reservation gate
 applies as it does on the CLI; `skip_reservation_check=True` is the `-R`
 break-glass.

@@ -83,7 +83,7 @@ function ({func}`~otto.suite.run.run_tests` calls the public coverage
 functions), never in the CLI leaf, or a Python caller loses the step; the
 other verb's CLI becomes a short sequence of the same public calls.
 ({func}`~otto.suite.run.prepare_run` is the preflight example; see the
-cookbook's {doc}`../cookbook/python-library` "Preflight" section.)
+cookbook's {doc}`../extend/python-library` "Preflight" section.)
 
 ## Fail loud, fail framed
 

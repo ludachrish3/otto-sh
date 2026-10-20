@@ -139,7 +139,7 @@ configured — the "Coverage toolchain" table in
 Two things, in two places. **Where the counters live on a host** belongs to
 the product that writes them — its `cov_dir`, defaulting to `/tmp/<name>`
 (see {doc}`../../configuration/declared-products-tools`, and
-{doc}`../../getting-started/coverage` for the walkthrough):
+{doc}`../../setup/coverage` for the walkthrough):
 
 ```toml
 [[products]]

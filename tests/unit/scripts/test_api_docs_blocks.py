@@ -86,7 +86,7 @@ def test_teaching_corpus_covers_the_boundary_and_skips_archives():
     corpus = teaching_corpus(CHECKOUT_ROOT)
     rel = {p.relative_to(CHECKOUT_ROOT).as_posix() for p in corpus}
     assert "README.md" in rel
-    assert "docs/cookbook/python-library.md" in rel
+    assert "docs/extend/python-library.md" in rel
     assert "src/otto/examples/lab_repository.py" in rel
     assert any(r.startswith("docs/examples/") and r.endswith(".py") for r in rel)
     assert not any("superpowers" in r or "_build" in r for r in rel)

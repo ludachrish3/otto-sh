@@ -60,7 +60,7 @@ otto tunnel check  --hosts <h0[@if],h1[@if],...,hn-1[@if]> --port <P> [--protoco
 | `--port` | `add`, `check` | Service port, used at both endpoints; `check` only looks at it, and builds on a scratch port |
 | `--protocol` | `add`, `check` | `tcp` (default for `add`) or `udp`; `check` also takes `both`, its default |
 | `--dest` | `add`, `check` | Far-end delivery override; defaults to loopback on the last `--hosts` entry |
-| `--carrier` | `add`, `check` | Tunnel transport — a registered `TunnelCarrier` name, applied chain-wide; default `socat`. See [Custom carriers](../../cookbook/network-api.md#custom-tunnel-carriers) |
+| `--carrier` | `add`, `check` | Tunnel transport — a registered `TunnelCarrier` name, applied chain-wide; default `socat`. See [Custom carriers](../../extend/network-api.md#custom-tunnel-carriers) |
 | `--idle-timeout` | `add` | Drop a TCP connection or UDP flow idle this many seconds; default never. See [Idle timeout](add.md#idle-timeout) |
 | `--report` | `check` | Also write the full result as JSON to this path |
 | `-v, --verbose` | `check` | Also print every probe's raw output |

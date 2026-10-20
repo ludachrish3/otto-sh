@@ -29,7 +29,7 @@ digraph testpipeline {
 Both verbs build their flags with the **same options-to-parameters
 machinery**: each field of an options class becomes a flag, and the
 populated instance is reconstructed at call time
-({doc}`../../cookbook/authoring/options-classes`).
+({doc}`../../setup/options-classes`).
 
 - **Verb-wide options** are classes registered with
   {func}`~otto.params.register_options` (or `@options(verbs=[...])`) from an
@@ -136,7 +136,7 @@ conftest hierarchy applies while otto's own never leaks in.
 Every session runs on one session-wide event loop by default
 (`asyncio_default_test_loop_scope` and `asyncio_default_fixture_loop_scope`
 are both `session`), the way every other otto command runs on one loop. A
-test may pin a narrower loop; {doc}`../../cookbook/host-scopes` has the rules.
+test may pin a narrower loop; {doc}`../../setup/host-scopes` has the rules.
 
 pytest keeps what it is good at (collection, fixtures, `parametrize`,
 markers, reporting) and two plugins layer on otto's concerns:
@@ -195,7 +195,7 @@ warm one refreshed, by a disposable, time-bounded child process. What a user
 sees is on {doc}`../../cli/test/selection` ("Tab-completing names"), and how
 the per-file tables, the check window and the child work is on
 {doc}`completion-cache` ("The test-names cache"). The path from `otto init` to a
-first run is in [getting started](../../getting-started/running-tests.md).
+first run is in [getting started](../../setup/running-tests.md).
 
 ## Non-fatal assertions
 
@@ -220,7 +220,7 @@ The split is intent. Instructions ({func}`~otto.instructions.instruction`) are
 their returned {class}`~otto.result.Result`. Tests are *verdicts*: many
 independent tests, pytest semantics, stability statistics, per-test
 artifacts. Options classes registered for both verbs keep the two consistent
-({doc}`../../cookbook/authoring/options-classes`).
+({doc}`../../setup/options-classes`).
 
 ## Project instructions
 

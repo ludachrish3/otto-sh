@@ -83,7 +83,7 @@ interval — `otto monitor --interval` above, `otto test --monitor-interval`
 (see [Monitoring during a test
 run](during-tests.md#monitoring-during-a-test-run)), and
 a test's `monitor.start()` (see [Monitoring from a
-test](../../cookbook/test-recipes.md#monitoring-from-a-test)) all
+test](../../setup/test-recipes.md#monitoring-from-a-test)) all
 reject anything lower. On `otto monitor`, a lower value is a usage error
 naming `--interval` (exit 2). `MetricCollector` itself has no floor.
 

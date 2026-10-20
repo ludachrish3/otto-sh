@@ -141,7 +141,7 @@ An entry without a usable `ttl_seconds` or `lab_key_paths` is a miss.
 **The lab key paths** are the files each lab source reads, then every
 directory their enumeration entered. Only the writer computes them: it runs
 after init, prepares each project's sources and asks each for the files it
-reads ({doc}`../../cookbook/extending/lab-source-backends`, "Files and the
+reads ({doc}`../../extend/lab-source-backends`, "Files and the
 completion cache"), then stores the list with the entry. A reader re-stats
 the stored paths and never prepares a source or expands a glob, so a new
 file matching a glob is seen through its directory's mtime. A source whose

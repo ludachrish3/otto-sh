@@ -1,4 +1,4 @@
-"""Every ``{literalinclude}`` under docs/getting-started/ resolves (spec §4 tier 1).
+"""Every ``{literalinclude}`` on the setup and bed-case-study pages resolves (spec §4 tier 1).
 
 Sphinx ``-W`` also refuses a missing file or marker, but only when the docs
 build runs; this guard runs in the unit lane, names the page and the marker,
@@ -11,7 +11,7 @@ from pathlib import Path
 from tests._fixtures.paths import CHECKOUT_ROOT
 
 _DOCS = CHECKOUT_ROOT / "docs"
-_PAGES = _DOCS / "getting-started"
+_PAGES = (_DOCS / "setup", _DOCS / "developing" / "bed-case-study")
 _INCLUDE = re.compile(
     r"^[ \t]*(?:```|:::)\{literalinclude\}[ \t]+(?P<target>\S+)[ \t]*\n"
     r"(?P<opts>(?:[ \t]*:[\w-]+:.*\n)*)",
@@ -117,5 +117,5 @@ def test_quoted_markers_are_unquoted_before_matching(tmp_path):
 
 
 def test_the_real_pages_resolve():
-    assert _PAGES.is_dir(), "docs/getting-started/ is the hub directory (Task 6)"
-    assert check_includes(_PAGES) == []
+    assert all(p.is_dir() for p in _PAGES), "setup/ and the bed case study hold the pages"
+    assert [bad for pages in _PAGES for bad in check_includes(pages)] == []

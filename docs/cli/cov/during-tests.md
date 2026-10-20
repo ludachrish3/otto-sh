@@ -86,7 +86,7 @@ is logged, just as an auto `otto test` behaves. A broken `[coverage].hosts`
 selector is one example.
 
 In a test, read it from the
-[`ctx` fixture](../../cookbook/authoring/writing-tests.md#what-every-test-gets).
+[`ctx` fixture](../../setup/writing-tests.md#what-every-test-gets).
 The usual case is a teardown that would otherwise erase the counters before
 the post-run fetch:
 
@@ -159,7 +159,7 @@ This `otto test --cov` tail calls the async library function
 which adds the command's rules and composes the same `collect_coverage()`.
 `run_coverage_report()` builds the HTML report from what either one fetched. To drive collection and reporting from your own Python (CI glue or
 a custom pipeline), see the *Collecting coverage from Python* section of
-{doc}`../../cookbook/python-library`.
+{doc}`../../extend/python-library`.
 ```
 
 ## Options

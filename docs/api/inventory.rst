@@ -9,6 +9,6 @@ it to the otto-specific host entry in ``lab.json`` with
 
 For configuration, the JSON and NetBox backends, and the adoption path, see
 :doc:`../configuration/inventory`; for writing a backend of your own,
-:doc:`../cookbook/extending/inventory-backends`.
+:doc:`../extend/inventory-backends`.
 
 .. automodule:: otto.inventory

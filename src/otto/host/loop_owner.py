@@ -69,7 +69,7 @@ class HostLoopError(OttoError, RuntimeError):
             f"{session_hint}"
             "Pin this test or fixture to the loop that opened the host, or close the host at "
             'the end of the scope that opened it. See "Sharing host connections across tests" '
-            "(docs/cookbook/host-scopes.md)."
+            "(docs/setup/host-scopes.md)."
         )
 
 

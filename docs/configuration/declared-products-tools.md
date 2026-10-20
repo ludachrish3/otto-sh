@@ -2,7 +2,7 @@
 
 `[[products]]` and `[[dev_tools]]` entries in `.otto/settings.toml` attach
 products and dev tools to hosts without writing a provider. The two arrays
-share one schema and one behavior; only the seam differs. Code providers ({doc}`../cookbook/extending/product-providers`) are for products
+share one schema and one behavior; only the seam differs. Code providers ({doc}`../extend/product-providers`) are for products
 that must be computed; a name is defined in data **or** in code
 ({ref}`one-definition`).
 
@@ -116,7 +116,7 @@ param; everything else is optional:
 The last three are **products only**: a `[[dev_tools]]` entry naming any of
 them is refused by name, because a dev tool is never under test and so has no
 coverage. What otto does with them is {doc}`../cli/cov/index`'s subject, and
-{doc}`../getting-started/coverage` is the walkthrough.
+{doc}`../setup/coverage` is the walkthrough.
 
 Without `install`/`uninstall` those steps are no-op successes (staging
 placed the artifact). Without `check`, `is_installed` answers False — otto
@@ -233,10 +233,10 @@ order; the loser is listed as shadowed.
 entry without it matches any run. The root `--field/--debug` flag (env
 `OTTO_FIELD_PRODUCTS`, default `--debug`) selects the run's. A Python caller
 passes `variant="field"` to
-[`open_context`](../cookbook/python-library.md#recommended-open_context); the
+[`open_context`](../extend/python-library.md#recommended-open_context); the
 lower-level `otto.context.set_variant` sets it directly, before any context is
 installed (the
-[manual pattern](../cookbook/python-library.md#bring-your-own-cli-lower-level-primitives)),
+[manual pattern](../extend/python-library.md#bring-your-own-cli-lower-level-primitives)),
 and a caller that does neither reads `debug`. `set_variant` refuses while a
 context is installed; to run some work under another variant there, nest an
 `open_context(variant=...)`. A variant entry

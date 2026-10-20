@@ -1077,23 +1077,27 @@ rather than the next air-gapped install.
 
 ```text
 docs/
-├── overview.md               # Project overview
-├── getting-started/          # hub + the worked example (fragments from examples/getting-started/)
-├── examples/                 # checked-in example projects the worked example includes; not Sphinx sources
-├── installation.md           # Install flows: air-gapped, teams, offline docs
-├── cli/                      # One page per command, mirroring otto's command tree
-├── configuration/            # settings.toml, lab.json, host sources and options
-├── cookbook/                 # Using otto from Python: library use, authoring, extending, recipes (Markdown)
-├── architecture/             # How otto is built and why (Markdown)
+├── overview.md               # Start here: what otto is
+├── installation.md           # Start here: install flows, air-gapped, teams, offline docs
+├── setup/                    # Set up a project: scaffold, products, tests, coverage
+├── use/                      # Use a project: driving a project someone else set up
+├── extend/                   # Extend otto: custom products, hosts, parsers, backends, library use
+├── cli/                      # Reference: one page per command, mirroring otto's command tree
+├── configuration/            # Reference: settings.toml, lab.json, host sources and options
+├── api/                      # Reference: API (reStructuredText, auto-generated)
+├── architecture/             # Developing otto: how otto is built and why
+├── developing/               # Developing otto: section hub and the bed case study
 ├── contributing.md           # This page
-└── api/                      # API reference (reStructuredText, auto-generated)
+└── examples/                 # checked-in example projects pages include; not Sphinx sources
 ```
 
 CLI usage goes in `cli/`, on the page for the command it serves —
 that tree mirrors `otto`'s own command tree, so a new subcommand gets a page
-under its verb's directory and an entry in that verb's toctree.  Anything
-that serves a *Python* author rather than a CLI user goes in `cookbook/`
-instead.  API reference pages live in `api/`. Each namespace declared in
+under its verb's directory and an entry in that verb's toctree.  Pages are
+grouped by reader: setting up a project, including writing its tests and instructions, goes in
+`setup/`; driving an existing project goes in `use/`; extending otto or using
+it from Python goes in `extend/`. A page has exactly one toctree parent, and
+other hubs link to it.  API reference pages live in `api/`. Each namespace declared in
 `api/public.toml` has one page, a bare `.. automodule::` that renders its
 `__all__` (the *Public API*). Every other module renders under
 `api/internals/` with `:ignore-module-all:` (the *Internals*). A new
@@ -1159,7 +1163,7 @@ no import.
 
 ### Getting Started captures
 
-The `docs/getting-started/` pages `{literalinclude}` what they show, never
+The `docs/setup/` and `docs/developing/bed-case-study/` pages `{literalinclude}` what they show, never
 paste it: config and code fragments from the checked-in project
 `docs/examples/getting-started/`, and real command output from committed text
 files under `docs/examples/getting-started/captures/`, produced by
@@ -1194,7 +1198,7 @@ user's project does; the inventory twin
 inline form, compared field by field and cred by cred; and the example
 reservation backend passes conformance with `expect_holders=True` and answers
 the inverted `holders` query. `tests/unit/docs/test_getting_started_includes.py`
-checks that every `{literalinclude}` under `docs/getting-started/` resolves.
+checks that every `{literalinclude}` under `docs/setup/` and `docs/developing/bed-case-study/` resolves.
 
 ### Configuration and host pages
 
@@ -1231,12 +1235,12 @@ test fixtures, so edit them with the tie in mind:
 
 ### Cookbook pages
 
-Much of `docs/cookbook/` is executable, so edit it with
+Much of `docs/extend/` is executable, so edit it with
 these ties in mind:
 
 - **The custom-backend example runs.**
   `tests/unit/docs/test_extending_backends_example.py` finds the one
-  `python` fence on `docs/cookbook/extending/extending-backends.md` that defines
+  `python` fence on `docs/extend/extending-backends.md` that defines
   `class XmodemTransfer`, `exec`s it as the page spells it, puts it through
   `assert_transfer_backend_conforms` and one real `put_files` of two files.
   Exactly one fence may define that class.

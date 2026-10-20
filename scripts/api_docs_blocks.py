@@ -59,7 +59,7 @@ SKIP_PARTS = ("_build", "superpowers")
 # A fence delimiter is a run of 3+ backticks OR 3+ tildes (CommonMark allows
 # either) OR 3+ colons (MyST's ``colon_fence`` extension, enabled in
 # docs/conf.py), optionally indented (a fence nested in a list item's
-# continuation, e.g. docs/cookbook/sessions.md:116). ``\s*`` mirrors
+# continuation, e.g. docs/extend/sessions.md:116). ``\s*`` mirrors
 # scripts/lint_markdown_doctests.py:28 rather than requiring column 0.
 FENCE = re.compile(r"^\s*(?P<fence>`{3,}|~{3,}|:{3,})(?P<info>.*)$")
 CODE_BLOCK_DIRECTIVE = "{code-block}"  # MyST: ```{code-block} python``` — lang is the 2nd token

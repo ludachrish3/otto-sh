@@ -1,6 +1,6 @@
-# The Getting Started worked example — a real otto project pointed at otto's
-# own test bed. Pages under docs/getting-started/ include fragments of this
-# file between `# doc: begin <id>` / `# doc: end <id>` markers.
+# The bed case study — a real otto project pointed at otto's own test bed.
+# Pages under docs/setup/ and docs/developing/bed-case-study/ include
+# fragments of this file between `# doc: begin <id>` / `# doc: end <id>` markers.
 
 # doc: begin identity
 name = "gs"

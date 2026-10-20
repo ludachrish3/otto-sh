@@ -276,7 +276,7 @@ class DockerImageProduct(ShellProduct):
         """Describe :meth:`stage`, :meth:`install` and :meth:`uninstall` as the plan contract asks.
 
         The contract is the ``product-kind-plan`` section of
-        ``docs/cookbook/dry-run-contract.md``.
+        ``docs/extend/dry-run-contract.md``.
 
         Every command is rendered by the same builder the hook runs, so the
         quoting is one expression, not two copies; the two placeholders stand

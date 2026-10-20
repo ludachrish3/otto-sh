@@ -16,14 +16,14 @@ collecting performance data.
 
 ## Where to start
 
-- **Install otto and set up your first project** → {doc}`Getting Started
-  <getting-started/index>`: installs otto, scaffolds a project with `otto init`,
-  then walks a worked example.
+- **Install otto and set up your first project** → {doc}`Set up a project
+  <setup/index>`: installs otto, scaffolds a project with `otto init`,
+  and builds it out.
 - **Drive your lab from the CLI** → the {doc}`CLI Reference <cli/index>`,
   one section per functional area.
 - **Learn what a host can do** → {doc}`otto host <cli/host/index>`: the
   verbs every host answers and what each host family supports.
-- **Script, author or extend otto from Python** → the {doc}`Cookbook <cookbook/index>`
+- **Script, author or extend otto from Python** → {doc}`Extend otto <extend/index>`
   (the {doc}`API reference <api/index>` backs it).
 - **Work on otto itself** → {doc}`Architecture <architecture/index>`, one
   design page per area, plus {doc}`contributing`.
@@ -204,14 +204,14 @@ otto test --iterations 10 --threshold 95 TestDevice
 
 Tests get pytest markers (`timeout`, `retry`, `parametrize`, `integration`),
 non-fatal assertions via the `expect` fixture, per-test artifact directories,
-and built-in monitoring; see {doc}`cookbook/authoring/writing-tests`.
+and built-in monitoring; see {doc}`setup/writing-tests`.
 
 An options class is declared in an init module (a module listed in your
 `init` setting), with the verbs whose flags it joins:
 `@otto.options(verbs=["test"])` for flags only tests take, or
 `@otto.options(verbs=["run", "test"])` for project-wide flags such as a device
 type or a lab environment, which every instruction and every test run then
-take. See {doc}`cookbook/authoring/options-classes`.
+take. See {doc}`setup/options-classes`.
 
 ### Monitor (`otto monitor`)
 
@@ -228,7 +228,7 @@ otto monitor metrics.db                            # review a captured session
 A test can also start a monitor of its own through the `monitor` fixture:
 `await monitor.start(hosts=...)`, stopped for it when the test ends. It
 collects without a dashboard; see
-[Monitoring from a test](cookbook/test-recipes.md#monitoring-from-a-test).
+[Monitoring from a test](setup/test-recipes.md#monitoring-from-a-test).
 
 ## Quick-start example
 
@@ -259,14 +259,14 @@ collects without a dashboard; see
 
 ## Where to go next
 
-- {doc}`getting-started/index` — Installation and first steps
+- {doc}`setup/index` — Set up a project: install otto, scaffold it, build it out
 - {doc}`installation` — Air-gapped installs, team setup, offline docs
 - {ref}`team-setup-checklist` — One-time team setup (host source, reservations, libs)
 - {doc}`cli/index` — Every `otto` command, one page per verb
 - {doc}`configuration/index` — The project and lab files every command reads
-- {doc}`cookbook/authoring/options-classes` — Options classes shared by instructions and tests
-- {doc}`cookbook/extending/extending-cli` — Registering your own top-level `otto` commands
-- {doc}`cookbook/index` — Using otto from Python: authoring, extending, and short recipes
-- {doc}`cookbook/python-library` — Using otto as a Python library
+- {doc}`setup/options-classes` — Options classes shared by instructions and tests
+- {doc}`extend/extending-cli` — Registering your own top-level `otto` commands
+- {doc}`extend/index` — Extend otto: custom products, hosts, parsers, backends and library use
+- {doc}`extend/python-library` — Using otto as a Python library
 - {doc}`architecture/index` — How otto is put together, for contributors and extenders
 - {doc}`api/index` — Full API reference for all otto packages

@@ -1,7 +1,7 @@
 """End-to-end test for the ``bootstrap()``/``run_tests()`` library path.
 
 Drives a plain Python script — no ``otto`` CLI involved at all — that mirrors
-the library walkthrough in ``docs/cookbook/python-library.md``:
+the library walkthrough in ``docs/extend/python-library.md``:
 ``bootstrap()``, then ``run_tests()`` by name with an instance of a class
 registered for ``test``. This is the flow
 that caught the extraction's only shipped bug (the library run assuming a

@@ -218,7 +218,7 @@ Three postures cover every way the process gets configured:
   {ref}`[logging.levels] <logging-levels>` noise-floor table as the CLI does,
   or the raw primitive underneath it,
   {func}`otto.logger.install <otto.logger.management.install>`, which knows
-  nothing of projects. See {doc}`the library page <../../cookbook/python-library>`
+  nothing of projects. See {doc}`the library page <../../extend/python-library>`
   for the embedder API.
 
 ### Handler ownership

@@ -62,7 +62,7 @@ __all__ = [
 
 T = TypeVar("T")
 
-# The public name the facade's users configure (docs/cookbook/python-library.md).
+# The public name the facade's users configure (docs/extend/python-library.md).
 logger = logging.getLogger("otto.context")
 
 LIBRARY_LAB_NAME = "<library>"
