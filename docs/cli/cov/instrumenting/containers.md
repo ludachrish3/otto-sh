@@ -90,6 +90,12 @@ container to still exist. `docker logs` captures only the container's PID
 1 — whatever a test runs against it separately, with `docker exec`, never
 reaches `container.log`.
 
+A container that is already gone (an earlier `otto run uninstall` removed it)
+has no logs to collect. The haul notes it — `container <name> is gone; no
+docker logs to collect` — and carries on, so a `cleanup` after an `uninstall`,
+or a second `cleanup`, succeeds. Any other `docker logs` failure (an
+unreachable daemon, say) is still reported.
+
 ## Root-owned files
 
 A container commonly writes its counters as whichever user its own process

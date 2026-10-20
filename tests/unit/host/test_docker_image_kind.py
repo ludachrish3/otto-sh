@@ -532,9 +532,38 @@ async def test_debug_logs_hauls_the_declared_globs_too(tmp_path):
     assert (tmp_path / "container.log").read_text() == "hello\n"
 
 
+# Verbatim from the docker CLI: the daemon's answer (Engine API) and the older
+# client-side one. The match is case-sensitive, as uninstall's is.
+_GONE = [
+    "Error response from daemon: No such container: app",
+    "Error: No such container: app",
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("answer", _GONE)
+async def test_debug_logs_missing_container_is_nothing_to_collect(tmp_path, caplog, answer):
+    host = _DockerHost(answers={"docker logs": (Status.Error, answer)})
+    with caplog.at_level("INFO", logger="otto.host.docker_image_kind"):
+        result = await _build(host, image="app:1").get_debug_logs(host, tmp_path)
+    assert result.status is Status.Success
+    assert not (tmp_path / "container.log").exists()
+    assert "test3: app: container app is gone; no docker logs to collect" in caplog.messages
+
+
+@pytest.mark.asyncio
+async def test_debug_logs_missing_container_still_reports_the_haul_failure(tmp_path):
+    host = _DockerHost(answers={"docker logs": (Status.Error, _GONE[0])})
+    host.get = AsyncMock(return_value=Result(Status.Error, msg="fetch failed"))
+    p = _build(host, image="app:1", debug_log_globs=["/var/log/app.log"])
+    result = await p.get_debug_logs(host, tmp_path)
+    assert result.msg == "fetch failed"
+
+
 @pytest.mark.asyncio
 async def test_debug_logs_failure_is_reported_when_the_declared_haul_succeeded(tmp_path):
-    host = _DockerHost(answers={"docker logs": (Status.Error, "no such container")})
+    unreachable = "Cannot connect to the Docker daemon at unix:///var/run/docker.sock."
+    host = _DockerHost(answers={"docker logs": (Status.Error, unreachable)})
     result = await _build(host, image="app:1").get_debug_logs(host, tmp_path)
     assert not result.is_ok
     assert "docker logs app failed on test3" in result.msg
@@ -542,7 +571,8 @@ async def test_debug_logs_failure_is_reported_when_the_declared_haul_succeeded(t
 
 @pytest.mark.asyncio
 async def test_debug_logs_reports_the_haul_failure_even_when_docker_logs_also_fails(tmp_path):
-    host = _DockerHost(answers={"docker logs": (Status.Error, "no such container")})
+    unreachable = "Cannot connect to the Docker daemon at unix:///var/run/docker.sock."
+    host = _DockerHost(answers={"docker logs": (Status.Error, unreachable)})
     host.get = AsyncMock(return_value=Result(Status.Error, msg="fetch failed"))
     p = _build(host, image="app:1", debug_log_globs=["/var/log/app.log"])
     result = await p.get_debug_logs(host, tmp_path)
@@ -618,3 +648,44 @@ def test_only_a_tarball_entry_stages_an_artifact():
     host = _DockerHost()
     assert _build(host, image="docker/app.tar").stages_artifact is True
     assert _build(host, image="app:1").stages_artifact is False
+
+
+# ── cleanup twice over a gone container (issue #688) ─────────────────────────
+
+
+def _local_host_whose_container_is_gone():
+    """A real LocalHost carrying a real DockerImageProduct whose container is gone.
+
+    ``exec`` answers as the docker CLI does once an earlier uninstall removed
+    the container: ``docker logs`` and ``docker rm -f`` both say so.
+    """
+    from otto.host.local_host import LocalHost
+
+    host = LocalHost()
+    gone = _DockerHost(
+        answers={
+            "docker logs": (Status.Error, "Error response from daemon: No such container: app"),
+            "docker rm -f": (Status.Error, "Error response from daemon: No such container: app"),
+        },
+        id=host.id,
+    )
+    host.exec = gone.exec
+    host.products = [_build(gone, image="app:1")]
+    return host, gone
+
+
+@pytest.mark.asyncio
+async def test_host_cleanup_twice_over_a_gone_container_succeeds(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)  # the product-log haul lands under the CWD
+    host, gone = _local_host_whose_container_is_gone()
+    first = await host.cleanup(get_debug_logs=False)
+    second = await host.cleanup(get_debug_logs=False)
+    assert first.status is Status.Success, first.msg
+    assert second.status is Status.Success, second.msg
+    assert sum("docker logs app" in c for c in gone.exec_calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_host_get_product_logs_over_a_gone_container_succeeds(tmp_path):
+    host, _ = _local_host_whose_container_is_gone()
+    assert (await host.get_product_logs(dest=tmp_path)).status is Status.Success

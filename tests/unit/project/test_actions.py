@@ -493,6 +493,55 @@ async def test_dev_tool_walks_dispatch_through_the_host_instance():
     assert ("overridden-uninstall", {"owner": "acme"}) in host.calls
 
 
+@pytest.mark.asyncio
+async def test_cleanup_twice_over_a_gone_docker_container_succeeds(tmp_path, monkeypatch):
+    """A REAL docker_image product whose container is gone cleans up twice (issue #688).
+
+    The earlier ``run uninstall`` removed the container, so ``docker logs`` and
+    ``docker rm -f`` both answer "No such container". Kills: the product-log
+    haul turning that answer into the failure ``otto run cleanup`` exits 2 on.
+    """
+    from pathlib import Path
+
+    from otto.declared import DeclaredEntry
+    from otto.host import product as product_mod
+    from otto.host.local_host import LocalHost
+    from otto.registry import resolved
+    from otto.result import CommandResult
+
+    monkeypatch.chdir(tmp_path)  # the product-log haul lands under the CWD
+    gone = "Error response from daemon: No such container: edge"
+
+    calls = []
+
+    async def _exec(cmd, **_kw):
+        calls.append(cmd)
+        if "docker logs" in cmd or "docker rm -f" in cmd:
+            return CommandResult(Status.Error, value=gone, command=cmd, retcode=1)
+        return CommandResult(Status.Success, value="", command=cmd, retcode=0)
+
+    host = LocalHost()
+    host.exec = _exec
+    entry = DeclaredEntry(
+        name="edge",
+        kind="docker_image",
+        seam="products",
+        owner="acme",
+        base_dir=Path("/project"),
+        match={},
+        params={"image": "edge:1"},
+    )
+    edge = resolved(product_mod.PRODUCT_KINDS.get("docker_image").factory)(entry, host)
+    edge.owner = "acme"  # what attaching stamps; the factory alone leaves it unset
+    host.products = [edge]
+    actions = _actions(_FakeCtx([host]))
+    first = await actions.cleanup(CleanupOptions())
+    second = await actions.cleanup(CleanupOptions())
+    assert calls.count("docker logs edge 2>&1") == 2  # the haul really ran, both times
+    assert first.status is Status.Success, first.msg
+    assert second.status is Status.Success, second.msg
+
+
 # ── tools ────────────────────────────────────────────────────────────────
 
 

@@ -26,6 +26,7 @@ both forms — it never scans :attr:`~otto.host.product.ShellProduct.artifact`
 true`` on the entry when the build is known to carry coverage.
 """
 
+import logging
 import shlex
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -55,6 +56,11 @@ from .shell_kind import (
 
 if TYPE_CHECKING:
     from .host import Host
+
+logger = logging.getLogger(__name__)
+
+_NO_SUCH_CONTAINER = "No such container"
+"""What the docker CLI prints when the named container does not exist (case-sensitive)."""
 
 TARBALL_SUFFIXES = (".tar", ".tar.gz", ".tgz")
 """An ``image`` value with one of these suffixes is a ``docker save`` tarball path."""
@@ -258,7 +264,7 @@ class DockerImageProduct(ShellProduct):
             return Result(Status.NotRun)
         # Idempotent: a container that was never installed (or already removed
         # by a prior, failed run) is not an uninstall failure.
-        if not removed.status.is_ok and "No such container" not in removed.value:
+        if not removed.status.is_ok and _NO_SUCH_CONTAINER not in removed.value:
             what = f"{self.name}: docker rm -f {self.container_name}"
             return self._error_from(host, what, removed)
         if image_to_remove is not None:
@@ -339,9 +345,26 @@ class DockerImageProduct(ShellProduct):
 
     @override
     async def get_debug_logs(self, host: "Host", dest: Path) -> Result:
-        """Haul the declared globs, plus ``docker logs`` as ``container.log``."""
+        """Haul the declared globs, plus ``docker logs`` as ``container.log``.
+
+        A container that is already gone (an earlier uninstall removed it) has
+        no logs to collect: that is noted at INFO and is not a failure, so a
+        second cleanup succeeds like the first. Any other ``docker logs``
+        failure is reported.
+        """
         hauled = await super().get_debug_logs(host, dest)
         logs = await host.exec(f"docker logs {shlex.quote(self.container_name)} 2>&1", timeout=60)
+        if (
+            logs.status is not Status.NotRun
+            and not logs.status.is_ok
+            and _NO_SUCH_CONTAINER in logs.value
+        ):
+            host_id = getattr(host, "id", "?")
+            logger.info(
+                f"{host_id}: {self.name}: container {self.container_name} is gone; "
+                "no docker logs to collect"
+            )
+            return hauled
         if not logs.status.is_ok:
             what = f"{self.name}: docker logs {self.container_name}"
             failure = self._error_from(host, what, logs)
