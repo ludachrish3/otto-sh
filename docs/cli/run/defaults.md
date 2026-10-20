@@ -459,9 +459,12 @@ subtree; debug logs come in two flavours — a product's `debug_log_globs`
 land under that product, and the host's own are swept once into
 `logs/<host_id>/debug/`. `uninstall` and `cleanup` gather product logs **before**
 each project's teardown and sweep debug logs **after** the last one. Retrieving
-zero logs is success — `--require-product-logs` is how a run whose whole
-purpose was the logs turns an empty haul into a failure, and it is asked only
-of hosts the project actually has products on.
+zero logs is success. A glob with no matches collects nothing, and so does a
+concrete `debug_log_globs` path that is not there (an uninstall commonly
+removes its own log file, so a second `cleanup` finds none): the haul notes it
+and carries on. `--require-product-logs` is how a run whose whole purpose was
+the logs turns an empty haul into a failure, and it is asked only of hosts the
+project actually has products on.
 
 ## Reading `status`
 

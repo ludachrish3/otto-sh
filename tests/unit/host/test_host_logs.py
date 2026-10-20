@@ -31,7 +31,7 @@ from pathlib import Path
 import pytest
 
 from otto.host.product import Product
-from otto.result import Result
+from otto.result import CommandResult, Result
 from otto.utils import Status, wait_for
 from tests.conftest import active_context
 
@@ -340,6 +340,104 @@ async def test_debug_glob_pattern_without_glob_support_fails_loud(
     assert "glob" in result.msg
     assert "override" in result.msg
     assert embedded_recording_host.get_calls == []
+
+
+def _get_fails_while(host, missing):
+    """Make *host*'s ``get`` fail, as a transfer does, while any of *missing* is asked for."""
+    real_get = host.get
+
+    async def _get(src_files, dest_dir):
+        result = await real_get(src_files, dest_dir)
+        if any(str(p) in missing for p in src_files):
+            return Result(Status.Error, msg="scp: No such file or directory")
+        return result
+
+    host.get = _get
+
+
+@pytest.mark.asyncio
+async def test_a_missing_literal_debug_path_is_nothing_to_collect(recording_host, tmp_path, caplog):
+    """A literal path that is gone (uninstall removed it) is noted, not failed (#691).
+
+    Kills: a haul that reports the failed fetch, which made the second ``otto
+    run cleanup`` fail for every product kind with a literal debug_log_globs entry.
+    """
+    recording_host.debug_log_globs = ["/var/log/myprod.log"]
+    _get_fails_while(recording_host, {"/var/log/myprod.log"})
+    recording_host.script_exec(ok=False)  # test -e: not there
+    with caplog.at_level("INFO", logger="otto.host.log_haul"):
+        result = await recording_host.get_debug_logs(dest=tmp_path)
+    assert result.status is Status.Success, result.msg
+    assert recording_host.exec_calls == ["test -e /var/log/myprod.log"]
+    assert "host h1: /var/log/myprod.log is not there; nothing to collect" in caplog.messages
+
+
+@pytest.mark.asyncio
+async def test_a_missing_literal_does_not_cost_the_paths_that_are_there(recording_host, tmp_path):
+    recording_host.debug_log_globs = ["/var/log/gone.log", "/var/log/here.log"]
+    _get_fails_while(recording_host, {"/var/log/gone.log"})
+    recording_host.script_exec(ok=False)  # test -e gone.log
+    recording_host.script_exec(ok=True)  # test -e here.log
+    result = await recording_host.get_debug_logs(dest=tmp_path)
+    assert result.status is Status.Success, result.msg
+    dest = tmp_path / "logs" / recording_host.id / "debug"
+    assert recording_host.get_calls[-1] == ([Path("/var/log/here.log")], dest)
+
+
+@pytest.mark.asyncio
+async def test_cleanup_twice_over_a_product_whose_literal_log_uninstall_removed(
+    recording_host, tmp_path
+):
+    """The issue's repro: the first cleanup's uninstall removes the log, the second succeeds."""
+    app = _LoggingProduct("app")
+    app.debug_log_globs = ["/var/log/myprod.log"]
+    recording_host.products = [app]
+    with active_context(output_dir=tmp_path):
+        assert (await recording_host.cleanup()).is_ok
+        _get_fails_while(recording_host, {"/var/log/myprod.log"})
+        recording_host.script_exec(ok=False)  # test -e: the uninstall removed it
+        second = await recording_host.cleanup()
+    assert second.status is Status.Success, second.msg
+
+
+@pytest.mark.asyncio
+async def test_a_failed_fetch_of_a_literal_that_is_there_is_still_a_failure(
+    recording_host, tmp_path
+):
+    recording_host.debug_log_globs = ["/var/log/myprod.log"]
+    _get_fails_while(recording_host, {"/var/log/myprod.log"})
+    recording_host.script_exec(ok=True)  # test -e: it IS there, so the fetch really failed
+    result = await recording_host.get_debug_logs(dest=tmp_path)
+    assert not result.is_ok
+    assert "No such file" in result.msg
+
+
+@pytest.mark.asyncio
+async def test_a_session_that_dies_during_the_probe_keeps_the_failed_fetch(
+    recording_host, tmp_path
+):
+    """A dead transport is not an absent file: the haul reports the fetch it could not make.
+
+    Kills: folding the probe to ``exists()``'s bool, where a session that died
+    (``Status.Error``, retcode -1) reads as "not there" and a host that went
+    away mid-cleanup passes the debug-log sweep.
+    """
+    recording_host.debug_log_globs = ["/var/log/myprod.log"]
+    _get_fails_while(recording_host, {"/var/log/myprod.log"})
+    recording_host._scripted_exec.append(
+        CommandResult(Status.Error, value="Session died unexpectedly (EOF)", retcode=-1)
+    )
+    result = await recording_host.get_debug_logs(dest=tmp_path)
+    assert not result.is_ok
+    assert "No such file" in result.msg
+
+
+@pytest.mark.asyncio
+async def test_a_successful_literal_fetch_asks_no_existence_question(recording_host, tmp_path):
+    # Kills: probing every literal up front, a round trip per path on every haul.
+    recording_host.debug_log_globs = ["/var/log/myprod.log"]
+    assert (await recording_host.get_debug_logs(dest=tmp_path)).is_ok
+    assert recording_host.exec_calls == []
 
 
 @pytest.mark.asyncio
