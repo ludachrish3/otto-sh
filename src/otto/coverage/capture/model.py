@@ -197,6 +197,7 @@ def build_capture(  # noqa: PLR0913 — wide capture-construction API, one keywo
     ticket: str | None = None,
     note: str | None = None,
     display_name: str | None = None,
+    base_commit: str | None = None,
     now: datetime | None = None,
 ) -> Capture:
     """Build a :class:`Capture` anchored to ``base_commit`` from an lcov ``.info`` file.
@@ -207,16 +208,29 @@ def build_capture(  # noqa: PLR0913 — wide capture-construction API, one keywo
             segment of ``cov/<host>/<product>/``.
         display_name: Host display name to annotate onto the capture;
             ``board`` stays the staging-dir/host-id name.
+        base_commit: The commit the counters were collected at, when known;
+            the capture is refused unless the tree is still at it.
+
+    Raises:
+        otto.coverage.errors.CaptureCommitError: *base_commit* is given and
+            the tree's HEAD is a different commit.
     """
-    base_commit = gitio.head_commit(project_root)
+    head = gitio.head_commit(project_root)
+    if base_commit is not None and base_commit != head:
+        from ..errors import CaptureCommitError
+
+        raise CaptureCommitError(capture=str(info_path.parent), taken_at=base_commit, head=head)
+    base_commit = head
     dirty = gitio.is_dirty(project_root)
     project_root = project_root.resolve()
 
     files: dict[str, CaptureFileCov] = {}
+    outside = 0
     for src, (raw_lines, raw_branches) in parse_info(info_path).items():
         src_path = Path(src).resolve()
         if not src_path.is_relative_to(project_root):
-            logger.warning("Skipping source outside the project root: %s", src)
+            outside += 1
+            logger.debug("outside the project root: %s", src)
             continue
         rel = src_path.relative_to(project_root)
         blob = gitio.blob_sha(project_root, rel)
@@ -235,6 +249,11 @@ def build_capture(  # noqa: PLR0913 — wide capture-construction API, one keywo
             blob=blob,
             lines=lines,
             branches=branches,
+        )
+
+    if outside:
+        logger.info(
+            "%s/%s: skipped %d source file(s) outside the project root", board, product, outside
         )
 
     captured_at = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")

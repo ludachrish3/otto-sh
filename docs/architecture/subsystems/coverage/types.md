@@ -56,8 +56,8 @@ which command produces the tier's data and where that data lives. The tier
 `BranchHits.reachable`, `CoverageStore.tier_order`, `RunRecord.tier` — so
 two tiers may share a kind, and a fourth or fifth tier costs the model
 nothing. `CoverageReporter.run` seeds `tier_order` from the declared tiers
-*before* any data folds, then appends legacy `--tier` specs not already
-present: a tier with no data this run still gets its column and its
+*before* any data folds, then appends `--tier NAME=PATH` tracefile tiers
+not already present: a tier with no data this run still gets its column and its
 precedence slot rather than disappearing from the report.
 
 Colors resolve twice, on purpose. At load, a tier declaring no `color` takes
@@ -238,9 +238,10 @@ deliberately does **not** share this version counter; see
 - **`label`** — what a drilldown chip shows: the host display name when
   the capture carries one, else the board id, else the tier name.
 - **`board`**, **`host`**, **`product`** — the capture's board id. `host` is
-  the explicit host identity, `""` for a synthetic or legacy-merged run with
-  no single host behind it. `product` (v8) is the `<product>` segment the
-  capture was produced from, `""` for a synthetic run or an unnamed unit
+  the explicit host identity, which every e2e and manual run carries; it is
+  `""` only for a run with no single host behind it (a unit harvest, a
+  `--tier` tracefile). `product` (v8) is the `<product>` segment the
+  capture was produced from, `""` for a `--tier` tracefile or an unnamed unit
   harvest, which name no product; together with `tier` and `label` the four
   form the `(tier, label, host, product)` context identity supersede keys on
   ({doc}`merging`). Product belongs in that identity because one host can
@@ -289,12 +290,6 @@ per-host and per-product line counts without a persisted table for either;
 this is pinned by
 `tests/unit/cov/test_model.py::TestRunHost::test_per_host_lines_derivable_from_run_hits`.
 
-**Known limitation:** the legacy multi-host `.gcda`-merge fallback
-(product directories with no `capture.json` — back-compat with pre-tier
-output directories) still collapses every host it merged into one
-synthetic run with `host = ""`. `lcov`'s counter merge combines hosts
-before otto ever sees per-board data, so there is no host identity left
-to attribute by the time a run is registered; host attribution
-requires the per-product capture path (`otto cov get` / `otto test
---cov`, one `capture.json` per host per product). A report built solely from the
-legacy fallback therefore has no per-host data to derive.
+Every e2e and manual run comes from one per-(host, product) capture, so
+there is always a host to group by. A unit harvest or a `--tier` tracefile
+names no host and drops out of the per-host view.

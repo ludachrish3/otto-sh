@@ -45,6 +45,9 @@ from otto.coverage.capture.gitio import (
 )
 from otto.coverage.config import DestinationError
 from otto.coverage.errors import (
+    CaptureCommitError,
+    CaptureFailedError,
+    CoverageCaptureError,
     CoverageCleanError,
     CoverageDataMismatchError,
     CoverageInputError,
@@ -52,6 +55,7 @@ from otto.coverage.errors import (
     CoverageToolVersionError,
     NoCoverageDataError,
     NoCoverageHostsError,
+    PairingError,
 )
 from otto.coverage.overrides import OverrideConfigError
 from otto.coverage.tickets import TicketConfigError
@@ -172,10 +176,14 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (CoverageConfigError, ValueError),
     (CoverageNotInstrumentedError, ValueError),
     (NoCoverageDataError, ValueError),
+    (CaptureCommitError, RuntimeError),
+    (CaptureFailedError, RuntimeError),
     (CoverageDataMismatchError, RuntimeError),
     (CoverageInputError, ValueError),
     (NoCoverageHostsError, ValueError),
     (CoverageCleanError, RuntimeError),
+    (CoverageCaptureError, RuntimeError),
+    (PairingError, ValueError),
     (OverrideConfigError, ValueError),
     (TicketConfigError, ValueError),
     (CredsError, Exception),

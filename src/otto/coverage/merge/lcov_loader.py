@@ -33,6 +33,7 @@ import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ..store.model import (
     BranchHits,
@@ -40,7 +41,9 @@ from ..store.model import (
     FileRecord,
     FunctionRecord,
 )
-from .paths import PathRemapper
+
+if TYPE_CHECKING:
+    from ..sources import SourceResolver
 
 logger = logging.getLogger(__name__)
 
@@ -102,19 +105,22 @@ class LCOVLoader:
     with the store on first use so the store's ``tier_order`` reflects
     the data without callers having to pre-declare every tier.
 
+    Each ``SF:`` path goes through *resolver* to its project file; a path it
+    cannot place keeps its raw value, and the resolver alone logs it.
+    With no resolver every path is kept as written.
+
     Example::
 
-        store = CoverageStore(tier_order=["unit", "system", "manual"])
-        remapper = PathRemapper([...])
-        loader = LCOVLoader(store, remapper)
+        store = CoverageStore(tier_order=["unit", "manual"])
+        loader = LCOVLoader(store, SourceResolver(project_root))
 
-        loader.load("system_merged.info", "system")
         loader.load("unit_tests.info", "unit")
+        loader.load("manual.info", "manual")
     """
 
-    def __init__(self, store: CoverageStore, remapper: PathRemapper) -> None:
+    def __init__(self, store: CoverageStore, resolver: "SourceResolver | None" = None) -> None:
         self.store = store
-        self.remapper = remapper
+        self.resolver = resolver
 
     def load(self, info_path: Path | str, tier: str, run_id: int | None = None) -> int:
         """Load an ``.info`` file into the store under *tier*.
@@ -136,11 +142,8 @@ class LCOVLoader:
 
                 if line.startswith("SF:"):
                     raw_path = line[3:]
-                    resolved = self.remapper.resolve(raw_path)
-                    if resolved is None:
-                        logger.warning("Unmapped path, using raw: %s", raw_path)
-                        resolved = Path(raw_path)
-                    current_file = self.store.get_or_create_file(resolved)
+                    resolved = self.resolver.resolve(raw_path) if self.resolver else None
+                    current_file = self.store.get_or_create_file(resolved or Path(raw_path))
 
                 elif line.startswith("FNDA:") and current_file is not None:
                     hit = parse_fnda_record(line[5:])

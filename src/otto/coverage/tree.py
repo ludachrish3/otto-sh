@@ -25,8 +25,10 @@ def iter_product_dirs(cov_dir: Path) -> list[tuple[str, str, Path]]:
     Nothing is filtered on content: a caller that only wants product dirs
     holding ``.gcda`` (or a ``capture.json``) applies that test itself.
     Non-directories at either level — the ``.otto_cov_meta.json`` sidecar,
-    a stray file — are skipped silently, and a *cov_dir* that is missing or
-    empty yields no entries.
+    a stray file — are skipped silently, as are dot-directories (the
+    capture producer's ``.otto-stage/`` scratch copy of a product's counters,
+    present while that product captures, is one), and a *cov_dir* that is
+    missing or empty yields no entries.
 
     Args:
         cov_dir: A coverage directory (``--cov-dir`` or ``<run>/cov``).
@@ -44,7 +46,7 @@ def iter_product_dirs(cov_dir: Path) -> list[tuple[str, str, Path]]:
         return []
     found: list[tuple[str, str, Path]] = []
     for host_dir in sorted(cov_dir.iterdir()):
-        if not host_dir.is_dir():
+        if not host_dir.is_dir() or host_dir.name.startswith("."):
             continue
         if _holds_data_directly(host_dir):
             raise CoverageConfigError(
@@ -52,7 +54,7 @@ def iter_product_dirs(cov_dir: Path) -> list[tuple[str, str, Path]]:
                 "expects cov/<host>/<product>/ — re-collect with this version of otto"
             )
         for product_dir in sorted(host_dir.iterdir()):
-            if not product_dir.is_dir():
+            if not product_dir.is_dir() or product_dir.name.startswith("."):
                 continue
             found.append((host_dir.name, product_dir.name, product_dir))
     return found

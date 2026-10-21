@@ -18,6 +18,9 @@ from otto.utils import Status
 from tests._fixtures.paths import TESTS_ROOT
 
 FIXTURES = TESTS_ROOT / "unit" / "fixtures" / "embedded_coverage"
+#: The full path the fixture capture dumps, leading ``/`` stripped: the key the
+#: decoder files it under and the path it is staged at inside a product dir.
+DUMPED = "home/vagrant/build/cov_ext_app/CMakeFiles/cov_ext_llext_lib.dir/src/cov_ext.c.gcda"
 
 
 def _llext_product(name: str = "cov_ext", dump_fn: str = "cov_dump", verdict: bool = True):
@@ -76,7 +79,7 @@ def test_decode_cov_dump_reconstructs_gcda_from_console_capture():
 
     result = decode_cov_dump(console)
 
-    assert result == {"cov_ext.c.gcda": expected}
+    assert result == {DUMPED: expected}
 
 
 @pytest.mark.asyncio
@@ -91,9 +94,51 @@ async def test_collect_one_host_lays_out_decoded_gcda_under_per_host_dir(tmp_pat
     dest = await _collect_one_embedded_host(host, tmp_path)
 
     assert dest == {"cov_ext": tmp_path / "zephyr37-llext" / "cov_ext"}
-    assert (dest["cov_ext"] / "cov_ext.c.gcda").read_bytes() == expected
+    assert (dest["cov_ext"] / DUMPED).read_bytes() == expected
     host.exec.assert_awaited_once()
     assert host.exec.await_args[0][0] == "llext call_fn cov_ext cov_dump"
+
+
+def test_decode_cov_dump_keeps_the_full_dumped_path():
+    """Two units with one basename stay two entries, each under its own path."""
+    block = "Emitting 1 bytes for {p}\n00000000: {b}\n{p}\nGcov End\n"
+    first = block.format(p="/b/a/main.c.gcda", b="01")
+    second = block.format(p="/b/c/main.c.gcda", b="02")
+
+    expected = {"b/a/main.c.gcda": b"\x01", "b/c/main.c.gcda": b"\x02"}
+    assert decode_cov_dump(first + second) == expected
+
+
+@pytest.mark.asyncio
+async def test_a_dumped_path_that_escapes_the_product_dir_is_not_staged(tmp_path, caplog):
+    """A ``..`` in a console-dumped path must not write outside the product dir."""
+    import logging
+
+    evil = "/x/../../../../evil.gcda"
+    console = f"Emitting 1 bytes for {evil}\n00000000: 01\n{evil}\nGcov End\n"
+    host = _mock_embedded_host("b", console)
+
+    with caplog.at_level(logging.WARNING, logger="otto.coverage.fetcher.embedded"):
+        assert await _collect_one_embedded_host(host, tmp_path / "s") is None
+
+    assert not (tmp_path / "evil.gcda").exists()
+    assert not (tmp_path / "s" / "b" / "cov_ext").exists()
+    assert "evil.gcda" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_a_collection_never_reports_stale_counters_as_fetched(tmp_path):
+    """The product leaf is reset before the decoded blocks are staged: a ``.gcda``
+    left by an earlier collection into the same output does not survive."""
+    stale = tmp_path / "zephyr37-llext" / "cov_ext" / "old" / "gone.c.gcda"
+    stale.parent.mkdir(parents=True)
+    stale.write_bytes(b"stale")
+    host = _mock_embedded_host("zephyr37-llext", (FIXTURES / "cov_dump_console.txt").read_text())
+
+    dest = await _collect_one_embedded_host(host, tmp_path)
+
+    leaf = dest["cov_ext"]
+    assert [p.relative_to(leaf).as_posix() for p in leaf.rglob("*.gcda")] == [DUMPED]
 
 
 @pytest.mark.asyncio
@@ -181,7 +226,7 @@ async def test_collect_all_stages_embedded_hosts_and_skips_others(
 
     assert set(result) == {("zephyr37-llext", "cov_ext")}
     expected = (FIXTURES / "cov_ext.c.gcda").read_bytes()
-    assert (result[("zephyr37-llext", "cov_ext")] / "cov_ext.c.gcda").read_bytes() == expected
+    assert (result[("zephyr37-llext", "cov_ext")] / DUMPED).read_bytes() == expected
     unix.exec.assert_not_awaited()
 
 

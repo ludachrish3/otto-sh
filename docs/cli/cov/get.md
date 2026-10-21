@@ -48,7 +48,7 @@ zephyr37-llext/cov_ext: counters cleared
 | `--note STR` | Free-text note annotated onto each capture | none |
 | `--tester-name STR` | Tester name annotated onto each capture (`manual`-kind tiers only) | `getpass.getuser()` |
 | `--tester-email STR` | Tester email annotated onto each capture (`manual`-kind tiers only) | `git config user.email`, omitted entirely (not annotated empty) when unset |
-| `--clean` | Reset every instrumented product on each host that contributed a capture — Unix and container counters under their `cov_dir`, embedded boards through `reset_fn` — after a successful retrieval — for use before starting a manual session | off |
+| `--clean` | Reset every product that captured — Unix and container counters under their `cov_dir`, embedded boards through `reset_fn` — after retrieval, for use before starting a manual session. A product that failed to capture keeps its counters | off |
 
 `--ticket` and `--note` annotate a capture of any kind; only a
 `manual`-kind tier requires `--ticket`. `--tester-name` and
@@ -80,9 +80,23 @@ touched:
    verdict
 5. the project root is not a git checkout
 6. no `--output` and no destination set for this invocation
+7. an `--output` reused from an earlier collection that still holds products
+   not yet captured, when that collection was at another tier or commit (or
+   left no `.otto_cov_meta.json` saying which). The directory's metadata is
+   shared by every product in it, so collecting again would capture the
+   earlier counters against this collection's commit. Report the old
+   directory first (`otto cov report` at the commit it names), or collect
+   into a fresh `--output`. Reusing a directory at the same tier and commit,
+   or one whose products are all captured, is fine
 
 After that, hosts are touched: collection can still fail if it produced no
 capture at all, naming every host and product searched.
+
+A product that fails to capture does not stop the others. The command names
+each failed product and exits `1`, but every product that did capture is
+kept: its `capture.json` is written (and, for a `manual`-kind tier, copied into
+the manual store), and `--clean` resets it. The failed product's counters stay
+on the host — fix the cause and run `otto cov get` again to capture them.
 
 A bad `--tier`, `--ticket`, or `--output` exits `2`; every other refusal —
 including the no-capture case above and a failed `--clean` — exits `1`.

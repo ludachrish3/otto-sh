@@ -58,7 +58,9 @@ class TestDockerImageCoverage:
         # TestCovContainer's own fixture installs only on test3 — otto test
         # never touches a product verb, so no other host's leaf can appear.
         _, cov_dir, _ = coverage_run
-        assert {d.name for d in cov_dir.iterdir() if d.is_dir()} == {"test3"}
+        hosts = {d.name for d in cov_dir.iterdir() if d.is_dir() and not d.name.startswith(".")}
+        assert hosts == {"test3"}
+        assert not (cov_dir / ".otto-stage").exists(), "staging outlived collection"
         assert {p.name for p in (cov_dir / "test3").iterdir()} == PRODUCTS
         for name in PRODUCTS:
             assert Capture.load(cov_dir / "test3" / name / "capture.json").product == name

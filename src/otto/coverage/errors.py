@@ -6,6 +6,7 @@ from ..config.coverage_settings import CoverageConfigError
 from ..errors import FieldError, OttoError
 
 if TYPE_CHECKING:  # pragma: no cover — typing only; see CoverageNotInstrumentedError
+    from .capture.produce import ProduceResult
     from .instrumentation import InstrumentationReport
     from .reports import CleanReport
 
@@ -102,25 +103,87 @@ class CoverageCleanError(OttoError, RuntimeError):
 
 
 class CoverageDataMismatchError(OttoError, RuntimeError):
-    """Fetched ``.gcda`` data does not match the current build's ``.gcno`` notes.
+    """Fetched ``.gcda`` data cannot be decoded against its ``.gcno`` notes.
 
     gcov embeds a build stamp in both files; a (partial) rebuild of the
-    product between ``otto test --cov`` and ``otto cov report`` changes the
-    stamps and breaks the pairing. Raised by the merger's structural
-    pairing check before lcov runs — header stamps, plus clang-dialect
-    per-function checksums (the only detection possible for clang builds,
-    where llvm-cov zeroes the data silently) — or from GNU gcov's own
-    ``stamp mismatch with notes file`` refusal as the backstop.
+    product after it was deployed changes the notes' stamps and breaks the
+    pairing. Raised at capture by the structural pairing check before lcov
+    runs — header format version and stamps, plus clang-dialect per-function
+    checksums (the only detection possible for clang builds, where llvm-cov
+    zeroes the data silently) — or from GNU gcov's own ``stamp mismatch with
+    notes file`` refusal as the backstop.
     """
 
     def __init__(self, detail: str) -> None:
         """Frame *detail* (mismatch lines or raw lcov output) with cause and remedy."""
         super().__init__(
-            "Coverage data does not match the current product build (the "
-            ".gcda data and .gcno notes files carry different build "
-            "stamps). The product was likely rebuilt after `otto test "
-            "--cov` collected this data — coverage must be reported "
-            "against the exact build that produced it. Re-run `otto test "
-            "--cov` and report on the new output directory.\n"
+            "Coverage data does not match the current product build: each .gcda "
+            "data file below cannot be decoded against its .gcno notes file. "
+            "Counters are only meaningful against the exact build that produced "
+            "them, and the usual cause is a product rebuilt after it was deployed. "
+            "Restore the build that ran and run `otto cov get` again, or redeploy "
+            "the current build and re-run the tests (`otto test --cov`).\n"
             f"Underlying output:\n{detail}"
         )
+
+
+class CaptureFailedError(OttoError, RuntimeError):
+    """``lcov --capture`` failed; the message is the short failure, not the full output."""
+
+
+class CaptureCommitError(OttoError, RuntimeError):
+    """An e2e capture was taken at a different commit than the tree is at now."""
+
+    def __init__(self, *, capture: str, taken_at: str, head: str) -> None:
+        """Name the capture, both commits and the two ways out."""
+        super().__init__(
+            f"The e2e capture {capture} was taken at commit {taken_at[:12]}, but the tree is "
+            f"at {head[:12]}. Coverage is reported against the commit it was taken at: "
+            f"check that commit out (`git checkout {taken_at[:12]}`) and report again, or "
+            "re-run `otto test --cov` at the current commit."
+        )
+        self.taken_at = taken_at
+        self.head = head
+
+
+class CoverageCaptureError(OttoError, RuntimeError):
+    """One or more products failed to capture; the others captured normally.
+
+    ``result`` carries every product's outcome, so a caller can still use
+    (and clean) the products that captured before re-raising. ``details``
+    holds each failed product's short failure, led by its ``host/product``
+    label, for a caller that frames them its own way. ``clean`` is
+    the clean of those captured products, when the raiser ran one before
+    re-raising: a failed reset there is a failure of its own, and a caller
+    that fails on a failed clean checks it here as it would on a success.
+    """
+
+    def __init__(self, result: "ProduceResult", clean: "CleanReport | None" = None) -> None:
+        """Frame each failed product's short failure as one message."""
+        blocks = []
+        for p in result.failed:
+            label = f"{p.key.host}/{p.key.product}:"
+            failure = p.failure or ""
+            # Pairing and mismatch failures already lead with the label.
+            blocks.append(failure if failure.startswith(label) else f"{label}\n{failure}")
+        super().__init__(
+            f"{len(blocks)} product(s) failed to capture; their counters stay on the host — "
+            "fix the cause and run `otto cov get` again:\n\n" + "\n\n".join(blocks)
+        )
+        self.details = blocks
+        self.result = result
+        self.clean = clean
+
+
+class PairingError(OttoError, ValueError):
+    """A fetched ``.gcda`` could not be paired with exactly one ``.gcno``.
+
+    ``kind`` names the case: ``merged-on-device`` (several objects wrote one
+    file on the device), ``several-trees`` (several differing notes files all
+    match), ``no-notes`` (no notes file matches).
+    """
+
+    def __init__(self, kind: str, message: str) -> None:
+        """Record *kind* beside *message*."""
+        super().__init__(message)
+        self.kind = kind

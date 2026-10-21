@@ -55,15 +55,15 @@ async def test_run_coverage_report_overwrite_clears_and_proceeds(tmp_path, monke
     from otto.coverage import reporter as reporter_module
 
     (tmp_path / "stale.html").write_text("stale")
-    legacy = MagicMock()
+    ran = MagicMock()
 
-    async def fake_legacy(*args, **kwargs):
-        legacy(*args, **kwargs)
+    async def fake_run(self):
+        ran()
 
-    monkeypatch.setattr(reporter_module, "_run_legacy_report", fake_legacy)
+    monkeypatch.setattr(reporter_module.CoverageReporter, "run", fake_run)
     await reporter_module.run_coverage_report([], tmp_path, ReportInputs(), overwrite=True)
     assert not (tmp_path / "stale.html").exists()
-    legacy.assert_called_once()
+    ran.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -74,15 +74,15 @@ async def test_run_coverage_report_creates_a_missing_output_dir(tmp_path, monkey
     from otto.coverage import reporter as reporter_module
 
     out = tmp_path / "new" / "report"
-    legacy = MagicMock()
+    ran = MagicMock()
 
-    async def fake_legacy(*args, **kwargs):
-        legacy(*args, **kwargs)
+    async def fake_run(self):
+        ran()
 
-    monkeypatch.setattr(reporter_module, "_run_legacy_report", fake_legacy)
+    monkeypatch.setattr(reporter_module.CoverageReporter, "run", fake_run)
     await reporter_module.run_coverage_report([], out, ReportInputs())
     assert out.is_dir()
-    legacy.assert_called_once()
+    ran.assert_called_once()
 
 
 # ── resolve_report_inputs — [coverage.exclusions].rules wiring ──────────────

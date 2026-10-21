@@ -8,7 +8,7 @@ from otto.coverage.merge.lcov_loader import (
     parse_fn_record,
     parse_fnda_record,
 )
-from otto.coverage.merge.paths import PathMapping, PathRemapper
+from otto.coverage.sources import SourceResolver
 from otto.coverage.store.model import CoverageStore
 
 SAMPLE_INFO = """\
@@ -45,12 +45,7 @@ def source_tree(tmp_path):
 class TestLCOVLoader:
     def test_load_basic(self, info_file, source_tree):
         store = CoverageStore()
-        remapper = PathRemapper(
-            [
-                PathMapping("/build", str(source_tree)),
-            ]
-        )
-        loader = LCOVLoader(store, remapper)
+        loader = LCOVLoader(store, SourceResolver(source_tree))
         n = loader.load(info_file, "system")
         assert n == 2
         assert store.file_count() == 2
@@ -59,8 +54,7 @@ class TestLCOVLoader:
 
     def test_line_hits(self, info_file, source_tree):
         store = CoverageStore()
-        remapper = PathRemapper([PathMapping("/build", str(source_tree))])
-        loader = LCOVLoader(store, remapper)
+        loader = LCOVLoader(store, SourceResolver(source_tree))
         loader.load(info_file, "system")
 
         foo = store.get_or_create_file(source_tree / "src" / "foo.c")
@@ -70,8 +64,7 @@ class TestLCOVLoader:
 
     def test_branch_data(self, info_file, source_tree):
         store = CoverageStore()
-        remapper = PathRemapper([PathMapping("/build", str(source_tree))])
-        loader = LCOVLoader(store, remapper)
+        loader = LCOVLoader(store, SourceResolver(source_tree))
         loader.load(info_file, "system")
 
         foo = store.get_or_create_file(source_tree / "src" / "foo.c")
@@ -93,8 +86,7 @@ class TestLCOVLoader:
         unit_info.write_text(f"TN:\nSF:{source_tree}/src/foo.c\nDA:1,7\nDA:2,1\nend_of_record\n")
 
         store = CoverageStore()
-        remapper = PathRemapper([])  # paths already local
-        loader = LCOVLoader(store, remapper)
+        loader = LCOVLoader(store)  # paths already local
         loader.load(system_info, "system")
         loader.load(unit_info, "unit")
 
@@ -111,7 +103,7 @@ class TestLCOVLoader:
         info = tmp_path / "smoke.info"
         info.write_text(f"TN:\nSF:{source_tree}/src/foo.c\nDA:1,2\nend_of_record\n")
         store = CoverageStore()
-        loader = LCOVLoader(store, PathRemapper([]))
+        loader = LCOVLoader(store)
         loader.load(info, "smoke")
 
         foo = store.get_or_create_file(source_tree / "src" / "foo.c")
@@ -125,7 +117,7 @@ class TestLCOVLoader:
         info.write_text(f"TN:\nSF:{tmp_path / 'f.c'}\nDA:1,3\nDA:2,0\nend_of_record\n")
         store = CoverageStore()
         run_id = store.add_run(tier="unit")
-        loader = LCOVLoader(store, PathRemapper([]))
+        loader = LCOVLoader(store)
         loader.load(info, "unit", run_id=run_id)
 
         (fr,) = list(store.files())
@@ -165,7 +157,7 @@ class TestFunctionRecords:
             "FN:1,foo\nFN:3,bar\nFNDA:5,foo\nFNDA:0,bar\nDA:1,5\nDA:3,0\nend_of_record\n"
         )
         store = CoverageStore()
-        LCOVLoader(store, PathRemapper([])).load(info, "system")
+        LCOVLoader(store).load(info, "system")
         foo = store.get_or_create_file(source_tree / "src" / "foo.c")
         assert foo.functions["foo"].start_line == 1
         assert foo.functions["foo"].hits.for_tier("system") == 5
@@ -178,7 +170,7 @@ class TestFunctionRecords:
         b = tmp_path / "b.info"
         b.write_text(f"TN:\nSF:{source_tree}/src/foo.c\nFN:1,foo\nFNDA:3,foo\nend_of_record\n")
         store = CoverageStore()
-        loader = LCOVLoader(store, PathRemapper([]))
+        loader = LCOVLoader(store)
         loader.load(a, "system")
         loader.load(b, "unit")
         foo = store.get_or_create_file(source_tree / "src" / "foo.c")
@@ -189,7 +181,7 @@ class TestFunctionRecords:
         info.write_text(f"TN:\nSF:{source_tree}/src/foo.c\nFNDA:4,ghost\nend_of_record\n")
         store = CoverageStore()
         with caplog.at_level("WARNING", logger="otto.coverage.merge.lcov_loader"):
-            LCOVLoader(store, PathRemapper([])).load(info, "system")
+            LCOVLoader(store).load(info, "system")
         foo = store.get_or_create_file(source_tree / "src" / "foo.c")
         assert foo.functions["ghost"].start_line == 0
         assert foo.functions["ghost"].hits.for_tier("system") == 4
@@ -218,7 +210,7 @@ class TestBlockIdParsing:
             f"TN:\nSF:{source_tree}/src/foo.c\nDA:3,10\nBRDA:3,e0,0,5\nBRDA:3,e0,1,-\nend_of_record\n"
         )
         store = CoverageStore()
-        LCOVLoader(store, PathRemapper([])).load(info, "system")
+        LCOVLoader(store).load(info, "system")
         foo = store.get_or_create_file(source_tree / "src" / "foo.c")
         assert foo.lines[3].branches == []
 
@@ -228,7 +220,7 @@ class TestBlockIdParsing:
             f"TN:\nSF:{source_tree}/src/foo.c\nDA:3,10\nBRDA:3,0,0,5\nBRDA:3,0,1,-\nend_of_record\n"
         )
         store = CoverageStore()
-        LCOVLoader(store, PathRemapper([])).load(info, "system")
+        LCOVLoader(store).load(info, "system")
         foo = store.get_or_create_file(source_tree / "src" / "foo.c")
         branches = foo.lines[3].branches
         assert len(branches) == 2
@@ -242,7 +234,7 @@ class TestBlockIdParsing:
             "end_of_record\n"
         )
         store = CoverageStore()
-        LCOVLoader(store, PathRemapper([])).load(info, "system")
+        LCOVLoader(store).load(info, "system")
         foo = store.get_or_create_file(source_tree / "src" / "foo.c")
         branches = foo.lines[3].branches
         assert len(branches) == 2

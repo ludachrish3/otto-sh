@@ -811,6 +811,11 @@ def install_sinks(output_dir: Path) -> None:
     atexit.register(_stop_listener)
 
 
+def verbose_log_path() -> Path | None:
+    """Return this invocation's ``verbose.log``, or ``None`` before the output dir exists."""
+    return _state.sinks_dir / "verbose.log" if _state.sinks_dir is not None else None
+
+
 def record_command_failure(exc: BaseException, message: str) -> None:
     """Write *message* and *exc*'s traceback to both log files, whatever their level.
 

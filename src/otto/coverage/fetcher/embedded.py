@@ -23,6 +23,7 @@ The on-wire format, per source file::
 
 import logging
 import re
+import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -53,7 +54,9 @@ def decode_cov_dump(text: str) -> dict[str, bytes]:
             ANSI colour codes and unrelated lines are tolerated.
 
     Returns:
-        Mapping of ``.gcda`` basename → reconstructed binary contents.
+        Mapping of each dumped ``.gcda`` path, its leading ``/`` stripped, →
+        reconstructed binary contents. The full path is kept so two units
+        sharing a basename stay apart.
     """
     result: dict[str, bytes] = {}
     collecting = False
@@ -79,12 +82,34 @@ def decode_cov_dump(text: str) -> dict[str, bytes]:
 
         # A bare `<path>.gcda` line closes the block and names the file.
         if _GCDA_LINE_RE.search(line):
-            basename = line.strip().rsplit("/", 1)[-1]
-            result[basename] = bytes(buf)
+            result[line.strip().lstrip("/")] = bytes(buf)
             collecting = False
             buf = bytearray()
 
     return result
+
+
+def _stage_blocks(blocks: dict[str, bytes], dest: Path, host_id: str, product: str) -> int:
+    """Write each decoded block at ``dest / <dumped path>``; return how many landed.
+
+    The path comes off a device console, so one that would resolve outside
+    *dest* (a ``..`` escape) is skipped with a WARNING rather than written.
+    *dest* is created only once a block is about to be written, so a dump
+    whose every path is refused leaves no empty leaf behind.
+    """
+    root = dest.resolve()
+    written = 0
+    for name, data in blocks.items():
+        target = (dest / name).resolve()
+        if not target.is_relative_to(root):
+            logger.warning(
+                "Skipping dumped .gcda %r for %s on %s: it escapes %s", name, product, host_id, dest
+            )
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+        written += 1
+    return written
 
 
 async def _collect_one_embedded_host(
@@ -153,13 +178,17 @@ async def _collect_one_embedded_host(
         # GcdaFetcher and keeping the staging tree free of empty subdirs that
         # lcov chokes on.
         dest = layout.cov_product_dir_in(staging_root, host.id, product.name)
-        dest.mkdir(parents=True, exist_ok=True)
-        for name, data in blocks.items():
-            (dest / name).write_bytes(data)
+        # Reset the leaf first: a .gcda left by an earlier collection into the
+        # same output must never be reported as this dump's.
+        if dest.exists():
+            shutil.rmtree(dest)
+        written = _stage_blocks(blocks, dest, host.id, product.name)
+        if not written:
+            continue
 
         logger.info(
             "Decoded %d .gcda file(s) for %s from %s into %s",
-            len(blocks),
+            written,
             product.name,
             host.id,
             dest,

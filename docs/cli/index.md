@@ -327,8 +327,11 @@ and they share one shape below `<kind>/<host_id>/`:
   logs/<host_id>/<product>/product/    each product's own get_logs output
   logs/<host_id>/<product>/debug/      that product's debug_log_globs haul
   logs/<host_id>/debug/                the host's own debug_log_globs haul
-  cov/<host_id>/<product>/             .gcda as fetched, board.info,
-                                       board.resolved.info, capture.json
+  cov/<host_id>/<product>/             .gcda at their paths under cov_dir,
+                                       board.info, board.resolved.info,
+                                       capture.json or capture.failed
+  cov/.otto_cov_meta.json              what the collection recorded: tier,
+                                       commit, source roots, toolchains
   cov_report/                          the rendered HTML report
   <module>/[<Class>/]<test>/           one directory per test (otto test)
 ```
@@ -345,7 +348,8 @@ and they share one shape below `<kind>/<host_id>/`:
   matched", not "nothing ran".  The coverage side is the opposite: a product's directory is
   created only once counters are known to exist, and a failed transfer takes
   the half-filled directory back out — so a missing `cov/<host_id>/<product>/`
-  means nothing was retrieved.
+  means nothing was retrieved.  {ref}`coverage-run-tree-product` says what
+  each file in it is.
 
 `cov_report/` and the per-test directories are the run dir's other tenants:
 the report renderer writes the first, and the second mirror each test's

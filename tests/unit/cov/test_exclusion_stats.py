@@ -117,7 +117,6 @@ async def test_excluded_lines_never_reach_ticket_attribution(tmp_path, monkeypat
     monkeypatch.setattr(spa_renderer_module, "SpaRenderer", FakeRenderer)
 
     reporter = CoverageReporter(
-        gcda_dirs=[],
         source_root=tmp_path,
         output_dir=tmp_path / "out",
         tiers=[("unit", info)],

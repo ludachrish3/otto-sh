@@ -642,23 +642,26 @@ async def _post_run_coverage(projects: "list[Project]", log_dir: Path, opts: Run
         # via `otto cov get`. %s-formats *e* through escape_markup: the
         # console handler renders log messages as Rich markup, and this
         # message may echo a literal bracket (e.g. "no [coverage] section").
-        result = None
+        from ..coverage.errors import CoverageCaptureError, CoverageCleanError
+
+        clean = None
         try:
-            result = await collect_coverage(cov_dir, projects=projects)
+            clean = (await collect_coverage(cov_dir, projects=projects)).clean
         except (ValueError, RuntimeError, FileNotFoundError) as e:
             logger.warning(
                 "Coverage collection failed (%s); raw coverage artifacts remain in %s",
                 escape_markup(str(e)),
                 cov_dir,
             )
-        if result is not None and result.clean is not None and not result.clean.ok:
-            from ..coverage.errors import CoverageCleanError
-
+            # A capture failure still cleaned the products that captured.
+            if isinstance(e, CoverageCaptureError):
+                clean = e.clean
+        if clean is not None and not clean.ok:
             # Clearing is never best-effort: stale counters would mix into the
             # next run's coverage. Raised after the report block below.
-            clean_failure = CoverageCleanError(result.clean)
-        elif result is not None and result.clean is not None:
-            _log_clean_summary(result.clean, "after collection")
+            clean_failure = CoverageCleanError(clean)
+        elif clean is not None:
+            _log_clean_summary(clean, "after collection")
 
     if opts.cov_report:
         from rich.markup import escape as escape_markup

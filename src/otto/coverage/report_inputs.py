@@ -24,10 +24,11 @@ class ReportInputs:
     ``project_root`` is the first ``[coverage]``-declaring project's ``root``
     (:func:`otto.config.coverage_settings.get_cov_project`); ``tier_configs`` is
     that project's ``[coverage.tiers]``, parsed by
-    :func:`otto.coverage.tiers.load_tiers`. Both ``None`` selects the legacy
-    gcda-merge path in :func:`otto.coverage.reporter.run_coverage_report`;
-    the ``--tier`` escape hatch relies on that — it never resolves settings,
-    so it passes ``ReportInputs()`` explicitly.
+    :func:`otto.coverage.tiers.load_tiers`. With ``project_root`` ``None``,
+    :func:`otto.coverage.reporter.run_coverage_report` reports tracefiles
+    alone and refuses run directories; the ``--tier`` escape hatch relies on
+    that — it never resolves settings, so it passes ``ReportInputs()``
+    explicitly.
 
     ``exclusion_rules`` comes from ``[coverage.exclusions].rules`` — the
     compiled rules (:func:`otto.coverage.exclusions.rules.load_exclusion_rules`)
@@ -67,9 +68,8 @@ def resolve_report_inputs(projects: "list[Project]") -> ReportInputs:
 
     The same first-project selection ``otto cov get`` and ``clean`` use
     (:func:`otto.config.coverage_settings.get_cov_project`). A tree with no
-    ``[coverage]`` table gets ``ReportInputs()`` — the git-less fallback that
-    keeps ``otto cov report`` working exactly as before on a tree with no
-    ``[coverage]`` settings.
+    ``[coverage]`` table gets ``ReportInputs()`` — the git-less fallback,
+    which reports tracefiles alone.
 
     Raises:
         otto.config.coverage_settings.CoverageConfigError: a malformed

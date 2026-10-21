@@ -190,6 +190,16 @@ def _product_function_hits(info_file: Path) -> dict[str, int]:
     return hits
 
 
+def _decoded_gcda(cov_dir: Path, host_id: str) -> list[Path]:
+    """The decoded ``cov_ext.c.gcda`` under *host_id*'s product leaf.
+
+    Each block lands at the path the board dumped it under (its leading
+    ``/`` stripped), so the file sits below the leaf at that path, not at
+    its top.
+    """
+    return sorted((cov_dir / host_id / PRODUCT).rglob("cov_ext.c.gcda"))
+
+
 def _board_info(cov_dir: Path, host_id: str) -> Path:
     """The lcov capture staged for *host_id*'s product at collect time."""
     info = cov_dir / host_id / PRODUCT / "board.resolved.info"
@@ -259,11 +269,14 @@ def test_embedded_coverage_cli_e2e(clean_zephyr37_llext, tmp_path):
 
     # The collector decoded a .gcda for the embedded host (cross-loop fix +
     # real hop transport), and the report rendered (cross-gcov lcov fix).
-    # Staged under <host>/<product>/: the host id is the slug of element
-    # "zephyr37_llext" -> "zephyr37-llext", the product is the [[products]]
-    # entry's name.
-    gcda = cov_dir / "zephyr37-llext" / PRODUCT / "cov_ext.c.gcda"
-    assert gcda.exists(), f"no decoded .gcda staged for zephyr37-llext\n{result.stdout[-2000:]}"
+    # Staged under <host>/<product>/<dumped path>: the host id is the slug of
+    # element "zephyr37_llext" -> "zephyr37-llext", the product is the
+    # [[products]] entry's name.
+    gcda = _decoded_gcda(cov_dir, "zephyr37-llext")
+    assert len(gcda) == 1, (
+        f"expected one decoded cov_ext.c.gcda for zephyr37-llext, got {gcda}\n"
+        f"{result.stdout[-2000:]}"
+    )
     assert (report_dir / "index.html").exists(), "no HTML report rendered"
 
     # The capture names the product it came from — the dimension the store and
@@ -279,15 +292,17 @@ def test_embedded_coverage_cli_e2e(clean_zephyr37_llext, tmp_path):
     # so far names zephyr37-llext alone. It would quietly halve the collection
     # and stay green, so the selector's intent is pinned here rather than left to
     # the settings comment.
-    staged = sorted(d.name for d in cov_dir.iterdir() if d.is_dir())
+    # Dot entries are otto's own (the metadata sidecar), not hosts.
+    staged = sorted(d.name for d in cov_dir.iterdir() if d.is_dir() and not d.name.startswith("."))
     assert staged == ["zephyr37-llext", "zephyr44-llext"], (
         f"expected both Zephyr coverage beds to be collected, got {staged} — "
         f"check `[coverage] hosts` in tests/project3/.otto/settings.toml\n"
         f"{result.stdout[-2000:]}"
     )
-    assert (cov_dir / "zephyr44-llext" / PRODUCT / "cov_ext.c.gcda").exists(), (
+    assert len(_decoded_gcda(cov_dir, "zephyr44-llext")) == 1, (
         "no decoded .gcda staged for the 4.4 bed zephyr44-llext"
     )
+    assert not (cov_dir / ".otto-stage").exists(), "staging outlived collection"
     # One product name across both beds, from two same-named [[products]]
     # entries with version-specific match tables: each board loaded its own
     # artifact, and the tree still has a single `cov_ext` segment per host.

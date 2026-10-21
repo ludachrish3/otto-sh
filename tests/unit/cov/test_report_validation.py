@@ -1,5 +1,7 @@
 """``run_coverage_report`` refuses unusable inputs before reading anything."""
 
+from pathlib import Path
+
 import pytest
 
 from otto.coverage.errors import CoverageInputError
@@ -26,7 +28,9 @@ async def test_a_run_dir_without_cov_is_not_refused(tmp_path, monkeypatch):
     # module (which never binds it at module scope).
     monkeypatch.setattr("otto.coverage.config.prepare_destination", lambda *a, **k: None)
     try:
-        await run_coverage_report([run / "cov"], tmp_path / "out", ReportInputs())
+        await run_coverage_report(
+            [run / "cov"], tmp_path / "out", ReportInputs(project_root=tmp_path)
+        )
     except CoverageInputError:
         pytest.fail("a run directory without cov/ must not be refused")
     except Exception:  # noqa: BLE001 — anything past validation is out of scope here
@@ -36,11 +40,8 @@ async def test_a_run_dir_without_cov_is_not_refused(tmp_path, monkeypatch):
 @pytest.mark.parametrize(
     ("specs", "match"),
     [
-        (
-            [("unit", None)],
-            r"^Tier 'unit' requires a path \(only the 'system' tier may omit a path\)$",
-        ),
-        ([("system", None), ("system", None)], r"Duplicate tier name: 'system'"),
+        ([("unit", None)], r"^Tier 'unit' has no tracefile: every --tier needs NAME=PATH$"),
+        ([("system", Path("s.info")), ("system", Path("t.info"))], r"Duplicate tier name"),
     ],
 )
 @pytest.mark.asyncio

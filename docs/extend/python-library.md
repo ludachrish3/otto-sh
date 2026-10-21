@@ -581,13 +581,15 @@ asyncio.run(main())
 
 ### `CollectResult`
 
-`collect_coverage` returns a `CollectResult` with three fields:
+`collect_coverage` returns a `CollectResult`:
 
 | Field              | Type              | Description                                                                                              |
 |--------------------|-------------------|---------------------------------------------------------------------------------------------------------|
 | `cov_dir`          | `Path`            | The directory the coverage landed in (the argument you passed).                                         |
 | `product_dirs`     | `dict[tuple[str, str], Path]` | Each contributing `(host id, product)` pair → its staging directory.                         |
-| `captures_written` | `list[Path]`      | The `capture.json` files produced, one per `(host, product)` pair (empty when no `[coverage]` project resolved a git root). |
+| `produce`          | `ProduceResult`   | Every `(host, product)` pair's capture outcome: `.captured` (the pairs that captured), `.written`, `.failed` (empty when no `[coverage]` project resolved). |
+| `captures_written` | `list[Path]`      | The `capture.json` files produced, one per captured pair (`produce.written`). |
+| `clean`            | `CleanReport \| None` | The clean after collection, when `clean_after_fetch` ran one. |
 
 ### Fails loud — exceptions to handle
 
@@ -605,19 +607,26 @@ failure should not abort your script:
   directly skips resolution).
 - `otto.coverage.capture.gitio.GitUnavailableError` — the project root is not inside a
   git repository, so captures cannot be anchored to `base_commit`.
-- `otto.coverage.errors.CoverageDataMismatchError` — the fetched `.gcda` no
-  longer matches the current build's `.gcno` notes (the product was rebuilt
-  after collection).
-- `otto.coverage.errors.CoverageToolVersionError` — the `gcov` tool cannot read
-  this build's coverage format (e.g. a clang build captured with GNU `gcov`).
-- `RuntimeError` — an lcov/merge failure.
+- `otto.coverage.errors.CoverageCaptureError` (a `RuntimeError`) — one or more
+  products failed to capture. Every product was attempted; `e.result` holds
+  every outcome, and `e.clean` the clean of the products that captured (when
+  `clean_after_fetch` ran one). The failed products' counters stay on the host.
+  A product fails when its `.gcda` no longer matches the current build's
+  `.gcno` notes (`CoverageDataMismatchError`: the product was rebuilt after
+  collection), when a `.gcda` cannot be paired with exactly one `.gcno`
+  (`PairingError`, see {ref}`coverage-pairing-errors`), when the `gcov` tool
+  cannot read the build's coverage format (`CoverageToolVersionError`, e.g. a
+  clang build captured with GNU `gcov`), when the `gcov` the data needs is not
+  installed (`otto.host.errors.CoverageToolMissingError`, naming the package),
+  or when `lcov --capture` fails (`CaptureFailedError`). Each
+  product's message is in the aggregate error and in its `capture.failed`.
 
 `CoverageConfigError` and `NoCoverageDataError` both subclass `ValueError`, so
 an existing `except ValueError` handler keeps working unmodified; catch them
 by name first if you want to distinguish the two fail-loud sites.
-`GitUnavailableError`, `CoverageDataMismatchError`, and
-`CoverageToolVersionError` all subclass `RuntimeError`, so catch them *before* a
-bare `except RuntimeError` if you want to distinguish them. The `otto test
+`GitUnavailableError` and `CoverageCaptureError` both subclass `RuntimeError`,
+so catch them *before* a bare `except RuntimeError` if you want to distinguish
+them. The `otto test
 --cov` tail logs these and leaves the test run's verdict alone, whereas `otto
 cov get` surfaces each as a clean, single-line error. Every exception otto
 *defines* also subclasses `otto.errors.OttoError`, so a single `except
@@ -632,13 +641,15 @@ reaches which exceptions.
 
 ### `clean_after_fetch`
 
-By default `collect_coverage` zeroes every contributing host's counters —
-Unix and container `.gcda`, an embedded board's `reset_fn` alike —
-immediately after a successful fetch, as `otto test --cov` does. Pass
-`clean_after_fetch=False` to skip that internal clean when you want to own the
-post-fetch reset yourself, as `otto cov get` does: its `--clean` flag zeroes
-only the hosts that actually fetched a product this call. To zero the
-counters *before* a run instead, call `clean_coverage()`.
+By default `collect_coverage` zeroes the counters of exactly the
+`(host, product)` pairs that captured — Unix and container `.gcda`, an
+embedded board's `reset_fn` alike — once production is done, as `otto test
+--cov` does; a product that failed to capture keeps its counters for the next
+collection. Pass `clean_after_fetch=False` to skip that internal clean when you
+want to own the post-fetch reset yourself, as `otto cov get` does with its
+`--clean` flag: `clean_coverage(pairs=result.produce.captured)` resets just
+those pairs. To zero the counters *before* a run instead, call
+`clean_coverage()`.
 
 See {doc}`../cli/cov/index` for the full CLI workflow, tier configuration, and
 the report format.

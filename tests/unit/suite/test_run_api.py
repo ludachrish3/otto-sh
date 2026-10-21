@@ -621,7 +621,12 @@ def test_run_tests_cov_report_into_reused_dir_warns_not_raises(tmp_path, monkeyp
     report_dir.mkdir()
     (report_dir / "stale.html").write_text("stale from a previous run")
 
-    _use_project(monkeypatch, _stub_project(tmp_path, root=log_dir, tests=[log_dir]))
+    # A [coverage] section: run directories need its project root, so the
+    # destination gate is the only refusal left to hit.
+    settings = {"coverage": {"tiers": {"system": {"kind": "e2e", "precedence": 1}}}}
+    _use_project(
+        monkeypatch, _stub_project(tmp_path, root=log_dir, tests=[log_dir], settings=settings)
+    )
     monkeypatch.setattr("pytest.main", pytest_main_returning())
     monkeypatch.setattr("otto.coverage.collect.clean_coverage", AsyncMock())
     _stub_instrumented_lab(monkeypatch)
@@ -629,10 +634,10 @@ def test_run_tests_cov_report_into_reused_dir_warns_not_raises(tmp_path, monkeyp
     # fetch machinery runs; stub it out — this test's subject is the report path.
     monkeypatch.setattr("otto.coverage.collect.collect_coverage", AsyncMock())
     # run_coverage_report itself is NOT mocked: its own prepare_destination
-    # call is the gate under test. _run_legacy_report is mocked only to prove
-    # it is never reached (the gate raises before it).
-    mock_legacy = AsyncMock()
-    monkeypatch.setattr("otto.coverage.reporter._run_legacy_report", mock_legacy)
+    # call is the gate under test. CoverageReporter.run is mocked only to
+    # prove it is never reached (the gate raises before it).
+    mock_run = AsyncMock()
+    monkeypatch.setattr("otto.coverage.reporter.CoverageReporter.run", mock_run)
 
     with caplog.at_level("WARNING"):
         result = run_tests(
@@ -644,7 +649,7 @@ def test_run_tests_cov_report_into_reused_dir_warns_not_raises(tmp_path, monkeyp
     assert isinstance(result, SuiteRunResult)
     assert result.passed
     # The report was skipped: the dir collision was swallowed before rendering.
-    mock_legacy.assert_not_called()
+    mock_run.assert_not_called()
     assert any(
         "Coverage report generation failed" in r.getMessage()
         and "cov_report_dir target" in r.getMessage()
@@ -761,11 +766,11 @@ def test_post_run_coverage_populates_ticket_data_end_to_end(tmp_path, monkeypatc
     (hdir / "f.gcda").write_bytes(b"")
     (hdir / "f.gcno").write_bytes(b"")
 
-    async def fake_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
+    async def fake_capture(self, directory, output, toolchain=None, includes=None):
         output.write_text(f"TN:\nSF:{project_root / 'f.c'}\nDA:1,5\nend_of_record\n")
         return output
 
-    monkeypatch.setattr(merger_mod.LcovMerger, "capture", fake_capture)
+    monkeypatch.setattr(merger_mod.LcovMerger, "capture_dir", fake_capture)
     # cov_tickets_json now forces cov=True too (construction-time rule), so the
     # fetch machinery runs; stub it out — this test's subject is ticket harvesting
     # from the report path, not collection.
@@ -1468,6 +1473,7 @@ def test_a_failed_clean_after_collection_fails_a_passing_run(tmp_path, monkeypat
     into the next run's coverage, so a failed post-collection clean alone
     must still fail the run.
     """
+    from otto.coverage.capture.produce import ProduceResult
     from otto.coverage.collect import CollectResult
     from otto.coverage.errors import CoverageCleanError
     from otto.coverage.reports import CleanReport
@@ -1481,7 +1487,7 @@ def test_a_failed_clean_after_collection_fails_a_passing_run(tmp_path, monkeypat
     _stub_instrumented_lab(monkeypatch)
     bad = CleanReport(hosts={"t1": {"app": Result(Status.Error, msg="denied")}})
     collected_result = CollectResult(
-        cov_dir=log_dir / "cov", product_dirs={}, captures_written=[], clean=bad
+        cov_dir=log_dir / "cov", product_dirs={}, produce=ProduceResult([]), clean=bad
     )
     monkeypatch.setattr(
         "otto.coverage.collect.collect_coverage", AsyncMock(return_value=collected_result)
@@ -1498,6 +1504,7 @@ def test_a_failed_clean_after_collection_still_writes_the_inline_report(tmp_path
     clean's failure is held until the report block has run; the run still
     fails with the clean's error.
     """
+    from otto.coverage.capture.produce import ProduceResult
     from otto.coverage.collect import CollectResult
     from otto.coverage.errors import CoverageCleanError
     from otto.coverage.reports import CleanReport
@@ -1511,7 +1518,7 @@ def test_a_failed_clean_after_collection_still_writes_the_inline_report(tmp_path
     _stub_instrumented_lab(monkeypatch)
     bad = CleanReport(hosts={"t1": {"app": Result(Status.Error, msg="denied")}})
     collected_result = CollectResult(
-        cov_dir=log_dir / "cov", product_dirs={}, captures_written=[], clean=bad
+        cov_dir=log_dir / "cov", product_dirs={}, produce=ProduceResult([]), clean=bad
     )
     monkeypatch.setattr(
         "otto.coverage.collect.collect_coverage", AsyncMock(return_value=collected_result)
@@ -1534,6 +1541,7 @@ def test_a_failed_clean_after_collection_still_writes_the_inline_report(tmp_path
 
 def test_a_successful_clean_after_collection_logs_one_summary_line(tmp_path, monkeypatch, caplog):
     """The run log keeps an audit trail of the clean: one INFO line, counted from the report."""
+    from otto.coverage.capture.produce import ProduceResult
     from otto.coverage.collect import CollectResult
     from otto.coverage.reports import CleanReport
     from otto.result import Result
@@ -1547,7 +1555,7 @@ def test_a_successful_clean_after_collection_logs_one_summary_line(tmp_path, mon
     ok = Result(Status.Success)
     good = CleanReport(hosts={"t1": {"app": ok, "lib": ok}, "t2": {"app": ok}})
     collected_result = CollectResult(
-        cov_dir=log_dir / "cov", product_dirs={}, captures_written=[], clean=good
+        cov_dir=log_dir / "cov", product_dirs={}, produce=ProduceResult([]), clean=good
     )
     monkeypatch.setattr(
         "otto.coverage.collect.collect_coverage", AsyncMock(return_value=collected_result)
@@ -1562,6 +1570,46 @@ def test_a_successful_clean_after_collection_logs_one_summary_line(tmp_path, mon
     assert summaries == [
         "coverage counters cleared after collection on 3 product(s) across 2 host(s)"
     ]
+
+
+def test_capture_failure_and_clean_failure_both_surface(tmp_path, monkeypatch, caplog):
+    """One product fails capture and the clean of the other fails: both surface.
+
+    The capture failure is warned about like any collection failure (the run
+    stays green over it), and the clean the collection ran before re-raising
+    it is enforced exactly as on success: the run fails with its error.
+    """
+    from otto.coverage.capture.produce import ProduceResult, ProductCapture, ProductKey
+    from otto.coverage.errors import CoverageCaptureError, CoverageCleanError
+    from otto.coverage.reports import CleanReport
+    from otto.result import Result
+    from otto.utils import Status
+
+    log_dir = tmp_path / "log"
+    log_dir.mkdir()
+    _use_project(monkeypatch, _stub_project(tmp_path))
+    monkeypatch.setattr("pytest.main", pytest_main_returning())
+    _stub_instrumented_lab(monkeypatch)
+    outcome = ProduceResult(
+        [
+            ProductCapture(ProductKey("t1", "app"), log_dir / "cov/t1/app/capture.json", None),
+            ProductCapture(ProductKey("t1", "lib"), None, "lcov --capture failed: boom"),
+        ]
+    )
+    bad = CleanReport(hosts={"t1": {"app": Result(Status.Error, msg="denied")}})
+    monkeypatch.setattr(
+        "otto.coverage.collect.collect_coverage",
+        AsyncMock(side_effect=CoverageCaptureError(outcome, clean=bad)),
+    )
+
+    with caplog.at_level("WARNING"), pytest.raises(CoverageCleanError, match="t1/app: denied"):
+        run_tests([_ALPHA], run_options=RunOptions(cov=True, cov_clean=False), output_dir=log_dir)
+    warned = [
+        r.getMessage() for r in caplog.records if "Coverage collection failed" in r.getMessage()
+    ]
+    assert len(warned) == 1
+    assert "t1/lib" in warned[0]
+    assert "lcov --capture failed: boom" in warned[0]
 
 
 def test_a_collection_failure_after_a_passing_run_still_only_warns(tmp_path, monkeypatch, caplog):

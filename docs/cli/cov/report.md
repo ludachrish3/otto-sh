@@ -6,14 +6,31 @@ otto --lab my_lab cov report <output_dir> --dir ./my_report
 
 `otto cov report` assembles a store from every source available:
 
-1. **E2E captures** — `capture.json` files under each given output
-   directory's `cov/<host_id>/<product>/` ({ref}`the run tree <run-tree>`),
-   subject to the base_commit guard below. A product directory with no
-   `capture.json` falls back to the legacy `.gcda`-merge path (back-compat
-   with pre-tier output directories). A directory that holds `.gcda` or a
-   `capture.json` *directly* under the host — the pre-product one-level tree
-   — is refused by name rather than misread as a product; there is no
-   migration shim, so re-collect with this version of otto.
+1. **E2E captures** — each given output directory's
+   `cov/<host_id>/<product>/` directories ({ref}`the run tree <run-tree>`).
+   Each product directory is in one of three states
+   ({ref}`coverage-run-tree-product`):
+   - **captured** — its `capture.json` loads as one run carrying its host and
+     product, subject to the base_commit guard below;
+   - **failed** — it holds a `capture.failed`. Every failed product is named
+     in one warning line, with the path of each `capture.failed` that holds
+     its reason, and the report goes on without it. It is not
+     retried here: fix the cause and run `otto cov get` again ({doc}`get`);
+   - **not yet captured** — it holds `.gcda` but neither marker, because
+     collection stopped before its capture. The report captures it now, by the same
+     code as collection, with the tier and commit that collection recorded
+     in the run's `.otto_cov_meta.json`. A run directory that records no tier
+     or commit is refused by name (exit `2`); it is never guessed or anchored
+     to the current `HEAD`. A capture that fails here is written as
+     `capture.failed` and named in the same warning.
+
+   A product directory with no `.gcda` and neither marker has nothing to
+   capture and is skipped.
+
+   A directory that holds `.gcda` or a `capture.json` *directly* under the
+   host — the pre-product one-level tree — is refused by name rather than
+   misread as a product; there is no migration shim, so re-collect with this
+   version of otto.
 2. **Unit harvest** — every `unit`-kind tier's `harvest_dirs`, plus each of
    its named `products` views, swept fresh from the current build tree.
 3. **Manual store** — every capture committed under the project's
@@ -30,11 +47,23 @@ naming every location that was searched.
 
 `otto cov report` calls {func}`~otto.coverage.reporter.run_coverage_report`
 with the parsed `OUTPUT_DIRS` and `--tier` pairs, joined into the run-tree
-layout above. A missing run directory, a bad `--tier` (malformed, a
-non-`system` tier with no path, or a repeated name), or a `--dir` that
-cannot be used (none given and no per-invocation directory, or non-empty
-without `--overwrite-dir`) is a usage error and exits `2`; every other
-refusal — including the empty-store case above — exits `1`.
+layout above. These are usage errors and exit `2`, and each is raised before `--dir` is
+cleared or created:
+
+- a missing run directory;
+- run directories when no `[coverage]` table names the project root (their
+  captures are anchored to its commits);
+- run directories given together with `--tier`, which reports tracefiles
+  alone;
+- a run directory whose `.otto_cov_meta.json` was written by an older otto
+  (an old key, or a missing one), and a run directory with products not yet
+  captured whose metadata is missing, so there is no recorded tier and commit
+  to capture them with;
+- a bad `--tier` (malformed, a tier with no path, or a repeated name);
+- a `--dir` that cannot be used (none given and no per-invocation
+  directory, or non-empty without `--overwrite-dir`).
+
+Every other refusal — including the empty-store case above — exits `1`.
 
 ## Stitching Multiple Runs
 
@@ -52,35 +81,51 @@ otto --lab my_lab cov report run1_output/ run2_output/ run3_output/ --dir ./comb
 | `--dir, -d PATH`          | Where to place the generated coverage report                        | `cov_report/` under {ref}`this invocation's output directory <invocation-output-directory>` |
 | `--overwrite-dir`         | Allow `--dir` to clear an existing non-empty directory               | off                 |
 | `--report-title STR`      | Title shown in the report header                                     | `Coverage Report`   |
-| `--tier NAME[=PATH]`      | Git-less escape hatch (see below); repeatable, order = precedence    | the configured tiers (or `system` with none configured) |
+| `--tier NAME=PATH`        | Report an lcov tracefile as a tier, git-less (see below); repeatable, order = precedence | none: the configured tiers are reported |
 | `--tickets-json PATH`     | Also write a per-ticket coverage summary (see {ref}`coverage-tickets-json`).  Requires `[coverage.tickets]` to have attributed at least one ticket; fails loud (exit 1) otherwise | not written |
 
 (coverage-report-stale-builds)=
-## Stale Builds: "stamp mismatch" and the e2e base_commit guard
+## Stale builds and moved commits
+
+Two different errors guard a report against data it cannot read honestly.
+The first is about the **build**, the second about the **commit**.
+
+### "Coverage data does not match the current product build"
 
 gcov embeds a build stamp in both the `.gcno` notes files (written at
 compile time) and the `.gcda` data files (written at run time).  Raw
 counters are therefore only meaningful against the exact build that
-produced them — and the moment they are paired is **collection**, when
-`otto cov get` (or the `otto test --cov` tail) merges the fetched
-`.gcda` against the local `.gcno` graph.  If the product was rebuilt
-in between, gcov refuses the data (`stamp mismatch with notes file`)
-and otto raises a `CoverageDataMismatchError` explaining the cause
-instead of dumping raw `lcov` output:
+produced them — and the moment they are paired is the **capture**, when
+`otto cov get` (or the `otto test --cov` tail) pairs each fetched `.gcda`
+with its `.gcno` ({ref}`coverage-build-requirement`).  If the product was
+rebuilt in between, the stamps disagree, and otto raises a
+`CoverageDataMismatchError` explaining the cause instead of dumping raw
+`lcov` output:
 
-> Coverage data does not match the current product build (gcov reports a
-> stamp mismatch between .gcda data and .gcno notes files). The product
-> was likely rebuilt after `otto test --cov` collected this data —
-> coverage must be reported against the exact build that produced it.
-> Re-run `otto test --cov` and report on the new output directory.
+> Coverage data does not match the current product build: each .gcda data
+> file below cannot be decoded against its .gcno notes file. Counters are
+> only meaningful against the exact build that produced them, and the usual
+> cause is a product rebuilt after it was deployed. Restore the build that
+> ran and run `otto cov get` again, or redeploy the current build and re-run
+> the tests (`otto test --cov`).
+
+Below it, the error names the product, both files and the reason: a
+different build stamp, a different format version (another compiler
+generation), changed function checksums (clang), or a header too short to
+read. The product is marked failed (`capture.failed`) and keeps its counters
+on the host; the other products capture normally. Which of the two remedies
+fits is in {ref}`coverage-gcc-stamp-guard`.
 
 Once a `capture.json` exists, the build tree no longer matters: the
 capture holds parsed hits, not raw counters, so **reporting on a
-capture-bearing run directory is immune to rebuilds** — recompiling
+captured run directory is immune to rebuilds** — recompiling
 the product between collection and `otto cov report` changes nothing.
-The same rebuild against a *pre-capture* run directory (an older otto's
-output, loaded via the legacy `.gcda`-merge fallback) still re-pairs
-raw counters at report time and fails with the error above.
+Only a product directory that is *not yet captured* is paired at report
+time, against the build tree as it is then. A rebuild in between fails that
+product with the error above: it gets a `capture.failed`, is named in the
+failed-products warning with the error printed beneath it, and the report goes
+on without it. A product whose `capture.failed` an earlier run wrote is named
+by its path only; that run printed the error.
 
 The ship-step variant of this mistake — deploying a binary, then
 rebuilding the local tree it will be decoded against — can be caught in
@@ -91,12 +136,28 @@ its {ref}`embedded flavor <coverage-embedded-stamp-guard>`, and the
 stale-deploy failure is silent at the toolchain level, so otto verifies
 the file pairing structurally at collection instead).
 
-A capture carries its own, git-based guard instead: its recorded
-`base_commit` must equal the tree's current `HEAD`.  A capture taken at a different
-commit — the tree moved on since collection — fails the report with a
-clean error naming both commits; the recovery is to collect fresh coverage
-with `otto test --cov` (or `otto cov get`) and report on the new
-output.  A working tree that is merely **dirty** at report time (same
+### "The e2e capture … was taken at commit A, but the tree is at B"
+
+A capture carries its own, git-based guard: its recorded `base_commit`
+must equal the tree's current `HEAD`, because its line numbers mean that
+commit's lines. A capture taken at a different commit — the tree moved on
+since collection — fails the report with a `CaptureCommitError` naming the
+capture and both commits, and exits `1`:
+
+> The e2e capture /path/to/output/cov/test1/myapp/capture.json was taken at commit
+> 3f2a9c1d0b7e, but the tree is at 8e41b07a2c95. Coverage is reported
+> against the commit it was taken at: check that commit out (`git checkout
+> 3f2a9c1d0b7e`) and report again, or re-run `otto test --cov` at the
+> current commit.
+
+Nothing was rebuilt, so the stamp error's advice does not apply. Check out
+the capture's commit and report again, or collect fresh coverage at the
+current commit. A product directory not yet captured is held to the same
+rule: its recorded commit must be the tree's `HEAD`. Both checks run before
+the report writes anything, so with `--overwrite-dir` a refused report leaves
+the previous one in `--dir` untouched.
+
+A working tree that is merely **dirty** at report time (same
 `HEAD`, uncommitted edits) does not fail: the e2e capture's hits are
 remapped from committed-code coordinates onto the current tree — the
 report-time mirror of the {ref}`dirty-tree remap at retrieval
@@ -111,31 +172,31 @@ in the tree count as dirty too.
 data the declarative model doesn't produce — a foreign `lcov` `.info`
 file, or a report built outside a git repository (retrieval and the
 validity pass both require git; this flag does not).  When any
-`--tier` flag is given, `otto cov report` **bypasses the declarative
-tiers model entirely** — settings tiers, the manual store, and unit
-harvesting are not consulted; only the exact tiers named on the
-command line are loaded.
+`--tier` flag is given, `otto cov report` **reports tracefiles alone**:
+settings tiers, the manual store, and unit harvesting are not consulted,
+and only the exact tiers named on the command line are loaded.  Run
+directories given together with `--tier` are refused (exit `2`): `--tier`
+reports the tracefiles it names and nothing else.
 
-`NAME` is a free-form label; `PATH` is an lcov `.info` tracefile.  The
-bare form `--tier system` (no path) refers to the implicit tier
-produced by merging the supplied `.gcda` directories with `lcov`; every
-other tier requires a path.  A non-`system` tier without a path,
-and a repeated tier name, are both rejected.  Flag order is precedence order — the
-first flag is highest-precedence and wins the row coloring when
-multiple tiers hit the same line.
+`NAME` is a free-form label; `PATH` is an lcov `.info` tracefile.  Every
+`--tier` needs its `=PATH`; a tier without one, and a repeated tier name,
+are both rejected.  Each tracefile becomes one run that records its tier
+only: it names no host, no product and no commit, because a tracefile
+someone else produced carries none of them.  Flag order is precedence
+order — the first flag is highest-precedence and wins the row coloring
+when multiple tiers hit the same line.
 
 ```bash
-otto --lab my_lab cov report runs/ \
+otto --lab my_lab cov report \
     --tier unit=u.info \
-    --tier system \
     --tier integration=i.info \
     --tier manual=m.info \
     --dir ./cov_report
 ```
 
-This produces a four-tier report with precedence
-`unit > system > integration > manual`.  A line hit only by the
-manual tier is colored manual; a line hit by all four is colored unit
+This produces a three-tier report with precedence
+`unit > integration > manual`.  A line hit only by the
+manual tier is colored manual; a line hit by all three is colored unit
 (the highest-precedence hit wins).  The summary table and per-file
 table both grow a column per tier in the same left-to-right order.
 

@@ -173,7 +173,7 @@ class TestExcludedLinesRoundTripThroughReporter:
         info.write_text(f"TN:\nSF:{src / 'f.c'}\nDA:1,7\nend_of_record\n")
 
         out = tmp_path / "report"
-        reporter = CoverageReporter([], src, out, tiers=[("unit", info)])
+        reporter = CoverageReporter(src, out, tiers=[("unit", info)])
         store = await reporter.run()
 
         (fr,) = [f for f in store.files() if f.path.name == "f.c"]
@@ -205,11 +205,11 @@ class TestExcludedLinesRoundTripThroughReporter:
         (hdir / "f.gcda").write_bytes(b"")
         (hdir / "f.gcno").write_bytes(b"")
 
-        async def fake_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
+        async def fake_capture(self, directory, output, toolchain=None, includes=None):
             output.write_text(f"TN:\nSF:{project / 'f.c'}\nDA:1,7\nend_of_record\n")
             return output
 
-        monkeypatch.setattr(merger_mod.LcovMerger, "capture", fake_capture)
+        monkeypatch.setattr(merger_mod.LcovMerger, "capture_dir", fake_capture)
 
         cov_config = {
             "tiers": {"unit": {"kind": "unit", "precedence": 1, "harvest_dirs": [str(hdir)]}},

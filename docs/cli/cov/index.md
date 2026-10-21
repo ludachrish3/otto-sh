@@ -21,7 +21,7 @@ the lib/ and product/ source directories and their files with
 threshold-colored Line % and Branch % bars and one percentage column per
 tier, and the per-node stats card](../../_static/generated/coverage-report.png)
 
-See {doc}`../../architecture/subsystems/coverage/index` for how the fetch → merge →
+See {doc}`../../architecture/subsystems/coverage/index` for how the fetch → pair →
 capture → render pipeline fits together, and for the design behind tiers,
 validity, and why only manual captures are committed.
 
@@ -52,7 +52,7 @@ otto cov kmodcov check DIR
 otto --lab my_lab cov get --tier manual --ticket PROJ-123 --note "verified failover"
 otto --lab my_lab cov report runs/2026-05-16_T1200/ --dir ./report
 otto --lab my_lab cov report run_a/ run_b/ run_c/ --dir ./combined
-otto --lab my_lab cov report runs/ --tier unit=unit.info --tier system --tier manual=manual.info
+otto --lab my_lab cov report --tier unit=unit.info --tier manual=manual.info --dir ./tracefiles
 ```
 
 On success, otto logs the overall coverage percentage, the file count,
@@ -73,7 +73,7 @@ The following system packages must be installed on the **otto host**
 
 | Package | Purpose                            | Required |
 |---------|------------------------------------|----------|
-| `lcov`  | Capture and merge `.info` files    | Yes      |
+| `lcov`  | Capture `.gcda` into `.info` files | Yes      |
 | `gcov`  | Process `.gcda` files into `.info` | Yes      |
 
 On **remote hosts** (the machines running the instrumented product):
@@ -82,6 +82,17 @@ On **remote hosts** (the machines running the instrumented product):
   `clang --coverage` (both spell `-fprofile-arcs -ftest-coverage`).
 - `.gcda` files must be written under the product's `cov_dir`, which is
   what `GCOV_PREFIX` in its run or install command is for.
+- `mktemp` and a `tar` that can create an archive (GNU or BusyBox both
+  do). otto archives the product's whole `cov_dir` with a plain `tar -cf`
+  into one file `mktemp` makes in the host's temp dir (`$TMPDIR`, else
+  `/tmp`), fetches that one archive, keeps only the `.gcda` from it, and
+  removes it from the host. The fetching user needs read access to
+  everything in `cov_dir` (nothing is written there, so a root-owned
+  `cov_dir` with readable counters is fine) and a writable temp dir. If any
+  step exits non-zero, that product's fetch fails with the command's
+  message, and its counters stay on the host rather than being
+  half-collected. That covers a read-only or missing temp dir, an unreadable
+  file or directory, and no `tar` at all.
 
 For clang-built products the otto host additionally needs `llvm-cov`
 (the `llvm` package) — see {doc}`instrumenting/clang`.
@@ -155,8 +166,10 @@ install = "GCOV_PREFIX={cov_dir} GCOV_PREFIX_STRIP=3 /opt/myproduct/myproduct &"
 `.otto/settings.toml`.  The table can be empty, but it has to exist: its
 presence is what says this project collects coverage at all.  The source root is
 auto-detected by walking up from the current directory to find the
-`.otto/` directory.  Path mappings between build-host paths and local
-source paths are auto-discovered from the `.info` and `.gcno` files.
+`.otto/` directory.  Source paths need no mapping either: each source file a
+capture names is resolved on its own, and one recorded on another machine
+(a container or CI build) is matched by its trailing path components under
+the project root.
 
 An optional `hosts` regex scopes collection to a subset of the lab — use it to
 keep, for example, an SSH hop that fronts a coverage target out of the

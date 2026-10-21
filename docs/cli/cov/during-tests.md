@@ -19,27 +19,59 @@ named `system` of the `e2e` kind, the kind a lab run collects into
 
 Retrieval then runs the tests normally, fetches each instrumented product's
 `.gcda` files from its own `cov_dir`, and — on a best-effort basis — produces
-a `capture.json` per host per product: one product's merged, source-resolved
+a `capture.json` per host per product: one product's source-resolved
 coverage on one host, stamped with the `base_commit` (the project's commit at
 capture time) it is valid against.  It is the same capture-production
 machinery `otto cov get` runs.
 
-This tail never fails an otherwise-successful test run **over collection**: a
-project that is not a git checkout (no commit to anchor a capture to),
-misconfigured tiers, or a stamp mismatch during merge — gcov reporting that
-the fetched `.gcda` came from a different build than the local `.gcno` notes
-files — are logged and swallowed.  What survives is the fetched `.gcda`
-themselves, in the run's own local `cov/` tree: recovery re-processes those.
-They land under `cov/` in the run's output directory, keyed by host and then
-product — {ref}`the run tree <run-tree>` is the shape.
+Stop the product's processes before collection, which runs after the last
+test. A process writes its `.gcda` files only when it exits, and counts
+written after the fetch are lost when the counters are cleaned. Stopping the
+product in a fixture's teardown is enough.
+
+This tail never fails an otherwise-successful test run **over collection**.
+A project that is not a git checkout (no commit to anchor a capture to),
+a misconfigured tier, or a product that fails to capture are logged and
+swallowed. A product can fail to capture because its `.gcda` came from a
+different build than the local `.gcno` notes files, or because otto cannot
+pair them ({ref}`coverage-pairing-errors`). Each failure's reason is printed once.
+
+A failed capture keeps that product's counters **on the host**: only the
+products that captured are cleaned. A non-git project and a misconfigured tier
+fail before anything is cleaned, so every product keeps its counters. Fix
+the cause and run `otto cov get` ({doc}`get`) to fetch and capture them
+again. The same command recovers a run that was interrupted before its
+capture. The exception is a product that was rebuilt after it was
+deployed: its counters belong to the old build, so either restore that
+build and run `otto cov get`, or redeploy and run the tests again
+({ref}`coverage-gcc-stamp-guard`).
 
 A failed **clean after collection** is not swallowed the same way. Once
-counters are fetched, the tail zeroes every contributing host's counters —
-embedded boards included — exactly as {doc}`clean` does, so the next run
-does not double-count. A reset that fails there fails the run even though
-every test passed; the captures already written are unaffected and stay on
-disk, and `--cov-report` still writes its report before the run fails. See {ref}`coverage-cov-clean-failures` below for the symmetric pre-run
-case.
+captures are produced, the tail zeroes the counters of every product that
+captured — embedded boards included — exactly as {doc}`clean` does, so the
+next run does not double-count. A reset that fails there fails the run even
+though every test passed; the captures already written are unaffected and
+stay on disk, and `--cov-report` still writes its report before the run
+fails. See {ref}`coverage-cov-clean-failures` below for the symmetric
+pre-run case.
+
+(coverage-run-tree-product)=
+## What lands in a product's directory
+
+Each product gets one directory, `cov/<host_id>/<product>/` in the run's
+output directory ({ref}`the run tree <run-tree>` is the whole shape). Inside
+it:
+
+- **the fetched `.gcda` files, at their paths relative to the product's
+  `cov_dir`.** The tree mirrors the one on the host, which mirrors the
+  product's object tree (see {ref}`coverage-build-requirement`). An embedded
+  board's files sit at the full path the board dumped.
+- **`capture.json`** when the product captured, or **`capture.failed`**,
+  holding the short reason, when it did not. A directory with neither has
+  not been captured yet. `otto cov report` captures it when it reads the
+  run ({doc}`report`).
+- `board.info` and `board.resolved.info`, the lcov tracefiles the capture
+  was built from, kept for debugging.
 
 (coverage-tristate)=
 ## Auto, on, off
@@ -188,9 +220,9 @@ otto test --cov-dir /var/artifacts/myrun TestMyDevice
 
 `--cov-dir` implies `--cov`, so the `--cov` flag is optional when you
 supply a path.  PATH stands in for the run directory's `cov/` subtree, keeping
-its shape: a product's `.gcda`, its merged `.info` files and its
-`capture.json` all land in `PATH/<host_id>/<product>/`, exactly as they would
-under `<run>/cov/`.  The destination directory is created if it does not
+its shape: everything {ref}`a product's directory <coverage-run-tree-product>`
+holds lands in `PATH/<host_id>/<product>/`, exactly as it would under
+`<run>/cov/`.  The destination directory is created if it does not
 already exist.  If it exists and is non-empty, the run aborts to avoid
 mixing stale coverage into the new results; pass `--overwrite-cov-dir`
 to clear it first:

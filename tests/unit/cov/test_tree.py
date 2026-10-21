@@ -79,3 +79,17 @@ def test_capture_directly_under_a_host_dir_is_refused(tmp_path: Path) -> None:
     with pytest.raises(CoverageConfigError, match=r"cov/<host>/<product>/") as excinfo:
         iter_product_dirs(cov)
     assert str(cov / "h1") in str(excinfo.value)
+
+
+def test_dot_dirs_are_not_hosts_or_products(tmp_path: Path) -> None:
+    # The capture producer stages pairs under ``.otto-stage/<host>/<product>/``;
+    # that copy must never be walked as a host of its own.
+    cov = tmp_path / "cov"
+    (cov / "h1" / "app").mkdir(parents=True)
+    (cov / "h1" / ".hidden").mkdir()
+    stage = cov / ".otto-stage" / "h1" / "app"
+    stage.mkdir(parents=True)
+    (stage / "x.gcda").write_bytes(b"")
+    (cov / ".otto-stage" / "x.gcda").write_bytes(b"")
+
+    assert iter_product_dirs(cov) == [("h1", "app", cov / "h1" / "app")]

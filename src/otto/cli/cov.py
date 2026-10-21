@@ -1,15 +1,19 @@
 r"""Generate coverage reports from ``otto test --cov`` output.
 
-Merges ``.gcda`` files collected from one or more ``otto test`` runs,
-processes them with ``lcov``, and renders a multi-tier HTML report.
+Loads the per-product captures collected by one or more ``otto test`` runs
+and renders a multi-tier HTML report.
 
 **Usage**::
 
     otto cov report RUN_DIR1 [RUN_DIR2 ...] --dir ./my_report
 
 Each *RUN_DIR* is an ``otto test`` output directory containing a ``cov/``
-subdirectory with per-host ``.gcda`` files.  Multiple directories can be
-specified to stitch together coverage from separate test runs.
+subdirectory with one ``<host>/<product>/`` directory per product. A product
+that captured holds a ``capture.json``; one that failed holds a
+``capture.failed`` and is named once in a warning; one with neither is
+captured now, with the tier and commit its collection recorded. Multiple
+directories can be specified to stitch together coverage from separate test
+runs.
 
 Per-host toolchains (``gcov``, ``lcov``) are resolved automatically from
 host configuration in ``lab.json`` or by inspecting ``.gcno`` files.
@@ -35,23 +39,21 @@ See the :doc:`/cli/cov/index` and :doc:`/cli/host/index` documentation.
     ``[coverage.tickets]`` to have attributed at least one ticket; fails
     loud otherwise (exit 1) rather than writing an empty file.
 
-``--tier NAME[=PATH]``
-    Repeatable.  Add a coverage tier to the report.  ``NAME`` is a
-    free-form label (e.g. ``unit``, ``manual``, ``integration``); ``PATH``
-    is the lcov ``.info`` file feeding that tier.  The bare form
-    ``--tier system`` (no path) refers to the implicit system tier
-    produced by merging the supplied ``.gcda`` directories.
+``--tier NAME=PATH``
+    Repeatable.  Report an lcov tracefile as a coverage tier.  ``NAME`` is
+    a free-form label (e.g. ``unit``, ``manual``, ``integration``); ``PATH``
+    is the lcov ``.info`` file feeding that tier, whose run records the tier
+    only.  Every ``--tier`` needs its ``=PATH``.
 
     The order of ``--tier`` flags is the precedence order: the first flag
     is the highest-precedence tier and wins the row coloring on the
-    annotated source view.  If no ``--tier`` flags are given, defaults
-    to ``--tier system``.
+    annotated source view.  ``--tier`` never reads settings, so it reports
+    tracefiles alone and cannot be combined with run directories.
 
     Example::
 
-        otto cov report runs/ \\
+        otto cov report \\
             --tier unit=u.info \\
-            --tier system \\
             --tier integration=i.info \\
             --tier manual=m.info
 
@@ -152,11 +154,11 @@ def cov_callback(ctx: typer.Context) -> None:
 
 
 def _parse_tier_specs(raw_tiers: list[str]) -> "list[TierSpec]":
-    """Split repeated ``--tier NAME[=PATH]`` values into ordered ``(name, path)`` pairs.
+    """Split repeated ``--tier NAME=PATH`` values into ordered ``(name, path)`` pairs.
 
     Order is preserved (= precedence order). Only the syntax is checked here
-    — a name, and a path after any ``=``; which tiers may omit a path and
-    whether a name repeats are :func:`~otto.coverage.reporter.run_coverage_report`'s
+    — a name, and a path after any ``=``; that every tier needs its path and
+    that no name repeats are :func:`~otto.coverage.reporter.run_coverage_report`'s
     rules.
     """
     specs: "list[TierSpec]" = []
@@ -235,12 +237,10 @@ def report(
         typer.Option(
             "--tier",
             help=(
-                "Add a coverage tier as NAME[=PATH]. Repeatable. "
-                "Order is precedence order (first = highest). "
-                'Use "--tier system" alone to position the implicit '
-                "lcov-merged system tier. When given, --tier flags take "
-                "precedence over settings tiers and select the git-less "
-                'legacy path. Defaults to the configured tiers (or "system").'
+                "Report an lcov tracefile as a coverage tier: NAME=PATH. "
+                "Repeatable. Order is precedence order (first = highest). "
+                "When given, --tier flags replace the settings tiers and "
+                "report tracefiles alone (no run directories)."
             ),
         ),
     ] = None,
@@ -253,30 +253,30 @@ def report(
     ] = False,
 ) -> None:
     """Generate a coverage report from otto test --cov output directories."""
-    from ..coverage.errors import CoverageDataMismatchError, CoverageToolVersionError
-    from ..coverage.store.model import TIER_SYSTEM
+    from ..coverage.errors import (
+        CaptureCommitError,
+        CoverageDataMismatchError,
+        CoverageToolVersionError,
+    )
     from ..host.errors import CoverageToolMissingError
 
     output_dirs = output_dirs or []
 
     # Precedence rule: explicit --tier flags are a git-less escape hatch and
-    # take precedence over settings tiers — route them through the legacy
-    # path unchanged, passing the empty inputs (no project_root / tier_configs
-    # resolution, exactly as before). With no --tier flags, resolve_report_inputs
-    # (below, inside the try block) reads the collection-model inputs
-    # (project_root + declared tiers) from settings; a tree with no [coverage]
-    # section falls back to ReportInputs(), i.e. the legacy behavior.
+    # take precedence over settings tiers — they pass the empty inputs (no
+    # project_root / tier_configs resolution), so they report tracefiles
+    # alone. With no --tier flags, resolve_report_inputs (below, inside the
+    # try block) reads the collection-model inputs (project_root + declared
+    # tiers) from settings; a tree with no [coverage] section gets
+    # ReportInputs(), which reports no run directory.
     from ..coverage.report_inputs import ReportInputs, resolve_report_inputs
 
     inputs = ReportInputs()
-    if tier:
-        tier_specs: "list[TierSpec]" = _parse_tier_specs(tier)
-        # --tier never resolves settings (see precedence rule above), so
-        # inputs stays ReportInputs() here — run_coverage_report defaults to
-        # Thresholds()'s 80.0/70.0 and runs no ticket attribution (it has no
-        # git project_root to walk).
-    else:
-        tier_specs = [(TIER_SYSTEM, None)]
+    # --tier never resolves settings (see precedence rule above), so inputs
+    # stays ReportInputs() there — run_coverage_report defaults to
+    # Thresholds()'s 80.0/70.0 and runs no ticket attribution (it has no git
+    # project_root to walk).
+    tier_specs: "list[TierSpec] | None" = _parse_tier_specs(tier) if tier else None
 
     cov_dirs = [d / "cov" for d in output_dirs]
 
@@ -324,12 +324,19 @@ def report(
                 overwrite=overwrite_dir,
             )
         )
-    except (CoverageDataMismatchError, CoverageToolVersionError, CoverageToolMissingError) as e:
-        # Typed capture errors — polluted tree (product rebuilt after the
-        # test run), a gcov tool that cannot read the build's format (e.g.
-        # clang build captured with GNU gcov), or a gcov the data's own
-        # stamp names that is not installed: the message already names the
-        # cause and remedy — print it clean, never as a traceback. Escaped:
+    except (
+        CaptureCommitError,
+        CoverageDataMismatchError,
+        CoverageToolVersionError,
+        CoverageToolMissingError,
+    ) as e:
+        # Typed capture errors — the tree moved to another commit since the
+        # counters were collected (check out that commit, or re-run at this
+        # one), a polluted tree (product rebuilt after the test run), a gcov
+        # tool that cannot read the build's format (e.g. clang build captured
+        # with GNU gcov), or a gcov the data's own stamp names that is not
+        # installed: the message already names the cause and remedy — print
+        # it clean, never as a traceback. Escaped:
         # the console handler renders log messages as Rich markup, and this
         # message is arbitrary (lcov/geninfo) text that may itself contain a
         # literal bracket.
@@ -352,11 +359,12 @@ def report(
         logger.error(escape_markup(str(e)))  # noqa: TRY400 — deliberately no traceback: git's own message is the cause
         raise typer.Exit(1) from e
     except (DestinationError, CoverageInputError) as e:
-        # A refused input — a run directory that does not exist, a tier
-        # without a path or named twice, a --dir that is not empty without
-        # --overwrite-dir — is a usage error (exit 2): the fix is an argument,
-        # not a rerun. Both are ValueError subclasses, so this must be caught
-        # before the generic handler below.
+        # A refused input — a run directory that does not exist or that no
+        # [coverage] project root can anchor, a tier without a path or named
+        # twice, a --dir that is not empty without --overwrite-dir — is a
+        # usage error (exit 2): the fix is an argument, not a rerun. Both are
+        # ValueError subclasses, so this must be caught before the generic
+        # handler below.
         raise usage_error_from(e, flags=_REPORT_FLAGS) from e
     except ValueError as e:
         # A malformed committed manual capture (load_manual_captures wraps the
@@ -369,16 +377,6 @@ def report(
     except RuntimeError as e:
         logger.error("Coverage merge failed: %s", escape_markup(str(e)))  # noqa: TRY400 — deliberately no traceback: lcov output is the diagnostic
         raise typer.Exit(1) from e
-    if store is None:
-        # run_coverage_report logged the specific warning (missing meta or
-        # no host dirs); for the standalone command treat that as an error.
-        # store is None only on the legacy path — the collection-model path
-        # always returns a store (manual store / declared tiers still yield
-        # a report even with no output dirs).
-        where = ", ".join(str(d) for d in output_dirs) if output_dirs else "the given inputs"
-        logger.error("Coverage report not generated — no valid coverage data in: %s", where)
-        raise typer.Exit(1)
-
     if store.file_count() == 0:
         # A store with no files is a vacuous success — restore the old loud
         # CI-friendly fail. Name every input searched (run cov dirs plus, when
@@ -405,7 +403,7 @@ def report(
         from ..version import get_version
 
         if inputs.project_root is None:
-            # The --tier legacy path and the no-[coverage]-section fallback
+            # The --tier tracefile path and the no-[coverage]-section fallback
             # both leave project_root unset here — and both also leave
             # ticket_spec unset, so no attribution ever ran and
             # store.tickets is always empty in this branch too. Same
@@ -494,8 +492,9 @@ def get(
         typer.Option(
             "--clean",
             help=(
-                "Zero the counters of every host that contributed a capture, after a "
-                "successful retrieval — for use before starting a manual session."
+                "Zero the counters of every product that captured, after retrieval — "
+                "for use before starting a manual session. A product that failed to "
+                "capture keeps its counters."
             ),
         ),
     ] = False,
@@ -503,7 +502,11 @@ def get(
     """Fetch .gcda from the lab's instrumented products; produce per-product captures."""
     # Function-local: this module sits on the `cov` import-budget surface, and
     # the coverage library pulls the collector, the fetcher and rich.table.
-    from ..coverage.errors import CoverageInputError, CoverageNotInstrumentedError
+    from ..coverage.errors import (
+        CoverageCaptureError,
+        CoverageInputError,
+        CoverageNotInstrumentedError,
+    )
     from ..coverage.get import get_coverage
     from ..lifecycle import run_command
     from .invoke import render_instrumentation_refusal, usage_error_from
@@ -527,6 +530,13 @@ def get(
         # headline is logged beside it (the rest of the message is the same
         # verdicts in plain text).
         logger.error(escape_markup(render_instrumentation_refusal(e)))  # noqa: TRY400 — deliberately no traceback: clean cause line
+        raise typer.Exit(1) from e
+    except CoverageCaptureError as e:
+        # The products that captured were kept; with --clean their clean is
+        # reported too, a failed reset as loudly as on success.
+        logger.error(escape_markup(str(e)))  # noqa: TRY400 — deliberately no traceback: clean cause line
+        if e.clean is not None:
+            _render_clean_report(e.clean)
         raise typer.Exit(1) from e
     except (ValueError, RuntimeError) as e:
         # Every other refusal (no [coverage] section, an empty host selection,

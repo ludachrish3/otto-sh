@@ -565,8 +565,8 @@ EXPECTED_HOST_IDS = {"test1", "test2", "test3"}
 
 
 def _host_dirs(cov_dir: Path) -> list[Path]:
-    """The ``cov/<host_id>/`` directories, sorted."""
-    return sorted(d for d in cov_dir.iterdir() if d.is_dir())
+    """The ``cov/<host_id>/`` directories, sorted; dot entries are otto's own, not hosts."""
+    return sorted(d for d in cov_dir.iterdir() if d.is_dir() and not d.name.startswith("."))
 
 
 def _product_dirs(cov_dir: Path) -> list[Path]:
@@ -590,10 +590,16 @@ class TestGcdaFetchStructure:
 
     def test_every_host_has_subdirectory(self, coverage_run):
         *_, cov_dir = coverage_run
-        actual_dirs = {d.name for d in cov_dir.iterdir() if d.is_dir()}
+        actual_dirs = {d.name for d in _host_dirs(cov_dir)}
         assert actual_dirs == EXPECTED_HOST_IDS, (
             f"Expected host dirs {EXPECTED_HOST_IDS}, found {actual_dirs}"
         )
+
+    def test_staging_does_not_outlive_collection(self, coverage_run):
+        """The capture's ``.otto-stage`` scratch tree is gone once every product is done."""
+        *_, cov_dir = coverage_run
+        leftovers = sorted(p.name for p in cov_dir.iterdir() if p.name.startswith("."))
+        assert leftovers == [".otto_cov_meta.json"], leftovers
 
     def test_every_host_has_one_product_dir(self, coverage_run):
         *_, cov_dir = coverage_run
@@ -841,12 +847,12 @@ class TestPollutedBuildTree:
     classic polluted-tree hazard.
 
     Coverage data (.gcda) embeds a build stamp that must match the build
-    tree's .gcno notes files, so raw counters cannot be re-merged after a
-    rebuild. Run dirs produced by this branch are immune: their per-board
-    ``capture.json`` anchors the merge result at collection time, so the
-    report never touches the polluted tree. Pre-capture run dirs (older
-    otto versions) still re-merge and must fail with a helpful error
-    naming the likely cause — never a traceback, never silent zeros.
+    tree's .gcno notes files, so raw counters cannot be paired after a
+    rebuild. A captured run dir is immune: its per-product ``capture.json``
+    anchors the hits at collection time, so the report never touches the
+    polluted tree. A product dir not yet captured is paired at report time
+    against the rebuilt tree, and must fail with a helpful error naming the
+    likely cause and the remedy — never a traceback, never silent zeros.
     """
 
     def test_report_after_rebuild_succeeds_from_captures(
@@ -869,9 +875,10 @@ class TestPollutedBuildTree:
     ) -> None:
         xdir, log_dir = polluted_run
 
-        # Emulate a pre-capture run dir (an older otto's output): same
-        # fetched .gcda, no capture.json — the back-compat gcda-merge path.
-        # Work on a copy so the capture-bearing sibling test stays intact.
+        # Emulate a run dir whose products are not yet captured: same fetched
+        # .gcda, no capture.json, so the report captures them against the
+        # rebuilt tree. Work on a copy so the capture-bearing sibling test
+        # stays intact.
         legacy_dir = tmp_path / log_dir.name
         shutil.copytree(log_dir, legacy_dir)
         for capture in legacy_dir.glob("cov/*/*/capture.json"):
@@ -885,7 +892,10 @@ class TestPollutedBuildTree:
             timeout=120,
         )
         combined = result.stdout + result.stderr
+        # Rich wraps the warning at the console width; match on flattened text.
+        flat = " ".join(combined.split())
         assert result.returncode == 1, f"expected exit 1, got {result.returncode}:\n{combined}"
         assert "Traceback" not in combined, f"user saw a traceback:\n{combined}"
-        assert "rebuilt" in combined  # the likely cause...
-        assert "otto test --cov" in combined  # ...and the remedy
+        assert "failed to capture" in flat, combined[-3000:]
+        assert "rebuilt" in flat, combined[-3000:]  # the likely cause...
+        assert "otto test --cov" in flat, combined[-3000:]  # ...and the remedy

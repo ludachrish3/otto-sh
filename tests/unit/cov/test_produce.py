@@ -1,4 +1,4 @@
-"""produce_captures orchestration (merger stubbed, no lcov binary)."""
+"""produce_captures orchestration (lcov capture stubbed, no lcov binary)."""
 
 import json
 import subprocess
@@ -36,16 +36,26 @@ def git_repo(tmp_path: Path) -> Path:
 def _write_meta(cov_dir: Path, git_repo: Path) -> None:
     (cov_dir / ".otto_cov_meta.json").write_text(
         f'{{"project_name": "r", "project_root": "{git_repo}", '
-        '"toolchains": {}, "source_roots": {}}'
+        '"toolchains": {}, "source_roots": {}, "tier": "system", "base_commit": "abc"}'
     )
 
 
+_DATA = b"adcg*33B\x01\x00\x00\x00"  # gcc 13, the stubbed system major
+
+
+def _counters(product_dir: Path, git_repo: Path, data: bytes = _DATA) -> None:
+    """Write one ``x.gcda`` under *product_dir* and its matching notes in the project."""
+    product_dir.mkdir(parents=True, exist_ok=True)
+    (product_dir / "x.gcda").write_bytes(data)
+    (git_repo / "x.gcno").write_bytes(b"oncg" + data[4:])
+
+
 def _stub_merger(monkeypatch: pytest.MonkeyPatch, git_repo: Path) -> None:
-    async def fake_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
+    async def fake_capture_pairs(self, pairs, staging, output, toolchain=None):
         output.write_text(f"TN:\nSF:{git_repo / 'f.c'}\nDA:1,3\nend_of_record\n")
         return output
 
-    monkeypatch.setattr(produce_mod.LcovMerger, "capture", fake_capture)
+    monkeypatch.setattr(produce_mod.LcovMerger, "capture_pairs", fake_capture_pairs)
 
 
 @pytest.fixture(autouse=True)
@@ -69,12 +79,12 @@ def _gcov_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str) ->
 def _capture_spy(monkeypatch: pytest.MonkeyPatch, git_repo: Path) -> list:
     seen: list = []
 
-    async def fake_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
+    async def fake_capture_pairs(self, pairs, staging, output, toolchain=None):
         seen.append(toolchain)
         output.write_text(f"TN:\nSF:{git_repo / 'f.c'}\nDA:1,3\nend_of_record\n")
         return output
 
-    monkeypatch.setattr(produce_mod.LcovMerger, "capture", fake_capture)
+    monkeypatch.setattr(produce_mod.LcovMerger, "capture_pairs", fake_capture_pairs)
     return seen
 
 
@@ -84,12 +94,15 @@ async def test_produce_writes_per_product_captures(
 ) -> None:
     cov_dir = tmp_path / "out" / "cov"
     for host in ("host1", "host2"):
-        (cov_dir / host / "app").mkdir(parents=True)
-        (cov_dir / host / "app" / "x.gcda").write_bytes(b"")
+        _counters(cov_dir / host / "app", git_repo)
     _write_meta(cov_dir, git_repo)
     _stub_merger(monkeypatch, git_repo)
 
-    written = await produce_captures(cov_dir, tier="system", project_root=git_repo, labs=["lab1"])
+    written = (
+        await produce_captures(
+            cov_dir, tier="system", project_root=git_repo, labs=["lab1"], products={}
+        )
+    ).written
 
     assert written == [
         cov_dir / "host1" / "app" / "capture.json",
@@ -113,12 +126,15 @@ async def test_produce_writes_one_capture_per_product_under_one_host(
 ) -> None:
     cov_dir = tmp_path / "out" / "cov"
     for product in ("agent", "app"):
-        (cov_dir / "host1" / product).mkdir(parents=True)
-        (cov_dir / "host1" / product / "x.gcda").write_bytes(b"")
+        _counters(cov_dir / "host1" / product, git_repo)
     _write_meta(cov_dir, git_repo)
     _stub_merger(monkeypatch, git_repo)
 
-    written = await produce_captures(cov_dir, tier="system", project_root=git_repo, labs=["lab1"])
+    written = (
+        await produce_captures(
+            cov_dir, tier="system", project_root=git_repo, labs=["lab1"], products={}
+        )
+    ).written
 
     assert written == [
         cov_dir / "host1" / "agent" / "capture.json",
@@ -136,16 +152,17 @@ async def test_produce_skips_product_dirs_without_counters(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     cov_dir = tmp_path / "out" / "cov"
-    (cov_dir / "host1" / "app").mkdir(parents=True)
-    (cov_dir / "host1" / "app" / "x.gcda").write_bytes(b"")
+    _counters(cov_dir / "host1" / "app", git_repo)
     (cov_dir / "host1" / "empty_dir").mkdir(parents=True)
     _write_meta(cov_dir, git_repo)
     _stub_merger(monkeypatch, git_repo)
 
     with caplog.at_level("WARNING"):
-        written = await produce_captures(
-            cov_dir, tier="system", project_root=git_repo, labs=["lab1"]
-        )
+        written = (
+            await produce_captures(
+                cov_dir, tier="system", project_root=git_repo, labs=["lab1"], products={}
+            )
+        ).written
 
     assert written == [cov_dir / "host1" / "app" / "capture.json"]
     assert any("empty_dir" in rec.message for rec in caplog.records)
@@ -157,18 +174,20 @@ async def test_produce_annotates_display_names_by_host(
 ) -> None:
     cov_dir = tmp_path / "out" / "cov"
     for host in ("host1", "host2"):
-        (cov_dir / host / "app").mkdir(parents=True)
-        (cov_dir / host / "app" / "x.gcda").write_bytes(b"")
+        _counters(cov_dir / host / "app", git_repo)
     _write_meta(cov_dir, git_repo)
     _stub_merger(monkeypatch, git_repo)
 
-    written = await produce_captures(
-        cov_dir,
-        tier="system",
-        project_root=git_repo,
-        labs=["lab1"],
-        display_names={"host1": "Rack 2 Slot 4"},
-    )
+    written = (
+        await produce_captures(
+            cov_dir,
+            tier="system",
+            project_root=git_repo,
+            labs=["lab1"],
+            products={},
+            display_names={"host1": "Rack 2 Slot 4"},
+        )
+    ).written
 
     by_host = {Capture.load(p).board: Capture.load(p) for p in written}
     assert by_host["host1"].display_name == "Rack 2 Slot 4"
@@ -193,13 +212,14 @@ async def test_produce_reads_each_product_with_the_gcov_its_stamp_names(
     with no recorded toolchain whose counters another gcc major wrote is
     captured with that major's gcov, not the system one."""
     cov_dir = tmp_path / "out" / "cov"
-    (cov_dir / "host1" / "app").mkdir(parents=True)
-    (cov_dir / "host1" / "app" / "x.gcda").write_bytes(b"adcg*42B" + b"\x00" * 4)  # gcc 12
+    _counters(cov_dir / "host1" / "app", git_repo, b"adcg*42B" + b"\x00" * 4)  # gcc 12
     _write_meta(cov_dir, git_repo)
     gcov_12 = _gcov_on_path(tmp_path, monkeypatch, "gcov-12")
     seen = _capture_spy(monkeypatch, git_repo)
 
-    await produce_captures(cov_dir, tier="system", project_root=git_repo, labs=["lab1"])
+    await produce_captures(
+        cov_dir, tier="system", project_root=git_repo, labs=["lab1"], products={}
+    )
 
     (toolchain,) = seen
     assert toolchain is not None
@@ -211,13 +231,14 @@ async def test_produce_keeps_a_recorded_gcov_over_the_stamp(
     tmp_path: Path, git_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     cov_dir = tmp_path / "out" / "cov"
-    (cov_dir / "host1" / "app").mkdir(parents=True)
-    (cov_dir / "host1" / "app" / "x.gcda").write_bytes(b"adcg*42B" + b"\x00" * 4)
+    _counters(cov_dir / "host1" / "app", git_repo, b"adcg*42B" + b"\x00" * 4)
     (cov_dir / ".otto_cov_meta.json").write_text(
         json.dumps(
             {
                 "project_name": "r",
                 "project_root": str(git_repo),
+                "tier": "system",
+                "base_commit": "abc",
                 "toolchains": {
                     "host1": {"sysroot": "/", "lcov": "usr/bin/lcov", "gcov": "/opt/cross/gcov"}
                 },
@@ -227,7 +248,9 @@ async def test_produce_keeps_a_recorded_gcov_over_the_stamp(
     )
     seen = _capture_spy(monkeypatch, git_repo)
 
-    await produce_captures(cov_dir, tier="system", project_root=git_repo, labs=["lab1"])
+    await produce_captures(
+        cov_dir, tier="system", project_root=git_repo, labs=["lab1"], products={}
+    )
 
     (toolchain,) = seen
     assert toolchain is not None

@@ -14,13 +14,16 @@ in :func:`otto.suite.run._post_run_coverage` (see ``TestPostRunSwallowPolicy``).
 import asyncio
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
+from otto.coverage.capture.produce import ProduceResult, ProductCapture, ProductKey
 from otto.coverage.collect import CollectResult, collect_coverage
 from otto.coverage.reports import CleanReport
 from otto.host.element import Element
+from otto.result import Result
+from otto.utils import Status
 from tests._fixtures.gitrepo import git_env
 
 
@@ -41,6 +44,16 @@ def _empty_fetcher() -> MagicMock:
 
 
 @pytest.fixture(autouse=True)
+def _gcc13_system_gcov(monkeypatch):
+    """Pin the system gcov to gcc 13, the major the fake counters carry.
+
+    The capture step resolves each product's gcov from its ``.gcda`` stamp;
+    this keeps it off the real ``gcov --version`` probe and on the default tool.
+    """
+    monkeypatch.setattr("otto.host.toolchain_discovery.system_gcov_major", lambda gcov="gcov": 13)
+
+
+@pytest.fixture(autouse=True)
 def _stub_post_fetch_clean(monkeypatch):
     """Stub the post-fetch clean path for every test in this module.
 
@@ -53,6 +66,23 @@ def _stub_post_fetch_clean(monkeypatch):
     mock = AsyncMock(return_value=CleanReport(hosts={}))
     monkeypatch.setattr("otto.coverage.collect.clean_coverage", mock)
     return mock
+
+
+def _counters(product_dir: Path, notes_root: Path) -> None:
+    """Write one ``x.gcda`` under *product_dir* and its matching notes under *notes_root*."""
+    product_dir.mkdir(parents=True, exist_ok=True)
+    (product_dir / "x.gcda").write_bytes(b"adcg*33B\x01\x00\x00\x00")
+    (notes_root / "x.gcno").write_bytes(b"oncg*33B\x01\x00\x00\x00")
+
+
+HEAD = "c0ffee" * 6 + "abcd"
+"""The commit a stubbed ``head_commit`` answers for a project root that is no git checkout."""
+
+
+@pytest.fixture
+def fake_head(monkeypatch):
+    """Answer :data:`HEAD` for the collected-at commit, for tests whose root is no git checkout."""
+    monkeypatch.setattr("otto.coverage.capture.gitio.head_commit", lambda root: HEAD)
 
 
 @pytest.fixture
@@ -380,14 +410,18 @@ class TestProductsOnly:
 
 class TestCleanAfterFetch:
     """``clean_after_fetch`` gates whether ``collect_coverage`` calls the one
-    clean path (:func:`~otto.coverage.collect.clean_coverage`) after a
-    successful collection. Default ``True`` preserves ``otto test --cov``
-    semantics (zero the counters right after a successful fetch); ``False``
-    skips that internal clean so a caller (``otto cov get``) can own the
-    post-fetch clean itself, scoped to its own host selection. Either way the
+    clean path (:func:`~otto.coverage.collect.clean_coverage`) after
+    production. Default ``True`` preserves ``otto test --cov`` semantics (zero
+    the counters of exactly the pairs that captured, so a product that failed
+    keeps its counters); ``False`` skips that internal clean so a caller
+    (``otto cov get``) can own the post-fetch clean itself. Either way the
     fetch itself is unchanged."""
 
-    def _run(self, cov_dir, *, clean_after_fetch=True):
+    APP = ProductKey("test1", "app")
+    LIB = ProductKey("test1", "lib")
+
+    def _run(self, cov_dir, produce_mock, clean_mock, *, clean_after_fetch=True):
+        """Collect ``test1``'s two fetched products, ``produce_mock`` standing in for capture."""
         from otto.host import UnixHost
 
         project = MagicMock()
@@ -396,14 +430,15 @@ class TestCleanAfterFetch:
 
         host = MagicMock(spec=UnixHost)
         host.id = "test1"
-        host.products = [_product("app", "/var/cov/app")]
-        board = cov_dir / "test1" / "app"
+        host.products = [_product("app", "/var/cov/app"), _product("lib", "/var/cov/lib")]
 
         fetcher_instance = MagicMock()
-        fetcher_instance.fetch_all = AsyncMock(return_value={("test1", "app"): board})
-
-        clean_mock = AsyncMock(return_value=CleanReport(hosts={}))
-
+        fetcher_instance.fetch_all = AsyncMock(
+            return_value={
+                ("test1", "app"): cov_dir / "test1" / "app",
+                ("test1", "lib"): cov_dir / "test1" / "lib",
+            }
+        )
         with (
             patch("otto.config.coverage_settings.get_cov_config", return_value={"hosts": ".*"}),
             patch("otto.fleet.all_hosts", return_value=[host]),
@@ -413,38 +448,85 @@ class TestCleanAfterFetch:
                 new=AsyncMock(return_value={}),
             ),
             patch("otto.coverage.collect.clean_coverage", clean_mock),
-            # get_cov_project None short-circuits the metadata + capture tail so the
-            # test pins only the fetch/clean seam.
-            patch("otto.config.coverage_settings.get_cov_project", return_value=None),
+            patch("otto.config.coverage_settings.get_cov_project", return_value=project),
+            patch("otto.coverage.collect._write_metadata", new=AsyncMock()),
+            patch("otto.coverage.capture.gitio.head_commit", return_value=HEAD),
+            patch("otto.coverage.capture.produce.produce_captures", new=produce_mock),
         ):
             result = asyncio.run(
                 collect_coverage(cov_dir, projects=[project], clean_after_fetch=clean_after_fetch)
             )
-        return result, clean_mock, board, project
+        return result, project
 
-    def test_true_default_calls_clean_coverage_scoped_to_contributing_hosts(self, tmp_path):
+    def _outcome(self, cov_dir, *, lib_fails=False):
+        """``test1/app`` captured; ``test1/lib`` failed when *lib_fails*, else left out."""
+        app = ProductCapture(self.APP, cov_dir / "test1" / "app" / "capture.json", None)
+        lib = ProductCapture(self.LIB, None, "lcov --capture failed")
+        return ProduceResult([app, lib] if lib_fails else [app])
+
+    def test_true_default_cleans_only_the_pairs_that_captured(self, tmp_path):
         cov_dir = tmp_path / "cov"
-        cov_dir.mkdir()
-        result, clean_mock, board, project = self._run(cov_dir)  # default True
-        # Scoped to the hosts that actually contributed a product, through the
-        # same project list collect_coverage itself resolved.
-        clean_mock.assert_awaited_once_with([project], host_ids=["test1"])
-        assert result.product_dirs == {("test1", "app"): board}
+        clean_mock = AsyncMock(return_value=CleanReport(hosts={}))
+        produce_mock = AsyncMock(return_value=self._outcome(cov_dir))
+        result, project = self._run(cov_dir, produce_mock, clean_mock)  # default True
+        # Scoped to the captured pair (test1/lib fetched but did not capture),
+        # through the same project list collect_coverage itself resolved.
+        clean_mock.assert_awaited_once_with([project], pairs=[self.APP])
+        assert set(result.product_dirs) == {("test1", "app"), ("test1", "lib")}
+        assert result.produce.captured == [self.APP]
         assert result.clean == CleanReport(hosts={})
+
+    def test_nothing_captured_cleans_nothing(self, tmp_path):
+        clean_mock = AsyncMock(return_value=CleanReport(hosts={}))
+        produce_mock = AsyncMock(return_value=ProduceResult([]))
+        result, _project = self._run(tmp_path / "cov", produce_mock, clean_mock)
+        clean_mock.assert_not_awaited()
+        assert result.clean is None
 
     def test_false_skips_the_internal_clean(self, tmp_path):
         cov_dir = tmp_path / "cov"
-        cov_dir.mkdir()
-        result, clean_mock, board, _project = self._run(cov_dir, clean_after_fetch=False)
+        clean_mock = AsyncMock(return_value=CleanReport(hosts={}))
+        produce_mock = AsyncMock(return_value=self._outcome(cov_dir))
+        result, _project = self._run(cov_dir, produce_mock, clean_mock, clean_after_fetch=False)
         clean_mock.assert_not_awaited()
         # The fetch still happened and its dirs are reported unchanged.
-        assert result.product_dirs == {("test1", "app"): board}
+        assert set(result.product_dirs) == {("test1", "app"), ("test1", "lib")}
         assert result.clean is None
+
+    def test_a_capture_failure_is_raised_after_the_captured_pairs_are_cleaned(self, tmp_path):
+        from otto.coverage.errors import CoverageCaptureError
+
+        cov_dir = tmp_path / "cov"
+        report = CleanReport(hosts={"test1": {"app": Result(Status.Success)}})
+        clean_mock = AsyncMock(return_value=report)
+        failure = CoverageCaptureError(self._outcome(cov_dir, lib_fails=True))
+        produce_mock = AsyncMock(side_effect=failure)
+        with pytest.raises(CoverageCaptureError) as excinfo:
+            self._run(cov_dir, produce_mock, clean_mock)
+        assert excinfo.value is failure
+        clean_mock.assert_awaited_once_with(ANY, pairs=[self.APP])
+        # The clean's report rides on the error, for a caller that fails on it.
+        assert excinfo.value.clean is report
+
+    def test_a_clean_that_raises_does_not_hide_the_pending_capture_failure(self, tmp_path, caplog):
+        from otto.coverage.errors import CoverageCaptureError, NoCoverageHostsError
+
+        cov_dir = tmp_path / "cov"
+        clean_mock = AsyncMock(side_effect=NoCoverageHostsError("nothing to clean"))
+        failure = CoverageCaptureError(self._outcome(cov_dir, lib_fails=True))
+        produce_mock = AsyncMock(side_effect=failure)
+        with caplog.at_level("ERROR"), pytest.raises(NoCoverageHostsError):
+            self._run(cov_dir, produce_mock, clean_mock)
+        logged = [r.getMessage() for r in caplog.records if r.levelname == "ERROR"]
+        assert len(logged) == 1
+        assert "test1/lib" in logged[0]
+        assert "lcov --capture failed" in logged[0]
 
 
 # ── Embedded collection + metadata sidecar (moved from TestRunCoverageEmbedded)
 
 
+@pytest.mark.usefixtures("fake_head")
 class TestCollectEmbedded:
     """``collect_coverage`` collects embedded boards' products, and its
     ``.otto_cov_meta.json`` sidecar behaves exactly as the old coverage-metadata
@@ -522,7 +604,10 @@ class TestCollectEmbedded:
             patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=_empty_fetcher()),
             patch("otto.coverage.fetcher.embedded.collect_embedded_coverage", new=embedded_collect),
             patch("otto.config.coverage_settings.get_cov_project", return_value=project),
-            patch("otto.coverage.capture.produce.produce_captures", new=AsyncMock(return_value=[])),
+            patch(
+                "otto.coverage.capture.produce.produce_captures",
+                new=AsyncMock(return_value=ProduceResult([])),
+            ),
         ):
             asyncio.run(collect_coverage(cov_dir, projects=[project]))
 
@@ -565,7 +650,10 @@ class TestCollectEmbedded:
             patch("otto.fleet.all_hosts", return_value=[host]),
             patch("otto.coverage.fetcher.embedded.collect_embedded_coverage", new=embedded_collect),
             patch("otto.config.coverage_settings.get_cov_project", return_value=project),
-            patch("otto.coverage.capture.produce.produce_captures", new=AsyncMock(return_value=[])),
+            patch(
+                "otto.coverage.capture.produce.produce_captures",
+                new=AsyncMock(return_value=ProduceResult([])),
+            ),
         ):
             asyncio.run(collect_coverage(cov_dir, projects=[project]))
 
@@ -612,7 +700,10 @@ class TestCollectEmbedded:
             patch("otto.coverage.fetcher.embedded.collect_embedded_coverage", new=embedded_collect),
             patch("otto.config.coverage_settings.get_cov_project", return_value=project),
             patch("otto.host.toolchain_discovery.discover_toolchain_from_gcno", new=_fake_discover),
-            patch("otto.coverage.capture.produce.produce_captures", new=AsyncMock(return_value=[])),
+            patch(
+                "otto.coverage.capture.produce.produce_captures",
+                new=AsyncMock(return_value=ProduceResult([])),
+            ),
         ):
             asyncio.run(collect_coverage(cov_dir, projects=[project]))
 
@@ -735,7 +826,10 @@ class TestCollectEmbedded:
             patch("otto.fleet.all_hosts", return_value=[zephyr37_fat, zephyr44_fat]),
             patch("otto.coverage.fetcher.embedded.collect_embedded_coverage", new=embedded_collect),
             patch("otto.config.coverage_settings.get_cov_project", return_value=project),
-            patch("otto.coverage.capture.produce.produce_captures", new=AsyncMock(return_value=[])),
+            patch(
+                "otto.coverage.capture.produce.produce_captures",
+                new=AsyncMock(return_value=ProduceResult([])),
+            ),
         ):
             asyncio.run(collect_coverage(cov_dir, projects=[project]))
 
@@ -744,6 +838,7 @@ class TestCollectEmbedded:
         assert meta["source_roots"]["zephyr44-fat"] == str(build44.resolve())
 
 
+@pytest.mark.usefixtures("fake_head")
 class TestFetchedToolchainMetadata:
     """``.otto_cov_meta.json`` records a toolchain per *fetched* host only when
     one was configured: the reporter reads a host left at the default with
@@ -784,7 +879,10 @@ class TestFetchedToolchainMetadata:
                 new=AsyncMock(return_value={}),
             ),
             patch("otto.config.coverage_settings.get_cov_project", return_value=project),
-            patch("otto.coverage.capture.produce.produce_captures", new=AsyncMock(return_value=[])),
+            patch(
+                "otto.coverage.capture.produce.produce_captures",
+                new=AsyncMock(return_value=ProduceResult([])),
+            ),
         ):
             asyncio.run(collect_coverage(cov_dir, projects=[project]))
 
@@ -854,6 +952,7 @@ class TestFetchedToolchainMetadata:
         }
 
 
+@pytest.mark.usefixtures("fake_head")
 class TestBuildDirPathAnchoring:
     """``[coverage.embedded] build_dir`` (and the per-version
     ``[coverage.embedded.builds.<ver>] build_dir``) is a passthrough
@@ -895,7 +994,10 @@ class TestBuildDirPathAnchoring:
             patch("otto.fleet.all_hosts", return_value=[host]),
             patch("otto.coverage.fetcher.embedded.collect_embedded_coverage", new=embedded_collect),
             patch("otto.config.coverage_settings.get_cov_project", return_value=project),
-            patch("otto.coverage.capture.produce.produce_captures", new=AsyncMock(return_value=[])),
+            patch(
+                "otto.coverage.capture.produce.produce_captures",
+                new=AsyncMock(return_value=ProduceResult([])),
+            ),
         ):
             asyncio.run(collect_coverage(cov_dir, projects=[project]))
         return json.loads((cov_dir / ".otto_cov_meta.json").read_text())
@@ -1003,8 +1105,22 @@ class TestCaptureTail:
     tail it never swallows — an ambiguous tier or a non-git sut *raise*."""
 
     def _collect(self, project, cov_dir, cov_config):
-        """Drive collect_coverage with one embedded board already collected."""
-        embedded_collect = AsyncMock(return_value={("board1", "app"): cov_dir / "board1"})
+        """Drive collect_coverage with one embedded board's counters collected by the fake.
+
+        The counters a test staged under ``cov_dir/board1`` are delivered by
+        the mocked collector, as a real one would: left in place they would be
+        a reused directory's uncaptured counters, which collection refuses.
+        """
+        held = cov_dir.parent / "held-board1"
+        if (cov_dir / "board1").exists():
+            (cov_dir / "board1").rename(held)
+
+        async def deliver(staging_root, pattern=None):
+            if held.exists():
+                held.rename(cov_dir / "board1")
+            return {("board1", "app"): cov_dir / "board1"}
+
+        embedded_collect = AsyncMock(side_effect=deliver)
         with (
             patch("otto.config.coverage_settings.get_cov_config", return_value=cov_config),
             patch("otto.fleet.all_hosts", return_value=[]),
@@ -1019,14 +1135,13 @@ class TestCaptureTail:
         from otto.coverage.capture import produce as produce_mod
 
         cov_dir = tmp_path / "cov"
-        (cov_dir / "board1" / "app").mkdir(parents=True)
-        (cov_dir / "board1" / "app" / "x.gcda").write_bytes(b"")
+        _counters(cov_dir / "board1" / "app", project_root)
 
-        async def fake_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
+        async def fake_capture(self, pairs, staging, output, toolchain=None):
             output.write_text(f"TN:\nSF:{project_root / 'f.c'}\nDA:1,3\nend_of_record\n")
             return output
 
-        monkeypatch.setattr(produce_mod.LcovMerger, "capture", fake_capture)
+        monkeypatch.setattr(produce_mod.LcovMerger, "capture_pairs", fake_capture)
 
         project = MagicMock()
         project.root = project_root
@@ -1041,20 +1156,56 @@ class TestCaptureTail:
         assert json.loads(capture_path.read_text())["tier"] == "system"
         assert result.captures_written == [capture_path]
 
+    def test_metadata_records_the_tier_and_the_commit_collected_at(
+        self, tmp_path, project_root, monkeypatch
+    ):
+        """``.otto_cov_meta.json`` carries the resolved tier and the project's HEAD."""
+        import subprocess
+
+        from otto.coverage.capture import produce as produce_mod
+
+        cov_dir = tmp_path / "cov"
+        _counters(cov_dir / "board1" / "app", project_root)
+
+        async def fake_capture(self, pairs, staging, output, toolchain=None):
+            output.write_text(f"TN:\nSF:{project_root / 'f.c'}\nDA:1,3\nend_of_record\n")
+            return output
+
+        monkeypatch.setattr(produce_mod.LcovMerger, "capture_pairs", fake_capture)
+
+        project = MagicMock()
+        project.root = project_root
+        project.name = "proj"
+
+        self._collect(project, cov_dir, {"tiers": {}})
+
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            check=True,
+            env=git_env(tmp_path),
+        ).stdout.strip()
+        meta = json.loads((cov_dir / ".otto_cov_meta.json").read_text())
+        assert meta["tier"] == "system"
+        assert meta["base_commit"] == head
+        capture = json.loads((cov_dir / "board1" / "app" / "capture.json").read_text())
+        assert capture["base_commit"] == head
+
     def test_ambiguous_tiers_raise(self, tmp_path, project_root, monkeypatch):
         """Two e2e-kind tiers make ``resolve_get_tier`` raise ``ValueError`` —
         which now propagates out of collect_coverage (no swallow)."""
         from otto.coverage.capture import produce as produce_mod
 
         cov_dir = tmp_path / "cov"
-        (cov_dir / "board1" / "app").mkdir(parents=True)
-        (cov_dir / "board1" / "app" / "x.gcda").write_bytes(b"")
+        _counters(cov_dir / "board1" / "app", project_root)
 
-        async def fake_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
+        async def fake_capture(self, pairs, staging, output, toolchain=None):
             output.write_text(f"TN:\nSF:{project_root / 'f.c'}\nDA:1,3\nend_of_record\n")
             return output
 
-        monkeypatch.setattr(produce_mod.LcovMerger, "capture", fake_capture)
+        monkeypatch.setattr(produce_mod.LcovMerger, "capture_pairs", fake_capture)
 
         project = MagicMock()
         project.root = project_root
@@ -1078,18 +1229,16 @@ class TestCaptureTail:
         from otto.coverage.capture.gitio import GitUnavailableError
 
         cov_dir = tmp_path / "cov"
-        (cov_dir / "board1" / "app").mkdir(parents=True)
-        (cov_dir / "board1" / "app" / "x.gcda").write_bytes(b"")
-
         notgit = tmp_path / "notgit"
         notgit.mkdir()
+        _counters(cov_dir / "board1" / "app", notgit)
         (notgit / "f.c").write_text("int a;\n")
 
-        async def fake_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
+        async def fake_capture(self, pairs, staging, output, toolchain=None):
             output.write_text(f"TN:\nSF:{notgit / 'f.c'}\nDA:1,3\nend_of_record\n")
             return output
 
-        monkeypatch.setattr(produce_mod.LcovMerger, "capture", fake_capture)
+        monkeypatch.setattr(produce_mod.LcovMerger, "capture_pairs", fake_capture)
 
         project = MagicMock()
         project.root = notgit
@@ -1098,6 +1247,84 @@ class TestCaptureTail:
         with pytest.raises(GitUnavailableError):
             self._collect(project, cov_dir, {"tiers": {}})
 
+    @pytest.mark.usefixtures("fake_head")
+    def test_products_map_reuses_the_fetched_products_without_rescanning(self, tmp_path):
+        """The produce step gets the products that yielded counters, never re-scanning
+        an artifact for instrumentation: the fetch already decided that."""
+        from otto.host import UnixHost
+
+        project = MagicMock()
+        project.root = tmp_path / "sut"
+        project.name = "proj"
+        cov_dir = tmp_path / "cov"
+        cov_dir.mkdir()
+        app, idle = _product("app", "/var/cov/app"), _product("idle", "/var/cov/idle")
+        host = MagicMock(spec=UnixHost)
+        host.id = "test1"
+        host.products = [app, idle]
+        fetcher = _empty_fetcher()
+        fetcher.fetch_all = AsyncMock(return_value={("test1", "app"): cov_dir / "test1" / "app"})
+        produce_mock = AsyncMock(return_value=ProduceResult([]))
+        with (
+            patch("otto.config.coverage_settings.get_cov_config", return_value={"tiers": {}}),
+            patch("otto.fleet.all_hosts", return_value=[host]),
+            patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher),
+            patch(
+                "otto.coverage.fetcher.embedded.collect_embedded_coverage",
+                new=AsyncMock(return_value={}),
+            ),
+            patch("otto.coverage.collect._write_metadata", new=AsyncMock()),
+            patch("otto.config.coverage_settings.get_cov_project", return_value=project),
+            patch("otto.coverage.capture.produce.produce_captures", new=produce_mock),
+        ):
+            asyncio.run(collect_coverage(cov_dir, projects=[project]))
+
+        assert produce_mock.await_args.kwargs["products"] == {ProductKey("test1", "app"): app}
+        app.instrumented.assert_not_called()
+        idle.instrumented.assert_not_called()
+
+    @pytest.mark.usefixtures("fake_head")
+    def test_same_named_products_on_two_hosts_keep_their_own_definitions(self, tmp_path):
+        """Two hosts carrying different builds under one name each hand produce their own."""
+        from otto.host import UnixHost
+
+        project = MagicMock()
+        project.root = tmp_path / "sut"
+        project.name = "proj"
+        cov_dir = tmp_path / "cov"
+        hosts, apps = [], []
+        for hid in ("test1", "test2"):
+            app = _product("app", f"/var/cov/{hid}")
+            host = MagicMock(spec=UnixHost)
+            host.id = hid
+            host.products = [app]
+            hosts.append(host)
+            apps.append(app)
+        fetcher = _empty_fetcher()
+        fetcher.fetch_all = AsyncMock(
+            return_value={(h.id, "app"): cov_dir / h.id / "app" for h in hosts}
+        )
+        produce_mock = AsyncMock(return_value=ProduceResult([]))
+        with (
+            patch("otto.config.coverage_settings.get_cov_config", return_value={"tiers": {}}),
+            patch("otto.fleet.all_hosts", return_value=hosts),
+            patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher),
+            patch(
+                "otto.coverage.fetcher.embedded.collect_embedded_coverage",
+                new=AsyncMock(return_value={}),
+            ),
+            patch("otto.coverage.collect._write_metadata", new=AsyncMock()),
+            patch("otto.config.coverage_settings.get_cov_project", return_value=project),
+            patch("otto.coverage.capture.produce.produce_captures", new=produce_mock),
+        ):
+            asyncio.run(collect_coverage(cov_dir, projects=[project]))
+
+        assert produce_mock.await_args.kwargs["products"] == {
+            ProductKey("test1", "app"): apps[0],
+            ProductKey("test2", "app"): apps[1],
+        }
+
+    @pytest.mark.usefixtures("fake_head")
     def test_annotations_passed_through_to_produce(self, tmp_path):
         """tier/ticket/note/tester/display_names thread through to produce_captures."""
         project = MagicMock()
@@ -1106,7 +1333,15 @@ class TestCaptureTail:
         cov_dir = tmp_path / "cov"
         cov_dir.mkdir()
 
-        produce_mock = AsyncMock(return_value=[cov_dir / "board1" / "capture.json"])
+        produce_mock = AsyncMock(
+            return_value=ProduceResult(
+                [
+                    ProductCapture(
+                        ProductKey("board1", "app"), cov_dir / "board1" / "capture.json", None
+                    )
+                ]
+            )
+        )
         embedded_collect = AsyncMock(return_value={("board1", "app"): cov_dir / "board1"})
         cov_config = {
             "tiers": {
@@ -1145,6 +1380,7 @@ class TestCaptureTail:
 # ── Tier passthrough — a resolved TierConfig object skips re-resolution ──────
 
 
+@pytest.mark.usefixtures("fake_head")
 class TestTierPassthrough:
     """Passing an already-resolved :class:`~otto.coverage.tiers.TierConfig` as
     ``tier=`` is used directly — ``resolve_get_tier`` (and the ``load_tiers``
@@ -1162,7 +1398,15 @@ class TestTierPassthrough:
         cov_dir.mkdir()
 
         tier_obj = TierConfig(name="manual", kind="manual", precedence=1, color="red")
-        produce_mock = AsyncMock(return_value=[cov_dir / "board1" / "capture.json"])
+        produce_mock = AsyncMock(
+            return_value=ProduceResult(
+                [
+                    ProductCapture(
+                        ProductKey("board1", "app"), cov_dir / "board1" / "capture.json", None
+                    )
+                ]
+            )
+        )
         embedded_collect = AsyncMock(return_value={("board1", "app"): cov_dir / "board1"})
         with (
             patch("otto.config.coverage_settings.get_cov_config", return_value={"tiers": {}}),
@@ -1227,18 +1471,16 @@ class TestPostRunSwallowPolicy:
         from otto.coverage.capture import produce as produce_mod
 
         cov_dir = tmp_path / "cov"
-        (cov_dir / "board1" / "app").mkdir(parents=True)
-        (cov_dir / "board1" / "app" / "x.gcda").write_bytes(b"")
-
         notgit = tmp_path / "notgit"
         notgit.mkdir()
+        _counters(cov_dir / "board1" / "app", notgit)
         (notgit / "f.c").write_text("int a;\n")
 
-        async def fake_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
+        async def fake_capture(self, pairs, staging, output, toolchain=None):
             output.write_text(f"TN:\nSF:{notgit / 'f.c'}\nDA:1,3\nend_of_record\n")
             return output
 
-        monkeypatch.setattr(produce_mod.LcovMerger, "capture", fake_capture)
+        monkeypatch.setattr(produce_mod.LcovMerger, "capture_pairs", fake_capture)
 
         project = MagicMock()
         project.root = notgit

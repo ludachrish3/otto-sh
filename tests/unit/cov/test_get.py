@@ -21,8 +21,10 @@ from otto.config.coverage_settings import CoverageConfigError
 from otto.config.scope import EmptySelectionError
 from otto.coverage.capture import produce as produce_module
 from otto.coverage.capture.gitio import GitUnavailableError
+from otto.coverage.capture.produce import ProduceResult, ProductCapture, ProductKey
 from otto.coverage.collect import CollectResult
 from otto.coverage.errors import (
+    CoverageCaptureError,
     CoverageInputError,
     CoverageNotInstrumentedError,
     NoCoverageDataError,
@@ -37,23 +39,35 @@ from tests._fixtures.gitrepo import TmpGitRepo
 OK = Result(Status.Success)
 
 
-def _fake_capture(root):
-    """Stand in for ``LcovMerger.capture``: write a minimal valid lcov record."""
+def _produced(*captures: Path) -> ProduceResult:
+    """A produce outcome in which each ``<host>/<product>/capture.json`` captured."""
+    return ProduceResult(
+        [ProductCapture(ProductKey(c.parent.parent.name, c.parent.name), c, None) for c in captures]
+    )
 
-    async def _capture(self, gcda_dir, gcno_dir, output, toolchain=None):
+
+def _fake_capture(root):
+    """Stand in for ``LcovMerger.capture_pairs``: write a minimal valid lcov record."""
+
+    async def _capture(self, pairs, staging, output, toolchain=None):
         output.write_text(f"TN:\nSF:{root / 'f.c'}\nDA:1,3\nend_of_record\n")
         return output
 
     return _capture
 
 
-def _fake_collect_one_board():
-    """Stand in for the embedded collector: one board, one product dir."""
+def _fake_collect_one_board(notes_root):
+    """Stand in for the embedded collector: one board, one product dir.
+
+    The counters' matching notes file is written under *notes_root* so the
+    real pairing step finds it.
+    """
 
     async def fake_collect(staging_root, pattern=None):
         product_dir = staging_root / "board1" / "app"
         product_dir.mkdir(parents=True)
-        (product_dir / "x.gcda").write_bytes(b"")
+        (product_dir / "x.gcda").write_bytes(b"adcg*33B\x01\x00\x00\x00")
+        (notes_root / "x.gcno").write_bytes(b"oncg*33B\x01\x00\x00\x00")
         return {("board1", "app"): product_dir}
 
     return fake_collect
@@ -92,6 +106,16 @@ def _project(coverage_cfg, root=None, name="sut"):
     project.root = root or Path("/nonexistent/sut")
     project.name = name
     return project
+
+
+@pytest.fixture(autouse=True)
+def _gcc13_system_gcov(monkeypatch):
+    """Pin the system gcov to gcc 13, the major the fake counters carry.
+
+    The capture step resolves each product's gcov from its ``.gcda`` stamp;
+    this keeps it off the real ``gcov --version`` probe and on the default tool.
+    """
+    monkeypatch.setattr("otto.host.toolchain_discovery.system_gcov_major", lambda gcov="gcov": 13)
 
 
 @pytest.fixture
@@ -336,7 +360,7 @@ async def test_no_captures_produced_raises_no_coverage_data(all_hosts_of, git_su
         return_value=CollectResult(
             cov_dir=tmp_path / "cov",
             product_dirs={("board1", "app"): product_dir},
-            captures_written=[],
+            produce=ProduceResult([]),
         )
     )
     with (
@@ -362,7 +386,7 @@ async def test_get_own_no_captures_refusal_names_every_product(all_hosts_of, git
         return_value=CollectResult(
             cov_dir=tmp_path / "cov",
             product_dirs={("t1", "app"): product_dir1, ("zephyr", "ext"): product_dir2},
-            captures_written=[],
+            produce=ProduceResult([]),
         )
     )
     with (
@@ -403,7 +427,7 @@ async def test_get_defaults_to_the_per_invocation_output_dir(all_hosts_of, git_s
         return_value=CollectResult(
             cov_dir=tmp_path / "cov",
             product_dirs={("board1", "app"): cap.parent},
-            captures_written=[cap],
+            produce=_produced(cap),
         )
     )
 
@@ -465,7 +489,7 @@ async def test_get_manual_tier_writes_capture_and_manual_store(all_hosts_of, git
         return_value=CollectResult(
             cov_dir=tmp_path / "cov",
             product_dirs={("board1", "app"): cap_path.parent},
-            captures_written=[cap_path],
+            produce=_produced(cap_path),
         )
     )
 
@@ -506,7 +530,7 @@ async def test_get_default_tier_no_manual_store(all_hosts_of, git_sut, tmp_path)
         return_value=CollectResult(
             cov_dir=tmp_path / "cov",
             product_dirs={("board1", "app"): cap_path.parent},
-            captures_written=[cap_path],
+            produce=_produced(cap_path),
         )
     )
 
@@ -549,9 +573,9 @@ async def test_resolve_get_tier_called_once_across_full_get_flow(all_hosts_of, g
         patch.object(tiers_module, "resolve_get_tier", resolve_spy),
         patch(
             "otto.coverage.fetcher.embedded.collect_embedded_coverage",
-            _fake_collect_one_board(),
+            _fake_collect_one_board(git_sut),
         ),
-        patch.object(produce_module.LcovMerger, "capture", _fake_capture(git_sut)),
+        patch.object(produce_module.LcovMerger, "capture_pairs", _fake_capture(git_sut)),
     ):
         report = await get_coverage(tmp_path, projects=[project])
 
@@ -560,9 +584,10 @@ async def test_resolve_get_tier_called_once_across_full_get_flow(all_hosts_of, g
 
 
 @pytest.mark.asyncio
-async def test_get_clean_resets_only_the_hosts_that_contributed(all_hosts_of, git_sut, tmp_path):
-    """``clean=True`` scopes the post-fetch clean to exactly the hosts that
-    contributed a product — not the raw ``[coverage].hosts`` match set."""
+async def test_get_clean_resets_only_the_pairs_that_captured(all_hosts_of, git_sut, tmp_path):
+    """``clean=True`` scopes the post-fetch clean to exactly the (host, product)
+    pairs that captured — not every host that contributed counters, nor the
+    raw ``[coverage].hosts`` match set."""
     project = _project({"hosts": ".*"}, root=git_sut)
     t1 = _host_double("t1")
     zephyr = _embedded_board("zephyr")
@@ -574,7 +599,7 @@ async def test_get_clean_resets_only_the_hosts_that_contributed(all_hosts_of, gi
     collected = CollectResult(
         cov_dir=tmp_path / "cov",
         product_dirs={("t1", "app"): d1, ("zephyr", "ext"): d2},
-        captures_written=[cap_path],
+        produce=_produced(cap_path),
     )
     clean_mock = AsyncMock(
         return_value=CleanReport(hosts={"t1": {"app": OK}, "zephyr": {"ext": OK}})
@@ -587,7 +612,7 @@ async def test_get_clean_resets_only_the_hosts_that_contributed(all_hosts_of, gi
     ):
         report = await get_coverage(tmp_path, clean=True, projects=[project])
 
-    clean_mock.assert_awaited_once_with([project], host_ids=["t1", "zephyr"])
+    clean_mock.assert_awaited_once_with([project], pairs=[ProductKey("t1", "app")])
     assert report.ok
     assert isinstance(collect_mock.await_args.kwargs["tier"], TierConfig)
 
@@ -604,7 +629,7 @@ async def test_a_failed_get_clean_keeps_the_captures_and_reports_not_ok(
     collected = CollectResult(
         cov_dir=tmp_path / "cov",
         product_dirs={("board1", "app"): cap_path.parent},
-        captures_written=[cap_path],
+        produce=_produced(cap_path),
     )
     clean_mock = AsyncMock(
         return_value=CleanReport(hosts={"board1": {"app": Result(Status.Error, msg="denied")}})
@@ -708,7 +733,7 @@ async def test_e2e_kind_keeps_ticket_and_note_but_no_tester(all_hosts_of, git_su
         return_value=CollectResult(
             cov_dir=tmp_path / "cov",
             product_dirs={("board1", "app"): cap_path.parent},
-            captures_written=[cap_path],
+            produce=_produced(cap_path),
         )
     )
     with patch("otto.coverage.collect.collect_coverage", collect_mock):
@@ -749,7 +774,7 @@ async def test_manual_kind_resolves_tester(all_hosts_of, git_sut, tmp_path):
         return_value=CollectResult(
             cov_dir=tmp_path / "cov",
             product_dirs={("board1", "app"): cap_path.parent},
-            captures_written=[cap_path],
+            produce=_produced(cap_path),
         )
     )
     with patch("otto.coverage.collect.collect_coverage", collect_mock):
@@ -767,3 +792,92 @@ async def test_manual_kind_resolves_tester(all_hosts_of, git_sut, tmp_path):
     assert kwargs["ticket"] == "T-1"
     assert isinstance(kwargs["tier"], TierConfig)
     assert kwargs["tier"].name == "manual"
+
+
+def _one_failed_capture(cov_dir: Path) -> "tuple[Path, CoverageCaptureError]":
+    """``board1/good`` captured (a real manual capture on disk); ``board1/bad`` failed."""
+    from otto.coverage.capture.model import Capture
+
+    good = cov_dir / "board1" / "good" / "capture.json"
+    Capture(
+        tier="manual", product="good", base_commit="deadbeef", board="board1", ticket="T-1"
+    ).save(good)
+    outcome = ProduceResult(
+        [
+            ProductCapture(ProductKey("board1", "good"), good, None),
+            ProductCapture(ProductKey("board1", "bad"), None, "lcov --capture failed: boom"),
+        ]
+    )
+    return good, CoverageCaptureError(outcome)
+
+
+_MANUAL_TIERS = {
+    "tiers": {
+        "manual": {"kind": "manual", "precedence": 1},
+        "system": {"kind": "e2e", "precedence": 2},
+    }
+}
+
+
+@pytest.mark.asyncio
+async def test_a_failed_product_keeps_the_good_ones_manual_capture_and_cleans_only_it(
+    all_hosts_of, git_sut, tmp_path
+):
+    """One product fails under ``--tier manual --clean``: the good one is kept and cleaned."""
+    from otto.coverage.capture.model import Capture
+
+    project = _project(_MANUAL_TIERS, root=git_sut)
+    all_hosts_of(_embedded_board("board1", products=("good", "bad")))
+    _good, failure = _one_failed_capture(tmp_path / "cov")
+    report = CleanReport(hosts={"board1": {"good": OK}})
+    clean_mock = AsyncMock(return_value=report)
+
+    with (
+        patch("otto.coverage.collect.collect_coverage", AsyncMock(side_effect=failure)),
+        patch("otto.coverage.collect.clean_coverage", clean_mock),
+        pytest.raises(CoverageCaptureError) as excinfo,
+    ):
+        await get_coverage(tmp_path, tier="manual", ticket="T-1", clean=True, projects=[project])
+
+    assert excinfo.value is failure
+    manual = list((git_sut / ".otto" / "coverage" / "manual").glob("*.json"))
+    assert [Capture.load(m).product for m in manual] == ["good"]
+    clean_mock.assert_awaited_once_with([project], pairs=[ProductKey("board1", "good")])
+    assert excinfo.value.clean is report
+
+
+@pytest.mark.asyncio
+async def test_a_failed_product_without_clean_cleans_nothing(all_hosts_of, git_sut, tmp_path):
+    project = _project(_MANUAL_TIERS, root=git_sut)
+    all_hosts_of(_embedded_board("board1", products=("good", "bad")))
+    _good, failure = _one_failed_capture(tmp_path / "cov")
+    clean_mock = AsyncMock()
+
+    with (
+        patch("otto.coverage.collect.collect_coverage", AsyncMock(side_effect=failure)),
+        patch("otto.coverage.collect.clean_coverage", clean_mock),
+        pytest.raises(CoverageCaptureError),
+    ):
+        await get_coverage(tmp_path, tier="manual", ticket="T-1", projects=[project])
+
+    clean_mock.assert_not_awaited()
+    assert failure.clean is None
+
+
+@pytest.mark.asyncio
+async def test_capture_failure_and_clean_failure_both_surface(all_hosts_of, git_sut, tmp_path):
+    """The capture failure propagates and carries the failed clean of the good product."""
+    project = _project({"hosts": ".*"}, root=git_sut)
+    all_hosts_of(_embedded_board("board1", products=("good", "bad")))
+    _good, failure = _one_failed_capture(tmp_path / "cov")
+    bad = CleanReport(hosts={"board1": {"good": Result(Status.Error, msg="denied")}})
+
+    with (
+        patch("otto.coverage.collect.collect_coverage", AsyncMock(side_effect=failure)),
+        patch("otto.coverage.collect.clean_coverage", AsyncMock(return_value=bad)),
+        pytest.raises(CoverageCaptureError, match="board1/bad") as excinfo,
+    ):
+        await get_coverage(tmp_path, clean=True, projects=[project])
+
+    assert excinfo.value.clean is bad
+    assert not excinfo.value.clean.ok

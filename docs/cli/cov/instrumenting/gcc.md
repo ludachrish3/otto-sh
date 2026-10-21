@@ -10,7 +10,7 @@ setup.
 Compile *and link* the product with `--coverage` (shorthand for
 `-fprofile-arcs -ftest-coverage` plus the gcov link library). Keep the build
 tree around: the compiler writes one `.gcno` (notes) file per object at
-build time, and the report step needs them to decode the `.gcda` counters
+build time, and collection needs them to decode the `.gcda` counters
 the product writes at run time.
 
 ```make
@@ -20,6 +20,90 @@ LDFLAGS += --coverage
 
 `-O0` is not required, but optimized builds fold lines and branches
 together and make the line table noticeably harder to read.
+
+(coverage-build-requirement)=
+## The one build requirement
+
+**Each object file needs a unique path: absolute, or relative to the project
+root.**
+
+This is the only build requirement coverage has, and it applies to clang
+builds ({doc}`clang`) as much as to gcc ones.
+
+otto matches each `.gcda` it fetches to its `.gcno` by the path the `.gcda`
+was written at, never by file name alone. Two `main.cpp` files in two
+directories, or in two products, therefore stay apart. An ordinary build
+meets the rule without effort. The compiler bakes each object's absolute
+path into the binary, and the `.gcda` is written at that path (see
+[Where counters land](#where-counters-land) below).
+
+Two things can break it:
+
+- **`GCOV_PREFIX_STRIP` set too deep.** The strip count drops leading
+  components from each path before the `.gcda` is written. Strip far enough
+  that two objects' remaining paths are the same, for example both
+  `main.cpp.gcda`, and the product's runtime merges both objects' counters
+  into one file on the device. otto then refuses the file (see
+  [Pairing errors](#pairing-errors)).
+- **`-fprofile-dir`.** It folds the whole path into a single file name, so
+  otto cannot follow it. otto does not support it. Use `GCOV_PREFIX` and
+  `GCOV_PREFIX_STRIP` instead.
+
+### Clean the counters after a rebuild
+
+Each process adds its counts to whatever `.gcda` is already on disk when it
+exits. After you rebuild a product, clear the counters it wrote before the
+rebuild. `otto test --cov` does this for you before every run
+(`--cov-clean`, on by default; see {doc}`../during-tests`). Outside a test
+run, use {doc}`../clean`. The two compilers differ in what happens if you
+skip the clean:
+
+- **gcc** sees that the old file belongs to another build and overwrites it,
+  so you only lose the earlier counts.
+- **clang** adds the new counts into the old file without checking that it
+  belongs to the same build. The counts come out wrong, and nothing reports
+  an error.
+
+### Shared libraries and plugins
+
+otto reads the list of objects built into a `shell` product from its
+`artifact`. For an ELF executable it also follows the libraries the
+executable links against (its `DT_NEEDED` entries). otto follows a library
+when exactly one file under the project root has its name (its soname). Those libraries'
+objects are paired exactly like the executable's own.
+
+A library the product loads with `dlopen` (a plugin) cannot be found that
+way. Its counters are still fetched and paired by their path alone, and one
+INFO line per product lists them. Pairing by path alone searches the project
+root, so a second build tree there can make it ambiguous. To have a plugin's
+objects paired like the rest, declare the product's `artifact` as a
+directory or an archive that contains the plugins too
+({doc}`../../../configuration/declared-products-tools`).
+
+(coverage-pairing-errors)=
+### Pairing errors
+
+When otto cannot pair a `.gcda` with exactly one `.gcno`, collection fails
+for that product and names the file, every candidate otto considered and
+why it was rejected. The product's counters stay on the host, so once the
+cause is fixed, `otto cov get` ({doc}`../get`) captures them. The exception
+is a merge on the device: those counters are already mixed, so clean them
+and run the tests again. Each error ends with its remedy:
+
+| The error says | What happened | What to do |
+|---|---|---|
+| *matches several objects … the device wrote their counters to one file; lower GCOV_PREFIX_STRIP* | The strip count left two objects with the same path, and the runtime merged their counters into one file | Lower `GCOV_PREFIX_STRIP`, clean, and run again |
+| *these build trees each hold notes that match … remove the stale tree* | The product was built somewhere else (in a container, on a CI machine), so otto searched the project root. Several build trees there hold different notes that all fit this object | Remove the stale build tree |
+| *no notes file for … keep the build tree that produced the product* | No `.gcno` under the project root fits this object | Keep, or restore, the build tree that produced the deployed product |
+
+An object the artifact lists and that was built on this machine never meets
+the second error. Its notes sit at the object's own path, and otto uses
+them without searching, so a stale build tree or a unit-test tree elsewhere
+in the project is never considered.
+
+A fourth failure is not a pairing error: the object's own notes exist, but
+they belong to a later build. That is the rebuilt-notes mismatch, covered in
+{ref}`coverage-gcc-stamp-guard`.
 
 ## Where counters land
 
@@ -43,7 +127,12 @@ install = "GCOV_PREFIX={cov_dir} GCOV_PREFIX_STRIP=3 /opt/myproduct/myproduct &"
 `GCOV_PREFIX_STRIP` drops that many leading components off the baked-in path
 before `GCOV_PREFIX` is prepended, which is what keeps the tree under
 `cov_dir` shallow rather than a deep replica of the build machine's layout.
-`cov_dir` defaults to `/tmp/<name>`, so two products on one host stay apart
+Together the two variables choose the path each `.gcda` is written at, and
+otto fetches each file at that path relative to `cov_dir`. An object built at
+`/home/dev/agent/build/src/main.cpp.o` writes, with `GCOV_PREFIX_STRIP=4`,
+`<cov_dir>/src/main.cpp.gcda`. Keep the strip count low enough that every
+object's path stays unique (see
+[The one build requirement](#the-one-build-requirement)). `cov_dir` defaults to `/tmp/<name>`, so two products on one host stay apart
 without being told to. See
 {doc}`../../../configuration/declared-products-tools` for the entry, and
 {ref}`the configuration section <coverage-configuration>` for the rest.
@@ -62,8 +151,11 @@ version"* or *"record size mismatch"*, or silently reports 0%. otto reads
 the major from the `.gcda` stamp: a product built by the system gcc's major
 is read by the system `gcov`, one built by another major by `gcov-<major>`
 from `PATH` (`apt install gcc-12` ships `gcov-12`), and that package is
-named when it is missing: `otto test --cov` logs it as a warning and
-writes no capture, `otto cov get` and `otto cov report` fail with it. A
+named when it is missing. A missing `gcov` fails only that product: it
+gets a `capture.failed` naming the package, and every other product still
+captures. `otto test --cov` logs the failure as a warning, `otto cov get`
+names it and exits `1`, and `otto cov report` names it in its one warning
+about products that failed to capture. A
 host record that names a
 `toolchain.gcov` is used instead of the stamp — the order is on the
 {ref}`main page <coverage-gcov-resolution>`.
@@ -96,19 +188,32 @@ compiler major, never a target — so configure it per host entry in
 it at the otto host's own `lcov`.
 
 (coverage-gcc-stamp-guard)=
-## Stale deploys: the `.gcno` stamp guard
+## Stale deploys: the rebuilt-notes mismatch and the `.gcno` stamp guard
 
 Every GCC compilation stamps a fresh 32-bit value into both the `.gcno`
 notes file and the `gcov_info` struct linked into the binary —
 recompiling even an *unchanged* source produces a new stamp.  Counters
-are only decodable against the exact compilation that produced them; a
-`.gcda` whose stamp disagrees with the `.gcno` is refused at collection
-(*"stamp mismatch with notes file"*), which otto surfaces as the
-`CoverageDataMismatchError` described in
-{ref}`coverage-report-stale-builds`.
+are only decodable against the exact compilation that produced them.
+
+For an object built on this machine, its own notes file, at the object's
+path, is the one candidate otto pairs with. otto does not look for another
+when the stamps disagree. A `.gcda` whose stamp does not match those notes
+means the product was rebuilt after the deployed binary was built. Collection
+fails for that product with the `CoverageDataMismatchError` described in
+{ref}`coverage-report-stale-builds`, naming both files. The product's
+counters stay on the host, and they still belong to the deployed build, so
+there are two ways out:
+
+- **Restore the build that produced the deployed product**, then run
+  `otto cov get` again. The same counters now pair with the right notes.
+- **Redeploy the current build and run the tests again** (`otto test
+  --cov`). The counters on the host belong to the old binary, so a plain
+  `otto cov get` would fail the same way. The run's pre-run clean
+  (`--cov-clean`, on by default) clears them first; outside a test run,
+  clear them with {doc}`../clean` before the new session.
 
 When the product runs in place, straight out of the build tree, that
-error and its remedy (re-collect) are all you need.  A build-time guard
+error and its remedy are all you need.  A build-time guard
 earns its keep when the flow has a **ship step** — the product is built
 on one machine and deployed to the target Unix hosts.  Rebuild locally
 after deploying, and every later run of the stale deploy produces

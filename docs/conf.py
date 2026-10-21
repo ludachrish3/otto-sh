@@ -317,6 +317,11 @@ _INTERNAL_ALIASES = {
     "scaffold": "otto.init.scaffolder.scaffold",
     # otto.coverage.reporter
     "TierSpec": "otto.coverage.reporter.TierSpec",
+    # TYPE_CHECKING-only imports in the coverage capture code: merger.py's
+    # capture_pairs takes ``list[Pair]`` and lcov_loader.py's LCOVLoader a
+    # ``SourceResolver``, both named bare in their signatures.
+    "Pair": "otto.coverage.pairing.Pair",
+    "SourceResolver": "otto.coverage.sources.SourceResolver",
     # otto.host.options (referenced via ``rt`` alias in host/option_specs.py)
     "rt.LocalPortForward": "otto.host.options.LocalPortForward",
     "rt.RemotePortForward": "otto.host.options.RemotePortForward",

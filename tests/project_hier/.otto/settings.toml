@@ -1,0 +1,57 @@
+name = "project_hier"
+version = "1.0.0"
+
+# The hierarchical coverage fixture (tests/e2e/cov/test_hierarchical_coverage_e2e.py):
+# a shared library reached through DT_NEEDED, two products that both compile a
+# main.cpp, a unit-test tree that compiles the library again, and a stale second
+# build tree. build.sh builds build/ and build-old/; only build/ is deployed.
+# Everything lands on test1 alone.
+[project]
+lab_patterns = ["unix"]
+host_patterns = ["test1"]
+
+[[lab.sources]]
+backend = "json"
+paths = ["../_fixtures/lab_data/tech1"]
+
+# app's runtime library. It is staged, not measured: app's own object list
+# reaches it through its DT_NEEDED entry, and its counters land under app's
+# cov_dir because app is the process that loads it.
+[[dev_tools]]
+name = "libcore"
+kind = "shell"
+artifact = "build/src/core/libcore.so"
+stage_dir = "/tmp"
+check = "test -f /tmp/libcore.so"
+uninstall = "rm -f /tmp/libcore.so"
+match = { id = "test1" }
+
+# The suite runs each product with GCOV_PREFIX={cov_dir} itself. The cov_dir is
+# spelled out because the /tmp/<name> default would collide with the staged
+# executable of the same name.
+[[products]]
+name = "app"
+kind = "shell"
+artifact = "build/src/app/app"
+stage_dir = "/tmp"
+cov_dir = "/tmp/otto-hier-cov-app"
+check = "test -x /tmp/app"
+uninstall = "rm -rf /tmp/app {cov_dir}"
+match = { id = "test1" }
+
+[[products]]
+name = "tool"
+kind = "shell"
+artifact = "build/src/tool/tool"
+stage_dir = "/tmp"
+cov_dir = "/tmp/otto-hier-cov-tool"
+check = "test -x /tmp/tool"
+uninstall = "rm -rf /tmp/tool {cov_dir}"
+match = { id = "test1" }
+
+[coverage]
+hosts = "test1"
+
+[coverage.tiers.system]
+kind = "e2e"
+precedence = 1

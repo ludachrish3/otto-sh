@@ -11,7 +11,10 @@ coverage internals
    config
    toolchains
    store_model
+   objects
+   pairing
    merge
+   sources
    fetcher
    instrumentation
    renderer

@@ -8,27 +8,115 @@ and a manual session — and the report has to keep those separable, credit
 each of them once, and never let one source's failure look like another
 source's absence.
 
+## From counters to a capture
+
+Before anything folds, each fetched product has to become a `capture.json`.
+Collection does this right after the fetch (`otto test --cov`, `otto cov
+get`), and the report does it for any product directory collection left
+uncaptured. Both go through one function,
+`otto.coverage.capture.produce.produce_captures`, which takes each
+`<cov>/<host>/<product>/` directory through the same steps. The user's side
+of it, the one build requirement and the errors, is in the GCC page's
+{ref}`coverage-build-requirement` section.
+
+1. **Object list.** `otto.coverage.objects` reads the product's local
+   artifact and lists every object built into it. An instrumented object
+   embeds the absolute path its `.gcda` is written at, as a NUL-terminated
+   string. Scanning the artifact's bytes for those strings gives each
+   object's full coverage path, so pairing never has to guess from a file
+   name. The artifact may be a file, a directory, a tar or zip archive, a
+   compressed file, or a `docker save` tarball. For the tarball, the scan
+   reads the image's final filesystem, with layers and whiteouts applied. An
+   ELF executable's `DT_NEEDED` libraries are followed when exactly one file
+   under the project root carries the soname. A product with no readable
+   artifact yields an `Unavailable` with the reason, and its `.gcda` are
+   paired by path alone. `ObjectListCache` reads each artifact once per
+   capture run.
+2. **Pairing.** `otto.coverage.pairing.pair_product` takes each `.gcda`'s
+   path relative to the product directory, which is its path relative to the
+   product's `cov_dir` on the host. It then looks for the listed objects whose
+   path ends with it. Matching is component-wise, so `xmain.cpp` never
+   matches `main.cpp`. Several objects mean the device merged them into one
+   file (`PairingError`, kind `merged-on-device`). One object means its own
+   `<object>.gcno`, or the kernel's `.tmp_<name>.gcno`, is the only
+   candidate when it exists. A stamp mismatch with that file is a rebuild
+   (`CoverageDataMismatchError`), never a reason to look elsewhere. When the
+   object's notes are not on this machine (a container or CI build), or the
+   `.gcda` is not on the list (a `dlopen` plugin), `GcnoIndex` searches the
+   search root for notes with the object's file name. The search root is the
+   project root, or an embedded board's `build_dir`, and `GcnoIndex` walks it
+   once. The search keeps the notes whose version, stamp and, for clang,
+   per-function checksums fit, then those with the longest common path tail.
+   One survivor, or several byte-identical files, is the answer. Several
+   differing files are `several-trees`, and none is `no-notes`. Each error
+   names every candidate and why it lost. There is no basename fallback.
+3. **Staging.** `LcovMerger.capture_pairs` lays the pairs out under
+   `<cov>/.otto-stage/<host>/<product>/`. Each `.gcda` is copied to its
+   relative path with a symlink to its `.gcno` beside it, which is the
+   layout `geninfo` expects, wherever the build happened. The staging tree
+   is scratch: it is removed once the product is captured or has failed,
+   and `.otto-stage` goes with its last product, so a finished run's `cov/`
+   holds only `<host>/<product>/` directories and the metadata sidecar.
+4. **One capture.** One `lcov --capture --directory <staging>` per product,
+   with the product's gcov tool ({ref}`coverage-gcov-resolution`),
+   `--rc branch_coverage=1`, `--ignore-errors source` and the host's
+   `lcov_args`. The capture does not depend on source files, so a build done
+   on another machine still captures. When the sources are present,
+   `geninfo` still reads them, and `LCOV_EXCL` markers keep working. lcov's
+   output goes to the run's log file only. A failure is summarised as its
+   first `ERROR:` line, the last 20 lines and the log path, typed when the
+   output names a stamp mismatch or an incompatible gcov.
+5. **Source resolution.** `otto.coverage.sources.SourceResolver` rewrites
+   each `SF:` path on its own. A path under the staging tree (clang records
+   relative source names, which `geninfo` resolves against the staged
+   `.gcda`) loses the staging prefix and its `..` parts, then is
+   tail-matched. An absolute path that exists is kept as is, without a log
+   line. An absolute path that does not exist (a build done elsewhere) is
+   tail-matched against the project's files. A match counts only when the
+   candidate's whole project-relative path is a suffix of the recorded one;
+   of several matches (`/build/src/a.c` against both `a.c` and `src/a.c`)
+   the longest wins. No match keeps the raw path with one WARNING. `build_capture` then
+   drops every file outside the project root and counts them in one INFO
+   line.
+6. **Capture states.** A product that got this far writes `capture.json`.
+   One that failed at any step writes `capture.failed`, holding the short
+   reason, and the loop moves on. After the loop, one
+   `CoverageCaptureError` lists every failed product, and its `result`
+   carries every outcome. Collection then cleans only the products that
+   captured, so a failed product keeps its counters on the host for the
+   next `otto cov get`.
+
+`run_coverage_report` sorts each run directory's product directories by
+those files before the fold. A `capture.json` is folded. A `capture.failed`
+is named in the one warning line that lists failed products and the path
+of each `capture.failed`, and is not retried. A directory with `.gcda` but
+neither marker is captured now through the same
+`produce_captures`, with the tier and `base_commit` collection recorded in
+`.otto_cov_meta.json`. A directory with no recorded tier or commit is a
+`CoverageInputError`, never a guess, and is raised, like every other input
+refusal, before the destination is cleared. A directory with no `.gcda` and
+neither marker has nothing to capture and is skipped. The products captured here are not
+cleaned on their hosts: reporting never touches the lab. Their object lists
+come from the product definitions of the active lab (`_declared_products`),
+so report with the same `--lab` the run used. Without it, every product has
+no object list and is paired by path alone, with a search of the project
+root, which a second build tree can turn into a `several-trees` error that
+collection would not have raised.
+
 ## The fold order
 
 `CoverageReporter.run` (`otto.coverage.reporter`) folds in a fixed order.
 The order is not incidental; the last step depends on it.
 
-1. **Legacy `.gcda` merge.** Only when a `system` tier was requested with no
-   `.info` path *and* there are non-capture board directories to merge.
-   `LcovMerger.capture_and_merge` runs each host's counters through that
-   host's own toolchain — the toolchain list is positional, parallel to
-   `gcda_dirs`, so a mixed bed (one clang product, one default-gcov host)
-   keeps every host paired with its own `gcov` — and merges the results with
-   lcov. `discover_path_mappings` then learns embedded→local path mappings
-   from the merged `.info`, falling back to `.gcno` discovery when it can't.
-   The whole merge registers **one** synthetic run: no board, no host
-   ({doc}`types` covers why that costs the report its per-host breakdown).
-2. **Explicit `--tier NAME=PATH` `.info` files.** Same loop, one run each. A
-   path that doesn't exist warns and still registers the tier, so its column
-   renders empty rather than vanishing.
-3. **E2e captures.** `_load_captures` folds each board's `capture.json`
+1. **Explicit `--tier NAME=PATH` tracefiles.** One run each, recording the
+   tier only: a tracefile someone else produced names no host, product or
+   commit. A path that doesn't exist warns and still registers the tier, so
+   its column renders empty rather than vanishing.
+2. **E2e captures.** `_load_captures` folds each board's `capture.json`
    under a strict guard: `capture.base_commit` must equal the checkout's `HEAD`,
-   or the report stops with `CoverageDataMismatchError` naming both commits.
+   or the report stops with `CaptureCommitError` naming both commits. That
+   error is separate from `CoverageDataMismatchError` on purpose: a moved
+   commit and a rebuilt product have different remedies.
    An e2e capture carries no anchor chain — its coordinates *are* that
    commit's line numbers — so a matching tree is the only thing that makes
    it readable. The guard proves nothing about the *working* tree, though:
@@ -37,16 +125,20 @@ The order is not incidental; the last step depends on it.
    the same `-U0` diff and `LineRemapper` the manual chain uses, dropping
    hits on locally-modified lines rather than misaligning everything past
    the edit.
-4. **Unit harvest.** `_harvest_unit_tiers` lcov-captures each `kind ==
+3. **Unit harvest.** `_harvest_unit_tiers` lcov-captures each `kind ==
    "unit"` tier's `harvest_dirs` out of the *current* build tree (relative
    entries resolved against the project root, not the process CWD — `otto
-   cov report` may run from anywhere). One run id per **tier**, not per
-   directory: `tier_run_id` is created lazily on the first usable dir and
-   reused, so a tier with three harvest dirs contributes one run. Counters
+   cov report` may run from anywhere). A unit build writes each `.gcda`
+   beside its own `.gcno`, so `LcovMerger.capture_dir` captures in place,
+   with no staging and no search, after checking that every `.gcda` has its
+   notes. One run per **view** — the unnamed `harvest_dirs`, or one named
+   `products` entry — not per directory: `_harvest_one` creates the run id
+   lazily on the first usable dir and reuses it, so a view with three dirs
+   contributes one run. Counters
    whose newest `.gcda` predates the newest `.gcno` warn but still load —
    this data is cheap to regenerate, and refusing it would be louder than
    the problem.
-5. **Manual store.** `_load_manual_store` folds every committed capture
+4. **Manual store.** `_load_manual_store` folds every committed capture
    under `.otto/coverage/manual/`, supersede-filtered, each with the
    report-time validity states {doc}`manual` describes. **Last, always.**
 
@@ -55,7 +147,7 @@ runs, ticket attribution and overrides fold in, the renderer runs, and only
 then is `store.json` written.
 
 The filter's position in that sequence is load-bearing: it sits after every
-fold above, so one pass covers all five sources, and before attribution, so
+fold above, so one pass covers all four sources, and before attribution, so
 an excluded line never reaches per-ticket coverage
 ({doc}`../../../cli/cov/exclusions`). The
 save coming last no longer is — rendering has no store side effect left for
@@ -123,9 +215,10 @@ written into per-line data. Two properties fall out of the code:
   exactly one run, so grouping a line's `run_hits` by `RunRecord.host`
   reconstructs per-host line counts with no per-host table in the schema.
   The SPA does exactly that grouping (`contexts.ts` groups runs by label and
-  reads `run.host || run.board` per member). Runs that have no single host
-  behind them — the legacy lcov merge, the unit harvest, an explicit
-  `--tier` `.info` — carry `host = ""` and contribute nothing to derive.
+  reads `run.host || run.board` per member). Every e2e and manual run has
+  one. Runs that have no single host behind them — the unit harvest, an
+  explicit `--tier` `.info` — carry `host = ""` and contribute nothing to
+  derive.
 
 ## Supersede: same context replaces, never accumulates
 

@@ -38,6 +38,12 @@ note that ``llvm-cov``'s branch *counts* are coarser than GNU gcov's
 The otto host needs `llvm-cov` installed (the `llvm` package) in addition
 to the `lcov` prerequisite from the main {doc}`../index` page.
 
+The GCC page's {ref}`one build requirement <coverage-build-requirement>`
+applies to clang builds too, and so does its advice to clean the counters
+after a rebuild. For clang the clean matters more: clang's runtime adds new
+counts into an old `.gcda` without checking that it belongs to the same
+build, so skipping the clean gives wrong counts and no error.
+
 (coverage-clang-stale-deploys)=
 ## Stale deploys
 
@@ -63,8 +69,8 @@ differently — so otto verifies the pairing itself, at collection:
   `.gcda` (ident plus line-number and control-flow checksums, the same
   triplet `llvm-cov` verifies) must appear in the `.gcno`.  Either
   disagreement fails collection with the same friendly
-  stamp-mismatch error GCC products get, naming the files; the remedy
-  is the usual one — redeploy the current build and re-collect.
+  stamp-mismatch error GCC products get, naming the files; the remedies
+  are the usual ones ({ref}`coverage-gcc-stamp-guard`).
 - **One drift stays invisible to any gcov-level check**: an in-place
   edit that changes neither control flow nor line positions (tweaking
   a constant).  `llvm-cov` accepts the stale binary's counters as

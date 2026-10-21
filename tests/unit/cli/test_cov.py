@@ -145,7 +145,7 @@ class TestCovHelp:
 
 class TestCovReportValidation:
     """The report's input rules are ``run_coverage_report``'s; the leaf only
-    splits ``--tier NAME[=PATH]`` (syntax) and spells a refusal in its flags."""
+    splits ``--tier NAME=PATH`` (syntax) and spells a refusal in its flags."""
 
     @pytest.fixture
     def run_dir(self, tmp_path):
@@ -176,7 +176,8 @@ class TestCovReportValidation:
             )
         )
         with patch(
-            "otto.coverage.report_inputs.resolve_report_inputs", return_value=ReportInputs()
+            "otto.coverage.report_inputs.resolve_report_inputs",
+            return_value=ReportInputs(project_root=tmp_path),
         ):
             result = runner.invoke(
                 cov_app, ["report", str(run_dir), "--dir", str(tmp_path / "out")]
@@ -190,15 +191,13 @@ class TestCovReportValidation:
         assert "re-collect" in out
         assert "Traceback" not in result.output
 
-    def test_a_non_system_tier_without_a_path_is_a_usage_error(self, run_dir, tmp_path):
-        result = runner.invoke(
-            cov_app,
-            ["report", str(run_dir), "--tier", "unit", "--dir", str(tmp_path / "out")],
-        )
+    @pytest.mark.parametrize("name", ["unit", "system"])
+    def test_a_tier_without_a_path_is_a_usage_error(self, tmp_path, name):
+        result = runner.invoke(cov_app, ["report", "--tier", name, "--dir", str(tmp_path / "out")])
         assert result.exit_code == 2
         out = _flat(result.output)
         assert "Invalid value for --tier" in out
-        assert "Tier 'unit' requires a path (only the 'system' tier may omit a path)" in out
+        assert f"Tier '{name}' has no tracefile: every --tier needs NAME=PATH" in out
 
     def test_a_duplicate_tier_name_is_a_usage_error(self, run_dir, tmp_path):
         result = runner.invoke(
@@ -231,34 +230,30 @@ class TestCovReportValidation:
         assert "Invalid value for --tier" in _flat(result.output)
         report_mock.assert_not_called()
 
-    def test_no_gcda_dirs_exits_1(self, tmp_path):
-        """Real directory but no cov/ subdirectory → error (git-less legacy path)."""
-        # Pin the git-less scenario: no [coverage] settings resolvable, so the
-        # legacy no-data path runs and returns None → exit 1. (Without this the
-        # outcome would depend on whatever project bootstrap resolved globally.)
-        with (
-            patch("otto.coverage.report_inputs.resolve_report_inputs", return_value=ReportInputs()),
-            patch.object(cov_module.logger, "error") as mock_err,
-        ):
-            result = runner.invoke(
-                cov_app, ["report", str(tmp_path), "--dir", str(tmp_path / "report_out")]
-            )
-        assert result.exit_code == 1
-        assert "not generated" in mock_err.call_args[0][0]
+    def test_run_dirs_with_a_tier_tracefile_are_a_tier_usage_error(self, run_dir, tmp_path):
+        """--tier reports tracefiles alone; the refusal says so, not "add [coverage]"."""
+        result = runner.invoke(
+            cov_app,
+            ["report", str(run_dir), "--tier", "a=x.info", "--dir", str(tmp_path / "out")],
+        )
+        assert result.exit_code == 2, result.output
+        out = _flat(result.output)
+        assert "Invalid value: --tier NAME=PATH reports tracefiles alone" in out
+        assert "cannot be combined with run directories" in out
+        assert "[coverage]" not in out
 
-    def test_source_root_not_found_exits_1(self, tmp_path):
-        # Create a cov/ subdir with host dir so discover_gcda_dirs returns
-        # entries, but no .otto_cov_meta.json so read_cov_source_root fails.
-        # Pin the git-less scenario so only the legacy path is exercised.
-        (tmp_path / "cov" / "host1").mkdir(parents=True)
-        with (
-            patch("otto.coverage.report_inputs.resolve_report_inputs", return_value=ReportInputs()),
-            patch.object(cov_module.logger, "error"),
+    def test_run_dirs_without_a_coverage_project_are_a_usage_error(self, run_dir, tmp_path):
+        """No [coverage] section resolves a project root, which run dirs need."""
+        with patch(
+            "otto.coverage.report_inputs.resolve_report_inputs", return_value=ReportInputs()
         ):
             result = runner.invoke(
-                cov_app, ["report", str(tmp_path), "--dir", str(tmp_path / "report_out")]
+                cov_app, ["report", str(run_dir), "--dir", str(tmp_path / "out")]
             )
-        assert result.exit_code == 1
+        assert result.exit_code == 2, result.output
+        out = _flat(result.output)
+        assert "Invalid value for OUTPUT_DIRS" in out
+        assert "run directories need the project's git root" in out
 
 
 class TestCovReportMergeErrors:
@@ -288,6 +283,21 @@ class TestCovReportMergeErrors:
         message = mock_err.call_args[0][0]
         assert "rebuilt" in message  # names the likely cause
         assert "otto test --cov" in message  # names the remedy
+
+    def test_a_moved_commit_reports_cause_without_traceback(self, cov_dir):
+        from otto.coverage.errors import CaptureCommitError
+
+        error = CaptureCommitError(capture="run/cov", taken_at="a" * 40, head="b" * 40)
+        with (
+            patch.object(reporter_module, "run_coverage_report", side_effect=error),
+            patch.object(cov_module.logger, "error") as mock_err,
+        ):
+            result = runner.invoke(
+                cov_app, ["report", str(cov_dir), "--dir", str(cov_dir / "report")]
+            )
+        assert result.exit_code == 1
+        assert "Traceback" not in result.output
+        assert mock_err.call_args[0][0] == str(error)
 
     def test_incompatible_gcov_tool_reports_cause_without_traceback(self, cov_dir):
         """A clang build captured with GNU gcov (geninfo: Incompatible
@@ -445,14 +455,19 @@ class TestCovReportSuccess:
         assert "--dir" in result.output
         mock.assert_not_called()
 
-    def test_explicit_dir_is_refused_when_non_empty(self, cov_tree, tmp_path):
+    def test_explicit_dir_is_refused_when_non_empty(self, tmp_path):
+        # A valid (empty) run tree: an unusable input is refused before the
+        # destination is even looked at.
+        run = tmp_path / "run"
+        (run / "cov").mkdir(parents=True)
         target = tmp_path / "out"
         target.mkdir()
         (target / "stale.html").write_text("stale")
         with patch(
-            "otto.coverage.report_inputs.resolve_report_inputs", return_value=ReportInputs()
+            "otto.coverage.report_inputs.resolve_report_inputs",
+            return_value=ReportInputs(project_root=tmp_path),
         ):
-            result = runner.invoke(cov_app, ["report", str(cov_tree), "--dir", str(target)])
+            result = runner.invoke(cov_app, ["report", str(run), "--dir", str(target)])
         assert result.exit_code == 2
         assert "pass --overwrite-dir to clear it" in result.output
         assert (target / "stale.html").exists()
@@ -516,14 +531,14 @@ class TestCovReportSuccess:
         args = mock.call_args.args
         assert args[0] == [dir1 / "cov", dir2 / "cov"]
 
-    def test_report_default_tier_is_system(self, cov_tree, mock_run_report):
-        """No --tier → default to system-only."""
+    def test_report_default_has_no_tracefile_tiers(self, cov_tree, mock_run_report):
+        """No --tier → no tracefile tiers; the settings tiers apply."""
         mock, _ = mock_run_report
         result = runner.invoke(
             cov_app, ["report", str(cov_tree), "--dir", str(cov_tree / "report")]
         )
         assert result.exit_code == 0
-        assert mock.call_args.kwargs["tier_specs"] == [("system", None)]
+        assert mock.call_args.kwargs["tier_specs"] is None
 
     def test_report_tier_with_path(self, cov_tree, mock_run_report):
         mock, _ = mock_run_report
@@ -535,7 +550,7 @@ class TestCovReportSuccess:
                 "--tier",
                 "unit=/tmp/u.info",
                 "--tier",
-                "system",
+                "system=/s.info",
                 "--dir",
                 str(cov_tree / "report"),
             ],
@@ -543,7 +558,7 @@ class TestCovReportSuccess:
         assert result.exit_code == 0
         assert mock.call_args.kwargs["tier_specs"] == [
             ("unit", Path("/tmp/u.info")),
-            ("system", None),
+            ("system", Path("/s.info")),
         ]
 
     def test_report_tier_order_is_preserved(self, cov_tree, mock_run_report):
@@ -557,7 +572,7 @@ class TestCovReportSuccess:
                 "--tier",
                 "unit=/u.info",
                 "--tier",
-                "system",
+                "system=/s.info",
                 "--tier",
                 "integration=/i.info",
                 "--tier",
@@ -677,7 +692,7 @@ class TestCovReportTicketsJson:
         assert "[coverage.tickets]" in mock_err.call_args[0][0]
 
     def test_tickets_json_without_project_root_exits_1_clean(self, cov_tree, mock_run_report):
-        """The --tier legacy path never resolves a project_root (or a
+        """The --tier tracefile path never resolves a project_root (or a
         ticket_spec) -- store.tickets is guaranteed empty there, so this
         must fail with the same clean "no ticket data" message rather than
         crashing on a None project_root inside write_ticket_export."""
@@ -691,7 +706,7 @@ class TestCovReportTicketsJson:
                     "--tickets-json",
                     str(target),
                     "--tier",
-                    "system",
+                    "system=/s.info",
                     "--dir",
                     str(cov_tree / "report"),
                 ],
@@ -738,7 +753,7 @@ class TestCovReportCollectionModel:
         inputs = mock_run_report.call_args.args[2]
         assert inputs.project_root == project_root
         assert inputs.tier_configs == tiers
-        assert mock_run_report.call_args.kwargs["tier_specs"] == [("system", None)]
+        assert mock_run_report.call_args.kwargs["tier_specs"] is None
 
     def test_ticket_spec_threaded_from_settings(self, tmp_path, mock_run_report):
         """[coverage.tickets] (via resolve_report_inputs) reaches run_coverage_report."""
@@ -784,7 +799,7 @@ class TestCovReportCollectionModel:
                     "--tier",
                     "unit=/u.info",
                     "--tier",
-                    "system",
+                    "system=/s.info",
                     "--dir",
                     str(tmp_path / "report"),
                 ],
@@ -837,7 +852,7 @@ class TestCovReportCollectionModel:
                     "--tier",
                     "unit=/u.info",
                     "--tier",
-                    "system",
+                    "system=/s.info",
                     "--dir",
                     str(tmp_path / "report"),
                 ],
@@ -849,7 +864,7 @@ class TestCovReportCollectionModel:
         assert inputs.tier_configs is None
         assert mock_run_report.call_args.kwargs["tier_specs"] == [
             ("unit", Path("/u.info")),
-            ("system", None),
+            ("system", Path("/s.info")),
         ]
 
     def test_no_output_dirs_allowed_for_manual_only_report(self, mock_run_report, tmp_path):
@@ -1201,6 +1216,49 @@ class TestCovGetLeaf:
         out = _flat(result.output)
         assert "Coverage captured: 1 product(s)" in out  # the captures were still written
         assert "t1/app: denied" in out
+
+    def test_capture_failure_and_clean_failure_both_surface(self):
+        """One product fails capture and the clean of the other fails: both are printed."""
+        from otto.coverage.capture.produce import ProduceResult, ProductCapture, ProductKey
+        from otto.coverage.errors import CoverageCaptureError
+
+        outcome = ProduceResult(
+            [
+                ProductCapture(ProductKey("t1", "app"), Path("/o/cov/t1/app/capture.json"), None),
+                ProductCapture(ProductKey("t1", "lib"), None, "lcov --capture failed: boom"),
+            ]
+        )
+        bad = CleanReport(hosts={"t1": {"app": Result(Status.Error, msg="denied")}})
+        err = CoverageCaptureError(outcome, clean=bad)
+        with (
+            patch("otto.coverage.get.get_coverage", AsyncMock(side_effect=err)),
+            patch.object(cov_module.logger, "error") as mock_err,
+        ):
+            result = runner.invoke(cov_app, ["get", "--clean"])
+        assert result.exit_code == 1
+        logged = mock_err.call_args.args[0]
+        assert "t1/lib" in logged
+        out = _flat(result.output)
+        assert "lcov --capture failed: boom" in logged
+        assert "t1/app: denied" in out
+
+    def test_a_capture_failure_still_prints_the_clean_of_what_captured(self):
+        from otto.coverage.capture.produce import ProduceResult, ProductCapture, ProductKey
+        from otto.coverage.errors import CoverageCaptureError
+
+        outcome = ProduceResult([ProductCapture(ProductKey("t1", "lib"), None, "boom")])
+        cleaned = CleanReport(hosts={"t1": {"app": Result(Status.Success)}})
+        err = CoverageCaptureError(outcome, clean=cleaned)
+        with (
+            patch("otto.coverage.get.get_coverage", AsyncMock(side_effect=err)),
+            patch.object(cov_module.logger, "error") as mock_err,
+        ):
+            result = runner.invoke(cov_app, ["get", "--clean"])
+        assert result.exit_code == 1
+        logged = mock_err.call_args.args[0]
+        assert "t1/lib" in logged
+        out = _flat(result.output)
+        assert "t1/app: counters cleared" in out
 
 
 # ── rich-markup escaping — literal brackets must survive the console handler ─

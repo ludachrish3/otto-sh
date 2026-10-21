@@ -14,7 +14,7 @@ import pytest
 from otto.coverage.errors import CoverageInputError
 from otto.coverage.reporter import read_cov_source_root
 
-NEW = {"project_name": "fw", "project_root": "/src/fw"}
+NEW = {"project_name": "fw", "project_root": "/src/fw", "tier": "system", "base_commit": "a" * 40}
 OLD = {"repo_name": "fw", "sut_dir": "/src/fw"}
 BOTH = {**NEW, **OLD}
 """A file carrying the current keys AND a stale one: refused, never read past."""
@@ -55,6 +55,16 @@ def test_metadata_missing_a_current_key_is_refused(tmp_path):
     half = _cov_dir(tmp_path / "half", {"project_name": "fw"})
     with pytest.raises(CoverageInputError, match="'project_root'"):
         read_cov_source_root([half])
+
+
+@pytest.mark.parametrize("key", ["tier", "base_commit"])
+def test_metadata_missing_its_tier_or_commit_is_refused_with_the_recollect_remedy(tmp_path, key):
+    meta = {k: v for k, v in NEW.items() if k != key}
+    with pytest.raises(CoverageInputError) as excinfo:
+        read_cov_source_root([_cov_dir(tmp_path / "half", meta)])
+    assert f"'{key}'" in str(excinfo.value)
+    assert "re-collect" in str(excinfo.value)
+    assert excinfo.value.field == "cov_dirs"
 
 
 def test_current_metadata_reads_its_project_root(tmp_path):

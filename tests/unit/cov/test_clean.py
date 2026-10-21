@@ -234,3 +234,50 @@ async def test_a_host_with_no_returned_outcome_is_reported_failed(lab, monkeypat
     assert set(report.hosts["t1"]) == {"app"}
     assert "no result" in report.hosts["t1"]["app"].msg
     assert "t1" in report.hosts["t1"]["app"].msg
+
+
+@pytest.mark.asyncio
+async def test_pairs_reset_only_the_named_products_on_the_named_hosts(lab):
+    from otto.coverage.capture.produce import ProductKey
+
+    app, tool = _product("app", Result(Status.Success)), _product("tool", Result(Status.Success))
+    other = _product("lib", Result(Status.Success))
+    lab(_host("t1", app, tool), _host("t2", other))
+    report = await clean_coverage([_project()], pairs=[ProductKey("t1", "app")])
+    assert report.hosts == {"t1": {"app": Result(Status.Success)}}
+    app.reset_coverage.assert_awaited_once()
+    tool.reset_coverage.assert_not_awaited()
+    other.reset_coverage.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_named_product_the_host_does_not_carry_is_reported_failed(lab):
+    from otto.coverage.capture.produce import ProductKey
+
+    lab(_host("t1", _product("app", Result(Status.Success))))
+    report = await clean_coverage([_project()], pairs=[ProductKey("t1", "gone")])
+    assert not report.ok
+    assert report.failed[0].product == "gone"
+    assert "not an instrumented product" in report.failed[0].reason
+
+
+@pytest.mark.asyncio
+async def test_a_host_whose_reset_raises_reports_only_the_named_products_failed(lab):
+    from otto.coverage.capture.produce import ProductKey
+
+    boom = _product("app", Result(Status.Success))
+    boom.reset_coverage = AsyncMock(side_effect=ConnectionResetError("peer reset"))
+    lab(_host("t1", boom, _product("tool", Result(Status.Success))))
+    report = await clean_coverage([_project()], pairs=[ProductKey("t1", "app")])
+    assert set(report.hosts["t1"]) == {"app"}
+    assert "ConnectionResetError: peer reset" in report.hosts["t1"]["app"].msg
+
+
+@pytest.mark.asyncio
+async def test_no_pairs_is_nothing_to_clean(lab):
+    app = _product("app", Result(Status.Success))
+    lab(_host("t1", app))
+    report = await clean_coverage([_project()], pairs=[])
+    assert report.hosts == {}
+    assert report.ok
+    app.reset_coverage.assert_not_awaited()

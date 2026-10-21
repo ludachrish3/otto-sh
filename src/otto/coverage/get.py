@@ -84,15 +84,23 @@ async def get_coverage(
     is not a git checkout
     (:class:`~otto.coverage.capture.gitio.GitUnavailableError`); no
     *output_dir* and no context to take one from (``CoverageInputError``,
+    ``field="output_dir"``); an output directory still holding counters not
+    yet captured from a collection at another tier or commit (also
     ``field="output_dir"``). After collection, no capture produced is
     :class:`~otto.coverage.errors.NoCoverageDataError`.
 
     A manual-kind tier's captures are also written into the project's committed
     manual store, attributed to *tester_name*/*tester_email* (defaults: the
     current user, and ``git config user.email`` in the project's checkout). With
-    *clean*, the counters of every host that contributed a product are
-    cleared afterwards; a failed reset does not raise — the captures are
+    *clean*, the counters of exactly the (host, product) pairs that captured
+    are cleared afterwards; a failed reset does not raise — the captures are
     written — it makes the report not ok.
+
+    When some products fail to capture, the others are still kept: their
+    manual-store copies are written and, with *clean*, their pairs cleared
+    (that clean's report rides on the error's ``clean``), and then the
+    :class:`~otto.coverage.errors.CoverageCaptureError` propagates. The failed
+    products' counters stay on the host for the next ``otto cov get``.
     """
     from ..config.coverage_settings import (
         CoverageConfigError,
@@ -107,7 +115,7 @@ async def get_coverage(
     from .capture.gitio import head_commit
     from .capture.model import Capture
     from .capture.store_dir import write_manual_capture
-    from .errors import NoCoverageDataError
+    from .errors import CoverageCaptureError, NoCoverageDataError
     from .instrumentation import decide_coverage, detect
     from .reports import GetReport
     from .tiers import load_tiers, resolve_get_tier
@@ -149,16 +157,25 @@ async def get_coverage(
         if resolved.kind == "manual"
         else None
     )
-    result = await collect.collect_coverage(
-        cov_dir,
-        projects=projects,
-        tier=resolved,
-        ticket=ticket,
-        note=note,
-        tester=tester,
-        display_names={h.id: h.name for h in hosts},
-        clean_after_fetch=False,
-    )
+    try:
+        result = await collect.collect_coverage(
+            cov_dir,
+            projects=projects,
+            tier=resolved,
+            ticket=ticket,
+            note=note,
+            tester=tester,
+            display_names={h.id: h.name for h in hosts},
+            clean_after_fetch=False,
+        )
+    except CoverageCaptureError as e:
+        # Keep what did capture before the failure propagates.
+        if resolved.kind == "manual":
+            for path in e.result.written:
+                write_manual_capture(Capture.load(path), cov_project.root)
+        if clean and e.result.captured:
+            e.clean = await collect.clean_coverage(projects, pairs=e.result.captured)
+        raise
     if not result.captures_written:
         searched = ", ".join(f"{h}:{p}" for h, p in sorted(result.product_dirs))
         where = f"searched: {searched}" if searched else "no products produced captures"
@@ -173,8 +190,7 @@ async def get_coverage(
 
     clean_report = None
     if clean:
-        contributed = sorted({host_id for host_id, _product in result.product_dirs})
-        clean_report = await collect.clean_coverage(projects, host_ids=contributed)
+        clean_report = await collect.clean_coverage(projects, pairs=result.produce.captured)
 
     return GetReport(
         cov_dir=cov_dir,

@@ -222,6 +222,30 @@ def test_untracked_file_skipped(
     assert any("no committed version" in r.message for r in caplog.records)
 
 
+def test_outside_root_files_are_one_info_count(
+    git_repo: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    info = tmp_path / "x.info"
+    info.write_text(
+        INFO.format(src=git_repo / "f.c")
+        + INFO.format(src="/usr/include/a.h")
+        + INFO.format(src="/usr/include/b.h")
+    )
+    with caplog.at_level("INFO"):
+        build_capture(
+            info_path=info,
+            tier="system",
+            project_root=git_repo,
+            board="b",
+            product="app",
+            labs=["lab1"],
+        )
+    infos = [r for r in caplog.records if r.levelname == "INFO" and "b/app" in r.message]
+    assert len(infos) == 1
+    assert "2" in infos[0].message
+    assert not [r for r in caplog.records if r.levelno >= 30 and "outside" in r.message]
+
+
 def test_gitignored_file_skipped(git_repo: Path, tmp_path: Path) -> None:
     (git_repo / ".gitignore").write_text("gen.c\n")
     _git(git_repo, tmp_path, "add", ".gitignore")

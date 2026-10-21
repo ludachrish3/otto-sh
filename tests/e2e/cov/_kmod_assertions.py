@@ -50,17 +50,24 @@ def assert_only_the_demo_is_fetched_from_the_two_hosts(cov_dir: Path) -> None:
     # The suite's own fixture installs only on test1/test2 — otto test never
     # touches a product verb, so no other host's leaf (in particular, no
     # container leaf on test3) can appear.
-    assert {d.name for d in cov_dir.iterdir() if d.is_dir()} == HOSTS
+    # Dot entries are otto's own (the metadata sidecar); the capture's
+    # ``.otto-stage`` scratch tree must be gone once collection is done.
+    assert {d.name for d in cov_dir.iterdir() if d.is_dir() and not d.name.startswith(".")} == HOSTS
+    assert not (cov_dir / ".otto-stage").exists()
     for host in HOSTS:
         assert sorted(p.name for p in (cov_dir / host).iterdir()) == [DEMO]
         assert Capture.load(cov_dir / host / DEMO / "capture.json").product == DEMO
 
 
 def assert_three_gcda_per_host(cov_dir: Path) -> None:
+    # Each .gcda lands at its path under the module's cov_dir (the fetch keeps
+    # the tree the runtime wrote), so it sits below the product leaf, not at
+    # its top.
     for host in HOSTS:
-        names = sorted(p.name for p in (cov_dir / host / DEMO).glob("*.gcda"))
-        assert names == ["demo_main.gcda", "demo_parse.gcda", "demo_policy.gcda"]
-        assert all(p.stat().st_size > 0 for p in (cov_dir / host / DEMO).glob("*.gcda"))
+        gcda = sorted((cov_dir / host / DEMO).rglob("*.gcda"))
+        names = sorted(p.name for p in gcda)
+        assert names == ["demo_main.gcda", "demo_parse.gcda", "demo_policy.gcda"], gcda
+        assert all(p.stat().st_size > 0 for p in gcda)
 
 
 def assert_run_log_reports_the_library_loaded_on_demand(log_dir: Path) -> None:

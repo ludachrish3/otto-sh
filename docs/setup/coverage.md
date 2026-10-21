@@ -13,7 +13,7 @@ a second host, to be kept apart from the first.
 
 Coverage data does not exist unless the compiler put it there. Build *and
 link* the product with `--coverage`, and keep the build tree: the compiler
-writes one `.gcno` notes file per object at build time, and the report step
+writes one `.gcno` notes file per object at build time, and collection
 needs them to decode the `.gcda` counters the product writes at run time.
 
 ```make
@@ -21,9 +21,9 @@ CFLAGS  += --coverage -O0
 LDFLAGS += --coverage
 ```
 
-{doc}`../cli/cov/instrumenting/gcc` is the full GCC treatment — version
-matching, cross toolchains, the stale-build stamp guard — and its siblings
-cover clang and embedded targets.
+{doc}`../cli/cov/instrumenting/gcc` is the full GCC treatment — the one
+build requirement, version matching, cross toolchains, the stale-build stamp
+guard — and its siblings cover clang and embedded targets.
 
 ## Tell otto where counters land
 
@@ -88,9 +88,10 @@ leading components from the path baked in at compile time, so the tree under
 `cov_dir` stays shallow instead of replicating the build machine's layout.
 Pick it by counting the leading components of the build directory's absolute
 path *on the machine that compiled the product* — `/home/dev/agent/build` is
-four. Nothing in otto reads the value: the fetch pulls every `.gcda` it finds
-under `cov_dir` into one flat directory per product, and the merge pairs each
-one with its `.gcno` by file name, whatever depth it was written at.
+four. Nothing in otto reads the value. The fetch keeps each `.gcda` at its path
+under `cov_dir`, and otto pairs it with its `.gcno` by that path, so the
+count only has to leave every object's path unique: the
+{ref}`one build requirement <coverage-build-requirement>`.
 
 ## Switch coverage on
 

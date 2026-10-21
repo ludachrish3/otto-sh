@@ -408,25 +408,17 @@ one; the order, and the failure naming the package when a tool is missing,
 are on the {ref}`main coverage page <coverage-gcov-resolution>`. What
 naming `llvm-cov` there means for otto is [clang's own page](clang.md).
 
-A clang build needs one more setting for that report to come back clean:
+A clang build records the inlined kernel-header records differently:
 clang's `.gcno` carries no compilation directory (gcc 9+ records it), so
-the inlined kernel-header records are relative to the kernel tree and lcov
-cannot open them from the fetch directory. Tell the bed host's lcov to
-carry on past them:
-
-```json
-"toolchain": { "lcov_args": ["--ignore-errors", "source"] }
-```
-
-otto passes those arguments to the lcov capture of that host's data; the
-field is in {doc}`../../../configuration/lab-config`'s toolchain table. Those records
-are kernel headers, never the module's own files, and the report drops them.
-otto does not ignore them for you: a blanket `--ignore-errors source` would
-also swallow a genuinely missing SUT source — a stale deploy, a wrong source
-root — which is the failure the capture exists to surface. If you have the
-kernel tree on the reporting machine, `["--base-directory", "<kernel
-tree>"]` travels the same way and resolves the records instead of dropping
-them.
+those records are relative to the kernel tree, and the reporting machine
+usually has no such file. That no longer fails the capture: otto runs every
+capture with `--ignore-errors source`, so a missing source file is never an
+error. Each header path otto cannot place in the project is logged as a
+warning and left out of the report; those records are kernel headers,
+never the module's own files. If you have the kernel tree on the reporting
+machine, `["--base-directory", "<kernel tree>"]` in the bed host's
+`toolchain.lcov_args` ({doc}`../../../configuration/lab-config`'s toolchain
+table) lets lcov resolve them instead.
 
 ## Kernel versions
 

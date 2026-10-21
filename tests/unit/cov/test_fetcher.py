@@ -1,6 +1,9 @@
 """Tests for the gcda fetcher."""
 
+import io
 import re
+import tarfile
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -35,11 +38,56 @@ def _product(name: str, cov_dir: str | None = None, verdict: bool | None = True)
     return p
 
 
+def _tar_get(files: dict[str, bytes] | None = None):
+    """A ``host.get`` side effect that "downloads" a tar of *files* (cov_dir-relative).
+
+    The fetcher asks for one remote archive; this writes a tar holding *files*
+    at that archive's basename in the destination, the way a real transfer
+    would, and answers success.
+    """
+    files = {"./foo.gcda": b"x"} if files is None else files
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tf:
+        for name, data in files.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+
+    async def _get(paths, dest, **_kwargs):
+        for remote in paths:
+            (Path(dest) / Path(remote).name).write_bytes(buf.getvalue())
+        return Result(Status.Success, value={})
+
+    return _get
+
+
+_OK = CommandResult(Status.Success, value="", command="sh", retcode=0)
+
+
+def _mktemp_exec(host: MagicMock):
+    """A ``host.exec`` side effect: the archive command answers the path its
+    ``mktemp`` would make; a test that sets ``host.exec.return_value`` gets
+    exactly that answer for every command instead."""
+
+    async def _exec(cmd: str, **_kwargs: object) -> CommandResult:
+        if host.exec.return_value is not _OK:
+            return host.exec.return_value
+        token = re.search(r"otto-fetch-[0-9a-f]+", cmd)
+        if "tar -cf" in cmd and token is not None:
+            path = f"/tmp/{token.group(0)}.Ab12Cd"
+            return CommandResult(
+                Status.Success, value=f"otto-archive:{path}\n", command="sh", retcode=0
+            )
+        return _OK
+
+    return _exec
+
+
 def _make_mock_host(host_id: str = "host1", products=None) -> MagicMock:
     host = MagicMock()
     host.id = host_id
-    host.exec = AsyncMock()
-    host.get = AsyncMock()
+    host.exec = AsyncMock(return_value=_OK, side_effect=_mktemp_exec(host))
+    host.get = AsyncMock(side_effect=_tar_get())
     host.products = list(products) if products is not None else [_product("app", "/var/cov")]
     return host
 
@@ -72,35 +120,36 @@ def fake_config_module():
 class TestGcdaFetcher:
     @pytest.mark.asyncio
     async def test_fetch_all_happy_path(self, tmp_path, fake_config_module):
+        """The counters come down as ONE archive and land at their cov_dir-relative
+        paths; the archive itself is removed on both ends."""
         host = _make_mock_host("host1")
-        host.exec.return_value = CommandResult(
-            Status.Success,
-            value="/var/cov/foo.gcda\n/var/cov/bar.gcda\n",
-            command="find ...",
-            retcode=0,
-        )
-        host.get.return_value = Result(Status.Success, value={})
+        host.get.side_effect = _tar_get({"./foo.gcda": b"1", "./sub/bar.gcda": b"2"})
         fake_config_module(host)
 
         fetcher = GcdaFetcher(tmp_path / "staging")
         result = await fetcher.fetch_all()
 
-        assert ("host1", "app") in result
-        host.exec.assert_called_once()
+        dest = result[("host1", "app")]
+        assert (dest / "foo.gcda").read_bytes() == b"1"
+        assert (dest / "sub" / "bar.gcda").read_bytes() == b"2"
+        assert not list(dest.glob("*.tar"))
         host.get.assert_called_once()
-        call_args = host.get.call_args
-        gcda_paths = call_args[0][0]
-        assert len(gcda_paths) == 2
+        (remote_tar,) = host.get.call_args[0][0]
+        cmds = [c.args[0] for c in host.exec.call_args_list]
+        token = remote_tar.name.split(".")[0]
+        assert remote_tar.as_posix() == f"/tmp/{token}.Ab12Cd"
+        assert cmds[0] == (
+            "! test -d /var/cov && echo otto-no-cov-dir || "
+            f'(t=$(mktemp "${{TMPDIR:-/tmp}}/{token}.XXXXXX") && echo "otto-archive:$t" '
+            '&& cd /var/cov && tar -cf "$t" .)'
+        )
+        assert cmds[1:] == [f'rm -f "${{TMPDIR:-/tmp}}"/{token}.*']
 
     @pytest.mark.asyncio
     async def test_fetch_all_stages_per_host_per_product(self, tmp_path, fake_config_module):
-        """Each instrumented product gets its own `find` at its own cov_dir and its
+        """Each instrumented product gets its own archive of its own cov_dir and its
         own staging leaf; a product that names no cov_dir falls back to /tmp/<name>."""
         host = _make_mock_host("host1", [_product("app", "/var/cov/app"), _product("agent")])
-        host.exec.return_value = CommandResult(
-            Status.Success, value="/x/foo.gcda\n/x/bar.gcda\n", command="find ...", retcode=0
-        )
-        host.get.return_value = Result(Status.Success, value={})
         fake_config_module(host)
 
         result = await GcdaFetcher(tmp_path / "staging").fetch_all()
@@ -108,11 +157,12 @@ class TestGcdaFetcher:
         assert set(result) == {("host1", "app"), ("host1", "agent")}
         assert result[("host1", "app")] == tmp_path / "staging" / "host1" / "app"
         assert result[("host1", "agent")] == tmp_path / "staging" / "host1" / "agent"
-        finds = [c.args[0] for c in host.exec.call_args_list]
-        assert finds == [
-            "find /var/cov/app -name '*.gcda' -type f",
-            "find /tmp/agent -name '*.gcda' -type f",  # the default cov_dir
-        ]
+        archives = [c.args[0] for c in host.exec.call_args_list if "tar -cf" in c.args[0]]
+        assert len(archives) == 2
+        assert archives[0].startswith("! test -d /var/cov/app ")
+        assert '&& cd /var/cov/app && tar -cf "$t" .)' in archives[0]
+        # the default cov_dir
+        assert '&& cd /tmp/agent && tar -cf "$t" .)' in archives[1]
         assert host.get.call_count == 2
 
     @pytest.mark.asyncio
@@ -133,12 +183,8 @@ class TestGcdaFetcher:
         host = MagicMock(spec=DockerContainerHost)  # isinstance-true double
         host.id = "p.proj.api"
         host.products = [_product("app")]
-        host.exec = AsyncMock()
-        host.get = AsyncMock()
-        host.exec.return_value = CommandResult(
-            Status.Success, value="/tmp/app/a.gcda\n", command="find", retcode=0
-        )
-        host.get.return_value = Result(Status.Success, value={})
+        host.exec = AsyncMock(return_value=_OK, side_effect=_mktemp_exec(host))
+        host.get = AsyncMock(side_effect=_tar_get())
         fake_config_module(host)
 
         result = await GcdaFetcher(tmp_path / "staging").fetch_all()
@@ -151,18 +197,49 @@ class TestGcdaFetcher:
         host = _make_mock_host(
             "host1", [_product("bad", "/var/bad"), _product("good", "/var/good")]
         )
-        host.exec.return_value = CommandResult(
-            Status.Success, value="/x/foo.gcda\n", command="find ...", retcode=0
-        )
-        host.get.side_effect = [
-            Result(Status.Error, value={}, msg="connection refused"),
-            Result(Status.Success, value={}),
-        ]
+        good_get = _tar_get()
+
+        async def _bad_then_good(paths, dest, **kwargs):
+            if host.get.await_count == 1:
+                return Result(Status.Error, value={}, msg="connection refused")
+            return await good_get(paths, dest, **kwargs)
+
+        host.get.side_effect = _bad_then_good
         fake_config_module(host)
 
         result = await GcdaFetcher(tmp_path / "staging").fetch_all()
 
         assert set(result) == {("host1", "good")}
+
+    @pytest.mark.asyncio
+    async def test_a_corrupt_archive_fails_only_its_own_product(
+        self, tmp_path, fake_config_module, caplog
+    ):
+        """An archive ``safe_extract`` refuses is that product's failed fetch —
+        a WARNING naming it — never an exception that loses its siblings."""
+        import logging
+
+        host = _make_mock_host(
+            "host1", [_product("bad", "/var/bad"), _product("good", "/var/good")]
+        )
+        good_get = _tar_get()
+
+        async def _corrupt_then_good(paths, dest, **kwargs):
+            if host.get.await_count == 1:
+                for remote in paths:
+                    (Path(dest) / Path(remote).name).write_bytes(b"not a tar at all" * 64)
+                return Result(Status.Success, value={})
+            return await good_get(paths, dest, **kwargs)
+
+        host.get.side_effect = _corrupt_then_good
+        fake_config_module(host)
+
+        with caplog.at_level(logging.WARNING, logger="otto.coverage.fetcher.remote"):
+            result = await GcdaFetcher(tmp_path / "staging").fetch_all()
+
+        assert set(result) == {("host1", "good")}
+        assert not (tmp_path / "staging" / "host1" / "bad").exists()
+        assert "Failed to fetch .gcda for bad from host1" in caplog.text
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -205,15 +282,12 @@ class TestGcdaFetcher:
         host = MagicMock(spec=cls)
         host.id = "host1"
         host.products = [_product("app", "/var/cov")]
-        host.exec = AsyncMock(
-            return_value=CommandResult(
-                Status.Success, value="/var/cov/foo.gcda\n", command="find ...", retcode=0
-            )
-        )
+        host.exec = AsyncMock(return_value=_OK, side_effect=_mktemp_exec(host))
+        serve = _tar_get()
 
         async def _get_like_the_family(*args, **kwargs):
             signature.bind(host, *args, **kwargs)  # raises exactly as the real method would
-            return Result(Status.Success, value={})
+            return await serve(*args, **kwargs)
 
         host.get = AsyncMock(side_effect=_get_like_the_family)
         fake_config_module(host)
@@ -229,9 +303,7 @@ class TestGcdaFetcher:
     async def test_fetch_all_no_gcda_files(self, tmp_path, fake_config_module):
         """Zero .gcda for a product is not an error — it just yields no entry."""
         host = _make_mock_host()
-        host.exec.return_value = CommandResult(
-            Status.Success, value="", command="find ...", retcode=0
-        )
+        host.get.side_effect = _tar_get({})
         fake_config_module(host)
 
         fetcher = GcdaFetcher(tmp_path / "staging")
@@ -240,30 +312,55 @@ class TestGcdaFetcher:
         assert not (tmp_path / "staging" / "host1").exists()
 
     @pytest.mark.asyncio
-    async def test_a_failed_find_warns_where_an_empty_one_stays_quiet(
+    async def test_a_failed_archive_warns_where_an_empty_one_stays_quiet(
         self, tmp_path, fake_config_module, caplog
     ):
-        """The two are different events. A host that could not be searched is a
-        WARNING; an instrumented product that a run never exercised producing no
-        counters is ordinary, so it must not cry wolf on every collection."""
+        """The two are different events. A cov_dir tar could not archive whole is
+        a WARNING (and no fallback, no transfer); an instrumented product that a
+        run never exercised producing no counters is ordinary, so it must not cry
+        wolf on every collection."""
         import logging
 
         host = _make_mock_host("host1")
         host.exec.return_value = CommandResult(
-            Status.Error, value="find: '/var/cov': No such file", command="find", retcode=1
+            Status.Error, value="tar: ./z: Cannot open: Permission denied", command="sh", retcode=2
         )
         fake_config_module(host)
 
         with caplog.at_level(logging.WARNING, logger="otto.coverage.fetcher.remote"):
             assert await GcdaFetcher(tmp_path / "staging").fetch_all() == {}
-        assert "find failed for app on host1 at /var/cov" in caplog.text
-        assert "No such file" in caplog.text
+        assert "Failed to archive .gcda for app on host1 at /var/cov" in caplog.text
+        assert "Permission denied" in caplog.text
+        host.get.assert_not_called()
 
         caplog.clear()
-        host.exec.return_value = CommandResult(Status.Success, value="", command="find", retcode=0)
+        host.exec.return_value = _OK
+        host.get.side_effect = _tar_get({})
         with caplog.at_level(logging.WARNING, logger="otto.coverage.fetcher.remote"):
             assert await GcdaFetcher(tmp_path / "staging").fetch_all() == {}
         assert caplog.text == ""
+
+    @pytest.mark.asyncio
+    async def test_a_missing_cov_dir_is_quiet_and_fetches_nothing(
+        self, tmp_path, fake_config_module, caplog
+    ):
+        """No cov_dir on the host means the product never wrote counters — the
+        same ordinary event as an empty one: no WARNING, no transfer, no leaf."""
+        import logging
+
+        from otto.coverage.fetcher.remote import _NO_COV_DIR
+
+        host = _make_mock_host("host1")
+        host.exec.return_value = CommandResult(
+            Status.Success, value=f"{_NO_COV_DIR}\n", command="sh", retcode=0
+        )
+        fake_config_module(host)
+
+        with caplog.at_level(logging.WARNING, logger="otto.coverage.fetcher.remote"):
+            assert await GcdaFetcher(tmp_path / "staging").fetch_all() == {}
+        assert caplog.text == ""
+        host.get.assert_not_called()
+        assert not (tmp_path / "staging" / "host1").exists()
 
     @pytest.mark.asyncio
     async def test_fetch_all_skips_builtin_local(self, tmp_path, fake_config_module):
@@ -273,10 +370,6 @@ class TestGcdaFetcher:
 
         local = LocalHost()
         unix = _make_mock_host("host1")
-        unix.exec.return_value = CommandResult(
-            Status.Success, value="/var/cov/foo.gcda\n", command="find ...", retcode=0
-        )
-        unix.get.return_value = Result(Status.Success, value={})
         fake_config_module(local, unix)
 
         fetcher = GcdaFetcher(tmp_path / "staging")
@@ -292,9 +385,7 @@ class TestGcdaFetcher:
         iterates `<cov_dir>/<host>/<product>` and an empty one would be read as
         a product that genuinely produced nothing."""
         host = _make_mock_host("host1")
-        host.exec.return_value = CommandResult(
-            Status.Success, value="/var/cov/foo.gcda\n", command="find ...", retcode=0
-        )
+        host.get.side_effect = None
         host.get.return_value = Result(Status.Error, value={}, msg="connection refused")
         fake_config_module(host)
 
@@ -310,9 +401,6 @@ class TestGcdaFetcher:
         """The failure cleanup is an rmtree, not an rmdir — a transfer that got
         some files down before failing must not leave a half-populated leaf."""
         host = _make_mock_host("host1")
-        host.exec.return_value = CommandResult(
-            Status.Success, value="/var/cov/foo.gcda\n", command="find ...", retcode=0
-        )
 
         async def _get_half_way(_files, dest, **_kwargs):
             (dest / "foo.gcda").write_bytes(b"partial")
@@ -339,9 +427,6 @@ class TestGcdaFetcher:
         the cleanup must not swallow a transport failure into a quiet "no data".
         """
         host = _make_mock_host("host1")
-        host.exec.return_value = CommandResult(
-            Status.Success, value="/var/cov/foo.gcda\n", command="find ...", retcode=0
-        )
 
         async def _get_then_raise(_files, dest, **_kwargs):
             (dest / "foo.gcda").write_bytes(b"partial")
@@ -353,19 +438,22 @@ class TestGcdaFetcher:
             await _fetch_one_product(host, host.products[0], tmp_path / "staging")
 
         assert not (tmp_path / "staging" / "host1" / "app").exists()
+        # The host-side archive is removed on the raising path too.
+        assert (
+            host.exec.call_args_list[-1].args[0].startswith('rm -f "${TMPDIR:-/tmp}"/otto-fetch-')
+        )
 
     @pytest.mark.asyncio
     async def test_a_cov_dir_with_a_space_is_shell_quoted(self, tmp_path, fake_config_module):
-        """An unquoted `/opt/My App/cov` would reach `find` as two start points."""
+        """An unquoted `/opt/My App/cov` would reach `test`/`cd` as two words."""
         host = _make_mock_host("host1", [_product("app", "/opt/My App/cov")])
-        host.exec.return_value = CommandResult(Status.Success, value="", command="find", retcode=0)
         fake_config_module(host)
 
         await GcdaFetcher(tmp_path / "staging").fetch_all()
-        assert host.exec.call_args_list[0].args[0] == (
-            "find '/opt/My App/cov' -name '*.gcda' -type f"
-        )
-        # The clean path's own quoting (the `-delete` variant of this find) is
+        archive = host.exec.call_args_list[0].args[0]
+        assert archive.startswith("! test -d '/opt/My App/cov' ")
+        assert "&& cd '/opt/My App/cov' && tar -cf \"$t\" .)" in archive
+        # The clean path's own quoting (a `find … -delete`) is
         # ``Product.reset_coverage``'s default, pinned directly in
         # tests/unit/host/test_product.py.
 
@@ -395,20 +483,19 @@ class TestGcdaFetcher:
         # tests/unit/cov/test_clean.py.
 
     @pytest.mark.asyncio
-    async def test_prepare_coverage_runs_before_the_find(self, tmp_path, fake_config_module):
+    async def test_prepare_coverage_runs_before_the_archive(self, tmp_path, fake_config_module):
         host = _make_mock_host("host1")
         order: list[str] = []
         host.products[0].prepare_coverage = AsyncMock(
             side_effect=lambda h: (order.append("prepare"), Result(Status.Success))[1]
         )
-        host.exec.side_effect = lambda *a, **k: (
-            order.append("find"),
-            CommandResult(Status.Success, value="/var/cov/foo.gcda\n", command="find", retcode=0),
+        host.exec.side_effect = lambda cmd, **k: (
+            order.append("archive" if "tar -cf" in cmd else "rm"),
+            _OK,
         )[1]
-        host.get.return_value = Result(Status.Success, value={})
         fake_config_module(host)
         await GcdaFetcher(tmp_path / "staging").fetch_all()
-        assert order == ["prepare", "find"]
+        assert order == ["prepare", "archive", "rm"]
 
     @pytest.mark.asyncio
     async def test_a_failed_prepare_skips_the_product_and_leaves_no_leaf(
@@ -431,7 +518,7 @@ class TestGcdaFetcher:
         self, tmp_path, fake_config_module, caplog
     ):
         """A hook that runs a host command is declined under a dry run; that is not
-        a failure to warn about, and the find that follows is not attempted."""
+        a failure to warn about, and the archive that follows is not attempted."""
         import logging
 
         host = _make_mock_host("host1")
@@ -452,14 +539,14 @@ class TestGcdaFetcher:
     async def test_fetch_dry_run_stages_nothing_and_does_not_warn(
         self, tmp_path, fake_config_module, caplog
     ):
-        """Same decline, on the fetch path's `find`: nothing to stage, and the
-        `find failed` warning must not fire on a value that was never measured."""
+        """Same decline, on the fetch path's archive: nothing to stage, and the
+        archive warning must not fire on a value that was never measured."""
         import logging
 
         host = _make_mock_host("host1")
         host.exec = AsyncMock(
             return_value=NotRunResult(
-                status=Status.NotRun, command="find ...", retcode=-1, host_name="host1"
+                status=Status.NotRun, command="sh", retcode=-1, host_name="host1"
             )
         )
         fake_config_module(host)
@@ -475,11 +562,6 @@ class TestGcdaFetcher:
     async def test_multiple_hosts(self, tmp_path, fake_config_module):
         host1 = _make_mock_host("host1")
         host2 = _make_mock_host("host2")
-        for h in [host1, host2]:
-            h.exec.return_value = CommandResult(
-                Status.Success, value="/var/cov/file.gcda\n", command="find ...", retcode=0
-            )
-            h.get.return_value = Result(Status.Success, value={})
         fake_config_module(host1, host2)
 
         fetcher = GcdaFetcher(tmp_path / "staging")
@@ -491,11 +573,6 @@ class TestGcdaFetcher:
         """A regex pattern scopes the fetcher to matching hosts only."""
         host1 = _make_mock_host("test1")
         host2 = _make_mock_host("test2")
-        for h in [host1, host2]:
-            h.exec.return_value = CommandResult(
-                Status.Success, value="/var/cov/file.gcda\n", command="find ...", retcode=0
-            )
-            h.get.return_value = Result(Status.Success, value={})
         fake_config_module(host1, host2)
 
         # `test1` alone selects nothing now — host ids are FULLMATCHED (D6).

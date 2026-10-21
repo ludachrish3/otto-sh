@@ -239,6 +239,14 @@ name	otto.context:try_get_context	function
 call	otto.context:try_get_context	sync	-
 name	otto.context:variant	function
 call	otto.context:variant	sync	-
+name	otto.coverage:CaptureCommitError	class
+mro	otto.coverage:CaptureCommitError	{otto.errors:OttoError} @builtin:builtins.RuntimeError @builtin:builtins.Exception @builtin:builtins.BaseException
+call	otto.coverage:CaptureCommitError	sync	KO:capture:- KO:taken_at:- KO:head:-
+abstract	otto.coverage:CaptureCommitError	-
+name	otto.coverage:CaptureFailedError	class
+mro	otto.coverage:CaptureFailedError	{otto.errors:OttoError} @builtin:builtins.RuntimeError @builtin:builtins.Exception @builtin:builtins.BaseException
+call	otto.coverage:CaptureFailedError	sync	@builtin:builtins.RuntimeError
+abstract	otto.coverage:CaptureFailedError	-
 name	otto.coverage:CleanReport	class
 mro	otto.coverage:CleanReport	-
 call	otto.coverage:CleanReport	sync	PK:hosts:-
@@ -252,14 +260,19 @@ member	otto.coverage:CleanReport.ok	property:g--
 abstract	otto.coverage:CleanReport	-
 name	otto.coverage:CollectResult	class
 mro	otto.coverage:CollectResult	-
-call	otto.coverage:CollectResult	sync	PK:cov_dir:- PK:product_dirs:- PK:captures_written:- PK:clean:N
+call	otto.coverage:CollectResult	sync	PK:cov_dir:- PK:product_dirs:- PK:produce:- PK:clean:N
 member	otto.coverage:CollectResult.__eq__	method	sync	PK:other:-
 member	otto.coverage:CollectResult.__hash__	method	sync	-
-member	otto.coverage:CollectResult.captures_written	field
+member	otto.coverage:CollectResult.captures_written	property:g--
 member	otto.coverage:CollectResult.clean	field
 member	otto.coverage:CollectResult.cov_dir	field
+member	otto.coverage:CollectResult.produce	field
 member	otto.coverage:CollectResult.product_dirs	field
 abstract	otto.coverage:CollectResult	-
+name	otto.coverage:CoverageCaptureError	class
+mro	otto.coverage:CoverageCaptureError	{otto.errors:OttoError} @builtin:builtins.RuntimeError @builtin:builtins.Exception @builtin:builtins.BaseException
+call	otto.coverage:CoverageCaptureError	sync	PK:result:- PK:clean:N
+abstract	otto.coverage:CoverageCaptureError	-
 name	otto.coverage:CoverageCleanError	class
 mro	otto.coverage:CoverageCleanError	{otto.errors:OttoError} @builtin:builtins.RuntimeError @builtin:builtins.Exception @builtin:builtins.BaseException
 call	otto.coverage:CoverageCleanError	sync	PK:report:-
@@ -282,7 +295,7 @@ call	otto.coverage:CoverageNotInstrumentedError	sync	PK:message:- PK:report:N
 abstract	otto.coverage:CoverageNotInstrumentedError	-
 name	otto.coverage:CoverageReporter	class
 mro	otto.coverage:CoverageReporter	-
-call	otto.coverage:CoverageReporter	sync	PK:gcda_dirs:- PK:source_root:- PK:output_dir:- PK:report_title:S:"Coverage\u0020Report" PK:toolchains:N PK:tiers:N PK:source_roots:N KO:collection:N KO:prefix:N KO:thresholds:N KO:ticket_spec:N KO:overrides:N
+call	otto.coverage:CoverageReporter	sync	PK:source_root:- PK:output_dir:- PK:report_title:S:"Coverage\u0020Report" PK:tiers:N KO:collection:N KO:prefix:N KO:thresholds:N KO:ticket_spec:N KO:overrides:N
 member	otto.coverage:CoverageReporter.run	method	coroutine	-
 abstract	otto.coverage:CoverageReporter	-
 name	otto.coverage:CoverageStore	class
@@ -347,6 +360,10 @@ name	otto.coverage:NoCoverageHostsError	class
 mro	otto.coverage:NoCoverageHostsError	{otto.errors:OttoError} @builtin:builtins.ValueError @builtin:builtins.Exception @builtin:builtins.BaseException
 call	otto.coverage:NoCoverageHostsError	sync	@builtin:builtins.ValueError
 abstract	otto.coverage:NoCoverageHostsError	-
+name	otto.coverage:PairingError	class
+mro	otto.coverage:PairingError	{otto.errors:OttoError} @builtin:builtins.ValueError @builtin:builtins.Exception @builtin:builtins.BaseException
+call	otto.coverage:PairingError	sync	PK:kind:- PK:message:-
+abstract	otto.coverage:PairingError	-
 name	otto.coverage:ReportInputs	class
 mro	otto.coverage:ReportInputs	-
 call	otto.coverage:ReportInputs	sync	PK:project_root:N PK:tier_configs:N PK:exclusion_rules:O PK:thresholds:N PK:ticket_spec:N PK:overrides:N
@@ -373,7 +390,7 @@ member	otto.coverage:TierConfig.precedence	field
 member	otto.coverage:TierConfig.products	field
 abstract	otto.coverage:TierConfig	-
 name	otto.coverage:clean_coverage	function
-call	otto.coverage:clean_coverage	coroutine	PK:projects:N KO:host_ids:N
+call	otto.coverage:clean_coverage	coroutine	PK:projects:N KO:host_ids:N KO:pairs:N
 name	otto.coverage:collect_coverage	function
 call	otto.coverage:collect_coverage	coroutine	PK:cov_dir:- KO:projects:N KO:tier:N KO:ticket:N KO:note:N KO:tester:N KO:display_names:N KO:clean_after_fetch:B:true
 name	otto.coverage:get_coverage	function

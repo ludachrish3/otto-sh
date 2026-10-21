@@ -22,7 +22,7 @@ Verified red when written:
 - Hardcoding ``overwrite=False`` in ``report``'s call to
   ``run_coverage_report`` (regardless of ``--overwrite-dir``) failed only
   ``test_each_leaf_hands_the_library_exactly_its_flags[report /o/run --dir
-  /o/out --tier a=x.info --tier system --report-title P --prefix X
+  /o/out --tier a=x.info --tier b --report-title P --prefix X
   --overwrite-dir]`` on ``assert fake.await_args.kwargs == kwargs`` —
   ``{'overwrite': False} != {'overwrite': True}``.
 - Narrowing ``report``'s ``except (DestinationError, CoverageInputError)``
@@ -109,7 +109,7 @@ ROWS = [
             "--tier",
             "a=x.info",
             "--tier",
-            "system",
+            "b",
             "--report-title",
             "P",
             "--prefix",
@@ -120,7 +120,7 @@ ROWS = [
         ([Path("/o/run/cov")], Path("/o/out").resolve(), ReportInputs()),
         {
             "report_title": "P",
-            "tier_specs": [("a", Path("x.info")), ("system", None)],
+            "tier_specs": [("a", Path("x.info")), ("b", None)],
             "prefix": Path("X"),
             "overwrite": True,
         },

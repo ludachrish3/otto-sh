@@ -1,0 +1,3 @@
+# build.sh's two build trees: the live one and the stale one.
+/build/
+/build-old/

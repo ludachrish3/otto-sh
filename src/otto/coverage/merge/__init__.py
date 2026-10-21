@@ -1,9 +1,9 @@
-"""Coverage merge: LCOV loading, multi-source merging, and source-path normalisation.
+"""Coverage merge: LCOV capture and LCOV loading.
 
 Every name is exported lazily (PEP 562), the shape every otto package shares:
-a caller that needs only the path mapping imports ``.paths``, not the LCOV
-loader or the merger. The resolver does not write a resolved name back into
-the module dict; see ``otto.config``'s ``__dir__`` for why.
+a caller that needs only the loader imports ``.lcov_loader``, not the merger.
+The resolver does not write a resolved name back into the module dict; see
+``otto.config``'s ``__dir__`` for why.
 """
 
 from typing import TYPE_CHECKING
@@ -11,15 +11,11 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .lcov_loader import LCOVLoader as LCOVLoader
     from .merger import LcovMerger as LcovMerger
-    from .paths import PathMapping as PathMapping
-    from .paths import PathRemapper as PathRemapper
 
 # name -> the module that defines it, imported on first access by __getattr__.
 _LAZY_ATTRS: dict[str, str] = {
     "LCOVLoader": "otto.coverage.merge.lcov_loader",
     "LcovMerger": "otto.coverage.merge.merger",
-    "PathMapping": "otto.coverage.merge.paths",
-    "PathRemapper": "otto.coverage.merge.paths",
 }
 
 
@@ -40,6 +36,4 @@ def __dir__() -> list[str]:
 __all__ = [
     "LCOVLoader",
     "LcovMerger",
-    "PathMapping",
-    "PathRemapper",
 ]

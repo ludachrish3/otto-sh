@@ -1,4 +1,4 @@
-"""Composed coverage collection: fetch ``.gcda`` → write metadata → produce captures.
+"""Composed coverage collection: fetch ``.gcda`` → write metadata → produce captures → clean.
 
 This is the single canonical collection workflow behind both ``otto test --cov``
 (via ``otto.suite.run._post_run_coverage``) and ``otto cov get`` (via
@@ -13,8 +13,8 @@ Two public entry points:
   ``otto test --cov --cov-clean`` pre-run clean, the clean after an
   ``otto test --cov`` collection and ``otto cov get --clean`` all come through
   it — a failed reset is a result in its report, never a log line.
-* :func:`collect_coverage` runs the fetch → metadata → capture sequence *after*
-  a run and returns a :class:`CollectResult`. It **fails loud**: a missing
+* :func:`collect_coverage` runs the fetch → metadata → capture → clean sequence
+  *after* a run and returns a :class:`CollectResult`. It **fails loud**: a missing
   ``[coverage]`` section, no ``.gcda`` retrieved from any product, an
   ambiguous/unknown tier, or a merge/produce error all raise — the never-fail-a-
   successful-run swallow policy lives in the callers (see
@@ -42,8 +42,10 @@ from .errors import NoCoverageDataError
 
 if TYPE_CHECKING:
     from ..config.project import Project
+    from ..host.product import Product
     from ..host.toolchain import Toolchain
     from ..result import Result
+    from .capture.produce import ProduceResult, ProductKey
     from .reports import CleanReport
     from .tiers import TierConfig
 
@@ -70,21 +72,28 @@ class CollectResult:
 
     ``product_dirs`` maps each contributing ``(host_id, product)`` pair to its
     staging dir (Unix and container hosts fetched over the network, embedded
-    boards dumped over the console); ``captures_written`` lists the
-    ``capture.json`` files produced, one per pair.
+    boards dumped over the console); ``produce`` is every pair's capture
+    outcome, and ``captures_written`` the ``capture.json`` files among them.
     """
 
     cov_dir: Path
     product_dirs: dict[tuple[str, str], Path]
-    captures_written: list[Path]
+    produce: "ProduceResult"
+    """Every product's capture outcome (empty when no ``[coverage]`` project resolved)."""
     clean: "CleanReport | None" = None
     """The clean after collection, when ``clean_after_fetch`` ran one."""
+
+    @property
+    def captures_written(self) -> list[Path]:
+        """List the ``capture.json`` files produced, one per captured pair."""
+        return self.produce.written
 
 
 async def clean_coverage(
     projects: "list[Project] | None" = None,
     *,
     host_ids: "list[str] | None" = None,
+    pairs: "list[ProductKey] | None" = None,
 ) -> "CleanReport":
     """Zero every instrumented product's counters on the lab's coverage hosts.
 
@@ -101,13 +110,20 @@ async def clean_coverage(
     failure. A host whose reset raises (a dropped connection) reports every
     one of its products failed, naming the exception.
 
+    *host_ids* narrows the walk to those hosts. *pairs* narrows it further,
+    to exactly the named products on the named hosts — the scope a
+    collection cleans after capture, so a product that failed to capture
+    keeps its counters. A named product the host does not carry as an
+    instrumented product is reported failed, never skipped. An empty *pairs*
+    is nothing to clean: an empty report, no host touched.
+
     Raises:
         CoverageConfigError: no ``[coverage]`` section, or a malformed
             ``hosts`` selector.
         NoCoverageHostsError: the selector matched no host (the otto runner
             is never in the base set ``all_hosts`` walks, so this is the only
-            way the walk comes back empty), or ``host_ids`` narrowed an
-            otherwise non-empty match down to nothing.
+            way the walk comes back empty), or ``host_ids`` or *pairs*
+            narrowed an otherwise non-empty match down to nothing.
     """
     from ..config.coverage_settings import get_cov_config, load_hosts_pattern
     from ..config.scope import EmptySelectionError
@@ -131,6 +147,8 @@ async def clean_coverage(
     cov_config = get_cov_config(projects)
     if not cov_config:
         raise CoverageConfigError("No [coverage] section found in .otto/settings.toml")
+    if pairs is not None and not pairs:
+        return CleanReport(hosts={})
 
     pattern = load_hosts_pattern(cov_config)
     try:
@@ -142,6 +160,13 @@ async def clean_coverage(
         # `all_hosts` stays silent here rather than raising (see its
         # docstring), so this is the only way that case reaches us.
         raise NoCoverageHostsError("no host in the lab to walk — nothing to clean")
+    # {host_id: product names to reset}, or None to reset every product.
+    named: dict[str, set[str]] | None = None
+    if pairs is not None:
+        named = {}
+        for key in pairs:
+            named.setdefault(key.host, set()).add(key.product)
+        host_ids = sorted(named if host_ids is None else set(host_ids) & set(named))
     if host_ids is not None:
         wanted = set(host_ids)
         hosts = [h for h in hosts if h.id in wanted]
@@ -152,17 +177,26 @@ async def clean_coverage(
             )
 
     scoped = re.compile("^(?:" + "|".join(re.escape(h.id) for h in hosts) + ")$")
-    outcomes = await do_for_all_hosts(_reset_products, pattern=scoped, include_containers=True)
+    outcomes = await do_for_all_hosts(
+        _reset_products, named, pattern=scoped, include_containers=True
+    )
 
     def _all_failed(host: "Any", reason: str) -> "dict[str, Result]":
-        """Every instrumented product on *host*, reported failed with *reason*.
+        """Every product on *host* this clean covers, reported failed with *reason*.
+
+        That is every instrumented product, or just the ones *pairs* named.
 
         The shape a host-level failure (a raised exception, or no outcome at
         all) takes: Chris's ruling leaves no room for a silent "ok" default,
         so a host this walk could not get a real per-product answer from is
         reported as fully failed rather than dropped or left empty.
         """
-        return {p.name: Result(Status.Error, msg=reason) for p in instrumented_products(host)} or {
+        names = (
+            sorted(named[host.id])
+            if named is not None
+            else [p.name for p in instrumented_products(host)]
+        )
+        return {name: Result(Status.Error, msg=reason) for name in names} or {
             "(host)": Result(Status.Error, msg=reason)
         }
 
@@ -184,17 +218,32 @@ async def clean_coverage(
     return CleanReport(hosts=by_host)
 
 
-async def _reset_products(host: "Any") -> "dict[str, Result]":
-    """Reset every instrumented product on *host*, in declaration order."""
+async def _reset_products(
+    host: "Any", named: "dict[str, set[str]] | None" = None
+) -> "dict[str, Result]":
+    """Reset *host*'s instrumented products, in declaration order.
+
+    With *named*, only the products it names for this host; a named product
+    the host does not carry instrumented is reported failed.
+    """
     from .. import layout
+    from ..result import Result
+    from ..utils import Status
     from .instrumentation import instrumented_products
 
+    wanted = None if named is None else named.get(host.id, set())
     results = {}
     for product in instrumented_products(host):
+        if wanted is not None and product.name not in wanted:
+            continue
         # Before the hook runs, not after: a name that is not a single safe
         # path segment must never reach a host.
         layout.validate_product_name(product.name)
         results[product.name] = await product.reset_coverage(host)
+    for name in sorted((wanted or set()) - set(results)):
+        results[name] = Result(
+            Status.Error, msg=f"{name!r} is not an instrumented product on {host.id!r}"
+        )
     return results
 
 
@@ -219,9 +268,10 @@ async def collect_coverage(
     :func:`~otto.coverage.fetcher.embedded.collect_embedded_coverage`. Both
     stage into ``<cov_dir>/<host_id>/<product>/`` so the merge/report step
     treats them identically. A ``.otto_cov_meta.json`` sidecar records source
-    roots and per-host toolchains, then a ``capture.json`` is produced per
-    board against the resolved tier (``tier=None`` selects the lab's sole
-    e2e-kind tier).
+    roots, per-host toolchains, the resolved tier and the commit the counters
+    were collected at; then a ``capture.json`` is produced per (host, product)
+    against that tier (``tier=None`` selects the lab's sole e2e-kind tier),
+    and only the pairs that captured are cleaned.
 
     Fails loud (never swallows):
 
@@ -230,6 +280,10 @@ async def collect_coverage(
     * no ``.gcda`` retrieved from any matched product →
       :class:`~otto.coverage.errors.NoCoverageDataError` (a :class:`ValueError`)
       naming every ``host:product:cov_dir`` triple searched;
+    * a reused *cov_dir* holding products not yet captured that another
+      collection left at another tier or commit (or with no metadata saying
+      which) → :class:`~otto.coverage.errors.CoverageInputError`
+      (``field="output_dir"``), before any host is fetched;
     * an ambiguous/unknown tier name → :class:`ValueError` (from
       :func:`~otto.coverage.tiers.resolve_get_tier`) — only reachable when
       *tier* is a name (or ``None``); a resolved :class:`~otto.coverage.tiers.TierConfig`
@@ -238,7 +292,13 @@ async def collect_coverage(
       propagate as :class:`~otto.coverage.capture.gitio.GitUnavailableError`,
       :class:`~otto.coverage.errors.CoverageDataMismatchError`,
       :class:`~otto.coverage.errors.CoverageToolVersionError`, or
-      :class:`RuntimeError`.
+      :class:`RuntimeError`;
+    * one or more products failing to capture →
+      :class:`~otto.coverage.errors.CoverageCaptureError`, raised after every
+      product was attempted and the ones that captured were cleaned (when
+      *clean_after_fetch*). Its ``result`` holds every outcome and its
+      ``clean`` that clean's report; a failed product's counters stay on
+      the host, so the next collection captures them.
 
     Args:
         cov_dir: Destination directory for the collected coverage.
@@ -256,26 +316,30 @@ async def collect_coverage(
         tester: Optional tester identity annotated onto each capture.
         display_names: Optional board-dir (host id) → display name map.
         clean_after_fetch: When ``True`` (default), call :func:`clean_coverage`
-            on every host that contributed a product (embedded boards
-            included) immediately after a successful collection — the
-            ``otto test --cov`` semantics that keep the next run from mixing
-            in stale data. When ``False``, skip that internal clean entirely
-            so the caller can own the post-fetch clean itself (e.g.
-            ``otto cov get`` scopes its ``--clean`` to just the hosts it
-            fetched). The report lands on the returned
-            :class:`CollectResult`'s ``clean`` field (``None`` when this is
-            ``False``); a failed reset is never swallowed here — it is the
-            caller's to act on.
+            on exactly the (host, product) pairs that captured (embedded
+            boards included) once production is done — the ``otto test
+            --cov`` semantics that keep the next run from mixing in stale
+            data, while a product that failed keeps its counters. When
+            ``False``, skip that internal clean entirely so the caller can
+            own the post-fetch clean itself (e.g. ``otto cov get``, whose
+            ``--clean`` is optional). The report lands on the returned
+            :class:`CollectResult`'s ``clean`` field, or on the raised
+            :class:`~otto.coverage.errors.CoverageCaptureError`'s (``None``
+            when this is ``False`` or nothing captured); a failed reset is
+            never swallowed here — it is the caller's to act on.
 
     Returns:
         A :class:`CollectResult` with the destination, per-product dirs, and
-        the produced capture paths.
+        every product's capture outcome.
     """
-    from ..config.coverage_settings import get_cov_config, load_hosts_pattern
+    from ..config.coverage_settings import get_cov_config, get_cov_project, load_hosts_pattern
     from ..declared import current_projects
     from ..fleet import all_hosts
     from ..host.embedded_host import EmbeddedHost
     from ..host.local_host import LocalHost
+    from .capture import gitio
+    from .capture.produce import ProduceResult, ProductKey, produce_captures
+    from .errors import CoverageCaptureError
     from .fetcher.embedded import collect_embedded_coverage
     from .fetcher.remote import GcdaFetcher
     from .instrumentation import instrumented_products
@@ -307,6 +371,16 @@ async def collect_coverage(
     # Of those, the ones with a filesystem to fetch over the network; an
     # embedded board has none and dumps over the console instead.
     fetch_hosts = [h for h in searched_hosts if not isinstance(h, EmbeddedHost)]
+
+    cov_project = get_cov_project(projects)
+    if cov_project is not None and _pending_products(cov_dir):
+        # Before any host is fetched: a reused directory's uncaptured counters
+        # must not be handed this collection's provenance.
+        _refuse_foreign_pending(
+            cov_dir,
+            tier=_resolve_tier(cov_config, tier).name,
+            base_commit=gitio.head_commit(cov_project.root),
+        )
 
     # {(host_id, product): staging dir}. Keying the meta off *collected
     # coverage* (rather than lab membership) is a safety net behind the
@@ -345,98 +419,167 @@ async def collect_coverage(
             where = "no hosts matched [coverage].hosts"
         raise NoCoverageDataError(f"no .gcda counters retrieved from any product ({where})")
 
-    clean_report = None
-    if clean_after_fetch:
-        # Every host that contributed a product, embedded boards included:
-        # each has a real reset now. A failed reset is reported, never logged
-        # and dropped — the caller (otto test) fails the run on it.
-        clean_report = await clean_coverage(
-            projects, host_ids=sorted({host_id for host_id, _product in product_dirs})
-        )
-
     logger.info("Coverage data collected to %s (%d product dir(s))", cov_dir, len(product_dirs))
 
-    await _write_metadata(
-        projects=projects,
-        cov_config=cov_config,
-        fetch_hosts=fetch_hosts,
-        fetched_host_ids={host_id for host_id, _product in fetched},
-        cov_hosts=cov_hosts,
-        embedded_host_ids={host_id for host_id, _product in embedded_dirs},
-        cov_dir=cov_dir,
-    )
+    produced = ProduceResult([])
+    failure: CoverageCaptureError | None = None
+    if cov_project is not None:
+        resolved_tier = _resolve_tier(cov_config, tier)
+        # The commit the counters were collected at: recorded beside them,
+        # and the one every capture below is anchored to.
+        base_commit = gitio.head_commit(cov_project.root)
+        await _write_metadata(
+            cov_project=cov_project,
+            cov_config=cov_config,
+            fetch_hosts=fetch_hosts,
+            fetched_host_ids={host_id for host_id, _product in fetched},
+            cov_hosts=cov_hosts,
+            embedded_host_ids={host_id for host_id, _product in embedded_dirs},
+            cov_dir=cov_dir,
+            tier=resolved_tier.name,
+            base_commit=base_commit,
+        )
 
-    captures_written = await _produce_capture_tail(
-        projects=projects,
-        cov_config=cov_config,
-        cov_dir=cov_dir,
-        tier=tier,
-        ticket=ticket,
-        note=note,
-        tester=tester,
-        display_names=display_names,
-    )
+        # Only the products that yielded counters, read off the hosts as declared:
+        # the fetch already decided which are instrumented, so no artifact is
+        # scanned again here.
+        # Keyed by host as well as name: two hosts may carry different builds
+        # under one product name, and each host's counters pair against its own.
+        products: "dict[ProductKey, Product]" = {}
+        for h in searched_hosts:
+            for p in h.products:
+                if (h.id, p.name) in product_dirs:
+                    products.setdefault(ProductKey(h.id, p.name), p)
+        try:
+            produced = await produce_captures(
+                cov_dir,
+                tier=resolved_tier.name,
+                project_root=cov_project.root,
+                labs=[cov_project.name],
+                products=products,
+                base_commit=base_commit,
+                # Only this call's fetched pairs: a reused cov_dir may hold
+                # leaves another collection left, which this one never fetched
+                # and so must neither capture nor clean.
+                only=[ProductKey(h, p) for h, p in sorted(product_dirs)],
+                tester=tester,
+                ticket=ticket,
+                note=note,
+                display_names=display_names,
+            )
+        except CoverageCaptureError as e:
+            produced, failure = e.result, e
+        logger.info("Coverage captures produced: %d board(s)", len(produced.written))
+
+    clean_report = None
+    if clean_after_fetch and produced.captured:
+        # Exactly the pairs that captured, embedded boards included: a product
+        # that failed keeps its counters on the host for the next collection.
+        # A failed reset is reported, never logged and dropped — the caller
+        # (otto test) fails the run on it.
+        try:
+            clean_report = await clean_coverage(projects, pairs=produced.captured)
+        except Exception:
+            if failure is not None:
+                from rich.markup import escape as escape_markup
+
+                # The clean's own exception propagates; this keeps the capture
+                # failure it would otherwise bury in __context__ visible.
+                logger.error(escape_markup(str(failure)))  # noqa: TRY400 — the clean's traceback follows; this is its companion line
+            raise
+
+    if failure is not None:
+        failure.clean = clean_report
+        raise failure
 
     return CollectResult(
         cov_dir=cov_dir,
         product_dirs=product_dirs,
-        captures_written=captures_written,
+        produce=produced,
         clean=clean_report,
     )
 
 
-async def _produce_capture_tail(
-    *,
-    projects: "list[Project]",
-    cov_config: dict[str, Any],
-    cov_dir: Path,
-    tier: "str | TierConfig | None",
-    ticket: str | None,
-    note: str | None,
-    tester: dict[str, str] | None,
-    display_names: dict[str, str] | None,
-) -> list[Path]:
-    """Produce a ``capture.json`` per board (anchored to base_commit) against a tier.
+def _pending_products(cov_dir: Path) -> list[str]:
+    """List *cov_dir*'s ``host/product`` dirs holding ``.gcda`` but no capture marker."""
+    from .tree import iter_product_dirs
 
-    So a bare ``otto test --cov`` run always leaves behind capture artifacts
-    (not just raw ``.gcda``) — the same production step ``otto cov get`` uses for
-    a manual/on-demand pull. Unlike the old inline tail this does **not** swallow
-    errors: an ambiguous/unknown tier (:class:`ValueError`), a project root outside git, a
-    stamp mismatch, or a merge failure propagate to the caller, which decides
-    whether to fail the run. Returns an empty list (no captures) when no
-    ``[coverage]`` project resolved a git root.
+    return [
+        f"{host_id}/{product}"
+        for host_id, product, leaf in iter_product_dirs(cov_dir)
+        if not (leaf / "capture.json").is_file()
+        and not (leaf / "capture.failed").is_file()
+        and next(leaf.rglob("*.gcda"), None) is not None
+    ]
 
-    *tier* skips :func:`~otto.coverage.tiers.resolve_get_tier` entirely when
-    it is already a :class:`~otto.coverage.tiers.TierConfig` (a caller like
-    ``otto cov get`` that resolved its own tier up front, e.g. to validate the
-    manual-tier ``--ticket`` requirement, must not pay for — or risk
-    diverging from — a second resolution by name here).
+
+def _refuse_foreign_pending(cov_dir: Path, *, tier: str, base_commit: str) -> None:
+    """Refuse a reused *cov_dir* whose uncaptured counters another collection left.
+
+    The directory's ``.otto_cov_meta.json`` is shared by every product under
+    it, and a product not yet captured is captured later with the tier and
+    commit that file records. A collection at another tier or commit would
+    rewrite it and so hand the earlier counters a provenance they do not
+    have. A product already captured (or failed) carries its own, so only
+    pending ones count; metadata that is missing or unreadable is as
+    foreign as metadata that differs.
+
+    Raises:
+        CoverageInputError: *cov_dir* holds pending products and its metadata
+            records another tier or commit, or none (``field="output_dir"``).
+            Raised before any host is fetched and before the metadata is
+            touched.
     """
-    from ..config.coverage_settings import get_cov_project
-    from .capture.produce import produce_captures
+    import json
+
+    from .errors import CoverageInputError
+
+    pending = _pending_products(cov_dir)
+    if not pending:
+        return
+    try:
+        meta = json.loads((cov_dir / ".otto_cov_meta.json").read_text())
+    except (OSError, ValueError):
+        meta = {}
+    if not isinstance(meta, dict):
+        meta = {}
+    recorded_tier, recorded_commit = meta.get("tier"), meta.get("base_commit")
+    if recorded_tier == tier and recorded_commit == base_commit:
+        return
+    if isinstance(recorded_tier, str) and isinstance(recorded_commit, str):
+        was = f"collected under tier {recorded_tier!r} at commit {recorded_commit[:12]}"
+        remedy = (
+            f"report that directory first ('otto cov report {cov_dir.parent}' at commit "
+            f"{recorded_commit[:12]}), or collect into a fresh output directory"
+        )
+    else:
+        was = "whose tier and commit no metadata records"
+        remedy = "collect into a fresh output directory"
+    raise CoverageInputError(
+        f"{cov_dir} holds counters not yet captured ({', '.join(pending)}) {was}; this "
+        f"collection is tier {tier!r} at commit {base_commit[:12]}, and reusing the "
+        f"directory would capture them under the wrong one — {remedy}",
+        field="output_dir",
+    )
+
+
+def _resolve_tier(cov_config: dict[str, Any], tier: "str | TierConfig | None") -> "TierConfig":
+    """Resolve the tier a collection annotates its captures with.
+
+    A :class:`~otto.coverage.tiers.TierConfig` is used as is: a caller like
+    ``otto cov get`` that resolved its own tier up front (to validate the
+    manual-tier ``--ticket`` requirement) must not pay for — or risk
+    diverging from — a second resolution by name here.
+
+    Raises:
+        ValueError: An ambiguous or unknown tier name (from
+            :func:`~otto.coverage.tiers.resolve_get_tier`).
+    """
     from .tiers import TierConfig, load_tiers, resolve_get_tier
 
-    cov_project = get_cov_project(projects)
-    if cov_project is None:
-        return []
-
     if isinstance(tier, TierConfig):
-        resolved_tier = tier
-    else:
-        tiers = load_tiers(cov_config)
-        resolved_tier = resolve_get_tier(tiers, tier)
-    written = await produce_captures(
-        cov_dir,
-        tier=resolved_tier.name,
-        project_root=cov_project.root,
-        labs=[cov_project.name],
-        tester=tester,
-        ticket=ticket,
-        note=note,
-        display_names=display_names,
-    )
-    logger.info("Coverage captures produced: %d board(s)", len(written))
-    return written
+        return tier
+    return resolve_get_tier(load_tiers(cov_config), tier)
 
 
 def _toolchain_meta(tc: "Toolchain") -> dict[str, Any]:
@@ -458,29 +601,29 @@ def _toolchain_meta(tc: "Toolchain") -> dict[str, Any]:
 
 
 async def _write_metadata(
-    projects: "list[Project]",
+    *,
+    cov_project: "Project",
     cov_config: dict[str, Any],
     fetch_hosts: list[Any],
     fetched_host_ids: set[str],
     cov_hosts: list[Any],
     embedded_host_ids: set[str],
     cov_dir: Path,
+    tier: str,
+    base_commit: str,
 ) -> None:
     """Write ``.otto_cov_meta.json`` so ``otto cov report`` can find source roots and toolchains.
 
     The metadata is per *host*, not per product: a host's toolchain and source
     root are shared by every product it runs, so the ``(host, product)`` pairs
-    that produced counters arrive here reduced to their host ids.
+    that produced counters arrive here reduced to their host ids. It also
+    records the *tier* the collection captured under and the *base_commit*
+    the counters were collected at.
     """
     import json
 
-    from ..config.coverage_settings import get_cov_project
     from ..host.toolchain import Toolchain
     from ..utils import anchor_path
-
-    cov_project = get_cov_project(projects)
-    if not cov_project:
-        return
 
     toolchains: dict[str, dict[str, Any]] = {}
     for host in fetch_hosts:
@@ -573,5 +716,7 @@ async def _write_metadata(
         "project_root": root,
         "toolchains": toolchains,
         "source_roots": source_roots,
+        "tier": tier,
+        "base_commit": base_commit,
     }
     (cov_dir / ".otto_cov_meta.json").write_text(json.dumps(meta, indent=2))

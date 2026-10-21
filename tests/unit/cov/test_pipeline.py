@@ -11,29 +11,33 @@ import pytest
 from otto.config.coverage_settings import CoverageConfigError
 from otto.coverage.capture.gitio import head_commit
 from otto.coverage.capture.model import Capture, CaptureFileCov
-from otto.coverage.errors import CoverageDataMismatchError
+from otto.coverage.capture.produce import ProductKey
+from otto.coverage.errors import CaptureCommitError
 from otto.coverage.report_inputs import ReportInputs
 from otto.coverage.reporter import (
     CollectionInputs,
     CoverageReporter,
-    _partition_board_dirs,
-    discover_gcda_dirs,
+    _classify_product_dirs,
     read_cov_source_root,
     read_cov_source_roots,
     read_cov_toolchains,
     run_coverage_report,
 )
 from otto.coverage.tiers import load_tiers
+from otto.coverage.toolchains import resolve_toolchains
 from otto.host.errors import CoverageToolMissingError
 from otto.host.toolchain import Toolchain
 from tests._fixtures.gitrepo import git_env
+
+TIER_AND_COMMIT = {"tier": "system", "base_commit": "a" * 40}
+"""The two keys every current ``.otto_cov_meta.json`` carries beside the project."""
 
 
 class TestReadCovSourceRoot:
     def test_reads_from_meta_file(self, tmp_path):
         cov_dir = tmp_path / "cov"
         cov_dir.mkdir()
-        meta = {"project_name": "myrepo", "project_root": str(tmp_path)}
+        meta = {"project_name": "myrepo", "project_root": str(tmp_path), **TIER_AND_COMMIT}
         (cov_dir / ".otto_cov_meta.json").write_text(json.dumps(meta))
         assert read_cov_source_root([cov_dir]) == tmp_path
 
@@ -42,7 +46,7 @@ class TestReadCovSourceRoot:
         cov1.mkdir(parents=True)
         cov2 = tmp_path / "run2" / "cov"
         cov2.mkdir(parents=True)
-        meta = {"project_name": "myrepo", "project_root": "/some/path"}
+        meta = {"project_name": "myrepo", "project_root": "/some/path", **TIER_AND_COMMIT}
         (cov2 / ".otto_cov_meta.json").write_text(json.dumps(meta))
         assert read_cov_source_root([cov1, cov2]) == Path("/some/path")
 
@@ -55,79 +59,20 @@ class TestReadCovSourceRoot:
             read_cov_source_root([])
 
 
-def _counters(product_dir: Path) -> Path:
-    """Create *product_dir* with one ``.gcda`` in it and return it."""
-    product_dir.mkdir(parents=True)
-    (product_dir / "x.gcda").write_bytes(b"")
-    return product_dir
-
-
-class TestDiscoverGcdaDirs:
-    def test_discovers_product_dirs(self, tmp_path):
-        cov_dir = tmp_path / "run1" / "cov"
-        _counters(cov_dir / "host_a" / "app")
-        _counters(cov_dir / "host_b" / "app")
-
-        result = discover_gcda_dirs([cov_dir])
-        assert result == [cov_dir / "host_a" / "app", cov_dir / "host_b" / "app"]
-
-    def test_discovers_every_product_under_one_host(self, tmp_path):
-        cov_dir = tmp_path / "run1" / "cov"
-        _counters(cov_dir / "host_a" / "agent")
-        _counters(cov_dir / "host_a" / "app")
-
-        result = discover_gcda_dirs([cov_dir])
-        assert result == [cov_dir / "host_a" / "agent", cov_dir / "host_a" / "app"]
-
-    def test_multiple_cov_dirs(self, tmp_path):
-        for run in ("run1", "run2"):
-            _counters(tmp_path / run / "cov" / "host1" / "app")
-
-        result = discover_gcda_dirs(
-            [tmp_path / "run1" / "cov", tmp_path / "run2" / "cov"],
-        )
-        assert len(result) == 2
-
-    def test_skips_missing_cov_dir(self, tmp_path):
-        result = discover_gcda_dirs([tmp_path / "run_no_cov" / "cov"])
-        assert len(result) == 0
-
-    def test_skips_product_dirs_without_counters(self, tmp_path):
-        cov_dir = tmp_path / "run1" / "cov"
-        _counters(cov_dir / "host1" / "app")
-        (cov_dir / "host1" / "empty").mkdir()
-
-        result = discover_gcda_dirs([cov_dir])
-        assert result == [cov_dir / "host1" / "app"]
-
-    def test_skips_files_in_cov_dir(self, tmp_path):
-        cov_dir = tmp_path / "run1" / "cov"
-        cov_dir.mkdir(parents=True)
-        (cov_dir / "stray_file.txt").write_text("not a dir")
-        _counters(cov_dir / "host1" / "app")
-
-        result = discover_gcda_dirs([cov_dir])
-        assert result == [cov_dir / "host1" / "app"]
-
-    def test_counters_directly_under_a_host_dir_are_refused(self, tmp_path):
-        cov_dir = tmp_path / "run1" / "cov"
-        _counters(cov_dir / "host1")
-
-        with pytest.raises(CoverageConfigError, match=r"cov/<host>/<product>/"):
-            discover_gcda_dirs([cov_dir])
-
-
-class TestPartitionBoardDirs:
-    def test_splits_capture_dirs_from_gcda_dirs(self, tmp_path):
+class TestClassifyProductDirs:
+    def test_sorts_product_dirs_by_capture_state(self, tmp_path):
         cov = tmp_path / "cov"
-        (cov / "h1" / "app").mkdir(parents=True)
+        for product in ("app", "agent", "tool"):
+            (cov / "h1" / product).mkdir(parents=True)
         (cov / "h1" / "app" / "capture.json").write_text("{}")
-        _counters(cov / "h1" / "agent")
+        (cov / "h1" / "tool" / "capture.failed").write_text("lcov --capture failed\n")
+        (cov / "h1" / "agent" / "x.gcda").write_bytes(b"adcg")
 
-        assert _partition_board_dirs([cov]) == (
-            [cov / "h1" / "agent"],
-            [cov / "h1" / "app" / "capture.json"],
-        )
+        states = _classify_product_dirs(cov)
+
+        assert states.captured == [ProductKey("h1", "app")]
+        assert states.failed == [ProductKey("h1", "tool")]
+        assert states.pending == [ProductKey("h1", "agent")]
 
     def test_a_capture_directly_under_the_host_dir_is_refused(self, tmp_path):
         cov = tmp_path / "cov"
@@ -135,7 +80,7 @@ class TestPartitionBoardDirs:
         (cov / "h1" / "capture.json").write_text("{}")
 
         with pytest.raises(CoverageConfigError, match=r"cov/<host>/<product>/"):
-            _partition_board_dirs([cov])
+            _classify_product_dirs(cov)
 
 
 class TestReadCovSourceRoots:
@@ -147,6 +92,7 @@ class TestReadCovSourceRoots:
                 {
                     "project_name": "p",
                     "project_root": "/x",
+                    **TIER_AND_COMMIT,
                     "toolchains": {},
                     "source_roots": {"zephyr37-fat": "/b/v3_7", "zephyr44-fat": "/b/v4_4"},
                 }
@@ -164,28 +110,9 @@ class TestReadCovSourceRoots:
         cov = tmp_path / "cov"
         cov.mkdir()
         (cov / ".otto_cov_meta.json").write_text(
-            json.dumps({"project_name": "p", "project_root": "/x"})
+            json.dumps({"project_name": "p", "project_root": "/x", **TIER_AND_COMMIT})
         )
         assert read_cov_source_roots([cov]) == {}
-
-
-class TestCoverageReporterPerHostGcno:
-    def test_per_host_gcno_dirs_uses_source_roots_then_fallback(self, tmp_path):
-        gcda_dirs = [
-            tmp_path / "cov" / "zephyr37-fat" / "app",
-            tmp_path / "cov" / "zephyr44-fat" / "app",
-            tmp_path / "cov" / "other" / "app",
-        ]
-        root_a = tmp_path / "build_v3_7"
-        root_b = tmp_path / "build_v4_4"
-        fallback = tmp_path / "fallback"
-        r = CoverageReporter(
-            gcda_dirs=gcda_dirs,
-            source_root=fallback,
-            output_dir=tmp_path / "out",
-            source_roots={"zephyr37-fat": root_a, "zephyr44-fat": root_b},
-        )
-        assert r._per_host_gcno_dirs() == [root_a, root_b, fallback]  # 3rd falls back
 
 
 # .gcda headers: 4-byte magic (little-endian files store it reversed) + the
@@ -231,20 +158,14 @@ class TestResolveToolchains:
         monkeypatch.setenv("PATH", str(d))
         return d
 
-    def _reporter(self, tmp_path, gcda_dirs, toolchains=None):
-        return CoverageReporter(
-            gcda_dirs=gcda_dirs,
-            source_root=tmp_path / "src",
-            output_dir=tmp_path / "out",
-            toolchains=toolchains,
-        )
+    @staticmethod
+    def _resolve(gcda_dirs, toolchains=None):
+        return resolve_toolchains(gcda_dirs, toolchains or {})
 
     def test_a_recorded_default_is_silent_and_the_stamp_chooses(self, tmp_path, bin_dir):
         llvm_cov = _tool(bin_dir, "llvm-cov")
         d = _gcda_dir(tmp_path, "test1", "app", _CLANG_GCDA)
-        r = self._reporter(tmp_path, [d], {"test1": Toolchain()})
-
-        (tc,) = r._resolve_toolchains()
+        (tc,) = self._resolve([d], {"test1": Toolchain()})
 
         assert tc is not None
         assert tc.gcov_bin == str(llvm_cov)
@@ -257,9 +178,7 @@ class TestResolveToolchains:
         monkeypatch.setattr("otto.host.toolchain_discovery.discover_toolchain_from_gcda", never)
         cross = Toolchain(sysroot=Path("/opt/cross"), gcov=Path("bin/arm-gcov"))
         d = _gcda_dir(tmp_path, "test1", "app", _CLANG_GCDA)
-        r = self._reporter(tmp_path, [d], {"test1": cross})
-
-        assert r._resolve_toolchains() == [cross]
+        assert self._resolve([d], {"test1": cross}) == [cross]
         assert self.probes == 0
 
     def test_a_record_naming_only_an_lcov_keeps_it_and_takes_the_stamps_gcov(
@@ -268,9 +187,7 @@ class TestResolveToolchains:
         gcov_12 = _tool(bin_dir, "gcov-12")
         d = _gcda_dir(tmp_path, "test1", "app", _GCC12_GCDA)
         wrapper = Toolchain(lcov=Path("/tmp/lcov-wrapper.sh"))
-        r = self._reporter(tmp_path, [d], {"test1": wrapper})
-
-        (tc,) = r._resolve_toolchains()
+        (tc,) = self._resolve([d], {"test1": wrapper})
 
         assert tc is not None
         assert tc.gcov_bin == str(gcov_12)
@@ -282,9 +199,7 @@ class TestResolveToolchains:
         llvm_cov = _tool(bin_dir, "llvm-cov")
         d = _gcda_dir(tmp_path, "test1", "app", _CLANG_GCDA)
         record = Toolchain(lcov_args=["--ignore-errors", "source"])
-        r = self._reporter(tmp_path, [d], {"test1": record})
-
-        (tc,) = r._resolve_toolchains()
+        (tc,) = self._resolve([d], {"test1": record})
 
         assert tc is not None
         assert tc.gcov_bin == str(llvm_cov)
@@ -298,9 +213,7 @@ class TestResolveToolchains:
             _gcda_dir(tmp_path, "test2", "app", _GCC12_GCDA),
             _gcda_dir(tmp_path, "test3", "app", _GCC13_GCDA),
         ]
-        r = self._reporter(tmp_path, dirs)
-
-        clang, gcc12, gcc13 = r._resolve_toolchains()
+        clang, gcc12, gcc13 = self._resolve(dirs)
 
         assert clang is not None
         assert clang.gcov_bin == str(llvm_cov)
@@ -312,16 +225,12 @@ class TestResolveToolchains:
     def test_a_same_major_stamp_keeps_a_recorded_default_as_recorded(self, tmp_path, bin_dir):
         d = _gcda_dir(tmp_path, "test1", "app", _GCC13_GCDA)
         recorded = Toolchain()
-        r = self._reporter(tmp_path, [d], {"test1": recorded})
-
-        assert r._resolve_toolchains() == [recorded]
+        assert self._resolve([d], {"test1": recorded}) == [recorded]
 
     def test_a_missing_tool_fails_the_report_before_lcov_runs(self, tmp_path, bin_dir):
         d = _gcda_dir(tmp_path, "test2", "otto_kmod_demo", _GCC12_GCDA)
-        r = self._reporter(tmp_path, [d])
-
         with pytest.raises(CoverageToolMissingError, match=r"gcov-12.*apt install gcc-12"):
-            r._resolve_toolchains()
+            self._resolve([d])
 
 
 class TestReadCovToolchains:
@@ -335,7 +244,12 @@ class TestReadCovToolchains:
         cov_dir.mkdir()
         (cov_dir / ".otto_cov_meta.json").write_text(
             json.dumps(
-                {"project_name": "r", "project_root": str(tmp_path), "toolchains": toolchains}
+                {
+                    "project_name": "r",
+                    "project_root": str(tmp_path),
+                    **TIER_AND_COMMIT,
+                    "toolchains": toolchains,
+                }
             )
         )
         return cov_dir
@@ -364,7 +278,6 @@ class TestCoverageReporter:
     @pytest.mark.asyncio
     async def test_run_empty_dirs(self, tmp_path):
         reporter = CoverageReporter(
-            gcda_dirs=[],
             source_root=tmp_path,
             output_dir=tmp_path / "out",
         )
@@ -413,7 +326,6 @@ class TestExclusionIsAFilterStage:
         monkeypatch.setattr(spa_renderer_module, "SpaRenderer", FakeRenderer)
 
         reporter = CoverageReporter(
-            gcda_dirs=[],
             source_root=tmp_path,
             output_dir=tmp_path / "out",
         )
@@ -464,7 +376,7 @@ class TestE2eBaseCommitGuard:
         cov = tmp_path / "out" / "cov"
         cap.save(cov / "board1" / "app" / "capture.json")
 
-        with pytest.raises(CoverageDataMismatchError) as excinfo:
+        with pytest.raises(CaptureCommitError) as excinfo:
             await run_coverage_report(
                 [cov],
                 tmp_path / "report",
@@ -563,14 +475,13 @@ class TestUnitHarvest:
 
         src = project / "f.c"
 
-        async def fake_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
-            # The merger is handed the harvest dir as *both* roots.
-            assert gcda_dir == hdir
-            assert gcno_dir == hdir
+        async def fake_capture(self, directory, output, toolchain=None, includes=None):
+            # The merger captures the harvest dir in place.
+            assert directory == hdir
             output.write_text(f"TN:\nSF:{src}\nDA:1,5\nend_of_record\n")
             return output
 
-        monkeypatch.setattr(merger_mod.LcovMerger, "capture", fake_capture)
+        monkeypatch.setattr(merger_mod.LcovMerger, "capture_dir", fake_capture)
 
         cov_config = {
             "tiers": {
@@ -607,11 +518,11 @@ class TestUnitHarvest:
 
         src = project / "f.c"
 
-        async def fake_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
+        async def fake_capture(self, directory, output, toolchain=None, includes=None):
             output.write_text(f"TN:\nSF:{src}\nDA:1,5\nend_of_record\n")
             return output
 
-        monkeypatch.setattr(merger_mod.LcovMerger, "capture", fake_capture)
+        monkeypatch.setattr(merger_mod.LcovMerger, "capture_dir", fake_capture)
 
         load_calls: list[tuple[str, int | None]] = []
         real_load = loader_mod.LCOVLoader.load
@@ -655,10 +566,10 @@ class TestUnitHarvest:
 
         project = _init_git_repo(tmp_path)
 
-        async def fail_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
-            raise AssertionError("merger.capture must not run for a missing harvest dir")
+        async def fail_capture(self, directory, output, toolchain=None, includes=None):
+            raise AssertionError("merger.capture_dir must not run for a missing harvest dir")
 
-        monkeypatch.setattr(merger_mod.LcovMerger, "capture", fail_capture)
+        monkeypatch.setattr(merger_mod.LcovMerger, "capture_dir", fail_capture)
 
         cov_config = {
             "tiers": {
@@ -690,10 +601,10 @@ class TestUnitHarvest:
         hdir = tmp_path / "unit_build_empty"
         hdir.mkdir()
 
-        async def fail_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
-            raise AssertionError("merger.capture must not run for a harvest dir with no .gcda")
+        async def fail_capture(self, directory, output, toolchain=None, includes=None):
+            raise AssertionError("merger.capture_dir must not run for a harvest dir with no .gcda")
 
-        monkeypatch.setattr(merger_mod.LcovMerger, "capture", fail_capture)
+        monkeypatch.setattr(merger_mod.LcovMerger, "capture_dir", fail_capture)
 
         cov_config = {
             "tiers": {
@@ -734,11 +645,11 @@ class TestUnitHarvest:
 
         src = project / "f.c"
 
-        async def fake_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
+        async def fake_capture(self, directory, output, toolchain=None, includes=None):
             output.write_text(f"TN:\nSF:{src}\nDA:1,5\nend_of_record\n")
             return output
 
-        monkeypatch.setattr(merger_mod.LcovMerger, "capture", fake_capture)
+        monkeypatch.setattr(merger_mod.LcovMerger, "capture_dir", fake_capture)
 
         cov_config = {
             "tiers": {
@@ -774,14 +685,13 @@ class TestUnitHarvest:
 
         src = project / "f.c"
 
-        async def fake_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
+        async def fake_capture(self, directory, output, toolchain=None, includes=None):
             # Resolved against project_root, matching the absolute harvest dir.
-            assert gcda_dir == hdir
-            assert gcno_dir == hdir
+            assert directory == hdir
             output.write_text(f"TN:\nSF:{src}\nDA:1,5\nend_of_record\n")
             return output
 
-        monkeypatch.setattr(merger_mod.LcovMerger, "capture", fake_capture)
+        monkeypatch.setattr(merger_mod.LcovMerger, "capture_dir", fake_capture)
 
         # CWD is a sibling of the project root, not the project root itself.
         elsewhere = tmp_path / "elsewhere"
@@ -824,14 +734,13 @@ class TestUnitHarvest:
 
         src = project / "f.c"
 
-        async def fake_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
+        async def fake_capture(self, directory, output, toolchain=None, includes=None):
             # Resolved against HOME, not project_root/"~"/... .
-            assert gcda_dir == hdir
-            assert gcno_dir == hdir
+            assert directory == hdir
             output.write_text(f"TN:\nSF:{src}\nDA:1,5\nend_of_record\n")
             return output
 
-        monkeypatch.setattr(merger_mod.LcovMerger, "capture", fake_capture)
+        monkeypatch.setattr(merger_mod.LcovMerger, "capture_dir", fake_capture)
 
         cov_config = {
             "tiers": {
@@ -881,7 +790,6 @@ async def test_duplicate_capture_across_sources_registers_one_run(tmp_path):
 
     cov = {"tiers": {"manual": {"kind": "manual", "precedence": 1}}}
     reporter = CoverageReporter(
-        [],
         project,
         tmp_path / "report",
         collection=CollectionInputs(
@@ -908,7 +816,7 @@ async def test_explicit_info_tier_gets_synthetic_run(tmp_path):
     info = tmp_path / "u.info"
     info.write_text(f"TN:\nSF:{src / 'f.c'}\nDA:1,7\nend_of_record\n")
 
-    reporter = CoverageReporter([], src, tmp_path / "report", tiers=[("unit", info)])
+    reporter = CoverageReporter(src, tmp_path / "report", tiers=[("unit", info)])
     store = await reporter.run()
 
     (rec,) = store.runs
@@ -937,7 +845,6 @@ async def _runs_for_captures(tmp_path: Path, contexts: list[tuple[str, str]]):
         capture_paths.append(path)
 
     reporter = CoverageReporter(
-        [],
         project,
         tmp_path / "report",
         collection=CollectionInputs(
@@ -1023,7 +930,6 @@ async def test_e2e_hit_suppresses_manual_stale_mark_same_line(tmp_path):
         }
     }
     reporter = CoverageReporter(
-        [],
         project,
         tmp_path / "report",
         collection=CollectionInputs(
@@ -1050,7 +956,7 @@ async def test_duplicate_survives_stale_base_commit_via_key_hoist(tmp_path):
     duplicate of an already-committed manual run is skipped by *key* before
     the e2e base_commit guard ever runs against it — even once the checkout has
     moved past the duplicate's base_commit. Without cross-source dedupe this raised
-    ``CoverageDataMismatchError``; the manual anchor-chain copy stays the
+    ``CaptureCommitError``; the manual anchor-chain copy stays the
     sole source of truth for the run.
     """
     from otto.coverage.capture.gitio import blob_sha, head_commit
@@ -1087,7 +993,6 @@ async def test_duplicate_survives_stale_base_commit_via_key_hoist(tmp_path):
 
     cov_config = {"tiers": {"manual": {"kind": "manual", "precedence": 1}}}
     reporter = CoverageReporter(
-        [],
         project,
         tmp_path / "report",
         collection=CollectionInputs(
@@ -1096,7 +1001,7 @@ async def test_duplicate_survives_stale_base_commit_via_key_hoist(tmp_path):
             capture_paths=[dup],
         ),
     )
-    # Pre-fix (load-order dedupe): this would raise CoverageDataMismatchError
+    # Pre-fix (load-order dedupe): this would raise CaptureCommitError
     # because the cov-dir duplicate is folded via _load_captures against the
     # now-stale base_commit before the manual copy ever gets a chance to dedupe it.
     store = await reporter.run()
@@ -1161,7 +1066,6 @@ async def test_superseded_covdir_duplicate_still_skipped(tmp_path):
 
     cov_config = {"tiers": {"manual": {"kind": "manual", "precedence": 1}}}
     reporter = CoverageReporter(
-        [],
         project,
         tmp_path / "report",
         collection=CollectionInputs(
@@ -1211,7 +1115,6 @@ def _reporter_with(**kwargs) -> CoverageReporter:
     test cares about (here, ``ticket_spec``).
     """
     defaults: dict[str, object] = {
-        "gcda_dirs": [],
         "source_root": Path("/nonexistent/source"),
         "output_dir": Path("/nonexistent/out"),
     }
@@ -1275,7 +1178,6 @@ async def test_run_wires_ticket_attribution_into_the_store(tmp_path):
     info.write_text(f"TN:\nSF:{project / 'f.c'}\nDA:1,3\nDA:2,1\nend_of_record\n")
 
     reporter = CoverageReporter(
-        [],
         project,
         tmp_path / "report",
         tiers=[("unit", info)],

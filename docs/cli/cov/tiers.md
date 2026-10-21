@@ -210,7 +210,7 @@ Every coverage input becomes a **run** at report time: each manual
 or e2e capture is one run — one host, one product (labelled by the host's
 display name, shown as `host · product` where runs are listed; hover for
 tier, ticket, note, date, and base_commit) — each named unit-tier product
-view is its own run, and the unnamed `harvest_dirs` sweep or a legacy
+view is its own run, and the unnamed `harvest_dirs` sweep or a `--tier`
 `.info` load gets a synthetic per-tier run that names no product.  On a file's annotated page,
 the right-hand **runs** column expands per line to list every run that hit
 it, colored by tier, with per-run hit counts.  A stale line lists the

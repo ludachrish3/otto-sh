@@ -6,8 +6,8 @@ Coverage works in two steps:
    hosts into the suite's output directory using
    :class:`~otto.coverage.fetcher.remote.GcdaFetcher`.
 
-2. **Report**: ``otto cov`` merges collected ``.gcda`` files, loads
-   coverage data, and renders a multi-tier HTML report using
+2. **Report**: ``otto cov report`` loads each product's capture (capturing
+   any product not yet captured) and renders a multi-tier HTML report using
    :class:`~otto.coverage.reporter.CoverageReporter`.
 
 Every name is exported lazily (PEP 562): a plain ``otto test`` imports
@@ -25,6 +25,9 @@ if TYPE_CHECKING:
     from .collect import clean_coverage as clean_coverage
     from .collect import collect_coverage as collect_coverage
     from .config import DestinationError as DestinationError
+    from .errors import CaptureCommitError as CaptureCommitError
+    from .errors import CaptureFailedError as CaptureFailedError
+    from .errors import CoverageCaptureError as CoverageCaptureError
     from .errors import CoverageCleanError as CoverageCleanError
     from .errors import CoverageDataMismatchError as CoverageDataMismatchError
     from .errors import CoverageInputError as CoverageInputError
@@ -32,6 +35,7 @@ if TYPE_CHECKING:
     from .errors import CoverageToolVersionError as CoverageToolVersionError
     from .errors import NoCoverageDataError as NoCoverageDataError
     from .errors import NoCoverageHostsError as NoCoverageHostsError
+    from .errors import PairingError as PairingError
     from .fetcher.remote import GcdaFetcher as GcdaFetcher
     from .get import get_coverage as get_coverage
     from .report_inputs import ReportInputs as ReportInputs
@@ -47,8 +51,11 @@ if TYPE_CHECKING:
 
 # name -> the module that defines it, imported on first access by __getattr__.
 _LAZY_ATTRS: dict[str, str] = {
+    "CaptureCommitError": "otto.coverage.errors",
+    "CaptureFailedError": "otto.coverage.errors",
     "CleanReport": "otto.coverage.reports",
     "CollectResult": "otto.coverage.collect",
+    "CoverageCaptureError": "otto.coverage.errors",
     "CoverageCleanError": "otto.coverage.errors",
     "CoverageConfigError": "otto.config.coverage_settings",
     "CoverageDataMismatchError": "otto.coverage.errors",
@@ -64,6 +71,7 @@ _LAZY_ATTRS: dict[str, str] = {
     "GitUnavailableError": "otto.coverage.capture.gitio",
     "NoCoverageDataError": "otto.coverage.errors",
     "NoCoverageHostsError": "otto.coverage.errors",
+    "PairingError": "otto.coverage.errors",
     "ReportInputs": "otto.coverage.report_inputs",
     "TierConfig": "otto.coverage.tiers",
     "clean_coverage": "otto.coverage.collect",
@@ -90,8 +98,11 @@ def __dir__() -> list[str]:
 
 
 __all__ = [
+    "CaptureCommitError",
+    "CaptureFailedError",
     "CleanReport",
     "CollectResult",
+    "CoverageCaptureError",
     "CoverageCleanError",
     "CoverageConfigError",
     "CoverageDataMismatchError",
@@ -107,6 +118,7 @@ __all__ = [
     "GitUnavailableError",
     "NoCoverageDataError",
     "NoCoverageHostsError",
+    "PairingError",
     "ReportInputs",
     "TierConfig",
     "clean_coverage",

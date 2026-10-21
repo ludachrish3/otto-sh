@@ -13,8 +13,8 @@ digraph coverage {
 
     test [label="otto test --cov /\notto cov get\ninstrumented run or retrieval"];
     fetch [label="fetch\n.gcda from covered hosts\n(transfer on Unix,\nconsole extraction embedded)"];
-    merge [label="merge\nmatch .gcda ↔ .gcno graph,\nremap sysroot paths,\nmerge hosts + runs (lcov)"];
-    capture [label="capture.json\nper host per product: parsed hits,\ngit-anchored coordinates"];
+    merge [label="pair + capture\npair each .gcda with its .gcno by path,\none lcov capture per product,\nresolve source paths"];
+    capture [label="capture.json or capture.failed\nper host per product: parsed hits,\ngit-anchored coordinates"];
     render [label="otto cov report\ncaptures + unit harvest\n+ manual store → HTML"];
     err [label="CoverageDataMismatchError\nstale build → instructions,\nnot a wrong report", shape=note, style=dashed];
 
@@ -45,25 +45,27 @@ The stages (packages `otto.coverage.fetcher` → `merge` → `capture` →
    report that it could not. Auto mode degrades the same situations to a
    warning and no coverage, because a plain `otto test` asked for a test run
    and must not die of a coverage misconfiguration.
-2. **Merge** — match counters to the build tree's `.gcno` graph and remap
-   embedded/sysroot paths back to source paths, merging counters across hosts
-   and runs (lcov semantics).
-3. **Capture** — freeze the merged result into one `capture.json` per host
+2. **Pair and capture** — pair each fetched `.gcda` with its own `.gcno` by
+   path, using the object list read from the product's artifact, run one lcov
+   capture per product, and resolve each source path to the project file
+   ({doc}`merging` walks the steps).
+3. **Capture file** — freeze the result into one `capture.json` per host
    per product: parsed hits in committed-code coordinates, anchored to the
    checkout's `HEAD` (`base_commit`) and per-file blob SHAs, and tagged with the
-   product they came from.
+   host and product they came from. A product that fails writes
+   `capture.failed` instead and keeps its counters on the host.
 4. **Render / report** — `otto cov report` assembles every tier — e2e
    captures, a fresh unit-tier harvest, the committed manual store — into an
    HTML report plus summary tiers.
 
-The merge stage's core invariant is *build/counter identity*: `.gcda` files
+The pairing stage's core invariant is *build/counter identity*: `.gcda` files
 are only meaningful against the exact `.gcno` graph the binary was compiled
 with. That pairing happens once, at **collection** — the capture holds
 parsed hits, so the report step never touches the build tree again and a
 later rebuild cannot invalidate it (a capture's own guard is its
 `base_commit`, which must match `HEAD` at report time). When the raw pairing disagrees — a
-stale or partially rebuilt product tree at collection time, or a
-pre-capture run directory re-merged via the legacy fallback — the pipeline
+stale or partially rebuilt product tree at collection time, or a product
+directory captured late, at report time, after a rebuild — that product
 stops with a diagnostic error that names the mismatch and the rebuild that
 fixes it, rather than a gcov stack trace or a silently wrong report. That
 fail-with-instructions posture is a house rule ({doc}`../../principles`).
@@ -108,7 +110,7 @@ output directory, or `--output` — and `otto cov clean` zeroes them on the
 remotes.
 
 Each product carries two coverage hooks: `prepare_coverage(host)` runs before
-the fetcher's `find` and puts counters on disk when they live somewhere else
+the fetcher archives the product's `cov_dir` and puts counters on disk when they live somewhere else
 first, and `reset_coverage(host)` is what every clean — `--cov-clean`, the
 post-fetch clean, `otto cov clean` — issues per product. The defaults (do
 nothing; `find <cov_dir> -name '*.gcda' -type f -delete`, guarded so a `cov_dir`
@@ -118,17 +120,28 @@ a kind whose counters live in the kernel or behind a daemon overrides them.
 ## Where the code lives
 
 - `otto.coverage.fetcher` — pulls `.gcda` off covered hosts, per product
-  (file transfer on Unix and containers, console extraction on embedded)
+  (one plain `tar` archive of the whole `cov_dir` per product on Unix and
+  containers, written to a `mktemp` file in the host's temp dir, of which
+  only the `.gcda` are kept; an archive command that exits non-zero fails
+  the product's fetch; console extraction on embedded). Each `.gcda` keeps
+  its path — relative to `cov_dir`, or the full dumped path on embedded — so
+  two units sharing a basename stay apart and each pairs with its own notes
 - `otto.coverage.instrumentation` — the local per-product instrumentation
   scan and the `--cov`/auto/`--no-cov` decision table
 - `otto.coverage.config` — `check_destination`/`prepare_destination`: the
   check-only / create-or-clear destination gate every `cov_dir` /
   `cov_report_dir` / report `output_dir` preflight shares, raising a
   field-named `DestinationError`
-- `otto.coverage.merge` — pairs counters to the `.gcno` build graph and
-  merges hosts and runs
-- `otto.coverage.capture` — freezes a merge into a per-(host, product)
-  `capture.json`, anchored to `base_commit`
+- `otto.coverage.objects` — a product's object list, read from its local
+  artifact (and its `DT_NEEDED` libraries)
+- `otto.coverage.pairing` — pairs each fetched `.gcda` with exactly one
+  `.gcno`, by path
+- `otto.coverage.merge` — `LcovMerger`: stages the pairs and runs one
+  `lcov --capture` per product (or, for a unit tier, per build directory)
+- `otto.coverage.sources` — `SourceResolver`: resolves each `SF:` path a
+  capture names to its project file
+- `otto.coverage.capture` — freezes a capture into a per-(host, product)
+  `capture.json`, anchored to `base_commit`, or records `capture.failed`
 - `otto.coverage.tiers` — resolves the declarative `[coverage.tiers]`
   table into precedence-ordered `TierConfig` values
 - `otto.coverage.store` — versioned store models (`RunRecord`,
@@ -156,8 +169,9 @@ a kind whose counters live in the kernel or behind a daemon overrides them.
   renderer
 - `web/src/covapp/` — the covapp SPA's TypeScript source (built by `make
   web` into `otto._webassets.COVAPP`, wheel-embedded)
-- {mod}`otto.coverage.reporter` — `otto cov report`'s store assembly: tiers,
-  the base_commit guard, and the `--tier NAME=PATH` escape hatch
+- {mod}`otto.coverage.reporter` — `otto cov report`'s store assembly: the
+  capture states, tiers, the base_commit guard, and the `--tier NAME=PATH`
+  escape hatch
 - {mod}`otto.coverage.validity` — the report-time valid/stale/aging pass over
   manual captures
 - `otto.coverage.anchor` — `AnchorResolver`: the per-capture tree-diff /

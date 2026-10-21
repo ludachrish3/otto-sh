@@ -288,6 +288,10 @@ depends_on = [
     "otto.run_context",
     # otto.layout: the run-tree paths (a pure leaf).
     "otto.layout",
+    # otto.logger: the lcov capture runs quiet (LogMode) and names the
+    # verbose log its full output went to (verbose_log_path). A foundation
+    # leaf that depends only on otto.console, so no cycle.
+    "otto.logger",
     "otto.config.scope",
     # otto.declared: the run's projects when no projects are given (current_projects),
     # the composed state's home (spec 2026-10-11 placement-and-phases §3.9).
