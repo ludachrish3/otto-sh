@@ -456,6 +456,17 @@ async def test_kmod_module_prepare_failure_names_the_sysfs_path():
 
 
 @pytest.mark.asyncio
+async def test_kmod_module_prepare_failure_points_at_dmesg_for_an_unreadable_gcda():
+    """A dump that cannot read an earlier load's .gcda fails too; the kernel log says which."""
+    host = _KmodHost(loaded=["otto_kmod_demo"], run_status=Status.Error)
+    p = _build(host, coverage="module")
+    result = await p.prepare_coverage(host)
+    assert "consumer snippet" in result.msg
+    assert "dmesg" in result.msg
+    assert "a dump that cannot read the .gcda fails and keeps the file" in result.msg
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("loaded", "expected"),
     [

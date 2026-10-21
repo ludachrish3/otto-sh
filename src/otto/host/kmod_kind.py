@@ -379,7 +379,8 @@ class KmodProduct(ShellProduct):
         return Result(
             Status.Error,
             msg=f"cannot write {dump} — {await self._kmodcov_context(host)}; was the "
-            f"module built with its consumer snippet? ({result.msg})",
+            f"module built with its consumer snippet? Or see dmesg: a dump that cannot read "
+            f"the .gcda fails and keeps the file ({result.msg})",
         )
 
     async def _prepare_kernel(self, host: Any) -> Result:
