@@ -254,6 +254,15 @@ def test_a_file_with_no_functions_is_truncated(bed: Bed):
     assert bed.hits() == 5
 
 
+def test_a_file_longer_than_the_object_is_skipped_before_it_is_decoded(bed: Bed):
+    """Read stops one byte past the object's own image: a longer file is never decoded."""
+    bed.earlier_load(10)
+    bed.gcda.write_bytes(bed.gcda.read_bytes() + b"\0" * 64)
+    session = bed.run("load", "run:5", "unload")
+    _assert_one_mismatch_warning(bed, session, "longer than this object's")
+    assert bed.hits() == 5
+
+
 def test_a_counter_length_overrunning_the_file_is_skipped(bed: Bed):
     bed.earlier_load(10)
     counters = [r for r in bed.records() if r[1] != GCOV_TAG_FUNCTION]
