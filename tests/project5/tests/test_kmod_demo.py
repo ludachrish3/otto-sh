@@ -9,6 +9,8 @@ dump only proves a free. Two paths stay uncovered on purpose (``drain`` with
 an argument; ``limit`` below the queue length) so the report has something to
 show as missed. Teardown UNINSTALLS the products and unloads the library —
 that is what makes the exit routine's coverage reach the post-run fetch.
+``TestKmodReload`` is a separate session's suite: two loads of the demo, each
+exercised and unloaded, whose counts must both reach the report.
 
 The common mix runs once per host inside the class-scoped ``_modules``
 fixture, right after install, rather than as its own test — the two ONLY
@@ -81,6 +83,13 @@ async def _install(host: UnixHost) -> None:
                 raise RuntimeError(f"{host.id}: installing {product.name} failed: {result.msg}")
 
 
+async def _uninstall_products(host: UnixHost) -> None:
+    for product in reversed(host.products):
+        result = await product.uninstall(host)
+        if not result.is_ok:
+            raise RuntimeError(f"{host.id}: uninstalling {product.name} failed: {result.msg}")
+
+
 async def _uninstall(host: UnixHost) -> None:
     # Product logs first, while the products still exist: otto test never
     # calls Host.uninstall()/get_product_logs() itself (that pairing is a
@@ -89,10 +98,7 @@ async def _uninstall(host: UnixHost) -> None:
     hauled = await host.get_product_logs()
     if not hauled.is_ok:
         raise RuntimeError(f"{host.id}: hauling product logs failed: {hauled.msg}")
-    for product in reversed(host.products):
-        result = await product.uninstall(host)
-        if not result.is_ok:
-            raise RuntimeError(f"{host.id}: uninstalling {product.name} failed: {result.msg}")
+    await _uninstall_products(host)
     # The library is a dev tool the demo loaded on demand; otto test never runs
     # cleanup, so this teardown removes it — after the demo, which depends on
     # it — the way `cleanup` would. Left resident, the NEXT run's demo (built
@@ -101,6 +107,54 @@ async def _uninstall(host: UnixHost) -> None:
     removed = await host.uninstall_dev_tools()
     if not removed.is_ok:
         raise RuntimeError(f"{host.id}: unloading otto_kmodcov failed: {removed.msg}")
+
+
+RELOAD_CYCLES = 10
+"""Each load of TestKmodReload enqueues and drains this many values: ``q->enqueued++`` once each."""
+
+
+class TestKmodReload:
+    """Load, exercise, unload, load, exercise, unload — one session, both hosts (#670).
+
+    Every load's counts must reach the same ``.gcda`` files: the first load's
+    exit dump writes them, and the second load adds its own on top. The
+    teardown's uninstall is the second unload, and it unloads the library too,
+    as TestKmodDemo's does.
+    """
+
+    @pytest_asyncio.fixture(autouse=True, scope="class")
+    @classmethod
+    async def _teardown(cls):
+        yield
+        failed = {
+            h: r
+            for h, r in (await do_for_all_hosts(_uninstall, pattern=_HOSTS)).items()
+            if isinstance(r, BaseException)
+        }
+        if failed:
+            raise RuntimeError(f"module uninstall failed on: {failed}")
+
+    @pytest.mark.integration
+    async def test_two_loads(self) -> None:
+        async def exercise(host: UnixHost) -> str:
+            line = ""
+            for value in range(RELOAD_CYCLES):
+                await _ctl(host, f"enqueue {value}")
+                line = await _ctl(host, "drain")
+            return line
+
+        async def two_loads(host: UnixHost) -> list[str]:
+            await _install(host)
+            first = await exercise(host)
+            await _uninstall_products(host)  # the first unload: its exit dump writes the files
+            await _install(host)
+            return [first, await exercise(host)]
+
+        lines = await do_for_all_hosts(two_loads, pattern=_HOSTS)
+        for host_id, result in lines.items():
+            assert not isinstance(result, BaseException), f"{host_id}: {result!r}"
+            for line in result:  # each load starts from a fresh queue
+                assert f"enqueued={RELOAD_CYCLES} " in line, f"{host_id}: {line}"
 
 
 class TestKmodDemo:

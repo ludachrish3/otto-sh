@@ -3,6 +3,8 @@
     otto -l unix test --cov TestKmodDemo      (project5)
     otto -l unix cov report <run> --dir <report>
 
+and the same for ``TestKmodReload``: two loads of the demo in one session.
+
 Prerequisites: test1/test2 up (6.8.0-86-generic), the headers for that
 release on the dev VM, gcc and lcov on the dev VM. The modules are built by
 ``tests/project5/kmod/build.sh`` when missing. Pinned to one xdist worker: both
@@ -13,10 +15,12 @@ import subprocess
 
 import pytest
 
+from otto.coverage.capture.model import Capture
 from otto.coverage.store.model import CoverageStore
 from tests.e2e._otto_subprocess import PROJECT5, run_otto
 from tests.e2e.cov._kmod_assertions import (
     DEMO,
+    HOSTS,
     assert_exit_routine_lines_are_hit_once_per_host,
     assert_mid_suite_dump_does_not_double_count,
     assert_only_the_demo_is_fetched_from_the_two_hosts,
@@ -26,8 +30,19 @@ from tests.e2e.cov._kmod_assertions import (
     assert_run_log_reports_the_library_loaded_on_demand,
     assert_store_has_the_three_demo_files,
     assert_three_gcda_per_host,
+    capture_file,
 )
-from tests.e2e.cov._project5_build import BUILD, DEMO_SRC, _line_of, _record, ensure_kmod_artifacts
+from tests.e2e.cov._project5_build import (
+    BUILD,
+    DEMO_SRC,
+    _hits,
+    _line_of,
+    _record,
+    ensure_kmod_artifacts,
+)
+
+RELOAD_CYCLES = 10
+"""What tests/project5/tests/test_kmod_demo.py's RELOAD_CYCLES is: enqueues per load."""
 
 _LAB = "unix"
 
@@ -79,6 +94,52 @@ def coverage_run(built_modules, tmp_path_factory):
     _run_otto(["cov", "report", str(log_dir), "--dir", str(report_dir)], xdir=xdir, timeout=120)
     store = CoverageStore.load(report_dir / "store.json")
     return store, cov_dir, log_dir
+
+
+@pytest.fixture(scope="module")
+def reload_run(built_modules, tmp_path_factory):
+    """``TestKmodReload``: two loads of the demo per host in one session, each unloaded."""
+    tmp = tmp_path_factory.mktemp("kmod_reload_e2e")
+    xdir = tmp / "xdir"
+    xdir.mkdir()
+    report_dir = tmp / "report"
+    _run_otto(["test", "--cov", "--cov-clean", "TestKmodReload"], xdir=xdir, timeout=900)
+    (log_dir,) = sorted((xdir / "test").glob("*"))
+    _run_otto(["cov", "report", str(log_dir), "--dir", str(report_dir)], xdir=xdir, timeout=120)
+    return CoverageStore.load(report_dir / "store.json"), log_dir / "cov"
+
+
+@pytest.mark.integration
+@pytest.mark.xdist_group("coverage_e2e")
+class TestKmodReload:
+    """#670: a module unloaded and loaded again keeps the first load's counts.
+
+    Each load enqueues RELOAD_CYCLES values (tests/project5/tests/test_kmod_demo.py),
+    so per host the enqueue line reads two loads' worth, and the init and exit
+    routines' lines read two — one per load. Before the fix the second load's
+    first dump overwrote the first load's exit dump, and each read one load.
+    """
+
+    def test_each_hosts_capture_holds_both_loads(self, reload_run):
+        _store, cov_dir = reload_run
+        policy, main = DEMO_SRC / "demo_policy.c", DEMO_SRC / "demo_main.c"
+        expected = {
+            ("demo_policy.c", _line_of(policy, "q->enqueued++;")): 2 * RELOAD_CYCLES,
+            ("demo_main.c", _line_of(main, 'pr_info("loaded, queue capacity')): 2,
+            ("demo_main.c", _line_of(main, 'pr_info("unloaded after')): 2,
+        }
+        for host in HOSTS:
+            capture = Capture.load(cov_dir / host / DEMO / "capture.json")
+            for (name, lineno), hits in expected.items():
+                cov = capture_file(capture, name)
+                assert cov is not None, (host, list(capture.files))
+                assert cov.lines.get(lineno) == hits, (host, name, lineno, cov.lines)
+
+    def test_the_report_sums_both_loads_on_both_hosts(self, reload_run):
+        store, _cov_dir = reload_run
+        rec = _record(store, "demo_policy.c")
+        lineno = _line_of(DEMO_SRC / "demo_policy.c", "q->enqueued++;")
+        assert _hits(rec, lineno) == 2 * RELOAD_CYCLES * len(HOSTS)
 
 
 @pytest.mark.integration
