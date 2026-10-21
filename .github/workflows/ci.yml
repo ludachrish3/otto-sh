@@ -108,9 +108,9 @@ jobs:
 
       # tests/unit/cov/test_kmodcov_reader.py builds otto_kmodcov's C with a gcc
       # before 12, the gcc and clang, and reads what each writes with its own
-      # gcov; the runner image has no gcc-11 and no llvm-cov.
-      - name: Install gcc-11 and llvm-cov (the kmodcov reader tests)
-        run: command -v gcc-11 && command -v llvm-cov || { sudo apt-get update && sudo apt-get install -y gcc-11 llvm; }
+      # gcov; the runner image may lack gcc-11, clang or llvm-cov.
+      - name: Install gcc-11, clang and llvm-cov (the kmodcov reader tests)
+        run: command -v gcc-11 && command -v clang && command -v llvm-cov || { sudo apt-get update && sudo apt-get install -y gcc-11 clang llvm; }
 
       - name: Run tests under Python ${{ matrix.python }}
         run: uv run nox -s tests_hostless-${{ matrix.python }}
@@ -156,9 +156,9 @@ jobs:
 
       # tests/unit/cov/test_kmodcov_reader.py builds otto_kmodcov's C with a gcc
       # before 12, the gcc and clang, and reads what each writes with its own
-      # gcov; the runner image has no gcc-11 and no llvm-cov.
-      - name: Install gcc-11 and llvm-cov (the kmodcov reader tests)
-        run: command -v gcc-11 && command -v llvm-cov || { sudo apt-get update && sudo apt-get install -y gcc-11 llvm; }
+      # gcov; the runner image may lack gcc-11, clang or llvm-cov.
+      - name: Install gcc-11, clang and llvm-cov (the kmodcov reader tests)
+        run: command -v gcc-11 && command -v clang && command -v llvm-cov || { sudo apt-get update && sudo apt-get install -y gcc-11 clang llvm; }
 
       - name: Repeat tests/unit in one process (test-isolation leak guard)
         run: uv run nox -s tests_unit_repeat
