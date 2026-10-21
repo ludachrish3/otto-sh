@@ -188,7 +188,10 @@ uv run pytest         # run the test suite
 
 `strace` (≥ 5.3) is a separate dev prerequisite `make dev` does not install,
 used by the import-budget tests to count file operations: `sudo apt-get install
-strace`.
+strace`. So are `gcc-11`, `clang` and `llvm-cov`, used by the kmodcov reader
+tests (`tests/unit/cov/test_kmodcov_reader.py`), which build `otto_kmodcov`'s
+own C with a gcc before 12, the default gcc and clang and read what it writes
+with each compiler's gcov: `sudo apt-get install gcc-11 clang llvm`.
 
 The test suite caches its bytecode under `$XDG_CACHE_HOME/otto/pytest-pycache`
 (falling back to `~/.cache`, then the system temp dir), never in `src/otto` —
