@@ -4,9 +4,24 @@
  * filled by the consumer's own gcov constructors, which kmodcov_register()
  * runs; each client owns an ACCUMULATOR per instrumented object (a private
  * gcov_info copy). A dump adds the live counters into the accumulator,
- * zeroes the live ones and writes the accumulator out, so the file on disk
- * is always the module's total since register (or the last reset) and two
- * dumps never double count — no .gcda is ever parsed.
+ * zeroes the live ones and writes the accumulator out, so two dumps of one
+ * load never double count.
+ *
+ * Counts also accumulate across loads: each accumulator is seeded once per
+ * load from the object's .gcda on disk, at the object's first dump and
+ * before its write, so the file holds the total of every load since the
+ * last clean. An object is PENDING at load, SEEDED once its file is
+ * imported (or there is none) and SKIPPED after a reset or a file that
+ * does not match it; only a pending object reads its file. The backend
+ * checks the whole file against the accumulator before adding any of it
+ * (gcov_info_import()); a file that does not match is warned about once
+ * and overwritten. A file that cannot be read (an I/O or allocation
+ * failure) is left as it is by a sysfs dump, which keeps the counts in
+ * memory and fails; the unload's dump retries the read once and, if it
+ * still fails, writes this load's counts and warns that the earlier loads'
+ * counts are lost. A reset zeroes the live counters and the accumulators
+ * and skips every object, so a reset followed by deleting the files never
+ * reads them back, whatever dump runs between the two.
  */
 /*
  * Kbuild force-includes a kmodcov_local.h before this file when one exists, and
@@ -29,9 +44,18 @@
 #include "kmodcov_gcov.h"
 #include "kmodcov_version.h"
 
+/* Where an object's accumulator stands with its file on disk, this load. */
+enum kmodcov_seed {
+	KMODCOV_PENDING, /* not read yet: the next dump imports the file first */
+	KMODCOV_SEEDED,  /* imported, or there was no file */
+	KMODCOV_SKIPPED, /* reset, or the file did not match: never read */
+};
+
 struct kmodcov_object {
 	struct gcov_info *live; /* the consumer's own, in its .data/.bss */
-	struct gcov_info *acc;  /* private total since register / reset */
+	struct gcov_info *acc;  /* private total since register / reset, plus the seed */
+	enum kmodcov_seed seed;
+	bool read_warned; /* a sysfs dump has said the file could not be read */
 };
 
 struct kmodcov_client {
@@ -105,29 +129,113 @@ static int kmodcov_write_file(const char *path, const char *buf, size_t len)
 	return err;
 }
 
+/*
+ * Read at most CAP bytes of PATH into BUF, *LEN being how many it held: 0,
+ * or the negative errno opening or reading failed with (-ENOENT: no file).
+ */
+static int kmodcov_read_file(const char *path, char *buf, size_t cap, size_t *len)
+{
+	struct file *f;
+	loff_t pos = 0;
+	int err = 0;
+
+	*len = 0;
+	f = filp_open(path, O_RDONLY, 0);
+	if (IS_ERR(f))
+		return PTR_ERR(f);
+	while (*len < cap) {
+		ssize_t r = KMODCOV_FILE_READ(f, buf + *len, cap - *len, &pos);
+
+		if (r < 0) {
+			err = r;
+			break;
+		}
+		if (!r)
+			break;
+		*len += r;
+	}
+	filp_close(f, NULL);
+	return err;
+}
+
 /* ---- dump / reset (caller holds kmodcov_lock) ----------------------------- */
 
-static int kmodcov_dump_object(struct kmodcov_client *c, struct kmodcov_object *o)
+/*
+ * Seed a pending object's accumulator from PATH. 0 once the object is
+ * seeded (imported, or no file) or skipped (the file does not match it);
+ * the negative errno of an operational failure leaves it pending.
+ */
+static int kmodcov_seed_object(struct kmodcov_client *c, struct kmodcov_object *o,
+			       const char *path)
+{
+	char why[96];
+	char *buf;
+	size_t cap, len;
+	int err;
+
+	/* One byte past this object's own image: a longer file cannot be one. */
+	cap = convert_to_gcda(NULL, o->acc) + 1;
+	buf = KMODCOV_BIG_ALLOC(cap);
+	if (!buf)
+		return -ENOMEM;
+	err = kmodcov_read_file(path, buf, cap, &len);
+	if (err == -ENOENT) {
+		o->seed = KMODCOV_SEEDED;
+		err = 0;
+	} else if (!err) {
+		if (len == cap) {
+			snprintf(why, sizeof(why), "longer than this object's %zu bytes", cap - 1);
+			err = -EINVAL;
+		} else {
+			err = gcov_info_import(o->acc, buf, len, why, sizeof(why));
+		}
+		if (err)
+			pr_warn("%s: %s does not match this object (%s); not adding its counts, and this dump overwrites it\n",
+				c->mod->name, path, why);
+		o->seed = err ? KMODCOV_SKIPPED : KMODCOV_SEEDED;
+		err = 0;
+	}
+	KMODCOV_BIG_FREE(buf);
+	return err;
+}
+
+/*
+ * FINAL is the unload's dump, the last chance: a file that still cannot be
+ * read is overwritten with this load's counts. Any other dump leaves it be.
+ */
+static int kmodcov_dump_object(struct kmodcov_client *c, struct kmodcov_object *o, bool final)
 {
 	char *path, *buf;
 	size_t size;
 	int err;
 
-	gcov_info_add(o->acc, o->live);
-	gcov_info_reset(o->live);
-	size = convert_to_gcda(NULL, o->acc);
-	buf = KMODCOV_BIG_ALLOC(size);
-	if (!buf)
-		return -ENOMEM;
-	convert_to_gcda(buf, o->acc);
 	/* gcov_info_filename() is the absolute .gcda path the compiler baked in. */
 	path = KMODCOV_ASPRINTF("%s%s%s", c->dir,
 			      gcov_info_filename(o->acc)[0] == '/' ? "" : "/",
 			      gcov_info_filename(o->acc));
-	if (!path) {
-		KMODCOV_BIG_FREE(buf);
+	if (!path)
+		return -ENOMEM;
+	err = o->seed == KMODCOV_PENDING ? kmodcov_seed_object(c, o, path) : 0;
+	gcov_info_add(o->acc, o->live);
+	gcov_info_reset(o->live);
+	if (err && !final) {
+		if (!o->read_warned)
+			pr_warn("%s: cannot read %s (%d); its counts stay in memory, and the file is left as it is until a dump can read it\n",
+				c->mod->name, path, err);
+		o->read_warned = true;
+		KMODCOV_FREE(path);
+		return err;
+	}
+	if (err)
+		pr_warn("%s: cannot read %s (%d) at unload; writing this load's counts, so the earlier loads' counts in that file are lost\n",
+			c->mod->name, path, err);
+	size = convert_to_gcda(NULL, o->acc);
+	buf = KMODCOV_BIG_ALLOC(size);
+	if (!buf) {
+		KMODCOV_FREE(path);
 		return -ENOMEM;
 	}
+	convert_to_gcda(buf, o->acc);
 	err = kmodcov_mkdir_parents(path);
 	if (!err)
 		err = kmodcov_write_file(path, buf, size);
@@ -138,13 +246,13 @@ static int kmodcov_dump_object(struct kmodcov_client *c, struct kmodcov_object *
 	return err;
 }
 
-static int kmodcov_dump_client(struct kmodcov_client *c)
+static int kmodcov_dump_client(struct kmodcov_client *c, bool final)
 {
 	size_t i;
 	int err = 0;
 
 	for (i = 0; i < c->n_objs; i++) {
-		int e = kmodcov_dump_object(c, &c->objs[i]);
+		int e = kmodcov_dump_object(c, &c->objs[i], final);
 
 		if (e && !err)
 			err = e;
@@ -159,6 +267,7 @@ static void kmodcov_reset_client(struct kmodcov_client *c)
 	for (i = 0; i < c->n_objs; i++) {
 		gcov_info_reset(c->objs[i].live);
 		gcov_info_reset(c->objs[i].acc);
+		c->objs[i].seed = KMODCOV_SKIPPED;
 	}
 }
 
@@ -200,7 +309,7 @@ static ssize_t kmodcov_dump_store(struct kobject *kobj, struct kobj_attribute *a
 
 	KMODCOV_LOCK(&kmodcov_lock);
 	c = kmodcov_client_of(kobj);
-	err = c ? kmodcov_dump_client(c) : -ENODEV;
+	err = c ? kmodcov_dump_client(c, false) : -ENODEV;
 	KMODCOV_UNLOCK(&kmodcov_lock);
 	return err ? err : count;
 }
@@ -291,6 +400,7 @@ void kmodcov_ctor_info(struct gcov_info *info)
 	gcov_info_reset(acc);
 	c->objs[c->n_objs].live = info;
 	c->objs[c->n_objs].acc = acc;
+	c->objs[c->n_objs].seed = KMODCOV_PENDING;
 	c->n_objs++;
 }
 
@@ -390,7 +500,7 @@ void kmodcov_unregister(struct module *mod)
 	}
 	if (found) {
 		/* The exit dump: everything the exit routine ran before this call. */
-		kmodcov_dump_client(found);
+		kmodcov_dump_client(found, true);
 		list_del(&found->node);
 	}
 	KMODCOV_UNLOCK(&kmodcov_lock);

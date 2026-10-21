@@ -56,11 +56,48 @@ object's counters. Writing to `dump` adds the live counters into the
 accumulator, zeroes the live ones, and writes the accumulator out as
 `<cov_dir>/<absolute object path>.gcda`; because the accumulator holds the
 running total and the live counters start over every time, two dumps in
-one run add correctly instead of double-counting. Writing to `reset` zeroes
-both. `otto_kmodcov` never parses a `.gcda` itself — it only ever writes one.
-A module registered twice without an unregister between is refused
+one load add correctly instead of double-counting. Writing to `reset` zeroes
+both. A module registered twice without an unregister between is refused
 (`-EBUSY`), and a control file that cannot be created fails the
 registration, so an `insmod` that succeeds has both files.
+
+### Counts across loads
+
+A module's counts accumulate across loads, the way a user-space program's
+do across runs: load, exercise, unload, load again, exercise, unload, and
+the `.gcda` files hold both loads' hits, until a clean deletes them. Each
+load seeds an object's accumulator once, from the object's `.gcda` already
+on disk, at that object's first dump and before the dump writes. Until
+then the object is *pending*; afterwards it is *seeded* (the file was added
+in, or there was none) or *skipped*, and neither reads the file again
+during that load.
+
+- **Reset stops a seed.** Writing to `reset` zeroes the live counters and
+  the accumulator and skips every object, so a reset before the first dump
+  means the file is never read. otto's clean ({doc}`../clean`, which
+  `--cov-clean` runs too) resets a loaded module, then deletes the files:
+  whatever dump runs between the two writes zeroed counters and cannot
+  bring the old counts back. The `reset` file itself never deletes one.
+- **A file that does not match is overwritten.** The whole file is checked
+  against the loaded object before any of it is added: the gcov magic and
+  version, the object's stamp, every function's checksums, and every
+  record's length against the file's size. A file from another build —
+  the module was rebuilt without a clean — adds nothing; the kernel log
+  says once which file and why (`<module>: <file> does not match this
+  object (<reason>); not adding its counts, and this dump overwrites it`)
+  and that dump replaces it with this load's counts.
+- **A file that cannot be read is kept.** An I/O or allocation failure
+  leaves the object pending: a sysfs `dump` keeps the counts in memory,
+  does not touch the file, fails with the error, and warns once in the
+  kernel log. Each later dump retries. The unload's dump is the last
+  chance: it retries once, and if it still fails it writes this load's
+  counts and warns that the earlier loads' counts in that file are lost.
+
+The `KMODCOV_INTERFACE` number does not change with this behaviour — a
+consumer needs no rebuild — but the library itself does: it comes with an
+otto release, and a lab picks it up by re-exporting the sources
+(`otto cov kmodcov export`, or `otto init --kmodcov`) and rebuilding the
+`otto_kmodcov` dev tool.
 
 ## Getting the library
 
@@ -418,9 +455,11 @@ two untested arms are proven by nothing yet.
 |---|---|---|---|
 | `KMODCOV_MKDIR(path)` | create the last component of an absolute path whose parents exist; `-EEXIST` counts as success | below 2.6.39 `path_lookup` + `lookup_create`; 2.6.39–3.0 the same with `kern_path_parent` (untested); 3.1–3.5 `kern_path_create` with `done_path_create` written out (untested); 3.6–4.0 `kern_path_create` with `->d_inode`; 4.1–5.11 `d_inode()`; 5.12–6.2 `mnt_user_ns`; 6.3–6.14 `mnt_idmap`; 6.15+ `vfs_mkdir` returns the dentry | `2.6.32`, `3.13`, `4.4`, `5.15`, the beds' 6.8 live, and the 6.8 tree (`x86_64-cross`), `6.17`, the untested arms: none |
 | `KMODCOV_FILE_WRITE(file, buf, len, ppos)` | write a kernel buffer at `*ppos`, advancing it | below 3.9 `vfs_write` under `set_fs`; 3.9–4.13 `kernel_write` with the offset by value; 4.14+ `kernel_write` by pointer | `2.6.32`, `3.13`, `5.4` |
+| `KMODCOV_FILE_READ(file, buf, len, ppos)` | read into a kernel buffer from `*ppos`, advancing it — the seed of [counts across loads](#counts-across-loads) | below 4.14 `kernel_read` with the offset by value; 4.14+ `kernel_read` by pointer | `2.6.32`, `3.13`, `4.4`, `5.4` |
 | `KMODCOV_BIG_ALLOC` / `KMODCOV_BIG_FREE` | the `.gcda` image buffer | below 4.12 `vmalloc`/`vfree`; 4.12+ `kvmalloc`/`kvfree` | `4.4`, `5.4` |
 | `KMODCOV_WITHIN_MODULE(addr, mod)` | whether an address is the module's | below 3.17 `within_module_core` or `within_module_init`; 3.17+ `within_module` | `3.13`, `4.4` |
 | `list_first_entry_or_null`, `list_last_entry`, `list_next_entry`, `__list_del_entry` | the list helpers the clang backend uses | provided below 3.10, 3.13, 3.13 and 2.6.38 | `2.6.32`, `3.13` (the "build: the clang backend's unit compiles with the column's gcc" row) |
+| `pr_warn` | the kernel-log warnings of [counts across loads](#counts-across-loads) | `pr_warning` where the kernel has no `pr_warn` (below 2.6.37) | `2.6.32` |
 | `KMODCOV_ALLOC`, `KMODCOV_ALLOC_ARRAY`, `KMODCOV_STRDUP`, `KMODCOV_MEMDUP`, `KMODCOV_ASPRINTF`, `KMODCOV_FREE`, `KMODCOV_DEFINE_LOCK`, `KMODCOV_LOCK`, `KMODCOV_UNLOCK`, `KMODCOV_SYSFS_DIR`, `KMODCOV_SYSFS_DIR_PUT`, `KMODCOV_SYSFS_GROUP`, `KMODCOV_SYSFS_GROUP_REMOVE` | allocation, the lock, the sysfs control files | one default each, unchanged since 2.6.32 | every column |
 
 On the two columns whose kbuild compiles every object as `.tmp_<unit>.o`
@@ -441,7 +480,9 @@ whatever `KMODCOV_ALLOC`, `KMODCOV_ALLOC_ARRAY`, `KMODCOV_STRDUP`, `KMODCOV_MEMD
 and `KMODCOV_ASPRINTF` return is releasable by `KMODCOV_FREE`, and
 `KMODCOV_BIG_ALLOC`'s by `KMODCOV_BIG_FREE` — a mismatched pair corrupts rather
 than fails. `KMODCOV_MKDIR` returns `0`, `-EEXIST` or another negative errno;
-`KMODCOV_FILE_WRITE` returns the bytes written or a negative errno.
+`KMODCOV_FILE_WRITE` returns the bytes written or a negative errno, and
+`KMODCOV_FILE_READ` the bytes read (`0` at the end of the file) or a
+negative errno.
 
 A reader writes one of these for a distribution kernel whose version number
 lies about its APIs, or to replace an untested arm that misbehaves:

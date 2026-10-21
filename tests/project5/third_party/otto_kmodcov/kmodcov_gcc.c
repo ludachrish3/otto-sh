@@ -3,7 +3,8 @@
  * Vendored from Linux v6.8 kernel/gcov/ for otto_kmodcov. Changed from the
  * original: the include name; the counter table below; every allocation,
  * free and within-module check routed through the KMODCOV_ macros in
- * kmodcov_compat.h, so a build may replace them; and store_gcov_u32()/
+ * kmodcov_compat.h, so a build may replace them; gcov_info_import(), the
+ * reader of what convert_to_gcda() writes, after it; and store_gcov_u32()/
  * store_gcov_u64() at the end of the file, vendored verbatim from
  * kernel/gcov/base.c — convert_to_gcda() calls them, but upstream they live
  * in base.c, which is not vendored (see their own comment).
@@ -457,6 +458,89 @@ size_t convert_to_gcda(char *buffer, struct gcov_info *info)
 	}
 
 	return pos;
+}
+
+/*
+ * One pass of gcov_info_import() over the image convert_to_gcda() above
+ * writes: the header (magic, version, stamp and, from gcc 12, the unit
+ * checksum word, written as zero and not compared), then per function its
+ * record and one counter record per active counter type. Lengths count
+ * GCOV_UNIT_SIZE-byte units: words before gcc 12, bytes from 12. With ADD
+ * false nothing is written; with ADD true the counters are added into
+ * INFO, which only a pass that returned 0 may be followed by.
+ */
+static int gcov_import_pass(struct gcov_info *info, struct kmodcov_gcda *g, bool add)
+{
+	struct gcov_fn_info *fi_ptr;
+	struct gcov_ctr_info *ci_ptr;
+	unsigned int fi_idx, ct_idx, cv_idx;
+	size_t unit = 4 / GCOV_UNIT_SIZE, bytes;
+	u32 magic, version, stamp;
+	/* Read within a record already bounded by the file; zero for older gcc's flow analysis. */
+	u32 ident = 0, lineno_checksum = 0, cfg_checksum = 0;
+	int err;
+
+	g->pos = 0;
+	if (!kmodcov_gcda_u32(g, &magic) || magic != GCOV_DATA_MAGIC)
+		return KMODCOV_GCDA_BAD(g, "not a .gcda file");
+	if (!kmodcov_gcda_u32(g, &version) || !kmodcov_gcda_u32(g, &stamp))
+		return KMODCOV_GCDA_BAD(g, "truncated in the header");
+	if (version != info->version)
+		return KMODCOV_GCDA_BAD(g, "gcov version %#x, not this object's %#x", version,
+					info->version);
+	if (stamp != info->stamp)
+		return KMODCOV_GCDA_BAD(g, "stamp %#x, not this object's %#x", stamp, info->stamp);
+#if (__GNUC__ >= 12)
+	if (!kmodcov_gcda_u32(g, &magic))
+		return KMODCOV_GCDA_BAD(g, "truncated in the header");
+#endif
+	for (fi_idx = 0; fi_idx < info->n_functions; fi_idx++) {
+		fi_ptr = info->functions[fi_idx];
+		err = kmodcov_gcda_record(g, GCOV_TAG_FUNCTION, unit, &bytes);
+		if (err)
+			return err;
+		if (bytes != GCOV_TAG_FUNCTION_LENGTH * 4)
+			return KMODCOV_GCDA_BAD(g, "function %u: a record of %zu bytes", fi_idx, bytes);
+		kmodcov_gcda_u32(g, &ident);
+		kmodcov_gcda_u32(g, &lineno_checksum);
+		kmodcov_gcda_u32(g, &cfg_checksum);
+		if (ident != fi_ptr->ident)
+			return KMODCOV_GCDA_BAD(g, "function %u: ident %#x, not %#x", fi_idx, ident,
+						fi_ptr->ident);
+		if (lineno_checksum != fi_ptr->lineno_checksum ||
+		    cfg_checksum != fi_ptr->cfg_checksum)
+			return KMODCOV_GCDA_BAD(g, "function %u: checksums differ", fi_idx);
+		ci_ptr = fi_ptr->ctrs;
+		for (ct_idx = 0; ct_idx < GCOV_COUNTERS; ct_idx++) {
+			if (!counter_active(info, ct_idx))
+				continue;
+			err = kmodcov_gcda_record(g, GCOV_TAG_FOR_COUNTER(ct_idx), unit, &bytes);
+			if (err)
+				return err;
+			if (bytes != (size_t)ci_ptr->num * 8)
+				return KMODCOV_GCDA_BAD(g, "function %u: %zu counter bytes, not %zu",
+							fi_idx, bytes, (size_t)ci_ptr->num * 8);
+			for (cv_idx = 0; cv_idx < ci_ptr->num; cv_idx++) {
+				u64 v = kmodcov_gcda_u64(g);
+
+				if (add)
+					ci_ptr->values[cv_idx] += (gcov_type)v;
+			}
+			ci_ptr++;
+		}
+	}
+	if (g->pos != g->len)
+		return KMODCOV_GCDA_BAD(g, "%zu bytes past the last function", g->len - g->pos);
+	return 0;
+}
+
+int gcov_info_import(struct gcov_info *acc, const char *buf, size_t len, char *why,
+		     size_t why_len)
+{
+	struct kmodcov_gcda g = { .buf = buf, .len = len, .why = why, .why_len = why_len };
+	int err = gcov_import_pass(acc, &g, false);
+
+	return err ? err : gcov_import_pass(acc, &g, true);
 }
 
 /*

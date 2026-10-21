@@ -259,6 +259,33 @@ static inline ssize_t kmodcov_compat_file_write(struct file *file, const char *b
 #endif
 #endif
 
+/*
+ * KMODCOV_FILE_READ(file, buf, len, ppos): read up to LEN bytes into a kernel
+ * buffer from *PPOS, advancing it; the bytes read (0 at end of file) or a
+ * negative errno — the contract kernel_read() has had since 4.14.
+ */
+#ifndef KMODCOV_FILE_READ
+#define KMODCOV_FILE_READ(file, buf, len, ppos) \
+	kmodcov_compat_file_read((file), (buf), (len), (ppos))
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 14, 0)
+static inline ssize_t kmodcov_compat_file_read(struct file *file, char *buf, size_t len,
+					     loff_t *ppos)
+{
+	int r = kernel_read(file, *ppos, buf, len); /* the offset by value */
+
+	if (r > 0)
+		*ppos += r;
+	return r;
+}
+#else
+static inline ssize_t kmodcov_compat_file_read(struct file *file, char *buf, size_t len,
+					     loff_t *ppos)
+{
+	return kernel_read(file, buf, len, ppos);
+}
+#endif
+#endif
+
 /* KMODCOV_WITHIN_MODULE(addr, mod): true when ADDR lies in MOD's core or init range. */
 #ifndef KMODCOV_WITHIN_MODULE
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3, 17, 0)
@@ -269,7 +296,13 @@ static inline ssize_t kmodcov_compat_file_write(struct file *file, const char *b
 #endif
 #endif
 
-/* ---- list helpers the vendored clang backend uses ---------------------- */
+/* ---- printk and list helpers older kernels lack ------------------------ */
+
+#ifndef pr_warn /* 2.6.37; pr_warning, its older name, is gone since 5.5 */
+#define pr_warn pr_warning
+#endif
+
+/* The list helpers the vendored clang backend uses. */
 
 #ifndef list_first_entry_or_null /* 3.10 */
 #define list_first_entry_or_null(ptr, type, member)                            \

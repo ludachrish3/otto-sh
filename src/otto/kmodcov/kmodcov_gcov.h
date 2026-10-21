@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Vendored from Linux v6.8 kernel/gcov/ for otto_kmodcov; unchanged apart from
- * the include name, the otto_kmodcov block at the end, and the kmodcov_compat.h
- * include, which carries every kernel-facing name the library uses so a
- * build may replace one.
+ * the include name, the otto_kmodcov block at the end (and the <linux/string.h>
+ * include it needs), and the kmodcov_compat.h include, which carries every
+ * kernel-facing name the library uses so a build may replace one.
  *
  *  Profiling infrastructure declarations.
  *
@@ -21,6 +21,7 @@
 #define GCOV_H GCOV_H
 
 #include <linux/module.h>
+#include <linux/string.h>
 #include <linux/types.h>
 #include "kmodcov_compat.h"
 
@@ -90,7 +91,8 @@ extern struct mutex gcov_lock;
 
 /*
  * otto_kmodcov's additions to the vendored interface: the one call a backend
- * makes into kmodcov.c, and the two hooks each backend implements for it.
+ * makes into kmodcov.c, the three hooks each backend implements for it, and
+ * the bounded .gcda reader both backends' import uses.
  */
 
 /*
@@ -118,5 +120,71 @@ bool gcov_info_built_by_this_compiler(struct gcov_info *info, const char *mod,
  * live gcov_info is the consumer's static data (gcc).
  */
 void gcov_info_forget(struct gcov_info *info);
+
+/*
+ * Add the counters of the .gcda image BUF (LEN bytes) into the accumulator
+ * *acc — an image this backend's convert_to_gcda() wrote for the same
+ * object in an earlier load. The whole image is checked against *acc
+ * first: magic, version, stamp, every function's ident and checksums, and
+ * every record's length bounded by LEN and equal to what *acc holds. Only a
+ * fully valid image is added; on any mismatch *acc is untouched, the return
+ * is -EINVAL and WHY (WHY_LEN bytes) names the reason.
+ */
+int gcov_info_import(struct gcov_info *acc, const char *buf, size_t len, char *why,
+		     size_t why_len);
+
+/*
+ * A bounded reader over a .gcda image, for the two backends' import:
+ * nothing it returns lies past LEN.
+ */
+struct kmodcov_gcda {
+	const char *buf;
+	size_t len, pos;
+	char *why;
+	size_t why_len;
+};
+
+/* Name the mismatch in g->why; evaluates to -EINVAL. */
+#define KMODCOV_GCDA_BAD(g, ...) (snprintf((g)->why, (g)->why_len, __VA_ARGS__), -EINVAL)
+
+static inline bool kmodcov_gcda_u32(struct kmodcov_gcda *g, u32 *v)
+{
+	if (g->len - g->pos < sizeof(*v))
+		return false;
+	memcpy(v, g->buf + g->pos, sizeof(*v));
+	g->pos += sizeof(*v);
+	return true;
+}
+
+/* The two words store_gcov_u64() wrote; the caller has bounded the record. */
+static inline u64 kmodcov_gcda_u64(struct kmodcov_gcda *g)
+{
+	u32 lo = 0, hi = 0;
+
+	kmodcov_gcda_u32(g, &lo);
+	kmodcov_gcda_u32(g, &hi);
+	return ((u64)hi << 32) | lo;
+}
+
+/*
+ * A record's tag and length: 0 with the payload's size in *BYTES when the
+ * tag is TAG and the payload fits in what is left, else -EINVAL. UNIT is
+ * how many bytes one unit of the length word stands for (4 when lengths
+ * count words, 1 when they count bytes).
+ */
+static inline int kmodcov_gcda_record(struct kmodcov_gcda *g, u32 tag, size_t unit, size_t *bytes)
+{
+	size_t at = g->pos;
+	u32 t, length;
+
+	if (!kmodcov_gcda_u32(g, &t) || !kmodcov_gcda_u32(g, &length))
+		return KMODCOV_GCDA_BAD(g, "truncated at byte %zu", at);
+	if (t != tag)
+		return KMODCOV_GCDA_BAD(g, "byte %zu: tag %#x, expected %#x", at, t, tag);
+	if (length > (g->len - g->pos) / unit)
+		return KMODCOV_GCDA_BAD(g, "the record at byte %zu overruns the file", at);
+	*bytes = (size_t)length * unit;
+	return 0;
+}
 
 #endif /* GCOV_H */

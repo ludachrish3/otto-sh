@@ -65,6 +65,7 @@ OVERRIDE_NAMES = (
     "KMODCOV_SYSFS_GROUP_REMOVE",
     "KMODCOV_MKDIR",
     "KMODCOV_FILE_WRITE",
+    "KMODCOV_FILE_READ",
     "KMODCOV_WITHIN_MODULE",
 )
 
@@ -106,6 +107,7 @@ BARE_KERNEL_CALLS = (
     "sysfs_remove_group(",
     "within_module(",
     "kernel_write(",
+    "kernel_read(",
     "kern_path_create(",
     "done_path_create(",
     "vfs_mkdir(",

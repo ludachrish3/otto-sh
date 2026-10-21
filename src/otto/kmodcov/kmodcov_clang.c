@@ -5,7 +5,8 @@
  * window under a lock of its own and hands the finished gcov_info to
  * kmodcov_ctor_info() instead of the in-kernel gcov's list, lock and event
  * (otto_kmodcov keeps its own per-client list in kmodcov.c); local
- * prototypes for the llvm_* entry points; the two backend hooks
+ * prototypes for the llvm_* entry points; gcov_info_import(), the reader of
+ * what convert_to_gcda() writes, after it; the two other backend hooks
  * kmodcov_gcov.h declares, at the end of the file; every allocation, free,
  * lock and within-module check routed through the KMODCOV_ macros in
  * kmodcov_compat.h, so a build may replace them; the dropped
@@ -429,6 +430,77 @@ size_t convert_to_gcda(char *buffer, struct gcov_info *info)
 	}
 
 	return pos;
+}
+
+/*
+ * One pass of gcov_info_import() over the image convert_to_gcda() above
+ * writes: the three header words (magic, version, and the unit checksum
+ * that is clang's stamp), then per function its record and its one counter
+ * record, every length in words. With ADD false nothing is written; with
+ * ADD true the counters are added into INFO, which only a pass that
+ * returned 0 may be followed by.
+ */
+static int gcov_import_pass(struct gcov_info *info, struct kmodcov_gcda *g, bool add)
+{
+	struct gcov_fn_info *fn;
+	unsigned int fn_idx = 0;
+	size_t bytes;
+	u32 magic, version, checksum, i;
+	/* Read within a record already bounded by the file; zero for older gcc's flow analysis. */
+	u32 ident = 0, func_checksum = 0, cfg_checksum = 0;
+	int err;
+
+	g->pos = 0;
+	if (!kmodcov_gcda_u32(g, &magic) || magic != GCOV_DATA_MAGIC)
+		return KMODCOV_GCDA_BAD(g, "not a .gcda file");
+	if (!kmodcov_gcda_u32(g, &version) || !kmodcov_gcda_u32(g, &checksum))
+		return KMODCOV_GCDA_BAD(g, "truncated in the header");
+	if (version != info->version)
+		return KMODCOV_GCDA_BAD(g, "gcov version %#x, not this object's %#x", version,
+					info->version);
+	if (checksum != info->checksum)
+		return KMODCOV_GCDA_BAD(g, "stamp %#x, not this object's %#x", checksum,
+					info->checksum);
+	list_for_each_entry(fn, &info->functions, head) {
+		err = kmodcov_gcda_record(g, GCOV_TAG_FUNCTION, 4, &bytes);
+		if (err)
+			return err;
+		if (bytes != 3 * 4)
+			return KMODCOV_GCDA_BAD(g, "function %u: a record of %zu bytes", fn_idx, bytes);
+		kmodcov_gcda_u32(g, &ident);
+		kmodcov_gcda_u32(g, &func_checksum);
+		kmodcov_gcda_u32(g, &cfg_checksum);
+		if (ident != fn->ident)
+			return KMODCOV_GCDA_BAD(g, "function %u: ident %#x, not %#x", fn_idx, ident,
+						fn->ident);
+		if (func_checksum != fn->checksum || cfg_checksum != fn->cfg_checksum)
+			return KMODCOV_GCDA_BAD(g, "function %u: checksums differ", fn_idx);
+		err = kmodcov_gcda_record(g, GCOV_TAG_COUNTER_BASE, 4, &bytes);
+		if (err)
+			return err;
+		if (bytes != (size_t)fn->num_counters * 8)
+			return KMODCOV_GCDA_BAD(g, "function %u: %zu counter bytes, not %zu", fn_idx,
+						bytes, (size_t)fn->num_counters * 8);
+		for (i = 0; i < fn->num_counters; i++) {
+			u64 v = kmodcov_gcda_u64(g);
+
+			if (add)
+				fn->counters[i] += v;
+		}
+		fn_idx++;
+	}
+	if (g->pos != g->len)
+		return KMODCOV_GCDA_BAD(g, "%zu bytes past the last function", g->len - g->pos);
+	return 0;
+}
+
+int gcov_info_import(struct gcov_info *acc, const char *buf, size_t len, char *why,
+		     size_t why_len)
+{
+	struct kmodcov_gcda g = { .buf = buf, .len = len, .why = why, .why_len = why_len };
+	int err = gcov_import_pass(acc, &g, false);
+
+	return err ? err : gcov_import_pass(acc, &g, true);
 }
 
 /*

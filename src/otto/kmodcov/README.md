@@ -6,7 +6,8 @@ on a stock kernel built without `CONFIG_GCOV_KERNEL` or
 provides the runtime symbols those constructors and objects reference (gcc's
 `__gcov_*` or clang's `llvm_gcov_*`/`llvm_gcda_*`, whichever compiler built
 the library), keeps an accumulator per instrumented object (a dump never
-double counts, and two dumps of the same run add correctly), and exposes two
+double counts, two dumps of one load add correctly, and each load adds its
+counts to the `.gcda` the earlier loads left), and exposes two
 sysfs control files, `dump` and `reset`, per registered module. It builds
 with any gcc from 4.7 to 15, or clang 11 and newer. It builds against every
 kernel from 2.6.32 on, proven through 6.17. The 2.6.39 to 3.5 window builds
@@ -30,7 +31,7 @@ layout, the `cov_dir` parameter and the consumer macros below all move
 together with it, and otto refuses to load a `.ko` whose `n` does not match
 its own. A `kmodcov_local.h` beside the sources, never exported nor compared,
 lets a build replace, one name at a time, any of the kernel-facing names
-`kmodcov_compat.h` isolates for it — mkdir, file write, the module-address
+`kmodcov_compat.h` isolates for it — mkdir, file read and write, the module-address
 range, allocation, the lock and the sysfs control files — the same header
 that holds the kernel version ladder; the supported range, the full name
 list and the override contract are on the kernel-modules guide page's
@@ -66,8 +67,13 @@ A consumer becomes coverage-instrumented in three steps:
    The worked consumer below shows the shape.
 
 Once registered, a write to `/sys/module/<module>/kmodcov/dump` writes each
-instrumented object's `.gcda` file under the module's `cov_dir` parameter; a
-write to `.../reset` zeroes the accumulated counters. The two files are
+instrumented object's `.gcda` file under the module's `cov_dir` parameter,
+first adding in the counts an earlier load left in that file; a write to
+`.../reset` zeroes the accumulated counters and stops that seed for the
+rest of the load. How a file that does not match, or cannot be read, is
+handled is on the kernel-modules guide page's
+[Counts across loads](../../../docs/cli/cov/instrumenting/kernel-modules.md#counts-across-loads)
+section. The two files are
 sysfs, beside the `parameters/` directory the loader gives every module, so
 no `CONFIG_DEBUG_FS` is needed. The exit routine's own coverage is captured
 by the dump `KMODCOV_EXIT()` performs on unregister.
