@@ -1,13 +1,13 @@
-#include <cstdio>
+#include <gtest/gtest.h>
 
 #include "core.h"
 
-int main()
+TEST(CoreScale, TriplesItsArgument)
 {
-    if (core_scale(2) != 6) {
-        std::puts("FAIL: core_scale(2) != 6");
-        return 1;
-    }
-    std::puts("ok");
-    return 0;
+    EXPECT_EQ(core_scale(2), 6);
+}
+
+TEST(CoreScale, KeepsZero)
+{
+    EXPECT_EQ(core_scale(0), 0);
 }

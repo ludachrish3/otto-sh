@@ -316,6 +316,11 @@ Each view needs its **own** build directory — `.gcno` files sit beside the
 objects they describe, so two views built from one tree cannot be told apart.
 {doc}`../cli/cov/tiers` has the rule and the rest of the tier model.
 
+The sweep reads the counters with the tools the build's own stamps choose,
+the same rule as for a product's counters; a tier that needs another reader,
+`lcov` or extra `lcov` arguments names them in its own `toolchain` sub-table
+({ref}`coverage-unit-toolchain`).
+
 ## Next
 
 {doc}`../cli/cov/index` is the command reference for the whole workflow:

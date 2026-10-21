@@ -7,7 +7,7 @@ from otto.coverage.errors import CoverageDataMismatchError, PairingError
 from otto.coverage.objects import ObjectList, Unavailable
 from otto.coverage.pairing import GcnoIndex, pair_product
 
-NONE = Unavailable(product="app", reason="test")
+NONE = Unavailable(product="app", reason="test", kind="missing")
 
 
 def _write(path: Path, magic: bytes, stamp: int, extra: bytes = b"") -> Path:
@@ -52,6 +52,21 @@ def test_incompatible_local_notes_is_a_mismatch_not_a_search(tmp_path):
     index = GcnoIndex(root)
     with pytest.raises(CoverageDataMismatchError, match="stamp mismatch"):
         pair_product(pdir, _objects(str(obj)), index, label="h/app")
+    assert index.walks == 0
+
+
+def test_relative_object_is_anchored_at_the_root_not_the_cwd(tmp_path, monkeypatch):
+    root = tmp_path / "proj"
+    notes = _gcno(root / "build/src/main.cpp.gcno", 9)  # rebuilt since the binary
+    pdir = tmp_path / "cov/h/app"
+    _gcda(pdir, "build/src/main.cpp", 1)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    index = GcnoIndex(root)
+    with pytest.raises(CoverageDataMismatchError, match="stamp mismatch") as ei:
+        pair_product(pdir, _objects("build/src/main.cpp"), index, label="h/app")
+    assert str(notes) in str(ei.value)
     assert index.walks == 0
 
 

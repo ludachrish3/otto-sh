@@ -378,6 +378,91 @@ class TestCovReportMergeErrors:
 # ── report command — success ─────────────────────────────────────────────────
 
 
+class TestCovReportUnitRefusals:
+    def test_a_stopped_reference_image_exits_2_naming_the_container(self, tmp_path, monkeypatch):
+        from otto.coverage.tiers import load_tiers
+        from tests.unit.cov._unit_lab import ContainerHost, install_lab, reference_image, unit_build
+
+        project = tmp_path / "sut"
+        unit_build(project / "build/tests", project, ["src/core/add.c"])
+        install_lab(monkeypatch, [ContainerHost("h1", [reference_image()], running=False)])
+        tiers = load_tiers(
+            {"tiers": {"unit": {"kind": "unit", "precedence": 1, "harvest_dirs": ["build/tests"]}}}
+        )
+        inputs = ReportInputs(project_root=project, project_name="proj", tier_configs=tiers)
+        with patch("otto.coverage.report_inputs.resolve_report_inputs", return_value=inputs):
+            result = runner.invoke(cov_app, ["report", "--dir", str(tmp_path / "report")])
+
+        assert result.exit_code == 2, result.output
+        out = _flat(result.output)
+        assert "Traceback" not in result.output
+        assert "product 'img' reads its object list from container 'img-c'" in out
+        assert "which is not running" in out
+
+    @staticmethod
+    def _unit_report(tmp_path, monkeypatch, toolchain):
+        import subprocess
+
+        from otto.coverage.tiers import load_tiers
+        from tests._fixtures.gitrepo import git_env
+        from tests.unit.cov._unit_lab import own_files, stub_unit_tools, unit_build
+
+        bin_dir = stub_unit_tools(monkeypatch, tmp_path / "stub-bin")
+        project = tmp_path / "sut"
+        project.mkdir()
+        for args in (["init", "-q"], ["commit", "-q", "--allow-empty", "-m", "init"]):
+            subprocess.run(
+                ["git", *args], cwd=project, check=True, capture_output=True, env=git_env(tmp_path)
+            )
+        own_files(monkeypatch, project, ["src/core/add.c"])
+        unit_build(project / "build/tests", project, ["src/core/add.c"])
+        tier = {"kind": "unit", "precedence": 1, "harvest_dirs": ["build/tests"]}
+        if toolchain is not None:
+            tier["toolchain"] = toolchain
+        inputs = ReportInputs(
+            project_root=project,
+            project_name="proj",
+            tier_configs=load_tiers({"tiers": {"unit": tier}}),
+        )
+        with patch("otto.coverage.report_inputs.resolve_report_inputs", return_value=inputs):
+            result = runner.invoke(cov_app, ["report", "--dir", str(tmp_path / "report")])
+        return result, bin_dir
+
+    def test_a_missing_configured_tool_exits_2_naming_the_setting(self, tmp_path, monkeypatch):
+        result, _ = self._unit_report(tmp_path, monkeypatch, {"coverage_tool": "no-such-reader"})
+
+        assert result.exit_code == 2, result.output
+        assert "Traceback" not in result.output
+        assert "coverage.tiers.unit.toolchain.coverage_tool = 'no-such-reader'" in _flat(
+            result.output
+        )
+        assert not (tmp_path / "report").exists()
+
+    def test_a_missing_default_tool_exits_1_naming_the_setting(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("otto.host.toolchain_discovery.system_gcov_major", lambda: 13)
+        monkeypatch.setattr("shutil.which", _which_but("lcov"))
+        with patch.object(cov_module.logger, "error") as mock_err:
+            result, _ = self._unit_report(tmp_path, monkeypatch, None)
+
+        assert result.exit_code == 1, result.output
+        assert "Traceback" not in result.output
+        message = mock_err.call_args[0][0]
+        assert "needs `lcov`, but no `lcov` is on PATH" in message
+        assert "`coverage.tiers.unit.toolchain.lcov`" in message
+        assert not (tmp_path / "report").exists()
+
+
+def _which_but(missing: str):
+    import shutil
+
+    real = shutil.which
+
+    def which(cmd, *args, **kwargs):
+        return None if cmd == missing else real(cmd, *args, **kwargs)
+
+    return which
+
+
 class TestCovReportSuccess:
     @pytest.fixture
     def cov_tree(self, tmp_path):

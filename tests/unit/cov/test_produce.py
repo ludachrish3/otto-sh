@@ -255,3 +255,25 @@ async def test_produce_keeps_a_recorded_gcov_over_the_stamp(
     (toolchain,) = seen
     assert toolchain is not None
     assert toolchain.gcov_bin == "/opt/cross/gcov"
+
+
+@pytest.mark.asyncio
+async def test_the_mergers_wrapper_dir_is_removed_when_production_ends(
+    tmp_path: Path, git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cov_dir = tmp_path / "out" / "cov"
+    _counters(cov_dir / "host1" / "app", git_repo)
+    _write_meta(cov_dir, git_repo)
+    made: list[Path] = []
+
+    async def capture_pairs(self, pairs, staging, output, toolchain=None):
+        made.append(self._wrapper_dir())  # what an llvm-cov reader would create
+        output.write_text(f"TN:\nSF:{git_repo / 'f.c'}\nDA:1,3\nend_of_record\n")
+        return output
+
+    monkeypatch.setattr(produce_mod.LcovMerger, "capture_pairs", capture_pairs)
+
+    await produce_captures(cov_dir, tier="system", project_root=git_repo, labs=[], products={})
+
+    assert len(made) == 1
+    assert not made[0].exists()

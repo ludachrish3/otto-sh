@@ -273,17 +273,19 @@ async def test_bare_tier_system_is_refused(tmp_path):
 @pytest.mark.asyncio
 async def test_unit_harvest_uses_capture_dir(tmp_path, monkeypatch):
     from otto.coverage.merge import merger as merger_mod
+    from tests.unit.cov._unit_lab import own_files, stub_unit_tools, unit_build
 
+    stub_unit_tools(monkeypatch, tmp_path / "stub-bin")
     project = tmp_path / "proj"
     project.mkdir()
+    own_files(monkeypatch, project, ["f.c"])
     hdir = tmp_path / "unit_build"
-    hdir.mkdir()
-    (hdir / "f.gcda").write_bytes(b"")
+    unit_build(hdir, project, ["f.c"])
     seen: list[dict] = []
 
     async def fake_capture_dir(self, directory, output, toolchain=None, includes=None):
         seen.append({"directory": directory, "includes": includes})
-        output.write_text("")
+        output.write_text(f"TN:\nSF:{project / 'f.c'}\nDA:1,1\nend_of_record\n")
         return output
 
     monkeypatch.setattr(merger_mod.LcovMerger, "capture_dir", fake_capture_dir)
@@ -292,10 +294,12 @@ async def test_unit_harvest_uses_capture_dir(tmp_path, monkeypatch):
     await run_coverage_report(
         [],
         tmp_path / "report",
-        ReportInputs(project_root=project, tier_configs=load_tiers(cov_config)),
+        ReportInputs(
+            project_root=project, project_name="proj", tier_configs=load_tiers(cov_config)
+        ),
     )
 
-    assert seen == [{"directory": hdir, "includes": None}]
+    assert seen == [{"directory": hdir, "includes": ["*/f.c"]}]
 
 
 def test_an_unresolved_source_is_warned_once_by_the_resolver(tmp_path, caplog):

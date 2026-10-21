@@ -20,9 +20,11 @@ import pytest
 
 from otto.host.errors import CoverageToolMissingError
 from otto.host.toolchain_discovery import (
+    StampSubject,
     discover_toolchain_from_gcda,
     discover_toolchain_from_gcno,
     ensure_gcov_tool,
+    gcov_for_stamp,
     gcov_stamp_major,
     read_gcno_version,
     read_gcov_version,
@@ -200,6 +202,24 @@ class TestEnsureGcovTool:
         wrapped = ensure_gcov_tool("/usr/bin/llvm-cov", tmp_path / "deep" / "dir")
         assert Path(wrapped).exists()
 
+    def test_each_wrapped_executable_gets_its_own_wrapper(self, tmp_path):
+        """Two readers in one report each run their own: the wrapper is keyed by its target."""
+        first = ensure_gcov_tool("/usr/lib/llvm-17/bin/llvm-cov", tmp_path)
+        second = ensure_gcov_tool("/usr/lib/llvm-18/bin/llvm-cov", tmp_path)
+        assert first != second
+        assert "llvm-17" in Path(first).read_text()
+        assert "llvm-18" in Path(second).read_text()
+
+    def test_a_wrapper_whose_target_differs_is_rewritten(self, tmp_path):
+        wrapped = Path(ensure_gcov_tool("/usr/bin/llvm-cov", tmp_path))
+        wrapped.write_text('#!/bin/sh\nexec /elsewhere/llvm-cov gcov "$@"\n')
+        assert Path(ensure_gcov_tool("/usr/bin/llvm-cov", tmp_path)) == wrapped
+        assert "/usr/bin/llvm-cov gcov" in wrapped.read_text()
+
+    def test_the_wrapped_target_is_quoted(self, tmp_path):
+        wrapped = ensure_gcov_tool("/opt/llvm 18/bin/llvm-cov", tmp_path)
+        assert "exec '/opt/llvm 18/bin/llvm-cov' gcov \"$@\"" in Path(wrapped).read_text()
+
 
 class TestReadGcovVersion:
     """One reader for both file kinds: the stamp sits at the same offset."""
@@ -356,7 +376,12 @@ class TestDiscoverToolchainFromGcda:
         with caplog.at_level(logging.WARNING):
             assert discover_toolchain_from_gcda(d, system_major=13) is None
 
-        assert any("407*" in r.message and str(d) in r.message for r in caplog.records)
+        assert [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING] == [
+            (
+                f"{d}: gcov stamp '407*' (from main.gcda) decodes to no GCC major; "
+                "using the default gcov"
+            )
+        ]
 
     def test_no_readable_gcda_is_none_without_a_warning(self, tmp_path, caplog):
         d = tmp_path / "cov" / "test1" / "app"
@@ -431,3 +456,55 @@ class TestDiscoverToolchainFromGcda:
 
         assert tc is not None
         assert tc.lcov_bin == str(lcov)
+
+
+_UNIT = StampSubject(
+    name="unit tier unit/app (directory /p/build/app-tests)",
+    log="unit unit/app",
+    remedy="set `coverage.tiers.unit.toolchain.coverage_tool`",
+    where=Path("/p/build/app-tests"),
+)
+
+
+class TestGcovForStampSubject:
+    """The stamp rule names whatever subject its caller gives it, and that subject's remedy."""
+
+    def test_a_missing_major_names_the_unit_subject_and_no_host(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PATH", str(tmp_path / "emptybin"))
+
+        with pytest.raises(CoverageToolMissingError) as info:
+            gcov_for_stamp("B24*", tmp_path / "a.gcno", system_major=13, subject=_UNIT)
+
+        message = str(info.value)
+        assert message == (
+            "Coverage data for unit tier unit/app (directory /p/build/app-tests) was written by "
+            "gcc 12 (gcov stamp 'B24*') and needs `gcov-12` to read it, but no `gcov-12` is on "
+            "PATH. Install it (`apt install gcc-12`), or set "
+            "`coverage.tiers.unit.toolchain.coverage_tool`."
+        )
+        assert "host" not in message
+
+    def test_a_missing_llvm_cov_names_the_unit_subject(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("PATH", str(tmp_path / "emptybin"))
+
+        with pytest.raises(CoverageToolMissingError, match="unit tier unit/app") as info:
+            gcov_for_stamp("408*", tmp_path / "a.gcno", system_major=13, subject=_UNIT)
+
+        assert "`coverage.tiers.unit.toolchain.coverage_tool`" in str(info.value)
+        assert "host" not in str(info.value)
+
+    def test_the_chosen_tool_is_logged_under_the_subject(self, tmp_path, monkeypatch, caplog):
+        gcov_12 = _fake_llvm_cov(tmp_path / "bin", "gcov-12")
+        monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+
+        with caplog.at_level(logging.INFO, logger="otto.host.toolchain_discovery"):
+            got = gcov_for_stamp("B24*", tmp_path / "a.gcno", system_major=13, subject=_UNIT)
+
+        assert got == gcov_12
+        assert [r.message for r in caplog.records] == [
+            f"unit unit/app: gcov stamp 'B24*' is gcc 12's; reading counters with {gcov_12}"
+        ]
+
+    def test_the_system_major_and_an_undecodable_stamp_mean_the_default(self, tmp_path):
+        assert gcov_for_stamp("B33*", tmp_path / "a", system_major=13, subject=_UNIT) is None
+        assert gcov_for_stamp("407*", tmp_path / "a", system_major=13, subject=_UNIT) is None

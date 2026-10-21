@@ -22,7 +22,9 @@ class ReportInputs:
     """What ``[coverage]`` says about a report; all-default is the git-less path.
 
     ``project_root`` is the first ``[coverage]``-declaring project's ``root``
-    (:func:`otto.config.coverage_settings.get_cov_project`); ``tier_configs`` is
+    (:func:`otto.config.coverage_settings.get_cov_project`) and ``project_name``
+    its name: a unit tier reports the sources of that project's products
+    only. ``tier_configs`` is
     that project's ``[coverage.tiers]``, parsed by
     :func:`otto.coverage.tiers.load_tiers`. With ``project_root`` ``None``,
     :func:`otto.coverage.reporter.run_coverage_report` reports tracefiles
@@ -56,6 +58,7 @@ class ReportInputs:
     """
 
     project_root: Path | None = None
+    project_name: str | None = None
     tier_configs: "list[TierConfig] | None" = None
     exclusion_rules: "list[ExclusionRule]" = dataclasses.field(default_factory=list)
     thresholds: "Thresholds | None" = None
@@ -90,6 +93,7 @@ def resolve_report_inputs(projects: "list[Project]") -> ReportInputs:
     tier_configs = load_tiers(cov_config)
     return ReportInputs(
         project_root=cov_project.root,
+        project_name=cov_project.name,
         tier_configs=tier_configs,
         exclusion_rules=load_exclusion_rules(cov_config),
         thresholds=load_report_thresholds(cov_config),

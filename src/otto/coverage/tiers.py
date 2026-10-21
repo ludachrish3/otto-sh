@@ -16,6 +16,19 @@ from .store.model import TIER_SYSTEM
 
 
 @dataclass(frozen=True)
+class TierToolchain:
+    """A unit tier's ``toolchain`` table, every value as written in the settings.
+
+    The unit preflight resolves each value (a ``PATH`` command or a path) and
+    overlays the set ones on what the build's stamps choose.
+    """
+
+    coverage_tool: str | None = None
+    lcov: str | None = None
+    lcov_args: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class TierConfig:
     """One declared coverage tier, ready for runtime use."""
 
@@ -26,11 +39,14 @@ class TierConfig:
     harvest_dirs: list[Path] = field(default_factory=list)
     max_age_days: int | None = None
     products: dict[str, list[Path]] = field(default_factory=dict)
+    toolchain: TierToolchain | None = None
+    """``unit``-kind only: the tier's own capture tools; ``None`` when no table is set."""
 
 
 def _tier_from_entry(name: str, entry: dict[str, Any]) -> TierConfig:
     kind = entry["kind"]
     max_age = entry.get("max_age")
+    toolchain = entry.get("toolchain")
     return TierConfig(
         name=name,
         kind=kind,
@@ -42,6 +58,13 @@ def _tier_from_entry(name: str, entry: dict[str, Any]) -> TierConfig:
             product: [Path(p) for p in dirs]
             for product, dirs in (entry.get("products") or {}).items()
         },
+        toolchain=None
+        if toolchain is None
+        else TierToolchain(
+            coverage_tool=toolchain.get("coverage_tool"),
+            lcov=toolchain.get("lcov"),
+            lcov_args=list(toolchain.get("lcov_args") or []),
+        ),
     )
 
 

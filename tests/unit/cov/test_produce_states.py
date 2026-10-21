@@ -200,7 +200,7 @@ async def test_a_products_object_list_is_read_from_its_definition(tmp_path, fake
     class _Cache:
         def read(self, product):
             reads.append(product)
-            return Unavailable(product="good", reason="test")
+            return Unavailable(product="good", reason="test", kind="missing")
 
     sentinel = object()
     await produce.produce_captures(
@@ -229,7 +229,7 @@ async def test_same_named_products_on_two_hosts_read_their_own_definitions(tmp_p
     class _Cache:
         def read(self, product):
             reads.append(product)
-            return Unavailable(product="good", reason="test")
+            return Unavailable(product="good", reason="test", kind="missing")
 
     on_h, on_h2 = object(), object()
     await produce.produce_captures(

@@ -55,3 +55,11 @@ hosts = "test1"
 [coverage.tiers.system]
 kind = "e2e"
 precedence = 1
+
+# The unit tier: build.sh runs the gtest unit tests once, so build/tests/unit
+# holds .gcda. Only the products' own sources count (the library's core.cpp,
+# through app's DT_NEEDED); the test file and gtest's headers are dropped.
+[coverage.tiers.unit]
+kind = "unit"
+precedence = 2
+harvest_dirs = ["build/tests/unit"]

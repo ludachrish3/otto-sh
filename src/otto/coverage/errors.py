@@ -22,21 +22,38 @@ class CoverageToolVersionError(OttoError, RuntimeError):
     build captured with the system gcov fails the same way.
     """
 
-    def __init__(self, detail: str) -> None:
-        """Frame *detail* (raw lcov/geninfo output) with the likely cause and remedy."""
+    def __init__(
+        self,
+        detail: str,
+        *,
+        setting: str = "the host toolchain's gcov",
+        subject: str = "the product",
+    ) -> None:
+        """Frame *detail* (raw lcov/geninfo output) with the likely cause and remedy.
+
+        *setting* is where the reader is named by hand: a host's
+        ``toolchain.gcov`` for a product, a unit tier's
+        ``coverage.tiers.<tier>.toolchain.coverage_tool`` for a unit capture.
+        *subject* is what was built: ``the product``, or a unit capture's
+        ``the tested code``.
+        """
         super().__init__(
             "The gcov tool cannot read this build's coverage data (geninfo "
-            "reports an incompatible GCC/GCOV version). If the product was "
+            f"reports an incompatible GCC/GCOV version). If {subject} was "
             "built with clang --coverage, capture needs `llvm-cov gcov`: "
-            "install llvm so otto can auto-discover it, or set the host "
-            "toolchain's gcov to an llvm-cov path. For a cross-GCC build, "
+            f"install llvm so otto can auto-discover it, or set {setting} "
+            "to an llvm-cov path. For a cross-GCC build, "
             "set it to the matching cross gcov instead.\n"
             f"Underlying output:\n{detail}"
         )
+        self.detail = detail
 
 
 class CoverageNotInstrumentedError(CoverageConfigError):
     """Coverage was requested but no product on any coverage host is instrumented.
+
+    The unit tier raises it too, before any capture of a report, when a unit
+    view selects no product or a product it filters by is not instrumented.
 
     Raised before anything runs, with the full per-product verdict listing in
     the message, so the run is never spent producing counters that do not

@@ -144,6 +144,13 @@ configured — the "Coverage toolchain" table in
 {doc}`../../configuration/lab-config` — and the per-compiler pages under
 {doc}`instrumenting/index` say what each build needs.
 
+A unit tier's build directories take the tier's own `toolchain` setting in
+place of the host record: its `coverage_tool` when set, else the same stamp
+rule as step 2, read from the notes (`.gcno`) of the directory's kept sources.
+There is no step 3: a directory with no readable stamp is read by `gcov` from
+`PATH`, and a stamp that decodes to no GCC major does so without a warning
+({ref}`coverage-unit-toolchain`).
+
 (coverage-configuration)=
 ## Configuration
 

@@ -53,6 +53,10 @@ class GcnoIndex:
         return self._by_name.get(stem_name, [])
 
 
+# directory + object name: a bare name never pairs by tail
+_MIN_TAIL = 2
+
+
 def _object_name(gcno: Path) -> str:
     name = gcno.name[: -len(".gcno")]
     return name.removeprefix(_TMP)
@@ -77,6 +81,39 @@ def _direct_notes(target: PurePosixPath) -> Path | None:
     for candidate in (Path(f"{target}.gcno"), Path(target.parent) / f"{_TMP}{target.name}.gcno"):
         if candidate.is_file():
             return candidate
+    return None
+
+
+def _anchored(path: PurePosixPath, root: Path) -> PurePosixPath:
+    """Anchor a relative object path at the project *root*, never at the process cwd."""
+    return path if path.is_absolute() else PurePosixPath(root.as_posix()) / path
+
+
+def notes_for_stem(stem: PurePosixPath, index: GcnoIndex) -> Path | None:
+    """Return the local notes file for an object stem, or ``None``.
+
+    ``<stem>.gcno`` when present, else the longest-tail match: several
+    equally good candidates count as one only when their bytes are identical.
+    A tail must span a directory and the object name — a bare name would pair
+    any same-named object in the tree.
+
+    A relative stem is project-relative: it is anchored at ``index.root``
+    first, never at the process's working directory.
+    """
+    stem = _anchored(stem, index.root)
+    direct = _direct_notes(stem)
+    if direct is not None:
+        return direct
+    candidates = index.candidates(stem.name)
+    if not candidates:
+        return None
+    scored = [(_common_tail(_notes_stem(c), stem.parts), c) for c in candidates]
+    best = max(score for score, _ in scored)
+    if best < _MIN_TAIL:
+        return None
+    winners = [c for score, c in scored if score == best]
+    if all(filecmp.cmp(winners[0], c, shallow=False) for c in winners[1:]):
+        return winners[0]
     return None
 
 
@@ -108,7 +145,7 @@ def pair_product(
                 )
             if listed:
                 target = listed[0]
-                direct = _direct_notes(target)
+                direct = _direct_notes(_anchored(target, index.root))
                 if direct is not None:
                     reason = incompatibility(gcda, direct)
                     if reason is not None:

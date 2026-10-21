@@ -15,6 +15,8 @@ coverage internals
    pairing
    merge
    sources
+   unit_filter
+   unit_toolchain
    fetcher
    instrumentation
    renderer

@@ -200,10 +200,12 @@ class TestExcludedLinesRoundTripThroughReporter:
         project.mkdir()
         (project / "f.c").write_text("int a;\nint b; // LCOV_EXCL_LINE\nint c;\n")
 
+        from tests.unit.cov._unit_lab import own_files, stub_unit_tools, unit_build
+
+        stub_unit_tools(monkeypatch, tmp_path / "stub-bin")
+        own_files(monkeypatch, project, ["f.c"])
         hdir = tmp_path / "unit_build"
-        hdir.mkdir()
-        (hdir / "f.gcda").write_bytes(b"")
-        (hdir / "f.gcno").write_bytes(b"")
+        unit_build(hdir, project, ["f.c"])
 
         async def fake_capture(self, directory, output, toolchain=None, includes=None):
             output.write_text(f"TN:\nSF:{project / 'f.c'}\nDA:1,7\nend_of_record\n")
@@ -216,7 +218,11 @@ class TestExcludedLinesRoundTripThroughReporter:
         }
         out = tmp_path / "report"
         store = await run_coverage_report(
-            [], out, ReportInputs(project_root=project, tier_configs=load_tiers(cov_config))
+            [],
+            out,
+            ReportInputs(
+                project_root=project, project_name="proj", tier_configs=load_tiers(cov_config)
+            ),
         )
 
         assert store is not None

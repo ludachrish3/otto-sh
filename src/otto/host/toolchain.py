@@ -18,6 +18,27 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+SHELL_METACHARACTERS = frozenset("|&;<>()$`\\\"'*?[]{}!#")
+"""Characters a shell gives a meaning to; ``~`` is not among them, since otto expands a
+leading one itself and a later one is literal."""
+
+
+def shell_unsafe(value: str) -> str | None:
+    """Return why *value* cannot reach lcov as one literal word, or ``None`` when it can.
+
+    lcov's ``geninfo`` runs the counter reader through a shell of its own, so
+    quoting by otto alone cannot make a path with white space, a control
+    character or a shell metacharacter work; such a value is refused instead.
+    """
+    if not value:
+        return "it is empty"
+    for c in value:
+        if c.isspace() or not c.isprintable():
+            return f"it contains white space or a control character ({c!r})"
+        if c in SHELL_METACHARACTERS:
+            return f"it contains the shell metacharacter {c!r}"
+    return None
+
 
 @dataclass(slots=True)
 class ToolchainTool:

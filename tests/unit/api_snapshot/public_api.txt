@@ -315,7 +315,7 @@ member	otto.coverage:CoverageStore.save	method	sync	PK:path:-
 abstract	otto.coverage:CoverageStore	-
 name	otto.coverage:CoverageToolVersionError	class
 mro	otto.coverage:CoverageToolVersionError	{otto.errors:OttoError} @builtin:builtins.RuntimeError @builtin:builtins.Exception @builtin:builtins.BaseException
-call	otto.coverage:CoverageToolVersionError	sync	PK:detail:-
+call	otto.coverage:CoverageToolVersionError	sync	PK:detail:- KO:setting:S:"the\u0020host\u0020toolchain's\u0020gcov" KO:subject:S:"the\u0020product"
 abstract	otto.coverage:CoverageToolVersionError	-
 name	otto.coverage:DestinationError	class
 mro	otto.coverage:DestinationError	{otto.errors:OttoError} @builtin:builtins.ValueError @builtin:builtins.Exception @builtin:builtins.BaseException
@@ -366,11 +366,12 @@ call	otto.coverage:PairingError	sync	PK:kind:- PK:message:-
 abstract	otto.coverage:PairingError	-
 name	otto.coverage:ReportInputs	class
 mro	otto.coverage:ReportInputs	-
-call	otto.coverage:ReportInputs	sync	PK:project_root:N PK:tier_configs:N PK:exclusion_rules:O PK:thresholds:N PK:ticket_spec:N PK:overrides:N
+call	otto.coverage:ReportInputs	sync	PK:project_root:N PK:project_name:N PK:tier_configs:N PK:exclusion_rules:O PK:thresholds:N PK:ticket_spec:N PK:overrides:N
 member	otto.coverage:ReportInputs.__eq__	method	sync	PK:other:-
 member	otto.coverage:ReportInputs.__hash__	method	sync	-
 member	otto.coverage:ReportInputs.exclusion_rules	field
 member	otto.coverage:ReportInputs.overrides	field
+member	otto.coverage:ReportInputs.project_name	field
 member	otto.coverage:ReportInputs.project_root	field
 member	otto.coverage:ReportInputs.thresholds	field
 member	otto.coverage:ReportInputs.ticket_spec	field
@@ -378,7 +379,7 @@ member	otto.coverage:ReportInputs.tier_configs	field
 abstract	otto.coverage:ReportInputs	-
 name	otto.coverage:TierConfig	class
 mro	otto.coverage:TierConfig	-
-call	otto.coverage:TierConfig	sync	PK:name:- PK:kind:- PK:precedence:- PK:color:- PK:harvest_dirs:O PK:max_age_days:N PK:products:O
+call	otto.coverage:TierConfig	sync	PK:name:- PK:kind:- PK:precedence:- PK:color:- PK:harvest_dirs:O PK:max_age_days:N PK:products:O PK:toolchain:N
 member	otto.coverage:TierConfig.__eq__	method	sync	PK:other:-
 member	otto.coverage:TierConfig.__hash__	method	sync	-
 member	otto.coverage:TierConfig.color	field
@@ -388,6 +389,7 @@ member	otto.coverage:TierConfig.max_age_days	field
 member	otto.coverage:TierConfig.name	field
 member	otto.coverage:TierConfig.precedence	field
 member	otto.coverage:TierConfig.products	field
+member	otto.coverage:TierConfig.toolchain	field
 abstract	otto.coverage:TierConfig	-
 name	otto.coverage:clean_coverage	function
 call	otto.coverage:clean_coverage	coroutine	PK:projects:N KO:host_ids:N KO:pairs:N

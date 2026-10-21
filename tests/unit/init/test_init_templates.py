@@ -16,6 +16,8 @@ from otto.init.templates import (
 )
 from otto.models.settings import (
     CoverageSettingsSpec,
+    CoverageTierSpec,
+    CoverageTierToolchainSpec,
     DependenciesSpec,
     DockerSettingsSpec,
     EnvSettingsSpec,
@@ -95,6 +97,15 @@ def test_template_mentions_every_fixed_section_field() -> None:
     for section, (spec, omitted) in _SECTION_SPECS.items():
         assert set(spec.model_fields) - set(data[section]) == omitted, section
         assert set(data[section]) <= set(spec.model_fields), section
+
+
+def test_template_shows_every_coverage_tier_field_and_the_unit_toolchain() -> None:
+    """One tier of each kind, so every tier field shows where it is legal; the unit tier
+    carries its own toolchain table with every field."""
+    tiers = _uncommented()["coverage"]["tiers"]
+    shown = set().union(*(set(tier) for tier in tiers.values()))
+    assert shown == set(CoverageTierSpec.model_fields)
+    assert set(tiers["unit"]["toolchain"]) == set(CoverageTierToolchainSpec.model_fields)
 
 
 def test_lab_template_parses_through_the_runtime_parsers_and_joins_its_siblings(tmp_path) -> None:

@@ -761,10 +761,12 @@ def test_post_run_coverage_populates_ticket_data_end_to_end(tmp_path, monkeypatc
     sut.write("f.c", "int a;\nint b;\n")
     sut.commit("fix PROJ-7")
 
+    from tests.unit.cov._unit_lab import own_files, stub_unit_tools, unit_build
+
+    stub_unit_tools(monkeypatch, tmp_path / "stub-bin")
+    own_files(monkeypatch, project_root, ["f.c"], owner="project")
     hdir = tmp_path / "unit_build"
-    hdir.mkdir()
-    (hdir / "f.gcda").write_bytes(b"")
-    (hdir / "f.gcno").write_bytes(b"")
+    unit_build(hdir, project_root, ["f.c"])
 
     async def fake_capture(self, directory, output, toolchain=None, includes=None):
         output.write_text(f"TN:\nSF:{project_root / 'f.c'}\nDA:1,5\nend_of_record\n")
@@ -806,6 +808,50 @@ def test_post_run_coverage_populates_ticket_data_end_to_end(tmp_path, monkeypatc
     assert payload["tickets"][0]["lines"]["owned"] >= 1
     assert payload["project"] == "Firmware"  # the title rides tickets.json's key "project"
     assert "report_title" not in payload
+
+
+def test_post_run_coverage_warns_on_an_unresolvable_unit_toolchain(tmp_path, monkeypatch, caplog):
+    """A unit tier's configured tool that is not installed is the usual report warning under
+    ``otto test --cov-report``: the inline report is skipped, the run is not failed."""
+    from otto.suite.run import _post_run_coverage
+    from tests.unit.cov._unit_lab import own_files, stub_unit_tools, unit_build
+
+    stub_unit_tools(monkeypatch, tmp_path / "stub-bin")
+    sut = TmpGitRepo(tmp_path / "sut")
+    sut.write("f.c", "int a;\n")
+    sut.commit("init")
+    own_files(monkeypatch, sut.root, ["f.c"], owner="project")
+    hdir = tmp_path / "unit_build"
+    unit_build(hdir, sut.root, ["f.c"])
+    monkeypatch.setattr("otto.coverage.collect.collect_coverage", AsyncMock())
+
+    project = MagicMock()
+    project.root = sut.root
+    project.name = "project"
+    project.settings = {
+        "coverage": {
+            "tiers": {
+                "unit": {
+                    "kind": "unit",
+                    "precedence": 1,
+                    "harvest_dirs": [str(hdir)],
+                    "toolchain": {"coverage_tool": "no-such-reader"},
+                }
+            }
+        }
+    }
+    log_dir = tmp_path / "log"
+    log_dir.mkdir()
+
+    with caplog.at_level("WARNING"):
+        asyncio.run(_post_run_coverage([project], log_dir, RunOptions(cov_report=True)))
+
+    assert any(
+        "Coverage report generation failed" in r.getMessage()
+        and "coverage.tiers.unit.toolchain.coverage_tool = 'no-such-reader'" in r.getMessage()
+        for r in caplog.records
+    )
+    assert not (log_dir / "cov_report").exists()
 
 
 # ── run_tests / _post_run_coverage: overrides wiring ─────────────────────────

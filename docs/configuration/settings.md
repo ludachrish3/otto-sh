@@ -199,7 +199,9 @@ init
   is the *product's* business (`cov_dir`, above), so this table carries only
   what is lab-wide: an optional `hosts` regex scoping collection to a subset
   of the lab, the `[coverage.tiers.<name>]` tier declarations — including a
-  unit tier's `[coverage.tiers.<name>.products]` views — plus
+  unit tier's `[coverage.tiers.<name>.products]` views and its
+  `[coverage.tiers.<name>.toolchain]` capture tools
+  ({ref}`coverage-unit-toolchain`) — plus
   `[coverage.embedded]`, `[coverage.tickets]`, and `[coverage.exclusions]`.
   Having the table at all is what lets collection run. See
   {doc}`../cli/cov/index` for the schema and {doc}`../cli/cov/tiers` for the

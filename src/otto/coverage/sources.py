@@ -7,7 +7,10 @@ an absolute path that exists is used as is; an absolute path that does not
 exist is tail-matched component-wise against the project's files, the
 longest match winning. A path with no match keeps its raw value and is
 logged once: a WARNING when project files share its name but none ends with
-it, INFO when no project file is even named like it.
+it, INFO when no project file is even named like it. A quiet resolver logs
+every such path at DEBUG: the unit tier's notes name system and gtest headers
+by the dozen, and a same-named project header is no sign of a missed match
+there.
 """
 
 import logging
@@ -18,11 +21,26 @@ logger = logging.getLogger(__name__)
 
 
 class SourceResolver:
-    """Per-file source resolution for one capture."""
+    """Per-file source resolution for one capture.
 
-    def __init__(self, project_root: Path, staging: Path | None = None) -> None:
+    The project's files are walked once, on the first tail match.
+    *index_from* shares another resolver's walk instead (same project root),
+    so a report whose resolvers differ only in how loudly they log walks the
+    tree once.
+    """
+
+    def __init__(
+        self,
+        project_root: Path,
+        staging: Path | None = None,
+        *,
+        quiet: bool = False,
+        index_from: "SourceResolver | None" = None,
+    ) -> None:
         self.project_root = project_root
         self.staging = staging
+        self.quiet = quiet
+        self._index_from = index_from
         self._by_name: dict[str, list[Path]] | None = None
         self._warned: set[str] = set()
 
@@ -36,7 +54,7 @@ class SourceResolver:
 
     def _tail_match(self, raw: str, path: str) -> Path | None:
         parts = tuple(p for p in path.split("/") if p not in ("", ".", ".."))
-        candidates = self._index().get(parts[-1], []) if parts else []
+        candidates = self.files_by_name().get(parts[-1], []) if parts else []
         top = [c for c in candidates if self._is_suffix(c, parts)]
         if top:
             # Every match is a whole project-relative path ending *parts*, so two
@@ -50,7 +68,10 @@ class SourceResolver:
         cparts = candidate.relative_to(self.project_root).parts
         return len(cparts) <= len(parts) and parts[len(parts) - len(cparts) :] == cparts
 
-    def _index(self) -> dict[str, list[Path]]:
+    def files_by_name(self) -> dict[str, list[Path]]:
+        """Return the project's files by basename, walking the tree once (``.git`` excluded)."""
+        if self._index_from is not None:
+            return self._index_from.files_by_name()
         if self._by_name is None:
             self._by_name = {}
             for p in self.project_root.rglob("*"):
@@ -59,7 +80,7 @@ class SourceResolver:
         return self._by_name
 
     def _warn_unresolved(self, raw: str, candidates: list[Path]) -> None:
-        """Log *raw* once: a WARNING when project files share its name, else INFO.
+        """Log *raw* once: a WARNING when project files share its name, else INFO (DEBUG if quiet).
 
         A path no project file is even named like — a relocated build's
         system header, one per header — is ordinary and stays at INFO; a
@@ -68,8 +89,9 @@ class SourceResolver:
         if raw not in self._warned:
             self._warned.add(raw)
             found = ", ".join(map(str, candidates)) if candidates else "none"
+            loud = logging.WARNING if candidates else logging.INFO
             logger.log(
-                logging.WARNING if candidates else logging.INFO,
+                logging.DEBUG if self.quiet else loud,
                 "%s: no source under %s ends with this path (candidates: %s); keeping the raw path",
                 raw,
                 self.project_root,

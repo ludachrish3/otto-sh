@@ -1,7 +1,9 @@
 """Tests for the CoverageReporter and helper functions."""
 
 import json
+import logging
 import os
+import shutil
 import stat
 import subprocess
 from pathlib import Path
@@ -12,7 +14,7 @@ from otto.config.coverage_settings import CoverageConfigError
 from otto.coverage.capture.gitio import head_commit
 from otto.coverage.capture.model import Capture, CaptureFileCov
 from otto.coverage.capture.produce import ProductKey
-from otto.coverage.errors import CaptureCommitError
+from otto.coverage.errors import CaptureCommitError, CoverageNotInstrumentedError
 from otto.coverage.report_inputs import ReportInputs
 from otto.coverage.reporter import (
     CollectionInputs,
@@ -28,6 +30,20 @@ from otto.coverage.toolchains import resolve_toolchains
 from otto.host.errors import CoverageToolMissingError
 from otto.host.toolchain import Toolchain
 from tests._fixtures.gitrepo import git_env
+from tests.unit.cov._unit_lab import (
+    ContainerHost,
+    FakeHost,
+    FakeProduct,
+    install_capture,
+    install_lab,
+    own_files,
+    product_build,
+    reference_image,
+    stub_tool,
+    stub_unit_tools,
+    unit_build,
+    write_sources,
+)
 
 TIER_AND_COMMIT = {"tier": "system", "base_commit": "a" * 40}
 """The two keys every current ``.otto_cov_meta.json`` carries beside the project."""
@@ -459,19 +475,42 @@ class TestE2eDirtyTreeRemap:
         assert any("uncommitted changes" in rec.message for rec in caplog.records)
 
 
+_UNIT_COV = {"tiers": {"unit": {"kind": "unit", "precedence": 1, "harvest_dirs": ["build/tests"]}}}
+
+
+def _unit_inputs(project: Path, cov_config: dict | None = None) -> ReportInputs:
+    return ReportInputs(
+        project_root=project,
+        project_name="proj",
+        tier_configs=load_tiers(cov_config or _UNIT_COV),
+    )
+
+
+def _messages(caplog, level: str | None = None) -> list[str]:
+    want = None if level is None else getattr(logging, level)
+    return [r.getMessage() for r in caplog.records if want is None or r.levelno == want]
+
+
+def _store_paths(store, project: Path) -> list[str]:
+    return [f.path.relative_to(project).as_posix() for f in store.files()]
+
+
 class TestUnitHarvest:
     """kind==unit tiers with harvest_dirs are captured+loaded via the merger."""
+
+    @pytest.fixture(autouse=True)
+    def _tools(self, tmp_path, monkeypatch):
+        stub_unit_tools(monkeypatch, tmp_path / "stub-bin")
 
     @pytest.mark.asyncio
     async def test_harvest_dir_loads_under_unit_tier(self, tmp_path, monkeypatch):
         from otto.coverage.merge import merger as merger_mod
 
         project = _init_git_repo(tmp_path)
+        own_files(monkeypatch, project, ["f.c"])
         # A harvest dir that is both the gcda and gcno root.
         hdir = tmp_path / "unit_build"
-        hdir.mkdir()
-        (hdir / "f.gcda").write_bytes(b"")
-        (hdir / "f.gcno").write_bytes(b"")
+        unit_build(hdir, project, ["f.c"])
 
         src = project / "f.c"
 
@@ -490,9 +529,7 @@ class TestUnitHarvest:
             }
         }
         store = await run_coverage_report(
-            [],
-            tmp_path / "report",
-            ReportInputs(project_root=project, tier_configs=load_tiers(cov_config)),
+            [], tmp_path / "report", _unit_inputs(project, cov_config)
         )
         assert store is not None
         (frec,) = [f for f in store.files() if f.path.name == "f.c"]
@@ -507,14 +544,14 @@ class TestUnitHarvest:
         from otto.coverage.merge import merger as merger_mod
 
         project = _init_git_repo(tmp_path)
+        app = product_build(project, "app", ["f.c"])
+        agent = product_build(project, "agent", ["f.c"])
+        install_lab(monkeypatch, [FakeHost("h1", [app, agent])])
         app_dir = tmp_path / "build" / "app-tests"
         agent_dir = tmp_path / "build" / "agent-tests"
         unit_dir = tmp_path / "build" / "tests"
         for d in (app_dir, agent_dir, unit_dir):
-            d.mkdir(parents=True)
-        (app_dir / "x.gcda").write_bytes(b"")
-        (agent_dir / "y.gcda").write_bytes(b"")
-        (unit_dir / "z.gcda").write_bytes(b"")
+            unit_build(d, project, ["f.c"])
 
         src = project / "f.c"
 
@@ -544,9 +581,7 @@ class TestUnitHarvest:
             }
         }
         store = await run_coverage_report(
-            [],
-            tmp_path / "report",
-            ReportInputs(project_root=project, tier_configs=load_tiers(cov_config)),
+            [], tmp_path / "report", _unit_inputs(project, cov_config)
         )
         assert store is not None
         assert {r.product for r in store.runs} == {"app", "agent", ""}
@@ -565,6 +600,7 @@ class TestUnitHarvest:
         from otto.coverage.merge import merger as merger_mod
 
         project = _init_git_repo(tmp_path)
+        own_files(monkeypatch, project, ["f.c"])
 
         async def fail_capture(self, directory, output, toolchain=None, includes=None):
             raise AssertionError("merger.capture_dir must not run for a missing harvest dir")
@@ -582,9 +618,7 @@ class TestUnitHarvest:
         }
         with caplog.at_level("WARNING"):
             store = await run_coverage_report(
-                [],
-                tmp_path / "report",
-                ReportInputs(project_root=project, tier_configs=load_tiers(cov_config)),
+                [], tmp_path / "report", _unit_inputs(project, cov_config)
             )
         assert store is not None
         assert any("does not exist" in rec.message for rec in caplog.records)
@@ -598,6 +632,7 @@ class TestUnitHarvest:
         from otto.coverage.merge import merger as merger_mod
 
         project = _init_git_repo(tmp_path)
+        own_files(monkeypatch, project, ["f.c"])
         hdir = tmp_path / "unit_build_empty"
         hdir.mkdir()
 
@@ -617,12 +652,13 @@ class TestUnitHarvest:
         }
         with caplog.at_level("WARNING"):
             store = await run_coverage_report(
-                [],
-                tmp_path / "report",
-                ReportInputs(project_root=project, tier_configs=load_tiers(cov_config)),
+                [], tmp_path / "report", _unit_inputs(project, cov_config)
             )
         assert store is not None
-        assert any("no .gcda files" in rec.message for rec in caplog.records)
+        assert any(
+            "no .gcda files" in rec.message and "run the unit tests first" in rec.message
+            for rec in caplog.records
+        )
         assert "unit" in store.tier_order
 
     @pytest.mark.asyncio
@@ -632,12 +668,11 @@ class TestUnitHarvest:
         from otto.coverage.merge import merger as merger_mod
 
         project = _init_git_repo(tmp_path)
+        own_files(monkeypatch, project, ["f.c"])
         hdir = tmp_path / "unit_build_stale"
-        hdir.mkdir()
-        gcda = hdir / "f.gcda"
-        gcno = hdir / "f.gcno"
-        gcda.write_bytes(b"")
-        gcno.write_bytes(b"")
+        unit_build(hdir, project, ["f.c"])
+        gcda = hdir / "f.c.gcda"
+        gcno = hdir / "f.c.gcno"
 
         now = 1_800_000_000.0
         os.utime(gcda, (now - 100, now - 100))  # counters predate the build notes
@@ -658,9 +693,7 @@ class TestUnitHarvest:
         }
         with caplog.at_level("WARNING"):
             store = await run_coverage_report(
-                [],
-                tmp_path / "report",
-                ReportInputs(project_root=project, tier_configs=load_tiers(cov_config)),
+                [], tmp_path / "report", _unit_inputs(project, cov_config)
             )
         assert store is not None
         assert any(
@@ -678,10 +711,9 @@ class TestUnitHarvest:
         from otto.coverage.merge import merger as merger_mod
 
         project = _init_git_repo(tmp_path)
+        own_files(monkeypatch, project, ["f.c"])
         hdir = project / "unit_build"
-        hdir.mkdir()
-        (hdir / "f.gcda").write_bytes(b"")
-        (hdir / "f.gcno").write_bytes(b"")
+        unit_build(hdir, project, ["f.c"])
 
         src = project / "f.c"
 
@@ -704,9 +736,7 @@ class TestUnitHarvest:
             }
         }
         store = await run_coverage_report(
-            [],
-            tmp_path / "report",
-            ReportInputs(project_root=project, tier_configs=load_tiers(cov_config)),
+            [], tmp_path / "report", _unit_inputs(project, cov_config)
         )
         assert store is not None
         (frec,) = [f for f in store.files() if f.path.name == "f.c"]
@@ -724,13 +754,12 @@ class TestUnitHarvest:
         from otto.coverage.merge import merger as merger_mod
 
         project = _init_git_repo(tmp_path)
+        own_files(monkeypatch, project, ["f.c"])
         home = tmp_path / "home"
         home.mkdir()
         monkeypatch.setenv("HOME", str(home))
         hdir = home / "unit_build"
-        hdir.mkdir()
-        (hdir / "f.gcda").write_bytes(b"")
-        (hdir / "f.gcno").write_bytes(b"")
+        unit_build(hdir, project, ["f.c"])
 
         src = project / "f.c"
 
@@ -748,13 +777,1150 @@ class TestUnitHarvest:
             }
         }
         store = await run_coverage_report(
-            [],
-            tmp_path / "report",
-            ReportInputs(project_root=project, tier_configs=load_tiers(cov_config)),
+            [], tmp_path / "report", _unit_inputs(project, cov_config)
         )
         assert store is not None
         (frec,) = [f for f in store.files() if f.path.name == "f.c"]
         assert frec.lines[1].hits.for_tier("unit") == 5
+
+    # -- the product filter ------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_products_filter_reaches_capture_and_exact_pass(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        project = _init_git_repo(tmp_path)
+        own_files(monkeypatch, project, ["src/core/add.c"])
+        unit_build(project / "build/tests", project, ["src/core/add.c", "tests/test_add.cpp"])
+        calls = install_capture(monkeypatch)
+
+        with caplog.at_level("DEBUG"):
+            store = await run_coverage_report([], tmp_path / "report", _unit_inputs(project))
+
+        assert [c["includes"] for c in calls] == [["*/src/core/add.c"]]
+        assert _store_paths(store, project) == ["src/core/add.c"]
+        assert "unit unit: kept 1 product source files, dropped 1 not in any product" in (
+            _messages(caplog, "INFO")
+        )
+        debug = _messages(caplog, "DEBUG")
+        assert "unit unit: keep src/core/add.c (product core)" in debug
+        assert "unit unit: drop tests/test_add.cpp (not in any product)" in debug
+
+    @pytest.mark.asyncio
+    async def test_view_with_no_products_refuses(self, tmp_path, monkeypatch):
+        project = _init_git_repo(tmp_path)
+        other = product_build(project, "core", ["src/core/add.c"], owner="other")
+        install_lab(monkeypatch, [FakeHost("h1", [other])])
+        unit_build(project / "build/tests", project, ["src/core/add.c"])
+        calls = install_capture(monkeypatch)
+
+        with pytest.raises(CoverageNotInstrumentedError) as excinfo:
+            await run_coverage_report([], tmp_path / "report", _unit_inputs(project))
+
+        message = str(excinfo.value)
+        assert "unit tier unit: no products of project proj found in the active lab (bench)" in (
+            message
+        )
+        assert "coverage instrumentation (--coverage)" in message
+        assert calls == []
+
+    @pytest.mark.asyncio
+    async def test_no_project_name_selects_no_owner_less_products(self, tmp_path, monkeypatch):
+        from otto.coverage.objects import ObjectListCache
+        from otto.coverage.pairing import GcnoIndex
+        from otto.coverage.sources import SourceResolver
+        from otto.coverage.unit_filter import plan_unit_views
+
+        project = _init_git_repo(tmp_path)
+        own_files(monkeypatch, project, ["src/core/add.c"], owner=None)
+        unit_build(project / "build/tests", project, ["src/core/add.c"])
+
+        with pytest.raises(CoverageNotInstrumentedError) as excinfo:
+            await plan_unit_views(
+                load_tiers(_UNIT_COV),
+                project,
+                None,
+                ObjectListCache(project),
+                SourceResolver(project, quiet=True),
+                GcnoIndex(project),
+            )
+
+        message = str(excinfo.value)
+        assert "unit tier unit: no project is named, so no products are selected" in message
+        assert "--coverage" in message
+
+    @pytest.mark.asyncio
+    async def test_named_view_matching_no_product_refuses(self, tmp_path, monkeypatch):
+        project = _init_git_repo(tmp_path)
+        own_files(monkeypatch, project, ["src/core/add.c"])
+        unit_build(project / "build/app-tests", project, ["src/core/add.c"])
+        calls = install_capture(monkeypatch)
+        cov_config = {
+            "tiers": {
+                "unit": {"kind": "unit", "precedence": 1, "products": {"app": ["build/app-tests"]}}
+            }
+        }
+
+        with pytest.raises(CoverageNotInstrumentedError) as excinfo:
+            await run_coverage_report([], tmp_path / "report", _unit_inputs(project, cov_config))
+
+        message = str(excinfo.value)
+        assert "unit tier unit/app: no product named 'app'" in message
+        assert "--coverage" in message
+        assert calls == []
+
+    @pytest.mark.asyncio
+    async def test_all_products_declared_uninstrumented_refuses(self, tmp_path, monkeypatch):
+        project = _init_git_repo(tmp_path)
+        core = own_files(monkeypatch, project, ["src/core/add.c"])
+        core.instrumented_override = False
+        unit_build(project / "build/tests", project, ["src/core/add.c"])
+        calls = install_capture(monkeypatch)
+
+        with pytest.raises(CoverageNotInstrumentedError) as excinfo:
+            await run_coverage_report([], tmp_path / "report", _unit_inputs(project))
+
+        assert "every product of project proj is declared instrumented = false" in str(
+            excinfo.value
+        )
+        assert calls == []
+
+    @pytest.mark.asyncio
+    async def test_no_lab_context_refuses(self, tmp_path, monkeypatch):
+        project = _init_git_repo(tmp_path)
+        monkeypatch.setattr("otto.run_context.try_get_context", lambda: None)
+        unit_build(project / "build/tests", project, ["src/core/add.c"])
+        calls = install_capture(monkeypatch)
+
+        with pytest.raises(CoverageNotInstrumentedError) as excinfo:
+            await run_coverage_report([], tmp_path / "report", _unit_inputs(project))
+
+        message = str(excinfo.value)
+        assert "unit tier unit: no products of project proj found: no lab is active" in message
+        assert "--coverage" in message
+        assert calls == []
+
+    @pytest.mark.asyncio
+    async def test_nothing_kept_skips_capture(self, tmp_path, monkeypatch, caplog):
+        project = _init_git_repo(tmp_path)
+        own_files(monkeypatch, project, ["src/core/add.c"])
+        hdir = project / "build/tests"
+        unit_build(hdir, project, ["tests/test_add.cpp"])
+        calls = install_capture(monkeypatch)
+
+        with caplog.at_level("INFO"):
+            store = await run_coverage_report([], tmp_path / "report", _unit_inputs(project))
+
+        assert calls == []
+        assert f"unit unit: no product source files under {hdir}; nothing to capture" in (
+            _messages(caplog, "INFO")
+        )
+        assert store.runs == []
+
+    @pytest.mark.asyncio
+    async def test_uninstrumented_product_refuses_before_any_capture(self, tmp_path, monkeypatch):
+        from otto.coverage.merge import merger as merger_mod
+
+        project = _init_git_repo(tmp_path)
+        core = product_build(project, "core", ["src/core/add.c"])
+        app = FakeProduct("app", artifact=str(project / "build/app/app.bin"))  # never built
+        install_lab(monkeypatch, [FakeHost("h1", [core, app])])
+        unit_build(project / "build/core-tests", project, ["src/core/add.c"])
+        unit_build(project / "build/app-tests", project, ["src/core/add.c"])
+        calls = install_capture(monkeypatch)
+        pairs: list[object] = []
+
+        async def spy_pairs(self, *args, **kwargs):
+            pairs.append(args)
+
+        monkeypatch.setattr(merger_mod.LcovMerger, "capture_pairs", spy_pairs)
+        produced = _spy_produce(monkeypatch)
+        # A product dir collected but not yet captured: the report would capture it now.
+        cov = tmp_path / "run" / "cov"
+        (cov / "h1" / "core").mkdir(parents=True)
+        (cov / "h1" / "core" / "add.c.gcda").write_bytes(b"")
+        _write_meta(cov, project)
+        cov_config = {
+            "tiers": {
+                "unit": {
+                    "kind": "unit",
+                    "precedence": 1,
+                    "products": {"core": ["build/core-tests"], "app": ["build/app-tests"]},
+                }
+            }
+        }
+
+        with pytest.raises(CoverageNotInstrumentedError) as excinfo:
+            await run_coverage_report([cov], tmp_path / "report", _unit_inputs(project, cov_config))
+
+        message = str(excinfo.value)
+        assert "unit tier unit/app: product 'app'" in message
+        assert str(project / "build/app/app.bin") in message
+        assert "--coverage" in message
+        assert calls == []
+        assert pairs == []
+        assert produced == []
+        assert not (cov / "h1" / "core" / "capture.json").exists()
+        assert not (cov / "h1" / "core" / "capture.failed").exists()
+        assert not (tmp_path / "report").exists()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("built", [False, True], ids=["artifact-missing", "artifact-readable"])
+    async def test_other_projects_products_are_ignored(self, tmp_path, monkeypatch, caplog, built):
+        project = _init_git_repo(tmp_path)
+        core = product_build(project, "core", ["src/core/add.c"])
+        if built:
+            other = product_build(project, "other", ["src/other.c"], owner="other")
+        else:
+            other = FakeProduct("other", owner="other", artifact=str(project / "nope.bin"))
+        install_lab(monkeypatch, [FakeHost("h1", [core, other])])
+        # The unit build compiles the other project's file too.
+        unit_build(project / "build/tests", project, ["src/core/add.c", "src/other.c"])
+        calls = install_capture(monkeypatch)
+
+        with caplog.at_level("DEBUG"):
+            store = await run_coverage_report([], tmp_path / "report", _unit_inputs(project))
+
+        assert [c["includes"] for c in calls] == [["*/src/core/add.c"]]
+        assert _store_paths(store, project) == ["src/core/add.c"]
+        assert "unit unit: drop src/other.c (not in any product)" in _messages(caplog, "DEBUG")
+
+    @pytest.mark.asyncio
+    async def test_project_tree_is_walked_once_per_report(self, tmp_path, monkeypatch):
+        from tests.unit.cov._gcno import gcc13_gcno
+
+        project = _init_git_repo(tmp_path)
+        own_files(monkeypatch, project, ["src/core/add.c"])
+        hdir = project / "build/tests"
+        unit_build(hdir, project, ["src/core/add.c"])
+        # Relocated builds: every recorded name needs the resolver's tail match (a walk).
+        relocated = gcc13_gcno("/elsewhere", ["/elsewhere/src/core/add.c"])
+        (project / "build/core/src/core/add.c.gcno").write_bytes(relocated)
+        (hdir / "add.c.gcno").write_bytes(relocated)
+        install_capture(monkeypatch)
+        walks: list[Path] = []
+        real_rglob = Path.rglob
+
+        def counting_rglob(self, pattern, *args, **kwargs):
+            if pattern == "*":
+                walks.append(self)
+            return real_rglob(self, pattern, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "rglob", counting_rglob)
+
+        store = await run_coverage_report([], tmp_path / "report", _unit_inputs(project))
+
+        assert _store_paths(store, project) == ["src/core/add.c"]
+        assert walks == [project]
+
+    @pytest.mark.asyncio
+    async def test_one_artifact_read_per_report(self, tmp_path, monkeypatch):
+        from otto.coverage import objects as objects_mod
+        from otto.coverage.errors import CaptureFailedError
+        from otto.coverage.merge import merger as merger_mod
+
+        project = _init_git_repo(tmp_path)
+        own_files(monkeypatch, project, ["src/core/add.c"])
+        unit_build(project / "build/tests", project, ["src/core/add.c"])
+        install_capture(monkeypatch)
+
+        async def no_lcov(self, *args, **kwargs):
+            raise CaptureFailedError("lcov --capture failed:\nstub")
+
+        monkeypatch.setattr(merger_mod.LcovMerger, "capture_pairs", no_lcov)
+        caches: list[objects_mod.ObjectListCache] = []
+        real_init = objects_mod.ObjectListCache.__init__
+
+        def spy_init(self, project_root):
+            real_init(self, project_root)
+            caches.append(self)
+
+        monkeypatch.setattr(objects_mod.ObjectListCache, "__init__", spy_init)
+        reads: list[str] = []
+        real_read = objects_mod.ObjectListCache.read
+
+        def spy_read(self, product):
+            reads.append(product.name)
+            return real_read(self, product)
+
+        monkeypatch.setattr(objects_mod.ObjectListCache, "read", spy_read)
+        cov = tmp_path / "run" / "cov"
+        (cov / "h1" / "core").mkdir(parents=True)
+        (cov / "h1" / "core" / "add.c.gcda").write_bytes(b"")
+        _write_meta(cov, project)
+
+        await run_coverage_report([cov], tmp_path / "report", _unit_inputs(project))
+
+        # asked twice (the unit preflight and the pending capture), read once
+        assert reads == ["core", "core"]
+        assert len(caches) == 1
+        assert caches[0].files_read == 1
+
+    @pytest.mark.asyncio
+    async def test_a_reference_image_filters_by_its_running_containers_objects(
+        self, tmp_path, monkeypatch
+    ):
+        project = _init_git_repo(tmp_path)
+        built = product_build(project, "img", ["src/core/add.c"])
+        host = ContainerHost("h1", [reference_image()])
+        host.files = {"/usr/bin/img": Path(str(built.artifact)).read_bytes()}
+        install_lab(monkeypatch, [host])
+        unit_build(project / "build/tests", project, ["src/core/add.c", "tests/test_add.cpp"])
+        calls = install_capture(monkeypatch)
+
+        store = await run_coverage_report([], tmp_path / "report", _unit_inputs(project))
+
+        assert [c["includes"] for c in calls] == [["*/src/core/add.c"]]
+        assert _store_paths(store, project) == ["src/core/add.c"]
+        assert any(
+            c.startswith("docker exec -e OTTO_SCAN_ID=") and " img-c sh -c " in c
+            for c in host.calls
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_stopped_reference_image_is_an_input_refusal(self, tmp_path, monkeypatch):
+        from otto.coverage.errors import CoverageInputError
+
+        project = _init_git_repo(tmp_path)
+        install_lab(monkeypatch, [ContainerHost("h1", [reference_image()], running=False)])
+        unit_build(project / "build/tests", project, ["src/core/add.c"])
+        calls = install_capture(monkeypatch)
+
+        with pytest.raises(CoverageInputError) as excinfo:
+            await run_coverage_report([], tmp_path / "report", _unit_inputs(project))
+
+        assert excinfo.value.field is None
+        assert str(excinfo.value) == (
+            "unit tier unit: product 'img' reads its object list from container 'img-c', "
+            "which is not running — install the product first (otto run install)."
+        )
+        assert calls == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("hits", [[], ["/usr/bin/app"]], ids=["no-hits", "some-hits"])
+    async def test_an_unscannable_reference_image_is_a_capture_failure(
+        self, tmp_path, monkeypatch, hits
+    ):
+        from otto.coverage.errors import CaptureFailedError
+        from otto.result import Result
+        from otto.utils import Status
+
+        project = _init_git_repo(tmp_path)
+        host = ContainerHost("h1", [reference_image()])
+        host.files = dict.fromkeys(hits, b"\x7fELF\x00/build/app/main.c.gcda\x00")
+        listed = "".join(f"{p}\n" for p in hits)
+        host.scan = Result(Status.Success, value=listed + "otto-scan-rc:1\notto-scan-rc:2\n")
+        install_lab(monkeypatch, [host])
+        unit_build(project / "build/tests", project, ["src/core/add.c"])
+        calls = install_capture(monkeypatch)
+
+        with pytest.raises(CaptureFailedError) as excinfo:
+            await run_coverage_report([], tmp_path / "report", _unit_inputs(project))
+
+        assert str(excinfo.value).startswith(
+            "unit tier unit: could not read product 'img''s object list: "
+            "could not scan container img-c: the scan exited 2"
+        )
+        assert calls == []
+
+    @pytest.mark.asyncio
+    async def test_an_uninstrumented_reference_image_refuses(self, tmp_path, monkeypatch):
+        project = _init_git_repo(tmp_path)
+        host = ContainerHost("h1", [reference_image()])  # the scan finds nothing
+        install_lab(monkeypatch, [host])
+        unit_build(project / "build/tests", project, ["src/core/add.c"])
+        calls = install_capture(monkeypatch)
+
+        with pytest.raises(CoverageNotInstrumentedError) as excinfo:
+            await run_coverage_report([], tmp_path / "report", _unit_inputs(project))
+
+        assert str(excinfo.value).startswith(
+            "unit tier unit: product 'img' (registry.example/img:1) is not instrumented: "
+            "container img-c holds no coverage paths (not instrumented). Build it with "
+            "coverage instrumentation (--coverage)"
+        )
+        assert calls == []
+
+    @pytest.mark.asyncio
+    async def test_declared_instrumented_false_is_not_filtered_by(self, tmp_path, monkeypatch):
+        project = _init_git_repo(tmp_path)
+        core = product_build(project, "core", ["src/core/add.c"])
+        # Declared uninstrumented and never built: not validated, so no refusal.
+        gen = FakeProduct("gen", artifact=str(project / "build/gen/gen.bin"))
+        gen.instrumented_override = False
+        install_lab(monkeypatch, [FakeHost("h1", [core, gen])])
+        unit_build(project / "build/tests", project, ["src/core/add.c"])
+        install_capture(monkeypatch)
+
+        store = await run_coverage_report([], tmp_path / "report", _unit_inputs(project))
+
+        assert "src/core/add.c" in _store_paths(store, project)
+
+    @pytest.mark.asyncio
+    async def test_unit_harvest_does_not_warn_on_unresolvable_system_headers(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        from tests.unit.cov._gcno import gcc13_gcno
+
+        project = _init_git_repo(tmp_path)
+        own_files(monkeypatch, project, ["src/core/add.c"])
+        write_sources(project, ["src/config.h"])
+        hdir = project / "build/tests"
+        unit_build(hdir, project, ["src/core/add.c"])
+        # gtest's config.h, from an SDK this machine does not have; the project has one too.
+        (hdir / "t.cpp.gcno").write_bytes(
+            gcc13_gcno(str(project), [str(project / "src/core/add.c"), "/opt/sdk/config.h"])
+        )
+        (hdir / "t.cpp.gcda").write_bytes(b"")
+        install_capture(monkeypatch)
+
+        with caplog.at_level("DEBUG"):
+            await run_coverage_report([], tmp_path / "report", _unit_inputs(project))
+
+        assert not [
+            r for r in caplog.records if r.levelno == logging.WARNING and "config.h" in r.message
+        ]
+        assert "unit unit: drop /opt/sdk/config.h (not in any product)" in _messages(
+            caplog, "DEBUG"
+        )
+
+
+def _tier(toolchain: dict | None = None, **extra) -> dict:
+    tier = {"kind": "unit", "precedence": 1, "harvest_dirs": ["build/tests"], **extra}
+    if toolchain is not None:
+        tier["toolchain"] = toolchain
+    return tier
+
+
+def _toolchain_inputs(project: Path, toolchain: dict | None = None, **extra) -> ReportInputs:
+    return _unit_inputs(project, {"tiers": {"unit": _tier(toolchain, **extra)}})
+
+
+class TestUnitToolchain:
+    """The unit tier's own ``toolchain`` setting over the build's stamps, resolved in the
+    preflight; the capture only uses what it resolved."""
+
+    @pytest.fixture
+    def tools(self, tmp_path, monkeypatch) -> Path:
+        """A ``PATH`` holding only stub tools (and git, which the project needs)."""
+        bin_dir = stub_unit_tools(monkeypatch, tmp_path / "bin")
+        git = shutil.which("git")
+        assert git is not None
+        (bin_dir / "git").symlink_to(git)
+        monkeypatch.setenv("PATH", str(bin_dir))
+        return bin_dir
+
+    @staticmethod
+    def _project(tmp_path, monkeypatch, compiler: str = "gcc13") -> Path:
+        project = _init_git_repo(tmp_path)
+        own_files(monkeypatch, project, ["src/core/add.c"])
+        unit_build(project / "build/tests", project, ["src/core/add.c"], compiler)
+        return project
+
+    # -- resolution --------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_with_no_setting_the_stamp_and_path_choose(self, tmp_path, monkeypatch, tools):
+        project = self._project(tmp_path, monkeypatch)
+        calls = install_capture(monkeypatch)
+
+        await run_coverage_report([], tmp_path / "report", _toolchain_inputs(project))
+
+        assert [c["toolchain"] for c in calls] == [
+            Toolchain(gcov=tools / "gcov", lcov=tools / "lcov")
+        ]
+
+    @pytest.mark.asyncio
+    async def test_a_declared_local_hosts_toolchain_is_ignored(self, tmp_path, monkeypatch, tools):
+        project = _init_git_repo(tmp_path)
+        core = product_build(project, "core", ["src/core/add.c"])
+        local = Toolchain(gcov=Path("usr/bin/gcov-12"), lcov_args=["--rc", "x=1"])
+        install_lab(monkeypatch, [FakeHost("local", [], local), FakeHost("h1", [core])])
+        unit_build(project / "build/tests", project, ["src/core/add.c"])
+        calls = install_capture(monkeypatch)
+
+        await run_coverage_report([], tmp_path / "report", _toolchain_inputs(project))
+
+        assert [c["toolchain"] for c in calls] == [
+            Toolchain(gcov=tools / "gcov", lcov=tools / "lcov")
+        ]
+
+    @pytest.mark.asyncio
+    async def test_only_lcov_args_on_a_clang_directory_keeps_llvm_cov_discovery(
+        self, tmp_path, monkeypatch, tools
+    ):
+        llvm_cov = stub_tool(tools, "llvm-cov")
+        project = self._project(tmp_path, monkeypatch, "clang")
+        calls = install_capture(monkeypatch)
+        args = ["--rc", "geninfo_unexecuted_blocks=1"]
+
+        await run_coverage_report(
+            [], tmp_path / "report", _toolchain_inputs(project, {"lcov_args": args})
+        )
+
+        assert [c["toolchain"] for c in calls] == [
+            Toolchain(gcov=llvm_cov, lcov=tools / "lcov", lcov_args=args)
+        ]
+
+    @pytest.mark.asyncio
+    async def test_only_lcov_is_a_project_root_path_from_any_cwd(
+        self, tmp_path, monkeypatch, tools
+    ):
+        project = self._project(tmp_path, monkeypatch)
+        my_lcov = stub_tool(project / "tools", "my-lcov")
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        monkeypatch.chdir(elsewhere)
+        calls = install_capture(monkeypatch)
+
+        await run_coverage_report(
+            [], tmp_path / "report", _toolchain_inputs(project, {"lcov": "tools/my-lcov"})
+        )
+
+        assert [c["toolchain"] for c in calls] == [Toolchain(gcov=tools / "gcov", lcov=my_lcov)]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("written", ["./gcov", "~/bin/gcov", "gcov-13"])
+    async def test_a_value_is_a_path_with_a_slash_and_a_command_without(
+        self, tmp_path, monkeypatch, tools, written
+    ):
+        project = self._project(tmp_path, monkeypatch)
+        home = tmp_path / "home"
+        monkeypatch.setenv("HOME", str(home))
+        expected = {
+            "./gcov": stub_tool(project, "gcov"),
+            "~/bin/gcov": stub_tool(home / "bin", "gcov"),
+            "gcov-13": stub_tool(tools, "gcov-13"),
+        }[written]
+        calls = install_capture(monkeypatch)
+
+        await run_coverage_report(
+            [], tmp_path / "report", _toolchain_inputs(project, {"coverage_tool": written})
+        )
+
+        assert calls[0]["toolchain"].gcov == expected
+
+    @pytest.mark.asyncio
+    async def test_one_setting_covers_a_plain_and_a_products_view(
+        self, tmp_path, monkeypatch, tools
+    ):
+        reader = stub_tool(tools, "gcov-13")
+        project = self._project(tmp_path, monkeypatch)
+        unit_build(project / "build/core-tests", project, ["src/core/add.c"])
+        calls = install_capture(monkeypatch)
+        inputs = _toolchain_inputs(
+            project, {"coverage_tool": "gcov-13"}, products={"core": ["build/core-tests"]}
+        )
+
+        await run_coverage_report([], tmp_path / "report", inputs)
+
+        assert [c["directory"].name for c in calls] == ["tests", "core-tests"]
+        assert [c["toolchain"].gcov for c in calls] == [reader, reader]
+
+    @pytest.mark.asyncio
+    async def test_two_tiers_run_their_own_llvm_cov(self, tmp_path, monkeypatch, tools):
+        llvm17 = stub_tool(tools / "llvm-17", "llvm-cov")
+        llvm18 = stub_tool(tools / "llvm-18", "llvm-cov")
+        project = self._project(tmp_path, monkeypatch, "clang")
+        unit_build(project / "build/other", project, ["src/core/add.c"], "clang")
+        calls = install_capture(monkeypatch)
+        cov = {
+            "tiers": {
+                "unit": _tier({"coverage_tool": str(llvm17)}),
+                "unit2": {
+                    "kind": "unit",
+                    "precedence": 2,
+                    "harvest_dirs": ["build/other"],
+                    "toolchain": {"coverage_tool": str(llvm18)},
+                },
+            }
+        }
+
+        await run_coverage_report([], tmp_path / "report", _unit_inputs(project, cov))
+
+        assert [c["toolchain"].gcov for c in calls] == [llvm17, llvm18]
+
+    @pytest.mark.asyncio
+    async def test_a_gcc_build_of_another_major_reads_with_its_gcov(
+        self, tmp_path, monkeypatch, tools, caplog
+    ):
+        gcov_12 = stub_tool(tools, "gcov-12")
+        project = self._project(tmp_path, monkeypatch, "gcc12")
+        calls = install_capture(monkeypatch)
+
+        with caplog.at_level("INFO"):
+            await run_coverage_report([], tmp_path / "report", _toolchain_inputs(project))
+
+        assert [c["toolchain"].gcov for c in calls] == [gcov_12]
+        assert f"unit unit: gcov stamp 'B24*' is gcc 12's; reading counters with {gcov_12}" in (
+            _messages(caplog, "INFO")
+        )
+
+    # -- refusals before the destination ------------------------------------
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("field", "written"),
+        [("coverage_tool", "gcov-99"), ("lcov", "no-lcov"), ("coverage_tool", "tools/gcov")],
+    )
+    async def test_a_missing_configured_tool_is_an_input_error_before_anything(
+        self, tmp_path, monkeypatch, tools, field, written
+    ):
+        from otto.coverage.errors import CoverageInputError
+
+        project = self._project(tmp_path, monkeypatch)
+        calls = install_capture(monkeypatch)
+
+        with pytest.raises(CoverageInputError) as excinfo:
+            await run_coverage_report(
+                [], tmp_path / "report", _toolchain_inputs(project, {field: written})
+            )
+
+        assert str(excinfo.value).startswith(f"coverage.tiers.unit.toolchain.{field} = {written!r}")
+        assert calls == []
+        assert not (tmp_path / "report").exists()
+
+    @pytest.mark.asyncio
+    async def test_a_configured_tool_is_checked_though_its_directory_is_skipped(
+        self, tmp_path, monkeypatch, tools
+    ):
+        from otto.coverage.errors import CoverageInputError
+
+        project = _init_git_repo(tmp_path)
+        own_files(monkeypatch, project, ["src/core/add.c"])  # no unit build at all
+
+        with pytest.raises(CoverageInputError, match=r"toolchain\.coverage_tool = 'gcov-99'"):
+            await run_coverage_report(
+                [], tmp_path / "report", _toolchain_inputs(project, {"coverage_tool": "gcov-99"})
+            )
+
+    @pytest.mark.asyncio
+    async def test_a_configured_tool_is_checked_on_a_tier_with_no_directories(
+        self, tmp_path, monkeypatch, tools
+    ):
+        from otto.coverage.errors import CoverageInputError
+
+        project = _init_git_repo(tmp_path)
+        own_files(monkeypatch, project, ["src/core/add.c"])
+        cov = {
+            "tiers": {"unit": {"kind": "unit", "precedence": 1, "toolchain": {"lcov": "no-lcov"}}}
+        }
+
+        with pytest.raises(CoverageInputError, match=r"toolchain\.lcov = 'no-lcov'"):
+            await run_coverage_report([], tmp_path / "report", _unit_inputs(project, cov))
+
+        assert not (tmp_path / "report").exists()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("missing", "key"), [("gcov", "coverage_tool"), ("lcov", "lcov")])
+    async def test_a_missing_default_tool_fails_before_the_destination(
+        self, tmp_path, monkeypatch, tools, missing, key
+    ):
+        project = self._project(tmp_path, monkeypatch)
+        # The system gcov reads gcc 13 data: the stamp asks for the default `gcov`.
+        monkeypatch.setattr("otto.host.toolchain_discovery.system_gcov_major", lambda: 13)
+        (tools / missing).unlink()
+        calls = install_capture(monkeypatch)
+
+        with pytest.raises(CoverageToolMissingError) as excinfo:
+            await run_coverage_report([], tmp_path / "report", _toolchain_inputs(project))
+
+        message = str(excinfo.value)
+        assert message == (
+            f"unit tier unit: capturing {project / 'build/tests'} needs `{missing}`, but no "
+            f"`{missing}` is on PATH. Install it, or set `coverage.tiers.unit.toolchain.{key}`."
+        )
+        assert calls == []
+        assert not (tmp_path / "report").exists()
+
+    @pytest.mark.asyncio
+    async def test_a_failed_probe_reads_every_gcc_build_by_its_versioned_gcov(
+        self, tmp_path, monkeypatch, tools
+    ):
+        """As for e2e: with no system gcov to ask, gcc 13 data is read by `gcov-13`."""
+        gcov_13 = stub_tool(tools, "gcov-13")
+        (tools / "gcov").unlink()
+        project = self._project(tmp_path, monkeypatch)
+        calls = install_capture(monkeypatch)
+
+        await run_coverage_report([], tmp_path / "report", _toolchain_inputs(project))
+
+        assert [c["toolchain"].gcov for c in calls] == [gcov_13]
+
+    @pytest.mark.asyncio
+    async def test_the_system_gcov_is_probed_once_per_report(self, tmp_path, monkeypatch, tools):
+        probes: list[str] = []
+
+        def probe(gcov="gcov"):
+            probes.append(gcov)
+            return 13
+
+        monkeypatch.setattr("otto.host.toolchain_discovery.system_gcov_major", probe)
+        project = self._project(tmp_path, monkeypatch)
+        unit_build(project / "build/core-tests", project, ["src/core/add.c"])
+        install_capture(monkeypatch)
+
+        await run_coverage_report(
+            [],
+            tmp_path / "report",
+            _toolchain_inputs(project, products={"core": ["build/core-tests"]}),
+        )
+
+        assert probes == ["gcov"]
+
+    @pytest.mark.asyncio
+    async def test_a_missing_major_names_the_tier_and_never_a_host(
+        self, tmp_path, monkeypatch, tools
+    ):
+        project = self._project(tmp_path, monkeypatch, "gcc12")
+
+        with pytest.raises(CoverageToolMissingError) as excinfo:
+            await run_coverage_report([], tmp_path / "report", _toolchain_inputs(project))
+
+        message = str(excinfo.value)
+        assert f"unit tier unit (directory {project / 'build/tests'})" in message
+        assert "`coverage.tiers.unit.toolchain.coverage_tool`" in message
+        assert "host" not in message
+        assert not (tmp_path / "report").exists()
+
+    # -- the family check ---------------------------------------------------
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("compiler", "reader", "proves"),
+        [
+            ("gcc13", "llvm-cov", "an llvm-cov reads only clang's coverage data"),
+            ("clang", "gcov-13", "a GNU gcov cannot read clang's coverage data"),
+            ("clang", "arm-none-eabi-gcov", "a GNU gcov cannot read clang's coverage data"),
+            ("clang", "x86_64-linux-gnu-gcov-13", "a GNU gcov cannot read clang's coverage data"),
+        ],
+    )
+    async def test_a_reader_whose_name_contradicts_the_stamps_is_refused(
+        self, tmp_path, monkeypatch, tools, compiler, reader, proves
+    ):
+        from otto.coverage.errors import CoverageInputError
+
+        stub_tool(tools, reader)
+        project = self._project(tmp_path, monkeypatch, compiler)
+        calls = install_capture(monkeypatch)
+
+        with pytest.raises(CoverageInputError) as excinfo:
+            await run_coverage_report(
+                [], tmp_path / "report", _toolchain_inputs(project, {"coverage_tool": reader})
+            )
+
+        message = str(excinfo.value)
+        assert message.startswith(
+            f"coverage.tiers.unit.toolchain.coverage_tool = {reader!r} cannot read "
+            f"{project / 'build/tests'}: {proves}, and {project / 'build/tests/add.c.gcno'} is "
+        )
+        assert calls == []
+        assert not (tmp_path / "report").exists()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", ["llvm-gcov.sh", "llvm-gcov", "llvm-gcov-18", "x-llvm-gcov"])
+    async def test_a_wrapper_name_proves_nothing_and_passes(
+        self, tmp_path, monkeypatch, tools, name
+    ):
+        """``llvm-gcov`` is the usual name of a clang reader wrapper: ``llvm`` in a name never
+        proves the GNU family."""
+        project = self._project(tmp_path, monkeypatch, "clang")
+        wrapper = stub_tool(project / "tools", name)
+        calls = install_capture(monkeypatch)
+
+        await run_coverage_report(
+            [],
+            tmp_path / "report",
+            _toolchain_inputs(project, {"coverage_tool": f"tools/{name}"}),
+        )
+
+        assert [c["toolchain"].gcov for c in calls] == [wrapper]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("second", ["clang", "gcc12"])
+    @pytest.mark.parametrize("toolchain", [None, {"coverage_tool": "tools/wrap.sh"}])
+    async def test_a_directory_of_two_compilers_is_refused_whatever_the_setting(
+        self, tmp_path, monkeypatch, tools, second, toolchain
+    ):
+        from otto.coverage.errors import CoverageInputError
+
+        project = _init_git_repo(tmp_path)
+        own_files(monkeypatch, project, ["src/core/add.c", "src/core/sub.c"])
+        stub_tool(project / "tools", "wrap.sh")
+        hdir = project / "build/tests"
+        unit_build(hdir, project, ["src/core/add.c"])
+        unit_build(hdir, project, ["src/core/sub.c"], second)
+        calls = install_capture(monkeypatch)
+
+        with pytest.raises(CoverageInputError) as excinfo:
+            await run_coverage_report(
+                [], tmp_path / "report", _toolchain_inputs(project, toolchain)
+            )
+
+        theirs = (
+            "clang's (gcov stamp '408*')" if second == "clang" else "gcc 12's (gcov stamp 'B24*')"
+        )
+        assert str(excinfo.value) == (
+            f"unit tier unit: {hdir} holds the notes of more than one compiler — "
+            f"{hdir / 'add.c.gcno'} is gcc 13's (gcov stamp 'B33*') and {hdir / 'sub.c.gcno'} "
+            f"is {theirs}. No single reader decodes both; build them into separate directories."
+        )
+        assert calls == []
+
+    # -- shell-safe paths -----------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_a_configured_tool_lcov_cannot_run_is_an_input_error(
+        self, tmp_path, monkeypatch, tools
+    ):
+        from otto.coverage.errors import CoverageInputError
+
+        project = self._project(tmp_path, monkeypatch)
+        spaced = tmp_path / "my tools"
+        stub_tool(spaced, "gcov-15")
+        monkeypatch.setenv("PATH", f"{tools}{os.pathsep}{spaced}")
+
+        with pytest.raises(CoverageInputError) as excinfo:
+            await run_coverage_report(
+                [], tmp_path / "report", _toolchain_inputs(project, {"coverage_tool": "gcov-15"})
+            )
+
+        assert str(excinfo.value) == (
+            f"coverage.tiers.unit.toolchain.coverage_tool = 'gcov-15' resolves to "
+            f"{spaced / 'gcov-15'}, which lcov cannot run: it contains white space or a control "
+            "character (' '). Name a path without white space or shell metacharacters."
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_default_tool_lcov_cannot_run_is_a_missing_tool(
+        self, tmp_path, monkeypatch, tools
+    ):
+        project = self._project(tmp_path, monkeypatch)
+        spaced = tmp_path / "my tools"
+        (tools / "lcov").rename(spaced.mkdir() or spaced / "lcov")
+        monkeypatch.setenv("PATH", f"{tools}{os.pathsep}{spaced}")
+
+        with pytest.raises(CoverageToolMissingError) as excinfo:
+            await run_coverage_report([], tmp_path / "report", _toolchain_inputs(project))
+
+        assert str(excinfo.value).startswith(
+            f"unit tier unit: the tool found on PATH at {spaced / 'lcov'} cannot be run by lcov"
+        )
+        assert "`coverage.tiers.unit.toolchain.lcov`" in str(excinfo.value)
+        assert not (tmp_path / "report").exists()
+
+    # -- after the capture ----------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_a_capture_that_records_nothing_fails(self, tmp_path, monkeypatch, tools):
+        """A reader of the wrong family that no name revealed: lcov reports success, empty."""
+        from otto.coverage.errors import CaptureFailedError
+        from otto.coverage.merge import merger as merger_mod
+
+        project = self._project(tmp_path, monkeypatch)
+        stub_tool(project / "tools", "wrap.sh")
+
+        async def empty_capture(self, directory, output, toolchain=None, includes=None):
+            output.write_text("")
+            return output
+
+        monkeypatch.setattr(merger_mod.LcovMerger, "capture_dir", empty_capture)
+
+        with pytest.raises(CaptureFailedError) as excinfo:
+            await run_coverage_report(
+                [],
+                tmp_path / "report",
+                _toolchain_inputs(project, {"coverage_tool": "tools/wrap.sh"}),
+            )
+
+        message = str(excinfo.value)
+        assert message.startswith(
+            f"unit tier unit: the capture of {project / 'build/tests'} with "
+            f"{project / 'tools/wrap.sh'} recorded no source file, though 1 product source"
+        )
+        assert "`coverage.tiers.unit.toolchain.coverage_tool`" in message
+
+    @pytest.mark.asyncio
+    async def test_a_failed_capture_names_the_view_and_the_tier_setting(
+        self, tmp_path, monkeypatch, tools
+    ):
+        from otto.coverage.errors import CaptureFailedError
+        from otto.coverage.merge import merger as merger_mod
+
+        project = self._project(tmp_path, monkeypatch)
+
+        async def failing_capture(self, directory, output, toolchain=None, includes=None):
+            raise CaptureFailedError("lcov --capture failed:\ngeninfo: ERROR: no data")
+
+        monkeypatch.setattr(merger_mod.LcovMerger, "capture_dir", failing_capture)
+
+        with pytest.raises(CaptureFailedError) as excinfo:
+            await run_coverage_report([], tmp_path / "report", _toolchain_inputs(project))
+
+        assert str(excinfo.value) == (
+            f"unit tier unit: capturing {project / 'build/tests'} failed; if the counter reader "
+            "is the wrong one, set `coverage.tiers.unit.toolchain.coverage_tool`.\n"
+            "lcov --capture failed:\ngeninfo: ERROR: no data"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_version_mismatch_names_the_tier_setting(self, tmp_path, monkeypatch, tools):
+        from otto.coverage.errors import CoverageToolVersionError
+        from otto.coverage.merge import merger as merger_mod
+
+        project = self._project(tmp_path, monkeypatch)
+
+        async def refusing_capture(self, directory, output, toolchain=None, includes=None):
+            raise CoverageToolVersionError("geninfo: Incompatible GCC/GCOV version")
+
+        monkeypatch.setattr(merger_mod.LcovMerger, "capture_dir", refusing_capture)
+
+        with pytest.raises(CoverageToolVersionError) as excinfo:
+            await run_coverage_report([], tmp_path / "report", _toolchain_inputs(project))
+
+        message = str(excinfo.value)
+        assert "set `coverage.tiers.unit.toolchain.coverage_tool` to an llvm-cov path" in message
+        assert "If the tested code was built with clang --coverage" in message
+        assert "host" not in message
+        assert "product" not in message
+        assert message.endswith("geninfo: Incompatible GCC/GCOV version")
+
+
+def _write_meta(cov: Path, project: Path) -> None:
+    (cov / ".otto_cov_meta.json").write_text(
+        json.dumps(
+            {
+                "project_name": "proj",
+                "project_root": str(project),
+                "tier": "system",
+                "base_commit": head_commit(project),
+            }
+        )
+    )
+
+
+def _spy_produce(monkeypatch) -> list[dict]:
+    from otto.coverage.capture.produce import ProduceResult
+
+    calls: list[dict] = []
+
+    async def fake(cov_dir, **kwargs):
+        calls.append({"cov_dir": cov_dir, **kwargs})
+        return ProduceResult([])
+
+    monkeypatch.setattr("otto.coverage.capture.produce.produce_captures", fake)
+    return calls
+
+
+def _needs(*tools: str) -> pytest.MarkDecorator:
+    missing = [t for t in tools if shutil.which(t) is None]
+    return pytest.mark.skipif(bool(missing), reason=f"not installed: {', '.join(missing)}")
+
+
+def _run(cmd: list[str], cwd: Path) -> None:
+    subprocess.run(cmd, cwd=cwd, check=True, capture_output=True)
+
+
+_ADD_C = "int add(int a) { return a + 1; }\n"
+_TEST_ADD_C = "int add(int);\nint main(void) { return add(1) == 2 ? 0 : 1; }\n"
+
+
+def _c_unit_project(tmp_path: Path, cc: str) -> Path:
+    """Build a C unit test beside a product build of the same source, both with *cc*."""
+    project = _init_git_repo(tmp_path)
+    (project / "src/core").mkdir(parents=True)
+    (project / "src/core/add.c").write_text(_ADD_C)
+    (project / "tests").mkdir()
+    (project / "tests/test_add.c").write_text(_TEST_ADD_C)
+    unit = project / "build" / "unit"
+    unit.mkdir(parents=True)
+    _run([cc, "--coverage", "-c", "../../src/core/add.c", "-o", "add.c.o"], unit)
+    _run([cc, "--coverage", "-c", "../../tests/test_add.c", "-o", "test_add.c.o"], unit)
+    _run([cc, "--coverage", "add.c.o", "test_add.c.o", "-o", "unit_tests"], unit)
+    _run(["./unit_tests"], unit)
+    prod = project / "build" / "prod"
+    prod.mkdir()
+    _run([cc, "--coverage", "-c", "../../src/core/add.c", "-o", "add.c.o"], prod)
+    return project
+
+
+_REAL_UNIT_COV = {
+    "tiers": {"unit": {"kind": "unit", "precedence": 1, "harvest_dirs": ["build/unit"]}}
+}
+
+
+class TestUnitHarvestRealTools:
+    """The unit capture in place with the real lcov, gcov and compilers."""
+
+    @_needs("lcov", "clang", "llvm-cov")
+    @pytest.mark.asyncio
+    async def test_real_clang_unit_capture_in_place(self, tmp_path, monkeypatch):
+        """The built-in ``local``: the notes' clang stamp picks ``llvm-cov`` over ``gcov``."""
+        project = _c_unit_project(tmp_path, "clang")
+        core = FakeProduct("core", artifact=str(project / "build/prod/add.c.o"))
+        install_lab(monkeypatch, [FakeHost("h1", [core])])
+
+        store = await run_coverage_report(
+            [], tmp_path / "report", _unit_inputs(project, _REAL_UNIT_COV)
+        )
+
+        raw = (tmp_path / "report/_work/unit_unit_0.raw.info").read_text()
+        assert "SF:" in raw
+        assert "test_add.c" not in raw
+        assert _store_paths(store, project) == ["src/core/add.c"]
+
+    @_needs("lcov", "gcc", "gcov")
+    @pytest.mark.asyncio
+    async def test_real_gcc_unit_capture_in_place(self, tmp_path, monkeypatch):
+        project = _c_unit_project(tmp_path, "gcc")
+        core = FakeProduct("core", artifact=str(project / "build/prod/add.c.o"))
+        install_lab(monkeypatch, [FakeHost("h1", [core])])
+
+        store = await run_coverage_report(
+            [], tmp_path / "report", _unit_inputs(project, _REAL_UNIT_COV)
+        )
+
+        raw = (tmp_path / "report/_work/unit_unit_0.raw.info").read_text()
+        assert "SF:" in raw
+        assert "test_add.c" not in raw
+        assert _store_paths(store, project) == ["src/core/add.c"]
+
+    @_needs("lcov", "gcc", "gcov")
+    @pytest.mark.asyncio
+    async def test_real_gcc_of_another_major_reads_with_its_gcov(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        from otto.host.toolchain_discovery import system_gcov_major
+
+        system = system_gcov_major()
+        other = next((m for m in range(9, 20) if m != system and shutil.which(f"gcc-{m}")), None)
+        if other is None or shutil.which(f"gcov-{other}") is None:
+            pytest.skip("no second gcc with its gcov installed")
+        project = _c_unit_project(tmp_path, f"gcc-{other}")
+        core = FakeProduct("core", artifact=str(project / "build/prod/add.c.o"))
+        install_lab(monkeypatch, [FakeHost("h1", [core])])
+
+        with caplog.at_level("INFO"):
+            store = await run_coverage_report(
+                [], tmp_path / "report", _unit_inputs(project, _REAL_UNIT_COV)
+            )
+
+        assert _store_paths(store, project) == ["src/core/add.c"]
+        gcov = shutil.which(f"gcov-{other}")
+        assert any(
+            m.startswith("unit unit: gcov stamp ") and m.endswith(f"reading counters with {gcov}")
+            for m in _messages(caplog, "INFO")
+        )
+
+    @_needs("lcov", "gcc", "gcov", "llvm-cov")
+    @pytest.mark.asyncio
+    async def test_real_llvm_cov_over_gcc_data_is_refused_in_the_preflight(
+        self, tmp_path, monkeypatch
+    ):
+        """lcov itself would report success with an empty tracefile here."""
+        from otto.coverage.errors import CoverageInputError
+
+        project = _c_unit_project(tmp_path, "gcc")
+        core = FakeProduct("core", artifact=str(project / "build/prod/add.c.o"))
+        install_lab(monkeypatch, [FakeHost("h1", [core])])
+        cov = {"tiers": {"unit": {**_REAL_UNIT_COV["tiers"]["unit"]}}}
+        cov["tiers"]["unit"]["toolchain"] = {"coverage_tool": "llvm-cov"}
+
+        with pytest.raises(CoverageInputError, match="an llvm-cov reads only clang's"):
+            await run_coverage_report([], tmp_path / "report", _unit_inputs(project, cov))
+
+        assert not (tmp_path / "report").exists()
+
+    @_needs("lcov", "clang", "llvm-cov")
+    @pytest.mark.asyncio
+    async def test_real_clang_with_only_lcov_args_into_a_spaced_output_dir(
+        self, tmp_path, monkeypatch
+    ):
+        """The overlay keeps llvm-cov discovery; its wrapper lives outside the output dir,
+        whose space would otherwise break geninfo's shell."""
+        project = _c_unit_project(tmp_path, "clang")
+        core = FakeProduct("core", artifact=str(project / "build/prod/add.c.o"))
+        install_lab(monkeypatch, [FakeHost("h1", [core])])
+        cov = {"tiers": {"unit": {**_REAL_UNIT_COV["tiers"]["unit"]}}}
+        cov["tiers"]["unit"]["toolchain"] = {"lcov_args": ["--rc", "geninfo_unexecuted_blocks=1"]}
+        out = tmp_path / "my report"
+        from otto.host.local_host import LocalHost
+
+        commands: list[str] = []
+        real_exec = LocalHost.exec
+
+        async def recording_exec(self, cmd, *args, **kwargs):
+            commands.append(cmd)
+            return await real_exec(self, cmd, *args, **kwargs)
+
+        monkeypatch.setattr(LocalHost, "exec", recording_exec)
+
+        store = await run_coverage_report([], out, _unit_inputs(project, cov))
+
+        assert _store_paths(store, project) == ["src/core/add.c"]
+        (capture,) = [c for c in commands if "--capture" in c]
+        assert " --rc geninfo_unexecuted_blocks=1 " in capture
+        assert "SF:" in (out / "_work/unit_unit_0.raw.info").read_text()
+        assert not list(out.rglob("llvm-gcov-*"))
+
+    @_needs("lcov", "gcc", "g++", "gcov")
+    @pytest.mark.skipif(not Path("/usr/include/gtest").is_dir(), reason="gtest not installed")
+    @pytest.mark.asyncio
+    async def test_gtest_file_never_reaches_geninfo(self, tmp_path, monkeypatch, caplog):
+        from otto.coverage.errors import CaptureFailedError
+        from otto.coverage.merge.merger import LcovMerger
+        from otto.host.local_host import LocalHost
+
+        project = _init_git_repo(tmp_path)
+        (project / "src/core").mkdir(parents=True)
+        (project / "src/core/add.c").write_text(_ADD_C)
+        (project / "tests").mkdir()
+        # A value-parameterised test: lcov 2 refuses gtest's expansion of it
+        # ("mismatched exception tag") when the file reaches geninfo.
+        (project / "tests/test_add.cpp").write_text(
+            "#include <gtest/gtest.h>\n"
+            'extern "C" int add(int);\n'
+            "TEST(Add, One) { EXPECT_EQ(add(1), 2); }\n"
+            "class AddP : public ::testing::TestWithParam<int> {};\n"
+            "TEST_P(AddP, Plus) { EXPECT_EQ(add(GetParam()), GetParam() + 1); }\n"
+            "INSTANTIATE_TEST_SUITE_P(Vals, AddP, ::testing::Values(1, 2, 3));\n"
+        )
+        unit = project / "build" / "unit"
+        unit.mkdir(parents=True)
+        _run(["gcc", "--coverage", "-c", "../../src/core/add.c", "-o", "add.c.o"], unit)
+        _run(["g++", "--coverage", "-c", "../../tests/test_add.cpp", "-o", "test_add.cpp.o"], unit)
+        _run(
+            [
+                *["g++", "--coverage", "add.c.o", "test_add.cpp.o"],
+                *["-lgtest", "-lgtest_main", "-pthread", "-o", "unit_tests"],
+            ],
+            unit,
+        )
+        _run(["./unit_tests"], unit)
+        prod = project / "build" / "prod"
+        prod.mkdir()
+        _run(["gcc", "--coverage", "-c", "../../src/core/add.c", "-o", "add.c.o"], prod)
+
+        # (a) unfiltered, geninfo fails on the gtest file
+        localhost = LocalHost()
+        try:
+            with pytest.raises(CaptureFailedError):
+                await LcovMerger(localhost).capture_dir(unit, tmp_path / "unfiltered.info")
+        finally:
+            await localhost.close()
+
+        # (b) the filtered unit harvest never hands it to geninfo
+        core = FakeProduct("core", artifact=str(prod / "add.c.o"))
+        install_lab(monkeypatch, [FakeHost("h1", [core])])
+        with caplog.at_level("DEBUG"):
+            store = await run_coverage_report(
+                [], tmp_path / "report", _unit_inputs(project, _REAL_UNIT_COV)
+            )
+
+        assert _store_paths(store, project) == ["src/core/add.c"]
+        debug = _messages(caplog, "DEBUG")
+        assert "unit unit: drop tests/test_add.cpp (not in any product)" in debug
+        assert any(m.startswith("unit unit: drop /usr/include/gtest/") for m in debug)
 
 
 @pytest.mark.asyncio

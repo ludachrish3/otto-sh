@@ -8,11 +8,15 @@ logging and timeout handling.
 import logging
 import shlex
 import shutil
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from typing_extensions import Self
+
 from ...host.local_host import LocalHost
-from ...host.toolchain_discovery import ensure_gcov_tool
+from ...host.toolchain import shell_unsafe
+from ...host.toolchain_discovery import ensure_gcov_tool, is_llvm_cov
 from ...logger.mode import LogMode
 from ...utils import Status
 from .gcovfile import incompatibility
@@ -58,6 +62,13 @@ class LcovMerger:
     Individual :meth:`capture_pairs` / :meth:`capture_dir` calls can
     override them via the *toolchain* parameter to support per-host
     toolchains.
+
+    An ``llvm-cov`` reader runs through a generated wrapper script in a
+    temporary directory the merger creates under the system temp dir (``/tmp``
+    when that path holds white space or a shell metacharacter) on first need,
+    never under a capture's output directory: lcov's ``geninfo``
+    runs the reader through a shell, and the output path is the user's to
+    choose. :meth:`close` (or leaving a ``with`` block) removes it.
     """
 
     def __init__(
@@ -69,6 +80,31 @@ class LcovMerger:
         self.localhost = localhost
         self.lcov = lcov
         self.gcov = gcov
+        self._wrappers: Path | None = None
+
+    def __enter__(self) -> Self:
+        """Return the merger; leaving the block calls :meth:`close`."""
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        """Remove the merger's wrapper directory."""
+        self.close()
+
+    def close(self) -> None:
+        """Remove the temporary directory holding the ``llvm-cov`` wrappers, if one was made."""
+        if self._wrappers is not None:
+            shutil.rmtree(self._wrappers, ignore_errors=True)
+            self._wrappers = None
+
+    def _wrapper_dir(self) -> Path:
+        if self._wrappers is None:
+            base = tempfile.gettempdir()
+            if shell_unsafe(base) is not None:
+                # geninfo runs the reader through its own shell: a TMPDIR with a space
+                # or a metacharacter in it cannot hold the wrapper.
+                base = "/tmp"  # noqa: S108 — a private mkdtemp below it, never a fixed name
+            self._wrappers = Path(tempfile.mkdtemp(prefix="otto-gcov-", dir=base))
+        return self._wrappers
 
     async def capture_pairs(
         self, pairs: "list[Pair]", staging: Path, output: Path, toolchain: "Toolchain | None" = None
@@ -119,15 +155,17 @@ class LcovMerger:
         from ..errors import CaptureFailedError, CoverageDataMismatchError, CoverageToolVersionError
 
         lcov = toolchain.lcov_bin if toolchain else self.lcov
-        gcov = ensure_gcov_tool(toolchain.gcov_bin if toolchain else self.gcov, output.parent)
+        gcov = toolchain.gcov_bin if toolchain else self.gcov
+        if is_llvm_cov(gcov):
+            gcov = ensure_gcov_tool(gcov, self._wrapper_dir())
         include_args = ""
         if includes:
             include_args = " --ignore-errors unused" + "".join(
                 f" --include {shlex.quote(p)}" for p in includes
             )
         cmd = (
-            f"{lcov} --capture --directory {shlex.quote(str(directory))}"
-            f" --gcov-tool {gcov} --rc branch_coverage=1 --ignore-errors source"
+            f"{shlex.quote(lcov)} --capture --directory {shlex.quote(str(directory))}"
+            f" --gcov-tool {shlex.quote(gcov)} --rc branch_coverage=1 --ignore-errors source"
             f"{_extra_args(toolchain)}{include_args} --output-file {shlex.quote(str(output))}"
         )
         logger.info(

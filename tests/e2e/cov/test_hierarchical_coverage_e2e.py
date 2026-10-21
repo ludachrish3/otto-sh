@@ -3,12 +3,12 @@
 tests/project_hier is a CMake project laid out the way real ones are: a shared
 library (``libcore.so``, its own object directory) that ``app`` reaches only
 through ``DT_NEEDED``; a second product, ``tool``, whose only source shares
-app's basename (``main.cpp``); a unit-test tree under the project root that
-compiles the library's source again; and a stale second build tree
-(``build-old/``, compiled with ``-DSTALE=ON`` so its code and stamps differ).
-Each pass is the user's own flow::
+app's basename (``main.cpp``); a gtest unit-test tree under the project root
+that compiles the library's source again and is the project's unit tier; and a
+stale second build tree (``build-old/``, compiled with ``-DSTALE=ON`` so its
+code and stamps differ). Each pass is the user's own flow::
 
-    tests/project_hier/build.sh
+    tests/project_hier/build.sh                # also runs the unit tests once
     otto -l unix run install-tools && otto -l unix run install
     otto -l unix cov clean
     otto -l unix host test1 exec '<app 3 times, tool 2 times>'
@@ -17,13 +17,15 @@ Each pass is the user's own flow::
 
 The first pass runs with ``build-old/`` present, the second with it removed;
 each ``.gcda`` must pair with its own notes by path both times, so the two
-reports are line-for-line identical.
+reports' system tiers are line-for-line identical. The unit tier counts only
+product sources: the library's ``core.cpp``, never the gtest test file.
 
 The products run with ``GCOV_PREFIX_STRIP`` set to the project root's depth, so
 every object's ``.gcda`` is written at its path relative to the project root —
 the one build rule the coverage docs state.
 
-**Prerequisites:** test1 up; ``cmake``, ``g++`` and ``lcov`` on the dev VM;
+**Prerequisites:** test1 up; ``cmake``, ``g++``, ``libgtest-dev`` and ``lcov``
+on the dev VM;
 test1 must share the dev VM's architecture and glibc, because
 ``app``, ``tool`` and ``libcore.so`` are built on the dev VM and run on test1
 as they are. A host that is down fails the run; nothing here skips. Teardown
@@ -37,6 +39,7 @@ xdist group: the product directories on test1 are shared state.
 """
 
 import json
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -66,6 +69,8 @@ SOURCES = {CORE, APP, TOOL}
 MARKERS = {CORE: "// hier: core-entry", APP: "// hier: app-main", TOOL: "// hier: tool-main"}
 APP_RUNS = 3
 TOOL_RUNS = 2
+# tests/unit/test_core.cpp's two TESTs each call core_scale once.
+UNIT_CALLS = 2
 
 # Each product's .gcda, at its path under the product's directory: the
 # object's own path relative to the project root, CMake's per-target object
@@ -83,9 +88,23 @@ GCDA = {
 _STRIP = len(PROJECT_HIER.parts) - 1
 
 
-def _run(argv: list[str], *, xdir: Path, timeout: int = 600) -> subprocess.CompletedProcess[str]:
-    """Run ``otto --lab unix ARGV`` against project_hier and fail loudly on a non-zero exit."""
-    result = run_otto(argv, xdir=xdir, roots=PROJECT_HIER, lab=_LAB, timeout=timeout)
+def _run(
+    argv: list[str], *, xdir: Path, timeout: int = 600, debug: bool = False
+) -> subprocess.CompletedProcess[str]:
+    """Run ``otto --lab unix ARGV`` against project_hier and fail loudly on a non-zero exit.
+
+    *debug* runs it at ``--log-level DEBUG``, on a wide console so no log line
+    is folded mid-path.
+    """
+    result = run_otto(
+        argv,
+        xdir=xdir,
+        roots=PROJECT_HIER,
+        lab=_LAB,
+        timeout=timeout,
+        extra_argv_prefix=["--log-level", "DEBUG"] if debug else None,
+        extra_env={"COLUMNS": "400"} if debug else None,
+    )
     if result.returncode != 0:
         raise AssertionError(
             f"otto --lab {_LAB} {' '.join(argv)} exited {result.returncode}\n"
@@ -115,6 +134,7 @@ class Pass:
     store: CoverageStore
     store_json: dict[str, Any]
     get_output: str
+    report_output: str
 
 
 def _one_pass(root: Path) -> Pass:
@@ -129,13 +149,19 @@ def _one_pass(root: Path) -> Pass:
     gets = [d for d in output_dirs(xdir, "cov") if d.name.endswith("_get")]
     assert len(gets) == 1, f"expected one cov get output dir, found {gets}"
     get_dir = gets[0]
-    _run(["cov", "report", str(get_dir), "--dir", str(report_dir)], xdir=xdir, timeout=300)
+    reported = _run(
+        ["cov", "report", str(get_dir), "--dir", str(report_dir)],
+        xdir=xdir,
+        timeout=300,
+        debug=True,
+    )
     store_path = report_dir / "store.json"
     return Pass(
         cov_dir=get_dir / "cov",
         store=CoverageStore.load(store_path),
         store_json=json.loads(store_path.read_text()),
         get_output=" ".join((got.stdout + got.stderr).split()),
+        report_output=" ".join((reported.stdout + reported.stderr).split()),
     )
 
 
@@ -253,5 +279,74 @@ class TestHierarchicalCoverage:
 
     @pytest.mark.parametrize("which", ["stale", "clean"])
     def test_every_run_carries_host_and_product(self, passes, which):
+        """Every e2e run names its host and product; the clean pass adds the unit run.
+
+        The unit tier's plain ``harvest_dirs`` sweep is one run with no host
+        and no product behind it. The stale pass has none (see
+        :meth:`test_stale_unit_view_keeps_nothing`).
+        """
         runs = passes[which].store_json["runs"]
-        assert sorted((r["host"], r["product"]) for r in runs) == [(_HOST, "app"), (_HOST, "tool")]
+        e2e = sorted((r["host"], r["product"]) for r in runs if r["tier"] == "system")
+        assert e2e == [(_HOST, "app"), (_HOST, "tool")]
+        unit = [(r["host"], r["product"]) for r in runs if r["tier"] == "unit"]
+        assert unit == ([("", "")] if which == "clean" else [])
+        assert len(runs) == len(e2e) + len(unit)
+
+    def test_unit_tier_holds_only_product_sources(self, passes):
+        """The unit build compiles core.cpp and the gtest file; only core.cpp counts.
+
+        core.cpp is app's source through its DT_NEEDED library, so it is a
+        product source; tests/unit/test_core.cpp is no product's. core.h is
+        not reported because the notes never name it: it holds a declaration
+        and no code.
+        """
+        store = passes["clean"].store
+        unit_files = {
+            fr.path.relative_to(PROJECT_HIER).as_posix()
+            for fr in store.files()
+            if any(lr.hits.for_tier("unit") for lr in fr.lines.values())
+        }
+        assert unit_files == {CORE}
+        line = _line_of(PROJECT_HIER / CORE, MARKERS[CORE])
+        assert _record(store, CORE).lines[line].hits.for_tier("unit") == UNIT_CALLS
+
+    def test_unit_filter_counts_what_it_dropped(self, passes):
+        """The filter keeps core.cpp for app and drops the test file and every header.
+
+        The dropped count is not pinned: besides tests/unit/test_core.cpp it
+        holds the system and gtest headers the compiler records for the test
+        file, which a gcc or libgtest-dev upgrade changes. Each of those is
+        an absolute path outside the project.
+        """
+        out = passes["clean"].report_output
+        counts = re.search(
+            r"unit unit: kept (\d+) product source files, dropped (\d+) not in any product", out
+        )
+        assert counts is not None, out
+        assert int(counts[1]) == 1
+        assert int(counts[2]) >= 2
+        keeps = re.findall(r"unit unit: keep (\S+) \(product (\S+)\)", out)
+        assert keeps == [(CORE, "app")]
+        drops = re.findall(r"unit unit: drop (\S+) \(not in any product\)", out)
+        assert "tests/unit/test_core.cpp" in drops
+        others = [d for d in drops if d != "tests/unit/test_core.cpp"]
+        assert others, drops
+        for dropped in others:
+            path = Path(dropped)
+            assert path.is_absolute(), dropped
+            assert not path.is_relative_to(PROJECT_HIER), dropped
+        assert len(drops) == int(counts[2])
+
+    def test_stale_unit_view_keeps_nothing(self, passes):
+        """With build-old/ present the unit tier keeps nothing: a known limitation (#694).
+
+        Two ``libcore.so`` under the project root make app's DT_NEEDED
+        ambiguous, so core.cpp is not on app's object list and no product
+        owns it (as :meth:`test_library_reached_through_dt_needed` pins for
+        collection). The unit view then skips its capture and adds no run.
+        """
+        out = passes["stale"].report_output
+        assert "unit unit: kept 0 product source files" in out
+        assert "unit unit: no product source files under" in out
+        assert "nothing to capture" in out
+        assert not [r for r in passes["stale"].store_json["runs"] if r["tier"] == "unit"]

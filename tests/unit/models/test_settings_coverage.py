@@ -154,3 +154,90 @@ def test_report_rejects_out_of_range() -> None:
         match=r"(?m)^coverage\.report\.medium\n\s+Input should be greater than or equal to 0",
     ):
         _settings({"report": {"medium": -1}})
+
+
+# -- a unit tier's own toolchain ------------------------------------------------
+
+
+def _unit_toolchain(toolchain: dict, kind: str = "unit") -> SettingsModel:
+    return _settings({"tiers": {"unit": {"kind": kind, "precedence": 1, "toolchain": toolchain}}})
+
+
+def test_a_unit_tier_toolchain_parses_every_field() -> None:
+    s = _unit_toolchain(
+        {
+            "coverage_tool": "gcov-13",
+            "lcov": "/opt/lcov2/bin/lcov",
+            "lcov_args": ["--rc", "geninfo_unexecuted_blocks=1"],
+        }
+    )
+    toolchain = s.coverage.tiers["unit"].toolchain
+    assert toolchain is not None
+    assert toolchain.coverage_tool == "gcov-13"
+    assert toolchain.lcov == "/opt/lcov2/bin/lcov"
+    assert toolchain.lcov_args == ["--rc", "geninfo_unexecuted_blocks=1"]
+
+
+def test_an_empty_toolchain_table_is_the_same_as_none() -> None:
+    toolchain = _unit_toolchain({}).coverage.tiers["unit"].toolchain
+    assert toolchain is not None
+    assert (toolchain.coverage_tool, toolchain.lcov, toolchain.lcov_args) == (None, None, [])
+
+
+def test_paths_and_tilde_values_are_accepted_as_written() -> None:
+    toolchain = _unit_toolchain({"coverage_tool": "~/bin/gcov", "lcov": "./tools/lcov"})
+    assert toolchain.coverage.tiers["unit"].toolchain.coverage_tool == "~/bin/gcov"
+    assert toolchain.coverage.tiers["unit"].toolchain.lcov == "./tools/lcov"
+
+
+def test_an_unknown_toolchain_key_is_refused_with_its_full_key() -> None:
+    with pytest.raises(
+        ValidationError, match=r"(?m)^coverage\.tiers\.unit\.toolchain\.gcov\n\s+Extra inputs"
+    ):
+        _unit_toolchain({"gcov": "gcov-13"})
+
+
+@pytest.mark.parametrize("field", ["coverage_tool", "lcov"])
+@pytest.mark.parametrize(
+    "value", ["", "llvm-cov gcov", "/opt/GCC 13/bin/gcov", "gcov;rm", "$(x)", "a\tb", "gc`ov`"]
+)
+def test_an_unusable_tool_value_is_refused_with_its_full_key(field: str, value: str) -> None:
+    with pytest.raises(
+        ValidationError,
+        match=rf"(?m)^coverage\.tiers\.unit\.toolchain\.{field}\n\s+Value error, ",
+    ):
+        _unit_toolchain({field: value})
+
+
+@pytest.mark.parametrize("value", ["", "--ignore-errors source", "a\tb"])
+def test_an_unusable_lcov_argument_is_refused_with_its_full_key(value: str) -> None:
+    with pytest.raises(
+        ValidationError,
+        match=r"(?m)^coverage\.tiers\.unit\.toolchain\.lcov_args\n\s+Value error, ",
+    ):
+        _unit_toolchain({"lcov_args": ["--rc", value]})
+
+
+def test_lcov_arguments_may_carry_shell_metacharacters() -> None:
+    """otto quotes each lcov argument; only the reader's own path goes through geninfo's shell."""
+    args = ["--exclude", "*/tests/*", "--rc", "x='a|b'", "--rc", "y=$HOME"]
+    assert _unit_toolchain({"lcov_args": args}).coverage.tiers["unit"].toolchain.lcov_args == args
+
+
+@pytest.mark.parametrize("kind", ["e2e", "manual"])
+@pytest.mark.parametrize("toolchain", [{}, {"lcov": "lcov"}])
+def test_a_toolchain_table_on_another_kind_is_refused_even_when_empty(
+    kind: str, toolchain: dict
+) -> None:
+    with pytest.raises(
+        ValidationError,
+        match=r"(?m)^coverage\.tiers\.unit\n\s+Value error, `toolchain` is only valid on a "
+        r"unit-kind tier",
+    ):
+        _unit_toolchain(toolchain, kind=kind)
+
+
+@pytest.mark.parametrize("value", ["llvm-cov gcov", "/usr/bin/llvm-cov-18 gcov"])
+def test_a_two_word_llvm_cov_reader_is_told_to_name_the_binary(value: str) -> None:
+    with pytest.raises(ValidationError, match=r"name the llvm-cov binary alone; otto adds `gcov`"):
+        _unit_toolchain({"coverage_tool": value})

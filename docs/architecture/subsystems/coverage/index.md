@@ -102,7 +102,10 @@ or `otto cov get` already wrote: it still loads the lab — per-host toolchain
 resolution (`gcov`, `lcov`) comes from host configuration first, else the
 product's own `.gcda` stamp per `<host>/<product>` directory (`llvm-cov`
 for clang, `gcov-<major>` for another gcc major; see
-{ref}`coverage-gcov-resolution`) — but it creates **no output directory of
+{ref}`coverage-gcov-resolution`); a unit tier's build directories take the
+tier's own `toolchain` setting in place of the host record, resolved with
+every unit view in the preflight before the destination is touched
+(`otto.coverage.unit_toolchain`) — but it creates **no output directory of
 its own** and runs **no gate**: reporting on yesterday's run must never be
 blocked by today's reservations ({doc}`../../lifecycle`). Its siblings do touch the
 lab: `otto cov get` fetches counters — into the standard per-invocation

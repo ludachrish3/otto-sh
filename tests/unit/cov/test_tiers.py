@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from otto.coverage.errors import CoverageInputError
-from otto.coverage.tiers import load_tiers, resolve_get_tier
+from otto.coverage.tiers import TierToolchain, load_tiers, resolve_get_tier
 
 
 def test_default_when_unconfigured() -> None:
@@ -47,6 +47,19 @@ def test_unit_tier_products_table_is_carried_through():
         "agent": [Path("b/agent")],
     }
     assert tiers[0].harvest_dirs == [Path("build/tests")]
+
+
+def test_a_unit_tier_toolchain_is_carried_through_as_written():
+    toolchain = {"coverage_tool": "~/bin/gcov", "lcov_args": ["--rc", "x=1"]}
+    (tier,) = load_tiers(
+        {"tiers": {"unit": {"kind": "unit", "precedence": 1, "toolchain": toolchain}}}
+    )
+    assert tier.toolchain == TierToolchain(coverage_tool="~/bin/gcov", lcov_args=["--rc", "x=1"])
+
+
+def test_a_tier_without_a_toolchain_carries_none():
+    (tier,) = load_tiers({"tiers": {"unit": {"kind": "unit", "precedence": 1}}})
+    assert tier.toolchain is None
 
 
 def test_explicit_color_wins() -> None:

@@ -38,7 +38,6 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ..utils import anchor_path
 from .merge.lcov_loader import LCOVLoader
 from .merge.merger import LcovMerger
 from .report_inputs import ReportInputs
@@ -52,9 +51,12 @@ if TYPE_CHECKING:
     from .capture.model import Capture
     from .capture.produce import ProductKey
     from .exclusions.rules import ExclusionRule
+    from .objects import ObjectListCache
     from .overrides import OverrideConfig
+    from .sources import SourceResolver
     from .tickets import TicketSpec
     from .tiers import TierConfig
+    from .unit_filter import UnitPlan, UnitView
 
 logger = logging.getLogger(__name__)
 
@@ -84,12 +86,21 @@ class CollectionInputs:
       fold in under their own tier, subject to the HEAD base_commit guard.
     - ``exclusion_rules``: Compiled ``[coverage.exclusions]`` rules. The
       built-in ``LCOV_EXCL_*`` families always apply and are not listed here.
+    - ``project_name``: The project whose products a unit tier reports.
+    - ``objects``: The report's object-list cache, so every artifact is read
+      once; a new one when omitted.
+    - ``unit_plan``: The unit views, validated before anything was captured
+      (:func:`~otto.coverage.unit_filter.plan_unit_views`); planned by
+      :meth:`CoverageReporter.run` when omitted.
     """
 
     project_root: Path | None = None
     tier_configs: "list[TierConfig]" = field(default_factory=list)
     capture_paths: list[Path] = field(default_factory=list)
     exclusion_rules: "list[ExclusionRule]" = field(default_factory=list)
+    project_name: str | None = None
+    objects: "ObjectListCache | None" = None
+    unit_plan: "UnitPlan | None" = None
 
 
 _META_KEYS = ["project_name", "project_root", "tier", "base_commit"]
@@ -270,6 +281,9 @@ class CoverageReporter:
         self.tier_configs: "list[TierConfig]" = list(coll.tier_configs)
         self.capture_paths: list[Path] = list(coll.capture_paths)
         self.exclusion_rules: "list[ExclusionRule]" = list(coll.exclusion_rules)
+        self.project_name: str | None = coll.project_name
+        self.objects: "ObjectListCache | None" = coll.objects
+        self.unit_plan: "UnitPlan | None" = coll.unit_plan
         self.prefix = prefix
         self.thresholds: Thresholds = thresholds or Thresholds()
         self.ticket_spec: "TicketSpec | None" = ticket_spec
@@ -321,7 +335,15 @@ class CoverageReporter:
             # Tracefiles and harvested tiers name their sources as lcov wrote
             # them; each is resolved to its project file, and the resolver
             # alone logs one it cannot place.
-            resolver = SourceResolver(self.project_root) if self.project_root is not None else None
+            # It shares the unit plan's walk of the project tree, when there is one.
+            resolver = (
+                SourceResolver(
+                    self.project_root,
+                    index_from=self.unit_plan.resolver if self.unit_plan is not None else None,
+                )
+                if self.project_root is not None
+                else None
+            )
             loader = LCOVLoader(store, resolver)
             for tier_name, tier_path in self.tiers:
                 if tier_path is None or not tier_path.exists():
@@ -502,92 +524,107 @@ class CoverageReporter:
         work_dir: Path,
         loader: LCOVLoader,
     ) -> None:
-        """Capture + load each unit tier's ``harvest_dirs`` and ``products``.
+        """Capture + load each unit view's directories: its products' sources only.
 
-        ``harvest_dirs``/``products`` entries are project-root-relative: a
-        relative entry is resolved against :attr:`project_root`, not the
-        process CWD (``otto cov report`` may run from anywhere). Absolute
-        entries pass through unchanged.
-
-        ``harvest_dirs`` folds into one unnamed run (``product=""``); each
-        entry in ``products`` gets its own run, named after the product, so
-        the report can distinguish per-product coverage.
+        ``harvest_dirs`` fold into one unnamed run (``product=""``); each
+        ``products`` entry gets its own run, named after the product. Each
+        view's directories, their kept sources and their toolchains come from
+        the unit plan (:class:`CollectionInputs`), planned here when none was
+        given: the tier's own ``toolchain`` setting over what each
+        directory's stamps choose.
         """
-        unit_tiers = [
-            t for t in self.tier_configs if t.kind == "unit" and (t.harvest_dirs or t.products)
-        ]
-        if not unit_tiers:
+        if not any(t.kind == "unit" and (t.harvest_dirs or t.products) for t in self.tier_configs):
+            return
+        if self.project_root is None:
+            logger.warning("Unit tiers need the project root to read its products; skipping them")
             return
         from .merge.merger import LcovMerger
+        from .sources import SourceResolver
 
-        merger = LcovMerger(localhost)
-        for tier in unit_tiers:
-            if tier.harvest_dirs:
-                await self._harvest_one(tier, "", tier.harvest_dirs, work_dir, merger, loader)
-            for product, hdirs in tier.products.items():
-                await self._harvest_one(tier, product, hdirs, work_dir, merger, loader)
+        plan = self.unit_plan
+        if plan is None:
+            from .objects import ObjectListCache
+            from .pairing import GcnoIndex
+            from .unit_filter import plan_unit_views
+
+            plan = await plan_unit_views(
+                self.tier_configs,
+                self.project_root,
+                self.project_name,
+                self.objects or ObjectListCache(self.project_root),
+                # The unit build's notes name system and gtest headers by the dozen.
+                SourceResolver(self.project_root, quiet=True, index_from=loader.resolver),
+                GcnoIndex(self.project_root),
+            )
+        with LcovMerger(localhost) as merger:
+            for view in plan.views:
+                await self._harvest_one(
+                    self.project_root, view, work_dir, merger, loader, plan.resolver
+                )
 
     async def _harvest_one(
         self,
-        tier: "TierConfig",
-        product: str,
-        hdirs: list[Path],
+        project_root: Path,
+        view: "UnitView",
         work_dir: Path,
         merger: "LcovMerger",
         loader: LCOVLoader,
+        resolver: "SourceResolver",
     ) -> None:
-        """Capture + load one ``harvest_dirs``/``products`` entry's dirs into one run.
+        """Capture + load one unit view's directories into one run, keeping product sources only.
 
-        The run id is created lazily, on the first dir that actually holds
-        data — a tier/product whose every dir is missing or empty registers
-        no run at all.
+        Each directory the plan kept is captured in place with its resolved
+        toolchain and one tail-glob ``--include`` per kept file, so nothing
+        else reaches ``geninfo``, then filtered exactly on the resolved
+        ``SF:`` paths. The run id is created lazily, on the first directory
+        captured — a view whose every directory is missing, empty or keeps
+        nothing registers no run.
+
+        Raises:
+            otto.coverage.errors.CaptureFailedError: a capture failed, or one of
+                a non-empty kept source set yielded no record (a reader that read
+                nothing); either names the view and the tier's setting.
+            otto.coverage.errors.CoverageToolVersionError: the reader cannot
+                read the build's format; its remedy names the tier's setting.
         """
-        label = f"{tier.name!r} product {product!r}" if product else f"{tier.name!r}"
-        run_id: int | None = None
-        for idx, raw_hdir in enumerate(hdirs):
-            hdir = (
-                anchor_path(raw_hdir, self.project_root)
-                if self.project_root is not None
-                else raw_hdir.expanduser()
-            )
-            if not hdir.is_dir():
-                logger.warning(
-                    "Unit tier %s: harvest dir does not exist: %s — skipping",
-                    label,
-                    hdir,
-                )
-                continue
-            gcda_files = list(hdir.rglob("*.gcda"))
-            if not gcda_files:
-                logger.warning(
-                    "Unit tier %s: harvest dir has no .gcda files: %s — skipping",
-                    label,
-                    hdir,
-                )
-                continue
-            self._warn_if_stale_counters(label, hdir, gcda_files)
-            suffix = f"_{product}" if product else ""
-            info_out = work_dir / f"unit_{tier.name}{suffix}_{idx}.info"
-            if run_id is None:
-                run_id = loader.store.add_run(tier=tier.name, product=product)
-            await merger.capture_dir(hdir, info_out)
-            loader.load(info_out, tier.name, run_id=run_id)
+        from .errors import CaptureFailedError, CoverageToolVersionError
+        from .unit_filter import filter_info, include_patterns
+        from .unit_toolchain import setting_key
 
-    @staticmethod
-    def _warn_if_stale_counters(label: str, hdir: Path, gcda_files: list[Path]) -> None:
-        """Warn (but still load) when counters look older than the build notes."""
-        gcno_files = list(hdir.rglob("*.gcno"))
-        if not gcno_files:
-            return
-        newest_gcda = max(p.stat().st_mtime for p in gcda_files)
-        newest_gcno = max(p.stat().st_mtime for p in gcno_files)
-        if newest_gcda < newest_gcno:
-            logger.warning(
-                "Unit tier %s: newest .gcda under %s predates newest .gcno — "
-                "counters may be stale (loading anyway).",
-                label,
-                hdir,
-            )
+        key = setting_key(view.tier, "coverage_tool")
+        run_id: int | None = None
+        for unit_dir in view.captures:
+            suffix = f"_{view.product}" if view.product else ""
+            raw_info = work_dir / f"unit_{view.tier}{suffix}_{unit_dir.index}.raw.info"
+            info_out = work_dir / f"unit_{view.tier}{suffix}_{unit_dir.index}.info"
+            if run_id is None:
+                run_id = loader.store.add_run(tier=view.tier, product=view.product)
+            kept = list(unit_dir.selection.kept)
+            try:
+                await merger.capture_dir(
+                    unit_dir.path,
+                    raw_info,
+                    toolchain=unit_dir.toolchain,
+                    includes=include_patterns(kept),
+                )
+            except CoverageToolVersionError as e:
+                raise CoverageToolVersionError(
+                    e.detail, setting=f"`{key}`", subject="the tested code"
+                ) from e
+            except CaptureFailedError as e:
+                raise CaptureFailedError(
+                    f"unit tier {view.label}: capturing {unit_dir.path} failed; if the counter "
+                    f"reader is the wrong one, set `{key}`.\n{e}"
+                ) from e
+            if not _has_records(raw_info):
+                raise CaptureFailedError(
+                    f"unit tier {view.label}: the capture of {unit_dir.path} with "
+                    f"{unit_dir.toolchain.gcov_bin} recorded no source file, though {len(kept)} "
+                    "product source file(s) are kept: the reader read nothing (a reader of "
+                    f"another compiler's data does this). Check `{key}`."
+                )
+            filter_info(raw_info, info_out, set(kept), project_root, resolver)
+            loader.load(info_out, view.tier, run_id=run_id)
 
     def _manual_captures(self) -> "list[Capture]":
         """Load every committed manual capture under ``project_root``.
@@ -840,6 +877,15 @@ def _classify_product_dirs(cov_dir: Path) -> _ProductStates:
     return states
 
 
+def _has_records(info: Path) -> bool:
+    """Return whether the tracefile *info* records any source file."""
+    try:
+        with info.open() as f:
+            return any(line.startswith("SF:") for line in f)
+    except FileNotFoundError:
+        return False
+
+
 def _declared_products(keys: "list[ProductKey]") -> "dict[ProductKey, Product]":
     """Map each of *keys* to its product's definition on that key's host in the active lab.
 
@@ -964,12 +1010,14 @@ def _refuse_moved_commits(runs: list[_RunInput], project_root: Path) -> None:
                 raise CaptureCommitError(capture=str(path), taken_at=capture.base_commit, head=head)
 
 
-async def _capture_states(runs: list[_RunInput], project_root: Path) -> list[Path]:
+async def _capture_states(
+    runs: list[_RunInput], project_root: Path, objects: "ObjectListCache"
+) -> list[Path]:
     """Capture every not-yet-captured product; return every ``capture.json`` to load.
 
     Each cov dir's pending products are captured with the tier and commit
-    its metadata records, through one object-list cache for the whole
-    report. A product that fails here, like one that failed at collection,
+    its metadata records, through *objects*, the report's one object-list
+    cache. A product that fails here, like one that failed at collection,
     is named in the one warning listing failed products, which gives the
     path of each ``capture.failed`` holding the detail. A failure new in
     this report also appends its detail there, since this warning is the
@@ -983,9 +1031,7 @@ async def _capture_states(runs: list[_RunInput], project_root: Path) -> list[Pat
 
     from .capture.produce import produce_captures
     from .errors import CoverageCaptureError
-    from .objects import ObjectListCache
 
-    objects = ObjectListCache(project_root)
     captures: list[Path] = []
     failed: list[Path] = []
     details: list[str] = []
@@ -1095,7 +1141,12 @@ async def run_coverage_report(
        neither is captured now with the tier and commit its
        ``.otto_cov_meta.json`` records. Every run carries its host and
        product.
-    3. **unit harvest** — each ``kind == "unit"`` tier's ``harvest_dirs``.
+    3. **unit harvest** — each ``kind == "unit"`` tier's ``harvest_dirs`` and
+       ``products``, keeping only the sources of ``inputs.project_name``'s
+       products in the active lab, each directory captured with the tier's
+       own ``toolchain`` setting over what its stamps choose. Every unit view
+       and every directory's toolchain is validated first — before the
+       destination is touched and before any capture.
     4. **manual store** — every committed capture under
        ``inputs.project_root``'s ``.otto/coverage/manual/`` (with report-time
        validity states).
@@ -1122,17 +1173,44 @@ async def run_coverage_report(
             a cov dir's metadata is stale, or a cov dir with products not yet
             captured records no tier or commit (``field="cov_dirs"``);
             *tier_specs* names a tier with no path, repeats a tier name, or is
-            given together with run directories (``field="tier_specs"``).
-            Every one is raised before *output_dir* is cleared or created.
+            given together with run directories (``field="tier_specs"``); a
+            unit tier's configured tool cannot be resolved or contradicts its
+            directory's stamps, or a unit directory holds two compilers' notes
+            (``field=None``). Every one is raised before *output_dir* is
+            cleared or created.
         otto.coverage.errors.CaptureCommitError: a capture, or a cov dir not
             yet captured, belongs to another commit than the tree's; also
             raised before *output_dir* is cleared or created.
+        otto.coverage.errors.CoverageNotInstrumentedError: a unit view selects
+            no product, or a selected product is not instrumented.
+        otto.coverage.errors.CaptureFailedError: a unit view's product's
+            object list could not be read, or a unit capture recorded nothing.
+        otto.host.errors.CoverageToolMissingError: a tool a unit directory's
+            data needs by default is not on ``PATH``; raised before
+            *output_dir* is cleared or created.
     """
     _validate_report_inputs(cov_dirs, tier_specs, inputs.project_root)
     # Every input refusal runs before the destination is cleared or created.
     runs = _scan_run_inputs(cov_dirs)
+    objects: "ObjectListCache | None" = None
+    unit_plan: "UnitPlan | None" = None
     if inputs.project_root is not None:
         _refuse_moved_commits(runs, inputs.project_root)
+        from .objects import ObjectListCache
+        from .pairing import GcnoIndex
+        from .sources import SourceResolver
+        from .unit_filter import plan_unit_views
+
+        # One cache for the report: the unit preflight and every capture share its reads.
+        objects = ObjectListCache(inputs.project_root)
+        unit_plan = await plan_unit_views(
+            list(inputs.tier_configs or []),
+            inputs.project_root,
+            inputs.project_name,
+            objects,
+            SourceResolver(inputs.project_root, quiet=True),
+            GcnoIndex(inputs.project_root),
+        )
 
     from .config import prepare_destination
 
@@ -1140,8 +1218,8 @@ async def run_coverage_report(
         output_dir, overwrite=overwrite, field="output_dir", remedy_field="overwrite"
     )
     capture_paths: list[Path] = []
-    if inputs.project_root is not None:
-        capture_paths = await _capture_states(runs, inputs.project_root)
+    if objects is not None:
+        capture_paths = await _capture_states(runs, objects.project_root, objects)
 
     reporter = CoverageReporter(
         source_root=inputs.project_root or Path.cwd(),
@@ -1153,6 +1231,9 @@ async def run_coverage_report(
             tier_configs=list(inputs.tier_configs or []),
             capture_paths=capture_paths,
             exclusion_rules=list(inputs.exclusion_rules),
+            project_name=inputs.project_name,
+            objects=objects,
+            unit_plan=unit_plan,
         ),
         prefix=prefix,
         thresholds=inputs.thresholds,

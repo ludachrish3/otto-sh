@@ -630,6 +630,67 @@ _HOST_PREFERENCE_CAPABILITIES: frozenset[str] = frozenset({"term", "transfer", "
 _MAX_AGE_RE = re.compile(r"^\d+d$")
 
 
+def _toolchain_value(field: str, value: str) -> str:
+    from ..host.toolchain import shell_unsafe
+
+    problem = shell_unsafe(value)
+    if problem is not None:
+        raise ValueError(
+            f"{field} {value!r} is refused: {problem}. lcov runs this tool through a shell, "
+            "so its value must be one plain word"
+        )
+    return value
+
+
+_TWO_WORD_LLVM_COV = re.compile(r"^\S*llvm-cov(?:-\d+)?\s+gcov$")
+"""``llvm-cov gcov`` as every page spells the reader; the setting names the binary alone."""
+
+
+class CoverageTierToolchainSpec(OttoModel):
+    """One ``[coverage.tiers.<name>.toolchain]`` table: the tools a unit tier's captures run.
+
+    Every field is optional; an empty table is the same as none. Whether a tool
+    exists is checked when a report runs, never here: settings load on every
+    command, and a missing coverage tool must not break ``otto run``.
+    """
+
+    coverage_tool: str | None = None
+    """The executable that reads the build's coverage counters (``gcov``, ``gcov-13``,
+    ``llvm-cov``, a wrapper script). Without a ``/`` it is a command looked up on
+    ``PATH``; with one it is a path (``~`` expanded, a relative one anchored at the
+    project root). Unset, the build's own stamps choose it."""
+
+    lcov: str | None = None
+    """The ``lcov`` executable for this tier's captures, classified like
+    *coverage_tool*; unset, ``lcov`` from ``PATH``."""
+
+    lcov_args: list[str] = Field(default_factory=list)
+    """Extra arguments appended to this tier's capture command, one argv token per entry."""
+
+    @field_validator("coverage_tool", "lcov")
+    @classmethod
+    def _validate_tool(cls, v: str | None, info: ValidationInfo) -> str | None:
+        if v is not None and info.field_name == "coverage_tool" and _TWO_WORD_LLVM_COV.match(v):
+            raise ValueError(
+                f"coverage_tool {v!r}: name the llvm-cov binary alone; otto adds `gcov` "
+                f"itself, so write {v.split()[0]!r}"
+            )
+        return v if v is None else _toolchain_value(str(info.field_name), v)
+
+    @field_validator("lcov_args")
+    @classmethod
+    def _validate_lcov_args(cls, v: list[str]) -> list[str]:
+        # The host rule: one argument per entry. otto quotes each one, so a glob
+        # or another shell metacharacter reaches lcov as written.
+        for arg in v:
+            if not arg or any(c.isspace() or not c.isprintable() for c in arg):
+                raise ValueError(
+                    f"each entry is one argument; {arg!r} is empty or contains white space "
+                    'or a control character — write it as ["--ignore-errors", "source"]'
+                )
+        return v
+
+
 class CoverageTierSpec(OttoModel):
     """One ``[coverage.tiers.<name>]`` block: a declared coverage tier."""
 
@@ -641,6 +702,8 @@ class CoverageTierSpec(OttoModel):
     products: dict[str, list[Path]] = Field(default_factory=dict)
     """``unit``-kind only: named product views, each its own run record —
     ``{"app": ["build/app-tests"]}``. Keys follow the product-name rule."""
+    toolchain: CoverageTierToolchainSpec | None = None
+    """``unit``-kind only: the tools every directory of the tier is captured with."""
 
     @field_validator("color")
     @classmethod
@@ -669,6 +732,8 @@ class CoverageTierSpec(OttoModel):
     def _products_need_unit_kind(self) -> "CoverageTierSpec":
         if self.products and self.kind != "unit":
             raise ValueError("`products` is only valid on a unit-kind tier")
+        if self.toolchain is not None and self.kind != "unit":
+            raise ValueError("`toolchain` is only valid on a unit-kind tier")
         return self
 
 

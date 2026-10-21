@@ -206,9 +206,9 @@ async def produce_captures(  # noqa: PLR0913 — one keyword per capture annotat
     indexes: dict[Path, GcnoIndex] = {}
 
     localhost = LocalHost()
+    merger = LcovMerger(localhost)
     results: list[ProductCapture] = []
     try:
-        merger = LcovMerger(localhost)
         for board, product, board_dir in product_dirs:
             key = ProductKey(board, product)
             if only is not None and key not in only:
@@ -234,7 +234,7 @@ async def produce_captures(  # noqa: PLR0913 — one keyword per capture annotat
                 else:
                     reason = "no definition of this product in the active lab"
                     logger.info("%s: object list unavailable: %s — pairing by path", label, reason)
-                    listed = Unavailable(product=product, reason=reason)
+                    listed = Unavailable(product=product, reason=reason, kind="no-definition")
                 pairs = pair_product(board_dir, listed, indexes[gcno_dir], label=label)
                 raw_info = board_dir / "board.info"
                 await merger.capture_pairs(pairs, staging, raw_info, toolchain=toolchain)
@@ -272,6 +272,7 @@ async def produce_captures(  # noqa: PLR0913 — one keyword per capture annotat
             finally:
                 _drop_staging(cov_dir, staging)
     finally:
+        merger.close()
         with teardown_step("coverage capture", "localhost close"):
             await localhost.close()
 

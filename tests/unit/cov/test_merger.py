@@ -1,6 +1,8 @@
 """Tests for the lcov merger."""
 
+import shlex
 import struct
+import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -304,10 +306,58 @@ class TestLcovMergerToolchain:
             )
             cmd = mock_exec.call_args[0][0]
         assert "--gcov-tool /usr/bin/llvm-cov" not in cmd
-        wrapper = tmp_path / "llvm-gcov-wrapper.sh"
-        assert f"--gcov-tool {wrapper}" in cmd
+        wrapper = Path(_gcov_tool(cmd))
         assert 'exec /usr/bin/llvm-cov gcov "$@"' in wrapper.read_text()
+        merger.close()
         await localhost.close()
+
+    @pytest.mark.asyncio
+    async def test_the_wrapper_lives_outside_the_output_dir_and_goes_with_the_merger(
+        self, tmp_path
+    ):
+        """The output directory is the user's choice (a space in it would break geninfo's
+        shell); the wrapper sits in otto's own temp dir and is removed with the merger."""
+        localhost = LocalHost()
+        out = tmp_path / "my report" / "_work" / "out.info"
+        tc = Toolchain(sysroot=Path("/"), gcov=Path("usr/bin/llvm-cov"))
+        with patch.object(localhost, "exec", new_callable=AsyncMock) as mock_exec:
+            mock_exec.return_value = CommandResult(
+                Status.Success, value="", command="lcov ...", retcode=0
+            )
+            with LcovMerger(localhost) as merger:
+                await merger.capture_dir(tmp_path, out, toolchain=tc)
+                wrapper = Path(_gcov_tool(mock_exec.call_args[0][0]))
+                assert wrapper.is_file()
+                assert wrapper.parent.parent == Path(tempfile.gettempdir())
+                assert tmp_path not in wrapper.parents
+        assert not wrapper.parent.exists()
+        await localhost.close()
+
+
+@pytest.mark.asyncio
+async def test_a_system_temp_dir_lcov_cannot_run_puts_the_wrapper_under_tmp(tmp_path, monkeypatch):
+    """geninfo runs the reader through a shell: a TMPDIR with a space cannot hold it."""
+    spaced = tmp_path / "my tmp"
+    spaced.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(spaced))
+    localhost = LocalHost()
+    tc = Toolchain(sysroot=Path("/"), gcov=Path("usr/bin/llvm-cov"))
+    with patch.object(localhost, "exec", new_callable=AsyncMock) as mock_exec:
+        mock_exec.return_value = CommandResult(
+            Status.Success, value="", command="lcov ...", retcode=0
+        )
+        with LcovMerger(localhost) as merger:
+            await merger.capture_dir(tmp_path, tmp_path / "out.info", toolchain=tc)
+            wrapper = Path(_gcov_tool(mock_exec.call_args[0][0]))
+            assert wrapper.parent.parent == Path("/tmp")
+            assert wrapper.is_file()
+    assert not wrapper.parent.exists()
+    await localhost.close()
+
+
+def _gcov_tool(cmd: str) -> str:
+    argv = shlex.split(cmd)
+    return argv[argv.index("--gcov-tool") + 1]
 
 
 class TestLcovMergerExtraArguments:

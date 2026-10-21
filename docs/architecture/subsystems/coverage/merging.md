@@ -137,7 +137,17 @@ The order is not incidental; the last step depends on it.
    contributes one run. Counters
    whose newest `.gcda` predates the newest `.gcno` warn but still load —
    this data is cheap to regenerate, and refusing it would be louder than
-   the problem.
+   the problem. Only product sources count: `otto.coverage.unit_filter`
+   plans every view first (`plan_unit_views`, at the top of
+   `run_coverage_report`, so its refusals precede every capture), building
+   each view's source set from its products' object lists and their local
+   notes, and each directory's kept sources and full capture toolchain
+   (`otto.coverage.unit_toolchain`: the tier's own `toolchain` setting over
+   what the kept notes' stamps choose, refusing a directory of two compilers
+   and a configured reader the stamps contradict); the capture then passes
+   one `--include` per kept file, fails one that records nothing, and filters
+   the resulting `SF:` paths exactly. What that means for a user is
+   {ref}`coverage-unit-filter` and {ref}`coverage-unit-toolchain`.
 4. **Manual store.** `_load_manual_store` folds every committed capture
    under `.otto/coverage/manual/`, supersede-filtered, each with the
    report-time validity states {doc}`manual` describes. **Last, always.**

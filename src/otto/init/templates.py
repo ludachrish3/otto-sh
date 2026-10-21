@@ -135,23 +135,35 @@ path = "lab_data/creds.json"
 # Embedded build settings live in [coverage.embedded] (see the coverage docs).
 #[coverage]
 #hosts = "example-device"
-## Each tier's `kind` decides which fields it may carry: `harvest_dirs` and
-## `products` are unit-only, `max_age` is manual-only. One tier of each kind
-## below, so every field is shown where it is legal.
+## Each tier's `kind` decides which fields it may carry: `harvest_dirs`,
+## `products` and `toolchain` are unit-only, `max_age` is manual-only. One
+## tier of each kind below, so every field is shown where it is legal.
 #[coverage.tiers.nightly]
 #kind = "e2e"
 #precedence = 10
 #color = "#22c55e"
 ## A unit tier harvests .gcda from the build tree at report time. `products`
-## splits that sweep into named views, one run each -- name a view after a
-## [[products]] entry and one product filter shows its e2e and unit evidence
-## together. Each view needs its OWN build dir: .gcno sit beside the objects.
+## splits that sweep into named views, one run each -- each view is named
+## after a [[products]] entry (any other name is refused), so one product
+## filter shows its e2e and unit evidence together. Each view needs its OWN
+## build dir: .gcno sit beside the objects.
+## Only the products' own sources count: build the products on this machine,
+## under the project root, before `otto cov report` (it reads their notes).
 #[coverage.tiers.unit]
 #kind = "unit"
 #precedence = 20
 #harvest_dirs = ["build"]
 #[coverage.tiers.unit.products]
 #app = ["build/app-tests"]
+## The tools the unit captures run, all optional: unset, the build's own gcov
+## stamp picks the reader (gcov, gcov-<major> or llvm-cov) and `lcov` comes from
+## PATH. A bare name is looked up on PATH; a value with a `/` is a path, `~`
+## expanded and a relative one anchored at the project root. (A host's
+## `toolchain` is a different table.)
+#[coverage.tiers.unit.toolchain]
+#coverage_tool = "gcov-13"  # reads the build's .gcda counters: gcov, gcov-13, llvm-cov, ...
+#lcov = "lcov"
+#lcov_args = ["--rc", "geninfo_unexecuted_blocks=1"]
 #[coverage.tiers.manual]
 #kind = "manual"
 #precedence = 30
