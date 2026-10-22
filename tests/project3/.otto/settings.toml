@@ -25,8 +25,7 @@ init = [
 [project]
 lab_patterns = [".*"]
 
-# Embedded coverage bed. Full design: ../../../todo/embedded_coverage.md;
-# bring-up record: docs/feasibility.md.
+# Embedded coverage bed. Bring-up record: ../docs/feasibility.md.
 #
 # The coverage target is the `zephyr37_llext` mps2_an385 instance in the shared
 # tech1 lab data — a stock Zephyr LLEXT loader base (built from

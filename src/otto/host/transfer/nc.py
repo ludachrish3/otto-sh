@@ -9,8 +9,10 @@ sender that has no ``-N`` to close itself -- see
 tunnelled GET's alike, is spelled ``nc -l -p PORT``, the one form every measured
 netcat accepts. So this module reads nothing from the gap registry: the
 ``nc-transfer`` record and the refusal that read it are gone, closed 2026-08-25
-by these spellings (``docs/superpowers/specs/2026-08-25-nc-universal-spelling-design.md``).
+by these spellings (the nc universal-spelling spec).
 """
+
+# Spec: docs/superpowers/specs/2026-08-25-nc-universal-spelling-design.md
 
 import asyncio
 import random

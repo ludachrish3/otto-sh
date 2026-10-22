@@ -1,6 +1,6 @@
 """``fleet_of_interest`` answers what a fleet walk would walk, without walking it.
 
-Spec ``docs/superpowers/specs/2026-10-06-project-and-scope-inputs-design.md`` §3
+Spec ``docs/superpowers/specs/2026-10-06-repo-and-scope-inputs-design.md`` §3
 and §8. The ORACLE is the walk itself: ``ctx.all_hosts(...)`` for the union and
 ``ctx.for_project(owner).all_hosts(...)`` for one project, on a non-sentinel context
 built on the same lab, projects and ``-E``, and handed one bootstrap result

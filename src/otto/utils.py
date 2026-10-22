@@ -639,13 +639,13 @@ class Status(Enum):
     Error = 2
     Unstable = 3
     Skipped = 4
+    # Spec: docs/superpowers/specs/2026-08-15-dry-run-contract-design.md #4
     NotRun = 5
     """A dry run declined this command -- nothing issued, nothing measured.
 
     NOT ok, deliberately -- Skipped stays ok for genuine skips, but code that
     branches on a NotRun's is_ok must take its failure arm, so nothing
-    proceeds on a fiction. See the design spec
-    ``docs/superpowers/specs/2026-08-15-dry-run-contract-design.md`` #4.
+    proceeds on a fiction. See :doc:`/extend/dry-run-contract`.
 
     NO COLON in the summary line above, and that is load-bearing rather than
     style: napoleon parses an attribute docstring's ``prefix: rest`` as

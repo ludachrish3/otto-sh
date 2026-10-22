@@ -229,7 +229,7 @@ class SftpFileTransfer(UnixFileTransfer):
         :func:`~otto.host.transfer.sftp.open_sftp_or_attribute`.
 
         The annotation is the live class rather than the quoted name, and it is
-        not interchangeable: ``docs/api/host/transfer_sftp.rst`` renders this
+        not interchangeable: the API reference renders this
         method under ``nitpicky``, where the quoted form arrived as a bare
         ``TransferContext`` that resolved to no target and failed the ``-W``
         build. The class is imported at runtime here anyway, so evaluating it

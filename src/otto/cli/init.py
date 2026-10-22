@@ -2,7 +2,7 @@
 
 The doctor and the scaffolder are the :mod:`otto.init` library; this leaf
 parses the flags, asks its questions before anything is written, renders the
-library's reports, and prints the Next steps panel. See docs/cli/init.md.
+library's reports, and prints the Next steps panel. See :doc:`/cli/init`.
 """
 
 import dataclasses

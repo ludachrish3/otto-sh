@@ -188,6 +188,7 @@ class PosixPrivilege(UserlandHost):
         if userland is not None:
             await userland.resolve()
 
+    # Spec: docs/superpowers/specs/2026-08-11-busybox-host-support-design.md
     def _elevate(self, cmd: str, user: str | None = None) -> tuple[str, list["Expect"]]:
         """Wrap *cmd* in this host's elevation mechanism, with its password expect.
 
@@ -202,8 +203,8 @@ class PosixPrivilege(UserlandHost):
         :attr:`~otto.host.userland.Userland.elevation` decides it. BusyBox
         systems frequently ship ``su`` and no ``sudo`` at all, where the old
         hard-coded wrapper produced ``sudo: not found`` — a message about
-        otto's own guess, attributed to whatever the caller was doing. See
-        ``docs/superpowers/specs/2026-08-11-busybox-host-support-design.md``.
+        otto's own guess, attributed to whatever the caller was doing. See the
+        BusyBox host support spec.
 
         **No resolver means sudo, deliberately.**
         :class:`~otto.host.unix_host.UnixHost` now builds one, so the lab's

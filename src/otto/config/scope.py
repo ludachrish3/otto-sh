@@ -1,7 +1,5 @@
 """Per-project lab/host scoping: the ONE membership predicate, its config, its resolver.
 
-Spec: ``docs/superpowers/specs/2026-08-18-project-lab-host-scoping-design.md`` §5.
-
 Every consumer — ingest gating, fleet iteration, the resolver, the status
 display — answers "does this project target this host?" by calling
 :func:`project_targets`. One predicate in one module is what makes those answers
@@ -50,6 +48,8 @@ more than it did. The four ``otto.config`` exports (:class:`DockerImage`,
 :class:`DockerCompose`, :class:`DockerSettings`, :class:`MonitorSettings`)
 keep that public path; otto imports the rest from this module directly.
 """
+
+# Spec: docs/superpowers/specs/2026-08-18-project-lab-host-scoping-design.md §5.
 
 import dataclasses
 import re

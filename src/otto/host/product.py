@@ -573,6 +573,7 @@ def gcda_delete_cmd(cov_dir: str) -> str:
     return f"! test -d {shlex.quote(cov_dir)} || {gcda_find_cmd(cov_dir)} -delete"
 
 
+# Spec: docs/superpowers/specs/2026-08-15-dry-run-contract-design.md
 async def sudo_gcda_delete(product: Product, host: "Host") -> Result:
     """Delete every ``.gcda`` under *product*'s :attr:`~Product.cov_dir`, elevated.
 
@@ -589,7 +590,7 @@ async def sudo_gcda_delete(product: Product, host: "Host") -> Result:
     ``--dry-run`` answers :attr:`~otto.utils.Status.NotRun`; that is
     returned as-is, never mapped to :attr:`~otto.utils.Status.Error` — the
     dry-run contract requires a decline to reach the fetcher unchanged
-    (``docs/superpowers/specs/2026-08-15-dry-run-contract-design.md``).
+    (:doc:`/extend/dry-run-contract`).
 
     Raises:
         ValueError: :attr:`Product.name` is not a single safe path segment;

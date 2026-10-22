@@ -1079,14 +1079,15 @@ class UnixHostSpec(HostSpec):
     scp_options: Annotated[ScpOptionsSpec, Convert(_value_only(_to_runtime))] = ScpOptionsSpec()
     ftp_options: Annotated[FtpOptionsSpec, Convert(_value_only(_to_runtime))] = FtpOptionsSpec()
     nc_options: Annotated[NcOptionsSpec, Convert(_value_only(_to_runtime))] = NcOptionsSpec()
+    # Spec: docs/superpowers/specs/2026-08-11-busybox-host-support-design.md
     userland_options: Annotated[UserlandOptionsSpec, Convert(_value_only(_to_runtime))] = (
         UserlandOptionsSpec()
     )
     """Declared answers about this host's userland; every key defaults to
     "probe it". Unlike its siblings this table is not per-protocol — it
     describes the DEVICE (which elevation mechanism exists, which ``timeout``
-    convention its applet speaks), so one table serves every backend. See
-    ``docs/superpowers/specs/2026-08-11-busybox-host-support-design.md``."""
+    convention its applet speaks), so one table serves every backend. See the
+    BusyBox host-support spec."""
 
     _host_family: ClassVar[str] = "unix"
 

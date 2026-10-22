@@ -1,11 +1,13 @@
 """Remote-path shell completion for `otto host get` / `put`.
 
-See docs/superpowers/specs/2026-08-06-remote-path-completion-design.md.
+Designed in the remote-path completion spec.
 Completion-time rules: never raise, never print, fail closed to []; the
 reservation gate runs before any lab contact; SSH hosts only (the listing
 itself uses the host's exec seam, so telnet later means relaxing the gate,
 not a new mechanism).
 """
+
+# Spec: docs/superpowers/specs/2026-08-06-remote-path-completion-design.md
 
 import asyncio
 import contextlib

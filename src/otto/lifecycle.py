@@ -5,8 +5,7 @@ a unit guard (tests/unit/test_no_bare_asyncio_run.py) enforces this. It
 holds a cleanup boundary on the command's loop, so hosts that connected
 during the command are closed before the command's loop exits, with or
 without an ``OttoContext``, and owns the two-stage
-SIGINT/SIGTERM interrupt policy
-(chaos spec: docs/superpowers/specs/2026-07-30-chaos-hardening-design.md).
+SIGINT/SIGTERM interrupt policy (the chaos-hardening spec).
 
 Unit tests drive the state machine by calling ``_CommandRun._on_signal``
 directly (``install_handlers=False``): installing real handlers in-process
@@ -15,6 +14,8 @@ delivery is exercised by the tier-2 subprocess tests in
 tests/integration/chaos/, which signal a real otto process over a loopback
 sshd rather than calling the handler.
 """
+
+# Spec: docs/superpowers/specs/2026-07-30-chaos-hardening-design.md
 
 import asyncio
 import contextlib

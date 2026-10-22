@@ -1676,9 +1676,10 @@ def test_the_busybox_doc_is_reachable_from_the_architecture_toctree():
     the per-task gate, so without this the cost of the omission is a red CI
     job on some later, unrelated commit (issue #178's shape exactly).
 
-    The page moved from `docs/guide/hosts/` to `docs/architecture/subsystems/`
-    when the user guide's CLI section was restructured to mirror the command
-    tree; the bed matrix is architecture, not CLI usage. The architecture index
+    The page moved out of the old user guide's host pages into
+    `docs/architecture/subsystems/` when the user guide's CLI section was
+    restructured to mirror the command tree; the bed matrix is architecture,
+    not CLI usage. The architecture index
     is reStructuredText, so this reads an RST directive rather than a MyST
     fenced block.
     """

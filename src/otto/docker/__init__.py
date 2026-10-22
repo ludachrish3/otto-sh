@@ -13,7 +13,7 @@ instruction can do too::
         async with deployed("integration", own=True) as stack:
             await stack.hosts["api"].run("./run-tests")
 
-See the design notes in ``docs/design/docker_hosts.md`` for the full
+See :doc:`/architecture/subsystems/docker-hosts` for the full
 architecture (parent-delegation pattern, hop inheritance, naming scheme).
 
 Every name is exported lazily (PEP 562), including ``AdapterResult`` /

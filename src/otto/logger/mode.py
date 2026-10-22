@@ -2,8 +2,10 @@
 
 ``LogMode`` decides *where* a host's command I/O is recorded — independent of the
 log *level* (INFO vs DEBUG), which stays native to the ``logger.info``/
-``logger.debug`` call. See ``docs/superpowers/specs/2026-06-28-three-sink-logging-design.md``.
+``logger.debug`` call (the three-sink logging spec).
 """
+
+# Spec: docs/superpowers/specs/2026-06-28-three-sink-logging-design.md
 
 from enum import Enum
 

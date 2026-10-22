@@ -1265,6 +1265,7 @@ class BaseHost(ABC):
     #  Dry-run helpers
     ####################
 
+    # Spec: docs/superpowers/specs/2026-08-15-dry-run-contract-design.md, section 4.
     def _dry_run_result(self, cmd: str, log: LogMode = LogMode.NORMAL) -> CommandResult:
         """Announce *cmd* and return a decline that cannot be read as its answer.
 
@@ -1276,9 +1277,8 @@ class BaseHost(ABC):
         — which was a poison pill shaped exactly like data: every status
         branch passed it and every parser chewed it, so userland probes
         settled fabricated capabilities, ``link list`` reported every link
-        clean and ``tunnel add`` accused hosts of missing socat. See the
-        design spec, ``docs/superpowers/specs/2026-08-15-dry-run-contract-design.md``
-        section 4.
+        clean and ``tunnel add`` accused hosts of missing socat. See section 4
+        of the dry-run contract spec.
 
         ``retcode=-1`` is this family's documented "the command never ran"
         sentinel (see :attr:`~otto.result.CommandResult.retcode`), not a

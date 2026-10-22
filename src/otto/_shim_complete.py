@@ -1,6 +1,6 @@
 """Answer a bash TAB from the completion cache with the standard library alone.
 
-Spec: docs/superpowers/specs/2026-09-04-shim-completion-design.md, section 4. This
+Specified in section 4 of the shim-completion spec. This
 module is imported by ``otto._shim`` BEFORE anything else in otto, on every TAB,
 so it imports ``hashlib``, ``json``, ``os``, ``re``, ``shlex``, ``sys``, ``time``
 and ``typing`` (already loaded by ``otto/__init__``, so free) and nothing else: not
@@ -28,6 +28,8 @@ is cited by the function it lives in there.
 Any case this module cannot answer raises :class:`Handover`; the caller then runs
 today's path in-process, which is always right.
 """
+
+# Spec: docs/superpowers/specs/2026-09-04-shim-completion-design.md, section 4.
 
 import hashlib
 import json

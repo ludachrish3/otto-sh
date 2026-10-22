@@ -1,6 +1,6 @@
 """``--dry-run --probe``: open a connection to each named host, and never a command.
 
-Spec: ``docs/superpowers/specs/2026-08-15-dry-run-contract-design.md`` §3.
+Specified in §3 of the dry-run contract spec.
 
 **The flag permits a CONNECTION, never a COMMAND.** That single sentence is why
 this module is allowed to exist inside a contract whose whole point is that a
@@ -37,6 +37,8 @@ this contract's own defect in miniature: a host that accepts TCP and refuses the
 login is not usable, and reporting it ``reachable`` is a fact about a question
 the operator did not ask. The probe verifies the real run's whole connect phase.
 """
+
+# Spec: docs/superpowers/specs/2026-08-15-dry-run-contract-design.md §3.
 
 import dataclasses
 import time

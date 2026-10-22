@@ -1,6 +1,6 @@
 """Serialise the bootstrapped Typer tree into the shape the completion shim answers from.
 
-Spec: docs/superpowers/specs/2026-09-04-shim-completion-design.md, sections 3.3-3.4.
+Specified in sections 3.3-3.4 of the shim-completion spec.
 Runs on the SLOW path only (a cache write), after bootstrap, so resolving
 every command real here is a once-per-rewrite cost; the shim never imports
 this module.
@@ -13,6 +13,8 @@ against the upstream ``click`` package is ALWAYS False for this app (and
 Typer's own classes and every context comes from the command's own
 ``context_class``.
 """
+
+# Spec: docs/superpowers/specs/2026-09-04-shim-completion-design.md, sections 3.3-3.4.
 
 import logging
 from dataclasses import dataclass

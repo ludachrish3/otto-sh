@@ -15,17 +15,18 @@ path, so the two cannot diverge.
 
 A third trivial invocation is answered here too: a bash TAB
 (``_OTTO_COMPLETE=complete_bash``), served from the completion cache by
-``otto._shim_complete.answer_or_reason`` when the cache validates
-(docs/superpowers/specs/2026-09-04-shim-completion-design.md). Nothing is
-written to stdout before that decision is made — the same rule the resolver
-itself follows. When the cache itself is what failed (not merely a TAB the
-shim does not model), the outcome's ``stale`` flag rides along to ``entry()``
-so THIS TAB repairs the cache and the next one is answered from here again.
-A test-name TAB answered from a table whose files moved starts the collect
-child detached, after its answer is written.
+``otto._shim_complete.answer_or_reason`` when the cache validates (the
+shim-completion spec). Nothing is written to stdout before that decision is
+made — the same rule the resolver itself follows. When the cache itself is what
+failed (not merely a TAB the shim does not model), the outcome's ``stale`` flag
+rides along to ``entry()`` so THIS TAB repairs the cache and the next one is
+answered from here again. A test-name TAB answered from a table whose files
+moved starts the collect child detached, after its answer is written.
 
 Imports nothing from otto at module scope.
 """
+
+# Spec: docs/superpowers/specs/2026-09-04-shim-completion-design.md
 
 import os
 import sys
@@ -71,9 +72,10 @@ def main() -> None:
     cache_stale = False
     if os.environ.get("_OTTO_COMPLETE") == "complete_bash":
         # A bash TAB: answered from the completion cache by the standard
-        # library alone when the cache validates (docs/superpowers/specs/
-        # 2026-09-04-shim-completion-design.md); anything else falls through
-        # to the full path below, which is always right.
+        # library alone when the cache validates
+        # (docs/superpowers/specs/2026-09-04-shim-completion-design.md);
+        # anything else falls through to the full path below, which is always
+        # right.
         from ._shim_complete import answer_or_reason, spawn_refresh
 
         environ = dict(os.environ)

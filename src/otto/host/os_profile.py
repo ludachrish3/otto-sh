@@ -337,6 +337,7 @@ OS_PROFILES: Registry[OsProfile] = Registry(
 """The code profiles (:func:`register_os_profile`): the first layer a name resolves in."""
 
 
+# Spec: docs/superpowers/specs/2026-08-11-busybox-host-support-design.md ("The dropbear risk").
 def _builtin_profiles() -> "FrozenMap[str, OsProfile]":
     """Return the built-in defaults-only profiles: ``busybox``, a unix host.
 
@@ -380,17 +381,16 @@ def _builtin_profiles() -> "FrozenMap[str, OsProfile]":
     runs **dropbear** in place of OpenSSH — a separate project, not a
     BusyBox applet itself (measured: ``busybox-1.35.0-x86_64 --list`` names
     none of its 402 applets ``sshd``/``ssh``/``scp``/``sftp``/``dropbear``)
-    — and dropbear ships no ``sftp-server`` (``docs/superpowers/specs/
-    2026-08-11-busybox-host-support-design.md``, "The dropbear risk"). A
-    2012-era dropbear (SHA-1-only key exchange, ``ssh-rsa``, ``hmac-sha1``)
-    is measured on the bb1350 bed guest (``docs/architecture/subsystems/
-    busybox-bed.md``): stock ``ssh_options`` negotiate it, and a per-host
-    ``kex_algs`` or ``encryption_algs`` reaches the wire for a device that
-    needs a narrower list; which algorithms need an ``ssh_options`` list at
-    all is ``docs/architecture/ssh-algorithms.md``. ``scp``/``sftp``/``ftp``/
-    ``nc`` stay in ``valid_transfers`` even so — a lab entry whose device
-    runs a real OpenSSH-compatible server opts into one by pinning
-    ``transfer`` itself.
+    — and dropbear ships no ``sftp-server`` (the BusyBox host support spec,
+    "The dropbear risk"). A 2012-era dropbear (SHA-1-only key exchange,
+    ``ssh-rsa``, ``hmac-sha1``) is measured on the bb1350 bed guest
+    (:doc:`/architecture/subsystems/busybox-bed`): stock ``ssh_options``
+    negotiate it, and a per-host ``kex_algs`` or ``encryption_algs`` reaches
+    the wire for a device that needs a narrower list; which algorithms need an
+    ``ssh_options`` list at all is :doc:`/architecture/ssh-algorithms`.
+    ``scp``/``sftp``/``ftp``/``nc`` stay in ``valid_transfers`` even so — a
+    lab entry whose device runs a real OpenSSH-compatible server opts into
+    one by pinning ``transfer`` itself.
     **Keeping ``scp`` here is what makes the refusal a question about the
     DEVICE rather than about this profile.**
     ``otto.host.transfer.scp.refuse_if_scp_is_absent`` declines a transfer

@@ -22,7 +22,7 @@ Only completion and the root help screen read this cache, and only they
 validate and rebuild it (:func:`otto.cli.main.entry`); an ordinary command
 never touches it. So "slow path" in this module means a cache REBUILD — a TAB
 or root help that missed — not every real invocation, as it once did.
-``docs/architecture/subsystems/completion-cache.md`` is the design page:
+:doc:`/architecture/subsystems/completion-cache` is the design page:
 sections, freshness, taint, who reads and who rebuilds.
 
 Cache location

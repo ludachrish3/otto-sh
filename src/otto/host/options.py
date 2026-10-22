@@ -148,7 +148,7 @@ class SshOptions:
     (e.g. ``"diffie-hellman-group14-sha1"``). The client's first entry the
     server also supports is what the handshake uses, so a legacy server that
     speaks only SHA-1 groups needs those listed. ``None`` = asyncssh default.
-    See docs/configuration/settings.md, "Legacy SSH servers", for the full
+    See "Legacy SSH servers" in :doc:`/configuration/settings` for the full
     ``ssh_options`` TOML shape."""
 
     mac_algs: list[str] | None = None
@@ -768,11 +768,11 @@ class UserlandOptions:
     elevation: str | None = None
     """``"sudo"``, ``"su"``, ``"none"``, or ``None`` to probe."""
 
+    # Measured in docs/superpowers/specs/2026-08-11-busybox-host-support-design.md
     base64_flag: str | None = None
     """Decode spelling (``"-d"`` / ``"--decode"``), ``"absent"``, or None.
 
-    Measured against real BusyBox binaries (see
-    ``docs/superpowers/specs/2026-08-11-busybox-host-support-design.md``):
+    Measured against real BusyBox binaries (the BusyBox host-support spec):
     ``base64 --decode`` is rejected by every BusyBox build tested (1.16.1
     through 1.35.0, and the Ubuntu 1.36.1 system build); only ``-d`` works
     there. ``--decode`` stays a valid member because GNU coreutils hosts
@@ -780,20 +780,20 @@ class UserlandOptions:
     ``base64`` itself is absent entirely on 1.16.1, which is why
     ``"absent"`` is a member and not an error."""
 
+    # Measured in docs/superpowers/specs/2026-08-11-busybox-host-support-design.md
     stat_size: str | None = None
     """``"stat"``, ``"wc"``, ``"absent"``, or ``None`` to probe.
 
-    Measured against real BusyBox binaries (see
-    ``docs/superpowers/specs/2026-08-11-busybox-host-support-design.md``):
+    Measured against real BusyBox binaries (the BusyBox host-support spec):
     ``"stat"`` means ``stat -c %s`` specifically — ``stat --format=%s`` is
     rejected by every BusyBox build tested. ``wc -c < FILE`` works
     everywhere as the fallback."""
 
+    # Measured in docs/superpowers/specs/2026-08-11-busybox-host-support-design.md
     checksum: str | None = None
     """``"md5sum"``, ``"absent"``, or ``None`` to probe.
 
-    Measured against real BusyBox binaries (see
-    ``docs/superpowers/specs/2026-08-11-busybox-host-support-design.md``):
+    Measured against real BusyBox binaries (the BusyBox host-support spec):
     ``md5sum`` is present on every BusyBox build tested, 1.16.1 included, so
     ``"absent"`` is unhit by the matrix today but stays a real member for a
     minimal userland the matrix does not cover. Consumed by
@@ -801,11 +801,11 @@ class UserlandOptions:
     GET landed intact: ``md5sum`` on both sides when present, a byte-size
     comparison via :attr:`stat_size` otherwise."""
 
+    # Measured in docs/superpowers/specs/2026-08-11-busybox-host-support-design.md
     timeout_style: str | None = None
     """``"coreutils"``, ``"dash-t"``, ``"absent"``, or ``None`` to probe.
 
-    Measured against real BusyBox binaries (see
-    ``docs/superpowers/specs/2026-08-11-busybox-host-support-design.md``):
+    Measured against real BusyBox binaries (the BusyBox host-support spec):
     ``-t SECS PROG`` works up to BusyBox 1.28.1; bare ``SECS PROG`` (the
     coreutils spelling) works from 1.31.0. The two spellings are mutually
     exclusive on every build tested."""

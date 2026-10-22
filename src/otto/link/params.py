@@ -1,6 +1,6 @@
 """The impairment vocabulary: parameters, selectors, the read-back shape and the impairer contract.
 
-Spec §3.1/§3.3 (docs/superpowers/specs/2026-07-10-link-impairment-design.md):
+The link-impairment spec, §3.1/§3.3:
 bare time = milliseconds, bare percent = percent, rate REQUIRES an explicit tc
 unit; re-impair merges per-param last-one-wins and an explicit zero clears just
 that param.
@@ -11,6 +11,8 @@ written in, so a built-in impairer (``otto.link.netem``) imports only this
 module and the registry (``otto.link.impairer``) names it by reference without
 a loop. Standard library only.
 """
+
+# Spec: docs/superpowers/specs/2026-07-10-link-impairment-design.md §3.1/§3.3.
 
 import re
 from dataclasses import dataclass, field, fields

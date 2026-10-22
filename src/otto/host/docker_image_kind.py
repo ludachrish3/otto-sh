@@ -286,8 +286,8 @@ class DockerImageProduct(ShellProduct):
     def plan(self, host: "Host") -> ProductPlan:
         """Describe :meth:`stage`, :meth:`install` and :meth:`uninstall` as the plan contract asks.
 
-        The contract is the ``product-kind-plan`` section of
-        ``docs/extend/dry-run-contract.md``.
+        The contract is :ref:`product-kind-plan` in
+        :doc:`/extend/dry-run-contract`.
 
         Every command is rendered by the same builder the hook runs, so the
         quoting is one expression, not two copies; the two placeholders stand

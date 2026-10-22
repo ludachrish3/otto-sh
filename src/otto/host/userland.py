@@ -304,6 +304,7 @@ _PROBE_TIMEOUT_S = 10.0
 # comment can substitute for it.
 _RESOLVE_BUDGET_S = 30.0
 
+# Spec: docs/superpowers/specs/2026-08-25-nc-universal-spelling-design.md
 PROBED_APPLETS = [
     "base64",
     "nc",
@@ -363,8 +364,7 @@ name, and how far presence actually gets each one:
     itself: nothing to run is nothing to run. There is no second,
     option-shaped question beside this one any more -- the backend emits one
     spelling every measured netcat accepts, which is what closed the
-    ``nc-transfer`` record
-    (``docs/superpowers/specs/2026-08-25-nc-universal-spelling-design.md``).
+    ``nc-transfer`` record (the nc universal-spelling spec).
     This entry has no consumer.
 
 WHAT IS DELIBERATELY NOT HERE. ``sftp-transfer`` is a blocked surface too
@@ -1698,7 +1698,7 @@ resolves the page through this constant and pins its table to :data:`GAPS` in
 both directions, so the anchors below are checked rather than promised.
 
 It sits under ``subsystems/`` because that is where the architecture toctree
-keeps its per-area pages; the top level of ``docs/architecture/`` is
+keeps its per-area pages; the top level of :doc:`/architecture/index` is
 cross-cutting material only.
 """
 

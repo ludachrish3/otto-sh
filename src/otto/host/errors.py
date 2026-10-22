@@ -125,6 +125,7 @@ class MountNotFoundError(OttoError, ValueError):
     """
 
 
+# Spec: docs/superpowers/specs/2026-08-11-busybox-host-support-design.md
 class UnsupportedOnUserlandError(OttoError, RuntimeError):
     """The host's userland provides no way to do what otto was asked to do.
 
@@ -147,8 +148,7 @@ class UnsupportedOnUserlandError(OttoError, RuntimeError):
 
     THE REGISTRY HAS LANDED, and this class stayed put. An earlier version of
     this note said the class was EXPECTED TO MOVE, next to the userland gap
-    registry described in
-    ``docs/superpowers/specs/2026-08-11-busybox-host-support-design.md``. What
+    registry described in the BusyBox host-support spec. What
     the registry actually needed was a RENDERING SURFACE, which is
     :meth:`for_gap` below, and moving the class to get one would have dragged
     every ``except`` clause and every import in this package along with it for

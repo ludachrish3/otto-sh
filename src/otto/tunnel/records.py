@@ -48,7 +48,7 @@ async def discover_tunnel_records(lab: "Lab") -> list[TunnelRecord]:
     RAISES RATHER THAN RETURNING ``[]``, and both arms below exist for that
     one reason: the collector's tunnel loop keeps its last known set on any
     exception and BLANKS the topology's tunnel layer on an empty list
-    (``docs/architecture/subsystems/network.md``). "No scan happened" and "no
+    (:doc:`/architecture/subsystems/network`). "No scan happened" and "no
     tunnels exist" are the two answers that must never be confused, and
     :attr:`~otto.tunnel.discovery.TunnelDiscovery.not_measured` is the second
     way to reach the first: under ``--dry-run`` every host is refused before

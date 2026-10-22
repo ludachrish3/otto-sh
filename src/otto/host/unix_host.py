@@ -322,6 +322,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     """Connection options for netcat file transfers (nc executable, port
     strategy, listener check, etc.)."""
 
+    # Spec: docs/superpowers/specs/2026-08-11-busybox-host-support-design.md
     userland_options: UserlandOptions = field(default_factory=UserlandOptions, repr=False)
     """Declared answers about this host's userland — which elevation mechanism
     it has, which ``timeout`` convention its applet speaks, and so on. Every
@@ -331,8 +332,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     Not a per-protocol table like its neighbours. These are facts about the
     DEVICE, so one table answers for every backend, and ``_userland()`` turns
     it into the single :class:`~otto.host.userland.Userland` this host's
-    consumers share. See
-    ``docs/superpowers/specs/2026-08-11-busybox-host-support-design.md``."""
+    consumers share. See the BusyBox host-support spec."""
 
     shell_history: bool = False
     """Whether otto's commands are recorded in this host's shell history.

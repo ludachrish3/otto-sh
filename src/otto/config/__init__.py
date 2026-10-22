@@ -1,10 +1,12 @@
 """Parsing otto's inputs: project settings, versions, user settings and the environment.
 
 ``otto.config`` parses, discovery included, and ``otto.bootstrap`` composes; the
-composed-projects accessors are in :mod:`otto.declared` (spec
-``docs/superpowers/specs/2026-10-06-repo-and-scope-inputs-design.md`` S-3; spec
-2026-10-11 placement-and-phases §3.9). The lab and fleet API is :mod:`otto.lab`.
+composed-projects accessors are in :mod:`otto.declared` (the scope-inputs
+spec, S-3; the placement-and-phases spec, §3.9). The lab and fleet API is
+:mod:`otto.lab`.
 """
+
+# Spec: docs/superpowers/specs/2026-10-06-repo-and-scope-inputs-design.md (S-3).
 
 from typing import TYPE_CHECKING
 

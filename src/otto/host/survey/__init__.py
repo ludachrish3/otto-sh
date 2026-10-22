@@ -1,13 +1,15 @@
 """The protocol survey behind ``otto host <id> probe``.
 
-Spec: ``docs/superpowers/specs/2026-09-14-host-probe-protocol-survey-design.md``.
-Imported only inside the verb, so the ``host`` import surface stays flat.
+Specified in the host-probe protocol survey spec. Imported only inside the verb,
+so the ``host`` import surface stays flat.
 
 Every name is exported lazily (PEP 562), the shape every otto package shares:
 the verb's ``--scan-ports`` parser, ``otto.host.survey.sweep``, loads without
 the survey engine. The resolver does not write a resolved name back into the
 module dict; see ``otto.config``'s ``__dir__`` for why.
 """
+
+# Spec: docs/superpowers/specs/2026-09-14-host-probe-protocol-survey-design.md
 
 from typing import TYPE_CHECKING
 

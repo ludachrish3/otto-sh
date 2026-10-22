@@ -1,8 +1,7 @@
 """``CompositeLabRepository`` — N ordered host sources behind one ``LabRepository``.
 
-The combining layer for ``[[lab.sources]]`` (specs:
-docs/superpowers/specs/2026-08-19-multi-source-lab-data-design.md §6 and
-docs/superpowers/specs/2026-08-27-lab-definition-v2-design.md §6). Sources are
+The combining layer for ``[[lab.sources]]`` (the multi-source lab data and
+lab definition v2 specs, §6 of each). Sources are
 consulted in declaration order; the LATER source wins wholesale at RECORD
 granularity, with a warning naming both sources — the sanctioned way to test a
 data change locally before it lands in a global database. Under v2 there are
@@ -22,6 +21,9 @@ This merge is deliberately NOT ``Lab.__add__``: that operator merges DIFFERENT
 labs (``a+b``, same-ip dedup / different-ip error); this class merges the SAME
 lab across sources, and the two rule sets must never blend.
 """
+
+# Specs: docs/superpowers/specs/2026-08-19-multi-source-lab-data-design.md §6 and
+# docs/superpowers/specs/2026-08-27-lab-definition-v2-design.md §6.
 
 import logging
 import re

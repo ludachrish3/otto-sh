@@ -1,8 +1,8 @@
 """Lab reservation / scheduler-check subsystem.
 
-See :mod:`otto.reservations.protocol` for the backend contract and
-``docs/cli/reservation/`` for the end-user docs and
-``docs/extend/reservation-backends.md`` for the implementer contract.
+See :mod:`otto.reservations.protocol` for the backend contract,
+:doc:`/cli/reservation/index` for the end-user docs and
+:doc:`/extend/reservation-backends` for the implementer contract.
 
 Every name is exported lazily (PEP 562): ``otto reservation --help`` and the
 lab session import the names they use, and neither pays for a backend it
