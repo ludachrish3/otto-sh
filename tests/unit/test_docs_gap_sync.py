@@ -60,9 +60,10 @@ from otto.host.userland import (
     gap_path_totals,
     table_guards,
 )
+from tests._fixtures.doc_links import broken_links, source_page
 from tests._fixtures.paths import CHECKOUT_ROOT
 
-DOCS_PAGE = CHECKOUT_ROOT / GAP_DOCS_PAGE
+DOCS_PAGE = source_page(GAP_DOCS_PAGE)
 """Resolved through the constant, never spelled out here.
 
 ``GAP_DOCS_PAGE`` is what every rendered error message points at, so a page
@@ -86,8 +87,8 @@ _ROW_RE = re.compile(
     r"^\|\s*\[`(?P<surface>[^`]+)`\]\(#(?P<anchor>[^)]+)\)\s*\|\s*`(?P<status>[^`]+)`\s*\|"
 )
 
-# ``### shell-transfer-base64`` -- bare, because myst_heading_anchors slugifies
-# the heading text and the slug has to come out equal to the surface.
+# ``### shell-transfer-base64`` -- bare, because the published anchor is the
+# heading's docutils id, and that id has to come out equal to the surface.
 _SECTION_RE = re.compile(r"^###\s+(?P<surface>\S+)\s*$")
 
 # ``**Status:** `measured-broken` -- otto refuses before it sends anything.``
@@ -383,14 +384,18 @@ class TestTheTableAndTheRegistryAgree:
 class TestTheAnchorsResolve:
     """`Gap.docs_anchor` is printed in an exception. It has to land somewhere."""
 
+    def test_every_printed_anchor_is_a_published_page_and_heading(self) -> None:
+        broken = [gap.docs_anchor for gap in GAPS if broken_links(gap.docs_anchor)]
+        assert not broken, f"these docs links name no published page or heading: {broken}"
+
     def test_every_gap_has_a_section_to_anchor_at(self) -> None:
         sections = _sections()
         missing = [gap.surface for gap in GAPS if gap.surface not in sections]
         assert not missing, (
             f"{GAP_DOCS_PAGE} has no `### <surface>` section for {missing}, so "
             f"`Gap.docs_anchor` renders a link to a fragment the page does not have. "
-            f"With `myst_heading_anchors = 3` the heading text IS the anchor, so the "
-            f"heading has to be the bare surface id."
+            f"The heading's docutils id IS the anchor, so the heading has to be the "
+            f"bare surface id."
         )
 
     def test_every_section_is_a_declared_gap(self) -> None:

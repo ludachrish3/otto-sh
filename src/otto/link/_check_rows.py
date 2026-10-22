@@ -77,12 +77,13 @@ _CLOCK_SLACK_S = 0.5
 
 NETEM_MISSING_HINT = (
     "sch_netem module not found — load it with `modprobe sch_netem` (Ubuntu ships it in "
-    "linux-modules-extra-$(uname -r)); see docs/cli/link/check (When a row isn't pass)"
+    "linux-modules-extra-$(uname -r)); see "
+    "https://otto-sh.readthedocs.io/en/stable/cli/link/check.html#when-a-row-isn-t-pass"
 )
 NETEM_UNKNOWN_HINT = (
     "otto could not tell whether the sch_netem module is available — if tc says the qdisc "
-    "kind is unknown, load it with `modprobe sch_netem`; see docs/cli/link/check "
-    "(When a row isn't pass)"
+    "kind is unknown, load it with `modprobe sch_netem`; see "
+    "https://otto-sh.readthedocs.io/en/stable/cli/link/check.html#when-a-row-isn-t-pass"
 )
 
 

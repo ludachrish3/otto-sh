@@ -68,8 +68,8 @@ class HostLoopError(OttoError, RuntimeError):
             f"{loop_label(caller)}. A connection belongs to the event loop that opened it. "
             f"{session_hint}"
             "Pin this test or fixture to the loop that opened the host, or close the host at "
-            'the end of the scope that opened it. See "Sharing host connections across tests" '
-            "(docs/setup/host-scopes.md)."
+            "the end of the scope that opened it. See "
+            "https://otto-sh.readthedocs.io/en/stable/setup/host-scopes.html"
         )
 
 

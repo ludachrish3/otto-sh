@@ -129,7 +129,7 @@ class TestRefusal:
         assert says in report.refusal
         assert report.refusal_hint == REFUSAL_HINT
         assert "otto tunnel add --help" in REFUSAL_HINT
-        assert "docs/cli/tunnel/add" in REFUSAL_HINT
+        assert "/cli/tunnel/add.html" in REFUSAL_HINT
         assert report.columns == []
         assert report.hops == []
         assert not report.ok

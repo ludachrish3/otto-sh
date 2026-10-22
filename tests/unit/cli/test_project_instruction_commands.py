@@ -329,7 +329,7 @@ def test_a_projects_collision_reaches_the_user_as_a_framed_error_not_a_crash(
     assert "acme_collision_init" in str(err), "the framing still names the file that failed"
     # …and the guard's whole point survives it: WHERE to put the override.
     assert "ProjectActions" in str(err)
-    assert "docs/cli/run/defaults.md" in str(err)
+    assert "/cli/run/defaults.html#" in str(err)
     # otto keeps the name; the project did not shadow it on the way past.
     assert INSTRUCTIONS.get("install").module == ACTIONS_MODULE
 

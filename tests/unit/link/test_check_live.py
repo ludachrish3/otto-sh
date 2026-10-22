@@ -625,7 +625,8 @@ async def test_a_foreign_qdisc_is_named_and_no_repair_is_suggested(
     [hint] = {r.hint for r in rows.values()}
     assert hint == (
         "link edge carries a qdisc otto did not create on b->a — otto will not touch it, "
-        "so --live cannot run; see docs/cli/link/safety (Clearing is not creating)"
+        "so --live cannot run; see "
+        "https://otto-sh.readthedocs.io/en/stable/cli/link/safety.html#clearing-is-not-creating"
     )
     assert "repair" not in hint
     assert fake.calls == []

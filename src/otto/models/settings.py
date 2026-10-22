@@ -420,7 +420,8 @@ class InventoryConfigSpec(OttoModel):
         if isinstance(data, dict) and "creds_file" in data:
             raise ValueError(
                 'creds_file has moved: declare [creds] backend = "json" / path = "<the same '
-                'path>" beside [inventory] (see docs/configuration/inventory.md)'
+                'path>" beside [inventory] (see '
+                "https://otto-sh.readthedocs.io/en/stable/configuration/inventory.html#creds)"
             )
         return data
 

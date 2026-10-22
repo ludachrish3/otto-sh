@@ -81,6 +81,16 @@ def source_paths(text: str) -> list[str]:
     return REPO_DOC_PATH.findall(text)
 
 
+def source_page(link: str) -> Path:
+    """Return the ``docs/`` source of the published page *link* names (anchor dropped).
+
+    Only ``.md`` sources are mapped: a page written in reStructuredText reports
+    as missing, the safe direction for a checker.
+    """
+    page = link.removeprefix(DOCS_BASE).partition("#")[0].removesuffix(".html")
+    return CHECKOUT_ROOT / "docs" / f"{page}.md"
+
+
 def broken_links(text: str) -> list[str]:
     """Return every docs link in *text* that names no published page or heading.
 
@@ -95,8 +105,7 @@ def broken_links(text: str) -> list[str]:
             broken.append(link)
             continue
         page, _, anchor = link.removeprefix(DOCS_BASE).partition("#")
-        source = CHECKOUT_ROOT / "docs" / page.removesuffix(".html")
-        source = source.with_name(source.name + ".md")
+        source = source_page(link)
         if (
             not page.endswith(".html")
             or not source.is_file()

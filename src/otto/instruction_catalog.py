@@ -446,8 +446,8 @@ def _check_standalone(
         raise ValueError(
             f"project {project!r} defines instruction {name!r}, which is a "
             "project instruction. Override lab behavior by declaring the method on a "
-            "ProjectActions subclass instead (see docs/cli/run/defaults.md), "
-            "or rename the instruction."
+            "ProjectActions subclass instead, or rename the instruction. See "
+            "https://otto-sh.readthedocs.io/en/stable/cli/run/defaults.html#the-four-surfaces-and-the-one-override-point"
         )
     _check_tables(first_party, actions, proposed, registering_standalone=True)
 

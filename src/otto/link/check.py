@@ -110,7 +110,7 @@ _LABELLED = ["iproute2", "kernel", "isa", "userland"]
 
 REFUSAL_HINT = (
     "declare this link in lab.json with an interface on each endpoint — "
-    "see docs/configuration/lab-config (lab-links)"
+    "see https://otto-sh.readthedocs.io/en/stable/configuration/lab-config.html#lab-links"
 )
 
 _ADDR_SHOW_COMMAND = "ip -o addr show"

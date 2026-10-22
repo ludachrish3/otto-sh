@@ -388,7 +388,7 @@ def active_reservations(backend: "ReservationBackend") -> "list[Reservation]":
         raise ReservationBackendError(
             f"Reservation backend {type(backend).__name__!r} has no 'reservations' "
             "attribute; inherit ReservationBackendBase or provide it (see "
-            "docs/extend/reservation-backends.md)."
+            "https://otto-sh.readthedocs.io/en/stable/extend/reservation-backends.html#writing-the-class)."
         )
     return rows
 

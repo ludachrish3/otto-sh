@@ -109,7 +109,7 @@ monkeypatching this attribute directly."""
 
 REFUSAL_HINT = (
     "the check refuses exactly what `otto tunnel add` would; see `otto tunnel add --help` "
-    "and docs/cli/tunnel/add"
+    "and https://otto-sh.readthedocs.io/en/stable/cli/tunnel/add.html"
 )
 
 FULL_PROOF = "full"

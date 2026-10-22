@@ -1687,7 +1687,9 @@ class UserlandHost:
 # that a host is in the measured class without becoming a second authority on
 # whether the class is refused.
 
-GAP_DOCS_PAGE = "docs/architecture/subsystems/busybox-support.md"
+GAP_DOCS_PAGE = (
+    "https://otto-sh.readthedocs.io/en/stable/architecture/subsystems/busybox-support.html"
+)
 """Where the user-facing rendering of this table lives.
 
 Named here rather than in the docs test so that a page MOVE is one edit and

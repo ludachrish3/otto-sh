@@ -519,7 +519,9 @@ async def _run_direction(
     return out
 
 
-_SAFETY_DOCS = "docs/cli/link/safety (Clearing is not creating)"
+_SAFETY_DOCS = (
+    "https://otto-sh.readthedocs.io/en/stable/cli/link/safety.html#clearing-is-not-creating"
+)
 
 
 def _occupied(link: Link, state: LinkState) -> str | None:
