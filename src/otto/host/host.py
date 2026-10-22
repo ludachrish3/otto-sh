@@ -3088,11 +3088,21 @@ class BaseHost(ABC):
         mode: LogMode = LogMode.NORMAL,
         level: int = INFO,
     ) -> None:
+        """Log *command* as this host's echo line, in bold.
+
+        *command* is literal text -- a command line, a dry-run banner, a hook's
+        outcome -- and reaches every sink with its brackets kept (see
+        :func:`~otto.logger.relay.relay_line`).
+        """
         if mode is LogMode.NEVER:
             return
+        from rich.markup import escape
+
+        from ..logger.relay import relay_line
+
         logger.log(
             level,
-            f"[bold]@{self.name}   | {command}",
+            relay_line(f"[bold]@{escape(self.name)}   | ", command),
             extra={"host": self, "log_mode": mode},
         )
 
@@ -3105,12 +3115,9 @@ class BaseHost(ABC):
         """
         if result.status is Status.NotRun:
             return
-        from rich.markup import escape  # function-local: off the startup import graph
-
-        # Hook and library text is free-form and goes into a Rich-markup record:
-        # escape it, or a "[sudo]" prompt vanishes and a stray "[/x]" raises.
-        detail = f" — {escape(str(result.msg))}" if result.msg else ""
-        name = escape(name)
+        # Hook and library text is free-form; `_log_command` takes it literally,
+        # so a "[sudo]" prompt survives and a stray "[/x]" cannot raise.
+        detail = f" — {result.msg}" if result.msg else ""
         if result.status is Status.Success:
             self._log_command(f"{name}: {done}")
         elif result.status is Status.Skipped:
@@ -3123,16 +3130,16 @@ class BaseHost(ABC):
         output: str,
         mode: LogMode = LogMode.NORMAL,
     ) -> None:
+        """Log *output* one yellow line per device line, each with its brackets kept."""
         if mode is LogMode.NEVER:
             return
-        preamble = f"[yellow]@{self.name} > | "
-        output_lines = [f"{preamble}{line}" for line in output.splitlines()]
+        from rich.markup import escape
 
-        # A python 3.10 limitation does not allow escape characters within f-string closures.
-        # Assign a variable to be a newline so it can be used within an f-string closure.
-        newline = "\n"
+        from ..logger.relay import relay_line
+
+        preamble = f"[yellow]@{escape(self.name)} > | "
         logger.info(
-            f"{newline.join(output_lines)}",
+            "\n".join(relay_line(preamble, line) for line in output.splitlines()),
             extra={"host": self, "log_mode": mode},
         )
 

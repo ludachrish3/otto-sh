@@ -74,6 +74,26 @@ class TestCommandFailedWarning:
         assert "Sockets metrics will be missing" in msg
 
     @pytest.mark.asyncio
+    async def test_the_failed_command_and_its_output_are_relayed_verbatim(self, collector, caplog):
+        """The command and the device's output reach every sink as written (#697).
+
+        Every sink renders a record as Rich markup, so the record's rendered
+        text is what the console and both log files show.
+        """
+        from rich.text import Text
+
+        cmd = "cat /sys/[x:y]"
+        parsers = {cmd: _NeverParses()}
+        with caplog.at_level("WARNING", logger="otto"):
+            await _tick(collector, parsers, [_failed(cmd, 1, "cat: [red]no[/red] such [/x]")])
+            await _tick(collector, parsers, [_ok(cmd, "unparseable")])
+        rendered = [Text.from_markup(r.getMessage()).plain for r in caplog.records]
+        assert any(
+            f"'{cmd}' failed on test1 (exit 1): cat: [red]no[/red] such [/x]" in m for m in rendered
+        ), rendered
+        assert any(f"'{cmd}' recovered on test1" in m for m in rendered), rendered
+
+    @pytest.mark.asyncio
     async def test_transient_failures_warn_every_time(self, collector, caplog):
         """fail -> ok -> fail is TWO outages: each transition logs. Intermittent
         issues after collection starts must never be swallowed."""

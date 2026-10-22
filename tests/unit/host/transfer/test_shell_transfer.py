@@ -4437,3 +4437,26 @@ class TestUuFramingIsSafeAndStrict:
     def test_an_empty_frame_decodes_to_no_bytes(self) -> None:
         """What a zero-length ``dd`` read comes back as, measured over real ssh."""
         assert shell_module._uu_unframe("begin 664 otto\n`\nend\n") == b""
+
+
+@pytest.mark.asyncio
+async def test_a_failed_cleanups_device_output_is_relayed_verbatim(caplog):
+    """The device's ``rm`` error reaches every sink as the device printed it (#697).
+
+    Every sink renders a record as Rich markup, so the record's rendered text
+    is what the console and both log files show.
+    """
+    import logging
+
+    from rich.text import Text
+
+    output = "rm: can't remove '[x:y]': [red]Read-only[/red] [/x]"
+
+    async def exec_cmd(cmd: str, *_: object, **__: object) -> CommandResult:
+        return CommandResult(command=cmd, value=output, status=Status.Error, retcode=1)
+
+    ft = _make_ft(exec_cmd)
+    with caplog.at_level(logging.DEBUG, logger="otto.host.transfer.shell"):
+        await ft._cleanup_temp("'/tmp/t'")
+    rendered = [Text.from_markup(r.getMessage()).plain for r in caplog.records]
+    assert f"test2: cleanup of '/tmp/t' failed (ignored): {output}" in rendered, rendered

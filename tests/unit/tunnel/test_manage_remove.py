@@ -40,6 +40,8 @@ class FakeHost:
     """If True, the ``kill`` command raises (host unreachable mid-reap)."""
     kill_timeout: bool = False
     """If True, the ``kill`` command comes back ``timed_out=True`` instead of acking."""
+    kill_output: str = "boom"
+    """What a failing ``kill`` (``kill_ok=False``) prints."""
     ps_texts: list = field(default_factory=lambda: [""])
     commands: list = field(default_factory=list)
 
@@ -62,7 +64,9 @@ class FakeHost:
                     timed_out=True,
                 )
             if not self.kill_ok:
-                return CommandResult(status=Status.Failed, value="boom", command=cmd, retcode=1)
+                return CommandResult(
+                    status=Status.Failed, value=self.kill_output, command=cmd, retcode=1
+                )
             return CommandResult(status=Status.Success, value="", command=cmd)
         raise AssertionError(f"unexpected command: {cmd!r}")
 
@@ -202,6 +206,39 @@ class TestRemoveTunnel:
         assert report.unreachable == ["a"]
         assert report.survivors == []
         assert any(cmd.startswith("kill ") for cmd in a.commands)
+
+    def test_a_failed_kills_output_is_relayed_verbatim(self) -> None:
+        """The device's kill error reaches every sink as the device printed it (#697).
+
+        Every sink renders a record as Rich markup, so the record's rendered
+        text is what the console and both log files show.
+        """
+        from rich.text import Text
+
+        tunnel = Tunnel(protocol="tcp", service_port=8080, path=(TunnelHop("a"), TunnelHop("b")))
+        carrier_fwd, carrier_rev = _LO, _LO + 1
+        text_a, _pids_a = _full_ps(tunnel, "a", carrier_fwd, carrier_rev, 100)
+        text_b, _pids_b = _full_ps(tunnel, "b", carrier_fwd, carrier_rev, 200)
+        output = "kill: [red](42)[/red] - No such process [/x]"
+        a = FakeHost("a", ps_texts=[text_a, text_a], kill_ok=False, kill_output=output)
+        b = FakeHost("b", ps_texts=[text_b, ""])
+
+        captured: list[logging.LogRecord] = []
+
+        class _Capture(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                captured.append(record)
+
+        manage_logger = logging.getLogger("otto.tunnel.manage")
+        handler = _Capture()
+        manage_logger.addHandler(handler)
+        try:
+            asyncio.run(remove_tunnel(_lab(a=a, b=b), tunnel.id))
+        finally:
+            manage_logger.removeHandler(handler)
+
+        rendered = [Text.from_markup(r.getMessage()).plain for r in captured]
+        assert f"otto tunnel: kill failed on host 'a': {output!r}" in rendered, rendered
 
     def test_kill_timeout_marks_unreachable_and_continues(self) -> None:
         # A timed-out kill exec (CommandResult.timed_out) must land exactly

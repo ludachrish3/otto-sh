@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ... import layout
+from ...logger.relay import relay_line
 from ...utils import Status
 
 if TYPE_CHECKING:
@@ -162,11 +163,19 @@ async def _collect_one_embedded_host(
 
         dump_command = loader.call_command(product.name, dump_fn)
         logger.info(
-            "Dumping embedded coverage for %s from %s via %r", product.name, host.id, dump_command
+            "Dumping embedded coverage for %s from %s via %s",
+            product.name,
+            host.id,
+            relay_line("", repr(dump_command)),
         )
         result = await host.exec(dump_command, timeout=_DUMP_TIMEOUT)
         if result.status != Status.Success:
-            logger.error("%s failed on %s: %s", dump_command, host.id, result.value)
+            logger.error(
+                "%s failed on %s: %s",
+                relay_line("", dump_command),
+                host.id,
+                relay_line("", str(result.value)),
+            )
             continue
 
         blocks = decode_cov_dump(result.value)

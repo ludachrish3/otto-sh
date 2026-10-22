@@ -1908,6 +1908,24 @@ class RenderPolicy:
     none_message: str | None = None
     """Message rendered (green) when the leaf returns None; None = silent."""
 
+    literal: bool = False
+    """Print a text payload as plain text, never as Rich markup.
+
+    Set by the ``otto host`` verbs: what they return is the device's text (a
+    file's contents, a listing), and a bracket in it that Rich reads as a tag
+    would be deleted -- or, for a lone ``[/x]``, raise -- instead of printed."""
+
+
+def _print_value(value: Any, *, literal: bool) -> None:
+    """Print one value: as plain text when *literal* and it is a ``str``, else via Rich."""
+    from rich import get_console
+    from rich import print as rprint
+
+    if literal and isinstance(value, str):
+        get_console().print(value, markup=False, emoji=False, highlight=False, soft_wrap=True)
+    else:
+        rprint(value)
+
 
 def _payload_or_decline(value: Any) -> Any:
     """Read a Result's payload, or report the decline and yield ``None``.
@@ -1970,20 +1988,19 @@ def _has_rich_renderable(items: "list[Any]") -> bool:
     return any(isinstance(item, (Table, Text)) for item in items)
 
 
-def _rprint_each(items: "list[Any]") -> None:
+def _rprint_each(items: "list[Any]", *, literal: bool = False) -> None:
     """Print one item per line: a Table/Text renders itself, a str prints plain.
 
     Handing a whole list to a single ``rprint()`` call pretty-prints it as one
     Python object instead of rendering each item — the hazard this exists to
     avoid, shared by a ``Result`` payload list and a plain list return alike.
+    *literal* prints a ``str`` item as plain text (see :attr:`RenderPolicy.literal`).
     """
-    from rich import print as rprint
-
     for item in items:
-        rprint(item)
+        _print_value(item, literal=literal)
 
 
-def _render_ok_result(value: "Result", success: "str | None") -> None:
+def _render_ok_result(value: "Result", success: "str | None", *, literal: bool = False) -> None:
     """Render a successful ``Result``: the success message, or its payload."""
     from rich import print as rprint
 
@@ -2003,11 +2020,12 @@ def _render_ok_result(value: "Result", success: "str | None") -> None:
     payload = _payload_or_decline(value)
     if isinstance(payload, dict):
         for src, entry in payload.items():
-            rprint(f"{src} -> {_payload_or_decline(entry)}")
+            line = f"{src} -> {_payload_or_decline(entry)}"
+            _print_value(line, literal=literal)
     elif isinstance(payload, list):
-        _rprint_each(payload)
+        _rprint_each(payload, literal=literal)
     elif payload is not None:
-        rprint(payload)
+        _print_value(payload, literal=literal)
 
 
 def _render_failed_result(value: "Result") -> None:
@@ -2054,7 +2072,11 @@ def render_leaf_value(value: Any, policy: "RenderPolicy | None" = None) -> None:
             _render_dry_run_decline(value)
             return
         if value.is_ok:
-            _render_ok_result(value, policy.success if policy else None)
+            _render_ok_result(
+                value,
+                policy.success if policy else None,
+                literal=policy.literal if policy else False,
+            )
             return
         _render_failed_result(value)
         return
@@ -2064,11 +2086,12 @@ def render_leaf_value(value: Any, policy: "RenderPolicy | None" = None) -> None:
             rprint(f"[green]{policy.none_message}[/green]")
         return
 
+    literal = policy.literal if policy else False
     if isinstance(value, list) and _has_rich_renderable(value):
-        _rprint_each(value)
+        _rprint_each(value, literal=literal)
         return
 
-    rprint(value)  # documented third-party plain-value fallback, exit 0
+    _print_value(value, literal=literal)  # documented third-party plain-value fallback, exit 0
 
 
 def _require_async_leaf(cmd: Any, spec: "CommandSpec") -> None:

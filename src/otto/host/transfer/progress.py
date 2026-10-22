@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from rich.markup import escape
 from rich.progress import (
     BarColumn,
     DownloadColumn,
@@ -25,6 +26,7 @@ from rich.progress import (
 )
 
 from ...console import CONSOLE
+from ...logger.relay import relay_line
 
 if TYPE_CHECKING:
     from .base import TransferProgressFactory, TransferProgressHandler
@@ -51,7 +53,7 @@ def make_rich_progress_handler(progress: Progress, host_name: str) -> "TransferP
         nonlocal current_src, task_id
         if src != current_src:
             current_src = src
-            description = f"[green]{host_name}[/] {Path(src).name}"
+            description = relay_line(f"[green]{escape(host_name)}[/] ", Path(src).name)
             task_id = progress.add_task(description, total=bytes_total)
         assert task_id is not None  # noqa: S101 — internal invariant: task_id set above when src changes; always set on second+ call
         progress.update(task_id, completed=bytes_done)

@@ -12,3 +12,6 @@ logger internals
 
 .. automodule:: otto.logger.management
    :ignore-module-all:
+
+.. automodule:: otto.logger.relay
+   :ignore-module-all:

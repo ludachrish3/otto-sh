@@ -488,3 +488,24 @@ async def test_a_missing_cov_dir_is_quiet_and_still_cleans_up(tmp_path, caplog):
     assert caplog.text == ""
     assert host.gets == []
     assert any(_RM.fullmatch(c) for c in host.cmds)
+
+
+class _NoArchivePath(_Host):
+    """The archive command answers with bracketed text and no archive path."""
+
+    async def exec(self, cmd, timeout=60, **kw):
+        if "tar -cf" in str(cmd):
+            self.cmds.append(str(cmd))
+            return CommandResult(Status.Success, value="[/x] [red]oops\n", retcode=0)
+        return await super().exec(cmd, timeout=timeout, **kw)
+
+
+@pytest.mark.asyncio
+async def test_a_no_archive_path_warning_keeps_the_devices_brackets(tmp_path, caplog):
+    from rich.text import Text
+
+    host = _NoArchivePath(None)
+    with caplog.at_level(logging.WARNING, logger="otto.coverage.fetcher.remote"):
+        assert await _fetch_one_product(host, _Product(), tmp_path) is None
+    (record,) = [r for r in caplog.records if "no archive path" in r.getMessage()]
+    assert Text.from_markup(record.getMessage()).plain.endswith("'[/x] [red]oops'")

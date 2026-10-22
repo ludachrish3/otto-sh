@@ -27,6 +27,7 @@ from ..host.docker_host import DockerContainerHost
 from ..host.errors import HostCommandError
 from ..host.host import is_dry_run
 from ..host.unix_host import UnixHost
+from ..logger.relay import relay_line
 from ..result import CommandNotRunError
 from .adapter import AdapterResult, adapter_for
 from .build import build_images
@@ -970,8 +971,11 @@ async def teardown(
             ran.append(result)
             if not result.is_ok:
                 logger.error(
-                    rf"\[docker] `{action.split()[0]}` failed for {proj} on "
-                    f"{parent_host.id}: {result.value}"
+                    relay_line(
+                        rf"\[docker] `{action.split()[0]}` failed for {proj} on "
+                        f"{parent_host.id}: ",
+                        result.value,
+                    )
                 )
         await unregister_container_hosts(resolution.lab, prefix, services=wanted)
         hosts[host_id] = ran

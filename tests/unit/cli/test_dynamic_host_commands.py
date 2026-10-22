@@ -106,7 +106,9 @@ async def test_make_method_command_dispatches_kwargs_and_closes():
     # direct pin of the expose-side default (no __cli_success__ → "done").
     from otto.cli.invoke import RENDER_POLICY_KEY, RenderPolicy
 
-    assert _Ctx.meta[RENDER_POLICY_KEY] == RenderPolicy(success=None, none_message="done")
+    assert _Ctx.meta[RENDER_POLICY_KEY] == RenderPolicy(
+        success=None, none_message="done", literal=True
+    )
 
 
 def test_make_method_command_failure_result_exits_nonzero(monkeypatch):

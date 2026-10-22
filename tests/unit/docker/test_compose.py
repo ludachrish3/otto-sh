@@ -1882,6 +1882,34 @@ async def test_compose_down_failure_logs_error(tmp_path, caplog):
 
 
 @pytest.mark.asyncio
+async def test_compose_down_failure_relays_dockers_output_verbatim(tmp_path, caplog):
+    """docker's own output reaches every sink as docker printed it (#697).
+
+    Every sink renders a record as Rich markup, so the record's rendered text
+    is what the console and both log files show.
+    """
+    from rich.text import Text
+
+    project = _make_project(tmp_path)
+    lab = _make_lab()
+    parent = lab.hosts["test3"]
+    output = "Error: image:[sha256:abc] [red]in use[/red] [/x]"
+
+    async def exec_side_effect(cmd, *_, **__):
+        if "compose" in cmd and " down" in cmd:
+            return _fail(output)
+        return _ok()
+
+    parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
+
+    with caplog.at_level(logging.ERROR):
+        await compose_down(project, lab)
+
+    rendered = [Text.from_markup(r.getMessage()).plain for r in caplog.records]
+    assert f"[docker] compose down failed: {output}" in rendered, rendered
+
+
+@pytest.mark.asyncio
 async def test_compose_down_swallows_host_close_error(tmp_path):
     """Does NOT propagate when a registered container host's close() raises."""
     project = _make_project(tmp_path)

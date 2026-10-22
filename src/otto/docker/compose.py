@@ -27,6 +27,7 @@ from ..host.factory import apply_providers
 from ..host.host import Host, is_dry_run, refuse_declined_fact
 from ..host.mount import Mount
 from ..host.unix_host import UnixHost
+from ..logger.relay import relay_line
 from ..result import CommandNotRunError, CommandResult
 from ..utils import Status
 
@@ -173,8 +174,11 @@ async def _stack_already_up(parent: Host, project_name: str) -> bool | None:
     refuse_declined_fact(result, asked=f"stack_already_up({project_name!r})")
     if not result.status.is_ok:
         logger.warning(
-            rf"\[docker] could not tell whether {project_name} was already running on "
-            f"{parent.id}: {result.value}"
+            relay_line(
+                rf"\[docker] could not tell whether {project_name} was already running on "
+                f"{parent.id}: ",
+                result.value,
+            )
         )
         return None
     return bool(result.value.strip())
@@ -214,8 +218,10 @@ async def _resolve_container_id(
             # daemon, and compose_up's "none resolved" error tells the user to
             # read these warnings.
             logger.warning(
-                rf"\[docker] looking up {project_name}/{service} on {parent.id} "
-                f"failed: {result.value}"
+                relay_line(
+                    rf"\[docker] looking up {project_name}/{service} on {parent.id} failed: ",
+                    result.value,
+                )
             )
         if attempt < _CONTAINER_ID_RESOLVE_ATTEMPTS - 1:
             await asyncio.sleep(_CONTAINER_ID_RESOLVE_BACKOFF_S)
@@ -339,8 +345,10 @@ async def _rollback_partial_up(project: Project, lab: "Lab", parent: UnixHost, p
         return
     if not result.is_ok:
         logger.error(
-            rf"\[docker] {proj} could not be rolled back on {parent.id} and is still "
-            f"up: {result.value}"
+            relay_line(
+                rf"\[docker] {proj} could not be rolled back on {parent.id} and is still up: ",
+                result.value,
+            )
         )
 
 
@@ -535,8 +543,11 @@ async def _up_and_register(
         # A cross-check only: the declared list is authoritative, so losing the
         # comparison costs a warning, not the stack.
         logger.warning(
-            rf"\[docker] could not list {proj}'s services to cross-check the declared "
-            f"ones: {live.value}"
+            relay_line(
+                rf"\[docker] could not list {proj}'s services to cross-check the declared "
+                "ones: ",
+                live.value,
+            )
         )
     else:
         # Nothing declared AND nothing listed: `services` below would be empty,
@@ -654,7 +665,7 @@ async def compose_down(
         extra=f"--timeout {int(stop_timeout)}",
     )
     if not result.is_ok:
-        logger.error(rf"\[docker] compose down failed: {result.value}")
+        logger.error(relay_line(r"\[docker] compose down failed: ", result.value))
 
     # Unregister any hosts that came from this stack (shared with the
     # use-case teardown path, which sweeps `<parent>.<usecase>.` instead).
@@ -711,8 +722,10 @@ async def compose_down_project(
     )
     if not result.is_ok:
         logger.error(
-            rf"\[docker] compose down failed for {compose_project} on {parent.id}: "
-            f"{result.value}"
+            relay_line(
+                rf"\[docker] compose down failed for {compose_project} on {parent.id}: ",
+                result.value,
+            )
         )
     if remove_ids_under is not None:
         await unregister_container_hosts(lab, remove_ids_under)

@@ -146,3 +146,22 @@ def test_a_mid_transfer_frame_is_partial():
     # carries the red for how full the user's bar looks.
     assert row.count(_FULL) == 26, row
     assert "32.8/49.2 kB" in row, row
+
+
+def test_a_bracketed_file_name_renders_and_keeps_its_brackets():
+    # A remote file named like a Rich tag (a name cannot hold "/", so no [/x])
+    # must neither raise on refresh nor lose its brackets.
+    for name in ("[x].log", "[red]a.log", "[link=x]b.log"):
+        stream = events_for(src=f"/remote/{name}", total=8192, granularity=8192)
+        _progress, text = _render(stream)
+        assert f"host-a {name}" in text, text
+
+
+def test_a_bracketed_host_name_renders_and_keeps_its_brackets():
+    console = Console(record=True, width=100, height=25, force_terminal=True, color_system=None)
+    progress = Progress(*make_transfer_progress().columns, console=console, auto_refresh=False)
+    handler = make_rich_progress_handler(progress, "[x]")
+    for e in events_for(src="/remote/a.bin", total=8192, granularity=8192):
+        handler(e.src, e.dst, e.done, e.total)
+    console.print(progress.get_renderable())
+    assert "[x] a.bin" in console.export_text()

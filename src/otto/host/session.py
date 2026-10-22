@@ -54,6 +54,7 @@ if TYPE_CHECKING:
 import logging
 
 from ..logger.mode import LogMode
+from ..logger.relay import relay_line
 from ..result import CommandNotRunError, CommandResult, NotRunResult, Results
 from ..utils import Status
 from .host import (
@@ -943,7 +944,9 @@ class ShellSession(ABC):
                 f"payload=<redacted {len(framed)} bytes>"
             )
         else:
-            logger.debug(f"{self._log_tag}: framed write cmd={cmd!r} payload={shown!r}")
+            logger.debug(
+                relay_line(f"{self._log_tag}: framed write ", f"cmd={cmd!r} payload={shown!r}")
+            )
         self._write_progress = write_progress
         try:
             await self.write_transport(framed)
@@ -981,9 +984,10 @@ class ShellSession(ABC):
                     if pat.search(data):
                         await self.write_transport(response)
                         logger.debug(
-                            f"{self._log_tag}: expect matched "
-                            f"pattern={getattr(pat, 'pattern', pat)!r} "
-                            f"response={response!r}"
+                            relay_line(
+                                f"{self._log_tag}: expect matched ",
+                                f"pattern={getattr(pat, 'pattern', pat)!r} response={response!r}",
+                            )
                         )
                         expect_matched = True
                         break
@@ -996,7 +1000,11 @@ class ShellSession(ABC):
                 if not seen_begin:
                     if self._frame.marks_begin(data, self._markers):
                         if not redact:
-                            logger.debug(f"{self._log_tag}: begin marker matched on chunk={data!r}")
+                            logger.debug(
+                                relay_line(
+                                    f"{self._log_tag}: begin marker matched on ", f"chunk={data!r}"
+                                )
+                            )
                         seen_begin = True
                 elif live:
                     line = data.rstrip("\r\n").replace("\r", "")
@@ -1026,8 +1034,11 @@ class ShellSession(ABC):
             )
         else:
             logger.debug(
-                f"{self._log_tag}: run_cmd done cmd={cmd!r} retcode={retcode} "
-                f"output_len={len(output)} buffer={buffer_preview!r}"
+                relay_line(
+                    f"{self._log_tag}: run_cmd done ",
+                    f"cmd={cmd!r} retcode={retcode} "
+                    f"output_len={len(output)} buffer={buffer_preview!r}",
+                )
             )
         return CommandResult(status=status, value=output, command=cmd, retcode=retcode)
 

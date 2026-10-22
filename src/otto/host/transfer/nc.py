@@ -29,6 +29,7 @@ import logging
 from typing_extensions import override
 
 from ...errors import OttoError
+from ...logger.relay import relay_line
 from ...result import CommandResult, Result
 from ...utils import Status, WaitTimeoutError, wait_for_async
 from ..errors import HostCommandError, HostUnreachableError
@@ -821,15 +822,19 @@ class NcFileTransfer(UnixFileTransfer):
             result = await self._control_run(_STRATEGY_PROBE)
             if result.retcode != 0:
                 _logger.debug(
-                    f"{self._name}: strategy probe failed (retcode={result.retcode}, "
-                    f"output={result.value!r}); lazy cascades will resolve"
+                    relay_line(
+                        f"{self._name}: strategy probe failed (retcode={result.retcode}, ",
+                        f"output={result.value!r}); lazy cascades will resolve",
+                    )
                 )
                 return
             parts = result.value.strip().split()
             if len(parts) != 2:  # noqa: PLR2004 — strategy probe output is exactly "port_choice listener_choice" (2 words)
                 _logger.debug(
-                    f"{self._name}: strategy probe returned malformed output "
-                    f"{result.value!r}; lazy cascades will resolve"
+                    relay_line(
+                        f"{self._name}: strategy probe returned malformed output ",
+                        f"{result.value!r}; lazy cascades will resolve",
+                    )
                 )
                 return
             port_choice, listener_choice = parts
@@ -1727,7 +1732,7 @@ class NcFileTransfer(UnixFileTransfer):
                 # One retry on the narrow listener-readiness race, on a fresh
                 # port — mirrors `_put_one`. A second failure is almost
                 # certainly a real problem and should propagate.
-                _logger.debug(f"{self._name}: NC get retry after: {result.msg}")
+                _logger.debug(f"{self._name}: NC get retry after: {relay_line('', result.msg)}")
                 result = await _attempt(src, dst)
             return result
 
@@ -2043,7 +2048,7 @@ class NcFileTransfer(UnixFileTransfer):
                 # One retry on the narrow listener-readiness race. A second
                 # failure is almost certainly a real problem (bad port,
                 # permissions, disk full) and should propagate.
-                _logger.debug(f"{self._name}: NC put retry after: {result.msg}")
+                _logger.debug(f"{self._name}: NC put retry after: {relay_line('', result.msg)}")
                 result = await _attempt(src, dst)
             return result
 

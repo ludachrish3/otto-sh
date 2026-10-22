@@ -185,6 +185,37 @@ class TestRunCmdLogging:
         assert s._end_marker_prefix in log
 
     @pytest.mark.asyncio
+    async def test_the_transport_debug_lines_relay_command_and_output_verbatim(
+        self,
+        initialized_session: MockSession,
+        caplog: pytest.LogCaptureFixture,
+    ):
+        """The command and the device's bytes reach every sink as written (#697).
+
+        Every sink renders a record as Rich markup, so the record's rendered
+        text is what the console and both log files show.
+        """
+        from rich.text import Text
+
+        s = initialized_session
+        caplog.clear()
+        caplog.set_level(logging.DEBUG, logger="otto")
+
+        feed_task = asyncio.create_task(
+            s.feed_after_write(
+                f"{s._begin_marker}\nimage:[sha256:abc] [/x]\n{s._end_marker_prefix}0__\n"
+            )
+        )
+        result = await s.run_cmd("echo '[red]x[/red]'")
+        await feed_task
+
+        assert result.retcode == 0
+        rendered = "\n".join(Text.from_markup(r.getMessage()).plain for r in caplog.records)
+        assert "framed write cmd=\"echo '[red]x[/red]'\"" in rendered, rendered
+        assert "run_cmd done cmd=\"echo '[red]x[/red]'\"" in rendered, rendered
+        assert "image:[sha256:abc] [/x]" in rendered, rendered
+
+    @pytest.mark.asyncio
     async def test_never_redacts_session_diagnostics(
         self,
         initialized_session: MockSession,

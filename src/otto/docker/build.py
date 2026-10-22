@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from ..config.project import Project
 from ..config.scope import DockerImage
 from ..host.host import Host, is_dry_run
+from ..logger.relay import relay_line
 from ..result import CommandNotRunError, CommandResult
 from ..utils import Status
 from .reports import ImageBuild
@@ -163,8 +164,10 @@ async def _build_one(
                 removed = await parent.exec(f"rm -f {shlex.quote(str(remote))}")
                 if not removed.is_ok:
                     logger.warning(
-                        f"{parent.id}: could not remove the uploaded archive {remote}: "
-                        f"{removed.value.strip()}"
+                        relay_line(
+                            f"{parent.id}: could not remove the uploaded archive {remote}: ",
+                            removed.value.strip(),
+                        )
                     )
     else:
         await stage_image_context(parent, project, image)

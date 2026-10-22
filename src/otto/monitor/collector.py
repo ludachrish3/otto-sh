@@ -23,6 +23,7 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ..logger.mode import LogMode
+from ..logger.relay import relay_line
 from ..models.formats import MONITOR_STREAM_WRITE_VERSIONS
 from ..models.monitor import (
     DEFAULT_MAX_SERIES_PER_CHART,
@@ -651,10 +652,10 @@ class MetricCollector:
                     first_line = str(cmd_result.value or "").strip().splitlines()[:1]
                     logger.warning(
                         "Monitor: '%s' failed on %s (exit %d): %s — %s metrics will be missing",
-                        cmd_result.command,
+                        relay_line("", cmd_result.command),
                         host_name,
                         cmd_result.retcode,
-                        first_line[0] if first_line else "",
+                        relay_line("", first_line[0] if first_line else ""),
                         parser.chart,
                     )
                 self._failing[key] = failed_ticks + 1
@@ -663,7 +664,7 @@ class MetricCollector:
                 if failed_ticks:
                     logger.warning(
                         "Monitor: '%s' recovered on %s after %d failed tick(s)",
-                        cmd_result.command,
+                        relay_line("", cmd_result.command),
                         host_name,
                         failed_ticks,
                     )

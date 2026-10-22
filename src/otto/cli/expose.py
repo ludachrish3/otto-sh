@@ -143,8 +143,11 @@ def make_method_command(
         # marker. Install it on ctx.meta (shared by-reference down the context
         # chain) for the leaf-invoke wrapper's `render_leaf_value`, and return
         # the raw result for it to render. `none_message=success or "done"`
-        # preserves the host verbs' historical None rendering.
-        ctx.meta[RENDER_POLICY_KEY] = RenderPolicy(success=success, none_message=success or "done")
+        # preserves the host verbs' historical None rendering. `literal`: a
+        # verb's text payload is the device's, printed as written (#697).
+        ctx.meta[RENDER_POLICY_KEY] = RenderPolicy(
+            success=success, none_message=success or "done", literal=True
+        )
         return result
 
     ctx_param = inspect.Parameter(

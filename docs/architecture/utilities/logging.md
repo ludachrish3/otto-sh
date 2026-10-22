@@ -56,6 +56,20 @@ literal in your own source can carry that backslash directly
 (`"\\[bench] stays in brackets"`). `extra={"markup": False}` is no substitute: the
 console honours it, but the files do not.
 
+otto does the same for the text it relays rather than writes: a host's echoed
+command and its output lines, and the device or tool output quoted in otto's
+own warnings (a failed `docker compose down`, a failed coverage archive, a
+monitor command's error). Each of those lines is built by
+{func}`~otto.logger.relay.relay_line`, which takes otto's markup prefix and the
+relayed text separately and escapes only the text, so `image:[sha256:abc]` in
+a device's output reaches the console and both files with its brackets kept,
+and a stray `[/x]` cannot raise. Rich still substitutes `:emoji:` codes in the
+log sinks, so the text is not guaranteed character for character. The escape
+lives in the record's message, so `caplog.text`, pytest's "Captured log"
+sections and any handler that does not render markup see `\[` before the
+relayed brackets. The text an `otto host <id>` verb returns (`read-file`) is
+printed with markup and emoji codes off for the same reason.
+
 By default the files are plain text: the markup is applied and its ANSI codes
 are stripped. `--rich-log-file` (or `OTTO_LOG_RICH`) keeps those codes in both
 files, for a pager that renders them (`less -R`). The colour comes from the
@@ -254,5 +268,7 @@ same shape below `<kind>/<host_id>/`.
 - {mod}`otto.logger.formatters` — `RichFormatter` (markup rendering for the
   files), `capture_exception`, `render_traceback` (the files' one traceback
   renderer) and the traceback bounds
+- {mod}`otto.logger.relay` — `relay_line`, otto's markup prefix plus relayed
+  text whose brackets every sink keeps
 - {mod}`otto.logger.mode` — `LogMode` and `effective_mode`, the
   most-restrictive-wins composition
