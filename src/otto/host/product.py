@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from typing_extensions import override
+from typing_extensions import TypeIs, override
 
 from .. import layout
 from ..declared import (
@@ -52,6 +52,7 @@ from ..utils import Status
 from .log_haul import haul_globs
 
 if TYPE_CHECKING:
+    from .file_ops import PosixFileOps
     from .host import Host
 
 __all__ = [
@@ -59,10 +60,13 @@ __all__ = [
     "Product",
     "ProductPlan",
     "ShellProduct",
+    "ensure_stage_dir",
+    "mkdir_line",
     "planned_stage_dir",
     "put_line",
     "register_product_kind",
     "register_product_provider",
+    "stage_lines",
     "sudo_line",
     "unplanned",
 ]
@@ -122,6 +126,26 @@ class StageDirPlan:
 def put_line(local: Path, remote_dir: str) -> str:
     """Return the plan's line for ``host.put(local, remote_dir)``."""
     return f"PUT {local} -> {remote_dir}"
+
+
+def mkdir_line(directory: str) -> str:
+    """Return the plan's line for :func:`ensure_stage_dir` making *directory*.
+
+    Quoted as the host's ``mkdir`` quotes it; :data:`LOGIN_HOME_PLACEHOLDER`
+    is shown as is, since it names a directory rather than spelling one.
+    """
+    shown = directory if directory == LOGIN_HOME_PLACEHOLDER else shlex.quote(directory)
+    return f"mkdir -p {shown}"
+
+
+def stage_lines(host: "Host", local: Path, directory: str) -> list[str]:
+    """Return the plan's lines for staging *local* into *directory* on *host*.
+
+    The ``mkdir -p`` :func:`ensure_stage_dir` runs first, on a host that has a
+    shell ``mkdir``, then the transfer.
+    """
+    made = [mkdir_line(directory)] if _creates_stage_dir(host) else []
+    return [*made, put_line(local, directory)]
 
 
 def sudo_line(command: str) -> str:
@@ -287,6 +311,47 @@ async def resolve_stage_dir(stage_dir: Path, host: "Host", who: str = "product")
             "or an absolute 'stage_dir' on the entry."
         )
     return await discover()
+
+
+def _creates_stage_dir(host: object) -> "TypeIs[PosixFileOps]":
+    """Return whether staging on *host* makes a missing directory first (a shell ``mkdir``).
+
+    The one predicate :func:`ensure_stage_dir` and :func:`stage_lines` share, so
+    the plan names the ``mkdir -p`` exactly when the hook runs it.
+    """
+    from .file_ops import PosixFileOps  # local: keeps the host graph off the product import path
+
+    return isinstance(host, PosixFileOps)
+
+
+async def ensure_stage_dir(host: "Host", directory: Path, who: str) -> Result:
+    """Create the resolved staging *directory* on *host* (``mkdir -p``) before a transfer.
+
+    A remote transfer to a directory that does not exist writes the artifact
+    ONTO that path as a file, and the next step (``chmod``, ``insmod``,
+    ``docker load``) then fails far from the cause. Every staging kind calls
+    this with the directory it is about to hand ``put`` or ``load``, so a
+    missing ``stage_dir`` is made rather than clobbered; only a failed
+    creation is an error, and its ``msg`` carries the shell's reason.
+
+    Hosts without a shell ``mkdir`` (embedded targets) are left alone, as is a
+    dry run: the transfer that follows announces the staging itself.
+    """
+    from .host import is_dry_run  # local: keeps the host graph off the product import path
+
+    if not _creates_stage_dir(host) or is_dry_run():
+        return Result(Status.Success)
+    made = await host.mkdir(directory)
+    if made.is_ok:
+        return Result(Status.Success)
+    reason = made.msg.strip() or f"mkdir exited {made.status.name}"
+    return Result(
+        made.status,
+        msg=(
+            f"{who}: cannot create stage_dir {str(directory)!r} on host "
+            f"{getattr(host, 'id', '?')}: {reason}"
+        ),
+    )
 
 
 class Product(ABC):
@@ -666,9 +731,14 @@ class ShellProduct(Product):
         ``put`` is handed the RESOLVED, absolute directory: ``put``'s own
         ``_resolve_dest`` knows the host's ``default_dest_dir`` but not the
         login-home fallback, so passing the raw value would land the artifact
-        somewhere the installing command does not name.
+        somewhere the installing command does not name. A missing directory
+        is created first (:func:`ensure_stage_dir`).
         """
-        return await host.put(self.artifact, await self.resolved_stage_dir(host))
+        directory = await self.resolved_stage_dir(host)
+        made = await ensure_stage_dir(host, directory, who=f"product {self.name!r}")
+        if not made.is_ok:
+            return made
+        return await host.put(self.artifact, directory)
 
     @override
     def instrumented(self) -> bool | None:

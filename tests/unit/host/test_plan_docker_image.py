@@ -84,7 +84,11 @@ async def test_tarball_plans_load_cleanup_run_and_the_image_reads(plan_recorder)
     product = _image(host, "images/web.tar")
     plan = product.plan(host)
     assert (await product.stage(host)).is_ok
-    assert host.take() == plan.stage == ["PUT /sut/images/web.tar -> /opt/stage"]
+    assert (
+        host.take()
+        == plan.stage
+        == ["mkdir -p /opt/stage", "PUT /sut/images/web.tar -> /opt/stage"]
+    )
     assert (await product.install(host)).is_ok
     assert (
         _actions(host.take(), {DOCKER_PROBE})
@@ -115,7 +119,10 @@ async def test_tarball_plans_load_cleanup_run_and_the_image_reads(plan_recorder)
 def test_tarball_plan_uses_the_placeholder_in_every_line(plan_recorder):
     host = plan_recorder  # no default_dest_dir: the tarball lands in the login home
     plan = _image(host, "images/web.tar").plan(host)
-    assert plan.stage == [f"PUT /sut/images/web.tar -> {LOGIN_HOME_PLACEHOLDER}"]
+    assert plan.stage == [
+        f"mkdir -p {LOGIN_HOME_PLACEHOLDER}",
+        f"PUT /sut/images/web.tar -> {LOGIN_HOME_PLACEHOLDER}",
+    ]
     assert plan.install[0] == f"docker load -i '{LOGIN_HOME_PLACEHOLDER}/web.tar'"
     assert plan.install[1] == f"rm -f '{LOGIN_HOME_PLACEHOLDER}/web.tar'"
     assert plan.unchecked[0] == (

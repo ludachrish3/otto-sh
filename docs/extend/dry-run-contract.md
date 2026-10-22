@@ -111,6 +111,8 @@ the host that the plan could not.
 configuration and what the host object already holds. The lines speak a small
 vocabulary, and a new kind uses it rather than inventing one:
 
+- `mkdir -p <dir>` for the staging directory a transfer is about to land in,
+  always the line before its `PUT` on a host with a shell `mkdir`
 - `PUT <file> -> <dir>` for a transfer
 - `LOAD <file> as <name>` for a load whose real command carries the whole file
   (the embedded kind's `llext load_hex`)
@@ -122,10 +124,18 @@ vocabulary, and a new kind uses it rather than inventing one:
   a connected host can answer, with one `unchecked` line saying so
 
 The helpers {func}`~otto.host.product.planned_stage_dir`,
+{func}`~otto.host.product.stage_lines`, {func}`~otto.host.product.mkdir_line`,
 {func}`~otto.host.product.put_line`, {func}`~otto.host.product.sudo_line` and
-{func}`~otto.host.product.unplanned` spell the staging directory, the `PUT` and
-`sudo` lines and the not-previewed answer, so a kind calls them instead of
-formatting those strings itself.
+{func}`~otto.host.product.unplanned` spell the staging directory, the
+`mkdir -p` and `PUT` pair, the `sudo` lines and the not-previewed answer, so a
+kind calls them instead of formatting those strings itself.
+
+A kind that stages calls {func}`~otto.host.product.ensure_stage_dir` first, with
+the directory it is about to hand `put` or `load`: it creates a missing
+`stage_dir` (`mkdir -p`) on a host with a shell `mkdir`, and a creation that
+fails is the hook's failure, with the host's reason. Its plan names the same
+step with `stage_lines` (or `mkdir_line` before its own transfer line), so the
+recorder differential below still holds.
 
 A kind that does not describe itself inherits the base's honest answer: empty
 step lists and one `unchecked` line naming its class, so a code-defined product

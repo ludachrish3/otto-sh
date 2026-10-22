@@ -38,6 +38,8 @@ from ..utils import Status, anchor_path
 from .dev_tool import DevTool
 from .product import (
     ProductPlan,
+    ensure_stage_dir,
+    mkdir_line,
     planned_stage_dir,
     put_line,
     resolve_stage_dir,
@@ -79,13 +81,17 @@ def _elevate(command: str, elevated: bool) -> str:
 
 
 def load_lines(artifact: Path, where: str, params: str, *, elevated: bool) -> list[str]:
-    """Return the three lines :meth:`~otto.host.unix_host.UnixHost.load` makes, in its quoting.
+    """Return the lines staging and loading a module make: ``mkdir -p``, then ``load``'s three.
 
+    The three are :meth:`~otto.host.unix_host.UnixHost.load`'s, in its quoting. A
+    kernel module only rides a Unix host, which always makes a missing staging
+    directory first (:func:`~otto.host.product.ensure_stage_dir`).
     *elevated* is whether the ``insmod`` runs under ``sudo`` (:func:`elevates`).
     """
     staged = shlex.quote(str(PurePosixPath(where) / artifact.name))
     extra = f" {params.strip()}" if params.strip() else ""
     return [
+        mkdir_line(where),
         put_line(artifact, where),
         _elevate(f"insmod {staged}{extra}", elevated),
         f"rm -f {staged}",
@@ -169,11 +175,15 @@ class KmodTool(DevTool):
         """
         if await self.is_installed(host):
             return Result(Status.Success)
+        directory = await self.resolved_stage_dir(host)
+        made = await ensure_stage_dir(host, directory, who=f"dev tool {self.name!r}")
+        if not made.is_ok:
+            return made
         return await host.load(  # ty: ignore[unresolved-attribute]
             self.artifact,
             self.module_name,
             params=self.params,
-            dest_dir=await self.resolved_stage_dir(host),
+            dest_dir=directory,
         )
 
     @override

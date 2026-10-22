@@ -47,7 +47,7 @@ from ..instruction_catalog import (
 )
 from ..params import OptionsSource, shared_field_values
 from ..registry import get_registering_project, registration_boundary
-from ..result import Result
+from ..result import CommandResult, Result, Results
 from ..utils import Status
 from .options import (
     CleanupOptions,
@@ -139,6 +139,27 @@ is not an ``OttoContext``, passes untouched.
 """
 
 
+def _failure_reason(outcome: Result) -> str:
+    """Return why the non-ok *outcome* failed, in one line, never an empty string.
+
+    ``msg`` when the outcome carries one. A hook that hands back ``host.run``'s
+    own failure (:class:`~otto.result.Results`, or one
+    :class:`~otto.result.CommandResult`) carries its reason in ``value``
+    instead -- the failing command, its exit and its output -- so that is
+    named. A dry run's decline keeps its own (empty) ``msg``: its ``value``
+    raises on read, and the preview already says what was declined.
+    """
+    if outcome.msg or outcome.status is Status.NotRun:
+        return outcome.msg
+    failed = outcome.first_failure if isinstance(outcome, Results) else outcome
+    if isinstance(failed, CommandResult) and failed.status is not Status.NotRun:
+        how = "timed out" if failed.timed_out else f"exit {failed.retcode}"
+        lines = [line.strip() for line in str(failed.value or "").splitlines() if line.strip()]
+        said = f": {lines[-1]}" if lines else ""
+        return f"`{failed.command}` failed ({how}){said}"
+    return f"failed ({outcome.status.name}) with no reason given"
+
+
 def _reduce_results(results: "dict[str, Result | BaseException]") -> Result:
     """Reduce a ``do_for_all_hosts`` mapping to one Result, naming the host.
 
@@ -148,8 +169,8 @@ def _reduce_results(results: "dict[str, Result | BaseException]") -> Result:
     raise, and a reduction that only understood Results would read a crashed
     host as a pass.
 
-    Only ``status`` and ``msg`` are lifted out of the failing entry -- never
-    ``value``, which RAISES on a dry run's
+    Only ``status`` and the reason (:func:`_failure_reason`) are lifted out of
+    the failing entry -- never ``value`` whole, which RAISES on a dry run's
     :class:`~otto.result.NotRunResult`. The host id has to come from the
     mapping's key because the Result itself does not carry it, which is why
     this repacks rather than returning the entry whole.
@@ -158,7 +179,7 @@ def _reduce_results(results: "dict[str, Result | BaseException]") -> Result:
         if isinstance(outcome, BaseException):
             return Result(Status.Error, msg=f"host {host_id!r}: {outcome!r}")
         if not outcome.is_ok:
-            return Result(outcome.status, msg=f"host {host_id!r}: {outcome.msg}")
+            return Result(outcome.status, msg=f"host {host_id!r}: {_failure_reason(outcome)}")
     return Result(Status.Success)
 
 

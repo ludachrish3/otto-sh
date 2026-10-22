@@ -45,6 +45,7 @@ from .product import (
     ShellProduct,
     cov_dir_of,
     cov_dir_of_name,
+    ensure_stage_dir,
     planned_stage_dir,
     sudo_gcda_delete,
 )
@@ -128,11 +129,15 @@ class KmodProduct(ShellProduct):
             # cov_dir containing whitespace would otherwise split in two.
             gcov_dir_arg = shlex.quote(f"cov_dir={cov_dir_of(self)}")
             params = f"{params} {gcov_dir_arg}".strip()
+        directory = await self.resolved_stage_dir(host)
+        made = await ensure_stage_dir(host, directory, who=f"product {self.name!r}")
+        if not made.is_ok:
+            return made
         result = await host.load(  # ty: ignore[unresolved-attribute]
             self.artifact,
             self.module_name,
             params=params,
-            dest_dir=await self.resolved_stage_dir(host),
+            dest_dir=directory,
         )
         if self.coverage == "module" and not result.is_ok and result.status is not Status.NotRun:
             # The library is in (or was already): this is the CONSUMER's own

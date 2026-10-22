@@ -3842,7 +3842,8 @@ async def test_a_declared_stage_dir_is_used_as_given_and_never_re_resolved(tmp_p
     tool = KmodTool(name="tracer", artifact=ko, stage_dir=Path("/opt/mods"))
     assert (await tool.install(host)).is_ok
     _assert_staged_at(host, "/opt/mods", "tracer.ko")
-    assert host.exec.await_count == 0  # no home probe: nothing needed it
+    # No home probe: nothing needed it. The one exec is the staging mkdir.
+    assert [c.args[0] for c in host.exec.await_args_list] == ["mkdir -p /opt/mods"]
 
 
 # ---------------------------------------------------------------------------

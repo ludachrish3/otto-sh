@@ -1104,6 +1104,10 @@ member	otto.host.product:ShellProduct.stage_key	method	sync	PK:host:-
 member	otto.host.product:ShellProduct.stages_artifact	property:g--
 member	otto.host.product:ShellProduct.uninstall	method	coroutine	PK:host:-
 abstract	otto.host.product:ShellProduct	install is_installed uninstall
+name	otto.host.product:ensure_stage_dir	function
+call	otto.host.product:ensure_stage_dir	coroutine	PK:host:- PK:directory:- PK:who:-
+name	otto.host.product:mkdir_line	function
+call	otto.host.product:mkdir_line	sync	PK:directory:-
 name	otto.host.product:planned_stage_dir	function
 call	otto.host.product:planned_stage_dir	sync	PK:stage_dir:- PK:host:- PK:who:-
 name	otto.host.product:put_line	function
@@ -1112,6 +1116,8 @@ name	otto.host.product:register_product_kind	function
 call	otto.host.product:register_product_kind	sync	PK:name:- PK:factory:- KO:overwrite:B:false
 name	otto.host.product:register_product_provider	function
 call	otto.host.product:register_product_provider	sync	PK:provider:-
+name	otto.host.product:stage_lines	function
+call	otto.host.product:stage_lines	sync	PK:host:- PK:local:- PK:directory:-
 name	otto.host.product:sudo_line	function
 call	otto.host.product:sudo_line	sync	PK:command:-
 name	otto.host.product:unplanned	function

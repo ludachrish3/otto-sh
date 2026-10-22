@@ -242,6 +242,41 @@ async def test_default_install_reduces_first_host_failure():
 
 
 @pytest.mark.asyncio
+async def test_a_failed_command_result_with_no_msg_still_names_why():
+    """A hook that returns ``host.run``'s own failure carries its reason in ``value``.
+
+    ``DeclaredProduct.install`` hands back the ``Results`` of its install
+    command, whose ``msg`` is empty: the reason is the failing command and its
+    output. The summary once ended ``host 'h1': `` with nothing after it.
+    """
+    from otto.result import CommandResult, Results
+
+    ctx, hosts = _fake_ctx(n=2)
+    failed = CommandResult(
+        Status.Failed,
+        value="chmod: cannot access '/opt/stage/app.bin': Not a directory\n",
+        command="chmod +x /opt/stage/app.bin",
+        retcode=1,
+    )
+    hosts[1].script("install", Results.collect([failed]))
+    result = await _actions(ctx).install(InstallOptions())
+    assert result.status is Status.Failed
+    assert result.msg.startswith(f"host {hosts[1].id!r}: ")
+    assert "chmod +x /opt/stage/app.bin" in result.msg
+    assert "exit 1" in result.msg
+    assert "Not a directory" in result.msg
+
+
+@pytest.mark.asyncio
+async def test_a_failed_result_with_no_reason_at_all_still_says_how_it_ended():
+    ctx, hosts = _fake_ctx(n=1)
+    hosts[0].script("install", Result(Status.Error))
+    result = await _actions(ctx).install(InstallOptions())
+    assert not result.msg.endswith(": "), result.msg
+    assert result.msg == f"host {hosts[0].id!r}: failed (Error) with no reason given"
+
+
+@pytest.mark.asyncio
 async def test_install_reduces_a_captured_host_exception():
     # do_for_all_hosts captures exceptions AS VALUES; a reduction that only
     # understands Results would treat a crashed host as a pass.

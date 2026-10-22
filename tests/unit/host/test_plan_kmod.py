@@ -67,6 +67,7 @@ async def test_kmod_tool_plan_is_the_load_and_the_unload(plan_recorder, tmp_path
         _actions(host.take())
         == plan.install
         == [
+            "mkdir -p /opt/mods",
             f"PUT {tmp_path}/helper.ko -> /opt/mods",
             "sudo insmod /opt/mods/helper.ko debug=1",
             "rm -f /opt/mods/helper.ko",
@@ -96,7 +97,7 @@ async def test_kmod_tool_install_skips_a_resident_module_and_the_plan_says_so(
     assert (await tool.install(host)).is_ok
     assert _actions(host.take()) == []  # the real run did nothing
     assert (
-        tool.plan(host).install[1] == "sudo insmod /opt/mods/helper.ko"
+        tool.plan(host).install[2] == "sudo insmod /opt/mods/helper.ko"
     )  # the plan still shows it
     assert "install skips a resident module" in tool.plan(host).unchecked[0]
 
@@ -106,6 +107,7 @@ def test_kmod_tool_plan_names_the_login_home_gap_like_the_collision_check(plan_r
     tool = _tool(host, tmp_path)
     plan = tool.plan(host)
     assert plan.install == [
+        f"mkdir -p {LOGIN_HOME_PLACEHOLDER}",
         f"PUT {tmp_path}/helper.ko -> {LOGIN_HOME_PLACEHOLDER}",
         "sudo insmod '<login home>/helper.ko'",
         "rm -f '<login home>/helper.ko'",
@@ -119,7 +121,10 @@ def test_kmod_tool_plan_names_the_login_home_gap_like_the_collision_check(plan_r
 def test_kmod_product_plan_names_its_own_login_home_gap(plan_recorder, tmp_path):
     host = plan_recorder
     plan = _kmod(host, tmp_path).plan(host)
-    assert plan.install[0] == f"PUT {tmp_path}/kcov.ko -> {LOGIN_HOME_PLACEHOLDER}"
+    assert plan.install[:2] == [
+        f"mkdir -p {LOGIN_HOME_PLACEHOLDER}",
+        f"PUT {tmp_path}/kcov.ko -> {LOGIN_HOME_PLACEHOLDER}",
+    ]
     assert plan.unchecked[0] == (
         "the login home — product 'kcov' declares no stage_dir and h1 no default_dest_dir"
     )
@@ -143,7 +148,7 @@ def test_kmodcov_tool_plan_adds_the_interface_check(plan_recorder, tmp_path):
     host.default_dest_dir = Path("/opt/mods")
     tool = _tool(host, tmp_path, kind="kmodcov", name="otto_kmodcov")
     plan = tool.plan(host)
-    assert plan.install[1] == "sudo insmod /opt/mods/otto_kmodcov.ko"
+    assert plan.install[2] == "sudo insmod /opt/mods/otto_kmodcov.ko"
     assert plan.unchecked[-1] == (
         f"the interface check of {tmp_path}/otto_kmodcov.ko (modinfo MODULE_VERSION): a .ko "
         "this otto cannot drive is refused before anything is sent"
@@ -163,6 +168,7 @@ async def test_kmod_product_without_coverage_plans_the_load(plan_recorder, tmp_p
         _actions(host.take())
         == plan.install
         == [
+            "mkdir -p /opt/mods",
             f"PUT {tmp_path}/kcov.ko -> /opt/mods",
             "sudo insmod /opt/mods/kcov.ko debug=1",
             "rm -f /opt/mods/kcov.ko",
@@ -190,9 +196,11 @@ async def test_kmod_product_with_module_coverage_plans_the_library_first(plan_re
         _actions(host.take())
         == plan.install
         == [
+            "mkdir -p /opt/mods",
             f"PUT {tmp_path}/otto_kmodcov.ko -> /opt/mods",
             "sudo insmod /opt/mods/otto_kmodcov.ko",
             "rm -f /opt/mods/otto_kmodcov.ko",
+            "mkdir -p /opt/mods",
             f"PUT {tmp_path}/kcov.ko -> /opt/mods",
             "sudo insmod /opt/mods/kcov.ko cov_dir=/tmp/kcov",
             "rm -f /opt/mods/kcov.ko",
@@ -223,7 +231,7 @@ async def test_a_resident_library_is_skipped_by_the_real_run_and_named_by_the_pl
     host.script(MODULES, "otto_kmodcov 16384 0 - Live 0x0\n")
     assert (await product.install(host)).is_ok
     recorded = _actions(host.take())
-    assert recorded == product.plan(host).install[3:]  # only the consumer's own load ran
+    assert recorded == product.plan(host).install[4:]  # only the consumer's own load ran
     assert "the library is loaded only when it is not" in product.plan(host).unchecked[0]
 
 
@@ -260,6 +268,7 @@ async def test_a_quoted_name_dir_and_params_are_quoted_alike_by_the_hook_and_the
     recorded = _actions(host.take())
     assert recorded == plan.install
     assert recorded == [
+        "mkdir -p '/opt/my mods'",
         f"PUT {tmp_path}/k cov.ko -> /opt/my mods",
         "sudo insmod '/opt/my mods/k cov.ko' debug=1",
         "rm -f '/opt/my mods/k cov.ko'",
@@ -319,7 +328,7 @@ async def test_a_root_stage_dir_joins_without_a_doubled_slash(plan_recorder, tmp
     assert (await tool.install(host)).is_ok
     recorded = _actions(host.take())
     assert recorded == plan.install
-    assert recorded[1:] == ["sudo insmod /helper.ko", "rm -f /helper.ko"]
+    assert recorded[2:] == ["sudo insmod /helper.ko", "rm -f /helper.ko"]
 
 
 @pytest.mark.asyncio
@@ -355,6 +364,7 @@ async def test_a_root_login_plans_the_bare_insmod_and_rmmod_the_tool_really_runs
         _actions(host.take())
         == plan.install
         == [
+            "mkdir -p /opt/mods",
             f"PUT {tmp_path}/helper.ko -> /opt/mods",
             "insmod /opt/mods/helper.ko debug=1",
             "rm -f /opt/mods/helper.ko",
@@ -379,6 +389,7 @@ async def test_a_root_login_plans_the_bare_insmod_and_rmmod_the_kmodcov_tool_rea
         _actions(host.take())
         == plan.install
         == [
+            "mkdir -p /opt/mods",
             f"PUT {tmp_path}/otto_kmodcov.ko -> /opt/mods",
             "insmod /opt/mods/otto_kmodcov.ko",
             "rm -f /opt/mods/otto_kmodcov.ko",
@@ -398,6 +409,7 @@ async def test_a_root_login_plans_the_bare_insmod_and_rmmod_the_kmod_product_rea
     host = root_plan_recorder
     host.default_dest_dir = Path("/opt/mods")
     expected = [
+        "mkdir -p /opt/mods",
         f"PUT {tmp_path}/kcov.ko -> /opt/mods",
         "insmod /opt/mods/kcov.ko",
         "rm -f /opt/mods/kcov.ko",
@@ -407,9 +419,11 @@ async def test_a_root_login_plans_the_bare_insmod_and_rmmod_the_kmod_product_rea
         host.dev_tools = [_tool(host, tmp_path, kind="kmodcov", name="otto_kmodcov")]
         extra = {"coverage": "module", "cov_dir": "/tmp/kcov"}
         expected = [
+            "mkdir -p /opt/mods",
             f"PUT {tmp_path}/otto_kmodcov.ko -> /opt/mods",
             "insmod /opt/mods/otto_kmodcov.ko",
             "rm -f /opt/mods/otto_kmodcov.ko",
+            "mkdir -p /opt/mods",
             f"PUT {tmp_path}/kcov.ko -> /opt/mods",
             "insmod /opt/mods/kcov.ko cov_dir=/tmp/kcov",
             "rm -f /opt/mods/kcov.ko",

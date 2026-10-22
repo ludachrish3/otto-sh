@@ -41,7 +41,7 @@ from typing_extensions import override
 from ..result import Result
 from ..utils import Status
 from .dev_tool import DevTool
-from .product import ProductPlan, ShellProduct, planned_stage_dir, put_line
+from .product import ProductPlan, ShellProduct, planned_stage_dir, stage_lines
 
 if TYPE_CHECKING:
     from .host import Host
@@ -96,16 +96,16 @@ class DeclaredProduct(ShellProduct, DevTool):
         seam = self.source_entry.seam if self.source_entry is not None else "products"
         noun = "dev tool" if seam == "dev_tools" else "product"
         unchecked: list[str] = []
-        stage_lines: list[str] = []
+        staging: list[str] = []
         if self._overridden("stage") is None:
             where = planned_stage_dir(self.stage_dir, host, who=f"{noun} {self.name!r}")
             if where.refusal is not None:
                 return ProductPlan(unchecked=[where.refusal])
             if where.unchecked is not None:
                 unchecked.append(where.unchecked)
-            stage_lines = [put_line(self.artifact, where.directory)]
+            staging = stage_lines(host, self.artifact, where.directory)
         declared = {
-            "stage": stage_lines,
+            "stage": staging,
             "install": [] if self.install_cmd is None else [self.install_cmd],
             "uninstall": [] if self.uninstall_cmd is None else [self.uninstall_cmd],
         }

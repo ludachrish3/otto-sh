@@ -42,8 +42,9 @@ from .product import (
     ShellProduct,
     cov_dir_of,
     cov_dir_of_name,
+    ensure_stage_dir,
     planned_stage_dir,
-    put_line,
+    stage_lines,
     sudo_gcda_delete,
 )
 from .shell_kind import (
@@ -189,7 +190,11 @@ class DockerImageProduct(ShellProduct):
         """
         if not self.is_tarball:
             return Result(Status.Success)
-        return await host.put(self.artifact, await self.resolved_stage_dir(host))
+        directory = await self.resolved_stage_dir(host)
+        made = await ensure_stage_dir(host, directory, who=f"product {self.name!r}")
+        if not made.is_ok:
+            return made
+        return await host.put(self.artifact, directory)
 
     @override
     async def install(self, host: "Host") -> Result:
@@ -303,7 +308,7 @@ class DockerImageProduct(ShellProduct):
             if where.unchecked is not None:
                 plan.unchecked.insert(0, where.unchecked)
             staged = str(PurePosixPath(where.directory) / self.artifact.name)
-            plan.stage = [put_line(self.artifact, where.directory)]
+            plan.stage = stage_lines(host, self.artifact, where.directory)
             plan.install = [
                 self._load_command(staged),
                 self._cleanup_command(staged),

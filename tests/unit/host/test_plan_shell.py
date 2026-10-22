@@ -52,7 +52,11 @@ async def test_shell_plan_is_what_the_hooks_do(plan_recorder):
     )
     plan = product.plan(host)
     recorded = await _recorded(product, host)
-    assert recorded.stage == plan.stage == ["PUT /sut/build/agent.tar.gz -> /opt/stage"]
+    assert (
+        recorded.stage
+        == plan.stage
+        == ["mkdir -p /opt/stage", "PUT /sut/build/agent.tar.gz -> /opt/stage"]
+    )
     assert recorded.install == plan.install == ["tar -xzf /opt/stage/agent.tar.gz -C /opt"]
     assert recorded.uninstall == plan.uninstall == ["rm -rf /opt/agent"]
     assert plan.unchecked == []
@@ -65,7 +69,11 @@ async def test_shell_without_commands_plans_nothing_for_install_and_uninstall(pl
     product = _shell(host)
     plan = product.plan(host)
     recorded = await _recorded(product, host)
-    assert recorded.stage == plan.stage == ["PUT /sut/build/agent.tar.gz -> /opt/stage"]
+    assert (
+        recorded.stage
+        == plan.stage
+        == ["mkdir -p /opt/stage", "PUT /sut/build/agent.tar.gz -> /opt/stage"]
+    )
     assert recorded.install == plan.install == []
     assert recorded.uninstall == plan.uninstall == []
     assert plan.unchecked == []
@@ -75,11 +83,17 @@ def test_shell_plan_names_the_login_home_only_when_it_falls_through(plan_recorde
     host = plan_recorder  # no default_dest_dir
     falls = _shell(host)
     pinned = _shell(host, stage_dir="/opt/pinned")
-    assert falls.plan(host).stage == [f"PUT /sut/build/agent.tar.gz -> {LOGIN_HOME_PLACEHOLDER}"]
+    assert falls.plan(host).stage == [
+        f"mkdir -p {LOGIN_HOME_PLACEHOLDER}",
+        f"PUT /sut/build/agent.tar.gz -> {LOGIN_HOME_PLACEHOLDER}",
+    ]
     assert falls.plan(host).unchecked == [
         "the login home — product 'agent' declares no stage_dir and h1 no default_dest_dir"
     ]
-    assert pinned.plan(host).stage == ["PUT /sut/build/agent.tar.gz -> /opt/pinned"]
+    assert pinned.plan(host).stage == [
+        "mkdir -p /opt/pinned",
+        "PUT /sut/build/agent.tar.gz -> /opt/pinned",
+    ]
     assert pinned.plan(host).unchecked == []
     assert host.home_reads == 0
 
@@ -127,7 +141,11 @@ async def test_shell_plan_uses_a_login_home_the_host_already_knows(plan_recorder
     product = _shell(host)
     plan = product.plan(host)
     recorded = await _recorded(product, host)
-    assert recorded.stage == plan.stage == ["PUT /sut/build/agent.tar.gz -> /home/v"]
+    assert (
+        recorded.stage
+        == plan.stage
+        == ["mkdir -p /home/v", "PUT /sut/build/agent.tar.gz -> /home/v"]
+    )
     assert plan.unchecked == []
     assert host.home_reads == 0
 
