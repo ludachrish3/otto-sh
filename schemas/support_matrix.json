@@ -1842,7 +1842,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_preserves_content",
         "venue": "bed",
-        "as_of": "2026-10-21",
+        "as_of": "2026-10-22",
         "observed_on": [
           "bb1161"
         ],
@@ -1872,7 +1872,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_preserves_content",
         "venue": "bed",
-        "as_of": "2026-10-21",
+        "as_of": "2026-10-22",
         "observed_on": [
           "bb1211"
         ],
@@ -1902,7 +1902,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_preserves_content",
         "venue": "bed",
-        "as_of": "2026-10-21",
+        "as_of": "2026-10-22",
         "observed_on": [
           "bb1281"
         ],
@@ -1932,7 +1932,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_preserves_content",
         "venue": "bed",
-        "as_of": "2026-10-21",
+        "as_of": "2026-10-22",
         "observed_on": [
           "bb1310"
         ],
@@ -1962,7 +1962,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_preserves_content",
         "venue": "bed",
-        "as_of": "2026-10-21",
+        "as_of": "2026-10-22",
         "observed_on": [
           "bb1350"
         ],
@@ -2016,7 +2016,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_preserves_content",
         "venue": "bed",
-        "as_of": "2026-10-21",
+        "as_of": "2026-10-22",
         "observed_on": [
           "test1",
           "test2",
@@ -2313,7 +2313,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_preserves_content",
         "venue": "bed",
-        "as_of": "2026-10-21",
+        "as_of": "2026-10-22",
         "observed_on": [
           "zephyr27_fat"
         ],
@@ -2407,7 +2407,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_lands_the_documented_mode_on_the_host",
         "venue": "bed",
-        "as_of": "2026-10-21",
+        "as_of": "2026-10-22",
         "observed_on": [
           "bb1161"
         ],
@@ -2437,7 +2437,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_lands_the_documented_mode_on_the_host",
         "venue": "bed",
-        "as_of": "2026-10-21",
+        "as_of": "2026-10-22",
         "observed_on": [
           "bb1211"
         ],
@@ -2467,7 +2467,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_lands_the_documented_mode_on_the_host",
         "venue": "bed",
-        "as_of": "2026-10-21",
+        "as_of": "2026-10-22",
         "observed_on": [
           "bb1281"
         ],
@@ -2497,7 +2497,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_lands_the_documented_mode_on_the_host",
         "venue": "bed",
-        "as_of": "2026-10-21",
+        "as_of": "2026-10-22",
         "observed_on": [
           "bb1310"
         ],
@@ -2527,7 +2527,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_lands_the_documented_mode_on_the_host",
         "venue": "bed",
-        "as_of": "2026-10-21",
+        "as_of": "2026-10-22",
         "observed_on": [
           "bb1350"
         ],
@@ -2581,7 +2581,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_lands_the_documented_mode_on_the_host",
         "venue": "bed",
-        "as_of": "2026-10-21",
+        "as_of": "2026-10-22",
         "observed_on": [
           "test1",
           "test2",
@@ -2878,7 +2878,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_lands_the_documented_mode_on_the_host",
         "venue": "bed",
-        "as_of": "2026-10-21",
+        "as_of": "2026-10-22",
         "observed_on": [
           "zephyr27_fat"
         ],
@@ -3536,7 +3536,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_recursive_tree",
         "venue": "bed",
-        "as_of": "2026-10-21",
+        "as_of": "2026-10-22",
         "observed_on": [
           "bb1161"
         ],
@@ -3566,7 +3566,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_recursive_tree",
         "venue": "bed",
-        "as_of": "2026-10-21",
+        "as_of": "2026-10-22",
         "observed_on": [
           "bb1211"
         ],
@@ -3596,7 +3596,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_recursive_tree",
         "venue": "bed",
-        "as_of": "2026-10-21",
+        "as_of": "2026-10-22",
         "observed_on": [
           "bb1281"
         ],
@@ -3626,7 +3626,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_recursive_tree",
         "venue": "bed",
-        "as_of": "2026-10-21",
+        "as_of": "2026-10-22",
         "observed_on": [
           "bb1310"
         ],
@@ -3656,7 +3656,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_recursive_tree",
         "venue": "bed",
-        "as_of": "2026-10-21",
+        "as_of": "2026-10-22",
         "observed_on": [
           "bb1350"
         ],
@@ -3710,7 +3710,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_recursive_tree",
         "venue": "bed",
-        "as_of": "2026-10-21",
+        "as_of": "2026-10-22",
         "observed_on": [
           "test1",
           "test2",
@@ -4007,7 +4007,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_roundtrip_recursive_tree",
         "venue": "bed",
-        "as_of": "2026-10-21",
+        "as_of": "2026-10-22",
         "observed_on": [
           "zephyr27_fat"
         ],
@@ -4101,7 +4101,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_batch_lands_every_file_in_both_modes",
         "venue": "bed",
-        "as_of": "2026-10-21",
+        "as_of": "2026-10-22",
         "observed_on": [
           "bb1161"
         ],
@@ -4131,7 +4131,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_batch_lands_every_file_in_both_modes",
         "venue": "bed",
-        "as_of": "2026-10-21",
+        "as_of": "2026-10-22",
         "observed_on": [
           "bb1211"
         ],
@@ -4161,7 +4161,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_batch_lands_every_file_in_both_modes",
         "venue": "bed",
-        "as_of": "2026-10-21",
+        "as_of": "2026-10-22",
         "observed_on": [
           "bb1281"
         ],
@@ -4191,7 +4191,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_batch_lands_every_file_in_both_modes",
         "venue": "bed",
-        "as_of": "2026-10-21",
+        "as_of": "2026-10-22",
         "observed_on": [
           "bb1310"
         ],
@@ -4221,7 +4221,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_batch_lands_every_file_in_both_modes",
         "venue": "bed",
-        "as_of": "2026-10-21",
+        "as_of": "2026-10-22",
         "observed_on": [
           "bb1350"
         ],
@@ -4275,7 +4275,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_batch_lands_every_file_in_both_modes",
         "venue": "bed",
-        "as_of": "2026-10-21",
+        "as_of": "2026-10-22",
         "observed_on": [
           "test1",
           "test2",
@@ -4572,7 +4572,7 @@
         "status": "measured-ok",
         "nodeid": "tests/conformance/test_transfer_contract.py::test_put_get_batch_lands_every_file_in_both_modes",
         "venue": "bed",
-        "as_of": "2026-10-21",
+        "as_of": "2026-10-22",
         "observed_on": [
           "zephyr27_fat"
         ],
