@@ -628,9 +628,13 @@ def main(  # noqa: PLR0913 — CLI command params
         typer.Option(
             "--lab-depth",
             min=0,
-            help="Depth for --show-lab output (0 = unlimited).",
+            help=(
+                "How many levels of the --show-lab tree open below the lab name: 1 = host ids "
+                "and kinds, 2 = also each host's address, transports and products, and each "
+                "link (0 = all)."
+            ),
         ),
-    ] = 3,
+    ] = 0,
     list_labs: Annotated[  # noqa: ARG001 — required by Typer eager callback option signature
         bool,
         typer.Option(
@@ -823,15 +827,10 @@ def main(  # noqa: PLR0913 — CLI command params
         # then print and exit.
         ensure_inline_lab(ctx)
         if show_lab:
-            from rich.pretty import pprint
-
             from ..run_context import get_context
+            from .show_lab import render_lab
 
-            pprint(
-                get_context().lab,
-                max_depth=(None if lab_depth == 0 else lab_depth),
-                expand_all=True,
-            )
+            render_lab(get_context().lab, depth=lab_depth)
         else:
             from .callbacks import list_hosts_callback
 

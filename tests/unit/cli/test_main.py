@@ -715,23 +715,22 @@ class TestLabLoading:
         result = _invoke(["--show-lab"])
         assert result.exit_code == 0
 
-    def test_show_lab_lab_depth_zero_maps_to_unlimited(self, real_main_mocks):
-        """--lab-depth 0 must reach pprint as max_depth=None (unlimited)."""
-        # The --show-lab block does `from rich.pretty import pprint` locally,
-        # so patch where it is looked up.
-        with patch("rich.pretty.pprint") as spy:
-            result = _invoke(["--show-lab", "--lab-depth", "0"])
-        assert result.exit_code == 0
-        spy.assert_called_once()
-        assert spy.call_args.kwargs["max_depth"] is None
+    def test_show_lab_draws_the_lab_tree_not_a_repr(self, real_main_mocks, monkeypatch):
+        monkeypatch.setenv("COLUMNS", "80")
+        result = _invoke(["--show-lab"])
+        assert result.exit_code == 0, result.output
+        assert "lab test_lab" in result.output
+        for host_id in ("host1", "host2", "local"):
+            assert host_id in result.output
+        assert "address: 10.0.0.1" in result.output
+        assert "Lab(" not in result.output
 
-    def test_show_lab_lab_depth_value_passed_to_pprint(self, real_main_mocks):
-        """--lab-depth N (N > 0) must reach pprint as max_depth=N."""
-        with patch("rich.pretty.pprint") as spy:
-            result = _invoke(["--show-lab", "--lab-depth", "2"])
-        assert result.exit_code == 0
-        spy.assert_called_once()
-        assert spy.call_args.kwargs["max_depth"] == 2
+    def test_show_lab_lab_depth_reaches_the_tree(self, real_main_mocks):
+        """--lab-depth N reaches the renderer as its depth; 0 is the default (all)."""
+        with patch("otto.cli.show_lab.render_lab") as spy:
+            assert _invoke(["--show-lab", "--lab-depth", "1"]).exit_code == 0
+            assert _invoke(["--show-lab"]).exit_code == 0
+        assert [c.kwargs["depth"] for c in spy.call_args_list] == [1, 0]
 
     def test_list_hosts_exits_zero(self, real_main_mocks):
         result = _invoke(["--list-hosts"])

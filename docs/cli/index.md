@@ -39,8 +39,8 @@ These options are available on every `otto` command:
 | `--list-hosts` | | | List host IDs in the loaded lab and exit |
 | `--list-products` | | | List the products the projects declare; with `--lab`, which hosts each lands on — see {ref}`list-products-flag` |
 | `--list-tools` | | | List the dev tools the projects declare; with `--lab`, which hosts each lands on — see {ref}`list-products-flag` |
-| `--show-lab` | | | Print full lab details and exit |
-| `--lab-depth` | | `3` | Nesting depth for `--show-lab` output — how deep the lab's host details are expanded (0 = unlimited) |
+| `--show-lab` | | | Print the lab as a tree (each host's id, kind, address, transports and products, then the links) and exit |
+| `--lab-depth` | | `0` | How many levels of the `--show-lab` tree open: `1` = host ids and kinds, `2` = also their details and the links (`0` = all) |
 | `--version` | | | Show version and exit |
 | `--install-completion` | | | Install shell completion and exit |
 | `--show-completion` | | | Print shell completion script and exit |
@@ -81,12 +81,31 @@ operator the `Lab` objects themselves use to merge.
 ```bash
 otto --lab my_lab --list-labs      # list all available lab names
 otto --lab my_lab --list-hosts     # list host IDs in the loaded lab
-otto --lab my_lab --show-lab       # full lab details (use --lab-depth N for deeper output)
+otto --lab my_lab --show-lab       # the lab as a tree; --lab-depth 1 shows host ids only
 ```
 
-`--list-hosts` needs `--lab`. Every lab also holds `local`, the built-in host for
-the machine otto runs on: `--show-lab` shows its name, `localhost`, and commands
-address it by its ID, `local`. A hop host is reached first, on the way to the
+`--list-hosts` needs `--lab`. `--show-lab` draws the lab as a tree, contacting
+no host:
+
+```text
+╭─────────────────────────────────────────╮
+│ lab my_lab                              │
+│ ├── router1  UnixHost                   │
+│ │   ├── address: 10.0.0.1               │
+│ │   ├── transports: ssh, sftp           │
+│ │   └── products: agent.tar.gz, kcov.ko │
+│ ├── dut1  UnixHost                      │
+│ │   ├── address: 10.0.0.2 (via router1) │
+│ │   └── transports: telnet, nc          │
+│ ├── local  LocalHost                    │
+│ │   └── address: this machine           │
+│ └── links                               │
+│     └── ab  router1:eth1 <-> dut1  udp  │
+╰─────────────────────────────────────────╯
+```
+
+Every lab also holds `local`, the built-in host for the machine otto runs on;
+commands address it by its ID, `local`. A hop host is reached first, on the way to the
 host behind it.
 
 (list-products-flag)=

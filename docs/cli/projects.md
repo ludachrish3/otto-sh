@@ -157,9 +157,9 @@ to one line and the run continues:
 $ otto --lab bench --show-lab
 warning: project root /work/radio-fw: failed to load radio_fw: ModuleNotFoundError("No module named 'does_not_exist_anywhere'")
 warning: project 'radio-fw' failed to load, but is inactive for this run (not applicable to lab(s) [bench]) — continuing without it
-Lab(
-    name='bench',
-    ...
+╭──────────────────────────╮
+│ lab bench                │
+│ ├── ...                  │
 ```
 
 Load a lab it *is* part of and the same breakage is fatal again:
