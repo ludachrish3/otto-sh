@@ -133,7 +133,10 @@ async def init_command(
 
     console = get_console()
     steps = next_steps_panel(
-        config.root, roots=os.environ.get(_ottopath_var(), ""), width=console.width
+        config.root,
+        roots=os.environ.get(_ottopath_var(), ""),
+        width=console.width,
+        kmodcov_dir=config.kmodcov_dir,
     )
     console.print(steps.renderable, soft_wrap=steps.soft_wrap)
     if not doctor.ok:
@@ -292,9 +295,7 @@ class NextSteps:
     soft_wrap: bool
 
 
-def _next_steps_lines(root: Path, roots: str) -> list[_Line]:
-    from ..init.templates import EXAMPLE_LAB_NAME
-
+def _next_steps_lines(root: Path, roots: str, kmodcov_dir: str) -> list[_Line]:
     export = [] if _already_active(root, roots) else [f"export {_ottopath_var()}={root}"]
     source = f"source {_COMPLETION_SCRIPT}"
     blank = _Line()
@@ -311,6 +312,10 @@ def _next_steps_lines(root: Path, roots: str) -> list[_Line]:
     def commands(*lines: str) -> list[_Line]:
         return [_Line(line, "green", _COMMAND_INDENT, command=True) for line in lines]
 
+    from ..init.next_steps import try_it_commands
+
+    tried = try_it_commands(root, kmodcov_dir, cwd=Path.cwd())
+    try_it = [blank, heading("3. Try it:"), blank, *commands(*tried)] if tried else []
     bashrc = [
         "`otto --install-completion` already added the `source` line to",
         "~/.bashrc, so completion needs nothing more there." + (" Add only:" if export else ""),
@@ -336,27 +341,23 @@ def _next_steps_lines(root: Path, roots: str) -> list[_Line]:
             "rewrites ~/.bashrc every time it runs.",
             style="yellow",
         ),
-        blank,
-        heading("3. Try it:"),
-        blank,
-        *commands(
-            f"otto --lab {EXAMPLE_LAB_NAME} --list-hosts",
-            "otto test --list-tests",
-            f"otto --lab {EXAMPLE_LAB_NAME} test TestExample",
-            f"otto --lab {EXAMPLE_LAB_NAME} test test_example_function",
-            f"otto --lab {EXAMPLE_LAB_NAME} run smoke",
-        ),
+        *try_it,
     ]
 
 
-def next_steps_panel(root: Path, *, roots: str, width: int) -> NextSteps:
+def next_steps_panel(
+    root: Path, *, roots: str, width: int, kmodcov_dir: str | None = None
+) -> NextSteps:
     """Build the Next steps block ``otto init`` prints last, for a *width*-column console.
 
     typer's bash installer writes ``~/.bash_completions/otto.sh`` and appends
     ``source '<that path>'`` to ``~/.bashrc`` once, so only the current shell
     needs a manual ``source``; it also rewrites ``~/.bashrc`` every time it
     runs, so it must never go in a startup file. The ``export`` lines are
-    omitted when *roots* already names *root*.
+    omitted when *roots* already names *root*. The "Try it" step lists only
+    the commands *root* can run (:func:`otto.init.next_steps.try_it_commands`), and is left out
+    when there are none; *kmodcov_dir* is where ``--kmodcov`` vendored the
+    library (``None``: the default directory).
 
     Boxed when every command fits inside the box. Otherwise the same lines
     print unboxed under a rule, soft-wrapped: rich folds or crops a line that
@@ -369,7 +370,11 @@ def next_steps_panel(root: Path, *, roots: str, width: int) -> NextSteps:
     from rich.rule import Rule
     from rich.text import Text
 
-    lines = _next_steps_lines(root, roots)
+    if kmodcov_dir is None:
+        from ..init.config import DEFAULT_KMODCOV_DIR
+
+        kmodcov_dir = DEFAULT_KMODCOV_DIR
+    lines = _next_steps_lines(root, roots, kmodcov_dir)
     widest = max(len(line.text) for line in lines if line.command)
     if widest + _COMMAND_INDENT + _BOX_OVERHEAD <= width:
         body = [

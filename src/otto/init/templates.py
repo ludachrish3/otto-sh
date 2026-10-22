@@ -623,8 +623,9 @@ KMODCOV_DEV_TOOL_TEMPLATE = """\
 # otto_kmodcov: the kernel-module coverage library, vendored at {kmodcov_dir} by
 # `otto init --kmodcov` (re-run it, or `otto cov kmodcov export {kmodcov_dir}`, after
 # upgrading otto). Your build system builds it against each kernel your
-# lab's hosts run — see docs/cli/cov/instrumenting/kernel-modules.md — and
-# one [[dev_tools]] entry per kernel names the built .ko and the hosts it
+# lab's hosts run — see
+# https://otto-sh.readthedocs.io/en/stable/cli/cov/instrumenting/kernel-modules.html
+# — and one [[dev_tools]] entry per kernel names the built .ko and the hosts it
 # belongs on. A `coverage = "module"` [[products]] kmod entry loads it on
 # demand; `cleanup` removes it after the products. Uncomment and fill in:
 #[[dev_tools]]
@@ -659,5 +660,6 @@ the Kbuild fragment. The library itself is vendored at `{kmodcov_dir}`
 
 The three steps a module takes — sentinels, flags, macros — and how otto
 loads the library before the module and removes it at cleanup are on the
-kernel-modules page of otto's docs (docs/cli/cov/instrumenting/kernel-modules.md).
+kernel-modules page of otto's docs:
+<https://otto-sh.readthedocs.io/en/stable/cli/cov/instrumenting/kernel-modules.html>.
 """

@@ -10,7 +10,8 @@
 # ARCH, CROSS_COMPILE, LLVM, CC and KMAKEFLAGS reach kbuild unchanged, so a
 # cross build or a clang build is the same command with the environment a
 # module of your own would take — see
-# docs/cli/cov/instrumenting/kernel-modules.md. <release> is what the
+# https://otto-sh.readthedocs.io/en/stable/cli/cov/instrumenting/kernel-modules.html#another-kernel-isa-or-compiler
+# <release> is what the
 # built module's vermagic is checked against; with KDIR set and no <release>
 # it is read from the tree's include/config/kernel.release (what kbuild bakes
 # into vermagic; a headers package has it, a source tree after

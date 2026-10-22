@@ -25,7 +25,7 @@ it never creates an output directory.
 | `--lab` | `False` | Scaffold the lab area (`lab_data/lab.json` + `inventory.json` + `creds.json` + README) |
 | `--tests` | `False` | Scaffold the tests area (example tests + conftest), plus the instructions area when it is missing; never overwrites an existing file |
 | `--instructions` | `False` | Scaffold the instructions area (the init module; `pylib/<name>_instructions/` in a fresh project) |
-| `--kmodcov` | `False` | Scaffold (or refresh) the kmodcov area: vendor the `otto_kmodcov` library at `--kmodcov-dir` (default `third_party/otto_kmodcov`), write a consumer starter beside it, and print the `[[dev_tools]]` snippet to paste. Never scaffolded by `--all` or the prompts |
+| `--kmodcov` | `False` | Scaffold (or refresh) the kmodcov area: vendor the `otto_kmodcov` library at `--kmodcov-dir` (default `third_party/otto_kmodcov`), write a consumer starter beside it, and append a commented `[[dev_tools]]` entry to `.otto/settings.toml` when it has none. Never scaffolded by `--all` or the prompts |
 | `--kmodcov-dir DIR` | `third_party/otto_kmodcov` | Where `--kmodcov` vendors the library (project-relative) |
 | `--name NAME` | directory name | Product name for `settings.toml` |
 | `--version X.Y.Z` | `0.1.0` | Product version for `settings.toml` |
@@ -45,18 +45,21 @@ interactive prompt, only by its own flag.
 
 Every file goes through one write policy. Otto-owned files are regenerated
 from the installed otto, so they are refreshed; user-owned files are created
-once and never edited again.
+once and never edited again — apart from the commented kmodcov entry `--kmodcov`
+appends to an existing `settings.toml` (see the kmodcov section below).
 
 | Owner | Files | When the file exists |
 | ----- | ----- | -------------------- |
 | otto | `.otto/schemas/*.schema.json`, `.vscode/otto.code-snippets`, the vendored `otto_kmodcov` library | refreshed |
 | you | `.otto/settings.toml`; `lab_data/{lab,inventory,creds}.json` and `lab_data/README.md`; `tests/test_example.py` and `tests/conftest.py`; the init module; `.vscode/settings.json` and `.vscode/extensions.json`; the kmodcov consumer starter | kept, byte for byte |
 
-Each file in the run is listed as `created`, `refreshed` or `kept`; refreshing
+Each file in the run is listed as `created`, `refreshed`, `kept` or (for the
+kmodcov entry added to an existing `settings.toml`, the one edit `otto init`
+makes to a file of yours) `appended`; refreshing
 `.otto/schemas` also lists each orphaned `*.schema.json` it deleted as
 `pruned` — see {doc}`schema/export` for exactly what is pruned. So `--tests`
-never overwrites an example test you edited, and nothing `otto init` does ever
-edits a file you own.
+never overwrites an example test you edited, and apart from that one appended
+block, nothing `otto init` does ever edits a file you own.
 
 ## Verdicts and exit codes
 
@@ -185,10 +188,13 @@ a consumer starter beside it — two sentinel translation units
 `README.md`. Re-running `--kmodcov` refreshes the vendored library itself
 (otto-owned) and keeps every starter file you already have.
 
-It never edits `settings.toml`. When the settings declare no `kmodcov` dev tool
-(commented or not), it prints the `[[dev_tools]]` snippet (kind `kmodcov`, `source` naming
-that directory) for you to paste; a `settings.toml` created in the same run
-already includes it, commented.
+When the settings declare no `kmodcov` dev tool (commented or not), it appends
+a commented `[[dev_tools]]` entry (kind `kmodcov`, `source` naming that
+directory) to the end of `.otto/settings.toml` for you to uncomment and fill
+in, and lists the file as `appended`. Nothing already in the file changes, and
+the block is comments only, so the settings mean what they meant before. A
+second run finds the block and appends nothing; a `settings.toml` created in
+the same run already includes it.
 
 Validating an existing kmodcov area checks every declared `[[dev_tools]]` entry
 of kind `kmodcov`: a `source` naming a directory with no library there at all
@@ -210,9 +216,13 @@ one-time team decisions around it, the
 
 The last thing `otto init` prints is a "Next steps" panel: the
 `export OTTOPATH=...` line (omitted when the project is already listed
-there), the tab-completion commands, and the commands to try first
-(`otto --lab example_lab --list-hosts`, `otto test --list-tests`, and the
-example test and instruction runs). When a command would not fit inside the
+there), the tab-completion commands, and the commands to try first. Only
+commands the project can run are listed: `otto --lab example_lab --list-hosts`
+when the lab files declare `example_lab`, `otto test --list-tests` when there
+are tests, the example test and instruction runs when both the lab and those
+exist, and `otto cov kmodcov check <dir>` when the kmodcov library is vendored
+— so `otto init --kmodcov` in an empty directory, which writes no lab, never
+points you at one. When a command would not fit inside the
 box at your terminal's width (a long project-root path), the same steps print
 unboxed under a "Next steps" rule, so every command stays on one line you
 can copy. The panel repeats the completion

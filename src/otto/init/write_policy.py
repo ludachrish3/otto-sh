@@ -5,6 +5,11 @@ kmodcov library) are generated from the installed otto and refreshed on every
 write. User-owned files (settings, lab data, example tests, the init module,
 the VS Code settings, the kmodcov consumer starter) are created only when
 absent and never edited afterwards: once written, they are the user's.
+
+The one exception is :func:`append_block`: a block of TOML comments added at
+the END of an existing ``settings.toml`` (the kmodcov area's commented
+``[[dev_tools]]`` entry). Nothing already in the file is changed, and a block
+of comments changes nothing the file means.
 """
 
 import dataclasses
@@ -13,7 +18,7 @@ from pathlib import Path
 from typing import Literal
 
 Owner = Literal["otto", "user"]
-Outcome = Literal["created", "refreshed", "kept", "pruned"]
+Outcome = Literal["created", "refreshed", "kept", "pruned", "appended"]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -21,7 +26,8 @@ class FileWrite:
     """One file the scaffolder touched, and what it did to it.
 
     ``pruned`` is a schema the installed otto no longer emits, deleted from
-    the otto-owned ``.otto/schemas``.
+    the otto-owned ``.otto/schemas``. ``appended`` is a user-owned file that
+    gained a block at its end (:func:`append_block`).
     """
 
     path: Path
@@ -51,3 +57,20 @@ def write_file(path: Path, text: str, owner: Owner, *, mode: int | None = None) 
     if mode is not None:
         path.chmod(mode)  # umask cannot widen 0o600, but be explicit
     return FileWrite(path, "refreshed" if existed else "created")
+
+
+def append_block(path: Path, block: str) -> FileWrite:
+    """Add *block* to the end of the existing file *path*, keeping every byte already there.
+
+    A file that does not end in a newline gets one first, so the block starts
+    on its own line. The caller decides whether the block is already present;
+    this only appends. A symlink is ``kept`` and never followed, as
+    :func:`write_file` keeps it.
+    """
+    if path.is_symlink():
+        return FileWrite(path, "kept")
+    text = path.read_bytes().decode("utf-8", errors="replace")
+    lead = "" if not text or text.endswith("\n") else "\n"
+    with path.open("a", encoding="utf-8") as f:
+        f.write(lead + block)
+    return FileWrite(path, "appended")

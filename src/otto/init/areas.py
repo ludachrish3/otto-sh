@@ -33,7 +33,7 @@ from .templates import (
     VSCODE_EXTENSIONS_TEMPLATE,
     VSCODE_SETTINGS_TEMPLATE,
 )
-from .write_policy import FileWrite, write_file
+from .write_policy import FileWrite, append_block, write_file
 
 if TYPE_CHECKING:
     from ..labs.sources import LabSourceState
@@ -410,8 +410,10 @@ def _kmodcov_wired(root: Path) -> bool:
 def _scaffold_kmodcov(config: InitConfig, areas: list[str]) -> AreaWrite:  # noqa: ARG001 — uniform signature
     """Export the library (otto-owned, refreshed whole), then the consumer starter (user-owned).
 
-    ``settings.toml`` is never edited: when it exists and declares no kmodcov
-    entry, the notice carries the commented ``[[dev_tools]]`` entry to paste.
+    When ``settings.toml`` exists and declares no kmodcov entry (commented or
+    not), the commented ``[[dev_tools]]`` entry is appended to it
+    (:func:`~otto.init.write_policy.append_block`) — the one edit ``init``
+    makes to a user-owned file — so a second run finds it and appends nothing.
     """
     from ..kmodcov.library import SHIPPED_FILES, VERSION_HEADER, export_tree
 
@@ -428,14 +430,19 @@ def _scaffold_kmodcov(config: InitConfig, areas: list[str]) -> AreaWrite:  # noq
         ("README.md", KMODCOV_STARTER_README_TEMPLATE.format(kmodcov_dir=config.kmodcov_dir)),
     ):
         writes.append(write_file(starter / name, text, "user"))
-    notices = []
-    if settings_path(config.root).is_file() and not _kmodcov_wired(config.root):
-        snippet = KMODCOV_DEV_TOOL_TEMPLATE.format(kmodcov_dir=config.kmodcov_dir).strip("\n")
-        notices.append(
-            "add this commented [[dev_tools]] entry to .otto/settings.toml and fill it in:\n"
-            f"{snippet}"
-        )
-    return AreaWrite(writes, notices)
+    settings = settings_path(config.root)
+    if settings.is_file() and not _kmodcov_wired(config.root):
+        block = KMODCOV_DEV_TOOL_TEMPLATE.format(kmodcov_dir=config.kmodcov_dir)
+        appended = append_block(settings, block)
+        writes.append(appended)
+        if appended.outcome == "kept":
+            # A symlinked settings file is never written through: say what to paste.
+            paste = (
+                "add this commented [[dev_tools]] entry to .otto/settings.toml and fill "
+                f"it in:\n{block.strip()}"
+            )
+            return AreaWrite(writes, [paste])
+    return AreaWrite(writes)
 
 
 _SCAFFOLD: dict[str, Callable[[InitConfig, list[str]], AreaWrite]] = {

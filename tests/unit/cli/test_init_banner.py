@@ -48,6 +48,7 @@ def test_the_block_is_the_last_output(tmp_path: Path) -> None:
 
 def test_both_shells_are_covered_and_completion_is_sourced_after_install(tmp_path: Path) -> None:
     root = tmp_path.resolve()
+    _scaffold_all(root)
     text = _render(root, "")
     for heading in (
         "1. Activate otto in this shell:",
@@ -135,3 +136,47 @@ def test_every_export_line_is_whole_on_either_side_of_the_box_boundary() -> None
         lines = [line.strip(" │") for line in text.splitlines()]
         assert lines.count(f"{prefix}{root}") == _EXPORTS_WHEN_INACTIVE, (length, text)
         assert text.startswith("╭") == (length <= 66), length
+
+
+def _try_it(text: str) -> list[str]:
+    """The commands under "3. Try it:", or ``[]`` when the block has no such step."""
+    if "3. Try it:" not in text:
+        return []
+    tail = text.split("3. Try it:", 1)[1]
+    return [line.strip(" │╰╯─") for line in tail.splitlines() if line.strip(" │╰╯─")]
+
+
+def test_a_full_project_tries_the_example_lab_tests_and_instruction(tmp_path: Path) -> None:
+    root = tmp_path.resolve()
+    _scaffold_all(root)
+    assert _try_it(_render(root, str(root))) == [
+        "otto --lab example_lab --list-hosts",
+        "otto test --list-tests",
+        "otto --lab example_lab test TestExample",
+        "otto --lab example_lab test test_example_function",
+        "otto --lab example_lab run smoke",
+    ]
+
+
+def test_a_kmodcov_only_project_is_never_told_to_use_a_lab_it_does_not_have(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """``otto init --kmodcov`` on an empty directory scaffolds no lab and no tests (#675).
+
+    Its Try-it step once printed `otto --lab example_lab ...` for a lab that
+    does not exist; it now names what the project holds: the vendored library.
+    """
+    root = tmp_path.resolve()
+    monkeypatch.chdir(root)
+    result = _invoke(["--kmodcov", "--name", "widget", "--path", str(root)])
+    assert result.exit_code in (0, 1), result.output
+    assert not (root / "lab_data" / "lab.json").exists()
+    steps = _try_it(_render(root, str(root)))
+    assert not [line for line in steps if "example_lab" in line], steps
+    assert "otto cov kmodcov check third_party/otto_kmodcov" in steps, steps
+
+
+def test_no_try_it_step_for_a_root_with_nothing_to_try(tmp_path: Path) -> None:
+    text = _render(tmp_path.resolve(), "")
+    assert "3. Try it:" not in text
+    assert "example_lab" not in text

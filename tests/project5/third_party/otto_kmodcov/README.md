@@ -35,16 +35,16 @@ lets a build replace, one name at a time, any of the kernel-facing names
 range, allocation, the lock and the sysfs control files — the same header
 that holds the kernel version ladder; the supported range, the full name
 list and the override contract are on the kernel-modules guide page's
-[Kernel versions](../../../docs/cli/cov/instrumenting/kernel-modules.md#kernel-versions)
+[Kernel versions](https://otto-sh.readthedocs.io/en/stable/cli/cov/instrumenting/kernel-modules.html#kernel-versions)
 section. See
-[the kernel-modules guide page](../../../docs/cli/cov/instrumenting/kernel-modules.md#getting-the-library)
+[the kernel-modules guide page](https://otto-sh.readthedocs.io/en/stable/cli/cov/instrumenting/kernel-modules.html#getting-the-library)
 for all of the above in more detail.
 
 `build.sh <build-dir> [<release>]` builds it out of tree; `KDIR`, `ARCH`,
 `CROSS_COMPILE`, `LLVM`, `CC` and `KMAKEFLAGS` pass through to kbuild — see
-the kernel-modules guide page
-(`docs/cli/cov/instrumenting/kernel-modules.md`, "Another kernel, ISA
-or compiler").
+the kernel-modules guide page's
+[Another kernel, ISA or compiler](https://otto-sh.readthedocs.io/en/stable/cli/cov/instrumenting/kernel-modules.html#another-kernel-isa-or-compiler)
+section.
 
 A consumer becomes coverage-instrumented in three steps:
 
@@ -72,17 +72,17 @@ first adding in the counts an earlier load left in that file; a write to
 `.../reset` zeroes the accumulated counters and stops that seed for the
 rest of the load. How a file that does not match, or cannot be read, is
 handled is on the kernel-modules guide page's
-[Counts across loads](../../../docs/cli/cov/instrumenting/kernel-modules.md#counts-across-loads)
+[Counts across loads](https://otto-sh.readthedocs.io/en/stable/cli/cov/instrumenting/kernel-modules.html#counts-across-loads)
 section. The two files are
 sysfs, beside the `parameters/` directory the loader gives every module, so
 no `CONFIG_DEBUG_FS` is needed. The exit routine's own coverage is captured
 by the dump `KMODCOV_EXIT()` performs on unregister.
 
 A worked consumer following these three steps is the demo module in otto's
-kernel-module coverage guide (`docs/cli/cov/instrumenting/kernel-modules.md`
-in otto's source tree): a bounded queue driven from a control file of its
-own, built in place by its project's `kmod/build.sh` against the library
-this directory's own `build.sh` builds out of tree. It
-lives in the project rather than here because otto's coverage capture
-anchors every measured file to a committed git blob under the project root that
-declares the `[[products]]` entry.
+kernel-module coverage guide, under
+[Instrumenting a module](https://otto-sh.readthedocs.io/en/stable/cli/cov/instrumenting/kernel-modules.html#instrumenting-a-module):
+a bounded queue driven from a control file of its own, built in place by its
+project's `kmod/build.sh` against the library this directory's own `build.sh`
+builds out of tree. It lives in the project rather than here because otto's
+coverage capture anchors every measured file to a committed git blob under the
+project root that declares the `[[products]]` entry.

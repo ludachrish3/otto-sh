@@ -453,7 +453,7 @@ def test_area_order_ends_with_the_opt_in_kmodcov_area() -> None:
     assert AREA_NAMES[-1] == "kmodcov"
 
 
-def test_kmodcov_scaffold_exports_the_library_and_returns_the_wiring_snippet(
+def test_kmodcov_scaffold_exports_the_library_and_appends_the_wiring_entry(
     tmp_path: Path,
 ) -> None:
     from otto import kmodcov
@@ -463,10 +463,10 @@ def test_kmodcov_scaffold_exports_the_library_and_returns_the_wiring_snippet(
     vendored = tmp_path / "third_party" / "otto_kmodcov"
     assert kmodcov.check_tree(vendored).state == "current"
     assert vendored / "kmodcov.h" in _paths(report)
-    (notice,) = [n for n in report.notices if "[[dev_tools]]" in n]
-    assert '#kind = "kmodcov"' in notice
-    assert '#source = "third_party/otto_kmodcov"' in notice
-    assert '#kind = "kmodcov"' not in (tmp_path / ".otto" / "settings.toml").read_text()
+    settings = (tmp_path / ".otto" / "settings.toml").read_text()
+    assert '#kind = "kmodcov"' in settings
+    assert '#source = "third_party/otto_kmodcov"' in settings
+    assert tmp_path / ".otto" / "settings.toml" in _paths(report, "appended")
     starter = tmp_path / "third_party" / "otto_kmodcov-consumer"
     assert (starter / "kmodcov_begin.c").read_text().strip().endswith("KMODCOV_SENTINEL_BEGIN;")
     assert (starter / "kmodcov_end.c").read_text().strip().endswith("KMODCOV_SENTINEL_END;")
@@ -498,9 +498,9 @@ def test_kmodcov_scaffold_refreshes_the_library_but_never_the_starter_or_a_secon
 def test_kmodcov_scaffold_honours_the_configured_directory(tmp_path: Path) -> None:
     cfg = InitConfig(tmp_path, "widget", "0.1.0", kmodcov_dir="vendor/kmodcov")
     scaffold(cfg, ["settings"])
-    report = scaffold(cfg, ["kmodcov"])
+    scaffold(cfg, ["kmodcov"])
     assert (tmp_path / "vendor" / "kmodcov" / "kmodcov.h").is_file()
-    assert any('#source = "vendor/kmodcov"' in n for n in report.notices)
+    assert '#source = "vendor/kmodcov"' in (tmp_path / ".otto" / "settings.toml").read_text()
 
 
 def test_kmodcov_detects_a_declared_entry_without_the_default_directory(tmp_path: Path) -> None:
@@ -533,15 +533,78 @@ def test_existing_tests_files_are_kept_byte_identical(tmp_path: Path) -> None:
     assert (tests / "conftest.py").read_bytes() == b"# mine\n"
 
 
-def test_kmodcov_never_edits_existing_settings_and_returns_the_snippet(tmp_path: Path) -> None:
+def test_kmodcov_appends_the_documented_entry_to_existing_settings_once(tmp_path: Path) -> None:
+    """``otto init --kmodcov`` on a project that already has settings (#675).
+
+    The kernel-modules page says it appends a commented ``[[dev_tools]]``
+    entry: the existing text is kept byte for byte, the template block is
+    added after it, and nothing is printed to paste. A second run finds the
+    block and appends nothing.
+    """
+    from otto.init.templates import KMODCOV_DEV_TOOL_TEMPLATE
+
     _scaffold(tmp_path, "settings")
     settings = tmp_path / ".otto" / "settings.toml"
-    before = settings.read_bytes()
+    before = settings.read_text()
     report = _scaffold(tmp_path, "kmodcov")
-    assert settings.read_bytes() == before
+    after = settings.read_text()
+    assert after.startswith(before)
+    block = KMODCOV_DEV_TOOL_TEMPLATE.format(kmodcov_dir="third_party/otto_kmodcov")
+    assert after[len(before) :].strip("\n") == block.strip("\n")
+    assert not [n for n in report.notices if "[[dev_tools]]" in n]
+    # The appended block is TOML comments only: the settings still parse unchanged.
+    import tomli
+
+    assert tomli.loads(after) == tomli.loads(before)
+
+    again = _scaffold(tmp_path, "kmodcov")
+    assert settings.read_text() == after
+    assert settings not in _paths(again, "appended")
+
+
+def test_kmodcov_appends_after_a_settings_file_with_no_trailing_newline(tmp_path: Path) -> None:
+    _scaffold(tmp_path, "settings")
+    settings = tmp_path / ".otto" / "settings.toml"
+    settings.write_text(settings.read_text().rstrip("\n"))  # scaffold-exempt: in-place edit
+    _scaffold(tmp_path, "kmodcov")
+    text = settings.read_text()
+    assert "\n#[[dev_tools]]\n" in text
+    import tomli
+
+    tomli.loads(text)
+
+
+def test_kmodcov_never_writes_through_a_symlinked_settings_file(tmp_path: Path) -> None:
+    _scaffold(tmp_path, "settings")
+    settings = tmp_path / ".otto" / "settings.toml"
+    real = tmp_path / "real-settings.toml"
+    settings.rename(real)
+    settings.symlink_to(real)
+    before = real.read_bytes()
+    report = _scaffold(tmp_path, "kmodcov")
+    assert real.read_bytes() == before
+    assert settings in _paths(report, "kept")
     (notice,) = [n for n in report.notices if "[[dev_tools]]" in n]
     assert '#kind = "kmodcov"' in notice
-    assert "third_party/otto_kmodcov" in notice
+
+
+def test_kmodcov_leaves_settings_alone_when_a_kmodcov_tool_is_declared(tmp_path: Path) -> None:
+    root = tmp_path / "declared"
+    make_project(
+        root,
+        name="widget",
+        version="0.1.0",
+        extra=(
+            '[[dev_tools]]\nname = "kmodcov-6.8"\nkind = "kmodcov"\n'
+            'artifact = "build/otto_kmodcov.ko"\nsource = "third_party/otto_kmodcov"\n'
+            'match = { id = ".*" }\n'
+        ),
+    )
+    settings = root / ".otto" / "settings.toml"
+    before = settings.read_bytes()
+    report = _scaffold(root, "kmodcov")
+    assert settings.read_bytes() == before
+    assert settings not in _paths(report, "appended")
 
 
 def test_fresh_settings_scaffolded_with_kmodcov_carry_the_block_and_no_notice(
