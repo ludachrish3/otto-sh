@@ -12,7 +12,8 @@ from typing import Any
 
 SETTINGS_TEMPLATE = """\
 #:schema ./schemas/settings.schema.json
-# {name} — otto project settings. Reference: docs/configuration/settings.md.
+# {name} — otto project settings. Reference:
+# https://otto-sh.readthedocs.io/en/stable/configuration/settings.html
 # Lines starting "#key" or "#[section]" are optional settings: remove the
 # leading "#" to enable them. Your editor autocompletes every field from the
 # schema line above (regenerate with `otto schema export`).
@@ -30,7 +31,7 @@ init = ["{init_module}"]           # modules imported at startup (register instr
 # host record (a warning names both). The built-in "json" backend reads
 # lab.json from directories, or a .json file directly; custom backends are
 # selected by registered name with their kwargs inline. See
-# docs/configuration/host-sources.md.
+# https://otto-sh.readthedocs.io/en/stable/configuration/host-sources.html
 [[lab.sources]]
 backend = "json"
 paths = ["lab_data"]
@@ -54,7 +55,7 @@ paths = ["lab_data"]
 
 # --- [[products]] / [[dev_tools]] — attach things to hosts without a provider -
 # Same schema, different seam. See
-# docs/configuration/declared-products-tools.md.
+# https://otto-sh.readthedocs.io/en/stable/configuration/declared-products-tools.html
 #[[products]]
 #name = "firmware"
 #kind = "shell"
@@ -92,13 +93,15 @@ paths = ["lab_data"]
 # --- [os_profiles.<name>] — named OS-profile bundles for lab.json hosts ------
 # `base` is the host class the profile builds on; any input the base's spec
 # accepts from lab data may follow as a default applied to every host that
-# selects this profile (see docs/configuration/os-profiles.md).
+# selects this profile. See
+# https://otto-sh.readthedocs.io/en/stable/configuration/os-profiles.html
 #[os_profiles.my-os]
 #base = "unix"
 #valid_terms = ["ssh"]
 
-# --- [reservations] — reservation gate; see docs/cli/reservation/ ------------
-# Backend-specific settings live in [reservations.<backend>].
+# --- [reservations] — reservation gate ---------------------------------------
+# Backend-specific settings live in [reservations.<backend>]. See
+# https://otto-sh.readthedocs.io/en/stable/cli/reservation/index.html
 #[reservations]
 #backend = "none"
 #url = ""
@@ -111,7 +114,7 @@ paths = ["lab_data"]
 # is the login order. The usual home for both tables is ~/.otto/settings.toml
 # (declared once per user); a table here overrides it for this project. Grow
 # `supplies` as inventory.json takes over more fields.
-# See docs/configuration/inventory.md.
+# See https://otto-sh.readthedocs.io/en/stable/configuration/inventory.html
 [inventory]
 backend = "json"
 path = "lab_data/inventory.json"
@@ -199,9 +202,9 @@ path = "lab_data/creds.json"
 #[[docker.composes]]
 #path = "docker/compose.yaml"
 #services = ["{name}-svc"]
-## Use-case fragments: what `otto docker compose up` deploys. See
-## docs/cli/docker/use-cases.md for provider competition (provides,
-## priority) and env templating (env, pass_env).
+## Use-case fragments: what `otto docker compose up` deploys. Provider
+## competition (provides, priority) and env templating (env, pass_env):
+## https://otto-sh.readthedocs.io/en/stable/cli/docker/use-cases.html
 #[[docker.use_cases]]
 #name = "integration"
 #composes = ["compose"]
@@ -240,7 +243,8 @@ EXAMPLE_ELEMENT_ENTRY = {
         "Example element — replace these values. An element is the smallest unit that "
         "joins a lab: 'labs' lists regex patterns full-matched against lab names, and "
         "'hosts' are the machines/boards it holds. Full schema: "
-        "docs/configuration/lab-config.md or `otto schema export`. The host below "
+        "https://otto-sh.readthedocs.io/en/stable/configuration/lab-config.html"
+        " or `otto schema export`. The host below "
         "is REFERENCED: its 'inventory' value is the machine's own name (typically its "
         "DNS hostname), never an otto id; its address lives in inventory.json and its "
         "creds in creds.json under that key."
@@ -255,7 +259,8 @@ LAB_JSON_TEMPLATE: dict[str, Any] = {
     "_comment": (
         "otto lab database: 'labs' declares each lab (its reservable resources and "
         "metadata); 'elements' groups hosts and says which labs they join; 'links' "
-        "declares data-plane routes (see docs/configuration/lab-config.md). "
+        "declares data-plane routes (see "
+        "https://otto-sh.readthedocs.io/en/stable/configuration/lab-config.html#links). "
         "Keys starting with _ are comments; $schema wires editor autocomplete. A host "
         'that says "inventory" gets its machine facts from inventory.json and its '
         "creds from creds.json under that key; everything otto-specific stays here, "
@@ -314,7 +319,7 @@ order is the login order (the first entry is the default login). A cred
 change you want to try before the team's files change goes in `lab.json`.
 The full rules, the other backends (NetBox, your own store) and the
 `~/.otto/settings.toml` home for a shared inventory are in
-`docs/configuration/inventory.md`.
+<https://otto-sh.readthedocs.io/en/stable/configuration/inventory.html>.
 
 ## `lab.json`
 
@@ -333,8 +338,8 @@ It is a JSON object with three sections, each optional:
 
 Older otto projects listed every host in a top-level `hosts` array. That shape is
 gone: otto refuses a `lab.json` that still has one and names where each field
-moved. See "Migrating from the hosts array" in
-`docs/configuration/lab-config.md`.
+moved. To migrate an older file, see
+<https://otto-sh.readthedocs.io/en/stable/configuration/lab-config.html#migrating-from-the-hosts-array>.
 
 ## The `labs` table
 
@@ -367,7 +372,8 @@ exists and reserves nothing.
   as `host.element.metadata`; otto never reads it.
 - **`hosts`** — one or more host entries. Each is validated against a
   pydantic spec before otto will use it (`UnixHostSpec` /
-  `EmbeddedHostSpec`, see `docs/configuration/lab-config.md`).
+  `EmbeddedHostSpec`, see
+  <https://otto-sh.readthedocs.io/en/stable/configuration/lab-config.html#per-host-fields>).
 
 ## Fields in the example host entry
 
@@ -423,8 +429,9 @@ otto's sanctioned way to leave a note inline — at the top level, inside the
 ## Where to go next
 
 - Every host field, and the full `lab.json` reference:
-  `docs/configuration/lab-config.md` (the reference the doctor keeps
-  complete — a field otto accepts but that page omits is a bug)
+  <https://otto-sh.readthedocs.io/en/stable/configuration/lab-config.html>
+  (the reference the doctor keeps complete — a field otto accepts but that
+  page omits is a bug)
 - Machine-readable schema (for editor validation or codegen):
   `otto schema export`
 - Confirm otto sees your hosts once you've edited this file:
@@ -545,7 +552,7 @@ class ProjectOptions:
     every field is a flag on both. A test reads the values with
     `ctx.options(ProjectOptions)`, importing the class from this module; an
     instruction takes a `ProjectOptions` parameter. See
-    docs/setup/options-classes.md.
+    https://otto-sh.readthedocs.io/en/stable/setup/options-classes.html
     """
 
     message: Annotated[
@@ -583,7 +590,7 @@ class ProjectOptions:
 #
 # One override point, so `otto run install --variant`, a script, a test, and
 # an ensure("installed") marker all pick it up.
-# See docs/cli/run/defaults.md.
+# See https://otto-sh.readthedocs.io/en/stable/cli/run/defaults.html
 
 
 @instruction()

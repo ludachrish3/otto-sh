@@ -760,7 +760,7 @@ def test_the_existing_vscode_settings_notice(tmp_path: Path) -> None:
     (tmp_path / ".vscode").mkdir()
     (tmp_path / ".vscode" / "settings.json").write_text("{}")
     report = _scaffold(tmp_path, "schemas")
-    assert any("docs/cli/schema/editors.md" in n for n in report.notices)
+    assert any("/cli/schema/editors.html#vs-code" in n for n in report.notices)
 
 
 def test_scaffolding_instructions_beside_a_resolving_init_module_writes_nothing(

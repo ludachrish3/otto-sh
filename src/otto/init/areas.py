@@ -258,8 +258,8 @@ class AreaWrite:
 
 
 _VSCODE_SETTINGS_KEPT = (
-    "existing .vscode/settings.json left untouched — see "
-    "docs/cli/schema/editors.md for the schema associations"
+    "existing .vscode/settings.json left untouched — for the schema associations see "
+    "https://otto-sh.readthedocs.io/en/stable/cli/schema/editors.html#vs-code"
 )
 
 
