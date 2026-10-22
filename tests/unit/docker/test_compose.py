@@ -2302,3 +2302,21 @@ async def test_unregister_tolerates_a_concurrent_pop_of_a_snapshotted_id(caplog)
     assert second.id not in lab.hosts
     second.close.assert_not_awaited()
     assert "error closing container host" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_compose_up_build_dry_run_refuses_a_missing_dockerfile(tmp_path):
+    """``otto -n ... compose up --build``: settled from config, so a dry run refuses too (#674)."""
+    from otto.docker.build import DockerImageConfigError
+
+    project = _make_project(tmp_path)
+    (tmp_path / "project1" / "docker" / "Dockerfile").unlink()
+    lab = _make_lab()
+    parent = lab.hosts["test3"]
+    with (
+        active_context(lab=lab, dry_run=True),
+        pytest.raises(DockerImageConfigError, match="dockerfile not found") as caught,
+    ):
+        await compose_up(project, lab, build=True)
+    assert "\n" not in str(caught.value)
+    assert parent.exec.await_count == 0

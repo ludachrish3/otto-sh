@@ -9,7 +9,7 @@ import pytest
 
 from otto.docker import build_verbs as verbs_mod
 from otto.docker import deployment as deploy_mod
-from otto.docker.build import BuildOptions
+from otto.docker.build import BuildOptions, DockerImageConfigError
 from otto.docker.build_verbs import build_on, compose_build
 from otto.docker.deployment import UseCaseResolution
 from otto.docker.observe import DockerVerbError
@@ -74,6 +74,41 @@ def install(lab):
             yield
 
     return _install
+
+
+@pytest.fixture(autouse=True)
+def _declared_paths_exist(monkeypatch):
+    """The fake images here name ``/ctx`` paths no disk has; selection is what these tests pin.
+
+    A test that pins the declared-path check itself puts the real one back
+    (``_real_path_check``) and declares real files under ``tmp_path``.
+    """
+    monkeypatch.setattr(verbs_mod, "check_declared_paths", lambda project, image: None)
+
+
+def _real_path_check(monkeypatch):
+    from otto.docker.build import check_declared_paths
+
+    monkeypatch.setattr(verbs_mod, "check_declared_paths", check_declared_paths)
+
+
+def _real_image(tmp_path, name, *, dockerfile=True):
+    from otto.config.scope import DockerImage
+
+    ctx = tmp_path / name
+    ctx.mkdir()
+    if dockerfile:
+        (ctx / "Dockerfile").write_text("FROM alpine\n")
+    return DockerImage(name=name, dockerfile=ctx / "Dockerfile", context=ctx)
+
+
+def _real_project(name, *images, fragments=()):
+    return fake_project(
+        name,
+        docker_settings=SimpleNamespace(
+            images=tuple(images), composes=("core",), use_cases=tuple(fragments)
+        ),
+    )
 
 
 @pytest.fixture
@@ -532,13 +567,63 @@ async def test_compose_build_hands_the_flags_to_every_build(lab, builds):
 
 
 @pytest.mark.asyncio
-async def test_a_missing_archive_context_is_refused_before_any_host_is_touched(install, builds):
-    missing = SimpleNamespace(name="api", is_archive=True, context=Path("/nonexistent/ctx.tar"))
+async def test_a_missing_archive_context_is_refused_before_any_host_is_touched(
+    install, builds, monkeypatch
+):
+    _real_path_check(monkeypatch)
+    missing = SimpleNamespace(
+        name="api",
+        is_archive=True,
+        context=Path("/nonexistent/ctx.tar"),
+        dockerfile=Path("/nonexistent/Dockerfile"),
+    )
     project = fake_project(
         "a", docker_settings=SimpleNamespace(images=(missing,), composes=(), use_cases=())
     )
-    with install([project]), pytest.raises(DockerVerbError, match=r"/nonexistent/ctx\.tar") as e:
+    with install([project]), pytest.raises(DockerImageConfigError, match=r"/nonexistent/ctx\.tar"):
         await build_on("test3")
-    assert "is not a file" in str(e.value)
-    assert e.value.field == "images"
     assert builds == [], "no build was started"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dry", [True, False])
+async def test_a_missing_dockerfile_refuses_build_on_before_any_project_builds(
+    install, builds, monkeypatch, tmp_path, dry
+):
+    """Every selected image of every project is checked before the first build (#674).
+
+    Project ``a`` is fine and builds first in dependency order; ``b``'s
+    Dockerfile is missing. Nothing builds, and a dry run refuses the same way
+    rather than printing a plan that cannot run.
+    """
+    _real_path_check(monkeypatch)
+    a = _real_project("a", _real_image(tmp_path, "api"))
+    b = _real_project("b", _real_image(tmp_path, "db", dockerfile=False))
+    with (
+        install([a, b]),
+        patch.object(verbs_mod, "is_dry_run", return_value=dry),
+        pytest.raises(DockerImageConfigError) as caught,
+    ):
+        await build_on("test3")
+    message = str(caught.value)
+    assert "\n" not in message
+    assert "'db'" in message
+    assert "dockerfile" in message
+    assert str(tmp_path / "db" / "Dockerfile") in message
+    assert builds == []
+
+
+@pytest.mark.asyncio
+async def test_a_missing_dockerfile_refuses_a_compose_build_dry_run(
+    lab, builds, monkeypatch, tmp_path
+):
+    _real_path_check(monkeypatch)
+    a = _real_project("a", _real_image(tmp_path, "api", dockerfile=False), fragments=(_frag(),))
+    placed = {"test3": [SelectedFragment(a, a.docker_settings.use_cases[0])]}
+    with (
+        _resolved(lab, placed),
+        patch.object(verbs_mod, "is_dry_run", return_value=True),
+        pytest.raises(DockerImageConfigError, match="dockerfile not found"),
+    ):
+        await compose_build("integration")
+    assert builds == []

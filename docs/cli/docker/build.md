@@ -100,9 +100,17 @@ fault:
   both projects are named. Narrow the selection with `--project`, or rename one
   declaration.
 
-Two further refusals concern a single project's own declarations: two of its
-images whose names would share one staging directory, and an archive
-`context` that is not a file.
+A further refusal concerns a single project's own declarations: two of its
+images whose names would share one staging directory.
+
+Every selected image's declared paths are checked before the first image
+builds, and under `--dry-run` too: a `context` that is not there (or an
+archive `context` that is not a file, or a directory `context` that is
+neither), or a `dockerfile` that is not there, ends the command with exit 1
+and one line naming the project, the image, the key and the resolved path.
+`otto docker compose build` and `otto docker compose up --build` check the
+same way. Both keys are anchored to the project root (see
+{doc}`../../configuration/settings`).
 
 ## Tarball contexts
 

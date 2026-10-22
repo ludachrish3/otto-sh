@@ -35,6 +35,19 @@ from tests.conftest import active_context
 
 from .test_resolve_select import _frag  # reuse the fragment table builder
 
+
+@pytest.fixture(autouse=True)
+def _declared_paths_exist(monkeypatch):
+    """The fake images here name ``/ctx`` paths no disk has; placement is what is pinned.
+
+    The declared-path check itself is pinned in ``test_build_verbs`` and ``test_build_inputs``.
+    """
+    from otto.docker import build_verbs, deployment
+
+    monkeypatch.setattr(build_verbs, "check_declared_paths", lambda project, image: None)
+    monkeypatch.setattr(deployment, "check_project_images", lambda project, names=None: None)
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -1757,3 +1770,35 @@ async def test_deployed_body_exception_wins_over_a_failed_teardown(single, caplo
         async with deployed("integration", own=True):
             raise ValueError("body failed")
     assert "teardown of integration failed on test3" in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dry", [True, False])
+async def test_deploy_build_refuses_a_missing_dockerfile_before_anything_runs(
+    single, tmp_path, dry, monkeypatch
+):
+    """``compose up --build <use-case>``: every image a build would use is checked first (#674)."""
+    from otto.config.scope import DockerImage
+    from otto.docker.build import DockerImageConfigError, check_project_images
+
+    monkeypatch.setattr(deploy_mod, "check_project_images", check_project_images)
+    ctx = tmp_path / "ctx"
+    ctx.mkdir()
+    image = DockerImage(name="api", dockerfile=ctx / "Dockerfile", context=ctx)
+    project = fake_project(
+        "a",
+        docker_settings=SimpleNamespace(
+            use_cases=single.project.docker_settings.use_cases,
+            composes=single.project.docker_settings.composes,
+            images=(image,),
+        ),
+    )
+    with (
+        _install(single.lab, [project]),
+        patch.object(deploy_mod, "is_dry_run", return_value=dry),
+        patch.object(deploy_mod, "build_images", AsyncMock(return_value={})) as builder,
+        pytest.raises(DockerImageConfigError, match="dockerfile not found"),
+    ):
+        await deploy("integration", parent="test3", build=True)
+    builder.assert_not_awaited()
+    assert single.host.exec.await_count == 0

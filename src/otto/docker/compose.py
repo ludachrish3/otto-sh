@@ -265,6 +265,13 @@ async def compose_up(
     parent_host = _project_parent_host(lab, parent)
     proj = project_name or get_user_compose_project(project.name)
 
+    if build and settings.images:
+        # A missing Dockerfile or context is settled from configuration: refused
+        # under a dry run too, and before anything is touched.
+        from .build import check_project_images  # late: `compose <-> build` cycle
+
+        check_project_images(project)
+
     # Below _project_parent_host, so a dry run still fails on an unknown host, a
     # non-UnixHost parent or one that is not docker_capable -- those refusals
     # are settled from configuration and must fire identically either way.

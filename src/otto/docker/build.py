@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 
 from ..config.project import Project
 from ..config.scope import DockerImage
+from ..errors import OttoError
 from ..host.host import Host, is_dry_run
 from ..result import CommandNotRunError, CommandResult
 from ..utils import Status
@@ -25,6 +26,63 @@ from .staging import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class DockerImageConfigError(OttoError, ValueError):
+    """A ``[[docker.images]]`` entry names a Dockerfile or context that is not there.
+
+    Raised before anything is tarred or sent, so nothing was touched. The
+    message is one line naming the project, the image, the settings key and
+    the path it resolved to.
+    """
+
+
+def check_declared_paths(project: str, image: DockerImage) -> None:
+    """Refuse *image* when its declared ``dockerfile`` or ``context`` is not on disk.
+
+    Both keys are anchored to the project root (the directory holding
+    ``.otto/``) when written relative. A directory context must be a
+    directory and its Dockerfile a file; an archive context must be a file,
+    and its ``dockerfile`` is a path inside the archive, so it is not looked
+    for on disk.
+
+    Raises:
+        DockerImageConfigError: a declared path is missing or the wrong kind.
+    """
+    where = f"[[docker.images]] {image.name!r} in project {project!r}"
+    if not image.context.exists():
+        raise DockerImageConfigError(f"{where}: context not found: {image.context}")
+    if image.is_archive:
+        if not image.context.is_file():
+            raise DockerImageConfigError(
+                f"{where}: context {image.context} is named like an archive but is not a file"
+            )
+        return
+    if not image.context.is_dir():
+        raise DockerImageConfigError(
+            f"{where}: context {image.context} is not a directory (nor a tar archive)"
+        )
+    if not image.dockerfile.is_file():
+        raise DockerImageConfigError(
+            f"{where}: dockerfile not found: {image.dockerfile} (relative paths are anchored "
+            "to the project root, not to context)"
+        )
+
+
+def check_project_images(project: Project, image_names: "Iterable[str] | None" = None) -> None:
+    """Refuse when a selected image of *project* names a missing path.
+
+    Each image goes through :func:`check_declared_paths`.
+
+    *image_names* narrows the selection as :func:`build_images` does; ``None``
+    checks every declared image. Every entry point that builds calls it for
+    every image it will build BEFORE the first build and before its dry-run
+    arm, since the answer is settled from configuration alone.
+    """
+    wanted = None if image_names is None else set(image_names)
+    for image in project.docker_settings.images:
+        if wanted is None or image.name in wanted:
+            check_declared_paths(project.name, image)
 
 
 @dataclass(frozen=True)
@@ -201,6 +259,9 @@ async def build_images(
         output and ``command`` / ``retcode`` are preserved.
 
     Raises:
+        DockerImageConfigError: a selected image's declared ``dockerfile`` or
+            ``context`` is not on disk (:func:`check_declared_paths`). Checked
+            before the dry-run arm: it is settled from configuration alone.
         ~otto.result.CommandNotRunError: this is a dry run, and at least one
             image was selected. A dry run builds nothing, so there is no
             ``docker build`` result to return -- see the arm below.
@@ -214,6 +275,10 @@ async def build_images(
         if image_names is not None
         else list(settings.images)
     )
+
+    # Settled from configuration, so it refuses a dry run too (check_project_images).
+    for image in selected:
+        check_declared_paths(project.name, image)
 
     # Below the pure filtering, above every device touch. An empty selection
     # still answers {} because "this project declares no such image" is settled

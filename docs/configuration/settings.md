@@ -558,6 +558,16 @@ pass_env = ["EDGE_TAG"]                  # allowlist copied from your shell
 directory or a tar archive. {doc}`../cli/docker/build` is the home for what a
 build does with them: the tag it applies and how an archive is used.
 
+`dockerfile` and `context` are both paths on the machine running otto, and both
+have the same base: a relative value is anchored to the **project root** (the
+directory holding `.otto/`), never to `context`. So `dockerfile = "Dockerfile"`
+with `context = "docker"` names `<project root>/Dockerfile`, not
+`<project root>/docker/Dockerfile`; write `dockerfile = "docker/Dockerfile"` for
+the second. The one exception is an archive `context`, whose `dockerfile` is a
+path inside the archive. A Dockerfile or context that is not there is refused
+before anything is built, in one line naming the image, the key and the path it
+resolved to.
+
 `services` names the entries of *this* file's own `services:` block, and it is
 authoritative: it is the list otto registers container hosts from, not a hint.
 Its cardinality is unrelated to `[[docker.images]]`: one built image can back

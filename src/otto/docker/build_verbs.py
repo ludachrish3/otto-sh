@@ -18,7 +18,7 @@ from ..host.host import is_dry_run
 from ..host.unix_host import UnixHost
 from ..result import CommandNotRunError
 from . import deployment
-from .build import BuildOptions, build_command, build_images
+from .build import BuildOptions, build_command, build_images, check_declared_paths
 from .observe import DockerVerbError, docker_parent
 from .reports import BuildReport, ProjectBuild
 from .staging import stage_key
@@ -52,8 +52,11 @@ def _select_docker_projects(project: "str | None") -> "list[Project]":
 def _check_images(projects: "Sequence[Project]", images: "Sequence[str] | None") -> None:
     """Refuse a selection that cannot be built as asked.
 
-    The refusals: an unknown image name; a selection with nothing to build; an
-    archive context that is not a file; one image name declared by more than
+    The refusals: an unknown image name; a selected image whose declared
+    ``dockerfile`` or ``context`` is not on disk (:func:`~otto.docker.build.check_declared_paths`,
+    raising :class:`~otto.docker.build.DockerImageConfigError` for EVERY selected
+    image of EVERY project, so nothing builds when any would fail); a selection with
+    nothing to build; one image name declared by more than
     one selected project (the name is the name docker sees); and two selected
     images of one project whose names flatten to one staging directory key
     (staging is per project, so only a project's own images can share a directory).
@@ -71,12 +74,7 @@ def _check_images(projects: "Sequence[Project]", images: "Sequence[str] | None")
         for img in r.docker_settings.images:
             if images is not None and img.name not in images:
                 continue
-            if img.is_archive and not img.context.is_file():
-                raise DockerVerbError(
-                    f"image {img.name!r} of project {r.name!r}: the context archive "
-                    f"{img.context} is not a file",
-                    field="images",
-                )
+            check_declared_paths(r.name, img)
     if not declared:
         raise DockerVerbError(
             f"nothing to build: none of {sorted(r.name for r in projects)} "

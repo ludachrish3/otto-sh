@@ -29,7 +29,7 @@ from ..host.host import is_dry_run
 from ..host.unix_host import UnixHost
 from ..result import CommandNotRunError
 from .adapter import AdapterResult, adapter_for
-from .build import build_images
+from .build import build_images, check_project_images
 from .compose import (
     _stack_already_up,
     compose_down_project,
@@ -679,10 +679,18 @@ async def deploy(
     stack = UseCaseStack(use_case=use_case, selection=resolution.selection)
     brought_up: "list[tuple[UnixHost, str]]" = []
     previews: "list[tuple[str, str]]" = []  # (host id, the command it would run)
+    acting_list = acting_hosts(
+        resolution.placed, resolution.order, services_filter, use_case=use_case, report=True
+    )
+    if build:
+        # Every image any host would build is checked before the first build,
+        # and under a dry run too: a missing Dockerfile is settled from config.
+        for acting in acting_list:
+            for unit in _units(acting.fragments):
+                if _unit_services(unit) & set(acting.services):
+                    check_project_images(unit.project)
     try:
-        for acting in acting_hosts(
-            resolution.placed, resolution.order, services_filter, use_case=use_case, report=True
-        ):
+        for acting in acting_list:
             host_id, frags, wanted = acting.host_id, acting.fragments, acting.services
             parent_host = parent_for(resolution.lab, host_id)
             proj = project_name or use_case_project(parent_host.source_lab, use_case)

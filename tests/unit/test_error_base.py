@@ -60,6 +60,7 @@ from otto.coverage.errors import (
 from otto.coverage.overrides import OverrideConfigError
 from otto.coverage.tickets import TicketConfigError
 from otto.creds.errors import CredsConstructionError, CredsError
+from otto.docker.build import DockerImageConfigError
 from otto.docker.observe import DockerVerbError
 from otto.docker.resolve import UseCaseResolutionError
 from otto.env import EnvBuildError, EnvExistsError
@@ -190,6 +191,7 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (CredsConstructionError, ValueError),
     (UseCaseResolutionError, ValueError),
     (DockerVerbError, ValueError),
+    (DockerImageConfigError, ValueError),
     (ParseMismatch, ValueError),
     (HostValidationError, ValueError),
     (HostUnreachableError, RuntimeError),

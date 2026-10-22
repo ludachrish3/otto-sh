@@ -23,6 +23,18 @@ from otto.docker.deployment import deploy
 from .test_deploy import _compose_file, _frag, _host, _install, _lab, _project, _wire
 
 
+@pytest.fixture(autouse=True)
+def _declared_paths_exist(monkeypatch):
+    """The fake images here name ``/ctx`` paths no disk has; placement is what is pinned.
+
+    The declared-path check itself is pinned in ``test_build_verbs`` and ``test_build_inputs``.
+    """
+    from otto.docker import build_verbs, deployment
+
+    monkeypatch.setattr(build_verbs, "check_declared_paths", lambda project, image: None)
+    monkeypatch.setattr(deployment, "check_project_images", lambda project, names=None: None)
+
+
 def _sub(tmp, name):
     """A fresh subdirectory of *tmp* for a second project's compose file."""
     path = tmp / name
