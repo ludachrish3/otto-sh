@@ -1885,10 +1885,10 @@ async def test_compose_down_failure_logs_error(tmp_path, caplog):
 async def test_compose_down_failure_relays_dockers_output_verbatim(tmp_path, caplog):
     """docker's own output reaches every sink as docker printed it (#697).
 
-    Every sink renders a record as Rich markup, so the record's rendered text
-    is what the console and both log files show.
+    The record does not opt in to Rich markup, so the console and both
+    log files show its message as written.
     """
-    from rich.text import Text
+    from tests._fixtures.log_text import shown
 
     project = _make_project(tmp_path)
     lab = _make_lab()
@@ -1905,7 +1905,7 @@ async def test_compose_down_failure_relays_dockers_output_verbatim(tmp_path, cap
     with caplog.at_level(logging.ERROR):
         await compose_down(project, lab)
 
-    rendered = [Text.from_markup(r.getMessage()).plain for r in caplog.records]
+    rendered = [shown(r) for r in caplog.records]
     assert f"[docker] compose down failed: {output}" in rendered, rendered
 
 

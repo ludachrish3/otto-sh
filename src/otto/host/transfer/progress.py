@@ -19,14 +19,17 @@ from rich.progress import (
     BarColumn,
     DownloadColumn,
     Progress,
+    Task,
     TaskID,
     TextColumn,
     TimeRemainingColumn,
     TransferSpeedColumn,
 )
+from rich.text import Text
+from typing_extensions import override
 
 from ...console import CONSOLE
-from ...logger.relay import relay_line
+from ...logger.relay import escape_relayed
 
 if TYPE_CHECKING:
     from .base import TransferProgressFactory, TransferProgressHandler
@@ -53,7 +56,7 @@ def make_rich_progress_handler(progress: Progress, host_name: str) -> "TransferP
         nonlocal current_src, task_id
         if src != current_src:
             current_src = src
-            description = relay_line(f"[green]{escape(host_name)}[/] ", Path(src).name)
+            description = f"[green]{escape(host_name)}[/] {escape_relayed(Path(src).name)}"
             task_id = progress.add_task(description, total=bytes_total)
         assert task_id is not None  # noqa: S101 — internal invariant: task_id set above when src changes; always set on second+ call
         progress.update(task_id, completed=bytes_done)
@@ -82,10 +85,28 @@ def make_rich_progress_factory(progress: Progress, host_name: str) -> "TransferP
     return factory
 
 
+class _LiteralEmojiTextColumn(TextColumn):
+    """A :class:`~rich.progress.TextColumn` whose markup pass leaves ``:emoji:`` codes alone.
+
+    A file name is foreign text: ``a:b:c.txt`` must not turn into an emoji.
+    """
+
+    @override
+    def render(self, task: Task) -> Text:
+        _text = self.text_format.format(task=task)
+        if self.markup:
+            text = Text.from_markup(_text, style=self.style, justify=self.justify, emoji=False)
+        else:
+            text = Text(_text, style=self.style, justify=self.justify)
+        if self.highlighter:
+            self.highlighter.highlight(text)
+        return text
+
+
 def make_transfer_progress() -> Progress:
     """Return a pre-configured Rich Progress suited for file transfers."""
     return Progress(
-        TextColumn("[bold blue]{task.description}"),
+        _LiteralEmojiTextColumn("[bold blue]{task.description}"),
         BarColumn(),
         DownloadColumn(),
         TransferSpeedColumn(),

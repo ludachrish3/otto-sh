@@ -172,9 +172,9 @@ async def test_report_time_failures_join_the_one_warning(tmp_path, monkeypatch, 
     assert store is not None
     warnings = [r.message for r in caplog.records if "failed to capture" in r.message]
     reasons = ", ".join(str(cov / "h" / p / "capture.failed") for p in ("app", "tool"))
-    # Escaped for the console's Rich markup: the detail is arbitrary lcov text.
-    escaped = fresh.replace("[twice]", "\\[twice]")
-    assert warnings == [f"h/app, h/tool: failed to capture; see {reasons}\n\n{escaped}"]
+    # The detail is arbitrary lcov text, shown as written: the record does not
+    # opt in to Rich markup, so its brackets need no escape.
+    assert warnings == [f"h/app, h/tool: failed to capture; see {reasons}\n\n{fresh}"]
     assert _DETAIL not in warnings[0]
 
 

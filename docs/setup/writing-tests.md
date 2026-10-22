@@ -114,6 +114,42 @@ either imports) reaches otto's console and log files. Known-noisy libraries
 are quieted by default; the floor is per-logger configurable in
 {ref}`[logging.levels] <logging-levels>`.
 
+(log-markup)=
+### Styled log messages
+
+A log message is printed as written: brackets, backslashes and `:emoji:`
+codes reach the console, `console.log` and `verbose.log` unchanged. To style
+one with [Rich markup](https://rich.readthedocs.io/en/stable/markup.html),
+opt in on that call with `extra={"markup": True}`:
+
+```python
+logger.info("[bold green]firmware flashed[/bold green]", extra={"markup": True})
+```
+
+Markup is off by default and opting in is per record; every other call stays
+plain. Opting in renders Rich markup and substitutes `:emoji:` codes
+(`:thumbs_up:` becomes the emoji). An opted-in message is parsed as markup in
+full, including whatever it interpolates, so a `[word]` in a host's output or a library's error would be
+read as a tag and dropped. Escape text you did not write with
+`rich.markup.escape`. Passing text you did not write through an
+opted-in message means doing both things: `escape(...)` its brackets and add
+`"emoji": False` so colon-words such as `root:x:0:0` or `:warning:` stay
+literal:
+
+```python
+from rich.markup import escape
+
+logger.warning(
+    f"[yellow]retrying:[/yellow] {escape(result.msg)}",
+    extra={"markup": True, "emoji": False},
+)
+```
+
+Text you wrote yourself needs neither the escape nor `"emoji": False`.
+
+pytest's own captured-log sections and the junit report show the message before
+Rich renders it, so an escaped value appears there with its backslash.
+
 ## Options
 
 An **options class** turns its fields into flags on `otto test`. Declare it

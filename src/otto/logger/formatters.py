@@ -457,9 +457,15 @@ class RichFormatter(MultilineFormatter):
     """``MultilineFormatter`` for the log file handler that controls Rich markup.
 
     The console handler is a :class:`rich.logging.RichHandler` of its own; this
-    formatter is attached to the file handler. When ``rich`` is ``True``, markup
-    is rendered to ANSI escape sequences via an internal capture console; when
-    ``rich`` is ``False`` (the default), ANSI is stripped so log files stay plain.
+    formatter is attached to the file handler. A record is rendered as Rich
+    markup only when it opts in with ``extra={"markup": True}`` -- the same
+    per-record attribute ``RichHandler`` reads. Any other record is printed as
+    written: brackets, backslashes and ``:emoji:`` codes untouched, except that
+    when ``rich`` is ``False`` ANSI escape sequences are still stripped. An opted-in
+    record also gets ``:emoji:`` substitution unless it sets ``emoji=False``. An opted-in
+    record is rendered through an internal capture console; when ``rich`` is
+    ``True`` its styles become ANSI escape sequences, and when ``rich`` is
+    ``False`` (the default) ANSI is stripped so log files stay plain.
 
     An exception is rendered by :func:`render_traceback`, after the markup
     pass and outside it, so the traceback is never read as markup. With
@@ -496,7 +502,7 @@ class RichFormatter(MultilineFormatter):
 
     @override
     def format(self, record: LogRecord) -> str:
-        """Render Rich markup in the record, then delegate to ``MultilineFormatter``.
+        """Render an opted-in record's Rich markup, then delegate to ``MultilineFormatter``.
 
         THE RECORD IS RESTORED BEFORE RETURNING, and that is not tidiness.
         ``_stylize`` replaces ``record.msg`` with its RENDERED form, and a
@@ -527,11 +533,19 @@ class RichFormatter(MultilineFormatter):
         self,
         record: LogRecord,
     ) -> LogRecord:
+        """Render *record*'s message as Rich markup if it opted in; leave it alone otherwise.
 
+        A record that did not ask for markup never reaches the capture
+        console, so nothing in it is parsed, substituted (``:emoji:``) or
+        re-wrapped.
+        """
+        if not getattr(record, "markup", False):
+            return record
         with _console.capture() as capture:
             _console.print(
                 record.msg,
                 markup=True,
+                emoji=getattr(record, "emoji", True),
             )
 
         record.msg = capture.get()

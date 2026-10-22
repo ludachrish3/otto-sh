@@ -15,7 +15,6 @@ from ..host.daemon import kill_command, launch_command
 from ..host.errors import HostCommandError, HostUnreachableError
 from ..host.host import is_dry_run
 from ..logger.mode import LogMode
-from ..logger.relay import relay_line
 from .carrier import DEFAULT_CARRIER, TunnelCarrier, build_carrier
 from .discovery import (
     _TUNNEL_HOST_TIMEOUT,
@@ -1128,9 +1127,7 @@ async def _reap(lab: "Lab", predicate: Any) -> RemovedReport:
             unreachable.add(host_id)
             continue
         if not result.is_ok:
-            logger.warning(
-                relay_line(f"otto tunnel: kill failed on host {host_id!r}: ", repr(result.value))
-            )
+            logger.warning(f"otto tunnel: kill failed on host {host_id!r}: {result.value!r}")
             unreachable.add(host_id)
             continue
         killed[host_id] = sorted(pids)

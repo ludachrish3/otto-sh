@@ -192,10 +192,10 @@ class TestRunCmdLogging:
     ):
         """The command and the device's bytes reach every sink as written (#697).
 
-        Every sink renders a record as Rich markup, so the record's rendered
-        text is what the console and both log files show.
+        The record does not opt in to Rich markup, so the console and both
+        log files show its message as written.
         """
-        from rich.text import Text
+        from tests._fixtures.log_text import shown
 
         s = initialized_session
         caplog.clear()
@@ -210,7 +210,7 @@ class TestRunCmdLogging:
         await feed_task
 
         assert result.retcode == 0
-        rendered = "\n".join(Text.from_markup(r.getMessage()).plain for r in caplog.records)
+        rendered = "\n".join(shown(r) for r in caplog.records)
         assert "framed write cmd=\"echo '[red]x[/red]'\"" in rendered, rendered
         assert "run_cmd done cmd=\"echo '[red]x[/red]'\"" in rendered, rendered
         assert "image:[sha256:abc] [/x]" in rendered, rendered

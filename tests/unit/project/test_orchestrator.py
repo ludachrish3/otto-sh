@@ -85,6 +85,7 @@ from otto.tunnel import (
 from otto.utils import Status
 from tests._fixtures.bootstrap_seam import seed_scope_verdicts
 from tests._fixtures.fake_project import fake_project
+from tests._fixtures.log_text import shown
 
 # ── doubles ──────────────────────────────────────────────────────────────
 
@@ -454,33 +455,16 @@ def _one_line(text):
 
 
 def _said(caplog):
-    """Every captured WARNING as an OPERATOR receives it: markup RENDERED, then collapsed.
+    """Every captured WARNING as an OPERATOR receives it, collapsed to one line.
 
-    NOT ``caplog.text``, and the difference is the whole point. Every sink otto
-    logs through renders rich markup — the console handler is built
-    ``markup=True`` and both log files go through
-    :class:`~otto.logger.formatters.RichFormatter`, which hard-codes it — so a
-    message's ``record.msg`` is markup, and the orchestrator escapes the
-    brackets it wants taken literally. ``caplog`` hands back that PRE-RENDER
-    string, complete with the escapes, which is neither what the code means nor
-    what anybody sees.
-
-    Rendering here buys two things at once. Assertions read as the delivered
-    sentence rather than as ``\\[unix_alt]``; and every message assertion in
-    this module becomes a rendering guard for free, because dropping the escape
-    at the source makes the lab list vanish from what this returns. The
-    dedicated sink tests below still earn their place — they cover all THREE
-    sinks, where this covers one render — but nothing here can now assert a
-    message the operator would not actually get.
-
-    Width is pinned absurdly wide so a fold cannot hide a word; the module's
-    own :func:`_one_line` then collapses what rich left.
+    Each record is read the way every sink shows it (:func:`shown`): its
+    markup rendered only if it opted in with ``extra={"markup": True}``. The
+    orchestrator's lines do not opt in, so a lab list in brackets is shown as
+    written -- and a line that started opting in without escaping its lab list
+    would lose it here, which makes every message assertion in this module a
+    rendering guard too. The dedicated sink tests below cover all THREE sinks.
     """
-    buf = io.StringIO()
-    console = Console(file=buf, width=10_000, no_color=True)
-    for record in caplog.records:
-        console.print(record.getMessage(), markup=True)
-    return _one_line(buf.getvalue())
+    return _one_line(" ".join(shown(record) for record in caplog.records))
 
 
 # ── install ──────────────────────────────────────────────────────────────
@@ -2821,15 +2805,14 @@ class TestForcedInclusionOfAnEmptyFleet:
 
 # ── how these messages RENDER, which is not what they say ────────────────────
 #
-# Both of otto's user-facing surfaces parse rich markup: the console log
-# handler is built ``markup=True`` (``otto.logger.management.init_cli_logging``)
-# and the CLI error boundary prints through ``rich``. Rich reads ``[unix_alt]``
-# as a style tag and DELETES it, so a message that is perfect as a string
-# reaches the operator with the one fact they needed missing — measured, not
-# assumed: an unmarked ``loaded lab(s) [bench, floor]`` renders as ``loaded
-# lab(s)``. Every assertion above reads ``caplog`` or ``str(exc)``, both of
-# which see the message BEFORE any renderer, so none of them can catch this
-# class of bug. These do.
+# A log record is rendered as rich markup only when it opts in with
+# ``extra={"markup": True}``, and the CLI error boundary prints through
+# ``rich``. Where markup is rendered, rich reads ``[unix_alt]`` as a style tag
+# and DELETES it, so a message that is perfect as a string reaches the operator
+# with the one fact they needed missing — measured, not assumed: a
+# ``loaded lab(s) [bench, floor]`` rendered as markup reads ``loaded lab(s)``.
+# These tests render the orchestrator's lines through every sink, so a line
+# that started opting in to markup without escaping its lab list is caught.
 
 
 class _Sinks:
@@ -2837,14 +2820,13 @@ class _Sinks:
 
     THREE SINKS, NOT ONE, and that is the whole reason this class exists rather
     than a lone ``RichHandler``. An earlier version of these tests captured the
-    console alone and certified a fix (``extra={"markup": False}``) that repairs
-    ONLY the console: ``RichFormatter._stylize`` prints ``record.msg`` through a
-    rich console with ``markup=True`` HARD-CODED and never consults
-    ``record.markup``, so both log files stayed broken and the guard could not
-    see it. A rendering test that samples one of three sinks is a rendering test
-    that passes for two thirds of the wrong reasons.
+    console alone and certified a fix (``extra={"markup": False}``) that, at the
+    time, repaired ONLY the console: the file formatter rendered every record as
+    markup without consulting ``record.markup``, so both log files stayed broken
+    and the guard could not see it. A rendering test that samples one of three
+    sinks is a rendering test that passes for two thirds of the wrong reasons.
 
-    ``console`` mirrors ``init_cli_logging``'s ``RichHandler`` kwargs;
+    ``console`` mirrors ``install_console``'s ``RichHandler`` kwargs;
     ``plain`` is ``console.log``'s handler (``RichFormatter``, ANSI stripped)
     and ``ansi`` is ``verbose.log``'s (``RichFormatter``, ANSI kept) — both
     built exactly as ``otto.logger.management._make_file_handler`` builds them.
@@ -2854,7 +2836,7 @@ class _Sinks:
         self.buf = io.StringIO()
         self.console_handler = RichHandler(
             console=Console(file=self.buf, width=300, force_terminal=False),
-            markup=True,
+            markup=False,
             highlighter=NullHighlighter(),
             show_time=False,
             show_path=False,
@@ -2895,46 +2877,39 @@ def rendered_warnings(monkeypatch, tmp_path):
         handler.close()
 
 
-def test_rich_really_does_eat_an_unmarked_lab_list(rendered_warnings):
+def test_an_opted_in_lab_list_is_eaten_on_every_sink(rendered_warnings):
     """The negative control, so the cells below are not tautologies — on EVERY sink.
 
-    Per-sink rather than "somewhere in the output", because the two file sinks
-    are exactly the ones a console-only guard was blind to. If rich ever stops
-    doing this, this test reddens and the escaping can be reconsidered rather
-    than cargo-culted.
+    Every sink renders an opted-in record as markup, and rich eats the lab
+    list. Per-sink rather than "somewhere in the output", because the two file
+    sinks are exactly the ones a console-only guard was blind to.
     """
-    orchestrator.logger.warning("not applicable to the loaded lab(s) [unix_alt]")
+    orchestrator.logger.warning(
+        "not applicable to the loaded lab(s) [unix_alt]", extra={"markup": True}
+    )
 
     for sink, text in rendered_warnings.rendered().items():
         assert "[unix_alt]" not in text, sink
 
 
-def test_a_per_record_markup_override_would_not_have_reached_the_files(rendered_warnings):
-    """Why the fix is ``escape`` at the source and not ``extra={"markup": False}``.
+def test_a_plain_record_keeps_its_lab_list_on_every_sink(rendered_warnings):
+    """The plain-record cell (markup absent, the default) of the opt-in pair.
 
-    Measured rather than asserted in a comment. ``RichHandler`` honours the
-    per-record flag; ``RichFormatter`` never reads it. Keeping this cell means
-    a future reader who reaches for the per-record knob — the obvious move, and
-    the one that was made first here — finds out why it was rejected instead of
-    rediscovering it in production.
+    Paired with the opted-in negative control above: ``record.markup`` is read
+    by the console AND both files, so a record that does not ask for markup
+    keeps its bracketed lab list on all three.
     """
     orchestrator.logger.warning(
         "not applicable to the loaded lab(s) [unix_alt]", extra={"markup": False}
     )
 
-    rendered = rendered_warnings.rendered()
-    assert "[unix_alt]" in rendered["console"]  # the knob works, as far as it goes
-    assert "[unix_alt]" not in rendered["plain"]  # and no further
-    assert "[unix_alt]" not in rendered["ansi"]
+    for sink, text in rendered_warnings.rendered().items():
+        assert "[unix_alt]" in text, sink
 
 
 @pytest.mark.asyncio
 async def test_the_skip_line_keeps_its_lab_list_in_every_sink(monkeypatch, rendered_warnings):
-    """D3's own skip message, rendered. It names two lists and rich eats both.
-
-    Pre-existing production code, not this task's: the same defect was live on
-    the branch, in every sink, before the escaping landed.
-    """
+    """D3's own skip message, rendered. It names two lists, and every sink keeps both."""
     _wire(
         monkeypatch,
         projects=["project1", "project2"],
@@ -2947,7 +2922,7 @@ async def test_the_skip_line_keeps_its_lab_list_in_every_sink(monkeypatch, rende
     for sink, text in rendered_warnings.rendered().items():
         assert "not applicable to the loaded lab(s) [unix_alt, bench]" in text, sink
         assert "(lab_patterns: project2-lab)" in text, sink
-        assert "\\[" not in text, sink  # escaped at the source, rendered back to a bare [
+        assert "\\[" not in text, sink
 
 
 @pytest.mark.asyncio

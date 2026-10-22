@@ -4443,12 +4443,12 @@ class TestUuFramingIsSafeAndStrict:
 async def test_a_failed_cleanups_device_output_is_relayed_verbatim(caplog):
     """The device's ``rm`` error reaches every sink as the device printed it (#697).
 
-    Every sink renders a record as Rich markup, so the record's rendered text
-    is what the console and both log files show.
+    The record does not opt in to Rich markup, so the console and both
+    log files show its message as written.
     """
     import logging
 
-    from rich.text import Text
+    from tests._fixtures.log_text import shown
 
     output = "rm: can't remove '[x:y]': [red]Read-only[/red] [/x]"
 
@@ -4458,5 +4458,5 @@ async def test_a_failed_cleanups_device_output_is_relayed_verbatim(caplog):
     ft = _make_ft(exec_cmd)
     with caplog.at_level(logging.DEBUG, logger="otto.host.transfer.shell"):
         await ft._cleanup_temp("'/tmp/t'")
-    rendered = [Text.from_markup(r.getMessage()).plain for r in caplog.records]
+    rendered = [shown(r) for r in caplog.records]
     assert f"test2: cleanup of '/tmp/t' failed (ignored): {output}" in rendered, rendered

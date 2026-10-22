@@ -637,13 +637,9 @@ class OttoContext:
             ProjectScopeError,
             ProjectLoadError,
         ) as exc:
-            from rich.markup import escape as escape_markup
-
-            # escape_markup: the message quotes a literal bracket ("[coverage].hosts",
-            # or the user's own regex) and the console handler renders markup.
             # selection_message: ctx.cov takes no membership flag, so an empty
             # selection's keyword advice could not be followed from here.
-            reason = escape_markup(selection_message(exc, walker="coverage") or str(exc))
+            reason = selection_message(exc, walker="coverage") or str(exc)
             logger.warning(f"otto: coverage detection failed, ctx.cov is False: {reason}")
             return False
         # The verdict otto.coverage.instrumentation.detect() reports as "yes" —

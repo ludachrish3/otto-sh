@@ -485,11 +485,9 @@ async def collect_coverage(
             clean_report = await clean_coverage(projects, pairs=produced.captured)
         except Exception:
             if failure is not None:
-                from rich.markup import escape as escape_markup
-
                 # The clean's own exception propagates; this keeps the capture
                 # failure it would otherwise bury in __context__ visible.
-                logger.error(escape_markup(str(failure)))  # noqa: TRY400 — the clean's traceback follows; this is its companion line
+                logger.error(str(failure))  # noqa: TRY400 — the clean's traceback follows; this is its companion line
             raise
 
     if failure is not None:

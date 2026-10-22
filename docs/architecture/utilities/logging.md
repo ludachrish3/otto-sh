@@ -23,55 +23,63 @@ time-boxed budget so rotation cannot stall startup on slow mounts.
 
 ## Rich markup in log messages
 
-A log message is [Rich markup](https://rich.readthedocs.io/en/stable/markup.html)
-on every sink. The console handler is a `RichHandler` built with
-`markup=True`, and both files render each message through
-{class}`~otto.logger.formatters.RichFormatter`, which prints it with markup on
-before writing it. A style tag colours the console and is consumed in the
-files:
+A log record is rendered as
+[Rich markup](https://rich.readthedocs.io/en/stable/markup.html) only when it
+asks for it with `extra={"markup": True}`, Rich's own per-record convention:
+`rich.logging.RichHandler` reads `record.markup`. The rule holds for every sink
+and every logger: otto's, a suite's or instruction's, a third-party library's.
+The console handler is a `RichHandler` built with `markup=False`, so it
+renders only opted-in records, and both files go through
+{class}`~otto.logger.formatters.RichFormatter`, which renders an opted-in
+record through a capture console and leaves any other record's message
+untouched. A record that does not opt in is printed as written: brackets,
+backslashes and `:emoji:` codes reach the console and both files unchanged
+(the one exception: a file that is not `--rich-log-file` still strips ANSI
+escape sequences from every record).
+How a suite or instruction author opts in, and escapes what an opted-in
+message interpolates, is on {ref}`log-markup`.
+
+Where otto opts in, it is for its own styling, such as the dry-run banner and a
+test's start banner:
 
 ```python
-logger.info("[bold]Deploy finished[/bold]")
-logger.warning("[yellow]Retrying[/yellow] the connection")
-logger.info("[magenta][DRY RUN] Commands and file transfers will be skipped.")
+logger.info(
+    "[magenta][DRY RUN] Commands and file transfers will be skipped.",
+    extra={"markup": True},
+)
 ```
 
-The last one is otto's own. Rich reads a bracket as a tag only when its text
-starts with a lowercase letter, `#`, `@` or `/`, so `[DRY RUN]` is printed as
-written. `[bench, floor]` is read as a tag, and a tag that names no style
-disappears from every sink. Whatever a message interpolates is parsed as well,
-f-string or `%`-argument alike, so a message that carries a lab list, a path or
-a library's error text can lose part of itself. To print a literal `[`, escape
-the text with Rich's `escape`, as `otto.cli.invoke.print_error` and
-`otto.project.orchestrator` do:
+Rich reads a bracket as a tag only when its text starts with a lowercase
+letter, `#`, `@` or `/`, so `[DRY RUN]` is printed as written; `[bench, floor]`
+is read as a tag, and a tag that names no style disappears. An opted-in message
+is parsed in full, f-string or `%`-argument alike, so whatever it interpolates
+must be escaped with `rich.markup.escape`.
 
-```python
-from rich.markup import escape
+A host's echoed command and its output lines combine the two: otto's styled
+prefix (`@host   | ` in bold, `@host > | ` in yellow) and text otto did not
+write. Passing text through means two things: escape its markup and turn the
+`:emoji:` pass off. Each of those lines is logged by
+{func}`~otto.logger.relay.log_relayed`, which takes otto's markup prefix and the
+relayed text separately, escapes only the text, and sends the record with
+`markup=True, emoji=False` itself, so a caller cannot relay text without both.
+`image:[sha256:abc]` in a device's output reaches the console and both files
+with its brackets kept, `root:x:0:0 :warning:` stays literal, and a stray
+`[/x]` cannot raise. The escape lives in the record's message, so
+`caplog.text`, pytest's "Captured log" sections and any handler that does not
+render markup see `\[` in any opted-in line that escapes foreign text: relay lines, a test's
+name banner, an expect-failure line. Device or tool output
+quoted in a plain otto warning (a failed `docker compose down`, a failed
+coverage archive, a monitor command's error) is not styled, does not opt in,
+and is shown as written. The text an `otto host <id>` verb returns
+(`read-file`) is printed with markup and emoji codes off.
 
-logger.warning(f"not applicable to the loaded lab(s) {escape(str(labs))}")
-```
+An opted-in record renders `:emoji:` codes on every sink; `extra={"emoji": False}`
+turns that pass off for the record (meaningful only with markup on). An opted-in
+record that escapes text otto did not write passes `"emoji": False` too; a guard
+test enforces it.
 
-`escape` puts a backslash before each bracket that would start a tag. A
-literal in your own source can carry that backslash directly
-(`"\\[bench] stays in brackets"`). `extra={"markup": False}` is no substitute: the
-console honours it, but the files do not.
-
-otto does the same for the text it relays rather than writes: a host's echoed
-command and its output lines, and the device or tool output quoted in otto's
-own warnings (a failed `docker compose down`, a failed coverage archive, a
-monitor command's error). Each of those lines is built by
-{func}`~otto.logger.relay.relay_line`, which takes otto's markup prefix and the
-relayed text separately and escapes only the text, so `image:[sha256:abc]` in
-a device's output reaches the console and both files with its brackets kept,
-and a stray `[/x]` cannot raise. Rich still substitutes `:emoji:` codes in the
-log sinks, so the text is not guaranteed character for character. The escape
-lives in the record's message, so `caplog.text`, pytest's "Captured log"
-sections and any handler that does not render markup see `\[` before the
-relayed brackets. The text an `otto host <id>` verb returns (`read-file`) is
-printed with markup and emoji codes off for the same reason.
-
-By default the files are plain text: the markup is applied and its ANSI codes
-are stripped. `--rich-log-file` (or `OTTO_LOG_RICH`) keeps those codes in both
+By default the files are plain text: an opted-in record's markup is applied
+and its ANSI codes are stripped. `--rich-log-file` (or `OTTO_LOG_RICH`) keeps those codes in both
 files, for a pager that renders them (`less -R`). The colour comes from the
 terminal otto started in, so a run whose output is redirected writes plain
 message lines even with the flag set.
@@ -151,7 +159,8 @@ exception into data on the thread that logged it:
 locals, inside the bounds above), the stdlib's plain traceback as a fallback,
 and an id that names the exception object, and clears `exc_info`. The stdlib's
 own `prepare` flattens the traceback into the message text instead, which
-loses the Rich rendering and feeds the traceback to the markup pass.
+loses the Rich rendering and, for a record that opted in, feeds the traceback
+to the markup pass.
 
 Capturing on the logging thread is what keeps the listener safe. The frame that
 caught the exception is still running when the listener gets to the record, so
@@ -265,10 +274,10 @@ same shape below `<kind>/<host_id>/`.
   handler wiring, marked-handler ownership), the `QueueListener`, the
   exception-capturing `QueueHandler`, the console handler,
   `record_command_failure`, and time-boxed log rotation
-- {mod}`otto.logger.formatters` — `RichFormatter` (markup rendering for the
-  files), `capture_exception`, `render_traceback` (the files' one traceback
+- {mod}`otto.logger.formatters` — `RichFormatter` (markup rendering of an
+  opted-in record for the files), `capture_exception`, `render_traceback` (the files' one traceback
   renderer) and the traceback bounds
-- {mod}`otto.logger.relay` — `relay_line`, otto's markup prefix plus relayed
+- {mod}`otto.logger.relay` — `log_relayed`, otto's markup prefix plus relayed
   text whose brackets every sink keeps
 - {mod}`otto.logger.mode` — `LogMode` and `effective_mode`, the
   most-restrictive-wins composition

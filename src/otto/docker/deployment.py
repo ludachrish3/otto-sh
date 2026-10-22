@@ -27,7 +27,6 @@ from ..host.docker_host import DockerContainerHost
 from ..host.errors import HostCommandError
 from ..host.host import is_dry_run
 from ..host.unix_host import UnixHost
-from ..logger.relay import relay_line
 from ..result import CommandNotRunError
 from .adapter import AdapterResult, adapter_for
 from .build import build_images
@@ -227,7 +226,7 @@ def _declared(frags: "list[SelectedFragment]", *, report: bool = False) -> "_Dec
                 if service in owner:
                     if report and owner[service] != where:
                         logger.warning(
-                            rf"\[docker] service {service!r} is declared by both "
+                            f"[docker] service {service!r} is declared by both "
                             f"{owner[service]} and {where}; the later -f wins the "
                             f"merge — use provides/priority (spec §4) to replace it"
                         )
@@ -356,7 +355,7 @@ def _plan_host(
     assembly = assemble_env(frags, facts, pass_env_source=os.environ)
     if assembly.missing_pass_env:
         logger.warning(
-            rf"\[docker] use-case {use_case!r} on {host_id}: pass_env names "
+            f"[docker] use-case {use_case!r} on {host_id}: pass_env names "
             f"{assembly.missing_pass_env} are not set in this shell; they are "
             f"absent from the deployment's environment"
         )
@@ -388,7 +387,7 @@ def _plan_host(
         for name, text in (result.extra_files if result else {}).items():
             if name in extra and extra[name] != text:
                 logger.warning(
-                    rf"\[docker] two adapters generated different content for "
+                    f"[docker] two adapters generated different content for "
                     f"extra file {name!r}; {unit.project.name}'s wins. They share one "
                     f"staging dir, so give the sidecars distinct relative names."
                 )
@@ -517,7 +516,7 @@ def acting_hosts(
         if not wanted:
             if report:
                 logger.info(
-                    rf"\[docker] {host_id} declares none of the requested services; "
+                    f"[docker] {host_id} declares none of the requested services; "
                     f"skipping it for use-case {use_case!r}"
                 )
             continue
@@ -742,7 +741,7 @@ async def deploy(
             was_up = await _stack_already_up(parent_host, proj) is True
             if not was_up:
                 brought_up.append((parent_host, proj))
-            logger.info(rf"\[docker] deploying {use_case} as {proj} on {parent_host.id}")
+            logger.info(f"[docker] deploying {use_case} as {proj} on {parent_host.id}")
             result = await parent_host.exec(
                 _up_command(
                     proj,
@@ -816,12 +815,8 @@ def _log_displacements(use_case: str, selection: Selection) -> None:
     so a dry run that fails before that decline is raised (an adapter or render
     error) names no displacement.
     """
-    from rich.markup import escape
-
-    # The log message is rich markup, so a project or capability name carrying
-    # `[x]` would be eaten as a style tag unescaped.
     for d in selection.displaced:
-        logger.info(rf"\[docker] use-case {use_case}: {escape(d.describe())}")
+        logger.info(f"[docker] use-case {use_case}: {d.describe()}")
 
 
 def _refuse_failed_up(compose_project: str, parent_id: str, output: str) -> "NoReturn":
@@ -887,7 +882,7 @@ async def _rollback_one(lab: "Lab", parent: UnixHost, compose_project: str) -> N
         # .error, not .exception: the traceback the user needs belongs to the
         # error being propagated, not to the rollback that failed after it.
         logger.error(  # noqa: TRY400 — see above
-            rf"\[docker] {compose_project} could not be rolled back on {parent.id} "
+            f"[docker] {compose_project} could not be rolled back on {parent.id} "
             f"and is still up: {e}"
         )
 
@@ -971,11 +966,8 @@ async def teardown(
             ran.append(result)
             if not result.is_ok:
                 logger.error(
-                    relay_line(
-                        rf"\[docker] `{action.split()[0]}` failed for {proj} on "
-                        f"{parent_host.id}: ",
-                        result.value,
-                    )
+                    f"[docker] `{action.split()[0]}` failed for {proj} on "
+                    f"{parent_host.id}: {result.value}"
                 )
         await unregister_container_hosts(resolution.lab, prefix, services=wanted)
         hosts[host_id] = ran
@@ -1076,6 +1068,6 @@ async def deployed(
                 message = f"teardown of {use_case} failed on {', '.join(report.failed)}: {detail}"
                 if body_failed:
                     # A compensating action never masks the real failure.
-                    logger.error(rf"\[docker] {message}")
+                    logger.error(f"[docker] {message}")
                 else:
                     raise HostCommandError(message)

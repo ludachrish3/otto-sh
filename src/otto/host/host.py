@@ -3092,17 +3092,19 @@ class BaseHost(ABC):
 
         *command* is literal text -- a command line, a dry-run banner, a hook's
         outcome -- and reaches every sink with its brackets kept (see
-        :func:`~otto.logger.relay.relay_line`).
+        :func:`~otto.logger.relay.log_relayed`).
         """
         if mode is LogMode.NEVER:
             return
         from rich.markup import escape
 
-        from ..logger.relay import relay_line
+        from ..logger.relay import log_relayed
 
-        logger.log(
+        log_relayed(
+            logger,
             level,
-            relay_line(f"[bold]@{escape(self.name)}   | ", command),
+            f"[bold]@{escape(self.name)}   | ",
+            command,
             extra={"host": self, "log_mode": mode},
         )
 
@@ -3135,12 +3137,15 @@ class BaseHost(ABC):
             return
         from rich.markup import escape
 
-        from ..logger.relay import relay_line
+        from ..logger.relay import log_relayed
 
-        preamble = f"[yellow]@{escape(self.name)} > | "
-        logger.info(
-            "\n".join(relay_line(preamble, line) for line in output.splitlines()),
+        log_relayed(
+            logger,
+            INFO,
+            f"[yellow]@{escape(self.name)} > | ",
+            output,
             extra={"host": self, "log_mode": mode},
+            per_line=True,
         )
 
 

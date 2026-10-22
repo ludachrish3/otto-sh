@@ -4,10 +4,11 @@ Driven through the real fan-out: :func:`otto.logger.management.init_cli_logging`
 plus :func:`~otto.logger.management.create_output_dir` install the same console
 handler, queue, listener and :class:`~otto.logger.formatters.RichFormatter` the
 CLI uses, and a :class:`~otto.host.local_host.LocalHost` runs a real shell
-command. Every sink renders a record as Rich markup, so a bracket in device
-output that Rich accepts as a tag (``[red]``, ``[link=x]``, ``[x:y]``) used to
-be deleted from the console and from both log files, and a lone ``[/x]`` could
-raise.
+command. The echo and output lines opt in to Rich markup for otto's styled
+host prefix, so a bracket in device output that Rich accepts as a tag
+(``[red]``, ``[link=x]``, ``[x:y]``) would be deleted from the console and
+from both log files, and a lone ``[/x]`` could raise, if the device's text
+were not escaped.
 
 Each fact is its own short output line: the console wraps at its width, and a
 wrapped fact would be split across two rendered lines.
@@ -30,6 +31,7 @@ _LINES = [
     "i [bold] j",
     "k [/x] l",
     r"m \[n] o",
+    "root:x:0:0 :warning: y",
 ]
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")

@@ -148,10 +148,11 @@ def test_a_mid_transfer_frame_is_partial():
     assert "32.8/49.2 kB" in row, row
 
 
-def test_a_bracketed_file_name_renders_and_keeps_its_brackets():
+def test_a_file_name_renders_with_its_brackets_and_emoji_codes_kept():
     # A remote file named like a Rich tag (a name cannot hold "/", so no [/x])
     # must neither raise on refresh nor lose its brackets.
-    for name in ("[x].log", "[red]a.log", "[link=x]b.log"):
+    # A name holding an emoji code (":x:") keeps it rather than becoming the emoji.
+    for name in ("[x].log", "[red]a.log", "[link=x]b.log", "root:x:0.log"):
         stream = events_for(src=f"/remote/{name}", total=8192, granularity=8192)
         _progress, text = _render(stream)
         assert f"host-a {name}" in text, text

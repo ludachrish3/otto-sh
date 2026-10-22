@@ -610,7 +610,7 @@ async def _record_host(host_id: str, *, images: bool, containers: bool) -> None:
             if found.answered:
                 record_docker_containers(get_projects(), host_id, names=found.names, ids=found.ids)
     except Exception as e:  # noqa: BLE001 — a completion hint never fails a verb
-        logger.debug(r"\[docker] observed state of %s not recorded: %r", host_id, e)
+        logger.debug("[docker] observed state of %s not recorded: %r", host_id, e)
 
 
 async def _build(

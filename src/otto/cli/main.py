@@ -1024,9 +1024,8 @@ def print_traceback_if_debug() -> None:
     has installed a handler.
 
     Printed straight to stderr rather than through ``logger.debug``: a
-    traceback is not log text. The console handler renders rich markup and
-    folds at the console width, and frames carry both brackets and
-    significant leading whitespace. The raw write also works where no
+    traceback is not log text. The console handler folds at the console
+    width, and frames carry significant leading whitespace. The raw write also works where no
     handler was ever installed.
     """
     if "DEBUG" in (

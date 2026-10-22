@@ -467,12 +467,11 @@ def test_resolve_coverage_auto_warning_names_no_membership_keyword(monkeypatch, 
 def test_resolve_coverage_auto_survives_a_malformed_hosts_selector(monkeypatch, caplog):
     """The other half of the same guard: a malformed selector warns, not raises.
 
-    The warning is also markup-escaped. Both errors carry a literal bracket
-    (``[coverage].hosts must be a string``, or a user regex like ``test[123]``
-    quoted back by ``EmptySelectionError``), and the console handler plus both
-    log files render log messages as Rich markup — unescaped, the bracketed
-    text is parsed as a style tag and silently eaten. ``getMessage()`` cannot
-    see that, so the LOGGED ARG is what this asserts.
+    Both errors carry a literal bracket (``[coverage].hosts must be a
+    string``, or a user regex like ``test[123]`` quoted back by
+    ``EmptySelectionError``). The record does not opt in to Rich markup, so
+    every sink shows it as written: the logged arg is the error's own text, with
+    no escape backslash for the reader to see.
     """
     from otto.config.coverage_settings import CoverageConfigError
     from otto.suite.run import RunOptions, resolve_coverage
@@ -491,13 +490,13 @@ def test_resolve_coverage_auto_survives_a_malformed_hosts_selector(monkeypatch, 
     assert resolved.cov is False
     record = caplog.records[-1]
     assert "coverage stays off" in record.getMessage()
-    # The escaped form reaches the handler, so the bracket survives rendering.
-    assert record.args[-1] == r"\[coverage].hosts must be a string"
+    assert not getattr(record, "markup", False)
+    assert record.args[-1] == "[coverage].hosts must be a string"
 
 
 def test_resolve_coverage_auto_warning_renders_its_brackets_literally(monkeypatch):
-    """End of the escaping chain: through a real Rich markup handler, the
-    ``[coverage]`` token is still in the rendered output."""
+    """Through a ``RichHandler`` built as otto's console handler is (markup off
+    unless a record opts in), the ``[coverage]`` token is in the rendered output."""
     import io
     import logging as _logging
 
@@ -520,7 +519,7 @@ def test_resolve_coverage_auto_warning_renders_its_brackets_literally(monkeypatc
     buf = io.StringIO()
     handler = RichHandler(
         console=Console(file=buf, width=200, force_terminal=False),
-        markup=True,
+        markup=False,
         highlighter=NullHighlighter(),
         show_time=False,
         show_path=False,
@@ -532,7 +531,7 @@ def test_resolve_coverage_auto_warning_renders_its_brackets_literally(monkeypatc
     assert resolve_coverage(RunOptions(), [], command="otto test").cov is False
 
     rendered = buf.getvalue()
-    assert "[coverage].hosts must be a string" in rendered
+    assert "coverage stays off: [coverage].hosts must be a string" in rendered
 
 
 def test_resolve_coverage_forced_on_refuses_an_empty_hosts_selection(monkeypatch):

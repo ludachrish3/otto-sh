@@ -27,7 +27,6 @@ from ..host.factory import apply_providers
 from ..host.host import Host, is_dry_run, refuse_declined_fact
 from ..host.mount import Mount
 from ..host.unix_host import UnixHost
-from ..logger.relay import relay_line
 from ..result import CommandNotRunError, CommandResult
 from ..utils import Status
 
@@ -174,11 +173,8 @@ async def _stack_already_up(parent: Host, project_name: str) -> bool | None:
     refuse_declined_fact(result, asked=f"stack_already_up({project_name!r})")
     if not result.status.is_ok:
         logger.warning(
-            relay_line(
-                rf"\[docker] could not tell whether {project_name} was already running on "
-                f"{parent.id}: ",
-                result.value,
-            )
+            f"[docker] could not tell whether {project_name} was already running on "
+            f"{parent.id}: {result.value}"
         )
         return None
     return bool(result.value.strip())
@@ -218,10 +214,8 @@ async def _resolve_container_id(
             # daemon, and compose_up's "none resolved" error tells the user to
             # read these warnings.
             logger.warning(
-                relay_line(
-                    rf"\[docker] looking up {project_name}/{service} on {parent.id} failed: ",
-                    result.value,
-                )
+                f"[docker] looking up {project_name}/{service} on {parent.id} failed: "
+                f"{result.value}"
             )
         if attempt < _CONTAINER_ID_RESOLVE_ATTEMPTS - 1:
             await asyncio.sleep(_CONTAINER_ID_RESOLVE_BACKOFF_S)
@@ -339,16 +333,13 @@ async def _rollback_partial_up(project: Project, lab: "Lab", parent: UnixHost, p
         # .error, not .exception: the traceback the user needs belongs to the
         # error we are propagating, not to the rollback that failed after it.
         logger.error(  # noqa: TRY400 — see above
-            rf"\[docker] {proj} could not be rolled back on {parent.id} and is still "
-            f"up: {e}"
+            f"[docker] {proj} could not be rolled back on {parent.id} and is still up: {e}"
         )
         return
     if not result.is_ok:
         logger.error(
-            relay_line(
-                rf"\[docker] {proj} could not be rolled back on {parent.id} and is still up: ",
-                result.value,
-            )
+            f"[docker] {proj} could not be rolled back on {parent.id} and is still up: "
+            f"{result.value}"
         )
 
 
@@ -406,7 +397,7 @@ async def register_stack_hosts(
         cid = await _resolve_container_id(parent, compose_project, service)
         if not cid:
             logger.warning(
-                rf"\[docker] could not resolve container id for {compose_project}/{service}; "
+                f"[docker] could not resolve container id for {compose_project}/{service}; "
                 f"skipping registration"
             )
             continue
@@ -495,7 +486,7 @@ async def _up_and_register(
     onto it and reap a displaced provider's now-orphaned container.
     """
     settings = project.docker_settings
-    logger.info(rf"\[docker] composing {proj} on {parent.id} (convergent)")
+    logger.info(f"[docker] composing {proj} on {parent.id} (convergent)")
     # `up -d` is convergent, so a transient libnetwork race (network
     # Created then reported "not found" when the container attaches) is
     # retried once with a brief backoff — the re-run starts the already-
@@ -516,7 +507,7 @@ async def _up_and_register(
             break
         if attempt == 0 and _is_transient_network_race(up.value):
             logger.debug(
-                rf"\[docker] {proj} hit a transient network race on up; "
+                f"[docker] {proj} hit a transient network race on up; "
                 f"retrying once after {_NETWORK_RACE_RETRY_BACKOFF_S}s"
             )
             await asyncio.sleep(_NETWORK_RACE_RETRY_BACKOFF_S)
@@ -536,18 +527,15 @@ async def _up_and_register(
         live_services = {s.strip() for s in live.value.splitlines() if s.strip()}
         if declared_services and set(declared_services) != live_services:
             logger.warning(
-                rf"\[docker] declared services {sorted(declared_services)} differ from "
+                f"[docker] declared services {sorted(declared_services)} differ from "
                 f"compose-listed services {sorted(live_services)} for {proj}"
             )
     elif declared_services:
         # A cross-check only: the declared list is authoritative, so losing the
         # comparison costs a warning, not the stack.
         logger.warning(
-            relay_line(
-                rf"\[docker] could not list {proj}'s services to cross-check the declared "
-                "ones: ",
-                live.value,
-            )
+            f"[docker] could not list {proj}'s services to cross-check the declared "
+            f"ones: {live.value}"
         )
     else:
         # Nothing declared AND nothing listed: `services` below would be empty,
@@ -654,7 +642,7 @@ async def compose_down(
         # .error, not .exception: this is returned as a failed CommandResult,
         # so the caller decides how loud to be about it.
         logger.error(  # noqa: TRY400 — see above
-            rf"\[docker] cannot stage compose files to tear {proj} down: {e}"
+            f"[docker] cannot stage compose files to tear {proj} down: {e}"
         )
         return CommandResult(Status.Failed, value=str(e), command="", retcode=1)
     result = await _compose_cmd(
@@ -665,7 +653,7 @@ async def compose_down(
         extra=f"--timeout {int(stop_timeout)}",
     )
     if not result.is_ok:
-        logger.error(relay_line(r"\[docker] compose down failed: ", result.value))
+        logger.error(f"[docker] compose down failed: {result.value}")
 
     # Unregister any hosts that came from this stack (shared with the
     # use-case teardown path, which sweeps `<parent>.<usecase>.` instead).
@@ -722,10 +710,7 @@ async def compose_down_project(
     )
     if not result.is_ok:
         logger.error(
-            relay_line(
-                rf"\[docker] compose down failed for {compose_project} on {parent.id}: ",
-                result.value,
-            )
+            f"[docker] compose down failed for {compose_project} on {parent.id}: {result.value}"
         )
     if remove_ids_under is not None:
         await unregister_container_hosts(lab, remove_ids_under)
@@ -774,7 +759,7 @@ async def unregister_container_hosts(
             try:
                 await host.close()
             except Exception as e:  # noqa: BLE001 — best-effort teardown, logs warning
-                logger.warning(rf"\[docker] error closing container host {hid}: {e}")
+                logger.warning(f"[docker] error closing container host {hid}: {e}")
     return drop
 
 

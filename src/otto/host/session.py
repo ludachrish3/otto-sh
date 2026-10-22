@@ -54,7 +54,6 @@ if TYPE_CHECKING:
 import logging
 
 from ..logger.mode import LogMode
-from ..logger.relay import relay_line
 from ..result import CommandNotRunError, CommandResult, NotRunResult, Results
 from ..utils import Status
 from .host import (
@@ -944,9 +943,7 @@ class ShellSession(ABC):
                 f"payload=<redacted {len(framed)} bytes>"
             )
         else:
-            logger.debug(
-                relay_line(f"{self._log_tag}: framed write ", f"cmd={cmd!r} payload={shown!r}")
-            )
+            logger.debug(f"{self._log_tag}: framed write cmd={cmd!r} payload={shown!r}")
         self._write_progress = write_progress
         try:
             await self.write_transport(framed)
@@ -984,10 +981,8 @@ class ShellSession(ABC):
                     if pat.search(data):
                         await self.write_transport(response)
                         logger.debug(
-                            relay_line(
-                                f"{self._log_tag}: expect matched ",
-                                f"pattern={getattr(pat, 'pattern', pat)!r} response={response!r}",
-                            )
+                            f"{self._log_tag}: expect matched "
+                            f"pattern={getattr(pat, 'pattern', pat)!r} response={response!r}"
                         )
                         expect_matched = True
                         break
@@ -1000,11 +995,7 @@ class ShellSession(ABC):
                 if not seen_begin:
                     if self._frame.marks_begin(data, self._markers):
                         if not redact:
-                            logger.debug(
-                                relay_line(
-                                    f"{self._log_tag}: begin marker matched on ", f"chunk={data!r}"
-                                )
-                            )
+                            logger.debug(f"{self._log_tag}: begin marker matched on chunk={data!r}")
                         seen_begin = True
                 elif live:
                     line = data.rstrip("\r\n").replace("\r", "")
@@ -1034,11 +1025,9 @@ class ShellSession(ABC):
             )
         else:
             logger.debug(
-                relay_line(
-                    f"{self._log_tag}: run_cmd done ",
-                    f"cmd={cmd!r} retcode={retcode} "
-                    f"output_len={len(output)} buffer={buffer_preview!r}",
-                )
+                f"{self._log_tag}: run_cmd done "
+                f"cmd={cmd!r} retcode={retcode} "
+                f"output_len={len(output)} buffer={buffer_preview!r}"
             )
         return CommandResult(status=status, value=output, command=cmd, retcode=retcode)
 
@@ -2751,7 +2740,7 @@ class SessionManager:
                     last_exc = exc
                     if attempt == 0 and new_session._retry_failed_handshake:  # noqa: SLF001 — intra-package read of the session's own retry verdict
                         logger.debug(
-                            rf"SessionManager\[{self._name}]: handshake failed "
+                            f"SessionManager[{self._name}]: handshake failed "
                             f"on first attempt ({exc!r}); rebuilding transport "
                             f"and retrying once"
                         )
@@ -2811,7 +2800,7 @@ class SessionManager:
         if term == "telnet" and not named:
             telnet_conn = await self._connections.telnet()
             logger.debug(
-                rf"SessionManager\[{self._name}]: building telnet session "
+                f"SessionManager[{self._name}]: building telnet session "
                 f"with frame={type(self._session_frame).__name__}"
             )
             return TelnetSession(

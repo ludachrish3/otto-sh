@@ -105,10 +105,16 @@ class ExpectCollector:
 
         self.failures.append(report)
         if self.logger is not None:
-            log_msg = f"[bold yellow]EXPECT FAILED[/bold yellow]  {header}\n  {source_line}"
+            from rich.markup import escape
+
+            # The report is the test's own text: escaped, so its brackets print.
+            log_msg = (
+                f"[bold yellow]EXPECT FAILED[/bold yellow]  {escape(header)}"
+                f"\n  {escape(source_line)}"
+            )
             if msg:
-                log_msg += f"\n  Message: {msg}"
-            self.logger.warning(log_msg)
+                log_msg += f"\n  Message: {escape(msg)}"
+            self.logger.warning(log_msg, extra={"markup": True, "emoji": False})
 
     def __call__(self, condition: object, msg: str | None = None) -> None:
         """``expect(condition, msg)`` — the form the ``expect`` fixture hands a test.

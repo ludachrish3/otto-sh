@@ -814,7 +814,10 @@ def ensure_cli_session(ctx: typer.Context) -> None:
             if opts.probe
             else "No device will be contacted."
         )
-        logger.info(f"[magenta][DRY RUN] Commands and file transfers will be skipped. {contact}")
+        logger.info(
+            f"[magenta][DRY RUN] Commands and file transfers will be skipped. {contact}",
+            extra={"markup": True},
+        )
 
     # The project-aware half, shared with library callers: every project's
     # [logging.levels] over otto's defaults (a conflict refuses), and the
@@ -893,8 +896,9 @@ def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
     identity = reservation_gate.identity
     if identity is not None and identity.source == "--holder":
         getLogger(__name__).info(
-            rf"[bold magenta]\[reservations] acting as {identity.username!r}"
-            rf" (--holder)[/bold magenta]"
+            rf"[bold magenta]\[reservations] acting as {escape(repr(identity.username))}"
+            rf" (--holder)[/bold magenta]",
+            extra={"markup": True, "emoji": False},
         )
 
     meta["otto_reservation"] = reservation_gate
@@ -1053,10 +1057,9 @@ def _echo_demotions(demoted: "list[DemotedProject]") -> None:
     # run CONTINUES past here, so stdout belongs to the command.
     #
     # MARKUP. The lab-inferred reason interpolates the selection in
-    # SQUARE BRACKETS, and both console routes — `rich.print` and the
-    # console handler, a RichHandler with `markup=True` — read `[unix]`
-    # as a style tag and delete it, leaving `lab(s) )`. `typer.echo`
-    # renders the sentence as written.
+    # SQUARE BRACKETS, and `rich.print` reads `[unix]` as a style tag and
+    # deletes it, leaving `lab(s) )`. `typer.echo` renders the sentence as
+    # written.
     for d in demoted:
         typer.echo(
             f"warning: project {d.name!r} failed to load, but is inactive "

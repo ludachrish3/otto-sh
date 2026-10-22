@@ -91,45 +91,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _literal(message: str) -> str:
-    r"""Return *message* with rich markup escaped, so its brackets reach EVERY sink.
-
-    MEASURED, not defensive, and measured across all three sinks rather than
-    the one that is easy to reach from a test. Otto renders a log record three
-    times: the console handler is a ``rich.logging.RichHandler`` built
-    ``markup=True``, and both log files go through
-    :class:`otto.logger.formatters.RichFormatter`, whose ``_stylize`` prints
-    ``record.msg`` through a rich console with ``markup=True`` hard-coded. So
-    ``[bench, floor]`` is parsed as a style tag and DELETED in all three:
-    "not applicable to the loaded lab(s) [bench, floor]" arrives as "not
-    applicable to the loaded lab(s)", with the one fact the reader needed gone
-    and nothing to suggest anything is missing. Every message this module logs
-    interpolates a lab list, a pattern list or a project name, so none of them can
-    be assumed bracket-free.
-
-    ESCAPING AT THE SOURCE IS THE ONLY FIX THAT REACHES THE FILES.
-    ``extra={"markup": False}`` was tried first and is wrong: ``RichHandler``
-    honours it, ``RichFormatter`` never looks at ``record.markup``, so the
-    console is repaired while ``console.log`` and ``verbose.log`` stay broken --
-    and those are the sinks an operator greps after the run. Escaping leaves no
-    backslashes anywhere, precisely because all three sinks DO render markup:
-    ``\[bench`` arrives as ``[bench``. Doing both would be the one visibly
-    broken combination -- the console would print the backslash.
-
-    The same call :func:`otto.cli.invoke.print_error` makes at its own render
-    seam, for the same reason.
-
-    Args:
-        message: The fully interpolated log line.
-
-    Returns:
-        *message* with every markup-significant bracket escaped.
-    """
-    from rich.markup import escape  # function-scope: `import otto.project` stays cheap
-
-    return escape(message)
-
-
 class InactiveRequiredDependencyError(OttoError):
     """A kept project requires a provider the LABS switched off (activation spec section 4).
 
@@ -368,15 +329,13 @@ def _applicable(
             continue
         if switched_off(project.name, ctx):
             logger.warning(
-                _literal(
-                    f"project {project.name!r} switched off for this run "
-                    f"(--exclude-projects {normalize_name(project.name)}) — skipping it for {verb}"
-                )
+                f"project {project.name!r} switched off for this run "
+                f"(--exclude-projects {normalize_name(project.name)}) — skipping it for {verb}"
             )
         else:
             # Not switched off and not active leaves exactly one cause, so the
             # verdict is present: ``active`` resolves True for a missing one.
-            logger.warning(_literal(_skip_message(scopes_of(ctx)[project.name], verb)))
+            logger.warning(_skip_message(scopes_of(ctx)[project.name], verb))
 
     for project in keep:
         for dep in project.dependencies:
@@ -438,11 +397,9 @@ def _announce_dropped_provider(
         if not announce:
             return
         logger.warning(
-            _literal(
-                f"project {project.name!r} requires {provider.name!r}, which was "
-                f"switched off (--exclude-projects {dep.normalized}) — "
-                f"proceeding as though {provider.name} is handled externally"
-            )
+            f"project {project.name!r} requires {provider.name!r}, which was "
+            f"switched off (--exclude-projects {dep.normalized}) — "
+            f"proceeding as though {provider.name} is handled externally"
         )
         return
     if dep.required:
@@ -452,13 +409,11 @@ def _announce_dropped_provider(
             if not announce:
                 return
             logger.warning(
-                _literal(
-                    f"project {project.name!r} requires {provider.name!r}, which is not "
-                    f"applicable to the loaded lab(s) [{labs}] — continuing, because "
-                    f"{verb} does not build {project.name} on top of it. A build-up verb "
-                    f"will refuse until a lab {provider.name} applies to is loaded, or "
-                    f"--exclude-projects={dep.normalized} declares it handled externally."
-                )
+                f"project {project.name!r} requires {provider.name!r}, which is not "
+                f"applicable to the loaded lab(s) [{labs}] — continuing, because "
+                f"{verb} does not build {project.name} on top of it. A build-up verb "
+                f"will refuse until a lab {provider.name} applies to is loaded, or "
+                f"--exclude-projects={dep.normalized} declares it handled externally."
             )
             return
         raise InactiveRequiredDependencyError(
@@ -478,10 +433,8 @@ def _announce_dropped_provider(
         f"[{', '.join(scopes_of(ctx)[provider.name].loaded_labs) or '(none)'}]"
     )
     logger.warning(
-        _literal(
-            f"project {project.name!r}: optional dependency {provider.name!r} "
-            f"not satisfied for this run — {provider.name} is inactive ({reason})"
-        )
+        f"project {project.name!r}: optional dependency {provider.name!r} "
+        f"not satisfied for this run — {provider.name} is inactive ({reason})"
     )
 
 
@@ -1167,11 +1120,9 @@ async def status(opts: "StatusOptions | OptionsSource | None" = None) -> Project
         if not active(project.name, ctx):
             if switched_off(project.name, ctx):
                 logger.warning(
-                    _literal(
-                        f"project {project.name!r} switched off for this run "
-                        f"(--exclude-projects {normalize_name(project.name)}) "
-                        "— skipping it for status"
-                    )
+                    f"project {project.name!r} switched off for this run "
+                    f"(--exclude-projects {normalize_name(project.name)}) "
+                    "— skipping it for status"
                 )
             continue
         actions = actions_for(project, ctx)

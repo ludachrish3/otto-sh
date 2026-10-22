@@ -1027,11 +1027,16 @@ class OttoPlugin:
             show_test_item(item, add_space=False)
 
         # ── Call (repeated) ───────────────────────────────────────────
+        from rich.markup import escape
+
         iteration = 0
         is_stability = self._iterations > 1 or self._duration > 0
         while iteration < max_iters and time.monotonic() < deadline:
             if is_stability:
-                logger.info(f"[bold cyan]--- {item.name} iteration {iteration + 1} ---[/bold cyan]")
+                logger.info(
+                    f"[bold cyan]--- {escape(item.name)} iteration {iteration + 1} ---[/bold cyan]",
+                    extra={"markup": True, "emoji": False},
+                )
             if iteration > 0:  # iteration 1's dir came from the fixture at setup
                 self._advance_test_dir(item, iteration + 1)
             call_and_report(item, "call", log=True)
@@ -1171,8 +1176,14 @@ class OttoPlugin:
         ``...: pass`` or ``...: fail``, where the owner is the test's class, or
         its module's stem for a plain function.
         """
+        from rich.markup import escape
+
         node = cast("pytest.Item", request.node)
-        logger.info(f"[bold cyan]=== {node.name} ===[/bold cyan]")
+        # escape(): a parametrized test's name carries its id in brackets.
+        logger.info(
+            f"[bold cyan]=== {escape(node.name)} ===[/bold cyan]",
+            extra={"markup": True, "emoji": False},
+        )
         collector = self.session_monitor_collector
         if collector is None:
             yield

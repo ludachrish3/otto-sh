@@ -131,7 +131,7 @@ async def inspect_mounts(parent: Host, container_ids: "list[str]") -> "dict[str,
     if unanswered:
         host_name: str = parent.id
         logger.warning(
-            rf"\[docker] could not read mounts for "
+            f"[docker] could not read mounts for "
             rf"{', '.join(c[:12] for c in unanswered)} on {host_name}; "
             rf"path translation will be unavailable for those containers"
         )

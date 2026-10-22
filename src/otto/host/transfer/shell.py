@@ -77,8 +77,6 @@ from typing import TYPE_CHECKING, Any
 
 from typing_extensions import override
 
-from ...logger.relay import relay_line
-
 if TYPE_CHECKING:
     from ..connections import ConnectionManager
     from ..userland import Userland
@@ -1081,10 +1079,8 @@ class UuencodeCodec(ShellCodec):
         result = await exec_cmd(f"rm -f -- {quoted_scratch}")
         if not result.is_ok:
             _logger.debug(
-                relay_line(
-                    f"sweep of uu scratch {quoted_scratch} failed (ignored): ",
-                    str(result.value or result.msg),
-                )
+                f"sweep of uu scratch {quoted_scratch} failed (ignored): "
+                f"{result.value or result.msg}"
             )
 
     @override
@@ -1635,10 +1631,8 @@ class ShellFileTransfer(UnixFileTransfer):
         result = await self._exec_cmd(f"rm -f -- {quoted_temp}")
         if not result.is_ok:
             _logger.debug(
-                relay_line(
-                    f"{self._name}: cleanup of {quoted_temp} failed (ignored): ",
-                    str(result.value or result.msg),
-                )
+                f"{self._name}: cleanup of {quoted_temp} failed (ignored): "
+                f"{result.value or result.msg}"
             )
 
     async def _cleanup_temp_interrupted(self, quoted_temp: str) -> None:

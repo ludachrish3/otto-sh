@@ -26,7 +26,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ... import layout
-from ...logger.relay import relay_line
 from ...utils import Status
 
 if TYPE_CHECKING:
@@ -114,7 +113,7 @@ async def _fetch_one_product(host: Any, product: "Product", staging_root: Path) 
             "%s:%s: prepare_coverage failed: %s — product skipped for this run",
             host.id,
             product.name,
-            relay_line("", prepared.msg),
+            prepared.msg,
         )
         return None
     q = shlex.quote(cov_dir)
@@ -177,10 +176,7 @@ async def _take_archive(
             product.name,
             host.id,
             cov_dir,
-            relay_line(
-                "",
-                "\n".join(line for line in lines if not line.startswith(_ARCHIVE_MARK)).strip(),
-            ),
+            "\n".join(line for line in lines if not line.startswith(_ARCHIVE_MARK)).strip(),
         )
         return None
     if not remote_tar:
@@ -192,7 +188,7 @@ async def _take_archive(
             product.name,
             host.id,
             cov_dir,
-            relay_line("", repr("\n".join(lines).strip())),
+            repr("\n".join(lines).strip()),
         )
         return None
     local_tar = dest / Path(remote_tar).name

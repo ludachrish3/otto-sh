@@ -14,7 +14,6 @@ from dataclasses import dataclass, field
 from ..config.project import Project
 from ..config.scope import DockerImage
 from ..host.host import Host, is_dry_run
-from ..logger.relay import relay_line
 from ..result import CommandNotRunError, CommandResult
 from ..utils import Status
 from .reports import ImageBuild
@@ -149,7 +148,7 @@ async def _build_one(
     and a build it does not list is a failure.
     """
     references = image_references(image, options)
-    logger.info(rf"\[docker] building {references[0]}")
+    logger.info(f"[docker] building {references[0]}")
     # Unbounded on purpose: an image build/pull has no defensible bound, and a
     # made-up constant would be wrong on a slower builder. `inf` states that.
     if image.is_archive:
@@ -164,10 +163,8 @@ async def _build_one(
                 removed = await parent.exec(f"rm -f {shlex.quote(str(remote))}")
                 if not removed.is_ok:
                     logger.warning(
-                        relay_line(
-                            f"{parent.id}: could not remove the uploaded archive {remote}: ",
-                            removed.value.strip(),
-                        )
+                        f"{parent.id}: could not remove the uploaded archive {remote}: "
+                        f"{removed.value.strip()}"
                     )
     else:
         await stage_image_context(parent, project, image)

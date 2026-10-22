@@ -38,6 +38,7 @@ from otto.result import CommandResult
 from otto.utils import Status
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result
 from tests._fixtures.dispatch import DispatchRunner
+from tests._fixtures.log_text import shown
 from tests.conftest import active_context
 
 from .test_cli import _uc, _uc_project
@@ -315,8 +316,6 @@ def test_a_dry_run_plan_joins_two_displacements_as_sentences(tmp_path, argv):
 
 def test_the_log_line_keeps_markup_looking_names_literal(caplog):
     """A `[x]` in a project or capability name is data, not a rich style tag."""
-    from rich.text import Text
-
     from otto.docker.deployment import _log_displacements
     from otto.docker.resolve import Selection
 
@@ -331,7 +330,7 @@ def test_the_log_line_keeps_markup_looking_names_literal(caplog):
         _log_displacements("integration", Selection("integration", [], displaced=[d]))
 
     (record,) = caplog.records
-    rendered = Text.from_markup(record.getMessage()).plain
+    rendered = shown(record)
     assert rendered == f"[docker] use-case integration: {d.describe()}"
     assert "edge[x]" in rendered
     assert "a[bold]" in rendered

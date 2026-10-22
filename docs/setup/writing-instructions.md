@@ -631,3 +631,6 @@ reaches the console and the log files.
 Warnings and errors are never suppressed by the log mode, whichever one you
 pass. See {doc}`../cli/host/exec` for the CLI-side view of the same
 output.
+
+An instruction's own log messages follow the same rules as a test's:
+{ref}`log-markup` covers styling one with Rich markup.

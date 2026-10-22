@@ -28,7 +28,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ... import layout
-from ...logger.relay import relay_line
 from ...utils import Status
 
 if TYPE_CHECKING:
@@ -166,15 +165,15 @@ async def _collect_one_embedded_host(
             "Dumping embedded coverage for %s from %s via %s",
             product.name,
             host.id,
-            relay_line("", repr(dump_command)),
+            repr(dump_command),
         )
         result = await host.exec(dump_command, timeout=_DUMP_TIMEOUT)
         if result.status != Status.Success:
             logger.error(
                 "%s failed on %s: %s",
-                relay_line("", dump_command),
+                dump_command,
                 host.id,
-                relay_line("", str(result.value)),
+                str(result.value),
             )
             continue
 

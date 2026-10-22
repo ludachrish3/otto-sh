@@ -1463,19 +1463,18 @@ class TestCovEmptySelectionCliWording:
 # ── rich-markup escaping — literal brackets must survive the console handler ─
 
 
-class TestCovMarkupEscaping:
-    """A ``[coverage]``-bearing error message must render *literally* through
+class TestCovRefusalRendersLiterally:
+    """A ``[coverage]``-bearing refusal message must render *literally* through
     the real ``RichHandler`` console pipeline.
 
-    ``RichHandler``/``rich.console.Console`` are built with ``markup=True``
-    (see ``otto.logger.management.init_cli_logging``), so an unescaped
-    ``logger.error(str(e))`` of a message containing a literal ``[coverage]``
-    is parsed as an (unknown-style) markup tag and the bracketed text is
-    silently eaten — e.g. "No [coverage] section found" renders as "No
-    section found". This wires a real ``RichHandler`` onto a
-    ``Console(file=StringIO())`` (mirroring ``init_cli_logging``'s kwargs) in
-    place of the module logger's handlers, so the assertion exercises actual
-    rendering rather than just the string handed to ``logger.error``.
+    The console handler is built ``markup=False`` (see
+    ``otto.logger.management.install_console``) and the refusal's record does
+    not opt in, so "No [coverage] section found" must reach the terminal as
+    written -- neither eaten as a tag nor shown with an escape backslash. This
+    wires a real ``RichHandler`` onto a ``Console(file=StringIO())`` (mirroring
+    ``install_console``'s kwargs) in place of the module logger's handlers, so
+    the assertion exercises actual rendering rather than just the string handed
+    to ``logger.error``.
     """
 
     @staticmethod
@@ -1491,7 +1490,7 @@ class TestCovMarkupEscaping:
         buf = io.StringIO()
         handler = RichHandler(
             console=Console(file=buf, width=120, force_terminal=False),
-            markup=True,
+            markup=False,
             highlighter=NullHighlighter(),
             show_time=False,
             show_path=False,
@@ -1514,14 +1513,12 @@ class TestCovMarkupEscaping:
     def test_no_config_error_renders_literal_brackets(self):
         exit_code, rendered = self._render_refusal("get", "otto.coverage.get.get_coverage")
         assert exit_code == 1
-        assert "[coverage]" in rendered
-        assert "No  section found" not in rendered
+        assert "No [coverage] section found" in rendered
 
     def test_clean_no_config_error_renders_literal_brackets(self):
         exit_code, rendered = self._render_refusal("clean", "otto.coverage.collect.clean_coverage")
         assert exit_code == 1
-        assert "[coverage]" in rendered
-        assert "No  section found" not in rendered
+        assert "No [coverage] section found" in rendered
 
 
 # ── clean command — a thin leaf over clean_coverage ─────────────────────────

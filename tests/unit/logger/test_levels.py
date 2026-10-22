@@ -112,8 +112,8 @@ def test_formatting_a_record_twice_renders_the_same_text():
     second file handler renders text the first one already rendered — and rich
     markup does not survive being rendered twice.
 
-    THE ESCAPED BRACKET IS THE CASE THAT BITES. Otto escapes brackets it wants
-    taken literally (``otto.project.orchestrator._literal``); the first pass
+    THE ESCAPED BRACKET IS THE CASE THAT BITES. A record that opts in to markup
+    escapes the brackets it wants taken literally; the first pass
     turns ``\\[bench]`` into ``[bench]``, and the second pass reads that bare
     bracket as a style tag and DELETES it. The symptom is ``console.log``
     carrying the lab list and ``verbose.log`` silently missing it — one log
@@ -126,11 +126,12 @@ def test_formatting_a_record_twice_renders_the_same_text():
     formatter = RichFormatter()
     formatter.rich = False
     record = _record(r"lab(s) \[bench, floor] here")
+    record.markup = True
 
     first = formatter.format(record)
     second = formatter.format(record)
 
-    assert "[bench, floor]" in first
+    assert "lab(s) [bench, floor] here" in first
     assert second == first
 
 

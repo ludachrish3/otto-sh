@@ -495,7 +495,7 @@ def warn_relative_bind_sources(handle: str, text: str, staged_dir: Path) -> None
     for source in sources:
         resolved = Path(os.path.normpath(str(staged_dir / source)))
         logger.warning(
-            rf"\[docker] compose file {handle!r} binds the relative source {source!r}, "
+            f"[docker] compose file {handle!r} binds the relative source {source!r}, "
             rf"which resolves to {resolved} on the parent — otto re-creates that staging "
             rf"directory on every deploy, so anything written there is lost. Use an "
             rf"absolute path on the parent, or a named volume."

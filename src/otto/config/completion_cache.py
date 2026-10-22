@@ -1546,7 +1546,7 @@ def _bounded(
             f"host source did not answer within {deadline}s — offering no hosts for it. "
             f"Raise {HOST_SUMMARY_DEADLINE_ENV_VAR} if it is merely slow."
         )
-        logging.getLogger(__name__).warning(rf"\[completion] {project.root}: {reason}")
+        logging.getLogger(__name__).warning(f"[completion] {project.root}: {reason}")
         return ProjectEnumeration(drops=[HostDrop(where=str(project.root), reason=reason)])
     # `or ProjectEnumeration()` rather than `box[0]`: a work() returning None
     # would otherwise hand every caller a None to read attributes off.
@@ -1603,7 +1603,7 @@ def resolve_process_inventory(projects: "Sequence[Project]") -> InventoryResolut
         return InventoryResolution(inventory=build_inventory(list(projects)))
     except Exception as e:  # noqa: BLE001 — completion never crashes the shell
         logging.getLogger(__name__).warning(
-            rf"\[completion] the host inventory could not be resolved, so no host "
+            f"[completion] the host inventory could not be resolved, so no host "
             f"completes until it is fixed: {e}"
         )
         return InventoryResolution(error=f"{type(e).__name__}: {e}")
@@ -1710,7 +1710,7 @@ def _enumerate_host_summaries(
         except Exception as e:  # noqa: BLE001 — completion never crashes the shell
             if abandoned is None or not abandoned.is_set():
                 logging.getLogger(__name__).warning(
-                    rf"\[completion] could not enumerate hosts for {project.root}: {e}"
+                    f"[completion] could not enumerate hosts for {project.root}: {e}"
                 )
             drops.append(HostDrop(where=str(project.root), reason=f"host source failed: {e}"))
             summaries = []
@@ -2116,7 +2116,7 @@ def collect_lab_names(projects: list["Project"]) -> list[str]:
             names.update(repository.list_labs())
         except Exception as e:  # noqa: BLE001, PERF203 — per-project resilience: one bad backend must not deny the rest
             logging.getLogger(__name__).warning(
-                rf"\[completion] could not list labs for {project.root}: {e}"
+                f"[completion] could not list labs for {project.root}: {e}"
             )
     return sorted(names)
 

@@ -346,12 +346,12 @@ class TestGcdaFetcher:
     ):
         """The device's tar error reaches every sink as the device printed it (#697).
 
-        Every sink renders a record as Rich markup, so the record's rendered
-        text is what the console and both log files show.
+        The record does not opt in to Rich markup, so the console and both
+        log files show its message as written.
         """
         import logging
 
-        from rich.text import Text
+        from tests._fixtures.log_text import shown
 
         output = "tar: ./[x:y].gcda: Cannot open [/x]"
         host = _make_mock_host("host1")
@@ -360,7 +360,7 @@ class TestGcdaFetcher:
 
         with caplog.at_level(logging.WARNING, logger="otto.coverage.fetcher.remote"):
             assert await GcdaFetcher(tmp_path / "staging").fetch_all() == {}
-        rendered = [Text.from_markup(r.getMessage()).plain for r in caplog.records]
+        rendered = [shown(r) for r in caplog.records]
         assert any(line.endswith(f": {output}") for line in rendered), rendered
 
     @pytest.mark.asyncio

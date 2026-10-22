@@ -210,10 +210,10 @@ class TestRemoveTunnel:
     def test_a_failed_kills_output_is_relayed_verbatim(self) -> None:
         """The device's kill error reaches every sink as the device printed it (#697).
 
-        Every sink renders a record as Rich markup, so the record's rendered
-        text is what the console and both log files show.
+        The record does not opt in to Rich markup, so the console and both
+        log files show its message as written.
         """
-        from rich.text import Text
+        from tests._fixtures.log_text import shown
 
         tunnel = Tunnel(protocol="tcp", service_port=8080, path=(TunnelHop("a"), TunnelHop("b")))
         carrier_fwd, carrier_rev = _LO, _LO + 1
@@ -237,7 +237,7 @@ class TestRemoveTunnel:
         finally:
             manage_logger.removeHandler(handler)
 
-        rendered = [Text.from_markup(r.getMessage()).plain for r in captured]
+        rendered = [shown(r) for r in captured]
         assert f"otto tunnel: kill failed on host 'a': {output!r}" in rendered, rendered
 
     def test_kill_timeout_marks_unreachable_and_continues(self) -> None:

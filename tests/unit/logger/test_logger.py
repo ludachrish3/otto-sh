@@ -69,15 +69,6 @@ def test_remove_old_logs_xdir_does_not_exist(tmpdir, caplog):
     assert len(caplog.records) == 0
 
 
-# TODO: Look into a better way to automate verification of this test.
-# Currently does not colorize or any other rich formatting
-# Maybe verify stdout content?
-def test_log_formatting(tmpdir, caplog):
-    with caplog.at_level("INFO", logger="otto"):
-        logger.info("[magenta]This is important")
-    assert len(caplog.records) == 1
-
-
 def test_remove_old_logs_respects_time_budget(monkeypatch, caplog):
     """The scan stops once the time budget is exceeded and resumes next run."""
     cmd_dir = management._state.xdir / "pytest"

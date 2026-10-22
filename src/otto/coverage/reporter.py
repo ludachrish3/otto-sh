@@ -1027,8 +1027,6 @@ async def _capture_states(
         otto.coverage.errors.CaptureCommitError: A pending cov dir was
             collected at another commit than the tree's.
     """
-    from rich.markup import escape as escape_markup
-
     from .capture.produce import produce_captures
     from .errors import CoverageCaptureError
 
@@ -1058,9 +1056,8 @@ async def _capture_states(
     if failed:
         names = ", ".join(dict.fromkeys(f"{d.parent.name}/{d.name}" for d in failed))
         reasons = ", ".join(str(d / "capture.failed") for d in failed)
-        # The console renders log messages as Rich markup; the detail is lcov text.
         message = "\n\n".join([f"{names}: failed to capture; see {reasons}", *details])
-        logger.warning(escape_markup(message))
+        logger.warning(message)
     return captures
 
 

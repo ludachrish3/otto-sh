@@ -336,11 +336,8 @@ def report(
         # tool that cannot read the build's format (e.g. clang build captured
         # with GNU gcov), or a gcov the data's own stamp names that is not
         # installed: the message already names the cause and remedy — print
-        # it clean, never as a traceback. Escaped:
-        # the console handler renders log messages as Rich markup, and this
-        # message is arbitrary (lcov/geninfo) text that may itself contain a
-        # literal bracket.
-        logger.error(escape_markup(str(e)))  # noqa: TRY400 — deliberately no traceback: user-facing cause + remedy
+        # it clean, never as a traceback.
+        logger.error(str(e))  # noqa: TRY400 — deliberately no traceback: user-facing cause + remedy
         raise typer.Exit(1) from e
     except NotAGitRepoError as e:
         # A [coverage] section resolved a project_root that is not a git repository:
@@ -356,7 +353,7 @@ def report(
     except GitUnavailableError as e:
         # git missing, or a git command that failed inside a real git repository: echo
         # what git said rather than mislabelling it as "not a git repository".
-        logger.error(escape_markup(str(e)))  # noqa: TRY400 — deliberately no traceback: git's own message is the cause
+        logger.error(str(e))  # noqa: TRY400 — deliberately no traceback: git's own message is the cause
         raise typer.Exit(1) from e
     except (DestinationError, CoverageInputError) as e:
         # A refused input — a run directory that does not exist or that no
@@ -370,12 +367,11 @@ def report(
         # A malformed committed manual capture (load_manual_captures wraps the
         # parse error with the offending file name), or the no-[coverage]-
         # config / no-.gcda ValueErrors raised by collect_coverage. Print the
-        # cause clean, escaped for the Rich-markup console handler (these
-        # messages may contain a literal bracket, e.g. "[coverage]").
-        logger.error(escape_markup(str(e)))  # noqa: TRY400 — deliberately no traceback: user-facing cause (names the bad file)
+        # cause clean.
+        logger.error(str(e))  # noqa: TRY400 — deliberately no traceback: user-facing cause (names the bad file)
         raise typer.Exit(1) from e
     except RuntimeError as e:
-        logger.error("Coverage merge failed: %s", escape_markup(str(e)))  # noqa: TRY400 — deliberately no traceback: lcov output is the diagnostic
+        logger.error("Coverage merge failed: %s", e)  # noqa: TRY400 — deliberately no traceback: lcov output is the diagnostic
         raise typer.Exit(1) from e
     if store.file_count() == 0:
         # A store with no files is a vacuous success — restore the old loud
@@ -430,7 +426,7 @@ def report(
             # ticket table is a loud, CI-visible failure here (unlike
             # `otto test`'s never-fail-a-successful-run policy for its
             # optional post-run tail).
-            logger.error(escape_markup(str(e)))  # noqa: TRY400 — deliberately no traceback: clean cause line
+            logger.error(str(e))  # noqa: TRY400 — deliberately no traceback: clean cause line
             raise typer.Exit(1) from e
         logger.info("Ticket export: %s", tickets_json)
 
@@ -529,20 +525,20 @@ def get(
         # The verdicts go to the console as the rounded table; only the
         # headline is logged beside it (the rest of the message is the same
         # verdicts in plain text).
-        logger.error(escape_markup(render_instrumentation_refusal(e)))  # noqa: TRY400 — deliberately no traceback: clean cause line
+        logger.error(render_instrumentation_refusal(e))  # noqa: TRY400 — deliberately no traceback: clean cause line
         raise typer.Exit(1) from e
     except CoverageCaptureError as e:
         # The products that captured were kept; with --clean their clean is
         # reported too, a failed reset as loudly as on success.
-        logger.error(escape_markup(str(e)))  # noqa: TRY400 — deliberately no traceback: clean cause line
+        logger.error(str(e))  # noqa: TRY400 — deliberately no traceback: clean cause line
         if e.clean is not None:
             _render_clean_report(e.clean)
         raise typer.Exit(1) from e
     except (ValueError, RuntimeError) as e:
         # Every other refusal (no [coverage] section, an empty host selection,
         # no repository, no data, a typed capture error) names its own cause
-        # and remedy. Escaped: these messages may carry a literal bracket.
-        logger.error(escape_markup(_failure_line(e)))  # noqa: TRY400 — deliberately no traceback: clean cause line
+        # and remedy.
+        logger.error(_failure_line(e))  # noqa: TRY400 — deliberately no traceback: clean cause line
         raise typer.Exit(1) from e
     _render_get_report(got)
 
@@ -586,8 +582,8 @@ def clean() -> None:
         cleaned = run_command(clean_coverage())
     except ValueError as e:
         # No [coverage] section, a malformed selector, or no host to walk:
-        # each message names the cause. Escaped for the literal "[coverage]".
-        logger.error(escape_markup(_failure_line(e)))  # noqa: TRY400 — deliberately no traceback: clean cause line
+        # each message names the cause.
+        logger.error(_failure_line(e))  # noqa: TRY400 — deliberately no traceback: clean cause line
         raise typer.Exit(1) from e
     _render_clean_report(cleaned)
 

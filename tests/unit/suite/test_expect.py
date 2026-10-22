@@ -64,6 +64,20 @@ class TestExpectCollector:
             c.expect(False, "logged failure")
         assert any("logged failure" in r.message for r in caplog.records)
 
+    def test_a_failure_line_keeps_its_colon_words_literal(self, caplog):
+        """The source line is foreign text: ``:x:`` must not become an emoji."""
+        from otto.logger.formatters import RichFormatter
+
+        logger = logging.getLogger("otto.test.expect")
+        c = ExpectCollector(logger=logger)
+        passwd = "daemon"
+        with caplog.at_level(logging.WARNING, logger="otto.test.expect"):
+            c.expect(passwd.startswith("root:x:0:0"), "see :warning: [red]")
+        (record,) = [r for r in caplog.records if "EXPECT FAILED" in r.message]
+        rendered = RichFormatter(fmt="{message}").format(record)
+        assert "root:x:0:0" in rendered
+        assert ":warning: [red]" in rendered
+
     def test_module_level_expect_uses_explicit_collector(self):
         c = ExpectCollector()
         expect(2 + 2 == 5, "via module fn", collector=c)

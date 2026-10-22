@@ -532,21 +532,15 @@ def resolve_coverage(opts: RunOptions, projects: "list[Project]", *, command: st
             raise NoCoverageHostsError(f"{command}: {e.cli_message(walker='coverage')}") from e
         if forced_on:
             raise
-        from rich.markup import escape as escape_markup
-
         # Auto: the user asked for a test run, not for coverage. A broken
         # [coverage].hosts selector turns retrieval off with one warning
-        # instead of killing the run. escape_markup(*e*): both of these
-        # messages carry a literal bracket — "[coverage].hosts must be a
-        # string", or the user's own regex (`test[123]`) quoted back by
-        # EmptySelectionError — and the console handler and both log files
-        # render messages as Rich markup, which would eat it.
+        # instead of killing the run.
         from ..config.scope import selection_message
 
         logger.warning(
             "%s: coverage stays off: %s",
             command,
-            escape_markup(selection_message(e, walker="coverage") or str(e)),
+            selection_message(e, walker="coverage") or str(e),
         )
         return dataclasses.replace(opts, cov=False)
 
@@ -643,8 +637,6 @@ async def _post_run_coverage(projects: "list[Project]", log_dir: Path, opts: Run
     # report is best-effort by policy, so it is never skipped for the clean.
     clean_failure: Exception | None = None
     if opts.cov:
-        from rich.markup import escape as escape_markup
-
         from ..coverage.collect import collect_coverage
 
         cov_dir = opts.cov_dir or log_dir / "cov"
@@ -653,9 +645,7 @@ async def _post_run_coverage(projects: "list[Project]", log_dir: Path, opts: Run
         # retrieved, an ambiguous/misconfigured tier, a non-git project root, or a
         # merge/produce error) turn an otherwise-successful test run red. Log
         # and swallow, leaving the raw artifacts on disk for manual recovery
-        # via `otto cov get`. %s-formats *e* through escape_markup: the
-        # console handler renders log messages as Rich markup, and this
-        # message may echo a literal bracket (e.g. "no [coverage] section").
+        # via `otto cov get`.
         from ..coverage.errors import CoverageCaptureError, CoverageCleanError
 
         clean = None
@@ -666,7 +656,7 @@ async def _post_run_coverage(projects: "list[Project]", log_dir: Path, opts: Run
 
             logger.warning(
                 "Coverage collection failed (%s); raw coverage artifacts remain in %s",
-                escape_markup(selection_message(e, walker="coverage") or str(e)),
+                selection_message(e, walker="coverage") or str(e),
                 cov_dir,
             )
             # A capture failure still cleaned the products that captured.
@@ -680,8 +670,6 @@ async def _post_run_coverage(projects: "list[Project]", log_dir: Path, opts: Run
             _log_clean_summary(clean, "after collection")
 
     if opts.cov_report:
-        from rich.markup import escape as escape_markup
-
         from ..coverage.config import DestinationError
         from ..coverage.report_inputs import resolve_report_inputs
         from ..coverage.reporter import run_coverage_report
@@ -732,12 +720,9 @@ async def _post_run_coverage(projects: "list[Project]", log_dir: Path, opts: Run
                     remedy="set overwrite_cov_report_dir=True",
                     reason=e.reason,
                 )
-            # escape_markup(*message*): the console handler renders log
-            # messages as Rich markup, and this message may echo a literal
-            # bracket (e.g. a malformed [coverage.exclusions] rule).
             logger.warning(
                 "Coverage report generation failed (%s); raw coverage artifacts remain in %s",
-                escape_markup(message),
+                message,
                 cov_dir,
             )
             store = None
@@ -782,7 +767,7 @@ async def _post_run_coverage(projects: "list[Project]", log_dir: Path, opts: Run
                     except ValueError as e:
                         logger.warning(
                             "Ticket export failed (%s); coverage report still written to %s",
-                            escape_markup(str(e)),
+                            e,
                             report_dir,
                         )
                     else:

@@ -502,10 +502,10 @@ class _NoArchivePath(_Host):
 
 @pytest.mark.asyncio
 async def test_a_no_archive_path_warning_keeps_the_devices_brackets(tmp_path, caplog):
-    from rich.text import Text
+    from tests._fixtures.log_text import shown
 
     host = _NoArchivePath(None)
     with caplog.at_level(logging.WARNING, logger="otto.coverage.fetcher.remote"):
         assert await _fetch_one_product(host, _Product(), tmp_path) is None
     (record,) = [r for r in caplog.records if "no archive path" in r.getMessage()]
-    assert Text.from_markup(record.getMessage()).plain.endswith("'[/x] [red]oops'")
+    assert shown(record).endswith("'[/x] [red]oops'")

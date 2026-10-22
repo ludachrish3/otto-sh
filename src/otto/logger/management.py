@@ -32,7 +32,7 @@ from logging.handlers import QueueHandler, QueueListener
 from pathlib import Path
 from queue import Queue
 from shutil import rmtree
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rich.highlighter import NullHighlighter
 from rich.logging import RichHandler
@@ -47,6 +47,9 @@ from .formatters import (
     capture_exception,
     format_log_time,
 )
+
+if TYPE_CHECKING:
+    from rich.console import ConsoleRenderable
 
 # Matches the timestamp directory names ``create_output_dir`` writes:
 # ``YYYYMMDD_HHMMSS_mmm`` optionally followed by ``_<subcommand>``. Fail-safe so
@@ -234,6 +237,8 @@ def install_console(log_level: str, *, show_time: bool = False) -> None:
     # No locals on the console: a logged exception is often routine (a
     # teardown step, an asyncio task nobody awaited, a dashboard request), and
     # a locals panel per frame would bury the terminal. The files keep them.
+    # markup=False: a record is printed as written unless it opts in with
+    # ``extra={"markup": True}``, which ``RichHandler`` reads off the record.
     stdout_handler = _ConsoleHandler(
         level=log_level,
         console=CONSOLE,
@@ -241,7 +246,7 @@ def install_console(log_level: str, *, show_time: bool = False) -> None:
         rich_tracebacks=True,
         tracebacks_max_frames=CONSOLE_TRACEBACK_MAX_FRAMES,
         tracebacks_show_locals=False,
-        markup=True,
+        markup=False,
         highlighter=NullHighlighter(),
         show_path=log_level == "DEBUG",
         enable_link_path=False,
@@ -588,8 +593,8 @@ class _InProcessQueueHandler(QueueHandler):
     process boundary: it formats the message and the traceback into ``msg``
     and drops ``exc_info``. That turns every logged exception into a plain
     traceback before any sink sees it: the console's Rich traceback is lost,
-    and the files get text their markup pass then reads (a ``[red]`` in a
-    frame is eaten as a style).
+    and a record that opted in to markup would have its traceback read as
+    markup by the files (a ``[red]`` in a frame eaten as a style).
 
     This one merges the message the same way, on the logging thread, so a
     mutable ``%``-argument changed afterwards cannot change what was logged.
@@ -641,6 +646,33 @@ class _ConsoleHandler(RichHandler):
     before the file sinks exist (when this handler hangs on root directly and
     still sees a live ``exc_info``), takes the stock path.
     """
+
+    @override
+    def render_message(self, record: LogRecord, message: str) -> "ConsoleRenderable":
+        """Render *message*; a record that opted in gets Rich markup and ``:emoji:`` codes.
+
+        ``extra={"emoji": False}`` turns the emoji pass off, so a colon-word
+        such as ``root:x:0:0`` stays literal -- the same rule the file sinks use.
+        """
+        from rich.text import Text
+
+        use_markup = getattr(record, "markup", self.markup)
+        if use_markup:
+            message_text = Text.from_markup(message, emoji=getattr(record, "emoji", True))
+        else:
+            message_text = Text(message)
+
+        highlighter = getattr(record, "highlighter", self.highlighter)
+        if highlighter:
+            message_text = highlighter(message_text)
+
+        if self.keywords is None:
+            self.keywords = self.KEYWORDS
+
+        if self.keywords:
+            message_text.highlight_words(self.keywords, "logging.keyword")
+
+        return message_text
 
     @override
     def emit(self, record: LogRecord) -> None:
@@ -825,8 +857,8 @@ def record_command_failure(exc: BaseException, message: str) -> None:
     ``console.log`` and ``verbose.log`` for whoever reads the run later. It
     never reaches the console or a foreign root handler.
 
-    *message* is plain text: it is escaped here, so brackets in it survive
-    the files' markup pass. The exception is captured as data here, on the
+    *message* is plain text, written as is: the record does not opt in to
+    Rich markup. The exception is captured as data here, on the
     calling thread (see :func:`~otto.logger.formatters.capture_exception`).
     The record joins the queue behind everything logged before it and is
     written as soon as the listener reaches it; the ``atexit`` stop
@@ -841,14 +873,12 @@ def record_command_failure(exc: BaseException, message: str) -> None:
     listener = _state.listener
     if listener is None or not _sinks_are_live():
         return
-    from rich.markup import escape
-
     record = LogRecord(
         name="otto",
         level=logging.ERROR,
         pathname=__file__,
         lineno=0,
-        msg=escape(message),
+        msg=message,
         args=None,
         exc_info=(type(exc), exc, exc.__traceback__),
     )
@@ -924,7 +954,8 @@ def remove_old_logs(
                     days = seconds / 60 / 60 / 24
                     days_str = f"{days:0.0f} {'day' if days == 1 else 'days'}"
                     logger.info(
-                        f"[magenta]Deleting log directories that are more than {days_str} old"
+                        f"[magenta]Deleting log directories that are more than {days_str} old",
+                        extra={"markup": True},
                     )
                     logged_deletion = True
                 rmtree(output_dir)

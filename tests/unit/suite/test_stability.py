@@ -30,6 +30,7 @@ def _make_report(when: str = "call", passed: bool = True) -> MagicMock:
 def _make_item() -> MagicMock:
     """Create a mock pytest.Item with the attributes the hook expects."""
     item = MagicMock()
+    item.name = "test_x[param]"  # a parametrized name: the banner escapes its brackets
     item._request = True  # hasattr check passes, truthy so _initrequest not called
     item.config.getoption.return_value = False  # setupshow=False
     return item
