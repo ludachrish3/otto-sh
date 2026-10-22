@@ -102,9 +102,12 @@ def list_labs_callback(value: bool) -> None:
 
         del bootstrap
         from ..declared import get_projects
+        from .invoke import fail_without_projects
 
+        projects = get_projects()
+        fail_without_projects(projects)
         # Extract lab search paths from all projects
-        panels: list[Panel] = [project.get_lab_panel() for project in get_projects()]
+        panels: list[Panel] = [project.get_lab_panel() for project in projects]
 
         table = Table(
             show_header=False, show_footer=False, box=None, expand=True, padding=(0, 1, 1, 1)

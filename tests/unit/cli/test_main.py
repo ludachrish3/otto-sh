@@ -25,6 +25,7 @@ from otto.logger import management
 from otto.logger.levels import LEVEL_NAMES
 from otto.result import CommandResult
 from otto.utils import Status
+from tests._fixtures.bootstrap_seam import fake_bootstrap_result
 from tests._fixtures.bootstrapstub import bootstrap_stub
 from tests._fixtures.fake_project import fake_project
 
@@ -108,10 +109,15 @@ def main_mocks(tmp_path):
     # The lab / session work is lazy (Task 7) and lives in otto.cli.invoke, which
     # imports get_projects / load_lab from otto.config at call time — patch the
     # source so both the root-callback (--show-lab) and preamble paths see mocks.
+    # One project: a lab is built only for a workspace that has one (a lab
+    # command with none refuses with the no-project message, #677). It
+    # declares no lab sources, so the patched `load_lab` is what answers.
+    project = fake_project("p")
     with (
         patch.dict(os.environ, clean_env, clear=True),
         patch("otto.logger.management.init_cli_logging") as p_logger,
-        patch("otto.declared.get_projects", return_value=[]),
+        patch("otto.declared.get_projects", return_value=[project]),
+        patch("otto.bootstrap.bootstrap", return_value=fake_bootstrap_result([project])),
         patch("otto.labs.loader.load_lab", return_value=mock_lab) as p_getlab,
     ):
         yield {
@@ -196,10 +202,12 @@ class TestEagerOptions:
         assert result.exit_code == 0
         assert "--holder" in result.output
 
-    def test_list_labs_exits_zero(self):
-        # get_projects() returns [] in test env; just verifies the flag is accepted
+    def test_list_labs_with_no_project_exits_1_naming_ottopath(self):
+        # get_projects() returns [] in test env: no project, so no labs to list (#677).
         result = runner.invoke(app, ["--list-labs"])
-        assert result.exit_code == 0
+        assert result.exit_code == 1
+        assert "no otto project found" in result.output
+        assert "OTTOPATH" in result.output
 
     def test_list_labs_reads_projects_where_they_are_defined(self):
         # `--list-labs` must look `get_projects` up at call time. A module-level
@@ -852,7 +860,7 @@ class TestInvocationResets:
         """The console-script path: ``entry()`` resets nothing itself; Click's close does."""
         from otto import context
 
-        monkeypatch.setattr("otto.bootstrap.bootstrap", lambda: bootstrap_stub([]))
+        monkeypatch.setattr("otto.bootstrap.bootstrap", lambda: bootstrap_stub([fake_project("p")]))
         baseline = context.try_get_context()
         first = _entry_invoke(monkeypatch, ["--field", "--lab", "test_lab", "_main_probe"])
         assert first.exit_code == 0, (first.output, first.exception)
@@ -964,7 +972,7 @@ class TestProjectSwitchWiring:
     """
 
     @pytest.fixture(autouse=True)
-    def _world_knows_these_names(self, monkeypatch):
+    def _world_knows_these_names(self, main_mocks):
         """Let discovery find every project name these tests type.
 
         The preamble validates ``-I``/``-E`` against the discovered project set
@@ -974,8 +982,10 @@ class TestProjectSwitchWiring:
         validator with exit 2 and witness none of the wiring it exists for.
         Names are the NORMALIZED spellings the validator compares against.
         """
+        del main_mocks  # set up first, so this world replaces its one project
         projects = [fake_project(n) for n in ("proj-a", "other-project", "a", "b", "c")]
-        monkeypatch.setattr("otto.bootstrap.bootstrap", lambda: bootstrap_stub(projects))
+        with patch("otto.bootstrap.bootstrap", lambda: bootstrap_stub(projects)):
+            yield
 
     def _capture_root_options(self, monkeypatch):
         """Spy RootOptions, returning a dict that fills in with the built instance."""
@@ -1214,3 +1224,16 @@ class TestEntryBoundaryRendersTheCoverageRefusal:
         from otto.cli import invoke
 
         assert callable(getattr(invoke, self._HELPER, None))
+
+
+class TestNoProjectFound:
+    """A lab command with no project discovered at all says so, not "no [[lab.sources]]" (#677)."""
+
+    def test_a_lab_command_with_no_project_exits_1_naming_ottopath(self, main_mocks, monkeypatch):
+        monkeypatch.delenv("OTTOPATH", raising=False)
+        monkeypatch.setattr("otto.bootstrap.bootstrap", lambda: bootstrap_stub([]))
+        result = _invoke([])
+        assert result.exit_code == 1, (result.output, result.exception)
+        assert "error: no otto project found: OTTOPATH is unset" in result.output
+        assert "[[lab.sources]]" not in result.output
+        main_mocks["load_lab"].assert_not_called()

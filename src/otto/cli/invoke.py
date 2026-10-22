@@ -12,7 +12,7 @@ import contextlib
 import dataclasses
 import functools
 import inspect
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from logging import getLogger
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, NoReturn, Protocol, cast, get_type_hints
@@ -624,6 +624,8 @@ def report_lab_context_error(err: "LabBuildError | ReservationBackendError") -> 
     bold-red frame (exit 1); an unreachable reservation backend names the
     ``-R`` break-glass (exit 1). An unknown lab is re-raised: the boundary
     frame in ``otto.cli.main`` has always printed it (``error: ...``, exit 1).
+    No project at all prints as :func:`fail_without_projects` prints it for a
+    listing (``error: ...``, unfolded, exit 1).
     """
     from rich import print as rprint
 
@@ -642,6 +644,11 @@ def report_lab_context_error(err: "LabBuildError | ReservationBackendError") -> 
             raise typer.Exit(code=2)
         if kind == "unknown_lab":
             raise err
+        if kind == "no_project":
+            # As the root listings print it, unfolded: it may end in an
+            # `export OTTOPATH=...` line meant to be copied whole.
+            print_error(f"error: {err}", soft_wrap=True)
+            raise typer.Exit(code=1)
         detail = err.detail or ""
         if kind == "sources":
             rprint(f"[bold red]Host source unavailable:[/bold red] {escape(detail)}")
@@ -659,6 +666,23 @@ def report_lab_context_error(err: "LabBuildError | ReservationBackendError") -> 
     # Unreachable for a well-typed caller. A stray error is handed back to the
     # boundary frame as itself, never dressed up as a reservation failure.
     raise err
+
+
+def fail_without_projects(projects: "Sequence[object]") -> None:
+    """Exit 1, saying why, when discovery found no project at all.
+
+    For the root listings (``--list-labs``, ``--list-products``,
+    ``--list-tools``), which would otherwise print an empty answer and exit 0.
+    The words are :func:`~otto.config.project.no_project_found_message`'s, the
+    same a lab build refuses with, printed the way the boundary frame prints
+    an error.
+    """
+    if projects:
+        return
+    from ..config.project import no_project_found_message
+
+    print_error(f"error: {no_project_found_message()}", soft_wrap=True)
+    raise typer.Exit(code=1)
 
 
 def ensure_inline_lab(ctx: typer.Context) -> None:

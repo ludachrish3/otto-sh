@@ -109,7 +109,15 @@ are two project roots, and otto refuses to load both at once.
 **`OTTOPATH`** lists the project roots otto loads, separated by the OS path
 separator (`:` on Linux and macOS, `;` on Windows), like `PATH`. To work on a
 project, add its project root to `OTTOPATH`. A root listed twice, under any
-spelling, is loaded once.
+spelling, is loaded once. `OTTOPATH` is the only place otto looks: the current
+directory is never searched, even when it is a project root. A command that
+needs a project when none was found — `--list-labs`, `--list-products`,
+`--list-tools`, or anything given `--lab` — stops with exit 1 and one line
+saying so, naming `OTTOPATH` as it stands:
+
+```text
+error: no otto project found: OTTOPATH is unset, and otto finds projects only through OTTOPATH, never the current directory; /home/me/widget is a project root: export OTTOPATH=/home/me/widget
+```
 
 A **workspace** is the set of projects active together: one `OTTOPATH` value.
 Each workspace has its own home under `~/.otto` for the state otto derives.

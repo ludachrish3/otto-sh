@@ -457,7 +457,9 @@ depends_on = ["otto.session.errors", "otto.config.scope", "otto.env"]
 [[modules]]
 path = "otto.session.lab"
 layer = "run"
-depends_on = ["otto.session.errors", "otto.labs", "otto.inventory", "otto.docker"]
+# otto.config: function-local, only when no project was discovered at all, for
+# the one no-project message every surface shares (no_project_found_message).
+depends_on = ["otto.session.errors", "otto.labs", "otto.inventory", "otto.docker", "otto.config"]
 
 [[modules]]
 path = "otto.session.projects"

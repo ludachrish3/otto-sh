@@ -73,7 +73,9 @@ class ProjectLoadError(OttoError):
 class LabBuildError(FieldError):
     """The lab could not be built from the projects' configuration.
 
-    ``kind``: ``"no_labs"`` (nothing selected), ``"unknown_lab"`` (the
+    ``kind``: ``"no_labs"`` (nothing selected), ``"no_project"`` (no project
+    was discovered at all, so nothing declares a lab; the message is
+    :func:`~otto.config.project.no_project_found_message`), ``"unknown_lab"`` (the
     message IS the source's own not-found text), ``"sources"`` (a bad
     ``[[lab.sources]]`` entry or an unknown backend), ``"inventory"`` (a broken
     ``[inventory]`` declaration). ``detail`` is the underlying error's text.
@@ -85,7 +87,7 @@ class LabBuildError(FieldError):
         message: str,
         *,
         field: "str | None",
-        kind: 'Literal["no_labs", "unknown_lab", "sources", "inventory"]',
+        kind: 'Literal["no_labs", "no_project", "unknown_lab", "sources", "inventory"]',
         detail: "str | None" = None,
     ) -> None:
         """Store the refusal's facts beside its message."""

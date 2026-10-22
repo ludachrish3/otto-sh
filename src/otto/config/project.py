@@ -738,6 +738,51 @@ def discover() -> DiscoveryResult:
     return _discovery.result
 
 
+def no_project_found_message() -> str:
+    """Say, in one line, why discovery found no project, in the terms discovery works by.
+
+    Discovery reads ``OTTOPATH`` and nothing else: the current directory is
+    never searched, even when it is a project root. So the message names
+    ``OTTOPATH`` as it stands -- unset, set to no directory, or naming roots
+    none of which loaded (a root may be a real project whose settings failed to
+    parse, or a duplicate, so the message points at the startup warnings rather
+    than guessing) -- and, when the current directory IS a project
+    root, the ``export`` that would make it one. Callers decide that no
+    project was found; this only says why. One message for every surface
+    that needs a project (the root listings, a lab build), so they cannot
+    drift into different explanations.
+    """
+    import os
+    import shlex
+
+    from ..utils import ottopath_entries
+    from .env import OTTOPATH_ENV_VAR
+
+    var = OTTOPATH_ENV_VAR
+    head = "no otto project found: "
+    raw = os.environ.get(var)
+    cwd = Path.cwd()
+    set_it = f"set {var} to your project root, the directory holding {TOML_SETTINGS_PATH}"
+    if raw is None:
+        if (cwd / TOML_SETTINGS_PATH).is_file():
+            return (
+                f"{head}{var} is unset, and otto finds projects only through {var}, never "
+                f"the current directory; {cwd} is a project root: "
+                f"export {var}={shlex.quote(str(cwd))}"
+            )
+        return (
+            f"{head}{var} is unset and {cwd} is not a project root (otto finds projects "
+            f"only through {var}, never the current directory); {set_it}"
+        )
+    roots = ottopath_entries(raw)
+    if not roots:
+        return f"{head}{var} is set but names no directory ({raw!r}); {set_it}"
+    return (
+        f"{head}none of the {var} roots loaded as a project ({', '.join(roots)}); "
+        "see the warnings above for why"
+    )
+
+
 def clear_discovery() -> None:
     """Drop the cached discovery, so the next :func:`discover` reads everything again."""
     _discovery.result = None

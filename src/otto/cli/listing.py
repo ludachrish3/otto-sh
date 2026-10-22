@@ -36,10 +36,12 @@ def show_listing(ctx: "typer.Context", seam: str) -> None:
     from rich.markup import escape
     from rich.table import Table
 
+    from ..declared import get_projects
     from ..host import listing
     from .invoke import (
         ensure_inline_lab,
         fail_loud_on_bootstrap_errors,
+        fail_without_projects,
         root_options,
         validate_project_switches,
     )
@@ -84,6 +86,7 @@ def show_listing(ctx: "typer.Context", seam: str) -> None:
     # A half-registered world would list a partial answer as if it were whole.
     validate_project_switches(ctx)
     fail_loud_on_bootstrap_errors(ctx)
+    fail_without_projects(get_projects())
     projects = listing.active_projects()
     table = Table(title=title, box=box.ROUNDED)
     for column in ("name", "kind", "variant", "instrumented", "project", "match", "artifact"):

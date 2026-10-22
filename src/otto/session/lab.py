@@ -46,7 +46,8 @@ def build_lab(projects: "list[Project]", labs: list[str]) -> "Lab":
     configured". Last, each project's declared docker services become
     placeholder hosts, so they list and complete before ``compose up``.
 
-    Raises :class:`~otto.session.LabBuildError`: no labs, an unknown lab, a
+    Raises :class:`~otto.session.LabBuildError`: no labs, no projects (none
+    was discovered: :func:`~otto.config.project.no_project_found_message`), an unknown lab, a
     bad source or unknown backend, a broken inventory declaration, or a call
     made while an init import is running (lab sources are built only after
     every project has registered its backends). A source
@@ -56,6 +57,12 @@ def build_lab(projects: "list[Project]", labs: list[str]) -> "Lab":
     """
     if not labs:
         raise LabBuildError("no lab selected: name one or more labs", field="labs", kind="no_labs")
+    if not projects:
+        # Nothing was discovered, so nothing declares a lab source: say THAT,
+        # not that no project declares [[lab.sources]].
+        from ..config.project import no_project_found_message
+
+        raise LabBuildError(no_project_found_message(), field=None, kind="no_project")
     from ..labs.errors import LabNotFoundError, LabRepositoryError
     from ..labs.loader import load_lab
     from ..labs.sources import build_lab_sources

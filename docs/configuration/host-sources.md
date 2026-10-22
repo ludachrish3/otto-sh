@@ -296,7 +296,9 @@ project's source overrides an earlier project's on a colliding element, with the
 warning, its labels project-qualified.
 
 If *no* project declares a source, otto still starts and lab-free commands still
-work; the failure arrives where a lab is actually demanded:
+work; the failure arrives where a lab is actually demanded (when no project was
+found at all, the failure says that instead — see the troubleshooting list
+below):
 
 ```text
 LabNotFoundError: Lab 'site' cannot be loaded: no project declares a [[lab.sources]] entry in .otto/settings.toml
@@ -562,8 +564,14 @@ registry machinery behind this and every other seam otto can be extended at.
   `list_labs()` and `load_lab()` disagree; check the name against
   `otto --list-labs`.
 
+`error: no otto project found: ...`
+: No project was found at all, so nothing could declare a source: `OTTOPATH`
+  is unset, names no directory, or names roots none of which loaded. The
+  message says which; see
+  [Projects, project roots and OTTOPATH](../overview.md#projects-project-roots-and-ottopath).
+
 `LabNotFoundError: Lab '...' cannot be loaded: no project declares a [[lab.sources]] entry`
-: No project on `OTTOPATH` declares any source at all. Add an entry (`otto
+: Projects were found, but none on `OTTOPATH` declares any source at all. Add an entry (`otto
   init` scaffolds one) — and if you expected a project to provide it, check
   startup output: a project whose `settings.toml` fails to parse is skipped with
   a framed error, and only the commands that need it fail.
