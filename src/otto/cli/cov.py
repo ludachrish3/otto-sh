@@ -217,7 +217,7 @@ def report(
             "--tickets-json",
             help=(
                 "Also write a machine-readable per-ticket coverage summary to this "
-                "path. Requires [coverage.tickets]."
+                "path. Requires \\[coverage.tickets]."
             ),
         ),
     ] = None,

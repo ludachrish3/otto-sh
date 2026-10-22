@@ -29,6 +29,7 @@ from typing import Any, ClassVar
 
 import click
 import typer
+from rich.text import Text
 
 from otto.cli.expose import collect_exposed_methods, verb_help
 from otto.cli.main import app
@@ -284,3 +285,65 @@ def test_the_root_help_names_ottopath_and_no_comma_rule():
     assert "project root" in DESCRIPTION
     assert "`,`" not in DESCRIPTION
     assert "repo" not in DESCRIPTION
+
+
+_DOUBLE_SPACE = re.compile(r"\S {2,}\S")
+"""Two or more spaces between words: the hole a swallowed word leaves behind."""
+
+
+def _as_rendered(text: str) -> str:
+    """*text* as ``--help`` shows it: Typer's ``rich`` markup mode parses it as Rich markup."""
+    return Text.from_markup(text).plain
+
+
+def _as_written(text: str) -> str:
+    """*text* as its author meant it to read: an escaped ``\\[`` shows as ``[``."""
+    return text.replace("\\[", "[")
+
+
+def _markup_offenders(texts: list[tuple[str, str, str]]) -> list[str]:
+    offenders: list[str] = []
+    for path, where, text in texts:
+        if not text:
+            continue
+        rendered = _as_rendered(text)
+        problems = []
+        if rendered != _as_written(text):
+            problems.append("Rich markup swallowed text (escape a literal [ as \\[)")
+        if _DOUBLE_SPACE.search(rendered):
+            problems.append("double space between words")
+        if "Requires ." in rendered:
+            problems.append("'Requires .' with the required thing missing")
+        if problems:
+            offenders.append(f"{path} [{where}]: {'; '.join(problems)}: {rendered.strip()!r}")
+    return offenders
+
+
+def test_built_in_help_renders_every_word_it_was_written_with():
+    """A ``[section]`` in a help string is a Rich tag, not a setting name.
+
+    Typer renders help in ``rich`` markup mode, so ``Requires [coverage.tickets].``
+    reaches the user as ``Requires .``. Every help string otto shows must render
+    to exactly the text it was written as.
+    """
+    offenders = _markup_offenders(_walk_built_in_commands())
+    assert not offenders, "help text loses words when rendered:\n" + "\n".join(offenders)
+
+
+def test_markup_offenders_flags_what_it_claims_to():
+    for leaky in (
+        "Requires [coverage.tickets].",
+        "on when [coverage] is configured.",
+        "a commented [[dev_tools]] entry",
+        "Overrides [env] backend.",
+        "spaced  out",
+    ):
+        assert _markup_offenders([("c", "help", leaky)]), leaky
+    for clean in (
+        "Requires \\[coverage.tickets].",
+        "a commented \\[\\[dev_tools]] entry",
+        "Ordered host path h1\\[@if],h2\\[@if],...",
+        "Sentence one. Sentence two.",
+        "Line one.\n\n    Indented line.",
+    ):
+        assert not _markup_offenders([("c", "help", clean)]), clean

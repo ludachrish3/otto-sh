@@ -69,7 +69,7 @@ async def init_command(
             "--kmodcov",
             help=(
                 "Scaffold (or refresh, if present) the kmodcov area: vendor the otto_kmodcov "
-                "library, a commented [[dev_tools]] entry, and a consumer starter."
+                "library, a commented \\[\\[dev_tools]] entry, and a consumer starter."
             ),
         ),
     ] = False,

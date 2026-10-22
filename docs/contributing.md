@@ -1129,8 +1129,11 @@ architecture page in the same PR.
   specs or internals. Put developer notes in a `# Developer note:` comment
   directly below the docstring. For an `otto host` verb the docstring stays API
   documentation and `@cli_exposed(help_=...)` carries the user text.
+  Typer renders help as Rich markup, so a literal `[` must be escaped: write
+  `\\[coverage.tickets]` in the Python string, or the settings section name
+  vanishes from the rendered help.
   `tests/unit/cli/test_help_text_user_facing.py` fails on markup in any built-in
-  command's help.
+  command's help, and on any help string that renders with words missing.
 
 ### Doctest quick reference
 

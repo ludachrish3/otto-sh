@@ -488,7 +488,7 @@ def _run_flags(  # noqa: PLR0913 — one parameter per run flag, by design
             help=(
                 "Collect coverage from the lab's instrumented products after the run "
                 "finishes. Default: auto — on when an instrumented product is detected "
-                "and [coverage] is configured. --cov forces it on (an error if nothing is "
+                "and \\[coverage] is configured. --cov forces it on (an error if nothing is "
                 "instrumented); --no-cov forces it off."
             ),
         ),
@@ -570,7 +570,7 @@ def _run_flags(  # noqa: PLR0913 — one parameter per run flag, by design
             "--cov-tickets-json",
             help=(
                 "Also write a machine-readable per-ticket coverage summary to this "
-                "path. Implies --cov-report. Requires [coverage.tickets] to be "
+                "path. Implies --cov-report. Requires \\[coverage.tickets] to be "
                 "configured (checked before the test run starts)."
             ),
         ),

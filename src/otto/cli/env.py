@@ -33,7 +33,7 @@ env_app = typer.Typer(
 
 _BACKEND = Annotated[
     str | None,
-    typer.Option("--backend", help="Installer to use: uv or pip. Overrides [env] backend."),
+    typer.Option("--backend", help="Installer to use: uv or pip. Overrides \\[env] backend."),
 ]
 _INSTALLER_ARGS = Annotated[
     list[str] | None,
