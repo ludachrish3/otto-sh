@@ -120,10 +120,10 @@ async def clean_coverage(
     Raises:
         CoverageConfigError: no ``[coverage]`` section, or a malformed
             ``hosts`` selector.
-        NoCoverageHostsError: the selector matched no host (the otto runner
-            is never in the base set ``all_hosts`` walks, so this is the only
-            way the walk comes back empty), or ``host_ids`` or *pairs*
-            narrowed an otherwise non-empty match down to nothing.
+        NoCoverageHostsError: the selector matched no host, or matched only
+            the built-in ``local`` host, which no coverage walk includes; or
+            ``host_ids`` or *pairs* narrowed an otherwise non-empty match down
+            to nothing.
     """
     from ..config.coverage_settings import get_cov_config, load_hosts_pattern
     from ..config.scope import EmptySelectionError
@@ -154,7 +154,11 @@ async def clean_coverage(
     try:
         hosts = list(all_hosts(pattern=pattern, include_containers=True))
     except EmptySelectionError as e:
-        raise NoCoverageHostsError(f"nothing to clean: {e}") from e
+        # The flag-free wording: no coverage call takes the membership flags,
+        # so the library advice to pass one cannot be followed from here. It
+        # names coverage as the walker, not "this command": a library caller
+        # of clean_coverage reads it as well as `otto cov clean`.
+        raise NoCoverageHostsError(f"nothing to clean: {e.cli_message(walker='coverage')}") from e
     if not hosts:
         # The base set itself was empty (a lab with no hosts at all) —
         # `all_hosts` stays silent here rather than raising (see its

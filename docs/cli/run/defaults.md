@@ -265,6 +265,33 @@ removed every match, the same class is raised with the other of its two
 messages — that one names the flag and tells you **not** to widen the regex,
 because the regex was already right.
 
+That flag advice is for a Python caller, who can pass the keyword — including
+an instruction's own `all_hosts` call, whose error reaches the console as
+raised. The selections otto makes itself take no such switch:
+`otto monitor --live --hosts`, `--monitor-hosts`, `otto cov`, the coverage step
+of `otto test` (with or without `--cov`), `ctx.cov`, and the coverage library
+calls behind them. They word the message without the keyword instead, from
+{meth}`~otto.config.scope.EmptySelectionError.cli_message`. A monitor
+selection says `this command`; a coverage one names `coverage`, because a
+Python caller of `otto.coverage` reads it too:
+
+```text
+pattern 'local' fullmatches 1 of the 4 host(s) this run may walk,
+but coverage does not walk the built-in 'local' host, so nothing would be contacted.
+
+The built-in 'local' host is the machine otto runs on, never a lab host:
+name a lab host in the pattern instead.
+```
+
+The remedy depends on what was held out. For a container host the regex was
+right — the message says `The regex is correct — do not widen it` and points
+at `otto host <id> <verb>`, which reaches the container directly. For the
+built-in `local` host the regex is what to change: no walk that holds `local`
+out ever reaches it, so name a lab host instead.
+
+Coverage walks always include container hosts and never the built-in `local`
+host, so for `[coverage] hosts` only a `local`-only pattern lands here.
+
 ### Explicit targeting is never scoped
 
 `otto host <id> <verb>`, `ctx.get_host("id")` and the host-id listing

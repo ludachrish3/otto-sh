@@ -53,10 +53,13 @@ different fix:
 
 - **The pattern matched nothing.** You get the pattern, the size of the set it
   was matched against, and the wildcard form to try. Fix the regex.
-- **The pattern matched, but every match is held out of fleet sweeps** by
-  `include_containers` / `include_local`. The message opens by saying the regex
-  is *not* the problem and names the flag; widening the regex changes nothing.
-  To reach one of those hosts, use `otto host <id> <verb>`.
+- **The pattern matched, but every match is a container host or the built-in
+  `local` host**, which `--live` does not walk. The message says
+  `this command does not walk container hosts` (or `the built-in 'local' host`).
+  For a container it adds `The regex is correct — do not widen it`: widening
+  the regex changes nothing, and `otto host <id> <verb>` reaches the container
+  directly. For `local`, the machine otto runs on, it says to name a lab host
+  in the pattern instead.
 - **Nothing was selected at all.** `No hosts available in the active lab.` —
   the message does not mention `--hosts`.
 - **Hosts were selected, but none can be sampled.** You get the count and the

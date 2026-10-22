@@ -1,0 +1,8 @@
+# One long-running service. The product is NOT baked into the image: the suite
+# stages it into the running container through the container host's own verbs.
+# `pull_policy: never` — test3 has no internet; the e2e loads the image first.
+services:
+  app:
+    image: otto-cov-ctr-runtime:e2e
+    pull_policy: never
+    command: ["sleep", "infinity"]

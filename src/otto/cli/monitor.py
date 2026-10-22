@@ -184,6 +184,7 @@ def monitor(
     except (MonitorInputError, ReviewSourceError) as e:
         raise usage_error_from(e, flags=_FLAGS) from e
     except (EmptySelectionError, ProjectScopeError, NoMonitorableHostsError, MonitorTlsError) as e:
-        fail(e)
+        # --hosts has no membership switch: the CLI wording names none.
+        fail(e.cli_message() if isinstance(e, EmptySelectionError) else e)
     if report.db is not None:
         logger.info(f"Monitor session {report.session_id} archived to {report.db}")

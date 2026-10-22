@@ -622,7 +622,7 @@ class OttoContext:
             get_cov_config,
             load_hosts_pattern,
         )
-        from .config.scope import EmptySelectionError, ProjectScopeError
+        from .config.scope import EmptySelectionError, ProjectScopeError, selection_message
         from .session.errors import ProjectLoadError
 
         cov_config = get_cov_config(projects)
@@ -641,7 +641,9 @@ class OttoContext:
 
             # escape_markup: the message quotes a literal bracket ("[coverage].hosts",
             # or the user's own regex) and the console handler renders markup.
-            reason = escape_markup(str(exc))
+            # selection_message: ctx.cov takes no membership flag, so an empty
+            # selection's keyword advice could not be followed from here.
+            reason = escape_markup(selection_message(exc, walker="coverage") or str(exc))
             logger.warning(f"otto: coverage detection failed, ctx.cov is False: {reason}")
             return False
         # The verdict otto.coverage.instrumentation.detect() reports as "yes" —

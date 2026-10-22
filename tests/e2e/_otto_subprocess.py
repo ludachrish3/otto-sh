@@ -28,6 +28,7 @@ from tests._fixtures.paths import CHECKOUT_ROOT
 PROJECT1 = CHECKOUT_ROOT / "tests" / "project1"
 PROJECT2 = CHECKOUT_ROOT / "tests" / "project2"
 PROJECT5 = CHECKOUT_ROOT / "tests" / "project5"
+PROJECT_CTR = CHECKOUT_ROOT / "tests" / "project_ctr"
 PROJECT_E2E = CHECKOUT_ROOT / "tests" / "project_e2e"
 COVERAGERC = CHECKOUT_ROOT / ".coveragerc"
 COVERAGE_BOOTSTRAP = CHECKOUT_ROOT / "tests" / "_coverage_bootstrap"

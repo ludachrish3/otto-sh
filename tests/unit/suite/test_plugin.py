@@ -201,7 +201,7 @@ def test_monitor_hosts_matching_nothing_stops_the_run_with_one_line(pytester):
     assert "no tests ran" in out
 
 
-def test_monitor_hosts_hidden_by_a_flag_says_the_regex_is_not_the_problem(pytester):
+def test_monitor_hosts_hidden_by_a_flag_says_the_regex_is_correct(pytester):
     """The other EmptySelectionError, and it must arrive with its own text intact.
 
     A pattern that MATCHED and was then emptied by a membership flag needs the
@@ -219,8 +219,11 @@ def test_monitor_hosts_hidden_by_a_flag_says_the_regex_is_not_the_problem(pytest
     assert result.ret == pytest.ExitCode.USAGE_ERROR
     out = " ".join(result.outlines)
     assert "--monitor-hosts" in out
-    assert "The regex is not the problem" in out
-    assert "include_containers=True" in out
+    assert "--monitor-hosts: pattern 'box.*' fullmatches 2 of the 3 host(s)" in out
+    assert "this command does not walk container hosts" in out
+    assert "The regex is correct" in out
+    # A CLI user has no keyword argument to pass.
+    assert "include_containers" not in out
 
 
 def test_selected_but_unmonitorable_hosts_blame_the_hosts_not_the_regex(pytester):

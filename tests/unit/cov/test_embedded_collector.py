@@ -284,3 +284,29 @@ async def test_collect_embedded_coverage_scopes_hosts_by_pattern(
 
     assert set(result) == {("zephyr37-llext", "cov_ext")}
     other.exec.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_container_only_pattern_collects_nothing_without_refusing(
+    tmp_path,
+    fake_config_module,
+):
+    """A pattern naming only containers walks them, skips them, and collects nothing.
+
+    A container is not embedded, so nothing is dumped from it. The walk must
+    still reach it rather than refuse the selection: a container-only
+    ``[coverage].hosts`` is legal, and its counters are the remote fetcher's.
+    """
+    import re
+
+    from otto.host.docker_host import DockerContainerHost
+
+    container = MagicMock(spec=DockerContainerHost)
+    container.id = "test1.r1.api"
+    container.exec = AsyncMock()
+    fake_config_module(container)
+
+    got = await collect_embedded_coverage(tmp_path / "stage", pattern=re.compile(r".*\.r1\.api"))
+
+    assert got == {}
+    container.exec.assert_not_awaited()

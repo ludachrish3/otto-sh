@@ -106,7 +106,7 @@ class CoverageInputError(FieldError, ValueError):
 
 
 class NoCoverageHostsError(OttoError, ValueError):
-    """No host but the otto runner itself matched ``[coverage].hosts``; nothing to clear."""
+    """``[coverage].hosts`` selects no host a coverage walk includes: nothing to collect."""
 
 
 class CoverageCleanError(OttoError, RuntimeError):

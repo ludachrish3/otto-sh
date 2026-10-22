@@ -189,6 +189,94 @@ class TestSelectionHiddenByMembershipFlags:
         assert excinfo.value.excluded_by == ["include_containers"]
         assert "include_containers=True" in str(excinfo.value)
         assert {h.id for h in all_hosts(pattern=pat, include_containers=True)} == {"test1.r1.api"}
+        cli = excinfo.value.cli_message()
+        assert "this command does not walk container hosts" in cli
+        assert "The regex is correct" in cli
+        assert "include_containers" not in cli
+        assert "=True" not in cli
+
+
+class TestSelectionMessageForACliUser:
+    """A CLI user has no keyword argument to pass, so the CLI wording names none.
+
+    ``str(exc)`` keeps the library advice (``include_local=True``) — a Python
+    caller of ``otto.fleet`` can follow it. ``cli_message()`` is what an otto
+    command prints: the command does not walk those hosts, and the remedy —
+    for a container, the regex is right and ``otto host <id> <verb>`` reaches
+    one directly; for ``local``, name a lab host instead.
+    """
+
+    def test_local_only_match_reads_as_the_command_not_walking_local(self, three_hosts_plus_local):
+        with pytest.raises(EmptySelectionError) as excinfo:
+            list(all_hosts(pattern=re.compile(r"local")))
+        cli = excinfo.value.cli_message()
+        assert "pattern 'local' fullmatches 1 of the 4 host(s)" in cli
+        assert "this command does not walk the built-in 'local' host" in cli
+        assert "include_local" not in cli
+        assert "=True" not in cli
+        # The library wording is unchanged: a Python caller can pass the flag.
+        assert "include_local=True" in str(excinfo.value)
+
+    def test_a_hidden_local_is_remedied_by_naming_a_lab_host(self):
+        """For ``local`` the regex IS what to change: no walk that holds it out reaches it.
+
+        ``otto host local <verb>`` runs a verb on this machine and collects or
+        monitors nothing, so neither "do not widen it" nor that pointer applies.
+        """
+        cli = EmptySelectionError(
+            "local", 4, excluded_by=["include_local"], matched_size=1
+        ).cli_message()
+        assert "name a lab host in the pattern instead" in cli
+        assert "do not widen" not in cli
+        assert "otto host" not in cli
+
+    def test_both_flags_join_in_sorted_flag_order(self):
+        exc = EmptySelectionError(
+            "x.*", 5, excluded_by=["include_local", "include_containers"], matched_size=2
+        )
+        cli = exc.cli_message()
+        assert "does not walk container hosts or the built-in 'local' host" in cli
+        assert "name a lab host in the pattern instead" in cli
+        assert "To reach a container directly, use 'otto host <id> <verb>'" in cli
+        assert "do not widen" not in cli
+
+    def test_walker_names_who_did_not_walk_the_hosts(self):
+        """A path a library caller reaches too names the walk, not "this command"."""
+        exc = EmptySelectionError("local", 4, excluded_by=["include_local"], matched_size=1)
+        cli = exc.cli_message(walker="coverage")
+        assert "but coverage does not walk the built-in 'local' host" in cli
+        assert "this command" not in cli
+
+    def test_a_plain_no_match_is_already_cli_actionable(self, three_hosts):
+        with pytest.raises(EmptySelectionError) as excinfo:
+            list(all_hosts(pattern=re.compile(r"nonexistent")))
+        assert excinfo.value.cli_message() == str(excinfo.value)
+
+    def test_selection_message_renders_the_error_itself(self):
+        from otto.config.scope import selection_message
+
+        exc = EmptySelectionError("local", 4, excluded_by=["include_local"], matched_size=1)
+        assert selection_message(exc) == exc.cli_message()
+
+    def test_selection_message_reaches_through_a_wrapping_cause(self):
+        """A wrapper's own prefix survives; only the wrapped library text is swapped."""
+        from otto.config.scope import selection_message
+
+        cause = EmptySelectionError("local", 4, excluded_by=["include_local"], matched_size=1)
+        wrapped = ValueError(f"nothing to clean: {cause}")
+        wrapped.__cause__ = cause  # what `raise ... from cause` sets
+        text = selection_message(wrapped)
+        assert text == f"nothing to clean: {cause.cli_message()}"
+        coverage = selection_message(wrapped, walker="coverage")
+        assert coverage == f"nothing to clean: {cause.cli_message(walker='coverage')}"
+
+    def test_selection_message_is_none_for_any_other_error(self):
+        from otto.config.scope import selection_message
+
+        assert selection_message(ValueError("x")) is None
+        wrapped = ValueError("wrapped")
+        wrapped.__cause__ = KeyError("k")
+        assert selection_message(wrapped) is None
 
 
 @pytest.fixture

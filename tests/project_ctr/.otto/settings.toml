@@ -1,0 +1,53 @@
+name = "project_ctr"
+version = "1.0.0"
+tests = ["tests"]
+
+# The container-host coverage fixture: one shell product that runs INSIDE a
+# compose container on test3, and a [coverage] hosts pattern that names only
+# that container. Its own project because [coverage] is per project — widening
+# project1's or project5's pattern would change every other coverage bed test.
+[project]
+lab_patterns = [".*"]
+
+[[lab.sources]]
+backend = "json"
+paths = ["../_fixtures/lab_data/tech1"]
+
+# docs-container-host-begin
+# Example values from otto's own bed: test3 is that lab's docker parent, and
+# covctr, counter and the /opt, /var paths are its names. Use your own.
+[docker]
+
+[[docker.composes]]
+name = "covctr"
+path = "docker/compose.yml"
+services = ["app"]
+
+# The one use-case. Its container's host id is <parent>.<use-case>.<service>,
+# here test3.covctr.app.
+[[docker.use_cases]]
+name = "covctr"
+composes = ["covctr"]
+
+# Built by build.sh inside a container with this directory mounted at /build,
+# so the binary's counters carry /build/build/... paths (no GCOV_PREFIX_STRIP
+# anywhere): the fetched tree keeps them, and pairing matches their tail to
+# build/*.gcno here. A container host has no default_dest_dir or login home,
+# so stage_dir is absolute; the suite creates it before staging.
+[[products]]
+name = "counter"
+kind = "shell"
+artifact = "build/counter"
+stage_dir = "/opt/cov-ctr/stage"
+install = "mkdir -p /opt/cov-ctr/bin && cp /opt/cov-ctr/stage/counter /opt/cov-ctr/bin/counter"
+uninstall = "rm -rf /opt/cov-ctr"
+check = "test -x /opt/cov-ctr/bin/counter"
+instrumented = true
+cov_dir = "/var/cov/counter"
+match = { id = "test3\\.covctr\\.app" }
+
+# Only the container: no bare host fullmatches this, so every coverage walk
+# must include container hosts to find anything at all.
+[coverage]
+hosts = "test3\\.covctr\\.app"
+# docs-container-host-end

@@ -1238,7 +1238,9 @@ class OttoPlugin:
         try:
             hosts = select_monitor_hosts(self._monitor_hosts)
         except EmptySelectionError as exc:
-            pytest.exit(f"--monitor-hosts: {exc}", returncode=pytest.ExitCode.USAGE_ERROR)
+            pytest.exit(
+                f"--monitor-hosts: {exc.cli_message()}", returncode=pytest.ExitCode.USAGE_ERROR
+            )
         except NoMonitorableHostsError as exc:
             pytest.exit(f"--monitor: {exc}", returncode=pytest.ExitCode.USAGE_ERROR)
 

@@ -439,6 +439,31 @@ def test_resolve_coverage_auto_survives_an_empty_hosts_selection(monkeypatch, ca
     assert any("otto test: coverage stays off" in m for m in messages), messages
 
 
+def test_resolve_coverage_auto_warning_names_no_membership_keyword(monkeypatch, caplog):
+    """No coverage call takes ``include_local``, so the warning cannot advise passing it."""
+    from otto.config.scope import EmptySelectionError
+    from otto.suite.run import RunOptions, resolve_coverage
+
+    def _raise_hidden(_projects):
+        raise EmptySelectionError("local", 4, excluded_by=["include_local"], matched_size=1)
+
+    monkeypatch.setattr("otto.coverage.instrumentation.detect_for_lab", _raise_hidden)
+    monkeypatch.setattr(
+        "otto.config.coverage_settings.get_cov_config", lambda projects: {"hosts": "local"}
+    )
+
+    with caplog.at_level("WARNING"):
+        resolved = resolve_coverage(RunOptions(), [], command="otto test")
+
+    assert resolved.cov is False
+    warned = [r.getMessage() for r in caplog.records if "coverage stays off" in r.getMessage()]
+    assert len(warned) == 1
+    message = warned[0]
+    assert "otto test: coverage stays off" in message
+    assert "coverage does not walk the built-in 'local' host" in message
+    assert "include_local" not in message
+
+
 def test_resolve_coverage_auto_survives_a_malformed_hosts_selector(monkeypatch, caplog):
     """The other half of the same guard: a malformed selector warns, not raises.
 
@@ -510,9 +535,14 @@ def test_resolve_coverage_auto_warning_renders_its_brackets_literally(monkeypatc
     assert "[coverage].hosts must be a string" in rendered
 
 
-def test_resolve_coverage_forced_on_propagates_an_empty_hosts_selection(monkeypatch):
-    """Forced on, the same selection error is fatal — the user asked for coverage."""
+def test_resolve_coverage_forced_on_refuses_an_empty_hosts_selection(monkeypatch):
+    """Forced on, the same selection error is fatal — the user asked for coverage.
+
+    Reframed as the coverage error ``NoCoverageHostsError``, chaining the
+    selection error, so the message names the command.
+    """
     from otto.config.scope import EmptySelectionError
+    from otto.coverage.errors import NoCoverageHostsError
     from otto.suite.run import RunOptions, resolve_coverage
 
     monkeypatch.setattr("otto.coverage.instrumentation.detect_for_lab", _raise_empty_selection)
@@ -520,8 +550,31 @@ def test_resolve_coverage_forced_on_propagates_an_empty_hosts_selection(monkeypa
         "otto.config.coverage_settings.get_cov_config", lambda projects: {"hosts": "sensor"}
     )
 
-    with pytest.raises(EmptySelectionError):
+    with pytest.raises(NoCoverageHostsError) as excinfo:
         resolve_coverage(RunOptions(cov=True), [], command="otto test --cov")
+    assert str(excinfo.value).startswith("otto test --cov: pattern 'sensor' fullmatches none")
+    assert isinstance(excinfo.value.__cause__, EmptySelectionError)
+
+
+def test_resolve_coverage_forced_on_names_no_membership_keyword(monkeypatch):
+    """A forced ``--cov`` over a ``local``-only selector refuses in the CLI wording."""
+    from otto.config.scope import EmptySelectionError
+    from otto.coverage.errors import NoCoverageHostsError
+    from otto.suite.run import RunOptions, resolve_coverage
+
+    def _raise_hidden(_projects):
+        raise EmptySelectionError("local", 4, excluded_by=["include_local"], matched_size=1)
+
+    monkeypatch.setattr("otto.coverage.instrumentation.detect_for_lab", _raise_hidden)
+    monkeypatch.setattr(
+        "otto.config.coverage_settings.get_cov_config", lambda projects: {"hosts": "local"}
+    )
+
+    with pytest.raises(NoCoverageHostsError) as excinfo:
+        resolve_coverage(RunOptions(cov=True), [], command="otto test --cov")
+    text = str(excinfo.value)
+    assert "coverage does not walk the built-in 'local' host" in text
+    assert "include_local" not in text
 
 
 # ── run_tests: --cov-report wiring ───────────────────────────────────────────
@@ -1681,6 +1734,33 @@ def test_a_collection_failure_after_a_passing_run_still_only_warns(tmp_path, mon
         )
     assert result.passed
     assert any("no .gcda" in r.getMessage() for r in caplog.records)
+
+
+def test_a_post_run_empty_selection_warning_names_no_membership_keyword(
+    tmp_path, monkeypatch, caplog
+):
+    """The post-run collection's warning uses the CLI wording for a flag-emptied selection."""
+    from otto.config.scope import EmptySelectionError
+
+    log_dir = tmp_path / "log"
+    log_dir.mkdir()
+    _use_project(monkeypatch, _stub_project(tmp_path))
+    monkeypatch.setattr("pytest.main", pytest_main_returning())
+    _stub_instrumented_lab(monkeypatch)
+    error = EmptySelectionError("local", 4, excluded_by=["include_local"], matched_size=1)
+    monkeypatch.setattr("otto.coverage.collect.collect_coverage", AsyncMock(side_effect=error))
+
+    with caplog.at_level("WARNING"):
+        result = run_tests(
+            [_ALPHA], run_options=RunOptions(cov=True, cov_clean=False), output_dir=log_dir
+        )
+    assert result.passed
+    warned = [
+        r.getMessage() for r in caplog.records if "Coverage collection failed" in r.getMessage()
+    ]
+    assert len(warned) == 1
+    assert "coverage does not walk the built-in 'local' host" in warned[0]
+    assert "include_local" not in warned[0]
 
 
 def test_run_tests_abandons_hosts_left_on_the_inner_sessions_closed_loops(tmp_path, monkeypatch):

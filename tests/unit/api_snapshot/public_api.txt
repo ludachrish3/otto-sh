@@ -3399,6 +3399,7 @@ call	otto.inventory:snapshot_cache_of	sync	PK:inventory:-
 name	otto.lab:EmptySelectionError	class
 mro	otto.lab:EmptySelectionError	{otto.errors:OttoError} @builtin:builtins.ValueError @builtin:builtins.Exception @builtin:builtins.BaseException
 call	otto.lab:EmptySelectionError	sync	PK:pattern:- PK:base_size:- KO:excluded_by:N KO:matched_size:I:0
+member	otto.lab:EmptySelectionError.cli_message	method	sync	KO:walker:S:"this\u0020command"
 abstract	otto.lab:EmptySelectionError	-
 name	otto.lab:Lab	class
 mro	otto.lab:Lab	-

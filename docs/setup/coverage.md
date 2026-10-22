@@ -108,7 +108,11 @@ hosts = ".*"
 ```
 
 `hosts` is a regular expression, full-matched against each host's otto id:
-`".*"` is every host in the lab, `"test[12]"` is those two. A tier is optional
+`".*"` is every host in the lab, `"test[12]"` is those two. A pattern may
+also name compose container hosts ({ref}`their ids <host-identity>`), alone or
+with others: a container is collected exactly like any other host, apart from
+two differences (your suite installs its product, and its stack must be up),
+set out in the {ref}`worked example <coverage-container-host-example>`. A tier is optional
 — with no `[coverage.tiers]` table otto assumes a single implicit tier named
 `system`, of the `e2e` kind, which is the one a lab run collects into.
 {doc}`../cli/cov/tiers` is the tier model, and the unit views at the
@@ -284,8 +288,9 @@ under test.
 
 ## Several products, one container
 
-A compose-built container host ingests products exactly like any other host,
-so a container running two products reports two products. That is a
+A compose-built container host ingests products exactly like any other host
+({ref}`coverage-container-host-example`), so a container running two products
+reports two products. That is a
 service under test *inside* a compose-built container; for an image you
 run *as* a product, see {doc}`../cli/cov/instrumenting/containers`.
 

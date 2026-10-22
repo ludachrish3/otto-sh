@@ -75,8 +75,9 @@ async def get_coverage(
     Refuses, in this order and before any host is touched: no ``[coverage]``
     section or a malformed ``hosts`` selector
     (:class:`~otto.config.coverage_settings.CoverageConfigError`); a selector
-    matching no host (:class:`~otto.config.scope.EmptySelectionError`, raised
-    by the host walk itself); an
+    matching no host a coverage walk includes
+    (:class:`~otto.coverage.errors.NoCoverageHostsError`, chaining the host
+    walk's :class:`~otto.config.scope.EmptySelectionError`); an
     unknown or ambiguous *tier*, or a manual-kind tier with no *ticket*
     (:class:`~otto.coverage.errors.CoverageInputError` naming the field);
     nothing instrumented
@@ -108,6 +109,7 @@ async def get_coverage(
         get_cov_project,
         load_hosts_pattern,
     )
+    from ..config.scope import EmptySelectionError
     from ..declared import current_projects
     from ..fleet import all_hosts
     from ..run_context import try_get_context
@@ -115,7 +117,7 @@ async def get_coverage(
     from .capture.gitio import head_commit
     from .capture.model import Capture
     from .capture.store_dir import write_manual_capture
-    from .errors import CoverageCaptureError, NoCoverageDataError
+    from .errors import CoverageCaptureError, NoCoverageDataError, NoCoverageHostsError
     from .instrumentation import decide_coverage, detect
     from .reports import GetReport
     from .tiers import load_tiers, resolve_get_tier
@@ -132,7 +134,13 @@ async def get_coverage(
     cov_project = get_cov_project(projects)
     if not cov_config or cov_project is None:
         raise CoverageConfigError("No [coverage] section found in .otto/settings.toml")
-    hosts = list(all_hosts(pattern=load_hosts_pattern(cov_config), include_containers=True))
+    try:
+        hosts = list(all_hosts(pattern=load_hosts_pattern(cov_config), include_containers=True))
+    except EmptySelectionError as e:
+        # The flag-free wording, naming coverage as the walker: no coverage
+        # call takes the membership flags, so the library advice to pass one
+        # cannot be followed by a caller of get_coverage either.
+        raise NoCoverageHostsError(e.cli_message(walker="coverage")) from e
 
     resolved = resolve_get_tier(load_tiers(cov_config), tier)
     if resolved.kind == "manual" and not ticket:

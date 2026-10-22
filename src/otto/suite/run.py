@@ -497,8 +497,9 @@ def resolve_coverage(opts: RunOptions, projects: "list[Project]", *, command: st
         otto.config.coverage_settings.CoverageConfigError: ``cov`` is forced on and
             either no ``[coverage]`` table is configured or its ``hosts``
             selector is malformed.
-        otto.config.scope.EmptySelectionError: ``cov`` is forced on and the
-            ``[coverage].hosts`` selector matched no host.
+        otto.coverage.errors.NoCoverageHostsError: ``cov`` is forced on and the
+            ``[coverage].hosts`` selector matched no host a coverage walk
+            includes; it chains the ``EmptySelectionError``.
         otto.coverage.errors.CoverageNotInstrumentedError: ``cov`` is forced
             on and no product on any coverage host is instrumented.
     """
@@ -522,6 +523,13 @@ def resolve_coverage(opts: RunOptions, projects: "list[Project]", *, command: st
     try:
         report = detect_for_lab(projects)
     except (EmptySelectionError, CoverageConfigError) as e:
+        if forced_on and isinstance(e, EmptySelectionError):
+            from ..coverage.errors import NoCoverageHostsError
+
+            # Reworded here, not at the CLI boundary: no coverage call takes the
+            # membership flags the library message advises, while a user's own
+            # `all_hosts` call reaching that boundary can.
+            raise NoCoverageHostsError(f"{command}: {e.cli_message(walker='coverage')}") from e
         if forced_on:
             raise
         from rich.markup import escape as escape_markup
@@ -533,7 +541,13 @@ def resolve_coverage(opts: RunOptions, projects: "list[Project]", *, command: st
         # string", or the user's own regex (`test[123]`) quoted back by
         # EmptySelectionError — and the console handler and both log files
         # render messages as Rich markup, which would eat it.
-        logger.warning("%s: coverage stays off: %s", command, escape_markup(str(e)))
+        from ..config.scope import selection_message
+
+        logger.warning(
+            "%s: coverage stays off: %s",
+            command,
+            escape_markup(selection_message(e, walker="coverage") or str(e)),
+        )
         return dataclasses.replace(opts, cov=False)
 
     on = decide_coverage(opts.cov, report, has_cov_config=has_cov_config, command=command)
@@ -648,9 +662,11 @@ async def _post_run_coverage(projects: "list[Project]", log_dir: Path, opts: Run
         try:
             clean = (await collect_coverage(cov_dir, projects=projects)).clean
         except (ValueError, RuntimeError, FileNotFoundError) as e:
+            from ..config.scope import selection_message
+
             logger.warning(
                 "Coverage collection failed (%s); raw coverage artifacts remain in %s",
-                escape_markup(str(e)),
+                escape_markup(selection_message(e, walker="coverage") or str(e)),
                 cov_dir,
             )
             # A capture failure still cleaned the products that captured.

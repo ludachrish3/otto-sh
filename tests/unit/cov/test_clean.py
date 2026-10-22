@@ -134,6 +134,23 @@ async def test_a_selector_matching_no_host_refuses_with_the_selection_error_chai
 
 
 @pytest.mark.asyncio
+async def test_a_local_only_selector_refuses_in_the_cli_wording(monkeypatch):
+    """No coverage call takes ``include_local``, so the refusal cannot advise passing it."""
+
+    def fake_all_hosts(pattern=None, **kw):
+        raise EmptySelectionError(pattern.pattern, 4, excluded_by=["include_local"], matched_size=1)
+
+    monkeypatch.setattr("otto.fleet.all_hosts", fake_all_hosts)
+    with pytest.raises(NoCoverageHostsError) as excinfo:
+        await clean_coverage([_project(hosts="local")])
+    text = str(excinfo.value)
+    assert text.startswith("nothing to clean: pattern 'local' fullmatches 1 of the 4 host(s)")
+    assert "coverage does not walk the built-in 'local' host" in text
+    assert "include_local" not in text
+    assert isinstance(excinfo.value.__cause__, EmptySelectionError)
+
+
+@pytest.mark.asyncio
 async def test_host_ids_matching_none_of_the_matched_hosts_refuses(lab):
     lab(_host("t1", _product("app", Result(Status.Success))))
     with pytest.raises(NoCoverageHostsError, match="nothing to clean"):

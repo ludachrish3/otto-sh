@@ -28,6 +28,7 @@ from otto.coverage.errors import (
     CoverageInputError,
     CoverageNotInstrumentedError,
     NoCoverageDataError,
+    NoCoverageHostsError,
 )
 from otto.coverage.get import _resolve_tester, get_coverage
 from otto.coverage.reports import CleanReport
@@ -242,7 +243,7 @@ async def test_a_non_string_hosts_selector_is_refused_by_name(all_hosts_of):
 
 @pytest.mark.asyncio
 async def test_a_selector_matching_no_host_refuses(monkeypatch):
-    """An empty host selection raises the host walk's own EmptySelectionError.
+    """An empty host selection refuses as NoCoverageHostsError, chaining the walk's own error.
 
     ``all_hosts`` is a generator — the error surfaces on the first ``next()``,
     inside ``get_coverage``'s own ``list(...)`` call, before any fetch.
@@ -254,8 +255,29 @@ async def test_a_selector_matching_no_host_refuses(monkeypatch):
 
     monkeypatch.setattr("otto.fleet.all_hosts", _raising_all_hosts)
     project = _project({"hosts": "sensor"})
-    with pytest.raises(EmptySelectionError):
+    with pytest.raises(NoCoverageHostsError) as excinfo:
         await get_coverage(projects=[project])
+    assert isinstance(excinfo.value.__cause__, EmptySelectionError)
+    assert "pattern 'sensor' fullmatches none of the 3 host(s)" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_a_local_only_selector_names_no_keyword_a_library_caller_cannot_pass(monkeypatch):
+    """No coverage call takes ``include_local``, so ``get_coverage`` cannot advise passing it."""
+
+    def _hidden(pattern=None, **_kw):
+        raise EmptySelectionError(pattern.pattern, 4, excluded_by=["include_local"], matched_size=1)
+        yield  # pragma: no cover — unreachable; keeps this a generator function
+
+    monkeypatch.setattr("otto.fleet.all_hosts", _hidden)
+    with pytest.raises(NoCoverageHostsError) as excinfo:
+        await get_coverage(projects=[_project({"hosts": "local"})])
+    text = str(excinfo.value)
+    assert text.startswith("pattern 'local' fullmatches 1 of the 4 host(s)")
+    assert "coverage does not walk the built-in 'local' host" in text
+    assert "name a lab host in the pattern instead" in text
+    assert "include_local" not in text
+    assert isinstance(excinfo.value.__cause__, EmptySelectionError)
 
 
 @pytest.mark.asyncio

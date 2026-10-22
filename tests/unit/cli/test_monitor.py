@@ -165,6 +165,23 @@ class TestArchiveReport:
         assert "archived" not in caplog.text
 
 
+class TestEmptySelection:
+    def test_a_container_only_hosts_pattern_prints_the_cli_wording(self, run_live):
+        """``--hosts`` matching only containers: the command does not walk them, no keyword."""
+        from otto.config.scope import EmptySelectionError
+
+        run_live.side_effect = EmptySelectionError(
+            r".*\.r1\.api", 3, excluded_by=["include_containers"], matched_size=1
+        )
+        result = _invoke(["--live", "--hosts", r".*\.r1\.api"])
+        assert result.exit_code == 1, result.output
+        out = _flat(result.output)
+        assert "this command does not walk container hosts" in out
+        assert "The regex is correct" in out
+        assert "include_containers" not in out
+        assert "Traceback" not in out
+
+
 # ── Reservation gate: per mode, not uniform ──────────────────────────────────
 #
 # monitor registers gate=False (see builtin_commands.py) and gates itself:

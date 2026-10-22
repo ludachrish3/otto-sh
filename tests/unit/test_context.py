@@ -589,6 +589,25 @@ def test_cov_detection_failure_is_false_with_one_warning(cov_detection, caplog):
     assert "coverage" in warnings[0].getMessage()
 
 
+def test_cov_detection_over_a_local_only_selector_names_no_membership_keyword(
+    cov_detection, caplog, monkeypatch
+):
+    """``ctx.cov`` takes no ``include_local``, so its warning cannot advise passing it."""
+    from otto.config.scope import EmptySelectionError
+
+    def _hidden(_self, pattern=None, **_kw):
+        raise EmptySelectionError(pattern.pattern, 4, excluded_by=["include_local"], matched_size=1)
+
+    monkeypatch.setattr(OttoContext, "all_hosts", _hidden)
+    cov_detection["projects"] = [_CovProject({"hosts": "local"})]
+    with caplog.at_level(logging.WARNING, logger="otto.context"):
+        assert OttoContext(lab=_lab_with("test1")).cov is False
+    warned = [r.getMessage() for r in caplog.records if "detection failed" in r.getMessage()]
+    assert len(warned) == 1
+    assert "coverage does not walk the built-in 'local' host" in warned[0]
+    assert "include_local" not in warned[0]
+
+
 def test_run_context_logs_on_the_public_otto_context_logger(cov_detection, caplog):
     """The run context's records stay on ``otto.context``, the name users configure."""
     import otto.run_context

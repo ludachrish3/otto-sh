@@ -220,7 +220,8 @@ class EmbeddedGcdaCollector:
         """Dump, decode and stage coverage from every matching embedded host.
 
         Returns ``{(host_id, product): staging_dir}``. Non-embedded hosts,
-        uninstrumented products, and failed dumps are omitted.
+        uninstrumented products, and failed dumps are omitted. Container hosts
+        are walked like every other coverage walk and skipped as non-embedded.
         """
         from ...fleet import do_for_all_hosts
 
@@ -230,6 +231,7 @@ class EmbeddedGcdaCollector:
             _collect_one_embedded_host,
             self.staging_root,
             pattern=self.pattern,
+            include_containers=True,
         )
 
         results: dict[tuple[str, str], Path] = {}

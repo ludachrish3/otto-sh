@@ -28,7 +28,7 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     (root / "docs").mkdir()
     (root / "docs" / "index.md").write_text("# otto\n")
     (root / ".gitignore").write_text(
-        "__pycache__/\nreports/\ntests/project5/build/\ndocs/generated.md\n"
+        "__pycache__/\nreports/\ntests/project5/build/\ntests/project_ctr/build/\ndocs/generated.md\n"
     )
     _git(root, "init", "-q", "-b", "main")
     _git(root, "add", "-A")
@@ -97,11 +97,12 @@ def test_a_modified_tracked_file_is_not_this_step_s_concern(repo):
     assert rp.preflight(repo) == 0
 
 
-def test_stale_observations_and_the_project5_build_are_cleared_and_reported(repo, capsys):
+def test_stale_observations_and_the_bed_builds_are_cleared_and_reported(repo, capsys):
     stale = [
         _write(repo / "reports" / "conformance-observations" / "bed-1.json"),
         _write(repo / "reports" / "kmodcov-observations" / "obs.json"),
         _write(repo / "tests" / "project5" / "build" / "lib" / "old_name.c"),
+        _write(repo / "tests" / "project_ctr" / "build" / "otto-cov-ctr-runtime.tar"),
     ]
     kept = _write(repo / "reports" / "coverage" / "index.html")
 
@@ -113,6 +114,7 @@ def test_stale_observations_and_the_project5_build_are_cleared_and_reported(repo
     assert "removed reports/conformance-observations" in out
     assert "removed reports/kmodcov-observations" in out
     assert "removed tests/project5/build" in out
+    assert "removed tests/project_ctr/build" in out
     assert kept.exists(), "the preflight removed run output it does not own"
 
 

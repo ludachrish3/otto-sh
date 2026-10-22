@@ -548,10 +548,16 @@ def get(
 
 
 def _failure_line(error: BaseException) -> str:
-    """Say what failed: a bare RuntimeError is the merge; every typed error speaks for itself."""
+    """Say what failed: a bare RuntimeError is the merge; every typed error speaks for itself.
+
+    An empty host selection, direct or wrapped, speaks in its CLI wording: no
+    coverage command takes the membership flags its library message names.
+    """
+    from ..config.scope import selection_message
+
     if type(error) is RuntimeError:
         return f"Coverage merge failed: {error}"
-    return str(error)
+    return selection_message(error, walker="coverage") or str(error)
 
 
 def _render_get_report(got: "GetReport") -> None:
@@ -581,7 +587,7 @@ def clean() -> None:
     except ValueError as e:
         # No [coverage] section, a malformed selector, or no host to walk:
         # each message names the cause. Escaped for the literal "[coverage]".
-        logger.error(escape_markup(str(e)))  # noqa: TRY400 — deliberately no traceback: clean cause line
+        logger.error(escape_markup(_failure_line(e)))  # noqa: TRY400 — deliberately no traceback: clean cause line
         raise typer.Exit(1) from e
     _render_clean_report(cleaned)
 

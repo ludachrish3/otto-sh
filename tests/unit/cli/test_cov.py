@@ -35,7 +35,7 @@ from otto.coverage.errors import (
 from otto.coverage.report_inputs import ReportInputs
 from otto.coverage.reports import CleanReport, GetReport
 from otto.host.errors import HostUnreachableError
-from otto.result import Result
+from otto.result import CommandResult, Result
 from otto.utils import Status
 from tests.unit.cli.conftest import _flat
 
@@ -1344,6 +1344,120 @@ class TestCovGetLeaf:
         assert "t1/lib" in logged
         out = _flat(result.output)
         assert "t1/app: counters cleared" in out
+
+
+class TestCovGetContainerOnlyPattern:
+    """A container-only ``[coverage].hosts`` pattern runs the real fetch/collect path."""
+
+    def test_a_stopped_container_fails_as_no_data_and_names_no_membership_flag(
+        self, tmp_path, caplog
+    ):
+        from otto.context import OttoContext, reset_context, set_context
+        from otto.host.docker_host import DockerContainerHost
+        from otto.labs.loader import Lab
+
+        parent = MagicMock()
+        parent.id = "test1"
+        parent.name = "test1"
+        parent.term = "ssh"
+        # The `docker ps` probe answers with no id: the stack is not up.
+        parent.exec = AsyncMock(
+            return_value=CommandResult(Status.Success, value="", command="docker ps", retcode=0)
+        )
+        container = DockerContainerHost(
+            parent=parent,
+            container_id="",
+            project="r1",
+            service="api",
+            compose_project="otto-r1",
+        )
+        product = _product_double("app")
+        product.cov_dir = "/var/cov/app"
+        product.prepare_coverage = AsyncMock(return_value=Result(Status.Success))
+        container.products = [product]
+        lab = Lab(name="container_lab")
+        lab.hosts[container.id] = container
+
+        project = MagicMock()
+        project.root = tmp_path
+        project.name = "proj"
+        project.settings = {"coverage": {"hosts": r".*\.r1\.api", "tiers": {}}}
+
+        token = set_context(OttoContext(lab=lab))
+        try:
+            with (
+                patch("otto.declared.current_projects", return_value=[project]),
+                patch(
+                    "otto.coverage.capture.gitio.head_commit", return_value="c0ffee" * 6 + "abcd"
+                ),
+                caplog.at_level(logging.ERROR),
+                patch.object(cov_module.logger, "error") as mock_err,
+            ):
+                result = runner.invoke(cov_app, ["get", "-o", str(tmp_path / "out")])
+        finally:
+            reset_context(token)
+
+        assert result.exit_code == 1, result.output
+        logged = " ".join(str(call.args[0]) for call in mock_err.call_args_list)
+        out = _flat(result.output) + caplog.text + logged
+        # The fetcher's own line names the stopped container.
+        assert "Failed to fetch from test1.r1.api" in out
+        assert "is not running" in out
+        assert "no .gcda counters retrieved" in out
+        assert "include_containers" not in out
+
+
+class TestCovEmptySelectionCliWording:
+    """A coverage host selection emptied by a membership flag names no Python keyword.
+
+    No coverage function exposes ``include_containers`` / ``include_local``,
+    so the library advice ("pass include_local=True") is wrong on every
+    coverage surface: the wording says coverage does not walk those hosts,
+    and for ``local`` (the runner, never a coverage host) to name a lab host.
+    """
+
+    def test_clean_with_a_local_only_pattern_says_coverage_does_not_walk_local(self, tmp_path):
+        from otto.context import OttoContext, reset_context, set_context
+        from otto.host.builtin_hosts import make_builtin_local_host
+        from otto.labs.loader import Lab
+
+        lab = Lab(name="local_only_lab")
+        lab.add_host(make_builtin_local_host())
+        project = MagicMock()
+        project.root = tmp_path
+        project.name = "proj"
+        project.settings = {"coverage": {"hosts": "local", "tiers": {}}}
+
+        token = set_context(OttoContext(lab=lab))
+        try:
+            with (
+                patch("otto.declared.current_projects", return_value=[project]),
+                patch.object(cov_module.logger, "error") as mock_err,
+            ):
+                result = runner.invoke(cov_app, ["clean"])
+        finally:
+            reset_context(token)
+
+        assert result.exit_code == 1, result.output
+        logged = " ".join(mock_err.call_args[0][0].split())
+        assert logged.startswith("nothing to clean: pattern 'local' fullmatches 1 of the")
+        assert "coverage does not walk the built-in 'local' host" in logged
+        assert "name a lab host in the pattern instead" in logged
+        assert "include_local" not in logged
+        assert "=True" not in logged
+
+    def test_get_with_a_selection_hidden_by_a_flag_logs_the_cli_wording(self):
+        error = EmptySelectionError("local", 4, excluded_by=["include_local"], matched_size=1)
+        with (
+            patch("otto.coverage.get.get_coverage", AsyncMock(side_effect=error)),
+            patch.object(cov_module.logger, "error") as mock_err,
+        ):
+            result = runner.invoke(cov_app, ["get"])
+        assert result.exit_code == 1
+        logged = " ".join(mock_err.call_args[0][0].split())
+        assert "coverage does not walk the built-in 'local' host" in logged
+        assert "name a lab host in the pattern instead" in logged
+        assert "include_local" not in logged
 
 
 # ── rich-markup escaping — literal brackets must survive the console handler ─

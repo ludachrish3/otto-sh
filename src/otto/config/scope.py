@@ -212,6 +212,56 @@ class EmptySelectionError(OttoError, ValueError):
         self.pattern = pattern
         self.base_size = base_size
 
+    def cli_message(self, *, walker: str = "this command") -> str:
+        """Return the message for a reader who has no keyword argument to pass.
+
+        ``str(self)`` advises a library caller to pass ``include_local=True``
+        and the like; an otto command exposes no such switch, and neither does
+        any coverage call, so that advice is unfollowable there. A selection
+        its membership flags emptied says instead that *walker* does not walk
+        those hosts. The plain no-match message is already actionable from a
+        command line and comes back unchanged.
+
+        Args:
+            walker: Who did the walk, as the sentence's subject. The default
+                addresses a command line; a path a library caller reaches as
+                well names the walk itself (``"coverage"``), which reads true
+                for both.
+        """
+        if not self.excluded_by:
+            return str(self)
+        what = " or ".join(_NOT_WALKED.get(flag, flag) for flag in self.excluded_by)
+        if "include_local" not in self.excluded_by:
+            remedy = _REACH_CONTAINER
+        elif len(self.excluded_by) == 1:
+            remedy = _NAME_A_LAB_HOST
+        else:
+            remedy = f"{_NAME_A_LAB_HOST}\n{_REACH_CONTAINER_ONLY}"
+        return _HIDDEN_FROM_COMMAND.format(
+            pattern=self.pattern,
+            matched=self.matched_size,
+            size=self.base_size,
+            walker=walker,
+            what=what,
+            remedy=remedy,
+        )
+
+
+def selection_message(error: BaseException, *, walker: str = "this command") -> "str | None":
+    """Return *error*'s CLI wording when it is, or directly wraps, an empty selection.
+
+    A wrapper (``nothing to clean: <selection message>``) keeps its own text;
+    only the wrapped library message is swapped for
+    :meth:`EmptySelectionError.cli_message`, given *walker*. ``None`` for any
+    other error, so a caller falls back to its own rendering.
+    """
+    cause = error.__cause__
+    if isinstance(error, EmptySelectionError):
+        return error.cli_message(walker=walker)
+    if isinstance(cause, EmptySelectionError):
+        return str(error).replace(str(cause), cause.cli_message(walker=walker))
+    return None
+
 
 _EMPTY_SELECTION = """\
 pattern {pattern!r} fullmatches none of the {size} host(s) this run may walk,
@@ -241,6 +291,42 @@ Deliberately opens by saying what DIDN'T go wrong. The reader arrives holding a
 pattern that matched, and the first instinct on any empty-selection error is to
 loosen the regex — which here changes nothing, twice, before anyone suspects a
 flag they never typed."""
+
+
+_HIDDEN_FROM_COMMAND = """\
+pattern {pattern!r} fullmatches {matched} of the {size} host(s) this run may walk,
+but {walker} does not walk {what}, so nothing would be contacted.
+
+{remedy}\
+"""
+"""The hidden-by-flag refusal for a reader with no keyword to pass: no otto
+command (and no coverage call) takes the membership flags."""
+
+
+_REACH_CONTAINER = """\
+The regex is correct — do not widen it. To reach one of them directly, use
+'otto host <id> <verb>'."""
+"""The remedy when only container hosts were held out: the pattern named them
+right, and a container is reached by its own id, never by a sweep."""
+
+
+_NAME_A_LAB_HOST = """\
+The built-in 'local' host is the machine otto runs on, never a lab host:
+name a lab host in the pattern instead."""
+"""The remedy when ``local`` was held out. Here the regex IS what to change:
+no walk that holds ``local`` out ever reaches it, and ``otto host local`` runs
+a verb on this machine without collecting or monitoring anything."""
+
+
+_REACH_CONTAINER_ONLY = "To reach a container directly, use 'otto host <id> <verb>'."
+"""The container half of the remedy when ``local`` was held out alongside one."""
+
+
+_NOT_WALKED = {
+    "include_containers": "container hosts",
+    "include_local": "the built-in 'local' host",
+}
+"""What each membership flag holds out, named for a reader who never typed the flag."""
 
 
 @dataclasses.dataclass(frozen=True)

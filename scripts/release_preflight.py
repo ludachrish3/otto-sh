@@ -49,7 +49,7 @@ READ_ROOTS = ["docs/", "src/", "tests/", "schemas/"]
 OBSERVATIONS_GLOB = "reports/*-observations"
 """Run output a matrix test compares with the committed verdicts; the release re-measures it."""
 
-BUILD_DIRS = ["tests/project5/build"]
+BUILD_DIRS = ["tests/project5/build", "tests/project_ctr/build"]
 """Build output the e2e fixtures rebuild on demand, refusing one another tool made."""
 
 PACKAGE_ROOT = "src/otto"

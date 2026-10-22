@@ -31,6 +31,7 @@ _RUN_TIMEOUT = 120
 _INIT = """\
 import asyncio
 import logging
+import re
 
 import typer
 
@@ -69,6 +70,17 @@ def exit_in_a_command(marker_local):
 
 def misuse_in_a_command(marker_local):
     raise typer.BadParameter("not a value this takes")
+
+
+def select_only_local():
+    from otto.fleet import all_hosts
+
+    return list(all_hosts(pattern=re.compile("local")))
+
+
+@cli_command(name="selectlocal")
+async def selectlocal() -> None:
+    select_only_local()
 
 
 @cli_command(name="crash")
@@ -281,3 +293,69 @@ def test_a_parse_error_or_help_writes_no_traceback(workspace, argv):
     for files in runs:
         _assert_no_traceback(files)
     assert "Traceback" not in p.stdout + p.stderr
+
+
+@pytest.fixture
+def local_only_coverage(tmp_path):
+    """A workspace whose ``[coverage] hosts`` fullmatches only the built-in ``local`` host."""
+    lab_data = tmp_path / "lab_data"
+    lab_data.mkdir()
+    write_lab_json(
+        lab_data / "lab.json",
+        [
+            {
+                "ip": "10.0.0.1",
+                "element": "host1",
+                "labs": ["test_lab"],
+                "creds": [{"login": "admin", "password": "pass"}],
+            }
+        ],
+    )
+    project = make_project(
+        tmp_path / "sut",
+        name="acme",
+        tests=["tests"],
+        extra=(
+            '[[lab.sources]]\nbackend = "json"\npaths = ["../lab_data"]\n\n'
+            '[coverage]\nhosts = "local"\n'
+        ),
+        files={"tests/test_x.py": "def test_x():\n    pass\n"},
+    )
+    env = {k: v for k, v in os.environ.items() if not is_otto_env_var(k)}
+    env["OTTOPATH"] = str(project)
+    env["OTTO_HOME"] = str(tmp_path / "home")
+    env["OTTO_XDIR"] = str(tmp_path / "xdir")
+    return tmp_path, env
+
+
+def test_a_forced_cov_over_a_local_only_selection_names_no_python_keyword(local_only_coverage):
+    """``otto test --cov`` reaches the boundary frame with an empty selection.
+
+    Every coverage walk leaves ``include_local`` off, and no CLI flag sets it,
+    so the boundary prints the CLI wording — never "pass include_local=True".
+    """
+    p, files = _otto(local_only_coverage, "test", "--cov", "test_x")
+
+    out = " ".join((p.stdout + p.stderr).split())
+    assert p.returncode == 1, out
+    assert "error: otto test --cov: pattern 'local' fullmatches 1 of the" in out
+    assert "coverage does not walk the built-in 'local' host" in out
+    assert "name a lab host in the pattern instead" in out
+    assert "include_local" not in out
+    for name, text in files.items():
+        assert "coverage does not walk the built-in 'local' host" in " ".join(text.split()), name
+
+
+def test_a_library_calls_empty_selection_keeps_its_keyword_advice(workspace):
+    """A command's own ``all_hosts`` call is a library call: its author CAN pass the flag.
+
+    The boundary frame prints such an error as raised — only coverage paths,
+    which take no membership flag, reword it for the command line.
+    """
+    p, _files = _otto(workspace, "selectlocal")
+
+    out = " ".join((p.stdout + p.stderr).split())
+    assert p.returncode == 1, out
+    assert "error: pattern 'local' fullmatches 1 of the" in out
+    assert "pass include_local=True" in out
+    assert "does not walk" not in out

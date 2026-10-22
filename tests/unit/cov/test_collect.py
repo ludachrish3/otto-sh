@@ -1491,3 +1491,67 @@ class TestPostRunSwallowPolicy:
 
         assert not (cov_dir / "board1" / "app" / "capture.json").exists()
         assert any("Coverage collection failed" in rec.message for rec in caplog.records)
+
+
+class TestContainerOnlyPattern:
+    """A ``[coverage].hosts`` pattern naming only container hosts collects them.
+
+    Unlike every test above, the embedded collector is NOT patched out: the
+    real walk runs over the real lab, which is where a container-only
+    selection was refused.
+    """
+
+    def test_the_containers_counters_are_collected(self, tmp_path, project_root, monkeypatch):
+        from otto.context import OttoContext, reset_context, set_context
+        from otto.coverage.capture import produce as produce_mod
+        from otto.host.docker_host import DockerContainerHost
+        from otto.host.toolchain import Toolchain
+        from otto.labs.loader import Lab
+
+        container = MagicMock(spec=DockerContainerHost)
+        container.id = "test1.r1.api"
+        container.name = "test1.r1.api"
+        container.products = [_product("app", "/var/cov/app")]
+        container.toolchain = Toolchain()
+        lab = Lab(name="container_lab")
+        lab.hosts[container.id] = container
+
+        cov_dir = tmp_path / "cov"
+        cov_dir.mkdir()
+        staged = cov_dir / container.id / "app"
+
+        async def fetch_all(*args, **kwargs):
+            # The fetch delivers the container's one .gcda, as a real one would.
+            _counters(staged, project_root)
+            return {(container.id, "app"): staged}
+
+        async def fake_capture(self, pairs, staging, output, toolchain=None):
+            output.write_text(f"TN:\nSF:{project_root / 'f.c'}\nDA:1,3\nend_of_record\n")
+            return output
+
+        monkeypatch.setattr(produce_mod.LcovMerger, "capture_pairs", fake_capture)
+
+        fetcher = MagicMock()
+        fetcher.fetch_all = AsyncMock(side_effect=fetch_all)
+        project = MagicMock()
+        project.root = project_root
+        project.name = "proj"
+
+        token = set_context(OttoContext(lab=lab))
+        try:
+            with (
+                patch(
+                    "otto.config.coverage_settings.get_cov_config",
+                    return_value={"hosts": r".*\.r1\.api", "tiers": {}},
+                ),
+                patch("otto.config.coverage_settings.get_cov_project", return_value=project),
+                patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher),
+            ):
+                result = asyncio.run(collect_coverage(cov_dir, projects=[project]))
+        finally:
+            reset_context(token)
+
+        assert result.product_dirs == {(container.id, "app"): staged}
+        capture_path = staged / "capture.json"
+        assert result.captures_written == [capture_path]
+        assert json.loads(capture_path.read_text())["tier"] == "system"

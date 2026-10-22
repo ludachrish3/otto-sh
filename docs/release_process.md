@@ -71,9 +71,9 @@ The distribution name is `otto-sh`; the installed CLI command is `otto`.
      no commit carries them, and neither CI nor `make gate-fresh` ever sees
      them. Commit, ignore or move each one, then run the release again. The
      preflight then clears the gitignored run output the release regenerates
-     anyway: `reports/*-observations`, `tests/project5/build`, and any
-     `src/otto/` directory left holding only `__pycache__` (it would import
-     as a namespace package). You can run `make release-preflight` by hand.
+     anyway: `reports/*-observations`, `tests/project5/build`,
+     `tests/project_ctr/build`, and any `src/otto/` directory left holding
+     only `__pycache__` (it would import as a namespace package). You can run `make release-preflight` by hand.
    - `clean-dist`, `web-install`, a first **docs** build (its prerequisites
      build the web assets, so a broken web build also surfaces here), the
      Python static checks and `budget-delta`.

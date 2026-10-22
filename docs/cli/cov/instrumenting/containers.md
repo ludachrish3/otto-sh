@@ -96,6 +96,7 @@ docker logs to collect` — and carries on, so a `cleanup` after an `uninstall`,
 or a second `cleanup`, succeeds. Any other `docker logs` failure (an
 unreachable daemon, say) is still reported.
 
+(coverage-container-root-owned-files)=
 ## Root-owned files
 
 A container commonly writes its counters as whichever user its own process
@@ -119,8 +120,71 @@ A container can also be the thing *under test*, rather than the vehicle
 for a product — a service your tests talk to, running inside a container
 the lab brought up with `docker compose`. That case is
 `[docker.use_cases]`: the container becomes an ordinary lab host, and a
-`shell` product installs onto it exactly as it would onto any Unix host,
-because the image itself carries no product of otto's own. `docker_image`
+`shell` product is declared for it exactly as for any Unix host (given an
+absolute `stage_dir`), because the image itself carries no product of
+otto's own. `otto run install`, `status` and `cleanup` do not visit
+container hosts, though, so your suite installs it
+({ref}`coverage-container-host-example`). `docker_image`
 is the opposite shape — the image *is* the deliverable, run as a product
 on a host that already exists.
 {doc}`../../docker/use-cases` is the compose workflow.
+
+(coverage-container-host-example)=
+### Collecting from the container
+
+A container host is an ordinary coverage host, so `[coverage] hosts` may name
+it alone. This is the bed project `tests/project_ctr/`'s settings: the
+compose stack and use-case that create the container host
+({doc}`../../docker/use-cases`), the product, and the pattern.
+
+```{literalinclude} ../../../../tests/project_ctr/.otto/settings.toml
+:language: toml
+:start-after: "# docs-container-host-begin"
+:end-before: "# docs-container-host-end"
+```
+
+- `match` selects the container by its host id
+  ({ref}`host identity <host-identity>`).
+- `stage_dir` is absolute because a container host has no default staging
+  directory and no login home.
+- `cov_dir` is where the program's counters land: run it with
+  `GCOV_PREFIX=/var/cov/counter`. The directory must be writable by the
+  user the program runs as
+  ({ref}`root-owned files <coverage-container-root-owned-files>`).
+- `hosts` fullmatches only the container, so no bare host is collected.
+
+The build path can stay as built: the product was compiled in a container
+with the project mounted at `/build`, so its counters carry
+`/build/build/main.gcda` paths that exist nowhere on the lab, and no
+`GCOV_PREFIX_STRIP` is required. {ref}`coverage-build-requirement` is the
+pairing rule.
+
+Two things differ from a bare host:
+
+- `otto run install` does not walk container hosts, so your suite stages
+  and installs the product itself, after creating `stage_dir` and `cov_dir`
+  on the container. The bed's `_install` does it with the product's own
+  `stage` and `install` verbs (`_sh` runs one command through `host.exec`
+  and raises unless it succeeds):
+
+  ```{literalinclude} ../../../../tests/project_ctr/tests/test_cov_ctr.py
+  :language: python
+  :pyobject: _install
+  ```
+
+  Its class fixture gets the container host — `all_hosts` leaves containers
+  out unless asked (`include_containers=True`); `ctx.get_host("<id>")` works
+  too — installs, and runs the program once with `GCOV_PREFIX` set
+  (`_CONTAINER` is the container's host-id pattern, `_BINARY` the installed
+  program):
+
+  ```{literalinclude} ../../../../tests/project_ctr/tests/test_cov_ctr.py
+  :language: python
+  :pyobject: TestCovCtr._container
+  ```
+
+- The stack must be up when coverage is fetched. otto does not start
+  containers on use: a stopped container fails the fetch from that
+  container, every product on it, logged at ERROR as
+  `Failed to fetch from <id>: Container '<id>' is not running: ...`, which
+  names the remedy (`otto docker compose up <use-case>`).
