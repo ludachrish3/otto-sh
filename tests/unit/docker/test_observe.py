@@ -187,7 +187,8 @@ async def test_run_on_refuses_a_dry_runs_declined_answer(lab):
     [
         (list_containers, {}, "docker ps"),
         (list_containers, {"all": True}, "docker ps -a"),
-        (list_images, {}, "docker images"),
+        (list_images, {}, "docker image ls"),
+        (list_images, {"all": True}, "docker image ls -a"),
     ],
 )
 async def test_the_fan_out_verbs_run_dockers_own_command_on_every_capable_host(

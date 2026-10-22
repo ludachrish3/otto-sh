@@ -180,6 +180,87 @@ def test_tags_without_a_parent_or_a_default_are_empty():
     )
 
 
+def test_a_declared_key_offers_the_declared_names_first_each_once():
+    image = {
+        "name": "image",
+        "source": {
+            "kind": "observed",
+            "key": "images",
+            "by_option": "parent",
+            "declared": "docker_images",
+        },
+    }
+    names = {**NAMES, "docker_images": ["db", "api:latest"]}
+    payloads = sc.Payloads(names, None, _observed())
+    # dut1 observed api:latest too: offered once, in the declared half.
+    assert sc._source_values(image, "", ["east"], payloads, _res(), now=NOW) == [
+        "api:latest",
+        "db",
+    ]
+    assert sc._source_values(image, "d", ["east"], payloads, _res(), now=NOW) == ["db"]
+    # No parent and no default: the declared half still answers.
+    assert sc._source_values(image, "", ["west"], payloads, _res(), now=NOW) == [
+        "api:latest",
+        "db",
+    ]
+    # Without the key, an observed site offers the observed half alone, as before.
+    tag = {"name": "tag", "source": {"kind": "observed", "key": "images", "by_option": "parent"}}
+    assert sc._source_values(tag, "", ["west"], payloads, _res(), now=NOW) == []
+
+
+def _images_entry(*refs, age=60):
+    return {"images": {"observed_at": NOW - age, "refs": list(refs), "ids": list(refs)}}
+
+
+_FLEET_IMAGE = {
+    "name": "image",
+    "source": {
+        "kind": "observed",
+        "key": "images",
+        "by_option": "parent",
+        "declared": "docker_images",
+        "fleet": "docker_hosts",
+    },
+}
+_FLEET_NAMES = {
+    "docker_images": ["db", "api"],
+    "docker_hosts": ["alt2", "test3", "west1"],
+    "hosts_by_lab": {"east": ["test3", "alt2"], "west": ["west1", "alt2"]},
+    "docker_default_parent_by_lab": {"east": "test3"},
+}
+_FLEET_OBSERVED = {
+    "schema_version": 1,
+    "hosts": {
+        "test3": _images_entry("api:latest", "redis:7"),
+        "alt2": _images_entry("db", "redis:7", "nginx:1"),
+        "west1": _images_entry("west:only"),
+        "gone": _images_entry("stale:1", age=25 * 3600),
+    },
+}
+
+
+@pytest.mark.parametrize(
+    ("labs", "option_values", "expected"),
+    [
+        # No --parent: every docker host's refs, hosts in payload order, each ref once.
+        ([], {}, ["api", "db", "redis:7", "nginx:1", "api:latest", "west:only"]),
+        (["east"], {}, ["api", "db", "redis:7", "nginx:1", "api:latest"]),
+        # west ties on docker_priority (no default parent); the fleet still answers.
+        (["west"], {}, ["api", "db", "redis:7", "nginx:1", "west:only"]),
+        # --parent: that host's refs alone.
+        (["west"], {"parent": "west1"}, ["api", "db", "west:only"]),
+        ([], {"parent": "nowhere"}, ["api", "db"]),
+    ],
+    ids=["all", "east", "west-tie", "parent", "unknown-parent"],
+)
+def test_a_fleet_key_offers_the_union_of_the_selected_docker_hosts_refs(
+    labs, option_values, expected
+):
+    payloads = sc.Payloads(_FLEET_NAMES, None, _FLEET_OBSERVED)
+    res = _res(option_values=option_values)
+    assert sc._source_values(_FLEET_IMAGE, "", labs, payloads, res, now=NOW) == expected
+
+
 def test_a_missing_or_malformed_namespace_answers_nothing():
     param = {
         "name": "container",

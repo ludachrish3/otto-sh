@@ -4,7 +4,9 @@ doc page."""
 
 import re
 
-from otto.cli.docker import _GROUPS, _VERBS, compose_app, docker_app
+import pytest
+
+from otto.cli.docker import _GROUPS, _VERBS, compose_app, docker_app, image_app
 from tests._fixtures.paths import CHECKOUT_ROOT
 
 
@@ -14,17 +16,17 @@ def _registered(app):
 
 def test_every_registered_command_has_a_row_and_vice_versa():
     rows = {(v.group, v.name) for v in _VERBS}
-    registered = {("docker", n) for n in _registered(docker_app)} | {
-        ("compose", n) for n in _registered(compose_app)
-    }
+    registered = (
+        {("docker", n) for n in _registered(docker_app)}
+        | {("compose", n) for n in _registered(compose_app)}
+        | {("image", n) for n in _registered(image_app)}
+    )
     assert registered == rows
 
 
-def test_compose_is_mounted_on_docker():
-    assert any(
-        g.typer_instance is compose_app and g.name == "compose"
-        for g in docker_app.registered_groups
-    )
+@pytest.mark.parametrize(("app", "name"), [(compose_app, "compose"), (image_app, "image")])
+def test_each_sub_group_is_mounted_on_docker(app, name):
+    assert any(g.typer_instance is app and g.name == name for g in docker_app.registered_groups)
 
 
 def test_every_row_stamps_the_markers_it_declares():
@@ -51,7 +53,7 @@ def test_every_rows_markers_survive_resolution_to_the_command_callback():
         cmd = (
             group.commands[verb.name]
             if verb.group == "docker"
-            else group.commands["compose"].commands[verb.name]
+            else group.commands[verb.group].commands[verb.name]
         )
         assert getattr(cmd.callback, "__cli_output_dir__", True) is verb.output_dir, verb
         assert getattr(cmd.callback, "__cli_dry_run_preview__", False) is verb.dry_run_preview, verb
@@ -59,13 +61,13 @@ def test_every_rows_markers_survive_resolution_to_the_command_callback():
 
 def test_every_row_has_a_doc_page():
     for verb in _VERBS:
-        sub = "" if verb.group == "docker" else "compose/"
+        sub = "" if verb.group == "docker" else f"{verb.group}/"
         page = CHECKOUT_ROOT / "docs" / "cli" / "docker" / f"{sub}{verb.name}.md"
         assert page.exists(), page
 
 
-def test_the_groups_map_names_both_apps():
-    assert {"docker": docker_app, "compose": compose_app} == _GROUPS
+def test_the_groups_map_names_every_app():
+    assert {"docker": docker_app, "compose": compose_app, "image": image_app} == _GROUPS
 
 
 _OLD = re.compile(r"otto docker (?:(?:up|down)\b|build\s+(?!-)(?!\[)(?:<TAB>|\w+))")

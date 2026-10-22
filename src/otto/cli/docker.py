@@ -13,7 +13,9 @@ Subcommands::
                                  [--provide CAP=PROJECT] [--env K=V] [--env-file FILE]
     otto docker compose down    [USE_CASE [SERVICE...]] [--parent H] [--provide CAP=PROJECT]
     otto docker ps              [-a] [--parent H]
-    otto docker images          [--parent H]
+    otto docker image ls        [-a] [--parent H]          (alias: otto docker images)
+    otto docker image rm        IMAGE... [-f] [--no-prune] [--parent H]
+    otto docker image prune     -f [-a] [--filter F]... [--parent H]
     otto docker logs            CONTAINER [--tail N] [--since T] [-t] [-f] [--parent H]
     otto docker compose ps      [USE_CASE] [-a] [--parent H] [--provide CAP=PROJECT]
     otto docker compose logs    [USE_CASE [SERVICE...]] [--tail N] [--since T] [-t] [-f]
@@ -24,8 +26,9 @@ cross-project deployment resolved by the provider competition (§4) onto one
 parent (§2), not a per-project loop over ``[[docker.composes]]``. ``build`` builds
 images only: it stages a project's declared images onto one lab host and knows
 nothing about a composition, so it takes a host (``--parent``), never a
-use-case. ``ps``, ``images``, ``logs``, ``compose ps`` and ``compose logs`` print
-docker's output as docker printed it.
+use-case. ``ps``, ``image ls`` (``images``), ``image rm``, ``image prune``,
+``logs``, ``compose ps`` and ``compose logs`` print docker's output as docker
+printed it.
 
 Every leaf is a thin wrapper around the library API in :mod:`otto.docker`,
 which is also what instructions and suites import directly.
@@ -67,7 +70,8 @@ _T = TypeVar("_T")
 docker_app = typer.Typer(
     name="docker",
     help=(
-        "Build images (`build`), inspect (`ps`, `images`, `logs`, `use-cases`) "
+        "Build images (`build`), inspect (`ps`, `images`, `logs`, `use-cases`), "
+        "list and remove images (`image`: ls, rm, prune) "
         "and run use-case stacks (`compose`: build, up, down, ps, logs)."
     ),
     no_args_is_help=True,
@@ -86,6 +90,14 @@ compose_app = typer.Typer(
     context_settings={"help_option_names": ["-h", "--help"]},
 )
 docker_app.add_typer(compose_app, name="compose")
+
+image_app = typer.Typer(
+    name="image",
+    help="List (`ls`) and remove (`rm`, `prune`) images on the lab's docker hosts.",
+    no_args_is_help=True,
+    context_settings={"help_option_names": ["-h", "--help"]},
+)
+docker_app.add_typer(image_app, name="image")
 
 
 @docker_app.callback()
@@ -340,6 +352,48 @@ def _tag_completer(ctx: typer.Context, incomplete: str) -> list[str]:
         return []
 
 
+@completion_source(
+    kind="observed",
+    key="images",
+    by_option="parent",
+    declared="docker_images",
+    fleet="docker_hosts",
+)
+def _image_ref_completer(ctx: typer.Context, incomplete: str) -> list[str]:
+    """Shell-completion source for ``image rm IMAGE``: declared names, then observed references.
+
+    The declared ``[[docker.images]]`` names sorted (what a build tags), then
+    the references the daemons last listed, each offered once. With
+    ``--parent``, that host's daemon. Without it the verb runs on every
+    docker-capable host, so TAB offers the union over the selected labs'
+    docker-capable hosts (the ``--parent`` completer's list, in its order),
+    each daemon's references in its order: the parent rule is not consulted.
+    Cache only -- a TAB never asks a host. The shim mirrors this as the
+    ``declared`` and ``fleet`` keys of an ``observed`` site; change both or
+    neither.
+    """
+    try:
+        declared = _image_completer(ctx, incomplete)
+        parent = (
+            ctx.params.get("parent") if isinstance(getattr(ctx, "params", None), dict) else None
+        )
+        if isinstance(parent, str):
+            observed = _tag_completer(ctx, incomplete)
+        else:
+            from ..config.completion_cache import read_docker_observed
+
+            projects = _discovered_projects()
+            observed = [
+                ref
+                for host in _docker_host_completer(ctx, "")
+                for ref in read_docker_observed(projects, host).image_refs
+                if ref.startswith(incomplete)
+            ]
+        return list(dict.fromkeys([*declared, *observed]))
+    except Exception:  # noqa: BLE001 — completion never crashes the shell
+        return []
+
+
 def _default_use_case(use_case: str | None) -> str:
     """Resolve an omitted ``USE_CASE`` positional, or refuse loudly.
 
@@ -463,6 +517,7 @@ _DOCKER_FLAGS: "dict[str, str]" = {
     "follow": "--follow",
     "use_case": "USE_CASE",
     "services": "SERVICE",
+    "force": "--force",
 }
 
 
@@ -1114,29 +1169,120 @@ async def _ps(
         await _record_observed(_answered_hosts(report), containers=True)
 
 
-async def _images(
+_IMAGE_PARENT_HELP = (
+    "The docker-capable lab host (the parent) to run on; omitted: every "
+    "docker-capable host in the lab. Not docker's -H."
+)
+
+
+async def _image_ls(
+    all_: Annotated[
+        bool,
+        typer.Option("--all", "-a", help="Show every image, intermediate ones too (docker's -a)."),
+    ] = False,
     parent: Annotated[
         str | None,
-        typer.Option(
-            "--parent",
-            help=(
-                "The docker-capable lab host (the parent) to ask; omitted: every "
-                "docker-capable host in the lab. Not docker's -H."
-            ),
-            autocompletion=_docker_host_completer,
-        ),
+        typer.Option("--parent", help=_IMAGE_PARENT_HELP, autocompletion=_docker_host_completer),
     ] = None,
 ) -> None:
-    """Print `docker images` from every docker-capable host, as docker printed it."""
+    """Print `docker image ls` from every docker-capable host, as docker printed it."""
     from ..docker.observe import list_images
 
-    report = await _run_docker(list_images(parent=parent))
+    report = await _run_docker(list_images(parent=parent, all=all_))
     if isinstance(report, _Declined):
         return
     try:
         _render_observe(report, header=True)
     finally:
         await _record_observed(_answered_hosts(report), images=True)
+
+
+def _reached_hosts(report: "ObserveReport") -> "list[str]":
+    """Return the hosts otto reached, a daemon's refusal included.
+
+    ``image rm a b`` on a host holding only ``a`` removes ``a`` and still
+    fails, so a failed host's images are re-recorded too; only a host otto
+    could not reach is spared a second connect timeout.
+    """
+    return [h.host_id for h in report.hosts if h.reached]
+
+
+async def _image_rm(
+    image: Annotated[
+        list[str],
+        typer.Argument(
+            help="Images to remove: a reference or an id, as docker takes them.",
+            autocompletion=_image_ref_completer,
+        ),
+    ],
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            "-f",
+            help="Remove an image a container uses, or untag a shared one (docker's -f).",
+        ),
+    ] = False,
+    no_prune: Annotated[
+        bool,
+        typer.Option("--no-prune", help="Keep the untagged parent images (docker's --no-prune)."),
+    ] = False,
+    parent: Annotated[
+        str | None,
+        typer.Option("--parent", help=_IMAGE_PARENT_HELP, autocompletion=_docker_host_completer),
+    ] = None,
+) -> None:
+    """Run `docker image rm` on every docker-capable host, printing what docker printed."""
+    from ..docker.image_verbs import remove_images
+
+    report = await _run_docker(remove_images(image, force=force, no_prune=no_prune, parent=parent))
+    if isinstance(report, _Declined):
+        return
+    try:
+        _render_observe(report, header=True)
+    finally:
+        await _record_observed(_reached_hosts(report), images=True)
+
+
+async def _image_prune(
+    all_: Annotated[
+        bool,
+        typer.Option(
+            "--all", "-a", help="Remove every image no container uses, not only dangling ones."
+        ),
+    ] = False,
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            "-f",
+            help="Required: docker would ask for confirmation, and otto never prompts.",
+        ),
+    ] = False,
+    filter_: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--filter",
+            help="docker's filter, e.g. until=24h or label=KEY=VALUE. Repeatable.",
+        ),
+    ] = None,
+    parent: Annotated[
+        str | None,
+        typer.Option("--parent", help=_IMAGE_PARENT_HELP, autocompletion=_docker_host_completer),
+    ] = None,
+) -> None:
+    """Run `docker image prune -f` on every docker-capable host, printing what docker printed."""
+    from ..docker.image_verbs import prune_images
+
+    report = await _run_docker(
+        prune_images(all=all_, force=force, filters=filter_ or [], parent=parent)
+    )
+    if isinstance(report, _Declined):
+        return
+    try:
+        _render_observe(report, header=True)
+    finally:
+        await _record_observed(_reached_hosts(report), images=True)
 
 
 async def _follow(resolve: "Coroutine[Any, Any, list[LogsTarget]]") -> None:
@@ -1371,7 +1517,7 @@ class _Verb:
     """One registered docker verb: its group, leaf and the policies the preamble reads."""
 
     name: str
-    group: Literal["docker", "compose"]
+    group: Literal["docker", "compose", "image"]
     leaf: "Callable[..., Any]"
     output_dir: bool = True
     """False: read-only, no per-invocation output directory."""
@@ -1384,8 +1530,11 @@ class _Verb:
     preview this workstream exists to ship, and the build verbs likewise print their plan.
     ``use-cases`` opts out too: it is a read-only inventory of configuration that
     contacts no host, so its body is its own dry-run answer and prints identically
-    either way. ``ps`` and the other observe verbs keep the safe default.
+    either way. The ``image`` verbs (and ``images``) preview each host's exact docker
+    command. ``ps`` and the other observe verbs keep the safe default.
     """
+    help: "str | None" = None
+    """The command's help, when not the leaf's docstring (an alias names what it aliases)."""
 
 
 # The single source of truth for which docker verbs exist, which group each registers
@@ -1396,7 +1545,17 @@ class _Verb:
 _VERBS: "list[_Verb]" = [
     _Verb("build", "docker", _build, dry_run_preview=True),
     _Verb("ps", "docker", _ps, output_dir=False),
-    _Verb("images", "docker", _images, output_dir=False),
+    # `images` and `image ls` both register the one `_image_ls` leaf, so both rows stamp
+    # the same function; test_every_row_stamps_the_markers_it_declares fails if they diverge.
+    _Verb(
+        "images",
+        "docker",
+        _image_ls,
+        output_dir=False,
+        dry_run_preview=True,
+        help="Alias of `otto docker image ls`: print `docker image ls` from every "
+        "docker-capable host, as docker printed it.",
+    ),
     _Verb("logs", "docker", _logs, output_dir=False),
     _Verb("use-cases", "docker", _use_cases, output_dir=False, dry_run_preview=True),
     _Verb("build", "compose", _compose_build, dry_run_preview=True),
@@ -1404,10 +1563,17 @@ _VERBS: "list[_Verb]" = [
     _Verb("down", "compose", _compose_down, dry_run_preview=True),
     _Verb("ps", "compose", _compose_ps, output_dir=False),
     _Verb("logs", "compose", _compose_logs, output_dir=False),
+    _Verb("ls", "image", _image_ls, output_dir=False, dry_run_preview=True),
+    _Verb("rm", "image", _image_rm, dry_run_preview=True),
+    _Verb("prune", "image", _image_prune, dry_run_preview=True),
 ]
-_GROUPS: "dict[str, typer.Typer]" = {"docker": docker_app, "compose": compose_app}
+_GROUPS: "dict[str, typer.Typer]" = {
+    "docker": docker_app,
+    "compose": compose_app,
+    "image": image_app,
+}
 
 for _verb in _VERBS:
     _verb.leaf.__cli_output_dir__ = _verb.output_dir  # ty: ignore[unresolved-attribute]
     _verb.leaf.__cli_dry_run_preview__ = _verb.dry_run_preview  # ty: ignore[unresolved-attribute]
-    _GROUPS[_verb.group].command(name=_verb.name)(_verb.leaf)
+    _GROUPS[_verb.group].command(name=_verb.name, help=_verb.help)(_verb.leaf)

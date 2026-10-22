@@ -23,7 +23,8 @@ deploy pipeline, spec §8/§11), and ``build_on`` / ``compose_build`` /
 ``DockerVerbError`` with the report types they and ``teardown`` return
 (``BuildReport``, ``ProjectBuild``, ``ImageBuild``, ``FailedImage``,
 ``HostReport``, ``TeardownReport``), and the read-only observe verbs
-``list_containers`` / ``list_images`` with their ``ObserveReport``, and the
+``list_containers`` / ``list_images`` with their ``ObserveReport``, the image
+verbs ``remove_images`` / ``prune_images``, and the
 one parent rule (``default_docker_parent`` / ``docker_parent``): a caller
 pays for the one module that defines the name it asks for. Every command that
 loads a lab imports ``.compose`` to place the declared container hosts, and
@@ -57,6 +58,8 @@ if TYPE_CHECKING:
     from .deployment import deploy as deploy
     from .deployment import deployed as deployed
     from .deployment import teardown as teardown
+    from .image_verbs import prune_images as prune_images
+    from .image_verbs import remove_images as remove_images
     from .observe import DockerVerbError as DockerVerbError
     from .observe import HostOutput as HostOutput
     from .observe import LogsTarget as LogsTarget
@@ -96,6 +99,8 @@ _LAZY_ATTRS: dict[str, str] = {
     "deploy": "otto.docker.deployment",
     "deployed": "otto.docker.deployment",
     "teardown": "otto.docker.deployment",
+    "prune_images": "otto.docker.image_verbs",
+    "remove_images": "otto.docker.image_verbs",
     "DockerVerbError": "otto.docker.observe",
     "HostOutput": "otto.docker.observe",
     "LogsTarget": "otto.docker.observe",
@@ -167,7 +172,9 @@ __all__ = [
     "get_user_compose_project",
     "list_containers",
     "list_images",
+    "prune_images",
     "register_compose_adapter",
+    "remove_images",
     "resolve_compose_logs",
     "resolve_logs",
     "teardown",

@@ -451,17 +451,23 @@ class TestEveryPublicDockerExportIsAdjudicated:
             "deploy",
             "deployed",
             "follow_logs",
+            "list_images",
+            "prune_images",
+            "remove_images",
             "teardown",
         }
     )
 
+    #: ``list_images`` is armed too, though it only reads: its CLI leaves
+    #: (``image ls``, ``images``) preview every host's exact command, which a
+    #: decline from the first host's exec could not name.
+    #:
     #: Reach the primitive and refuse the ANSWER. With ``LogMode.QUIET`` the
     #: observe execs' ``[DRY RUN]`` announcement goes to ``verbose.log`` only;
     #: the refusal still names the probe (``list_containers(test3)``).
     REFUSING_PROBE = frozenset(
         {
             "list_containers",
-            "list_images",
             "compose_ps",
             "compose_logs",
             "container_logs",
@@ -510,7 +516,6 @@ class TestEveryPublicDockerExportIsAdjudicated:
         ("argv", "seam"),
         [
             (["ps"], "otto.docker.observe.list_containers"),
-            (["images"], "otto.docker.observe.list_images"),
             (["compose", "ps", "integration"], "otto.docker.observe.compose_ps"),
             (["compose", "logs", "integration"], "otto.docker.observe.compose_logs"),
             (["logs", "x"], "otto.docker.observe.container_logs"),
@@ -521,7 +526,7 @@ class TestEveryPublicDockerExportIsAdjudicated:
     def test_the_cli_never_reaches_the_library_under_a_dry_run(self, argv, seam, dry):
         """WHY this hazard is library-only, pinned rather than asserted in prose.
 
-        ``ps``, ``images``, ``compose ps`` and ``compose logs`` register with the
+        ``ps``, ``compose ps``, ``compose logs`` and ``logs`` register with the
         safe default -- no ``dry_run_preview`` -- so the CLI dry-run seam validates,
         prints the block and exits 0 above its body.
         That is what makes the package's dry-run holes a LIBRARY-surface
@@ -695,6 +700,10 @@ class TestTheDeployVerbsOwnTheirDryRunPreview:
         [
             (["build", "--parent", "test3"], "otto.docker.build_verbs.build_on"),
             (["compose", "build", "integration"], "otto.docker.build_verbs.compose_build"),
+            (["image", "ls"], "otto.docker.observe.list_images"),
+            (["images"], "otto.docker.observe.list_images"),
+            (["image", "rm", "api"], "otto.docker.image_verbs.remove_images"),
+            (["image", "prune", "-f"], "otto.docker.image_verbs.prune_images"),
         ],
     )
     def test_a_build_verb_also_runs_under_a_dry_run_and_the_plan_is_printed(self, argv, seam):
@@ -703,7 +712,9 @@ class TestTheDeployVerbsOwnTheirDryRunPreview:
         Both now stamp ``__cli_dry_run_preview__`` (the ``_VERBS`` rows set
         ``dry_run_preview=True``), so their bodies reach ``build_on``/
         ``compose_build`` under ``-n`` instead of seam-stopping above them --
-        the same proof as the deploy verbs above, for the build verbs.
+        the same proof as the deploy verbs above, for the build verbs. The
+        ``image`` verbs (and the ``images`` alias) carry it too: their decline
+        names each host's exact docker command.
         """
         from unittest.mock import patch
 

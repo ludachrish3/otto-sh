@@ -15,8 +15,8 @@ otto docker ps [-a|--all] [--parent HOST]
 otto adds one line per host, `== <host-id> ==`, and changes nothing inside
 docker's output: every id is as long as docker printed it, every column
 where docker put it. A host whose daemon could not answer prints docker's
-error under its header; the command goes on to the next host and exits 1 at
-the end. Library: {func}`~otto.docker.observe.list_containers`.
+error under its header, and a host otto could not reach prints otto's error
+there; the command goes on to the next host and exits 1 at the end. Library: {func}`~otto.docker.observe.list_containers`.
 
 An illustrative listing — your daemon's columns and rows are what you will see:
 

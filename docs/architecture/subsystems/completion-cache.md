@@ -251,8 +251,9 @@ and each has writers of its own:
   and an image reference is still worth offering a day later; each list is
   capped at 200 entries so a warm TAB stays one file read. The writers are
   the verbs that ask a daemon, and each records one kind: `ps`, `compose ps`,
-  `compose up` and `compose down` record containers (15 min); `images`,
-  `build` and `compose build` record images (a day). Each replaces
+  `compose up` and `compose down` record containers (15 min); `image ls`
+  (`images`), `image rm`, `image prune`, `build` and `compose build` record
+  images (a day). Each replaces
   its host's sub-entry whole, and an answered but empty probe is recorded as
   empty, so the hint vanishes after a `compose down`; a probe that failed, was
   declined, or answered with no row otto could read records nothing. A TAB never writes or deletes: an expired
@@ -268,6 +269,17 @@ resolves to the same parent; one refusing lab, or two different parents, offers
 nothing, so TAB never offers what the verb would reject. With no lab
 selected, TAB answers the map's only distinct value: two labs that map to the
 same host still answer it, two different hosts answer nothing.
+
+`image rm IMAGE` is the exception, because the verb runs on every
+docker-capable host when `--parent` is not given. Its TAB offers the declared
+images (`names.docker_images`), then the observed references. With `--parent`
+those are that host's alone. Without it they are the union over the selected
+labs' docker-capable hosts (the lab-scoped `names.docker_hosts`, in its order),
+each daemon's references in its own order, each reference once. That costs one
+`__docker_observed__` entry per docker host, read from the same file, and it
+never consults `docker_default_parent_by_lab`, so a lab whose rule refuses
+still gets references. The shim reads this from the `declared` and `fleet`
+keys of the site's `observed` source.
 
 That guarantee rests on one premise: a host id carries one `docker_priority`
 across the labs a selection merges. A host that two lab sources rank
@@ -485,8 +497,8 @@ digraph cache_paths {
 | the collect child | each project's table | never a section; seeds a cold table, collects what moved in a warm one, writes the tables and touches the `tests` marker |
 | any other command | nothing | nothing |
 | `otto tunnel list`/`remove` | nothing | never; writes `__dynamic_tunnels__` only (keyed by the narrow tunnel-scope digest, which reads no test file) |
-| a docker verb that asks a daemon (`ps`, `images`, `build`, `compose ps`/`build`/`up`/`down`) | nothing | never a section; writes the host's `__docker_observed__` sub-entries only |
-| a docker TAB (`CONTAINER`, `--tag`) | `names` for the default parent; `__docker_observed__` for names and references | reads only; never contacts a host, never writes or deletes |
+| a docker verb that asks a daemon (`ps`, `images`, `image ls`/`rm`/`prune`, `build`, `compose ps`/`build`/`up`/`down`) | nothing | never a section; writes the host's `__docker_observed__` sub-entries only |
+| a docker TAB (`CONTAINER`, `--tag`, `image rm IMAGE`) | `names` for the default parent (`CONTAINER`, `--tag`), or `names.docker_images` and the lab-scoped `names.docker_hosts` (`image rm IMAGE`); `__docker_observed__` for names and references | reads only; never contacts a host, never writes or deletes |
 
 **A stale TAB repairs the cache.** When the shim hands a TAB over, it says
 why. `Handover.stale` is true when the cache itself is at fault: no cache

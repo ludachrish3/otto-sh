@@ -13,10 +13,10 @@ from typing import TYPE_CHECKING
 
 from ..errors import FieldError
 from ..host.errors import HostUnreachableError
-from ..host.host import refuse_declined_fact
+from ..host.host import is_dry_run, refuse_declined_fact
 from ..host.unix_host import UnixHost
 from ..logger.mode import LogMode
-from ..result import CommandResult
+from ..result import CommandNotRunError, CommandResult
 from ..utils import Status
 from .compose import use_case_project
 
@@ -110,6 +110,9 @@ class HostOutput:
     """The exact docker command run on the host."""
     result: CommandResult
     """Docker's output verbatim in ``value``, and whether docker succeeded."""
+    reached: bool = True
+    """False when otto could not reach the host at all; ``result`` then carries
+    otto's words, never docker's. A daemon's own refusal is a reached host."""
 
 
 @dataclass
@@ -159,7 +162,12 @@ async def _exec_targets(targets: "list[LogsTarget]", *, asked: str) -> ObserveRe
                 retcode=-1,
             )
             outputs.append(
-                HostOutput(host_id=target.parent.id, command=target.command, result=result)
+                HostOutput(
+                    host_id=target.parent.id,
+                    command=target.command,
+                    result=result,
+                    reached=False,
+                )
             )
             continue
         refuse_declined_fact(result, asked=f"{asked}({target.parent.id})")
@@ -191,13 +199,44 @@ async def list_containers(parent: "str | None" = None, *, all: bool = False) -> 
     return await run_on(docker_parents(require_run().lab, parent), command, asked="list_containers")
 
 
-async def list_images(parent: "str | None" = None) -> ObserveReport:
-    """``docker images`` on every docker-capable host, or the one *parent* names."""
+def decline_dry_run(asked: str, parents: "list[UnixHost]", command: str, untouched: str) -> None:
+    """Under a dry run, decline at the top, naming *command* on every one of *parents*.
+
+    For the fan-out verbs whose preview is the command itself: a decline from
+    the first host's ``exec`` would name that host alone, and a mutating verb
+    must not reach a device at all. The detail is ``Would run:``, then one
+    ``on <host>: <command>`` line per host, then *untouched*, the closing
+    sentence that says what did not happen. A no-op outside a dry run.
+
+    Raises:
+        ~otto.result.CommandNotRunError: this is a dry run.
+    """
+    if not is_dry_run():
+        return
+    ids = ", ".join(p.id for p in parents)
+    per_host = "\n".join(f"on {p.id}: {command}" for p in parents)
+    raise CommandNotRunError(f"{asked}({ids})", ids, f"Would run:\n{per_host}\n{untouched}")
+
+
+async def list_images(
+    parent: "str | None" = None,
+    *,
+    all: bool = False,  # noqa: A002 -- docker's flag name
+) -> ObserveReport:
+    """``docker image ls [-a]`` on every docker-capable host, or the one *parent* names.
+
+    Raises:
+        DockerVerbError: *parent* is not a docker-capable unix host of the
+            active lab, or the lab has none.
+        ~otto.result.CommandNotRunError: this is a dry run; the message names
+            the exact command on every host, and no daemon was asked.
+    """
     from ..invocation import require_run
 
-    return await run_on(
-        docker_parents(require_run().lab, parent), "docker images", asked="list_images"
-    )
+    parents = docker_parents(require_run().lab, parent)
+    command = "docker image ls -a" if all else "docker image ls"
+    decline_dry_run("list_images", parents, command, "No daemon was asked.")
+    return await run_on(parents, command, asked="list_images")
 
 
 IMAGES_PROBE = r"docker images --format '{{.Repository}}:{{.Tag}}\t{{.ID}}'"

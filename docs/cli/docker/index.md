@@ -20,7 +20,9 @@ fragments to; `compose build`, `compose up`, `compose down`, `compose ps` and
 | --- | --- | --- | --- |
 | `otto docker build [--parent HOST] [--project NAME] [IMAGE...] [-t REF]... [--no-cache] [--pull] [--build-arg K=V]... [--target STAGE]` | `docker build` | the selected projects' images, on one parent | the default parent |
 | `otto docker ps [-a] [--parent HOST]` | `docker ps` | containers per host, as docker prints them | every docker-capable host |
-| `otto docker images [--parent HOST]` | `docker images` | images per host, as docker prints them | every docker-capable host |
+| `otto docker image ls [-a] [--parent HOST]` (alias `otto docker images`) | `docker image ls` | images per host, as docker prints them | every docker-capable host |
+| `otto docker image rm IMAGE... [-f] [--no-prune] [--parent HOST]` | `docker image rm` | remove images, docker's lines per host | every docker-capable host |
+| `otto docker image prune -f [-a] [--filter F]... [--parent HOST]` | `docker image prune` | remove unused images, docker's lines per host | every docker-capable host |
 | `otto docker logs CONTAINER [--tail N] [--since T] [-t] [-f|--follow] [--parent HOST]` | `docker logs` | one container's log, a docker name or id on the parent | the default parent |
 | `otto docker use-cases [USE_CASE]` | none | declared inventory, config only | no `--parent` flag; shows the default parent |
 | `otto docker compose build [USE_CASE [IMAGE]...] [--parent HOST] [--provide CAP=PROJECT]... [--no-cache] [--pull] [--build-arg K=V]...` | `docker compose build` | the images `up` would deploy, on the parent | the default parent |
@@ -35,7 +37,7 @@ own `docker build` / `docker compose` split.
 
 Both build verbs take `docker build`'s own flags; {doc}`build` is the one home for them.
 
-A curated verb exists only where otto adds something docker cannot do from the host's shell: resolving a use-case ({doc}`compose/ps`, {doc}`compose/logs`) to the real project, choosing the host for you ({doc}`logs`), or fanning out over the lab's docker hosts ({doc}`ps`, {doc}`images`). Each prints what docker printed: every verb that may reach several hosts prints it under one `== host ==` line per host (whether one host or ten answered); `logs`, one container on one host, prints docker's lines alone. Everything else is `otto host <HOST> exec "docker …"`:
+A curated verb exists only where otto adds something docker cannot do from the host's shell: resolving a use-case ({doc}`compose/ps`, {doc}`compose/logs`) to the real project, choosing the host for you ({doc}`logs`), or fanning out over the lab's docker hosts ({doc}`ps`, {doc}`image/ls`, {doc}`image/rm`, {doc}`image/prune`). Each prints what docker printed: every verb that may reach several hosts prints it under one `== host ==` line per host (whether one host or ten answered); `logs`, one container on one host, prints docker's lines alone. Everything else is `otto host <HOST> exec "docker …"`:
 
 ```text
 otto host test3 exec "docker ps --format '{{.ID}} {{.Names}}'"
@@ -53,23 +55,30 @@ with the tied hosts named — otto never picks a host by file order. A use-case
 deploys on one parent; a deployment that spans hosts is two use-cases, each
 brought up with its own `--parent`.
 
-`ps`, `images` and `compose ps` are the exception: without `--parent` they
-list every docker-capable host in the lab.
+`ps`, `compose ps` and the `image` verbs (`image ls`/`images`, `image rm`,
+`image prune`) are the exception: without `--parent` they run on every
+docker-capable host in the lab.
 
 `--parent` is otto's flag, not docker's `-H/--host`: it names the lab host,
 never a daemon socket.
 
+(docker-completion)=
 ## Completion
 
 TAB always offers the names a project declares: the images in `[[docker.images]]`,
 the services of the use-case already on the line, the project names, and the
 lab's container host ids. It adds what a docker daemon last said, once a verb
 has asked it: `ps`, `compose ps`, `compose up` and `compose down` record that
-host's containers, `images`, `build` and `compose build` its images, and only for the
-host it asked. Those names are offered at `logs CONTAINER` ({doc}`logs`) and
-`build --tag` ({doc}`build`) for the parent the verb would use: the host
-`--parent` names, or without it the default of {ref}`Which host <docker-which-host>`.
-Where that rule refuses, TAB offers none — the verb would refuse too. A TAB never
+host's containers, `image ls`/`images`, `image rm`, `image prune`, `build` and
+`compose build` its images, and only for the host it asked. Those names are offered at
+`logs CONTAINER` ({doc}`logs`) and `build --tag` ({doc}`build`) for the parent the
+verb would use: the host `--parent` names, or without it the default of
+{ref}`Which host <docker-which-host>`. Where that rule refuses, TAB offers none — the
+verb would refuse too. `image rm IMAGE` ({doc}`image/rm`) runs on every docker-capable
+host without `--parent`, so after the declared images its TAB offers what any of them
+last listed: the references of each docker-capable host of the selected labs, each
+reference once. With `--parent` it offers that host's alone. It never consults the
+default-parent rule, so a lab whose rule refuses still gets them. A TAB never
 contacts a host; it reads what the last verb recorded. `otto cache info`
 ({doc}`../cache/index`) shows which hosts still have something vouched for, and
 {doc}`../../architecture/subsystems/completion-cache` is the home for which
@@ -81,7 +90,10 @@ verb records what, for how long, and how the record is kept.
 otto docker build     [--parent HOST] [--project NAME] [IMAGE...] [-t/--tag REF]... [--no-cache]
                       [--pull] [--build-arg K=V]... [--target STAGE]
 otto docker ps        [-a|--all] [--parent HOST]
-otto docker images    [--parent HOST]
+otto docker image ls  [-a|--all] [--parent HOST]
+otto docker images    [-a|--all] [--parent HOST]
+otto docker image rm  IMAGE... [-f|--force] [--no-prune] [--parent HOST]
+otto docker image prune -f|--force [-a|--all] [--filter FILTER]... [--parent HOST]
 otto docker logs      CONTAINER [--tail N] [--since T] [-t|--timestamps] [-f|--follow]
                       [--parent HOST]
 otto docker use-cases [USE_CASE]
@@ -357,6 +369,15 @@ build
 ps
 images
 logs
+```
+
+```{toctree}
+:caption: Image
+:hidden:
+
+image/ls
+image/rm
+image/prune
 ```
 
 ```{toctree}

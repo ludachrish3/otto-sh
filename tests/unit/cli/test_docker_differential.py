@@ -159,7 +159,7 @@ ROWS = [
         ["images", "--parent", "test3"],
         "otto.docker.observe.list_images",
         (),
-        {"parent": "test3"},
+        {"parent": "test3", "all": False},
         ObserveReport([]),
     ),
     (
@@ -201,6 +201,75 @@ ROWS = [
             "since": "1m",
             "timestamps": True,
         },
+        ObserveReport([]),
+    ),
+    # `otto docker image ls|rm|prune`, and `images`, the alias docker itself keeps for
+    # `docker image ls`: one row per verb, and per flag that reaches the library.
+    (
+        ["image", "ls"],
+        "otto.docker.observe.list_images",
+        (),
+        {"parent": None, "all": False},
+        ObserveReport([]),
+    ),
+    (
+        ["image", "ls", "-a", "--parent", "test3"],
+        "otto.docker.observe.list_images",
+        (),
+        {"parent": "test3", "all": True},
+        ObserveReport([]),
+    ),
+    (
+        ["images"],
+        "otto.docker.observe.list_images",
+        (),
+        {"parent": None, "all": False},
+        ObserveReport([]),
+    ),
+    (
+        ["images", "--all"],
+        "otto.docker.observe.list_images",
+        (),
+        {"parent": None, "all": True},
+        ObserveReport([]),
+    ),
+    (
+        ["image", "rm", "api"],
+        "otto.docker.image_verbs.remove_images",
+        (["api"],),
+        {"force": False, "no_prune": False, "parent": None},
+        ObserveReport([]),
+    ),
+    (
+        ["image", "rm", "api", "db:1", "-f", "--no-prune", "--parent", "alt2"],
+        "otto.docker.image_verbs.remove_images",
+        (["api", "db:1"],),
+        {"force": True, "no_prune": True, "parent": "alt2"},
+        ObserveReport([]),
+    ),
+    (
+        ["image", "prune", "-f"],
+        "otto.docker.image_verbs.prune_images",
+        (),
+        {"all": False, "force": True, "filters": [], "parent": None},
+        ObserveReport([]),
+    ),
+    (
+        [
+            "image",
+            "prune",
+            "--all",
+            "--force",
+            "--filter",
+            "until=24h",
+            "--filter",
+            "label=a=b",
+            "--parent",
+            "test3",
+        ],
+        "otto.docker.image_verbs.prune_images",
+        (),
+        {"all": True, "force": True, "filters": ["until=24h", "label=a=b"], "parent": "test3"},
         ObserveReport([]),
     ),
 ]
@@ -327,6 +396,21 @@ REFUSALS = [
         "otto.docker.observe.follow_logs",
         DockerVerbError("follow needs an SSH parent; test3 is reached by telnet", field="follow"),
         "--follow",
+    ),
+    (
+        ["image", "prune"],
+        "otto.docker.image_verbs.prune_images",
+        DockerVerbError(
+            "image prune needs -f: docker would ask for confirmation, and otto never prompts",
+            field="force",
+        ),
+        "--force",
+    ),
+    (
+        ["image", "rm", "api", "--parent", "ghost"],
+        "otto.docker.image_verbs.remove_images",
+        DockerVerbError("'ghost' is not a docker-capable unix host in lab 'unix'", field="parent"),
+        "--parent",
     ),
 ]
 

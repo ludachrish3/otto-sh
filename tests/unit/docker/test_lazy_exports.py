@@ -83,6 +83,8 @@ def test_a_lazy_export_never_degrades_into_its_own_submodule():
         "follow_logs",
         "list_containers",
         "list_images",
+        "prune_images",
+        "remove_images",
         "resolve_compose_logs",
         "resolve_logs",
         "build_on",

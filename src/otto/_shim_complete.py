@@ -606,13 +606,48 @@ def _observed_values(
 
     The parent is the option's value on the line, else the one the verb would
     default to; its observed entry answers, an unknown parent answers nothing.
+    A ``declared`` key names a names-payload list offered first, sorted, with
+    each value once (``image rm IMAGE``: the declared images, then the
+    observed references). Mirrors ``otto.cli.docker._image_ref_completer``.
+    """
+    declared_key = source.get("declared")
+    declared = sorted(str(v) for v in payloads.names.get(declared_key, [])) if declared_key else []
+    return list(
+        dict.fromkeys([*declared, *_observed_entry_values(source, payloads, res, labs, now)])
+    )
+
+
+def _observed_entry_values(
+    source: dict[str, Any],
+    payloads: Payloads,
+    res: "Resolution | None",
+    labs: list[str],
+    now: float,
+) -> list[str]:
+    """Answer an ``observed`` site's observed half from the parent's fresh sub-entry.
+
+    The parent is the option's value on the line. Without one, a ``fleet`` key
+    (``image rm``, a verb that runs on every docker host) unions every host of
+    that lab-scoped payload, in its order, each value once; otherwise the
+    parent the verb would default to answers, and no default answers nothing.
     """
     parent = res.option_values.get(source.get("by_option", "")) if res is not None else None
+    if parent is None and source.get("fleet"):
+        fleet = {"key": source["fleet"], "lab_scoped": True, "sort": True}
+        hosts = _payload_values(fleet, payloads.names, labs)
+        return list(
+            dict.fromkeys(v for h in hosts for v in _host_observed(source, payloads, h, now))
+        )
     if parent is None:
         parent = _default_parent(payloads.names, labs)
     if parent is None:
         return []
-    entry = _observed_hosts(payloads.observed).get(parent)
+    return _host_observed(source, payloads, parent, now)
+
+
+def _host_observed(source: dict[str, Any], payloads: Payloads, host: str, now: float) -> list[str]:
+    """Return one host's fresh observed values for the site's key (containers or images)."""
+    entry = _observed_hosts(payloads.observed).get(host)
     if source["key"] == "containers":
         sub = entry.get("containers") if isinstance(entry, dict) else None
         found, ids = _fresh_sub_entry(

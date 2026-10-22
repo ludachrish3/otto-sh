@@ -113,6 +113,8 @@ def _seed_observed(projects) -> None:
     cc.record_docker_containers(
         projects, "dut1", names=["east-integration-x-api-1"], ids=["3f9a3f9a"]
     )
+    # west's dut3 (no default parent: dut2 ties it) holds an image only a fleet union offers.
+    cc.record_docker_images(projects, "dut3", refs=["west:1"], ids=["sha-w"])
     path = cc._cache_path()
     raw = json.loads(path.read_text())
     hosts = raw[cc.DOCKER_OBSERVED_KEY]["hosts"]
@@ -510,6 +512,12 @@ HAND_WRITTEN = [
     ("otto docker logs --parent dut1 ", 5),
     ("otto docker logs --parent dut2 ", 5),
     ("otto docker logs 3f", 3),
+    ("otto docker image rm ", 4),
+    ("otto docker image rm --parent dut1 a", 6),
+    ("otto docker image rm --parent dut2 ", 6),
+    ("otto -l west docker image rm ", 6),
+    ("otto -l east docker image rm ", 6),
+    ("otto docker image rm w", 4),
 ]
 ENVS = [{}, {"OTTO_LAB": "east"}, {"OTTO_LAB": "west east"}, {"OTTO_LAB": ""}]
 
@@ -950,6 +958,14 @@ def test_the_real_collector_wrote_the_default_parents_the_pins_rely_on(world):
         ("otto -l west docker logs ", 5, []),
         ("otto docker build ", 3, ["api"]),
         ("otto docker build --project ", 4, ["shimsut"]),
+        # `image rm IMAGE`: the declared names, then the parent's observed references.
+        ("otto docker image rm --parent dut1 ", 6, ["api", "api:latest", "api:1.2"]),
+        ("otto docker image rm --parent dut2 ", 6, ["api"]),
+        # No --parent: every docker host's refs (dut2's are expired), not the default's alone.
+        ("otto docker image rm ", 4, ["api", "api:latest", "api:1.2", "west:1"]),
+        # west ties on docker_priority, so the parent rule refuses; image rm still unions.
+        ("otto -l west docker image rm ", 6, ["api", "west:1"]),
+        ("otto -l east docker image rm ", 6, ["api", "api:latest", "api:1.2"]),
     ],
 )
 def test_the_docker_sites_are_answered_with_the_seeded_values(

@@ -86,12 +86,12 @@ def test_a_header_is_printed_even_for_one_host(capsys):
             {"parent": "test3", "all": True},
         ),
         (["ps", "--all"], "otto.docker.observe.list_containers", (), {"parent": None, "all": True}),
-        (["images"], "otto.docker.observe.list_images", (), {"parent": None}),
+        (["images"], "otto.docker.observe.list_images", (), {"parent": None, "all": False}),
         (
             ["images", "--parent", "test3"],
             "otto.docker.observe.list_images",
             (),
-            {"parent": "test3"},
+            {"parent": "test3", "all": False},
         ),
         (
             ["compose", "ps", "integration"],

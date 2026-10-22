@@ -505,10 +505,11 @@ member	otto.docker:FailedImage.result	field
 abstract	otto.docker:FailedImage	-
 name	otto.docker:HostOutput	class
 mro	otto.docker:HostOutput	-
-call	otto.docker:HostOutput	sync	PK:host_id:- PK:command:- PK:result:-
+call	otto.docker:HostOutput	sync	PK:host_id:- PK:command:- PK:result:- PK:reached:B:true
 member	otto.docker:HostOutput.__eq__	method	sync	PK:other:-
 member	otto.docker:HostOutput.command	field
 member	otto.docker:HostOutput.host_id	field
+member	otto.docker:HostOutput.reached	field
 member	otto.docker:HostOutput.result	field
 abstract	otto.docker:HostOutput	-
 name	otto.docker:HostReport	class
@@ -615,9 +616,13 @@ call	otto.docker:get_user_compose_project	sync	PK:project_name:- PK:suffix:N
 name	otto.docker:list_containers	function
 call	otto.docker:list_containers	coroutine	PK:parent:N KO:all:B:false
 name	otto.docker:list_images	function
-call	otto.docker:list_images	coroutine	PK:parent:N
+call	otto.docker:list_images	coroutine	PK:parent:N KO:all:B:false
+name	otto.docker:prune_images	function
+call	otto.docker:prune_images	coroutine	KO:all:B:false KO:force:B:false KO:filters:T:[] KO:parent:N
 name	otto.docker:register_compose_adapter	function
 call	otto.docker:register_compose_adapter	sync	PK:use_case:- KO:overwrite:B:false
+name	otto.docker:remove_images	function
+call	otto.docker:remove_images	coroutine	PK:images:- KO:force:B:false KO:no_prune:B:false KO:parent:N
 name	otto.docker:resolve_compose_logs	function
 call	otto.docker:resolve_compose_logs	sync	PK:use_case:- PK:services:T:[] KO:parent:N KO:provide:N KO:tail:N KO:since:N KO:timestamps:B:false
 name	otto.docker:resolve_logs	function
