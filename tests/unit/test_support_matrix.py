@@ -4285,6 +4285,36 @@ def _contradiction_report(
     return "\n".join(lines)
 
 
+def _contradicted_cells(
+    committed: dict, reproduced: dict, spoken_for: "set[tuple[str, str]]"
+) -> "list[tuple[str, str]]":
+    """The cells the records speak about whose committed form they do not reproduce.
+
+    A reproduced cell that differs only by a LATER `as_of` confirms the verdict:
+    a re-measurement moves the date and nothing else (#702).
+    """
+
+    def confirms(mine: dict, theirs: dict) -> bool:
+        if mine == theirs:
+            return True
+        return (
+            str(mine.get("as_of")) > str(theirs.get("as_of"))
+            and {
+                **mine,
+                "as_of": theirs.get("as_of"),
+            }
+            == theirs
+        )
+
+    return [
+        (surface, profile)
+        for surface, profile in sorted(spoken_for)
+        if surface in committed
+        and profile in committed[surface]
+        and not confirms(reproduced[surface][profile], committed[surface][profile])
+    ]
+
+
 def test_no_committed_verdict_contradicts_this_machine_s_records():
     """★ THE ONLY GUARD THAT CAN CATCH A FABRICATED HAND-EDIT -- and it is CONDITIONAL.
 
@@ -4293,7 +4323,8 @@ def test_no_committed_verdict_contradicts_this_machine_s_records():
     satisfies the schema, `element_accounting_errors`, `positive_control_errors`
     and every other check in this file. The only thing that can tell it from a
     collated one is the EVIDENCE, so this re-collates this machine's records and
-    requires the committed cell to be exactly what they produce.
+    requires the committed cell to be exactly what they produce -- save a later
+    `as_of`, which is a re-measurement confirming the verdict.
 
     **DECLARED VACUITY.** The records are run output under a git-ignored
     `reports/` directory, so on a fresh checkout and in CI there are none and
@@ -4312,14 +4343,56 @@ def test_no_committed_verdict_contradicts_this_machine_s_records():
     records = [record for record in read_records(observations_dir()) if record.get("venue") == BED]
     reproduced = collate(matrix, records).matrix["cells"]
     spoken_for = {(record["surface"], record["profile"]) for record in records}
-    contradicted = [
-        (surface, profile)
-        for surface, profile in sorted(spoken_for)
-        if surface in matrix["cells"]
-        and profile in matrix["cells"][surface]
-        and reproduced[surface][profile] != matrix["cells"][surface][profile]
-    ]
+    contradicted = _contradicted_cells(matrix["cells"], reproduced, spoken_for)
     assert contradicted == [], _contradiction_report(matrix["cells"], reproduced, contradicted)
+
+
+def test_newer_evidence_for_the_same_verdict_is_no_contradiction():
+    """A bed run dated after the verdict, reproducing it field for field, confirms it.
+
+    A lane that runs past UTC midnight dates its records the next day, so the
+    collated cell differs from the committed one in `as_of` alone. Counting
+    that as a contradiction turned every local `make coverage` red until a
+    date-only matrix refresh was committed (#702).
+    """
+    verdict = {"status": "measured-ok", "observable": "exit 42 reads 42", "as_of": "2026-10-22"}
+    committed = {"exec-exit-code": {"busybox-1.16.1": verdict}}
+    reproduced = {"exec-exit-code": {"busybox-1.16.1": {**verdict, "as_of": "2026-10-23"}}}
+    spoken_for = {("exec-exit-code", "busybox-1.16.1")}
+    assert _contradicted_cells(committed, reproduced, spoken_for) == []
+
+
+@pytest.mark.parametrize(
+    "reproduced_cell",
+    [
+        pytest.param(
+            {"status": "measured-broken", "observable": "exit 42 reads 42", "as_of": "2026-10-23"},
+            id="newer-evidence-other-status",
+        ),
+        pytest.param(
+            {"status": "measured-ok", "observable": "exit 42 reads 0", "as_of": "2026-10-23"},
+            id="newer-evidence-other-observable",
+        ),
+        pytest.param(
+            {"status": "measured-ok", "observable": "exit 42 reads 42", "as_of": "2026-10-21"},
+            id="older-evidence-same-verdict",
+        ),
+    ],
+)
+def test_only_a_later_date_is_forgiven(reproduced_cell):
+    """Negative control: any other difference still contradicts the verdict.
+
+    The date is the only field a re-measurement may move. A different verdict
+    field is the fabricated hand-edit this guard exists for, and evidence OLDER
+    than the verdict cannot vouch for a date it predates.
+    """
+    verdict = {"status": "measured-ok", "observable": "exit 42 reads 42", "as_of": "2026-10-22"}
+    committed = {"exec-exit-code": {"busybox-1.16.1": verdict}}
+    reproduced = {"exec-exit-code": {"busybox-1.16.1": reproduced_cell}}
+    spoken_for = {("exec-exit-code", "busybox-1.16.1")}
+    assert _contradicted_cells(committed, reproduced, spoken_for) == [
+        ("exec-exit-code", "busybox-1.16.1")
+    ]
 
 
 def test_the_contradiction_report_tells_the_two_causes_apart():
