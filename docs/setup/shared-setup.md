@@ -11,13 +11,10 @@ measured.
 
 ```bash
 mkdir acme && cd acme && git init
-export OTTO_XDIR=~/otto-runs
 otto init --all --name acme --path .
 ```
 
-`OTTO_XDIR` is where otto writes each run's logs and artifacts. Without it,
-runs land under the current directory — inside your project, if that is
-where you are. `otto init` scaffolds a runnable project — settings, an
+`otto init` scaffolds a runnable project — settings, an
 example lab host, example tests, an example instruction — and prints the
 next steps:
 
@@ -40,7 +37,9 @@ export OTTO_XDIR=~/otto-runs
 ```
 
 otto finds projects through `OTTOPATH`, never through the current
-directory. The {ref}`invocation-output-directory` section explains the run
+directory. `OTTO_XDIR` is where otto writes each run's logs and artifacts.
+Without it, runs land under the current directory — inside your project, if
+that is where you are. The {ref}`invocation-output-directory` section explains the run
 layout under `OTTO_XDIR`, and {ref}`enabling-tab-completion` makes both
 exports permanent.
 
@@ -93,8 +92,8 @@ INFO     @dut > | 6.8.0-86-generic
 
 ## Before you declare products
 
-Once `settings.toml` declares any `[[products]]`, it also needs a
-`[project]` table saying which labs the project speaks for:
+Once `settings.toml` declares any `[[products]]` or `[[dev_tools]]`, it also
+needs a `[project]` table saying which labs the project speaks for:
 
 ```toml
 [project]

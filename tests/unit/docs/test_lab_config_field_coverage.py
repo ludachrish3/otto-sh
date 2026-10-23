@@ -1,9 +1,10 @@
 """Every lab-data field is documented on its own reference page (spec §13, §15).
 
 The reference cannot fall behind the model: a field added to a spec without a
-row on the page fails here. Two pages are covered — the lab file's fields on
-``lab-config.md``, and the inventory record's on ``inventory.md`` — so each
-case carries the page it is about rather than reading one module-level file.
+row on the page fails here. Two references are covered — the lab file's fields
+on the area pages under ``configuration/lab/``, read together, and the
+inventory record's on ``inventory.md`` — so each case carries the page it is
+about rather than reading one module-level file.
 
 A case may also carry the SECTION its rows must live in. ``inventory.md`` needs
 it: that page carries a second table — the NetBox mapping — whose left column
@@ -14,7 +15,7 @@ rows while staying green. Scoping the search to the section makes the check
 about the table it is supposed to be about.
 
 Known limitation, still true for the unscoped cases — this proves PRESENCE, not
-PLACEMENT. ``lab-config.md`` is searched whole, so a row in the wrong table
+PLACEMENT. The lab area pages are searched whole, so a row in the wrong table
 satisfies it: ``name`` has rows in the per-host, element AND link tables, and a
 field that MOVES between levels looks documented while its old row still
 stands. That is why this guard stayed green on ``name`` / ``labs`` /
@@ -33,10 +34,18 @@ from otto.models.lab import HOISTED_HOST_KEYS, ElementSpec, LabEntrySpec
 from tests._fixtures.paths import CHECKOUT_ROOT
 
 _CONFIG = CHECKOUT_ROOT / "docs" / "configuration"
-_PAGE = _CONFIG / "lab-config.md"
+_PAGE = _CONFIG / "lab"
+"""The lab reference's area pages, read together as one text."""
 _INVENTORY_PAGE = _CONFIG / "inventory.md"
 _RECORD_FIELDS = "## Record fields"
 """The inventory page's reference table, verbatim as its heading reads."""
+
+
+def _read(page: Path) -> str:
+    """Return *page*'s text; a directory is every ``*.md`` page in it, joined."""
+    if page.is_dir():
+        return "\n".join(p.read_text() for p in sorted(page.glob("*.md")))
+    return page.read_text()
 
 
 def _section(text: str, heading: "str | None", page: Path) -> str:
@@ -84,7 +93,7 @@ def _section(text: str, heading: "str | None", page: Path) -> str:
 def test_every_field_has_a_row(
     page: Path, heading: "str | None", owner: str, fields: list[str]
 ) -> None:
-    text = _section(page.read_text(), heading, page)
+    text = _section(_read(page), heading, page)
     missing = [f for f in fields if f"| `{f}`" not in text]
     where = f"{page.name}" if heading is None else f"{page.name} under {heading!r}"
     assert not missing, f"{owner}: undocumented in {where}: {missing}"

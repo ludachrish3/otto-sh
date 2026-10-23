@@ -136,7 +136,7 @@ delegates to its parent host instead of being a parallel transport stack.
 
 Configuration lives with the rest of the project's settings: the per-project
 `[docker]` block in {doc}`../../configuration/settings`, and the per-lab
-`docker_capable`/`docker_priority` host fields in {doc}`../../configuration/lab-config`.
+`docker_capable`/`docker_priority` host fields in {doc}`../../configuration/lab/docker`.
 
 (docker-start-first)=
 ## Starting containers before you use them

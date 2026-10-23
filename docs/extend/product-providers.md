@@ -22,6 +22,15 @@ the provider decides. A provider also anchors its own paths, as the example's
 `ROOT` does: otto anchors an entry's `artifact` to its project, never a path a
 provider builds.
 
+(provider-instances-are-stamped)=
+```{note}
+otto stamps `kind`, `origin` and `owner` on every instance a provider
+returns, so each instance must accept those three attribute assignments. A
+frozen dataclass, a `__slots__` class without those slots, or a class that
+makes any of them a read-only property fails when the lab loads. The
+dev-tool provider seam stamps its instances the same way.
+```
+
 A provider's name must not be one a `[[products]]` entry declares: a name is
 defined in data **or** in code, and the lab refuses to load when both define
 one. The rule, and what two providers returning one name do, are in

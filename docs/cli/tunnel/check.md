@@ -180,7 +180,7 @@ example, `whole path payload-verified to test3 (tcp)`.
 
 **Split proof: the dest runs nothing of otto's.** That is either a dest the
 lab declares with
-[`has_bash`](../../configuration/lab-config.md#common-optional) set to
+[`has_bash`](../../configuration/lab/host-fields.md#common-optional) set to
 `false` (an embedded target, say), which otto never contacts at all, or one
 whose fingerprint shows no socat or no bash. Nothing is started on it and
 nothing is swept there. The throwaway tunnel

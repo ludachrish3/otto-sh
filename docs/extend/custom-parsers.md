@@ -111,7 +111,10 @@ register_parsers([SocketParser()])
 
 A parser whose `command` matches a built-in overrides it; new commands
 extend the set.  Per-host registrations (`register_host_parsers`) still take
-total precedence for their host.  `register_parsers` accepts any iterable,
+total precedence for their host: a per-host dict *replaces* the whole set,
+so no project-level parser applies to that host. A per-host dict that should
+keep one names it itself, the way the per-host example above names
+`UptimeParser` next to `DEFAULT_PARSERS`.  `register_parsers` accepts any iterable,
 a generator included.
 
 A command that is already registered raises
@@ -188,8 +191,19 @@ register_snmp_metric(
 
 This follows the same extension pattern as `register_host_parsers` and
 `register_command_frame`.  The `SnmpMetric` fields are `oid`, `label`,
-`chart`, `y_title`, `unit`, `tab`, `tab_label`, and `scale`; everything
-after `chart` has a default, so a private OID only needs the first three:
+`chart`, `y_title`, `unit`, `tab`, `tab_label`, `scale`, `kind` and
+`meta_of`; everything after `chart` has a default, so a private OID only
+needs the first three. Two of the defaults change what the value means:
+
+- `kind` is `"gauge"` (chart the scaled value as read) or `"counter"`: a
+  monotonic count that otto charts as a per-second rate. A counter that
+  goes backwards, as after a device reboot, starts a new baseline and skips
+  that tick.
+- `meta_of` names another OID. The value is then not charted as a series of
+  its own; it appears in the hover details of that OID's series, under this
+  descriptor's `label`. When that OID has no value on a tick, the detail is
+  simply left out.
+
 
 ```{doctest}
 >>> from otto.monitor.snmp import SnmpMetric
@@ -199,6 +213,11 @@ after `chart` has a default, so a private OID only needs the first three:
 ('fans', 'Fans', 1.0)
 >>> SnmpMetric(oid='1.2.3', label='X', chart='C').tab
 'metrics'
+>>> SnmpMetric(oid='1.2.3', label='X', chart='C').kind
+'gauge'
+>>> SnmpMetric(oid='1.3.6.1.4.1.99999.1.6.0', label='Packets', chart='Traffic',
+...            unit='pkt/s', kind='counter').kind
+'counter'
 ```
 
 Each OID has one descriptor. Registering a descriptor for an OID that

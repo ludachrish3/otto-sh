@@ -31,7 +31,7 @@ kind = "shell"
 artifact = "build/agent"
 stage_dir = "/opt/agent"
 install = "chmod +x /opt/agent/agent && /opt/agent/agent --install"
-uninstall = "/opt/agent/agent --uninstall; rm -rf /opt/agent"
+uninstall = "/opt/agent/agent --uninstall; rm -f /opt/agent/agent"
 check = "test -x /opt/agent/agent"
 match = { os_type = "unix" }
 ```

@@ -1,89 +1,89 @@
 $ otto --log-level DEBUG --lab embedded host zephyr37-fat exec 'kernel uptime'
-DEBUG    declared declared_products: project 'gs' does not target host test4 of lab  declared.py:748
+DEBUG    declared declared_products: project 'gs' does not target host test4 of lab  declared.py:<n>
          'embedded' — skipped
-DEBUG    declared declared_dev_tools: project 'gs' does not target host test4 of lab declared.py:748
+DEBUG    declared declared_dev_tools: project 'gs' does not target host test4 of lab declared.py:<n>
          'embedded' — skipped
-DEBUG    declared declared_products: project 'gs' does not target host zephyr37-fat  declared.py:748
+DEBUG    declared declared_products: project 'gs' does not target host zephyr37-fat  declared.py:<n>
          of lab 'embedded' — skipped
-DEBUG    declared declared_dev_tools: project 'gs' does not target host zephyr37-fat declared.py:748
+DEBUG    declared declared_dev_tools: project 'gs' does not target host zephyr37-fat declared.py:<n>
          of lab 'embedded' — skipped
-DEBUG    declared declared_products: project 'gs' does not target host zephyr37-lfs  declared.py:748
+DEBUG    declared declared_products: project 'gs' does not target host zephyr37-lfs  declared.py:<n>
          of lab 'embedded' — skipped
-DEBUG    declared declared_dev_tools: project 'gs' does not target host zephyr37-lfs declared.py:748
+DEBUG    declared declared_dev_tools: project 'gs' does not target host zephyr37-lfs declared.py:<n>
          of lab 'embedded' — skipped
-DEBUG    zephyr37_nofs: console_options.login overridden to False (no RTOS      embedded_host.py:237
+DEBUG    zephyr37_nofs: console_options.login overridden to False (no RTOS      embedded_host.py:<n>
          login)
-DEBUG    declared declared_products: project 'gs' does not target host zephyr37-nofs declared.py:748
+DEBUG    declared declared_products: project 'gs' does not target host zephyr37-nofs declared.py:<n>
          of lab 'embedded' — skipped
-DEBUG    declared declared_dev_tools: project 'gs' does not target host              declared.py:748
+DEBUG    declared declared_dev_tools: project 'gs' does not target host              declared.py:<n>
          zephyr37-nofs of lab 'embedded' — skipped
-DEBUG    declared declared_products: project 'gs' does not target host zephyr27-fat  declared.py:748
+DEBUG    declared declared_products: project 'gs' does not target host zephyr27-fat  declared.py:<n>
          of lab 'embedded' — skipped
-DEBUG    declared declared_dev_tools: project 'gs' does not target host zephyr27-fat declared.py:748
+DEBUG    declared declared_dev_tools: project 'gs' does not target host zephyr27-fat declared.py:<n>
          of lab 'embedded' — skipped
-DEBUG    declared declared_products: project 'gs' does not target host zephyr44-lfs  declared.py:748
+DEBUG    declared declared_products: project 'gs' does not target host zephyr44-lfs  declared.py:<n>
          of lab 'embedded' — skipped
-DEBUG    declared declared_dev_tools: project 'gs' does not target host zephyr44-lfs declared.py:748
+DEBUG    declared declared_dev_tools: project 'gs' does not target host zephyr44-lfs declared.py:<n>
          of lab 'embedded' — skipped
-DEBUG    zephyr37_llext: console_options.login overridden to False (no RTOS     embedded_host.py:237
+DEBUG    zephyr37_llext: console_options.login overridden to False (no RTOS     embedded_host.py:<n>
          login)
-DEBUG    declared declared_products: project 'gs' does not target host               declared.py:748
+DEBUG    declared declared_products: project 'gs' does not target host               declared.py:<n>
          zephyr37-llext of lab 'embedded' — skipped
-DEBUG    declared declared_dev_tools: project 'gs' does not target host              declared.py:748
+DEBUG    declared declared_dev_tools: project 'gs' does not target host              declared.py:<n>
          zephyr37-llext of lab 'embedded' — skipped
-DEBUG    zephyr44_llext: console_options.login overridden to False (no RTOS     embedded_host.py:237
+DEBUG    zephyr44_llext: console_options.login overridden to False (no RTOS     embedded_host.py:<n>
          login)
-DEBUG    declared declared_products: project 'gs' does not target host               declared.py:748
+DEBUG    declared declared_products: project 'gs' does not target host               declared.py:<n>
          zephyr44-llext of lab 'embedded' — skipped
-DEBUG    declared declared_dev_tools: project 'gs' does not target host              declared.py:748
+DEBUG    declared declared_dev_tools: project 'gs' does not target host              declared.py:<n>
          zephyr44-llext of lab 'embedded' — skipped
-DEBUG    Skipping unrelated-lab link at index 0 in lab.json: {'endpoints': [{'host':   derive.py:171
+DEBUG    Skipping unrelated-lab link at index 0 in lab.json: {'endpoints': [{'host':   derive.py:<n>
          'test1', 'interface': 'eth2'}, {'host': 'test2', 'interface': 'eth2'}],
          'protocol': 'udp'}
-DEBUG    Skipping unrelated-lab link at index 1 in lab.json: {'_comment': "The bb1350  derive.py:171
+DEBUG    Skipping unrelated-lab link at index 1 in lab.json: {'_comment': "The bb1350  derive.py:<n>
          guest's /30 to its TAP on test1 -- the ONLY wire the guest has.",
          'endpoints': [{'host': 'test1', 'interface': 'bbeth-1350'}, {'host':
          'bb1350-qemu', 'interface': 'eth0'}], 'protocol': 'tcp'}
-DEBUG    Loaded lab 'embedded' with 8 hosts                                   json_repository.py:477
-INFO     fleet of interest: 0 of 9 lab hosts (1 project(s), 1 excluded)           run_context.py:842
-DEBUG    Opening SSH tunnel through test4 for zephyr37_fat                        remote_host.py:789
-DEBUG    zephyr37_fat via test4: asyncssh.connect('10.10.200.14')                 connections.py:413
+DEBUG    Loaded lab 'embedded' with 8 hosts                                   json_repository.py:<n>
+INFO     fleet of interest: 0 of 9 lab hosts (1 project(s), 1 excluded)           run_context.py:<n>
+DEBUG    Opening SSH tunnel through test4 for zephyr37_fat                        remote_host.py:<n>
+DEBUG    zephyr37_fat via test4: asyncssh.connect('10.10.200.14')                 connections.py:<n>
          kwargs={'username': 'vagrant', 'password': '***', 'tunnel': None,
          'port': 22, 'known_hosts': None}
-DEBUG    zephyr37_fat via test4: negotiated server='SSH-2.0-OpenSSH_9.6p1         connections.py:417
+DEBUG    zephyr37_fat via test4: negotiated server='SSH-2.0-OpenSSH_9.6p1         connections.py:<n>
          Ubuntu-3ubuntu13.14'
          cipher=chacha20-poly1305@openssh.com/chacha20-poly1305@openssh.com
          mac=chacha20-poly1305@openssh.com/chacha20-poly1305@openssh.com
          compression=none/none
-DEBUG    Forwarding localhost:<port> -> 192.0.2.1:23 for zephyr37_fat              connections.py:651
-DEBUG    Connecting to zephyr37_fat via telnet                                    connections.py:890
-DEBUG    TelnetClient.connect host=localhost:<port> user='' login=False                 telnet.py:171
+DEBUG    Forwarding localhost:<port> -> 192.0.2.1:23 for zephyr37_fat              connections.py:<n>
+DEBUG    Connecting to zephyr37_fat via telnet                                    connections.py:<n>
+DEBUG    TelnetClient.connect host=localhost:<port> user='' login=False                 telnet.py:<n>
          login_prompt=b':' interactive=False
-INFO     Connected to <Peer 127.0.0.1 <port>>                                      client_base.py:188
-DEBUG    negotiation complete after <duration>s.                                        client_base.py:531
-DEBUG    remote_option[ECHO] = False                                           stream_writer.py:3534
-DEBUG    send IAC DONT ECHO                                                    stream_writer.py:1101
-DEBUG    Skipping telnet login for localhost (options.login=False)                     telnet.py:204
-DEBUG    Telnet connected to localhost:<port> in <duration>s                                  telnet.py:215
-DEBUG    Connected to zephyr37_fat via telnet                                     connections.py:913
-DEBUG    SessionManager[zephyr37_fat]: building telnet session with                  session.py:2802
+INFO     Connected to <Peer 127.0.0.1 <port>>                                      client_base.py:<n>
+DEBUG    negotiation complete after <duration>s.                                        client_base.py:<n>
+DEBUG    remote_option[ECHO] = False                                           stream_writer.py:<n>
+DEBUG    send IAC DONT ECHO                                                    stream_writer.py:<n>
+DEBUG    Skipping telnet login for localhost (options.login=False)                     telnet.py:<n>
+DEBUG    Telnet connected to localhost:<port> in <duration>s                                  telnet.py:<n>
+DEBUG    Connected to zephyr37_fat via telnet                                     connections.py:<n>
+DEBUG    SessionManager[zephyr37_fat]: building telnet session with                  session.py:<n>
          frame=ZephyrFrame
-DEBUG    TelnetSession@<session>: handshake start                                  session.py:612
+DEBUG    TelnetSession@<session>: handshake start                                  session.py:<n>
          cmd='__OTTO_<session>_READY__\n' marker='__OTTO_<session>_READY__'
          timeout=15.0s
-DEBUG    TelnetSession@<session>: handshake matched                                session.py:635
-INFO     @zephyr37_fat   | kernel uptime                                                host.py:3093
-DEBUG    TelnetSession@<session>: framed write cmd='kernel uptime'                 session.py:946
+DEBUG    TelnetSession@<session>: handshake matched                                session.py:<n>
+INFO     @zephyr37_fat   | kernel uptime                                                host.py:<n>
+DEBUG    TelnetSession@<session>: framed write cmd='kernel uptime'                 session.py:<n>
          payload='__OTTO_<session>_BEGIN__\rkernel
          uptime\rretval\r__OTTO_<session>_END__\r'
-DEBUG    TelnetSession@<session>: begin marker matched on                          session.py:999
+DEBUG    TelnetSession@<session>: begin marker matched on                          session.py:<n>
          chunk='\x1b[1;31m__OTTO_<session>_BEGIN__: command not found\r\n'
-INFO     @zephyr37_fat > | Uptime: <n> ms                                        host.py:3134
-DEBUG    TelnetSession@<session>: run_cmd done cmd='kernel uptime' retcode=0      session.py:1028
+INFO     @zephyr37_fat > | Uptime: <n> ms                                        host.py:<n>
+DEBUG    TelnetSession@<session>: run_cmd done cmd='kernel uptime' retcode=0      session.py:<n>
          output_len=<n> buffer=': command not found\r\n\x1b[m\x1b[1;32m~$
          \x1b[m\r\n\x1b[1;31m__OTTO_<session>_BEGIN__: command not
          found\r\n\x1b[m\x1b[1;32m~$ \x1b[m\r\nUptime: <n> ms\r\n\x1b[1;32m~$
          \x1b[m\r\n0\r\n\x1b[1;32m~$ \x1b[m\r\n\x1b[1;31m__OTTO_<session>_END__'
-INFO     Connection closed to <Peer 127.0.0.1 <port>>                              client_base.py:120
+INFO     Connection closed to <Peer 127.0.0.1 <port>>                              client_base.py:<n>
 
 Output directory: /tmp/otto-gs/xdir/host/<run>_exec

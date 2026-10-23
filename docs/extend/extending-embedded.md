@@ -60,6 +60,23 @@ The two in-tree implementations are the reference to read side by side:
 the END marker; `ZephyrFrame` sends four CR-separated lines
 (`BEGIN` / `cmd` / `retval` / `END`) and parses positionally.
 
+### Optional overrides and class flags
+
+Beyond the seven methods, `CommandFrame` has two methods with working
+defaults and two class flags. Override them only when your dialect differs
+from the default:
+
+| Member | Default | Override when |
+|--------|---------|---------------|
+| `quiet_history()` | `""`: nothing to suppress | Your shell keeps a persistent command history. Return a statement prefix that stops it recording. otto prepends it to the first line written into a fresh shell and resends that line until it lands, so it must print nothing and be safe to repeat. |
+| `recover_pattern(m)` | The bare `m.recover` token | Your shell can echo the token without running the probe (an echoing REPL). Return a pattern only a real execution can produce, as `BashFrame` does with the exit code. |
+| `streams_output_live` | `False`: the session buffers to the END sentinel and logs `parse_output(buffer)` | Your raw stream between the markers is already clean, line by line (no prompts, no exit-code scaffolding), so the log can show it as it arrives. |
+| `single_client_console` | `False` | Your console serves one client at a time (a serial line, a single-session debug port). A failed readiness handshake is then reported as a held slot rather than an unresponsive device. |
+
+The getting-started example's `PyReplFrame`
+(`docs/examples/getting-started/libs/gs_example/pyrepl_frame.py`) overrides
+`recover_pattern` and sets `streams_output_live`.
+
 ### Registering and selecting it
 
 Register the frame from an `init` module, then select it by `type_name` in lab

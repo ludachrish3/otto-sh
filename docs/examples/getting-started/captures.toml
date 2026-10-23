@@ -4,6 +4,11 @@
 #
 # labless = true  -> tier 2, checked in the docs gate
 # labless = false -> tier 3, checked by `make docs-captures-check` only
+#
+# kind = "gtest"  -> argv is a GoogleTest binary: colour off, timings redacted
+# [[capture.store]] -> after the run, a hit count the coverage store must hold:
+#   path (may use {xdir}), file (as the store records it), line, tier, hits,
+#   and optionally product (sum over that product's runs in the tier)
 
 [[capture]]
 id = "init-all"

@@ -10,4 +10,5 @@ own tests run on.
 ../contributing
 ../release_process
 bed-case-study/index
+kmodcov-provisioning
 ```

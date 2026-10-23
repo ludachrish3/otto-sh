@@ -54,6 +54,9 @@ re-stages and re-installs the product.
 return inside it. Anything that stays running — a daemon, an agent like this
 one — is backgrounded with a trailing `&`, or the install fails on the timeout
 rather than on anything being wrong.
+A command-line tool the tests run once each needs nothing about coverage in
+`install`: each test sets the variables itself
+({ref}`a tool run once per test <coverage-run-per-test-case>`).
 
 `{cov_dir}` and `{name}` are the two placeholders `install`, `uninstall`, and
 `check` accept; anything else is refused when settings load. A literal brace —
@@ -96,9 +99,9 @@ count only has to leave every object's path unique: the
 ## Switch coverage on
 
 Retrieval is automatic, but it is not unconditional: otto collects only for a
-project that declares a `[coverage]` table, and a table counts as declared only
-when it carries `hosts`, `tiers` or `embedded` — an empty `[coverage]` is the
-same as none. The smallest one that works names the hosts to collect from:
+project whose `[coverage]` table declares something to collect (the rule is in
+{ref}`settings-coverage`). The smallest one that works names the hosts to
+collect from:
 
 ```{code-block} toml
 :caption: .otto/settings.toml

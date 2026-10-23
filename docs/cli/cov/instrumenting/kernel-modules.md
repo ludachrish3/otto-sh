@@ -172,6 +172,14 @@ applies the flags step below to each instrumented object:
 :language: make
 ```
 
+The module's `Makefile` hands kbuild the library's build directory as
+`KMODCOV` and its `Module.symvers` as `KBUILD_EXTRA_SYMBOLS`, so the
+module's references to the library's exports resolve:
+
+```{literalinclude} ../../../../tests/project5/kmod/demo/Makefile
+:language: make
+```
+
 **2. Flags.** Compile every instrumented object with `$(KMODCOV_CFLAGS)`,
 defined by the library's own Kbuild fragment:
 
@@ -305,61 +313,16 @@ cannot be used from a different build machine; a foreign target needs a
 source tree prepared for it (and `modules_prepare` builds the kernel's own
 host tools, so the build machine needs `flex`, `bison`, `libelf-dev` and
 `libssl-dev` — the Debian and Ubuntu package names — beside the cross
-compiler). The recipe otto's own proof runs — it also builds a copy of the
-demo module the same way — on an arm64 machine building x86_64 modules (any
-other pair changes only the `ARCH` name and the `CROSS_COMPILE` prefix):
+compiler). A module meant to be *loaded* is built against a fully built kernel tree or
+the target's own headers package — either ships a real `Module.symvers` —
+never a bare `modules_prepare` tree. The cross-build recipe otto's own proof
+runs is on {doc}`../../../developing/kmodcov-provisioning`.
 
-```bash
-tar -xJf linux-6.8.tar.xz
-make -C linux-6.8 ARCH=x86_64 CROSS_COMPILE=x86_64-linux-gnu- defconfig modules_prepare
-KDIR=$PWD/linux-6.8 ARCH=x86_64 CROSS_COMPILE=x86_64-linux-gnu- \
-    KMAKEFLAGS=KBUILD_MODPOST_WARN=1 \
-    src/otto/kmodcov/build.sh build
-```
-
-That `KMAKEFLAGS=KBUILD_MODPOST_WARN=1` is there because a prepared source
-tree like this one has no `Module.symvers`: `make … defconfig
-modules_prepare` never produces one (the kernel's own kbuild docs say a
-full build is needed), so without it modpost fails outright on the
-core-kernel exports (`memcpy`, `kfree`, `_printk`, …) it cannot resolve;
-with it, those become warnings instead. A module meant to be *loaded*, as
-opposed to checked, is built against a fully built tree or the target's
-own headers package — either ships a real `Module.symvers` — never a bare
-`modules_prepare` tree.
-
-The release to check `vermagic` against is the tree's own
-(`cat linux-6.8/include/config/kernel.release`), which is what the script
-reads when `KDIR` is set and no release is given.
-
-**Build an old kernel's modules with that kernel's own era of compiler.** A
-kernel tree is coupled to the compilers of its time in both directions: its
-headers dispatch on `__GNUC__` (kernels before 4.2 include a
-`compiler-gcc<major>.h` that exists only for the majors they knew), its
-kbuild assumes that compiler's defaults (2.6.32 and 3.13 refuse a
-PIE-by-default gcc, 2.6.32's host tools a `-fno-common` one), and
-distributions backport compiler fixes into their long-term kernels
-precisely because a newer gcc is unsupported there. A container image of
-the kernel's own distribution release is the cheap way to have that
-compiler; this is how `make kmodcov` builds for every provisioned kernel it
-proves. Its oldest column, 2.6.32 in Ubuntu 12.04 with gcc 4.7 (the oldest
-gcc the library's `gcov_info` layouts cover), runs exactly this, inside
-the image:
-
-```bash
-tar -xJf linux-2.6.32.71.tar.xz
-make -C linux-2.6.32.71 CC=gcc-4.7 HOSTCC=gcc-4.7 defconfig modules_prepare
-KDIR=$PWD/linux-2.6.32.71 CC=gcc-4.7 KMAKEFLAGS="HOSTCC=gcc-4.7 KBUILD_MODPOST_WARN=1" \
-    src/otto/kmodcov/build.sh build
-```
-
-The images and the prepared trees come from
-`scripts/provision_kmodcov_kernels.sh`, whose header is the one home of that
-mechanism.
-
-A newer gcc *can* be shimmed onto such a tree — a `compiler-gcc<major>.h`
-copied from `compiler-gcc4.h`, `KCFLAGS=-fno-PIE`, `HOSTCFLAGS=-fcommon` —
-but that certifies an environment no user of that kernel has, and
-`make kmodcov` does not certify it.
+**Build an old kernel's modules with a compiler of that kernel's own era.**
+An old kernel's headers and kbuild assume the compilers of their time, and a
+newer gcc is unsupported there. How otto provisions those kernels and
+compilers, and what `make kmodcov` proves on each, is maintainer material on
+{doc}`../../../developing/kmodcov-provisioning`.
 
 A stock kernel's config was written for the compiler that built it, and
 kbuild applies that config's compiler-specific flags to every external
@@ -376,29 +339,6 @@ module. Two cases need `KMAKEFLAGS`, both proven on Ubuntu's
   gcc names in its error — for gcc 9, 10 and 11 against that kernel,
   `CC=gcc-11 KMAKEFLAGS="CONFIG_GCC_VERSION=110500 CONFIG_SHADOW_CALL_STACK= CONFIG_INIT_STACK_ALL_ZERO= CONFIG_ZERO_CALL_USED_REGS="`.
   gcc 12 and newer need nothing there.
-
-What is proven, and where: `make kmodcov` (which `make release` runs) rebuilds
-the fixture with gcc 9, 10, 11, 12, 13 and 14 and with clang 18 and runs
-the kernel-module coverage suite on the bed for each, then builds it for
-every kernel of the set under [Kernel versions](#kernel-versions)
-(`x86_64-cross`, `2.6.32`, `3.13`, `4.4`, `5.4`, `5.15`, `6.17`): each
-provisioned kernel inside the image of its own era described above, and
-the x86_64 cross build on the host with the VM's `x86_64-linux-gnu-gcc`
-13. Every gcc from 4.7 on is in the format table, and every clang from 11
-on shares one format.
-
-Where a gcc puts its constructor is decided when that gcc was configured,
-not by its version: Ubuntu's `x86_64-linux-gnu-gcc-9` cross package, a
-compiler `make kmodcov` does not build with, emits `.ctors.65435` where the
-native `gcc-9` emits `.init_array.00100`. No compiler `make kmodcov` builds
-with emits `.ctors`, which is why the matrix carries a synthetic
-`.ctors`-convention row. The library's own linker script, `kmodcov.lds`, which
-`consumer.mk` applies at the consumer's intermediate link, folds
-`.init_array.*`, `.ctors.*` and `.ctors` into the one `.init_array` the
-sentinels bracket, so both conventions work on every kernel — including
-kernels before 4.0, whose module linker script orders none of these sections
-itself. What stays unsupported is older than either convention: the gcc 4.4
-to 4.6 counter layout (issue #492).
 
 Getting a module to load is not the same as getting its counters read
 back. The gcov that reads them is chosen per product from the data's own
@@ -417,7 +357,7 @@ error. Each header path otto cannot place in the project is logged as a
 warning and left out of the report; those records are kernel headers,
 never the module's own files. If you have the kernel tree on the reporting
 machine, `["--base-directory", "<kernel tree>"]` in the bed host's
-`toolchain.lcov_args` ({doc}`../../../configuration/lab-config`'s toolchain
+`toolchain.lcov_args` ({doc}`../../../configuration/lab/coverage-toolchain`'s toolchain
 table) lets lcov resolve them instead.
 
 ## Kernel versions
@@ -453,18 +393,6 @@ two untested arms are proven by nothing yet.
 | `list_first_entry_or_null`, `list_last_entry`, `list_next_entry`, `__list_del_entry` | the list helpers the clang backend uses | provided below 3.10, 3.13, 3.13 and 2.6.38 | `2.6.32`, `3.13` (the "build: the clang backend's unit compiles with the column's gcc" row) |
 | `pr_warn` | the kernel-log warnings of [counts across loads](#counts-across-loads) | `pr_warning` where the kernel has no `pr_warn` (below 2.6.37) | `2.6.32` |
 | `KMODCOV_ALLOC`, `KMODCOV_ALLOC_ARRAY`, `KMODCOV_STRDUP`, `KMODCOV_MEMDUP`, `KMODCOV_ASPRINTF`, `KMODCOV_FREE`, `KMODCOV_DEFINE_LOCK`, `KMODCOV_LOCK`, `KMODCOV_UNLOCK`, `KMODCOV_SYSFS_DIR`, `KMODCOV_SYSFS_DIR_PUT`, `KMODCOV_SYSFS_GROUP`, `KMODCOV_SYSFS_GROUP_REMOVE` | allocation, the lock, the sysfs control files | one default each, unchanged since 2.6.32 | every column |
-
-On the two columns whose kbuild compiles every object as `.tmp_<unit>.o`
-before deciding whether to relink or rename it (3.13 and 4.4,
-`CONFIG_MODVERSIONS=y`), the `.gcno` gcc writes keeps that name —
-`.tmp_<unit>.gcno` beside the object — and a module's `.gcda` files carry
-the same prefix. gcc 4.7, 4.8 and 5 put their constructor,
-`_GLOBAL__sub_I_65535_0_<first public symbol, or the file name>`, in plain
-`.init_array`; gcc 9 and later put `_sub_I_00100_0` in `.init_array.00100`.
-No compiler `make kmodcov` builds with emits `.ctors`, so that convention is
-proven instead on a rewritten object — the matrix row "build: a
-.ctors-convention demo is bracketed too". Collection of those files is
-tracked as #530.
 
 The contract an override must keep: `KMODCOV_ALLOC` and `KMODCOV_ALLOC_ARRAY`
 return zeroed memory; `KMODCOV_FREE` and `KMODCOV_BIG_FREE` accept `NULL`;
@@ -506,13 +434,20 @@ host and the kind, and so is a host matching two of them. `cleanup` unloads
 the library after the products, which is the order dev tools always come
 down in; a test module that drives the products itself and never runs
 `cleanup` unloads it in its own teardown, the way
-`tests/project5/tests/test_kmod_demo.py` does.
+`tests/project5/tests/test_kmod_demo.py` does. Such a teardown leaves the lab
+uninstalled, module and library both, so the next run puts them back:
+`otto run install --ensure` ({doc}`../../run/defaults`) installs them again,
+and a test marked `@pytest.mark.ensure("installed")`
+([Declaring lab state](../../../setup/writing-tests.md#declaring-lab-state-the-ensure-marker))
+converges the lab the same way before it runs. Either one loads the library
+on demand, at the module's own `install`.
 
 `otto_kmod_demo` sets `coverage = "module"` and a `cov_dir` for `otto_kmodcov`
 to write under. A module built with the sentinel/macro snippet above refuses
 to load without that `cov_dir=` argument — `KMODCOV_INIT()` returns `-EINVAL`
 — so `coverage = "none"` on such a module, or a manual `insmod`, fails with
-a message only `dmesg --sudo` shows. See
+a message only the kernel log shows: `otto host <id> exec --sudo dmesg`
+({doc}`../../host/exec`). See
 {doc}`../../../configuration/declared-products-tools` for every parameter
 these kinds take — this page only walks the build the params point at.
 

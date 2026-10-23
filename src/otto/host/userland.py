@@ -1264,7 +1264,7 @@ _SOURCE_LEGEND = (
 )
 
 
-def _probe_report(userland: "Userland") -> "list[str | Table]":
+def _probe_report(userland: "Userland") -> "list[str | Table | Text]":
     """Lay out the resolved capabilities, then the pin, as :meth:`UserlandHost.probe` prints them.
 
     Two audiences in one output, in the order they are useful: the table says
@@ -1286,32 +1286,40 @@ def _probe_report(userland: "Userland") -> "list[str | Table]":
         table.add_column(column)
     for n, v, s in rows:
         table.add_row(Text(n), Text(v), Text(s))
-    lines: list[str | Table] = [table, "", _SOURCE_LEGEND, ""]
+    lines: list[str | Table | Text] = [table, "", Text(_SOURCE_LEGEND), ""]
     if not pin:
         lines.append(
-            f"Nothing settled, so there is nothing to pin: all {len(rows)} values above are "
-            "guesses, and recording one would make it permanent. otto abandons a resolution "
-            f"after {_RESOLVE_BUDGET_S:.0f}s and refuses the next attempt for "
-            f"{_RETRY_COOLDOWN_S:.0f}s once one has left anything unasked, so an empty pin "
-            "says otto measured nothing this round -- not that the device has nothing. Run "
-            "this again outside that window."
+            Text(
+                f"Nothing settled, so there is nothing to pin: all {len(rows)} values above are "
+                "guesses, and recording one would make it permanent. otto abandons a resolution "
+                f"after {_RESOLVE_BUDGET_S:.0f}s and refuses the next attempt for "
+                f"{_RETRY_COOLDOWN_S:.0f}s once one has left anything unasked, so an empty pin "
+                "says otto measured nothing this round -- not that the device has nothing. Run "
+                "this again outside that window."
+            )
         )
         return lines
     if assumed:
         lines.append(
-            f"Left out of the pin below because otto could not ask about them "
-            f"({len(assumed)} of {len(rows)}): {', '.join(assumed)}. Pin the rest into this "
-            "host's lab.json entry; otto asks about these again on a later connection."
+            Text(
+                f"Left out of the pin below because otto could not ask about them "
+                f"({len(assumed)} of {len(rows)}): {', '.join(assumed)}. Pin the rest into this "
+                "host's lab.json entry; otto asks about these again on a later connection."
+            )
         )
     elif all(s == "declared" for _, _, s in rows):
         lines.append(
-            "Every capability is declared in this host's userland_options already, so none "
-            "of them needed a probe. This is the pin in force:"
+            Text(
+                "Every capability is declared in this host's userland_options already, so none "
+                "of them needed a probe. This is the pin in force:"
+            )
         )
     else:
         lines.append(
-            "Every capability settled. Pin these into this host's lab.json entry and the "
-            "next connection to this device issues no probe at all:"
+            Text(
+                "Every capability settled. Pin these into this host's lab.json entry and the "
+                "next connection to this device issues no probe at all:"
+            )
         )
     lines.append("")
     payload = json.dumps(pin, indent=2, sort_keys=True).splitlines()
@@ -1320,7 +1328,7 @@ def _probe_report(userland: "Userland") -> "list[str | Table]":
     return lines
 
 
-def _no_resolver_report(host_class: str) -> "list[str]":
+def _no_resolver_report(host_class: str) -> "list[str | Text]":
     """Say plainly that a host whose ``_userland()`` answers ``None`` has no answers.
 
     Said rather than swallowed, because the alternative renderings are both
@@ -1341,13 +1349,15 @@ def _no_resolver_report(host_class: str) -> "list[str]":
     ``tests/unit/host/test_userland_probe.py::test_the_no_resolver_paragraph_is_about_the_host_being_probed``
     holds that list and fails when a fourth family joins it.
     """
+    from rich.text import Text
+
     return [
-        (
+        Text(
             f"{host_class} builds no Userland, so otto asked this host nothing and there is "
             "nothing to pin."
         ),
         "",
-        (
+        Text(
             "That is a recorded hole and not a failure of this command: `_userland()` answers "
             "None by default, and otto's own UnixHost is the only host class that overrides "
             "it. What follows from that is written where the hook lives -- `UserlandHost` in "
@@ -1357,7 +1367,7 @@ def _no_resolver_report(host_class: str) -> "list[str]":
             "answer into anyway."
         ),
         "",
-        (
+        Text(
             "The protocol survey below still runs: what this host serves, and on which port, "
             "is measured from the outside and does not depend on a userland resolver."
         ),
@@ -1535,9 +1545,9 @@ class UserlandHost:
         resolver round rather than inside the survey: a typo in an option is
         the user's to fix and must not cost a probe round on a slow device.
 
-        ``value`` carries Rich tables interleaved with plain lines, which the
-        CLI renderer prints item by item. The pin block stays plain text so it
-        is still selectable and pasteable.
+        ``value`` carries Rich tables, otto's own sentences as Rich ``Text``
+        (which wraps at the terminal width) and the pin block as plain ``str``
+        lines, which the CLI prints as written so the pin stays pasteable.
         """
         if is_dry_run():
             return Result(Status.Skipped, value=_dry_run_report())
@@ -1563,7 +1573,7 @@ class UserlandHost:
             return Result(Status.Error, msg=msg)
         userland = self._userland()
         if userland is None:
-            lines: "list[str | Table]" = list(_no_resolver_report(type(self).__name__))
+            lines: "list[str | Table | Text]" = list(_no_resolver_report(type(self).__name__))
         else:
             await userland.resolve()
             lines = _probe_report(userland)

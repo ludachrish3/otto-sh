@@ -53,6 +53,8 @@ collect_marker_sets = _lane_invariants.collect_marker_sets
         ("docs/architecture/testing.md", gs.DOCS),
         ("docs/conf.py", None),
         ("docs/examples/getting-started/libs/gs_example/__init__.py", None),
+        ("docs/examples/quickstart-shell/src/main.cpp", gs.DOCS),
+        ("docs/examples/quickstart-shell/.otto/settings.toml", gs.DOCS),
         ("web/src/App.tsx", gs.WEB),
         ("web/src/__tests__/topology.test.ts", gs.WEB),
         ("web/src/api/types.gen.ts", None),
@@ -2124,3 +2126,50 @@ def test_a_whole_release_range_needs_only_live_lanes():
     tip = gs.commands(_scope(changes, files), tip=True, base="origin/main")
     assert tip == ["make check-breaking", "make gate-fresh"]
     assert all(gt.is_live(line) for line in tip)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "scripts/refresh_docs_captures.py",
+        "scripts/check_docs_examples.py",
+        "scripts/build_example_archives.py",
+    ],
+)
+def test_a_docs_harness_script_also_runs_the_docs_lane(path):
+    scope = _scope([gs.Change(path, "M")], {("head", path): "x = 1\n", ("base", path): "x = 0\n"})
+    assert scope.classes == [gs.SCRIPTS]
+    assert "make docs" in gs.commands(scope, tip=False, base="origin/main")
+
+
+def test_an_example_project_change_runs_the_docs_lane_not_the_full_gate():
+    path = "docs/examples/quickstart-shell/src/main.cpp"
+    scope = _scope([gs.Change(path, "M")])
+    assert scope.classes == [gs.DOCS]
+    assert scope.full_at_commit == []
+    assert gs.commands(scope, tip=False, base="origin/main") == [
+        "make check-breaking",
+        "make docs",
+    ]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "src/otto/host/userland.py",
+        "docs/examples/getting-started/captures.toml",
+        "docs/examples/getting-started/libs/x.py",
+        "docs/examples/getting-started-inventory/.otto/settings.toml",
+        "scripts/refresh_docs_captures.py",
+    ],
+)
+def test_a_change_the_docs_captures_read_runs_their_drift_check_at_the_tip(path):
+    """The captures record otto's output on the bed: any src or example change can move them."""
+    scope = _scope([gs.Change(path, "M")], {("head", path): "x = 1\n", ("base", path): "x = 0\n"})
+    assert "make docs-captures-check" in gs.commands(scope, tip=True, base="origin/main")
+    assert "make docs-captures-check" not in gs.commands(scope, tip=False, base="origin/main")
+
+
+def test_a_docs_page_change_does_not_run_the_captures_drift_check():
+    scope = _scope([gs.Change("docs/configuration/settings.md", "M")])
+    assert "make docs-captures-check" not in gs.commands(scope, tip=True, base="origin/main")

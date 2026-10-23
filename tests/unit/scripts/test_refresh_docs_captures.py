@@ -530,3 +530,149 @@ def test_a_capture_keeps_no_trailing_spaces_and_keeps_everything_else(tmp_path):
     rdc.refresh(rdc.load_manifest(m), ctx)
     lines = (ctx.captures_dir / "pad.txt").read_text().split("\n")
     assert lines[1:] == ["a  b", "", "  c", "", ""]
+
+
+def _store(path: Path, *, tier: str, product: str, file: str, line: int, hits: int) -> Path:
+    """Write a one-line coverage store with otto's own model, so the format cannot drift."""
+    from otto.coverage.store.model import CoverageStore
+
+    store = CoverageStore()
+    run_id = store.add_run(tier=tier, product=product)
+    record = store.get_or_create_file(Path(file)).get_or_create_line(line)
+    record.hits.add(tier, hits)
+    record.run_hits[run_id] = hits
+    store.save(path)
+    return path
+
+
+def _store_manifest(tmp_path: Path, assertion: str) -> Path:
+    """A capture that puts a prepared store under {xdir}, then asserts on it."""
+    src = _store(
+        tmp_path / "prepared.json",
+        tier="manual",
+        product="app",
+        file="src/main.cpp",
+        line=12,
+        hits=3,
+    )
+    copy = "import shutil, sys; shutil.copy(sys.argv[1], sys.argv[2])"
+    return _manifest(
+        tmp_path,
+        "[[capture]]\n"
+        'id = "cov"\n'
+        f'argv = ["{{python}}", "-c", "{copy}", "{src}", "{{xdir}}/store.json"]\n'
+        "[[capture.store]]\n"
+        'path = "{xdir}/store.json"\n'
+        'file = "src/main.cpp"\n'
+        "line = 12\n" + assertion,
+    )
+
+
+def test_a_store_assertion_passes_on_the_recorded_count(tmp_path):
+    m = _store_manifest(tmp_path, 'tier = "manual"\nproduct = "app"\nhits = 3\n')
+    rdc.refresh(rdc.load_manifest(m), _ctx(tmp_path))
+    assert (tmp_path / "captures" / "cov.txt").exists()
+
+
+def test_a_store_assertion_without_a_product_reads_the_tier_total(tmp_path):
+    m = _store_manifest(tmp_path, 'tier = "manual"\nhits = 3\n')
+    rdc.refresh(rdc.load_manifest(m), _ctx(tmp_path))
+
+
+def test_a_store_assertion_fails_on_a_different_count(tmp_path):
+    m = _store_manifest(tmp_path, 'tier = "manual"\nproduct = "app"\nhits = 4\n')
+    with pytest.raises(rdc.CaptureError) as err:
+        rdc.refresh(rdc.load_manifest(m), _ctx(tmp_path))
+    message = str(err.value)
+    assert "src/main.cpp:12" in message
+    assert "expected 4" in message
+    assert "recorded 3" in message
+
+
+@pytest.mark.parametrize(
+    ("assertion", "said"),
+    [
+        (
+            'tier = "manual"\nproduct = "nope"\nhits = 0\n',
+            "no run of product 'nope' in tier 'manual'",
+        ),
+        ('tier = "unit"\nhits = 0\n', "no run in tier 'unit'"),
+    ],
+)
+def test_an_unrecorded_product_or_tier_is_an_error_not_zero(tmp_path, assertion, said):
+    m = _store_manifest(tmp_path, assertion)
+    with pytest.raises(rdc.CaptureError, match=said):
+        rdc.refresh(rdc.load_manifest(m), _ctx(tmp_path))
+
+
+def test_a_file_the_store_does_not_hold_is_an_error_naming_what_it_holds(tmp_path):
+    m = _store_manifest(tmp_path, 'tier = "manual"\nhits = 3\n').read_text()
+    m_path = _manifest(tmp_path, m.replace('file = "src/main.cpp"', 'file = "src/other.cpp"'))
+    with pytest.raises(rdc.CaptureError, match=r"src/other\.cpp.*src/main\.cpp"):
+        rdc.refresh(rdc.load_manifest(m_path), _ctx(tmp_path))
+
+
+def test_a_missing_store_file_is_an_error(tmp_path):
+    m = _manifest(
+        tmp_path,
+        '[[capture]]\nid = "cov"\nargv = ["{python}", "-c", "pass"]\n'
+        '[[capture.store]]\npath = "{xdir}/store.json"\nfile = "a.c"\nline = 1\n'
+        'tier = "manual"\nhits = 1\n',
+    )
+    with pytest.raises(rdc.CaptureError, match=r"store\.json"):
+        rdc.refresh(rdc.load_manifest(m), _ctx(tmp_path))
+
+
+def test_the_gtest_kind_redacts_timings_and_turns_colour_off(tmp_path):
+    script = (
+        "import sys; print(' '.join(sys.argv[1:])); "
+        "print('[       OK ] Queue.Push (12 ms)'); "
+        "print('[==========] 1 test from 1 test suite ran. (34 ms total)')"
+    )
+    m = _manifest(
+        tmp_path,
+        f'[[capture]]\nid = "g"\nkind = "gtest"\nargv = ["{{python}}", "-c", "{script}"]\n',
+    )
+    rdc.refresh(rdc.load_manifest(m), _ctx(tmp_path))
+    output = (tmp_path / "captures" / "g.txt").read_text().split("\n", 1)[1]
+    assert "--gtest_color=no" in output
+    assert "Queue.Push (<n> ms)" in output
+    assert "(<n> ms total)" in output
+    assert "12 ms" not in output
+
+
+@pytest.mark.parametrize(
+    ("body", "said"),
+    [
+        ('kind = "pytest"\n', "kind"),
+        (
+            '[[capture.store]]\npath = "x"\nfile = "a.c"\nline = "one"\ntier = "t"\nhits = 1\n',
+            "line",
+        ),
+        ('[[capture.store]]\npath = "x"\nline = 1\ntier = "t"\nhits = 1\n', "file"),
+    ],
+)
+def test_load_manifest_refuses_a_bad_kind_or_store_entry(tmp_path, body, said):
+    m = _manifest(tmp_path, f'[[capture]]\nid = "a"\nargv = ["x"]\n{body}')
+    with pytest.raises(rdc.CaptureError, match=said):
+        rdc.load_manifest(m)
+
+
+def test_a_log_line_s_source_line_number_is_redacted(tmp_path):
+    """The log's ``file.py:123`` column moves with every edit to that file.
+
+    Left in, a capture drifts on almost any src change and the drift check
+    reports noise. Only a ``.py:<digits>`` at the very end of a line is a log
+    path column; the same text inside a message is left alone.
+    """
+    ctx = _ctx(tmp_path)
+    text = (
+        "INFO     @zephyr37_fat   | kernel uptime          host.py:3103\n"
+        "DEBUG    framed write cmd='x'                    session.py:946\n"
+        "see host.py:12 for details\n"
+    )
+    assert rdc.redact(text, ctx.default_rules()) == (
+        "INFO     @zephyr37_fat   | kernel uptime          host.py:<n>\n"
+        "DEBUG    framed write cmd='x'                    session.py:<n>\n"
+        "see host.py:12 for details\n"
+    )

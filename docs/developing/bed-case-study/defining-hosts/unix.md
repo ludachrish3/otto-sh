@@ -4,7 +4,7 @@ A Unix host needs an address and `os_type: "unix"` — the default — and
 usually a credential. `creds` is optional, but by default leaving it out
 only works for a host reached with no login step, such as a console that
 lands at a prompt, and that term needs `login: false` too; see
-[the `creds` field](../../../configuration/lab-config.md#common-optional) for what
+[the `creds` field](../../../configuration/lab/host-fields.md#common-optional) for what
 otto does with none. `valid_terms` and `valid_transfers` are menus otto
 chooses from (`ssh` and `scp` first, by default); everything else otto works
 out for itself on first connect.

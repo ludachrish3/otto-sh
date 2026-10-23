@@ -73,9 +73,9 @@ _BASE = "https://otto-sh.readthedocs.io/en/stable/"
         "http://otto-sh.readthedocs.io/en/stable/configuration/lab-config.html",
         "otto-sh.readthedocs.io/en/stable/configuration/lab-config.html",
         # MyST's heading_anchors slug: resolves [](#...) at build time, is no HTML id.
-        _BASE + "configuration/lab-config.html#host-identity--naming",
+        _BASE + "configuration/lab/host-identity.html#host-identity--naming",
         # `# .otto/settings.toml` there sits inside a fenced block: not a heading.
-        _BASE + "configuration/lab-config.html#otto-settings-toml",
+        _BASE + "configuration/lab/project-scope.html#otto-settings-toml",
         # A repeated title's second section gets a numbered id, not a suffixed one.
         _BASE + "extend/extending-backends.html#the-callable-contract-1",
     ],
@@ -87,13 +87,13 @@ def test_a_link_to_a_missing_page_or_heading_is_caught(link):
 @pytest.mark.parametrize(
     "link",
     [
-        _BASE + "configuration/lab-config.html#migrating-from-the-hosts-array",
+        _BASE + "configuration/lab/migrating.html#migrating-from-the-hosts-array",
         # "Host identity & naming": the HTML id joins the '&' run with one '-'.
-        _BASE + "configuration/lab-config.html#host-identity-naming",
+        _BASE + "configuration/lab/host-identity.html#host-identity-naming",
         # Every level has an id, an h4 included.
         _BASE + "configuration/host-options.html#port-forwarding",
         # A `(lab-links)=` label is an id too.
-        _BASE + "configuration/lab-config.html#lab-links",
+        _BASE + "configuration/lab/links.html#lab-links",
         # A repeated title keeps its id on the first section.
         _BASE + "extend/extending-backends.html#the-callable-contract",
     ],

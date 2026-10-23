@@ -58,6 +58,9 @@ SCRATCH_DIR = Path("/tmp/otto-gs")  # noqa: S108 -- a fixed, documented scratch 
 SCRATCH_LOCK = Path("/tmp/otto-gs.lock")  # noqa: S108 -- pairs with SCRATCH_DIR, machine-wide on purpose
 
 _TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?")
+# The log path column ends a log line with ``file.py:<line>``; the number moves
+# with every edit to that file, so a capture would drift on almost any src change.
+_LOG_SOURCE_LINE = re.compile(r"(?m)(\.py):\d+(?=[ \t]*$)")
 
 
 class CaptureError(RuntimeError):
@@ -90,6 +93,29 @@ def scratch_lock(path: Path = SCRATCH_LOCK) -> Iterator[None]:
             fcntl.flock(handle, fcntl.LOCK_UN)
 
 
+KINDS = ("otto", "gtest")
+"""What a capture runs: an ordinary command, or a GoogleTest binary."""
+
+_GTEST_RULES = [(r"\(\d+ ms\)", "(<n> ms)"), (r"\(\d+ ms total\)", "(<n> ms total)")]
+"""A gtest binary's per-test and total timings change on every run."""
+
+
+@dataclasses.dataclass(frozen=True)
+class StoreAssertion:
+    """One hit count a capture's coverage store must record.
+
+    ``hits`` is the count on ``file``:``line`` in ``tier``: the tier total, or,
+    with ``product``, the sum over that product's runs in the tier.
+    """
+
+    path: str
+    file: str
+    line: int
+    tier: str
+    hits: int
+    product: "str | None" = None
+
+
 @dataclasses.dataclass(frozen=True)
 class Capture:
     """One manifest entry: the argv to run and how to judge and redact it."""
@@ -103,6 +129,8 @@ class Capture:
     redact: list[tuple[str, str]] = dataclasses.field(default_factory=list)
     mkdir: list[str] = dataclasses.field(default_factory=list)
     settings_append: str = ""
+    kind: str = "otto"
+    store: list[StoreAssertion] = dataclasses.field(default_factory=list)
 
 
 @dataclasses.dataclass
@@ -163,6 +191,7 @@ class RunContext:
             (re.escape(str(self.examples_root)), "<examples>"),
             (re.escape(str(ROOT)), "<repo>"),
             (_TIMESTAMP.pattern, "<timestamp>"),
+            (_LOG_SOURCE_LINE.pattern, r"\1:<n>"),
         ]
 
     def substitutions(self, cap: Capture) -> dict[str, str]:
@@ -175,6 +204,7 @@ class RunContext:
             "{tmp}": str(self.tmp),
             "{project}": project,
             "{repo}": str(ROOT),  # captures run from {tmp}; repo scripts need an absolute path
+            "{xdir}": str(self.tmp / "xdir"),  # the capture's OTTO_XDIR
         }
 
     def env(self, cap: Capture) -> dict[str, str]:
@@ -200,6 +230,42 @@ class RunContext:
         if cap.project:
             env["OTTOPATH"] = str(self.project_dir(cap))
         return env
+
+
+def _store_assertions(path: Path, cap_id: str, raw: object) -> list[StoreAssertion]:
+    """Parse a capture's ``[[capture.store]]`` entries, naming the capture on any error."""
+    where = f"manifest {path}: capture {cap_id!r}: store"
+    if not isinstance(raw, list):
+        raise CaptureError(f"{where} entries are tables ([[capture.store]])")
+    out = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            raise CaptureError(f"{where} entries are tables ([[capture.store]])")
+        for key, kind in (
+            ("path", str),
+            ("file", str),
+            ("line", int),
+            ("tier", str),
+            ("hits", int),
+        ):
+            if key not in entry:
+                raise CaptureError(f"{where} entry lacks {key!r}")
+            if not isinstance(entry[key], kind) or isinstance(entry[key], bool):
+                raise CaptureError(f"{where} {key!r} must be a {kind.__name__}")
+        product = entry.get("product")
+        if product is not None and not isinstance(product, str):
+            raise CaptureError(f"{where} 'product' must be a str")
+        out.append(
+            StoreAssertion(
+                path=entry["path"],
+                file=entry["file"],
+                line=entry["line"],
+                tier=entry["tier"],
+                hits=entry["hits"],
+                product=product,
+            )
+        )
+    return out
 
 
 def load_manifest(path: Path) -> list[Capture]:
@@ -232,6 +298,11 @@ def load_manifest(path: Path) -> list[Capture]:
                 f"manifest {path}: capture {raw['id']!r}: "
                 "settings_append is a file name (relative to the project)"
             )
+        kind = raw.get("kind", "otto")
+        if kind not in KINDS:
+            raise CaptureError(
+                f"manifest {path}: capture {raw['id']!r}: kind {kind!r} is not one of {list(KINDS)}"
+            )
         if raw_append and not raw.get("project"):
             raise CaptureError(
                 f"manifest {path}: capture {raw['id']!r}: settings_append needs project"
@@ -247,6 +318,8 @@ def load_manifest(path: Path) -> list[Capture]:
                 redact=rules,
                 mkdir=list(raw_mkdir),
                 settings_append=raw_append,
+                kind=kind,
+                store=_store_assertions(path, raw["id"], raw.get("store", [])),
             )
         )
     ids = [c.id for c in caps]
@@ -347,6 +420,8 @@ def run_capture(cap: Capture, ctx: RunContext) -> str:
             raise CaptureError(f"capture {cap.id!r}: mkdir {entry!r} is outside the scratch dir")
         target.mkdir(parents=True, exist_ok=True)
     argv = [_substitute(a, subs) for a in cap.argv]
+    if cap.kind == "gtest":
+        argv.append("--gtest_color=no")
     with _appended_settings(cap, ctx):
         try:
             proc = subprocess.run(  # noqa: S603 — fixed argv from a committed manifest, no shell
@@ -376,12 +451,51 @@ def run_capture(cap: Capture, ctx: RunContext) -> str:
             f"capture {cap.id!r} exited {proc.returncode}, "
             f"expected {cap.expect_exit}:\n{proc.stdout}"
         )
-    body = redact(proc.stdout, ctx.default_rules() + cap.redact)
+    for assertion in cap.store:
+        _check_store(cap, assertion, subs)
+    gtest_rules = _GTEST_RULES if cap.kind == "gtest" else []
+    body = redact(proc.stdout, ctx.default_rules() + gtest_rules + cap.redact)
     # Rich pads a table row to the terminal width; the padding is not output a
     # reader sees, and keeping it made a refresh at another width rewrite lines
     # that had not changed.
     lines = [line.rstrip() for line in body.rstrip("\n").split("\n")]
     return render_command(cap.argv) + "\n" + "\n".join(lines) + "\n"
+
+
+def _check_store(cap: Capture, want: StoreAssertion, subs: dict[str, str]) -> None:
+    """Raise CaptureError unless the capture's coverage store records *want*'s count."""
+    from otto.coverage.store.model import CoverageStore  # the project venv's otto
+
+    path = Path(_substitute(want.path, subs))
+    try:
+        store = CoverageStore.load(path)
+    except (OSError, ValueError) as exc:
+        raise CaptureError(f"capture {cap.id!r}: cannot read the store {path}: {exc}") from exc
+    where = f"capture {cap.id!r}: {want.file}:{want.line}"
+    record = next((f for f in store.files() if f.path.as_posix() == want.file), None)
+    if record is None:
+        held = sorted(f.path.as_posix() for f in store.files())
+        raise CaptureError(f"{where}: the store holds no such file; it holds {held}")
+    line = record.lines.get(want.line)
+    if want.product is None:
+        if not any(run.tier == want.tier for run in store.runs):
+            raise CaptureError(f"{where}: no run in tier {want.tier!r}")
+        recorded = line.hits.for_tier(want.tier) if line else 0
+    else:
+        runs = [
+            run_id
+            for run_id, run in enumerate(store.runs)
+            if run.tier == want.tier and run.product == want.product
+        ]
+        if not runs:
+            raise CaptureError(f"{where}: no run of product {want.product!r} in tier {want.tier!r}")
+        recorded = sum(line.run_hits.get(run_id, 0) for run_id in runs) if line else 0
+    if recorded != want.hits:
+        product = f", product {want.product!r}" if want.product else ""
+        raise CaptureError(
+            f"{where}: tier {want.tier!r}{product}: expected {want.hits} hit(s), "
+            f"recorded {recorded}"
+        )
 
 
 def _substitute(arg: str, subs: dict[str, str]) -> str:

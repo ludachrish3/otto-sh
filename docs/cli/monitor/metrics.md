@@ -278,7 +278,7 @@ labels above (`rx if0`, `fs1 used`, …) come from the same descriptor
 registry as the core scalars, so they can be renamed per device — see
 [registering custom descriptors](../../extend/custom-parsers.md#extending-registering-custom-descriptors).
 Lab data never spells out these OIDs directly; the `otto-net:N` /
-`otto-fs:N` bundles (see {doc}`../../configuration/lab-config`) expand them
+`otto-fs:N` bundles (see {doc}`../../configuration/lab/snmp`) expand them
 and register their descriptors together.
 
 An OID present in `oids` but without a registered descriptor falls back to

@@ -155,7 +155,7 @@ init
   sub-table key is a Python regex matched against host ids; inner keys
   are `term`, `transfer` (ordered backend lists) or `*_options` tables
   (per-key option values that win over `lab.json`).  See
-  {ref}`host-preferences` in {doc}`lab-config` for the full schema and
+  {ref}`host-preferences` for the full schema and
   precedence rules.
 
   > **Migration note:** `[host_defaults]` was removed; its option
@@ -170,7 +170,7 @@ init
   becomes **required** the moment the project registers one of those providers —
   or declares a non-empty `[[products]]`/`[[dev_tools]]` array (see below):
   either way the project is *providing*, and bootstrap refuses a providing project
-  with no `[project]` scope. See {ref}`project-scope` in {doc}`lab-config` for
+  with no `[project]` scope. See {ref}`project-scope` for
   the full schema and {doc}`../cli/run/defaults` for what it does to a walk.
 
 \[\[products\]\]
@@ -194,6 +194,7 @@ init
   `base` and defaults after `init`, naming the project.  See {doc}`os-profiles`
   for the full treatment.
 
+(settings-coverage)=
 \[coverage\]
 : Optional table configuring gcov collection. Where counters live on a host
   is the *product's* business (`cov_dir`, above), so this table carries only
@@ -202,10 +203,18 @@ init
   unit tier's `[coverage.tiers.<name>.products]` views and its
   `[coverage.tiers.<name>.toolchain]` capture tools
   ({ref}`coverage-unit-toolchain`) — plus
-  `[coverage.embedded]`, `[coverage.tickets]`, and `[coverage.exclusions]`.
-  Having the table at all is what lets collection run. See
-  {doc}`../cli/cov/index` for the schema and {doc}`../cli/cov/tiers` for the
-  tier model.
+  `[coverage.embedded]`, `[coverage.tickets]`, `[coverage.overrides]`,
+  `[coverage.report]` and `[coverage.exclusions]`.
+  otto collects coverage only for a project whose `[coverage]` table sets
+  `hosts`, `tiers` or `embedded`. An empty table, or one holding only
+  `exclusions`, `report`, `tickets` or `overrides`, is the same as none, and
+  `otto test --cov` then refuses to run.
+  Each part's reference: `hosts` in {ref}`coverage-configuration`; tiers in
+  {doc}`../cli/cov/tiers`; `[coverage.exclusions]` in
+  {doc}`../cli/cov/exclusions`; `[coverage.report]` in
+  {doc}`../cli/cov/thresholds`; `[coverage.tickets]` and
+  `[coverage.overrides]` in {doc}`../cli/cov/tickets`; `[coverage.embedded]`
+  in {doc}`../cli/cov/instrumenting/embedded`.
 
 \[reservations\]
 : Optional table enabling the **reservation gate** — otto refuses to start

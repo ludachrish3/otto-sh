@@ -1088,7 +1088,9 @@ class TestCensus:
         assert "check-breaking" in seen
         assert seen - set(gt.LIVE_GOALS) == set(gt.STAMPED_GOALS)
 
-    @pytest.mark.parametrize("goal", ["conformance-bed", "kmodcov", "dashboard", "quick-guards"])
+    @pytest.mark.parametrize(
+        "goal", ["conformance-bed", "kmodcov", "dashboard", "quick-guards", "docs-captures-check"]
+    )
     def test_a_stamped_goal_dropped_from_the_set_fails_the_census(self, monkeypatch, goal):
         monkeypatch.setattr(gt, "STAMPED_GOALS", [g for g in gt.STAMPED_GOALS if g != goal])
         with pytest.raises(gt.UnknownGoalError):

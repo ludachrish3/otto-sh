@@ -248,7 +248,7 @@ ELEVATION_TIMEOUT_S = 8.0
 """How long :func:`probe_elevation` waits for ``id -u``: a root shell answers at once."""
 
 CREDS_DOCS = (
-    "https://otto-sh.readthedocs.io/en/stable/configuration/lab-config.html#common-optional"
+    "https://otto-sh.readthedocs.io/en/stable/configuration/lab/host-fields.html#common-optional"
 )
 
 

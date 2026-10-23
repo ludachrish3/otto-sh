@@ -58,7 +58,7 @@ os.chdir(_old_cwd)
 Container hosts and the built-in `local` host are held out of every walk by
 default regardless of the declaration.
 
-{doc}`../../configuration/lab-config` (*Project scope*) is the reference,
+{doc}`../../configuration/lab/project-scope` is the reference,
 including what happens when several repositories declare scopes over one
 lab; {doc}`../../cli/run/defaults` shows the walk from an instruction's
 point of view, including the two memberships held out of it.

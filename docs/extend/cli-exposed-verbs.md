@@ -189,7 +189,8 @@ sets that ride beside them, `resources` (the host entry's) and
 `element.resources` (its element's) — both `frozenset[str]` — to decide which hosts
 get which products; source any per-host parameters (versions, artifact paths)
 from your own product-project config. Providers aggregate in registration order
-and dedupe by `Product.name`.
+and dedupe by `Product.name`. The instances a provider returns must accept
+otto's attribute stamps ({ref}`the stamping rule <provider-instances-are-stamped>`).
 
 ```{warning}
 **`host.lab_info` is not readable at provider time.** The factory stamps

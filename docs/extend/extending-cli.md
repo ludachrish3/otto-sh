@@ -16,8 +16,8 @@ ergonomics match `@instruction()` (see {doc}`../cli/run/index`): an
 `OttoContext`-annotated parameter is injected and hidden from the CLI, and an
 `options=` dataclass expands into individual flags. Unlike `@instruction()`,
 `@cli_command()` takes keyword arguments only (`options=`, `name=`, `help=`,
-`lab_free=`, `output_dir=`, `gate=`) and does not forward extra positional or
-keyword arguments to Typer.
+`lab_free=`, `output_dir=`, `gate=`, `dry_run_preview=`) and does not forward
+extra positional or keyword arguments to Typer.
 
 ```python
 from typing import Annotated
@@ -187,7 +187,7 @@ it always blocks *execution*.
 `output_dir`, `gate` and `dry_run_preview`, but not `async_leaves` or
 `overwrite`, which only `register_cli_command()` takes. The registering module
 is not metadata you pass: the engine records it, and
-`CLI_COMMANDS.origin(name)` reads it back. The table covers the three that
+`CLI_COMMANDS.origin(name)` reads it back. The first three rows are the ones
 most commands set:
 
 | Keyword      | Default | Effect                                                                                                                                   |
@@ -195,8 +195,10 @@ most commands set:
 | `lab_free`   | `False` | Skips lab bootstrap *and* CLI session setup (no banner, no logging init) for this command. Use for commands that never touch lab state. |
 | `output_dir` | `True`  | Creates a per-invocation artifact directory under `--xdir` before the command body runs.                                                |
 | `gate`       | `True`  | Runs the reservation gate before dispatch (ignored entirely when `lab_free=True`).                                                      |
+| `dry_run_preview` | `False` | Under `--dry-run`, `False` stops the invocation after validation and prints the would-run block, so a command written without dry runs in mind never reaches a device. `True` runs the body, which must short-circuit at its own `is_dry_run()` branch (the shape `link` and `tunnel` use). One leaf can opt in alone with `cli_exposed(dry_run_preview=True)`. |
+| `async_leaves` | `False` | `register_cli_command()` only. Every leaf under the command must be `async def`; otto refuses a sync leaf when it is invoked. `run` sets it. |
 
-All three take effect once per real invocation, *after* argv parsing and
+The first three take effect once per real invocation, *after* argv parsing and
 *never* on a `--help` path.
 
 The built-ins span the whole matrix — read them as worked examples

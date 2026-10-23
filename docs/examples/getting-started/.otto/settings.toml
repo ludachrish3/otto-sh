@@ -33,7 +33,7 @@ name = "agent"
 class = "gs_example.products:AgentBinary"
 artifact = "build/agent"
 stage_dir = "/opt/agent"
-uninstall = "/opt/agent/agent --uninstall; rm -rf /opt/agent"
+uninstall = "/opt/agent/agent --uninstall; rm -f /opt/agent/agent"
 check = "test -x /opt/agent/agent"
 cov_dir = "/var/cov/agent"
 match = { os_type = "unix" }

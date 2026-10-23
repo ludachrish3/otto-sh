@@ -35,6 +35,7 @@ import re
 from dataclasses import fields
 
 import pytest
+from rich.text import Text
 
 from otto.host.local_host import LocalHost
 from otto.host.options import UserlandOptions
@@ -288,7 +289,7 @@ async def test_a_host_that_settled_nothing_prints_no_pin_and_says_why():
     one.
     """
     lines = await _report(_userland(raises=OSError("channel refused")))
-    text = "\n".join(line for line in lines if isinstance(line, str))
+    text = "\n".join(str(line) for line in lines if isinstance(line, (str, Text)))
 
     assert '"userland_options"' not in text, f"an empty pin was printed anyway:\n{text}"
     assert f"{_RESOLVE_BUDGET_S:.0f}s" in text, "the budget is not named as a reason"
@@ -407,9 +408,40 @@ async def test_a_host_with_no_userland_says_so_instead_of_printing_an_empty_pin(
     result = await LocalHost().probe()
 
     assert result.is_ok, "a recorded hole is an answer, not a failure of the command"
-    text = "\n".join(line for line in result.value if isinstance(line, str))
+    text = "\n".join(str(line) for line in result.value if isinstance(line, (str, Text)))
     assert "LocalHost" in text, f"the host class is not named:\n{text}"
     assert '"userland_options"' not in text, f"an empty pin was offered anyway:\n{text}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "report",
+    [
+        pytest.param(lambda: _report(_userland(applets=list(PROBED_APPLETS))), id="settled"),
+        pytest.param(lambda: _report(_userland(raises=OSError("refused"))), id="nothing-settled"),
+    ],
+)
+async def test_otto_s_own_prose_wraps_at_the_terminal_width(monkeypatch, report):
+    """The CLI prints a ``str`` result line as written, never re-wrapped.
+
+    That is right for device output and the pin, and wrong for otto's own
+    sentences: printed as written, the legend is one 300-column line that the
+    terminal breaks mid-word. Rendered here through the CLI's own printer at
+    100 columns, the width the docs captures use.
+    """
+    import io
+
+    import rich
+    from rich.console import Console
+
+    from otto.cli.invoke import _rprint_each
+
+    out = io.StringIO()
+    monkeypatch.setattr(rich, "_console", Console(file=out, width=100, color_system=None))
+    _rprint_each(await report(), literal=True)
+
+    long = [line for line in out.getvalue().splitlines() if len(line) > 100]
+    assert not long, "a line of otto's prose was not wrapped:\n" + "\n".join(long)
 
 
 @pytest.mark.asyncio
@@ -473,7 +505,7 @@ def test_the_no_resolver_paragraph_is_about_the_host_being_probed():
 
     names = [cls.__name__ for cls in families]
     for name in names:
-        text = "\n".join(_no_resolver_report(name))
+        text = "\n".join(str(line) for line in _no_resolver_report(name))
         assert name in text, f"the host being probed is not named:\n{text}"
         for other in names:
             if other != name:

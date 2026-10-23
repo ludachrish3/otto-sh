@@ -213,8 +213,12 @@ that family needs at its call site, and hands it to the registry:
 the context, calls the registered class's `create(ctx)`, and returns the built
 backend. A custom backend overrides `create` and reads only the fields it needs:
 
+- every transfer backend can read `transfer` (the selected name), `host_name`
+  and `max_filename_len` (the host's longest file name, 255 unless the host
+  declares one);
 - a **unix** transfer backend reads `connections`, `exec_cmd`, `nc_options`,
-  `scp_options`, `get_local_ip`, `userland` — the host's shared capability
+  `scp_options`, `sftp_options` (the host's SFTP option table, or `None`),
+  `get_local_ip`, `userland` — the host's shared capability
   resolver, whose answers are only readable after `await ctx.userland.resolve()`
   — and `exec_line_budget`, a callable answering how long ONE line of a command
   `exec_cmd` can carry on this host (`None` when nothing bounds it), which a
@@ -718,7 +722,7 @@ Pass `overwrite=True` to replace the built-in `command`.
 
 - {doc}`extending-embedded` — custom command frames and embedded filesystems
 - {doc}`custom-host-classes` — registering a custom host class that bundles these
-- {doc}`../configuration/lab-config` — the `term` / `transfer` lab-data fields
+- {doc}`../configuration/lab/host-fields` — the `term` / `transfer` lab-data fields
 - {doc}`../configuration/host-sources` — the `creds` field reference and login-proxy ownership
   consequences
 - {doc}`creds-backends` — a creds store of your own

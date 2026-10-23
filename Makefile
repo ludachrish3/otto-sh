@@ -1831,9 +1831,13 @@ coverage-gate-args: ## (internal) Print the declared coverage gate, one argv ele
 # artifact it just committed. src/otto/check/proven.json and its renderer are the
 # same shape again, for the setup checks' known-good environments page, and
 # tach.toml with its renderer for the architecture docs' module dependencies page.
+# Every file under docs/examples is a literalinclude or a download-archive input,
+# so editing one must rebuild the pages that show it (build output and bytecode
+# excluded: they are not what a page shows).
 SPHINX_SRCS :=  docs/conf.py                        \
                 $(shell find docs -name '*.rst')    \
                 $(shell find docs -name '*.md')    \
+                $(shell find docs/examples -type f -not -path '*/build/*' -not -path '*/__pycache__/*') \
                 $(shell find src/otto -name '*.py') \
                 schemas/support_matrix.json         \
                 scripts/render_support_matrix.py    \
@@ -1844,6 +1848,7 @@ SPHINX_SRCS :=  docs/conf.py                        \
                 tach.toml                           \
                 scripts/render_module_graph.py      \
                 scripts/docs_api_reference.py       \
+                scripts/build_example_archives.py   \
                 api/public.toml                     \
 
 docs: docs-lint docs-html doctest doctest-src ## (Docs) Build HTML docs + Sphinx & src doctests (sub-targets: docs-lint, docs-html, doctest, doctest-src, docs-inventories)
@@ -1858,6 +1863,8 @@ docs-lint:
 	@uv run python scripts/check_docs_wheel_matrix.py
 	@$(SAY) "getting-started captures: labless drift check"
 	@uv run python scripts/refresh_docs_captures.py --check --labless
+	@$(SAY) "docs examples: hostless check"
+	@uv run python scripts/check_docs_examples.py
 
 docs-html: docs/_build/html/index.html
 	@$(SAY) "api reference: stability marks and the pre-1.0 notice (built site)"
@@ -1915,7 +1922,7 @@ docs-captures: ## (Docs) Refresh EVERY Getting Started capture, bed included (ne
 	@$(SAY) "getting-started captures: full refresh (bed)"
 	@uv run python scripts/refresh_docs_captures.py
 
-docs-captures-check: ## (Docs) Diff EVERY Getting Started capture against the bed -- monitoring, never a push gate
+docs-captures-check: ## (Docs) Diff EVERY Getting Started capture against the bed -- a tip lane for src and example changes
 	@$(SAY) "getting-started captures: full drift check (bed)"
 	@uv run python scripts/refresh_docs_captures.py --check
 

@@ -1167,6 +1167,25 @@ every otto name it uses, in its own code: the docs validator
 (`setup-only-name`). The setup's non-otto helpers (`run`, `GS_EXAMPLE`) need
 no import.
 
+### Downloadable example projects
+
+A track's example project lives in `docs/examples/quickstart-<track>/`, and is
+a complete project a reader can build: sources, `.otto/` settings, tests.
+`make docs` (and `nox -s docs`) checks each one without a lab with
+`scripts/check_docs_examples.py`: `otto --list-products`, `otto --lab <lab> -n
+run install`, and, when it has a `CMakeLists.txt`, a cmake build and `ctest`.
+The lab is the project's single literal `[project] lab_patterns` entry, or the
+only lab it has. At build time `scripts/build_example_archives.py` packs the
+project's tracked files into `docs/_static/generated/examples/<track>.tar.gz`,
+and the track's page links that archive:
+
+```text
+{download}`quickstart-shell.tar.gz </_static/generated/examples/quickstart-shell.tar.gz>`
+```
+
+Only tracked files ship, so commit a file before its page relies on it being
+in the download.
+
 ### Setup and bed-case-study captures
 
 The `docs/setup/` and `docs/developing/bed-case-study/` pages `{literalinclude}` what they show, never
@@ -1226,9 +1245,15 @@ test fixtures, so edit them with the tie in mind:
   `tests/_fixtures/lab_data/tech1/lab.json`, trimmed to two elements, with
   fewer resources and host fields. Nothing compares the two, so keep them in
   step by hand.
+- **The lab reference is an index plus one page per area.**
+  `docs/configuration/lab-config.md` holds a minimal lab, the list of area
+  pages under `docs/configuration/lab/`, and the whole-lab example. A new
+  lab-data area gets its own page there, listed in the index's toctree and
+  its one-line list; `tests/unit/docs/test_lab_config_split.py` checks both.
 - **Every lab-data field needs a row.**
   `tests/unit/docs/test_lab_config_field_coverage.py` fails when a field of a
-  lab-data spec model has no row on `lab-config.md`, or an inventory record
+  lab-data spec model has no row on any page under
+  `docs/configuration/lab/`, or an inventory record
   field has none in `inventory.md`'s *Record fields* table. It proves presence,
   not placement.
 - **`docs/cli/host/families.md` is generated.**

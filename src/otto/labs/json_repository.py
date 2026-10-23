@@ -49,7 +49,7 @@ _MIGRATION_HINT = (
     "'name', optional 'id', 'labs' membership patterns, optional 'metadata', and "
     "'hosts'), and per-host 'labs' moved to the element (a host's 'resources' may "
     "stay on the host — a slot — or move to the element or the 'labs' table). "
-    "See https://otto-sh.readthedocs.io/en/stable/configuration/lab-config.html#migrating-from-the-hosts-array"
+    "See https://otto-sh.readthedocs.io/en/stable/configuration/lab/migrating.html#migrating-from-the-hosts-array"
 )
 
 _GLOB_CHARS = frozenset("*?[")

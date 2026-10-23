@@ -312,7 +312,7 @@ session on it:
   already shares the one session ({doc}`../cli/host/embedded`).
 - The `nc` transfer is refused: its remote listener would hold the session
   while its control commands need it too. How a menu that lists `nc` resolves
-  is on {doc}`lab-config` (the `transfer` row); a transfer asked to run as a
+  is on {doc}`lab/host-fields` (the `transfer` row); a transfer asked to run as a
   user other than the one logged in is refused too.
 - Every command otto issues for itself — the userland probes, a transfer's
   helper commands, the `sudo` probe — is an `exec`, so it runs on the same
@@ -535,7 +535,7 @@ and never touches a shell.
 A host that exposes metrics over SNMP rather than a shell carries an ``snmp``
 block ({class}`~otto.host.options.SnmpOptions`) instead of (or alongside) the
 ``*_options`` transport objects.  The full field reference and a worked example
-are under [SNMP monitoring](lab-config.md#snmp-monitoring) in the lab schema;
+are under [SNMP monitoring](lab/snmp.md#snmp-monitoring) in the lab schema;
 see {doc}`../cli/monitor/metrics` for what ``otto monitor`` does with the
 readings.
 

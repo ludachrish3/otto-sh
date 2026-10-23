@@ -16,7 +16,7 @@ Resolution order, stated once and consulted by every enforcement point:
 - Otherwise, if the project declared a `[project]` table, its `lab_patterns` and
   `host_patterns` are matched against the loaded labs. A project no loaded lab
   applies to — or one whose `host_patterns` match no host in the labs that do —
-  is inactive. See {ref}`project-scope` in {doc}`../configuration/lab-config`
+  is inactive. See {ref}`project-scope`
   for that schema.
 - Otherwise the project is active. **A project that declared no `[project]` table is
   always active**, so a single-project workspace is unaffected and activation is

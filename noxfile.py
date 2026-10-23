@@ -830,6 +830,7 @@ def docs(session: nox.Session) -> None:
     session.run("python", "scripts/check_docs_dependency_table.py")
     session.run("python", "scripts/check_docs_wheel_matrix.py")
     session.run("python", "scripts/refresh_docs_captures.py", "--check", "--labless")
+    session.run("python", "scripts/check_docs_examples.py")
     # -E (fresh env) + -a (write all) so the build matches a clean checkout.
     # -a deletes no page, so the tree goes first: a page a moved .rst left
     # behind would reach the built-site check below.

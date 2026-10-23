@@ -167,6 +167,23 @@ path instead. That is the only way to name a file outside the project root:
 a relative glob cannot match one, since there is no relative path to match
 it against.
 
+(coverage-exclude-third-party)=
+### System and third-party headers
+
+System headers need no rule: a capture drops every file outside the project
+root and counts them in one INFO line, and the unit tier keeps only product
+sources ({ref}`coverage-unit-filter`). Generated or downloaded code inside the
+root needs none either. A capture also skips every file with no committed
+version at HEAD, such as a GoogleTest tree that CMake's `FetchContent` unpacks
+under `build/_deps/`. Third-party code you *commit* is different: a vendored
+library is project source as far as a capture can tell, so name it:
+
+```toml
+[[coverage.exclusions.rules]]
+kind = "path"
+patterns = ["third_party/**"]
+```
+
 ## `regex`
 
 Matched against each raw source line — the general-purpose fallback when

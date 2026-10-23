@@ -87,8 +87,13 @@ just make it a decision rather than an omission.
     defaults so the dataclass will let you omit them, but each one drives a
     surface: `labs` scopes `otto host -l <lab> <TAB>` (and must be exactly the
     labs that contain the host — claiming one it is not in offers an id that
-    cannot dispatch there), `docker_capable` gates `otto docker --parent`, and
-    `ip` drives tunnel narrowing.
+    cannot dispatch there), `docker_capable` gates `otto docker --parent`,
+    `docker_priority` picks the default docker parent (highest wins), `ip`
+    drives tunnel narrowing, `os_type` decides which verbs
+    `otto host <id> <TAB>` offers (left `None`, it offers every class's), and
+    `logins` (one `LoginSummary` per login: `login`, `protocols`, `proxy`)
+    is what `--user <TAB>` offers. The conformance helper compares every one
+    of these against the constructed host.
 
   `lab_patterns` is the one field a backend may legitimately leave empty. A
   backend whose membership is

@@ -112,7 +112,12 @@ to the build's object files — the absolute path is baked in at compile time,
 and it is the *build machine's* path, which on a target usually does not
 exist. `GCOV_PREFIX` redirects those writes at run time, and the product's
 `cov_dir` is where that directory is declared, so `otto cov get` knows where
-to fetch from:
+to fetch from. Where the two variables are set depends on how the product
+runs.
+
+(coverage-daemon-case)=
+**A daemon** — a process `install` starts and leaves running — gets them in
+its `install` command, and writes its counters when it exits:
 
 ```toml
 [[products]]
@@ -136,6 +141,23 @@ object's path stays unique (see
 without being told to. See
 {doc}`../../../configuration/declared-products-tools` for the entry, and
 {ref}`the configuration section <coverage-configuration>` for the rest.
+
+(coverage-run-per-test-case)=
+**A command-line tool run once per test** writes its counters each time it
+exits, so the test sets the variables on every invocation. Read the
+directory from the product rather than repeating the path, so the test and
+`otto cov get` cannot disagree: `Product.cov_dir` is filled in concrete when
+the lab loads.
+
+```python
+product = next(p for p in host.products if p.name == "mytool")
+result = await host.exec(
+    f"GCOV_PREFIX={product.cov_dir} GCOV_PREFIX_STRIP=3 /opt/mytool/mytool --check"
+)
+```
+
+Each run adds its counts to the `.gcda` files the previous runs left, so
+every invocation of the tool across the run is counted.
 
 A kernel module has no `GCOV_PREFIX`; {doc}`kernel-modules` is that path.
 Inside a container the same two variables apply; {doc}`containers` is the

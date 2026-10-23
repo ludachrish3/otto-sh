@@ -108,6 +108,21 @@ TRIGGER_FILES = frozenset(
 )
 TRIGGER_GLOBS = ("src/otto/_shim*.py", "src/otto/*/__init__.py", "tests/_fixtures/*", ".githooks/*")
 DOCS_EXCLUDED = ("docs/conf.py", "docs/_ext/*", "docs/examples/*")
+EXAMPLE_GLOBS = ("docs/examples/quickstart-*",)
+"""Example projects a reader downloads: `make docs` checks them hostlessly and builds their
+archives. The other `docs/examples` trees stay excluded: tests and doctests import them."""
+DOCS_HARNESS = frozenset(
+    {
+        "scripts/refresh_docs_captures.py",
+        "scripts/check_docs_examples.py",
+        "scripts/build_example_archives.py",
+    }
+)
+"""Scripts `make docs` runs over the examples: a change to one also runs the docs lane."""
+CAPTURE_INPUTS = ("docs/examples/getting-started*", "scripts/refresh_docs_captures.py")
+"""Besides src/otto, what the Getting Started captures read: a change to either can move
+what otto prints on the bed, so the tip runs their drift check."""
+CAPTURES_LANE = "make docs-captures-check"
 WEB_EXCLUDED = ("web/src/api/*.gen.ts",)
 MAX_SRC_PACKAGES = 2
 """More packages than this in one commit is `escalate`."""
@@ -497,7 +512,8 @@ def classify_path(path: str) -> "str | None":
     ):
         return ESCALATE
     if path.startswith("docs/"):
-        return None if _match(path, DOCS_EXCLUDED) else DOCS
+        excluded = _match(path, DOCS_EXCLUDED) and not _match(path, EXAMPLE_GLOBS)
+        return None if excluded else DOCS
     if "/" not in path and path.endswith(".md"):
         return DOCS  # AGENTS.md never reaches here: NONE_GLOBS matched it first
     if path.startswith("web/src/"):
@@ -971,8 +987,11 @@ def _owning_tree_lanes(path: str) -> "list[list[Any]]":
     Each directory row (`<root>/*`) whose root holds `path` gives a "tree" lane row, as a
     test module there would: the path keeps its own class (a conftest escalates), and the
     tree's lanes join both columns because the full gate excludes that tier. File rows name
-    one module only and feed nothing else.
+    one module only and feed nothing else. A docs-harness script feeds the docs lane at the
+    commit (the tip's full gate already runs it).
     """
+    if path in DOCS_HARNESS:
+        return [[["make docs"], [], set(), "tree"]]
     if not path.startswith("tests/") or _is_test_module(path):
         return []
     return [
@@ -980,6 +999,11 @@ def _owning_tree_lanes(path: str) -> "list[list[Any]]":
         for glob, at_commit, at_tip in SPECIAL_TREES
         if glob.endswith("/*") and path.startswith(glob[:-1])
     ]
+
+
+def _captures_lane(path: str) -> "list[str]":
+    """Return the captures drift check when the Getting Started captures read *path*."""
+    return [CAPTURES_LANE] if _is_src(path) or _match(path, CAPTURE_INPUTS) else []
 
 
 def _route_lane(
@@ -1074,6 +1098,7 @@ def classify(
         paths.add(path)
         if _is_src(path):
             bed.update(BED_LANES.get(_src_key(path), []))
+        special_tip.update(_captures_lane(path))
         cls = classify_path(path)
         for lane in _owning_tree_lanes(path):
             _route_lane(path, None, lane, special, special_tip, full_commit, full_tip)

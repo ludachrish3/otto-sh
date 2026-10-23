@@ -260,7 +260,7 @@ LAB_JSON_TEMPLATE: dict[str, Any] = {
         "otto lab database: 'labs' declares each lab (its reservable resources and "
         "metadata); 'elements' groups hosts and says which labs they join; 'links' "
         "declares data-plane routes (see "
-        "https://otto-sh.readthedocs.io/en/stable/configuration/lab-config.html#links). "
+        "https://otto-sh.readthedocs.io/en/stable/configuration/lab/links.html#links). "
         "Keys starting with _ are comments; $schema wires editor autocomplete. A host "
         'that says "inventory" gets its machine facts from inventory.json and its '
         "creds from creds.json under that key; everything otto-specific stays here, "
@@ -339,7 +339,7 @@ It is a JSON object with three sections, each optional:
 Older otto projects listed every host in a top-level `hosts` array. That shape is
 gone: otto refuses a `lab.json` that still has one and names where each field
 moved. To migrate an older file, see
-<https://otto-sh.readthedocs.io/en/stable/configuration/lab-config.html#migrating-from-the-hosts-array>.
+<https://otto-sh.readthedocs.io/en/stable/configuration/lab/migrating.html#migrating-from-the-hosts-array>.
 
 ## The `labs` table
 
@@ -373,7 +373,7 @@ exists and reserves nothing.
 - **`hosts`** — one or more host entries. Each is validated against a
   pydantic spec before otto will use it (`UnixHostSpec` /
   `EmbeddedHostSpec`, see
-  <https://otto-sh.readthedocs.io/en/stable/configuration/lab-config.html#per-host-fields>).
+  <https://otto-sh.readthedocs.io/en/stable/configuration/lab/host-fields.html#per-host-fields>).
 
 ## Fields in the example host entry
 

@@ -441,7 +441,7 @@ there are any entries, at least one applies to the host's term, so the term
 never connects as nobody — for the term the file declares. A `--term`
 override onto a term nothing applies to authenticates with an empty login,
 as a host with no `creds` does
-([the `creds` field](lab-config.md#common-optional) says what follows): over
+([the `creds` field](lab/host-fields.md#common-optional) says what follows): over
 ssh the far end refuses it, and the error names the address, not the otto
 host. And a `user` key is refused with a message pointing here — the field
 is gone, order `creds` instead.

@@ -17,7 +17,8 @@ tools ({ref}`dry-run-lab-verbs`).
 A project that declares a non-empty `[[products]]` or `[[dev_tools]]` array must
 also declare its fleet in a `[project]` table; otherwise otto exits 1 at
 startup with an error naming the project. See {ref}`project-scope-required` for
-what to write.
+what to write. The same scope bounds fleet walks, `otto monitor` and coverage
+collection ({ref}`project-scope-effects`).
 
 ```toml
 [[products]]

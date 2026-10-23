@@ -54,6 +54,7 @@ STAMPED_GOALS = [
     "tests_hostless-3.14",
     "nox-unit-repeat",
     "conformance-bed",
+    "docs-captures-check",
     "stability-unit",
     "stability-unix",
     "stability-tunnel",

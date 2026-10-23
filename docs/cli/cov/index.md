@@ -42,7 +42,7 @@ otto cov kmodcov check DIR
 | Subcommand | Description |
 | ---------- | ----------- |
 | `get` | Fetch `.gcda` counters from each coverage host's instrumented products and write one `capture.json` per host per product, anchored to `base_commit` (also run implicitly by `otto test --cov`) |
-| `clean` | Zero each product's remote `.gcda` counters ahead of a fresh session (Unix coverage hosts only) |
+| `clean` | Zero each product's remote `.gcda` counters ahead of a fresh session, each product its own way — see {doc}`clean` |
 | `report` | Assemble every tier — e2e captures, unit harvest, committed manual store — into an HTML report |
 | `kmodcov` | Vendor the `otto_kmodcov` kernel-module library into a project (`export`), or compare a vendored copy with this otto (`check`: exit 0 current, 1 differs, 2 absent). Lab-free. See {doc}`instrumenting/kernel-modules`. |
 
@@ -140,8 +140,7 @@ compiler ships with: another GCC major, or GNU gcov on clang's files, fails
 
 So the common cases need no configuration: several gccs on one build
 machine, or clang. Only a cross gcov, which no stamp can name, is
-configured — the "Coverage toolchain" table in
-{doc}`../../configuration/lab-config` — and the per-compiler pages under
+configured — see {doc}`../../configuration/lab/coverage-toolchain` — and the per-compiler pages under
 {doc}`instrumenting/index` say what each build needs.
 
 A unit tier's build directories take the tier's own `toolchain` setting in
@@ -170,8 +169,8 @@ install = "GCOV_PREFIX={cov_dir} GCOV_PREFIX_STRIP=3 /opt/myproduct/myproduct &"
 ```
 
 **Everything lab-wide** belongs to a `[coverage]` table in the project's
-`.otto/settings.toml`.  The table can be empty, but it has to exist: its
-presence is what says this project collects coverage at all.  The source root is
+`.otto/settings.toml`; {ref}`settings-coverage` says which keys switch
+collection on.  The source root is
 auto-detected by walking up from the current directory to find the
 `.otto/` directory.  Source paths need no mapping either: each source file a
 capture names is resolved on its own, and one recorded on another machine

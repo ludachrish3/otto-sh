@@ -709,6 +709,31 @@ def _generate_rendered_pages(app):  # noqa: ARG001 — Sphinx event signature
             )
 
 
+def _build_example_archives(app):  # noqa: ARG001 — Sphinx event signature
+    """Archive every ``docs/examples/quickstart-*`` track for its page's ``{download}`` link.
+
+    EVERY BUILDER, like the rendered pages: a ``{download}`` of a missing archive
+    is a warning, so ``-W`` fails a build whose archive was not made. The archives
+    land under ``docs/_static/generated/examples/`` (git-ignored). A non-zero exit
+    RAISES. ``scripts/build_example_archives.py`` documents what an archive holds.
+    """
+    import subprocess
+
+    root = pathlib.Path(__file__).parent.parent
+    proc = subprocess.run(
+        [sys.executable, "-m", "scripts.build_example_archives"],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(root),
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"scripts.build_example_archives failed with exit code {proc.returncode}:\n"
+            f"{proc.stderr}"
+        )
+
+
 @functools.cache
 def _api_reference() -> docs_api_reference.Reference:
     """Every public object's documented home, read once per build from the declaration."""
@@ -866,6 +891,7 @@ def setup(app):
     app.connect("source-read", _substitute_version_token)
     app.connect("builder-inited", _generate_docs_media)
     app.connect("builder-inited", _generate_rendered_pages)
+    app.connect("builder-inited", _build_example_archives)
     app.connect("missing-reference", _resolve_short_types)
     app.connect("missing-reference", _resolve_internal_aliases)
     app.connect("missing-reference", _resolve_public_home)
