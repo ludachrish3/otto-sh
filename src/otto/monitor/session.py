@@ -190,12 +190,13 @@ def snapshot_lab_json(hosts: Sequence[RemoteHost], declared: list[Link]) -> str:
 
 # Imports of collector/factory/export live inside the methods: otto.monitor.db
 # and otto.monitor.export import SessionFrame from this module.
-def _report_stopped_collection(task: "asyncio.Task[None]") -> None:
+def report_stopped_collection(task: "asyncio.Task[None]") -> None:
     """Log a collection task that died, the moment it dies.
 
     A live dashboard keeps serving after its collection task fails, and the
     caller only gathers that task at shutdown: without this, the dashboard
-    froze with nothing saying why.
+    froze with nothing saying why. ``otto test --monitor``'s per-class task is
+    gathered only at class teardown, and attaches this too.
     """
     if task.cancelled() or task.exception() is None:
         return
@@ -357,7 +358,7 @@ class MonitorSession:
         if not self._opened:
             raise RuntimeError("MonitorSession.spawn() before open(): open the archive first")
         task = asyncio.create_task(self.collector.run(self.interval))
-        task.add_done_callback(_report_stopped_collection)
+        task.add_done_callback(report_stopped_collection)
         return task
 
     async def finish(self) -> None:

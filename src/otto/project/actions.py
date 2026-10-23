@@ -546,9 +546,16 @@ class ProjectActions:
             if not any(
                 any(layout.product_logs_dir(base, host.id, p.name).glob("**/*")) for p in owned
             ):
+                # A stopped container was passed over, not asked: say so, or
+                # the failure blames products that were never given a chance.
+                why = (
+                    ": the container is not running (start it with `otto docker compose up`)"
+                    if await _stopped(host)
+                    else ""
+                )
                 return Result(
                     Status.Error,
-                    msg=f"require_product_logs: no product logs retrieved from {host.id}",
+                    msg=f"require_product_logs: no product logs retrieved from {host.id}{why}",
                 )
         return Result(Status.Success)
 

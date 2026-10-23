@@ -414,8 +414,10 @@ def fleet_of_interest(
         lab: The loaded lab. Its ``hosts`` are read as they stand at the call.
         projects: The projects whose ``[project]`` declarations scope the lab.
         owner: A ``Project.name`` exactly as declared (it is never normalized),
-            for that one project's fleet. ``None`` (the default) answers the
-            union of the declaring projects, or the whole lab when none declares.
+            for that one project's fleet, which also admits the containers that
+            project owns a product or dev tool on. ``None`` (the default) answers
+            the union of the declaring projects, or the whole lab when none
+            declares; containers join it only through *include_containers*.
         exclude_projects: Project names switched off for the union, compared
             PEP 503-normalized, as ``--exclude-projects`` is. Ignored when
             *owner* is set, as in the walk. A name that matches no project is

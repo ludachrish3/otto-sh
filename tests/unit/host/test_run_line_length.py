@@ -623,3 +623,23 @@ def test_the_framing_overhead_is_measured_for_a_frame_that_rewrites_the_command(
             return f"print({cmd!r})\n"
 
     assert framed_line_overhead(_ReprFrame()) == len("print('')")
+
+
+def test_the_published_framing_numbers_are_the_code_s():
+    """The architecture page and the gap's reason both quote the framing overhead
+    and the ash line budget. Computed nowhere else, they drifted the last time the
+    frame changed (74/948 survived a frame that costs 38): pin them to the code."""
+    from otto.host.session import framed_line_overhead, typed_line_budget
+    from tests._fixtures.paths import CHECKOUT_ROOT
+
+    overhead = framed_line_overhead(AshFrame())
+    budget = typed_line_budget(AshFrame())
+    assert budget == ASH_TYPED_LINE_MAX - overhead
+    page = (CHECKOUT_ROOT / "docs/architecture/subsystems/busybox-support.md").read_text(
+        encoding="utf-8"
+    )
+    gap = gap_for("run-command-line-length")
+    assert gap is not None
+    for text in (page, gap.reason):
+        assert f"{overhead} characters" in text
+        assert str(budget) in text

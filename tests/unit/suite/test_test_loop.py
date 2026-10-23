@@ -137,3 +137,39 @@ def test_monitor_events_are_added_on_the_tests_own_loop(pytester, otto_plugins, 
         ("test_m.test_x: start", collector.body_loop),
         ("test_m.test_x: pass", collector.body_loop),
     ]
+
+
+class _DyingCollector:
+    """A monitor collector double whose ``run`` dies on its first tick."""
+
+    async def run(self, *, interval: object) -> None:
+        raise RuntimeError("collector died")
+
+    async def add_event(self, label: str, **_: object) -> None:
+        pass
+
+
+_DYING_BODY = """
+import asyncio
+
+
+class TestMonitored:
+    async def test_x(self, caplog):
+        await asyncio.sleep(0.05)
+        # The task dies on its first tick, which may land in class setup.
+        records = caplog.get_records("setup") + caplog.get_records("call")
+        said = [r.getMessage() for r in records]
+        assert any("collection stopped" in m and "collector died" in m for m in said)
+"""
+
+
+def test_a_class_s_monitor_task_that_dies_is_logged_while_the_class_runs(pytester, otto_plugins):
+    """``otto test --monitor`` collects per class in a task gathered only at class teardown.
+
+    A collector that dies mid-class used to stay silent until then: the
+    dashboard and the archive simply stopped. The error is logged the moment
+    the task dies, while the class's own tests still run.
+    """
+    otto_plugins[0].session_monitor_collector = _DyingCollector()
+    otto_plugins[0].class_monitor_interval = lambda: 0.01
+    run_inner(pytester, otto_plugins, test_m=_DYING_BODY).assert_outcomes(passed=1)

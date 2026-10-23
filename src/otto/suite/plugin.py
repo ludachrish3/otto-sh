@@ -1308,7 +1308,10 @@ class OttoPlugin:
             yield
             return
 
+        from ..monitor.session import report_stopped_collection
+
         task = asyncio.create_task(collector.run(interval=timedelta(seconds=interval)))
+        task.add_done_callback(report_stopped_collection)
         try:
             yield
         finally:

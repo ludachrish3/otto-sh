@@ -154,19 +154,10 @@ There is no step 3: a directory with no readable stamp is read by `gcov` from
 ## Configuration
 
 Two things, in two places. **Where the counters live on a host** belongs to
-the product that writes them — its `cov_dir`, defaulting to `/tmp/<name>`
-(see {doc}`../../configuration/declared-products-tools`, and
-{doc}`../../setup/coverage` for the walkthrough):
-
-```toml
-[[products]]
-name = "myproduct"
-kind = "shell"
-artifact = "build/myproduct"
-stage_dir = "/opt/myproduct"         # where staging puts the artifact
-cov_dir = "/var/coverage/myproduct"
-install = "GCOV_PREFIX={cov_dir} GCOV_PREFIX_STRIP=3 setsid /opt/myproduct/myproduct </dev/null >/tmp/myproduct.log 2>&1 &"
-```
+the product that writes them — its `cov_dir`, defaulting to `/tmp/<name>`,
+which its `install` command hands the program as `GCOV_PREFIX`.
+{ref}`declared-placeholders` shows the full product entry, and
+{doc}`../../setup/coverage` walks through it.
 
 **Everything lab-wide** belongs to a `[coverage]` table in the project's
 `.otto/settings.toml`; {ref}`settings-coverage` says which keys switch

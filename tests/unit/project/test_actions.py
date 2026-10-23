@@ -1436,3 +1436,20 @@ async def test_a_container_carrying_nothing_of_this_project_s_is_never_probed():
     await actions.status(StatusOptions())
     await actions.is_clean()
     assert _Probed.probes == 0
+
+
+@pytest.mark.asyncio
+async def test_require_product_logs_names_a_stopped_container_as_the_reason(tmp_path):
+    """A stopped container delivers no logs because it was passed over, not because
+    its products wrote none: the requirement's failure says which, and how to start it."""
+    stopped = _StoppedContainer(
+        "h0.stack.app",
+        products=[_FakeItem("app", PROJECT.name)],
+        log_dir=_log_dir(tmp_path, "stopped", "h0.stack.app", delivered=False),
+    )
+    result = await _actions(_FakeCtx([stopped])).get_logs(GetLogsOptions(require_product_logs=True))
+    assert not result.is_ok
+    assert "h0.stack.app" in result.msg
+    assert "not running" in result.msg
+    assert "otto docker compose up" in result.msg
+    assert stopped.calls == []

@@ -106,3 +106,14 @@ def test_the_exit_code_is_the_command_s_own(argv, frame):
     assert fails[1] == 1
     assert sets[1] == 7
     assert empty == ("", 0)
+
+
+@pytest.mark.parametrize(("argv", "frame"), SHELLS)
+def test_a_comment_only_command_and_a_trailing_backslash_both_frame(argv, frame):
+    """A group holding only a comment is empty, which every shell rejects; a
+    trailing backslash joins the closing brace onto the command's line, so the
+    group never closes. Both left the call waiting out its timeout."""
+    note, continued, after = _run(argv, frame, "# just a note", "echo a \\", "echo next")
+    assert note == ("", 0)
+    assert continued == ("a", 0)
+    assert after == ("next", 0)

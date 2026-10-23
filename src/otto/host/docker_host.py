@@ -909,13 +909,17 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
 
     @staticmethod
     def _stage_dir(container_id: str) -> Path:
-        """Per-CALL staging directory under the container's own prefix on the parent filesystem.
+        """Per-CALL staging directory on the parent filesystem, named for its container.
 
         Two overlapping transfers to one container must not remove each
-        other's files in ``finally``.
+        other's files in ``finally``. Each is a direct child of the shared
+        root, so removing it removes everything the call staged: a
+        per-container parent left one empty directory behind per container
+        ever transferred to (#698), and removing that parent once empty raced
+        a second transfer between its two ``mkdir`` steps.
         """
         stage_root = "/tmp/otto-docker-stage"  # noqa: S108 — deliberate staging path
-        return Path(f"{stage_root}/{container_id}/{uuid.uuid4().hex}")
+        return Path(f"{stage_root}/{container_id}-{uuid.uuid4().hex}")
 
     @override
     @cli_exposed(success="Transfer complete.", dry_run_preview=True)
@@ -1223,15 +1227,8 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
 
     @staticmethod
     def _unstage_command(stage: Path) -> str:
-        """Remove one call's staging dir, then its container's dir once no transfer still uses it.
-
-        ``rmdir`` only removes an empty directory, so a concurrent transfer to the
-        same container keeps its own; the exit status is ``rm``'s alone.
-        """
-        return (
-            f"rm -rf {shlex.quote(str(stage))} && "
-            f"{{ rmdir {shlex.quote(str(stage.parent))} 2>/dev/null || true; }}"
-        )
+        """Remove one call's staging dir, and with it everything the call staged."""
+        return f"rm -rf {shlex.quote(str(stage))}"
 
     @override
     async def _mkdir_all(self, paths: "list[Path]", *, user: str | None = None) -> Result:

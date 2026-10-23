@@ -237,6 +237,17 @@ class CommandFrame(ABC):
         return re.compile(re.escape(m.recover))
 
 
+def _runs_something(cmd: str) -> bool:
+    """Whether *cmd* has a line that is neither blank nor a ``#`` comment."""
+    return any(line.strip() and not line.lstrip().startswith("#") for line in cmd.splitlines())
+
+
+def _continues(cmd: str) -> bool:
+    """Whether *cmd* ends in an unescaped backslash, which continues its last line."""
+    trailing = len(cmd) - len(cmd.rstrip("\\"))
+    return trailing % 2 == 1
+
+
 class BashFrame(CommandFrame):
     """POSIX bash dialect: ``echo`` brackets and ``$?`` baked into the END marker.
 
@@ -273,8 +284,13 @@ class BashFrame(CommandFrame):
         # never inside the output. Not `eval '<cmd>'`: quoting makes the typed
         # length depend on the command's quotes, and a line budget sized by a
         # fixed framing overhead would then overrun. An empty group is itself
-        # a syntax error, hence `:`.
-        body = cmd if cmd.strip() else ":"
+        # a syntax error, so a command with nothing to run (blank, or only
+        # comments) becomes `:`. A trailing backslash would join `}` onto the
+        # command's last line and the group would never close, so a blank
+        # line ends the continuation first.
+        body = cmd if _runs_something(cmd) else ":"
+        if _continues(body):
+            body += "\n"
         return f'echo "{m.begin}"; {{ {body}\n}}; echo "{m.end_prefix}$?__"\n'
 
     @override

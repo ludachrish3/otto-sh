@@ -1870,7 +1870,11 @@ async def test_two_overlapping_puts_use_distinct_staging_dirs(tmp_path):
     assert len(mkdirs) == 2
     assert mkdirs[0] != mkdirs[1], f"overlapping puts shared a staging dir: {mkdirs}"
     for d in mkdirs:
-        assert d.startswith("/tmp/otto-docker-stage/abc123def456/")
+        # A direct child of the shared root, never under a per-container
+        # parent: a parent shared by two transfers is one that the first to
+        # finish could remove between the other's two mkdirs.
+        assert Path(d).parent == Path("/tmp/otto-docker-stage"), d
+        assert Path(d).name.startswith("abc123def456-"), d
 
 
 @pytest.mark.asyncio
@@ -2308,12 +2312,13 @@ def test_compose_container_probe_quotes_its_values_and_skips_one_offs():
 
 @pytest.mark.asyncio
 async def test_a_put_and_a_get_leave_no_staging_directory_for_the_container(tmp_path):
-    """Each transfer removes its own staging dir AND the per-container dir it made (#698).
+    """Each transfer removes everything it staged, leaving the shared root empty (#698).
 
-    The parent's filesystem is real here: every staging ``mkdir``/``rm``/``rmdir``
-    the container sends runs in a shell, rooted under *tmp_path* instead of
-    ``/tmp``. Removing only the per-call ``<uuid>`` left one empty
-    ``<container_id>`` directory behind per container ever transferred to.
+    The parent's filesystem is real here: every staging ``mkdir``/``rm`` the
+    container sends runs in a shell, rooted under *tmp_path* instead of
+    ``/tmp``. A per-call ``<uuid>`` nested under a per-container directory
+    left one empty ``<container_id>`` directory behind per container ever
+    transferred to.
     """
     import subprocess
 
@@ -2336,4 +2341,4 @@ async def test_a_put_and_a_get_leave_no_staging_directory_for_the_container(tmp_
     await h.get(Path("/etc/os-release"), tmp_path / "out")
 
     assert stage_root.is_dir(), "the staging commands never ran against the fake parent"
-    assert not (stage_root / h.container_id).exists(), sorted(stage_root.rglob("*"))
+    assert list(stage_root.iterdir()) == [], sorted(stage_root.rglob("*"))
