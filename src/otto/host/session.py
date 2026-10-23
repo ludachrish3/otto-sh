@@ -184,8 +184,9 @@ def refuse_if_line_editor_would_truncate(
     included. Two corrections to the obvious ``len(cmd)``, and both matter:
 
     * otto never types the caller's command bare -- it wraps it in the frame's
-      BEGIN/END sentinels, which cost 74 characters on the bash/ash frame. A
-      guard on ``len(cmd)`` would leave every command between 949 and 1022
+      BEGIN/END sentinels. On the bash/ash frame the command's line carries
+      the BEGIN half, 38 characters (the END half has a line of its own). A
+      guard on ``len(cmd)`` would leave every command between 985 and 1022
       characters silently truncated, which is the original defect with a
       narrower mouth.
     * the buffer holds ONE line. A multi-line script is many lines, each
@@ -215,7 +216,7 @@ def refuse_if_line_editor_would_truncate(
     longest = max(len(line) for line in frame.frame(cmd, markers).rstrip("\n").split("\n"))
     if longest <= ASH_TYPED_LINE_MAX:
         return
-    overhead = len(frame.frame("", markers).rstrip("\n"))
+    overhead = framed_line_overhead(frame)
     way_out = (
         "Send it through `exec()`, which allocates no pty and took 9000 characters "
         "in the same measurement, or split it"
@@ -227,7 +228,7 @@ def refuse_if_line_editor_would_truncate(
         host=host,
         attempted=(
             f"a {len(cmd)}-character command, which otto types as a {longest}-character "
-            f"line once its own BEGIN/END framing ({overhead} characters) is added — over "
+            f"line once otto's framing ({overhead} characters) is added to it — over "
             f"the {ASH_TYPED_LINE_MAX} this shell's line editor delivers intact, so "
             f"{ASH_TYPED_LINE_MAX - overhead} characters is the most any one line of a "
             f"command may be here. {way_out}"
@@ -296,27 +297,47 @@ def typed_line_budget(frame: "CommandFrame | None") -> int:
     function for why reading the probed dialect here would be the tempting
     wrong answer).
 
-    Returns the budget for the caller's COMMAND, with otto's own BEGIN/END
-    framing already subtracted: the caller never types its command bare, and a
-    budget that ignored the framing would leave a band of commands over the
-    ceiling by exactly the framing's width. Rendered against a synthetic
+    Returns the budget for the caller's COMMAND, with what otto's frame adds to
+    the command's own line already subtracted (see
+    :func:`framed_line_overhead`): the caller never types its command bare,
+    and a budget that ignored the framing would leave a band of commands over
+    the ceiling by exactly the framing's width. Rendered against a synthetic
     marker set, like the refusal's, because only the marker LENGTH affects the
     arithmetic and no session need exist to ask.
 
-    ON A MULTI-LINE COMMAND THIS IS CONSERVATIVE BY DESIGN. The framing wraps
-    the command as a whole -- its BEGIN half opens the first line and its END
-    half closes the last -- so a command of several lines pays part of the
-    overhead on each of two lines rather than all of it on one. Subtracting
-    the whole of it regardless costs a multi-line caller a few dozen
-    characters it could have spent, and the alternative is a budget whose
-    value depends on the shape of a command the caller has not built yet.
+    ON A MULTI-LINE COMMAND THIS IS CONSERVATIVE BY DESIGN. Only the line the
+    command starts on carries the frame's opening; every later line of the
+    command is typed as written. Subtracting the overhead from every line
+    costs a multi-line caller a few dozen characters it could have spent on
+    those later lines, and the alternative is a budget whose value depends on
+    the shape of a command the caller has not built yet.
     """
     frame = frame or BashFrame()
     ceiling = PTY_TYPED_LINE_MAX
     if isinstance(frame, AshFrame):
         ceiling = min(ceiling, ASH_TYPED_LINE_MAX)
+    return ceiling - framed_line_overhead(frame)
+
+
+def framed_line_overhead(frame: "CommandFrame") -> int:
+    """Characters the frame adds to the physical line a command is typed on.
+
+    Measured on the line that carries the command, not on the whole frame: the
+    bash/ash frame closes its brace group and echoes END on a line of its own,
+    so a command line pays only the BEGIN half. A frame that quotes or
+    escapes the command (``{cmd!r}``) still contains a plain probe word, so
+    its quotes are counted too. Rendered against a synthetic marker set; only
+    the marker LENGTH affects the arithmetic.
+    """
+    probe = "OTTOFRAMEPROBE"
     markers = SessionMarkers.for_session("0" * _SESSION_ID_LEN)
-    return ceiling - len(frame.frame("", markers).rstrip("\n"))
+    lines = frame.frame(probe, markers).rstrip("\n").split("\n")
+    line = next((line for line in lines if probe in line), None)
+    if line is None:
+        # A frame that transforms the command beyond recognition: charge the
+        # whole empty frame, as before the bash/ash frame split its lines.
+        return len(frame.frame("", markers).rstrip("\n"))
+    return len(line) - len(probe)
 
 
 class ShellSession(ABC):

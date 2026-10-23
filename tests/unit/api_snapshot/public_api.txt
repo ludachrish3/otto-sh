@@ -3699,22 +3699,24 @@ enum	otto.link:Provenance	DECLARED	S:"declared"
 enum	otto.link:Provenance	DYNAMIC	S:"dynamic"
 name	otto.link:RepairAllReport	class
 mro	otto.link:RepairAllReport	-
-call	otto.link:RepairAllReport	sync	PK:repaired:O PK:failures:O PK:skipped:O PK:planned:O PK:dry_run:B:false
+call	otto.link:RepairAllReport	sync	PK:repaired:O PK:failures:O PK:skipped:O PK:planned:O PK:dry_run:B:false PK:out_of_scope:O
 member	otto.link:RepairAllReport.__eq__	method	sync	PK:other:-
 member	otto.link:RepairAllReport.__hash__	method	sync	-
 member	otto.link:RepairAllReport.dry_run	field
 member	otto.link:RepairAllReport.failures	field
+member	otto.link:RepairAllReport.out_of_scope	field
 member	otto.link:RepairAllReport.planned	field
 member	otto.link:RepairAllReport.repaired	field
 member	otto.link:RepairAllReport.skipped	field
 abstract	otto.link:RepairAllReport	-
 name	otto.link:RepairReport	class
 mro	otto.link:RepairReport	-
-call	otto.link:RepairReport	sync	PK:link_id:- PK:cleared:O PK:timers_cancelled:I:0 PK:unreachable:O PK:plan:N
+call	otto.link:RepairReport	sync	PK:link_id:- PK:cleared:O PK:timers_cancelled:I:0 PK:unreachable:O PK:plan:N PK:outside:O
 member	otto.link:RepairReport.__eq__	method	sync	PK:other:-
 member	otto.link:RepairReport.__hash__	method	sync	-
 member	otto.link:RepairReport.cleared	field
 member	otto.link:RepairReport.link_id	field
+member	otto.link:RepairReport.outside	field
 member	otto.link:RepairReport.plan	field
 member	otto.link:RepairReport.timers_cancelled	field
 member	otto.link:RepairReport.unreachable	field

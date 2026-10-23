@@ -126,8 +126,11 @@ kind = "shell"
 artifact = "build/myproduct"
 stage_dir = "/opt/myproduct"         # where staging puts the artifact
 cov_dir = "/var/coverage/myproduct"
-install = "GCOV_PREFIX={cov_dir} GCOV_PREFIX_STRIP=3 /opt/myproduct/myproduct &"
+install = "GCOV_PREFIX={cov_dir} GCOV_PREFIX_STRIP=3 setsid /opt/myproduct/myproduct </dev/null >/tmp/myproduct.log 2>&1 &"
 ```
+
+The `setsid … &` form starts a long-running product and returns; see
+{ref}`long-running products <declared-long-running>`.
 
 `GCOV_PREFIX_STRIP` drops that many leading components off the baked-in path
 before `GCOV_PREFIX` is prepended, which is what keeps the tree under

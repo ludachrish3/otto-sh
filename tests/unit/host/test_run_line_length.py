@@ -108,8 +108,10 @@ def _manager(frame, *, term: str = "ssh", name: str = "bb1"):
 
 
 def _framing_overhead(frame) -> int:
-    """Characters the frame's own sentinels add to the typed line."""
-    return len(frame.frame("", SessionMarkers.for_session("0" * _SESSION_ID_LEN)).rstrip("\n"))
+    """Characters the frame's own sentinels add to the line the command is typed on."""
+    markers = SessionMarkers.for_session("0" * _SESSION_ID_LEN)
+    lines = frame.frame("CMD", markers).rstrip("\n").split("\n")
+    return len(next(line for line in lines if "CMD" in line)) - len("CMD")
 
 
 # ===========================================================================
@@ -319,7 +321,8 @@ class TestTheBoundIsTheTypedLine:
             "a real session no longer builds its id from _SESSION_ID_LEN, so the guard is "
             "sizing otto's framing against markers of a length nothing uses"
         )
-        real = len(session._frame.frame("", session._markers).rstrip("\n"))
+        lines = session._frame.frame("CMD", session._markers).rstrip("\n").split("\n")
+        real = len(next(line for line in lines if "CMD" in line)) - len("CMD")
         assert real == _framing_overhead(AshFrame())
 
 
@@ -607,3 +610,16 @@ class TestThroughAHostBuiltFromLabData:
         with pytest.raises(UnsupportedOnUserlandError) as excinfo:
             await host.run("echo " + "x" * 2000)
         assert re.search(r"\bbb1\b", str(excinfo.value))
+
+
+def test_the_framing_overhead_is_measured_for_a_frame_that_rewrites_the_command():
+    """A frame may quote or escape the command (the getting-started REPL frame types
+    `{cmd!r}`), so the command never appears verbatim. Measuring must still answer."""
+    from otto.host.command_frame import BashFrame
+    from otto.host.session import framed_line_overhead
+
+    class _ReprFrame(BashFrame):
+        def frame(self, cmd, m):
+            return f"print({cmd!r})\n"
+
+    assert framed_line_overhead(_ReprFrame()) == len("print('')")

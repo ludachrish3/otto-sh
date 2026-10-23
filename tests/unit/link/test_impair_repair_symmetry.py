@@ -22,7 +22,7 @@ that happens to have it.
 
 import pytest
 
-from otto.link.manage import impair_link, repair_all, repair_link
+from otto.link.manage import describe_out_of_scope, impair_link, repair_all, repair_link
 from otto.link.model import Link, LinkEndpoint
 from otto.link.params import ImpairmentParams
 
@@ -242,19 +242,23 @@ class TestRepairReachesWhatItCan:
         assert "not in the loaded lab" in report.unreachable[0]
 
     @pytest.mark.asyncio
-    async def test_a_partial_clear_is_a_sweep_failure_not_a_skip(self) -> None:
-        """`skipped` means otto declined a link it never impaired — reassurance
-        this link has not earned. A sweep that could not finish must not exit 0."""
+    async def test_an_end_outside_the_lab_scope_is_declined_not_failed(self) -> None:
+        """#695: a scope that loads one end of a link cannot own the other.
+
+        The end it can see is cleared; the end outside the loaded lab is named
+        as out of scope, not filed as a failure -- status already ignores such
+        a link, and a cleanup scoped to `--lab unix` must not fail over it."""
         lab, test1, _ = _bed(see_the_guest=False)
         test1.qdisc_texts = [IMPAIRED, ""]
 
         sweep = await repair_all(lab)
 
-        assert sweep.skipped == [], sweep.skipped
-        assert sweep.repaired == []
-        assert len(sweep.failures) == 1
-        assert "bb1350-wire" in sweep.failures[0] or GUEST_LINK.id in sweep.failures[0]
-        assert "could not reach" in sweep.failures[0]
+        assert sweep.failures == [], sweep.failures
+        assert len(sweep.out_of_scope) == 1, sweep.out_of_scope
+        described = describe_out_of_scope(sweep.out_of_scope[0])
+        assert "bb1350-qemu/eth0 is outside the loaded lab" in described
+        assert "cleared 1 placement" in described
+        assert "tc qdisc del dev bbeth-1350 root" in test1.sudo_commands
 
     @pytest.mark.asyncio
     async def test_a_bare_far_end_no_longer_strands_the_named_one(self) -> None:

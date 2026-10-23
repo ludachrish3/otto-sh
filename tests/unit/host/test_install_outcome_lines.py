@@ -285,3 +285,45 @@ async def test_a_dry_run_decline_adds_no_line(caplog_host):
 
     assert result is declined
     assert _lines(caplog_host) == []
+
+
+@pytest.mark.asyncio
+async def test_a_timed_out_install_command_says_it_timed_out(caplog_host):
+    """#678: a declared product's install is a `run`, whose Results carry no msg.
+
+    The reason lived only in the failed command's value, so the line read
+    `apigw: error` and nothing else."""
+    from otto.result import CommandResult, Results
+
+    timed_out = CommandResult(
+        Status.Error,
+        value="Command timed out after 30.0s",
+        command="/opt/stack/apigw 8080 &",
+        retcode=-1,
+        timed_out=True,
+    )
+    host = _host(products=[_Product("apigw", install=Results.collect([timed_out]))])
+
+    await host.install()
+
+    assert (logging.WARNING, "apigw: error — Command timed out after 30.0s") in _lines(caplog_host)
+
+
+@pytest.mark.asyncio
+async def test_a_failed_install_command_names_its_exit_and_first_line(caplog_host):
+    from otto.result import CommandResult, Results
+
+    failed = CommandResult(
+        Status.Failed,
+        value="cp: cannot stat '/opt/stack/apigw': No such file or directory\nmore",
+        command="cp /opt/stack/apigw /usr/bin",
+        retcode=1,
+    )
+    host = _host(products=[_Product("apigw", install=Results.collect([failed]))])
+
+    await host.install()
+
+    assert (
+        logging.WARNING,
+        "apigw: failed — exit 1: cp: cannot stat '/opt/stack/apigw': No such file or directory",
+    ) in _lines(caplog_host)

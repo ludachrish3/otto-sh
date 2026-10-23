@@ -303,7 +303,10 @@ methods are the canonical host accessors:
 - {meth}`~otto.context.OttoContext.all_hosts` — iterate the fleet. The
   built-in `local` host and Docker container hosts are excluded unless opted
   in (`include_local=True` / `include_containers=True`): deploy, monitor, and
-  coverage sweeps must never silently operate on the runner itself.
+  coverage sweeps must never silently operate on the runner itself. A walk
+  scoped to one project (its `ProjectActions` view) also yields the
+  containers that project owns a product or dev tool on
+  ({ref}`a project's own containers <fleet-owned-containers>`).
 - {meth}`~otto.context.OttoContext.do_for_all_hosts` /
   {meth}`~otto.context.OttoContext.run_on_all_hosts` — fan a call out across
   the fleet (concurrently by default) with per-host error isolation: the

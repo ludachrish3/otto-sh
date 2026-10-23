@@ -61,25 +61,25 @@ DEBUG    TelnetClient.connect host=localhost:<port> user='' login=False         
          login_prompt=b':' interactive=False
 INFO     Connected to <Peer 127.0.0.1 <port>>                                      client_base.py:<n>
 DEBUG    negotiation complete after <duration>s.                                        client_base.py:<n>
-DEBUG    remote_option[ECHO] = False                                           stream_writer.py:<n>
-DEBUG    send IAC DONT ECHO                                                    stream_writer.py:<n>
+DEBUG    remote_option[ECHO] = False                                            stream_writer.py:<n>
+DEBUG    send IAC DONT ECHO                                                     stream_writer.py:<n>
 DEBUG    Skipping telnet login for localhost (options.login=False)                     telnet.py:<n>
 DEBUG    Telnet connected to localhost:<port> in <duration>s                                  telnet.py:<n>
 DEBUG    Connected to zephyr37_fat via telnet                                     connections.py:<n>
-DEBUG    SessionManager[zephyr37_fat]: building telnet session with                  session.py:<n>
+DEBUG    SessionManager[zephyr37_fat]: building telnet session with                   session.py:<n>
          frame=ZephyrFrame
 DEBUG    TelnetSession@<session>: handshake start                                  session.py:<n>
          cmd='__OTTO_<session>_READY__\n' marker='__OTTO_<session>_READY__'
          timeout=15.0s
 DEBUG    TelnetSession@<session>: handshake matched                                session.py:<n>
-INFO     @zephyr37_fat   | kernel uptime                                                host.py:<n>
+INFO     @zephyr37_fat   | kernel uptime                                                 host.py:<n>
 DEBUG    TelnetSession@<session>: framed write cmd='kernel uptime'                 session.py:<n>
          payload='__OTTO_<session>_BEGIN__\rkernel
          uptime\rretval\r__OTTO_<session>_END__\r'
 DEBUG    TelnetSession@<session>: begin marker matched on                          session.py:<n>
          chunk='\x1b[1;31m__OTTO_<session>_BEGIN__: command not found\r\n'
-INFO     @zephyr37_fat > | Uptime: <n> ms                                        host.py:<n>
-DEBUG    TelnetSession@<session>: run_cmd done cmd='kernel uptime' retcode=0      session.py:<n>
+INFO     @zephyr37_fat > | Uptime: <n> ms                                         host.py:<n>
+DEBUG    TelnetSession@<session>: run_cmd done cmd='kernel uptime' retcode=0       session.py:<n>
          output_len=<n> buffer=': command not found\r\n\x1b[m\x1b[1;32m~$
          \x1b[m\r\n\x1b[1;31m__OTTO_<session>_BEGIN__: command not
          found\r\n\x1b[m\x1b[1;32m~$ \x1b[m\r\nUptime: <n> ms\r\n\x1b[1;32m~$

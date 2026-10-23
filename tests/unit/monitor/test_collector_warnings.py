@@ -355,3 +355,45 @@ class TestEventsCountAsProduction:
             for _ in range(4):
                 await _tick(collector, parsers, [_ok(parser.command)])
         assert not [r for r in caplog.records if "has produced no data" in r.message]
+
+
+class _RaisesOnNoDocker(MetricParser):
+    chart = "Containers"
+    y_title = "Count"
+    unit = ""
+    command = "docker ps -q | wc -l"
+
+    def parse(self, output: str, *, ctx: ParseContext) -> dict[str, MetricDataPoint]:
+        return {"Containers": MetricDataPoint(float(output))}
+
+
+class TestParserRaisedWarning:
+    """A parser that raises loses its own series, never anyone else's (#672)."""
+
+    @pytest.mark.asyncio
+    async def test_a_raising_parser_warns_once_and_the_others_still_record(self, collector, caplog):
+        parsers = {
+            _RaisesOnNoDocker.command: _RaisesOnNoDocker(),
+            _ParsesFine.command: _ParsesFine(),
+        }
+        bad = _ok(_RaisesOnNoDocker.command, "sh: docker: not found")
+        for _ in range(3):
+            await _tick(collector, parsers, [bad, _ok(_ParsesFine.command)])
+
+        raised = [r for r in caplog.records if "raised on test1" in r.getMessage()]
+        assert len(raised) == 1, [r.getMessage() for r in caplog.records]
+        assert "_RaisesOnNoDocker" in raised[0].getMessage()
+        assert "Containers" in raised[0].getMessage()
+        assert len(collector._store.series.get("test1/Test", [])) == 3
+
+    @pytest.mark.asyncio
+    async def test_a_parser_that_stops_raising_logs_its_recovery(self, collector, caplog):
+        parsers = {_RaisesOnNoDocker.command: _RaisesOnNoDocker()}
+        await _tick(collector, parsers, [_ok(_RaisesOnNoDocker.command, "sh: docker: not found")])
+        await _tick(collector, parsers, [_ok(_RaisesOnNoDocker.command, "sh: docker: not found")])
+        await _tick(collector, parsers, [_ok(_RaisesOnNoDocker.command, "3\n")])
+
+        recovered = [r for r in caplog.records if "recovered on test1" in r.getMessage()]
+        assert len(recovered) == 1, [r.getMessage() for r in caplog.records]
+        assert "2" in recovered[0].getMessage()
+        assert len(collector._store.series.get("test1/Containers", [])) == 1

@@ -6,6 +6,7 @@ The collector stays session-blind: one process run == one live session, and
 """
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -19,6 +20,8 @@ from ..host.remote_host import RemoteHost
 from ..link.derive import implicit_links
 from ..link.model import Link, Provenance
 from ..models.monitor import HostSnapshot, LabSnapshot, LinkEndpointSnapshot, LinkSnapshot
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ..models.monitor import MonitorExport, TunnelRecord
@@ -187,6 +190,18 @@ def snapshot_lab_json(hosts: Sequence[RemoteHost], declared: list[Link]) -> str:
 
 # Imports of collector/factory/export live inside the methods: otto.monitor.db
 # and otto.monitor.export import SessionFrame from this module.
+def _report_stopped_collection(task: "asyncio.Task[None]") -> None:
+    """Log a collection task that died, the moment it dies.
+
+    A live dashboard keeps serving after its collection task fails, and the
+    caller only gathers that task at shutdown: without this, the dashboard
+    froze with nothing saying why.
+    """
+    if task.cancelled() or task.exception() is None:
+        return
+    logger.error("Monitor: collection stopped: %r", task.exception())
+
+
 class MonitorSession:
     """One live monitor session: its identity, lab snapshot, collector and archive.
 
@@ -341,7 +356,9 @@ class MonitorSession:
         """
         if not self._opened:
             raise RuntimeError("MonitorSession.spawn() before open(): open the archive first")
-        return asyncio.create_task(self.collector.run(self.interval))
+        task = asyncio.create_task(self.collector.run(self.interval))
+        task.add_done_callback(_report_stopped_collection)
+        return task
 
     async def finish(self) -> None:
         """Stamp the end, write the export, finalize the archive, close. Idempotent.

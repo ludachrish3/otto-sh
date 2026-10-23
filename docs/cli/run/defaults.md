@@ -52,8 +52,8 @@ That walk is:
    default — constructed with that project and that project's *view* of the live
    context.
 3. Each project's `install()` fans out across its **fleet of interest**:
-   `ctx.all_hosts()`, so the built-in `local` host and Docker containers are
-   excluded exactly as they are everywhere else, and so are hosts outside the
+   `ctx.all_hosts()`, which leaves out the built-in `local` host, every Docker
+   container the project owns nothing on, and every host outside the
    project's declared universe (see [The fleet of
    interest](#the-fleet-of-interest)). Hosts proceed in parallel.
 4. On each host, `install(owner=<project name>)` installs that project's products in
@@ -237,6 +237,26 @@ Two things are **outside** the fleet: the built-in `local` host (pass
 Both flags are applied *after* scoping, so they still work under a
 declaration.
 
+(fleet-owned-containers)=
+
+**One exception: a project's own containers.** A project's walk (its view,
+so `install`, `uninstall`, `cleanup`, `status` and their `ProjectActions`
+overrides) also reaches every container host that project owns a product or
+dev tool on, without `include_containers`. A product declared for
+`test2.stack.app` is installed, reported and cleaned up like one on `test2`.
+A container whose stack is down is never started for you, and the verbs
+treat it differently:
+
+- `status` counts its products as not installed, so `install --ensure`
+  installs again;
+- `install` reaches it and fails at once, naming
+  `otto docker compose up` (otto never starts a container because you used
+  it);
+- `uninstall` and `cleanup` find nothing there to remove and say so.
+
+Host-global steps (the debug-log sweep, the toolchain, impairments and
+tunnels) and `otto monitor` still walk without containers.
+
 ### Narrowing further: `pattern=`
 
 `pattern=` picks a **subset** of that base set, never a superset, and it is a
@@ -387,8 +407,12 @@ the self-lockout reasons `link impair` refuses them. Those refusals are
 reported: `cleanup` comes back `Skipped` naming each declined link, which is
 `is_ok` (a decline is not a teardown failure and does not abort the rest of a
 best-effort cleanup) but is *not* `Success` — something may still be on that
-netdev, and otto has just declined to take it off. A link otto tried
-and failed to repair is a failure, as usual.
+netdev, and otto has just declined to take it off. A link with one end on a
+host the loaded lab does not contain is declined the same way when otto
+cleared an impairment on the end it can see, and is not mentioned when it
+cleared nothing (see
+[When one end is out of scope](../link/repair.md#when-one-end-is-out-of-scope)).
+A link otto tried and failed to repair is a failure, as usual.
 
 **A link that could never have been impaired is not a decline at all.**
 `repair_all` files those in the same bucket — every implicit hop edge is one,

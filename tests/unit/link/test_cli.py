@@ -112,6 +112,32 @@ class TestRepairCommand:
         assert "skipped 1 link(s)" in result.output
         assert "foreign qdisc otto did not create" in result.output
 
+    def test_repair_all_names_a_link_end_outside_the_lab_scope_without_failing(self) -> None:
+        """#695: the loaded end was cleared; the far end is on a host this scope
+        does not load. Named, and not a failure."""
+        from otto.link import RepairAllReport, RepairReport
+        from otto.link.placement import FlowDirection, Placement
+
+        sweep = RepairAllReport(
+            out_of_scope=[
+                RepairReport(
+                    "wire",
+                    cleared=[Placement("test1", "bbeth-1350", FlowDirection.A_TO_B)],
+                    outside=[Placement("bb1350-qemu", "eth0", FlowDirection.B_TO_A)],
+                )
+            ]
+        )
+        with (
+            patch("otto.fleet.get_lab", return_value=object()),
+            patch("otto.cli.link.repair_all", AsyncMock(return_value=sweep)),
+        ):
+            result = runner.invoke(link_app, ["repair", "--all"])
+        assert result.exit_code == 0, result.output
+        assert "outside this lab scope 1 link(s)" in result.output
+        assert "wire: cleared 1 placement(s); bb1350-qemu/eth0 is outside the loaded lab" in (
+            result.output
+        )
+
     def test_a_partial_repair_names_what_it_could_not_reach_and_exits_1(self) -> None:
         """ "I did not look" is not a clean bill of health.
 

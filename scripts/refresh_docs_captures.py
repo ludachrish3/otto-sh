@@ -44,7 +44,7 @@ import shlex
 import shutil
 import subprocess
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import tomli
@@ -60,7 +60,20 @@ SCRATCH_LOCK = Path("/tmp/otto-gs.lock")  # noqa: S108 -- pairs with SCRATCH_DIR
 _TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?")
 # The log path column ends a log line with ``file.py:<line>``; the number moves
 # with every edit to that file, so a capture would drift on almost any src change.
-_LOG_SOURCE_LINE = re.compile(r"(?m)(\.py):\d+(?=[ \t]*$)")
+# Rich pads the message so that column ends at the right edge, so the padding in
+# front of it moves too when the number gains or loses a digit: the digits' width
+# goes into the padding, which leaves the redacted line the same either way.
+_LOG_SOURCE_LINE = re.compile(r"(?m)( *)(\S+\.py):(\d+)(?=[ \t]*$)")
+_LINE_PLACEHOLDER = "<n>"
+
+
+def _redact_log_source(match: re.Match[str]) -> str:
+    pad, path, digits = match.groups()
+    width = len(pad) + len(digits) - len(_LINE_PLACEHOLDER)
+    return " " * max(width, 1 if pad else 0) + f"{path}:{_LINE_PLACEHOLDER}"
+
+
+Replacement = str | Callable[[re.Match[str]], str]
 
 
 class CaptureError(RuntimeError):
@@ -179,7 +192,7 @@ class RunContext:
             self._project_dirs[cap.project] = self.tmp / cap.project
         return self._project_dirs[cap.project]
 
-    def default_rules(self) -> list[tuple[str, str]]:
+    def default_rules(self) -> list[tuple[str, Replacement]]:
         """Redaction rules every capture gets before its own manifest rules run."""
         # Order matters: the scratch dir is redacted before the examples
         # root (so a path never half-matches a date later), the examples
@@ -191,7 +204,7 @@ class RunContext:
             (re.escape(str(self.examples_root)), "<examples>"),
             (re.escape(str(ROOT)), "<repo>"),
             (_TIMESTAMP.pattern, "<timestamp>"),
-            (_LOG_SOURCE_LINE.pattern, r"\1:<n>"),
+            (_LOG_SOURCE_LINE.pattern, _redact_log_source),
         ]
 
     def substitutions(self, cap: Capture) -> dict[str, str]:
@@ -341,7 +354,7 @@ def select(caps: list[Capture], *, labless: bool, only: list[str]) -> list[Captu
     return chosen
 
 
-def redact(text: str, rules: list[tuple[str, str]]) -> str:
+def redact(text: str, rules: list[tuple[str, Replacement]]) -> str:
     """Apply each ``(pattern, replacement)`` rule to ``text`` in order."""
     for pattern, repl in rules:
         text = re.sub(pattern, repl, text)

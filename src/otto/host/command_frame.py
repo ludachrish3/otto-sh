@@ -263,8 +263,19 @@ class BashFrame(CommandFrame):
     @override
     def frame(self, cmd: str, m: SessionMarkers) -> str:
         # Bracket the command with echoes; the END sentinel embeds ``$?`` so the
-        # exit code travels back inside the marker.
-        return f'echo "{m.begin}"; {cmd}; echo "{m.end_prefix}$?__"\n'
+        # exit code travels back inside the marker. The command sits in a
+        # brace group closed on the NEXT line: a trailing `&` or `# comment`
+        # used to splice into `&;` (a syntax error that rejected the whole
+        # line) or comment out the END echo, so no marker came back and the
+        # call waited out its timeout (#678). The newline ends the command
+        # however it ends. The shell reads the whole group before running
+        # BEGIN, so a continuation prompt prints BEFORE the BEGIN marker,
+        # never inside the output. Not `eval '<cmd>'`: quoting makes the typed
+        # length depend on the command's quotes, and a line budget sized by a
+        # fixed framing overhead would then overrun. An empty group is itself
+        # a syntax error, hence `:`.
+        body = cmd if cmd.strip() else ":"
+        return f'echo "{m.begin}"; {{ {body}\n}}; echo "{m.end_prefix}$?__"\n'
 
     @override
     def recover(self, m: SessionMarkers) -> str:

@@ -672,7 +672,25 @@ def test_a_log_line_s_source_line_number_is_redacted(tmp_path):
         "see host.py:12 for details\n"
     )
     assert rdc.redact(text, ctx.default_rules()) == (
-        "INFO     @zephyr37_fat   | kernel uptime          host.py:<n>\n"
+        "INFO     @zephyr37_fat   | kernel uptime           host.py:<n>\n"
         "DEBUG    framed write cmd='x'                    session.py:<n>\n"
         "see host.py:12 for details\n"
     )
+
+
+def test_a_redacted_source_column_does_not_depend_on_the_line_number_s_width(tmp_path):
+    """Rich pads the message so the ``file.py:<line>`` column ends at the right edge.
+
+    A line number that gains or loses a digit moves that padding by one, so a
+    redaction that replaced only the digits still drifted whenever an edit
+    carried a log call across 999/1000. The two lines below are one log record
+    from before and after such an edit; they must redact to the same text.
+    """
+    ctx = _ctx(tmp_path)
+    before = "DEBUG    begin marker matched on                         session.py:1001\n"
+    after = "DEBUG    begin marker matched on                          session.py:999\n"
+    assert len(before) == len(after)
+    redacted = rdc.redact(before, ctx.default_rules())
+    assert redacted == rdc.redact(after, ctx.default_rules())
+    assert redacted.endswith(" session.py:<n>\n")
+    assert len(redacted) == len(before) - len("999") + len("<n>")

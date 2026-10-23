@@ -29,12 +29,8 @@ on the dev VM;
 test1 must share the dev VM's architecture and glibc, because
 ``app``, ``tool`` and ``libcore.so`` are built on the dev VM and run on test1
 as they are. A host that is down fails the run; nothing here skips. Teardown
-runs ``otto run cleanup --no-reset-impairments`` whatever happened, so the bed
-ends clean: the flag is there because the unix lab's test1 carries a link to
-the busybox lab's ``bb1350-qemu`` guest, which ``--lab unix`` does not load, so
-the impairment repair would refuse that link and fail cleanup — a stale link
-outside this test, which places no impairments; the flag stays until #695 is
-fixed. Pinned to the one coverage
+runs ``otto run cleanup`` whatever happened, so the bed ends clean. Pinned to
+the one coverage
 xdist group: the product directories on test1 are shared state.
 """
 
@@ -195,12 +191,7 @@ def passes(built, tmp_path_factory):
     finally:
         teardown = root / "cleanup"
         teardown.mkdir()
-        # --no-reset-impairments: the unix lab's test1 carries a link to the
-        # busybox lab's bb1350-qemu guest, which `--lab unix` does not load, so
-        # the impairment repair refuses that link and fails cleanup. This
-        # fixture places no impairments, so it has none to repair. Until #695
-        # is fixed.
-        _run(["run", "cleanup", "--no-reset-impairments"], xdir=teardown)
+        _run(["run", "cleanup"], xdir=teardown)
 
 
 def _record(store: CoverageStore, rel: str) -> FileRecord:

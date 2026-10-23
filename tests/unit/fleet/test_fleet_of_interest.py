@@ -23,6 +23,7 @@ import dataclasses
 import itertools
 import logging
 import re
+import types
 
 import pytest
 
@@ -67,7 +68,8 @@ def world(tmp_path_factory):
     tells a right answer from a wrong one:
 
     * ``plain`` declares nothing;
-    * ``alpha`` admits ``h1`` and the container, ``beta`` admits ``h2``;
+    * ``alpha`` admits ``h1`` and the container, and owns a product on the
+      container; ``beta`` admits ``h2``;
     * ``every-a`` admits all of lab ``a``, ``local`` included, while
       ``alpha``/``beta``/``bravo`` do not admit ``local``;
     * ``bravo`` admits lab ``b``; ``ghost`` applies to no loaded lab;
@@ -76,7 +78,11 @@ def world(tmp_path_factory):
     """
     base = tmp_path_factory.mktemp("fleet_of_interest")
     lab = _lab(("h1", "a"), ("h2", "a"), ("h3", "b"))
-    lab.add_host(_container(lab.hosts["h1"], "api", "a"))
+    container = _container(lab.hosts["h1"], "api", "a")
+    # alpha owns a product on the container, so alpha's walk reaches it without
+    # include_containers (#676); every other project's walk still does not.
+    container.products = [types.SimpleNamespace(name="app", owner="alpha")]
+    lab.add_host(container)
     add_builtin_local(lab)
     projects = {
         "plain": _project(base, "plain"),
@@ -406,7 +412,7 @@ def test_every_membership_reader_consults_the_one_flag_rule(world, monkeypatch):
     asks the helper rather than repeating the isinstance tests.
     """
 
-    def _hold_out_h2_only(host, *, include_containers, include_local):
+    def _hold_out_h2_only(host, *, include_containers, include_local, owner=None):
         return "include_containers" if host.id == "h2" else None
 
     monkeypatch.setattr("otto.host.builtin_hosts._flag_holding_out", _hold_out_h2_only)

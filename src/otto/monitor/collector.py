@@ -42,6 +42,7 @@ from .parsers import (
     MetricDataPoint,
     MetricParser,
     ParseContext,
+    TickResult,
     default_catalog,
 )
 from .snmp import SnmpMetric, SnmpSource, process_snmp_values, resolve_snmp_metric
@@ -282,6 +283,10 @@ class MetricCollector:
         # the pop-on-success warns the recovery with the outage length. The
         # never-produced backstop below stays warn-once per run.
         self._failing: dict[tuple[str, str], int] = {}
+        # A parser that raises, keyed the same way and edge-triggered the same
+        # way, but apart from _failing: a command can exit 0 while its parser
+        # raises, and sharing the counter would log a false recovery.
+        self._parse_failing: dict[tuple[str, str], int] = {}
         self._warned_silent: set[tuple[str, str]] = set()
         self._health_ticks: dict[tuple[str, str], int] = {}
         self._health_produced: set[tuple[str, str]] = set()
@@ -499,9 +504,9 @@ class MetricCollector:
                 )
 
         # Supervised, not bare-gathered: if any loop escapes with a
-        # processing exception (parser.parse or a DB write raising —
-        # collection errors are contained per-tick inside _collect_bucket
-        # and _tunnel_pass alike), every sibling loop is cancelled before
+        # processing exception (a DB write raising -- collection errors are
+        # contained per-tick inside _collect_bucket and _tunnel_pass alike, and
+        # a parser's raise per command in _parse_contained), every sibling loop is cancelled before
         # the failure propagates. A bare gather() re-raises WITHOUT
         # cancelling siblings, and the CLI's collection_task.cancel() is a
         # no-op on the already-failed task — the orphaned loop(s) kept
@@ -671,7 +676,9 @@ class MetricCollector:
             # exit nonzero while their (partial) output still carries series.
             # `or ""` defends against value=None the same way the log line
             # above does — parsers expect str, not str | None.
-            tick = parser.parse_tick(cmd_result.value or "", ctx=ctx)
+            tick = self._parse_contained(parser, key, cmd_result.value or "", ctx=ctx)
+            if tick is None:
+                continue
             # The never-produced backstop only counts SUCCEEDING ticks — a
             # failing command is layer 1's job above; double-warning one root
             # cause helps nobody. Samples OR events count as production, so
@@ -688,6 +695,51 @@ class MetricCollector:
                     await self._record_point(host_name, sample_ts, label, dp, parser)
             if tick.events:
                 await self._record_log_events(host_name, parser.tab, tick.events)
+
+    def _parse_contained(
+        self, parser: MetricParser, key: tuple[str, str], output: str, *, ctx: ParseContext
+    ) -> "TickResult | None":
+        """Parse one command's output; a parser that raises loses this tick's series only.
+
+        Contained here rather than left to the loop supervisor, which cancels
+        every sibling loop on an escape: one parser that cannot read one host's
+        output would otherwise stop collection on every host. Edge-triggered
+        like a failing command: warn when it starts raising, debug while it
+        keeps raising, warn its recovery.
+        """
+        host_name, command = key
+        try:
+            tick = parser.parse_tick(output, ctx=ctx)
+        except Exception as exc:  # noqa: BLE001 — any parser bug is contained to its own series
+            raised_ticks = self._parse_failing.get(key, 0)
+            if raised_ticks == 0:
+                logger.warning(
+                    "Monitor: parser %s ('%s') raised on %s: %r — %s metrics will be missing",
+                    type(parser).__name__,
+                    command,
+                    host_name,
+                    exc,
+                    parser.chart,
+                )
+            else:
+                logger.debug(
+                    "Monitor: parser %s still raising on %s: %r",
+                    type(parser).__name__,
+                    host_name,
+                    exc,
+                )
+            self._parse_failing[key] = raised_ticks + 1
+            return None
+        raised_ticks = self._parse_failing.pop(key, 0)
+        if raised_ticks:
+            logger.warning(
+                "Monitor: parser %s ('%s') recovered on %s after %d raising tick(s)",
+                type(parser).__name__,
+                command,
+                host_name,
+                raised_ticks,
+            )
+        return tick
 
     def _note_health(self, key: tuple[str, str], *, produced: bool, what: str) -> None:
         """Track never-produced-by-tick-K per (host, command/oid); warn once."""

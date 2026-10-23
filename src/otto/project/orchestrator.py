@@ -802,8 +802,8 @@ async def _reset_impairments(ctx: "OttoContext") -> Result:
     configuration a human put on a shared host, and a cleanup that does that
     once is a cleanup nobody runs again.
 
-    ``repair_all`` never raises. Its outcomes become three different answers,
-    because they are three different facts:
+    ``repair_all`` never raises. Its outcomes become four different answers,
+    because they are four different facts:
 
     * :attr:`~otto.link.manage.RepairAllReport.failures` -- a link otto tried
       and could not repair (host down, a clear that did not take). A failure.
@@ -812,12 +812,17 @@ async def _reset_impairments(ctx: "OttoContext") -> Result:
       never impairable in the first place. Not a failure, and not a success
       either: see :func:`_reported`. The reasons are named rather than counted,
       matching what ``otto link repair --all`` prints from the same bucket.
+    * :attr:`~otto.link.manage.RepairAllReport.out_of_scope` -- a link with an
+      end on a host this lab scope does not load: the loaded ends were
+      cleared, the other is not this scope's to clear. Declined, like a skip,
+      when otto cleared something on the loaded end; dropped when it cleared
+      nothing, since the link was never impaired from here.
     * :attr:`~otto.link.manage.RepairAllReport.dry_run` -- nothing was read and
       nothing was reset. ``Status.NotRun``, the dry-run contract's own answer
       for an acting verb, rather than the Success an empty report would
       otherwise be indistinguishable from.
     """
-    from ..link.manage import repair_all
+    from ..link.manage import describe_out_of_scope, repair_all
 
     report = await repair_all(ctx.lab)
     if report.dry_run:
@@ -825,7 +830,12 @@ async def _reset_impairments(ctx: "OttoContext") -> Result:
             Status.NotRun,
             msg="dry run: no link was read and no impairment was reset",
         )
-    declined = "; ".join(_live_refusals(ctx.lab, report.skipped))
+    # An out-of-scope link is named only when otto cleared something on the end
+    # it can see: then the far end, which this scope cannot look at, may still
+    # carry the rest. One that cleared nothing is dropped, like a structural
+    # refusal: `run status` already reads it as clean.
+    outside = [describe_out_of_scope(r) for r in report.out_of_scope if r.cleared]
+    declined = "; ".join([*_live_refusals(ctx.lab, report.skipped), *outside])
     if report.failures:
         also = f" (declined: {declined})" if declined else ""
         failed = "; ".join(report.failures)

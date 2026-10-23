@@ -2304,3 +2304,36 @@ def test_compose_container_probe_quotes_its_values_and_skips_one_offs():
         "--filter label=com.docker.compose.oneoff=False"
     )
     assert compose_container_probe("p x", "web", all=True).startswith("docker ps -aq ")
+
+
+@pytest.mark.asyncio
+async def test_a_put_and_a_get_leave_no_staging_directory_for_the_container(tmp_path):
+    """Each transfer removes its own staging dir AND the per-container dir it made (#698).
+
+    The parent's filesystem is real here: every staging ``mkdir``/``rm``/``rmdir``
+    the container sends runs in a shell, rooted under *tmp_path* instead of
+    ``/tmp``. Removing only the per-call ``<uuid>`` left one empty
+    ``<container_id>`` directory behind per container ever transferred to.
+    """
+    import subprocess
+
+    stage_root = tmp_path / "otto-docker-stage"
+    parent = _mock_parent()
+
+    def run_staging(cmd, *_, **__):
+        if "docker cp" in cmd:
+            return _ok()
+        local = cmd.replace("/tmp/otto-docker-stage", str(stage_root))
+        done = subprocess.run(["sh", "-c", local], capture_output=True, text=True, check=False)
+        return _ok() if done.returncode == 0 else _fail(cmd, out=done.stderr)
+
+    parent.exec.side_effect = run_staging
+    h = _make_container(parent)
+    f = tmp_path / "payload.bin"
+    f.write_bytes(b"x")
+
+    await h.put([f], Path("/srv/in"))
+    await h.get(Path("/etc/os-release"), tmp_path / "out")
+
+    assert stage_root.is_dir(), "the staging commands never ran against the fake parent"
+    assert not (stage_root / h.container_id).exists(), sorted(stage_root.rglob("*"))

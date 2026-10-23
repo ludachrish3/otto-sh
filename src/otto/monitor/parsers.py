@@ -214,7 +214,8 @@ class MetricParser(ABC):
 
         Returns:
             A dict mapping series label → :class:`MetricDataPoint` for each data
-            point produced this tick.  Return an empty dict if parsing fails.
+            point produced this tick.  Return an empty dict if parsing fails;
+            a raise is contained to this parser's series on this host and logged.
             Single-series parsers return ``{self.chart: MetricDataPoint(value)}``.
             Multi-series parsers may return multiple entries in the dict.
             Log-sourced parsers — which override

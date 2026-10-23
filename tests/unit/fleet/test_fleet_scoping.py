@@ -959,3 +959,82 @@ def test_view_get_host_stays_unscoped(tmp_path, scoped_context):
     ctx = scoped_context(lab, [_project(tmp_path, "r1", labs=["a"], hosts=["h1"])])
 
     assert ctx.for_project("r1").get_host("h2") is lab.hosts["h2"]
+
+
+# ── a project's own containers join its walk (#676) ───────────────────────────
+
+
+def _owned_by(owner):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(name="item", owner=owner)
+
+
+def _containers_with_attachments(lab):
+    parent = lab.hosts["h1"]
+    product_on = _container(parent, "api", "a")
+    product_on.products = [_owned_by("r1")]
+    tool_on = _container(parent, "tools", "a")
+    tool_on.dev_tools = [_owned_by("r1")]
+    other_project = _container(parent, "db", "a")
+    other_project.products = [_owned_by("r2")]
+    bare = _container(parent, "cache", "a")
+    for host in (product_on, tool_on, other_project, bare):
+        lab.add_host(host)
+
+
+@pytest.mark.asyncio
+async def test_a_project_walk_includes_the_containers_it_owns_something_on(
+    tmp_path, scoped_context
+):
+    """`run status` used to skip containers, so a product on one read as installed after
+    the stack was gone. A container joins a project's walk when that project owns a
+    product or dev tool on it; one carrying another project's, or nothing, stays out."""
+    lab = _lab(("h1", "a"))
+    ctx = scoped_context(lab, [_project(tmp_path, "r1", labs=["a"], hosts=[r"h1(\..*)?"])])
+    _containers_with_attachments(lab)
+
+    view = ctx.for_project("r1")
+    assert sorted(h.id for h in view.all_hosts()) == ["h1", "h1.r1.api", "h1.r1.tools"]
+    assert sorted(host_id for host_id, _ in await _verb_saw(view)) == [
+        "h1",
+        "h1.r1.api",
+        "h1.r1.tools",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_the_lab_wide_walk_still_holds_every_container_out(tmp_path, scoped_context):
+    """Host-global steps (debug sweep, toolchain, monitor) walk the plain context: no containers."""
+    lab = _lab(("h1", "a"))
+    ctx = scoped_context(lab, [_project(tmp_path, "r1", labs=["a"], hosts=[r"h1(\..*)?"])])
+    _containers_with_attachments(lab)
+
+    assert [h.id for h in ctx.all_hosts()] == ["h1"]
+    assert await _contacted(ctx) == ["h1"]
+
+
+@pytest.mark.asyncio
+async def test_include_containers_on_a_project_walk_still_means_every_container(
+    tmp_path, scoped_context
+):
+    lab = _lab(("h1", "a"))
+    ctx = scoped_context(lab, [_project(tmp_path, "r1", labs=["a"], hosts=[r"h1(\..*)?"])])
+    _containers_with_attachments(lab)
+
+    ids = sorted(h.id for h in ctx.for_project("r1").all_hosts(include_containers=True))
+    assert ids == ["h1", "h1.r1.api", "h1.r1.cache", "h1.r1.db", "h1.r1.tools"]
+
+
+@pytest.mark.asyncio
+async def test_a_pattern_naming_an_owned_container_selects_it(tmp_path, scoped_context):
+    """The empty-selection prediction applies the same rule as the walk: a pattern that
+    matches only the project's own container is not "hidden by include_containers"."""
+    import re
+
+    lab = _lab(("h1", "a"))
+    ctx = scoped_context(lab, [_project(tmp_path, "r1", labs=["a"], hosts=[r"h1(\..*)?"])])
+    _containers_with_attachments(lab)
+
+    ids = [h.id for h in ctx.for_project("r1").all_hosts(re.compile(r"h1\.r1\.api"))]
+    assert ids == ["h1.r1.api"]

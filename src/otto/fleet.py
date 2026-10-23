@@ -481,7 +481,7 @@ def fleet_of_interest(
         for host_id, host in lab.hosts.items()
         if host_id in admissible
         and _flag_holding_out(
-            host, include_containers=include_containers, include_local=include_local
+            host, include_containers=include_containers, include_local=include_local, owner=owner
         )
         is None
     ]

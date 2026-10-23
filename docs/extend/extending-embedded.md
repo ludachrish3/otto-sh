@@ -95,7 +95,11 @@ class MyShellFrame(CommandFrame):
         return f"{m.ready}\n"
 
     def frame(self, cmd: str, m: SessionMarkers) -> str:
-        return f"echo {m.begin}; {cmd}; echo {m.end_prefix}$?__\n"
+        # The braces and the newline before "}" keep a command ending in "&"
+        # or a "#" comment from swallowing the END echo. An empty group is a
+        # syntax error, so an empty command becomes ":".
+        body = cmd if cmd.strip() else ":"
+        return f"echo {m.begin}; {{ {body}\n}}; echo {m.end_prefix}$?__\n"
 
     def recover(self, m: SessionMarkers) -> str:
         return f"echo {m.recover}\n"

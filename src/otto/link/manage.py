@@ -209,7 +209,8 @@ class RepairReport:
 
     unreachable: list[str] = dc_field(default_factory=list)
     """``"<host>/<netdev>: <why>"`` per placement this lab scope could not
-    resolve, so otto could not even look at it.
+    resolve, so otto could not even look at it. :attr:`outside` holds the same
+    placements, structured.
 
     A repair that cannot see one placement must still clear the ones it can:
     the command's whole job is undoing state, and aborting the sweep over an
@@ -224,6 +225,9 @@ class RepairReport:
     nothing was looked at, and no ``ps`` scan ran. ``0`` is the honest value
     for "did not cancel any" and is the wrong thing to render as a result,
     which is why this field exists for the renderer to branch on."""
+
+    outside: list[Placement] = dc_field(default_factory=list)
+    """The placements on a host this lab scope does not load (#695)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -242,8 +246,7 @@ class RepairAllReport:
 
     failures: list[str] = dc_field(default_factory=list)
     """``"<link id>: <why>"`` per link that FAILED to repair — host down, a
-    command that errored, a clear that did not take, or a placement this lab
-    scope could not resolve. These set the exit code."""
+    command that errored, a clear that did not take. These set the exit code."""
 
     skipped: list[str] = dc_field(default_factory=list)
     """``"<link id>: <why>"`` per link otto DECLINED to touch — neither endpoint
@@ -280,6 +283,18 @@ class RepairAllReport:
     Recorded by :func:`repair_all` from the run's own context rather than
     inferred from its results, for that reason: a flag derived from the output
     cannot describe a run that produced none."""
+
+    out_of_scope: list[RepairReport] = dc_field(default_factory=list)
+    """One report per link with an end on a host this lab scope does not load;
+    :func:`describe_out_of_scope` renders one.
+
+    Every end the scope DOES load was cleared and verified. The other end is
+    a fact about the lab's shape, decided from lab data alone: a teardown
+    scoped to one lab cannot own a host at the far end of a wire it does not
+    load, and filing that end as a failure failed every such cleanup
+    (#695). Named, never silent, and not a failure: it does not set the exit
+    code. Reading the link's state from the same scope already treats it as
+    not impairable."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -1533,12 +1548,14 @@ async def repair_link(lab: "Lab", ident: str, *, selector: Selector | None = Non
 
     cleared: list[Placement] = []
     unreachable: list[str] = []
+    outside: list[Placement] = []
     timers_cancelled = 0
     for placement in placements:
         try:
             host = lab_host(lab, placement.host_id)
         except ValueError as e:
             unreachable.append(f"{placement.host_id}/{placement.netdev}: {e}")
+            outside.append(placement)
             continue
         impairer = _impairer_for(host)
         if selector is not None:
@@ -1579,7 +1596,19 @@ async def repair_link(lab: "Lab", ident: str, *, selector: Selector | None = Non
                 f"repair failed on {host.id}/{placement.netdev}: impairment still present"
             )
         cleared.append(placement)
-    return RepairReport(link.id, cleared, timers_cancelled, unreachable=unreachable)
+    return RepairReport(
+        link.id, cleared, timers_cancelled, unreachable=unreachable, outside=outside
+    )
+
+
+def describe_out_of_scope(report: RepairReport) -> str:
+    """Say what a sweep did on a link with an end outside the loaded lab."""
+    names = ", ".join(f"{p.host_id}/{p.netdev}" for p in report.outside)
+    verb = "is" if len(report.outside) == 1 else "are"
+    return (
+        f"{report.link_id}: cleared {len(report.cleared)} placement(s); "
+        f"{names} {verb} outside the loaded lab"
+    )
 
 
 async def repair_all(lab: "Lab") -> RepairAllReport:
@@ -1594,7 +1623,9 @@ async def repair_all(lab: "Lab") -> RepairAllReport:
     caused to be skipped are now swept like any other. A link whose repair
     fails for a live reason (:class:`RuntimeError` — host down, command
     failed) is collected into :attr:`~RepairAllReport.failures` instead of
-    aborting the rest, as is a link this lab scope could only partly reach.
+    aborting the rest. A link with an end on a host this lab scope does not
+    load has the ends it can see cleared and lands in
+    :attr:`~RepairAllReport.out_of_scope`, named but not a failure.
 
     Under ``--dry-run`` each link's preview lands in
     :attr:`~RepairAllReport.planned` and NOT in
@@ -1616,15 +1647,10 @@ async def repair_all(lab: "Lab") -> RepairAllReport:
         except RuntimeError as e:
             report.failures.append(f"{link.id}: {e}")
         else:
-            if outcome.unreachable:
-                # A partial clear is not a repair. It goes to `failures` rather
-                # than `skipped` because the sweep DID act here and could not
-                # finish — `skipped` means otto declined a link it never
-                # impaired, which would read as reassurance it has not earned.
-                report.failures.append(
-                    f"{link.id}: cleared {len(outcome.cleared)} placement(s), but could not "
-                    f"reach {'; '.join(outcome.unreachable)}"
-                )
+            if outcome.outside:
+                # Not `repaired` (an end is still unexamined) and not `skipped`
+                # (the sweep DID act here): its own bucket, named in the output.
+                report.out_of_scope.append(outcome)
                 continue
             bucket = report.planned if outcome.plan is not None else report.repaired
             bucket.append(outcome)

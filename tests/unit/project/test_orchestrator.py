@@ -697,6 +697,48 @@ async def test_cleanup_reports_a_link_the_impairment_reset_failed_on(monkeypatch
     assert ("lab", "remove_all_tunnels") in lab.events
 
 
+def _out_of_scope(*, cleared: bool):
+    from otto.link import RepairReport
+    from otto.link.placement import FlowDirection, Placement
+
+    near = [Placement("r1", "eth1", FlowDirection.A_TO_B)] if cleared else []
+    far = [Placement("bb1350-qemu", "eth0", FlowDirection.B_TO_A)]
+    return RepairAllReport(out_of_scope=[RepairReport("core", cleared=near, outside=far)])
+
+
+@pytest.mark.asyncio
+async def test_cleanup_declines_a_link_end_outside_the_lab_scope(monkeypatch):
+    # #695: `--lab unix` loads test1 but not bb1350-qemu. otto cleared the end it
+    # can see; the far end is not this scope's, so cleanup names it and succeeds.
+    lab = _wire(
+        monkeypatch,
+        projects=["app"],
+        hosts=1,
+        links=[_link("core")],
+        repair=_out_of_scope(cleared=True),
+    )
+    result = await project.cleanup()
+    assert result.is_ok, result.msg
+    assert result.status is Status.Skipped
+    assert "bb1350-qemu/eth0 is outside the loaded lab" in result.msg
+    assert ("lab", "remove_all_tunnels") in lab.events
+
+
+@pytest.mark.asyncio
+async def test_cleanup_says_nothing_of_an_out_of_scope_link_it_cleared_nothing_on(monkeypatch):
+    # Every `--lab unix` cleanup meets test1's wire to the busybox guest. With
+    # nothing impaired on test1's end there is nothing to say: status reads clean.
+    _wire(
+        monkeypatch,
+        projects=["app"],
+        hosts=1,
+        links=[_link("core")],
+        repair=_out_of_scope(cleared=False),
+    )
+    result = await project.cleanup()
+    assert result.status is Status.Success, result.msg
+
+
 @pytest.mark.asyncio
 async def test_cleanup_a_refused_impairment_does_not_read_as_success(monkeypatch):
     # THE REFUSAL CASE. A foreign qdisc otto did not create is DECLINED, not

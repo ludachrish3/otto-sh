@@ -128,6 +128,19 @@ serves.
 (30 seconds) — the `shell` kind passes no `timeout` to `host.run`. An install
 that needs longer belongs to a project-registered kind instead.
 
+(declared-long-running)=
+
+**A product that keeps running** (a daemon, a server under test) has to leave
+the command once it starts, or `install` waits on it until the timeout. End the
+command with `&`, and detach the process from otto's session as well:
+`setsid` gives it a session of its own, so it outlives otto's shell, and
+`</dev/null >log 2>&1` lets go of the terminal, as in the example below. A bare
+`/opt/app/app &` returns, but the process can be hung up when otto closes the
+session. On a container host, a long-running process belongs in the image's
+`CMD` instead (or a {ref}`docker_image <docker-image-kind>` product): otto runs
+`install` through `docker exec`, and the container's main process is what
+`docker` keeps alive.
+
 (declared-placeholders)=
 
 ### Placeholders
@@ -147,7 +160,7 @@ name = "app"
 kind = "shell"
 artifact = "build/app"
 stage_dir = "/opt/app"               # where staging puts the artifact
-install = "GCOV_PREFIX={cov_dir} GCOV_PREFIX_STRIP=3 /opt/app/{name} &"
+install = "GCOV_PREFIX={cov_dir} GCOV_PREFIX_STRIP=3 setsid /opt/app/{name} </dev/null >/tmp/{name}.log 2>&1 &"
 ```
 
 `GCOV_PREFIX_STRIP` is the compiler's knob, not otto's: it drops that many
@@ -420,6 +433,8 @@ Two refusals, on top of the `kmod` kind's own:
 Which product needs the library, and how otto loads it on demand before that
 product's own module, is the consumer's side — see
 {doc}`../cli/cov/instrumenting/kernel-modules`.
+
+(docker-image-kind)=
 
 ## The `docker_image` kind
 

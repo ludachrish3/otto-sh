@@ -186,7 +186,7 @@ channel, so its chunk lines stay byte-identical -- the path that was never
 broken does not move), and :meth:`Base64Codec.send_chunks` spends whatever it
 is handed by MEASURING its own empty command line and giving the payload what
 is left, rounded down to the largest whole base64 quantum. On the bed that is
-a 2889-byte chunk against the 4096 an ssh host still sends. Two properties
+a chunk of just under 3 KB against the 4096 bytes an ssh host still sends. Two properties
 this shape has that a smaller universal ``_SHELL_CHUNK_BYTES`` would not: it
 costs the ssh path nothing, and it survives a long destination path, which is
 interpolated into every chunk command and is what the ssh-side headroom above

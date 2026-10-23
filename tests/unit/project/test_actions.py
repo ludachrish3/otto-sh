@@ -1366,3 +1366,73 @@ class TestBodyRegistration:
                     return Result(Status.Success)
 
         assert "deploy" not in set(PROJECT_INSTRUCTIONS.names())
+
+
+# ── a container that is not running (#676) ────────────────────────────────────
+
+
+class _StoppedContainer(_FakeHost):
+    """A container host whose stack is down: it answers `is_running` False."""
+
+    async def is_running(self):
+        return False
+
+
+def _stopped_container_ctx():
+    product = _FakeItem("app", PROJECT.name, installed=True)
+    tool = _FakeItem("probe", PROJECT.name, installed=True)
+    stopped = _StoppedContainer("h0.stack.app", products=[product], dev_tools=[tool])
+    return _FakeCtx([stopped]), stopped, product, tool
+
+
+@pytest.mark.asyncio
+async def test_status_counts_a_stopped_container_s_products_as_not_installed():
+    """Before #676 a product on a stopped stack read as installed: the container was
+    never asked. Asking a stopped one would raise, so its products are not installed."""
+    ctx, _, product, _ = _stopped_container_ctx()
+    state = await _actions(ctx).status(StatusOptions())
+    assert state is InstallState.UNINSTALLED
+    assert product.calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_stopped_container_is_clean():
+    ctx, _, product, tool = _stopped_container_ctx()
+    assert await _actions(ctx).is_clean()
+    assert product.calls == tool.calls == []
+
+
+@pytest.mark.asyncio
+async def test_uninstall_and_cleanup_pass_over_a_stopped_container(caplog):
+    ctx, stopped, _, _ = _stopped_container_ctx()
+    actions = _actions(ctx)
+    assert (await actions.uninstall(UninstallOptions())).is_ok
+    assert (await actions.cleanup(CleanupOptions())).is_ok
+    assert stopped.calls == []
+    assert any("not running" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_install_on_a_stopped_container_is_still_the_host_s_to_refuse():
+    """No auto-start: install reaches the host verb, which fails fast naming compose up."""
+    ctx, stopped, _, _ = _stopped_container_ctx()
+    await _actions(ctx).install(InstallOptions())
+    assert [verb for verb, _ in stopped.calls] == ["install"]
+
+
+@pytest.mark.asyncio
+async def test_a_container_carrying_nothing_of_this_project_s_is_never_probed():
+    """Probing costs a docker call per container; one with nothing of ours has no answer we need."""
+
+    class _Probed(_FakeHost):
+        probes = 0
+
+        async def is_running(self):
+            type(self).probes += 1
+            return False
+
+    other = _Probed("h0.stack.db", products=[_FakeItem("db", "someone-else", installed=True)])
+    actions = _actions(_FakeCtx([other]))
+    await actions.status(StatusOptions())
+    await actions.is_clean()
+    assert _Probed.probes == 0

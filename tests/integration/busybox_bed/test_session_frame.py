@@ -144,6 +144,29 @@ async def test_command_output_is_bracketed_in_order_with_no_marker_bleed(guest):
     )
 
 
+async def test_a_command_may_end_with_an_ampersand_or_a_comment(guest):
+    """#678: the frame used to splice a trailing `&` into `&;`, a syntax error
+    ash rejected whole, so no marker came back until the timeout; a trailing
+    comment swallowed the END echo the same way."""
+    host, version = guest
+    bg = await host.exec("sleep 1 >/dev/null 2>&1 &", timeout=10)
+    assert not bg.timed_out, f"{host.element.name} (BusyBox {version}): {bg.value!r}"
+    assert bg.retcode == 0, f"{host.element.name} (BusyBox {version}): {bg.status} {bg.value!r}"
+    noted = await host.exec("echo noted # a trailing comment", timeout=10)
+    assert noted.value.strip() == "noted", (
+        f"{host.element.name} (BusyBox {version}): {noted.value!r}"
+    )
+
+
+async def test_a_two_line_command_comes_back_without_a_continuation_prompt(guest):
+    """The brace group spans two typed lines; ash prints PS2 before BEGIN, never after."""
+    host, version = guest
+    res = await host.exec("echo one\necho two", timeout=10)
+    assert res.value.splitlines() == ["one", "two"], (
+        f"{host.element.name} (BusyBox {version}) answered {res.value!r}"
+    )
+
+
 async def test_history_suppression_runs_and_sets_histfile(guest):
     """The frame's history payload runs under real ash, sets HISTFILE, says nothing.
 

@@ -106,8 +106,11 @@ Two properties of the fleet helpers to keep in mind:
 - **Fleet membership.**  The built-in `local` host (the machine otto
   itself runs on, present in every lab) and Docker container hosts are
   excluded by default.  Opt in with `include_local=True` (on
-  `all_hosts()` and `do_for_all_hosts()`) or `include_containers=True`;
-  `get_host("local")` always resolves the local host.
+  `all_hosts()` and `do_for_all_hosts()`) or `include_containers=True`.
+  A walk through a project's own view (`self.ctx` in a `ProjectActions`
+  override) already includes the containers that project owns a product or
+  dev tool on ({ref}`a project's own containers <fleet-owned-containers>`).  `get_host("local")` always
+  resolves the local host.
 - **Failure isolation.**  `run_on_all_hosts()` and `do_for_all_hosts()`
   return a dict mapping each host ID to its result *or* to the exception
   that host raised (`asyncio.gather` with `return_exceptions=True`

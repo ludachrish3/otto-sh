@@ -612,8 +612,8 @@ session, which otto opens with a `dumb` terminal type, so the far side allocates
 a pty and the command arrives as a *typed line* through that editor.
 
 **What the bound applies to.** The line otto *types*, not the command you passed:
-every command is wrapped in BEGIN/END sentinels first, which cost 74 characters,
-so **948** is the most any single line of your command may be. A multi-line
+otto's framing adds 38 characters to the line your command starts on, so
+**984** is the most any single line of your command may be. A multi-line
 script is judged line by line, because the editor's buffer holds one line —
 a long here-doc is fine as long as no individual line is over.
 

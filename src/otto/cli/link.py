@@ -22,6 +22,7 @@ from ..link.manage import (
     ImpairReport,
     LinkState,
     RepairReport,
+    describe_out_of_scope,
     impair_link,
     read_link_states,
     repair_all,
@@ -329,6 +330,12 @@ async def repair(
             rprint(f"[yellow]skipped[/yellow] {len(sweep.skipped)} link(s):")
             for skip in sweep.skipped:
                 print_error(f"  {skip}")
+        if sweep.out_of_scope:
+            # A decline, like a skip: the loaded ends were cleared, and the
+            # other end is on a host this lab scope does not load.
+            rprint(f"[yellow]outside this lab scope[/yellow] {len(sweep.out_of_scope)} link(s):")
+            for entry in sweep.out_of_scope:
+                print_error(f"  {describe_out_of_scope(entry)}")
         if sweep.failures:
             rprint("[red]failures:[/red]")
             for failure in sweep.failures:

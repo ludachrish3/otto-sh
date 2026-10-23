@@ -54,7 +54,8 @@ from tests._fixtures.fake_shell import replay
 
 _BASH_READY_RE = re.compile(r"echo (__OTTO_[0-9a-f]+_READY__)\n")
 _BASH_FRAME_RE = re.compile(
-    r'echo "(__OTTO_[0-9a-f]+_BEGIN__)"; (.*); echo "(__OTTO_[0-9a-f]+_END__)\$\?__"'
+    r'echo "(__OTTO_[0-9a-f]+_BEGIN__)"; \{ (.*)\n\}; echo "(__OTTO_[0-9a-f]+_END__)\$\?__"',
+    re.DOTALL,
 )
 _BASH_IDENTITY_RE = re.compile(r'echo "(__OTTO_[0-9a-f]+_RECOVER__)\$\?__\$\(id -un\)__"')
 _BASH_RECOVER_RE = re.compile(r'echo "(__OTTO_[0-9a-f]+_RECOVER__)\$\?__"')

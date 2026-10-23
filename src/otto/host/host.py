@@ -1065,6 +1065,23 @@ class Host(Protocol):
     async def __aexit__(self, *exc: object) -> None: ...
 
 
+def _first_failure_reason(result: Result) -> str:
+    """Return why a ``run``-based verb failed, read from its first failed command.
+
+    A declared product's install, uninstall or check is a ``run``, and its
+    :class:`~otto.result.Results` carry no message of their own: the reason
+    is in the failed command's value. Without this the outcome line read
+    ``apigw: error`` and nothing else (#678).
+    """
+    failure = result.first_failure if isinstance(result, Results) else None
+    if failure is None:
+        return ""
+    first_line = next(iter(str(failure.value or "").strip().splitlines()), "")
+    if failure.timed_out:
+        return first_line
+    return f"exit {failure.retcode}: {first_line}" if first_line else f"exit {failure.retcode}"
+
+
 @dataclass(kw_only=True)
 class BaseHost(ABC):
     """Abstract base class providing shared mechanics for all host implementations.
@@ -3119,7 +3136,8 @@ class BaseHost(ABC):
             return
         # Hook and library text is free-form; `_log_command` takes it literally,
         # so a "[sudo]" prompt survives and a stray "[/x]" cannot raise.
-        detail = f" — {result.msg}" if result.msg else ""
+        reason = result.msg or _first_failure_reason(result)
+        detail = f" — {reason}" if reason else ""
         if result.status is Status.Success:
             self._log_command(f"{name}: {done}")
         elif result.status is Status.Skipped:

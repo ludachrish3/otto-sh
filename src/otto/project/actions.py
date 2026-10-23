@@ -33,6 +33,7 @@ orchestrator's to perform once (spec section 5):
 """
 
 import dataclasses
+import logging
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from .. import layout
@@ -47,7 +48,7 @@ from ..instruction_catalog import (
 )
 from ..params import OptionsSource, shared_field_values
 from ..registry import get_registering_project, registration_boundary
-from ..result import CommandResult, Result, Results
+from ..result import CommandNotRunError, CommandResult, Result, Results
 from ..utils import Status
 from .options import (
     CleanupOptions,
@@ -60,6 +61,8 @@ from .options import (
 )
 from .render import render_status
 from .state import InstallState, combine_install_states
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ..config.project import Project
@@ -273,6 +276,33 @@ def _options_for(actions: "ProjectActions", name: str, base: Any, caller: str) -
 # ``install_dev_tools``/``uninstall_dev_tools`` learned ``owner=``.
 
 
+async def _stopped(host: "Host") -> bool:
+    """Whether *host* is a container whose stack is down.
+
+    A project's walk includes the containers it owns something on (#676), and
+    nothing on a stopped one can be asked or removed: asking raises, and otto
+    never starts a container because it was used. A host with no
+    ``is_running`` cannot be down this way. A dry run cannot ask either, and
+    leaves the verb to decline on its own. ``is_running`` folds a docker probe
+    that failed or timed out into "not running", so a container otto cannot
+    ask (a docker socket it may not open, say) is passed over the same way; a
+    parent host otto cannot reach at all raises, as any unreachable host does.
+    """
+    is_running = getattr(host, "is_running", None)
+    if is_running is None:
+        return False
+    try:
+        return not await is_running()
+    except CommandNotRunError:
+        return False
+
+
+def _passed_over(host: "Host", what: str) -> Result:
+    """Say a stopped container was passed over, and answer Skipped."""
+    logger.info("%s: the container is not running, so it has no %s", host.id, what)
+    return Result(Status.Skipped, msg=f"{host.id}: container not running")
+
+
 async def _dispatch_install(host: "Host", owner: "str | None" = None) -> Result:
     """Install *host*'s ``owner``-scoped products through the host's OWN method."""
     return await host.install(owner=owner)
@@ -285,6 +315,8 @@ async def _dispatch_uninstall(
     owner: "str | None" = None,
 ) -> Result:
     """Uninstall *host*'s ``owner``-scoped products through the host's OWN method."""
+    if await _stopped(host):
+        return _passed_over(host, "products to uninstall")
     return await host.uninstall(
         get_product_logs=get_product_logs,
         get_debug_logs=get_debug_logs,
@@ -294,6 +326,8 @@ async def _dispatch_uninstall(
 
 async def _dispatch_get_product_logs(host: "Host", owner: "str | None" = None) -> Result:
     """Haul *host*'s ``owner``-scoped product logs through the host's OWN method."""
+    if await _stopped(host):
+        return _passed_over(host, "product logs to haul")
     return await host.get_product_logs(owner=owner)
 
 
@@ -309,6 +343,8 @@ async def _dispatch_uninstall_dev_tools(host: "Host", owner: "str | None" = None
     tools, which one host shares with every owner on it, so a project calling it
     would take its neighbours' tooling down with its own.
     """
+    if await _stopped(host):
+        return _passed_over(host, "dev tools to remove")
     return await host.uninstall_dev_tools(owner=owner)
 
 
@@ -316,9 +352,13 @@ class ProjectActions:
     """One project's lifecycle across the lab; subclass to override any part of it.
 
     Constructed per command with the project it acts for and the live context.
-    Every default fans out across ``ctx.all_hosts()`` -- the fleet, so the
-    built-in ``local`` host and Docker containers are excluded as everywhere
-    else -- and scopes each host verb to this project's products and dev tools.
+    Every default fans out across ``ctx.all_hosts()`` -- the fleet, plus the
+    Docker containers this project owns a product or dev tool on (the built-in
+    ``local`` host and every other container stay out) -- and scopes each host
+    verb to this project's products and dev tools. A container whose stack is
+    down is passed over: its products count as not installed, it is clean,
+    and uninstall and cleanup have nothing there to remove. Install still
+    reaches it, and the host refuses, naming how to bring the stack up.
 
     Overriding is ordinary Python: subclass, register it with
     :func:`register_project_actions` from the project's init module, and call
@@ -609,8 +649,13 @@ class ProjectActions:
         installed = 0
         total = 0
         for host in self.ctx.all_hosts():
-            for product in _owned(host.products, self.project.name):
-                total += 1
+            owned = _owned(host.products, self.project.name)
+            if not owned:
+                continue
+            total += len(owned)
+            if await _stopped(host):
+                continue  # a stopped container's products are not installed
+            for product in owned:
                 if await product.is_installed(host):
                     installed += 1
         if total == 0 or installed == 0:
@@ -648,10 +693,14 @@ class ProjectActions:
         tools are host-global and are checked by the orchestrator, not here.
         """
         for host in self.ctx.all_hosts():
-            for product in _owned(host.products, self.project.name):
+            products = _owned(host.products, self.project.name)
+            tools = _owned(host.dev_tools, self.project.name)
+            if not (products or tools) or await _stopped(host):
+                continue  # nothing of ours here, or a stopped container: nothing installed
+            for product in products:
                 if await product.is_installed(host):
                     return False
-            for tool in _owned(host.dev_tools, self.project.name):
+            for tool in tools:
                 if await tool.is_installed(host):
                     return False
         return True

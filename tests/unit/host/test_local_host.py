@@ -710,3 +710,42 @@ def test_local_transfer_is_one_file_at_a_time() -> None:
     from otto.host.local_host import LocalFileTransfer
 
     assert LocalFileTransfer(name="local").concurrency_limit == 1
+
+
+# ---------------------------------------------------------------------------
+# What a command may end with (#678)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_backgrounded_command_returns_at_once():
+    """`cmd &` used to frame as `cmd &; echo END`, a syntax error the shell
+    rejected whole: no marker came back and the call waited out its timeout."""
+    host = LocalHost()
+    try:
+        result = (await host.run("sleep 30 >/dev/null 2>&1 &", timeout=5)).only
+        assert not result.timed_out, result.value
+        assert result.status == Status.Success, result.value
+    finally:
+        await host.close()
+
+
+@pytest.mark.asyncio
+async def test_a_trailing_comment_does_not_swallow_the_end_marker():
+    host = LocalHost()
+    try:
+        result = (await host.run("echo hi # a note", timeout=5)).only
+        assert not result.timed_out
+        assert result.value.strip() == "hi"
+    finally:
+        await host.close()
+
+
+@pytest.mark.asyncio
+async def test_a_multi_line_command_prints_no_prompt_into_its_output():
+    host = LocalHost()
+    try:
+        result = (await host.run("echo one\necho two", timeout=5)).only
+        assert result.value.strip().splitlines() == ["one", "two"], result.value
+    finally:
+        await host.close()

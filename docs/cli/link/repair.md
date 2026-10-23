@@ -38,9 +38,25 @@ partially repaired bb1350-wire: cleared test1/bbeth-1350, timers cancelled 0
   could not reach bb1350-qemu/eth0: link references host 'bb1350-qemu' not in the loaded lab
 ```
 
-The headline reads `partially repaired`, not a green `repaired`, and the
-command **exits 1**. A `--all` sweep files the same link as a *failure* rather
-than a skip — `skipped` means otto declined a link it never impaired.
+Asked for one link by name, the headline reads `partially repaired`, not a
+green `repaired`, and the command **exits 1**: you asked about both ends, and
+otto could look at only one.
+
+A `--all` sweep is different. It clears every end the loaded lab contains and
+lists a link whose other end is on a host outside that lab under its own
+heading, without failing the sweep:
+
+```text
+repaired 0 link(s)
+outside this lab scope 1 link(s):
+  bb1350-wire: cleared 1 placement(s); bb1350-qemu/eth0 is outside the loaded lab
+```
+
+Here the loaded lab contains `test1` but not `bb1350-qemu`, the host at the
+wire's other end, so that end is not a failure of the sweep. `otto run cleanup`
+reports the same link as declined when it cleared something on the loaded
+end, and says nothing of it when it cleared nothing: the link was never
+impaired from this scope.
 
 ## Repairing one selector
 

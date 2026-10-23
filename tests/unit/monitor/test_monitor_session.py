@@ -207,3 +207,21 @@ async def test_a_failing_export_still_closes_and_propagates(tmp_path, owns):
         await session.finish()
     closer = session.collector.close if owns else session.collector.close_db
     closer.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_a_collection_task_that_dies_says_so_at_once(caplog):
+    """The live server keeps serving after collection dies; before #672 nothing said why."""
+    import asyncio
+
+    session = MonitorSession.build([_unix()], interval=2, owns_hosts=False)
+    session.collector.run = AsyncMock(side_effect=RuntimeError("disk full"))  # type: ignore[method-assign]
+    async with session:
+        task = session.spawn()
+        await asyncio.gather(task, return_exceptions=True)
+        await asyncio.sleep(0)  # let the done-callback run
+
+    stopped = [r for r in caplog.records if "collection stopped" in r.getMessage()]
+    assert len(stopped) == 1, [r.getMessage() for r in caplog.records]
+    assert "disk full" in stopped[0].getMessage()
+    assert stopped[0].levelname == "ERROR"

@@ -2820,8 +2820,9 @@ GAPS: list[Gap] = [
             "declared shell dialect is `ash`: `run()` drives a PERSISTENT session, which "
             '`SshSession.open_transport` opens with `term_type="dumb"`, so the far side allocates '
             "a pty and the command arrives as a TYPED LINE through that editor. The bound "
-            "is on the LINE and not on the command -- otto's own BEGIN/END framing costs "
-            "74 characters, leaving 948 for the longest line of the command itself. "
+            "is on the LINE and not on the command -- otto's framing adds 38 characters "
+            "to the command's first line, leaving 984 for the longest line of the "
+            "command itself. "
             "`Host.exec()` opens a bare exec channel with no pty, is unaffected, and is "
             "NOT refused: it is the way to send this command. Two paths stay unguarded "
             "deliberately -- a named session's `HostSession.run()`, and `exec()` on a "

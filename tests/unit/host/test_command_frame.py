@@ -58,7 +58,7 @@ class TestBashFrame:
 
     def test_frame_brackets_command_and_bakes_retcode_into_end(self):
         assert self.frame.frame("ls /tmp", M) == (
-            f'echo "{M.begin}"; ls /tmp; echo "{M.end_prefix}$?__"\n'
+            f'echo "{M.begin}"; {{ ls /tmp\n}}; echo "{M.end_prefix}$?__"\n'
         )
 
     def test_recover_is_exit_code_probe(self):

@@ -138,7 +138,7 @@ class SocketParser(MetricParser):
 
 ## Parser health
 
-The collector watches each parser's command for two kinds of trouble and
+The collector watches each parser's command for three kinds of trouble and
 logs a warning — edge-triggered, so a flapping command logs every
 transition while a steady outage logs only once.
 
@@ -163,7 +163,21 @@ Only succeeding ticks count toward those three; a failing command is already
 covered by the warning above and isn't double-counted here.  The same
 backstop watches SNMP OIDs that never return a value.
 
-Either way, a missing tool or unreachable metric is not an error otto tries
+**Parser that raises.** A `parse()` that raises (a `float()` on output it
+didn't expect, say) loses only its own series on that host. The rest of the
+host's commands, and every other host, keep collecting. The first tick it
+raises logs a warning with the exception; recovery logs once more:
+
+```text
+Monitor: parser DockerCountParser ('docker ps -q | wc -l') raised on zephyr: ValueError("could not convert string to float: 'sh: docker: not found'") — Containers metrics will be missing
+Monitor: parser DockerCountParser ('docker ps -q | wc -l') recovered on zephyr after 12 raising tick(s)
+```
+
+Returning an empty dict for output you can't read is still the better
+habit: it is quiet, and the silent-command backstop above still notices a
+parser that never produces anything.
+
+In any case, a missing tool or unreachable metric is not an error otto tries
 to recover from: the affected series is simply absent from the dashboard,
 same as any other tick that produced no data.
 

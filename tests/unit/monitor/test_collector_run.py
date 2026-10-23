@@ -684,3 +684,38 @@ class TestCollectorLiveRun:
 
         # Parsers return {} for empty/unparseable output — no series created
         assert collector.get_series() == {}
+
+
+class _RaisingParser(MetricParser):
+    """The #672 shape: a parser that raises on a host whose command output it cannot read."""
+
+    chart = "Raises"
+    y_title = "Value"
+    unit = ""
+    command = "echo 42"
+
+    def parse(self, output: str, *, ctx: ParseContext) -> dict[str, MetricDataPoint] | None:
+        raise ValueError(f"could not convert string to float: {output!r}")
+
+
+@pytest.mark.asyncio
+async def test_a_parser_raising_on_one_host_does_not_stop_collection_on_the_others():
+    """Before #672 the raise escaped the bucket loop, which cancelled every sibling loop."""
+    good = _make_mock_host("good")
+    zephyr = _make_mock_host("zephyr")
+    collector = MetricCollector(
+        targets=[
+            MonitorTarget(host=good, parsers={StubParser.command: StubParser()}),
+            MonitorTarget(host=zephyr, parsers={_RaisingParser.command: _RaisingParser()}),
+        ]
+    )
+
+    with _virtual_time() as vt:
+        await vt.drive(
+            collector.run(
+                interval=timedelta(milliseconds=100),
+                duration=timedelta(milliseconds=350),
+            )
+        )
+
+    assert len(collector.get_series()["good/value"]) == 5

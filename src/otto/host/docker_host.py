@@ -1089,7 +1089,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             return aggregate_transfer(per_file)
         finally:
             with teardown_step(host_name, "staging-dir removal"):
-                await self.parent.exec(f"rm -rf {shlex.quote(str(stage))}")
+                await self.parent.exec(self._unstage_command(stage))
 
     async def _chown_landed_as_root(self, per_file: "dict[Path, Result]", effective: str) -> None:
         """Chown every landed file to *effective*, run as root inside the container.
@@ -1219,7 +1219,19 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             return aggregate_transfer({f: per_file[f] for f in files})
         finally:
             with teardown_step(host_name, "staging-dir removal"):
-                await self.parent.exec(f"rm -rf {shlex.quote(str(stage))}")
+                await self.parent.exec(self._unstage_command(stage))
+
+    @staticmethod
+    def _unstage_command(stage: Path) -> str:
+        """Remove one call's staging dir, then its container's dir once no transfer still uses it.
+
+        ``rmdir`` only removes an empty directory, so a concurrent transfer to the
+        same container keeps its own; the exit status is ``rm``'s alone.
+        """
+        return (
+            f"rm -rf {shlex.quote(str(stage))} && "
+            f"{{ rmdir {shlex.quote(str(stage.parent))} 2>/dev/null || true; }}"
+        )
 
     @override
     async def _mkdir_all(self, paths: "list[Path]", *, user: str | None = None) -> Result:

@@ -296,6 +296,7 @@ def _flags_hiding_every_match(
     *,
     include_containers: bool,
     include_local: bool,
+    owner: "str | None" = None,
 ) -> "list[str]":
     """Name the membership flags that hold back EVERY host in *matched*.
 
@@ -319,6 +320,7 @@ def _flags_hiding_every_match(
             mapping the walk itself iterates.
         include_containers: The walk's container flag, as passed by the caller.
         include_local: The walk's ``local`` flag, as passed by the caller.
+        owner: The project the walk is scoped to, as the walk passes it.
 
     Returns:
         The flag names — sorted, so the message is stable — that between them
@@ -331,7 +333,7 @@ def _flags_hiding_every_match(
     hiding: set[str] = set()
     for host in matched:
         flag = _flag_holding_out(
-            host, include_containers=include_containers, include_local=include_local
+            host, include_containers=include_containers, include_local=include_local, owner=owner
         )
         if flag is None:
             return []
@@ -959,6 +961,12 @@ class OttoContext:
                 goes through, never from an argument each call site remembers
                 (spec §7). It also cannot be spelled ``owner``: that name is
                 already a *method* kwarg forwarded to owner-accepting host verbs.
+                A walk scoped to a project also yields the container hosts
+                that project owns a product or dev tool on, without
+                *include_containers*: its own containers are its fleet, and a
+                ``run status`` that skipped them read a product on a stopped
+                stack as installed (#676). Containers carrying nothing of its
+                own stay out.
             **overrides: Per-call protocol/option overrides; see
                 ``_apply_option_overrides``.
 
@@ -1006,6 +1014,7 @@ class OttoContext:
                 [host for host in self.lab.hosts.values() if host.id in matched],
                 include_containers=include_containers,
                 include_local=include_local,
+                owner=_scope_owner,
             )
             if hidden_by:
                 raise EmptySelectionError(
@@ -1019,7 +1028,10 @@ class OttoContext:
             if host.id not in selected:
                 continue
             held_out_by = _flag_holding_out(
-                host, include_containers=include_containers, include_local=include_local
+                host,
+                include_containers=include_containers,
+                include_local=include_local,
+                owner=_scope_owner,
             )
             if held_out_by is not None:
                 continue

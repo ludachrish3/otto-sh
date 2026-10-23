@@ -122,8 +122,10 @@ the lab brought up with `docker compose`. That case is
 `[docker.use_cases]`: the container becomes an ordinary lab host, and a
 `shell` product is declared for it exactly as for any Unix host (given an
 absolute `stage_dir`), because the image itself carries no product of
-otto's own. `otto run install`, `status` and `cleanup` do not visit
-container hosts, though, so your suite installs it
+otto's own. `otto run install`, `status` and `cleanup` visit a container
+host your project owns a product on once its stack is up
+({ref}`a project's own containers <fleet-owned-containers>`); the bed below installs its product from the
+suite instead, for the reason it gives
 ({ref}`coverage-container-host-example`). `docker_image`
 is the opposite shape — the image *is* the deliverable, run as a product
 on a host that already exists.
@@ -161,20 +163,23 @@ pairing rule.
 
 Two things differ from a bare host:
 
-- `otto run install` does not walk container hosts, so your suite stages
-  and installs the product itself, after creating `stage_dir` and `cov_dir`
-  on the container. The bed's `_install` does it with the product's own
-  `stage` and `install` verbs (`_sh` runs one command through `host.exec`
-  and raises unless it succeeds):
+- The program writes its counters as its own user, so `cov_dir` must exist
+  and be writable before it runs. `otto run install` installs the product on
+  the container like on any host, but creates no `cov_dir`; the bed's suite
+  therefore stages and installs the product itself, after creating
+  `stage_dir` and a writable `cov_dir`. Its `_install` does it with the
+  product's own `stage` and `install` verbs (`_sh` runs one command through
+  `host.exec` and raises unless it succeeds):
 
   ```{literalinclude} ../../../../tests/project_ctr/tests/test_cov_ctr.py
   :language: python
   :pyobject: _install
   ```
 
-  Its class fixture gets the container host — `all_hosts` leaves containers
-  out unless asked (`include_containers=True`); `ctx.get_host("<id>")` works
-  too — installs, and runs the program once with `GCOV_PREFIX` set
+  Its class fixture gets the container host — the plain `all_hosts` the test
+  calls is not a project's view, so it leaves containers out unless asked
+  (`include_containers=True`; {ref}`a project's own containers <fleet-owned-containers>`);
+  `ctx.get_host("<id>")` works too — installs, and runs the program once with `GCOV_PREFIX` set
   (`_CONTAINER` is the container's host-id pattern, `_BINARY` the installed
   program):
 
