@@ -79,7 +79,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v10.2.0
+        uses: astral-sh/setup-uv@v10.3.1
         with:
           enable-cache: true
 
@@ -113,7 +113,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v10.2.0
+        uses: astral-sh/setup-uv@v10.3.1
         with:
           enable-cache: true
 
@@ -170,7 +170,7 @@ jobs:
         uses: actions/setup-node@v7.0.0
         with:
           node-version-file: .nvmrc
-      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: astral-sh/setup-uv@v10.3.1
         with:
           enable-cache: true
       - run: uv python install 3.10
@@ -215,7 +215,7 @@ jobs:
           node-version-file: .nvmrc
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v10.2.0
+        uses: astral-sh/setup-uv@v10.3.1
         with:
           enable-cache: true
 
@@ -252,7 +252,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v10.2.0
+        uses: astral-sh/setup-uv@v10.3.1
         with:
           enable-cache: true
 
@@ -317,7 +317,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v10.2.0
+        uses: astral-sh/setup-uv@v10.3.1
         with:
           enable-cache: true
 
@@ -433,7 +433,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v10.2.0
+        uses: astral-sh/setup-uv@v10.3.1
         with:
           enable-cache: true
 
@@ -539,7 +539,7 @@ jobs:
           node-version-file: .nvmrc
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v10.2.0
+        uses: astral-sh/setup-uv@v10.3.1
         with:
           enable-cache: true
 
