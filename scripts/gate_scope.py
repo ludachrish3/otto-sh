@@ -52,13 +52,13 @@ class Scope:
     src_packages: "list[str]"
     # changed paths that still exist at head (the lint/typecheck inputs)
     changed_files: "list[str]"
-    # every changed path, deleted ones included (the rider triggers)
+    # every changed path, deleted ones included (the build-file rider reads it)
     changed_paths: "list[str]"
     # commit-time lane commands (SPECIAL_TREES / STABILITY_FILES / LANE_MARKERS)
     special: "list[str]"
     # the same rows' tip-time commands
     special_tip: "list[str]"
-    # the bed lanes a changed src package adds to any full gate this diff earns (sorted)
+    # the bed lane lines a changed src package adds to any full gate this diff earns (sorted)
     bed_lanes: "list[str]"
     # paths no row matched (each makes the class `full`)
     unknown: "list[str]"
@@ -252,13 +252,36 @@ UNIT_TREES = {
     "declared": ["tests/unit"],
     "__main__": ["tests/unit"],
 }
+
+
+SINGLE_PASS_DEPTH = {"stability-tunnel": ["CYCLES=2"]}
+"""What a target needs beyond `COUNT=1` to run one pass, not a soak: the tunnel tests loop
+internally (`CYCLES`, default 5), and `CYCLES=2` is the Makefile's documented smoke run."""
+
+
+def stability_once(target: str) -> str:
+    """Return the line that runs one stability lane once, never at its soak depth.
+
+    `COUNT=1`, plus the target's :data:`SINGLE_PASS_DEPTH` when it soaks inside each test.
+    Every stability line the oracle emits is spelled here, whichever row selects it. The
+    soaks (the Makefile's defaults) never ride a gate (docs/contributing.md says where
+    each one runs); a full gate a diff earns, or a stability test file or tree it
+    changes, runs a single pass.
+    """
+    return " ".join(["make", target, "COUNT=1", *SINGLE_PASS_DEPTH.get(target, [])])
+
+
+STABILITY_UNIT = stability_once("stability-unit")
+STABILITY_UNIX = stability_once("stability-unix")
+STABILITY_TUNNEL = stability_once("stability-tunnel")
+STABILITY_EMBEDDED = stability_once("stability-embedded")
 BED_LANES = {
-    "host": ["conformance-bed"],
-    "link": ["stability-unix"],
-    "tunnel": ["stability-tunnel"],
-    "console": ["stability-embedded"],
+    "host": ["make conformance-bed"],
+    "link": [STABILITY_UNIX],
+    "tunnel": [STABILITY_TUNNEL],
+    "console": [STABILITY_EMBEDDED],
 }
-"""The lane every full gate this diff earns adds for these sources: the full gate
+"""The lane lines every full gate this diff earns adds for these sources: the full gate
 excludes the bed tiers, and a change to these packages is what the beds exercise."""
 GUARD_RIDERS = [
     "tests/unit/test_error_base.py",
@@ -436,7 +459,11 @@ SPECIAL_TREES = [
         ["make dashboard-soak"],
         ["make dashboard-soak"],
     ),
-    ("tests/e2e/tunnel_stability/*", ["make stability-tunnel"], ["make stability-tunnel"]),
+    (
+        "tests/e2e/tunnel_stability/*",
+        [STABILITY_TUNNEL],
+        [STABILITY_TUNNEL],
+    ),
     (
         "tests/e2e/chaos/*",
         ["make chaos", "make chaos-embedded"],
@@ -447,17 +474,17 @@ SPECIAL_TREES = [
 # rest — when there IS a rest (else quick's legs would select nothing and go red). The
 # stability lanes name files (the `stability-*` targets).
 STABILITY_FILES = {
-    "tests/unit/host/test_app_shell_concurrency.py": ["make stability-unit"],
-    "tests/unit/host/test_session_concurrency.py": ["make stability-unit"],
-    "tests/unit/host/test_unix_host.py": ["make stability-unit"],
-    "tests/unit/monitor/test_collector_tunnel_soak.py": ["make stability-unit"],
-    "tests/integration/host/test_app_shell_stability_integration.py": ["make stability-unix"],
+    "tests/unit/host/test_app_shell_concurrency.py": [STABILITY_UNIT],
+    "tests/unit/host/test_session_concurrency.py": [STABILITY_UNIT],
+    "tests/unit/host/test_unix_host.py": [STABILITY_UNIT],
+    "tests/unit/monitor/test_collector_tunnel_soak.py": [STABILITY_UNIT],
+    "tests/integration/host/test_app_shell_stability_integration.py": [STABILITY_UNIX],
     "tests/integration/host/test_host_stability_contract.py": [
-        "make stability-unix",
-        "make stability-embedded",
+        STABILITY_UNIX,
+        STABILITY_EMBEDDED,
     ],
-    "tests/integration/host/test_proxy_user_stability_integration.py": ["make stability-unix"],
-    "tests/integration/host/test_session_stability_integration.py": ["make stability-unix"],
+    "tests/integration/host/test_proxy_user_stability_integration.py": [STABILITY_UNIX],
+    "tests/integration/host/test_session_stability_integration.py": [STABILITY_UNIX],
 }
 LANE_MARKERS = {
     "kmodcov": "make kmodcov",
@@ -467,9 +494,9 @@ LANE_MARKERS = {
 """A changed test file carrying one of these marks runs the lane too, wherever it lives."""
 # The marks a lane row's selector covers, for "is anything left for quick".
 LANE_COVERS = {
-    "make stability-unit": {"concurrency"},
-    "make stability-unix": {"stability"},
-    "make stability-embedded": {"stability"},
+    STABILITY_UNIT: {"concurrency"},
+    STABILITY_UNIX: {"stability"},
+    STABILITY_EMBEDDED: {"stability"},
     "make kmodcov": {"kmodcov"},
     "make dashboard": {"browser"},
     "make busybox": {"busybox"},
@@ -1171,7 +1198,6 @@ def classify(
 BUILD_FILES = frozenset(
     {"Makefile", "noxfile.py", "pyproject.toml", ".coveragerc", ".github/workflows/ci.yml"}
 )
-REPEAT_TRIGGERS = ("tests/_fixtures/*",)
 
 
 def _ty_line(path: str) -> str:
@@ -1211,14 +1237,15 @@ def commands(scope: Scope, *, tip: bool, base: str) -> "list[str]":
     quick-guards instead); tests-structural: the same + quick-guards; src-leaf: quick
     (trees + riders) + ty + ruff + lint-arch + quick-guards; scripts: quick-guards + ty +
     ruff; escalate / full: the full gate + bed lanes, + quick-guards when a build file
-    changed, + nox-unit-repeat when a conftest, tests/_fixtures file or the registry
-    changed (deleted ones included). At the tip — none: check-breaking; docs: gate-fresh;
-    web: check-ts coverage-ts + gate-fresh; tests-*: the commit lines + quick-guards +
-    gate-fresh; src-leaf / scripts / escalate / full: the full gate + bed lanes, + the same
-    nox-unit-repeat rider (quick-guards is commit-only: `make coverage` runs it). Special
-    rows add their column's lanes in both forms, full column or not (`make coverage`
-    excludes those tiers); a full column replaces quick/ty/ruff/lint-arch but never a
-    web or docs line (check-python is Python only; the full gate already runs docs).
+    changed. At the tip — none: check-breaking; docs: gate-fresh; web: check-ts
+    coverage-ts + gate-fresh; tests-*: the commit lines + quick-guards + gate-fresh;
+    src-leaf / scripts / escalate / full: the full gate + bed lanes (quick-guards is
+    commit-only: `make coverage` runs it). Special rows add their column's lanes in both
+    forms, full column or not (`make coverage` excludes those tiers); a full column
+    replaces quick/ty/ruff/lint-arch but never a web or docs line (check-python is Python
+    only; the full gate already runs docs). Every stability line is one pass
+    (:func:`stability_once`), and the test-isolation guard (`nox-unit-repeat`) is never
+    emitted: CI's unit-repeat job runs it on every push.
     """
     classes = set(scope.classes)
     python = [p for p in scope.changed_files if p.endswith(".py")]
@@ -1232,14 +1259,9 @@ def commands(scope: Scope, *, tip: bool, base: str) -> "list[str]":
     out: "list[str]" = ["make check-breaking"]
     if full:
         out += FULL_GATE
-        out += [f"make {lane}" for lane in scope.bed_lanes]
+        out += scope.bed_lanes
         if not tip and changed & BUILD_FILES:
             out.append("make quick-guards")  # the tip's `make coverage` runs the family
-        # both columns: a landing is one squashed commit nobody re-runs the oracle on
-        if "src/otto/registry.py" in changed or any(
-            p.split("/")[-1] == "conftest.py" or _match(p, REPEAT_TRIGGERS) for p in changed
-        ):
-            out.append("make nox-unit-repeat")
     else:
         if running and scope.quick_paths:
             out.append(f'make quick PATHS="{" ".join(scope.quick_paths)}"')

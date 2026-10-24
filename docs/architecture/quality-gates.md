@@ -264,7 +264,7 @@ job that enforces it on push.
 | public-API dump invariance: the dump regenerated on each supported Python, under its own `PYTHONHASHSEED`, from runtime dependencies alone, is byte-identical to the golden | — | `api_dump_invariance` | `api-dump-invariance` (3.10–3.14) |
 | breaking marks: each commit's golden is its own regenerated dump, and a commit that breaks the public API carries a `!` or a `BREAKING CHANGE:` footer (`scripts/check_breaking_marks.py`) | `check-breaking`, and pulled in by `lint-arch` | — (it needs a commit range; see `noxfile.py`'s `lint`) | `lint-python` |
 | docs teach only declared names (`scripts/api_teaching.py`) | `check-api-teaching` | — | `lint-python` |
-| test-isolation leak guard | `nox-unit-repeat` | `tests_unit_repeat` | `unit-repeat` |
+| test-isolation leak guard | `nox-unit-repeat` (by hand only; `make gate-scope` never names it) | `tests_unit_repeat` | `unit-repeat` — a CI lane, run after the push: a leak shows up there, not before it |
 | import budget | `profile` — gates each gated surface's file operations against its per-interpreter ceilings and target ratio, and prints the tracked surfaces (see {doc}`startup-performance`); never wall-clock, which fails for reasons outside the change | via `tests_hostless` | `tests` — enforced by `tests/unit/import_budget/` |
 | build-lane invariants: an `addopts` override keeps `-p no:tach`; every lane that excludes `serial_timing` re-appends it in a paired `-n0` leg (an exclusion without its leg makes the discriminators CI-invisible). **Not attempted:** the complement — that no lane running under xdist *selects* a `serial_timing` test — is not gated. The leg check can only audit lanes that *spell* an exclusion, and resource markers like `integration` and `browser` are applied by conftest hooks at collection, so no source scan can see them; asking pytest per lane (`--collect-only -m "<expr> and serial_timing"`) was run once as a hand audit when the marker was introduced, and never wired up as a standing check. The protection in force is the root conftest, which errors any `serial_timing` test that reaches an xdist worker. Make macros in a lane's `-m` are expanded first; an unexpanded one is reported, never handed to pytest | via `coverage*` | via `tests_hostless` | `tests` — enforced by `tests/unit/test_lane_invariants.py` |
 | declared harness bounds: each lane must *declare* its runaway guard rather than inherit a library default (vitest `testTimeout`/`hookTimeout`, Playwright's `expect.set_options` ceiling, pytest's `timeout`), each at or above a floor drawn from measured contention. A runaway guard discriminates nothing, so the gate does not care what the number is — only that a human wrote it, since a library default never appears in a diff. The vitest configs are discovered, not listed. **Not attempted:** finding a wall-clock bound written *into* an assertion (`assert elapsed < 5.0`). No gate looks for those; they are found by review and by the `serial_timing` marker's runtime backstop below | via `coverage*` | via `tests_hostless` | `tests` — enforced by `tests/unit/test_declared_harness_bounds.py` |
@@ -279,7 +279,7 @@ job that enforces it on push.
 | vendored-UI upstream drift | — | — | `untitledui-drift.yml` (its own workflow) |
 | Python coverage floor (95.5, lines + branches) | `coverage`, `validate`, `all` | — | **not in CI** — local only; `release` trusts the coverage stamp (`make coverage` passed on the released tree under this venv, with these assets) or runs `make coverage` itself first |
 | The landing's gate: the oracle's tip lanes, stamped per lane on the committed tree | `gate-tip` (`make gate-scope` names the lanes) | — | **not in CI** — enforced by the pre-push hook on every push to `main` |
-| chaos / stability lanes | `chaos`, `chaos-embedded`, `stability*`; `release-campaign` runs the stability tiers once inside `make release`, never the chaos lanes (see below) | `chaos`, `chaos_embedded` | **not in `ci.yml`** — nightly runs the no-VM legs only |
+| chaos / stability lanes | `chaos`, `chaos-embedded`, `stability*`; `release-campaign` runs the stability tiers once inside `make release`, never the chaos lanes; `make gate-scope` names a single pass of a stability tier in the full gates a link, tunnel or console change earns, and for a stability test change ({ref}`the rule <gate-stability-lanes>`) | `chaos`, `chaos_embedded` | **not in `ci.yml`** — nightly runs the no-VM legs only |
 
 ### The last two rows are the point
 
@@ -345,8 +345,10 @@ the shared testbed — so they are excluded from every default gate and from
 tier-2 real-signal chaos suite over a loopback sshd, a dockerized tier-3
 slice, and `stability-unit` across the Python matrix. Everything that needs
 a real host — `make chaos`, `stability-unix`, `stability-tunnel`,
-`stability-embedded` — runs when a human decides to run it. The stability
-tiers also run once in every release: `make release-campaign` (a stage of
+`stability-embedded` — runs when a human decides to run it. The gate oracle
+never names a stability soak, only a single pass of a stability tier, and only
+where {ref}`its stability rule <gate-stability-lanes>` says so.
+The stability tiers also run once in every release: `make release-campaign` (a stage of
 `make release`) runs them at `COUNT=1`, then the dashboard replay soak,
 hermetic conformance over every cell, and the BusyBox artifact tier. The
 chaos lanes do **not**: by owner decision (2026-10-15) `chaos` and

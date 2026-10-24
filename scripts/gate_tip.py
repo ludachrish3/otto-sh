@@ -52,7 +52,6 @@ LIVE_GOALS = ["check-breaking", "lint-arch", "check-python", "docs", "gate-fresh
 STAMPED_GOALS = [
     "coverage",
     "tests_hostless-3.14",
-    "nox-unit-repeat",
     "conformance-bed",
     "docs-captures-check",
     "stability-unit",
@@ -776,7 +775,7 @@ def missing_stamps(repo: Path, remote: str, remote_sha: str, tip_sha: str) -> Ve
     )
     out.append(
         "git push --no-verify skips this check; CI then runs only its own lanes — "
-        "never make coverage, nox-unit-repeat or the beds."
+        "never make coverage or the beds."
     )
     return Verdict(missing, out)
 

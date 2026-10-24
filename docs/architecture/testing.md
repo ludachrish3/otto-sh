@@ -55,7 +55,7 @@ full list, from `pyproject.toml`:
 | `hostless` | An e2e test that needs no test bed at all (no VMs, no docker daemon, no Zephyr) |
 | `browser` | Needs a Playwright browser binary (`make browsers`) |
 | `concurrency` | Fast, no-VM `SessionManager` concurrency/soak test; stays in the default coverage gate |
-| `stability` | Heavy soak/churn test; bed-hostile, excluded from `make coverage`. Runs once in every release (`make release-campaign`). |
+| `stability` | Heavy soak/churn test; bed-hostile, excluded from `make coverage`. Runs once in every release (`make release-campaign`), and once in a gate when {ref}`the oracle names its lane <gate-stability-lanes>`. |
 | `chaos` | Tier-3 chaos-lane scenario; bed-hostile like `stability`, excluded from every default gate and from the release — `make chaos` / `make chaos-embedded` are on demand only (why, and how the census accounts for them: [the last two rows are the point](quality-gates.md#the-last-two-rows-are-the-point)). |
 | `soak` | The heavy browser-driven replay stress test; chromium-only, excluded even from `make dashboard`'s default selection. Runs once in every release (`make release-campaign`). |
 | `busybox` | Needs a real BusyBox artifact (fetched, SHA-256-verified and cached; qemu-user-static on non-x86_64); excluded from every default lane, opt-in via `make busybox`. Runs once in every release (`make release-campaign`). |
@@ -84,7 +84,7 @@ Given a change, here is how to place the test that proves it:
 | A teardown/cancellation invariant, provable against fakes with no I/O | `tests/unit/` | none — use `sweep_cancellation()` | rides the default gate automatically (chaos tier 1) |
 | A real SIGINT/SIGTERM reaching a real otto subprocess at an exact phase | `tests/integration/chaos/` | (auto-stamped `integration`) | rides `make coverage` / `nox -s tests_integration`; also runs standalone in GitHub nightly (chaos tier 2) |
 | A destructive or randomized scenario against a live, leased bed (docker kill, reboot, SIGKILL, link blackhole) | `tests/e2e/chaos/` | `chaos` + `stability` | opt-in only (`make chaos` / `make chaos-embedded`, chaos tier 3) — never in a release |
-| A heavy soak/churn check that must own the bed exclusively | existing directory | `stability` | opt-in (`make stability*`) and once per release via `make release-campaign` |
+| A heavy soak/churn check that must own the bed exclusively | existing directory | `stability` | opt-in (`make stability*`), once per release via `make release-campaign`, and once in a gate when {ref}`the oracle names its lane <gate-stability-lanes>` |
 
 The last three rows are worth their own section, because "chaos" is not one
 lane but three, sized to how much determinism each kind of proof can afford.

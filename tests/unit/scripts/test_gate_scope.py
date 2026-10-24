@@ -438,7 +438,7 @@ def test_a_src_leaf_change_maps_to_its_unit_and_bed_trees_with_the_riders():
         "tests/e2e/console",
         *gs.GUARD_RIDERS,
     }
-    assert scope.bed_lanes == ["conformance-bed"]
+    assert scope.bed_lanes == ["make conformance-bed"]
 
 
 def test_a_src_tree_whose_tests_are_gone_drops_the_root_and_is_full_when_none_remain():
@@ -483,7 +483,7 @@ def test_a_trigger_file_still_names_its_bed_lane():
         [gs.Change("src/otto/host/__init__.py", "M")], {("head", "src/otto/host/__init__.py"): ""}
     )
     assert scope.classes == [gs.ESCALATE]
-    assert scope.bed_lanes == ["conformance-bed"]
+    assert scope.bed_lanes == ["make conformance-bed"]
     assert scope.quick_paths == []
 
 
@@ -573,8 +573,8 @@ def test_a_mixed_stability_file_runs_both_lanes():
             ("head", "tests/unit/host/test_unix_host.py"): text,
         },
     )
-    assert scope.special == ["make stability-unit"]
-    assert scope.special_tip == ["make stability-unit"]
+    assert scope.special == ["make stability-unit COUNT=1"]
+    assert scope.special_tip == ["make stability-unit COUNT=1"]
     assert scope.quick_paths == ["tests/unit/host"]
     assert scope.classes == [gs.TESTS_LEAF]
 
@@ -595,8 +595,102 @@ def test_a_two_lane_stability_file_names_both():
     text = "import pytest\npytestmark = pytest.mark.stability\ndef test_a(): pass\n"
     path = "tests/integration/host/test_host_stability_contract.py"
     scope = _scope([gs.Change(path, "M")], {("base", path): text, ("head", path): text})
-    assert scope.special == ["make stability-embedded", "make stability-unix"]
+    assert scope.special == ["make stability-embedded COUNT=1", "make stability-unix COUNT=1"]
     assert scope.quick_paths == [], "every test carries the lane mark: nothing is left for quick"
+
+
+def _real_scope(path: str):
+    """Classify *path* changed alone against the real tree (added when it is not on disk)."""
+    target = CHECKOUT_ROOT / path
+    on_disk = target.is_file()
+    text = target.read_text(encoding="utf-8") if on_disk else "x = 1\n"
+    change = gs.Change(path, "M" if on_disk else "A")
+    return gs.classify([change], _at_head(path, text), "base", "head", _head_paths() | {path})
+
+
+def _stability_lines(lines: "list[str]") -> "list[str]":
+    """The `make` lines naming a stability goal, wherever the goal sits among the words."""
+    return [
+        line
+        for line in lines
+        if line.startswith("make ")
+        and any(word.startswith("stability-") for word in line.split()[1:])
+    ]
+
+
+def test_the_stability_line_filter_reads_every_word_after_make():
+    assert _stability_lines(["make COUNT=1 stability-unit", "make coverage"]) == [
+        "make COUNT=1 stability-unit"
+    ]
+
+
+_UNIT_ONCE = "make stability-unit COUNT=1"
+_UNIX_ONCE = "make stability-unix COUNT=1"
+_TUNNEL_ONCE = "make stability-tunnel COUNT=1 CYCLES=2"
+_EMBEDDED_ONCE = "make stability-embedded COUNT=1"
+# (path, stability lines at the commit, at the tip). A src leaf's bed lane rides the full
+# gate it earns, which is the tip's for a lone leaf; a test-side area runs it in both columns.
+_STABILITY_AREAS = [
+    ("src/otto/link/model.py", [], [_UNIX_ONCE]),
+    ("src/otto/tunnel/model.py", [], [_TUNNEL_ONCE]),
+    ("src/otto/console.py", [], [_EMBEDDED_ONCE]),
+    ("src/otto/link/__init__.py", [_UNIX_ONCE], [_UNIX_ONCE]),
+    ("tests/e2e/tunnel_stability/test_churn.py", [_TUNNEL_ONCE], [_TUNNEL_ONCE]),
+    ("tests/e2e/tunnel_stability/_harness.py", [_TUNNEL_ONCE], [_TUNNEL_ONCE]),
+    ("tests/unit/host/test_app_shell_concurrency.py", [_UNIT_ONCE], [_UNIT_ONCE]),
+    ("tests/unit/host/test_session_concurrency.py", [_UNIT_ONCE], [_UNIT_ONCE]),
+    ("tests/unit/host/test_unix_host.py", [_UNIT_ONCE], [_UNIT_ONCE]),
+    ("tests/unit/monitor/test_collector_tunnel_soak.py", [_UNIT_ONCE], [_UNIT_ONCE]),
+    ("tests/integration/host/test_app_shell_stability_integration.py", [_UNIX_ONCE], [_UNIX_ONCE]),
+    (
+        "tests/integration/host/test_host_stability_contract.py",
+        [_EMBEDDED_ONCE, _UNIX_ONCE],
+        [_EMBEDDED_ONCE, _UNIX_ONCE],
+    ),
+    ("tests/integration/host/test_proxy_user_stability_integration.py", [_UNIX_ONCE], [_UNIX_ONCE]),
+    ("tests/integration/host/test_session_stability_integration.py", [_UNIX_ONCE], [_UNIX_ONCE]),
+]
+
+
+def test_the_area_table_names_every_stability_file():
+    assert set(gs.STABILITY_FILES) <= {path for path, _c, _t in _STABILITY_AREAS}
+
+
+@pytest.mark.parametrize(
+    ("path", "at_commit", "at_tip"), _STABILITY_AREAS, ids=[p for p, _c, _t in _STABILITY_AREAS]
+)
+def test_a_stability_area_runs_its_lane_once(path, at_commit, at_tip):
+    """Each area's stability lane is one pass (COUNT=1; the tunnel tier also at its smoke
+    depth, CYCLES=2), never the Makefile's soak: the soaks are nightly CI's and `make
+    release`'s, never a commit's or a landing's."""
+    scope = _real_scope(path)
+    assert _stability_lines(gs.commands(scope, tip=False, base="origin/main")) == at_commit
+    assert _stability_lines(gs.commands(scope, tip=True, base="origin/main")) == at_tip
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "tests/conftest.py",
+        "tests/unit/cli/conftest.py",
+        "tests/_fixtures/x.py",
+        "src/otto/registry.py",
+        "src/otto/host/unix.py",
+        "src/otto/host/__init__.py",
+        "Makefile",
+        "tests/unit/scripts/test_gate_tip.py",
+        "scripts/gate_tip.py",
+        "uv.lock",
+    ],
+)
+def test_a_path_outside_the_stability_areas_runs_no_stability_lane_and_no_repeat(path):
+    """Neither column names a stability lane outside the areas, a full gate included, and
+    no path selects `nox-unit-repeat`: CI's unit-repeat job runs the isolation guard."""
+    scope = _real_scope(path)
+    for tip in (False, True):
+        lines = gs.commands(scope, tip=tip, base="origin/main")
+        assert _stability_lines(lines) == [], (tip, lines)
+        assert not any("nox-unit-repeat" in line for line in lines), (tip, lines)
 
 
 def test_a_marked_file_outside_the_tables_routes_by_its_mark():
@@ -999,7 +1093,7 @@ def test_every_path_and_lane_the_tables_name_exists():
     ]
     commands += [c for _g, a, b in gs.SPECIAL_TREES for c in (*a, *b) if c != gs.FULL]
     lanes = {cmd.split()[1] for cmd in commands if cmd.startswith("make ")}
-    lanes |= {lane for lanes_ in gs.BED_LANES.values() for lane in lanes_}
+    lanes |= {lane.split()[1] for lanes_ in gs.BED_LANES.values() for lane in lanes_}
     missing_lanes = sorted(
         name for name in lanes if not re.search(rf"^{re.escape(name)}:", makefile, re.MULTILINE)
     )
@@ -1012,10 +1106,11 @@ def test_every_path_and_lane_the_tables_name_exists():
 def test_the_stability_files_are_the_lanes_own():
     from tests.unit.test_lane_invariants import _STABILITY_UNIT_FILES, _STABILITY_UNIX_FILES
 
-    assert {p for p, lanes in gs.STABILITY_FILES.items() if "make stability-unit" in lanes} == set(
+    unit, unix = gs.stability_once("stability-unit"), gs.stability_once("stability-unix")
+    assert {p for p, lanes in gs.STABILITY_FILES.items() if unit in lanes} == set(
         _STABILITY_UNIT_FILES
     )
-    assert {p for p, lanes in gs.STABILITY_FILES.items() if "make stability-unix" in lanes} == set(
+    assert {p for p, lanes in gs.STABILITY_FILES.items() if unix in lanes} == set(
         _STABILITY_UNIX_FILES
     )
 
@@ -1169,7 +1264,7 @@ def test_commands_for_each_class():
         quick=["tests/unit/host", *gs.GUARD_RIDERS],
         packages=["host"],
         files=["src/otto/host/unix.py"],
-        bed=["conformance-bed"],
+        bed=["make conformance-bed"],
     )
     assert gs.commands(src, tip=False, base=base) == [
         cb,
@@ -1188,43 +1283,30 @@ def test_commands_for_each_class():
         "uv run ruff check scripts/gate_fresh.py",
     ]
     assert gs.commands(scripts, tip=True, base=base) == [cb, *gs.FULL_GATE]
-    esc = _s([gs.ESCALATE], files=["Makefile"], bed=["stability-unix"])
+    esc = _s([gs.ESCALATE], files=["Makefile"], bed=["make stability-unix COUNT=1"])
     assert gs.commands(esc, tip=False, base=base) == [
         cb,
         *gs.FULL_GATE,
-        "make stability-unix",
+        "make stability-unix COUNT=1",
         "make quick-guards",
     ]
-    assert gs.commands(esc, tip=True, base=base) == [cb, *gs.FULL_GATE, "make stability-unix"]
-    conftest = _s([gs.ESCALATE], files=["tests/conftest.py"])
-    assert gs.commands(conftest, tip=False, base=base) == [
+    assert gs.commands(esc, tip=True, base=base) == [
         cb,
         *gs.FULL_GATE,
-        "make nox-unit-repeat",
+        "make stability-unix COUNT=1",
     ]
-    # the landing is one squashed commit and nobody re-runs the oracle on it: the tip owes
-    # the repeat rider too (quick-guards stays commit-only — `make coverage` runs the family)
-    assert gs.commands(conftest, tip=True, base=base) == [
-        cb,
-        *gs.FULL_GATE,
-        "make nox-unit-repeat",
-    ]
-    deleted_conftest = _s([gs.ESCALATE], files=[], paths=["tests/unit/cli/conftest.py"])
-    assert gs.commands(deleted_conftest, tip=False, base=base) == [
-        cb,
-        *gs.FULL_GATE,
-        "make nox-unit-repeat",
-    ]
-    assert gs.commands(deleted_conftest, tip=True, base=base) == [
-        cb,
-        *gs.FULL_GATE,
-        "make nox-unit-repeat",
-    ]
-    deleted_fixture = _s([gs.ESCALATE], files=[], paths=["tests/_fixtures/old.py"])
-    assert gs.commands(deleted_fixture, tip=False, base=base)[-1] == "make nox-unit-repeat"
-    registry = _s([gs.ESCALATE], files=["src/otto/registry.py"])
-    assert gs.commands(registry, tip=False, base=base)[-1] == "make nox-unit-repeat"
-    assert gs.commands(registry, tip=True, base=base)[-1] == "make nox-unit-repeat"
+    # the isolation guard is CI's unit-repeat job, after the push: a conftest, a fixture or
+    # the registry, deleted or not, adds no line to the full gate in either column
+    for paths in (
+        ["tests/conftest.py"],
+        ["tests/unit/cli/conftest.py"],
+        ["tests/_fixtures/old.py"],
+        ["src/otto/registry.py"],
+    ):
+        for files in (paths, []):
+            rider = _s([gs.ESCALATE], files=files, paths=paths)
+            assert gs.commands(rider, tip=False, base=base) == [cb, *gs.FULL_GATE], paths
+            assert gs.commands(rider, tip=True, base=base) == [cb, *gs.FULL_GATE], paths
     full = _s(
         [gs.DOCS, gs.FULL],
         files=["docs/a.md", "uv.lock"],
@@ -1758,7 +1840,7 @@ def test_the_ranged_targets_are_the_ones_that_reach_check_breaking():
     a command-line RANGE through MAKEFLAGS; the rest reach check-breaking as a prerequisite."""
     makefile = (CHECKOUT_ROOT / "Makefile").read_text()
     emitted = {line.split()[1] for line in gs.FULL_GATE if line.startswith("make ")}
-    emitted |= {"check-breaking", "lint-arch", "quick", "quick-guards", "nox-unit-repeat"}
+    emitted |= {"check-breaking", "lint-arch", "quick", "quick-guards"}
     reaching = {t for t in emitted if "check-breaking" in make_reachable(t, makefile)}
     assert reaching | {"gate-fresh"} == set(gs.RANGE_TARGETS)
     assert "lint-arch" in GATED_TARGETS

@@ -797,7 +797,7 @@ class TestPrePushCheck:
         ) in err
         assert (
             "git push --no-verify skips this check; CI then runs only its own lanes — "
-            "never make coverage, nox-unit-repeat or the beds."
+            "never make coverage or the beds."
         ) in err
 
     def test_a_stamped_tree_is_honoured_by_a_squash_and_a_message_amend(
@@ -884,9 +884,9 @@ class TestPrePushCheck:
         assert "make coverage" in gs.tip_commands(repo, remote_sha, tip, git_env(repo))
         _stamp_tip(repo, remote_sha, tip)
         assert base_tip != tip
-        monkeypatch.setattr(gs, "FULL_GATE", [*gs.FULL_GATE, "make nox-unit-repeat"])
+        monkeypatch.setattr(gs, "FULL_GATE", [*gs.FULL_GATE, "make dashboard-soak"])
         verdict = gt.missing_stamps(repo, "origin", remote_sha, tip)
-        assert verdict.missing == [gt.Missing("make nox-unit-repeat", "no stamp")]
+        assert verdict.missing == [gt.Missing("make dashboard-soak", "no stamp")]
 
     def test_a_lane_this_runner_does_not_know_refuses_with_one_line(
         self, tmp_path, capsys, monkeypatch

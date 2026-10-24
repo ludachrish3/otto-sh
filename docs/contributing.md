@@ -444,7 +444,7 @@ Each changed path has a class; a diff takes the union of its paths' classes:
 | `tests-structural` | a test module that removes or renames a test, adds a marked one, or changes a mark (its arguments too) | the leaf lines plus `make quick-guards` | as `tests-leaf` |
 | `src-leaf` | one or two `src/otto/` packages | `make quick` over the package's unit and bed trees plus the tree-wide guards, ty, ruff, `make lint-arch`, `make quick-guards` | the full gate and the package's bed lane |
 | `scripts` | `scripts/` | `make quick-guards`, ty, ruff | the full gate |
-| `escalate` | a conftest, `tests/_fixtures/`, the registry, a package `__init__`, a build file (`Makefile`, `noxfile.py`, `pyproject.toml`, CI), three or more packages | the full gate, the bed lanes, plus `make quick-guards` (build file) and/or `make nox-unit-repeat` (conftest, fixture, registry) | the full gate, the bed lanes and `make nox-unit-repeat` (conftest, fixture, registry) |
+| `escalate` | a conftest, `tests/_fixtures/`, the registry, a package `__init__`, a build file (`Makefile`, `noxfile.py`, `pyproject.toml`, CI), three or more packages | the full gate, the bed lanes, plus `make quick-guards` (build file) | the full gate and the bed lanes |
 | `full` | any path with no row | the full gate | the full gate |
 
 The full gate is `make coverage`, `nox -s tests_hostless-3.14`,
@@ -456,6 +456,32 @@ surviving root `make quick` could run, and when a `src/otto/` path's test
 trees are all gone; each reason is printed above the commands. The roots
 `make quick` receives for `src/otto/` packages include integration and e2e
 bed trees, which need the lab VMs: run them on the dev VM.
+
+(gate-stability-lanes)=
+
+**Stability lanes and the test-isolation guard (`nox-unit-repeat`).**
+A package's bed lane rides every full gate the diff earns: `make conformance-bed`
+for `src/otto/host/`, and a stability tier for `src/otto/link/`
+(`stability-unix`), `src/otto/tunnel/` (`stability-tunnel`) and
+`src/otto/console.py` (`stability-embedded`). The stability tiers have two more
+areas, the stability test files (the files the `stability-*` Makefile targets
+run) and the tunnel-stability tree, which name their lanes in both columns. So a
+persisting commit that changes only a src leaf under `src/otto/link/` runs no
+stability lane (its *This commit* column is the `make quick` line, not the full
+gate), and the landing's tip, where a src leaf earns the full gate, runs it. Whichever area selects it, a
+stability lane runs **once**: `make stability-<tier> COUNT=1`, and for the tunnel
+tier, whose tests loop internally, `make stability-tunnel COUNT=1 CYCLES=2`, its
+smoke depth. It never runs at the Makefile's soak count or depth, and a diff
+outside those areas runs no stability lane at all. Outside the gate, nightly CI
+soaks `stability-unit` at `COUNT=100` on every Python, and `make release-campaign`
+runs `make stability COUNT=1` in each release: a single pass of the unit, unix and
+embedded tiers, and the tunnel tier at its full depth (`CYCLES` 5). A
+`stability-unix` soak (its default `COUNT=10`) or an embedded one runs only by
+hand. So a regression that only a soak shows is found at nightly for unit, at
+release for tunnel, and only by a hand-run soak for unix and embedded; never at
+the commit. The test-isolation guard is never a local lane either: CI's
+`unit-repeat` job runs the same session on every push, so a test-isolation leak
+shows up in CI after the push. The target stays for running it by hand.
 
 Some test trees are a lane's own and are never handed to `quick`. Both `quick`
 legs deselect the items of `tests/conformance/` (`make conformance`; the
@@ -593,7 +619,7 @@ refuses and says which, as in:
 gate-tip: refusing to push 3f9a1c2d4e5b to main — its gate is not stamped on tree 7b0c91ae2d44 (range 9e1d4b7a0c33..3f9a1c2d4e5b):
   make coverage: no stamp
 run: git fetch origin main && make gate-tip BASE=FETCH_HEAD   (on commit 3f9a1c2d4e5b), then push again.
-git push --no-verify skips this check; CI then runs only its own lanes — never make coverage, nox-unit-repeat or the beds.
+git push --no-verify skips this check; CI then runs only its own lanes — never make coverage or the beds.
 ```
 
 Each lane's reason is one of `no stamp`, `unreadable stamp`, `command mismatch (…)`, `stamped for tree …, which differs from the tip's beyond the measured outputs (…)` or `stamped for a different path list (…)`; the last is the stale-fetch case below.
@@ -604,9 +630,9 @@ list longer than the one you stamped. The remedy in the message is the
 fetch-then-restamp: `git fetch <remote> main && make gate-tip BASE=FETCH_HEAD`.
 
 There are two ways out of a refusal: stamp the tip, or `git push --no-verify`.
-The second is honest only about what it skips: CI never runs `make coverage`,
-`nox-unit-repeat` or the beds, so a push that bypasses the hook lands without
-any of them having run.
+The second is honest only about what it skips: CI never runs `make coverage`
+or the beds, so a push that bypasses the hook lands without either having run.
+(The test-isolation guard is not on that list: CI's `unit-repeat` job runs it.)
 
 `scripts/coverage_stamp.py check` stays exact-tree, and `make release` still
 uses it that way. A release after a matrix commit therefore re-runs coverage

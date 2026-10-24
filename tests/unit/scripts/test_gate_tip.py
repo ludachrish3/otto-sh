@@ -106,6 +106,29 @@ class TestKeysAndFiles:
         )
         assert len(gt.slug("x" * 200)) == 40 + 1 + 8
 
+    def test_a_single_pass_stability_line_is_its_own_key(self, tmp_path):
+        """`COUNT=1` is a make variable, not a goal; the key (and its stamp) keeps it."""
+        once, soak = "make stability-unit COUNT=1", "make stability-unit"
+        assert gt.goals(once) == ["stability-unit"]
+        assert not gt.is_live(once)
+        assert gt.lane_key(once) == once
+        assert gt.lane_key(f"{once} RANGE=abc..HEAD") == once
+        assert gt.slug(once).startswith("make_stability-unit_COUNT_1-")
+        root = _store(tmp_path)
+        assert gt.stamp_path(root, "t" * 40, once) != gt.stamp_path(root, "t" * 40, soak)
+
+    def test_the_tunnel_smoke_line_is_one_goal_and_its_own_key(self, tmp_path):
+        """The tunnel tier's single pass also sets its depth: `CYCLES=2` is a variable too."""
+        smoke = gs.STABILITY_TUNNEL
+        assert smoke == "make stability-tunnel COUNT=1 CYCLES=2"
+        assert gt.goals(smoke) == ["stability-tunnel"]
+        assert not gt.is_live(smoke)
+        assert gt.lane_key(smoke) == smoke
+        root = _store(tmp_path)
+        assert gt.stamp_path(root, "t" * 40, smoke) != gt.stamp_path(
+            root, "t" * 40, "make stability-tunnel COUNT=1"
+        )
+
     def test_a_malformed_stamp_is_unreadable_not_evidence(self, tmp_path):
         root = _store(tmp_path)
         path = gt.stamp_path(root, "t" * 40, "make coverage")
@@ -1045,10 +1068,6 @@ def _census_scopes():
         ("scripts", scope("scripts/gate_tip.py")),
         ("trigger", scope(min(gs.TRIGGER_FILES))),
         ("unknown", scope("mystery/thing.bin")),
-    ]
-    cases += [
-        (f"repeat {glob}", scope(next(p for p in sorted(head) if fnmatch.fnmatch(p, glob))))
-        for glob in gs.REPEAT_TRIGGERS
     ]
     cases += [
         (f"special {glob}", scope(next(p for p in sorted(head) if fnmatch.fnmatch(p, glob))))
