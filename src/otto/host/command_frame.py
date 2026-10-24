@@ -47,6 +47,7 @@ from typing_extensions import override
 
 from ..registry import ClassEntry, Ref, Registry, registration_boundary, resolved
 from .errors import RawLandingError
+from .terminal_mapping import CALIBRATION_COMMAND
 
 __all__ = [
     "FRAME_CLASSES",
@@ -128,6 +129,18 @@ class CommandFrame(ABC):
     shapes the diagnostic. They are not plumbed together because ``ShellSession``
     holds a frame and not the connection's options; if that ever changes, collapse
     them rather than letting the two drift."""
+
+    measures_terminal_mapping: ClassVar[bool] = False
+    """Whether :meth:`handshake` prints the terminal-mapping calibration line.
+
+    True means the payload runs
+    :data:`~otto.host.terminal_mapping.CALIBRATION_COMMAND` immediately before
+    it prints READY on a line of its own, ending in a line ending. The session
+    then waits for READY's line ending too, reads how the terminal mapped the
+    calibration, and undoes exactly that from every command's output (see
+    :mod:`otto.host.terminal_mapping`). False (the default) leaves the session
+    ``unmeasured`` and the output as it arrived, so a dialect whose READY is
+    not a line of its own (Zephyr's is an error message) is unaffected."""
 
     streams_output_live: ClassVar[bool] = False
     """Whether this dialect's raw inter-marker byte stream is already clean
@@ -237,6 +250,17 @@ class CommandFrame(ABC):
         return re.compile(re.escape(m.recover))
 
 
+def _typed_apart(marker: str) -> str:
+    """Return *marker* as shell text that prints it whole but never contains it.
+
+    The empty quote after the first character goes in quote removal, so
+    ``echo`` prints *marker* intact while the typed line, and so any echo of
+    it, carries it split. Every POSIX shell (bash, dash, BusyBox ash, ksh, zsh)
+    treats ``''`` this way.
+    """
+    return f"{marker[:1]}''{marker[1:]}"
+
+
 def _runs_something(cmd: str) -> bool:
     """Whether *cmd* has a line that is neither blank nor a ``#`` comment."""
     return any(line.strip() and not line.lstrip().startswith("#") for line in cmd.splitlines())
@@ -256,6 +280,7 @@ class BashFrame(CommandFrame):
 
     type_name = "bash"
     streams_output_live = True  # echo off + single prompt: raw stream == clean output
+    measures_terminal_mapping = True  # the handshake carries the calibration line
 
     @override
     def handshake(self, m: SessionMarkers) -> str:
@@ -269,7 +294,20 @@ class BashFrame(CommandFrame):
         # hook) would print `user@host:~$ __OTTO_..._READY__` and never match.
         # With echo still on (the first handshake) the echoed line already ends
         # in a newline, so the extra blank line is harmless.
-        return f"stty -echo 2>/dev/null; echo; echo {m.ready}\n"
+        #
+        # The calibration line between them shows the session how this
+        # terminal maps line endings (see otto.host.terminal_mapping). It sits
+        # immediately before READY, so the session reads it from the output
+        # copy and never from an echo of the typed line.
+        #
+        # READY is typed split by an empty quote (_typed_apart), so the echo of
+        # the typed line never carries it whole. A long line that wraps echoes
+        # a carriage return where it wrapped, and one landing right before the
+        # marker would otherwise put READY at a line start in the echo: the
+        # handshake would stop there and measure the echo instead of the output.
+        return (
+            f"stty -echo 2>/dev/null; echo; {CALIBRATION_COMMAND}; echo {_typed_apart(m.ready)}\n"
+        )
 
     @override
     def frame(self, cmd: str, m: SessionMarkers) -> str:
@@ -411,21 +449,33 @@ class BashFrame(CommandFrame):
 
     @override
     def parse_output(self, buffer: str, cmd: str, m: SessionMarkers) -> str:
+        # The command's output, exactly: *buffer* already has the terminal's
+        # own line-ending translation undone by the session (the onlcr fold),
+        # so every byte left between the markers is the program's.
+        #
         # Find the LAST BEGIN marker — if the shell echoes the wrapped command,
         # the marker appears twice (echoed command text + actual output);
         # rfind skips the echoed copy.
         begin_idx = buffer.rfind(m.begin)
+        # BEGIN's `echo` contributes exactly one line ending; a blank line
+        # after it is the program's. It is CRLF only when the session left an
+        # unknown mapping unfolded, and then the output's last line ending is
+        # CRLF too, so the same ending is the one removed at the end.
+        line_ending = "\n"
         if begin_idx != -1:
             start = begin_idx + len(m.begin)
-            # Skip trailing newline(s) after the marker.
-            while start < len(buffer) and buffer[start] in ("\r", "\n"):
-                start += 1
+            if buffer.startswith("\r\n", start):
+                line_ending = "\r\n"
+            if buffer.startswith(line_ending, start):
+                start += len(line_ending)
         else:
             start = 0
         end_match = self.end_pattern(m).search(buffer, start)
         end = end_match.start() if end_match else len(buffer)
-        # Strip carriage returns left over from PTY \r\n line endings.
-        return buffer[start:end].rstrip("\r\n").replace("\r", "")
+        output = buffer[start:end]
+        # END's `echo` starts where the output stops and contributes no line
+        # ending, so the output's own last line ending is the one to remove.
+        return output.removesuffix(line_ending)
 
     @override
     def extract_retcode(self, buffer: str, m: SessionMarkers) -> int:

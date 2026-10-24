@@ -7,6 +7,7 @@ to in-memory asyncio streams, avoiding any real SSH or telnet connections.
 """
 
 import asyncio
+import codecs
 import inspect
 import os
 import re
@@ -24,7 +25,12 @@ from otto.host.local_host import LocalHost
 from otto.host.session import LocalSession, SessionManager, ShellSession
 from otto.utils import Status, wait_for_async
 from tests._fixtures.fake_shell import ShellModel
-from tests.unit.host._session_feed import FeedAfterWriteMixin
+from tests.unit.host._session_feed import (
+    FeedAfterWriteMixin,
+    handshake_reply,
+    identity_handshake_reply,
+    zephyr_handshake_reply,
+)
 
 
 class MockSession(FeedAfterWriteMixin, ShellSession):
@@ -54,6 +60,7 @@ class MockSession(FeedAfterWriteMixin, ShellSession):
         # Create paired streams: what the session writes to "stdin" can be read
         # by the test, and what the test writes to "stdout" can be read by the session.
         self._out_reader = asyncio.StreamReader()
+        self._utf8 = codecs.getincrementaldecoder("utf-8")()
         # No real writer needed — we feed data directly into the StreamReader
 
     async def write_transport(self, data: str) -> None:
@@ -72,7 +79,8 @@ class MockSession(FeedAfterWriteMixin, ShellSession):
                 raise asyncssh.ConnectionLost("connection lost")
             if not chunk:
                 raise asyncio.IncompleteReadError(buf.encode(), None)
-            buf += chunk.decode()
+            # Incremental: a multi-byte character arrives one byte per read.
+            buf += self._utf8.decode(chunk)
             m = pattern.search(buf)
             if m:
                 return buf
@@ -141,7 +149,7 @@ async def session() -> MockSession:
     async def init_handshake():
         await s._ensure_initialized()
 
-    feed_task = asyncio.create_task(s.feed_after_write(s._ready_marker + "\n"))
+    feed_task = asyncio.create_task(s.feed_after_write(identity_handshake_reply(s._ready_marker)))
     task = asyncio.create_task(init_handshake())
     await task
     await feed_task
@@ -587,7 +595,9 @@ class TestZephyrRecovery:
         """A ``MockSession`` framed by ``frame_cls`` and past its readiness handshake."""
         session = MockSession(command_frame=frame_cls())
         await session.open_transport()
-        feed_task = asyncio.create_task(session.feed_after_write(session._ready_marker + "\n"))
+        feed_task = asyncio.create_task(
+            session.feed_after_write(zephyr_handshake_reply(session._ready_marker))
+        )
         init_task = asyncio.create_task(session._ensure_initialized())
         await init_task
         await feed_task
@@ -725,7 +735,9 @@ class TestShellHistorySuppression:
         """Drive a MockSession through its handshake; return it and what it wrote."""
         s = MockSession(**kwargs)
         await s.open_transport()
-        feed_task = asyncio.create_task(s.feed_after_write(s._ready_marker + "\n"))
+        feed_task = asyncio.create_task(
+            s.feed_after_write(handshake_reply(s._frame, s._ready_marker))
+        )
         task = asyncio.create_task(s._ensure_initialized())
         await task
         await feed_task
@@ -743,7 +755,7 @@ class TestShellHistorySuppression:
     async def test_suppressed_session_neutralizes_histfile_before_probing(self):
         s, probe = await self._first_probe(shell_history=False)
         assert "HISTFILE=/dev/null" in probe
-        assert probe.index("HISTFILE=/dev/null") < probe.index(f"echo {s._ready_marker}")
+        assert probe.index("HISTFILE=/dev/null") < probe.index(f"echo {s._ready_marker[:1]}''")
 
     @pytest.mark.asyncio
     async def test_suppression_costs_no_extra_round_trip(self):
@@ -751,7 +763,7 @@ class TestShellHistorySuppression:
         # a command of its own — one line, still ending in the READY probe.
         s, probe = await self._first_probe(shell_history=False)
         assert probe.count("\n") == 1
-        assert probe.endswith(f"echo {s._ready_marker}\n")
+        assert probe.endswith(f"echo {s._ready_marker[:1]}''{s._ready_marker[1:]}\n")
 
     @pytest.mark.asyncio
     async def test_suppression_preserves_the_echo_silencing(self):
@@ -779,7 +791,9 @@ class TestSessionInit:
             await s._ensure_initialized()
 
         # The ready-marker response is fed once the handshake write lands.
-        feed_task = asyncio.create_task(s.feed_after_write(s._ready_marker + "\n"))
+        feed_task = asyncio.create_task(
+            s.feed_after_write(identity_handshake_reply(s._ready_marker))
+        )
         task = asyncio.create_task(init())
         await task
         await feed_task
@@ -788,7 +802,9 @@ class TestSessionInit:
         # handshake took exactly one write to do it.
         assert len(s.written) == 1
         assert "stty -echo" in s.written[0]
-        assert s._ready_marker in s.written[0]
+        # READY is typed split by an empty quote; the shell prints it whole.
+        ready = s._ready_marker
+        assert f"echo {ready[:1]}''{ready[1:]}" in s.written[0]
 
         assert s.alive
         assert s._initialized
@@ -1496,7 +1512,9 @@ async def test_default_session_seeds_current_user_from_login():
         built.append(s)
         # The session only exists once the manager builds it, so its feeder is
         # armed here — synchronously, before the handshake write it waits on.
-        feeders.append(asyncio.create_task(s.feed_after_write(s._ready_marker + "\n")))
+        feeders.append(
+            asyncio.create_task(s.feed_after_write(identity_handshake_reply(s._ready_marker)))
+        )
         return s
 
     mgr = SessionManager(connections=conn, name="h", session_factory=factory)
@@ -1523,7 +1541,9 @@ async def test_open_session_seeds_named_session_current_user_from_login():
         s = MockSession()
         built.append(s)
         # Armed at build time — see the default-session twin above.
-        feeders.append(asyncio.create_task(s.feed_after_write(s._ready_marker + "\n")))
+        feeders.append(
+            asyncio.create_task(s.feed_after_write(identity_handshake_reply(s._ready_marker)))
+        )
         return s
 
     mgr = SessionManager(connections=conn, name="h", session_factory=factory)

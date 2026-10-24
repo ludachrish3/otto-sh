@@ -91,6 +91,7 @@ from hypothesis import strategies as st
 from otto.host.connections import ConnectionManager
 from otto.host.session import _HANDSHAKE_RETRY_BACKOFF, SessionManager, ShellSession
 from otto.result import CommandResult
+from tests.unit.host._session_feed import identity_handshake_reply, writes_handshake
 
 pytestmark = pytest.mark.concurrency
 
@@ -146,8 +147,8 @@ class _StabilityFakeSession(ShellSession):
         await asyncio.sleep(0)
 
     async def write_transport(self, data: str) -> None:
-        if self._ready_marker in data:
-            self._read_queue.put_nowait(f"{self._ready_marker}\n")
+        if writes_handshake(data, self._ready_marker):
+            self._read_queue.put_nowait(identity_handshake_reply(self._ready_marker))
         elif self._begin_marker in data:
             self._read_queue.put_nowait(f"{self._begin_marker}\n")
             self._read_queue.put_nowait(f"{self._end_marker_prefix}0__\n")
@@ -705,7 +706,8 @@ class _HandshakeFailsOnceFakeSession(_StabilityFakeSession):
     fail_until_instance: int = 1
 
     async def write_transport(self, data: str) -> None:
-        if self._ready_marker in data and self.instance_id <= self.fail_until_instance:
+        failing = self.instance_id <= self.fail_until_instance
+        if failing and writes_handshake(data, self._ready_marker):
             raise ConnectionError(
                 "shell never became ready after open — the transport connected "
                 "but the shell never reached a prompt; the shell may never have "

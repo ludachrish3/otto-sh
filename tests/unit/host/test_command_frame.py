@@ -30,6 +30,7 @@ from otto.host.command_frame import (
 )
 from otto.host.errors import RawLandingError
 from otto.host.session import ready_pattern
+from otto.host.terminal_mapping import CALIBRATION_COMMAND
 
 M = SessionMarkers.for_session("cafef00d")
 
@@ -53,8 +54,16 @@ class TestBashFrame:
     def test_type_name(self):
         assert BashFrame.type_name == "bash"
 
-    def test_handshake_silences_echo_and_prints_ready(self):
-        assert self.frame.handshake(M) == f"stty -echo 2>/dev/null; echo; echo {M.ready}\n"
+    def test_handshake_silences_echo_calibrates_and_prints_ready(self):
+        # READY is typed split by an empty quote: the shell prints it whole, and
+        # the typed line (so any echo of it) never carries it.
+        typed_ready = f"{M.ready[:1]}''{M.ready[1:]}"
+        assert self.frame.handshake(M) == (
+            f"stty -echo 2>/dev/null; echo; {CALIBRATION_COMMAND}; echo {typed_ready}\n"
+        )
+
+    def test_the_typed_handshake_never_carries_ready_whole(self):
+        assert M.ready not in self.frame.handshake(M)
 
     def test_frame_brackets_command_and_bakes_retcode_into_end(self):
         assert self.frame.frame("ls /tmp", M) == (

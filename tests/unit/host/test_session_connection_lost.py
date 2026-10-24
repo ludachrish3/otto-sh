@@ -11,6 +11,7 @@ import pytest
 
 from otto.host.session import LocalSession, ShellSession, SshSession, _DockerSshSession
 from otto.utils import Status
+from tests.unit.host._session_feed import identity_handshake_reply
 from tests.unit.host.test_session import MockSession
 
 
@@ -83,7 +84,7 @@ async def test_ssh_connection_lost_is_still_reported():
     conn.create_process = AsyncMock(return_value=proc)
     s = SshSession(conn)
     proc.stdout.readuntil = AsyncMock(
-        side_effect=[f"{s._ready_marker}\n", asyncssh.ConnectionLost("gone")]
+        side_effect=[identity_handshake_reply(s._ready_marker), asyncssh.ConnectionLost("gone")]
     )
 
     result = await s.run_cmd("echo hi")

@@ -88,6 +88,12 @@ class Survey:
     working_ports: dict[str, int] = field(default_factory=dict)
     supported: list[str] = field(default_factory=list)
     user: "str | None" = None
+    terminal_mappings: dict[str, str] = field(default_factory=dict)
+    """Per term a shell session opened on: how its terminal maps line endings.
+
+    The first session on a term is the one recorded. An observation only:
+    there is no host field to pin it in, because the handshake measures it on
+    every session at no cost, and a stale pin would corrupt output silently."""
 
 
 class _Deadline:
@@ -149,7 +155,9 @@ async def _open_own_session(
         await asyncio.wait_for(host.run("true", timeout=timeout, log=LogMode.NEVER), timeout)
     except Exception as exc:  # noqa: BLE001 — every wire failure becomes a classified verdict
         return classify_login_error(exc, who=who)
-    return LoginOutcome("supported", f"{who}: session opened")
+    return LoginOutcome(
+        "supported", f"{who}: session opened", terminal_mapping=host.terminal_mapping
+    )
 
 
 async def _run_only(host: "BaseHost", cmd: str, *, sudo: bool = False) -> "CommandResult":
@@ -400,6 +408,11 @@ class _UnixSurvey:
             return user
         return user if cred_for(self.host.creds, user, protocol) is not None else None
 
+    def _note_mapping(self, term: str, got: "LoginOutcome | None") -> None:
+        """Keep the terminal mapping of the first shell session *term* opened."""
+        if got is not None and got.terminal_mapping is not None:
+            self.survey.terminal_mappings.setdefault(term, got.terminal_mapping)
+
     def _budget_row(self, c: Candidate, tier: Tier) -> None:
         self.rows.append(
             _verdict(c, "timeout", tier, _vantage(self.host), "survey budget exhausted")
@@ -420,6 +433,7 @@ class _UnixSurvey:
             else:
                 got = await self._own_session()
                 self.own_ok = got is not None and got.state == "supported"
+                self._note_mapping(self.host.term, got)
                 if got is None:
                     self._budget_row(own, "login")
                 else:
@@ -441,6 +455,7 @@ class _UnixSurvey:
                 if not await self._declared_dial(c):
                     continue
                 got = await self._declared_login(c)
+            self._note_mapping(c.protocol, got)
             if got is None:
                 self._budget_row(c, "login")
             else:
@@ -890,6 +905,7 @@ class _UnixSurvey:
                     self.host, got.service, port, login=login, timeout=LOGIN_TIMEOUT_S
                 ),
             )
+            self._note_mapping(got.service, out)
         if out is None:
             self._budget_row(c, "login")
         else:

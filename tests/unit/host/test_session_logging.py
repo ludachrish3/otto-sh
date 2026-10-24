@@ -22,7 +22,7 @@ import pytest_asyncio
 
 from otto.host.element import Element
 from otto.host.session import ShellSession
-from tests.unit.host._session_feed import FeedAfterWriteMixin
+from tests.unit.host._session_feed import FeedAfterWriteMixin, identity_handshake_reply
 
 
 class MockSession(FeedAfterWriteMixin, ShellSession):
@@ -69,7 +69,7 @@ async def initialized_session(caplog: pytest.LogCaptureFixture) -> MockSession:
     async def handshake():
         await s._ensure_initialized()
 
-    feed_task = asyncio.create_task(s.feed_after_write(s._ready_marker + "\n"))
+    feed_task = asyncio.create_task(s.feed_after_write(identity_handshake_reply(s._ready_marker)))
     task = asyncio.create_task(handshake())
     await task
     await feed_task
@@ -106,7 +106,9 @@ class TestHandshakeLogging:
         s = MockSession()
         await s.open_transport()
 
-        feed_task = asyncio.create_task(s.feed_after_write(s._ready_marker + "\n"))
+        feed_task = asyncio.create_task(
+            s.feed_after_write(identity_handshake_reply(s._ready_marker))
+        )
         task = asyncio.create_task(s._ensure_initialized())
         await task
         await feed_task

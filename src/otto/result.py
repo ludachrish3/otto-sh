@@ -98,7 +98,12 @@ class Result:
 
 @dataclass(frozen=True)
 class CommandResult(Result):
-    """Result of one shell command; :attr:`~otto.result.Result.value` holds the command's output."""
+    """Result of one shell command; :attr:`~otto.result.Result.value` holds the command's output.
+
+    What exactly ``value`` holds (one trailing newline removed, nothing else
+    changed, on which terms and frames) is the command-output contract: see
+    :ref:`command-output-contract`.
+    """
 
     command: str = ""
     """The command that was issued."""

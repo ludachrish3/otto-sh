@@ -1573,6 +1573,17 @@ class BaseHost(ABC):
         """
         return self._live_session_mgr().current_user
 
+    @property
+    def terminal_mapping(self) -> str:
+        """How this host's default shell session maps line endings, as its handshake measured it.
+
+        ``identity``, ``onlcr``, ``unknown(<observed>)``, or ``unmeasured``
+        before the session opens or on a dialect with no calibration line. An
+        observation, never a setting: see :mod:`otto.host.terminal_mapping`.
+        ``otto host <id> probe`` reports it per term.
+        """
+        return self._live_session_mgr().terminal_mapping
+
     def _apply_sudo(self, sc: "ShellCommand", user: str | None = None) -> "ShellCommand":
         """Rewrite a ``ShellCommand`` to run under sudo.
 
@@ -1734,6 +1745,9 @@ class BaseHost(ABC):
         The session is stateful: working directory changes (``cd``), exported environment
         variables, and other shell state persist between calls, just as they would in
         an interactive terminal.
+
+        Each result's ``value`` is the command's output as
+        :ref:`command-output-contract` defines it.
 
         Args:
             cmds: A single command (``str`` or :class:`ShellCommand`) or a sequence of
@@ -1900,10 +1914,11 @@ class BaseHost(ABC):
         the single-command shape of ``run``'s signature, parameter for
         parameter. A family may satisfy it with a raw channel (an ssh exec
         channel, a subprocess, ``docker exec``) when the call needs nothing a
-        shell provides — that is what makes ``exec`` concurrency-safe and
-        byte-exact where ``run`` is neither. Anything a raw channel cannot do
-        (answer *expects*, elevate, switch user, replay proxy hops) runs on a
-        pooled shell session the way ``run`` would.
+        shell provides — that is what makes ``exec`` concurrency-safe where
+        ``run`` is not. Anything a raw channel cannot do (answer *expects*,
+        elevate, switch user, replay proxy hops) runs on a pooled shell
+        session the way ``run`` would. Either way the result's ``value`` is
+        the command's output as :ref:`command-output-contract` defines it.
 
         Validation and refusals sit ABOVE the dry-run arm, so a dry run of a
         call the family could never honour refuses rather than declining as

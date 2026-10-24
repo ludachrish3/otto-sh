@@ -36,9 +36,25 @@ async def open_telnet_connection(*args: Any, **kwargs: Any) -> Any:
     Kept as a module-level seam (tests monkeypatch it) while deferring the
     heavy ``telnetlib3`` import to connect-time — see
     ``tests/unit/host/test_lazy_network_imports.py``.
+
+    Every telnet stream otto opens comes through here, so this is where the
+    NVT decoding is installed (:mod:`otto.host.nvt`): the client class is the
+    one ``open_connection`` would have picked (or the one a host's
+    ``telnet_options.extra`` names), with a reader that decodes ``CR NUL``
+    before anything reads it.
     """
     from telnetlib3 import open_connection
 
+    from .nvt import nvt_client_factory
+
+    base = kwargs.get("client_factory")
+    if base is None or isinstance(base, type):
+        kwargs["client_factory"] = nvt_client_factory(base)
+    else:
+        logger.warning(
+            f"telnet client_factory {base!r} is not a class, so otto cannot add NVT "
+            f"decoding: a bare CR from this server will arrive as CR NUL"
+        )
     return await open_connection(*args, **kwargs)
 
 

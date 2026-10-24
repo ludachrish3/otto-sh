@@ -205,3 +205,21 @@ def test_a_valid_terms_pin_keeps_the_hosts_non_dialling_term():
         supported=["ssh", "telnet"],
     )
     assert menu_pin(["ssh", "console"], [], s) == ['valid_terms = ["ssh", "telnet", "console"]']
+
+
+def test_terminal_mapping_lines_name_each_term_and_what_was_observed():
+    from otto.host.survey.report import survey_report, terminal_mapping_lines
+
+    s = _survey(terminal_mappings={"ssh": "onlcr", "console": "unmeasured"})
+    assert [str(t) for t in terminal_mapping_lines(s)] == [
+        "terminal mapping (ssh): onlcr",
+        "terminal mapping (console): unmeasured",
+    ]
+    rendered = [str(x) for x in survey_report(object(), s) if isinstance(x, Text)]
+    assert "terminal mapping (ssh): onlcr" in rendered
+
+
+def test_no_session_means_no_terminal_mapping_line():
+    from otto.host.survey.report import terminal_mapping_lines
+
+    assert terminal_mapping_lines(_survey()) == []

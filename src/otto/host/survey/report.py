@@ -62,6 +62,18 @@ def footnote_lines(survey: "Survey") -> list[Text]:
     return lines
 
 
+def terminal_mapping_lines(survey: "Survey") -> list[Text]:
+    """One ``terminal mapping (<term>): <mapping>`` line per term a shell session opened on.
+
+    What the handshake observed, and nothing more: never a cause, never a pin
+    (see :mod:`otto.host.terminal_mapping`).
+    """
+    return [
+        Text(f"terminal mapping ({term}): {mapping}")
+        for term, mapping in survey.terminal_mappings.items()
+    ]
+
+
 def _kind_of(protocol: str) -> str:
     return "term" if protocol in dialling_terms() else "transfer"
 
@@ -157,7 +169,11 @@ def menu_pin(host_terms: list[str], host_transfers: list[str], survey: "Survey")
 
 def survey_report(host: "BaseHost", survey: "Survey") -> "list[str | Table | Text]":
     """Lay out the protocol section of ``otto host <id> probe``, in the spec's order."""
-    out: "list[str | Table | Text]" = [protocol_table(survey), *footnote_lines(survey)]
+    out: "list[str | Table | Text]" = [
+        protocol_table(survey),
+        *footnote_lines(survey),
+        *terminal_mapping_lines(survey),
+    ]
     terms = list(getattr(host, "valid_terms", []))
     transfers = list(getattr(host, "valid_transfers", []))
     drift = drift_table(drift_rows(terms, transfers, survey))

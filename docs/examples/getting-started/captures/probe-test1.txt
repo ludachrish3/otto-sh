@@ -91,6 +91,8 @@ device issues no probe at all:
 not applicable to this family: console, tftp
 8 loopback-only listeners not shown
 other listeners: 68/udp systemd-network, 546/udp systemd-network
+terminal mapping (ssh): onlcr
+terminal mapping (telnet): onlcr
                               drift
 ╭──────────┬──────────┬────────────────────────┬─────────────────╮
 │ protocol │ kind     │ drift                  │ detail          │

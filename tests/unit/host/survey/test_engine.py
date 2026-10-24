@@ -1090,3 +1090,46 @@ async def test_embedded_behind_a_hop_without_a_relay_does_not_dial_snmp_blindly(
     assert _row(s, "snmp", 161).state == "not-checkable"
     assert "relay" in _row(s, "snmp", 161).detail
     assert _row(s, "telnet", 23).vantage == "hop:test4"
+
+
+@pytest.mark.asyncio
+async def test_each_term_a_session_opened_on_reports_its_terminal_mapping(seams, monkeypatch):
+    """The own session and every other term's login session report what their handshake saw.
+
+    Mutation: drop the engine's note of the mapping and the survey carries none.
+    """
+
+    async def own(host, timeout, *, who=None):
+        return LoginOutcome("supported", "login 'admin': session opened", terminal_mapping="onlcr")
+
+    async def term(host, protocol, port, *, login, timeout):
+        return LoginOutcome(
+            "supported", "login 'admin': session opened", terminal_mapping="unknown('X')"
+        )
+
+    monkeypatch.setattr(engine, "_open_own_session", own)
+    monkeypatch.setattr(engine, "attempt_term_login", term)
+    host = _unix(ssh_options=SshOptions(port=22), telnet_options=TelnetOptions(port=23))
+    s = await engine.run_survey(host)
+    assert s.terminal_mappings == {"ssh": "onlcr", "telnet": "unknown('X')"}
+
+
+@pytest.mark.asyncio
+async def test_a_term_whose_login_opened_no_session_reports_no_mapping(seams):
+    """The default `term` seam refuses telnet: no session opened, so no mapping is claimed."""
+    host = _unix(ssh_options=SshOptions(port=22), telnet_options=TelnetOptions(port=23))
+    s = await engine.run_survey(host)
+    assert "telnet" not in s.terminal_mappings
+
+
+@pytest.mark.asyncio
+async def test_the_own_session_reads_the_hosts_mapping_after_it_opens(monkeypatch):
+    """`_open_own_session` reports the default session's mapping, measured by its handshake."""
+
+    async def ok(self, *_a, **_k):
+        return None
+
+    monkeypatch.setattr(UnixHost, "run", ok)
+    monkeypatch.setattr(UnixHost, "terminal_mapping", property(lambda self: "identity"))
+    out = await engine._open_own_session(_unix(), 5.0)
+    assert out.terminal_mapping == "identity"

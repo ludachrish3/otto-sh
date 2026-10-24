@@ -780,6 +780,7 @@ member	otto.host.command_frame:BashFrame.extract_retcode	method	sync	PK:buffer:-
 member	otto.host.command_frame:BashFrame.frame	method	sync	PK:cmd:- PK:m:-
 member	otto.host.command_frame:BashFrame.handshake	method	sync	PK:m:-
 member	otto.host.command_frame:BashFrame.marks_begin	method	sync	PK:data:- PK:m:-
+member	otto.host.command_frame:BashFrame.measures_terminal_mapping	attribute
 member	otto.host.command_frame:BashFrame.parse_output	method	sync	PK:buffer:- PK:cmd:- PK:m:-
 member	otto.host.command_frame:BashFrame.quiet_history	method	sync	-
 member	otto.host.command_frame:BashFrame.recover	method	sync	PK:m:-
@@ -797,6 +798,7 @@ member	otto.host.command_frame:CommandFrame.extract_retcode	method	sync	PK:buffe
 member	otto.host.command_frame:CommandFrame.frame	method	sync	PK:cmd:- PK:m:-
 member	otto.host.command_frame:CommandFrame.handshake	method	sync	PK:m:-
 member	otto.host.command_frame:CommandFrame.marks_begin	method	sync	PK:data:- PK:m:-
+member	otto.host.command_frame:CommandFrame.measures_terminal_mapping	attribute
 member	otto.host.command_frame:CommandFrame.parse_output	method	sync	PK:buffer:- PK:cmd:- PK:m:-
 member	otto.host.command_frame:CommandFrame.quiet_history	method	sync	-
 member	otto.host.command_frame:CommandFrame.recover	method	sync	PK:m:-
@@ -814,6 +816,7 @@ member	otto.host.command_frame:RawFrame.extract_retcode	method	sync	PK:buffer:- 
 member	otto.host.command_frame:RawFrame.frame	method	sync	PK:cmd:- PK:m:-
 member	otto.host.command_frame:RawFrame.handshake	method	sync	PK:m:-
 member	otto.host.command_frame:RawFrame.marks_begin	method	sync	PK:data:- PK:m:-
+member	otto.host.command_frame:RawFrame.measures_terminal_mapping	attribute
 member	otto.host.command_frame:RawFrame.parse_output	method	sync	PK:buffer:- PK:cmd:- PK:m:-
 member	otto.host.command_frame:RawFrame.quiet_history	method	sync	-
 member	otto.host.command_frame:RawFrame.recover	method	sync	PK:m:-
@@ -842,6 +845,7 @@ member	otto.host.command_frame:ZephyrFrame.extract_retcode	method	sync	PK:buffer
 member	otto.host.command_frame:ZephyrFrame.frame	method	sync	PK:cmd:- PK:m:-
 member	otto.host.command_frame:ZephyrFrame.handshake	method	sync	PK:m:-
 member	otto.host.command_frame:ZephyrFrame.marks_begin	method	sync	PK:data:- PK:m:-
+member	otto.host.command_frame:ZephyrFrame.measures_terminal_mapping	attribute
 member	otto.host.command_frame:ZephyrFrame.parse_output	method	sync	PK:buffer:- PK:cmd:- PK:m:-
 member	otto.host.command_frame:ZephyrFrame.quiet_history	method	sync	-
 member	otto.host.command_frame:ZephyrFrame.recover	method	sync	PK:m:-
@@ -1443,6 +1447,7 @@ member	otto.host:BaseHost.shutdown	method	coroutine	-
 member	otto.host:BaseHost.source_lab	field
 member	otto.host:BaseHost.stage	method	coroutine	PK:owner:N
 member	otto.host:BaseHost.switch_user	method	coroutine	PK:user:S:"" PK:password:N
+member	otto.host:BaseHost.terminal_mapping	property:g--
 member	otto.host:BaseHost.toolchain	field
 member	otto.host:BaseHost.toolchain_tools_absent	method	coroutine	-
 member	otto.host:BaseHost.uninstall	method	coroutine	PK:get_product_logs:B:true PK:get_debug_logs:B:true PK:owner:N
@@ -1458,6 +1463,7 @@ member	otto.host:BashFrame.extract_retcode	method	sync	PK:buffer:- PK:m:-
 member	otto.host:BashFrame.frame	method	sync	PK:cmd:- PK:m:-
 member	otto.host:BashFrame.handshake	method	sync	PK:m:-
 member	otto.host:BashFrame.marks_begin	method	sync	PK:data:- PK:m:-
+member	otto.host:BashFrame.measures_terminal_mapping	attribute
 member	otto.host:BashFrame.parse_output	method	sync	PK:buffer:- PK:cmd:- PK:m:-
 member	otto.host:BashFrame.quiet_history	method	sync	-
 member	otto.host:BashFrame.recover	method	sync	PK:m:-
@@ -1475,6 +1481,7 @@ member	otto.host:CommandFrame.extract_retcode	method	sync	PK:buffer:- PK:m:-
 member	otto.host:CommandFrame.frame	method	sync	PK:cmd:- PK:m:-
 member	otto.host:CommandFrame.handshake	method	sync	PK:m:-
 member	otto.host:CommandFrame.marks_begin	method	sync	PK:data:- PK:m:-
+member	otto.host:CommandFrame.measures_terminal_mapping	attribute
 member	otto.host:CommandFrame.parse_output	method	sync	PK:buffer:- PK:cmd:- PK:m:-
 member	otto.host:CommandFrame.quiet_history	method	sync	-
 member	otto.host:CommandFrame.recover	method	sync	PK:m:-
@@ -1686,6 +1693,7 @@ member	otto.host:DockerContainerHost.shutdown	method	coroutine	-
 member	otto.host:DockerContainerHost.source_lab	field
 member	otto.host:DockerContainerHost.stage	method	coroutine	PK:owner:N
 member	otto.host:DockerContainerHost.switch_user	method	coroutine	PK:user:S:"" PK:password:N
+member	otto.host:DockerContainerHost.terminal_mapping	property:g--
 member	otto.host:DockerContainerHost.toolchain	field
 member	otto.host:DockerContainerHost.toolchain_tools_absent	method	coroutine	-
 member	otto.host:DockerContainerHost.uninstall	method	coroutine	PK:get_product_logs:B:true PK:get_debug_logs:B:true PK:owner:N
@@ -1821,6 +1829,7 @@ member	otto.host:EmbeddedHost.sw_version	field
 member	otto.host:EmbeddedHost.switch_user	method	coroutine	PK:user:S:"" PK:password:N
 member	otto.host:EmbeddedHost.telnet_options	field
 member	otto.host:EmbeddedHost.term	field
+member	otto.host:EmbeddedHost.terminal_mapping	property:g--
 member	otto.host:EmbeddedHost.toolchain	field
 member	otto.host:EmbeddedHost.toolchain_tools_absent	method	coroutine	-
 member	otto.host:EmbeddedHost.transfer	field
@@ -2065,6 +2074,7 @@ member	otto.host:HostSession.name	property:g--
 member	otto.host:HostSession.run	method	coroutine	PK:cmds:- PK:expects:N PK:timeout:F:0x1.e000000000000p+4 PK:log:E:{otto.logger:LogMode}:NORMAL=S:"normal"
 member	otto.host:HostSession.send	method	coroutine	PK:text:- PK:log:E:{otto.logger:LogMode}:NORMAL=S:"normal"
 member	otto.host:HostSession.switch_user	method	coroutine	PK:user:S:"" PK:password:N
+member	otto.host:HostSession.terminal_mapping	property:g--
 abstract	otto.host:HostSession	-
 name	otto.host:HostSpec	model
 mro	otto.host:HostSpec	{otto.models:OttoModel}
@@ -2217,6 +2227,7 @@ member	otto.host:LocalHost.shutdown	method	coroutine	-
 member	otto.host:LocalHost.source_lab	field
 member	otto.host:LocalHost.stage	method	coroutine	PK:owner:N
 member	otto.host:LocalHost.switch_user	method	coroutine	PK:user:S:"" PK:password:N
+member	otto.host:LocalHost.terminal_mapping	property:g--
 member	otto.host:LocalHost.toolchain	field
 member	otto.host:LocalHost.toolchain_tools_absent	method	coroutine	-
 member	otto.host:LocalHost.uninstall	method	coroutine	PK:get_product_logs:B:true PK:get_debug_logs:B:true PK:owner:N
@@ -2385,6 +2396,7 @@ member	otto.host:RawFrame.extract_retcode	method	sync	PK:buffer:- PK:m:-
 member	otto.host:RawFrame.frame	method	sync	PK:cmd:- PK:m:-
 member	otto.host:RawFrame.handshake	method	sync	PK:m:-
 member	otto.host:RawFrame.marks_begin	method	sync	PK:data:- PK:m:-
+member	otto.host:RawFrame.measures_terminal_mapping	attribute
 member	otto.host:RawFrame.parse_output	method	sync	PK:buffer:- PK:cmd:- PK:m:-
 member	otto.host:RawFrame.quiet_history	method	sync	-
 member	otto.host:RawFrame.recover	method	sync	PK:m:-
@@ -2484,6 +2496,7 @@ member	otto.host:RemoteHost.sw_version	field
 member	otto.host:RemoteHost.switch_user	method	coroutine	PK:user:S:"" PK:password:N
 member	otto.host:RemoteHost.telnet_options	field
 member	otto.host:RemoteHost.term	field
+member	otto.host:RemoteHost.terminal_mapping	property:g--
 member	otto.host:RemoteHost.toolchain	field
 member	otto.host:RemoteHost.toolchain_tools_absent	method	coroutine	-
 member	otto.host:RemoteHost.transfer	field
@@ -2545,6 +2558,7 @@ member	otto.host:SessionManager.has_live_sessions	property:g--
 member	otto.host:SessionManager.open_session	method	coroutine	PK:name:-
 member	otto.host:SessionManager.run_cmd	method	coroutine	PK:cmd:- PK:expects:N PK:timeout:F:0x1.e000000000000p+4 PK:log:E:{otto.logger:LogMode}:NORMAL=S:"normal" PK:write_progress:N
 member	otto.host:SessionManager.send	method	coroutine	PK:text:- PK:log:E:{otto.logger:LogMode}:NORMAL=S:"normal"
+member	otto.host:SessionManager.terminal_mapping	property:g--
 abstract	otto.host:SessionManager	-
 name	otto.host:SessionMarkers	class
 mro	otto.host:SessionMarkers	-
@@ -2830,6 +2844,7 @@ member	otto.host:UnixHost.sw_version	field
 member	otto.host:UnixHost.switch_user	method	coroutine	PK:user:S:"" PK:password:N
 member	otto.host:UnixHost.telnet_options	field
 member	otto.host:UnixHost.term	field
+member	otto.host:UnixHost.terminal_mapping	property:g--
 member	otto.host:UnixHost.toolchain	field
 member	otto.host:UnixHost.toolchain_tools_absent	method	coroutine	-
 member	otto.host:UnixHost.transfer	field
@@ -2977,6 +2992,7 @@ member	otto.host:ZephyrFrame.extract_retcode	method	sync	PK:buffer:- PK:m:-
 member	otto.host:ZephyrFrame.frame	method	sync	PK:cmd:- PK:m:-
 member	otto.host:ZephyrFrame.handshake	method	sync	PK:m:-
 member	otto.host:ZephyrFrame.marks_begin	method	sync	PK:data:- PK:m:-
+member	otto.host:ZephyrFrame.measures_terminal_mapping	attribute
 member	otto.host:ZephyrFrame.parse_output	method	sync	PK:buffer:- PK:cmd:- PK:m:-
 member	otto.host:ZephyrFrame.quiet_history	method	sync	-
 member	otto.host:ZephyrFrame.recover	method	sync	PK:m:-
@@ -3085,6 +3101,7 @@ member	otto.host:ZephyrHost.sw_version	field
 member	otto.host:ZephyrHost.switch_user	method	coroutine	PK:user:S:"" PK:password:N
 member	otto.host:ZephyrHost.telnet_options	field
 member	otto.host:ZephyrHost.term	field
+member	otto.host:ZephyrHost.terminal_mapping	property:g--
 member	otto.host:ZephyrHost.toolchain	field
 member	otto.host:ZephyrHost.toolchain_tools_absent	method	coroutine	-
 member	otto.host:ZephyrHost.transfer	field

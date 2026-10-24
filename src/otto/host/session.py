@@ -36,6 +36,7 @@ from .errors import ConsoleError, RawLandingError, SessionSetupError
 from .login_proxy import LoginProxyError, cred_for, perform_switch, run_proxy, run_undo
 from .shell_liveness import confirm_live
 from .telnet import TelnetClient
+from .terminal_mapping import ONLCR, UNMEASURED, is_unknown, measure
 from .userland import ASH_TYPED_LINE_MAX, refuse_if_gapped
 
 if TYPE_CHECKING:
@@ -117,7 +118,7 @@ _CONSOLE_QUIESCE_BUDGET = 2.0
 _HANDSHAKE_RETRY_BACKOFF = 2.0
 
 
-def ready_pattern(m: SessionMarkers) -> re.Pattern[str]:
+def ready_pattern(m: SessionMarkers, *, line_ending: bool = False) -> re.Pattern[str]:
     r"""Compile the pattern a readiness handshake's reply has to satisfy.
 
     Line-anchored (or buffer-start) + ANSI-absorbing, so the marker can't
@@ -126,10 +127,18 @@ def ready_pattern(m: SessionMarkers) -> re.Pattern[str]:
     leading newline in every echo state is the frame's job (see
     :meth:`~otto.host.command_frame.CommandFrame.handshake`).
 
+    *line_ending* (for a frame that
+    :attr:`~otto.host.command_frame.CommandFrame.measures_terminal_mapping`)
+    also requires READY's own line ending, however the terminal mapped it.
+    The read then stops after it, deterministically: an optional ending
+    would match or not depending on whether it had arrived yet, and the
+    handshake's measurement needs the whole line.
+
     Module level rather than a closure in ``ShellSession._handshake`` so
     the shape can be pinned directly against what the dialects render.
     """
-    return re.compile(r"(?:^|\r|\n)(?:\x1b\[[0-9;]*m)*" + re.escape(m.ready))
+    tail = r"\r*\n" if line_ending else ""
+    return re.compile(r"(?:^|\r|\n)(?:\x1b\[[0-9;]*m)*" + re.escape(m.ready) + tail)
 
 
 def _drop_output(_line: str) -> None:
@@ -433,6 +442,11 @@ class ShellSession(ABC):
         # SessionManager from the host's login user; mutated only by the
         # elevation flow (switch_user/as_user). '' on loginless shells.
         self.current_user: str = ""
+        # How this session's terminal maps line endings, as the last
+        # handshake measured it (see otto.host.terminal_mapping), and whether
+        # an unknown mapping has been warned about yet: once per session.
+        self.terminal_mapping: str = UNMEASURED
+        self._warned_terminal_mapping = False
         # App-shell lock: the AppShell instance currently attached to this
         # session, or None. Typed `object` (not AppShell) to avoid an import
         # cycle — session.py must not import app_shell at module load. While
@@ -601,10 +615,15 @@ class ShellSession(ABC):
         contract :class:`~otto.host.command_frame.RawFrame` relies on — and
         marks the session ready without writing a byte.
 
-        On bash that payload is ``stty -echo; echo; echo <READY marker>``, read back
-        until the marker returns: the deterministic readiness check that
-        replaced telnet login's silence-drain — prompt-independent and
-        content-independent.
+        On bash that payload is ``stty -echo; echo; <calibration>; echo <READY
+        marker>``, read back until the marker and its line ending return: the
+        deterministic readiness check that replaced telnet login's
+        silence-drain — prompt-independent and content-independent. The
+        calibration line (:data:`~otto.host.terminal_mapping.CALIBRATION_COMMAND`)
+        is how the session learns its terminal's line-ending mapping, recorded
+        as ``terminal_mapping``. READY is typed split by an empty quote, so an
+        echo of the typed line (echo is still on at the first handshake) never
+        matches, even where a wrapped echo puts a carriage return before it.
 
         The probe is *resent* on a fixed interval rather than written once
         (``confirm_live``'s resend loop). This matters for telnet:
@@ -626,6 +645,7 @@ class ShellSession(ABC):
         handshake_cmd = self._handshake_payload(self._markers)
         if handshake_cmd == "":
             logger.debug(f"{self._log_tag}: raw landing — no handshake to send")
+            self.terminal_mapping = UNMEASURED
             self._initialized = True
             self._alive = True
             return
@@ -634,13 +654,23 @@ class ShellSession(ABC):
             f"{self._log_tag}: handshake start cmd={handshake_cmd!r} "
             f"marker={self._ready_marker!r} timeout={deadline}s"
         )
+        measures = self._frame.measures_terminal_mapping
+        # The expect adapter keeps what the probe read: confirm_live only
+        # answers whether it matched, and the measurement needs the bytes.
+        reply = ""
+
+        async def _expect(pat: re.Pattern[str], t: float) -> str:
+            nonlocal reply
+            reply = await asyncio.wait_for(self.read_transport_until(pat), t)
+            return reply
+
         confirmed = False
         with suppress(asyncio.IncompleteReadError):
             confirmed = await confirm_live(
                 self.write_transport,
-                lambda pat, t: asyncio.wait_for(self.read_transport_until(pat), t),
+                _expect,
                 self._handshake_payload,
-                ready_pattern,
+                lambda m: ready_pattern(m, line_ending=measures),
                 lambda: self._markers,
                 settle=0.0,
                 probe_timeout=self._init_probe_interval,
@@ -650,13 +680,41 @@ class ShellSession(ABC):
             await self._fail_init()
 
         # confirm_live owns the resend bookkeeping internally and doesn't
-        # expose a per-probe attempt count or the matched bytes to its
-        # caller, so this is deliberately leaner than the bespoke loop it
-        # replaces — just enough to confirm the handshake landed.
+        # expose a per-probe attempt count to its caller, so this is
+        # deliberately leaner than the bespoke loop it replaces — just enough
+        # to confirm the handshake landed.
         logger.debug(f"{self._log_tag}: handshake matched")
+        self._measure_terminal_mapping(reply if measures else None)
 
         self._initialized = True
         self._alive = True
+
+    def _measure_terminal_mapping(self, reply: str | None) -> None:
+        """Record how the terminal maps line endings, from the handshake's *reply*.
+
+        ``None`` (a frame with no calibration line) records ``unmeasured``.
+        Measured afresh at every handshake; an ``unknown(...)`` mapping logs a
+        WARNING the first time this session sees one, and never fails anything:
+        the output is then returned as it arrived.
+        """
+        if reply is None:
+            self.terminal_mapping = UNMEASURED
+            return
+        seen = measure(reply, self._markers.ready)
+        mapping = seen.mapping
+        self.terminal_mapping = mapping
+        logger.debug(f"{self._log_tag}: terminal mapping: {mapping}")
+        if is_unknown(mapping) and not self._warned_terminal_mapping:
+            self._warned_terminal_mapping = True
+            why = (
+                "The terminal translates line endings in a way otto cannot undo exactly"
+                if seen.calibrated
+                else "No calibration line came back (no `printf` on the target?)"
+            )
+            logger.warning(
+                f"{self._log_tag}: terminal mapping: {mapping}. {why}, so this session's "
+                f"command output is left as it arrived"
+            )
 
     async def enter_frame(self, frame: CommandFrame, *, timeout: float | None = None) -> None:
         """Switch this session to *frame* and run that frame's handshake.
@@ -1023,6 +1081,11 @@ class ShellSession(ABC):
                     if line:
                         on_output(line)
 
+        if self.terminal_mapping == ONLCR:
+            # Undo the terminal's \n -> \r\n and nothing else: every \n
+            # arrived with a CR the terminal added in front of it, so this is
+            # the exact inverse, and a CR the program wrote stays.
+            buffer = buffer.replace("\r\n", "\n")
         output = self._frame.parse_output(buffer, cmd, self._markers)
         retcode = self._frame.extract_retcode(buffer, self._markers)
         status = Status.Success if retcode == 0 else Status.Failed
@@ -1742,6 +1805,15 @@ class HostSession:
         :meth:`switch_user` / :meth:`as_user`.
         """
         return self._session.current_user
+
+    @property
+    def terminal_mapping(self) -> str:
+        """How this session's terminal maps line endings, as its last handshake measured it.
+
+        ``identity``, ``onlcr``, ``unknown(<observed>)`` or ``unmeasured``; see
+        :mod:`otto.host.terminal_mapping`.
+        """
+        return self._session.terminal_mapping
 
     def _refuse_elevation(self, verb: str, user: str) -> Never:
         """Bind this session's identity to the shared elevation refusal.
@@ -2655,6 +2727,16 @@ class SessionManager:
         if self._session is not None:
             return self._session.current_user
         return self._login_user()
+
+    @property
+    def terminal_mapping(self) -> str:
+        """How the default session's terminal maps line endings; ``unmeasured`` before it opens.
+
+        See :mod:`otto.host.terminal_mapping` for the four outcomes.
+        """
+        if self._session is not None:
+            return self._session.terminal_mapping
+        return UNMEASURED
 
     @property
     def ambient_user(self) -> str | None:

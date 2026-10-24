@@ -24,8 +24,12 @@ symptom was an unrelated-looking read timeout or hang).
 """
 
 from collections.abc import Callable, Coroutine
+from typing import TYPE_CHECKING
 
 from otto.utils import wait_for_async
+
+if TYPE_CHECKING:
+    from otto.host.command_frame import CommandFrame
 
 
 class FeedAfterWriteMixin:
@@ -76,3 +80,42 @@ class FeedAfterWriteMixin:
                 then()
 
         return _feed()
+
+
+def identity_handshake_reply(ready: str) -> str:
+    """The bash handshake's reply from a shell on a pipe: the calibration line, then READY.
+
+    What every test double answers a handshake with unless the test is about
+    the terminal mapping itself, so the session measures ``identity`` and the
+    ``unknown`` WARNING only appears in the tests that want it.
+    """
+    return f"\nX\r\nY\nZ\rW\n{ready}\n"
+
+
+def zephyr_handshake_reply(ready: str) -> str:
+    """The Zephyr handshake's reply: the shell rejects READY as an unknown command.
+
+    Zephyr has no calibration line, so the error line is all it sends.
+    """
+    return f"{ready}: command not found\r\n"
+
+
+def handshake_reply(frame: "CommandFrame", ready: str) -> str:
+    """What a shell of *frame*'s dialect answers its handshake with (bash: on a pipe)."""
+    if frame.measures_terminal_mapping:
+        return identity_handshake_reply(ready)
+    return zephyr_handshake_reply(ready)
+
+
+def onlcr_handshake_reply(ready: str) -> str:
+    """The bash handshake's reply from a default Linux tty: every LF arrives as CRLF."""
+    return f"\r\nX\r\r\nY\r\nZ\rW\r\n{ready}\r\n"
+
+
+def writes_handshake(data: str, ready: str) -> bool:
+    """Whether *data* is a handshake that prints the READY marker *ready*.
+
+    The bash handshake types READY split by an empty quote (the shell prints
+    it whole), so a double that answers handshakes looks for the typed form.
+    """
+    return f"{ready[:1]}''{ready[1:]}" in data

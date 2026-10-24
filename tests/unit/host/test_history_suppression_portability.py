@@ -259,6 +259,21 @@ def test_payload_composes_onto_a_handshake_without_splitting_the_line():
 
 
 @pytest.mark.parametrize(("name", "argv"), SHELLS, ids=[n for n, _ in SHELLS])
+def test_the_split_ready_marker_prints_whole_on_a_line_of_its_own(name: str, argv: list[str]):
+    """The handshake types READY split by an empty quote; every shell prints it whole.
+
+    The split keeps READY out of the echo of the typed line. It only works if
+    each shell's quote removal joins the halves again, so the shell's output
+    has the marker as the last line.
+    """
+    m = SessionMarkers.for_session("cafef00d")
+    handshake = BashFrame().handshake(m)
+    assert m.ready not in handshake
+    proc = _run(argv, PAYLOAD + handshake)
+    assert proc.stdout.endswith(f"\n{m.ready}\n"), f"{name}: stdout {proc.stdout!r}"
+
+
+@pytest.mark.parametrize(("name", "argv"), SHELLS, ids=[n for n, _ in SHELLS])
 def test_payload_stays_silent_under_readonly(name: str, argv: list[str]):
     """Failing is acceptable; *narrating* the failure onto the stream is not.
 

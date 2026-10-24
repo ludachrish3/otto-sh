@@ -41,6 +41,86 @@ a transfer fold) that callers should sail past, so it cannot be made non-ok;
 `NotRun` means a dry run declined to contact a device, and every `is_ok`
 branch must take its failure arm rather than proceed on a fiction.
 
+(command-output-contract)=
+
+## What a command's `value` holds
+
+A {class}`~otto.result.CommandResult`'s `value` is the command's output with
+**exactly one trailing newline removed**: nothing stripped, nothing added.
+That holds on the ssh `exec` channel, and on a shell session whose frame
+calibrates its terminal (the `bash` and `ash` frames) on every term (`ssh`,
+`telnet`, `console`) and both routes (`run` and `exec`):
+
+| The command prints | `value` |
+| --- | --- |
+| nothing (`true`) | `""` |
+| `3` and a newline | `"3"` |
+| `a`, then a blank line | `"a\n"` |
+| a blank line, then `a` | `"\na"` |
+| `abc` with no newline | `"abc"` |
+| `a\r\nb\rc` and a newline | `"a\r\nb\rc"` |
+
+Trailing spaces and tabs are kept, and so are the program's own carriage
+returns. stderr arrives in the same stream as stdout. The bytes are decoded as
+UTF-8, with any invalid byte replaced.
+
+The Zephyr frames (`zephyr` and `zephyr-serial`) keep their existing parsing:
+they trim whitespace from both ends of the output and delete every `\r`.
+
+To return the exact output, otto undoes two things that sit between the program and otto,
+and nothing else:
+
+- **Telnet's own encoding.** A telnet server sends a bare carriage return as
+  `CR NUL` (RFC 854). otto decodes that on every telnet and console stream
+  before it reads anything, unless the server negotiated BINARY.
+- **The terminal's newline translation.** `run` runs on a shell session, and
+  so does every shell-routed `exec` (see the note below). A shell session runs
+  on a terminal. By default a Linux terminal sends each `\n` as `\r\n` (`onlcr`).
+  otto never changes that setting. The session's readiness handshake measures
+  it instead with a **calibration line**, a `printf` of known bytes that runs
+  just before the handshake's READY marker ({ref}`per-host-session-setup`),
+  and the session undoes exactly that translation. The measurement is the
+  session's `terminal_mapping`, and `otto host <id> probe` reports it per
+  term:
+  - `identity`: nothing is translated, so nothing is undone;
+  - `onlcr`: each `\n` arrives as `\r\n`, so each `\r\n` is folded back to
+    `\n`, the exact inverse;
+  - `unknown(<what was seen>)`: some other translation that can't be undone
+    exactly, or no calibration line came back at all (a target with no
+    `printf`). The output comes back as it arrived, and the session logs one
+    WARNING saying which;
+  - `unmeasured`: a dialect with no calibration line, such as Zephyr's.
+
+  The ssh `exec` channel has no terminal, so there is nothing to undo there,
+  and `terminal_mapping` always reports the shell session's terminal.
+
+A command that changes its own terminal (`stty -onlcr`, or a program that puts
+the terminal in raw mode and leaves it that way) changes what later output on
+that session looks like. The session measured its terminal when it opened, and
+it doesn't measure again until a new session opens.
+
+The log is a separate view. Live output lines are cleaned for reading, so
+carriage returns are removed and the shell route skips blank lines. `value` is
+the record.
+
+`send()` writes to the raw stream and `expect()` reads it raw, with `\r\n`
+kept: the fold applies only to a command's `value`.
+
+```{note}
+**Upgrading.** Before this, every shell-routed command trimmed blank lines
+from both ends of the output, deleted every `\r`, and left telnet's NUL bytes
+in. That is `run()`, and `exec()` wherever it runs on a shell session: on
+telnet and console, and on ssh when a session-setup hook, a proxied login or a
+call that needs a shell (*expects*, `sudo`, a switched user) routes it through
+the pooled shell. If you compare `value` exactly for a command that prints
+blank lines or carriage returns, expect those now. `.strip()` callers are
+unaffected by the blank-line change; output that contains its own carriage
+returns (CRLF files, progress lines) now keeps them.
+
+NVT decoding also changes what `expect()` patterns see on telnet and console:
+a pattern that matched telnet's padding NULs (`\r\x00`) must drop them.
+```
+
 ## Exit codes
 
 `Result.exit_code` is `0` when ok, else the status value.
@@ -91,11 +171,11 @@ Both halves are gated rather than documented-and-hoped:
   function in `src/otto` whose return annotation mentions `Status` anywhere,
   including inside a composite: `tuple[Status, str]`, `Status | None`,
   `dict[str, tuple[Status, str]]` (run by `make lint-arch`).
-- **raises** — `tests/unit/test_error_base.py` sweeps every public exception
-  class and fails on one that does not reach `OttoError`, on one that is not
-  declared in its `CASES` table, and on one declared with a `stdlib_root` of
-  bare `Exception` without being listed as deliberately rootless (that row
-  would otherwise assert nothing, since every exception is an `Exception`).
+- **raises** — a test sweeps every public exception class and fails on one
+  that does not reach `OttoError`, on one that is not declared in its table
+  of expected roots, and on one whose only declared stdlib root is bare
+  `Exception` without being listed as deliberately rootless (that row would
+  otherwise assert nothing, since every exception is an `Exception`).
 
   Note the scope: the gate is about the exceptions otto *defines*. It says
   nothing about raise sites, and deliberately so — see above.

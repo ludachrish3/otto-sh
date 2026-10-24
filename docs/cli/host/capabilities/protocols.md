@@ -5,8 +5,9 @@
 `otto host <id> probe` also answers a second question: which term,
 transfer, and monitoring protocols this host really supports, and on
 which ports. It runs after the {doc}`userland section <userland>` and
-prints one table, a few footnotes, a drift table when something disagrees
-with the lab record, and a pasteable pin.
+prints one table, a few footnotes, one terminal-mapping line per term it
+opened a shell session on, a drift table when something disagrees with the lab
+record, and a pasteable pin.
 
 ```bash
 otto host <id> probe
@@ -60,6 +61,24 @@ for the machine otto itself runs on. snmp is the one exception: pysnmp
 issues the GET itself, a local UDP call never routed through a hop the way
 a dial or a login is, so its row always reads `controller` — even when
 every other row on that same hopped host reads `hop:<id>`.
+
+## Terminal mapping
+
+Every term the survey opened a shell session on gets one more line, naming how
+that session's terminal maps line endings, as its handshake measured them:
+
+```text
+terminal mapping (ssh): onlcr
+terminal mapping (telnet): onlcr
+```
+
+The value is one of `identity`, `onlcr`, `unknown(<what was seen>)` or
+`unmeasured`, and {ref}`command-output-contract` says what each one means for
+a command's output. The line reports what was observed and never guesses why.
+There is nothing to pin: every session measures its own terminal for free
+when it opens, and a recorded value that went stale would corrupt output
+without anyone noticing. A term whose login failed opened no session, so it
+gets no line.
 
 ## Owners, and running as root
 

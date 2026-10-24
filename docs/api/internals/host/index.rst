@@ -18,7 +18,9 @@ host internals
    loop_owner
    transport
    telnet
+   nvt
    console
+   terminal_mapping
    capability_grid
    os_profile
    construction

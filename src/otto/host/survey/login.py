@@ -40,6 +40,9 @@ class LoginOutcome:
 
     state: State
     detail: str
+    terminal_mapping: "str | None" = None
+    """How the shell session it opened maps line endings (see
+    :mod:`otto.host.terminal_mapping`); ``None`` when no shell session opened."""
 
 
 def _front_loaded(host: "UnixHost", protocol: str, login: str | None) -> list[Cred]:
@@ -268,7 +271,9 @@ async def attempt_term_login(
     who = _who(copy, protocol, login=login)
     try:
         await asyncio.wait_for(copy.run("true", timeout=timeout, log=LogMode.NEVER), timeout)
-        outcome = LoginOutcome("supported", f"{who}: session opened")
+        outcome = LoginOutcome(
+            "supported", f"{who}: session opened", terminal_mapping=copy.terminal_mapping
+        )
     except asyncio.CancelledError:
         await _close_on_cancel(copy, host.name, "survey login close")
         raise

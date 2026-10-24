@@ -71,6 +71,7 @@ if TYPE_CHECKING:
 # tolerance of 4 and eager gc policy with it. The generator body is the shared
 # part, and that is what gets imported.
 from tests._fixtures.fd_watermark import fd_watermark_bracket
+from tests.unit.host._session_feed import identity_handshake_reply
 from tests.unit.host.test_session import MockSession
 
 
@@ -455,7 +456,7 @@ async def landed() -> MockSession:
     """A MockSession that has completed its bash landing handshake."""
     s = MockSession()
     await s.open_transport()
-    feed = asyncio.create_task(s.feed_after_write(s._ready_marker + "\n"))
+    feed = asyncio.create_task(s.feed_after_write(identity_handshake_reply(s._ready_marker)))
     await s._ensure_initialized()
     await feed
     s.written.clear()

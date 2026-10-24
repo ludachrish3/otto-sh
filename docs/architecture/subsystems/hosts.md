@@ -38,8 +38,8 @@ transport stack — that design has its own page: {doc}`docker-hosts`.
 field — its type, its docstring, its default — is declared exactly once, on
 the base that owns it. A subclass re-declares a field only to change its value
 policy, and the re-declaration carries no docstring, so the field's
-documentation has one home. `tests/unit/host/test_field_homes.py` holds otto's
-own host classes to that shape.
+documentation has one home. A test holds otto's own host classes to that
+shape.
 
 ## The CLI layer: verbs from methods
 
@@ -101,6 +101,10 @@ streams.
 persistent session *and* of other concurrent `exec` calls, which is what
 makes `asyncio.gather()` fan-out safe. Embedded hosts are exec-only —
 a serial console has no multiplexed channels to hold a session on.
+
+Both return the command's exact output, whichever route carried it;
+{ref}`command-output-contract` says what that means and what otto undoes to
+get there.
 
 Three pieces of per-session state matter architecturally:
 

@@ -10,7 +10,7 @@ import pytest_asyncio
 
 from otto.host.command_frame import ZephyrFrame
 from otto.host.session import ShellSession
-from tests.unit.host._session_feed import FeedAfterWriteMixin
+from tests.unit.host._session_feed import FeedAfterWriteMixin, handshake_reply
 
 
 class FrameMockSession(FeedAfterWriteMixin, ShellSession):
@@ -51,7 +51,7 @@ class FrameMockSession(FeedAfterWriteMixin, ShellSession):
 
 async def _init(s: FrameMockSession) -> None:
     await s.open_transport()
-    feed_task = asyncio.create_task(s.feed_after_write(s._ready_marker + "\n"))
+    feed_task = asyncio.create_task(s.feed_after_write(handshake_reply(s._frame, s._ready_marker)))
     task = asyncio.create_task(s._ensure_initialized())
     await task
     await feed_task

@@ -32,6 +32,7 @@ from otto.utils import Status
 from tests._fixtures.dispatch import DispatchRunner
 from tests._fixtures.fake_project import fake_project
 from tests._fixtures.labdata import json_lab_sources, write_lab_json
+from tests.unit.host._session_feed import identity_handshake_reply, writes_handshake
 
 # The dynamic verbs are plain ``async def`` leaves bridged by the leaf-invoke
 # wrapper, so host_app invocations go through the production dispatch seam;
@@ -73,9 +74,9 @@ class FakeSession(ShellSession):
         pass  # no transport to open
 
     async def write_transport(self, data: str) -> None:
-        if self._ready_marker in data:
+        if writes_handshake(data, self._ready_marker):
             # Initialization handshake — echo the ready marker back
-            self._read_queue.put_nowait(f"{self._ready_marker}\n")
+            self._read_queue.put_nowait(identity_handshake_reply(self._ready_marker))
         elif self._begin_marker in data and self._responses:
             # Sentinel-wrapped command — enqueue the canned response
             output, retcode = self._responses.pop(0)

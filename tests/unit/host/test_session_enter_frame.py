@@ -15,6 +15,7 @@ from otto.host.app_shell import AppShellActiveError
 from otto.host.command_frame import BashFrame, RawFrame, ZephyrFrame
 from otto.host.errors import RawLandingError
 from otto.host.session_setup import SessionSetupError
+from tests.unit.host._session_feed import identity_handshake_reply, onlcr_handshake_reply
 from tests.unit.host.test_session import MockSession
 
 # The `landed` fixture (a MockSession past its bash landing handshake) lives
@@ -40,7 +41,7 @@ class _CountingSession(MockSession):
 async def test_enter_frame_never_reopens_the_transport():
     s = _CountingSession()
     await s.open_transport()  # the fixture shape: explicit open, then handshake
-    feed = asyncio.create_task(s.feed_after_write(s._ready_marker + "\n"))
+    feed = asyncio.create_task(s.feed_after_write(identity_handshake_reply(s._ready_marker)))
     await s._ensure_initialized()
     await feed
     opens_after_landing = s.opens
@@ -134,20 +135,27 @@ async def test_enter_frame_refuses_on_a_dead_session(landed):
 
 
 @pytest.mark.asyncio
-async def test_enter_frame_clears_pending_recovery(landed):
+@pytest.mark.parametrize(
+    ("reply", "mapping"),
+    [(identity_handshake_reply, "identity"), (onlcr_handshake_reply, "onlcr")],
+    ids=["lf", "crlf"],
+)
+async def test_enter_frame_clears_pending_recovery(landed, reply, mapping):
     landed._needs_recovery = True
 
     def answer() -> None:
         # The shape a real interactive shell answers a SECOND bash handshake
         # with: echo is off by now, so the prompt left over from the previous
         # command leads the line and only the payload's own bare `echo` puts
-        # the marker at the start of one.
-        landed.feed(_PS1 + "\r\n" + landed.markers.ready + "\r\n")
+        # the marker at the start of one. A pipe ends each line in LF, a
+        # default tty in CRLF; READY must confirm with either ending.
+        landed.feed(_PS1 + reply(landed.markers.ready))
 
     feeder = asyncio.create_task(landed.feed_after_write(then=answer))
     await landed.enter_frame(BashFrame())
     await feeder
     assert landed._needs_recovery is False
+    assert landed.terminal_mapping == mapping
 
 
 @pytest.mark.asyncio

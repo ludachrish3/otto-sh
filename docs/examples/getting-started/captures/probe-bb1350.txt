@@ -81,3 +81,5 @@ probe. This is the pin in force:
 │          │          │      │                  │           │                │ hop                 │
 ╰──────────┴──────────┴──────┴──────────────────┴───────────┴────────────────┴─────────────────────╯
 not applicable to this family: console, tftp
+terminal mapping (ssh): onlcr
+terminal mapping (telnet): onlcr

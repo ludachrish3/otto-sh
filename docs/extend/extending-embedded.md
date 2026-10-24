@@ -46,7 +46,7 @@ Subclass `CommandFrame` and implement seven methods — a *render half* (command
 | `recover(m)` | render | Post-timeout re-sync payload echoing `m.recover`. |
 | `end_pattern(m)` | parse | Regex marking the end of a command's output (the session compiles it once and uses it to detect completion and bound parsing). |
 | `marks_begin(data, m)` | parse | `True` if `data` is the chunk carrying the BEGIN sentinel. |
-| `parse_output(buffer, cmd, m)` | parse | Extract the command's output from the accumulated `buffer`. |
+| `parse_output(buffer, cmd, m)` | parse | Extract the command's output from the accumulated `buffer`. When the session measured its terminal as `onlcr`, `buffer` arrives already folded (each `\r\n` back to `\n`; see {ref}`command-output-contract`). |
 | `extract_retcode(buffer, m)` | parse | Recover the exit code; return `-1` when none can be read. |
 | `restore_interactive()` | render | *Optional.* Line that undoes what `handshake` did to a terminal for a human (`None` by default); the `login` bridge sends it after a session-setup hook. |
 
@@ -63,7 +63,7 @@ the END marker; `ZephyrFrame` sends four CR-separated lines
 ### Optional overrides and class flags
 
 Beyond the seven methods, `CommandFrame` has two methods with working
-defaults and two class flags. Override them only when your dialect differs
+defaults and three class flags. Override them only when your dialect differs
 from the default:
 
 | Member | Default | Override when |
@@ -72,6 +72,7 @@ from the default:
 | `recover_pattern(m)` | The bare `m.recover` token | Your shell can echo the token without running the probe (an echoing REPL). Return a pattern only a real execution can produce, as `BashFrame` does with the exit code. |
 | `streams_output_live` | `False`: the session buffers to the END sentinel and logs `parse_output(buffer)` | Your raw stream between the markers is already clean, line by line (no prompts, no exit-code scaffolding), so the log can show it as it arrives. |
 | `single_client_console` | `False` | Your console serves one client at a time (a serial line, a single-session debug port). A failed readiness handshake is then reported as a held slot rather than an unresponsive device. |
+| `measures_terminal_mapping` | `False`: the session is `unmeasured` and nothing changes | Your shell runs on a terminal and you want its line-ending translation undone exactly ({ref}`command-output-contract`). `True` means `handshake` must print the calibration line (`otto.host.terminal_mapping.CALIBRATION_COMMAND`) immediately before READY, and READY must end its line. A `BashFrame` subclass inherits `True`, so one that overrides `handshake` without the calibration line logs an `unknown` WARNING on every session and gets no fold. |
 
 The getting-started example's `PyReplFrame`
 (`docs/examples/getting-started/libs/gs_example/pyrepl_frame.py`) overrides

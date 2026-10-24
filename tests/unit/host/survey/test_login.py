@@ -429,3 +429,27 @@ def test_raised_by_asyncssh_walks_the_mro():
     assert _raised_by_asyncssh(asyncssh.PermissionDenied("denied"))
     assert _raised_by_asyncssh(_LocalSubclass("denied"))
     assert not _raised_by_asyncssh(ValueError("not ssh"))
+
+
+@pytest.mark.asyncio
+async def test_a_session_that_opened_carries_its_terminal_mapping(monkeypatch):
+    """Read off the copy before it closes: the handshake measured it on that session."""
+
+    async def ok(self, *_a, **_k):
+        return None
+
+    monkeypatch.setattr(UnixHost, "run", ok)
+    monkeypatch.setattr(UnixHost, "terminal_mapping", property(lambda self: "onlcr"))
+    out = await attempt_term_login(_host(), "ssh", 2222, login=None, timeout=5.0)
+    assert out.state == "supported"
+    assert out.terminal_mapping == "onlcr"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_login_claims_no_terminal_mapping(monkeypatch):
+    async def deny(*_a, **_k):
+        raise asyncssh.PermissionDenied("Permission denied")
+
+    monkeypatch.setattr("otto.host.connections.ssh_connect", deny)
+    out = await attempt_term_login(_host(), "ssh", 2222, login=None, timeout=5.0)
+    assert out.terminal_mapping is None

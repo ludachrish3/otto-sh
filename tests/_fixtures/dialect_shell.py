@@ -50,9 +50,12 @@ import asyncio
 import re
 
 from otto.host.session import ShellSession
+from otto.host.terminal_mapping import CALIBRATION_COMMAND
 from tests._fixtures.fake_shell import replay
 
-_BASH_READY_RE = re.compile(r"echo (__OTTO_[0-9a-f]+_READY__)\n")
+# The handshake types READY split by an empty quote (`_''_OTTO_<id>_READY__`)
+# and the shell prints it whole, so group 1 is the typed text.
+_BASH_READY_RE = re.compile(r"echo (_''_OTTO_[0-9a-f]+_READY__)\n")
 _BASH_FRAME_RE = re.compile(
     r'echo "(__OTTO_[0-9a-f]+_BEGIN__)"; \{ (.*)\n\}; echo "(__OTTO_[0-9a-f]+_END__)\$\?__"',
     re.DOTALL,
@@ -152,7 +155,7 @@ class DialectShell:
         """
         return "" if self.echo_on else self.ps1
 
-    def _bash_handshake_reply(self, payload: str, ready: str) -> str:
+    def _bash_handshake_reply(self, payload: str, typed_ready: str) -> str:
         """Answer the readiness payload the way a real bash terminal would.
 
         Echo on (the first handshake): the typed line comes back, newline and
@@ -169,15 +172,22 @@ class DialectShell:
         """
         lead = payload.rstrip("\r\n") + "\r\n" if self.echo_on else self._prompt()
         self.echo_on = False  # the payload's own `stty -echo`
-        return f"{lead}{self._blank_lines_before(payload, ready)}{ready}\r\n"
+        ready = typed_ready.replace("''", "")  # quote removal, as the shell does it
+        return f"{lead}{self._printed_before(payload, typed_ready)}{ready}\r\n"
 
     @staticmethod
-    def _blank_lines_before(payload: str, ready: str) -> str:
-        """One empty line per bare ``echo`` clause preceding the marker's clause."""
+    def _printed_before(payload: str, typed_ready: str) -> str:
+        """What the clauses preceding the marker's clause print, on an ``onlcr`` terminal.
+
+        One empty line per bare ``echo``, and the terminal-mapping calibration
+        line as a default Linux tty returns it, so a session on this fake
+        measures ``onlcr``.
+        """
         clauses = [c.strip() for c in payload.split(";")]
-        marker_clause = f"echo {ready}"
+        marker_clause = f"echo {typed_ready}"
         before = clauses[: clauses.index(marker_clause)] if marker_clause in clauses else clauses
-        return "\r\n" * sum(1 for c in before if c == "echo")
+        printed = {"echo": "\r\n", CALIBRATION_COMMAND: "X\r\r\nY\r\nZ\rW\r\n"}
+        return "".join(printed.get(c, "") for c in before)
 
     def _zephyr_reply(self, text: str) -> str | None:
         if (m := _ZEPHYR_FRAME_RE.search(text)) is not None:
