@@ -2221,6 +2221,58 @@ class TestExecLogsCommandExactlyOnce:
         assert logged == []
 
 
+class TestExecOnDropsTheEofPartial:
+    """asyncssh's stdout iterator is ``while not at_eof(): yield await readline()``,
+    and ``readline()`` hands back the empty partial ``''`` when end-of-file
+    lands after the last line was already read. Whether it does is packet
+    timing. These are the raw yields #711 measured on test1, 20 runs per
+    command: ``true`` gave ``['']`` 20/20; ``echo 3`` gave ``['3\\n', '']`` 16
+    times and ``['3\\n']`` 4; ``printf 'a\\n\\n'`` gave the phantom 14 times and
+    not 6; ``printf 'abc'`` gave ``['abc']`` 20/20; ``printf '\\n'`` split 10/10.
+    Each shape is pinned with the phantom ``''`` and without it, so the two
+    never-seen counterparts (``true`` without it, ``abc`` with it) are
+    constructed. ``value`` and the logged output must be identical either
+    way: the command's output, one trailing newline removed, and never an
+    empty line the command did not print.
+    """
+
+    @pytest.mark.parametrize(
+        ("raw", "value", "output_lines"),
+        [
+            pytest.param([""], "", [], id="true-phantom"),
+            pytest.param([], "", [], id="true-no-phantom"),
+            pytest.param(["3\n", ""], "3", ["3"], id="echo-phantom"),
+            pytest.param(["3\n"], "3", ["3"], id="echo-no-phantom"),
+            pytest.param(["a\n", "\n", ""], "a\n", ["a", ""], id="blank-tail-phantom"),
+            pytest.param(["a\n", "\n"], "a\n", ["a", ""], id="blank-tail-no-phantom"),
+            pytest.param(["abc", ""], "abc", ["abc"], id="partial-phantom"),
+            pytest.param(["abc"], "abc", ["abc"], id="partial-no-phantom"),
+            pytest.param(["\n", ""], "", [""], id="newline-phantom"),
+            pytest.param(["\n"], "", [""], id="newline-no-phantom"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_value_and_log_ignore_the_phantom(
+        self, raw: list[str], value: str, output_lines: list[str]
+    ) -> None:
+        logged: list[str] = []
+        mgr = SessionManager(
+            connections=SimpleNamespace(),
+            session_factory=_StubExecSession,
+            log_command=lambda *_: None,
+            log_output=lambda line, _mode: logged.append(line),
+            host_id="h",
+        )
+        conn = SimpleNamespace(create_process=AsyncMock(return_value=_FakeSshProcess(raw)))
+
+        result = await mgr.exec_on(conn, "cmd")
+
+        assert result.value == value
+        # A real blank line the command printed is logged (and kept); the EOF
+        # partial is neither.
+        assert logged == output_lines
+
+
 # ---------------------------------------------------------------------------
 # Console term: session dispatch, single-client refusal, failure context
 # ---------------------------------------------------------------------------

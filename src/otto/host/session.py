@@ -3061,6 +3061,11 @@ class SessionManager:
 
         async def _drain() -> None:
             async for raw_line in process.stdout:
+                # asyncssh yields an empty partial when EOF lands after the last
+                # line (timing-dependent, #711). Real output is never '': a blank
+                # line is '\n', so test the raw line, never the stripped one.
+                if raw_line == "":
+                    continue
                 line = raw_line.rstrip("\n")
                 lines.append(line)
                 if mode is not LogMode.NEVER:
