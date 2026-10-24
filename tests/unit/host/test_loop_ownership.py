@@ -14,8 +14,19 @@ from otto.host.docker_host import DockerContainerHost
 from otto.host.local_host import LocalHost
 from otto.host.loop_owner import LOOP_LABELS, HostLoopError, loop_label
 from otto.host.options import SshOptions
+from tests._fixtures.clock import LONG_DEADLINE, stepped_loop_clock
 from tests._fixtures.registry import registered_ids
 from tests.conftest import make_host
+
+
+async def _until_closed(host) -> None:
+    """Yield to the loop until *host*'s close has run, bounded so a defect cannot hang."""
+
+    async def poll() -> None:
+        while host._owner_loop is not None:  # noqa: ASYNC110 — a close sets no event to wait on
+            await asyncio.sleep(0)
+
+    await asyncio.wait_for(poll(), 5)
 
 
 @pytest.fixture
@@ -304,10 +315,12 @@ def test_a_sweep_that_outlasts_its_deadline_drops_the_stuck_host(ctx, caplog, mo
     """
     slow, quick = _local("slow"), _local("quick")
     real_close = slow._close
+    hanging = asyncio.Event()
 
     async def hang():
+        hanging.set()
         try:
-            await asyncio.sleep(30)
+            await asyncio.Event().wait()  # never set: only the deadline ends it
         finally:  # the deadline cancels this; free the shell anyway
             await real_close()
 
@@ -318,9 +331,18 @@ def test_a_sweep_that_outlasts_its_deadline_drops_the_stuck_host(ctx, caplog, mo
     async def use():
         await slow.run("true")
         await quick.run("true")
-        return await ctx.sweep_loop(
-            asyncio.get_running_loop(), label="TestSlow's loop", deadline=0.1
-        )
+        with stepped_loop_clock() as clock:
+            sweep = asyncio.ensure_future(
+                ctx.sweep_loop(
+                    asyncio.get_running_loop(), label="TestSlow's loop", deadline=LONG_DEADLINE
+                )
+            )
+            # The deadline runs out only once quick has closed and slow is stuck: a
+            # short real deadline bet on reaching both in time (#705).
+            await asyncio.wait_for(hanging.wait(), 5)
+            await _until_closed(quick)
+            clock.advance()
+            return await asyncio.wait_for(sweep, 5)
 
     with caplog.at_level(logging.DEBUG, logger="otto"):
         assert asyncio.run(use()) == ["quick"]
@@ -329,7 +351,7 @@ def test_a_sweep_that_outlasts_its_deadline_drops_the_stuck_host(ctx, caplog, mo
     assert quick._owner_loop is None
     assert re.search(
         r"closing hosts at end of TestSlow's loop ran past its deadline; gave up after "
-        r"0\.\ds and dropped the connections of: slow$",
+        r"\d+\.\ds and dropped the connections of: slow$",
         caplog.text,
         re.MULTILINE,
     ), caplog.text
@@ -344,13 +366,15 @@ def test_a_close_stuck_in_its_own_cleanup_cannot_stretch_the_deadline(ctx):
     """
     stuck = _local("stuck")
     real_close = stuck._close
+    hanging = asyncio.Event()
 
     async def hang():
+        hanging.set()
         try:
-            await asyncio.sleep(30)
+            await asyncio.Event().wait()  # never set
         finally:
             try:
-                await asyncio.sleep(30)  # the cleanup in the finally hangs as well
+                await asyncio.Event().wait()  # the cleanup in the finally hangs as well
             finally:
                 await real_close()  # free the shell
 
@@ -358,13 +382,19 @@ def test_a_close_stuck_in_its_own_cleanup_cannot_stretch_the_deadline(ctx):
 
     async def use():
         await stuck.run("true")
-        started = time.monotonic()
-        closed = await ctx.sweep_loop(asyncio.get_running_loop(), label="x", deadline=0.2)
-        return closed, time.monotonic() - started
+        with stepped_loop_clock() as clock:
+            sweep = asyncio.ensure_future(
+                ctx.sweep_loop(asyncio.get_running_loop(), label="x", deadline=LONG_DEADLINE)
+            )
+            await asyncio.wait_for(hanging.wait(), 5)
+            clock.advance()  # the deadline runs out with the close stuck
+            started = time.monotonic()
+            closed = await asyncio.wait_for(sweep, 5)
+            return closed, time.monotonic() - started
 
     closed, elapsed = asyncio.run(use())
     assert closed == []
-    assert elapsed < 2, f"the sweep took {elapsed:.1f}s against a 0.2s deadline"
+    assert elapsed < 2, f"the sweep took {elapsed:.1f}s past its deadline"
     assert stuck._owner_loop is None
 
 

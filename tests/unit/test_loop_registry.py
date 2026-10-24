@@ -8,12 +8,12 @@ import asyncio
 import contextlib
 import logging
 import re
-import time
 from collections.abc import Callable
 
 import pytest
 
 from otto import invocation as inv
+from tests._fixtures.clock import LONG_DEADLINE, stepped_loop_clock
 from tests._fixtures.registry import DuckHost, register_duck, registered_ids
 
 pytestmark = pytest.mark.asyncio
@@ -38,6 +38,22 @@ async def _until(ready: Callable[[], bool]) -> None:
             await asyncio.sleep(0)
 
     await asyncio.wait_for(poll(), 5)
+
+
+async def _sweep_expiring_once(ready: Callable[[], bool]) -> list[str]:
+    """Sweep under a deadline that expires only once *ready()* holds.
+
+    A short real deadline bet that the sweep reached the state a test is about
+    before it ran out, and a stalled CI loop lost that bet (#705). Here the
+    deadline cannot run out on its own: the loop's clock steps past it on cue.
+    """
+    with stepped_loop_clock() as clock:
+        sweep = asyncio.ensure_future(inv.sweep_unheld(_loop(), label="t", deadline=LONG_DEADLINE))
+        try:
+            await _until(ready)
+        finally:
+            clock.advance()  # expire it even when ready() never held: a red never hangs
+        return await asyncio.wait_for(sweep, 5)
 
 
 async def test_registering_prunes_closed_loops_registries():  # P1
@@ -186,8 +202,8 @@ async def test_expiry_cancels_twice_then_leaves_a_refusing_close_to_finish():  #
     host = DuckHost("stuck", block=True, refuse_cancel=True)
     host.claim(_loop())
     try:
-        # generous outer bound: the sweep returns after its deadline and two graces, not never
-        await asyncio.wait_for(inv.sweep_unheld(_loop(), label="t", deadline=0.1), 5)
+        # the sweep returns after its deadline and two graces, not never
+        await _sweep_expiring_once(host.entered.is_set)
         assert host.cancels_refused == 2
     finally:
         host.gate.set()  # the refusing close finishes on its own later; a red never hangs
@@ -227,7 +243,7 @@ async def test_expiry_abandons_every_outstanding_record_and_leaves_none(caplog):
     host.claim(_loop())
     try:
         with caplog.at_level(logging.WARNING, logger="otto.invocation"):
-            await asyncio.wait_for(inv.sweep_unheld(_loop(), label="t", deadline=0.1), 5)
+            await _sweep_expiring_once(late.entered.is_set)
         assert registered_ids(_loop()) == []
         assert host.abandoned == [2]
         assert late.abandoned == [1]
@@ -243,7 +259,7 @@ async def test_a_close_cut_short_that_removed_its_own_record_is_still_abandoned(
     host.claim(_loop())
     try:
         with caplog.at_level(logging.WARNING, logger="otto.invocation"):
-            await asyncio.wait_for(inv.sweep_unheld(_loop(), label="t", deadline=0.1), 5)
+            await _sweep_expiring_once(host.entered.is_set)
         assert host.abandoned == [1]  # the half-closed connections are dropped
         assert "dropped the connections of: h" in caplog.text
         assert registered_ids(_loop()) == []
@@ -265,7 +281,7 @@ async def test_a_close_cut_short_after_its_host_reconnected_elsewhere_is_not_aba
     host.claim(_loop())
     try:
         with caplog.at_level(logging.WARNING, logger="otto.invocation"):
-            await asyncio.wait_for(inv.sweep_unheld(_loop(), label="t", deadline=0.1), 5)
+            await _sweep_expiring_once(host.entered.is_set)
         assert host.abandon_calls == [1]  # the cut record reached its abandon, at generation 1
         assert host.abandoned == []  # a no-op: the host is at 2
         assert host.generation == 2
@@ -281,6 +297,7 @@ async def test_a_close_that_finishes_despite_the_cancel_is_not_abandoned():  # S
     class _Finishing(DuckHost):
         async def close(self) -> None:
             loop, generation = self.owner, self.generation
+            self.entered.set()
             with contextlib.suppress(asyncio.CancelledError):  # finishes its close anyway
                 await self.gate.wait()
             self.closes_finished += 1
@@ -288,7 +305,7 @@ async def test_a_close_that_finishes_despite_the_cancel_is_not_abandoned():  # S
 
     host = _Finishing("h")
     host.claim(_loop())
-    closed = await asyncio.wait_for(inv.sweep_unheld(_loop(), label="t", deadline=0.1), 5)
+    closed = await _sweep_expiring_once(host.entered.is_set)
     assert closed == ["h"]
     assert host.abandoned == []  # it was not cut short: it closed
     assert registered_ids(_loop()) == []
@@ -304,7 +321,7 @@ async def test_abandoning_a_cut_close_leaves_no_record_even_if_the_abandon_regis
     host = _Reregistering("h", block=True, release_on_cancel=True)
     host.claim(_loop())
     try:
-        await asyncio.wait_for(inv.sweep_unheld(_loop(), label="t", deadline=0.1), 5)
+        await _sweep_expiring_once(host.entered.is_set)
         assert host.abandoned == [1]
         assert registered_ids(_loop()) == []  # no record outlives the expired sweep
     finally:
@@ -324,7 +341,7 @@ async def test_a_queued_close_whose_host_was_rebuilt_before_it_started_closes_th
     rebuilt.claim(_loop())  # independent of the rebuilder: both closes are queued in one step
     try:
         with caplog.at_level(logging.WARNING, logger="otto.invocation"):
-            await asyncio.wait_for(inv.sweep_unheld(_loop(), label="t", deadline=0.1), 5)
+            await _sweep_expiring_once(rebuilt.entered.is_set)
         # The close queued for generation 1 never ran; the sweep closed generation 2,
         # and the expiry that interrupted that close abandoned it at generation 2.
         assert rebuilt.closes_started == 1
@@ -343,7 +360,7 @@ async def test_a_cut_close_whose_cancellation_cleanup_raises_is_still_abandoned(
     host.claim(_loop())
     try:
         with caplog.at_level(logging.WARNING, logger="otto.invocation"):
-            closed = await asyncio.wait_for(inv.sweep_unheld(_loop(), label="t", deadline=0.1), 5)
+            closed = await _sweep_expiring_once(host.entered.is_set)
         assert closed == []
         assert "closing host 'h' failed during the loop's sweep: OSError" in caplog.text
         assert host.abandoned == [1]  # the expiry interrupted it, and it never finished
@@ -467,21 +484,24 @@ async def test_the_synchronous_acquisition_refuses_draining_shut_and_closed_loop
 
 
 async def test_the_last_release_is_bounded_by_the_deadline_recorded_at_acquisition():  # B2
-    boundary = inv.acquire_boundary(_loop(), deadline=0.1)
-    assert boundary.deadline == 0.1
-    host = DuckHost("stuck", block=True, refuse_cancel=True)
-    host.claim(_loop())
-    release = asyncio.ensure_future(boundary.release(label="t"))
-    try:
-        # asyncio.wait never cancels: an unbounded drain cannot absorb it and hang the test
-        done, _ = await asyncio.wait({release}, timeout=0.1 + 2 * 0.25 + 1.0)
-        assert release in done, "the release outlived the deadline its boundary recorded"
-        assert host.abandoned == [1]
-    finally:
-        host.gate.set()  # always: lets a drain with no deadline (the mutation) finish
-        await asyncio.wait({release}, timeout=1.0)
-        if not release.done():
-            release.cancel()
+    with stepped_loop_clock() as clock:
+        boundary = inv.acquire_boundary(_loop(), deadline=LONG_DEADLINE)
+        assert boundary.deadline == LONG_DEADLINE
+        host = DuckHost("stuck", block=True, refuse_cancel=True)
+        host.claim(_loop())
+        release = asyncio.ensure_future(boundary.release(label="t"))
+        try:
+            await _until(host.entered.is_set)
+            clock.advance()  # past the deadline the boundary recorded, not one passed now
+            # asyncio.wait never cancels: an unbounded drain cannot absorb it and hang the test
+            done, _ = await asyncio.wait({release}, timeout=2 * 0.25 + 1.0)
+            assert release in done, "the release outlived the deadline its boundary recorded"
+            assert host.abandoned == [1]
+        finally:
+            host.gate.set()  # always: lets a drain with no deadline (the mutation) finish
+            await asyncio.wait({release}, timeout=1.0)
+            if not release.done():
+                release.cancel()
 
 
 async def test_a_release_that_is_not_the_last_sweeps_nothing():  # B3
@@ -628,14 +648,19 @@ async def test_a_waiter_cancelled_after_its_grant_releases_it_and_one_cancelled_
 async def test_the_wait_is_bounded_by_the_running_sweeps_deadline():  # W3
     host = DuckHost("stuck", block=True, refuse_cancel=True)
     host.claim(_loop())
-    sweep = asyncio.ensure_future(inv.sweep_unheld(_loop(), label="t", deadline=0.1))
     try:
-        await host.entered.wait()
-        boundary = await asyncio.wait_for(
-            inv.acquire_boundary_waiting(_loop(), deadline=5), 0.1 + 2 * 0.25 + 1.0
-        )
-        await sweep
-        await boundary.release(label="t")
+        with stepped_loop_clock() as clock:
+            sweep = asyncio.ensure_future(
+                inv.sweep_unheld(_loop(), label="t", deadline=LONG_DEADLINE)
+            )
+            await host.entered.wait()
+            waiting = asyncio.ensure_future(inv.acquire_boundary_waiting(_loop(), deadline=5))
+            registry = inv._REGISTRIES[_loop()]
+            await _until(lambda: bool(registry.waiters))
+            clock.advance()  # the sweep's deadline, which the waiter must not outlast
+            boundary = await asyncio.wait_for(waiting, 2 * 0.25 + 1.0)
+            await sweep
+            await boundary.release(label="t")
     finally:
         host.gate.set()  # lets the refusing close end, so a red never hangs the loop's teardown
 
@@ -725,8 +750,6 @@ async def test_a_second_cancel_cuts_the_drain_short_and_abandons_before_admittin
 async def test_a_cancelled_drain_that_expires_abandons_before_admitting(caplog):  # C3
     host = DuckHost("stuck", block=True, refuse_cancel=True)
     host.claim(_loop())
-    sweep = asyncio.ensure_future(inv.sweep_unheld(_loop(), label="t", deadline=0.2))
-    await host.entered.wait()
     abandoned_at_admission: list[list[int]] = []
 
     async def wait_and_look():
@@ -734,20 +757,26 @@ async def test_a_cancelled_drain_that_expires_abandons_before_admitting(caplog):
         abandoned_at_admission.append(list(host.abandoned))
         return boundary
 
-    registry = inv._REGISTRIES[_loop()]
-    waiter = asyncio.ensure_future(wait_and_look())
     try:
-        await _until(lambda: bool(registry.waiters))
-        sweep.cancel()  # once
-        with (
-            caplog.at_level(logging.WARNING, logger="otto.invocation"),
-            pytest.raises(asyncio.CancelledError),
-        ):
-            await asyncio.wait_for(sweep, 5)
-        boundary = await asyncio.wait_for(waiter, 1)
-        assert abandoned_at_admission == [[1]]
-        assert "closing hosts at end of t ran past its deadline; gave up after" in caplog.text
-        await boundary.release(label="t")
+        with stepped_loop_clock() as clock:
+            sweep = asyncio.ensure_future(
+                inv.sweep_unheld(_loop(), label="t", deadline=LONG_DEADLINE)
+            )
+            await host.entered.wait()
+            registry = inv._REGISTRIES[_loop()]
+            waiter = asyncio.ensure_future(wait_and_look())
+            await _until(lambda: bool(registry.waiters))
+            sweep.cancel()  # once: the drain keeps closing under its own deadline
+            clock.advance()  # which then runs out
+            with (
+                caplog.at_level(logging.WARNING, logger="otto.invocation"),
+                pytest.raises(asyncio.CancelledError),
+            ):
+                await asyncio.wait_for(sweep, 5)
+            boundary = await asyncio.wait_for(waiter, 1)
+            assert abandoned_at_admission == [[1]]
+            assert "closing hosts at end of t ran past its deadline; gave up after" in caplog.text
+            await boundary.release(label="t")
     finally:
         host.gate.set()  # lets the refusing close end, so a red never hangs the loop's teardown
 
@@ -853,8 +882,11 @@ async def test_a_deadline_that_runs_out_in_the_end_of_body_window_abandons_the_l
 ):  # S15, at the deadline
     host, late = DuckHost("h", block=True), DuckHost("late")
     host.claim(_loop())
-    with caplog.at_level(logging.WARNING, logger="otto.invocation"):
-        sweep = asyncio.ensure_future(inv.sweep_unheld(_loop(), label="t", deadline=1.0))
+    with (
+        caplog.at_level(logging.WARNING, logger="otto.invocation"),
+        stepped_loop_clock() as clock,
+    ):
+        sweep = asyncio.ensure_future(inv.sweep_unheld(_loop(), label="t", deadline=LONG_DEADLINE))
         try:
             await host.entered.wait()
             body = next(
@@ -863,14 +895,16 @@ async def test_a_deadline_that_runs_out_in_the_end_of_body_window_abandons_the_l
 
             def in_window(_):
                 late.claim(_loop())
-                # Blocks the loop past the deadline, so the drain resumes with none left:
-                # the deadline has passed, not raced.
-                time.sleep(1.1)
+                # Past the deadline before the drain resumes, so it resumes with none
+                # left: the deadline has passed, not raced.
+                clock.advance()
 
             body.add_done_callback(in_window)
         finally:
             host.gate.set()  # lets the close end, so a red never hangs the loop's teardown
-        assert await asyncio.wait_for(sweep, 5) == ["h"]
+        # The advance lands while this wait is pending, so its bound must outlast it:
+        # a bound of 5 s would come due at the advance and cancel a finished sweep.
+        assert await asyncio.wait_for(sweep, 2 * LONG_DEADLINE) == ["h"]
     assert late.abandoned == [1]
     assert late.closes_started == 0
     assert registered_ids(_loop()) == []

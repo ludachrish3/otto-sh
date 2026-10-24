@@ -30,6 +30,7 @@ import logging
 from otto.host.local_host import LocalHost
 
 CLOSED = []
+FINISHED = []
 _log = logging.getLogger("fakehost")
 
 
@@ -46,6 +47,7 @@ class RecordingHost(LocalHost):
         CLOSED.append((self.id, id(loop), loop.is_closed()))
         _log.info("recorded close of %s, loop closed: %s", self.id, loop.is_closed())
         await super()._close()
+        FINISHED.append(self.id)
 
 
 class FailingHost(RecordingHost):
@@ -55,9 +57,27 @@ class FailingHost(RecordingHost):
 
 
 class SlowHost(RecordingHost):
+    """Hangs in its close, and runs its loop's teardown deadline out from inside it.
+
+    It first waits for the hosts named in *after* to finish closing, then steps
+    the loop's clock past any deadline: the expiry lands after them however
+    slow the machine, where a short real deadline bet they would close in
+    time (#705). The clock stays stepped: the loop is this class's, and the
+    graces the expiry schedules are measured on it.
+    """
+
+    def __init__(self, name, after=()):
+        super().__init__(name)
+        self.after = list(after)
+
     async def _close(self):
         try:
-            await asyncio.sleep(30)
+            while not set(self.after) <= set(FINISHED):
+                await asyncio.sleep(0)
+            loop = asyncio.get_running_loop()
+            real = loop.time
+            loop.time = lambda: real() + 3600.0
+            await asyncio.Event().wait()  # never set: only the deadline ends it
         finally:  # cancelled by the deadline: still release the local shell
             await LocalHost._close(self)
 '''
@@ -66,7 +86,8 @@ class SlowHost(RecordingHost):
 A test writes it with ``pytester.makepyfile(fakehost=FAKE_HOSTS)``. The hosts
 claim the running loop on first use, as every host does, so they register
 with that loop with no test wiring. ``CLOSED`` gets ``(host id, id(loop),
-loop closed?)`` for every close.
+loop closed?)`` for every close as it starts, ``FINISHED`` the id of every
+close that completed.
 """
 
 

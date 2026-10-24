@@ -1,0 +1,37 @@
+# Rule test for .ast-grep/rules/no-short-deadline-in-tests.yml.
+# `valid` snippets must NOT match, `invalid` snippets must. Run by
+# `make lint-arch` (`ast-grep test`), whose test dir is sgconfig.yml's
+# testConfigs entry.
+id: no-short-deadline-in-tests
+valid:
+# The remedy: a deadline nothing reaches on its own, expired on cue.
+- |
+  async def test_expiry_abandons_the_stuck_close():
+      with stepped_loop_clock() as clock:
+          sweep = asyncio.ensure_future(
+              inv.sweep_unheld(_loop(), label="t", deadline=LONG_DEADLINE)
+          )
+          await host.entered.wait()
+          clock.advance()
+          await asyncio.wait_for(sweep, 5)
+# Zero expires on the next loop turn: nothing has to happen first.
+- |
+  task = asyncio.ensure_future(compensate(rollback(), deadline=0.0, what="hung"))
+- |
+  ctrl = _CommandRun(teardown_deadline=0.0, install_handlers=False)
+# A budget the sweep is expected to finish inside, not an expiry under test.
+- |
+  closed = await inv.sweep_unheld(_loop(), label="t", deadline=5)
+- |
+  binding = install_policy(RunPolicy(teardown_deadline=60.0))
+# Short timeouts are out of scope: waited out against a fake that never answers.
+- |
+  await asyncio.wait({release}, timeout=0.5)
+invalid:
+# The #705 shape: a 0.1 s sweep deadline the test bets the machine beats.
+- |
+  await asyncio.wait_for(inv.sweep_unheld(_loop(), label="t", deadline=0.1), 5)
+- |
+  binding = install_policy(RunPolicy(teardown_deadline=0.2))
+- |
+  ok = await confirm_live(io.send, io.expect, settle=0.0, deadline=.08)

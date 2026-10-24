@@ -8,6 +8,7 @@ import pytest
 from otto.host import shell_liveness
 from otto.host.command_frame import SessionMarkers
 from otto.host.shell_liveness import confirm_live
+from tests._fixtures.clock import LONG_DEADLINE, stepped_loop_clock
 
 _FIXED = SessionMarkers.for_session("cafef00d")
 
@@ -82,18 +83,31 @@ async def test_resends_past_timeouts_then_confirms():
 @pytest.mark.asyncio
 async def test_returns_false_when_deadline_elapses():
     io = _FakeIO(fail_times=999, sleep_on_fail=True)
-    ok = await confirm_live(
-        io.send,
-        io.expect,
-        _render,
-        _pattern,
-        _fixed_markers,
-        settle=0.0,
-        probe_timeout=0.02,
-        deadline=0.08,
-    )
+    with stepped_loop_clock() as clock:
+        probing = asyncio.ensure_future(
+            confirm_live(
+                io.send,
+                io.expect,
+                _render,
+                _pattern,
+                _fixed_markers,
+                settle=0.0,
+                probe_timeout=LONG_DEADLINE,
+                deadline=LONG_DEADLINE,
+            )
+        )
+
+        async def first_probe() -> None:
+            while io.calls < 1:  # noqa: ASYNC110 — the fake sets no event to wait on
+                await asyncio.sleep(0)
+
+        try:
+            await asyncio.wait_for(first_probe(), 5)
+        finally:
+            clock.advance()  # the first probe is waiting: the deadline runs out under it
+        ok = await asyncio.wait_for(probing, 5)
     assert ok is False
-    assert io.calls >= 1
+    assert io.calls == 1
 
 
 @pytest.mark.asyncio

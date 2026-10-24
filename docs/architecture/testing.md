@@ -89,6 +89,33 @@ Given a change, here is how to place the test that proves it:
 The last three rows are worth their own section, because "chaos" is not one
 lane but three, sized to how much determinism each kind of proof can afford.
 
+(testing-stepped-clock)=
+### A deadline the test expires on cue
+
+A test about what happens when a deadline runs out must not give otto a short
+real one (`deadline=0.1`) and assert what happened before it expired: that
+bets the machine reaches the state under test in time, and a CI runner whose
+loop stalls for half a second loses the bet with nothing wrong (#705). Every
+deadline otto takes is measured on the event loop's clock, so the test owns
+that clock instead. `tests/_fixtures/clock.py`'s `stepped_loop_clock()`
+shadows `loop.time()` with real time plus an offset; the test passes
+`LONG_DEADLINE`, waits for the state it is about (a close entered, a waiter
+queued), then calls `clock.advance()`, and the expiry lands after that state on
+every machine:
+
+```python
+with stepped_loop_clock() as clock:
+    sweep = asyncio.ensure_future(inv.sweep_unheld(loop, label="t", deadline=LONG_DEADLINE))
+    await host.entered.wait()
+    clock.advance()
+    await asyncio.wait_for(sweep, 5)
+```
+
+A deadline of `0` needs none of this: it expires on the next loop turn, so a
+test that needs nothing to happen first is already deterministic. The
+`no-short-deadline-in-tests` ast-grep rule refuses a `deadline=` or
+`teardown_deadline=` literal between 0 and 1 in `tests/`.
+
 ## Special lanes, and why they are opt-in
 
 A few markers exist specifically to keep expensive or bed-hostile tests out

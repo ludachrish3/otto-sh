@@ -167,7 +167,7 @@ def test_a_close_that_outlasts_the_teardown_deadline_is_abandoned(
     # The runner imports shut_down when it sweeps, so the spy is what it calls.
     monkeypatch.setattr(inv, "shut_down", recording_shut_down)
     pytester.makepyfile(fakehost=_FAKE)
-    binding = install_policy(RunPolicy(teardown_deadline=0.2))
+    binding = install_policy(RunPolicy(teardown_deadline=60.0))
     try:
         result = run_inner(
             pytester,
@@ -176,7 +176,7 @@ def test_a_close_that_outlasts_the_teardown_deadline_is_abandoned(
                 _CLASS_LOOPS + "from fakehost import SlowHost, RecordingHost\n"
                 "class TestSlow:\n"
                 "    async def test_x(self):\n"
-                "        await SlowHost('slow1').run('true')\n"
+                "        await SlowHost('slow1', after=['quick1']).run('true')\n"
                 "        await RecordingHost('quick1').run('true')\n"
             ),
         )
@@ -192,8 +192,9 @@ def test_a_close_that_outlasts_the_teardown_deadline_is_abandoned(
             "*closed 1 host at end of TestSlow's loop: quick1*",
         ]
     )
-    # The installed 0.2 s policy, not the 10 s default, bounds the runner's sweep.
-    assert deadlines["TestSlow's loop"] == 0.2
+    # The installed 60 s policy, not the 10 s default, bounds the runner's sweep;
+    # slow1 runs it out once quick1 has closed.
+    assert deadlines["TestSlow's loop"] == 60.0
 
 
 def test_nothing_is_left_for_the_backstop(pytester, otto_plugins):

@@ -1,0 +1,54 @@
+id: no-short-deadline-in-tests
+language: python
+severity: error
+message: a short real deadline bets the machine reaches the state under test before it runs out — pass tests/_fixtures/clock.LONG_DEADLINE and expire it on cue with stepped_loop_clock() once that state holds (or 0 to expire on the next loop turn).
+note: >
+  A test that hands otto a deadline like 0.1 s and then asserts what
+  happened before it expired is a race against the machine: a CI runner whose
+  loop stalls for half a second runs the deadline out first, and the test
+  fails with nothing wrong in otto (#705: a 0.1 s sweep deadline, a close
+  that never started, `0 == 1` on one Python of five). Every deadline otto
+  takes is measured on the event loop's own clock, so a test can own that
+  clock instead: tests/_fixtures/clock.stepped_loop_clock() shadows
+  loop.time() with real time plus an offset, the test passes LONG_DEADLINE,
+  waits for the state it is about (a close entered, a waiter queued), and
+  calls clock.advance() — the expiry then lands after that state on every
+  machine.
+
+  Zero is allowed: a 0 deadline expires on the next loop turn, so a test
+  that needs nothing to happen before the expiry is deterministic by
+  construction (the lifecycle/compensate tests). One second and above is out
+  of scope: those are budgets a sweep is expected to finish inside, not
+  expiries a test is waiting for.
+
+  Matched: a `deadline=` or `teardown_deadline=` keyword whose value is a
+  float literal strictly between 0 and 1. Accepted residuals, each a
+  spelling with no in-tree use when this rule landed (2026-10-23, 15 sites
+  converted): the value bound to a name first (`d = 0.1; ...deadline=d`), an
+  arithmetic expression (`deadline=0.05 * 2`), a positional deadline, and
+  other parameter names for the same idea (`timeout=` is deliberately NOT
+  covered: most short timeouts in the tree are waited out against a fake
+  that never answers, where the expiry is the expected outcome and no state
+  has to be reached first).
+files:
+- tests/**
+ignores:
+# Fixture projects + firmware: user-example input data, not otto's tests
+# (sgconfig.yml discipline for tests-scoped rules).
+- tests/project1/**
+- tests/project2/**
+- tests/project3/**
+- tests/project_broken/**
+- tests/project_e2e/**
+- tests/firmware/**
+rule:
+  kind: keyword_argument
+  all:
+  - has:
+      field: name
+      regex: ^(deadline|teardown_deadline)$
+  - has:
+      field: value
+      kind: float
+      # 0.1, .05, 0.08 — but not 0, 0.0 or anything from 1 up.
+      regex: ^0*\.0*[1-9][0-9]*$
