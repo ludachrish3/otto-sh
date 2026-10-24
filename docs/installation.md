@@ -82,8 +82,44 @@ the rig needs, and one tool makes it so.
 ### With uv (recommended)
 
 [uv](https://docs.astral.sh/uv/) is a single static binary — no Python needed to
-install it, which matters on C/C++ build hosts. Add a `pyproject.toml` at the root of
-the repository that holds your otto project:
+install it, which matters on C/C++ build hosts. The settings below need **uv 0.11 or
+newer** (`uv --version`). Setting up inside an air gap? Read
+[Creating the project inside the gap](#air-gap-create-project) before you run
+`uv add`.
+
+At the root of the repository that holds your otto project, create a bare
+`pyproject.toml`:
+
+```bash
+uv init --bare --python 3.10   # writes only pyproject.toml
+```
+
+Pass `--python` with the **oldest** Python your hosts run: it becomes the file's
+`requires-python` floor. Without it, `uv init` uses the interpreter it finds
+locally, and a 3.14 workstation would write `requires-python = ">=3.14"`, shutting
+out every older host. The flag sets only that floor: uv still builds `.venv/` with
+the newest interpreter it finds. To use a specific one, pass it to the command that
+builds the environment, e.g. `uv sync --python 3.10`.
+
+Append a `[tool.uv]` table to the generated file:
+
+```toml
+[tool.uv]
+# This repository is not a Python package; install its dependencies only.
+package = false
+# Verify HTTPS against the operating system's certificate store.
+system-certs = true
+```
+
+Then add otto, and any Python packages your instructions or tests import:
+
+```bash
+uv add otto-sh       # records the dependency, locks, and installs into .venv/
+uv add pyserial      # for example
+uv run otto --version   # prints: otto version: %OTTO_VERSION%
+```
+
+The finished file reads:
 
 ```toml
 [project]
@@ -92,19 +128,32 @@ version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = [
     "otto-sh>=%OTTO_VERSION%",
-    # Python packages your instructions/tests import go here, e.g.:
-    # "pyserial>=3.5",
+    "pyserial>=3.5",
 ]
+
+[tool.uv]
+package = false
+system-certs = true
 ```
 
-`name` and `version` are required by the file format but otherwise unused — your project
-does not become a Python package, and no build configuration is needed: uv treats a
-`pyproject.toml` without a build backend as a *virtual* project and installs only its
-dependencies.
+`name` and `version` are required by the file format but otherwise unused. `uv init`
+derives the name from the directory; when the directory name is not a valid package
+name, pass one with `--name my-project-tests`. Your project does not become a Python
+package, and no build configuration is needed: a `pyproject.toml` without a build
+backend is already a *virtual* project to uv (a list of dependencies to install, not
+a package to build). `package = false` states that explicitly, so it stays true even if
+someone adds a build backend later.
+
+`system-certs = true` makes uv trust the operating system's certificate store rather
+than its own bundled one. It is what lets uv work behind a TLS-inspecting corporate
+proxy, or against a package index whose certificate comes from your organization's
+internal CA. Where neither applies, it does no harm.
+
+Writing the file by hand instead of using `uv init` and `uv add` is equally fine.
+Either way, a teammate with a fresh clone needs one command:
 
 ```bash
 uv sync            # creates .venv/ and installs otto + your extra packages
-uv run otto --version
 ```
 
 Commit `pyproject.toml` and the generated `uv.lock` (exact, reproducible versions for
@@ -250,7 +299,10 @@ bring it across the gap explicitly, either way:
 - **As a wheel:** uv is also published on PyPI, so `pip download uv` alongside otto
   (next step) places it in the same wheel directory, installable with the system pip.
 
-Pin whatever version you transfer — `uv self update` cannot work offline. The current
+Transfer uv **0.11 or newer**, and pin it — `uv self update` cannot work offline.
+Older releases do not know the `system-certs` and `environments` settings this page
+puts in `pyproject.toml`; they warn once and then ignore the **whole** `[tool.uv]`
+table, so the index and platform settings below silently stop applying. The current
 artifact list lives in
 [uv's installation docs](https://docs.astral.sh/uv/getting-started/installation/).
 
@@ -390,17 +442,28 @@ pip config set global.trusted-host pypi.internal    # plain HTTP needs this
 ```
 
 Point **uv** at it in the project's `pyproject.toml` — committed once, so every
-teammate's `uv sync` works with no per-machine setup:
+teammate's `uv sync` works with no per-machine setup. Add the index at the end of
+the file, and the plain-HTTP allowance to the `[tool.uv]` table the
+[recommended setup](#with-uv-recommended) created. A file may hold only one
+`[tool.uv]` header, so a second one is a parse error. Replace `pypi.internal` with
+your index's host name, in both places; `allow-insecure-host` takes the bare host
+name, with no `http://` and no port:
 
 ```toml
+[tool.uv]
+package = false
+system-certs = true
+# Only needed for plain HTTP; drop when the index serves HTTPS.
+allow-insecure-host = ["pypi.internal"]
+
 [[tool.uv.index]]
 url = "http://pypi.internal:8080/simple/"
 default = true
-
-[tool.uv]
-# Only needed for plain HTTP; drop when the index serves HTTPS.
-allow-insecure-host = ["pypi.internal"]
 ```
+
+An HTTPS index whose certificate comes from your internal CA needs no
+`allow-insecure-host`: `system-certs` already makes uv trust that CA, provided the
+host's certificate store does.
 
 **Tier 3 — an artifact manager you already run.** Artifactory, Nexus, and GitLab's
 package registry all speak the same PyPI protocol. If your organization already runs
@@ -415,6 +478,56 @@ installation is just:
 ```bash
 uv sync
 ```
+
+(air-gap-create-project)=
+
+**Creating the project inside the gap.** Follow the
+[recommended setup](#with-uv-recommended), but before you run `uv add`, give the
+file the index settings from Step 3 and one more `[tool.uv]` key, `environments`.
+The complete file, before `uv add` fills in `dependencies`, reads:
+
+```toml
+[project]
+name = "my-project-tests"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.uv]
+package = false
+system-certs = true
+# Only needed for plain HTTP; drop when the index serves HTTPS.
+allow-insecure-host = ["pypi.internal"]
+# Lock for Linux only: the index holds only the Linux wheels from Step 1.
+environments = ["sys_platform == 'linux'"]
+
+[[tool.uv.index]]
+url = "http://pypi.internal:8080/simple/"
+default = true
+```
+
+Then run `uv add otto-sh` as the recommended setup shows. Any extra package you
+`uv add` (such as `pyserial`) must be on the index too, so name it in the Step 1
+download alongside otto: `pip download otto-sh pyserial …`.
+
+Why `environments` is needed: uv locks *universally*. By default `uv.lock` covers
+every operating system, so `uv add` and `uv lock` must find the packages that only
+Windows or macOS need. pytest, for example, depends on `colorama` on Windows only
+(the `; sys_platform == 'win32'` marker on that dependency). Step 1 never downloads
+those packages, because pip evaluates such markers on the Linux machine running the
+download. So without `environments`, `uv add otto-sh` fails with:
+
+```text
+× No solution found when resolving dependencies for split (markers: ...):
+╰─▶ Because only colorama{sys_platform == 'win32'}<0.4 is available and all
+    versions of pytest depend on colorama{sys_platform == 'win32'}>=0.4, ...
+```
+
+`environments` narrows the lock to the platforms you list. Name every platform your
+hosts run on, such as `"sys_platform == 'darwin'"` alongside Linux. For each one you
+add, run the Step 1 download on that platform too, because otherwise its
+platform-only dependencies are still missing. A host on an unlisted platform is not
+silently mis-installed: its `uv sync` fails and names `tool.uv.environments`.
 
 With Tier 1, or without a project checkout:
 
