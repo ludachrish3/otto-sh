@@ -63,6 +63,7 @@ calls).  `exec` runs each call independently of the persistent shell and
 of other concurrent `exec` calls, making it safe to fan out via
 `asyncio.gather()`.
 
+(overview-local-host)=
 Every lab automatically contains a built-in `local` host — a
 {class}`~otto.host.local_host.LocalHost` for the machine otto itself runs
 on, usable as `otto host local <verb>` with no configuration.  It is

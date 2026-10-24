@@ -55,7 +55,7 @@ Three things that code relies on:
 `otto run install --help` now shows the inherited flags and the new one side
 by side:
 
-```{literalinclude} ../examples/getting-started/captures/run-install-help.txt
+```{literalinclude} ../examples/captures/run-install-help.txt
 :language: text
 ```
 

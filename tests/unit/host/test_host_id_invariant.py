@@ -25,6 +25,16 @@ _CONTAINER_ID = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*\.[a-z0-9_-]+\.[a-z0-9._-]+$
 _LABS = [
     CHECKOUT_ROOT / "tests/_fixtures/lab_data/tech1/lab.json",
     CHECKOUT_ROOT / "docs/examples/getting-started/lab_data/lab.json",
+    CHECKOUT_ROOT / "docs/examples/quickstart-shell/lab_data/lab.json",
+    CHECKOUT_ROOT / "docs/examples/bed/quickstart-shell/lab_data/lab.json",
+]
+
+
+# The labs that declare links, named outright: a lab that loses its links must
+# fail the link test, not drop out of it.
+_LINKED_LABS = [
+    CHECKOUT_ROOT / "tests/_fixtures/lab_data/tech1/lab.json",
+    CHECKOUT_ROOT / "docs/examples/getting-started/lab_data/lab.json",
 ]
 
 
@@ -63,7 +73,9 @@ def test_every_shipped_lab_id_is_kebab(path):
     assert not bad, bad
 
 
-@pytest.mark.parametrize("path", _LABS, ids=lambda p: p.relative_to(CHECKOUT_ROOT).as_posix())
+@pytest.mark.parametrize(
+    "path", _LINKED_LABS, ids=lambda p: p.relative_to(CHECKOUT_ROOT).as_posix()
+)
 def test_every_link_endpoint_names_a_composed_id(path):
     doc = json.loads(path.read_text())
     ids = set(_composed_ids(path))

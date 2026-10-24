@@ -1,0 +1,15 @@
+$ otto --lab example_lab test --no-cov --no-random TestMonitoring
+INFO     fleet of interest: 1 of 2 lab hosts (1 project(s), 0 excluded)
+======================================= test session starts ========================================
+INFO     === test_install_size_is_charted ===
+INFO     @dut   | GCOV_PREFIX=/tmp/shout GCOV_PREFIX_STRIP=3 /tmp/quickstart/shout monitored
+INFO     @dut > | MONITORED
+INFO     @dut   | GCOV_PREFIX=/tmp/shout GCOV_PREFIX_STRIP=3 /tmp/quickstart/shout monitored
+INFO     @dut > | MONITORED
+INFO     @dut   | GCOV_PREFIX=/tmp/shout GCOV_PREFIX_STRIP=3 /tmp/quickstart/shout monitored
+INFO     @dut > | MONITORED
+
+----- generated xml file: /tmp/otto-gs/xdir/test/<run>/junit.xml -----
+=== 1 passed, 4 deselected in <t>s ===
+
+Output directory: /tmp/otto-gs/xdir/test/<run>

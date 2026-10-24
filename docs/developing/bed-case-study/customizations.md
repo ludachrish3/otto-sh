@@ -36,7 +36,7 @@ project carries the shortest script that proves the round trip:
 :end-before: "# doc: end as-root"
 ```
 
-```{literalinclude} ../../examples/getting-started/captures/as-root-test1.txt
+```{literalinclude} ../../examples/captures/as-root-test1.txt
 :language: text
 ```
 
@@ -88,7 +88,7 @@ REPL work (and the handshake repeat that follows it) runs once, on the
 default session that `otto host test1 login` or the library's persistent
 `host.run` opens:
 
-```{literalinclude} ../../examples/getting-started/captures/session-setup-test1.txt
+```{literalinclude} ../../examples/captures/session-setup-test1.txt
 :language: text
 ```
 
@@ -123,7 +123,7 @@ The hook's `run()` is bash-framed; `send`/`expect` navigate; and on return
 otto enters the `pyrepl` frame — its handshake, in the REPL — and every
 session from then on, `exec` included, speaks Python:
 
-```{literalinclude} ../../examples/getting-started/captures/session-setup-pyrepl.txt
+```{literalinclude} ../../examples/captures/session-setup-pyrepl.txt
 :language: text
 ```
 
@@ -151,7 +151,7 @@ telnet through the `test4` hop; only the landing changed:
 :end-before: "# doc: end land-on-zephyr"
 ```
 
-```{literalinclude} ../../examples/getting-started/captures/session-setup-zephyr37-lfs.txt
+```{literalinclude} ../../examples/captures/session-setup-zephyr37-lfs.txt
 :language: text
 ```
 
@@ -208,7 +208,7 @@ tests.
 :end-before: "# doc: end collect-metrics"
 ```
 
-```{literalinclude} ../../examples/getting-started/captures/monitor-bb1350.txt
+```{literalinclude} ../../examples/captures/monitor-bb1350.txt
 :language: text
 ```
 

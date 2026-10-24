@@ -114,7 +114,7 @@ def _lab(project: Path, otto: str, env: "dict[str, str]") -> str:
     return labs[0]
 
 
-def _not_copied(examples_root: Path) -> "Callable[[str, list[str]], set[str]]":
+def not_copied(examples_root: Path) -> "Callable[[str, list[str]], set[str]]":
     """Return a copytree filter: bytecode anywhere, and each example's own build directory."""
 
     def ignore(directory: str, names: "list[str]") -> "set[str]":
@@ -132,7 +132,7 @@ def check(example: Path, examples_root: Path, *, otto: str) -> "list[str]":
     with tempfile.TemporaryDirectory(prefix="otto-docs-example-") as tmp:
         scratch = Path(tmp)
         copy_root = scratch / "examples"
-        shutil.copytree(examples_root, copy_root, ignore=_not_copied(examples_root))
+        shutil.copytree(examples_root, copy_root, ignore=not_copied(examples_root))
         project = copy_root / example.name
         env = _env(project, scratch)
         try:

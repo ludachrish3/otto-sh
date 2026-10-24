@@ -1,0 +1,13 @@
+{
+  "labs": { "example_lab": {} },
+  "elements": [
+    {
+      "name": "dut",
+      "labs": ["example_lab"],
+      "hosts": [
+        { "ip": "192.0.2.10", "os_type": "unix",
+          "creds": [{ "login": "admin", "password": "changeme" }] }
+      ]
+    }
+  ]
+}

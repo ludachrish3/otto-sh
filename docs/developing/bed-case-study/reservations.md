@@ -55,13 +55,13 @@ holds each, and the verdict a gated command would reach. The identity is your
 login name unless `--holder` overrides it, and the `reservations.json` above
 names `chris`, so the walkthrough passes `--holder`. `alice` holds nothing:
 
-```{literalinclude} ../../examples/getting-started/captures/reservation-check-refused.txt
+```{literalinclude} ../../examples/captures/reservation-check-refused.txt
 :language: text
 ```
 
 `chris` holds all three:
 
-```{literalinclude} ../../examples/getting-started/captures/reservation-check-ok.txt
+```{literalinclude} ../../examples/captures/reservation-check-ok.txt
 :language: text
 ```
 

@@ -1,0 +1,25 @@
+$ otto --lab example_lab cov get --tier manual --ticket QS-1 --tester-name docs --tester-email docs@example.invalid
+INFO     fleet of interest: 1 of 2 lab hosts (1 project(s), 0 excluded)
+INFO     Archiving .gcda for wordcount on dut:/tmp/wordcount
+INFO     @dut   | ! test -d /tmp/wordcount && echo otto-no-cov-dir || (t=$(mktemp
+         "${TMPDIR:-/tmp}/otto-fetch-<id>.XXXXXX") && echo "otto-archive:$t" && cd
+         /tmp/wordcount && tar -cf "$t" .)
+INFO     @dut > | otto-no-cov-dir
+INFO     @dut   | rm -f "${TMPDIR:-/tmp}"/otto-fetch-<id>.*
+INFO     Archiving .gcda for shout on dut:/tmp/shout
+INFO     @dut   | ! test -d /tmp/shout && echo otto-no-cov-dir || (t=$(mktemp
+         "${TMPDIR:-/tmp}/otto-fetch-<id>.XXXXXX") && echo "otto-archive:$t" && cd
+         /tmp/shout && tar -cf "$t" .)
+INFO     @dut > | otto-archive:/tmp/otto-fetch-<id>.<tmp>
+INFO     @dut   | rm -f "${TMPDIR:-/tmp}"/otto-fetch-<id>.*
+INFO     Coverage data collected to /tmp/otto-gs/xdir/cov/<run>_get/cov (1 product
+         dir(s))
+INFO     === Capturing dut / shout ===
+INFO     lcov capture: 1 file(s) ->
+         /tmp/otto-gs/xdir/cov/<run>_get/cov/dut/shout/board.info
+INFO     dut/shout: skipped 10 source file(s) outside the project root
+INFO     Coverage captures produced: 1 board(s)
+/tmp/otto-gs/xdir/cov/<run>_get/cov/dut/shout/capture.json
+Coverage captured: 1 product(s) -> /tmp/otto-gs/xdir/cov/<run>_get/cov
+
+Output directory: /tmp/otto-gs/xdir/cov/<run>_get

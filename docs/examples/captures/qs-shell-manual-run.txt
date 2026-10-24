@@ -1,0 +1,8 @@
+$ otto --lab example_lab host dut exec 'GCOV_PREFIX=/tmp/shout GCOV_PREFIX_STRIP=3 /tmp/quickstart/shout by hand; GCOV_PREFIX=/tmp/shout GCOV_PREFIX_STRIP=3 /tmp/quickstart/shout again'
+INFO     fleet of interest: 1 of 2 lab hosts (1 project(s), 0 excluded)
+INFO     @dut   | GCOV_PREFIX=/tmp/shout GCOV_PREFIX_STRIP=3 /tmp/quickstart/shout by hand;
+         GCOV_PREFIX=/tmp/shout GCOV_PREFIX_STRIP=3 /tmp/quickstart/shout again
+INFO     @dut > | BY HAND
+INFO     @dut > | AGAIN
+
+Output directory: /tmp/otto-gs/xdir/host/<run>_exec

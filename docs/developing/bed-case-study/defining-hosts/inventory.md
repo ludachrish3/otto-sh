@@ -62,11 +62,11 @@ passwords, and the merge composes them.
 
 ## Asking the inventory
 
-```{literalinclude} ../../../examples/getting-started/captures/inventory-lookup-test1.txt
+```{literalinclude} ../../../examples/captures/inventory-lookup-test1.txt
 :language: text
 ```
 
-```{literalinclude} ../../../examples/getting-started/captures/inventory-list.txt
+```{literalinclude} ../../../examples/captures/inventory-list.txt
 :language: text
 ```
 

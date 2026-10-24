@@ -694,3 +694,445 @@ def test_a_redacted_source_column_does_not_depend_on_the_line_number_s_width(tmp
     assert redacted == rdc.redact(after, ctx.default_rules())
     assert redacted.endswith(" session.py:<n>\n")
     assert len(redacted) == len(before) - len("999") + len("<n>")
+
+
+def test_an_unrecorded_step_runs_but_writes_no_artifact(tmp_path):
+    marker = tmp_path / "scratch" / "ran"
+    m = _manifest(
+        tmp_path,
+        '[[capture]]\nid = "step"\nrecord = false\n'
+        f'argv = ["{{python}}", "-c", "open(\'{marker}\', \'w\').close()"]\n',
+    )
+    caps = rdc.load_manifest(m)
+    ctx = _ctx(tmp_path)
+    ctx.tmp.mkdir(parents=True)
+    rdc.refresh(caps, ctx)
+    assert marker.exists()
+    assert not (ctx.captures_dir / "step.txt").exists()
+
+
+def test_check_never_reports_an_unrecorded_step_missing(tmp_path, capsys):
+    m = _manifest(
+        tmp_path, '[[capture]]\nid = "step"\nrecord = false\nargv = ["{python}", "-c", "pass"]\n'
+    )
+    ctx = _ctx(tmp_path)
+    ctx.tmp.mkdir(parents=True)
+    assert rdc.check(rdc.load_manifest(m), ctx) == 0
+    assert "MISSING" not in capsys.readouterr().out
+
+
+def test_an_unrecorded_step_that_fails_still_fails_the_run(tmp_path):
+    m = _manifest(
+        tmp_path,
+        '[[capture]]\nid = "step"\nrecord = false\n'
+        'argv = ["{python}", "-c", "raise SystemExit(3)"]\n',
+    )
+    ctx = _ctx(tmp_path)
+    ctx.tmp.mkdir(parents=True)
+    with pytest.raises(rdc.CaptureError, match="exited 3"):
+        rdc.refresh(rdc.load_manifest(m), ctx)
+
+
+def test_record_must_be_a_boolean(tmp_path):
+    m = _manifest(
+        tmp_path, '[[capture]]\nid = "a"\nrecord = "no"\nargv = ["{python}", "-c", "pass"]\n'
+    )
+    with pytest.raises(rdc.CaptureError, match="record"):
+        rdc.load_manifest(m)
+
+
+def test_a_store_assertion_file_is_matched_after_substitution(tmp_path):
+    """The store records absolute paths; the manifest names them through a placeholder."""
+    scratch = tmp_path / "scratch"
+    src = _store(
+        tmp_path / "prepared.json",
+        tier="manual",
+        product="app",
+        file=str(scratch / "src" / "main.cpp"),
+        line=12,
+        hits=3,
+    )
+    copy = "import shutil, sys; shutil.copy(sys.argv[1], sys.argv[2])"
+    m = _manifest(
+        tmp_path,
+        '[[capture]]\nid = "cov"\n'
+        f'argv = ["{{python}}", "-c", "{copy}", "{src}", "{{xdir}}/store.json"]\n'
+        '[[capture.store]]\npath = "{xdir}/store.json"\nfile = "{tmp}/src/main.cpp"\n'
+        'line = 12\ntier = "manual"\nproduct = "app"\nhits = 3\n',
+    )
+    rdc.refresh(rdc.load_manifest(m), _ctx(tmp_path))
+    assert (tmp_path / "captures" / "cov.txt").exists()
+
+
+def test_the_rendered_command_never_shows_the_xdir_placeholder():
+    line = rdc.render_command(["{otto}", "cov", "report", "{xdir}/e2e"])
+    assert "{xdir}" not in line
+    assert line == f"$ otto cov report {rdc.SCRATCH_DIR}/xdir/e2e"
+
+
+def test_a_marker_that_is_not_on_its_line_is_refused(tmp_path):
+    project = tmp_path / "examples" / "p"
+    (project / "src").mkdir(parents=True)
+    (project / "src" / "x.cpp").write_text("int a;\nint b;  // qs: here\n")
+    body = (
+        '[[capture]]\nid = "a"\nproject = "p"\nargv = ["{python}", "-c", "pass"]\n'
+        '[[capture.store]]\npath = "{xdir}/s.json"\nfile = "{project}/src/x.cpp"\n'
+        'tier = "system"\nhits = 1\nmarker = "qs: here"\nline = '
+    )
+    rdc.verify_markers(rdc.load_manifest(_manifest(tmp_path, body + "2\n")), tmp_path / "examples")
+    with pytest.raises(rdc.CaptureError, match=r"x\.cpp:1"):
+        rdc.verify_markers(
+            rdc.load_manifest(_manifest(tmp_path, body + "1\n")), tmp_path / "examples"
+        )
+
+
+def test_a_source_set_assertion_names_the_extra_file(tmp_path):
+    src = _store(
+        tmp_path / "prepared.json", tier="unit", product="", file="/p/src/x.cpp", line=1, hits=2
+    )
+    copy = "import shutil, sys; shutil.copy(sys.argv[1], sys.argv[2])"
+    m = _manifest(
+        tmp_path,
+        '[[capture]]\nid = "cov"\n'
+        f'argv = ["{{python}}", "-c", "{copy}", "{src}", "{{xdir}}/store.json"]\n'
+        '[[capture.store_sources]]\npath = "{xdir}/store.json"\ntier = "unit"\nfiles = []\n',
+    )
+    with pytest.raises(rdc.CaptureError, match=r"/p/src/x\.cpp"):
+        rdc.refresh(rdc.load_manifest(m), _ctx(tmp_path))
+
+
+def test_an_overlay_replaces_the_projects_file_in_the_scratch_copy_only(tmp_path):
+    examples = tmp_path / "examples"
+    (examples / "p" / "lab_data").mkdir(parents=True)
+    (examples / "p" / "lab_data" / "lab.json").write_text("placeholder")
+    (examples / "bed" / "p" / "lab_data").mkdir(parents=True)
+    (examples / "bed" / "p" / "lab_data" / "lab.json").write_text("bed")
+    m = _manifest(
+        tmp_path,
+        '[overlays]\np = "bed/p"\n\n'
+        '[[capture]]\nid = "a"\nproject = "p"\nargv = ["{python}", "-c", "pass"]\n',
+    )
+    ctx = _ctx(tmp_path)
+    ctx.overlays = rdc.read_manifest(m).overlays
+    ctx.tmp.mkdir(parents=True)
+    copied = ctx.project_dir(rdc.load_manifest(m)[0])
+    assert (copied / "lab_data" / "lab.json").read_text() == "bed"
+    assert (examples / "p" / "lab_data" / "lab.json").read_text() == "placeholder"
+
+
+def test_an_overlay_naming_a_missing_directory_is_refused(tmp_path):
+    (tmp_path / "examples" / "p").mkdir(parents=True)
+    m = _manifest(
+        tmp_path,
+        '[overlays]\np = "bed/nowhere"\n\n'
+        '[[capture]]\nid = "a"\nproject = "p"\nargv = ["{python}", "-c", "pass"]\n',
+    )
+    ctx = _ctx(tmp_path)
+    ctx.overlays = rdc.read_manifest(m).overlays
+    ctx.tmp.mkdir(parents=True)
+    with pytest.raises(rdc.CaptureError, match="bed/nowhere"):
+        ctx.project_dir(rdc.load_manifest(m)[0])
+
+
+def test_the_example_copy_leaves_an_in_place_build_tree_behind(tmp_path):
+    (tmp_path / "examples" / "p" / "build").mkdir(parents=True)
+    (tmp_path / "examples" / "p" / "build" / "CMakeCache.txt").write_text("x")
+    (tmp_path / "examples" / "p" / "src").mkdir()
+    ctx = _ctx(tmp_path)
+    ctx.tmp.mkdir(parents=True)
+    copied = ctx.project_dir(rdc.Capture(id="a", argv=["x"], project="p"))
+    assert (copied / "src").is_dir()
+    assert not (copied / "build").exists()
+
+
+def test_the_defaults_are_the_shared_manifest_and_one_artifact_directory():
+    assert rdc.DEFAULT_MANIFEST == rdc.EXAMPLES / "captures.toml"
+    assert rdc.DEFAULT_CAPTURES == rdc.EXAMPLES / "captures"
+    assert rdc.DEFAULT_MANIFEST.is_file()
+    ids = {c.id for c in rdc.load_manifest(rdc.DEFAULT_MANIFEST) if c.record}
+    on_disk = {p.stem for p in rdc.DEFAULT_CAPTURES.glob("*.txt")}
+    assert ids == on_disk
+
+
+def test_an_overlay_for_a_project_with_no_example_is_refused(tmp_path):
+    (tmp_path / "examples" / "p").mkdir(parents=True)
+    (tmp_path / "examples" / "bed" / "q").mkdir(parents=True)
+    ctx = _ctx(tmp_path)
+    ctx.overlays = {"q": "bed/q"}
+    ctx.tmp.mkdir(parents=True)
+    with pytest.raises(rdc.CaptureError, match="no example project 'q'"):
+        ctx.project_dir(rdc.Capture(id="a", argv=["x"], project="p"))
+
+
+@pytest.mark.parametrize("table", ['overlays = "bed/p"\n', "[overlays]\np = 1\n"])
+def test_overlays_must_map_a_project_to_a_directory(tmp_path, table):
+    with pytest.raises(rdc.CaptureError, match="overlays"):
+        rdc.read_manifest(_manifest(tmp_path, table))
+
+
+def test_a_manifest_without_overlays_has_none(tmp_path):
+    assert rdc.read_manifest(_manifest(tmp_path, "")).overlays == {}
+
+
+_CAP = '[[capture]]\nid = "a"\nargv = ["{python}", "-c", "pass"]\n'
+_STORE = '[[capture.store]]\npath = "s"\nline = 1\ntier = "t"\nhits = 1\n'
+
+
+@pytest.mark.parametrize(
+    ("body", "said"),
+    [
+        (_CAP + _STORE + 'file = "{project}/x"\nmarker = "m"\n', "needs the capture's project"),
+        (
+            _CAP.replace('id = "a"', 'id = "a"\nproject = "p"')
+            + _STORE
+            + 'file = "x"\nmarker = "m"\n',
+            "needs a file under",
+        ),
+        (_CAP + _STORE + 'file = "{project}/x"\nmarker = 3\n', "'marker' must be a str"),
+        (_CAP + '[[capture.store_sources]]\npath = "s"\ntier = "t"\n', "lacks 'files'"),
+        (_CAP + '[[capture.store_sources]]\npath = "s"\ntier = "t"\nfiles = "x"\n', "'files' must"),
+        (_CAP + '[[capture.store_sources]]\npath = "s"\ntier = "t"\nfiles = [1]\n', "are strings"),
+        (_CAP + 'store_sources = "x"\n', "are tables"),
+    ],
+)
+def test_load_manifest_refuses_a_bad_marker_or_source_set(tmp_path, body, said):
+    with pytest.raises(rdc.CaptureError, match=said):
+        rdc.load_manifest(_manifest(tmp_path, body))
+
+
+def test_a_marker_on_a_line_past_the_end_is_refused(tmp_path):
+    (tmp_path / "examples" / "p").mkdir(parents=True)
+    (tmp_path / "examples" / "p" / "x.cpp").write_text("one\n")
+    cap = rdc.Capture(
+        id="a",
+        argv=["x"],
+        project="p",
+        store=[rdc.StoreAssertion("s", "{project}/x.cpp", 5, "t", 1, marker="one")],
+    )
+    with pytest.raises(rdc.CaptureError, match=r"x\.cpp:5"):
+        rdc.verify_markers([cap], tmp_path / "examples")
+
+
+def test_a_source_set_passes_on_exactly_its_files_for_a_product(tmp_path):
+    src = _store(
+        tmp_path / "prepared.json", tier="unit", product="app", file="/p/x.cpp", line=1, hits=2
+    )
+    copy = "import shutil, sys; shutil.copy(sys.argv[1], sys.argv[2])"
+    m = _manifest(
+        tmp_path,
+        '[[capture]]\nid = "cov"\n'
+        f'argv = ["{{python}}", "-c", "{copy}", "{src}", "{{xdir}}/store.json"]\n'
+        '[[capture.store_sources]]\npath = "{xdir}/store.json"\ntier = "unit"\n'
+        'product = "app"\nfiles = ["/p/x.cpp"]\n',
+    )
+    rdc.refresh(rdc.load_manifest(m), _ctx(tmp_path))
+    bad = m.read_text().replace('product = "app"', 'product = "other"')
+    with pytest.raises(rdc.CaptureError, match="no such run"):
+        rdc.refresh(rdc.load_manifest(_manifest(tmp_path, bad)), _ctx(tmp_path))
+
+
+# --- Final review: overlays stay inside the examples and the scratch dir ----
+
+
+def _overlay_examples(tmp_path: Path) -> Path:
+    """An examples root with projects ``p`` and ``q``, ``p``'s bed overlay, and a dir outside it.
+
+    No capture runs ``q``: it is an example on disk the manifest never names.
+    """
+    examples = tmp_path / "examples"
+    (examples / "p").mkdir(parents=True)
+    (examples / "q").mkdir()
+    (examples / "bed" / "p").mkdir(parents=True)
+    (tmp_path / "elsewhere").mkdir()
+    return examples
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "said"),
+    [
+        ("/abs/p", "bed/p", "plain project name"),
+        ("..", "bed/p", "plain project name"),
+        ("p/sub", "bed/p", "plain project name"),
+        ("q", "bed/p", "no capture runs project 'q'"),
+        ("p", "../elsewhere", "outside"),
+    ],
+)
+def test_main_refuses_an_overlay_that_escapes_before_copying_anything(
+    tmp_path, monkeypatch, key, value, said
+):
+    examples = _overlay_examples(tmp_path)
+    if key == "/abs/p":
+        key = str(examples / "p")  # an absolute key naming the checked-in example itself
+    m = _manifest(
+        tmp_path,
+        f'[overlays]\n"{key}" = "{value}"\n\n'
+        '[[capture]]\nid = "a"\nproject = "p"\nargv = ["{python}", "-c", "pass"]\n',
+    )
+    copies: list[object] = []
+    removals: list[object] = []
+    monkeypatch.setattr(rdc, "EXAMPLES", examples)
+    monkeypatch.setattr(rdc, "SCRATCH_DIR", tmp_path / "scratch")
+    monkeypatch.setattr(rdc.shutil, "copytree", lambda *a, **k: copies.append(a))
+    monkeypatch.setattr(rdc.shutil, "rmtree", lambda *a, **k: removals.append(a))
+    with pytest.raises(rdc.CaptureError, match=said):
+        rdc.main(["--manifest", str(m), "--captures-dir", str(tmp_path / "out")])
+    assert copies == []
+    assert removals == []
+
+
+def test_an_overlay_set_on_the_context_cannot_copy_outside_the_scratch_dir(tmp_path):
+    examples = _overlay_examples(tmp_path)
+    ctx = _ctx(tmp_path)
+    ctx.overlays = {str(examples / "p"): "bed/p"}
+    ctx.tmp.mkdir(parents=True)
+    with pytest.raises(rdc.CaptureError, match="plain project name"):
+        ctx.project_dir(rdc.Capture(id="a", argv=["x"], project="p"))
+
+
+def test_check_overlays_accepts_a_project_s_bed_overlay(tmp_path):
+    examples = _overlay_examples(tmp_path)
+    caps = [rdc.Capture(id="a", argv=["x"], project="p")]
+    rdc.check_overlays({"p": "bed/p"}, caps, examples_root=examples, scratch=tmp_path / "s")
+
+
+# --- Final review: a source set counts every file in the tier, hit or not ---
+
+
+def _two_file_store(path: Path, *, product: str, other_hits: int) -> Path:
+    """A unit-tier store: ``/p/x.cpp`` hit twice and ``/p/foreign.cpp`` hit *other_hits* times.
+
+    Loaded the way otto loads counters, so a zero-hit line keeps its tier
+    entry and credits no run.
+    """
+    from otto.coverage.merge.lcov_loader import LCOVLoader
+    from otto.coverage.store.model import CoverageStore
+
+    info = path.with_suffix(".info")
+    info.write_text(
+        f"SF:/p/x.cpp\nDA:1,2\nend_of_record\nSF:/p/foreign.cpp\nDA:1,{other_hits}\nend_of_record\n"
+    )
+    store = CoverageStore()
+    run_id = store.add_run(tier="unit", product=product)
+    LCOVLoader(store).load(info, "unit", run_id=run_id)
+    store.save(path)
+    return path
+
+
+def _sources_manifest(tmp_path: Path, src: Path, product: str) -> Path:
+    copy = "import shutil, sys; shutil.copy(sys.argv[1], sys.argv[2])"
+    wants_product = f'product = "{product}"\n' if product else ""
+    return _manifest(
+        tmp_path,
+        '[[capture]]\nid = "cov"\n'
+        f'argv = ["{{python}}", "-c", "{copy}", "{src}", "{{xdir}}/store.json"]\n'
+        '[[capture.store_sources]]\npath = "{xdir}/store.json"\ntier = "unit"\n'
+        + wants_product
+        + 'files = ["/p/x.cpp"]\n',
+    )
+
+
+@pytest.mark.parametrize("product", ["", "app"], ids=["tier-wide", "per-product"])
+def test_a_source_set_refuses_an_extra_file_the_tier_never_executed(tmp_path, product):
+    src = _two_file_store(tmp_path / "prepared.json", product=product, other_hits=0)
+    m = _sources_manifest(tmp_path, src, product)
+    with pytest.raises(rdc.CaptureError, match=r"extra \['/p/foreign\.cpp'\]"):
+        rdc.refresh(rdc.load_manifest(m), _ctx(tmp_path))
+
+
+def test_a_product_s_source_set_leaves_out_a_file_only_another_product_ran(tmp_path):
+    from otto.coverage.merge.lcov_loader import LCOVLoader
+    from otto.coverage.store.model import CoverageStore
+
+    store = CoverageStore()
+    for product, sf in (("app", "/p/x.cpp"), ("other", "/p/foreign.cpp")):
+        info = tmp_path / f"{product}.info"
+        info.write_text(f"SF:{sf}\nDA:1,2\nend_of_record\n")
+        LCOVLoader(store).load(info, "unit", run_id=store.add_run(tier="unit", product=product))
+    store.save(tmp_path / "prepared.json")
+    m = _sources_manifest(tmp_path, tmp_path / "prepared.json", "app")
+    rdc.refresh(rdc.load_manifest(m), _ctx(tmp_path))
+
+
+# --- The manifest is read once; an ordered set is selected whole ----------
+
+
+_ORDERED = (
+    '[ordered]\nsets = ["p"]\n\n'
+    '[[capture]]\nid = "build"\nproject = "p"\nrecord = false\nargv = ["{python}", "-c", "1"]\n'
+    '[[capture]]\nid = "use"\nproject = "p"\nargv = ["{python}", "-c", "1"]\n'
+    '[[capture]]\nid = "other"\nlabless = true\nargv = ["{python}", "-c", "1"]\n'
+)
+
+
+def test_main_parses_the_manifest_once(tmp_path, monkeypatch):
+    m = _manifest(tmp_path, "[overlays]\n\n" + _CAP)
+    real = rdc.tomli.loads
+    parsed: list[str] = []
+
+    def spy(text: str) -> dict[str, object]:
+        parsed.append(text)
+        return real(text)
+
+    monkeypatch.setattr(rdc.tomli, "loads", spy)
+    assert rdc.main(["--list", "--manifest", str(m)]) == 0
+    assert parsed == [m.read_text()]
+
+
+def test_an_ordered_set_is_declared_in_the_manifest(tmp_path):
+    assert rdc.read_manifest(_manifest(tmp_path, _ORDERED)).ordered == ["p"]
+    assert rdc.read_manifest(_manifest(tmp_path, _CAP)).ordered == []
+
+
+def test_only_naming_part_of_an_ordered_set_is_refused_naming_what_is_missing(tmp_path):
+    caps = rdc.read_manifest(_manifest(tmp_path, _ORDERED)).captures
+    with pytest.raises(rdc.CaptureError, match=r"ordered set 'p'.*\['build'\]"):
+        rdc.select(caps, labless=False, only=["use"], ordered=["p"])
+
+
+def test_main_refuses_a_partial_ordered_set_before_touching_the_scratch_dir(tmp_path, monkeypatch):
+    m = _manifest(tmp_path, _ORDERED)
+    removals: list[object] = []
+    monkeypatch.setattr(rdc, "SCRATCH_DIR", tmp_path / "scratch")
+    monkeypatch.setattr(rdc.shutil, "rmtree", lambda *a, **k: removals.append(a))
+    with pytest.raises(rdc.CaptureError, match=r"ordered set 'p'.*\['use'\]"):
+        rdc.main(["--only", "build", "--manifest", str(m), "--captures-dir", str(tmp_path / "o")])
+    assert removals == []
+
+
+def test_an_ordered_set_selected_whole_or_not_at_all_is_accepted(tmp_path, capsys):
+    m = _manifest(tmp_path, _ORDERED)
+    common = ["--list", "--manifest", str(m)]
+    assert rdc.main([*common, "--only", "use", "--only", "build"]) == 0
+    assert rdc.main([*common, "--only", "other"]) == 0
+    assert rdc.main(common) == 0
+    assert rdc.main([*common, "--labless"]) == 0
+    listed = [line.split()[0] for line in capsys.readouterr().out.splitlines()]
+    assert listed == ["build", "use", "other", "build", "use", "other", "other"]
+
+
+@pytest.mark.parametrize(
+    ("table", "said"),
+    [
+        ('[ordered]\nsets = ["q"]\n', "no capture runs project 'q'"),
+        ('[ordered]\nsets = "p"\n', r"\[ordered\] sets"),
+        ("[ordered]\nsets = [1]\n", r"\[ordered\] sets"),
+        ('[ordered]\nset = ["p"]\n', r"\[ordered\] sets"),
+        ('ordered = ["p"]\n', r"\[ordered\] sets"),
+    ],
+)
+def test_an_ordered_set_no_capture_runs_or_a_malformed_table_is_refused_at_load(
+    tmp_path, table, said
+):
+    body = table + '\n[[capture]]\nid = "a"\nproject = "p"\nargv = ["{python}", "-c", "1"]\n'
+    with pytest.raises(rdc.CaptureError, match=said):
+        rdc.load_manifest(_manifest(tmp_path, body))
+
+
+def test_the_shared_manifest_s_full_check_selects_every_capture_and_labless_none_of_a_set():
+    manifest = rdc.read_manifest(rdc.DEFAULT_MANIFEST)
+    assert "quickstart-shell" in manifest.ordered
+    every = manifest.captures
+    full = rdc.select(every, labless=False, only=[], ordered=manifest.ordered)
+    assert full == every
+    labless = rdc.select(every, labless=True, only=[], ordered=manifest.ordered)
+    assert not [c for c in labless if c.project in manifest.ordered]

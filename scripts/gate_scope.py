@@ -108,9 +108,16 @@ TRIGGER_FILES = frozenset(
 )
 TRIGGER_GLOBS = ("src/otto/_shim*.py", "src/otto/*/__init__.py", "tests/_fixtures/*", ".githooks/*")
 DOCS_EXCLUDED = ("docs/conf.py", "docs/_ext/*", "docs/examples/*")
-EXAMPLE_GLOBS = ("docs/examples/quickstart-*",)
+EXAMPLE_GLOBS = (
+    "docs/examples/quickstart-*",
+    "docs/examples/captures.toml",
+    "docs/examples/captures/*",
+    "docs/examples/bed/*",
+)
 """Example projects a reader downloads: `make docs` checks them hostlessly and builds their
-archives. The other `docs/examples` trees stay excluded: tests and doctests import them."""
+archives; the shared captures manifest and its artifacts are page inputs, as are the bed
+overlays the captures run with. The other `docs/examples` trees stay excluded: tests and
+doctests import them."""
 DOCS_HARNESS = frozenset(
     {
         "scripts/refresh_docs_captures.py",
@@ -119,9 +126,18 @@ DOCS_HARNESS = frozenset(
     }
 )
 """Scripts `make docs` runs over the examples: a change to one also runs the docs lane."""
-CAPTURE_INPUTS = ("docs/examples/getting-started*", "scripts/refresh_docs_captures.py")
-"""Besides src/otto, what the Getting Started captures read: a change to either can move
-what otto prints on the bed, so the tip runs their drift check."""
+CAPTURE_INPUTS = (
+    "docs/examples/getting-started*",
+    "docs/examples/quickstart-*",
+    "docs/examples/captures.toml",
+    "docs/examples/captures/*",
+    "docs/examples/bed/*",
+    "scripts/refresh_docs_captures.py",
+    "scripts/check_docs_examples.py",
+)
+"""Besides src/otto, what the docs example captures read: a change to any of these can move
+what otto prints on the bed, so the tip runs their drift check. The runner imports the
+examples checker's copy rule, so that script is an input too."""
 CAPTURES_LANE = "make docs-captures-check"
 WEB_EXCLUDED = ("web/src/api/*.gen.ts",)
 MAX_SRC_PACKAGES = 2
@@ -1029,7 +1045,7 @@ def _owning_tree_lanes(path: str) -> "list[list[Any]]":
 
 
 def _captures_lane(path: str) -> "list[str]":
-    """Return the captures drift check when the Getting Started captures read *path*."""
+    """Return the captures drift check when the docs example captures read *path*."""
     return [CAPTURES_LANE] if _is_src(path) or _match(path, CAPTURE_INPUTS) else []
 
 

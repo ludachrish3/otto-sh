@@ -71,10 +71,44 @@ A settings file with no `[coverage.tiers]` section gets an implicit
 
 ## Three-tier walkthrough
 
+Collect the three tiers in this order, which is the order `otto cov report`
+accepts:
+
+1. Build your products and unit tests with coverage instrumentation (the
+   commands are in the **unit** block below), then commit, since each capture
+   records the commit it was taken at.
+2. Install the build on the target, then zero its counters with
+   `otto cov clean`.
+3. Exercise the target by hand, then retrieve that session with
+   `otto cov get --tier manual --ticket …`.
+4. Commit the manual store.
+5. Run your tests with `otto test --cov`.
+6. Run the unit tests, then `otto cov report`
+   ([Report all three tiers](#report-all-three-tiers) has the command). The
+   unit run can come any time after the build: its counters stay in the build
+   tree, which `otto cov clean` never touches.
+
+The manual tier comes first because committing its store moves `HEAD`, and a
+report refuses an e2e capture taken at any commit but `HEAD`
+({ref}`the report's commit rule <coverage-capture-commit>`). So that commit
+comes before the e2e run, never between the e2e run and its report.
+
+**manual** — install the build on the target, zero its counters
+({doc}`clean`), and exercise it by hand. Then retrieve and anchor that session
+against the instrumented target, attaching a ticket, and commit it:
+
+```bash
+otto --lab my_lab cov clean
+# ... exercise the target by hand ...
+otto --lab my_lab cov get --tier manual --ticket PROJ-123 --note "verified failover via GDB"
+git add .otto/coverage/manual/
+git commit -m "cov: manual verification for PROJ-123"
+```
+
 **e2e** — run your tests with coverage on:
 
 ```bash
-otto test --cov TestMyDevice
+otto --lab my_lab test --cov TestMyDevice
 ```
 
 **unit** — the unit tier counts only the sources of your project's
@@ -84,14 +118,14 @@ machine, under the project root** — otto reads which files each one is built
 from out of its notes (`.gcno`). Build your unit tests with coverage
 instrumentation too and run them as you always have; `.gcda` files land next
 to the `.gcno` files under the tier's configured `harvest_dirs` (e.g.
-`build/`):
+`build/`). The build is step 1 of the order above; running the unit tests is
+step 6, or any time after the build:
 
 ```bash
 cmake -DCMAKE_C_FLAGS="--coverage" -DCMAKE_CXX_FLAGS="--coverage" \
       -DCMAKE_EXE_LINKER_FLAGS="--coverage" -B build ..
 cmake --build build          # the products and the unit tests
 ./build/my_unit_tests
-otto --lab my_lab cov report --dir ./cov_report
 ```
 
 No lcov invocation and no `--tier unit=...` flag are needed — as long
@@ -166,7 +200,7 @@ files that are product sources.
 unit unit: kept 41 product source files, dropped 17 not in any product
 ```
 
-The first `unit` is the view: the tier's name, or `<tier>/<product>` for a
+The second `unit` is the view: the tier's name, or `<tier>/<product>` for a
 `products` view. `dropped` counts every other file the unit build's notes
 name, system and gtest headers included. Under `--log-level DEBUG` one line
 per file says which:
@@ -281,17 +315,11 @@ paths are printed absolute; `<project>` below is the project root:
 | *unit tier unit: the capture of \<project\>/build/tests with … recorded no source file* | The reader read nothing — one of another compiler's data that its name did not reveal | Check `coverage_tool` | `1` |
 | *unit tier unit: capturing \<project\>/build/tests failed; if the counter reader is the wrong one, set …* | lcov itself failed; its own first error and last lines follow | Fix what lcov says, or name the right reader | `1` |
 
-**manual** — retrieve and anchor a session against the instrumented
-target, attaching a ticket:
+### Report all three tiers
 
-```bash
-otto --lab my_lab cov get --tier manual --ticket PROJ-123 --note "verified failover via GDB"
-git add .otto/coverage/manual/
-git commit -m "cov: manual verification for PROJ-123"
-```
-
-Then generate a single report covering all three — `--overwrite-dir` because
-the {doc}`coverage walkthrough <../../setup/coverage>` already left a report at `./cov_report`:
+With every tier collected, report them together. `--overwrite-dir` is
+there because the {doc}`coverage walkthrough <../../setup/coverage>` already
+left a report at `./cov_report`:
 
 ```bash
 otto --lab my_lab cov report path/to/e2e_run_output/ --dir ./cov_report --overwrite-dir

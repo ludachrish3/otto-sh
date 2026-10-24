@@ -1228,14 +1228,17 @@ in the download.
 The `docs/setup/` and `docs/developing/bed-case-study/` pages `{literalinclude}` what they show, never
 paste it: config and code fragments from the checked-in project
 `docs/examples/getting-started/`, and real command output from committed text
-files under `docs/examples/getting-started/captures/`, produced by
+files under `docs/examples/captures/`, produced by
 `scripts/refresh_docs_captures.py` from the manifest
-`docs/examples/getting-started/captures.toml`. Labless captures
+`docs/examples/captures.toml`. One manifest and one artifact directory serve
+every example project. Labless captures
 (`labless = true`) are diffed in the docs gate (`nox -s docs`,
 `make docs-lint`); bed captures are
 diffed by `make docs-captures-check` and refreshed by `make docs-captures`,
 both of which need the lab VMs. To refresh one: `uv run --no-sync python
-scripts/refresh_docs_captures.py --only <id>`. Never edit an artifact by hand
+scripts/refresh_docs_captures.py --only <id>`; a capture in an ordered set
+(the manifest's `[ordered]` table) refreshes only with its whole set, so
+name every id in it. Never edit an artifact by hand
 — if a capture drifts, the page's claim drifted with it, and the fix is in
 otto, the manifest's redaction rules, or the prose. A failed refresh leaves
 the captures it had already written updated and the rest stale (exit 2); fix

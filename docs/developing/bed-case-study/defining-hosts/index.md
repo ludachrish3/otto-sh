@@ -87,7 +87,7 @@ means "probe it at connect". `otto host <id> probe` runs those probes once
 and prints the result as a pin; `--lab unix` names the lab to load, and a
 host that belongs to several labs is reached through any one of them:
 
-```{literalinclude} ../../../examples/getting-started/captures/probe-test1.txt
+```{literalinclude} ../../../examples/captures/probe-test1.txt
 :language: text
 ```
 

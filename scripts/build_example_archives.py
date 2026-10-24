@@ -46,20 +46,20 @@ def _archive(track: Path, files: "list[Path]") -> bytes:
     return packed.getvalue()
 
 
-def build(examples_root: Path, out_dir: Path, *, repo: Path) -> "list[Path]":
+def build(examples_root: Path, out_dir: Path, *, checkout: Path) -> "list[Path]":
     """Write ``<out_dir>/<track>.tar.gz`` for every ``quickstart-*`` track; return the paths."""
     built: "list[Path]" = []
     for track in sorted(p for p in examples_root.glob("quickstart-*") if p.is_dir()):
         out_dir.mkdir(parents=True, exist_ok=True)
         target = out_dir / f"{track.name}.tar.gz"
-        target.write_bytes(_archive(track, _tracked(repo, track)))
+        target.write_bytes(_archive(track, _tracked(checkout, track)))
         built.append(target)
     return built
 
 
 def main() -> int:
     """Build every track's archive under ``docs/_static/generated/examples``."""
-    for path in build(EXAMPLES, OUT_DIR, repo=ROOT):
+    for path in build(EXAMPLES, OUT_DIR, checkout=ROOT):
         print(f"built {path.relative_to(ROOT)}")
     return 0
 

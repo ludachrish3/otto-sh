@@ -1861,7 +1861,7 @@ docs-lint:
 	@uv run python scripts/lint_docs_versions.py docs/
 	@uv run python scripts/check_docs_dependency_table.py
 	@uv run python scripts/check_docs_wheel_matrix.py
-	@$(SAY) "getting-started captures: labless drift check"
+	@$(SAY) "docs example captures: labless drift check"
 	@uv run python scripts/refresh_docs_captures.py --check --labless
 	@$(SAY) "docs examples: hostless check"
 	@uv run python scripts/check_docs_examples.py
@@ -1918,12 +1918,12 @@ doctest-src:
 # by tests/unit/test_doctest_lane_hermeticity.py, as is the nox `docs` twin.
 	@env $(foreach v,$(filter OTTO_% OTTOPATH,$(.VARIABLES)),-u $(v)) uv run pytest -p no:cacheprovider -o addopts="--doctest-modules -p no:tach" -o log_cli=false src/otto
 
-docs-captures: ## (Docs) Refresh EVERY Getting Started capture, bed included (needs the lab VMs)
-	@$(SAY) "getting-started captures: full refresh (bed)"
+docs-captures: ## (Docs) Refresh EVERY docs example capture, bed included (needs the lab VMs)
+	@$(SAY) "docs example captures: full refresh (bed)"
 	@uv run python scripts/refresh_docs_captures.py
 
-docs-captures-check: ## (Docs) Diff EVERY Getting Started capture against the bed -- a tip lane for src and example changes
-	@$(SAY) "getting-started captures: full drift check (bed)"
+docs-captures-check: ## (Docs) Diff EVERY docs example capture against the bed -- a tip lane for src and example changes
+	@$(SAY) "docs example captures: full drift check (bed)"
 	@uv run python scripts/refresh_docs_captures.py --check
 
 # web-clean is a prerequisite because the built frontend IS a generated

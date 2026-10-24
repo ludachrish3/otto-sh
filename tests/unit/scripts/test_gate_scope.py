@@ -2238,11 +2238,26 @@ def test_an_example_project_change_runs_the_docs_lane_not_the_full_gate():
 @pytest.mark.parametrize(
     "path",
     [
+        "docs/examples/captures.toml",
+        "docs/examples/captures/probe-test1.txt",
+        "docs/examples/bed/quickstart-shell/lab_data/lab.json",
+    ],
+)
+def test_the_shared_captures_manifest_and_artifacts_are_docs_rows(path):
+    assert gs.classify_path(path) == gs.DOCS
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
         "src/otto/host/userland.py",
-        "docs/examples/getting-started/captures.toml",
+        "docs/examples/captures.toml",
+        "docs/examples/captures/probe-test1.txt",
+        "docs/examples/quickstart-shell/src/shout/main.cpp",
         "docs/examples/getting-started/libs/x.py",
         "docs/examples/getting-started-inventory/.otto/settings.toml",
         "scripts/refresh_docs_captures.py",
+        "scripts/check_docs_examples.py",
     ],
 )
 def test_a_change_the_docs_captures_read_runs_their_drift_check_at_the_tip(path):

@@ -9,6 +9,7 @@ Then scaffold a project and reach your first host: {doc}`shared-setup`.
 :maxdepth: 1
 
 shared-setup
+tracks/shell
 defining-products-and-tools
 running-tests
 running-instructions

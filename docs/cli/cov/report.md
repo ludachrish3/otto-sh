@@ -136,6 +136,7 @@ its {ref}`embedded flavor <coverage-embedded-stamp-guard>`, and the
 stale-deploy failure is silent at the toolchain level, so otto verifies
 the file pairing structurally at collection instead).
 
+(coverage-capture-commit)=
 ### "The e2e capture … was taken at commit A, but the tree is at B"
 
 A capture carries its own, git-based guard: its recorded `base_commit`

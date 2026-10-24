@@ -1,0 +1,411 @@
+# Captures the docs pages include, for every example project (spec 2026-08-27 §5).
+# Artifacts: docs/examples/captures/<id>.txt -- one directory for every project.
+# Refresh: python scripts/refresh_docs_captures.py [--only ID]   (bed captures need the lab)
+# Check:   python scripts/refresh_docs_captures.py --check [--labless]
+#
+# labless = true  -> tier 2, checked in the docs gate
+# labless = false -> tier 3, checked by `make docs-captures-check` only
+# record = false  -> a step later captures need: run and exit-checked, no artifact
+#
+# Captures run in this file's order and share one scratch copy of the examples,
+# so a set whose later captures depend on earlier steps must be selected whole:
+# list its project under [ordered] (below), and an --only that names some of
+# its captures but not all is refused.
+#
+# kind = "gtest"  -> argv is a GoogleTest binary: colour off, timings redacted
+# [[capture.store]] -> after the run, a hit count the coverage store must hold:
+#   path and file (as the store records it) may use {project}/{tmp}/{xdir};
+#   line, tier, hits, and optionally product (sum over that product's runs in
+#   the tier) and marker (text that line must hold in the committed example,
+#   checked before any capture runs; the file is then "{project}/<path>")
+# [[capture.store_sources]] -> after the run, the exact set of source files in
+#   the tier, whatever their hit count (a file no run in the tier executed
+#   counts for every product): path, tier, files (placeholders allowed), and
+#   optionally product
+#
+# [overlays] -> <project> = "<dir under docs/examples>": copied over that
+#   project's scratch copy. A downloadable example ships placeholder hosts; its
+#   overlay carries the bed's lab data, so the captures still reach the bed.
+#   The key is a project some capture runs; the dir stays under docs/examples.
+#
+# [ordered] -> sets = ["<project>", ...]: each project's captures form one
+#   ordered set, selected whole or not at all. Each is a project some capture
+#   runs. quickstart-shell is one: its build, test and coverage steps feed
+#   each other.
+
+[overlays]
+quickstart-shell = "bed/quickstart-shell"
+
+[ordered]
+sets = ["quickstart-shell"]
+
+[[capture]]
+id = "init-all"
+labless = true
+mkdir = ["{tmp}/acme"]
+argv = ["{otto}", "init", "--all", "--name", "acme", "--path", "{tmp}/acme"]
+
+[[capture]]
+id = "run-install-help"
+labless = true
+project = "getting-started"
+argv = ["{otto}", "run", "install", "--help"]
+
+[[capture]]
+id = "probe-test1"
+labless = false
+project = "getting-started"
+timeout = 300
+argv = ["{otto}", "--lab", "unix", "host", "test1", "probe"]
+
+[[capture]]
+id = "inventory-lookup-test1"
+labless = true
+project = "getting-started-inventory"
+argv = ["{otto}", "inventory", "lookup", "test1"]
+
+[[capture]]
+id = "inventory-list"
+labless = true
+project = "getting-started-inventory"
+argv = ["{otto}", "inventory", "list"]
+
+[[capture]]
+id = "zephyr37-debug-run"
+labless = false
+project = "getting-started"
+timeout = 300
+argv = ["{otto}", "--log-level", "DEBUG", "--lab", "embedded", "host", "zephyr37-fat", "exec", "kernel uptime"]
+# The uptime value varies every run. DEBUG logging turned out to carry five
+# more things that vary run to run: the per-session random ids threaded
+# through every handshake/marker/framed-write line, the local hop's ephemeral
+# forwarding port, the tunnel-connect duration, the telnetlib3
+# negotiation-complete duration, and the uptime response's own byte length --
+# plus the per-run scratch output directory, which otto names from a non-ISO
+# YYYYMMDD_HHMMSS_mmm timestamp. The repository's commit is not among them: the
+# capture runs against a scratch copy, so otto's git read fails and no hash
+# is ever printed. The telnet client's own "Connected to <Peer ...>" line is
+# INFO, not DEBUG-only, so it appears in every Zephyr capture, ephemeral port
+# and all.
+redact = [
+    ["Uptime: \\d+ ms", "Uptime: <n> ms"],
+    ["output_len=\\d+", "output_len=<n>"],
+    ["LocalSession@[0-9a-f]+", "LocalSession@<session>"],
+    ["TelnetSession@[0-9a-f]+", "TelnetSession@<session>"],
+    ["__OTTO_[0-9a-f]+_", "__OTTO_<session>_"],
+    ["localhost:\\d+", "localhost:<port>"],
+    ["<Peer 127\\.0\\.0\\.1 \\d+>", "<Peer 127.0.0.1 <port>>"],
+    ["in \\d+\\.\\d+s", "in <duration>s"],
+    ["after \\d+\\.\\d+s", "after <duration>s"],
+    ["\\d{8}_\\d{6}_\\d{3}_exec", "<run>_exec"],
+]
+
+[[capture]]
+id = "probe-bb1350"
+labless = false
+project = "getting-started"
+timeout = 300
+argv = ["{otto}", "--lab", "busybox", "host", "bb1350-qemu", "probe"]
+# The protocol survey's login tier opens a telnet session through the test1
+# hop to reach the guest, and that hop's local forwarded port is ephemeral --
+# same nondeterminism the zephyr27-run rule below masks.
+redact = [["<Peer 127\\.0\\.0\\.1 \\d+>", "<Peer 127.0.0.1 <port>>"]]
+
+[[capture]]
+id = "as-root-test1"
+labless = false
+project = "getting-started"
+timeout = 300
+argv = ["{python}", "{project}/as_root.py"]
+
+[[capture]]
+id = "monitor-bb1350"
+labless = false
+project = "getting-started"
+timeout = 300
+argv = ["{python}", "{project}/collect_metrics.py"]
+# How many samples a fixed-duration run collects depends on where the ticks
+# fall (and a rate series needs two ticks before its first point), so the
+# counts are normalised; which series appear is the point, and is stable.
+redact = [["\\t\\d+ samples", "\\tN samples"]]
+
+[[capture]]
+id = "zephyr27-run"
+labless = false
+project = "getting-started"
+timeout = 300
+argv = ["{otto}", "--lab", "embedded", "host", "zephyr27-fat", "exec", "kernel uptime"]
+# Same uptime-casing and run-directory fixes as zephyr37-debug-run; this one
+# runs at the default log level so none of the DEBUG-only noise appears. The
+# telnet client's own "Connected to <Peer ...>" line is INFO, not DEBUG-only,
+# so it appears here too, ephemeral port and all -- it's in every Zephyr
+# capture regardless of log level.
+redact = [
+    ["Uptime: \\d+ ms", "Uptime: <n> ms"],
+    ["\\d{8}_\\d{6}_\\d{3}_exec", "<run>_exec"],
+    ["<Peer 127\\.0\\.0\\.1 \\d+>", "<Peer 127.0.0.1 <port>>"],
+]
+
+[[capture]]
+id = "reservation-check-refused"
+labless = true
+project = "getting-started"
+settings_append = "reservations.toml"
+expect_exit = 1
+argv = ["{otto}", "--lab", "busybox", "--holder", "alice", "reservation", "check"]
+
+[[capture]]
+id = "reservation-check-ok"
+labless = true
+project = "getting-started"
+settings_append = "reservations.toml"
+argv = ["{otto}", "--lab", "busybox", "--holder", "chris", "reservation", "check"]
+
+[[capture]]
+id = "session-setup-test1"
+labless = false
+project = "getting-started"
+timeout = 300
+argv = ["{otto}", "--lab", "unix", "host", "test1", "exec", "echo $APP_ENV"]
+redact = [
+    ["__OTTO_[0-9a-f]+_", "__OTTO_<session>_"],
+    ["\\d{8}_\\d{6}_\\d{3}_exec", "<run>_exec"],
+]
+
+[[capture]]
+id = "session-setup-pyrepl"
+labless = false
+project = "getting-started"
+timeout = 300
+argv = ["{otto}", "--lab", "pyrepl", "host", "test1-py", "exec", "1 + 1"]
+redact = [
+    ["__OTTO_[0-9a-f]+_", "__OTTO_<session>_"],
+    ["\\d{8}_\\d{6}_\\d{3}_exec", "<run>_exec"],
+]
+
+[[capture]]
+id = "session-setup-zephyr37-lfs"
+labless = false
+project = "getting-started"
+timeout = 300
+argv = ["{otto}", "--lab", "embedded", "host", "zephyr37-lfs", "exec", "kernel version"]
+# The native_posix QEMU instance's peer socket binds an ephemeral port that
+# varies every run. This is the only capture with a raw ANSI escape byte in
+# its output (the device shell's own colorized prompt) rather than a textual
+# "\x1b" inside a quoted debug buffer -- an invisible byte in a committed text
+# file, but its trailing SGR code (e.g. "[1;32m") is printable text once the
+# page renders it, so it is stripped here.
+redact = [
+    ["__OTTO_[0-9a-f]+_", "__OTTO_<session>_"],
+    ["\\d{8}_\\d{6}_\\d{3}_exec", "<run>_exec"],
+    ["<Peer 127\\.0\\.0\\.1 \\d+>", "<Peer 127.0.0.1 <port>>"],
+    ["\\x1b\\[[0-9;]*m", ""],
+]
+
+# ---- Shell track (docs/setup/tracks/shell.md) --------------------------------
+# One ordered set, listed under [ordered]: every entry depends on the ones
+# before it, so an --only that names some of them but not all is refused. It
+# builds a fresh copy of the example, makes it a git repository, installs on
+# dut (test1), takes the manual tier,
+# the e2e tier and the unit tier in the order the reporter accepts, reports,
+# monitors, and cleans the host. record = false entries are steps no page quotes.
+
+[[capture]]
+id = "qs-shell-git-init"
+project = "quickstart-shell"
+record = false
+argv = ["git", "-C", "{project}", "init", "-q", "-b", "main"]
+
+[[capture]]
+id = "qs-shell-cmake-configure"
+project = "quickstart-shell"
+record = false
+timeout = 300
+argv = ["cmake", "-S", "{project}", "-B", "{project}/build"]
+
+[[capture]]
+id = "qs-shell-cmake-build"
+project = "quickstart-shell"
+record = false
+timeout = 600
+argv = ["cmake", "--build", "{project}/build"]
+
+[[capture]]
+id = "qs-shell-git-add"
+project = "quickstart-shell"
+record = false
+argv = ["git", "-C", "{project}", "add", "-A"]
+
+[[capture]]
+id = "qs-shell-git-commit"
+project = "quickstart-shell"
+record = false
+argv = ["git", "-C", "{project}", "-c", "user.name=otto docs", "-c", "user.email=docs@example.invalid", "commit", "-qm", "quickstart-shell"]
+
+[[capture]]
+id = "qs-shell-install-dry"
+project = "quickstart-shell"
+argv = ["{otto}", "--lab", "example_lab", "-n", "run", "install"]
+redact = [
+    ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
+]
+
+[[capture]]
+id = "qs-shell-install"
+project = "quickstart-shell"
+timeout = 300
+argv = ["{otto}", "--lab", "example_lab", "run", "install"]
+# The transfer bar's rate and elapsed time vary, and so does its width.
+redact = [
+    ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
+    ["━+ ([\\d.]+/[\\d.]+ [kMG]?B) [\\d.]+ [kMG]?B/s \\d+:\\d{2}:\\d{2}", "━━━━ \\1 <rate>"],
+]
+
+[[capture]]
+id = "qs-shell-cov-clean"
+project = "quickstart-shell"
+record = false
+argv = ["{otto}", "--lab", "example_lab", "cov", "clean"]
+
+[[capture]]
+id = "qs-shell-manual-run"
+project = "quickstart-shell"
+argv = ["{otto}", "--lab", "example_lab", "host", "dut", "exec", "GCOV_PREFIX=/tmp/shout GCOV_PREFIX_STRIP=3 /tmp/quickstart/shout by hand; GCOV_PREFIX=/tmp/shout GCOV_PREFIX_STRIP=3 /tmp/quickstart/shout again"]
+redact = [
+    ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
+]
+
+[[capture]]
+id = "qs-shell-cov-get-manual"
+project = "quickstart-shell"
+timeout = 300
+argv = ["{otto}", "--lab", "example_lab", "cov", "get", "--tier", "manual", "--ticket", "QS-1", "--tester-name", "docs", "--tester-email", "docs@example.invalid"]
+# The remote fetch id and its mktemp suffix are random per run.
+redact = [
+    ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
+    ["otto-fetch-[0-9a-f]{12}", "otto-fetch-<id>"],
+    ["otto-fetch-<id>\\.(?!XXXXXX)[A-Za-z0-9]{6}", "otto-fetch-<id>.<tmp>"],
+]
+
+[[capture]]
+id = "qs-shell-git-add-manual"
+project = "quickstart-shell"
+record = false
+argv = ["git", "-C", "{project}", "add", ".otto/coverage/manual"]
+
+[[capture]]
+id = "qs-shell-git-commit-manual"
+project = "quickstart-shell"
+record = false
+argv = ["git", "-C", "{project}", "-c", "user.name=otto docs", "-c", "user.email=docs@example.invalid", "commit", "-qm", "manual coverage QS-1"]
+
+[[capture]]
+id = "qs-shell-test-cov"
+project = "quickstart-shell"
+timeout = 600
+argv = ["{otto}", "--lab", "example_lab", "test", "--cov", "--cov-dir", "{xdir}/e2e/cov", "--no-random", "TestTools"]
+redact = [
+    ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
+    ["otto-fetch-[0-9a-f]{12}", "otto-fetch-<id>"],
+    ["otto-fetch-<id>\\.(?!XXXXXX)[A-Za-z0-9]{6}", "otto-fetch-<id>.<tmp>"],
+    ["=+ (\\d+ passed[^=\\n]*?) in [\\d.]+s =+", "=== \\1 in <t>s ==="],
+]
+
+[[capture]]
+id = "qs-shell-unit"
+project = "quickstart-shell"
+kind = "gtest"
+argv = ["{project}/build/tests/unit/unit_tests"]
+
+[[capture]]
+id = "qs-shell-report"
+project = "quickstart-shell"
+timeout = 300
+argv = ["{otto}", "--lab", "example_lab", "cov", "report", "{xdir}/e2e", "--dir", "{xdir}/report"]
+redact = [
+    ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
+]
+
+[[capture.store]]
+path = "{xdir}/report/store.json"
+file = "{project}/src/textlib/text.cpp"
+line = 8
+marker = "// qs: count-words"
+tier = "system"
+product = "wordcount"
+hits = 3
+
+[[capture.store]]
+path = "{xdir}/report/store.json"
+file = "{project}/src/wordcount/main.cpp"
+line = 8
+marker = "// qs: wordcount-main"
+tier = "system"
+product = "wordcount"
+hits = 3
+
+[[capture.store]]
+path = "{xdir}/report/store.json"
+file = "{project}/src/shout/main.cpp"
+line = 7
+marker = "// qs: shout-main"
+tier = "system"
+product = "shout"
+hits = 1
+
+[[capture.store]]
+path = "{xdir}/report/store.json"
+file = "{project}/src/shout/main.cpp"
+line = 7
+marker = "// qs: shout-main"
+tier = "manual"
+product = "shout"
+hits = 2
+
+[[capture.store]]
+path = "{xdir}/report/store.json"
+file = "{project}/src/textlib/text.cpp"
+line = 8
+marker = "// qs: count-words"
+tier = "unit"
+hits = 2
+
+# Exact source sets: nothing but the products' own sources in any tier.
+[[capture.store_sources]]
+path = "{xdir}/report/store.json"
+tier = "system"
+product = "wordcount"
+files = ["{project}/src/textlib/text.cpp", "{project}/src/wordcount/main.cpp"]
+
+[[capture.store_sources]]
+path = "{xdir}/report/store.json"
+tier = "system"
+product = "shout"
+files = ["{project}/src/shout/main.cpp"]
+
+[[capture.store_sources]]
+path = "{xdir}/report/store.json"
+tier = "manual"
+files = ["{project}/src/shout/main.cpp"]
+
+[[capture.store_sources]]
+path = "{xdir}/report/store.json"
+tier = "unit"
+files = ["{project}/src/textlib/text.cpp"]
+
+[[capture]]
+id = "qs-shell-monitor"
+project = "quickstart-shell"
+timeout = 300
+argv = ["{otto}", "--lab", "example_lab", "test", "--no-cov", "--no-random", "TestMonitoring"]
+redact = [
+    ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
+    ["=+ (\\d+ passed[^=\\n]*?) in [\\d.]+s =+", "=== \\1 in <t>s ==="],
+]
+
+[[capture]]
+id = "qs-shell-cleanup"
+project = "quickstart-shell"
+record = false
+timeout = 300
+argv = ["{otto}", "--lab", "example_lab", "run", "cleanup"]

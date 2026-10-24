@@ -17,7 +17,7 @@ value declared, none left for the probe. That is what a probe on a pinned
 host reports — here the newest guest, `bb1350-qemu` (the element name plus
 the board otto appends):
 
-```{literalinclude} ../../../examples/getting-started/captures/probe-bb1350.txt
+```{literalinclude} ../../../examples/captures/probe-bb1350.txt
 :language: text
 ```
 

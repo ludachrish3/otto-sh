@@ -1,0 +1,12 @@
+$ otto --lab example_lab run install
+INFO     fleet of interest: 1 of 2 lab hosts (1 project(s), 0 excluded)
+INFO     @dut   | mkdir -p /tmp/quickstart
+dut wordcount ━━━━ 151.9/151.9 kB <rate>
+INFO     @dut   | wordcount: staged
+INFO     @dut   | mkdir -p /tmp/quickstart
+dut shout ━━━━ 139.9/139.9 kB <rate>
+INFO     @dut   | shout: staged
+INFO     @dut   | wordcount: installed
+INFO     @dut   | shout: installed
+
+Output directory: /tmp/otto-gs/xdir/run/<run>_install

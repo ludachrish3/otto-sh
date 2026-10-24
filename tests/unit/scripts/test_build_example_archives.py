@@ -37,7 +37,7 @@ def _members(archive: Path) -> "list[tarfile.TarInfo]":
 
 
 def test_one_archive_per_track_holding_only_tracked_files(repo, tmp_path):
-    built = bea.build(repo / "docs" / "examples", tmp_path / "out", repo=repo)
+    built = bea.build(repo / "docs" / "examples", tmp_path / "out", checkout=repo)
     assert [p.name for p in built] == ["quickstart-shell.tar.gz"]
     assert [m.name for m in _members(built[0])] == [
         "quickstart-shell/CMakeLists.txt",
@@ -47,7 +47,7 @@ def test_one_archive_per_track_holding_only_tracked_files(repo, tmp_path):
 
 
 def test_an_executable_stays_executable_and_nothing_names_its_builder(repo, tmp_path):
-    built = bea.build(repo / "docs" / "examples", tmp_path / "out", repo=repo)
+    built = bea.build(repo / "docs" / "examples", tmp_path / "out", checkout=repo)
     members = {m.name: m for m in _members(built[0])}
     assert members["quickstart-shell/run.sh"].mode == 0o755
     assert members["quickstart-shell/src/main.cpp"].mode == 0o644
@@ -58,14 +58,14 @@ def test_an_executable_stays_executable_and_nothing_names_its_builder(repo, tmp_
 
 def test_two_builds_are_byte_identical(repo, tmp_path):
     examples = repo / "docs" / "examples"
-    first = bea.build(examples, tmp_path / "a", repo=repo)[0].read_bytes()
+    first = bea.build(examples, tmp_path / "a", checkout=repo)[0].read_bytes()
     (repo / "docs" / "examples" / "quickstart-shell" / "src" / "main.cpp").touch()
-    second = bea.build(examples, tmp_path / "b", repo=repo)[0].read_bytes()
+    second = bea.build(examples, tmp_path / "b", checkout=repo)[0].read_bytes()
     assert first == second
 
 
 def test_no_track_builds_nothing(tmp_path):
     root = tmp_path / "examples"
     root.mkdir()
-    assert bea.build(root, tmp_path / "out", repo=tmp_path) == []
+    assert bea.build(root, tmp_path / "out", checkout=tmp_path) == []
     assert not (tmp_path / "out").exists()

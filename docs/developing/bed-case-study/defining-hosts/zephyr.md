@@ -23,7 +23,7 @@ through `test4`, addressed over the console:
 Run one command at `--log-level DEBUG` and the log shows the frame: the
 command wrapped in a BEGIN marker, a `retval`, and an END marker.
 
-```{literalinclude} ../../../examples/getting-started/captures/zephyr37-debug-run.txt
+```{literalinclude} ../../../examples/captures/zephyr37-debug-run.txt
 :language: text
 ```
 
@@ -65,7 +65,7 @@ in `lab.json` resolves:
 
 And the same command on the 2.7 target:
 
-```{literalinclude} ../../../examples/getting-started/captures/zephyr27-run.txt
+```{literalinclude} ../../../examples/captures/zephyr27-run.txt
 :language: text
 ```
 

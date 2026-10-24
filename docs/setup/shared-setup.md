@@ -18,7 +18,7 @@ otto init --all --name acme --path .
 example lab host, example tests, an example instruction — and prints the
 next steps:
 
-```{literalinclude} ../examples/getting-started/captures/init-all.txt
+```{literalinclude} ../examples/captures/init-all.txt
 :language: text
 ```
 
@@ -46,7 +46,7 @@ exports permanent.
 ## One host, written inline
 
 Replace `lab_data/lab.json` with one host in the scaffolded `example_lab`.
-Use the address and login of a machine you can reach over SSH:
+Use the address and credentials of a machine you can reach over SSH:
 
 ```json
 {
@@ -106,6 +106,7 @@ every host in those labs. {ref}`project-scope` explains both, and
 
 ## Next
 
+- {doc}`tracks/shell` — a complete project: two command-line tools, tests, three-tier coverage and a custom metric.
 - {doc}`defining-products-and-tools` — put your products on the host.
 - {doc}`running-tests` — write and run a test.
 - {doc}`coverage` — measure what the tests exercised.

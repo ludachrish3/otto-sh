@@ -209,6 +209,7 @@ a custom pipeline), see the *Collecting coverage from Python* section of
 See {doc}`../test/index` for the rest of `otto test`'s options, and
 {doc}`index` for the collection workflow these flags plug into.
 
+(coverage-cov-dir)=
 ## Choosing a Destination
 
 Use `--cov-dir` to write coverage artifacts to an explicit location —

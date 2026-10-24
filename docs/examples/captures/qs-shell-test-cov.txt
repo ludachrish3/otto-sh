@@ -1,0 +1,47 @@
+$ otto --lab example_lab test --cov --cov-dir /tmp/otto-gs/xdir/e2e/cov --no-random TestTools
+INFO     fleet of interest: 1 of 2 lab hosts (1 project(s), 0 excluded)
+======================================= test session starts ========================================
+INFO     @dut   | ! test -d /tmp/wordcount || find /tmp/wordcount -name '*.gcda' -type f -delete
+INFO     @dut   | ! test -d /tmp/shout || find /tmp/shout -name '*.gcda' -type f -delete
+INFO     coverage counters cleared before the run on 2 product(s) across 1 host(s)
+INFO     === test_wordcount_counts_words[one-1] ===
+INFO     @dut   | GCOV_PREFIX=/tmp/wordcount GCOV_PREFIX_STRIP=3 /tmp/quickstart/wordcount one
+INFO     @dut > | 1
+INFO     === test_wordcount_counts_words[one two-2] ===
+INFO     @dut   | GCOV_PREFIX=/tmp/wordcount GCOV_PREFIX_STRIP=3 /tmp/quickstart/wordcount one two
+INFO     @dut > | 2
+INFO     === test_wordcount_counts_words[one two three-3] ===
+INFO     @dut   | GCOV_PREFIX=/tmp/wordcount GCOV_PREFIX_STRIP=3 /tmp/quickstart/wordcount one two
+         three
+INFO     @dut > | 3
+INFO     === test_shout_capitalises ===
+INFO     @dut   | GCOV_PREFIX=/tmp/shout GCOV_PREFIX_STRIP=3 /tmp/quickstart/shout hello world
+INFO     @dut > | HELLO WORLD
+
+----- generated xml file: /tmp/otto-gs/xdir/test/<run>/junit.xml -----
+=== 4 passed, 1 deselected in <t>s ===
+INFO     Archiving .gcda for wordcount on dut:/tmp/wordcount
+INFO     @dut   | ! test -d /tmp/wordcount && echo otto-no-cov-dir || (t=$(mktemp
+         "${TMPDIR:-/tmp}/otto-fetch-<id>.XXXXXX") && echo "otto-archive:$t" && cd
+         /tmp/wordcount && tar -cf "$t" .)
+INFO     @dut > | otto-archive:/tmp/otto-fetch-<id>.<tmp>
+INFO     @dut   | rm -f "${TMPDIR:-/tmp}"/otto-fetch-<id>.*
+INFO     Archiving .gcda for shout on dut:/tmp/shout
+INFO     @dut   | ! test -d /tmp/shout && echo otto-no-cov-dir || (t=$(mktemp
+         "${TMPDIR:-/tmp}/otto-fetch-<id>.XXXXXX") && echo "otto-archive:$t" && cd
+         /tmp/shout && tar -cf "$t" .)
+INFO     @dut > | otto-archive:/tmp/otto-fetch-<id>.<tmp>
+INFO     @dut   | rm -f "${TMPDIR:-/tmp}"/otto-fetch-<id>.*
+INFO     Coverage data collected to /tmp/otto-gs/xdir/e2e/cov (2 product dir(s))
+INFO     === Capturing dut / shout ===
+INFO     lcov capture: 1 file(s) -> /tmp/otto-gs/xdir/e2e/cov/dut/shout/board.info
+INFO     dut/shout: skipped 10 source file(s) outside the project root
+INFO     === Capturing dut / wordcount ===
+INFO     lcov capture: 2 file(s) -> /tmp/otto-gs/xdir/e2e/cov/dut/wordcount/board.info
+INFO     dut/wordcount: skipped 5 source file(s) outside the project root
+INFO     Coverage captures produced: 2 board(s)
+INFO     @dut   | ! test -d /tmp/wordcount || find /tmp/wordcount -name '*.gcda' -type f -delete
+INFO     @dut   | ! test -d /tmp/shout || find /tmp/shout -name '*.gcda' -type f -delete
+INFO     coverage counters cleared after collection on 2 product(s) across 1 host(s)
+
+Output directory: /tmp/otto-gs/xdir/test/<run>
