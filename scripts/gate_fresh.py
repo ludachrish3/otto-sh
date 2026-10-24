@@ -18,6 +18,7 @@ Usage::
 
 import argparse
 import contextlib
+import json
 import os
 import shutil
 import signal
@@ -27,6 +28,7 @@ import tempfile
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -36,10 +38,14 @@ from scripts.gate_stamp_common import (  # noqa: E402 -- path set up above
     GateFreshError,
     TreeState,
     _git,
+    stamps_root,
+    tree_hash,
     tree_state,
+    write_atomically,
 )
 
 __all__ = [
+    "HISTORY_TARGETS",
     "ZERO_SHA",
     "GateFreshError",
     "GateResult",
@@ -49,7 +55,10 @@ __all__ = [
     "main",
     "ref_to_gate",
     "resolve_ref",
+    "stamp_path",
+    "stamped",
     "tree_state",
+    "write_stamp",
 ]
 
 # Pre-push runs while git holds the connection to the remote OPEN: git dials
@@ -117,7 +126,62 @@ GATED_TARGETS = [
     "docs",
 ]
 
+HISTORY_TARGETS = ["check-breaking"]
+"""What the push re-runs over a tree that already passed: the only targets reading ``RANGE``.
+
+Every other gated target is a function of the committed tree, so a tree that passed once
+passes again; ``check-breaking`` reads the pushed commits' messages, which an amend or a
+squash changes without touching the tree. A test pins that it holds every Makefile recipe
+that reads ``$(RANGE)``.
+"""
+
+STORE = "otto-gate-fresh-stamps"
+STAMP_FORMAT = 1
+
 _PRE_PUSH_LINE_FIELDS = 4
+
+
+# A tree that passed the gate is stamped, in a store every worktree of the clone shares: one
+# `<tree>.json` recording the targets it ran. Pre-push then runs only HISTORY_TARGETS over a
+# stamped tree, in the same pristine worktree, instead of the ~3.5 minutes of lanes it would
+# otherwise repeat while git holds the remote's SSH connection idle. `make gate-fresh` before
+# the push is what every landing flow runs anyway, so the hook it shortens is the common case.
+def stamp_path(repo: Path, tree: str) -> Path:
+    """Return where the stamp for *tree* lives."""
+    return stamps_root(repo, STORE) / f"{tree}.json"
+
+
+def write_stamp(repo: Path, tree: str) -> Path:
+    """Record that *tree* passed every target in :data:`GATED_TARGETS`."""
+    record = {
+        "format": STAMP_FORMAT,
+        "tree": tree,
+        "targets": GATED_TARGETS,
+        "written_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "checkout": str(repo),
+    }
+    path = stamp_path(repo, tree)
+    write_atomically(path, json.dumps(record, indent=2, sort_keys=True) + "\n")
+    return path
+
+
+def stamped(repo: Path, tree: str) -> bool:
+    """Whether *tree* passed the gate as it stands now.
+
+    Only a stamp of this format, for this tree, recording exactly today's target list counts:
+    a stamp from before a target was added certifies nothing about that target, and a file
+    that does not parse is never evidence.
+    """
+    try:
+        record = json.loads(stamp_path(repo, tree).read_text())
+    except (OSError, ValueError):
+        return False
+    return (
+        isinstance(record, dict)
+        and record.get("format") == STAMP_FORMAT
+        and record.get("tree") == tree
+        and record.get("targets") == GATED_TARGETS
+    )
 
 
 @dataclass(frozen=True)
@@ -483,11 +547,26 @@ def main(argv: list[str] | None = None) -> int:
             for name in state.untracked:
                 print(f"  {name}", flush=True)
         sha = resolve_ref(repo, args.ref)
-        print(
-            f"gate-fresh: gating {sha[:12]} in a pristine worktree ({', '.join(GATED_TARGETS)})",
-            flush=True,
-        )
-        result = gate(repo, sha, make_args=make_args)
+        tree = tree_hash(repo, sha)
+        if args.pre_push and stamped(repo, tree):
+            print(
+                f"gate-fresh: tree {tree[:12]} already passed gate-fresh; running only the "
+                f"history checks over the pushed range ({', '.join(HISTORY_TARGETS)}) on "
+                f"{sha[:12]}",
+                flush=True,
+            )
+            result = gate(repo, sha, targets=HISTORY_TARGETS, make_args=make_args)
+            full = False
+        else:
+            print(
+                f"gate-fresh: gating {sha[:12]} in a pristine worktree "
+                f"({', '.join(GATED_TARGETS)})",
+                flush=True,
+            )
+            result = gate(repo, sha, make_args=make_args)
+            full = True
+        if result.passed and full:
+            write_stamp(repo, tree)
     except GateFreshError as exc:
         print(f"gate-fresh: {exc}", file=sys.stderr)
         return 1

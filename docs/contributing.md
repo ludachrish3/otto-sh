@@ -509,6 +509,17 @@ present would be just as wrong as gating the browser lanes without it.
 `git push` to `main` runs this automatically via `.githooks/pre-push`; use
 `git push --no-verify` to skip it deliberately.
 
+A pass stamps the gated tree, under `<git common dir>/otto-gate-fresh-stamps/`,
+with the list of targets it ran. When the push finds a stamp for the pushed
+tree and today's target list, it runs only the history check (`check-breaking`
+over the pushed range) in the pristine worktree, a few seconds instead of the
+full gate's three and a half minutes: every other target is a function of the
+tree, and a tree that passed once passes again. The history check still runs
+because an amend or a squash changes the commit messages without changing the
+tree. That keeps the hook well inside the time GitHub holds an idle push
+connection open, which a full run can outlast; running `make gate-fresh` before
+you push is what earns the stamp.
+
 ### The landing's gate is stamped
 
 `make gate-tip` is how a branch earns its push to `main`. It asks the oracle

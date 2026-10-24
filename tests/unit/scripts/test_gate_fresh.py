@@ -760,7 +760,9 @@ def _sentinel_gate(monkeypatch) -> None:
 def _recording_gate(monkeypatch, tmp_path: Path) -> "list[tuple[str, list[str]]]":
     calls: "list[tuple[str, list[str]]]" = []
 
-    def fake(repo, sha, *, make_args=None):
+    def fake(repo, sha, *, targets=None, make_args=None):
+        # targets: the full gate (None) or, over a tree a pass already stamped, the history
+        # lane alone (TestTreeStamps pins which).
         calls.append((sha, make_args or []))
         return GateResult(passed=True, worktree=tmp_path / "wt", kept=False)
 
@@ -1048,3 +1050,115 @@ class TestMeasuredOutputsThroughTheCheck:
             f"beyond the measured outputs (stamped in {repo}, base {remote_sha[:12]})"
         )
         assert {m.reason for m in verdict.missing} == {reason}
+
+
+# ---------------------------------------------------------------------------
+# Tree stamps: a tree that passed the gate is not gated again at the push
+# ---------------------------------------------------------------------------
+
+
+def _targets_gate(
+    monkeypatch, tmp_path: Path, *, passed: bool = True
+) -> "list[tuple[str, list[str] | None, list[str]]]":
+    """Fake gate() recording (sha, targets, make_args); ``targets`` None is the full gate."""
+    calls: "list[tuple[str, list[str] | None, list[str]]]" = []
+
+    def fake(repo, sha, *, targets=None, make_args=None):
+        calls.append((sha, targets, make_args or []))
+        return GateResult(passed=passed, worktree=tmp_path / "wt", kept=not passed)
+
+    monkeypatch.setattr(gate_fresh, "gate", fake)
+    return calls
+
+
+class TestTreeStamps:
+    def test_a_pass_stamps_the_gated_tree_with_the_targets_it_ran(self, tmp_path, monkeypatch):
+        repo = _repo(tmp_path)
+        _targets_gate(monkeypatch, tmp_path)
+        assert main(["--repo", str(repo)]) == 0
+        import json
+
+        tree = gt.tree_hash(repo, "HEAD")
+        assert gate_fresh.stamped(repo, tree)
+        record = json.loads(gate_fresh.stamp_path(repo, tree).read_text())
+        assert record["tree"] == tree
+        assert record["targets"] == gate_fresh.GATED_TARGETS
+
+    def test_a_failure_stamps_nothing(self, tmp_path, monkeypatch):
+        repo = _repo(tmp_path)
+        _targets_gate(monkeypatch, tmp_path, passed=False)
+        assert main(["--repo", str(repo)]) == 1
+        assert not gate_fresh.stamped(repo, gt.tree_hash(repo, "HEAD"))
+
+    def test_a_stamped_tree_runs_only_the_history_lane_at_the_push(
+        self, tmp_path, capsys, monkeypatch
+    ):
+        repo, _bare_repo, remote_sha, tip = _published(tmp_path)
+        _stamp_tip(repo, remote_sha, tip)
+        gate_fresh.write_stamp(repo, gt.tree_hash(repo, tip))
+        calls = _targets_gate(monkeypatch, tmp_path)
+        assert _pre_push(monkeypatch, repo, "origin", remote_sha, tip) == 0
+        assert calls == [(tip, gate_fresh.HISTORY_TARGETS, [f"RANGE={remote_sha}..HEAD"])]
+        assert "already passed gate-fresh" in capsys.readouterr().out
+
+    def test_an_amend_that_keeps_the_tree_still_runs_the_history_lane(self, tmp_path, monkeypatch):
+        """The stamp is for the tree; the commit messages the push carries are checked anew."""
+        repo, _bare_repo, remote_sha, tip = _published(tmp_path)
+        _stamp_tip(repo, remote_sha, tip)
+        gate_fresh.write_stamp(repo, gt.tree_hash(repo, tip))
+        _git(repo, "commit", "--amend", "-qm", "tip, reworded")
+        amended = _git(repo, "rev-parse", "HEAD").strip()
+        calls = _targets_gate(monkeypatch, tmp_path)
+        assert _pre_push(monkeypatch, repo, "origin", remote_sha, amended) == 0
+        assert calls == [(amended, gate_fresh.HISTORY_TARGETS, [f"RANGE={remote_sha}..HEAD"])]
+
+    def test_an_unstamped_tree_runs_the_full_gate_and_is_stamped_by_it(self, tmp_path, monkeypatch):
+        repo, _bare_repo, remote_sha, tip = _published(tmp_path)
+        _stamp_tip(repo, remote_sha, tip)
+        calls = _targets_gate(monkeypatch, tmp_path)
+        assert _pre_push(monkeypatch, repo, "origin", remote_sha, tip) == 0
+        assert calls == [(tip, None, [f"RANGE={remote_sha}..HEAD"])]
+        assert gate_fresh.stamped(repo, gt.tree_hash(repo, tip))
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            "not json",
+            '{"format": 1, "tree": "TREE", "targets": ["docs"]}',
+            '{"format": 2, "tree": "TREE", "targets": TARGETS}',
+            '{"format": 1, "tree": "another", "targets": TARGETS}',
+        ],
+        ids=["unreadable", "another-target-list", "another-format", "another-tree"],
+    )
+    def test_a_stamp_that_is_not_this_gate_s_evidence_runs_the_full_gate(
+        self, tmp_path, monkeypatch, body
+    ):
+        import json
+
+        repo, _bare_repo, remote_sha, tip = _published(tmp_path)
+        _stamp_tip(repo, remote_sha, tip)
+        tree = gt.tree_hash(repo, tip)
+        path = gate_fresh.stamp_path(repo, tree)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            body.replace("TREE", tree).replace("TARGETS", json.dumps(gate_fresh.GATED_TARGETS))
+        )
+        calls = _targets_gate(monkeypatch, tmp_path)
+        assert _pre_push(monkeypatch, repo, "origin", remote_sha, tip) == 0
+        assert [targets for _, targets, _ in calls] == [None]
+
+    def test_the_history_lane_holds_every_make_target_that_reads_the_range(self):
+        """A target reading ``$(RANGE)`` depends on the pushed commits, not the tree: one the
+        stamp shortcut does not run would go unchecked on every stamped push."""
+        import re
+
+        readers: "set[str]" = set()
+        target = None
+        for line in (CHECKOUT_ROOT / "Makefile").read_text().splitlines():
+            head = re.match(r"^([A-Za-z0-9_.-]+):(?!=)", line)
+            if head:
+                target = head.group(1)
+            elif line.startswith("\t") and "$(RANGE)" in line and target is not None:
+                readers.add(target)
+        assert readers, "no Makefile recipe reads $(RANGE): the scan is broken"
+        assert readers <= set(gate_fresh.HISTORY_TARGETS), readers
