@@ -4,7 +4,7 @@ Runs against the live unix bed. The unit suite proves the payload is
 composed and written; only a real interactive shell can prove the *effect* —
 that bash, having read the user's rc files and holding a real ``HISTFILE``,
 actually stops recording, and that the file on disk is untouched after the
-session closes (bash writes history at exit, so nothing before close proves
+session ends (bash writes history at exit, so nothing before the end proves
 anything).
 
 Two observations per case, because either alone is weak:
@@ -20,11 +20,29 @@ Two observations per case, because either alone is weak:
 suppression assertions could pass against a bed where nothing writes history
 for some unrelated reason (no rc file, ``HISTFILE`` already unset, a
 restricted shell), and the suite would look green while proving nothing.
+
+HOW A SESSION ENDS DECIDES WHETHER bash SAVES. bash (5.2 on the bed) writes
+``~/.bash_history`` on two paths: the ``exit`` builtin, which always saves, and
+a SIGHUP that lands while bash is idle in readline, waiting for a command. A
+SIGHUP that lands while bash is still busy -- finishing the command whose
+output otto just read, or running ``PROMPT_COMMAND`` -- kills bash without it
+ever opening the file. Leaving ``async with host:`` closes the channel straight
+after the last command's output, sends no ``exit``, and so races bash back to
+readline. bash nearly always wins, which makes it a flake, not a failure.
+
+So every test here that NEEDS a write to happen ends its shell with ``exit``
+(:func:`_exit_shell`), and the ``busy_prompt`` pair below holds that window
+open on purpose (:func:`_busy_until_released`): one test proves a hangup
+inside it loses the write, the other proves ``exit`` saves anyway. The
+suppression tests end on both paths (see
+:func:`test_default_host_leaves_history_untouched`).
 """
 
 import contextlib
+import logging
+import sys
 import uuid
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 
 import pytest
 import pytest_asyncio
@@ -125,18 +143,24 @@ async def _history_digest(host, element: str) -> str:
 _WRITER_EXIT_TIMEOUT = 30.0
 """Runaway guard on the shell's exit — deliberately NOT a discriminator.
 
-bash writes ~/.bash_history in its exit path and only then does the process go
-away, so "the session's shell is gone" *happens after* "the history write
-landed". Waiting on that predicate is what makes this module safe on a slow or
-loaded host: a wall-clock window would have to be guessed, and guessing short
-fails the positive control spuriously while guessing anything at all caps how
-long a suppression leak has to show up. A deterministic predicate just waits
+"The session's shell is gone" means "bash will write nothing more", NOT
+"bash wrote its history". Where bash saves at all, it saves before the
+process goes away, so once the shell is gone a sample of the file is final:
+any write that is coming has landed. But a shell hung up while busy (see the
+module docstring) goes away having written nothing. That is why a test that
+needs the write ends its shell with ``exit`` first (:func:`_exit_shell`), and
+this wait only rules out sampling too early.
+
+Waiting on that predicate is what makes this module safe on a slow or loaded
+host: a wall-clock window would have to be guessed, and guessing short fails
+the positive control spuriously while guessing anything at all caps how long
+a suppression leak has to show up. A deterministic predicate just waits
 longer on a slow host and still gives the right answer.
 
-Measured on the bed: the shell disappears 0.12s after close, and the first
-sample taken afterwards saw the write 10 times out of 10. This 30s bound is
-two orders of magnitude above that, so it can only fire on a genuine hang --
-and when it fires it raises, rather than quietly letting a test decide.
+Measured on the bed: the shell disappears about 0.12s after ``exit`` or a
+hangup. This 30s bound is two orders of magnitude above that, so it can only
+fire on a genuine hang -- and when it fires it raises, rather than quietly
+letting a test decide.
 """
 
 _WRITER_POLL = 0.05
@@ -182,6 +206,10 @@ async def _await_writer_exit(host, pid: str, element: str) -> None:
     control, and -- far more quietly -- would let every suppression assertion
     call a not-yet-flushed leak clean.
 
+    It proves only that bash will write nothing MORE, not that it wrote
+    anything: a shell hung up while busy exits without saving. Tests that need
+    the write call :func:`_exit_shell` first; this is then a no-op guard.
+
     ``wait_for_async`` owns the loop: a hand-rolled deadline poll here is what
     the ``no-handrolled-deadline-poll`` lint rule exists to stop, and it would
     also have swallowed the timeout into a bare ``AssertionError`` instead of
@@ -198,10 +226,162 @@ async def _await_writer_exit(host, pid: str, element: str) -> None:
         interval=_WRITER_POLL,
         on_timeout=(
             f"{element}: the session's shell (pid {pid}) was still alive "
-            f"{_WRITER_EXIT_TIMEOUT:.0f}s after the session closed, so "
+            f"{_WRITER_EXIT_TIMEOUT:.0f}s after the session ended, so "
             f"~/.bash_history cannot be sampled meaningfully"
         ),
     )
+
+
+async def _exit_shell(host, pid: str, element: str, release: str | None = None) -> None:
+    """End the session's shell with ``exit`` and wait until it is gone.
+
+    Called inside ``async with host:``, before leaving the block closes the
+    channel. ``exit`` runs bash's exit builtin, which saves history whatever
+    bash was doing when the line arrived: if it is still busy, the line waits
+    in the terminal until bash is back in readline. Leaving the block instead
+    hangs up on bash, and a hangup that lands while bash is busy loses the
+    write (see the module docstring). Waiting for the PID here, rather than
+    after the block, means the close that follows has nothing left to race.
+
+    *release* names a :func:`_busy_until_released` gate to remove after the
+    ``exit`` is sent, so a deliberately busy bash can reach the waiting line.
+    """
+    await host.send("exit\n")
+    if release is not None:
+        await _release(host, release)
+    await _await_writer_exit(host, pid, element)
+
+
+def _note_on(exc: BaseException, text: str) -> None:
+    """Attach *text* to an exception already on its way out, never replacing it.
+
+    ``add_note`` exists from Python 3.11; on 3.10 the note goes to the log.
+    """
+    if sys.version_info >= (3, 11):
+        exc.add_note(text)
+    else:
+        logging.getLogger(__name__).error(text)
+
+
+async def _restore_history(
+    host, element: str, backup: str, existed: str, before: str
+) -> str | None:
+    """Put ~/.bash_history back from *backup*; return what is wrong, or ``None``.
+
+    `rm` of the backup is unconditional (`;` not `&&`) so a failed restore
+    can't also leak the backup file, and a bed that had no history file gets
+    none.
+    """
+    restore = f"cp {backup} ~/.bash_history" if existed == "yes" else "rm -f ~/.bash_history"
+    await host.exec(f"{restore}; rm -f {backup}")
+    # No writer-exit wait here: the restore is a synchronous `cp` over an exec
+    # channel that has already returned.
+    after = await _history_digest(host, element)
+    if after != before:
+        return f"{element}: failed to restore ~/.bash_history (digest {after}, expected {before})"
+    return None
+
+
+@contextlib.asynccontextmanager
+async def _history_restored(host, element: str) -> AsyncIterator[str]:
+    """Back up ~/.bash_history, yield its digest, and restore it byte-for-byte.
+
+    For the tests that write history on purpose. The bed is shared, so the
+    file is put back exactly as found and the restore is verified by digest
+    on every path. When the body succeeded, a bad restore fails the test.
+    When the body already raised, a bad restore is attached to that exception
+    as a note and never replaces it.
+
+    The restore is byte-exact only when the body ended its shell first: a
+    shell still alive at restore time can write after the `cp`.
+    """
+    before = await _history_digest(host, element)
+    # Record whether the file existed at all: restoring a `cp` of a missing
+    # file would CREATE an empty ~/.bash_history where the bed had none. The
+    # digest wouldn't notice (both hash as empty) but the bed would be altered.
+    # An answer that is neither word would pick the `rm` restore and delete a
+    # real history file, so it stops the test here instead.
+    existed = str((await host.exec("test -f ~/.bash_history && echo yes || echo no")).value).strip()
+    assert existed in ("yes", "no"), (
+        f"{element}: could not tell whether ~/.bash_history exists: {existed!r}"
+    )
+    backup = f"/tmp/otto-history-backup-{uuid.uuid4().hex[:8]}"
+    if existed == "yes":
+        # The backup is proven a byte-exact copy before anything may write:
+        # a failed `cp` would otherwise "restore" garbage over the real file.
+        copied = await host.exec(f"cp ~/.bash_history {backup} && sha256sum < {backup}")
+        assert copied.status is Status.Success, (
+            f"{element}: could not back up ~/.bash_history: {copied!r}"
+        )
+        assert str(copied.value).strip() == before, (
+            f"{element}: the backup of ~/.bash_history does not match it: {copied!r}"
+        )
+    failure: BaseException | None = None
+    try:
+        yield before
+    except BaseException as exc:
+        failure = exc
+        raise
+    finally:
+        if failure is None:
+            problem = await _restore_history(host, element, backup, existed, before)
+            assert problem is None, problem
+        else:
+            try:
+                problem = await _restore_history(host, element, backup, existed, before)
+            except Exception as restore_exc:  # noqa: BLE001 — must never replace the body's failure
+                problem = f"{element}: restoring ~/.bash_history raised {restore_exc!r}"
+            if problem is not None:
+                _note_on(failure, problem)
+
+
+@contextlib.asynccontextmanager
+async def _busy_until_released(host, element: str) -> AsyncIterator[str]:
+    """Create a gate file on the host and yield its path; remove it on exit.
+
+    :func:`_gate_prompt` turns it into a ``PROMPT_COMMAND``. Set inside one
+    session only (never in the bed's rc files), that keeps bash busy -- out
+    of readline -- until the gate file is removed. otto reads a command's
+    output before bash runs ``PROMPT_COMMAND``, so the command that sets it
+    returns, and from then on
+    bash is busy for as long as the test says: a hangup is certain to land
+    in the window, with no wall-clock guess about how fast the close is.
+
+    The gate is removed when the block exits, on every path. A test that
+    hangs up waits for the shell's PID to go first; one that sends ``exit``
+    removes the gate itself (:func:`_release`) so bash can reach the line.
+    """
+    gate = f"/tmp/otto-gate-{uuid.uuid4().hex[:8]}"
+    made = await host.exec(f"touch {gate}")
+    assert made.status is Status.Success, f"{element}: could not create {gate}: {made!r}"
+    try:
+        yield gate
+    finally:
+        await _release(host, gate)
+
+
+async def _release(host, gate: str) -> None:
+    """Remove the gate file, letting a busy ``PROMPT_COMMAND`` loop finish."""
+    await host.exec(f"rm -f {gate}")
+
+
+def _gate_prompt(gate: str) -> str:
+    """The ``PROMPT_COMMAND`` that loops until *gate* is gone."""
+    return f"while [ -e {gate} ]; do sleep 0.1; done"
+
+
+async def _marker_recorded(host, marker: str) -> bool:
+    """Whether *marker* appears in ~/.bash_history, read over ``exec``.
+
+    A verdict word, not a count: `grep -c` prints "0" AND exits 1 on no
+    match, so any `|| fallback` fires too and the output is ambiguous.
+    """
+    found = await host.exec(
+        f"if grep -q -F {marker} ~/.bash_history 2>/dev/null; then echo FOUND; else echo ABSENT; fi"
+    )
+    verdict = str(found.value).strip()
+    assert verdict in ("FOUND", "ABSENT"), f"could not grep ~/.bash_history: {found!r}"
+    return verdict == "FOUND"
 
 
 async def _shells_histfile(host) -> str:
@@ -212,8 +392,21 @@ async def _shells_histfile(host) -> str:
 
 
 @pytest.mark.asyncio
-async def test_default_host_leaves_history_untouched(leased_host, make_host):
-    """The whole point: a default UnixHost writes nothing to ~/.bash_history."""
+@pytest.mark.parametrize("ending", ["exit", "hangup"])
+async def test_default_host_leaves_history_untouched(leased_host, make_host, ending):
+    """The whole point: a default UnixHost writes nothing to ~/.bash_history.
+
+    Checked on both ways a session can end, because bash can save on either:
+
+    - ``exit``: bash's exit builtin, which always reaches the save. This is
+      the strict case -- if suppression ever broke, this ending is certain to
+      write, so a clean digest here cannot be luck.
+    - ``hangup``: leaving ``async with host:``, which is how otto itself ends
+      a session. A hangup while bash is idle in readline saves too, so this
+      proves suppression holds on the path users actually get. (A hangup
+      while bash is busy saves nothing, which can only make this case pass
+      more easily -- hence the ``exit`` case.)
+    """
     element, ip = leased_host
     host = make_host(ip, element)
 
@@ -226,21 +419,15 @@ async def test_default_host_leaves_history_untouched(leased_host, make_host):
         for _ in range(3):
             assert (await host.run(f"echo {marker}")).only.status is Status.Success
         pid = await _session_pid(host)
-    # Leaving the context closes the session — the moment bash flushes history.
-    # Both checks below are taken after that write has provably completed, so
-    # the grep further down is protected by this wait too, not just the digest.
+        if ending == "exit":
+            await _exit_shell(host, pid, element)
+    # Whatever the ending, nothing is sampled until the shell is gone: from
+    # then on bash can write nothing more, so both checks below are final.
     await _await_writer_exit(host, pid, element)
 
     after = await _history_digest(host, element)
     assert after == before, f"{element}: otto's commands reached ~/.bash_history"
-
-    # Emit a verdict word, not a count: `grep -c` prints "0" AND exits 1 on no
-    # match, so any `|| fallback` fires too and the output is ambiguous —
-    # while asserting the *marker* is absent from a count can never fail at all.
-    leaked = await host.exec(
-        f"if grep -q -F {marker} ~/.bash_history 2>/dev/null; then echo LEAKED; else echo CLEAN; fi"
-    )
-    assert str(leaked.value).strip() == "CLEAN", (
+    assert not await _marker_recorded(host, marker), (
         f"{element}: marker {marker} found in ~/.bash_history"
     )
 
@@ -258,18 +445,15 @@ async def test_opting_in_still_records(leased_host, make_host):
     So this deliberately pollutes, asserts the digest moved, and then restores
     the file byte-for-byte, verifying the digest returns to its original
     value. The bed is left exactly as found.
+
+    The shell is ended with ``exit``, not a hangup: a hangup can land while
+    bash is still finishing the last command, and then bash saves nothing
+    (see the module docstring). That race is what made this control flaky.
     """
     element, ip = leased_host
     host = make_host(ip, element, shell_history=True)
-    backup = f"/tmp/otto-history-backup-{uuid.uuid4().hex[:8]}"
 
-    before = await _history_digest(host, element)
-    # Record whether the file existed at all: restoring a `cp` of a missing
-    # file would CREATE an empty ~/.bash_history where the bed had none. The
-    # digest wouldn't notice (both hash as empty) but the bed would be altered.
-    existed = str((await host.exec("test -f ~/.bash_history && echo yes || echo no")).value).strip()
-    await host.exec(f"cp ~/.bash_history {backup} 2>/dev/null || : > {backup}")
-    try:
+    async with _history_restored(host, element) as before:
         marker = f"otto-control-probe-{uuid.uuid4().hex[:8]}"
         async with host:
             seen = await _shells_histfile(host)
@@ -281,27 +465,98 @@ async def test_opting_in_still_records(leased_host, make_host):
             for _ in range(3):
                 assert (await host.run(f"echo {marker}")).only.status is Status.Success
             pid = await _session_pid(host)
+            await _exit_shell(host, pid, element)
 
-        await _await_writer_exit(host, pid, element)
         after = await _history_digest(host, element)
         assert after != before, (
             f"{element}: history did not change even with recording ENABLED — the "
             f"digest cannot detect pollution, so this module's suppression "
             f"assertions are vacuous"
         )
-    finally:
-        # Restore byte-for-byte; leave no trace of the control on a shared bed.
-        # `rm` is unconditional (`;` not `&&`) so a failed restore can't also
-        # leak the backup file, and a bed that had no history file gets none.
-        restore = f"cp {backup} ~/.bash_history" if existed == "yes" else "rm -f ~/.bash_history"
-        await host.exec(f"{restore}; rm -f {backup}")
 
-    # No writer-exit wait here: the restore above is a synchronous `cp` over an
-    # exec channel that has already returned, so there is no pending write to
-    # race with.
-    assert await _history_digest(host, element) == before, (
-        f"{element}: failed to restore ~/.bash_history after the positive control"
-    )
+
+async def _busy_prompt_session(host, marker: str, gate: str) -> str:
+    """Record *marker*, then keep bash busy until *gate* goes; return the PID.
+
+    The opt-in session's shell keeps history, so the marker is due to be
+    saved. The PID is read before the busy ``PROMPT_COMMAND`` is set, because
+    once it is set bash reads no further command until the gate is released.
+    """
+    assert (await host.run(f"echo {marker}")).only.status is Status.Success
+    pid = await _session_pid(host)
+    busy = (await host.run(f"PROMPT_COMMAND='{_gate_prompt(gate)}'")).only
+    assert busy.status is Status.Success, f"could not set the busy PROMPT_COMMAND: {busy!r}"
+    return pid
+
+
+@pytest.mark.asyncio
+async def test_busy_prompt_hangup_loses_the_history_write(leased_host, make_host):
+    """A hangup while bash is busy kills it before it saves history.
+
+    The control for the test below: it proves the gated ``PROMPT_COMMAND``
+    really holds bash out of readline, so the ``exit`` test is not passing on
+    a bed where the window never opens. It also pins the bash behaviour that
+    made the positive control flaky. The gate stays until the shell is gone,
+    so the hangup lands in the window however slow the close is.
+
+    It turns red if a hangup while busy starts saving: a bash that saves on
+    any SIGHUP, or a session close that sends ``exit`` and lets bash run it
+    before hanging up. #717 plans that graceful close for ``shell_history``
+    sessions, and is the expected reason for this test to change; when it
+    does, this module's ``exit`` endings can be revisited. A close that sends
+    ``exit`` and hangs up straight away does NOT turn it red, and rightly:
+    the ``exit`` waits behind the gate, so the busy shell still loses the
+    write. So this control cannot see a time-bounded graceful close: #717
+    needs its own test of that close on an idle, ungated shell.
+    """
+    element, ip = leased_host
+    host = make_host(ip, element, shell_history=True)
+
+    async with _history_restored(host, element) as before:
+        marker = f"otto-hangup-probe-{uuid.uuid4().hex[:8]}"
+        async with _busy_until_released(host, element) as gate:
+            async with host:
+                pid = await _busy_prompt_session(host, marker, gate)
+            await _await_writer_exit(host, pid, element)
+
+        assert await _history_digest(host, element) == before, (
+            f"{element}: a hangup while bash was busy still saved history. Either "
+            f"bash now saves on SIGHUP outside readline, or the session's close now "
+            f"sends `exit` and bash ran it (#717 plans that for shell_history "
+            f"sessions) -- this module's `exit` endings can then be revisited"
+        )
+        assert not await _marker_recorded(host, marker), (
+            f"{element}: marker {marker} saved despite a hangup while bash was busy"
+        )
+
+
+@pytest.mark.asyncio
+async def test_busy_prompt_exit_still_saves_history(leased_host, make_host):
+    """``exit`` saves history even when bash is busy as it arrives.
+
+    The regression test for the positive control's flake. The same gated
+    window that loses the write on a hangup (the test above) must not lose it
+    when the shell is ended the way :func:`_exit_shell` ends it. ``exit`` is
+    sent while bash is still busy, so it waits in the terminal; only then is
+    the gate released, and bash reads it the moment it is back in readline.
+    It turns red if :func:`_exit_shell` stops sending ``exit`` before the
+    session closes.
+    """
+    element, ip = leased_host
+    host = make_host(ip, element, shell_history=True)
+
+    async with _history_restored(host, element) as before:
+        marker = f"otto-exit-probe-{uuid.uuid4().hex[:8]}"
+        async with _busy_until_released(host, element) as gate, host:
+            pid = await _busy_prompt_session(host, marker, gate)
+            await _exit_shell(host, pid, element, release=gate)
+
+        assert await _history_digest(host, element) != before, (
+            f"{element}: ending with `exit` while bash was busy wrote no history"
+        )
+        assert await _marker_recorded(host, marker), (
+            f"{element}: marker {marker} missing although the shell ended with `exit`"
+        )
 
 
 @pytest.mark.asyncio
@@ -343,6 +598,10 @@ async def test_root_history_untouched_across_elevation(leased_host, make_host):
 
     before = await _root_digest()
     marker = f"otto-root-probe-{uuid.uuid4().hex[:8]}"
+    # No `_exit_shell` needed: leaving `as_user` runs the proxy's undo, which
+    # ends root's shell with `exit`. That is bash's always-saving path, so a
+    # broken suppression is certain to show in root's digest. Only the login
+    # shell underneath is then hung up, and it does not own root's file.
     async with host, host.as_user("root"):
         assert (await host.run(f"echo {marker}")).only.status is Status.Success
         # Root's shell is the one that would write /root/.bash_history, so it
