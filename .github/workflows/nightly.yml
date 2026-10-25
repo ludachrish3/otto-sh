@@ -61,9 +61,13 @@ env:
   PY_COLORS: ""
   CLICOLOR: ""
 
+# Runners are pinned to ubuntu-24.04 until #719 is fixed: ubuntu-26.04
+# (ubuntu-latest from 2026-10-25) ships clang 21, which otto's coverage
+# does not read yet. Put ubuntu-latest back as part of #719.
+
 jobs:
   stability-matrix:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -104,7 +108,7 @@ jobs:
   # the CI `tests_hostless` job but loops each session with --count via
   # pytest-repeat.
   unit-matrix:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -159,7 +163,7 @@ jobs:
   # session with --count.
   dashboard:
     name: dashboard-e2e (${{ matrix.browser }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -204,7 +208,7 @@ jobs:
   # than the deterministic gates — the same "non-deterministic lanes only"
   # scope as the rest of this workflow.
   chaos-tier2:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7.0.1
@@ -246,7 +250,7 @@ jobs:
   # (kills/restarts a real daemon), so it only runs where that is safe to do
   # — a disposable GitHub runner, never the dev VM or the lab bed.
   chaos-docker:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7.0.1
@@ -307,7 +311,7 @@ jobs:
   # it joins THIS job then. Deliberately not stubbed -- an empty matrix
   # nothing writes would be a check that cannot fail.
   conformance-hermetic:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # ABOVE the Makefile's PYTEST_TIMEOUT wrap (2400s) around `make
     # conformance`, plus the sync / sshd / `make busybox-cache` setup ahead of
     # it, so a stall reports through `timeout`'s exit 124 rather than a
@@ -425,7 +429,7 @@ jobs:
   # fetch in exactly the runs that could detect a rebuild.
   busybox-upstream-drift:
     name: BusyBox upstream drift (pins vs busybox.net)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
       OTTO_BUSYBOX_SOURCE: upstream
@@ -496,7 +500,7 @@ jobs:
   # on another interpreter, so that false climb cannot come back unnoticed.
   python-canary:
     name: Next-Python canary (expected-rung ratchet)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The climb reaches `make conformance`, wrapped at the Makefile's
     # PYTEST_TIMEOUT, and runs every other nightly lane's tests besides — so
     # this bound is well above the sum, and above the wrap plus setup that
@@ -683,7 +687,7 @@ jobs:
         python-canary,
       ]
     if: failure()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       issues: write
     steps:

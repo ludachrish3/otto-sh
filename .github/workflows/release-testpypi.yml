@@ -3,10 +3,14 @@ name: Release (TestPyPI)
 on:
   workflow_dispatch:
 
+# Runners are pinned to ubuntu-24.04 until #719 is fixed: ubuntu-26.04
+# (ubuntu-latest from 2026-10-25) ships clang 21, which otto's coverage
+# does not read yet. Put ubuntu-latest back as part of #719.
+
 jobs:
   build:
     name: Build distribution
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -42,7 +46,7 @@ jobs:
   publish:
     name: Publish to TestPyPI
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: testpypi
     permissions:
       id-token: write

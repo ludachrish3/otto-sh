@@ -40,10 +40,14 @@ env:
   PY_COLORS: ""
   CLICOLOR: ""
 
+# Runners are pinned to ubuntu-24.04 until #719 is fixed: ubuntu-26.04
+# (ubuntu-latest from 2026-10-25) ships clang 21, which otto's coverage
+# does not read yet. Put ubuntu-latest back as part of #719.
+
 jobs:
   tests:
     name: tests_hostless-${{ matrix.python }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # A healthy lane finishes in 9-15 minutes. Without this the job inherits
     # GitHub's 6-hour default, and one stalled runner (2026-09-11: both xdist
     # workers went silent mid-file at 75% with no failure and no pytest-timeout,
@@ -129,7 +133,7 @@ jobs:
   # cross-module leaks).
   unit-repeat:
     name: unit-repeat (test-isolation guard)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -172,7 +176,7 @@ jobs:
   # the others.
   dashboard:
     name: dashboard-e2e (${{ matrix.browser }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -348,7 +352,7 @@ jobs:
       matrix:
         include:
           - arch: x86_64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
           - arch: arm64
             runner: ubuntu-24.04-arm
     steps:
@@ -413,7 +417,7 @@ jobs:
   # after its headline gate; it also runs the vitest unit floor.)
   check-ts:
     name: check-ts
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Set up Node
@@ -426,7 +430,7 @@ jobs:
   # Python static gates. Named -python because they run Python-only nox
   # sessions (ruff / ty); the TS analogues live in the `check-ts` job above.
   lint-python:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -481,7 +485,7 @@ jobs:
           uv run python scripts/check_breaking_marks.py "$RANGE"
 
   typecheck-python:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: astral-sh/setup-uv@v10.2.0
@@ -491,7 +495,7 @@ jobs:
       - run: uv run nox -s typecheck
 
   docs:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Set up Node
@@ -537,7 +541,7 @@ jobs:
   # needs the web assets (the build backend refuses an asset-less one), and
   # `make wheel-smoke` builds them, checks the wheel, then runs the session.
   wheel-smoke:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Set up Node
@@ -557,7 +561,7 @@ jobs:
   # fails here, on the minor that disagrees.
   api-dump-invariance:
     name: api-dump-invariance-${{ matrix.python }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -582,7 +586,7 @@ jobs:
     name: Open issue on failure
     needs: [lint-python, tests, unit-repeat, dashboard, busybox, check-ts, typecheck-python, docs, wheel-smoke, api-dump-invariance]
     if: failure() && github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       issues: write
     steps:
