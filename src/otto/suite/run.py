@@ -842,16 +842,23 @@ registration or a failed coverage pre-clean (``pytest.ExitCode.USAGE_ERROR``,
 """
 
 
+def _partial_junit_path(final: Path) -> Path:
+    """Name the temporary file a session's JUnit file is written under, beside *final*."""
+    return final.with_name(f".{final.name}.{os.getpid()}.partial")
+
+
 class _SessionStdout:
     """``sys.stdout`` for one inner pytest session.
 
     pytest's terminal reporter binds ``sys.stdout`` when the session is
     configured, so everything it prints comes through here. A run writes its
-    JUnit file under a temporary name (:func:`_run_pytest_session`): the
-    "generated xml file" line names the path the file is moved to, or is
-    dropped when the file is not kept (*kept* is asked then, at the end of
-    the session). A *silent* stream drops everything: a collection prints
-    nothing.
+    JUnit file under a temporary name (:func:`_run_pytest_session`). pytest
+    prints its "generated xml file" banner for the final file
+    (:class:`~otto.suite.plugin.JUnitPromotion` moves a kept file first); the
+    stream drops a line naming the temporary file when the file is not kept
+    (*kept* is asked then, at the end of the session), and swaps the final
+    path into any other line that names the temporary one. A *silent* stream
+    drops everything: a collection prints nothing.
     """
 
     def __init__(
@@ -1086,7 +1093,7 @@ def _pytest_session(
         base_args.append("--collect-only")
     else:
         final_junit = run.results_path
-        partial_junit = final_junit.with_name(f".{final_junit.name}.{os.getpid()}.partial")
+        partial_junit = _partial_junit_path(final_junit)
         base_args.append(f"--junitxml={partial_junit}")
 
     is_stability = not collect_only and (opts.iterations > 0 or opts.duration > 0)
@@ -1123,13 +1130,22 @@ def _pytest_session(
         if run is None
         else run.layout
     )
+
+    def kept() -> bool:
+        return otto_plugin.collection_finished and otto_plugin.exitstatus not in _NOTHING_RAN
+
     stream = _SessionStdout(
         sys.stdout,
         partial=str(partial_junit),
         final=str(final_junit),
-        kept=lambda: otto_plugin.collection_finished and otto_plugin.exitstatus not in _NOTHING_RAN,
+        kept=kept,
         silent=collect_only,
     )
+    plugins: list[object] = [otto_plugin, fixtures_plugin]
+    if final_junit is not None:
+        from .plugin import JUnitPromotion
+
+        plugins.append(JUnitPromotion(final_name=final_junit.name, kept=kept))
 
     import pytest
 
@@ -1147,7 +1163,7 @@ def _pytest_session(
             loading_test_files(),
             contextlib.redirect_stdout(stream),  # type: ignore[type-var]
         ):
-            rc = pytest.main([*base_args, *cache_args], plugins=[otto_plugin, fixtures_plugin])
+            rc = pytest.main([*base_args, *cache_args], plugins=plugins)
     finally:
         # The next session in this process imports the files as they are
         # then: pytest would serve these modules from the last import.
@@ -1156,7 +1172,12 @@ def _pytest_session(
         if partial_junit is not None and final_junit is not None:
             # A session whose collection did not finish ran no test: what
             # pytest wrote on its way out is no result, and no earlier one
-            # is replaced by it.
+            # is replaced by it. A kept session's file has usually moved
+            # already, before pytest named it in its summary (JUnitPromotion).
+            # That hook judged "kept" by the exit status at sessionfinish; rc
+            # differs from it only by what ends the session after the summary
+            # (pytest's max-warnings code, an exception out of pytest.main, a
+            # later hook's own exit code), when the tests have already run.
             ran = otto_plugin.collection_finished and rc not in _NOTHING_RAN
             if ran and partial_junit.exists():
                 partial_junit.replace(final_junit)

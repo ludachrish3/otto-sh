@@ -204,6 +204,51 @@ class StabilityCollector:
         )
 
 
+class JUnitPromotion:
+    """Moves a run's JUnit file to its final name before pytest names it.
+
+    A run gives pytest's ``--junitxml`` a temporary name in the final file's
+    directory, so a session that is not kept never replaces an earlier file.
+    pytest's junitxml plugin writes the file in its ``pytest_sessionfinish``.
+    The terminal reporter then calls ``pytest_terminal_summary``, where the
+    junitxml plugin prints its "generated xml file" banner. This plugin's
+    ``pytest_terminal_summary`` runs first (``tryfirst``). When *kept* says
+    the session is kept, it moves the file to *final_name* and points the
+    junitxml plugin at it, so pytest prints, and pads, the banner for the file
+    as it ends up. A session that is not kept, or that gets no summary,
+    leaves the file under its temporary name for the caller to settle.
+
+    pytest has no public route to the file the junitxml plugin names: this
+    reads its private stash key and sets its ``logfile``. When either is out
+    of reach (a pytest that moved them), the hook leaves the file alone too:
+    the caller still moves it after the session, and only the banner's
+    padding is off, for the temporary name.
+    """
+
+    def __init__(self, *, final_name: str, kept: Callable[[], bool]) -> None:
+        self._final_name = final_name
+        self._kept = kept
+
+    @pytest.hookimpl(tryfirst=True)
+    def pytest_terminal_summary(self, config: pytest.Config) -> None:
+        """Move the JUnit file to its final name, and have pytest name that one."""
+        try:
+            from _pytest.junitxml import xml_key
+        except ImportError:
+            logger.debug("pytest's junitxml stash key is gone: the JUnit file moves later")
+            return
+        xml = config.stash.get(xml_key, None)
+        logfile = getattr(xml, "logfile", None)
+        if xml is None or not isinstance(logfile, str) or not self._kept():
+            return
+        written = Path(logfile)
+        if not written.exists():
+            return
+        final = written.with_name(self._final_name)
+        written.replace(final)
+        xml.logfile = str(final)
+
+
 class OttoPlugin:
     """Internal pytest plugin used by ``otto test`` to instrument test runs.
 

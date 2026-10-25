@@ -17,10 +17,12 @@ Between two runs in one test the generated modules are evicted from
 """
 
 import dataclasses
+import io
 import logging
 from pathlib import Path
 
 import pytest
+from _pytest._io import TerminalWriter
 
 from otto.config import completion_cache as cc
 from otto.config.collected_tests import classify, read_table, write_tables
@@ -1503,6 +1505,55 @@ def test_a_run_names_the_junit_file_where_it_ends_up(project, tmp_path, capfd):
     assert f"generated xml file: {out / 'junit.xml'}" in printed
     assert ".partial" not in printed
     assert sorted(p.name for p in out.iterdir()) == ["junit.xml"]
+
+
+# One PID per length, 1 to 7 digits (pid_max is 4194304 on the dev VM): the
+# temporary JUnit name, and so the banner pytest would print for it, grows
+# with the PID.
+_PIDS = [1, 42, 999, 1234, 99999, 123456, 4194304]
+
+
+@pytest.mark.parametrize("pid", _PIDS)
+def test_pytest_prints_the_junit_banner_for_the_file_it_names(
+    project, tmp_path, capfd, monkeypatch, pid
+):
+    """The banner is pytest's own, for the final file, whatever the PID.
+
+    This guards pytest's behaviour as ``JUnitPromotion`` relies on it: that
+    the junitxml plugin writes the file before ``pytest_terminal_summary``,
+    that a ``tryfirst`` implementation runs before the one that prints the
+    banner, and that the banner names the plugin's ``logfile``, found under
+    ``_pytest.junitxml.xml_key``.
+    """
+    # Wide enough that the banner is padded for either name: a long tmp_path
+    # would leave one "-" a side of both.
+    monkeypatch.setenv("COLUMNS", "250")
+    out = tmp_path / "out"
+    monkeypatch.setattr(
+        "otto.suite.run._partial_junit_path",
+        lambda final: final.with_name(f".{final.name}.{pid}.partial"),
+    )
+    banner = io.StringIO()
+    writer = TerminalWriter(banner)
+    writer.fullwidth = 250
+    writer.sep("-", f"generated xml file: {out / 'junit.xml'}")
+
+    assert run_tests(["TestA"], output_dir=out).exit_code == 0
+
+    assert banner.getvalue() in capfd.readouterr().out
+    assert sorted(p.name for p in out.iterdir()) == ["junit.xml"]
+
+
+def test_a_kept_run_leaves_only_its_final_junit_file(project, tmp_path):
+    """A kept run ends with its JUnit file at the final name and no temporary file left."""
+    out = tmp_path / "out"
+
+    result = run_tests(["TestA"], output_dir=out)
+
+    assert result.exit_code == 0
+    assert result.junit_paths == [out / "junit.xml"]
+    assert sorted(p.name for p in out.iterdir()) == ["junit.xml"]
+    assert "<testcase" in (out / "junit.xml").read_text()
 
 
 # ── a refusal after another project's tests ran ─────────────────────────────────

@@ -9,7 +9,7 @@ INFO     @dut > | MONITORED
 INFO     @dut   | GCOV_PREFIX=/tmp/shout GCOV_PREFIX_STRIP=3 /tmp/quickstart/shout monitored
 INFO     @dut > | MONITORED
 
------ generated xml file: /tmp/otto-gs/xdir/test/<run>/junit.xml -----
+------------- generated xml file: /tmp/otto-gs/xdir/test/<run>/junit.xml -------------
 === 1 passed, 4 deselected in <t>s ===
 
 Output directory: /tmp/otto-gs/xdir/test/<run>
