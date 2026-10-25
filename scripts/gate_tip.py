@@ -10,11 +10,27 @@ the push runs them itself over the pushed range (scripts/gate_fresh.py).
 
 The store: ``<git common dir>/otto-gate-stamps/<tree>/<slug>-<8 hex>.json``,
 one file per (tree, lane key). A measured matrix (MEASURED_OUTPUTS) committed
-exactly as a run produced it keeps every stamp of that run ("promotion"); a
-re-run of a lane first deletes every stamp for its key, under every tree.
+exactly as a run produced it keeps every stamp of that run ("promotion").
+
+Every worktree shares the store, so a run deletes only what cannot still be true:
+before a lane runs, a corrupt or misnamed file at the gated tree's own path, and
+every stamp or red marker for the lane whose tree is pruned, whoever wrote it.
+Every other stamp stays, so a landing gated earlier, here or in a peer, keeps its
+evidence. A lane that goes red leaves a red marker at its (tree, key) path: never
+evidence, and the lookup stops there, so no stamp of another tree is promoted to
+a tree that went red. Only the lane's next outcome on that tree replaces it.
+
+The store lock (a flock on ``<store>/.lock``) serializes peers. Writers hold it
+exclusively: every stamp or marker write, invalidate's load-then-delete, and
+promotion's lookup-then-write. The pre-push check holds it shared from its first
+read to its verdict, so it judges one state of the store: no peer's marker or
+stamp lands while it reads, spawns git, and promotes. No lane runs under either,
+and no holder takes the other in the same process.
 """
 
 import argparse
+import contextlib
+import fcntl
 import hashlib
 import json
 import os
@@ -23,7 +39,7 @@ import shlex
 import subprocess
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -74,8 +90,11 @@ STAMPED_GOALS = [
 MEASURED_OUTPUTS = ["schemas/support_matrix.json", "schemas/kmodcov_matrix.json"]
 """Files a lane rewrites with what it measured; the Makefile says review and commit the diff."""
 STORE = "otto-gate-stamps"
+LOCK_FILE = ".lock"
+"""The store lock's file under the store root (a dotfile, never a tree directory)."""
 FORMAT = 1
 _STR_FIELDS = ("tree", "command", "base", "written_at", "checkout")
+_RED_FIELDS = ("tree", "command", "written_at", "checkout")
 
 
 class UnknownGoalError(ValueError):
@@ -137,17 +156,33 @@ class Stamp:
     path: Path
 
 
-def read_stamp(path: Path) -> "Stamp | None":
-    """Return the stamp at *path*, or None when it is unreadable.
+def _read_record(path: Path) -> "dict | None":
+    """Return the JSON object at *path* when it is one of this FORMAT, else None.
 
-    Unreadable: not JSON, not an object, another format, a missing field, or a field of
-    the wrong type — a crashed write or an older format is never evidence.
+    The store's only file read: every reader parses what this returned, so each file is
+    read once whatever it turns out to be.
     """
     try:
         data = json.loads(path.read_text())
     except (OSError, ValueError):
         return None
     if not isinstance(data, dict) or data.get("format") != FORMAT:
+        return None
+    return data
+
+
+def read_stamp(path: Path) -> "Stamp | None":
+    """Return the stamp at *path*, or None when it is unreadable.
+
+    Unreadable: not JSON, not an object, another format, a missing field, or a field of
+    the wrong type — a crashed write or an older format is never evidence.
+    """
+    return _stamp_from(_read_record(path), path)
+
+
+def _stamp_from(data: "dict | None", path: Path) -> "Stamp | None":
+    """Return the stamp *data* (read from *path*) records, or None."""
+    if data is None or "red" in data:  # a red marker is never a stamp
         return None
     if any(not isinstance(data.get(name), str) for name in _STR_FIELDS):
         return None
@@ -203,6 +238,79 @@ def write_stamp(
 
 
 @dataclass(frozen=True)
+class Red:
+    """A red marker: the lane for ``command`` went red on ``tree``. Never evidence."""
+
+    tree: str
+    command: str
+    written_at: str
+    checkout: str
+    path: Path
+
+
+def _red_from(data: "dict | None", path: Path) -> "Red | None":
+    """Return the red marker *data* (read from *path*) records, or None."""
+    if data is None or data.get("red") is not True:
+        return None
+    if any(not isinstance(data.get(name), str) for name in _RED_FIELDS):
+        return None
+    return Red(
+        tree=data["tree"],
+        command=data["command"],
+        written_at=data["written_at"],
+        checkout=data["checkout"],
+        path=path,
+    )
+
+
+def read_entry(path: Path) -> "Stamp | Red | None":
+    """Read *path* once and return the stamp or the red marker it holds, or None."""
+    data = _read_record(path)
+    return _stamp_from(data, path) or _red_from(data, path)
+
+
+@contextlib.contextmanager
+def store_lock(root: Path, *, shared: bool = False) -> Iterator[None]:
+    """Hold the store's lock (flock on ``<root>/.lock``): exclusive, or *shared* for readers.
+
+    A writer (exclusive) creates the store and the lock file if missing, and waits for every
+    other holder. A reader (shared) waits only for a writer; with no store there is nothing
+    to read, so it takes no lock and creates nothing. Only for short store steps, never
+    while a lane runs, and never nested: two flocks of one process on two open files of the
+    same lock can deadlock.
+    """
+    if shared and not root.is_dir():
+        yield
+        return
+    root.mkdir(parents=True, exist_ok=True)
+    with (root / LOCK_FILE).open("a") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_SH if shared else fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def write_red(root: Path, *, tree: str, key: str, checkout: str) -> Path:
+    """Write the red marker for (tree, key) atomically at the stamp's own path; return it."""
+    record = {
+        "format": FORMAT,
+        "red": True,
+        "tree": tree,
+        "command": key,
+        "written_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "checkout": checkout,
+    }
+    path = stamp_path(root, tree, key)
+    write_atomically(path, json.dumps(record, indent=2, sort_keys=True) + "\n")
+    return path
+
+
+def _red_reason(red: Red) -> str:
+    return f"the lane went red on this tree ({red.written_at} in {red.checkout})"
+
+
+@dataclass(frozen=True)
 class Mismatch:
     """A stamp file whose name is not its command's, and the command the file claims."""
 
@@ -212,11 +320,12 @@ class Mismatch:
 
 @dataclass(frozen=True)
 class Store:
-    """Everything one read of the store found: the stamps, and the files that are not stamps."""
+    """Everything one read of the store found: the stamps, the red markers, and the rest."""
 
     stamps: "list[Stamp]"
     unreadable: "list[Path]"
     mismatched: "list[Mismatch]"
+    red: "list[Red]"
 
 
 def _identity_holds(stamp: Stamp, tree_dir: Path) -> "tuple[bool, bool]":
@@ -230,15 +339,23 @@ def load_store(root: Path) -> Store:
     A file that is not a stamp, or whose ``tree`` is not the directory it sits in, is
     unreadable; a stamp whose file name is not its command's is mismatched (a digest
     collision, or a hand edit). Neither is ever a candidate or a witness; the lookup
-    names them only when nothing else satisfies.
+    names them only when nothing else satisfies. A red marker at its own (tree, key) path is
+    neither: it lands in ``red``, never a candidate or a witness either.
     """
     stamps: "list[Stamp]" = []
     unreadable: "list[Path]" = []
     mismatched: "list[Mismatch]" = []
+    red: "list[Red]" = []
     if root.is_dir():
         for tree_dir in sorted(p for p in root.iterdir() if p.is_dir()):
             for file in sorted(tree_dir.glob("*.json")):
-                stamp = read_stamp(file)
+                stamp = read_entry(file)
+                if isinstance(stamp, Red):
+                    if file == stamp_path(root, stamp.tree, stamp.command):
+                        red.append(stamp)
+                    else:
+                        unreadable.append(file)
+                    continue
                 if stamp is None:
                     unreadable.append(file)
                     continue
@@ -249,7 +366,7 @@ def load_store(root: Path) -> Store:
                     mismatched.append(Mismatch(file, stamp.command))
                 else:
                     stamps.append(stamp)
-    return Store(stamps, unreadable, mismatched)
+    return Store(stamps, unreadable, mismatched, red)
 
 
 def exact_stamp(root: Path, tree: str, key: str) -> "Stamp | None":
@@ -318,23 +435,59 @@ def _pruned(repo: Path, tree: str) -> bool:
     return False
 
 
+_OBJECT_NAME = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
+
+
+def _pruned_trees(repo: Path, trees: "list[str]") -> "set[str]":
+    """Return which of *trees* the object store no longer holds, in ONE git spawn.
+
+    ``git cat-file --batch-check`` answers every ``<tree>^{tree}`` line on stdin in order;
+    a line that does not say ``tree`` is pruned. A name that is not a full hex object id
+    is pruned without asking, so nothing but object ids ever reaches git's stdin.
+    """
+    names = sorted(set(trees))
+    asked = [t for t in names if _OBJECT_NAME.fullmatch(t)]
+    pruned = {t for t in names if t not in asked}
+    if not asked:
+        return pruned
+    out = _git(repo, "cat-file", "--batch-check", stdin="".join(f"{t}^{{tree}}\n" for t in asked))
+    answers = out.splitlines()
+    if len(answers) != len(asked):
+        raise GateFreshError(
+            f"git cat-file --batch-check answered {len(answers)} of {len(asked)} trees"
+        )
+    for tree, answer in zip(asked, answers, strict=True):
+        if answer.split()[1:2] != ["tree"]:  # "<name> missing", or another object type
+            pruned.add(tree)
+    return pruned
+
+
 def lookup(
     repo: Path, root: Path, tree: str, key: str, store: "Store | None" = None, base: str = ""
 ) -> Lookup:
     """Find a stamp satisfying (tree, key): the exact file first, then every promoted candidate.
 
+    A red marker for (tree, key) ends the search, whether the exact read or the store scan
+    finds it: the lane went red on this tree, so no other tree's stamp is promoted to it.
     Nothing that fails ends the search; the reason names the best evidence that did NOT count,
     in this order: a stamp of a tree that differs beyond the measured outputs; a command
     mismatch at the exact path; an unreadable file (corrupt, wrong-tree, or a pruned tree); a
     same-goal stamp for a different path list (with the remote's base when *base* is given);
     "no stamp".
     """
-    exact = exact_stamp(root, tree, key)
-    if exact is not None:
-        return Lookup(exact, "", store)  # one read; the store is not touched
+    exact_path = stamp_path(root, tree, key)
+    entry = read_entry(exact_path)  # one read; on a hit the store is not touched
+    if entry is not None and entry.tree == tree and entry.command == key:
+        if isinstance(entry, Red):
+            return Lookup(None, _red_reason(entry), store)
+        return Lookup(entry, "", store)
     if store is None:
         store = load_store(root)
-    exact_path = stamp_path(root, tree, key)
+    # a marker the scan holds ends the search too: a peer's red may land after the exact read,
+    # or come in a store the caller loaded earlier
+    marker = next((r for r in store.red if r.tree == tree and r.command == key), None)
+    if marker is not None:
+        return Lookup(None, _red_reason(marker), store)
     file_name = exact_path.name
     unreadable = False
     nearest: "Stamp | None" = None
@@ -382,19 +535,28 @@ def find_stamp(repo: Path, root: Path, tree: str, key: str) -> "Stamp | None":
     return lookup(repo, root, tree, key).stamp
 
 
-def invalidate(root: Path, key: str) -> "list[Path]":
-    """Delete every stamp for *key*, and every non-stamp file at the key's name.
+def invalidate(repo: Path, root: Path, key: str, *, tree: str) -> "list[Path]":
+    """Delete, for *key*, only the store files that cannot still be true; return their paths.
 
-    Stamps go under every tree; a file at the key's name that is unreadable or claims another
-    command goes too.
+    Those are a file at (*tree*, *key*)'s own path that is unreadable or claims another
+    command, and every stamp or red marker for *key* whose tree is pruned, whoever wrote it.
+    Everything else stays. That includes *tree*'s own stamp, which the lane's outcome
+    overwrites, and every other tree's stamp, whichever checkout wrote it: a landing gated
+    earlier, here or in a peer, keeps its evidence. A red marker on a live tree stays until
+    the lane's next outcome on its tree replaces it, so an interrupted re-run keeps it. The
+    load and the deletes hold the store lock, so a peer's write cannot land between them;
+    the pruned check under it is one git spawn for every tree the key's files name.
     """
-    store = load_store(root)
-    file_name = stamp_path(root, "x", key).name
-    gone = [s.path for s in store.stamps if s.command == key]
-    gone += [p for p in store.unreadable if p.name == file_name]
-    gone += [m.path for m in store.mismatched if m.path.name == file_name]
-    for path in gone:
-        path.unlink(missing_ok=True)
+    with store_lock(root):
+        store = load_store(root)
+        here = stamp_path(root, tree, key)
+        entries: "list[Stamp | Red]" = [e for e in [*store.stamps, *store.red] if e.command == key]
+        pruned = _pruned_trees(repo, [e.tree for e in entries]) if entries else set()
+        gone = [e.path for e in entries if e.tree in pruned]
+        gone += [p for p in store.unreadable if p == here]
+        gone += [m.path for m in store.mismatched if m.path == here]
+        for path in gone:
+            path.unlink(missing_ok=True)
     return gone
 
 
@@ -539,19 +701,26 @@ class _Run:
 
 def _already_stamped(ctx: _Run, label: str, key: str) -> bool:
     """Report (and, outside a dry run, promote) a lane some stamp already satisfies for the tree."""
-    found = None if ctx.opts.force else find_stamp(ctx.opts.repo, ctx.root, ctx.tree, key)
+    if ctx.opts.force:
+        return False
+    if ctx.opts.dry_run:
+        with store_lock(ctx.root, shared=True):
+            found = find_stamp(ctx.opts.repo, ctx.root, ctx.tree, key)
+    else:
+        with store_lock(ctx.root):  # a peer's red marker cannot land between lookup and write
+            found = find_stamp(ctx.opts.repo, ctx.root, ctx.tree, key)
+            if found is not None and found.tree != ctx.tree:
+                write_stamp(
+                    ctx.root,
+                    tree=ctx.tree,
+                    key=key,
+                    base=ctx.merge_base,
+                    measured={},
+                    checkout=str(ctx.opts.repo),
+                    promoted_from=found.tree,
+                )
     if found is None:
         return False
-    if found.tree != ctx.tree and not ctx.opts.dry_run:
-        write_stamp(
-            ctx.root,
-            tree=ctx.tree,
-            key=key,
-            base=ctx.merge_base,
-            measured={},
-            checkout=str(ctx.opts.repo),
-            promoted_from=found.tree,
-        )
     _say(ctx.opts, f"{label} … already stamped")
     ctx.already += 1
     return True
@@ -580,6 +749,16 @@ def _before_lane(ctx: _Run, label: str) -> bool:
     return True
 
 
+def _mark_red(ctx: _Run, key: str) -> None:
+    """Count a red lane and leave its red marker, so nothing promotes to this tree for it.
+
+    A lane that could not be framed (a GateFreshError before it ran) leaves one too.
+    """
+    with store_lock(ctx.root):
+        write_red(ctx.root, tree=ctx.tree, key=key, checkout=str(ctx.opts.repo))
+    ctx.red += 1
+
+
 def _after_lane(ctx: _Run, label: str, line: str, key: str, status: int, elapsed: int) -> bool:
     """Judge a finished lane and stamp it on green; return False when the run must stop."""
     repo = ctx.opts.repo
@@ -593,7 +772,7 @@ def _after_lane(ctx: _Run, label: str, line: str, key: str, status: int, elapsed
                 f"(git checkout -- {path}) or review it before the next run",
             )
         _say(ctx.opts, f"{label} … RED (exit {status}, {elapsed} s)")
-        ctx.red += 1
+        _mark_red(ctx, key)
         return False
     blocking = blocking_untracked(after.untracked, ctx.roots)
     if tree_hash(repo) != ctx.tree or other or blocking:
@@ -602,14 +781,15 @@ def _after_lane(ctx: _Run, label: str, line: str, key: str, status: int, elapsed
         ctx.red += 1
         return False
     blobs = {path: blob_sha(repo, path) for path in measured}
-    write_stamp(
-        ctx.root,
-        tree=ctx.tree,
-        key=key,
-        base=ctx.merge_base,
-        measured=blobs,
-        checkout=str(repo),
-    )
+    with store_lock(ctx.root):
+        write_stamp(
+            ctx.root,
+            tree=ctx.tree,
+            key=key,
+            base=ctx.merge_base,
+            measured=blobs,
+            checkout=str(repo),
+        )
     for path in measured:
         _say(ctx.opts, f"{line} rewrote {path}: review and commit, or restore it")
     _say(ctx.opts, f"{label} … stamped ({elapsed} s)")
@@ -621,14 +801,14 @@ def _stamp_lane(ctx: _Run, label: str, line: str, key: str) -> bool:
     """Run one stamped lane and stamp it on green; return False when the run must stop."""
     if not _before_lane(ctx, label):
         return False
-    invalidate(ctx.root, key)
+    invalidate(ctx.opts.repo, ctx.root, key, tree=ctx.tree)
     _say(ctx.opts, f"{label} …")
     started = time.monotonic()
     try:
         status = _run_lane(ctx.opts, line, ctx.env)
     except GateFreshError as exc:
         _say(ctx.opts, f"{label} … RED ({exc})")
-        ctx.red += 1
+        _mark_red(ctx, key)
         return False
     return _after_lane(ctx, label, line, key, status, int(time.monotonic() - started))
 
@@ -748,16 +928,19 @@ def missing_stamps(repo: Path, remote: str, remote_sha: str, tip_sha: str) -> Ve
         raise GateFreshError(
             f"the oracle could not classify {remote_sha[:12]}..{short}: {exc}"
         ) from exc
-    store: "Store | None" = None  # lookup loads it once, at the first lane without exact evidence
+    # lookup loads the store once, at the first lane without exact evidence; with no store
+    # there is nothing to scan (and nothing a peer writes mid-check is promoted from)
+    store: "Store | None" = None if root.is_dir() else Store([], [], [], [])
     missing: "list[Missing]" = []
     try:
-        for line in lines:
-            if is_live(line):
-                continue
-            found = lookup(repo, root, tree, lane_key(line), store, base=remote_sha)
-            store = found.store
-            if found.stamp is None:
-                missing.append(Missing(line, found.reason))
+        with store_lock(root, shared=True):  # one store state, from the first read to the verdict
+            for line in lines:
+                if is_live(line):
+                    continue
+                found = lookup(repo, root, tree, lane_key(line), store, base=remote_sha)
+                store = found.store
+                if found.stamp is None:
+                    missing.append(Missing(line, found.reason))
     except UnknownGoalError as exc:
         raise GateFreshError(str(exc)) from exc
     if not missing:

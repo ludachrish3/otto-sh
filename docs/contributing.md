@@ -555,7 +555,17 @@ you push is what earns the stamp.
 for the tip list (`make gate-scope`, over `BASE..HEAD`), runs every **stamped**
 lane on it in order, and on green writes a stamp for that lane, keyed by the
 committed tree. A lane that already has a stamp for this tree is skipped, so a
-re-run after a red lane repeats only what is missing. It skips the **live**
+re-run after a red lane repeats only what is missing. A lane that goes red
+writes a red marker where its stamp would be. Until the lane passes on that
+tree, nothing counts for it there, not even a stamp promoted from another tree.
+`make gate-tip` deletes only evidence that cannot still be true: before a lane
+runs, a corrupt or misnamed file at that lane's path for the gated tree, and
+that lane's stamps and red markers for trees git no longer holds. Every other
+stamp stays, whichever worktree wrote it, so two worktrees can gate at once and
+you can gate a second landing before you push the first. A lock on
+`otto-gate-stamps/.lock` keeps two runs from interleaving their writes, and the
+pre-push check holds it shared while it reads, so it judges one state of the
+store and never sees a write half done. It skips the **live**
 lanes: the history checks, `lint-arch`, `check-python`, `docs` and
 `make gate-fresh` depend on the pushed range or are run by the push itself
 (`.githooks/pre-push`), so a stamp for them would certify the wrong thing.
@@ -625,7 +635,7 @@ run: git fetch origin main && make gate-tip BASE=FETCH_HEAD   (on commit 3f9a1c2
 git push --no-verify skips this check; CI then runs only its own lanes — never make coverage or the beds.
 ```
 
-Each lane's reason is one of `no stamp`, `unreadable stamp`, `command mismatch (…)`, `stamped for tree …, which differs from the tip's beyond the measured outputs (…)` or `stamped for a different path list (…)`; the last is the stale-fetch case below.
+Each lane's reason is one of `no stamp`, `the lane went red on this tree (…)`, `unreadable stamp`, `command mismatch (…)`, `stamped for tree …, which differs from the tip's beyond the measured outputs (…)` or `stamped for a different path list (…)`; the last is the stale-fetch case below.
 
 The check recomputes the tip list over the range the push really carries, so
 a stale `origin/main` (someone else landed after your last fetch) can make the

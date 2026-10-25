@@ -52,6 +52,45 @@ def _store(tmp_path: Path) -> Path:
     return tmp_path / "store"
 
 
+def _live_tree(repo: Path, text: str) -> str:
+    """Return a tree the object store holds (so never pruned) that is not HEAD's."""
+
+    def git_in(args: "list[str]", given: str) -> str:
+        return subprocess.run(
+            ["git", *args],
+            cwd=repo,
+            input=given,
+            capture_output=True,
+            text=True,
+            check=True,
+            env=git_env(repo),
+        ).stdout.strip()
+
+    blob = git_in(["hash-object", "-w", "--stdin"], text)
+    return git_in(["mktree"], f"100644 blob {blob}\tf.txt\n")
+
+
+def _peer_write(root: Path, write, deferred: list) -> None:
+    """Act as a peer gate-tip: it writes only under the store lock, waiting while it is held.
+
+    The wait is simulated: a held lock defers *write* to *deferred*, for the test to run once
+    the step under test has returned; a free lock lets the write land inside the window.
+    """
+    import fcntl
+
+    root.mkdir(parents=True, exist_ok=True)
+    with (root / gt.LOCK_FILE).open("a") as handle:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            deferred.append(write)
+            return
+        try:
+            write()
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
 def _measure(repo: Path, text: str) -> str:
     """Rewrite the support matrix as a lane would and return its blob."""
     (repo / "schemas" / "support_matrix.json").write_text(text)
@@ -239,7 +278,7 @@ class TestKeysAndFiles:
         assert gt.find_stamp(repo, root, "t" * 40, "make kmodcov") is None, (
             "never evidence for the claimed key either"
         )
-        assert gt.invalidate(root, "make coverage") == [path]
+        assert gt.invalidate(repo, root, "make coverage", tree="t" * 40) == [path]
         assert not path.exists()
 
     def test_a_misnamed_file_is_neither_candidate_nor_witness_at_another_tree(self, tmp_path):
@@ -293,8 +332,8 @@ class TestKeysAndFiles:
             root, tree=t_tree, key="make coverage", base="b", measured={}, checkout=str(repo)
         )
         reads = []
-        real = gt.read_stamp
-        monkeypatch.setattr(gt, "read_stamp", lambda p: (reads.append(p), real(p))[1])
+        real = gt._read_record
+        monkeypatch.setattr(gt, "_read_record", lambda p: (reads.append(p), real(p))[1])
         found = gt.lookup(repo, root, t_tree, "make coverage")
         assert found.stamp is not None
         assert found.stamp.tree == t_tree
@@ -533,34 +572,266 @@ class TestSatisfies:
                 root, tree=tree, key="make coverage", base="b", measured={}, checkout="/x"
             )
         reads = []
-        real = gt.read_stamp
-        monkeypatch.setattr(gt, "read_stamp", lambda p: (reads.append(p), real(p))[1])
+        real = gt._read_record
+        monkeypatch.setattr(gt, "_read_record", lambda p: (reads.append(p), real(p))[1])
         gt.lookup(repo, root, tree_hash(repo), "make coverage")
         assert len(reads) == 1 + 6, "the exact probe, then one read per stamp file, no re-reads"
 
+    def test_lookup_reads_each_non_stamp_file_once(self, tmp_path, monkeypatch):
+        repo, root = _repo(tmp_path), _store(tmp_path)
+        tree = tree_hash(repo)
+        gt.write_red(root, tree="a" * 40, key="make coverage", checkout="/x")
+        bad = gt.stamp_path(root, "b" * 40, "make coverage")
+        bad.parent.mkdir(parents=True)
+        bad.write_text("{bad")
+        reads = []
+        real = gt._read_record
+        monkeypatch.setattr(gt, "_read_record", lambda p: (reads.append(p), real(p))[1])
+        gt.lookup(repo, root, tree, "make coverage")
+        assert sorted(reads) == sorted(
+            [
+                gt.stamp_path(root, tree, "make coverage"),
+                bad,
+                gt.stamp_path(root, "a" * 40, "make coverage"),
+            ]
+        ), "the exact probe once, then each file once"
+
 
 class TestInvalidate:
+    """invalidate deletes only what cannot still be true (#650)."""
+
     def test_an_unreadable_file_at_the_keys_name_goes_too(self, tmp_path):
-        root = _store(tmp_path)
+        repo, root = _repo(tmp_path), _store(tmp_path)
         path = gt.stamp_path(root, "z" * 40, "make coverage")
         path.parent.mkdir(parents=True)
         path.write_text("{bad")
-        assert gt.invalidate(root, "make coverage") == [path]
+        assert gt.invalidate(repo, root, "make coverage", tree="z" * 40) == [path]
         assert not path.exists()
 
-    def test_every_stamp_for_the_key_under_every_tree_goes(self, tmp_path):
-        root = _store(tmp_path)
-        for tree in ("a" * 40, "b" * 40):
+    def test_a_pruned_trees_stamps_and_markers_for_the_key_go_whoever_wrote_them(self, tmp_path):
+        repo, root = _repo(tmp_path), _store(tmp_path)
+        gated = tree_hash(repo)
+        gone = [
             gt.write_stamp(
-                root, tree=tree, key="make coverage", base="b", measured={}, checkout="/x"
-            )
+                root, tree="a" * 40, key="make coverage", base="b", measured={}, checkout="/x"
+            ),
             gt.write_stamp(
-                root, tree=tree, key="make kmodcov", base="b", measured={}, checkout="/x"
-            )
-        gone = gt.invalidate(root, "make coverage")
-        assert len(gone) == 2
+                root, tree="b" * 40, key="make coverage", base="b", measured={}, checkout="/y"
+            ),
+            gt.write_red(root, tree="c" * 40, key="make coverage", checkout="/y"),
+        ]
+        kept = gt.write_stamp(
+            root, tree="a" * 40, key="make kmodcov", base="b", measured={}, checkout="/x"
+        )
+        assert sorted(gt.invalidate(repo, root, "make coverage", tree=gated)) == sorted(gone)
         assert not any(p.exists() for p in gone)
-        assert gt.read_stamp(gt.stamp_path(root, "a" * 40, "make kmodcov")) is not None
+        assert gt.read_stamp(kept) is not None, "another key is never touched"
+
+    def test_the_pruned_check_spawns_git_once_however_many_trees(self, tmp_path, monkeypatch):
+        """Perf in operations: one ``cat-file --batch-check`` for every tree, under the lock."""
+        repo, root = _repo(tmp_path), _store(tmp_path)
+        live = [_live_tree(repo, str(n)) for n in range(3)]
+        dead = [c * 40 for c in "abcd"]
+        for tree in live + dead:
+            gt.write_stamp(root, tree=tree, key=NOX, base="b", measured={}, checkout="/x")
+        gt.write_red(root, tree="e" * 40, key=NOX, checkout="/y")
+        gated = tree_hash(repo)
+        spawns = []
+        real = subprocess.run
+
+        def counting(argv, *args, **kwargs):
+            spawns.append(list(argv))
+            return real(argv, *args, **kwargs)
+
+        monkeypatch.setattr(subprocess, "run", counting)
+        gone = gt.invalidate(repo, root, NOX, tree=gated)
+        monkeypatch.undo()
+        assert [argv[:3] for argv in spawns] == [["git", "cat-file", "--batch-check"]]
+        assert sorted(gone) == sorted(gt.stamp_path(root, t, NOX) for t in [*dead, "e" * 40])
+        assert all(gt.stamp_path(root, t, NOX).exists() for t in live)
+
+    def test_nothing_for_the_key_spawns_no_git(self, tmp_path, monkeypatch):
+        repo, root = _repo(tmp_path), _store(tmp_path)
+        gt.write_stamp(
+            root, tree="a" * 40, key="make kmodcov", base="b", measured={}, checkout="/x"
+        )
+        spawns = []
+        monkeypatch.setattr(subprocess, "run", lambda *a, **k: spawns.append(a))
+        assert gt.invalidate(repo, root, NOX, tree="z" * 40) == []
+        assert spawns == []
+
+    def test_a_peer_checkouts_stamp_for_another_tree_survives(self, tmp_path):
+        """#650: gating tree A from checkout X never deletes tree B's stamp from checkout Y."""
+        repo, root = _repo(tmp_path), _store(tmp_path)
+        a_tree, b_tree = tree_hash(repo), _live_tree(repo, "b")
+        peer = gt.write_stamp(
+            root, tree=b_tree, key="make coverage", base="b", measured={}, checkout="/y"
+        )
+        assert gt.invalidate(repo, root, "make coverage", tree=a_tree) == []
+        assert gt.read_stamp(peer) is not None
+
+    def test_gating_landing_c_keeps_landing_as_stamps_from_this_checkout(self, tmp_path):
+        """Gate landing A, then landing C in the same worktree before A is pushed."""
+        repo, root = _repo(tmp_path), _store(tmp_path)
+        a_tree, c_tree = _live_tree(repo, "a"), tree_hash(repo)
+        a_stamp = gt.write_stamp(
+            root, tree=a_tree, key="make coverage", base="b", measured={}, checkout="/x"
+        )
+        assert gt.invalidate(repo, root, "make coverage", tree=c_tree) == []
+        assert gt.read_stamp(a_stamp) is not None
+
+    def test_the_gated_trees_own_stamp_stays_for_the_lanes_outcome_to_replace(self, tmp_path):
+        repo, root = _repo(tmp_path), _store(tmp_path)
+        u_tree = tree_hash(repo)
+        own = gt.write_stamp(
+            root, tree=u_tree, key="make coverage", base="b", measured={}, checkout="/y"
+        )
+        assert gt.invalidate(repo, root, "make coverage", tree=u_tree) == []
+        assert gt.read_stamp(own) is not None
+
+    def test_an_unreadable_or_mismatched_file_under_another_tree_is_left_alone(self, tmp_path):
+        repo, root = _repo(tmp_path), _store(tmp_path)
+        unreadable = gt.stamp_path(root, "b" * 40, "make coverage")
+        unreadable.parent.mkdir(parents=True)
+        unreadable.write_text("{bad")
+        mismatched = gt.write_stamp(
+            root, tree="c" * 40, key="make coverage", base="b", measured={}, checkout="/x"
+        )
+        data = json.loads(mismatched.read_text())
+        data["command"] = "make kmodcov"
+        mismatched.write_text(json.dumps(data))
+        assert gt.invalidate(repo, root, "make coverage", tree=tree_hash(repo)) == []
+        assert unreadable.exists()
+        assert mismatched.exists()
+
+    def test_a_peers_write_between_load_and_delete_survives(self, tmp_path, monkeypatch):
+        """The load and the delete hold the store lock, so a peer cannot land in between."""
+        repo, root = _repo(tmp_path), _store(tmp_path)
+        u_tree = tree_hash(repo)
+        corrupt = gt.stamp_path(root, u_tree, NOX)
+        corrupt.parent.mkdir(parents=True)
+        corrupt.write_text("{bad")
+        deferred: list = []
+        real = gt.load_store
+
+        def load_then_peer(where):
+            store = real(where)
+            _peer_write(
+                root, lambda: gt.write_red(root, tree=u_tree, key=NOX, checkout="/peer"), deferred
+            )
+            return store
+
+        monkeypatch.setattr(gt, "load_store", load_then_peer)
+        gt.invalidate(repo, root, NOX, tree=u_tree)
+        monkeypatch.undo()
+        for write in deferred:
+            write()
+        assert [r.checkout for r in gt.load_store(root).red] == ["/peer"], "the peer's marker"
+        assert gt.lookup(repo, root, u_tree, NOX).reason.startswith("the lane went red")
+
+
+def _probe(root: Path, mode: int) -> bool:
+    """Return whether a fresh open of the lock file gets *mode* without waiting."""
+    import fcntl
+
+    with (root / gt.LOCK_FILE).open("a") as handle:
+        try:
+            fcntl.flock(handle.fileno(), mode | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return False
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        return True
+
+
+class TestStoreLock:
+    def test_shared_holders_coexist_and_exclude_a_writer(self, tmp_path):
+        import fcntl
+
+        root = _store(tmp_path)
+        root.mkdir()
+        with gt.store_lock(root, shared=True):
+            assert _probe(root, fcntl.LOCK_SH), "shared plus shared does not block"
+            assert not _probe(root, fcntl.LOCK_EX), "shared blocks a writer"
+        with gt.store_lock(root):
+            assert not _probe(root, fcntl.LOCK_SH), "a writer blocks a reader"
+
+    def test_a_shared_lock_without_a_store_creates_nothing(self, tmp_path):
+        root = _store(tmp_path)
+        with gt.store_lock(root, shared=True):
+            pass
+        assert not root.exists()
+
+    def test_two_holders_serialize(self, tmp_path):
+        root = _store(tmp_path)
+        child = (
+            "import fcntl, sys\n"
+            f"sys.path.insert(0, {str(CHECKOUT_ROOT)!r})\n"
+            "from pathlib import Path\n"
+            "from scripts import gate_tip as gt\n"
+            f"root = Path({str(root)!r})\n"
+            "with open(root / gt.LOCK_FILE, 'a') as h:\n"
+            "    try:\n"
+            "        fcntl.flock(h.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
+            "        print('free', flush=True)\n"
+            "    except BlockingIOError:\n"
+            "        print('blocked', flush=True)\n"
+            "with gt.store_lock(root):\n"
+            "    print('held', flush=True)\n"
+        )
+        with gt.store_lock(root):
+            assert (root / gt.LOCK_FILE).is_file(), "created if missing"
+            proc = subprocess.Popen(
+                [sys.executable, "-c", child], stdout=subprocess.PIPE, text=True
+            )
+            try:
+                assert proc.stdout is not None
+                assert proc.stdout.readline() == "blocked\n", "the peer waits on our lock"
+            except BaseException:
+                proc.kill()
+                raise
+        out, _ = proc.communicate(timeout=60)
+        assert out == "held\n", "the peer gets the lock once we release it"
+        assert proc.returncode == 0
+
+
+class TestRedMarker:
+    def test_a_red_marker_is_neither_a_stamp_nor_unreadable(self, tmp_path):
+        repo, root = _repo(tmp_path), _store(tmp_path)
+        tree = tree_hash(repo)
+        path = gt.write_red(root, tree=tree, key="make coverage", checkout="/x")
+        assert path == gt.stamp_path(root, tree, "make coverage")
+        assert gt.read_stamp(path) is None
+        assert gt.exact_stamp(root, tree, "make coverage") is None
+        store = gt.load_store(root)
+        assert (store.stamps, store.unreadable, store.mismatched) == ([], [], [])
+        assert [(r.tree, r.command, r.checkout) for r in store.red] == [
+            (tree, "make coverage", "/x")
+        ]
+
+    def test_a_red_marker_never_promotes_to_another_tree(self, tmp_path):
+        repo, root = _repo(tmp_path), _store(tmp_path)
+        s_tree = tree_hash(repo)
+        blob = _measure(repo, '{"as_of": "2026-10-20"}\n')
+        gt.write_stamp(
+            root, tree=s_tree, key="make kmodcov", base="b", measured={SUPPORT: blob}, checkout="/x"
+        )
+        gt.write_red(root, tree=s_tree, key=NOX, checkout="/x")
+        _git(repo, "commit", "-qam", "measured")
+        u_tree = tree_hash(repo)
+        assert gt.find_stamp(repo, root, u_tree, "make kmodcov") is not None, "S's witness holds"
+        found = gt.lookup(repo, root, u_tree, NOX)
+        assert found.stamp is None
+        assert found.reason == "no stamp"
+
+    def test_a_red_marker_on_a_live_tree_survives_invalidate(self, tmp_path):
+        """Only the lane's next outcome replaces a marker, so an interrupted re-run keeps it."""
+        repo, root = _repo(tmp_path), _store(tmp_path)
+        u_tree, c_tree = tree_hash(repo), _live_tree(repo, "c")
+        mine = gt.write_red(root, tree=u_tree, key=NOX, checkout="/x")
+        other = gt.write_red(root, tree=c_tree, key=NOX, checkout="/x")
+        assert gt.invalidate(repo, root, NOX, tree=u_tree) == []
+        assert mine.exists()
+        assert other.exists()
 
 
 class FakeRunner:
@@ -732,20 +1003,26 @@ class TestRunner:
         assert runner.keys == [NOX]
         assert "NOT STAMPED" in out
 
-    def test_the_first_red_lane_stops_the_run_and_leaves_no_evidence_for_its_key(
+    def test_the_first_red_lane_stops_the_run_and_leaves_only_a_peers_stamp_and_a_red_marker(
         self, tmp_path, monkeypatch
     ):
         repo = _repo(tmp_path)
         root = gt.stamps_root(repo, gt.STORE)
-        _stamp(repo, "make coverage", tree="a" * 40)
+        p_tree = _live_tree(repo, "peer")
+        _stamp(repo, "make coverage", tree="a" * 40)  # a and b: trees no object store holds
         _stamp(repo, "make coverage", tree="b" * 40, promoted_from="a" * 40)
+        _stamp(repo, "make coverage", tree=p_tree, checkout="/peer")
         lines = [NOX, "make coverage", "make quick-guards"]
         runner = FakeRunner(
             outputs={GATE_ARGS: GATE_LINES}, checker_statuses=[0], statuses={"make coverage": 1}
         )
         status, out, _ = _go(monkeypatch, repo, lines, runner, force=True)
         assert status == 1
-        assert not [s for s in gt.load_store(root).stamps if s.command == "make coverage"]
+        store = gt.load_store(root)
+        assert [(s.tree, s.checkout) for s in store.stamps if s.command == "make coverage"] == [
+            (p_tree, "/peer")
+        ], "the pruned trees' stamps go; the peer's stays"
+        assert [(r.tree, r.command) for r in store.red] == [(tree_hash(repo), "make coverage")]
         assert "make quick-guards" not in runner.keys
         assert gt.exact_stamp(root, tree_hash(repo), NOX) is not None
         assert "RED (exit 1" in out
@@ -758,7 +1035,107 @@ class TestRunner:
         _oracle(monkeypatch, repo, [NOX])
         with pytest.raises(KeyboardInterrupt):
             gt.run(_options(repo, runner, force=True))
-        assert gt.exact_stamp(root, tree_hash(repo), NOX) is None
+        assert gt.exact_stamp(root, tree_hash(repo), NOX) is not None, (
+            "an interrupted forced re-run keeps the tree's earlier green stamp: still true"
+        )
+
+    def test_a_re_run_keeps_a_peer_worktrees_stamp_for_its_own_tree(self, tmp_path, monkeypatch):
+        """#650: a forced re-run here never erases what a peer checkout stamped for its tree."""
+        repo = _repo(tmp_path)
+        root = gt.stamps_root(repo, gt.STORE)
+        b_tree, c_tree = _live_tree(repo, "b"), _live_tree(repo, "c")
+        _stamp(repo, NOX, tree=b_tree, checkout="/peer")
+        _stamp(repo, NOX, tree=c_tree)  # an earlier landing gated here
+        _stamp(repo, NOX, tree="d" * 40)  # a tree no object store holds
+        runner = FakeRunner(statuses={NOX: 1})
+        status, _out, _ = _go(monkeypatch, repo, [NOX], runner, force=True)
+        assert status == 1
+        assert runner.keys == [NOX]
+        assert sorted((s.tree, s.checkout) for s in gt.load_store(root).stamps) == sorted(
+            [(b_tree, "/peer"), (c_tree, str(repo))]
+        ), "every stamp that can still be true stays; the pruned tree's goes"
+
+    def test_a_forced_red_rerun_keeps_the_peers_stamp_and_promotes_nothing(
+        self, tmp_path, monkeypatch
+    ):
+        """A red lane on U marks U red, so a peer's stamp of S never promotes to U."""
+        repo = _repo(tmp_path)
+        root = gt.stamps_root(repo, gt.STORE)
+        s_tree = tree_hash(repo)
+        b2 = _measure(repo, '{"as_of": "2026-10-20"}\n')
+        _stamp(repo, NOX, tree=s_tree, checkout="/peer", measured={SUPPORT: b2})
+        _git(repo, "commit", "-qam", "measured")
+        u_tree = tree_hash(repo)
+        assert gt.find_stamp(repo, root, u_tree, NOX) is not None, "promotable before the run"
+        runner = FakeRunner(statuses={NOX: 1})
+        status, _out, _ = _go(monkeypatch, repo, [NOX], runner, force=True)
+        assert status == 1
+        assert gt.find_stamp(repo, root, u_tree, NOX) is None
+        peer = gt.exact_stamp(root, s_tree, NOX)
+        assert peer is not None
+        assert peer.checkout == "/peer"
+        found = gt.lookup(repo, root, u_tree, NOX)
+        assert found.stamp is None
+        assert found.reason.startswith("the lane went red on this tree")
+        assert str(repo) in found.reason
+
+        runner = FakeRunner()
+        status, _out, _ = _go(monkeypatch, repo, [NOX], runner)
+        assert status == 0
+        assert runner.keys == [NOX], "a red marker is never evidence: the lane runs again"
+        stamp = gt.exact_stamp(root, u_tree, NOX)
+        assert stamp is not None
+        assert stamp.checkout == str(repo)
+        assert gt.load_store(root).red == [], "the green run's stamp replaced the marker"
+
+    def test_red_then_interrupted_rerun_still_promotes_nothing(self, tmp_path, monkeypatch):
+        repo = _repo(tmp_path)
+        root = gt.stamps_root(repo, gt.STORE)
+        s_tree = tree_hash(repo)
+        b2 = _measure(repo, '{"as_of": "2026-10-20"}\n')
+        _stamp(repo, NOX, tree=s_tree, checkout="/peer", measured={SUPPORT: b2})
+        _git(repo, "commit", "-qam", "measured")
+        u_tree = tree_hash(repo)
+        _go(monkeypatch, repo, [NOX], FakeRunner(statuses={NOX: 1}), force=True)
+        assert gt.find_stamp(repo, root, u_tree, NOX) is None
+
+        def interrupt():
+            raise KeyboardInterrupt
+
+        with pytest.raises(KeyboardInterrupt):
+            _go(monkeypatch, repo, [NOX], FakeRunner(effects={NOX: interrupt}))
+        assert gt.find_stamp(repo, root, u_tree, NOX) is None, "U never passed"
+        assert gt.lookup(repo, root, u_tree, NOX).reason.startswith("the lane went red")
+        assert gt.exact_stamp(root, s_tree, NOX) is not None, "the peer's stamp stays"
+
+    def test_a_peers_red_marker_between_lookup_and_promotion_survives(self, tmp_path, monkeypatch):
+        """Promotion's lookup and write hold the store lock, so a peer's red cannot land between."""
+        repo = _repo(tmp_path)
+        root = gt.stamps_root(repo, gt.STORE)
+        s_tree = tree_hash(repo)
+        b2 = _measure(repo, '{"as_of": "2026-10-20"}\n')
+        _stamp(repo, NOX, tree=s_tree, checkout="/peer", measured={SUPPORT: b2})
+        _git(repo, "commit", "-qam", "measured")
+        u_tree = tree_hash(repo)
+        deferred: list = []
+        real = gt.find_stamp
+
+        def find_then_peer(*args):
+            found = real(*args)
+            _peer_write(
+                root, lambda: gt.write_red(root, tree=u_tree, key=NOX, checkout="/peer"), deferred
+            )
+            return found
+
+        monkeypatch.setattr(gt, "find_stamp", find_then_peer)
+        status, out, _ = _go(monkeypatch, repo, [NOX], FakeRunner())
+        assert (status, "already stamped" in out) == (0, True), "promoted from S"
+        for write in deferred:
+            write()
+        found = gt.lookup(repo, root, u_tree, NOX)
+        assert found.stamp is None, "the peer's later red stands"
+        assert found.reason.startswith("the lane went red")
+        assert gt.exact_stamp(root, s_tree, NOX) is not None
 
     def test_the_lineage_sequence(self, tmp_path, monkeypatch):
         repo = _repo(tmp_path)
@@ -790,19 +1167,24 @@ class TestRunner:
         runner = FakeRunner(statuses={NOX: 1})
         status, _out, _ = _go(monkeypatch, repo, [NOX], runner, force=True)
         assert status == 1
-        assert not [s for s in gt.load_store(root).stamps if s.command == NOX]
+        assert sorted(s.tree for s in gt.load_store(root).stamps if s.command == NOX) == sorted(
+            [s_tree, t_tree]
+        ), "S's and T's stamps are still true and stay"
+        assert gt.find_stamp(repo, root, u_tree, NOX) is None, "U went red"
 
         _git(repo, "checkout", "-q", t_sha)
-        runner = FakeRunner(statuses={NOX: 1})
-        status, _out, _ = _go(monkeypatch, repo, [NOX], runner)
-        assert status == 1
-        assert runner.keys == [NOX], "no skip: the red run left no evidence"
-        assert gt.find_stamp(repo, root, u_tree, NOX) is None
-
         runner = FakeRunner()
-        status, _out, _ = _go(monkeypatch, repo, [NOX], runner)
+        status, out, _ = _go(monkeypatch, repo, [NOX], runner)
         assert status == 0
-        assert gt.find_stamp(repo, root, u_tree, NOX) is not None, "through the bed's witness"
+        assert runner.keys == [], "T's own stamp survived U's red run"
+        assert "already stamped" in out
+        t_stamp = gt.exact_stamp(root, t_tree, NOX)
+        assert t_stamp is not None
+        witnessed = gt.witnesses(gt.load_store(root).stamps, t_tree)
+        assert gt.satisfies(repo, t_stamp, u_tree, witnessed), "through the bed's witness"
+        found = gt.lookup(repo, root, u_tree, NOX)
+        assert found.stamp is None, "U went red: nothing promotes to it until it passes"
+        assert found.reason.startswith("the lane went red on this tree")
 
     def test_a_lane_already_stamped_is_skipped_and_a_changed_paths_key_is_run(
         self, tmp_path, monkeypatch
@@ -976,6 +1358,8 @@ class TestRunner:
         _stamp(repo, NOX)
         _stamp(repo, "make kmodcov", measured={SUPPORT: b1})
         _git(repo, "commit", "-qam", "measured")
+        with gt.store_lock(root):  # a store written through the runner always has its lock file
+            pass
         before = _snapshot(root)
         runner = FakeRunner()
         lines = [NOX, "make quick-guards"]
@@ -1163,13 +1547,13 @@ class TestPushCheck:
         root = gt.stamps_root(repo, gt.STORE)
         tree = tree_hash(repo, tip)
         reads: "list[Path]" = []
-        real = gt.read_stamp
+        real = gt._read_record
 
         def counting(path):
             reads.append(path)
             return real(path)
 
-        monkeypatch.setattr(gt, "read_stamp", counting)
+        monkeypatch.setattr(gt, "_read_record", counting)
         assert gt.missing_stamps(repo, "origin", remote_sha, tip).missing == []
         assert sorted(reads) == sorted(gt.stamp_path(root, tree, key) for key in lanes)
 
@@ -1180,6 +1564,126 @@ class TestPushCheck:
         in_store = len(list(root.glob("*/*.json")))
         assert len(reads) == len(lanes) + in_store
         assert max(reads.count(path) for path in set(reads)) <= 2
+
+    def test_a_refused_push_says_the_lane_went_red(self, tmp_path):
+        repo, _bare_repo, remote_sha, tip = _published(tmp_path)
+        _stamp_tip(repo, remote_sha, tip)
+        key = next(
+            gt.lane_key(line)
+            for line in gs.tip_commands(repo, remote_sha, tip, git_env(repo))
+            if not gt.is_live(line)
+        )
+        root = gt.stamps_root(repo, gt.STORE)
+        gt.write_red(root, tree=tree_hash(repo, tip), key=key, checkout="/x")
+        verdict = gt.missing_stamps(repo, "origin", remote_sha, tip)
+        assert [gt.lane_key(m.lane) for m in verdict.missing] == [key]
+        assert any("went red on this tree" in line and "/x" in line for line in verdict.lines)
+
+    def test_a_red_marker_only_the_scan_holds_still_refuses(self, tmp_path, monkeypatch):
+        """lookup heeds a red in the scanned store even when its exact read missed it.
+
+        Inside the check the shared lock keeps peers out (see the next test), so the files are
+        written here between the exact read and the scan directly, as a caller without the lock,
+        or one holding a cached store, could see them.
+        """
+        repo, _bare_repo, remote_sha, _tip = _published(tmp_path)
+        tip = _commit_file(repo, SUPPORT, '{"as_of": "2026-10-21"}\n', "matrix")
+        u_tree = tree_hash(repo, tip)
+        u_blob = _git(repo, "rev-parse", f"{tip}:{SUPPORT}").strip()
+        (repo / SUPPORT).write_text('{"as_of": "2026-10-20"}\n')
+        _git(repo, "add", SUPPORT)
+        s_tree = _git(repo, "write-tree").strip()  # U but for the measured matrix
+        _git(repo, "reset", "-q", "--hard")
+        _stamp_tip(repo, remote_sha, tip)
+        root = gt.stamps_root(repo, gt.STORE)
+        lanes = [
+            gt.lane_key(line)
+            for line in gs.tip_commands(repo, remote_sha, tip, git_env(repo))
+            if not gt.is_live(line)
+        ]
+        key = lanes[0]
+        gt.stamp_path(root, u_tree, key).unlink()
+        real_load = gt.load_store
+
+        def peers_then_scan(where):
+            gt.write_red(root, tree=u_tree, key=key, checkout="/peer")
+            gt.write_stamp(
+                root,
+                tree=s_tree,
+                key=key,
+                base=remote_sha,
+                measured={SUPPORT: u_blob},
+                checkout="/p",
+            )
+            return real_load(where)
+
+        reads: "list[Path]" = []
+        real_read = gt._read_record
+
+        def counting(path):
+            reads.append(path)
+            return real_read(path)
+
+        monkeypatch.setattr(gt, "load_store", peers_then_scan)
+        monkeypatch.setattr(gt, "_read_record", counting)
+        found = gt.lookup(repo, root, u_tree, key)
+        monkeypatch.undo()
+        assert found.stamp is None
+        assert found.reason.startswith("the lane went red")
+        in_store = len(list(root.glob("*/*.json")))
+        assert len(reads) == 1 + in_store, "the exact probe, then one scan: no new read"
+        assert len(lanes) > 1, "the tip's other lanes are stamped too"
+        gt.stamp_path(root, u_tree, key).unlink()
+        assert gt.find_stamp(repo, root, u_tree, key) is not None, "without the red, S promotes"
+
+    def test_a_peers_red_during_the_checks_git_spawns_waits_for_the_check(
+        self, tmp_path, monkeypatch
+    ):
+        """The check holds the shared lock from its first read to its result: a peer's red that
+        would land during ``_pruned``/``satisfies`` waits, so the verdict is of one store state."""
+        repo, _bare_repo, remote_sha, _tip = _published(tmp_path)
+        tip = _commit_file(repo, SUPPORT, '{"as_of": "2026-10-21"}\n', "matrix")
+        u_tree = tree_hash(repo, tip)
+        u_blob = _git(repo, "rev-parse", f"{tip}:{SUPPORT}").strip()
+        (repo / SUPPORT).write_text('{"as_of": "2026-10-20"}\n')
+        _git(repo, "add", SUPPORT)
+        s_tree = _git(repo, "write-tree").strip()
+        _git(repo, "reset", "-q", "--hard")
+        _stamp_tip(repo, remote_sha, tip)
+        root = gt.stamps_root(repo, gt.STORE)
+        key = next(
+            gt.lane_key(line)
+            for line in gs.tip_commands(repo, remote_sha, tip, git_env(repo))
+            if not gt.is_live(line)
+        )
+        gt.stamp_path(root, u_tree, key).unlink()
+        gt.write_stamp(
+            root, tree=s_tree, key=key, base=remote_sha, measured={SUPPORT: u_blob}, checkout="/p"
+        )
+        deferred: list = []
+        real = gt._pruned
+
+        def spawn_then_peer(*args):
+            _peer_write(
+                root, lambda: gt.write_red(root, tree=u_tree, key=key, checkout="/peer"), deferred
+            )
+            return real(*args)
+
+        monkeypatch.setattr(gt, "_pruned", spawn_then_peer)
+        verdict = gt.missing_stamps(repo, "origin", remote_sha, tip)
+        monkeypatch.undo()
+        assert len(deferred) == 1, "the peer's write waited for the check"
+        assert verdict.missing == [], "the check saw one state: S promotes, no red yet"
+        for write in deferred:
+            write()
+        after = gt.missing_stamps(repo, "origin", remote_sha, tip)
+        assert [m.reason.startswith("the lane went red") for m in after.missing] == [True]
+
+    def test_the_check_creates_nothing_without_a_store(self, tmp_path):
+        repo, _bare_repo, remote_sha, tip = _published(tmp_path)
+        root = gt.stamps_root(repo, gt.STORE)
+        assert gt.missing_stamps(repo, "origin", remote_sha, tip).missing
+        assert not root.exists()
 
     def test_the_check_cli_prints_the_hooks_text(self, tmp_path, capsys):
         repo, _bare_repo, remote_sha, tip = _published(tmp_path)

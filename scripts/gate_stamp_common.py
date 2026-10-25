@@ -37,11 +37,13 @@ class TreeState:
     untracked: "list[str]"
 
 
-def _git(repo: Path, *args: str) -> str:
+def _git(repo: Path, *args: str, stdin: "str | None" = None) -> str:
+    """Run git in *repo* (feeding *stdin* when given) and return its stdout."""
     try:
         result = subprocess.run(  # noqa: S603
             ["git", *args],  # noqa: S607
             cwd=repo,
+            input=stdin,
             capture_output=True,
             text=True,
             check=False,
