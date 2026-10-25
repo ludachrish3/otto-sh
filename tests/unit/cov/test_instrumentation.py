@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from otto.config.coverage_settings import CoverageConfigError
+from otto.config.coverage_settings import CoverageConfigError, missing_cov_config_error
 from otto.coverage.errors import CoverageNotInstrumentedError
 from otto.coverage.instrumentation import (
     InstrumentationReport,
@@ -81,26 +81,31 @@ def _report(*verdicts):
 def test_auto_some_with_config_turns_on_and_logs_info(caplog):
     with caplog.at_level(logging.INFO, logger="otto.coverage.instrumentation"):
         assert (
-            decide_coverage(None, _report(True, True), has_cov_config=True, command="otto test")
+            decide_coverage(None, _report(True, True), cov_config_missing=None, command="otto test")
             is True
         )
     assert any("instrumented" in r.message for r in caplog.records if r.levelno == logging.INFO)
 
 
-def test_auto_some_without_config_warns_and_stays_off(caplog):
+def test_auto_some_without_config_warns_and_stays_off(caplog, tmp_path):
+    project = SimpleNamespace(root=tmp_path, settings={"coverage": {}})
+    missing = missing_cov_config_error([project])
     with caplog.at_level(logging.WARNING, logger="otto.coverage.instrumentation"):
         assert (
-            decide_coverage(None, _report(True), has_cov_config=False, command="otto test") is False
+            decide_coverage(None, _report(True), cov_config_missing=missing, command="otto test")
+            is False
         )
     warning = next(r for r in caplog.records if r.levelno == logging.WARNING)
-    assert "[coverage]" in warning.message
-    assert "p0" in warning.message
+    assert warning.message == f"otto test: instrumented product(s) found (p0@h1) but {missing}"
+    assert "declares no hosts" in warning.message
 
 
 def test_auto_none_is_off_and_quiet(caplog):
     with caplog.at_level(logging.DEBUG, logger="otto.coverage.instrumentation"):
         assert (
-            decide_coverage(None, _report(False, None), has_cov_config=True, command="otto test")
+            decide_coverage(
+                None, _report(False, None), cov_config_missing=None, command="otto test"
+            )
             is False
         )
     assert not [r for r in caplog.records if r.levelno >= logging.INFO]
@@ -109,7 +114,9 @@ def test_auto_none_is_off_and_quiet(caplog):
 
 def test_forced_on_with_none_instrumented_raises_listing_every_product():
     with pytest.raises(CoverageNotInstrumentedError) as excinfo:
-        decide_coverage(True, _report(False, None), has_cov_config=True, command="otto test --cov")
+        decide_coverage(
+            True, _report(False, None), cov_config_missing=None, command="otto test --cov"
+        )
     assert isinstance(excinfo.value, CoverageConfigError)
     msg = str(excinfo.value)
     assert "otto test --cov" in msg
@@ -120,14 +127,14 @@ def test_forced_on_with_none_instrumented_raises_listing_every_product():
 
 def test_forced_on_with_no_products_at_all_raises():
     with pytest.raises(CoverageNotInstrumentedError, match="no products"):
-        decide_coverage(True, _report(), has_cov_config=True, command="otto cov get")
+        decide_coverage(True, _report(), cov_config_missing=None, command="otto cov get")
 
 
 def test_partial_warns_listing_the_missing_and_proceeds(caplog):
     with caplog.at_level(logging.WARNING, logger="otto.coverage.instrumentation"):
         assert (
             decide_coverage(
-                True, _report(True, False, None), has_cov_config=True, command="otto test --cov"
+                True, _report(True, False, None), cov_config_missing=None, command="otto test --cov"
             )
             is True
         )
@@ -141,7 +148,9 @@ def test_partial_warns_listing_the_missing_and_proceeds(caplog):
 def test_auto_partial_warns_listing_missing_and_turns_on(caplog):
     with caplog.at_level(logging.WARNING, logger="otto.coverage.instrumentation"):
         assert (
-            decide_coverage(None, _report(True, False), has_cov_config=True, command="otto test")
+            decide_coverage(
+                None, _report(True, False), cov_config_missing=None, command="otto test"
+            )
             is True
         )
     warning = next(r for r in caplog.records if r.levelno == logging.WARNING)
@@ -151,7 +160,7 @@ def test_auto_partial_warns_listing_missing_and_turns_on(caplog):
 
 def test_forced_off_never_looks():
     assert (
-        decide_coverage(False, _report(False, None), has_cov_config=True, command="otto test")
+        decide_coverage(False, _report(False, None), cov_config_missing=None, command="otto test")
         is False
     )
 
@@ -222,13 +231,13 @@ def test_refusal_carries_the_report_as_structure_not_only_as_text():
     """
     report = _report(False, None)
     with pytest.raises(CoverageNotInstrumentedError) as excinfo:
-        decide_coverage(True, report, has_cov_config=True, command="otto test --cov")
+        decide_coverage(True, report, cov_config_missing=None, command="otto test --cov")
     assert excinfo.value.report is report
 
 
 def test_refusal_with_no_products_carries_the_empty_report_too():
     with pytest.raises(CoverageNotInstrumentedError) as excinfo:
-        decide_coverage(True, _report(), has_cov_config=True, command="otto cov get")
+        decide_coverage(True, _report(), cov_config_missing=None, command="otto cov get")
     assert excinfo.value.report is not None
     assert excinfo.value.report.rows == []
 

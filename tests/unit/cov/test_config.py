@@ -13,7 +13,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from otto.config.coverage_settings import get_cov_config, get_cov_project, has_cov_config
+from otto.config.coverage_settings import (
+    CoverageConfigError,
+    get_cov_config,
+    get_cov_project,
+    has_cov_config,
+    missing_cov_config_error,
+)
 from otto.coverage.config import (
     DestinationError,
     DestinationErrorKind,
@@ -127,6 +133,71 @@ class TestGetCovConfig:
         project = MagicMock()
         project.settings = {"coverage": cov}
         assert get_cov_config([project]) is cov
+
+
+_SETUP_URL = "https://otto-sh.readthedocs.io/en/stable/setup/coverage.html#switch-coverage-on"
+
+
+def _settings_project(root: Path, settings: dict) -> MagicMock:
+    project = MagicMock()
+    project.root = root
+    project.settings = settings
+    return project
+
+
+class TestMissingCovConfigError:
+    """The one refusal every coverage entry point raises when nothing declares coverage.
+
+    It tells the two cases apart: no project has a ``[coverage]`` table at
+    all, or a table exists but sets no target. Each names the settings files
+    it means and links the setup section that shows a working table.
+    """
+
+    def test_no_table_names_the_checked_settings_file(self, tmp_path: Path) -> None:
+        err = missing_cov_config_error([_settings_project(tmp_path, {})])
+        assert isinstance(err, CoverageConfigError)
+        assert str(err) == (
+            f"no project declares [coverage]; checked: {tmp_path / '.otto' / 'settings.toml'}. "
+            f"See {_SETUP_URL}"
+        )
+
+    def test_no_table_across_several_projects_lists_every_checked_file(
+        self, tmp_path: Path
+    ) -> None:
+        roots = [tmp_path / "a", tmp_path / "b", tmp_path / "c"]
+        err = missing_cov_config_error([_settings_project(r, {"name": r.name}) for r in roots])
+        checked = ", ".join(str(r / ".otto" / "settings.toml") for r in roots)
+        assert str(err) == f"no project declares [coverage]; checked: {checked}. See {_SETUP_URL}"
+
+    def test_no_projects_says_none_was_checked(self) -> None:
+        assert str(missing_cov_config_error([])) == (
+            f"no project declares [coverage]; checked: no settings file. See {_SETUP_URL}"
+        )
+
+    @pytest.mark.parametrize(
+        "table",
+        [{}, {"exclusions": {"lines": ["x"]}}, {"tiers": {}, "hosts": "", "embedded": {}}],
+    )
+    def test_a_table_with_no_target_names_its_file_and_the_fix(
+        self, tmp_path: Path, table: dict
+    ) -> None:
+        bare = _settings_project(tmp_path / "bare", {})
+        declared = _settings_project(tmp_path / "declared", {"coverage": table})
+        err = missing_cov_config_error([bare, declared])
+        path = tmp_path / "declared" / ".otto" / "settings.toml"
+        assert str(err) == (
+            f"the [coverage] in {path} declares no hosts, tiers or embedded target: "
+            f"add one of them. See {_SETUP_URL}"
+        )
+
+    def test_several_tables_with_no_target_are_all_named(self, tmp_path: Path) -> None:
+        roots = [tmp_path / "a", tmp_path / "b"]
+        err = missing_cov_config_error([_settings_project(r, {"coverage": {}}) for r in roots])
+        paths = ", ".join(str(r / ".otto" / "settings.toml") for r in roots)
+        assert str(err) == (
+            f"the [coverage] tables in {paths} declare no hosts, tiers or embedded target: "
+            f"add one of them. See {_SETUP_URL}"
+        )
 
 
 class TestPrepareDestination:

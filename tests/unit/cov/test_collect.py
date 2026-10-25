@@ -130,14 +130,16 @@ class TestNamedExceptions:
     unmodified since both subclass ``ValueError``."""
 
     def test_no_coverage_config_raises_coverage_config_error(self, tmp_path):
-        from otto.config.coverage_settings import CoverageConfigError
+        from otto.config.coverage_settings import CoverageConfigError, missing_cov_config_error
 
         project = MagicMock()
+        project.root = tmp_path
         project.settings = {}
         with pytest.raises(CoverageConfigError) as excinfo:
             asyncio.run(collect_coverage(tmp_path, projects=[project]))
         assert isinstance(excinfo.value, ValueError)
-        assert str(excinfo.value) == "No [coverage] section found in .otto/settings.toml"
+        assert str(excinfo.value) == str(missing_cov_config_error([project]))
+        assert str(tmp_path / ".otto" / "settings.toml") in str(excinfo.value)
 
     def test_no_gcda_data_raises_no_coverage_data_error(self, tmp_path):
         from otto.coverage.errors import NoCoverageDataError

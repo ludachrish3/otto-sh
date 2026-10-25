@@ -34,6 +34,7 @@ from rich.table import Table
 from .errors import CoverageNotInstrumentedError
 
 if TYPE_CHECKING:
+    from ..config.coverage_settings import CoverageConfigError
     from ..config.project import Project
     from ..host.product import Product
 
@@ -152,14 +153,18 @@ def decide_coverage(
     mode: bool | None,
     report: InstrumentationReport,
     *,
-    has_cov_config: bool,
+    cov_config_missing: "CoverageConfigError | None",
     command: str,
 ) -> bool:
     """Apply the module's decision table; return whether retrieval runs.
 
     *mode*: ``True`` forced on (``--cov`` / ``otto cov get``), ``False``
-    forced off (``--no-cov``), ``None`` auto. *command* names the invocation
-    in messages.
+    forced off (``--no-cov``), ``None`` auto. *cov_config_missing* is ``None``
+    when some project's ``[coverage]`` declares a target, else the refusal
+    :func:`~otto.config.coverage_settings.missing_cov_config_error` built for
+    the project list; it is read in auto mode only, where its message becomes
+    the warning (a forced-on caller refuses before it gets here). *command*
+    names the invocation in messages.
     """
     if mode is False:
         return False
@@ -188,12 +193,12 @@ def decide_coverage(
                 "%s: no instrumented products; coverage stays off\n%s", command, report.describe()
             )
             return False
-        if not has_cov_config:
+        if cov_config_missing is not None:
             logger.warning(
-                "%s: instrumented product(s) found (%s) but no [coverage] table is configured — "
-                "add [coverage] (and a tier) to .otto/settings.toml to collect their counters",
+                "%s: instrumented product(s) found (%s) but %s",
                 command,
                 ", ".join(f"{r.product}@{r.host_id}" for r in instrumented),
+                cov_config_missing,
             )
             return False
         logger.info(

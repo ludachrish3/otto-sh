@@ -37,7 +37,6 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ..config.coverage_settings import CoverageConfigError
 from .errors import NoCoverageDataError
 
 if TYPE_CHECKING:
@@ -125,7 +124,11 @@ async def clean_coverage(
             ``host_ids`` or *pairs* narrowed an otherwise non-empty match down
             to nothing.
     """
-    from ..config.coverage_settings import get_cov_config, load_hosts_pattern
+    from ..config.coverage_settings import (
+        get_cov_config,
+        load_hosts_pattern,
+        missing_cov_config_error,
+    )
     from ..config.scope import EmptySelectionError
     from ..declared import current_projects
     from ..errors import is_containable
@@ -146,7 +149,7 @@ async def clean_coverage(
         projects = current_projects()
     cov_config = get_cov_config(projects)
     if not cov_config:
-        raise CoverageConfigError("No [coverage] section found in .otto/settings.toml")
+        raise missing_cov_config_error(projects)
     if pairs is not None and not pairs:
         return CleanReport(hosts={})
 
@@ -336,7 +339,12 @@ async def collect_coverage(
         A :class:`CollectResult` with the destination, per-product dirs, and
         every product's capture outcome.
     """
-    from ..config.coverage_settings import get_cov_config, get_cov_project, load_hosts_pattern
+    from ..config.coverage_settings import (
+        get_cov_config,
+        get_cov_project,
+        load_hosts_pattern,
+        missing_cov_config_error,
+    )
     from ..declared import current_projects
     from ..fleet import all_hosts
     from ..host.embedded_host import EmbeddedHost
@@ -359,7 +367,7 @@ async def collect_coverage(
 
     cov_config = get_cov_config(projects)
     if not cov_config:
-        raise CoverageConfigError("No [coverage] section found in .otto/settings.toml")
+        raise missing_cov_config_error(projects)
 
     # The set of hosts to collect coverage from is project-declared: an optional
     # ``[coverage].hosts`` regex (matched against each host id) selects targets,

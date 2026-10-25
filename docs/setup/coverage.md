@@ -178,9 +178,10 @@ with *some* products instrumented proceeds and warns about the rest, so a
 product that quietly stopped being a coverage build is visible rather than
 silently absent from the report.
 
-`--cov` also refuses when the project has no `[coverage]` table at all: there is
-nowhere to collect into. In auto mode the same situation is one warning and no
-coverage; the tests still run.
+`--cov` also refuses when no project's `[coverage]` table declares something to
+collect ({ref}`settings-coverage`): there is nowhere to collect into. In auto
+mode, with an instrumented product found, the same situation is one warning
+and no coverage; the tests still run.
 
 {doc}`../cli/cov/during-tests` has the rest of the flags — an explicit
 destination, the pre-run counter cleanup, the inline report.

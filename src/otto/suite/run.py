@@ -484,19 +484,19 @@ def resolve_coverage(opts: RunOptions, projects: "list[Project]", *, command: st
     Forced off (``--no-cov``) short-circuits: no scan, no ``[coverage]``
     lookup, nothing at all.
 
-    Forced on is a request that must be answerable *now*: with no ``[coverage]``
-    table there is nothing to collect into, so this refuses here rather than
-    running the whole suite and discarding the collection failure in
-    ``_post_run_coverage``'s never-fail-a-successful-run swallow. A coverage-only
-    configuration error (a ``[coverage].hosts`` selector that matches nothing,
-    or a malformed one) is likewise fatal when forced on — and, in auto mode,
-    only a warning: a plain ``otto test`` asked for no coverage and must not die
-    of a coverage misconfiguration.
+    Forced on is a request that must be answerable *now*: when no project's
+    ``[coverage]`` declares a target there is nothing to collect into, so this
+    refuses here rather than running the whole suite and discarding the
+    collection failure in ``_post_run_coverage``'s never-fail-a-successful-run
+    swallow. A coverage-only configuration error (a ``[coverage].hosts``
+    selector that matches nothing, or a malformed one) is likewise fatal when
+    forced on — and, in auto mode, only a warning: a plain ``otto test`` asked
+    for no coverage and must not die of a coverage misconfiguration.
 
     Raises:
         otto.config.coverage_settings.CoverageConfigError: ``cov`` is forced on and
-            either no ``[coverage]`` table is configured or its ``hosts``
-            selector is malformed.
+            either no project's ``[coverage]`` declares a target or its
+            ``hosts`` selector is malformed.
         otto.coverage.errors.NoCoverageHostsError: ``cov`` is forced on and the
             ``[coverage].hosts`` selector matched no host a coverage walk
             includes; it chains the ``EmptySelectionError``.
@@ -508,17 +508,18 @@ def resolve_coverage(opts: RunOptions, projects: "list[Project]", *, command: st
     # Function-scope: otto.coverage.instrumentation pulls rich.table, and this
     # module sits on an import-budget surface a plain `otto test` must not
     # widen.
-    from ..config.coverage_settings import CoverageConfigError, get_cov_config
+    from ..config.coverage_settings import (
+        CoverageConfigError,
+        get_cov_config,
+        missing_cov_config_error,
+    )
     from ..config.scope import EmptySelectionError
     from ..coverage.instrumentation import decide_coverage, detect_for_lab
 
     forced_on = opts.cov is True
-    has_cov_config = bool(get_cov_config(projects))
-    if forced_on and not has_cov_config:
-        raise CoverageConfigError(
-            f"{command}: coverage was requested but no [coverage] table is configured — "
-            "add a [coverage] table (and a tier) to .otto/settings.toml, or drop --cov."
-        )
+    missing = None if get_cov_config(projects) else missing_cov_config_error(projects)
+    if forced_on and missing is not None:
+        raise CoverageConfigError(f"{command}: coverage was requested, but {missing}")
 
     try:
         report = detect_for_lab(projects)
@@ -544,13 +545,26 @@ def resolve_coverage(opts: RunOptions, projects: "list[Project]", *, command: st
         )
         return dataclasses.replace(opts, cov=False)
 
-    on = decide_coverage(opts.cov, report, has_cov_config=has_cov_config, command=command)
+    on = decide_coverage(opts.cov, report, cov_config_missing=missing, command=command)
     return dataclasses.replace(opts, cov=on)
 
 
 def _cov_command_label(opts: RunOptions, command: str) -> str:
-    """Name the invocation for :func:`resolve_coverage`'s messages."""
-    return f"{command} --cov" if opts.cov else command
+    """Name the invocation for :func:`resolve_coverage`'s messages.
+
+    Names the option that turned coverage on. A destination alone sets
+    ``cov`` (:meth:`RunOptions.__post_init__`), so a true ``cov`` does not
+    mean ``--cov`` was passed: a destination, when one is set, is named
+    first, and ``--cov`` only when none is.
+    """
+    destinations = [
+        ("--cov-dir", opts.cov_dir is not None),
+        ("--cov-report-dir", opts.cov_report_dir is not None),
+        ("--cov-tickets-json", opts.cov_tickets_json is not None),
+        ("--cov-report", opts.cov_report),
+    ]
+    flag = next((name for name, given in destinations if given), "--cov" if opts.cov else None)
+    return f"{command} {flag}" if flag else command
 
 
 async def _pre_run_cov_clean(projects: "list[Project]", opts: RunOptions) -> None:

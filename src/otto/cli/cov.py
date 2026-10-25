@@ -267,8 +267,8 @@ def report(
     # project_root / tier_configs resolution), so they report tracefiles
     # alone. With no --tier flags, resolve_report_inputs (below, inside the
     # try block) reads the collection-model inputs (project_root + declared
-    # tiers) from settings; a tree with no [coverage] section gets
-    # ReportInputs(), which reports no run directory.
+    # tiers) from settings; a tree where no project's [coverage] declares a
+    # target gets ReportInputs(), which reports no run directory.
     from ..coverage.report_inputs import ReportInputs, resolve_report_inputs
 
     inputs = ReportInputs()
@@ -535,9 +535,9 @@ def get(
             _render_clean_report(e.clean)
         raise typer.Exit(1) from e
     except (ValueError, RuntimeError) as e:
-        # Every other refusal (no [coverage] section, an empty host selection,
-        # no repository, no data, a typed capture error) names its own cause
-        # and remedy.
+        # Every other refusal (no project's [coverage] declaring a target, an
+        # empty host selection, no repository, no data, a typed capture error)
+        # names its own cause and remedy.
         logger.error(_failure_line(e))  # noqa: TRY400 — deliberately no traceback: clean cause line
         raise typer.Exit(1) from e
     _render_get_report(got)
@@ -581,7 +581,7 @@ def clean() -> None:
     try:
         cleaned = run_command(clean_coverage())
     except ValueError as e:
-        # No [coverage] section, a malformed selector, or no host to walk:
+        # No project declaring [coverage], a malformed selector, or no host to walk:
         # each message names the cause.
         logger.error(_failure_line(e))  # noqa: TRY400 — deliberately no traceback: clean cause line
         raise typer.Exit(1) from e

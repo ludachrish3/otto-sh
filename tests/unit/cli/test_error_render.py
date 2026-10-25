@@ -120,7 +120,7 @@ def _refusal(*verdicts, command="otto test --cov"):
         for i, v in enumerate(verdicts)
     ]
     try:
-        decide_coverage(True, detect(hosts), has_cov_config=True, command=command)
+        decide_coverage(True, detect(hosts), cov_config_missing=None, command=command)
     except CoverageNotInstrumentedError as e:
         return e
     raise AssertionError("decide_coverage did not refuse")  # pragma: no cover — guard

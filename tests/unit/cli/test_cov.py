@@ -1095,7 +1095,7 @@ def _not_instrumented_refusal(instrumented):
 
     board = _embedded_board("board1", products=("app",), instrumented=instrumented)
     with pytest.raises(CoverageNotInstrumentedError) as e:
-        decide_coverage(True, detect([board]), has_cov_config=True, command="otto cov get")
+        decide_coverage(True, detect([board]), cov_config_missing=None, command="otto cov get")
     return e.value
 
 
@@ -1194,7 +1194,7 @@ class TestCovGetLeaf:
         with (
             patch(
                 "otto.coverage.get.get_coverage",
-                AsyncMock(side_effect=CoverageConfigError("No [coverage] section found")),
+                AsyncMock(side_effect=CoverageConfigError("no project declares [coverage]")),
             ),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
@@ -1469,7 +1469,7 @@ class TestCovRefusalRendersLiterally:
 
     The console handler is built ``markup=False`` (see
     ``otto.logger.management.install_console``) and the refusal's record does
-    not opt in, so "No [coverage] section found" must reach the terminal as
+    not opt in, so "no project declares [coverage]" must reach the terminal as
     written -- neither eaten as a tag nor shown with an escape backslash. This
     wires a real ``RichHandler`` onto a ``Console(file=StringIO())`` (mirroring
     ``install_console``'s kwargs) in place of the module logger's handlers, so
@@ -1486,7 +1486,9 @@ class TestCovRefusalRendersLiterally:
         from rich.highlighter import NullHighlighter
         from rich.logging import RichHandler
 
-        refusal = CoverageConfigError("No [coverage] section found in .otto/settings.toml")
+        refusal = CoverageConfigError(
+            "no project declares [coverage]; checked: /p/.otto/settings.toml"
+        )
         buf = io.StringIO()
         handler = RichHandler(
             console=Console(file=buf, width=120, force_terminal=False),
@@ -1513,12 +1515,12 @@ class TestCovRefusalRendersLiterally:
     def test_no_config_error_renders_literal_brackets(self):
         exit_code, rendered = self._render_refusal("get", "otto.coverage.get.get_coverage")
         assert exit_code == 1
-        assert "No [coverage] section found" in rendered
+        assert "no project declares [coverage]" in rendered
 
     def test_clean_no_config_error_renders_literal_brackets(self):
         exit_code, rendered = self._render_refusal("clean", "otto.coverage.collect.clean_coverage")
         assert exit_code == 1
-        assert "No [coverage] section found" in rendered
+        assert "no project declares [coverage]" in rendered
 
 
 # ── clean command — a thin leaf over clean_coverage ─────────────────────────
@@ -1594,7 +1596,7 @@ class TestCovCleanLeaf:
         assert "[coverage].hosts" in mock_err.call_args[0][0]
 
     def test_no_coverage_section_prints_clean_and_exits_1(self):
-        err = CoverageConfigError("No [coverage] section found in .otto/settings.toml")
+        err = CoverageConfigError("no project declares [coverage]; checked: /p/.otto/settings.toml")
         with (
             patch("otto.coverage.collect.clean_coverage", AsyncMock(side_effect=err)),
             patch.object(cov_module.logger, "error") as mock_err,

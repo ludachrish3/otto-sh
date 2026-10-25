@@ -376,8 +376,51 @@ def test_resolve_coverage_forced_on_refuses_a_missing_coverage_table(monkeypatch
         lambda projects: InstrumentationReport([InstrumentationRow("h1", "app", True)]),
     )
     monkeypatch.setattr("otto.config.coverage_settings.get_cov_config", lambda projects: {})
-    with pytest.raises(CoverageConfigError, match=r"\[coverage\] table"):
+    with pytest.raises(CoverageConfigError) as excinfo:
         resolve_coverage(RunOptions(cov=True), [], command="otto test --cov")
+    assert str(excinfo.value) == (
+        "otto test --cov: coverage was requested, but "
+        "no project declares [coverage]; checked: no settings file. See "
+        "https://otto-sh.readthedocs.io/en/stable/setup/coverage.html#switch-coverage-on"
+    )
+
+
+def test_resolve_coverage_forced_on_by_a_destination_names_the_destination(monkeypatch, tmp_path):
+    """A coverage destination alone forces coverage on, so the refusal names that option."""
+    from otto.config.coverage_settings import CoverageConfigError
+    from otto.suite.run import RunOptions, _cov_command_label, resolve_coverage
+
+    monkeypatch.setattr("otto.config.coverage_settings.get_cov_config", lambda projects: {})
+    opts = RunOptions(cov_dir=tmp_path / "cov")
+    with pytest.raises(CoverageConfigError) as excinfo:
+        resolve_coverage(opts, [], command=_cov_command_label(opts, "otto test"))
+    assert str(excinfo.value).startswith(
+        "otto test --cov-dir: coverage was requested, but no project declares [coverage]"
+    )
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "label"),
+    [
+        ({}, "otto test"),
+        ({"cov": False}, "otto test"),
+        ({"cov": True}, "otto test --cov"),
+        ({"cov_dir": "cov"}, "otto test --cov-dir"),
+        ({"cov": True, "cov_dir": "cov"}, "otto test --cov-dir"),
+        ({"cov_report": True}, "otto test --cov-report"),
+        ({"cov_report_dir": "report"}, "otto test --cov-report-dir"),
+        ({"cov_tickets_json": "tickets.json"}, "otto test --cov-tickets-json"),
+    ],
+)
+def test_the_coverage_label_names_an_option_that_was_passed(tmp_path, kwargs, label):
+    """The label names the option that turned coverage on, never a ``--cov`` not passed.
+
+    A destination alone sets ``cov``, so ``cov`` being true does not mean ``--cov`` was given.
+    """
+    from otto.suite.run import RunOptions, _cov_command_label
+
+    paths = {k: tmp_path / v if isinstance(v, str) else v for k, v in kwargs.items()}
+    assert _cov_command_label(RunOptions(**paths), "otto test") == label
 
 
 def test_run_tests_forced_cov_without_coverage_table_refuses_before_the_run(tmp_path, monkeypatch):
@@ -395,7 +438,10 @@ def test_run_tests_forced_cov_without_coverage_table_refuses_before_the_run(tmp_
     )
     monkeypatch.setattr("otto.config.coverage_settings.get_cov_config", lambda projects: {})
 
-    with pytest.raises(CoverageConfigError, match=r"\[coverage\] table"):
+    with pytest.raises(
+        CoverageConfigError,
+        match=r"^otto test --cov: coverage was requested, but no project declares",
+    ):
         run_tests([_ALPHA], run_options=RunOptions(cov=True), output_dir=tmp_path)
     pre_clean.assert_not_awaited()
 
@@ -1497,7 +1543,10 @@ def test_run_tests_a_refused_coverage_run_leaves_an_overwrite_dir_untouched(tmp_
     monkeypatch.setattr("pytest.main", pytest_main_returning())
     monkeypatch.setattr("otto.config.coverage_settings.get_cov_config", lambda projects: {})
 
-    with pytest.raises(CoverageConfigError, match=r"\[coverage\] table"):
+    with pytest.raises(
+        CoverageConfigError,
+        match=r"^otto test --cov-dir: coverage was requested, but no project declares",
+    ):
         run_tests(
             [_ALPHA],
             run_options=RunOptions(cov_dir=cov_dir, overwrite_cov_dir=True),

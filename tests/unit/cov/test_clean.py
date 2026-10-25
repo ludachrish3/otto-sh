@@ -5,12 +5,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from otto.config.coverage_settings import CoverageConfigError
+from otto.config.project import Project
 from otto.config.scope import EmptySelectionError
 from otto.coverage.collect import clean_coverage
 from otto.coverage.errors import NoCoverageHostsError
 from otto.result import Result
 from otto.utils import Status
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result
+from tests._fixtures.project_scaffold import make_project
 
 
 def _product(name, result, *, instrumented=True):
@@ -117,6 +119,19 @@ async def test_a_host_whose_reset_raises_reports_every_product_failed(lab):
 async def test_no_coverage_section_refuses():
     with pytest.raises(CoverageConfigError):
         await clean_coverage([_project(cov=False)])
+
+
+@pytest.mark.asyncio
+async def test_a_coverage_table_with_no_target_is_refused_by_its_file(tmp_path):
+    """A real settings file whose ``[coverage]`` sets no target is named as such, not as absent."""
+    root = make_project(tmp_path / "project", name="project", extra="[coverage]\n")
+    with pytest.raises(CoverageConfigError) as excinfo:
+        await clean_coverage([Project(root=root)])
+    assert str(excinfo.value) == (
+        f"the [coverage] in {root / '.otto' / 'settings.toml'} declares no hosts, tiers or "
+        "embedded target: add one of them. "
+        "See https://otto-sh.readthedocs.io/en/stable/setup/coverage.html#switch-coverage-on"
+    )
 
 
 @pytest.mark.asyncio

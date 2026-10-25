@@ -6,7 +6,8 @@ like. Every coverage code path — ``otto test --cov``, ``otto cov``, and the
 coverage awareness behind :attr:`otto.context.OttoContext.cov` — resolves
 its coverage settings through :func:`has_cov_config`, :func:`get_cov_project`
 and :func:`get_cov_config`, so a lab with multiple projects always picks the
-same one. :func:`load_hosts_pattern` compiles that section's optional
+same one, and every refusal for a project list that declares none is built by
+:func:`missing_cov_config_error`. :func:`load_hosts_pattern` compiles that section's optional
 ``hosts`` host-id selector, refusing a malformed value by name.
 
 Lives in ``otto.config``, beneath ``otto.coverage``, because reading a
@@ -50,6 +51,39 @@ def get_cov_project(projects: "list[Project]") -> "Project | None":
         if has_cov_config(project.settings.get("coverage") or {}):
             return project
     return None
+
+
+_COVERAGE_SETUP_URL = (
+    "https://otto-sh.readthedocs.io/en/stable/setup/coverage.html#switch-coverage-on"
+)
+
+
+def missing_cov_config_error(projects: "list[Project]") -> CoverageConfigError:
+    """Build the refusal for a project list in which no project declares coverage.
+
+    The one wording every coverage entry point raises when
+    :func:`get_cov_project` finds nothing. It tells the two causes
+    apart: no project has a ``[coverage]`` table at all, which names every
+    settings file checked; or a table exists but sets none of the keys
+    :func:`has_cov_config` counts, which names that file and the fix. Both
+    link the setup section that shows a working table.
+    """
+    from .scope import TOML_SETTINGS_PATH
+
+    def path_of(project: "Project") -> str:
+        return str(project.root / TOML_SETTINGS_PATH)
+
+    see = f"See {_COVERAGE_SETUP_URL}"
+    targetless = [path_of(p) for p in projects if "coverage" in p.settings]
+    if targetless:
+        tables = "[coverage] tables in" if len(targetless) > 1 else "[coverage] in"
+        declare = "declare" if len(targetless) > 1 else "declares"
+        return CoverageConfigError(
+            f"the {tables} {', '.join(targetless)} {declare} no hosts, tiers or "
+            f"embedded target: add one of them. {see}"
+        )
+    checked = ", ".join(path_of(p) for p in projects) or "no settings file"
+    return CoverageConfigError(f"no project declares [coverage]; checked: {checked}. {see}")
 
 
 def get_cov_config(projects: "list[Project]") -> dict[str, Any]:

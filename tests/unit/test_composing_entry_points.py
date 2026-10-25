@@ -75,7 +75,16 @@ except Exception as exc:
     print(json.dumps([type(exc).__name__, str(exc)]))
 """
 
-_NO_COVERAGE = ["CoverageConfigError", "No [coverage] section found in .otto/settings.toml"]
+_SETUP_URL = "https://otto-sh.readthedocs.io/en/stable/setup/coverage.html#switch-coverage-on"
+
+
+def _no_coverage(tmp_path: Path) -> "list[object]":
+    """The refusal for the scratch project, which declares no ``[coverage]`` table."""
+    settings = tmp_path / "project" / ".otto" / "settings.toml"
+    return [
+        "CoverageConfigError",
+        f"no project declares [coverage]; checked: {settings}. See {_SETUP_URL}",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -126,6 +135,6 @@ def test_a_coverage_entry_point_with_no_projects_composes_once_then_refuses_as_t
     body: str, tmp_path: Path
 ) -> None:
     source = _CALL.format(body=body.format(out=str(tmp_path / "cov")))
-    assert run_fresh(tmp_path, source) == _NO_COVERAGE
+    assert run_fresh(tmp_path, source) == _no_coverage(tmp_path)
     assert armed(tmp_path)
     assert compositions(tmp_path) == 1

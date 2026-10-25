@@ -104,10 +104,10 @@ async def get_coverage(
     products' counters stay on the host for the next ``otto cov get``.
     """
     from ..config.coverage_settings import (
-        CoverageConfigError,
         get_cov_config,
         get_cov_project,
         load_hosts_pattern,
+        missing_cov_config_error,
     )
     from ..config.scope import EmptySelectionError
     from ..declared import current_projects
@@ -133,7 +133,7 @@ async def get_coverage(
     cov_config = get_cov_config(projects)
     cov_project = get_cov_project(projects)
     if not cov_config or cov_project is None:
-        raise CoverageConfigError("No [coverage] section found in .otto/settings.toml")
+        raise missing_cov_config_error(projects)
     try:
         hosts = list(all_hosts(pattern=load_hosts_pattern(cov_config), include_containers=True))
     except EmptySelectionError as e:
@@ -147,7 +147,7 @@ async def get_coverage(
         raise CoverageInputError(
             f"tier {resolved.name!r} is a manual-kind tier and requires a ticket", field="ticket"
         )
-    decide_coverage(True, detect(hosts), has_cov_config=True, command="otto cov get")
+    decide_coverage(True, detect(hosts), cov_config_missing=None, command="otto cov get")
     head_commit(cov_project.root)
 
     if output_dir is None:
