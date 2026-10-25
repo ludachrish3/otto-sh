@@ -123,9 +123,10 @@ DOCS_HARNESS = frozenset(
         "scripts/refresh_docs_captures.py",
         "scripts/check_docs_examples.py",
         "scripts/build_example_archives.py",
+        "scripts/lint_docs_citations.py",
     }
 )
-"""Scripts `make docs` runs over the examples: a change to one also runs the docs lane."""
+"""Scripts `make docs` runs over the docs and examples: a change to one also runs the docs lane."""
 CAPTURE_INPUTS = (
     "docs/examples/getting-started*",
     "docs/examples/quickstart-*",

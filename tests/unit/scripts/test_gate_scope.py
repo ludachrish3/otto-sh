@@ -2216,6 +2216,7 @@ def test_a_whole_release_range_needs_only_live_lanes():
         "scripts/refresh_docs_captures.py",
         "scripts/check_docs_examples.py",
         "scripts/build_example_archives.py",
+        "scripts/lint_docs_citations.py",
     ],
 )
 def test_a_docs_harness_script_also_runs_the_docs_lane(path):

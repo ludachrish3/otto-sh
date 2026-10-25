@@ -275,11 +275,8 @@ a matching interpreter, exactly as {ref}`Step 1 <air-gap-download>` describes.
 
 ## From source (development)
 
-Working on otto itself? `uv sync` in a clone installs otto plus its dev tools. Note
-that building a *wheel* from source additionally requires Node (see `.nvmrc`) to
-build the embedded web frontends first: `make web-install && make web && uv build
---wheel`. For installing released versions this is never necessary — the published
-wheels already embed the frontends.
+Working on otto itself starts at the contributing guide's
+[development setup](contributing.md#development-setup).
 
 ## Air-gapped installation
 

@@ -203,8 +203,7 @@ manages. The last leg gets its own row, `last segment → <dest>`:
 
 The `proven:` line then says exactly what was shown, for example
 `hop chain: payload-verified; last segment to zephyr: TCP handshake only; UDP
-not measured`. Payload proof on that last leg is
-[issue #440](https://github.com/ludachrish3/otto-sh/issues/440).
+not measured`. Otto does not yet prove the payload on that last leg.
 
 ## Reading the output
 

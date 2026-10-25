@@ -212,7 +212,10 @@ the Read the Docs build all install exactly that version. `make dev` runs
 the dashboard build (`make web`, `web-dev`) and the TypeScript quality gates
 below. Everything else — the Python test suite and every other
 non-`web`/non-quality `make` target — works from a checkout with the
-dashboard already built and never needs Node.
+dashboard already built and never needs Node. Building a *wheel* from source
+does need it, to build the embedded web frontends first:
+`make web-install && make web && uv build --wheel`. Installing a released
+version never does; the published wheels already embed the frontends.
 
 Moving Node is a reviewed bump, never a drift: the web gates fail on any
 stderr output, and a new Node release can add a deprecation warning. To bump
@@ -1147,6 +1150,30 @@ anything else.  Design rationale and subsystem
 internals belong in `architecture/` — when a change alters how a
 subsystem works (not just what it does), update the matching
 architecture page in the same PR.
+
+### User pages cite only what a reader has
+
+A page outside Developing otto must not require otto's maintainer checkout or
+infrastructure: its reader has the published site, otto's shipped sources and
+the example projects, nothing more. `make docs-lint` (and `nox -s docs`)
+enforces it with `scripts/lint_docs_citations.py`, which skips the Developing
+otto pages (`developing/`, `architecture/`, this page and
+{doc}`release_process`) and generated pages. Its six rules:
+
+- **include:** a `literalinclude` or `include` target lands in `docs/examples/` or `src/otto/`.
+- **download:** a `download` target lands in `docs/examples/` or the built example archives.
+- **link:** a relative link that resolves inside the checkout stays inside `docs/` or `src/otto/`.
+- **path:** a path in code never names a tracked `scripts/` file and never starts in one of otto's other tracked two-level directories (such as `tests/unit/`; `docs/examples/` and `src/otto/` are the reader's), unless an example project has the same path.
+- **make:** a `make` command in code names no maintainer target, such as `make kmodcov`.
+- **issue:** no `(#NNN` or `issue #NNN` reference, in prose or code.
+
+HTML comments in Markdown and comments in RST are invisible to it, so a
+maintainer note can sit in one; Markdown's 4-space indented code blocks are read
+as prose, a known gap, so put code in a fence. A `make -C dir` or `make -f file`
+that names some other Makefile is not otto's and is never checked; `make -C .`
+and `make -f Makefile` still are. A page that a pending docs track will rewrite
+carries an exact ceiling of findings in `EXEMPT`: a fix lowers the ceiling, a
+new finding fails, and the list only shrinks until each track lands.
 
 ### Docstring rules of thumb
 

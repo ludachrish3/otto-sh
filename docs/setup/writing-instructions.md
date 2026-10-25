@@ -493,7 +493,8 @@ modules are being imported:
 ```text
 project 'widget' defines instruction 'install', which is a project instruction.
 Override lab behavior by declaring the method on a ProjectActions subclass
-instead (see docs/cli/run/defaults.md), or rename the instruction.
+instead, or rename the instruction. See
+https://otto-sh.readthedocs.io/en/stable/cli/run/defaults.html#the-four-surfaces-and-the-one-override-point
 ```
 
 A **method** declaration of the same name is the sanctioned override and passes;

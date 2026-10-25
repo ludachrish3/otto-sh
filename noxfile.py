@@ -827,6 +827,7 @@ def docs(session: nox.Session) -> None:
     session.run("doc8", "docs/")
     session.run("python", "scripts/lint_markdown_doctests.py", "docs/")
     session.run("python", "scripts/lint_docs_versions.py", "docs/")
+    session.run("python", "scripts/lint_docs_citations.py")
     session.run("python", "scripts/check_docs_dependency_table.py")
     session.run("python", "scripts/check_docs_wheel_matrix.py")
     session.run("python", "scripts/refresh_docs_captures.py", "--check", "--labless")

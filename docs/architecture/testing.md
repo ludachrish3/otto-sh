@@ -116,6 +116,22 @@ test that needs nothing to happen first is already deterministic. The
 `no-short-deadline-in-tests` ast-grep rule refuses a `deadline=` or
 `teardown_deadline=` literal between 0 and 1 in `tests/`.
 
+### A kind's plan, held to its hooks
+
+A product or dev-tool kind's `plan(host)` is what `otto -n run install` prints,
+so it must say exactly what the kind's hooks do. The **recorder differential**
+in `tests/unit/host/test_plan_*.py` (one file per built-in kind: shell, kmod,
+embedded, docker image) proves it. It runs the kind's real `stage`, `install`
+and `uninstall` against `PlanRecorder` in `tests/unit/host/conftest.py`, a real
+`UnixHost` whose `put`, `run` and `exec` record each call as a line in the
+plan's own vocabulary (`PUT <src> -> <dir>`, `sudo <cmd>`, the command
+verbatim), and asserts the recorded lines equal the plan, phase by phase. The
+embedded kind uses its sibling there, `EmbeddedPlanRecorder`, a `RecordingHost`
+that records `load` as `LOAD <file> as <name>`, `unload` and `exec`. If a kind's
+commands change but its plan does not, the test goes red. A new built-in kind
+gets its own `test_plan_<kind>.py`; the vocabulary itself is documented for kind
+authors in {ref}`product-kind-plan`.
+
 ## Special lanes, and why they are opt-in
 
 A few markers exist specifically to keep expensive or bed-hostile tests out

@@ -141,14 +141,16 @@ A kind that does not describe itself inherits the base's honest answer: empty
 step lists and one `unchecked` line naming its class, so a code-defined product
 shows as "not previewed" rather than as a silent no-op.
 
-The contract is the **recorder differential** in `tests/unit/host/test_plan_*.py`.
-For every built-in kind it runs the real `stage`, `install` and `uninstall`
-against a recording host double and asserts the recorded lines equal the plan,
-line for line. A kind that changes a command without changing its plan goes
-red, which is what keeps the preview from becoming a second, wrong description
-of install. The recorder (`PlanRecorder` in `tests/unit/host/conftest.py`) is
-otto's own test double; a project-registered kind's author runs the same idea with a
-host double of their own.
+The contract is the **recorder differential**. Otto holds every built-in kind to
+its plan by running the real `stage`, `install` and `uninstall` against a
+recording host double and checking that the recorded lines equal the plan, line
+for line. A kind that changes a command without changing its plan goes red,
+which is what keeps the preview from becoming a second, wrong description of
+install. A project-registered kind's author runs the same check with a host
+double of their own: subclass the host the kind runs on so that its `put`, `run`
+and `exec` (and `load`, for a kind that loads) record each call as a line in the
+vocabulary above, run the kind's hooks against it, and compare the recorded
+lines with `plan(host)`.
 
 ## The library contract, for test and script authors
 
