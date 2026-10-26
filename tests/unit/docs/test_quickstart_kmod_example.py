@@ -13,7 +13,6 @@ import re
 import shlex
 import shutil
 import subprocess
-import sys
 import tarfile
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -27,6 +26,7 @@ from scripts import refresh_docs_captures as rdc
 from scripts.build_example_archives import build
 from tests._fixtures.gitrepo import git_env
 from tests._fixtures.paths import CHECKOUT_ROOT
+from tests.e2e._otto_subprocess import run_otto
 
 pytestmark = pytest.mark.interpreter_agnostic
 
@@ -181,15 +181,17 @@ def test_otto_init_kmodcov_supplies_the_sentinels_and_leaves_the_settings_alone(
     assert not (project / "third_party").exists()
     assert not [n for n in SENTINELS if (project / "module" / n).exists()]
     before = (project / ".otto" / "settings.toml").read_bytes()
-    env = {**git_env(tmp_path / "home"), "OTTO_HOME": str(tmp_path / "otto-home"), "NO_COLOR": "1"}
-    env.pop("OTTOPATH", None)
-    otto = Path(sys.executable).with_name("otto")
-    done = subprocess.run(
-        [str(otto), "init", "--kmodcov", "--path", str(project)],
-        capture_output=True,
-        text=True,
-        env=env,
-        check=False,
+    # run_otto builds the child's env with the session's PYTHONPYCACHEPREFIX,
+    # so this child never writes bytecode into src/otto.
+    done = run_otto(
+        ["init", "--kmodcov", "--path", str(project)],
+        roots=None,
+        cwd=tmp_path,
+        extra_env={
+            **git_env(tmp_path / "home"),
+            "OTTO_HOME": str(tmp_path / "otto-home"),
+            "NO_COLOR": "1",
+        },
     )
     assert done.returncode == 0, done.stdout + done.stderr
     assert (project / ".otto" / "settings.toml").read_bytes() == before

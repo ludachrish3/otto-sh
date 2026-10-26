@@ -38,6 +38,11 @@ def git_env(home: Path | str, *, dates: str | None = None) -> dict[str, str]:
     git in /usr/local/bin or /opt would need this widened).  The dict is
     COMPLETE — pass it as ``env=`` verbatim, never merged over
     ``os.environ``.
+
+    It is for git alone. A Python or ``otto`` child given this env loses the
+    session's ``PYTHONPYCACHEPREFIX`` and writes bytecode into ``src/otto``;
+    build that child's env with ``tests.e2e._otto_subprocess`` and layer this
+    dict on top through ``extra_env``.
     """
     env = {
         **_IDENTITY,
