@@ -230,7 +230,18 @@ async def _pump_remote_to_stdout(
     read_remote: Callable[[], Awaitable[bytes]],
     line_buffer: _LineBuffer,
 ) -> None:
-    """Forward remote bytes to fd 1 and the line buffer until EOF."""
+    """Forward remote bytes to fd 1 and the line buffer until EOF.
+
+    Each chunk goes to the descriptor itself, past ``sys.stdout``, so the text
+    otto queued before it (the session's own ``[otto]`` notices, log lines) is
+    drained onto the terminal first. With nothing queued that costs nothing.
+    The drain blocks the event loop, so once one gives up (a sink stuck on a
+    write) the session stops draining: a stuck sink costs one bounded wait,
+    not one per keystroke echoed back.
+    """
+    from ..logger.management import drain_log_queue
+
+    draining = True
     try:
         while True:
             data = await read_remote()
@@ -239,6 +250,8 @@ async def _pump_remote_to_stdout(
             # Feed the log buffer first so a broken terminal pipe doesn't
             # drop bytes from the transcript.
             line_buffer.feed(data)
+            if draining:
+                draining = drain_log_queue()
             try:
                 os.write(1, data)
             except BrokenPipeError:
@@ -699,6 +712,8 @@ async def _run_bridge(
     and to the session log after the banner, because the pumps never saw it
     and nothing else will ever re-send it.
     """
+    from ..logger.management import drain_log_queue
+
     loop = asyncio.get_running_loop()
     stdin_is_tty = sys.stdin.isatty() and sys.platform != "win32"
     stdin_fd = sys.stdin.fileno()
@@ -713,6 +728,8 @@ async def _run_bridge(
             line_buffer_prelude = _LineBuffer(on_output_line)
             line_buffer_prelude.feed(prelude)
             line_buffer_prelude.flush()
+            # Straight to the descriptor, so the banner queued above goes first.
+            drain_log_queue()
             with contextlib.suppress(BrokenPipeError):
                 os.write(1, prelude)
 

@@ -14,12 +14,64 @@ CLI logging writes to three places, wired per invocation by
 | Sink | Level | Purpose |
 | --- | --- | --- |
 | console (Rich) | `--log-level` | what the operator watches; timestamps only with `--show-time` |
-| `console.log` | `--log-level` | a *faithful transcript* of the console — same records, always timestamped, plus the failure that ended the command ([Tracebacks](#tracebacks)) |
+| `console.log` | `--log-level` | the console's log records, always timestamped, plus the failure that ended the command ([Tracebacks](#tracebacks)); not a copy of everything the terminal shows (a command's own output, such as a table or a dry-run plan, is not a log record) |
 | `verbose.log` | INFO floor, DEBUG when `--log-level DEBUG` | the everything-record, including what the console suppressed |
 
 Handlers hang off a `QueueListener`, so slow file I/O (e.g. logs on NFS)
 never blocks the event loop, and old run directories are pruned under a
 time-boxed budget so rotation cannot stall startup on slow mounts.
+
+### One writer for the terminal
+
+The listener prints the console's records on its own thread, while the CLI
+prints its own output (a dry-run plan, a report, a table, a traceback) on the
+thread that produces it. Two writers would let a line logged just before a
+print land after it. So on the CLI path the listener is the terminal's only
+writer: when `create_output_dir` builds the sinks it replaces `sys.stdout`
+and `sys.stderr` with proxies that put each finished piece of text on the
+same queue as the log records, and the listener writes both in the order they
+were produced. `rich.print`, `print`, `typer.echo`, Typer's crash traceback
+and the report of the `otto test` session (which runs with `-s`, so pytest
+captures no descriptor) need nothing at the call site, and neither a log
+call nor a print waits for the terminal. Terminal output does wait behind the
+listener's file writes, so a slow disk delays it. Inside `otto test`, text the
+session's reporter queued can therefore be written while the next test runs,
+and land in that test's `capfd` capture instead of on the terminal, as a log
+line queued at that moment already could.
+
+A proxy writes straight to the stream it replaced when queueing could not keep
+that order: on the listener thread itself, without a running listener, when
+the stream it replaced at install was not the process's own (a test's
+capture or `CliRunner`, whose reader must see the whole output when the call
+returns), and once a queued write to that stream has failed. A failed write
+never stops the listener. A closed pipe (`otto ... | head`) is silent: the
+next print fails on the main thread and Rich ends the command with exit
+status 1, as without the queue. Any other failure is reported once on the
+other stream, as `--- console output error ---` with the exception. A process
+started with a descriptor closed (`otto ... >&-`) has no stream there, and
+gets no proxy: a print to it stays the silent no-op it is in Python. The
+embedder entry {func}`~otto.logger.management.install` installs no proxies.
+
+Anything that reaches the terminal past the two streams could land before
+text otto queued a moment earlier, so it waits for the queue first. There are
+three such cases: a raw `os.write` to descriptor 1 or 2, a subprocess that
+inherits stdout, and a prompt. Before a raw write or such a subprocess, call
+{func}`~otto.logger.management.drain_log_queue`. It puts a barrier on the
+queue and waits, at most `DRAIN_TIMEOUT_SECONDS`, for the listener to reach
+it, or returns at once when nothing is pending. The interactive session
+drains before each chunk of the remote's bytes it writes to descriptor 1, and
+stops draining for the session once a drain gives up, so a stuck sink costs
+one bounded wait rather than one per keystroke. Run a prompt inside
+{func}`~otto.logger.management.direct_terminal`: it drains, and then, until
+the block ends, the proxies stop queueing and write straight to the terminal,
+so the question is on screen before `input()` waits. That direct writing
+applies to every thread while the block lasts, so each block wraps only the
+prompt call itself. `tests/unit/test_raw_terminal_writers_drain_first.py`
+fails on a site that does neither and is not listed with its reason. The
+Ctrl-C notice written from the signal handler is the one listed exception: it
+is a raw write that may precede text still queued, because a drain inside a
+signal handler could deadlock. A hard kill or a forced exit can lose text
+still queued, as it can lose log lines.
 
 ## Rich markup in log messages
 
@@ -273,7 +325,9 @@ same shape below `<kind>/<host_id>/`.
 - {mod}`otto.logger.management` — `install_console`/`install_sinks` (root
   handler wiring, marked-handler ownership), the `QueueListener`, the
   exception-capturing `QueueHandler`, the console handler,
-  `record_command_failure`, and time-boxed log rotation
+  `record_command_failure`, time-boxed log rotation, and the stream proxies
+  with `drain_log_queue` and `direct_terminal` ([One writer for the
+  terminal](#one-writer-for-the-terminal))
 - {mod}`otto.logger.formatters` — `RichFormatter` (markup rendering of an
   opted-in record for the files), `capture_exception`, `render_traceback` (the files' one traceback
   renderer) and the traceback bounds

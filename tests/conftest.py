@@ -1150,7 +1150,8 @@ def _restore_otto_logger_state():
     therefore hands back, the worker's pre-test state.
 
     What restore means here: a listener the TEST created is stopped and its
-    handlers closed (its thread must not outlive the test), and the
+    handlers closed (its thread must not outlive the test), the CLI's stream
+    proxies are taken out of ``sys.stdout``/``sys.stderr``, and the
     ``_stop_listener`` atexit hook it registered unconditionally is
     unregistered with it; other atexit hooks the test registered are
     unregistered; ``management._state`` is rebound to the snapshot copy;
@@ -1198,6 +1199,8 @@ def _restore_otto_logger_state():
         management._state,
         floored_loggers=list(management._state.floored_loggers),
         level_overrides=dict(management._state.level_overrides),
+        stream_proxies=dict(management._state.stream_proxies),
+        dead_routes=dict(management._state.dead_routes),
     )
     # Pre-test levels of the loggers otto has already floored, so teardown can
     # restore rather than blanket-reset them.
@@ -1234,6 +1237,13 @@ def _restore_otto_logger_state():
         # The rebind and logger restore must happen even if a stop/close
         # above raised — see docstring: a skipped snapshot restore is
         # permanent pollution, not a one-test glitch.
+        #
+        # sys.stdout/sys.stderr are process state, not _state: a test that ran
+        # the CLI path (create_output_dir) left its stream proxies there, and
+        # rebinding _state would not take them out. The same helper reset()
+        # uses, after the listener above has stopped; it touches a stream only
+        # while a proxy is still installed in it.
+        management._restore_streams()
         #
         # Hand back every logger otto's noise floor pinned during the test,
         # BEFORE the rebind (the post-test state is the only record of what was

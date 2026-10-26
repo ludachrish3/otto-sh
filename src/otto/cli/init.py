@@ -162,25 +162,31 @@ def _ask(config: "InitConfig", candidates: list[str], *, name_given: bool) -> _A
 
     The product name and version only when settings will be scaffolded; then
     one confirmation per candidate, skipping an area a chosen one already
-    pulls in (the library scaffolds it as a prerequisite).
+    pulls in (the library scaffolds it as a prerequisite). Each question holds
+    the terminal (:func:`~otto.logger.management.direct_terminal`), so it is
+    on screen, after everything printed before it, when ``input()`` waits.
     """
     from ..init.scaffolder import scaffold_prerequisites
+    from ..logger.management import direct_terminal
 
     if "settings" in candidates:
-        # str() pins what click already guarantees: with a str default and no
-        # ``type=``, prompt returns str — but its declared return type is Any.
-        name = (
-            config.name
-            if name_given
-            else str(typer.prompt("Product name", default=config.root.name))
-        )
-        version = str(typer.prompt("Version", default=config.version))
+        if name_given:
+            name = config.name
+        else:
+            # str() pins what click already guarantees: with a str default and
+            # no ``type=``, prompt returns str — but its declared return type is Any.
+            with direct_terminal():
+                name = str(typer.prompt("Product name", default=config.root.name))
+        with direct_terminal():
+            version = str(typer.prompt("Version", default=config.version))
         config = dataclasses.replace(config, name=name, version=version)
     chosen: list[str] = []
     for area in candidates:
         if area in scaffold_prerequisites(config.root, chosen):
             continue
-        if typer.confirm(f"Scaffold the {area} area?", default=True):
+        with direct_terminal():
+            wanted = typer.confirm(f"Scaffold the {area} area?", default=True)
+        if wanted:
             chosen.append(area)
     return _Answers(config, chosen)
 

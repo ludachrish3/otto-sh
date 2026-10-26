@@ -289,9 +289,9 @@ def test_second_install_sinks_retires_the_first_fan_out(tmp_path):
     first_dir.mkdir()
     second_dir.mkdir()
 
-    management.install_sinks(first_dir)
+    management.install_sinks(first_dir, proxy_streams=False)
     first = management._state.listener
-    management.install_sinks(second_dir)
+    management.install_sinks(second_dir, proxy_streams=False)
 
     assert management._state.listener is not first, "the listener must be replaced"
     assert getattr(first, "_thread", None) is None, "the first listener must have been stopped"

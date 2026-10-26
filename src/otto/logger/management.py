@@ -13,18 +13,31 @@ plain propagation, with no allowlist to keep in sync.
 **Context-free** by design (it does not import ``otto.context``):
 ``create_output_dir`` *creates and returns* the per-run directory; the CLI
 records that path on ``OttoContext.output_dir``. These functions are called only
-by ``otto/cli/*.py`` (and tests).
+by ``otto/cli/*.py`` (and tests), except :func:`drain_log_queue` and
+:func:`direct_terminal`, which code that writes to the terminal's descriptors
+or reads from it calls first (both do nothing without the CLI's sinks).
+
+**One writer.** On the CLI path the listener thread is the only thing that
+writes to the terminal: :func:`create_output_dir` replaces ``sys.stdout`` and
+``sys.stderr`` with proxies that put each finished piece of text on the same
+FIFO queue as the log records, so a line logged before a print reaches the
+terminal before it. ``rich.print``, ``print``, ``typer.echo`` and tracebacks
+need no change at the call site. See ``_QueuedStream``.
 
 Scope guardrail: keep this strictly logging config + the per-run dir's
 creation/rotation. It is not a catch-all.
 """
 
 import atexit
+import contextlib
 import copy
 import logging
+import os
 import re
+import sys
+import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from logging import FileHandler, Filter, LogRecord, NullHandler, getLogger
@@ -61,6 +74,15 @@ _LOG_DIR_NAME_RE = re.compile(r"^\d{8}_\d{6}_\d{3}(_.+)?$")
 # drains across subsequent runs.
 LOG_ROTATE_BUDGET_SECONDS = 5.0
 
+# The longest a raw descriptor write or a prompt waits for the log queue (see
+# drain_log_queue). Ordering is worth a short pause, never a hang: a sink stuck
+# on a write costs each such wait this much at most, and the write then goes
+# ahead.
+DRAIN_TIMEOUT_SECONDS = 2.0
+
+# How often a waiting drain re-checks that the listener thread is still alive.
+_DRAIN_POLL_SECONDS = 0.05
+
 
 @dataclass
 class _LogConfig:
@@ -96,6 +118,22 @@ class _LogConfig:
     # The [logging.levels] overrides applied so far, so a re-install re-applies
     # them instead of reverting to the bare defaults. See apply_library_levels.
     level_overrides: dict[str, str] = field(default_factory=dict[str, str])
+    # Whether sys.stdout and sys.stderr are this module's _QueuedStream proxies.
+    # Only the CLI path installs them (create_output_dir); the embedder entry
+    # install() never does. A later install that does not ask for them leaves
+    # them in place, and reset() puts the real streams back.
+    proxy_streams: bool = False
+    # The process's own streams, read when the proxies were installed: text is
+    # queued only for these (see _QueuedStream.write). None without proxies.
+    process_streams: "_ProcessStreams | None" = None
+    # The proxies installed, by stream name ("stdout", "stderr").
+    stream_proxies: "dict[str, _QueuedStream]" = field(default_factory=dict)
+    # The streams whose queued text failed to write, by name: from then on,
+    # writes to that stream go to it directly. See _SinkListener.handle.
+    dead_routes: "dict[str, _DeadRoute]" = field(default_factory=dict)
+    # How many callers hold the terminal for a prompt (see direct_terminal):
+    # while one does, the proxies write directly.
+    terminal_holds: int = 0
 
 
 _state = _LogConfig()
@@ -343,7 +381,7 @@ def install(
             # root growing a queue nobody drains). ``install_sinks`` REVIVES
             # rather than reopens when the directory matches — see its
             # docstring — so the earlier transcript survives the rebuild.
-            install_sinks(output_dir)
+            install_sinks(output_dir, proxy_streams=False)
         elif _state.sinks_log_level != log_level:
             _set_sink_levels(log_level)
     elif _state.listener is not None and _state.sinks_log_level != log_level:
@@ -398,28 +436,433 @@ def shutdown_listener(*, join_timeout: float | None = None) -> None:
     (a wedged producer must never wedge the exit), and the listener thread
     is joined with the timeout instead of forever (a listener stuck on a
     slow sink — e.g. NFS — forfeits its tail of buffered lines).
+
+    Once the listener has stopped (or been given up on), the CLI's stream
+    proxies are taken out of ``sys.stdout``/``sys.stderr`` again, and a process
+    descriptor whose pipe broke during the run is pointed at ``/dev/null`` so
+    the interpreter's exit flush stays quiet. The force path never drains with
+    :func:`drain_log_queue`, which takes the queue's mutex blocking.
     """
     listener = _state.listener
     _state.listener = None
-    if listener is None:
-        return
-    if join_timeout is None:
-        listener.stop()
-        return
-    queue_mutex = getattr(listener.queue, "mutex", None)
-    if queue_mutex is not None:
-        # Probe, don't block: enqueue_sentinel acquires this mutex. Its
-        # critical sections are tiny stdlib bookkeeping that cannot wedge,
-        # but the force path's contract is "never hang", so trade the flush
-        # away rather than trust that. (A live producer re-taking the mutex
-        # between release and enqueue only delays us microseconds.)
-        if not queue_mutex.acquire(blocking=False):
+    try:
+        if listener is None:
             return
-        queue_mutex.release()
-    listener.enqueue_sentinel()
-    thread = listener._thread  # noqa: SLF001 — QueueListener has no bounded stop; join its (stable-since-3.2) thread directly
-    if thread is not None:
-        thread.join(timeout=join_timeout)
+        if join_timeout is None:
+            listener.stop()
+            return
+        queue_mutex = getattr(listener.queue, "mutex", None)
+        if queue_mutex is not None:
+            # Probe, don't block: enqueue_sentinel acquires this mutex. Its
+            # critical sections are tiny stdlib bookkeeping that cannot wedge,
+            # but the force path's contract is "never hang", so trade the flush
+            # away rather than trust that. (A live producer re-taking the mutex
+            # between release and enqueue only delays us microseconds.)
+            if not queue_mutex.acquire(blocking=False):
+                return
+            queue_mutex.release()
+        listener.enqueue_sentinel()
+        thread = listener._thread  # noqa: SLF001 — QueueListener has no bounded stop; join its (stable-since-3.2) thread directly
+        if thread is not None:
+            thread.join(timeout=join_timeout)
+    finally:
+        _after_listener_stop()
+
+
+class _DrainBarrier:
+    """A marker :func:`drain_log_queue` puts on the queue; it never reaches a sink.
+
+    The queue is FIFO, so once the listener reaches the marker it has handed
+    every record queued before it to every sink. ``_SinkListener.handle``
+    sets ``reached`` and stops there.
+    """
+
+    __slots__ = ("reached",)
+
+    def __init__(self) -> None:
+        self.reached = threading.Event()
+
+
+def drain_log_queue(timeout: float = DRAIN_TIMEOUT_SECONDS) -> bool:
+    """Wait until the sinks have written every log record queued before this call.
+
+    The listener writes the log records, and on the CLI path the text of
+    ``sys.stdout``/``sys.stderr`` too, in queue order. Something that writes
+    past those two streams (a raw ``os.write`` to the terminal's descriptors) or
+    reads from the terminal (a prompt, see :func:`direct_terminal`) calls this
+    first, so what was queued before it reaches the terminal first.
+
+    With nothing pending (nothing queued, and nothing the listener has taken
+    but not finished) it returns at once. Otherwise it puts a barrier on the
+    queue and waits for the listener to reach it. Records queued after the
+    call are not waited for, so a thread that keeps logging cannot hold the
+    caller back. The listener still calls ``task_done()``
+    for the barrier, so ``Queue.join()`` and its count stay consistent.
+
+    It can never hang. It returns at once without a listener, with one that
+    was stopped (it has already flushed), with one whose thread has died, and
+    on the listener thread itself (a sink that prints), which would otherwise
+    wait on its own record. While it waits it re-checks that the listener
+    thread is alive, and it gives up after *timeout* seconds when a sink is
+    stuck on a write.
+
+    Returns True when everything queued before the call has been written,
+    False when it gave up.
+    """
+    listener = _state.listener
+    if not isinstance(listener, _SinkListener):
+        return True  # no listener, or one that would hand the barrier to its sinks
+    thread = getattr(listener, "_thread", None)
+    if thread is None:
+        return True  # stopped, which flushed the queue
+    if not thread.is_alive() or thread is threading.current_thread():
+        return False
+    if getattr(listener.queue, "unfinished_tasks", None) == 0:
+        # QueueListener calls task_done() only after handling an item, so an
+        # item being written still counts as unfinished.
+        return True
+    barrier = _DrainBarrier()
+    # The same put every logging call makes. Like logging itself, it takes the
+    # queue's lock, which is not reentrant: a signal handler that logs or
+    # drains on a thread already inside Queue.put shares that risk.
+    listener.queue.put_nowait(barrier)
+    deadline = time.monotonic() + timeout
+    while not barrier.reached.wait(min(max(deadline - time.monotonic(), 0), _DRAIN_POLL_SECONDS)):
+        if not thread.is_alive() or time.monotonic() >= deadline:
+            return False
+    return True
+
+
+# Guards _LogConfig.terminal_holds: a read-modify-write that must not lose a
+# count when two threads enter or leave direct_terminal() at once.
+_HOLDS_LOCK = threading.Lock()
+
+
+@contextlib.contextmanager
+def direct_terminal() -> Iterator[None]:
+    """Hand the terminal to the caller for a prompt: drain the queue, then write directly.
+
+    A prompt (``typer.prompt``, ``typer.confirm``) writes its question through
+    ``sys.stdout`` and then blocks in ``input()``, whose own prompt character
+    (and, on a terminal, readline itself) goes straight to the descriptor. If
+    the question were queued, it could land after readline's output, or after
+    the person has started typing. So inside this block the stream proxies
+    write directly, after a :func:`drain_log_queue` has put everything queued
+    before the block on the terminal first.
+
+    The hand-over is for every thread, not only the caller's: while it lasts,
+    any thread's ``print`` (a progress display's refresh, a background
+    printer) also writes directly and can overtake a line the listener has not
+    written yet. Lines logged during the block still print, from the listener
+    thread. So keep the block tight, around the prompt call itself. Holds nest
+    (they are counted). A :func:`reset` clears every hold: a block it ran
+    inside leaves none behind, and a second block that overlapped it loses its
+    hold too, so its writes queue again (the CLI never resets inside a prompt).
+
+    Without the CLI's proxies it only drains, which itself does nothing
+    without a listener.
+    """
+    drain_log_queue()
+    held = _state
+    with _HOLDS_LOCK:
+        held.terminal_holds += 1
+    try:
+        yield
+    finally:
+        with _HOLDS_LOCK:
+            held.terminal_holds = max(0, held.terminal_holds - 1)
+
+
+_STREAM_NAMES = ["stdout", "stderr"]
+
+# The first line of the notice a dead route writes to the other stream, in the
+# shape of the one ``logging.Handler.handleError`` writes for a failed record.
+_CONSOLE_ERROR_NOTICE = "--- console output error ---\n"
+
+
+@dataclass(frozen=True)
+class _ProcessStreams:
+    """The streams the process's descriptors 1 and 2 were opened as.
+
+    The proxies queue text only for these: a stream that something else put in
+    ``sys.stdout`` (a test's capture, ``CliRunner``, ``redirect_stdout``) is
+    written directly, so whoever reads it sees the whole output as soon as the
+    write returns. Either may be None (a process started without one), and then
+    nothing queues for it.
+    """
+
+    stdout: Any
+    stderr: Any
+
+
+def _process_streams() -> _ProcessStreams:
+    """Return the process's own streams, read now.
+
+    ``sys.__stdout__`` and ``sys.__stderr__``, never whatever ``sys.stdout`` is
+    at the time: under an in-process ``CliRunner`` that is the runner's buffer.
+    Read once at each install of the proxies. Tests replace this function to
+    name their own buffer as the process stream.
+    """
+    return _ProcessStreams(stdout=sys.__stdout__, stderr=sys.__stderr__)
+
+
+@dataclass
+class _DeadRoute:
+    """A stream whose queued text failed to write, the stream it was, and why."""
+
+    target: Any
+    cause: "type[BaseException]"
+    silenced: bool = False
+
+
+class _ConsoleText:
+    """A finished piece of text a ``_QueuedStream`` put on the queue for *target*.
+
+    The listener writes it to *target* in queue order, between the log records
+    queued around it. It never reaches a log handler, so it is never in
+    ``console.log`` or ``verbose.log``.
+    """
+
+    __slots__ = ("route", "target", "text")
+
+    def __init__(self, text: str, target: Any, route: str) -> None:
+        self.text = text
+        self.target = target
+        self.route = route
+
+
+# Attributes a proxy refuses rather than forwarding to the stream it replaced.
+# ``rich_proxied_file``: Rich prints to the file a proxy names there, which
+# would skip the queue. ``buffer``, ``detach`` and ``raw``: click writes bytes
+# to the binary stream under a text stream it finds misconfigured (an ASCII
+# locale), which would skip it too; without them it writes text through here.
+_NOT_FORWARDED = frozenset({"rich_proxied_file", "buffer", "detach", "raw", "_real", "_route"})
+
+
+class _QueuedStream:
+    """``sys.stdout`` or ``sys.stderr`` on the CLI path: finished text joins the log queue.
+
+    Log records reach the terminal on the listener thread, and the CLI's own
+    output (``rich.print``, ``print``, ``typer.echo``, a traceback) is written
+    on the thread that prints it. Each write here puts its text on the
+    listener's queue instead, behind the records logged before it, so the
+    listener is the only thing writing to the terminal and the two come out in
+    the order they were produced. A log call still costs only a queue put, and
+    so does a print: neither waits for the terminal.
+
+    A write goes straight to the stream this one replaced when queueing it
+    could not keep that order or would never deliver it: on the listener
+    thread itself (the console handler printing a record), without a running
+    listener, while a prompt holds the terminal (:func:`direct_terminal`),
+    when the stream replaced is not the process's own (a capture, which its
+    reader must find complete as soon as the write returns), or once a queued
+    write to this stream has failed. :meth:`flush` passes through whenever a
+    write would.
+
+    It reads the module's state at every call and holds none of its own, so a
+    proxy outlives any rebinding of that state safely. It is a plain class and
+    not an ``io.TextIOBase``: that base defines ``encoding`` and ``errors`` as
+    properties returning None, which would hide the real stream's. Everything
+    else (``isatty``, ``fileno``, ``encoding``, ...) is the replaced stream's,
+    except the names in ``_NOT_FORWARDED``. It is hashable and
+    weak-referenceable, which click's cache of wrapped streams needs.
+    """
+
+    def __init__(self, route: str, real: Any) -> None:
+        self._route = route
+        self._real = real
+
+    def _queue(self) -> "Queue[Any] | None":
+        """Return the queue to put text on, or None when it must be written directly."""
+        state = _state
+        listener = state.listener
+        if not isinstance(listener, _SinkListener) or not _sinks_are_live():
+            return None
+        thread = listener._thread  # noqa: SLF001 — QueueListener exposes no other "which thread"
+        if thread is None or thread is threading.current_thread() or not thread.is_alive():
+            return None
+        if state.terminal_holds > 0:
+            return None
+        streams = state.process_streams
+        target = getattr(streams, self._route, None) if streams is not None else None
+        if target is None or target is not self._real:
+            return None
+        if self._route in state.dead_routes:
+            return None
+        queue = listener.queue
+        return queue if isinstance(queue, Queue) else None
+
+    def write(self, text: str) -> int:
+        """Queue *text* for the listener to write, or write it directly; return its length.
+
+        Only ``str`` is accepted, as a text stream does: click probes a stream
+        with ``write(b"")`` to tell a binary one, and must be told this is not.
+        """
+        if not isinstance(text, str):
+            raise TypeError(f"write() argument must be str, not {type(text).__name__}")
+        queue = self._queue()
+        if queue is None:
+            return self._real.write(text)
+        queue.put_nowait(_ConsoleText(text, self._real, self._route))
+        return len(text)
+
+    def writelines(self, lines: "Iterable[str]") -> None:
+        """Write each of *lines* as :meth:`write` would."""
+        for line in lines:
+            self.write(line)
+
+    def flush(self) -> None:
+        """Flush the stream replaced when writes go to it directly; else the listener does."""
+        if self._queue() is None:
+            self._real.flush()
+
+    def isatty(self) -> bool:
+        """Return the replaced stream's answer; False once it is closed."""
+        try:
+            return bool(self._real.isatty())
+        except ValueError:
+            return False
+
+    def __getattr__(self, name: str) -> Any:
+        if name in _NOT_FORWARDED:
+            raise AttributeError(name)
+        return getattr(self._real, name)
+
+
+def _peel(stream: Any) -> Any:
+    """Return the stream under every ``_QueuedStream`` layer of *stream*."""
+    while isinstance(stream, _QueuedStream):
+        stream = stream._real  # noqa: SLF001 — this module's own class
+    return stream
+
+
+def _install_stream_proxies() -> None:
+    """Put a ``_QueuedStream`` in ``sys.stdout`` and ``sys.stderr``.
+
+    A proxy already there, left by an earlier install (perhaps put back by a
+    nested owner such as a Rich ``Live`` that saved it), is peeled first, so a
+    proxy never wraps a proxy. A stream that is None (its descriptor was closed
+    when the process started) is left None. The process streams are read
+    afresh, and every route starts alive.
+    """
+    _state.process_streams = _process_streams()
+    _state.dead_routes = {}
+    proxies: dict[str, _QueuedStream] = {}
+    for name in _STREAM_NAMES:
+        current = _peel(getattr(sys, name))
+        if current is None:
+            # No stream at all (the process started with that descriptor
+            # closed): a print is a silent no-op, and stays one.
+            continue
+        proxy = _QueuedStream(name, current)
+        setattr(sys, name, proxy)
+        proxies[name] = proxy
+    _state.stream_proxies = proxies
+    _state.proxy_streams = True
+
+
+def _restore_streams() -> None:
+    """Put the replaced streams back in ``sys.stdout`` and ``sys.stderr``.
+
+    Only where a proxy is still installed: something nested that replaced it
+    since (a capture, a Rich ``Live``) owns that slot and puts back what it
+    saved. A proxy it puts back later finds no listener and writes directly,
+    and the next install peels it. Called after the listener has stopped, so
+    everything it held has been written.
+    """
+    for name in _STREAM_NAMES:
+        current = getattr(sys, name)
+        if isinstance(current, _QueuedStream):
+            setattr(sys, name, _peel(current))
+    _state.stream_proxies = {}
+    _state.process_streams = None
+    _state.proxy_streams = False
+
+
+def _write_console_text(item: _ConsoleText) -> None:
+    """Write *item* for the listener; a failure marks its stream's route dead, never raises.
+
+    The failed piece of text is dropped, and later writes to that stream go to
+    it directly, so the caller sees the failure as it would have without the
+    queue: after ``| head`` closes the pipe, the next print raises
+    ``BrokenPipeError`` on the main thread, where Rich's own handling ends the
+    command. The other stream keeps its queue. Text still queued for a stream
+    whose pipe has closed is dropped without trying it.
+    """
+    dead = _state.dead_routes.get(item.route)
+    if dead is not None and issubclass(dead.cause, (BrokenPipeError, ConnectionResetError)):
+        return
+    try:
+        item.target.write(item.text)
+        item.target.flush()
+    except Exception as exc:  # noqa: BLE001 — the listener must survive any stream
+        _mark_route_dead(item.route, item.target, exc)
+
+
+def _mark_route_dead(route: str, target: Any, exc: Exception) -> None:
+    """Record that *route*'s stream failed; say so once on the other stream.
+
+    Silent for a closed pipe (``| head``) or a reset connection, the ordinary
+    ends of a reader, and when the other stream has failed too. Otherwise the
+    one notice, in the shape ``logging`` uses for a failed record, is the only
+    trace of the text dropped, which without the queue would have raised on
+    the caller (an ``UnicodeEncodeError`` on an ASCII terminal, say).
+    """
+    if route in _state.dead_routes:
+        return
+    _state.dead_routes[route] = _DeadRoute(target=target, cause=type(exc))
+    if isinstance(exc, (BrokenPipeError, ConnectionResetError)):
+        return
+    other = "stderr" if route == "stdout" else "stdout"
+    streams = _state.process_streams
+    other_target = getattr(streams, other, None) if streams is not None else None
+    if other in _state.dead_routes or other_target is None:
+        return
+    import traceback
+
+    notice = _CONSOLE_ERROR_NOTICE + "".join(
+        traceback.format_exception(type(exc), exc, exc.__traceback__)
+    )
+    try:
+        other_target.write(notice)
+        other_target.flush()
+    except Exception:  # noqa: BLE001, S110 — a notice about a failed stream may itself fail
+        pass
+
+
+def _silence_broken_process_streams() -> None:
+    """Point a process descriptor whose pipe broke at ``/dev/null``, once, at stop.
+
+    The interpreter flushes its streams on the way out, and a flush into a
+    closed pipe prints ``Exception ignored ... BrokenPipeError``. Rich does the
+    same for the main thread's own write (``Console.on_broken_pipe``). Only for
+    a route whose stream is the process's real one and whose cause was a
+    broken pipe; never mid-run, where the main thread's next write must still
+    fail so the command ends.
+    """
+    for name, route in _state.dead_routes.items():
+        if route.silenced or not issubclass(route.cause, BrokenPipeError):
+            continue
+        real = getattr(sys, f"__{name}__", None)
+        if real is None or route.target is not real:
+            continue
+        route.silenced = True
+        try:
+            fd = real.fileno()
+            devnull = os.open(os.devnull, os.O_WRONLY)
+            try:
+                os.dup2(devnull, fd)
+            finally:
+                os.close(devnull)
+        except (OSError, ValueError):
+            continue
+
+
+def _after_listener_stop() -> None:
+    """Silence a broken process pipe and put the real streams back, once the listener stopped."""
+    _silence_broken_process_streams()
+    if _state.proxy_streams:
+        _restore_streams()
 
 
 def _print_output_dir() -> None:
@@ -471,6 +914,12 @@ def reset() -> None:
     for fh in (_state.console_log_handler, _state.verbose_handler):
         if fh is not None and not any(fh is done for done in closed):
             fh.close()
+    # After the stop above, so the text the proxies queued has been written.
+    if _state.proxy_streams:
+        _restore_streams()
+    _state.dead_routes = {}
+    with _HOLDS_LOCK:
+        _state.terminal_holds = 0
     _state.xdir = None
     _state.keep_seconds = None
     _state.rich_log_file = False
@@ -548,7 +997,7 @@ def create_output_dir(command: str, subcommand: str | None = None) -> Path:
     if _state.keep_seconds is not None:
         remove_old_logs(_state.keep_seconds)
 
-    install_sinks(output_dir)
+    install_sinks(output_dir, proxy_streams=True)
     return output_dir
 
 
@@ -712,7 +1161,7 @@ class _ConsoleHandler(RichHandler):
 
 
 class _SinkListener(QueueListener):
-    """The fan-out, plus one routing rule: a command's failure goes to the files only.
+    """The fan-out, plus two routing rules: a failure to the files, queued text to its stream.
 
     A record from :func:`record_command_failure` documents the failure that
     ended the command. Both files take it whatever their level, since a
@@ -720,10 +1169,21 @@ class _SinkListener(QueueListener):
     its transcript. The console never does: the terminal has already shown
     the failure in its own way. Filters are skipped too, for the same reason
     as levels; they exist to quiet a host's command I/O, which this is not.
+
+    Text from a ``_QueuedStream`` is written to the stream it was meant for,
+    in queue order, and never reaches a handler. A failed write never raises
+    out of here (it would end the thread, and every sink with it): that
+    stream's route is marked dead instead (see ``_write_console_text``).
     """
 
     @override
     def handle(self, record: LogRecord) -> None:
+        if isinstance(record, _DrainBarrier):
+            record.reached.set()
+            return
+        if isinstance(record, _ConsoleText):
+            _write_console_text(record)
+            return
         if not getattr(record, COMMAND_FAILURE_ATTR, False):
             super().handle(record)
             return
@@ -736,11 +1196,11 @@ class _SinkListener(QueueListener):
                     handler.release()
 
 
-def install_sinks(output_dir: Path) -> None:
+def install_sinks(output_dir: Path, *, proxy_streams: bool) -> None:
     """Wrap the console + two file handlers in a QueueListener for non-blocking I/O.
 
     Three sinks fan through the listener: the console handler installed by
-    ``install_console``, ``console.log`` (a faithful console transcript at
+    ``install_console``, ``console.log`` (the console's log records at
     ``--log-level``), and ``verbose.log`` (at the verbose floor — INFO, or
     DEBUG at ``--log-level DEBUG``). Everything hangs on the ROOT logger, so
     any logger in the process feeds these sinks by propagation.
@@ -770,6 +1230,13 @@ def install_sinks(output_dir: Path) -> None:
     already there) leaves the process with no otto handlers and no listener.
     ``create_output_dir`` cannot reach that: it always names a fresh
     timestamped directory it has just created.
+
+    *proxy_streams* makes the listener the terminal's only writer: True (the
+    CLI, from :func:`create_output_dir`) replaces ``sys.stdout`` and
+    ``sys.stderr`` with ``_QueuedStream`` proxies, so direct output joins the
+    queue behind the records logged before it. False (:func:`install`, the
+    embedder entry) leaves both streams alone, and leaves in place proxies an
+    earlier call installed, which the new listener then serves.
     """
     root = getLogger()
     # The current run's own files, when this call names the directory they
@@ -820,7 +1287,7 @@ def install_sinks(output_dir: Path) -> None:
         verbose_log = _make_file_handler(
             output_dir / "verbose.log", verbose_floor(log_level), _state.rich_log_file
         )
-        # console.log is a faithful console transcript, so it inherits the console
+        # console.log holds the console's log records, so it inherits the console
         # handler's suppress filters (e.g. HostFilter). attach_console_suppress_filter
         # may run before this dir exists (the CLI attaches in its callback, builds the
         # dir later), so copy them here; verbose.log deliberately keeps QUIET records.
@@ -834,12 +1301,14 @@ def install_sinks(output_dir: Path) -> None:
     _state.sinks_dir = output_dir.resolve()
     _state.sinks_log_level = log_level
 
-    log_queue: Queue[LogRecord] = Queue(-1)
+    log_queue: Queue[Any] = Queue(-1)
     _state.listener = _SinkListener(
         log_queue, *console_handlers, console_log, verbose_log, respect_handler_level=True
     )
     root.addHandler(_mark(_InProcessQueueHandler(log_queue)))
     _state.listener.start()
+    if proxy_streams:
+        _install_stream_proxies()
     atexit.register(_stop_listener)
 
 

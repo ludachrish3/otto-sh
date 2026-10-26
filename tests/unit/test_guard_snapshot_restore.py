@@ -24,7 +24,9 @@ state).
 
 import contextlib
 import dataclasses
+import io
 import logging
+import sys
 from collections.abc import Iterator
 from types import SimpleNamespace
 
@@ -215,6 +217,49 @@ def test_the_guards_state_snapshot_does_not_alias_its_mutable_fields(tmp_path) -
     assert management._state.level_overrides == before_overrides, (
         "the snapshot aliased level_overrides — it adopted the test's overrides"
     )
+
+
+def test_the_guard_takes_the_cli_stream_proxies_back_out(tmp_path) -> None:
+    """``sys.stdout``/``sys.stderr`` are process state the rebind of ``_state`` cannot reach.
+
+    A test that runs the CLI path installs the stream proxies; the guard must
+    put the streams it found back, and leave no record for the next install.
+    """
+    before = [sys.stdout, sys.stderr]
+
+    with _logger_guard_round_trip():
+        management.init_cli_logging(xdir=tmp_path, log_level="INFO", keep_days=7)
+        management.create_output_dir("run")
+        # POSITIVE CONTROL: the proxies really were installed inside the window.
+        assert isinstance(sys.stdout, management._QueuedStream)
+        assert isinstance(sys.stderr, management._QueuedStream)
+
+    assert [sys.stdout, sys.stderr] == before
+    assert management._state.proxy_streams is False
+    assert management._state.process_streams is None
+    assert management._state.stream_proxies == {}
+    assert management._state.dead_routes == {}
+
+
+def test_the_next_install_after_the_guard_reads_the_process_streams_afresh(
+    tmp_path, monkeypatch
+) -> None:
+    first, second = io.StringIO(), io.StringIO()
+    monkeypatch.setattr(
+        management, "_process_streams", lambda: management._ProcessStreams(first, first)
+    )
+    with _logger_guard_round_trip():
+        management.init_cli_logging(xdir=tmp_path / "a", log_level="INFO", keep_days=7)
+        management.create_output_dir("run")
+        assert management._state.process_streams == management._ProcessStreams(first, first)
+
+    monkeypatch.setattr(
+        management, "_process_streams", lambda: management._ProcessStreams(second, second)
+    )
+    with _logger_guard_round_trip():
+        management.init_cli_logging(xdir=tmp_path / "b", log_level="INFO", keep_days=7)
+        management.create_output_dir("run")
+        assert management._state.process_streams == management._ProcessStreams(second, second)
 
 
 @pytest.fixture(scope="module")

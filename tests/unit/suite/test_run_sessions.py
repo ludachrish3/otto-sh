@@ -396,6 +396,21 @@ def test_a_warm_run_is_one_pytest_session(project, tmp_path, sessions, monkeypat
     assert project.ran_tests() == ["test_a1", "test_a2"]
 
 
+def test_the_session_runs_with_capture_off(project, tmp_path, monkeypatch):
+    """``-s``: the session must not capture the descriptors otto's terminal output uses.
+
+    On the CLI path the log listener's thread writes everything that reaches
+    the terminal, the session's own report included (it goes through
+    ``sys.stdout``, whose text joins the log queue). pytest's descriptor-level
+    capture would swallow those writes for as long as each test runs.
+    """
+    calls = _count_sessions(monkeypatch)
+
+    assert run_tests(["TestA"], output_dir=tmp_path / "out").exit_code == 0
+
+    assert "-s" in calls[0]
+
+
 def test_a_typo_runs_nothing_and_says_nothing_else(project, tmp_path, sessions, capfd):
     """The name was placed nowhere and the session did not find it: one message, no JUnit.
 

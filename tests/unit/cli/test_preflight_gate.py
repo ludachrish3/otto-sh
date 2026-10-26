@@ -20,6 +20,7 @@ environment; ``test_the_absent_package_really_is_absent`` refuses to let that
 premise rot.
 """
 
+import logging
 import types
 from typing import Any
 
@@ -34,6 +35,7 @@ from otto.labs.loader import Lab
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result, seed_scope_verdicts
 from tests._fixtures.clickctx import chain
 from tests._fixtures.fake_project import fake_project
+from tests._fixtures.held_console import live_sinks_with_a_held_console
 from tests._fixtures.rootoptions import make_root_options
 from tests._fixtures.scoping import verdict
 
@@ -278,6 +280,35 @@ class TestRendering:
         captured = capsys.readouterr()
         assert "cannot preflight project4" in captured.err
         assert captured.out == ""
+
+
+@pytest.mark.parametrize("refused", [False, True], ids=["warns", "warns-then-refuses"])
+def test_a_warning_prints_after_the_log_lines_queued_before_it(
+    pytestconfig, monkeypatch: pytest.MonkeyPatch, tmp_path, refused: bool
+) -> None:
+    """The warning is a plain ``typer.echo`` to stderr: its text queues behind the line."""
+    from otto.logger import management
+
+    projects = [_project(tmp_path, "project3", f"{ABSENT} >= 0.1")]
+    if refused:
+        projects.append(_project(tmp_path, "project4", f"{ABSENT} >= 0.2"))
+    _wire(monkeypatch, projects, exclude=("project3",))
+    management.reset()
+    try:
+        sinks = live_sinks_with_a_held_console(tmp_path / "xdir", monkeypatch, pytestconfig)
+        logging.getLogger("otto").info("logged before the warning")
+        if refused:
+            with pytest.raises(typer.Exit) as excinfo:
+                refuse_unsatisfied_dependencies()
+            assert excinfo.value.exit_code == 1
+        else:
+            refuse_unsatisfied_dependencies()
+        out = sinks.release()
+    finally:
+        management.reset()
+    assert "logged before the warning" in out
+    assert "project3 is inactive for this run" in out
+    assert out.index("logged before the warning") < out.index("project3 is inactive"), out
 
 
 class _PreambleCtx:

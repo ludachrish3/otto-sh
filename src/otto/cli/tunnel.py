@@ -472,6 +472,7 @@ async def remove(
     del bootstrap
     from ..declared import get_projects
     from ..fleet import get_lab
+    from ..logger.management import direct_terminal
 
     # These two usage-error exits are deliberately kept OUT of the try/except
     # below: typer's vendored click fork makes ``typer.Exit`` a ``RuntimeError``
@@ -479,8 +480,13 @@ async def remove(
     # ``except (ValueError, RuntimeError)`` would get them re-wrapped as a
     # spurious "[red]1[/red]" / "[red]2[/red]" message instead of exiting clean.
     if all_:
-        if not yes and not typer.confirm("Reap ALL otto tunnels?"):
-            raise typer.Exit(1)
+        if not yes:
+            # The question holds the terminal, so it is on screen, after
+            # everything printed before it, when input() waits.
+            with direct_terminal():
+                confirmed = typer.confirm("Reap ALL otto tunnels?")
+            if not confirmed:
+                raise typer.Exit(1)
     elif not tunnel_id:
         rprint("[red]give a tunnel id or --all[/red]")
         raise typer.Exit(2)
