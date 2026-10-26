@@ -655,9 +655,9 @@ class _QueuedStream:
     thread itself (the console handler printing a record), without a running
     listener, while a prompt holds the terminal (:func:`direct_terminal`),
     when the stream replaced is not the process's own (a capture, which its
-    reader must find complete as soon as the write returns), or once a queued
-    write to this stream has failed. :meth:`flush` passes through whenever a
-    write would.
+    reader must find complete as soon as the write returns), once a queued
+    write to this stream has failed, or for an empty write (it has nothing to
+    order). :meth:`flush` passes through whenever a write would.
 
     It reads the module's state at every call and holds none of its own, so a
     proxy outlives any rebinding of that state safely. It is a plain class and
@@ -697,9 +697,15 @@ class _QueuedStream:
 
         Only ``str`` is accepted, as a text stream does: click probes a stream
         with ``write(b"")`` to tell a binary one, and must be told this is not.
+        Empty text is written directly, never queued: it has nothing to order,
+        and a queued one (click probes a new stream with ``write("")`` before
+        its first echo) would give the listener a write to fail on before any
+        text exists.
         """
         if not isinstance(text, str):
             raise TypeError(f"write() argument must be str, not {type(text).__name__}")
+        if not text:
+            return self._real.write(text)
         queue = self._queue()
         if queue is None:
             return self._real.write(text)

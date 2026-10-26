@@ -413,6 +413,8 @@ def test_an_unencodable_line_on_an_ascii_terminal_is_reported_once(
 
 
 class _BrokenPipe(Terminal):
+    # It raises on "" too, on purpose: the strictest pipe is what shows an
+    # empty probe write reaching the listener.
     def write(self, text: str) -> int:
         raise BrokenPipeError(32, "Broken pipe")
 
@@ -468,6 +470,25 @@ def test_text_still_queued_for_a_closed_pipe_is_dropped_untried(
     assert management.drain_log_queue(timeout=10) is True
 
     assert out.tries == 1
+
+
+def test_clicks_empty_probe_writes_never_reach_the_listener(pytestconfig, tmp_path, monkeypatch):
+    """click probes a new stream with ``write(b"")`` and ``write("")`` before its first echo.
+
+    A queued empty write gives the listener a write to fail on before any text
+    exists, so a route could die on a probe while the real text then went
+    direct. Empty text has nothing to order, so it never joins the queue.
+    """
+    out, err = Terminal(), _BrokenPipe()
+    _install_over(tmp_path, monkeypatch, pytestconfig, out, err)
+
+    with pytest.raises(BrokenPipeError):
+        sys.stderr.write("")  # straight to the stream, as without the proxy
+    click_compat._default_text_stderr()  # the lookup a first echo(err=True) makes
+    assert management.drain_log_queue(timeout=10) is True
+
+    assert "stderr" not in management._state.dead_routes
+    assert _queues("stderr")
 
 
 def test_no_notice_when_the_other_route_is_dead_too(pytestconfig, tmp_path, monkeypatch):
