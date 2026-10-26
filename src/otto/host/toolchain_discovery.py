@@ -1,26 +1,29 @@
 """Resolve the gcov that reads a build's counters from the data's own stamp.
 
-A ``.gcno``/``.gcda`` embeds no compiler path, but its 8-byte header carries
-the gcov *format version stamp* the producing compiler wrote: GCC stamps its
-own release (``B33*`` for 13.3), while ``clang --coverage`` always stamps
-the GCC 4.8-era ``408*`` (``402*`` on old LLVM) it emulates. That stamp is
-the one reliable signal, and it names two things:
+A ``.gcno``/``.gcda`` embeds no compiler path, but its header carries the
+gcov *format version stamp* its writer chose: GCC stamps its own release
+(``B33*`` for 13.3); ``clang --coverage`` stamps the GCC 4.8-era ``408*``
+(``402*`` on old LLVM) up to clang 20 and gcc 11.1.0's ``B11*`` from clang
+21. The stamp alone chooses the reader
+(:func:`~otto.host.gcovformat.is_llvm_stamp`):
 
-* **the family** — GNU gcov refuses (or worse, crashes on) clang's files; an
-  LLVM stamp means the counters must be read by ``llvm-cov gcov``, resolved
-  from ``PATH`` here;
-* **the GCC major** — gcov reads only its own major's record format, so a
-  GCC stamp from another major than the system gcov's is read by that
-  major's ``gcov-<major>`` from ``PATH``.
+* **llvm-cov's stamps** (``402*``, ``408*``, ``B11*``) are read by
+  ``llvm-cov gcov``, resolved from ``PATH`` here. GNU gcov refuses or
+  crashes on ``402*``/``408*``, and a gcov 12 or later reads ``B11*`` as
+  empty. A gcc 11.1.0 build, which stamps ``B11*`` too, names its
+  ``gcov-11`` by hand;
+* **every other stamp** names a GCC major, and gcov reads only its own
+  major's record format, so a stamp from another major than the system
+  gcov's is read by that major's ``gcov-<major>`` from ``PATH``.
 
 A cross toolchain cannot be *located* from a stamp (it names a compiler,
 never a target) and must be named by hand: in the host's ``toolchain`` for a
 product, in the tier's own ``toolchain`` for a unit capture. The rule
 (:func:`gcov_for_stamp`) names whichever subject its caller gives it.
 
-``lcov --gcov-tool`` takes a single command, but Clang's reader is the
-two-word ``llvm-cov gcov`` — :func:`ensure_gcov_tool` bridges that with a
-generated one-word wrapper script at capture time.
+``lcov --gcov-tool`` takes a single command, but ``llvm-cov`` reads only
+as the two-word ``llvm-cov gcov`` — :func:`ensure_gcov_tool` bridges that
+with a generated one-word wrapper script at capture time.
 """
 
 import hashlib
@@ -38,14 +41,9 @@ from pathlib import Path
 
 from ..host.toolchain import Toolchain
 from .errors import CoverageToolMissingError
+from .gcovformat import LLVM_COV_STAMPS, gcov_stamp_major, is_llvm_stamp, read_gcov_version
 
 logger = logging.getLogger(__name__)
-
-# Version stamps LLVM's gcov-compatible writer emits by default: clang
-# emulated GCC 4.2 historically and emulates 4.8 on every current release.
-# Real GCC builds of that vintage predate every supported bed; in practice a
-# .gcno carrying one of these stamps came from ``clang --coverage``.
-_LLVM_STAMPS = frozenset({"402*", "408*"})
 
 # llvm-cov binary names: plain, or Debian/Ubuntu's versioned `llvm-cov-18`.
 _LLVM_COV_NAME = re.compile(r"^llvm-cov(-\d+)?$")
@@ -53,66 +51,15 @@ _LLVM_COV_NAME = re.compile(r"^llvm-cov(-\d+)?$")
 # Files sampled for a stamp per directory; one readable header decides.
 _GCNO_SAMPLE_LIMIT = 5
 
-# .gcno header: 4-byte magic + 4-byte version stamp.
-_GCNO_HEADER_LEN = 8
-
-
-# gcov file magics. A little-endian target stores the word reversed
-# (``oncg``/``adcg``) and the stamp characters with it; a big-endian one
-# stores both as written.
-_GCOV_MAGIC_REVERSED = {b"oncg", b"adcg"}
-_GCOV_MAGIC_AS_IS = {b"gcno", b"gcda"}
+# llvm-cov's stamps as a message names them: ``402*/408*/B11*``.
+_LLVM_COV_STAMPS = "/".join(sorted(LLVM_COV_STAMPS))
 
 _GCOV_VERSION_RE = re.compile(r"\b(\d+)\.\d+(?:\.\d+)?\b")
 
-# A version stamp is always 4 characters: <lead><major digit><minor digit>*.
-_GCOV_STAMP_LEN = 4
-
-
-def is_llvm_stamp(stamp: str) -> bool:
-    """Return whether a gcov version *stamp* is one clang's gcov-compatible writer emits."""
-    return stamp in _LLVM_STAMPS
-
-
-def read_gcov_version(path: Path) -> str | None:
-    """Return a ``.gcno``/``.gcda`` file's 4-char version stamp (``'B33*'``, ``'408*'``).
-
-    Both file kinds carry the stamp at bytes 4:8 behind their magic. Handles
-    both byte orders. Returns ``None`` for anything unreadable or not a gcov
-    file.
-    """
-    try:
-        with path.open("rb") as f:
-            header = f.read(_GCNO_HEADER_LEN)
-    except OSError:
-        return None
-    if len(header) < _GCNO_HEADER_LEN:
-        return None
-    magic, version = header[:4], header[4:8]
-    if magic in _GCOV_MAGIC_REVERSED:
-        return version[::-1].decode(errors="replace")
-    if magic in _GCOV_MAGIC_AS_IS:
-        return version.decode(errors="replace")
-    return None
-
 
 def read_gcno_version(gcno: Path) -> str | None:
-    """:func:`read_gcov_version` under the name the ``.gcno`` callers use."""
+    """:func:`~otto.host.gcovformat.read_gcov_version` under the name the ``.gcno`` callers use."""
     return read_gcov_version(gcno)
-
-
-def gcov_stamp_major(stamp: str) -> int | None:
-    """Decode the GCC major a gcov version word names, or ``None``.
-
-    gcc writes the word as ``<lead><major digit><minor digit>*``: the lead is
-    ``'A'`` for majors 5-9 and ``'B'`` for 10-19 (``'A95*'`` is 9.5, ``'B24*'``
-    12.4), each later letter adding ten. gcc 4 wrote a digit lead (``'407*'``),
-    the form clang still emulates; that, and anything else that is not a
-    capital letter followed by a digit, decodes to ``None``.
-    """
-    if len(stamp) != _GCOV_STAMP_LEN or not ("A" <= stamp[0] <= "Z") or not stamp[1].isdigit():
-        return None
-    return (ord(stamp[0]) - ord("A")) * 10 + int(stamp[1])
 
 
 def system_gcov_major(gcov: str = "gcov") -> int | None:
@@ -179,14 +126,27 @@ def _product_subject(gcda_dir: Path) -> StampSubject:
     )
 
 
+def _build_subject(gcno_dir: Path) -> StampSubject:
+    """Return the subject of one embedded build directory, read at collection."""
+    return StampSubject(
+        name=f"the build in {gcno_dir}",
+        log=str(gcno_dir),
+        remedy="name the gcov to use in the host's `toolchain.gcov`",
+        where=gcno_dir,
+    )
+
+
 def _missing_tool(
     subject: StampSubject, stamp: str, major: int | None, tool: str, package: str
 ) -> CoverageToolMissingError:
-    written_by = f"gcc {major}" if major is not None else "clang --coverage"
+    """Name the stamp and the reader it needs: a GCC *major*'s ``gcov-<major>``, or llvm-cov."""
+    if major is None:
+        needs = f"has gcov stamp {stamp!r}, read by `{tool}`,"
+    else:
+        needs = f"was written by gcc {major} (gcov stamp {stamp!r}) and needs `{tool}` to read it,"
     return CoverageToolMissingError(
-        f"Coverage data for {subject.name} was written by "
-        f"{written_by} (gcov stamp {stamp!r}) and needs `{tool}` to read it, but no "
-        f"`{tool}` is on PATH. Install it (`apt install {package}`), or {subject.remedy}."
+        f"Coverage data for {subject.name} {needs} but no `{tool}` is on PATH. Install it "
+        f"(`apt install {package}`), or {subject.remedy}."
     )
 
 
@@ -195,22 +155,27 @@ def gcov_for_stamp(
 ) -> Path | None:
     """Return the reader a gcov *stamp* needs, or ``None`` for the default ``gcov``.
 
-    An LLVM stamp resolves ``llvm-cov`` from ``PATH``; a GCC stamp whose major
-    is *system_major* (the system gcov's, or ``None`` when it could not be
-    probed) returns ``None``; any other GCC major resolves ``gcov-<major>``
-    from ``PATH``; a stamp that decodes to no major returns ``None`` with one
-    warning naming the subject's directory and *sample*, the file it came from.
-    Every diagnostic names *subject*.
+    One of llvm-cov's stamps (``402*``, ``408*``, ``B11*``) resolves
+    ``llvm-cov`` from ``PATH``; a GCC stamp whose major is *system_major*
+    (the system gcov's, or ``None`` when it could not be probed) returns
+    ``None``; any other GCC major resolves ``gcov-<major>`` from ``PATH``; a
+    stamp that decodes to no major returns ``None`` with one warning naming
+    the subject's directory and *sample*, the file it came from. Every
+    diagnostic names *subject*.
 
     Raises:
         CoverageToolMissingError: the tool the data needs is not on ``PATH``.
     """
-    if stamp in _LLVM_STAMPS:
+    if is_llvm_stamp(stamp):
         llvm_cov = _find_llvm_cov()
         if llvm_cov is None:
             raise _missing_tool(subject, stamp, None, "llvm-cov", "llvm")
         logger.info(
-            "%s: gcov stamp %r is clang's; reading counters with %s", subject.log, stamp, llvm_cov
+            "%s: gcov stamp %r is llvm-cov's (stamps %s); reading counters with %s",
+            subject.log,
+            stamp,
+            _LLVM_COV_STAMPS,
+            llvm_cov,
         )
         return llvm_cov
     major = gcov_stamp_major(stamp)
@@ -259,46 +224,37 @@ def discover_toolchain_from_gcda(gcda_dir: Path, *, system_major: int | None) ->
 
 
 def discover_toolchain_from_gcno(gcno_dir: Path) -> Toolchain | None:
-    """Infer the gcov tool family from the ``.gcno`` files under *gcno_dir*.
+    """Return a toolchain reading with the ``llvm-cov`` the ``.gcno`` files under *gcno_dir* need.
 
-    The collect-time rule for an embedded build directory: a clang stamp
-    resolves to an ``llvm-cov`` from ``PATH``; a GCC stamp returns ``None``
-    (the host's configured or default cross gcov applies, and a mismatch
-    fails loudly at capture with
-    :class:`~otto.coverage.errors.CoverageToolVersionError`). A clang build
-    without ``llvm-cov`` on ``PATH`` returns ``None`` with a warning.
+    ``None`` when they need none.
+
+    The collect-time rule for an embedded build directory: one of llvm-cov's
+    stamps resolves an ``llvm-cov`` from ``PATH``, by :func:`gcov_for_stamp`;
+    a GCC stamp returns ``None`` (the host's configured or default cross gcov
+    applies, and a mismatch fails loudly at capture with
+    :class:`~otto.coverage.errors.CoverageToolVersionError`), as does a
+    directory with no readable ``.gcno``.
 
     Args:
         gcno_dir: Directory tree containing the build's ``.gcno`` files.
+
+    Raises:
+        CoverageToolMissingError: the stamp is llvm-cov's and no ``llvm-cov``
+            is on ``PATH``.
     """
     stamp, sample = _first_stamp(gcno_dir.rglob("*.gcno"))
     if stamp is None or sample is None:
         logger.debug("No readable .gcno files under %s", gcno_dir)
         return None
-
-    if stamp not in _LLVM_STAMPS:
+    if not is_llvm_stamp(stamp):
         logger.debug(
             "%s carries GCC-family gcov stamp %r; leaving the default gcov in place",
             sample,
             stamp,
         )
         return None
-
-    llvm_cov = _find_llvm_cov()
-    if llvm_cov is None:
-        logger.warning(
-            "%s was produced by clang --coverage (gcov stamp %r), but no "
-            "llvm-cov executable is on PATH; install llvm or set the host "
-            "toolchain's gcov to an llvm-cov path.",
-            sample,
-            stamp,
-        )
-        return None
-
-    logger.info(
-        "Auto-discovered clang toolchain from %s (stamp %r): gcov=%s", sample, stamp, llvm_cov
-    )
-    return _toolchain_for(llvm_cov)
+    llvm_cov = gcov_for_stamp(stamp, sample, system_major=None, subject=_build_subject(gcno_dir))
+    return None if llvm_cov is None else _toolchain_for(llvm_cov)
 
 
 def is_llvm_cov(tool: str) -> bool:

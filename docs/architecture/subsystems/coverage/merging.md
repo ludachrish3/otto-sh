@@ -45,8 +45,9 @@ of it, the one build requirement and the errors, is in the GCC page's
    `.gcda` is not on the list (a `dlopen` plugin), `GcnoIndex` searches the
    search root for notes with the object's file name. The search root is the
    project root, or an embedded board's `build_dir`, and `GcnoIndex` walks it
-   once. The search keeps the notes whose version, stamp and, for clang,
-   per-function checksums fit, then those with the longest common path tail.
+   once. The search keeps the notes whose version, stamp and, for the stamps
+   llvm-cov reads, per-function checksums fit, then those with the longest
+   common path tail.
    One survivor, or several byte-identical files, is the answer. Several
    differing files are `several-trees`, and none is `no-notes`. Each error
    names every candidate and why it lost. There is no basename fallback.

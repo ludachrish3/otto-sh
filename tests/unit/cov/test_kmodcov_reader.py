@@ -11,7 +11,10 @@ file the library wrote is one gcov accepts.
 
 Three formats, one per backend arm: gcc before 12 (a 12-byte header, lengths
 in words), gcc 12 and later (a 16-byte header, lengths in bytes) and clang
-(a 12-byte header, lengths in words). The compilers are the dev VM's; a
+(a 12-byte header, lengths in words). clang runs twice: with its own stamp
+(``408*`` up to clang 20, ``B11*`` from clang 21) and forced to ``B11*``, so a
+clang older than 21 still proves the runtime on clang 21's stamp; both are
+read with llvm-cov, the stamp's reader. The compilers are the dev VM's; a
 missing one FAILS naming the package that provides it.
 """
 
@@ -49,7 +52,7 @@ def _toolchain(which: str) -> Toolchain:
         return tc
     if not shutil.which("clang"):
         pytest.fail("no clang on PATH; apt install clang llvm")
-    tc = clang_toolchain()
+    tc = clang_toolchain(coverage_version="B11*" if which == "clang-B11" else None)
     if not shutil.which(tc.gcov[0]):
         pytest.fail(f"no {tc.gcov[0]} on PATH; apt install llvm")
     return tc
@@ -65,7 +68,7 @@ class Harness:
         return self.program.parent
 
 
-@pytest.fixture(scope="module", params=["gcc-pre12", "gcc-12+", "clang"])
+@pytest.fixture(scope="module", params=["gcc-pre12", "gcc-12+", "clang", "clang-B11"])
 def harness(request, tmp_path_factory) -> Harness:
     tc = _toolchain(request.param)
     return Harness(tc, build(tc, tmp_path_factory.mktemp(f"kmodcov-{request.param}")))
@@ -116,6 +119,10 @@ class Bed:
         work.mkdir()
         shutil.copy(self.h.obj / "unit.gcno", work / "unit.gcno")
         shutil.copy(self.gcda, work / "unit.gcda")
+        forced = self.h.tc.coverage_version
+        if forced is not None:
+            # the forced stamp reached the file, or this case would silently re-test the default
+            assert self.gcda.read_bytes()[4:8] == forced.encode()[::-1]
         done = subprocess.run(
             [*self.h.tc.gcov, "-o", str(work), str(HERE / "unit.c")],
             cwd=work,

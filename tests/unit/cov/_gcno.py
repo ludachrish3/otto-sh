@@ -59,3 +59,44 @@ def gcc13_gcno(cwd: str, names: list[str]) -> bytes:
         lines += struct.pack("<I", 0) + struct.pack("<I", 0)  # lineno 0 + empty string ends
         out += struct.pack("<II", 0x01450000, len(lines)) + lines
     return out
+
+
+TAG_FUNCTION = 0x01000000
+TAG_ARCS_COUNTER = 0x01A10000
+
+
+def gcc9_notes(
+    cwd: str,
+    *,
+    version: bytes = b"*11B",
+    stamp: int = 0xABCD,
+    support: int = 1,
+    funcs: list[tuple[int, int, int]] | None = None,
+    filename: str = "a.c",
+) -> bytes:
+    """Build gcc 9-11 layout notes: a cwd string and support word, then one record per function.
+
+    *version* is the on-disk (little-endian, reversed) tag: ``*11B`` is ``B11*``.
+    """
+    out = b"oncg" + version + struct.pack("<I", stamp) + words_str(cwd) + struct.pack("<I", support)
+    for ident, lineno, cfg in [(1, 2, 3)] if funcs is None else funcs:
+        fn = (
+            struct.pack("<III", ident, lineno, cfg)
+            + words_str("f")
+            + struct.pack("<I", 0)
+            + words_str(filename)
+            + struct.pack("<IIII", 1, 1, 2, 1)
+        )
+        out += struct.pack("<II", TAG_FUNCTION, len(fn) // 4) + fn
+    return out
+
+
+def gcc9_data(
+    *, version: bytes = b"*11B", stamp: int = 0xABCD, funcs: list[tuple[int, int, int]]
+) -> bytes:
+    """Build gcc 9-11 layout data: per function its checksums and one arc counter, then a 0 word."""
+    out = b"adcg" + version + struct.pack("<I", stamp)
+    for ident, lineno, cfg in funcs:
+        out += struct.pack("<IIIII", TAG_FUNCTION, 3, ident, lineno, cfg)
+        out += struct.pack("<II", TAG_ARCS_COUNTER, 2) + struct.pack("<Q", 1)
+    return out + struct.pack("<I", 0)

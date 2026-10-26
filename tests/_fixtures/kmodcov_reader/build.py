@@ -32,6 +32,9 @@ class Toolchain:
     gcov: list[str]
     family: str  # "gcc" or "clang"
     major: int
+    coverage_version: str | None = None
+    """The gcov stamp the instrumented unit is forced to write (clang's
+    ``-coverage-version``); ``None`` for the compiler's own."""
 
     @property
     def header_bytes(self) -> int:
@@ -55,12 +58,21 @@ def gcc_toolchain(cc: str) -> Toolchain:
     return Toolchain(name=cc, cc=cc, gcov=[gcov], family="gcc", major=major)
 
 
-def clang_toolchain(cc: str = "clang") -> Toolchain:
+def clang_toolchain(cc: str = "clang", coverage_version: str | None = None) -> Toolchain:
+    """clang, read by its llvm-cov; *coverage_version* forces the stamp it writes."""
     major = _major(cc)
     llvm_cov = next(
         (c for c in (f"llvm-cov-{major}", "llvm-cov") if shutil.which(c)), f"llvm-cov-{major}"
     )
-    return Toolchain(name=cc, cc=cc, gcov=[llvm_cov, "gcov"], family="clang", major=major)
+    name = cc if coverage_version is None else f"{cc} ({coverage_version})"
+    return Toolchain(
+        name=name,
+        cc=cc,
+        gcov=[llvm_cov, "gcov"],
+        family="clang",
+        major=major,
+        coverage_version=coverage_version,
+    )
 
 
 def _run(argv: list[str], cwd: Path) -> None:
@@ -106,12 +118,16 @@ def build(tc: Toolchain, out: Path) -> Path:
     _run([tc.cc, *cflags, "-c", "begin.c", "end.c"], obj)
     # The "module": instrumented, linked without the compiler's own gcov
     # runtime — the library provides every symbol its constructor calls.
+    forced: list[str] = []
+    if tc.coverage_version is not None:
+        forced = ["-Xclang", f"-coverage-version={tc.coverage_version}"]
     _run(
         [
             tc.cc,
             "-O0",
             "-fprofile-arcs",
             "-ftest-coverage",
+            *forced,
             "-c",
             str(HERE / "unit.c"),
             "-o",

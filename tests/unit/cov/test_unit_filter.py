@@ -17,7 +17,9 @@ from otto.coverage.unit_filter import (
     product_source_set,
     select_unit_sources,
 )
-from tests.unit.cov._gcno import clang_gcno, gcc13_gcno
+from tests.unit.cov._gcno import clang_gcno, gcc9_notes, gcc13_gcno
+
+DATA = Path(__file__).parent / "data"
 
 
 def _project(tmp_path: Path) -> Path:
@@ -341,3 +343,76 @@ def test_filter_drops_a_truncated_final_record_and_warns(tmp_path, caplog):
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warnings) == 1
     assert str(info) in warnings[0].getMessage()
+
+
+def _beside_sources(tmp_path: Path, fixture: str) -> tuple[Path, Path]:
+    """A project with ``src/core/a.c`` and ``src/core/inc/h.h``, *fixture*'s notes beside them."""
+    root = tmp_path / "proj"
+    core = root / "src/core"
+    (core / "inc").mkdir(parents=True)
+    (core / "a.c").write_text("x\n")
+    (core / "inc/h.h").write_text("x\n")
+    gcno = core / "a.gcno"
+    shutil.copyfile(DATA / fixture, gcno)
+    return root, gcno
+
+
+@pytest.mark.parametrize("fixture", ["clang-21.1.8-same.gcno", "clang-18.1.3-same-forced-B11.gcno"])
+def test_real_b11_clang_notes_resolve_beside_their_sources(tmp_path, caplog, fixture):
+    root, gcno = _beside_sources(tmp_path, fixture)
+    with caplog.at_level(logging.INFO):
+        got = gcno_project_sources(gcno, root, SourceResolver(root))
+    assert got == [Path("src/core/a.c"), Path("src/core/inc/h.h")]
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+def test_real_gcc15_notes_resolve_against_their_cwd(tmp_path):
+    # cwd /tmp/gcc-same + a.c, inc/h.h: anchored, then tail-matched in the relocated tree
+    root = tmp_path / "proj"
+    (root / "gcc-same/inc").mkdir(parents=True)
+    (root / "gcc-same/a.c").write_text("x\n")
+    (root / "gcc-same/inc/h.h").write_text("x\n")
+    (root / "a.c").write_text("x\n")  # beside the notes, but not the file compiled
+    gcno = root / "a.gcno"
+    shutil.copyfile(DATA / "gcc-15.2.0-same.gcno", gcno)
+    got = gcno_project_sources(gcno, root, SourceResolver(root))
+    assert got == [Path("gcc-same/a.c"), Path("gcc-same/inc/h.h")]
+
+
+@pytest.mark.parametrize("cwd", ["", ".", "obj"])
+def test_a_relative_or_placeholder_cwd_falls_back_beside_the_notes(tmp_path, caplog, cwd):
+    # "obj" is a -fprofile-prefix-map cwd: relative to something the notes do not record
+    root = _project(tmp_path)
+    gcno = root / "src/core/add.c.gcno"
+    gcno.write_bytes(gcc9_notes(cwd, version=b"*59A", filename="add.c"))
+    with caplog.at_level(logging.INFO):
+        got = gcno_project_sources(gcno, root, SourceResolver(root))
+    assert got == [Path("src/core/add.c")]
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+def test_a_relative_cwd_that_names_the_directory_resolves_through_the_join(tmp_path):
+    # relocated notes: nothing beside them, but cwd src/core + add.c is a project path
+    root = _project(tmp_path)
+    gcno = root / "elsewhere/add.c.gcno"
+    gcno.parent.mkdir()
+    gcno.write_bytes(gcc9_notes("src/core", version=b"*59A", filename="add.c"))
+    assert gcno_project_sources(gcno, root, SourceResolver(root)) == [Path("src/core/add.c")]
+
+
+def test_an_absolute_cwd_that_misses_resolves_nothing(tmp_path):
+    # never falls back: a same-named file beside the notes is not the one compiled
+    root = _project(tmp_path)
+    gcno = root / "src/core/add.c.gcno"
+    gcno.write_bytes(gcc9_notes("/elsewhere/build", version=b"*59A", filename="add.c"))
+    got = gcno_named_sources(gcno, root, SourceResolver(root))
+    assert got.project == []
+    assert got.external == ["add.c"]
+
+
+def test_an_absolute_cwd_still_anchors(tmp_path):
+    root = _project(tmp_path)
+    gcno = root / "build/add.c.gcno"
+    gcno.parent.mkdir()
+    gcno.write_bytes(gcc9_notes(str(root / "src/core"), version=b"*59A", filename="add.c"))
+    assert gcno_project_sources(gcno, root, SourceResolver(root)) == [Path("src/core/add.c")]

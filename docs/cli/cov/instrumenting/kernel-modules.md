@@ -293,10 +293,11 @@ asked for. A consumer from the other family never gets that far: the library
 exports only its own family's runtime symbols, so `insmod` fails with
 `Unknown symbol __gcov_init` (a gcc consumer on a clang-built library) or
 `Unknown symbol llvm_gcov_init` (the reverse).
-clang's format does not change across clang versions, so for clang the rule
-is just the family and kbuild's own floor of clang 11. What each installed
-compiler was last measured to do, contract by contract, is the
-{ref}`compatibility matrix <kmodcov-matrix>`.
+clang's file format changed at clang 21 (its stamp went from `408*` to
+`B11*`), but the `llvm_gcda_*` calls the library answers did not, so for
+clang the rule is just the family and kbuild's own floor of clang 11. What
+each installed compiler was last measured to do, contract by contract, is
+the {ref}`compatibility matrix <kmodcov-matrix>`.
 
 The library's `build.sh` and the example's `module/Makefile` take the kernel
 tree and the toolchain from the environment exactly as your own module's build
@@ -334,19 +335,18 @@ module. Two cases need `KMAKEFLAGS`, both proven on Ubuntu's
   gcc 12 and newer need nothing there.
 
 Getting a module to load is not the same as getting its counters read
-back. The gcov that reads them is chosen per product from the data's own
-stamp — the system `gcov`, `gcov-<major>` for a module built by another
-gcc, `llvm-cov` for clang — unless the bed host's `toolchain.gcov` names
-one; the order, and the failure naming the package when a tool is missing,
-are on the {ref}`main coverage page <coverage-gcov-resolution>`. What
+back. The gcov that reads them is chosen per product by the data's own
+stamp, unless the bed host's `toolchain.gcov` names one; the rule, and the
+failure naming the package when a tool is missing, are on the
+{ref}`main coverage page <coverage-gcov-resolution>`. What
 naming `llvm-cov` there means for otto is [clang's own page](clang.md).
 
 A clang build records the inlined kernel-header records differently:
-clang's `.gcno` carries no compilation directory (gcc 9+ records it), so
-those records are relative to the kernel tree, and the reporting machine
-usually has no such file. That no longer fails the capture: otto runs every
-capture with `--ignore-errors source`, so a missing source file is never an
-error. Each header path otto cannot place in the project is logged — at INFO when no
+clang's `.gcno` records no compilation directory, or a placeholder otto
+ignores (gcc 9+ records it), so those records are relative to the kernel
+tree, and the reporting machine usually has no such file. That no longer
+fails the capture: otto runs every capture with `--ignore-errors source`, so
+a missing source file is never an error. Each header path otto cannot place in the project is logged — at INFO when no
 project file shares its name, the usual case for a kernel header, and as a
 warning when a project file of that name exists but its path does not match;
 those records are kernel headers,

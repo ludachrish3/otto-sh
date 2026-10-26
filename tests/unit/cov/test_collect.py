@@ -13,6 +13,9 @@ in :func:`otto.suite.run._post_run_coverage` (see ``TestPostRunSwallowPolicy``).
 
 import asyncio
 import json
+import shutil
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
@@ -1557,3 +1560,155 @@ class TestContainerOnlyPattern:
         capture_path = staged / "capture.json"
         assert result.captures_written == [capture_path]
         assert json.loads(capture_path.read_text())["tier"] == "system"
+
+
+# ── A missing reader fails only the target that needs it ───────────────────
+
+# a B11* version and stamp, as a little-endian file stores them
+_B11 = b"*11B" + b"\x07\x00\x00\x00"
+
+
+@contextmanager
+def _two_targets(
+    base: Path, project_root: Path, monkeypatch, broken: str
+) -> Iterator[tuple[Path, MagicMock]]:
+    """Stage a healthy gcc 13 product ``test1/app`` and a ``B11*`` target no llvm-cov reads.
+
+    *broken* ``"gcno"``: the ``B11*`` target is embedded board ``board2/fw``, whose
+    build directory collection reads for its notes' stamp; ``"gcda"``: it is
+    product ``test1/lib``, resolved from its own ``.gcda`` only. Only git is on
+    ``PATH``. Yields the ``(cov_dir, project)`` to collect.
+    """
+    from otto.coverage.capture import produce as produce_mod
+    from otto.host import UnixHost
+    from otto.host.toolchain import Toolchain
+
+    git = shutil.which("git")
+    assert git is not None
+    bin_dir = base / "gitonly"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "git").symlink_to(git)
+    monkeypatch.setenv("PATH", str(bin_dir))
+
+    cov_dir = base / "cov"
+    build = base / "build"
+    build.mkdir()
+    (build / "fw.gcno").write_bytes(b"oncg" + _B11)
+
+    app, lib = _product("app", "/var/cov/app"), _product("lib", "/var/cov/lib")
+    app.artifact = lib.artifact = None
+    host = MagicMock(spec=UnixHost)
+    host.id = "test1"
+    host.products = [app, lib] if broken == "gcda" else [app]
+    host.toolchain = Toolchain()
+
+    async def fetch_all():
+        _counters(cov_dir / "test1" / "app", project_root)
+        got = {("test1", "app"): cov_dir / "test1" / "app"}
+        if broken == "gcda":
+            lib_dir = cov_dir / "test1" / "lib"
+            lib_dir.mkdir(parents=True)
+            (lib_dir / "fw.gcda").write_bytes(b"adcg" + _B11)
+            got[("test1", "lib")] = lib_dir
+        return got
+
+    async def embedded(staging_root, pattern=None):
+        if broken != "gcno":
+            return {}
+        board = cov_dir / "board2" / "fw"
+        board.mkdir(parents=True)
+        (board / "fw.gcda").write_bytes(b"adcg" + _B11)
+        return {("board2", "fw"): board}
+
+    async def fake_capture(self, pairs, staging, output, toolchain=None):
+        output.write_text(f"TN:\nSF:{project_root / 'f.c'}\nDA:1,3\nend_of_record\n")
+        return output
+
+    monkeypatch.setattr(produce_mod.LcovMerger, "capture_pairs", fake_capture)
+    fetcher = MagicMock()
+    fetcher.fetch_all = AsyncMock(side_effect=fetch_all)
+    project = MagicMock()
+    project.root = project_root
+    project.name = "proj"
+    cov_config = {"tiers": {}, "embedded": {"build_dir": str(build)}}
+    with (
+        patch("otto.config.coverage_settings.get_cov_config", return_value=cov_config),
+        patch("otto.fleet.all_hosts", return_value=[host]),
+        patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher),
+        patch(
+            "otto.coverage.fetcher.embedded.collect_embedded_coverage",
+            new=AsyncMock(side_effect=embedded),
+        ),
+        patch("otto.config.coverage_settings.get_cov_project", return_value=project),
+    ):
+        yield cov_dir, project
+
+
+_NO_LLVM_COV = (
+    "has gcov stamp 'B11*', read by `llvm-cov`, but no `llvm-cov` is on PATH. Install it "
+    "(`apt install llvm`), or name the gcov to use in the host's `toolchain.gcov`."
+)
+
+
+class TestAMissingReaderFailsOnlyItsTarget:
+    """A reader the counters need that is not installed fails that product or board
+    alone (its ``capture.failed`` names the reader); every other product captures.
+    The notes an embedded build is read for at collection keep to that, as a
+    product's own ``.gcda`` stamp does."""
+
+    @pytest.mark.parametrize("broken", ["gcno", "gcda"])
+    def test_the_target_without_its_reader_fails_and_the_rest_captures(
+        self, tmp_path, project_root, monkeypatch, broken
+    ):
+        from otto.coverage.errors import CoverageCaptureError
+
+        with (
+            _two_targets(tmp_path, project_root, monkeypatch, broken) as (cov_dir, project),
+            pytest.raises(CoverageCaptureError) as info,
+        ):
+            asyncio.run(collect_coverage(cov_dir, projects=[project]))
+
+        result = info.value.result
+        assert result.captured == [ProductKey("test1", "app")]
+        assert (cov_dir / "test1" / "app" / "capture.json").is_file()
+        [failed] = result.failed
+        host, product = ("board2", "fw") if broken == "gcno" else ("test1", "lib")
+        assert failed.key == ProductKey(host, product)
+        reason = f"Coverage data for product '{product}' on host '{host}' {_NO_LLVM_COV}"
+        assert failed.failure == reason
+        assert (cov_dir / host / product / "capture.failed").read_text() == f"{reason}\n"
+
+    def test_otto_cov_get_reports_a_build_without_its_reader_as_it_does_a_product(
+        self, tmp_path, project_root, monkeypatch
+    ):
+        """The exit status and message match, target names aside, on both paths."""
+        from typer.testing import CliRunner
+
+        from otto.cli import cov as cov_module
+        from otto.cli.cov import cov_app
+
+        seen: dict[str, tuple[int, str]] = {}
+        for broken, label in (("gcno", "board2/fw"), ("gcda", "test1/lib")):
+            base = tmp_path / broken
+            with _two_targets(base, project_root, monkeypatch, broken) as (cov_dir, project):
+
+                async def get_coverage(output_dir, *, _cov=cov_dir, _project=project, **_kw):
+                    await collect_coverage(_cov, projects=[_project], clean_after_fetch=False)
+
+                with (
+                    patch("otto.coverage.get.get_coverage", new=get_coverage),
+                    patch.object(cov_module.logger, "error") as logged,
+                ):
+                    result = CliRunner().invoke(cov_app, ["get"])
+            host, product = label.split("/")
+            message = (
+                logged.call_args.args[0]
+                .replace(label, "<target>")
+                .replace(f"product '{product}' on host '{host}'", "<subject>")
+            )
+            seen[broken] = (result.exit_code, message)
+
+        assert seen["gcno"] == seen["gcda"]
+        exit_code, message = seen["gcda"]
+        assert exit_code == 1
+        assert message.endswith(f"<target>:\nCoverage data for <subject> {_NO_LLVM_COV}")

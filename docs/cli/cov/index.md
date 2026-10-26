@@ -115,8 +115,8 @@ that can read a given product's counters.
 (coverage-gcov-resolution)=
 ## Which gcov reads the counters
 
-The gcov that processes a product's `.gcda` files must be the one its
-compiler ships with: another GCC major, or GNU gcov on clang's files, fails
+The gcov that processes a product's `.gcda` files must be one that reads their
+format: another GCC major's gcov, or GNU gcov on clang's `408*` files, fails
 `otto cov report` with geninfo's *"Incompatible GCC/GCOV version"*. For each
 `<host>/<product>` directory of a run otto picks the tool in this order:
 
@@ -125,22 +125,33 @@ compiler ships with: another GCC major, or GNU gcov on clang's files, fails
    as is; a cross gcov can only come from here, and otto does not
    second-guess it. A record that names only an `lcov` is silent about
    gcov and falls to step 2.
-2. **The data's own stamp.** Every `.gcda` header carries the gcov format
-   version its compiler wrote. A clang stamp is read by `llvm-cov gcov`
-   (`llvm-cov`, or the highest `llvm-cov-<N>`, on `PATH`); a GCC stamp
-   from the same major as the system `gcov` uses that gcov; a GCC stamp
-   from another major is read by `gcov-<major>` from `PATH` —
-   `apt install gcc-12` ships `gcov-12`. A stamp that decodes to no GCC
-   major (GCC 4.x's `407*` form) falls back to the system gcov, with one
-   warning naming the directory and the word. A tool the data needs that is
-   not installed is named before lcov runs — host, product, stamp and the
-   package to install: `otto test --cov` logs it as a warning and writes no
-   capture, `otto cov get` and `otto cov report` fail with it.
+2. **The data's own stamp.** Every `.gcda` header carries a gcov format
+   version, its *stamp*, and the stamp alone chooses the reader:
+
+   | Stamp | Read by |
+   |---|---|
+   | `402*`, `408*`, `B11*` | `llvm-cov gcov` (`llvm-cov`, or the highest `llvm-cov-<N>`, on `PATH`) |
+   | a GCC stamp of the system `gcov`'s major | that `gcov` |
+   | any other GCC stamp | `gcov-<major>` from `PATH` — `apt install gcc-12` ships `gcov-12` |
+   | a stamp that decodes to no GCC major (GCC 4.x's `407*` form) | the system gcov, with one warning naming the directory and the word |
+
+   clang writes `408*` up to clang 20 and `B11*` from clang 21
+   ({doc}`instrumenting/clang`). **gcc 11.1.0 writes `B11*` too**, and
+   llvm-cov silently loses counts on the data of gcc 11 and later, so a
+   gcc 11.1.0 build names its `gcov-11` by hand: in the host record's
+   `toolchain.gcov` (step 1), or a unit tier's `coverage_tool`
+   ({ref}`coverage-unit-toolchain`). gcc 11.2 and later write their own
+   stamps and need nothing.
+
+   A tool the data needs that is not installed is named before lcov runs —
+   host, product, stamp and the package to install: `otto test --cov` logs
+   it as a warning and writes no capture, `otto cov get` and
+   `otto cov report` fail with it.
 3. **lcov's own diagnostics** for a directory with no readable `.gcda`.
 
 So the common cases need no configuration: several gccs on one build
-machine, or clang. Only a cross gcov, which no stamp can name, is
-configured — see {doc}`../../configuration/lab/coverage-toolchain` — and the per-compiler pages under
+machine, or clang. Only a cross gcov, which no stamp can name, and a gcc
+11.1.0 build are configured — see {doc}`../../configuration/lab/coverage-toolchain` — and the per-compiler pages under
 {doc}`instrumenting/index` say what each build needs.
 
 A unit tier's build directories take the tier's own `toolchain` setting in

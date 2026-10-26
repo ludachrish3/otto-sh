@@ -25,6 +25,9 @@ reports/
 # decode against (a live mps2_an385 cov_dump capture + its known-good .gcda).
 !tests/unit/fixtures/embedded_coverage/*.gcda
 !tests/unit/fixtures/embedded_coverage/*.gcno
+# ...and the real clang/gcc notes and data files the gcov reader tests read.
+!tests/unit/cov/data/*.gcda
+!tests/unit/cov/data/*.gcno
 
 # otto CLI per-subcommand output dirs — timestamped run artifacts written at
 # the repo root by `otto test|host|cov|run|monitor|docker`. Root-anchored so

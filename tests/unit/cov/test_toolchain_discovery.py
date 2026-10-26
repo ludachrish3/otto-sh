@@ -1,10 +1,10 @@
 """Tests for toolchain auto-discovery from ``.gcno`` files.
 
 Discovery is stamp-based: the 8-byte ``.gcno`` header carries a gcov format
-version (GCC writes its own release, e.g. ``B33*`` for 13.3; clang always
-writes the GCC 4.8-era ``408*`` unless overridden), and that stamp — not any
+version (GCC writes its own release, e.g. ``B33*`` for 13.3; clang writes
+``408*`` up to clang 20 and ``B11*`` from clang 21), and that stamp — not any
 embedded compiler path, because .gcno files embed none — tells the coverage
-pipeline which gcov tool family can read the build's counters.
+pipeline which reader decodes the build's counters.
 
 Header bytes in these tests are real ones observed from gcc 13.3 and
 clang 18 (``oncg`` magic = little-endian file, stamp chars reversed on disk).
@@ -30,6 +30,7 @@ from otto.host.toolchain_discovery import (
     read_gcov_version,
     system_gcov_major,
 )
+from tests.unit.cov._gcno import gcc9_data, gcc9_notes
 
 # Real on-disk headers: 4-byte magic + 4-byte version stamp.
 GCC13_LE_HEADER = b"oncg*33B" + b"\x28\x88\xf5\x39"  # gcc 13.3, stamp word follows
@@ -44,14 +45,20 @@ GCC9_LE_GCDA = b"adcg*59A" + b"\x28\x88\xf5\x39"
 CLANG_LE_GCDA = b"adcg*804" + b"\xa2\x1c\x9d\x13"
 GCC13_BE_GCDA = b"gcdaB33*" + b"\x28\x88\xf5\x39"
 
+# B11* files shaped the way gcc 11.1.0 writes them: notes with an absolute cwd
+# and support word 1, data whose function checksums are not the build stamp.
+# Only the stamp chooses the reader, so both still go to llvm-cov.
+GCC_SHAPED_B11_NOTES = gcc9_notes("/work", stamp=0x1234, support=1, funcs=[(1, 2, 0x9999)])
+GCC_SHAPED_B11_DATA = gcc9_data(stamp=0x1234, funcs=[(1, 2, 0x9999)])
 
-def _write_gcno(path: Path, header: bytes) -> Path:
+
+def _write_gcov_file(path: Path, header: bytes) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(header)
     return path
 
 
-def _fake_llvm_cov(bin_dir: Path, name: str = "llvm-cov") -> Path:
+def _fake_tool(bin_dir: Path, name: str = "llvm-cov") -> Path:
     bin_dir.mkdir(parents=True, exist_ok=True)
     exe = bin_dir / name
     exe.write_text("#!/bin/sh\nexit 0\n")
@@ -61,28 +68,28 @@ def _fake_llvm_cov(bin_dir: Path, name: str = "llvm-cov") -> Path:
 
 class TestReadGcnoVersion:
     def test_little_endian_gcc(self, tmp_path):
-        gcno = _write_gcno(tmp_path / "a.gcno", GCC13_LE_HEADER)
+        gcno = _write_gcov_file(tmp_path / "a.gcno", GCC13_LE_HEADER)
         assert read_gcno_version(gcno) == "B33*"
 
     def test_little_endian_clang(self, tmp_path):
-        gcno = _write_gcno(tmp_path / "a.gcno", CLANG18_LE_HEADER)
+        gcno = _write_gcov_file(tmp_path / "a.gcno", CLANG18_LE_HEADER)
         assert read_gcno_version(gcno) == "408*"
 
     def test_big_endian_gcc(self, tmp_path):
         """A big-endian target's .gcno stores magic and stamp unreversed."""
-        gcno = _write_gcno(tmp_path / "a.gcno", GCC13_BE_HEADER)
+        gcno = _write_gcov_file(tmp_path / "a.gcno", GCC13_BE_HEADER)
         assert read_gcno_version(gcno) == "B33*"
 
     def test_big_endian_clang(self, tmp_path):
-        gcno = _write_gcno(tmp_path / "a.gcno", CLANG_BE_HEADER)
+        gcno = _write_gcov_file(tmp_path / "a.gcno", CLANG_BE_HEADER)
         assert read_gcno_version(gcno) == "408*"
 
     def test_truncated_file_returns_none(self, tmp_path):
-        gcno = _write_gcno(tmp_path / "a.gcno", b"oncg")
+        gcno = _write_gcov_file(tmp_path / "a.gcno", b"oncg")
         assert read_gcno_version(gcno) is None
 
     def test_not_a_gcno_returns_none(self, tmp_path):
-        gcno = _write_gcno(tmp_path / "a.gcno", b"\x7fELF\x02\x01\x01\x00")
+        gcno = _write_gcov_file(tmp_path / "a.gcno", b"\x7fELF\x02\x01\x01\x00")
         assert read_gcno_version(gcno) is None
 
     def test_missing_file_returns_none(self, tmp_path):
@@ -95,8 +102,8 @@ class TestDiscoverToolchainFromGcno:
     from the .gcno alone and must be configured on the host)."""
 
     def test_clang_build_resolves_llvm_cov(self, tmp_path, monkeypatch):
-        _write_gcno(tmp_path / "build" / "obj" / "a.gcno", CLANG18_LE_HEADER)
-        llvm_cov = _fake_llvm_cov(tmp_path / "bin")
+        _write_gcov_file(tmp_path / "build" / "obj" / "a.gcno", CLANG18_LE_HEADER)
+        llvm_cov = _fake_tool(tmp_path / "bin")
         monkeypatch.setenv("PATH", str(tmp_path / "bin"))
 
         tc = discover_toolchain_from_gcno(tmp_path / "build")
@@ -107,9 +114,9 @@ class TestDiscoverToolchainFromGcno:
     def test_clang_build_resolves_versioned_llvm_cov(self, tmp_path, monkeypatch):
         """Ubuntu/Debian ship only ``llvm-cov-<N>`` unless the meta package
         is installed; the highest version wins."""
-        _write_gcno(tmp_path / "build" / "a.gcno", CLANG18_LE_HEADER)
-        _fake_llvm_cov(tmp_path / "bin", "llvm-cov-17")
-        want = _fake_llvm_cov(tmp_path / "bin", "llvm-cov-18")
+        _write_gcov_file(tmp_path / "build" / "a.gcno", CLANG18_LE_HEADER)
+        _fake_tool(tmp_path / "bin", "llvm-cov-17")
+        want = _fake_tool(tmp_path / "bin", "llvm-cov-18")
         monkeypatch.setenv("PATH", str(tmp_path / "bin"))
 
         tc = discover_toolchain_from_gcno(tmp_path / "build")
@@ -117,21 +124,31 @@ class TestDiscoverToolchainFromGcno:
         assert tc is not None
         assert tc.gcov_bin == str(want)
 
-    def test_clang_build_without_llvm_cov_returns_none_with_warning(
-        self, tmp_path, monkeypatch, caplog
+    @pytest.mark.parametrize(
+        ("header", "stamp"),
+        [(CLANG18_LE_HEADER, "408*"), (GCC_SHAPED_B11_NOTES, "B11*")],
+        ids=["408", "B11"],
+    )
+    def test_an_llvm_cov_stamp_without_llvm_cov_fails_naming_llvm(
+        self, tmp_path, monkeypatch, header, stamp
     ):
-        _write_gcno(tmp_path / "build" / "a.gcno", CLANG18_LE_HEADER)
-        monkeypatch.setenv("PATH", str(tmp_path / "emptybin"))
+        _write_gcov_file(tmp_path / "build" / "a.gcno", header)
+        _fake_tool(tmp_path / "bin", "gcov-11")
+        monkeypatch.setenv("PATH", str(tmp_path / "bin"))
 
-        tc = discover_toolchain_from_gcno(tmp_path / "build")
+        with pytest.raises(CoverageToolMissingError) as info:
+            discover_toolchain_from_gcno(tmp_path / "build")
 
-        assert tc is None
-        assert any("llvm-cov" in r.message for r in caplog.records)
+        message = str(info.value)
+        assert str(tmp_path / "build") in message
+        assert f"gcov stamp {stamp!r}" in message
+        assert "`apt install llvm`" in message
+        assert "gcc-11" not in message
 
     def test_gcc_build_returns_none(self, tmp_path, monkeypatch):
         """GCC-family stamp: no override — the merger's default gcov applies."""
-        _write_gcno(tmp_path / "build" / "a.gcno", GCC13_LE_HEADER)
-        _fake_llvm_cov(tmp_path / "bin")
+        _write_gcov_file(tmp_path / "build" / "a.gcno", GCC13_LE_HEADER)
+        _fake_tool(tmp_path / "bin")
         monkeypatch.setenv("PATH", str(tmp_path / "bin"))
 
         assert discover_toolchain_from_gcno(tmp_path / "build") is None
@@ -144,9 +161,9 @@ class TestDiscoverToolchainFromGcno:
         assert discover_toolchain_from_gcno(tmp_path / "nope") is None
 
     def test_skips_unreadable_gcno_and_uses_next(self, tmp_path, monkeypatch):
-        _write_gcno(tmp_path / "build" / "a_bad.gcno", b"oncg")  # truncated
-        _write_gcno(tmp_path / "build" / "b_good.gcno", CLANG18_LE_HEADER)
-        llvm_cov = _fake_llvm_cov(tmp_path / "bin")
+        _write_gcov_file(tmp_path / "build" / "a_bad.gcno", b"oncg")  # truncated
+        _write_gcov_file(tmp_path / "build" / "b_good.gcno", CLANG18_LE_HEADER)
+        llvm_cov = _fake_tool(tmp_path / "bin")
         monkeypatch.setenv("PATH", str(tmp_path / "bin"))
 
         tc = discover_toolchain_from_gcno(tmp_path / "build")
@@ -157,9 +174,9 @@ class TestDiscoverToolchainFromGcno:
     def test_discovered_toolchain_uses_host_lcov(self, tmp_path, monkeypatch):
         """lcov is a host-side orchestrator; the discovered clang toolchain
         must resolve the host lcov, not a path under a clang sysroot."""
-        _write_gcno(tmp_path / "build" / "a.gcno", CLANG18_LE_HEADER)
-        _fake_llvm_cov(tmp_path / "bin")
-        fake_lcov = _fake_llvm_cov(tmp_path / "bin", "lcov")
+        _write_gcov_file(tmp_path / "build" / "a.gcno", CLANG18_LE_HEADER)
+        _fake_tool(tmp_path / "bin")
+        fake_lcov = _fake_tool(tmp_path / "bin", "lcov")
         monkeypatch.setenv("PATH", str(tmp_path / "bin"))
 
         tc = discover_toolchain_from_gcno(tmp_path / "build")
@@ -225,24 +242,24 @@ class TestReadGcovVersion:
     """One reader for both file kinds: the stamp sits at the same offset."""
 
     def test_little_endian_gcda(self, tmp_path):
-        path = _write_gcno(tmp_path / "a.gcda", GCC12_LE_GCDA)
+        path = _write_gcov_file(tmp_path / "a.gcda", GCC12_LE_GCDA)
         assert read_gcov_version(path) == "B24*"
 
     def test_big_endian_gcda(self, tmp_path):
-        path = _write_gcno(tmp_path / "a.gcda", GCC13_BE_GCDA)
+        path = _write_gcov_file(tmp_path / "a.gcda", GCC13_BE_GCDA)
         assert read_gcov_version(path) == "B33*"
 
     def test_clang_gcda(self, tmp_path):
-        path = _write_gcno(tmp_path / "a.gcda", CLANG_LE_GCDA)
+        path = _write_gcov_file(tmp_path / "a.gcda", CLANG_LE_GCDA)
         assert read_gcov_version(path) == "408*"
 
     def test_gcno_still_reads(self, tmp_path):
-        path = _write_gcno(tmp_path / "a.gcno", GCC13_LE_HEADER)
+        path = _write_gcov_file(tmp_path / "a.gcno", GCC13_LE_HEADER)
         assert read_gcov_version(path) == "B33*"
         assert read_gcno_version(path) == "B33*"
 
     def test_other_magic_returns_none(self, tmp_path):
-        path = _write_gcno(tmp_path / "a.gcda", b"\x7fELF\x02\x01\x01\x00")
+        path = _write_gcov_file(tmp_path / "a.gcda", b"\x7fELF\x02\x01\x01\x00")
         assert read_gcov_version(path) is None
 
 
@@ -323,7 +340,7 @@ class TestSystemGcovMajor:
 def _gcda_dir(root: Path, host: str, product: str, header: bytes) -> Path:
     """A ``<cov>/<host>/<product>`` directory holding one ``.gcda`` with *header*."""
     d = root / "cov" / host / product
-    _write_gcno(d / "obj" / "main.gcda", header)
+    _write_gcov_file(d / "obj" / "main.gcda", header)
     return d
 
 
@@ -334,7 +351,7 @@ class TestDiscoverToolchainFromGcda:
 
     def test_an_llvm_stamp_resolves_llvm_cov(self, tmp_path, monkeypatch):
         d = _gcda_dir(tmp_path, "test1", "app", CLANG_LE_GCDA)
-        llvm_cov = _fake_llvm_cov(tmp_path / "bin")
+        llvm_cov = _fake_tool(tmp_path / "bin")
         monkeypatch.setenv("PATH", str(tmp_path / "bin"))
 
         tc = discover_toolchain_from_gcda(d, system_major=13)
@@ -345,14 +362,14 @@ class TestDiscoverToolchainFromGcda:
 
     def test_the_system_major_is_the_default(self, tmp_path, monkeypatch):
         d = _gcda_dir(tmp_path, "test1", "app", GCC13_LE_GCDA)
-        _fake_llvm_cov(tmp_path / "bin", "gcov-13")
+        _fake_tool(tmp_path / "bin", "gcov-13")
         monkeypatch.setenv("PATH", str(tmp_path / "bin"))
 
         assert discover_toolchain_from_gcda(d, system_major=13) is None
 
     def test_another_major_resolves_its_gcov(self, tmp_path, monkeypatch):
         d = _gcda_dir(tmp_path, "test1", "app", GCC12_LE_GCDA)
-        gcov_12 = _fake_llvm_cov(tmp_path / "bin", "gcov-12")
+        gcov_12 = _fake_tool(tmp_path / "bin", "gcov-12")
         monkeypatch.setenv("PATH", str(tmp_path / "bin"))
 
         tc = discover_toolchain_from_gcda(d, system_major=13)
@@ -362,7 +379,7 @@ class TestDiscoverToolchainFromGcda:
 
     def test_an_unprobed_system_major_resolves_every_gcc_by_name(self, tmp_path, monkeypatch):
         d = _gcda_dir(tmp_path, "test1", "app", GCC13_LE_GCDA)
-        gcov_13 = _fake_llvm_cov(tmp_path / "bin", "gcov-13")
+        gcov_13 = _fake_tool(tmp_path / "bin", "gcov-13")
         monkeypatch.setenv("PATH", str(tmp_path / "bin"))
 
         tc = discover_toolchain_from_gcda(d, system_major=None)
@@ -424,16 +441,16 @@ class TestDiscoverToolchainFromGcda:
             "test1",
             "app",
             "'408*'",
-            "clang",
             "llvm-cov",
             "apt install llvm",
             "toolchain.gcov",
         ):
             assert part in message, part
+        assert "clang" not in message  # the stamp names its reader, never a compiler
 
     def test_a_chosen_tool_is_logged_once_at_info(self, tmp_path, monkeypatch, caplog):
         d = _gcda_dir(tmp_path, "test1", "app", GCC12_LE_GCDA)
-        gcov_12 = _fake_llvm_cov(tmp_path / "bin", "gcov-12")
+        gcov_12 = _fake_tool(tmp_path / "bin", "gcov-12")
         monkeypatch.setenv("PATH", str(tmp_path / "bin"))
 
         with caplog.at_level(logging.INFO, logger="otto.host.toolchain_discovery"):
@@ -448,8 +465,8 @@ class TestDiscoverToolchainFromGcda:
 
     def test_the_discovered_toolchain_uses_the_host_lcov(self, tmp_path, monkeypatch):
         d = _gcda_dir(tmp_path, "test1", "app", GCC12_LE_GCDA)
-        _fake_llvm_cov(tmp_path / "bin", "gcov-12")
-        lcov = _fake_llvm_cov(tmp_path / "bin", "lcov")
+        _fake_tool(tmp_path / "bin", "gcov-12")
+        lcov = _fake_tool(tmp_path / "bin", "lcov")
         monkeypatch.setenv("PATH", str(tmp_path / "bin"))
 
         tc = discover_toolchain_from_gcda(d, system_major=13)
@@ -494,7 +511,7 @@ class TestGcovForStampSubject:
         assert "host" not in str(info.value)
 
     def test_the_chosen_tool_is_logged_under_the_subject(self, tmp_path, monkeypatch, caplog):
-        gcov_12 = _fake_llvm_cov(tmp_path / "bin", "gcov-12")
+        gcov_12 = _fake_tool(tmp_path / "bin", "gcov-12")
         monkeypatch.setenv("PATH", str(tmp_path / "bin"))
 
         with caplog.at_level(logging.INFO, logger="otto.host.toolchain_discovery"):
@@ -508,3 +525,137 @@ class TestGcovForStampSubject:
     def test_the_system_major_and_an_undecodable_stamp_mean_the_default(self, tmp_path):
         assert gcov_for_stamp("B33*", tmp_path / "a", system_major=13, subject=_UNIT) is None
         assert gcov_for_stamp("407*", tmp_path / "a", system_major=13, subject=_UNIT) is None
+
+
+DATA = Path(__file__).parent / "data"
+
+
+def _fixture(name: str, dest: Path) -> Path:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes((DATA / name).read_bytes())
+    return dest
+
+
+class TestB11IsReadByLlvmCov:
+    """``B11*`` is one of llvm-cov's stamps (clang 21 writes it by default), and a file's
+    12-byte header alone chooses its reader, whatever the rest of the file holds."""
+
+    @pytest.mark.parametrize(
+        ("name", "raw"),
+        [
+            ("a.gcno", GCC_SHAPED_B11_NOTES),
+            ("a.gcda", GCC_SHAPED_B11_DATA),
+            ("a.gcda", b"adcg*11B" + b"\x01\x00\x00\x00"),
+        ],
+        ids=["gcc-shaped-notes", "gcc-shaped-data", "header-only"],
+    )
+    def test_gcov_for_stamp_reads_b11_with_llvm_cov(self, tmp_path, monkeypatch, caplog, name, raw):
+        sample = _write_gcov_file(tmp_path / name, raw)
+        llvm_cov = _fake_tool(tmp_path / "bin")
+        _fake_tool(tmp_path / "bin", "gcov-11")
+        monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+
+        with caplog.at_level(logging.INFO, logger="otto.host.toolchain_discovery"):
+            got = gcov_for_stamp("B11*", sample, system_major=13, subject=_UNIT)
+
+        assert got == llvm_cov
+        assert [r.getMessage() for r in caplog.records] == [
+            (
+                f"unit unit/app: gcov stamp 'B11*' is llvm-cov's (stamps 402*/408*/B11*); "
+                f"reading counters with {llvm_cov}"
+            )
+        ]
+
+    @pytest.mark.parametrize(
+        "raw",
+        [GCC_SHAPED_B11_DATA, b"adcg*11B" + b"\x01\x00\x00\x00"],
+        ids=["gcc-shaped", "header-only"],
+    )
+    def test_a_b11_data_directory_resolves_llvm_cov(self, tmp_path, monkeypatch, raw):
+        d = tmp_path / "cov" / "test1" / "app"
+        _write_gcov_file(d / "obj" / "a.gcda", raw)
+        llvm_cov = _fake_tool(tmp_path / "bin")
+        _fake_tool(tmp_path / "bin", "gcov-11")
+        monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+
+        tc = discover_toolchain_from_gcda(d, system_major=13)
+
+        assert tc is not None
+        assert tc.gcov_bin == str(llvm_cov)
+
+    @pytest.mark.parametrize(
+        "raw",
+        [GCC_SHAPED_B11_NOTES, b"oncg*11B" + b"\x01\x00\x00\x00"],
+        ids=["gcc-shaped", "header-only"],
+    )
+    def test_a_b11_notes_directory_resolves_llvm_cov(self, tmp_path, monkeypatch, raw):
+        _write_gcov_file(tmp_path / "build" / "a.gcno", raw)
+        llvm_cov = _fake_tool(tmp_path / "bin")
+        _fake_tool(tmp_path / "bin", "gcov-11")
+        monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+
+        tc = discover_toolchain_from_gcno(tmp_path / "build")
+
+        assert tc is not None
+        assert tc.gcov_bin == str(llvm_cov)
+
+    def test_real_clang21_notes_and_data_resolve_llvm_cov(self, tmp_path, monkeypatch):
+        _fixture("clang-21.1.8-same.gcno", tmp_path / "build" / "a.gcno")
+        d = tmp_path / "cov" / "test1" / "app"
+        _fixture("clang-21.1.8-run.gcda", d / "obj" / "a.gcda")
+        llvm_cov = _fake_tool(tmp_path / "bin")
+        _fake_tool(tmp_path / "bin", "gcov-11")
+        monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+
+        from_notes = discover_toolchain_from_gcno(tmp_path / "build")
+        from_data = discover_toolchain_from_gcda(d, system_major=13)
+
+        assert from_notes is not None
+        assert from_data is not None
+        assert from_notes.gcov_bin == from_data.gcov_bin == str(llvm_cov)
+
+    def test_a_missing_llvm_cov_for_b11_fails_naming_llvm_never_gcov_11(
+        self, tmp_path, monkeypatch
+    ):
+        d = tmp_path / "cov" / "test1" / "app"
+        _write_gcov_file(d / "a.gcda", GCC_SHAPED_B11_DATA)
+        _fake_tool(tmp_path / "bin", "gcov-11")  # installed, and still not the reader
+        monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+
+        with pytest.raises(CoverageToolMissingError) as info:
+            discover_toolchain_from_gcda(d, system_major=13)
+
+        assert str(info.value) == (
+            "Coverage data for product 'app' on host 'test1' has gcov stamp 'B11*', read by "
+            "`llvm-cov`, but no `llvm-cov` is on PATH. Install it (`apt install llvm`), or name "
+            "the gcov to use in the host's `toolchain.gcov`."
+        )
+
+    @pytest.mark.parametrize(
+        ("stamp", "tool"), [("A95*", "gcov-9"), ("B15*", "gcov-11"), ("B33*", "gcov-13")]
+    )
+    def test_every_other_gcc_stamp_keeps_its_majors_gcov(self, tmp_path, monkeypatch, stamp, tool):
+        want = _fake_tool(tmp_path / "bin", tool)
+        _fake_tool(tmp_path / "bin")
+        monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+
+        got = gcov_for_stamp(stamp, tmp_path / "a.gcda", system_major=None, subject=_UNIT)
+
+        assert got == want
+
+    def test_gcc15_notes_stay_with_the_default_gcov(self, tmp_path, monkeypatch):
+        _fixture("gcc-15.2.0-same.gcno", tmp_path / "build" / "a.gcno")
+        _fake_tool(tmp_path / "bin")
+        monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+
+        assert discover_toolchain_from_gcno(tmp_path / "build") is None
+
+    def test_a_big_endian_gcc_data_directory_still_resolves_its_major(self, tmp_path, monkeypatch):
+        d = _gcda_dir(tmp_path, "test1", "app", GCC13_BE_GCDA)
+        gcov_13 = _fake_tool(tmp_path / "bin", "gcov-13")
+        monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+
+        tc = discover_toolchain_from_gcda(d, system_major=None)
+
+        assert tc is not None
+        assert tc.gcov_bin == str(gcov_13)

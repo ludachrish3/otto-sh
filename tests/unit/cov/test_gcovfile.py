@@ -5,8 +5,19 @@ from pathlib import Path
 
 import pytest
 
+from otto.coverage.merge import gcovfile
 from otto.coverage.merge.gcovfile import GcnoSources, gcno_sources, incompatibility, read_header
-from tests.unit.cov._gcno import clang_gcno, gcc13_gcno, words_str
+from tests.unit.cov._gcno import (
+    TAG_ARCS_COUNTER,
+    TAG_FUNCTION,
+    clang_gcno,
+    gcc9_data,
+    gcc9_notes,
+    gcc13_gcno,
+    words_str,
+)
+
+DATA = Path(__file__).parent / "data"
 
 MAGIC_GCDA = b"adcg"
 MAGIC_GCNO = b"oncg"
@@ -45,8 +56,8 @@ def test_version_mismatch_is_named(tmp_path):
 
 
 def test_clang_function_checksum_mismatch_is_named(tmp_path):
-    a = _gcov(tmp_path / "a.gcda", MAGIC_GCDA, b"408*", 7, funcs=[(1, 10, 20)])
-    n = _gcov(tmp_path / "a.gcno", MAGIC_GCNO, b"408*", 7, funcs=[(1, 11, 20)])
+    a = _gcov(tmp_path / "a.gcda", MAGIC_GCDA, b"*804", 7, funcs=[(1, 10, 20)])
+    n = _gcov(tmp_path / "a.gcno", MAGIC_GCNO, b"*804", 7, funcs=[(1, 11, 20)])
     assert "function checksums" in incompatibility(a, n)
 
 
@@ -241,3 +252,174 @@ def test_real_gxx_gcno_names_template_and_inline_header(tmp_path):
     assert got.cwd == str(tmp_path)
     assert "b.cpp" in got.names
     assert any(n.endswith("inc/t.hpp") for n in got.names)
+
+
+@pytest.mark.parametrize(
+    ("name", "names"),
+    [
+        ("clang-21.1.8-same.gcno", ["a.c", "./inc/h.h"]),
+        ("clang-21.1.8-nested.gcno", ["../src/a.c", "../src/inc/h.h"]),
+        ("clang-21.1.8-abs.gcno", ["/tmp/clang-abs/a.c", "/tmp/clang-abs/inc/h.h"]),
+        ("clang-18.1.3-same-forced-B11.gcno", ["a.c", "./inc/h.h"]),
+        ("clang-18.1.3-same.gcno", ["a.c", "./inc/h.h"]),
+    ],
+)
+def test_real_clang_notes_record_no_compile_directory(name, names):
+    # clang 21 writes "." where gcc writes its cwd, clang 18 forced to B11* writes ""
+    assert gcno_sources(DATA / name) == GcnoSources(cwd=None, names=names)
+
+
+@pytest.mark.parametrize(
+    ("name", "got"),
+    [
+        ("gcc-15.2.0-same.gcno", GcnoSources(cwd="/tmp/gcc-same", names=["a.c", "inc/h.h"])),
+        (
+            "gcc-15.2.0-nested.gcno",
+            GcnoSources(cwd="/tmp/gcc-nested/build", names=["../src/a.c", "../src/inc/h.h"]),
+        ),
+        (
+            "gcc-15.2.0-abs.gcno",
+            GcnoSources(cwd="/", names=["/tmp/gcc-abs/a.c", "/tmp/gcc-abs/inc/h.h"]),
+        ),
+    ],
+)
+def test_real_gcc15_notes_keep_their_absolute_cwd(name, got):
+    assert gcno_sources(DATA / name) == got
+
+
+@pytest.mark.parametrize("cwd", ["", "."])
+def test_a_placeholder_cwd_reads_as_none_whoever_wrote_it(tmp_path, cwd):
+    p = tmp_path / "a.gcno"
+    p.write_bytes(gcc9_notes(cwd, version=b"*59A", support=1, funcs=[(1, 2, 0x9999)]))
+    assert gcno_sources(p) == GcnoSources(cwd=None, names=["a.c"])
+
+
+def test_a_relative_gcc_cwd_is_kept(tmp_path):
+    p = tmp_path / "a.gcno"
+    p.write_bytes(gcc9_notes("src/core", version=b"*59A"))
+    assert gcno_sources(p) == GcnoSources(cwd="src/core", names=["a.c"])
+
+
+def test_real_clang21_notes_and_data_carry_the_same_functions():
+    notes = gcovfile.function_records(DATA / "clang-21.1.8-run.gcno")
+    data = gcovfile.function_records(DATA / "clang-21.1.8-run.gcda")
+    assert notes == data == {(0, 0xF9BECDE3, 0xD03AECD7), (1, 0x62011EBB, 0xD03AECD7)}
+
+
+def _flip_first_lineno_checksum(gcda: Path) -> None:
+    raw = bytearray(gcda.read_bytes())
+    # header (12) + function tag and length (8) + ident (4): the lineno_checksum's low byte
+    raw[24] ^= 0xFF
+    gcda.write_bytes(bytes(raw))
+
+
+def test_real_clang21_pair_is_compatible(tmp_path):
+    gcda = tmp_path / "a.gcda"
+    gcno = tmp_path / "a.gcno"
+    shutil.copyfile(DATA / "clang-21.1.8-run.gcda", gcda)
+    shutil.copyfile(DATA / "clang-21.1.8-run.gcno", gcno)
+    assert incompatibility(gcda, gcno) is None
+
+
+def test_real_clang21_stale_pair_is_named(tmp_path):
+    gcda = tmp_path / "a.gcda"
+    gcno = tmp_path / "a.gcno"
+    shutil.copyfile(DATA / "clang-21.1.8-run.gcda", gcda)
+    shutil.copyfile(DATA / "clang-21.1.8-run.gcno", gcno)
+    _flip_first_lineno_checksum(gcda)
+    assert "function checksums do not match" in (incompatibility(gcda, gcno) or "")
+
+
+@pytest.mark.parametrize("version", [b"*59A", b"*51B"], ids=["gcc9", "gcc11.5"])
+def test_gcc_pairs_are_checked_by_header_never_by_function(tmp_path, version):
+    """GNU gcov checks a gcc pair's functions itself; only llvm-cov's stamps are compared here."""
+    funcs = [(1, 0x10, 0x20), (2, 0x30, 0x40)]
+    gcno = tmp_path / "a.gcno"
+    gcno.write_bytes(gcc9_notes("/work", version=version, stamp=7, funcs=funcs))
+    gcda = tmp_path / "a.gcda"
+    gcda.write_bytes(gcc9_data(version=version, stamp=7, funcs=[(1, 0x11, 0x20), funcs[1]]))
+    assert incompatibility(gcda, gcno) is None
+    gcda.write_bytes(gcc9_data(version=version, stamp=8, funcs=funcs))
+    assert "stamp mismatch" in (incompatibility(gcda, gcno) or "")
+
+
+def test_a_gcc_pairs_files_are_never_read_past_their_headers(tmp_path, monkeypatch):
+    """The function comparison is gated on the header already read: a gcc pair reads no body."""
+    funcs = [(1, 0x10, 0x20)]
+    gcno = tmp_path / "a.gcno"
+    gcno.write_bytes(gcc9_notes("/work", version=b"*51B", stamp=7, funcs=funcs))
+    gcda = tmp_path / "a.gcda"
+    gcda.write_bytes(gcc9_data(version=b"*51B", stamp=7, funcs=funcs))
+    whole_reads: list[Path] = []
+    real = Path.read_bytes
+    monkeypatch.setattr(Path, "read_bytes", lambda self: whole_reads.append(self) or real(self))
+    assert incompatibility(gcda, gcno) is None
+    assert whole_reads == []
+
+
+GCC11_1_FUNCS = [(1, 0x10, 0x20), (2, 0x30, 0x40)]
+
+
+def _gcc11_1_data(stamp: int, funcs: list[tuple[int, int, int]]) -> bytes:
+    """gcc 11.1.0-shaped B11* data: the first function's counters all zero (a negative length,
+    no payload), then a zero-length function record (a function another unit owns)."""
+    out = b"adcg*11B" + struct.pack("<I", stamp)
+    for i, (ident, lineno, cfg) in enumerate(funcs):
+        out += struct.pack("<IIIII", TAG_FUNCTION, 3, ident, lineno, cfg)
+        if i == 0:
+            out += struct.pack("<Ii", TAG_ARCS_COUNTER, -2)
+            out += struct.pack("<II", TAG_FUNCTION, 0)
+        else:
+            out += struct.pack("<II", TAG_ARCS_COUNTER, 2) + struct.pack("<Q", 1)
+    return out + struct.pack("<I", 0)
+
+
+def _gcc11_1_pair(tmp_path: Path, data_funcs: list[tuple[int, int, int]]) -> tuple[Path, Path]:
+    """A B11* pair as gcc 11.1.0 writes it: notes with an absolute cwd and support word 1."""
+    gcno = tmp_path / "a.gcno"
+    gcno.write_bytes(gcc9_notes("/work", stamp=7, support=1, funcs=GCC11_1_FUNCS))
+    gcda = tmp_path / "a.gcda"
+    gcda.write_bytes(_gcc11_1_data(7, data_funcs))
+    return gcda, gcno
+
+
+def test_a_gcc11_1_shaped_b11_pair_is_compatible(tmp_path):
+    gcda, gcno = _gcc11_1_pair(tmp_path, GCC11_1_FUNCS)
+    assert incompatibility(gcda, gcno) is None
+
+
+def test_a_gcc11_1_shaped_b11_pair_names_a_changed_function(tmp_path):
+    # the changed function sits past the zeroed counters and the zero-length record
+    gcda, gcno = _gcc11_1_pair(tmp_path, [GCC11_1_FUNCS[0], (2, 0x31, 0x40)])
+    assert "1 of 2 functions differ" in (incompatibility(gcda, gcno) or "")
+
+
+@pytest.mark.parametrize(
+    "cut", [14, 44, 60], ids=["first-record", "absent-record", "last-function"]
+)
+def test_a_gcc11_1_shaped_b11_pair_cut_short_makes_no_claim(tmp_path, cut):
+    gcda, gcno = _gcc11_1_pair(tmp_path, GCC11_1_FUNCS)
+    gcda.write_bytes(gcda.read_bytes()[:cut])
+    assert incompatibility(gcda, gcno) is None
+
+
+def test_a_real_gcc11_data_file_restamped_b11_is_compared_by_function(tmp_path):
+    # a real gcc 11.4 .gcda whose first function's counters are all zero (length -2 words)
+    raw = bytearray((DATA / "gcc-11.4-zero-counters.gcda").read_bytes())
+    raw[4:8] = b"*11B"
+    (stamp,) = struct.unpack_from("<I", raw, 8)
+    funcs = [(0x0EA7D626, 0xD581357B, 0xDB5DE9E8), (0x090A34EC, 0xF57D68DC, 0xDB5DE9E8)]
+    gcda = tmp_path / "a.gcda"
+    gcda.write_bytes(bytes(raw))
+    gcno = tmp_path / "a.gcno"
+    gcno.write_bytes(gcc9_notes("/work", stamp=stamp, support=1, funcs=funcs))
+    assert incompatibility(gcda, gcno) is None
+    changed = [funcs[0], (funcs[1][0], funcs[1][1] ^ 1, funcs[1][2])]
+    gcno.write_bytes(gcc9_notes("/work", stamp=stamp, support=1, funcs=changed))
+    assert "1 of 2 functions differ" in (incompatibility(gcda, gcno) or "")
+
+
+def test_gcc_b11_notes_walk_by_layout(tmp_path):
+    p = tmp_path / "a.gcno"
+    p.write_bytes(gcc9_notes("/work", stamp=7, support=1, funcs=[(3, 4, 5)]))
+    assert gcovfile.function_records(p) == {(3, 4, 5)}

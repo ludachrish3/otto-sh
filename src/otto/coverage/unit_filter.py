@@ -42,32 +42,47 @@ def _under(path: Path, root: Path) -> Path | None:
         return None
 
 
-def _anchored(name: str, cwd: str | None, gcno: Path) -> str:
-    """Return *name* made absolute the way the compiler's working directory would.
+def _anchored(name: str, cwd: str | None, gcno: Path) -> list[str]:
+    """Return the paths *name* may stand for, made absolute the way the compiler's cwd would.
 
-    A recorded cwd (gcc) anchors it; with none (clang) the notes file's own
-    directory does, the rule ``geninfo`` applies in place. A name that then
+    An absolute cwd anchors a relative name, and that is the one candidate:
+    a same-named file elsewhere is not the one compiled. With no cwd (clang)
+    the notes file's own directory does, the rule ``geninfo`` applies in
+    place, or the bare name when nothing is there. A relative cwd (gcc's
+    ``-fprofile-prefix-map``) is relative to a directory the notes do not
+    record: its join is tried first, then the no-cwd rule. A name that then
     exists nowhere still falls to the resolver's tail match.
     """
     if posixpath.isabs(name):
-        return name
+        return [name]
+    candidates: list[str] = []
     if cwd is not None:
-        return posixpath.normpath(posixpath.join(cwd, name))
+        candidates.append(posixpath.normpath(posixpath.join(cwd, name)))
+        if posixpath.isabs(cwd):
+            return candidates
     beside = posixpath.normpath(posixpath.join(gcno.parent.as_posix(), name))
-    return beside if Path(beside).exists() else name
+    candidates.append(beside if Path(beside).exists() else name)
+    return candidates
 
 
 def gcno_named_sources(gcno: Path, project_root: Path, resolver: SourceResolver) -> NamedSources:
-    """Split the sources *gcno* names into project-relative paths and the rest (as recorded)."""
+    """Split the sources *gcno* names into project-relative paths and the rest (as recorded).
+
+    Each name resolves through its first candidate that matches; every
+    candidate but the last is tried quietly, so a fallback that matches
+    logs nothing about the try before it.
+    """
     got = gcno_sources(gcno)
     if got is None:
         logger.debug("unit: %s is not a notes file this reader knows; no sources from it", gcno)
         return NamedSources(project=[], external=[])
     root = project_root.resolve()
+    probe = SourceResolver(resolver.project_root, resolver.staging, quiet=True, index_from=resolver)
     kept: dict[Path, None] = {}
     external: dict[str, None] = {}
     for name in got.names:
-        resolved = resolver.resolve(_anchored(name, got.cwd, gcno))
+        *tries, last = _anchored(name, got.cwd, gcno)
+        resolved = next(filter(None, map(probe.resolve, tries)), None) or resolver.resolve(last)
         rel = _under(resolved, root) if resolved is not None else None
         if rel is None:
             # a system header, gtest, or a name no project file matches

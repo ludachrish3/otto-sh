@@ -226,9 +226,10 @@ class UnsupportedOnUserlandError(OttoError, RuntimeError):
 class CoverageToolMissingError(OttoError, RuntimeError):
     """The gcov the coverage data needs is not installed on the otto host.
 
-    Raised before lcov runs, for data whose stamp names a compiler nothing
+    Raised before lcov runs, for data whose stamp needs a reader nothing
     configured covers: a GCC major other than the system gcov's, read by
-    ``gcov-<major>``, or clang, read by ``llvm-cov gcov``. For a product the
+    ``gcov-<major>``, or one of llvm-cov's stamps (``402*``, ``408*``,
+    ``B11*``), read by ``llvm-cov gcov``. For a product the
     message names the host, the product, the stamp, the tool and the package
     that ships it; for a unit directory it names the tier, the directory and
     the tier's ``toolchain`` setting, as it does for a unit capture's default

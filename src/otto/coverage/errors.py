@@ -15,11 +15,11 @@ class CoverageToolVersionError(OttoError, RuntimeError):
     """The gcov tool used for capture cannot read this build's coverage format.
 
     geninfo probes the gcov tool and refuses when the ``.gcda``/``.gcno``
-    were written by a different compiler family or version ("Incompatible
-    GCC/GCOV version"). The classic trigger: the product was built with
-    ``clang --coverage`` — clang stamps the GCC 4.8-era file format only
-    ``llvm-cov gcov`` still reads — but capture ran GNU gcov. A cross-GCC
-    build captured with the system gcov fails the same way.
+    carry a gcov stamp the tool does not read ("Incompatible GCC/GCOV
+    version"). The classic trigger: data stamped ``402*`` or ``408*``, which
+    only ``llvm-cov gcov`` reads (``clang --coverage`` up to clang 20),
+    captured with GNU gcov. A cross-GCC build captured with the system gcov
+    fails the same way.
     """
 
     def __init__(
@@ -125,10 +125,10 @@ class CoverageDataMismatchError(OttoError, RuntimeError):
     gcov embeds a build stamp in both files; a (partial) rebuild of the
     product after it was deployed changes the notes' stamps and breaks the
     pairing. Raised at capture by the structural pairing check before lcov
-    runs — header format version and stamps, plus clang-dialect per-function
-    checksums (the only detection possible for clang builds, where llvm-cov
-    zeroes the data silently) — or from GNU gcov's own ``stamp mismatch with
-    notes file`` refusal as the backstop.
+    runs — header format version and stamps, plus per-function checksums for
+    the stamps llvm-cov reads (the only detection possible there, since
+    llvm-cov zeroes the data silently) — or from GNU gcov's own ``stamp
+    mismatch with notes file`` refusal as the backstop.
     """
 
     def __init__(self, detail: str) -> None:

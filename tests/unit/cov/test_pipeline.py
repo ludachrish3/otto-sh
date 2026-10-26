@@ -1489,10 +1489,10 @@ class TestUnitToolchain:
     @pytest.mark.parametrize(
         ("compiler", "reader", "proves"),
         [
-            ("gcc13", "llvm-cov", "an llvm-cov reads only clang's coverage data"),
-            ("clang", "gcov-13", "a GNU gcov cannot read clang's coverage data"),
-            ("clang", "arm-none-eabi-gcov", "a GNU gcov cannot read clang's coverage data"),
-            ("clang", "x86_64-linux-gnu-gcov-13", "a GNU gcov cannot read clang's coverage data"),
+            ("gcc13", "llvm-cov", "an llvm-cov reads only gcov stamps 402*/408*/B11*"),
+            ("clang", "gcov-13", "a GNU gcov cannot read gcov stamps 402*/408*"),
+            ("clang", "arm-none-eabi-gcov", "a GNU gcov cannot read gcov stamps 402*/408*"),
+            ("clang", "x86_64-linux-gnu-gcov-13", "a GNU gcov cannot read gcov stamps 402*/408*"),
         ],
     )
     async def test_a_reader_whose_name_contradicts_the_stamps_is_refused(
@@ -1558,10 +1558,12 @@ class TestUnitToolchain:
             )
 
         theirs = (
-            "clang's (gcov stamp '408*')" if second == "clang" else "gcc 12's (gcov stamp 'B24*')"
+            "llvm-cov's (gcov stamp '408*')"
+            if second == "clang"
+            else "gcc 12's (gcov stamp 'B24*')"
         )
         assert str(excinfo.value) == (
-            f"unit tier unit: {hdir} holds the notes of more than one compiler — "
+            f"unit tier unit: {hdir} holds notes for more than one reader — "
             f"{hdir / 'add.c.gcno'} is gcc 13's (gcov stamp 'B33*') and {hdir / 'sub.c.gcno'} "
             f"is {theirs}. No single reader decodes both; build them into separate directories."
         )
@@ -1826,7 +1828,7 @@ class TestUnitHarvestRealTools:
         cov = {"tiers": {"unit": {**_REAL_UNIT_COV["tiers"]["unit"]}}}
         cov["tiers"]["unit"]["toolchain"] = {"coverage_tool": "llvm-cov"}
 
-        with pytest.raises(CoverageInputError, match="an llvm-cov reads only clang's"):
+        with pytest.raises(CoverageInputError, match="an llvm-cov reads only gcov stamps"):
             await run_coverage_report([], tmp_path / "report", _unit_inputs(project, cov))
 
         assert not (tmp_path / "report").exists()

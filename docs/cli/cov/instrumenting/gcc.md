@@ -176,8 +176,9 @@ version"* or *"record size mismatch"*, or silently reports 0%. otto reads
 the major from the `.gcda` stamp: a product built by the system gcc's major
 is read by the system `gcov`, one built by another major by `gcov-<major>`
 from `PATH` (`apt install gcc-12` ships `gcov-12`), and that package is
-named when it is missing. A missing `gcov` fails only that product: it
-gets a `capture.failed` naming the package, and every other product still
+named when it is missing. gcc 11.1.0 is the one exception
+({ref}`coverage-gcov-resolution`). A missing `gcov` fails only that product:
+it gets a `capture.failed` naming the package, and every other product still
 captures. `otto test --cov` logs the failure as a warning, `otto cov get`
 names it and exits `1`, and `otto cov report` names it in its one warning
 about products that failed to capture. A

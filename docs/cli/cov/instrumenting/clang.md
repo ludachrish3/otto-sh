@@ -2,15 +2,16 @@
 # Clang products
 
 Products compiled with ``clang --coverage`` emit gcov-*compatible*
-counters in the GCC 4.8-era file format (clang stamps ``408*``), which
-modern GNU ``gcov`` refuses.  They must be read by ``llvm-cov gcov``:
+counters in a GCC file format: GCC 4.8's up to clang 20 (stamped
+``408*``) and GCC 11.1's from clang 21 (stamped ``B11*``). otto reads both
+with ``llvm-cov gcov``, chosen by the stamp
+({ref}`step 2 <coverage-gcov-resolution>` on the main page):
 
 - **Auto-discovery**: with ``llvm-cov`` (or a versioned
-  ``llvm-cov-<N>``) on ``PATH``, otto reads the clang stamp from the
+  ``llvm-cov-<N>``) on ``PATH``, otto reads the stamp from the
   product's own ``.gcda`` files and uses it — no configuration, for any
-  host whose record does not name a gcov of its own (the order is on the
-  {ref}`main page <coverage-gcov-resolution>`). Without ``llvm-cov`` the
-  report fails naming the ``llvm`` package.
+  host whose record does not name a gcov of its own. Without ``llvm-cov``
+  the report fails naming the ``llvm`` package.
 - **Explicit config**: point the host toolchain's ``gcov`` at an
   ``llvm-cov`` binary; otto substitutes the required one-word
   ``llvm-cov gcov`` wrapper for ``lcov --gcov-tool`` at capture time.
@@ -24,11 +25,23 @@ modern GNU ``gcov`` refuses.  They must be read by ``llvm-cov gcov``:
 }
 ```
 
+(coverage-clang-b11)=
+## Clang 21 and gcc 11.1.0
+
+From clang 21, LLVM writes gcc 11.1's record layout and stamps it ``B11*``,
+gcc 11.1.0's own stamp. Its notes record the compile directory as ``"."``,
+a placeholder otto ignores: names resolve beside the notes, as they do for
+older clang. Because the stamp alone chooses the reader, a gcc 11.1.0 build
+is read by ``llvm-cov`` too unless it names its own gcov; the main page says
+how ({ref}`coverage-gcov-resolution`).
+
 ```{warning}
 Do not force clang to imitate a GCC version stamp
-(``-Xclang -coverage-version=…``): clang still writes its own record
-layout, and GNU gcov trusts the stamp — it crashes or silently emits
-empty data. Let otto route clang counters through ``llvm-cov`` instead.
+(``-Xclang -coverage-version=…``). otto reads ``408*`` and ``B11*``, the
+stamps clang writes, with ``llvm-cov``, and every other GCC stamp with GNU
+gcov, so forcing clang to another GCC stamp sends its data to GNU gcov,
+which reads it incompletely, emits empty data, or crashes. Leave the stamp
+as clang writes it.
 ```
 
 Branch coverage (`BRDA` records) flows through the llvm path as well;

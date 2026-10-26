@@ -1,31 +1,36 @@
 """Read just enough of a ``.gcda`` / ``.gcno`` to tell whether the two decode together.
 
 A ``.gcda`` decodes only against the notes of the compilation that produced
-its binary. GNU gcov refuses a bad pair loudly; llvm-cov (clang builds) prints
-a complaint, exits 0 and records the file at zero hits. So the pair is checked
-structurally before lcov runs: the header's format version and build stamp
-(bytes 4:12, compared raw so endianness never enters), and for clang notes the
-per-function checksums, because clang's stamp is a structure hash that does not
-move when lines shift.
+its binary. GNU gcov refuses a bad pair loudly; llvm-cov prints a complaint,
+exits 0 and records the file at zero hits. So the pair is checked structurally
+before lcov runs: for every pair, the header's format version and build stamp
+(bytes 4:12, compared raw so endianness never enters); for a pair llvm-cov
+reads (:func:`~otto.host.gcovformat.is_llvm_stamp`), the per-function
+checksums too, because LLVM's build stamp is a structure hash that does not
+move when lines shift. Records are walked by the layout the notes' version
+names (:mod:`otto.host.gcovformat`): ``B11*`` is gcc 11.1's layout.
 """
 
 import struct
 from dataclasses import dataclass
 from pathlib import Path
 
-from ...host.toolchain_discovery import gcov_stamp_major
+from ...host.gcovformat import (
+    LLVM_402,
+    PLACEHOLDER_CWDS,
+    Layout,
+    is_llvm_stamp,
+    layout_for,
+    notes_preamble,
+    parse_header,
+)
+from ...host.gcovformat import function_records as walk_function_records
 
 _HEADER_LEN = 12
-_GCC12_HEADER_LEN = 16  # gcc 12 added a checksum word after the stamp
-_MIN_GCC_MAJOR = 8
 _RECORD_HEAD_LEN = 8  # tag + length
 _WORD = 4
 _TAG_FUNCTION = 0x01000000
 _TAG_LINES = 0x01450000
-_FUNCTION_ANNOUNCE_WORDS = 3  # ident, lineno_checksum, cfg_checksum
-_CLANG_VERSION = b"*804"  # LLVM's 4.8 layout, what clang writes by default
-_GCC_FIRST_CWD = 9  # gcc 9 added the compile directory and the end column
-_GCC_BYTE_LENGTHS = 12  # gcc 12 switched record and string lengths to bytes
 
 
 def read_header(path: Path) -> bytes | None:
@@ -35,36 +40,33 @@ def read_header(path: Path) -> bytes | None:
     return header if len(header) == _HEADER_LEN else None
 
 
-def clang_function_records(path: Path) -> set[tuple[int, int, int]] | None:
-    """Return the (ident, lineno_checksum, cfg_checksum) set of a clang-dialect gcov file.
+def _records(data: bytes, layout: Layout | None) -> set[tuple[int, ...]] | None:
+    header = parse_header(data)
+    if header is None:
+        return None
+    layout = layout if layout is not None else layout_for(header.version)
+    if layout is None:
+        return None
+    walked = walk_function_records(data, header, layout)
+    return None if walked is None else set(walked)
 
-    clang writes the GCC 4.8-era layout: the 12-byte header, then tag/length
-    records with lengths counted in 32-bit words. ``None`` when the file does
-    not walk cleanly as that dialect — GNU gcc 12+ files never do (16-byte
-    headers, byte lengths), which is deliberate: gcc restamps every compile,
-    so its header check is already decisive.
+
+def function_records(path: Path) -> set[tuple[int, ...]] | None:
+    """Return the (ident, checksums...) set of a gcov notes or data file.
+
+    The file's version names its layout: notes skip their compile directory
+    and support word, data has neither. ``None`` for a file that does not
+    walk cleanly in that layout, or whose version no layout covers.
     """
-    data = path.read_bytes()
-    pos = _HEADER_LEN
-    functions: set[tuple[int, int, int]] = set()
-    while pos + 8 <= len(data):
-        tag, length = struct.unpack_from("<II", data, pos)
-        pos += 8
-        if tag == 0:
-            break
-        nbytes = length * 4
-        if pos + nbytes > len(data):
-            return None
-        if tag == _TAG_FUNCTION:
-            if length < _FUNCTION_ANNOUNCE_WORDS:
-                return None
-            functions.add(struct.unpack_from("<III", data, pos))
-        pos += nbytes
-    return functions
+    return _records(path.read_bytes(), None)
 
 
 def incompatibility(gcda: Path, gcno: Path) -> str | None:
-    """Return why *gcda* cannot be decoded against *gcno*, or ``None`` when it can."""
+    """Return why *gcda* cannot be decoded against *gcno*, or ``None`` when it can.
+
+    The headers are compared for every pair; the function records only for
+    llvm-cov's stamps, where a walk that does not complete makes no claim.
+    """
     data_header = read_header(gcda)
     notes_header = read_header(gcno)
     if data_header is None or notes_header is None:
@@ -82,10 +84,17 @@ def incompatibility(gcda: Path, gcno: Path) -> str | None:
             f"{gcda}: stamp mismatch with notes file {gcno} "
             f"(data {data_stamp:#010x} vs notes {notes_stamp:#010x})"
         )
-    data_funcs = clang_function_records(gcda)
+    parsed = parse_header(notes_header)
+    if parsed is None or not is_llvm_stamp(parsed.version):
+        return None  # GNU gcov checks a gcc pair's functions itself, and loudly
+    layout = layout_for(parsed.version)
+    if layout is None:
+        return None
+    # the notes choose the layout both files are walked in
+    data_funcs = _records(gcda.read_bytes(), layout)
     if not data_funcs:
         return None
-    notes_funcs = clang_function_records(gcno)
+    notes_funcs = _records(gcno.read_bytes(), layout)
     if not notes_funcs:
         return None
     missing = data_funcs - notes_funcs
@@ -103,7 +112,8 @@ class GcnoSources:
     """The source names one notes file records, as written (absolute or relative).
 
     ``cwd`` is gcc's recorded compile directory — the base a relative gcc name
-    resolves against; clang records none.
+    resolves against; ``None`` when the file records none, or only a
+    placeholder.
     """
 
     cwd: str | None
@@ -136,40 +146,32 @@ class _Reader:
         return raw.split(b"\0", 1)[0].decode("utf-8", "surrogateescape")
 
 
-def _function_tail_words(*, clang: bool, major: int | None) -> int:
-    """Count the words after a function's filename: clang 1 (line); gcc 8 three; gcc 9+ four."""
-    if clang:
-        return 1
-    return 4 if major is not None and major >= _GCC_FIRST_CWD else 3
-
-
 def gcno_sources(path: Path) -> GcnoSources | None:
     """Return every source name *path* records, or ``None`` for a file this reader does not know.
 
     Function records name the file each function lives in; line records name
-    every file a block's lines come from, headers included.
+    every file a block's lines come from, headers included. A recorded cwd of
+    ``"."`` or ``""`` is a placeholder (clang 21 writes ``"."``, older clang
+    forced to a gcc tag ``""``) and reads as ``None``, as no cwd at all does.
     """
     try:
         data = path.read_bytes()
     except OSError:
         return None
-    if len(data) < _HEADER_LEN or data[:4] != b"oncg":
+    header = parse_header(data)
+    if header is None or not header.notes or header.big_endian:
         return None
-    version = data[4:8]
-    clang = version == _CLANG_VERSION
-    major = None if clang else gcov_stamp_major(version[::-1].decode("ascii", "replace"))
-    if not clang and (major is None or major < _MIN_GCC_MAJOR):
+    layout = layout_for(header.version)
+    if layout is None or layout is LLVM_402:
         return None
-    byte_lengths = not clang and major is not None and major >= _GCC_BYTE_LENGTHS
-    r = _Reader(data, byte_lengths=byte_lengths)
+    preamble = notes_preamble(data, header, layout)
+    if preamble is None:
+        return None
+    cwd = None if preamble.cwd in PLACEHOLDER_CWDS else preamble.cwd
+    r = _Reader(data, byte_lengths=layout.byte_lengths)
+    r.pos = preamble.end
     names: dict[str, None] = {}
     try:
-        r.pos = _GCC12_HEADER_LEN if byte_lengths else _HEADER_LEN
-        cwd = None
-        if not clang:
-            if major is not None and major >= _GCC_FIRST_CWD:
-                cwd = r.string()
-            r.u32()  # has_unexecuted_blocks
         while r.pos < len(data):
             r.limit = len(data)
             if r.pos + _RECORD_HEAD_LEN > len(data):
@@ -177,18 +179,18 @@ def gcno_sources(path: Path) -> GcnoSources | None:
             tag, length = r.u32(), r.u32()
             if tag == 0:
                 break
-            end = r.pos + (length if byte_lengths else length * _WORD)
+            end = r.pos + (length if layout.byte_lengths else length * _WORD)
             if end > len(data):
                 return None
             r.limit = end  # field reads cannot run into the next record
             if tag == _TAG_FUNCTION:
-                for _ in range(_FUNCTION_ANNOUNCE_WORDS):
+                for _ in range(layout.announce_words):
                     r.u32()
                 r.string()  # function name
-                if not clang:
-                    r.u32()  # artificial
+                if layout.function_artificial:
+                    r.u32()
                 names.setdefault(r.string(), None)
-                for _ in range(_function_tail_words(clang=clang, major=major)):
+                for _ in range(layout.function_tail_words):
                     r.u32()  # start line (+ columns, end line on gcc) — mandatory
             elif tag == _TAG_LINES:
                 r.u32()  # block

@@ -101,7 +101,7 @@ renderer
 or `otto cov get` already wrote: it still loads the lab — per-host toolchain
 resolution (`gcov`, `lcov`) comes from host configuration first, else the
 product's own `.gcda` stamp per `<host>/<product>` directory (`llvm-cov`
-for clang, `gcov-<major>` for another gcc major; see
+for `402*`, `408*` and `B11*`, `gcov-<major>` for another gcc major's; see
 {ref}`coverage-gcov-resolution`); a unit tier's build directories take the
 tier's own `toolchain` setting in place of the host record, resolved with
 every unit view in the preflight before the destination is touched

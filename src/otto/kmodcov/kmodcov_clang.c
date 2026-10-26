@@ -540,10 +540,10 @@ size_t store_gcov_u64(void *buffer, size_t off, u64 v)
 /* ---- otto_kmodcov's backend hooks ---------------------------------------- */
 
 /*
- * clang writes the gcc 4.8 file format whatever its own version (measured
- * 2026-09-18: clang 18 stamps "408*"), and the llvm_gcda_* callback ABI
- * above has been stable since clang 11, the oldest kbuild accepts: any
- * clang unit this build can link, it can parse.
+ * clang writes gcc 4.8's format up to clang 20 ("408*") and gcc 11.1's
+ * from clang 21 ("B11*"); otto reads both with llvm-cov by their stamp.
+ * The llvm_gcda_* callback ABI above has been stable since clang 11, the
+ * oldest kbuild accepts: any clang unit this build can link, it can parse.
  */
 bool gcov_info_built_by_this_compiler(struct gcov_info *info, const char *mod,
 				      int *have, int *want)

@@ -610,6 +610,24 @@ def _toolchain_meta(tc: "Toolchain") -> dict[str, Any]:
     return meta
 
 
+def _notes_toolchain(build_dir: Path) -> "Toolchain | None":
+    """Return the reader an embedded build's notes name, or ``None`` to leave it to its products.
+
+    A reader the notes need that is not installed fails nothing here: each
+    product of the build resolves its reader again from its own ``.gcda``
+    stamp when it is captured, where the missing tool fails that product
+    alone with a ``capture.failed``, as on every other host.
+    """
+    from ..host.errors import CoverageToolMissingError
+    from ..host.toolchain_discovery import discover_toolchain_from_gcno
+
+    try:
+        return discover_toolchain_from_gcno(build_dir)
+    except CoverageToolMissingError as e:
+        logger.debug("%s; left to each product's capture", e)
+        return None
+
+
 async def _write_metadata(
     *,
     cov_project: "Project",
@@ -690,7 +708,6 @@ async def _write_metadata(
     source_roots: dict[str, str] = {}
     if embedded_host_ids and (embedded_build_dir or embedded_builds):
         from ..host.embedded_host import EmbeddedHost
-        from ..host.toolchain_discovery import discover_toolchain_from_gcno
 
         embedded_hosts = {h.id: h for h in cov_hosts if isinstance(h, EmbeddedHost)}
         # Cache .gcno-discovery per build dir so hosts sharing a build dir do
@@ -708,7 +725,7 @@ async def _write_metadata(
                 bd_key = host_build_dir or ""
                 if bd_key not in discovery_cache:
                     if host_build_dir:
-                        discovery_cache[bd_key] = discover_toolchain_from_gcno(Path(host_build_dir))
+                        discovery_cache[bd_key] = _notes_toolchain(Path(host_build_dir))
                     else:
                         discovery_cache[bd_key] = None
                 tc = discovery_cache[bd_key]

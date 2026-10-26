@@ -184,8 +184,10 @@ async def test_capture_dir_refuses_stamp_mismatch(tmp_path):
 @pytest.mark.asyncio
 async def test_capture_dir_refuses_clang_checksum_mismatch(tmp_path):
     def clang_file(magic: bytes, checksum: int) -> bytes:
-        # Matching headers; one function record (ident, lineno checksum, cfg checksum).
-        return _header(magic, 7) + struct.pack("<IIIII", 0x01000000, 3, 1, 5, checksum)
+        # Matching 408* headers (stored reversed); one function record (ident, lineno
+        # checksum, cfg checksum).
+        head = magic + b"*804" + struct.pack("<I", 7)
+        return head + struct.pack("<IIIII", 0x01000000, 3, 1, 5, checksum)
 
     (tmp_path / "a.gcno").write_bytes(clang_file(b"oncg", 111))
     (tmp_path / "a.gcda").write_bytes(clang_file(b"adcg", 222))

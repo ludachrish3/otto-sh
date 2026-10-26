@@ -19,15 +19,9 @@ from typing import TYPE_CHECKING
 
 from ..host import toolchain_discovery
 from ..host.errors import CoverageToolMissingError
+from ..host.gcovformat import LLVM_COV_STAMPS, gcov_stamp_major, is_llvm_stamp, read_gcov_version
 from ..host.toolchain import Toolchain, shell_unsafe
-from ..host.toolchain_discovery import (
-    StampSubject,
-    gcov_for_stamp,
-    gcov_stamp_major,
-    is_llvm_cov,
-    is_llvm_stamp,
-    read_gcov_version,
-)
+from ..host.toolchain_discovery import StampSubject, gcov_for_stamp, is_llvm_cov
 from ..utils import anchor_path
 from .errors import CoverageInputError
 
@@ -39,6 +33,10 @@ logger = logging.getLogger(__name__)
 _GNU_GCOV_NAME = re.compile(r"^(?:.+-)?gcov(?:-\d+)?$")
 """A reader whose name proves it GNU gcov: ``gcov``, ``gcov-13``, ``arm-none-eabi-gcov``,
 ``x86_64-linux-gnu-gcov-13`` — never one containing ``llvm`` (see :func:`_proves_gnu`)."""
+
+# llvm-cov's stamps as a message names them, and those no GNU gcov reads (no GCC major)
+_LLVM_COV_STAMPS = "/".join(sorted(LLVM_COV_STAMPS))
+_GNU_UNREADABLE = "/".join(sorted(s for s in LLVM_COV_STAMPS if gcov_stamp_major(s) is None))
 
 
 def _proves_gnu(name: str) -> bool:
@@ -137,21 +135,36 @@ def _resolve_value(
 
 @dataclass(frozen=True)
 class _Family:
-    """The compiler a known gcov stamp proves, and the first notes file carrying it."""
+    """The reader a directory's known stamps need, and every one of those stamps."""
 
     name: str
-    """``clang`` or ``gcc <major>``."""
-    stamp: str
-    notes: Path
+    """``llvm-cov`` or ``gcc <major>``."""
+    stamps: dict[str, Path]
+    """Each known stamp, in notes order, with the first notes file carrying it."""
+
+    @property
+    def stamp(self) -> str:
+        return next(iter(self.stamps))
+
+    @property
+    def notes(self) -> Path:
+        return self.stamps[self.stamp]
 
     @property
     def is_llvm(self) -> bool:
-        return self.name == "clang"
+        return is_llvm_stamp(self.stamp)
+
+    def gnu_unreadable(self) -> str | None:
+        """Return the first stamp no GNU gcov reads: one naming no GCC major (``402*``/``408*``).
+
+        ``B11*`` names gcc 11, so a GNU gcov reads it: the remedy for a gcc 11.1.0 build.
+        """
+        return next((s for s in self.stamps if gcov_stamp_major(s) is None), None)
 
 
 def _family_of(stamp: str) -> str | None:
     if is_llvm_stamp(stamp):
-        return "clang"
+        return "llvm-cov"
     major = gcov_stamp_major(stamp)
     return None if major is None else f"gcc {major}"
 
@@ -179,13 +192,13 @@ class UnitToolchains:
         """Return the toolchain that captures *directory*, a directory of the view *label*.
 
         *notes* are the directory's kept notes files (those naming a product
-        source); their stamps prove the compiler. A configured field wins over
+        source); their stamps choose the reader. A configured field wins over
         what the stamps choose, field by field.
 
         Raises:
-            otto.coverage.errors.CoverageInputError: the kept notes carry two
-                known compilers, or the configured ``coverage_tool``'s name
-                proves a family the stamps contradict (``field=None``).
+            otto.coverage.errors.CoverageInputError: the kept notes' stamps
+                need two readers, or the configured ``coverage_tool``'s name
+                proves it cannot read one of them (``field=None``).
             otto.host.errors.CoverageToolMissingError: a default tool the data
                 needs is not on ``PATH``, or is at a path lcov cannot run.
         """
@@ -228,42 +241,45 @@ class UnitToolchains:
 
 
 def _one_family(label: str, directory: Path, notes: list[Path]) -> _Family | None:
-    """Return the one compiler the known stamps of *notes* prove; ``None`` when none is known."""
-    families: dict[str, _Family] = {}
+    """Return the one reader the known stamps of *notes* need; ``None`` when none is known."""
+    families: dict[str, dict[str, Path]] = {}
     for path in notes:
         stamp = read_gcov_version(path)
         name = _family_of(stamp) if stamp is not None else None
         if stamp is None or name is None:
             continue  # an unreadable or unrecognised stamp proves nothing
-        families.setdefault(name, _Family(name=name, stamp=stamp, notes=path))
-    if len(families) > 1:
-        first, second = list(families.values())[:2]
+        families.setdefault(name, {}).setdefault(stamp, path)
+    found = [_Family(name=name, stamps=stamps) for name, stamps in families.items()]
+    if len(found) > 1:
+        first, second = found[:2]
         raise CoverageInputError(
-            f"unit tier {label}: {directory} holds the notes of more than one compiler — "
+            f"unit tier {label}: {directory} holds notes for more than one reader — "
             f"{first.notes} is {first.name}'s (gcov stamp {first.stamp!r}) and {second.notes} "
             f"is {second.name}'s (gcov stamp {second.stamp!r}). No single reader decodes both; "
             "build them into separate directories.",
             field=None,
         )
-    return next(iter(families.values()), None)
+    return next(iter(found), None)
 
 
 def _check_family(tier: str, tool: ConfiguredTool, directory: Path, family: _Family | None) -> None:
-    """Refuse a configured reader whose name proves a family the stamps contradict."""
+    """Refuse a configured reader whose name proves it cannot read one of the stamps."""
     if family is None:
         return
     name = tool.path.name
+    stamp = family.stamp
     if is_llvm_cov(name) and not family.is_llvm:
-        reads = "an llvm-cov reads only clang's coverage data"
-    elif _proves_gnu(name) and family.is_llvm:
-        reads = "a GNU gcov cannot read clang's coverage data"
+        reads = f"an llvm-cov reads only gcov stamps {_LLVM_COV_STAMPS}"
+    elif _proves_gnu(name) and family.is_llvm and (unread := family.gnu_unreadable()) is not None:
+        stamp = unread
+        reads = f"a GNU gcov cannot read gcov stamps {_GNU_UNREADABLE}"
     else:
         return
     key = setting_key(tier, "coverage_tool")
     raise CoverageInputError(
-        f"{key} = {tool.written!r} cannot read {directory}: {reads}, and {family.notes} is "
-        f"{family.name}'s (gcov stamp {family.stamp!r}). Name a reader for {family.name}'s "
-        "data, or leave the setting unset to let the stamp choose.",
+        f"{key} = {tool.written!r} cannot read {directory}: {reads}, and "
+        f"{family.stamps[stamp]} is {family.name}'s (gcov stamp {stamp!r}). Name a reader for "
+        f"gcov stamp {stamp!r}, or leave the setting unset to let the stamp choose.",
         field=None,
     )
 

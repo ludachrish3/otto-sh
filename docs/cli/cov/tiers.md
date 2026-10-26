@@ -278,22 +278,23 @@ directory, field by field:
 1. **`coverage_tool`**: the configured one; else the build's own gcov stamp
    chooses, by the same rule as a product's counters
    ({ref}`coverage-gcov-resolution`) with the tier's `toolchain` in place of
-   the host record — clang's notes are read by `llvm-cov`, a gcc build of the
-   system `gcov`'s major by `gcov`, another gcc major by `gcov-<major>`, each
-   from `PATH`. Setting only `lcov_args` keeps that choice.
+   the host record, each tool from `PATH`. Setting only `lcov_args` keeps that
+   choice.
 2. **`lcov`**: the configured one; else `lcov` from `PATH`.
 3. **`lcov_args`**: the configured ones; else none.
 
 The stamps are read from the notes of every kept source, so a directory
-holding two compilers' notes (clang's and gcc's, or two gcc majors) is refused
-whatever the setting — no single reader decodes both; build them into
-separate directories. A configured `coverage_tool` whose name proves its
-family — an `llvm-cov` over gcc data, or a `gcov`, `gcov-<N>`,
-`<triplet>-gcov` or `<triplet>-gcov-<N>` over clang's — is refused too,
-because lcov reports an `llvm-cov` run over gcc data as a success with nothing
-in it. Any other name passes: a wrapper script, and any name containing `llvm`,
-such as the usual clang wrapper `llvm-gcov`; and a capture that still records nothing for a directory that keeps
-product sources fails rather than adding an empty run. Within its family a
+whose notes need two readers (llvm-cov's stamps and a gcc's, or two gcc
+majors) is refused whatever the setting — no single reader decodes both;
+build them into separate directories. A configured `coverage_tool` whose name
+proves it cannot read one of the stamps — an `llvm-cov` over a gcc stamp, or a
+`gcov`, `gcov-<N>`, `<triplet>-gcov` or `<triplet>-gcov-<N>` over `402*` or
+`408*` notes — is refused too, because lcov reports an `llvm-cov` run over gcc
+data as a success with nothing in it. A GNU gcov over `B11*` notes passes
+({ref}`coverage-gcov-resolution`). Any other name passes: a
+wrapper script, and any name containing `llvm`, such as the usual clang
+wrapper `llvm-gcov`; and a capture that still records nothing for a directory
+that keeps product sources fails rather than adding an empty run. Within its family a
 configured reader is otherwise never second-guessed: a `gcov-12` over gcc 13
 data fails its capture.
 
@@ -308,9 +309,9 @@ paths are printed absolute; `<project>` below is the project root:
 |---|---|---|---|
 | *coverage.tiers.unit.toolchain.coverage_tool = 'gcov-12': no `gcov-12` command is on PATH* (or *… is not an executable file*) | A configured tool cannot be found — checked for every unit tier, even one whose directories are all skipped | Install it, or correct the setting | `2` |
 | *coverage.tiers.unit.toolchain.coverage_tool = 'gcov-12' resolves to /opt/my tools/gcov-12, which lcov cannot run: …* | The configured tool's resolved path holds white space or a shell metacharacter | Install it at a plain path, or name one | `2` |
-| *coverage.tiers.unit.toolchain.coverage_tool = 'llvm-cov' cannot read \<project\>/build/tests: an llvm-cov reads only clang's coverage data, …* | The configured reader's name contradicts the directory's stamps | Name a reader for that compiler, or leave the setting unset | `2` |
-| *unit tier unit: \<project\>/build/tests holds the notes of more than one compiler — …* | One directory holds two compilers' notes | Build each compiler's objects into its own directory | `2` |
-| *unit tier unit: capturing \<project\>/build/tests needs `lcov`, but no `lcov` is on PATH* | A default tool the data needs is missing; for another gcc major or clang the message names `gcov-<major>` or `llvm-cov` and its package | Install it, or set the key the message names | `1` |
+| *coverage.tiers.unit.toolchain.coverage_tool = 'llvm-cov' cannot read \<project\>/build/tests: an llvm-cov reads only gcov stamps 402\*/408\*/B11\*, …* | The configured reader's name contradicts the directory's stamps | Name a reader for that stamp, or leave the setting unset | `2` |
+| *unit tier unit: \<project\>/build/tests holds notes for more than one reader — …* | One directory's notes need two readers | Build each compiler's objects into its own directory | `2` |
+| *unit tier unit: capturing \<project\>/build/tests needs `lcov`, but no `lcov` is on PATH* | A default tool the data needs is missing; for another gcc major's stamp, or one of llvm-cov's, the message names `gcov-<major>` or `llvm-cov` and its package | Install it, or set the key the message names | `1` |
 | *unit tier unit: the tool found on PATH at /opt/my tools/lcov cannot be run by lcov: …* | The default tool found on `PATH` sits at a path with white space or a shell metacharacter | Install it at a plain path, or set the key the message names | `1` |
 | *unit tier unit: the capture of \<project\>/build/tests with … recorded no source file* | The reader read nothing — one of another compiler's data that its name did not reveal | Check `coverage_tool` | `1` |
 | *unit tier unit: capturing \<project\>/build/tests failed; if the counter reader is the wrong one, set …* | lcov itself failed; its own first error and last lines follow | Fix what lcov says, or name the right reader | `1` |

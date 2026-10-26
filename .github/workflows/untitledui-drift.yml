@@ -34,13 +34,9 @@ permissions:
 env:
   ISSUE_TITLE: "Untitled UI upstream drift"
 
-# Runners are pinned to ubuntu-24.04 until #719 is fixed: ubuntu-26.04
-# (ubuntu-latest from 2026-10-25) ships clang 21, which otto's coverage
-# does not read yet. Put ubuntu-latest back as part of #719.
-
 jobs:
   drift:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
 
