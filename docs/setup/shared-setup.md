@@ -107,6 +107,7 @@ every host in those labs. {ref}`project-scope` explains both, and
 ## Next
 
 - {doc}`tracks/shell` — a complete project: two command-line tools, tests, three-tier coverage and a custom metric.
+- {doc}`tracks/kmod` — a kernel module: its coverage library, an e2e test, a GoogleTest unit test of its logic, and three-tier coverage.
 - {doc}`defining-products-and-tools` — put your products on the host.
 - {doc}`running-tests` — write and run a test.
 - {doc}`coverage` — measure what the tests exercised.

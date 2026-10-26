@@ -1,0 +1,25 @@
+$ otto --lab example_lab -n run install
+INFO     [DRY RUN] Commands and file transfers will be skipped. No device will be contacted.
+INFO     fleet of interest: 1 of 2 lab hosts (1 project(s), 0 excluded)
+quickstart-kmod
+  dut
+    install  qs_wordcount  mkdir -p /tmp
+                           PUT /tmp/otto-gs/quickstart-kmod/build/kmodcov/lib/otto_kmodcov.ko -> /tmp
+                           sudo insmod /tmp/otto_kmodcov.ko
+                           rm -f /tmp/otto_kmodcov.ko
+                           mkdir -p /tmp
+                           PUT /tmp/otto-gs/quickstart-kmod/module/qs_wordcount.ko -> /tmp
+                           sudo insmod /tmp/qs_wordcount.ko cov_dir=/tmp/qs_wordcount
+                           rm -f /tmp/qs_wordcount.ko
+  not checked:
+    dut: qs_wordcount: whether otto_kmodcov is already resident on dut (cat /proc/modules): the library is loaded only when it is not
+    dut: qs_wordcount: the interface check of /tmp/otto-gs/quickstart-kmod/build/kmodcov/lib/otto_kmodcov.ko (modinfo MODULE_VERSION): a .ko this otto cannot drive is refused before anything is sent
+    dut: qs_wordcount: whether qs_wordcount is resident on dut (cat /proc/modules): uninstall runs rmmod only then
+    dut: qs_wordcount: sudo is assumed because the login user is not root; a real run measures how dut elevates
+dry run: no command body was run and no device was contacted
+  would run: otto run install
+  options:
+    InstallOptions: ensure=False, recover_partial=True
+  lab: example_lab (2 hosts)
+
+Output directory: /tmp/otto-gs/xdir/run/<run>_install

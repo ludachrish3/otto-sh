@@ -1,0 +1,31 @@
+$ otto init --kmodcov --path .
+created third_party/otto_kmodcov/Kbuild
+created third_party/otto_kmodcov/Makefile
+created third_party/otto_kmodcov/build.sh
+created third_party/otto_kmodcov/consumer.mk
+created third_party/otto_kmodcov/kmodcov.lds
+created third_party/otto_kmodcov/kmodcov.c
+created third_party/otto_kmodcov/kmodcov.h
+created third_party/otto_kmodcov/kmodcov_compat.h
+created third_party/otto_kmodcov/kmodcov_gcov.h
+created third_party/otto_kmodcov/kmodcov_gcc.c
+created third_party/otto_kmodcov/kmodcov_gcc_abi.c
+created third_party/otto_kmodcov/kmodcov_clang.c
+created third_party/otto_kmodcov/README.md
+created third_party/otto_kmodcov/kmodcov_version.h
+created third_party/otto_kmodcov-consumer/kmodcov_begin.c
+created third_party/otto_kmodcov-consumer/kmodcov_end.c
+created third_party/otto_kmodcov-consumer/Kbuild.example
+created third_party/otto_kmodcov-consumer/README.md
+           otto init — /tmp/otto-gs/quickstart-kmod
+┏━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ area         ┃ status      ┃ detail                         ┃
+┡━━━━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ settings     │ ✓           │                                │
+│ schemas      │ not present │ no .otto/schemas/*.schema.json │
+│ lab          │ ✓           │                                │
+│ tests        │ ✓           │                                │
+│ instructions │ ✓           │                                │
+│ kmodcov      │ scaffolded  │                                │
+└──────────────┴─────────────┴────────────────────────────────┘
+<next steps: shell completion, then the commands to try>

@@ -31,7 +31,6 @@ FILES = [
 FIRST_CEILINGS: dict[str, int] = {
     "cli/cov/instrumenting/containers.md": 10,
     "cli/cov/instrumenting/embedded.md": 3,
-    "cli/cov/instrumenting/kernel-modules.md": 14,
     "setup/coverage.md": 2,
 }
 

@@ -1,0 +1,20 @@
+$ otto --lab example_lab cov get --tier manual --ticket QS-1 --tester-name docs --tester-email docs@example.invalid
+INFO     fleet of interest: 1 of 2 lab hosts (1 project(s), 0 excluded)
+INFO     @dut   | sudo -S -p 'otto-sudo:' sh -c 'echo 1 > /sys/module/qs_wordcount/kmodcov/dump'
+INFO     Archiving .gcda for qs_wordcount on dut:/tmp/qs_wordcount
+INFO     @dut   | ! test -d /tmp/qs_wordcount && echo otto-no-cov-dir || (t=$(mktemp
+         "${TMPDIR:-/tmp}/otto-fetch-<id>.XXXXXX") && echo "otto-archive:$t" && cd
+         /tmp/qs_wordcount && tar -cf "$t" .)
+INFO     @dut > | otto-archive:/tmp/otto-fetch-<id>.<tmp>
+INFO     @dut   | rm -f "${TMPDIR:-/tmp}"/otto-fetch-<id>.*
+INFO     Coverage data collected to /tmp/otto-gs/xdir/cov/<run>_get/cov (1 product
+         dir(s))
+INFO     === Capturing dut / qs_wordcount ===
+INFO     lcov capture: 2 file(s) ->
+         /tmp/otto-gs/xdir/cov/<run>_get/cov/dut/qs_wordcount/board.info
+INFO     dut/qs_wordcount: skipped 1 source file(s) outside the project root
+INFO     Coverage captures produced: 1 board(s)
+/tmp/otto-gs/xdir/cov/<run>_get/cov/dut/qs_wordcount/capture.json
+Coverage captured: 1 product(s) -> /tmp/otto-gs/xdir/cov/<run>_get/cov
+
+Output directory: /tmp/otto-gs/xdir/cov/<run>_get

@@ -101,17 +101,24 @@ otto release, and a lab picks it up by re-exporting the sources
 
 ## Getting the library
 
-- **In a project otto scaffolds**: `otto init --kmodcov` vendors the sources into
-  `third_party/otto_kmodcov` (`--kmodcov-dir` names another directory), appends a
-  commented `[[dev_tools]]` entry of kind `kmodcov` to fill in, and writes a
-  consumer starter beside it — the two sentinel files, a `Kbuild.example`,
-  and a `README.md`. Re-run `otto init --kmodcov` after upgrading otto to
-  refresh the vendored library. See {doc}`../../init` for the area's full
-  detect/validate/scaffold contract.
-- **Just the sources**: `otto cov kmodcov export <dir>` writes the same
-  sources with none of the rest of that scaffolding; commit the directory. A
-  machine that only builds the module needs no otto at all. See
-  {doc}`../index`.
+- **Setting up or refreshing a project's kmodcov area: `otto init --kmodcov`.**
+  It vendors the library into `third_party/otto_kmodcov` (`--kmodcov-dir`
+  names another directory), and writes a consumer starter beside it,
+  `third_party/otto_kmodcov-consumer/`: the two sentinel files, a
+  `Kbuild.example` and a `README.md`. Copy the sentinels and the Kbuild
+  fragment beside your module. When `.otto/settings.toml` declares no
+  `kmodcov` entry yet, it also appends a commented `[[dev_tools]]` entry to
+  fill in. Re-run it after upgrading otto: it refreshes the vendored library
+  and keeps the starter and your settings as they are. See {doc}`../../init`
+  for the area's full detect/validate/scaffold contract.
+- **The library sources alone: `otto cov kmodcov export <dir>`.** It writes
+  the same sources with none of the rest of that scaffolding, which suits a
+  tree otto did not scaffold, a CI job that vendors the library itself, or
+  a re-export after an upgrade into a project that deleted the starter once
+  its sentinels were copied, where `otto init --kmodcov` would write the
+  missing starter files again.
+  Commit the directory. A machine that only builds the module needs no otto
+  at all. See {doc}`../index`.
 - **Staying current**: `otto cov kmodcov check <dir>` exits 0 when the
   directory is current, 1 when it differs (naming the files and the otto
   that exported them), or 2 when it is absent; run it in CI. `otto init`
@@ -128,8 +135,6 @@ otto release, and a lab picks it up by re-exporting the sources
   defaults, so a rebuild is all that is needed. See
   [Kernel versions](#kernel-versions) for the range, the names and the
   contract. `check` ignores the file and `export` never overwrites it.
-  Proving a customised library against the matrix's own contracts is issue
-  #406.
 - **What otto checks**: the built `.ko`'s `MODULE_VERSION`
   (`<otto version>+kmodcov<n>`, read directly off the file, no host tool)
   must carry this otto's interface number — checked at lab load when the
@@ -144,14 +149,14 @@ otto release, and a lab picks it up by re-exporting the sources
 
 ## Instrumenting a module
 
-The worked example throughout this page is `tests/project5/kmod/demo/`, a
-small bounded queue driven from a debugfs control file, living inside the
-project that declares it as a product. A project that reports coverage for a
-module must own that module's sources and build them in place: coverage
-capture anchors every measured file to a committed git blob under the
-project root. The library's own `README.md` — the copy you hold, e.g.
-`third_party/otto_kmodcov/README.md` (`src/otto/kmodcov/README.md` in otto's
-own source tree) — documents the same three steps that follow, in more
+The worked example on this page is `qs_wordcount`, the module of the example
+project of the {doc}`kernel-module track <../../../setup/tracks/kmod>`: a word
+counter driven through two module parameters, under `module/`. A project that
+reports coverage for a module must own that module's sources and build them
+in place: coverage capture anchors every measured file to a committed git blob
+under the project root. The library's own `README.md` — the copy you hold,
+e.g. `third_party/otto_kmodcov/README.md` (`src/otto/kmodcov/README.md` in
+otto's own source tree) — documents the same three steps that follow, in more
 general terms, for any consumer.
 
 A consumer becomes coverage-instrumented in three steps:
@@ -168,16 +173,22 @@ sentinels has those run by `KMODCOV_INIT()` too, which is what a
 `CONFIG_CONSTRUCTORS` kernel would have done for them. The same Kbuild also
 applies the flags step below to each instrumented object:
 
-```{literalinclude} ../../../../tests/project5/kmod/demo/Kbuild
+```{literalinclude} ../../../examples/quickstart-kmod/module/Kbuild
 :language: make
+:caption: module/Kbuild
 ```
+
+The two sentinel files are the ones `otto init --kmodcov` writes into its
+consumer starter, copied beside the module ([Getting the
+library](#getting-the-library)).
 
 The module's `Makefile` hands kbuild the library's build directory as
 `KMODCOV` and its `Module.symvers` as `KBUILD_EXTRA_SYMBOLS`, so the
 module's references to the library's exports resolve:
 
-```{literalinclude} ../../../../tests/project5/kmod/demo/Makefile
+```{literalinclude} ../../../examples/quickstart-kmod/module/Makefile
 :language: make
+:caption: module/Makefile
 ```
 
 **2. Flags.** Compile every instrumented object with `$(KMODCOV_CFLAGS)`,
@@ -190,9 +201,8 @@ defined by the library's own Kbuild fragment:
 **3. Macros.** Call `KMODCOV_DECLARE()` at file scope, `KMODCOV_INIT()` first in
 the module's init routine, and `KMODCOV_EXIT()` last in its exit routine — and
 first on every error return of the init routine after `KMODCOV_INIT()` has
-succeeded, the way the demo's `demo_init` does below. The registration holds
-the module's own sysfs directory; a module that leaves it held cannot be
-freed, and `insmod` or `rmmod` waits forever:
+succeeded. The registration holds the module's own sysfs directory; a module
+that leaves it held cannot be freed, and `insmod` or `rmmod` waits forever:
 
 ```{literalinclude} ../../../../src/otto/kmodcov/kmodcov.h
 :language: c
@@ -200,10 +210,10 @@ freed, and `insmod` or `rmmod` waits forever:
 :end-at: "#define KMODCOV_EXIT() kmodcov_unregister(THIS_MODULE)"
 ```
 
-The demo applies all three at the call sites they describe. Declaring the
+The example applies all three at the call sites they describe. Declaring the
 parameter, at file scope:
 
-```{literalinclude} ../../../../tests/project5/kmod/demo/demo_main.c
+```{literalinclude} ../../../examples/quickstart-kmod/module/qs_main.c
 :language: c
 :start-at: "KMODCOV_DECLARE();"
 :end-at: "KMODCOV_DECLARE();"
@@ -212,7 +222,7 @@ parameter, at file scope:
 Registering, first in the init routine, failing the module load if it
 fails:
 
-```{literalinclude} ../../../../tests/project5/kmod/demo/demo_main.c
+```{literalinclude} ../../../examples/quickstart-kmod/module/qs_main.c
 :language: c
 :start-at: "int err = KMODCOV_INIT();"
 :end-at: "return err;"
@@ -222,28 +232,21 @@ And unregistering, as the last statement of the exit routine — so the exit
 dump `kmodcov_unregister` performs sees everything the exit routine did
 before it:
 
-```{literalinclude} ../../../../tests/project5/kmod/demo/demo_main.c
+```{literalinclude} ../../../examples/quickstart-kmod/module/qs_main.c
 :language: c
-:start-at: "demo_queue_free(&queue);"
+:start-at: "static void __exit qs_exit(void)"
 :end-at: "KMODCOV_EXIT();"
 ```
-
-The demo also carries a `demo_compat.h`, three definitions of what a
-module of 2.6.32's age carries itself: `simple_open` below 3.5, `kstrtol`
-below 2.6.39 and `strim` below 2.6.33, each under its own version guard.
-It is the demo's business, not the library's — a module
-written for one kernel needs none of it — and it is what lets `make kmodcov`
-build the same three instrumented units, with the same coverage
-expectations, on every kernel of the set.
 
 ## Building
 
 Build against the headers of the kernel release the module will **load
 into** — a `.ko`'s `vermagic` string must match that release exactly, and a
-mismatch fails `insmod` with a message that only the kernel log explains:
+mismatch fails `insmod` with a message only the kernel log explains, which
+`otto host exec --sudo` ({doc}`../../host/exec`) reads:
 
 ```bash
-otto host test1 exec --sudo dmesg
+otto host <id> exec --sudo dmesg
 ```
 
 The vendored copy's own `build.sh <build-dir> [<release>]`
@@ -257,24 +260,24 @@ tree (see below). The library builds **out of tree**: it is never itself a
 measured product, so `build.sh` copies its sources into a scratch directory
 and builds them there against `/lib/modules/<release>/build`. The consumer
 builds **in place**, next to its own committed sources, for the reason
-given above. `tests/project5/kmod/build.sh` does both, library first, and
-checks the resulting `vermagic` before calling either build a success:
+given above. The example builds both, library first, from its project root:
 
-```{literalinclude} ../../../../tests/project5/kmod/build.sh
-:language: bash
+```bash
+third_party/otto_kmodcov/build.sh build/kmodcov
+make -C module
 ```
 
-`tests/project5/build.sh` is the human entry point: it runs that script and
-then the container image's own `docker/build.sh`.
+For a host running another release, pass it to both:
+`third_party/otto_kmodcov/build.sh build/kmodcov <release>` and
+`make -C module KDIR=/lib/modules/<release>/build`.
 
-A product project's own module follows the same shape: build `otto_kmodcov` out
-of tree once, then build the module against it in place, checking
-`vermagic` the same way before it ships anywhere. Only the library's `.ko`
-carries `modinfo -F version`: `<otto version>+kmodcov<n>`, naming the otto
-that exported the sources and the interface they implement — the
-consumer's own `.ko` carries no such stamp, and otto never looks for one
-there, only on the kmodcov dev tool's own artifact (see
-[Getting the library](#getting-the-library) above for what otto checks).
+Check the module's own `vermagic` the same way before it ships anywhere:
+`modinfo -F vermagic module/qs_wordcount.ko` names the release it was built
+for. Only the library's `.ko` carries `modinfo -F version`:
+`<otto version>+kmodcov<n>`, naming the otto that exported the sources and the
+interface they implement — the consumer's own `.ko` carries no such stamp, and
+otto never looks for one there, only on the kmodcov dev tool's own artifact
+(see [Getting the library](#getting-the-library) above for what otto checks).
 
 ## Another kernel, ISA or compiler
 
@@ -295,10 +298,9 @@ is just the family and kbuild's own floor of clang 11. What each installed
 compiler was last measured to do, contract by contract, is the
 {ref}`compatibility matrix <kmodcov-matrix>`.
 
-Both build scripts — the library's `build.sh` and the fixture's
-`kmod/build.sh` — take the kernel tree and the toolchain from the
-environment exactly as your own module's build would, and pass them to
-kbuild unchanged:
+The library's `build.sh` and the example's `module/Makefile` take the kernel
+tree and the toolchain from the environment exactly as your own module's build
+would, and pass them to kbuild unchanged:
 
 | Variable | Meaning |
 |---|---|
@@ -308,21 +310,12 @@ kbuild unchanged:
 | `CC` | one specific compiler, such as `gcc-12` (passed on kbuild's command line, where it overrides the kernel's own choice) |
 | `KMAKEFLAGS` | extra `make` arguments, verbatim: the place for `CONFIG_*` overrides |
 
-A distro headers package ships host tools for its own architecture and
-cannot be used from a different build machine; a foreign target needs a
-source tree prepared for it (and `modules_prepare` builds the kernel's own
-host tools, so the build machine needs `flex`, `bison`, `libelf-dev` and
-`libssl-dev` — the Debian and Ubuntu package names — beside the cross
-compiler). A module meant to be *loaded* is built against a fully built kernel tree or
-the target's own headers package — either ships a real `Module.symvers` —
-never a bare `modules_prepare` tree. The cross-build recipe otto's own proof
-runs is on {doc}`../../../developing/kmodcov-provisioning`.
-
-**Build an old kernel's modules with a compiler of that kernel's own era.**
-An old kernel's headers and kbuild assume the compilers of their time, and a
-newer gcc is unsupported there. How otto provisions those kernels and
-compilers, and what `make kmodcov` proves on each, is maintainer material on
-{doc}`../../../developing/kmodcov-provisioning`.
+A module for another architecture is built against a kernel tree prepared
+for that target, and a module meant to be loaded needs that tree's real
+`Module.symvers`; an old kernel's modules are built with a compiler of that
+kernel's own era. {doc}`../../../developing/kmodcov-provisioning` has the
+cross-build recipe, what the build machine needs for it, and how otto
+provisions old kernels and their compilers.
 
 A stock kernel's config was written for the compiler that built it, and
 kbuild applies that config's compiler-specific flags to every external
@@ -353,8 +346,10 @@ clang's `.gcno` carries no compilation directory (gcc 9+ records it), so
 those records are relative to the kernel tree, and the reporting machine
 usually has no such file. That no longer fails the capture: otto runs every
 capture with `--ignore-errors source`, so a missing source file is never an
-error. Each header path otto cannot place in the project is logged as a
-warning and left out of the report; those records are kernel headers,
+error. Each header path otto cannot place in the project is logged — at INFO when no
+project file shares its name, the usual case for a kernel header, and as a
+warning when a project file of that name exists but its path does not match;
+those records are kernel headers,
 never the module's own files. If you have the kernel tree on the reporting
 machine, `["--base-directory", "<kernel tree>"]` in the bed host's
 `toolchain.lcov_args` ({doc}`../../../configuration/lab/coverage-toolchain`'s toolchain
@@ -374,7 +369,7 @@ from 2.6.39 to 3.0 upstream had renamed `path_lookup()` to
 without `done_path_create()`. The header carries an arm for each half,
 marked UNTESTED in a comment beside the code that names the headers column
 which would prove it; a module on those kernels builds, and the caveat sits
-where the reader is. Proving them is issue #531. A kernel whose version
+where the reader is. A kernel whose version
 number lies about its APIs (a distribution kernel with backports) gets the
 same remedy, a `kmodcov_local.h` that defines the name. On the beds' 6.8
 kernel the arm each name selects for 6.8 runs live, which is the newest for
@@ -419,10 +414,11 @@ kind `kmodcov` — project tooling nothing measures, one entry per kernel, point
 at the hosts running it by its `match` table — and the consumer is an
 ordinary `kmod` product with `coverage = "module"`:
 
-```{literalinclude} ../../../../tests/project5/.otto/settings.toml
+```{literalinclude} ../../../examples/quickstart-kmod/.otto/settings.toml
 :language: toml
-:start-at: "[[dev_tools]]"
-:end-before: "# The container-image products"
+:caption: .otto/settings.toml
+:start-after: "# doc: begin declare"
+:end-before: "# doc: end declare"
 ```
 
 otto loads the library on demand, at the consumer's own `install`, when it
@@ -430,26 +426,58 @@ is not already resident — so an `install-tools` before the run costs
 nothing, and nothing depends on declaration order. Both halves of the
 binding are checked at lab load: a host carrying a `coverage = "module"`
 product with no matching `kmodcov` entry is refused, naming the products, the
-host and the kind, and so is a host matching two of them. `cleanup` unloads
-the library after the products, which is the order dev tools always come
-down in; a test module that drives the products itself and never runs
-`cleanup` unloads it in its own teardown, the way
-`tests/project5/tests/test_kmod_demo.py` does. Such a teardown leaves the lab
-uninstalled, module and library both, so the next run puts them back:
-`otto run install --ensure` ({doc}`../../run/defaults`) installs them again,
-and a test marked `@pytest.mark.ensure("installed")`
-([Declaring lab state](../../../setup/writing-tests.md#declaring-lab-state-the-ensure-marker))
-converges the lab the same way before it runs. Either one loads the library
-on demand, at the module's own `install`.
+host and the kind, and so is a host matching two of them. `uninstall` leaves
+the library loaded; `cleanup` unloads it after the products, which is the
+order dev tools always come down in, and `uninstall-tools` unloads it on its
+own.
 
-`otto_kmod_demo` sets `coverage = "module"` and a `cov_dir` for `otto_kmodcov`
-to write under. A module built with the sentinel/macro snippet above refuses
-to load without that `cov_dir=` argument — `KMODCOV_INIT()` returns `-EINVAL`
-— so `coverage = "none"` on such a module, or a manual `insmod`, fails with
-a message only the kernel log shows: `otto host <id> exec --sudo dmesg`
-({doc}`../../host/exec`). See
+`qs_wordcount` sets `coverage = "module"` and keeps the default `cov_dir`,
+`/tmp/qs_wordcount`, for `otto_kmodcov` to write under. A module built with
+the sentinel/macro snippet above refuses to load without that `cov_dir=`
+argument — `KMODCOV_INIT()` returns `-EINVAL` — so `coverage = "none"` on
+such a module, or a manual `insmod`, fails with a message only the kernel log
+shows ([Building](#building) reads it). See
 {doc}`../../../configuration/declared-products-tools` for every parameter
 these kinds take — this page only walks the build the params point at.
+
+(kmod-teardown-ensure)=
+### Unloading in a test, and putting it back
+
+A test that unloads its module in its own teardown — which is how the exit
+routine's counters reach the run ({ref}`kmod-init-coverage`) — leaves the
+module uninstalled after the run; the library stays loaded
+([above](#declaring-the-module-and-its-library)). Two things put the module
+back, and a coverage run wants the second. `otto run install --ensure`
+({doc}`../../run/defaults`) installs it again, for work outside a coverage
+run: before `otto test --cov`, a loaded module loses its init routine
+({ref}`kmod-init-coverage`). For a coverage run, leave the module unloaded
+and mark the test `@pytest.mark.ensure("installed")`
+([Declaring lab state](../../../setup/writing-tests.md#declaring-lab-state-the-ensure-marker)):
+it converges the lab after the pre-run reset. Either one loads the library
+on demand, at the module's own `install`. The
+{doc}`kernel-module track <../../../setup/tracks/kmod>` runs both halves.
+
+(kmod-init-coverage)=
+## The init and exit routines
+
+A module's init routine runs once, at `insmod`, and its exit routine once,
+at `rmmod`. Their lines count only in a run whose counters were zeroed before
+the load and collected after the unload:
+
+- **A module loaded before the run loses its init routine.** With coverage
+  on, `otto test` resets every instrumented product's counters before any
+  test runs ({ref}`coverage-cov-clean-failures`), and for a loaded module
+  that reset is its sysfs `reset` file, which zeroes what the init routine
+  counted at load. `otto cov clean` resets it the same way
+  ({doc}`../clean`). Unload the module before the run (`otto run
+  uninstall`), and a test's `ensure("installed")` loads it after the reset:
+  the init routine then counts.
+- **A module still loaded at the fetch loses its exit routine.** A loaded
+  module is dumped through its sysfs `dump` file, which counts everything the
+  module ran so far but not the exit routine. Unload it before `otto test
+  --cov`'s post-run fetch — a test class's teardown does
+  ({ref}`kmod-teardown-ensure`) — and the exit dump `KMODCOV_EXIT()` writes
+  is what the fetch collects.
 
 ## The `kernel` method
 
@@ -469,23 +497,14 @@ table.
 ## What the report shows
 
 If `otto cov report` fails outright instead of showing anything below — a
-gcov version mismatch, or clang's unreadable kernel-header records — see
+gcov version mismatch — see
 the remedies under
-[Another kernel, ISA or compiler](kernel-modules.md#another-kernel-isa-or-compiler)
+[Another kernel, ISA or compiler](#another-kernel-isa-or-compiler)
 above.
 
-A run of `TestKmodDemo` produces exactly three tracked files per host —
-`demo_main.c`, `demo_parse.c`, `demo_policy.c`, one per translation unit
-compiled with `$(KMODCOV_CFLAGS)`; the two sentinel objects carry no code of
-their own and contribute nothing to the report. The demo's own `ctl` read-back
-reports a `dropped` counter alongside `enqueued` and `drained`: under the
-`fifo`/`lifo` policies it counts rejected enqueues into a full queue, but
-under `drop-oldest` — which never rejects — it counts evicted items instead.
-The exit routine's lines — `demo_exit`'s cleanup and its `pr_info` calls —
-show real hits rather than zero, because the tests leave the queue non-empty
-before teardown unloads the module and the exit dump captures what the exit
-routine did. Three paths stay uncovered: sending `drain` with an argument
-(`demo_parse.c`'s `if (arg)` guard), lowering `limit` below the queue's
-current length (`demo_policy.c`'s `if (cap < q->len)` guard), and the policy
-switch's `default:` arm (`demo_policy.c`'s `switch (q->policy)`), unreachable
-since the parser only ever admits the three named policies.
+A module's report tracks the translation units compiled with
+`$(KMODCOV_CFLAGS)` — `qs_main.c` and `wordcount.c` in the example. The two
+sentinel objects are compiled without those flags, so they are not
+coverage-instrumented and contribute no coverage records. The
+{doc}`kernel-module track <../../../setup/tracks/kmod>` reports one module
+across all three tiers.

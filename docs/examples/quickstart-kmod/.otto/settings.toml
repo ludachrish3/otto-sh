@@ -1,0 +1,63 @@
+# The kernel-module track's example project (Set up a project > Tracks >
+# Kernel module). The track page includes the sections between
+# `# doc: begin <id>` and `# doc: end <id>`.
+name = "quickstart-kmod"
+version = "0.1.0"
+
+# doc: begin libs
+libs = ["pylib"]
+init = ["quickstart_kmod"]
+tests = ["tests"]
+# doc: end libs
+
+[[lab.sources]]
+backend = "json"
+paths = ["lab_data"]
+
+[project]
+lab_patterns = ["example_lab"]
+
+# doc: begin declare
+# The coverage library: built from the vendored copy for dut's kernel, loaded
+# on dut when the module installs, and unloaded by `otto run cleanup`.
+[[dev_tools]]
+name = "otto_kmodcov"
+kind = "kmodcov"
+artifact = "build/kmodcov/lib/otto_kmodcov.ko"
+source = "third_party/otto_kmodcov"
+stage_dir = "/tmp"
+match = { id = "dut" }
+
+# The module under test. coverage = "module" hands insmod its cov_dir
+# (/tmp/qs_wordcount by default), where otto_kmodcov writes its counters.
+[[products]]
+name = "qs_wordcount"
+kind = "kmod"
+artifact = "module/qs_wordcount.ko"
+coverage = "module"
+stage_dir = "/tmp"
+match = { id = "dut" }
+# doc: end declare
+
+# doc: begin coverage
+[coverage]
+hosts = "dut"
+
+# What the e2e tests exercised, collected by `otto test --cov`.
+[coverage.tiers.system]
+kind = "e2e"
+precedence = 1
+
+# What someone exercised by hand, fetched by `otto cov get --tier manual`
+# and committed under .otto/coverage/manual/.
+[coverage.tiers.manual]
+kind = "manual"
+precedence = 2
+
+# What the unit tests exercised: their counters in the build tree, read at
+# report time. Only the module's own sources count.
+[coverage.tiers.unit]
+kind = "unit"
+precedence = 3
+harvest_dirs = ["build"]
+# doc: end coverage

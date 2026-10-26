@@ -193,8 +193,7 @@ ROOT = Path(__file__).resolve().parents[1]
 EXEMPT: dict[str, Exemption] = {
     "cli/cov/instrumenting/containers.md": Exemption("L4.5 docker track", 10),
     "cli/cov/instrumenting/embedded.md": Exemption("L4.3 embedded track", 3),
-    "cli/cov/instrumenting/kernel-modules.md": Exemption("L4.2 kernel-module track", 14),
-    "setup/coverage.md": Exemption("L4.2 kernel-module and L4.5 docker tracks", 2),
+    "setup/coverage.md": Exemption("L4.5 docker track", 1),
 }
 
 GENERIC_TARGETS = frozenset({"all", "build", "check", "clean", "dev", "format", "help", "lint"})

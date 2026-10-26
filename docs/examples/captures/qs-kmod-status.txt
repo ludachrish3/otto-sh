@@ -1,0 +1,6 @@
+$ otto --lab example_lab run status
+INFO     fleet of interest: 1 of 2 lab hosts (1 project(s), 0 excluded)
+quickstart-kmod  uninstalled
+lab is uninstalled
+
+Output directory: /tmp/otto-gs/xdir/run/<run>_status

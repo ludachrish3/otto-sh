@@ -10,6 +10,7 @@ Then scaffold a project and reach your first host: {doc}`shared-setup`.
 
 shared-setup
 tracks/shell
+tracks/kmod
 defining-products-and-tools
 running-tests
 running-instructions

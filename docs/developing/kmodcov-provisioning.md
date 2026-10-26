@@ -8,8 +8,9 @@ follow, are on {doc}`../cli/cov/instrumenting/kernel-modules`.
 ## The cross build otto's proof runs
 
 otto's own proof runs this recipe — it also builds a copy of the
-demo module the same way — on an arm64 machine building x86_64 modules (any
-other pair changes only the `ARCH` name and the `CROSS_COMPILE` prefix):
+[demo module](#the-fixtures-demo-module) the same way — on an arm64 machine
+building x86_64 modules (any other pair changes only the `ARCH` name and the
+`CROSS_COMPILE` prefix):
 
 ```bash
 tar -xJf linux-6.8.tar.xz
@@ -18,6 +19,13 @@ KDIR=$PWD/linux-6.8 ARCH=x86_64 CROSS_COMPILE=x86_64-linux-gnu- \
     KMAKEFLAGS=KBUILD_MODPOST_WARN=1 \
     src/otto/kmodcov/build.sh build
 ```
+
+A distro headers package ships host tools for its own architecture and
+cannot be used from a different build machine; a foreign target needs a
+source tree prepared for it (and `modules_prepare` builds the kernel's own
+host tools, so the build machine needs `flex`, `bison`, `libelf-dev` and
+`libssl-dev` — the Debian and Ubuntu package names — beside the cross
+compiler).
 
 That `KMAKEFLAGS=KBUILD_MODPOST_WARN=1` is there because a prepared source
 tree like this one has no `Module.symvers`: `make … defconfig
@@ -101,3 +109,44 @@ No compiler `make kmodcov` builds with emits `.ctors`, so that convention is
 proven instead on a rewritten object — the matrix row "build: a
 .ctors-convention demo is bracketed too". Collection of those files is
 tracked as #530.
+
+## The fixture's demo module
+
+`make kmodcov` proves the library with `tests/project5/kmod/demo/`, a small
+bounded queue driven from a debugfs control file. `tests/project5/kmod/build.sh`
+builds the library out of tree from the fixture's vendored copy, then the demo
+in place against it, and checks both modules' `vermagic` before it calls the
+build a success; `tests/project5/build.sh` is the human entry point, running
+that script and then the container image's own `docker/build.sh`. The suite
+that drives the demo, `tests/project5/tests/test_kmod_demo.py`, never runs
+`cleanup`: its teardown unloads the demo and then the library, because the next
+`make kmodcov` column's demo, built by another compiler, cannot use a library
+left resident.
+
+The demo also carries a `demo_compat.h`, three definitions of what a
+module of 2.6.32's age carries itself: `simple_open` below 3.5, `kstrtol`
+below 2.6.39 and `strim` below 2.6.33, each under its own version guard.
+It is the demo's business, not the library's — a module
+written for one kernel needs none of it — and it is what lets `make kmodcov`
+build the same three instrumented units, with the same coverage
+expectations, on every kernel of the set.
+
+A run of `TestKmodDemo` produces exactly three tracked files per host —
+`demo_main.c`, `demo_parse.c`, `demo_policy.c`, one per translation unit
+compiled with `$(KMODCOV_CFLAGS)`. The demo's own `ctl` read-back
+reports a `dropped` counter alongside `enqueued` and `drained`: under the
+`fifo`/`lifo` policies it counts rejected enqueues into a full queue, but
+under `drop-oldest` — which never rejects — it counts evicted items instead.
+The exit routine's lines — `demo_exit`'s cleanup and its `pr_info` calls —
+show real hits rather than zero, because the tests leave the queue non-empty
+before teardown unloads the module and the exit dump captures what the exit
+routine did. Three paths stay uncovered: sending `drain` with an argument
+(`demo_parse.c`'s `if (arg)` guard), lowering `limit` below the queue's
+current length (`demo_policy.c`'s `if (cap < q->len)` guard), and the policy
+switch's `default:` arm (`demo_policy.c`'s `switch (q->policy)`), unreachable
+since the parser only ever admits the three named policies.
+
+Open proof work: the two untested arms of
+[Kernel versions](../cli/cov/instrumenting/kernel-modules.md#kernel-versions)
+(issue #531), and proving a customised library against the matrix's own
+contracts (issue #406).

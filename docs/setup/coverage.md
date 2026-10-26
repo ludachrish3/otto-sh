@@ -227,36 +227,30 @@ instead of `kind = "shell"` — but a module has no process to write
 (`src/otto/kmodcov/`), does that job instead. A product links against it
 and declares `coverage = "module"`:
 
-```{literalinclude} ../../tests/project5/.otto/settings.toml
+```{literalinclude} ../examples/quickstart-kmod/.otto/settings.toml
 :language: toml
-:start-at: "[[dev_tools]]"
-:end-before: "# The container-image products"
+:start-after: "# doc: begin declare"
+:end-before: "# doc: end declare"
 ```
 
 The library, `otto_kmodcov`, is not a product — nothing measures it — but a
 `[[dev_tools]]` entry of kind `kmodcov`, one per kernel: otto loads it on
-demand when a consumer installs, and `cleanup` unloads it after the
-products (`uninstall` leaves it loaded; `uninstall-tools` unloads it on its
-own). The consumer module, `otto_kmod_demo`, sets `coverage = "module"`
-and a `cov_dir`: on install, otto appends
-`cov_dir=<cov_dir>` to *its own* `insmod` line — the parameter
-`KMODCOV_DECLARE()` declares on the module — and the module hands that value
-to the `otto_kmodcov` runtime at `KMODCOV_INIT()`. A write to the module's
-sysfs control file (`/sys/module/otto_kmod_demo/kmodcov/dump`) then dumps
-its counters there as ordinary `.gcda` files, fetched exactly like any
+demand when a consumer installs; which command unloads it is under
+[Declaring the module and its library](../cli/cov/instrumenting/kernel-modules.md#declaring-the-module-and-its-library).
+The consumer module, `qs_wordcount`, sets `coverage = "module"`: on
+install, otto appends `cov_dir=<cov_dir>` to *its own* `insmod` line — the
+parameter `KMODCOV_DECLARE()` declares on the module — and the module hands
+that value to the `otto_kmodcov` runtime at `KMODCOV_INIT()`. A write to the
+module's sysfs control file (`/sys/module/qs_wordcount/kmodcov/dump`) then
+dumps its counters there as ordinary `.gcda` files, fetched exactly like any
 other product's.
 
-```bash
-otto test --cov TestKmodDemo
-```
-
-Coverage from a module's exit routine only reaches the report if the
-module is uninstalled before the post-run fetch — a test class's teardown does
-this by unloading the product, and the exit dump lands before `otto test
---cov`'s own post-run fetch runs (not `otto cov get`, a separate,
-later command). {doc}`../cli/cov/instrumenting/kernel-modules` has the
-rest: what a module lacks, instrumenting a module of your own,
-and the alternative `coverage = "kernel"` method.
+Which of a module's lines a run can count — its init and exit routines
+especially — is on {ref}`kmod-init-coverage`.
+{doc}`../cli/cov/instrumenting/kernel-modules` has the rest: what a module
+lacks, instrumenting a module of your own, and the alternative
+`coverage = "kernel"` method. {doc}`tracks/kmod` builds one module from start to
+finish.
 
 ## A container image
 

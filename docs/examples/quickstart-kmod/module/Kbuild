@@ -1,0 +1,12 @@
+# qs_wordcount, instrumented for otto_kmodcov: the starter's Kbuild.example
+# (third_party/otto_kmodcov-consumer/) with the module and its objects filled
+# in. kmodcov_begin.c and kmodcov_end.c are the starter's two sentinels, copied
+# here; they go FIRST and LAST in the object list, bracketing the coverage
+# constructors otto_kmodcov runs at KMODCOV_INIT(). module/Makefile always
+# passes KMODCOV, so the starter's `KMODCOV ?=` fallback is left out.
+# `-include`, so `make clean` works before the library is built.
+-include $(KMODCOV)/consumer.mk
+obj-m := qs_wordcount.o
+qs_wordcount-y := kmodcov_begin.o qs_main.o wordcount.o kmodcov_end.o
+CFLAGS_qs_main.o += $(KMODCOV_CFLAGS)
+CFLAGS_wordcount.o += $(KMODCOV_CFLAGS)

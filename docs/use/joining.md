@@ -65,8 +65,9 @@ otto --lab my_lab run install --ensure   # converge: do only the missing work
 `-n` previews a run without contacting a device. `--ensure` turns `install`
 into a converge: an installed lab does no work, and a partial one is brought
 back to installed. A coverage run of a kernel-module project can unload its
-modules at teardown and leave the lab partial; `run install --ensure` restores
-it. {doc}`../cli/run/defaults` covers all of this.
+modules at teardown and leave the lab partial, or uninstalled when they are
+its only products; `run install --ensure` restores it.
+{doc}`../cli/run/defaults` covers all of this.
 
 ## Run its tests
 

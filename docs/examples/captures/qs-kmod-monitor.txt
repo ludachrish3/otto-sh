@@ -1,0 +1,21 @@
+$ otto --lab example_lab test --no-cov --no-random TestMonitoring
+INFO     fleet of interest: 1 of 2 lab hosts (1 project(s), 0 excluded)
+======================================= test session starts ========================================
+INFO     === test_module_size_is_charted ===
+INFO     @dut   | sudo -S -p 'otto-sudo:' sh -c 'printf %s one >
+         /sys/module/qs_wordcount/parameters/line'
+INFO     @dut   | cat /sys/module/qs_wordcount/parameters/words
+INFO     @dut > | 1
+INFO     @dut   | sudo -S -p 'otto-sudo:' sh -c 'printf %s '"'"'one two'"'"' >
+         /sys/module/qs_wordcount/parameters/line'
+INFO     @dut   | cat /sys/module/qs_wordcount/parameters/words
+INFO     @dut > | 2
+INFO     @dut   | sudo -S -p 'otto-sudo:' sh -c 'printf %s '"'"'one two three'"'"' >
+         /sys/module/qs_wordcount/parameters/line'
+INFO     @dut   | cat /sys/module/qs_wordcount/parameters/words
+INFO     @dut > | 3
+
+------------- generated xml file: /tmp/otto-gs/xdir/test/<run>/junit.xml -------------
+=== 1 passed, 3 deselected in <t>s ===
+
+Output directory: /tmp/otto-gs/xdir/test/<run>

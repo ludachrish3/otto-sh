@@ -1131,8 +1131,29 @@ def test_an_ordered_set_no_capture_runs_or_a_malformed_table_is_refused_at_load(
 def test_the_shared_manifest_s_full_check_selects_every_capture_and_labless_none_of_a_set():
     manifest = rdc.read_manifest(rdc.DEFAULT_MANIFEST)
     assert "quickstart-shell" in manifest.ordered
+    assert "quickstart-kmod" in manifest.ordered
     every = manifest.captures
     full = rdc.select(every, labless=False, only=[], ordered=manifest.ordered)
     assert full == every
     labless = rdc.select(every, labless=True, only=[], ordered=manifest.ordered)
     assert not [c for c in labless if c.project in manifest.ordered]
+
+
+def test_no_two_projects_share_a_coverage_or_report_destination():
+    """A destination one project writes is never another's, nor inside or above another's."""
+    owners: dict[str, set[str]] = {}
+    for cap in rdc.read_manifest(rdc.DEFAULT_MANIFEST).captures:
+        for flag in ["--cov-dir", "--dir"]:
+            if flag in cap.argv:
+                owners.setdefault(cap.argv[cap.argv.index(flag) + 1], set()).add(cap.project)
+    clashes = [
+        (a, b)
+        for a, pa in owners.items()
+        for b, pb in owners.items()
+        if (a == b and len(pa) > 1)
+        or (a != b and pa != pb and (b.startswith(a + "/") or a.startswith(b + "/")))
+    ]
+    assert not clashes, clashes
+    # Checked after the clashes: a shared destination also lowers the count,
+    # and the clash is the message that names the defect.
+    assert len(owners) >= 4, owners  # both tracks' --cov-dir and report --dir

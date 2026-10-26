@@ -30,14 +30,15 @@
 #
 # [ordered] -> sets = ["<project>", ...]: each project's captures form one
 #   ordered set, selected whole or not at all. Each is a project some capture
-#   runs. quickstart-shell is one: its build, test and coverage steps feed
-#   each other.
+#   runs. quickstart-shell and quickstart-kmod are two: in each, the build,
+#   test and coverage steps feed each other.
 
 [overlays]
 quickstart-shell = "bed/quickstart-shell"
+quickstart-kmod = "bed/quickstart-kmod"
 
 [ordered]
-sets = ["quickstart-shell"]
+sets = ["quickstart-shell", "quickstart-kmod"]
 
 [[capture]]
 id = "init-all"
@@ -409,3 +410,345 @@ project = "quickstart-shell"
 record = false
 timeout = 300
 argv = ["{otto}", "--lab", "example_lab", "run", "cleanup"]
+
+# ---- Kernel-module track (docs/setup/tracks/kmod.md) -------------------------
+# One ordered set, listed under [ordered]. In a fresh copy of the example it
+# runs init, then copies the sentinels, commits, builds the library, the
+# module and the unit tests, checks the builds left the tree clean, installs
+# on dut (test1), takes the manual tier, unloads the module so the e2e run's
+# ensure loads it after the pre-run clean, takes the e2e tier, puts the lab
+# back with --ensure, runs the unit tests, reports, monitors, and cleans the
+# host. The module builds on this machine against its own kernel headers;
+# test1 runs the same release, so the vermagic matches and insmod accepts it
+# (a mismatch fails the install).
+
+# The reader's first step (D1): vendor the library and write the consumer
+# starter. The settings already declare the kmodcov entry, so nothing is
+# appended. The "Next steps" panel varies with OTTOPATH and the cwd
+# (src/otto/cli/init.py:298-299, 317), so it is redacted.
+# --path, because captures run from the scratch dir (refresh_docs_captures.py:706).
+[[capture]]
+id = "qs-kmod-init"
+project = "quickstart-kmod"
+argv = ["{otto}", "init", "--kmodcov", "--path", "{project}"]
+redact = [
+    ["╭─ Next steps[\\s\\S]*?╰─+╯", "<next steps: shell completion, then the commands to try>"],
+]
+
+[[capture]]
+id = "qs-kmod-copy-sentinels"
+project = "quickstart-kmod"
+record = false
+argv = ["cp", "{project}/third_party/otto_kmodcov-consumer/kmodcov_begin.c", "{project}/third_party/otto_kmodcov-consumer/kmodcov_end.c", "{project}/module/"]
+
+[[capture]]
+id = "qs-kmod-git-init"
+project = "quickstart-kmod"
+record = false
+argv = ["git", "-C", "{project}", "init", "-q", "-b", "main"]
+
+[[capture]]
+id = "qs-kmod-git-add"
+project = "quickstart-kmod"
+record = false
+argv = ["git", "-C", "{project}", "add", "-A"]
+
+[[capture]]
+id = "qs-kmod-git-commit"
+project = "quickstart-kmod"
+record = false
+argv = ["git", "-C", "{project}", "-c", "user.name=otto docs", "-c", "user.email=docs@example.invalid", "commit", "-qm", "quickstart-kmod"]
+
+# A module built in place in the checkout would be copied here with objects
+# that name the checkout's paths: clean before the first build.
+[[capture]]
+id = "qs-kmod-module-clean"
+project = "quickstart-kmod"
+record = false
+timeout = 300
+argv = ["make", "-C", "{project}/module", "clean"]
+
+[[capture]]
+id = "qs-kmod-build-library"
+project = "quickstart-kmod"
+record = false
+timeout = 600
+argv = ["{project}/third_party/otto_kmodcov/build.sh", "{project}/build/kmodcov"]
+
+[[capture]]
+id = "qs-kmod-build-module"
+project = "quickstart-kmod"
+record = false
+timeout = 600
+argv = ["make", "-C", "{project}/module"]
+
+[[capture]]
+id = "qs-kmod-cmake-configure"
+project = "quickstart-kmod"
+record = false
+timeout = 300
+argv = ["cmake", "-S", "{project}", "-B", "{project}/build"]
+
+[[capture]]
+id = "qs-kmod-cmake-build"
+project = "quickstart-kmod"
+record = false
+timeout = 600
+argv = ["cmake", "--build", "{project}/build"]
+
+# The builds must leave the git repository clean: the page says so, and a
+# coverage capture anchors every measured file to it.
+[[capture]]
+id = "qs-kmod-tree-clean"
+project = "quickstart-kmod"
+record = false
+argv = ["sh", "-c", "test -z \"$(git -C \"$1\" status --porcelain)\"", "sh", "{project}"]
+
+# A library or module another session left resident would be used, or unloaded
+# under it: start from a clean host (fails loudly when one is in use).
+[[capture]]
+id = "qs-kmod-cleanup-before"
+project = "quickstart-kmod"
+record = false
+timeout = 300
+argv = ["{otto}", "--lab", "example_lab", "run", "cleanup"]
+
+# The capture keeps the emitted order and redacts only the run timestamp.
+[[capture]]
+id = "qs-kmod-install-dry"
+project = "quickstart-kmod"
+argv = ["{otto}", "--lab", "example_lab", "-n", "run", "install"]
+redact = [
+    ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
+]
+
+[[capture]]
+id = "qs-kmod-install"
+project = "quickstart-kmod"
+timeout = 300
+argv = ["{otto}", "--lab", "example_lab", "run", "install"]
+redact = [
+    ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
+    ["━+ ([\\d.]+/[\\d.]+ [kMG]?B) [\\d.]+ [kMG]?B/s \\d+:\\d{2}:\\d{2}", "━━━━ \\1 <rate>"],
+]
+
+[[capture]]
+id = "qs-kmod-cov-clean"
+project = "quickstart-kmod"
+record = false
+argv = ["{otto}", "--lab", "example_lab", "cov", "clean"]
+
+[[capture]]
+id = "qs-kmod-manual-run"
+project = "quickstart-kmod"
+argv = ["{otto}", "--lab", "example_lab", "host", "dut", "exec", "--sudo", "sh -c \"echo by hand > /sys/module/qs_wordcount/parameters/line; echo once more > /sys/module/qs_wordcount/parameters/line\""]
+redact = [
+    ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
+]
+
+[[capture]]
+id = "qs-kmod-cov-get-manual"
+project = "quickstart-kmod"
+timeout = 300
+argv = ["{otto}", "--lab", "example_lab", "cov", "get", "--tier", "manual", "--ticket", "QS-1", "--tester-name", "docs", "--tester-email", "docs@example.invalid"]
+redact = [
+    ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
+    ["otto-fetch-[0-9a-f]{12}", "otto-fetch-<id>"],
+    ["otto-fetch-<id>\\.(?!XXXXXX)[A-Za-z0-9]{6}", "otto-fetch-<id>.<tmp>"],
+]
+
+[[capture]]
+id = "qs-kmod-git-add-manual"
+project = "quickstart-kmod"
+record = false
+argv = ["git", "-C", "{project}", "add", ".otto/coverage/manual"]
+
+[[capture]]
+id = "qs-kmod-git-commit-manual"
+project = "quickstart-kmod"
+record = false
+argv = ["git", "-C", "{project}", "-c", "user.name=otto docs", "-c", "user.email=docs@example.invalid", "commit", "-qm", "manual coverage QS-1"]
+
+# Unloaded now, the module is loaded by the e2e run's ensure("installed")
+# after its pre-run clean, so the init routine's lines count.
+[[capture]]
+id = "qs-kmod-uninstall"
+project = "quickstart-kmod"
+timeout = 300
+argv = ["{otto}", "--lab", "example_lab", "run", "uninstall"]
+redact = [
+    ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
+]
+
+[[capture]]
+id = "qs-kmod-test-cov"
+project = "quickstart-kmod"
+timeout = 600
+argv = ["{otto}", "--lab", "example_lab", "test", "--cov", "--cov-dir", "{xdir}/quickstart-kmod/e2e/cov", "--no-random", "TestWordcount"]
+redact = [
+    ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
+    ["otto-fetch-[0-9a-f]{12}", "otto-fetch-<id>"],
+    ["otto-fetch-<id>\\.(?!XXXXXX)[A-Za-z0-9]{6}", "otto-fetch-<id>.<tmp>"],
+    ["=+ (\\d+ passed[^=\\n]*?) in [\\d.]+s =+", "=== \\1 in <t>s ==="],
+]
+
+# The teardown unloaded the one product: the lab reads uninstalled (exit 1).
+[[capture]]
+id = "qs-kmod-status"
+project = "quickstart-kmod"
+expect_exit = 1
+timeout = 300
+argv = ["{otto}", "--lab", "example_lab", "run", "status"]
+redact = [
+    ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
+]
+
+[[capture]]
+id = "qs-kmod-install-ensure"
+project = "quickstart-kmod"
+timeout = 300
+argv = ["{otto}", "--lab", "example_lab", "run", "install", "--ensure"]
+redact = [
+    ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
+    ["━+ ([\\d.]+/[\\d.]+ [kMG]?B) [\\d.]+ [kMG]?B/s \\d+:\\d{2}:\\d{2}", "━━━━ \\1 <rate>"],
+]
+
+[[capture]]
+id = "qs-kmod-unit"
+project = "quickstart-kmod"
+kind = "gtest"
+argv = ["{project}/build/tests/unit/unit_tests"]
+
+[[capture]]
+id = "qs-kmod-report"
+project = "quickstart-kmod"
+timeout = 300
+argv = ["{otto}", "--lab", "example_lab", "cov", "report", "{xdir}/quickstart-kmod/e2e", "--dir", "{xdir}/quickstart-kmod/report"]
+# How many unit-tree sources are dropped depends on whether GoogleTest was
+# installed or fetched into the build tree, so the count is redacted.
+redact = [
+    ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
+    ["dropped \\d+ not in any product", "dropped <n> not in any product"],
+]
+
+[[capture.store]]
+path = "{xdir}/quickstart-kmod/report/store.json"
+file = "{project}/module/wordcount.c"
+line = 11
+marker = "// qs: count-words"
+tier = "system"
+product = "qs_wordcount"
+hits = 3
+
+[[capture.store]]
+path = "{xdir}/quickstart-kmod/report/store.json"
+file = "{project}/module/qs_main.c"
+line = 24
+marker = "// qs: line-set"
+tier = "system"
+product = "qs_wordcount"
+hits = 3
+
+[[capture.store]]
+path = "{xdir}/quickstart-kmod/report/store.json"
+file = "{project}/module/qs_main.c"
+line = 39
+marker = "// qs: init"
+tier = "system"
+product = "qs_wordcount"
+hits = 1
+
+[[capture.store]]
+path = "{xdir}/quickstart-kmod/report/store.json"
+file = "{project}/module/qs_main.c"
+line = 45
+marker = "// qs: exit"
+tier = "system"
+product = "qs_wordcount"
+hits = 1
+
+[[capture.store]]
+path = "{xdir}/quickstart-kmod/report/store.json"
+file = "{project}/module/wordcount.c"
+line = 11
+marker = "// qs: count-words"
+tier = "manual"
+product = "qs_wordcount"
+hits = 2
+
+[[capture.store]]
+path = "{xdir}/quickstart-kmod/report/store.json"
+file = "{project}/module/qs_main.c"
+line = 24
+marker = "// qs: line-set"
+tier = "manual"
+product = "qs_wordcount"
+hits = 2
+
+[[capture.store]]
+path = "{xdir}/quickstart-kmod/report/store.json"
+file = "{project}/module/qs_main.c"
+line = 39
+marker = "// qs: init"
+tier = "manual"
+product = "qs_wordcount"
+hits = 0
+
+[[capture.store]]
+path = "{xdir}/quickstart-kmod/report/store.json"
+file = "{project}/module/qs_main.c"
+line = 45
+marker = "// qs: exit"
+tier = "manual"
+product = "qs_wordcount"
+hits = 0
+
+[[capture.store]]
+path = "{xdir}/quickstart-kmod/report/store.json"
+file = "{project}/module/wordcount.c"
+line = 11
+marker = "// qs: count-words"
+tier = "unit"
+hits = 2
+
+# Exact source sets: the module's own sources only, in every tier.
+[[capture.store_sources]]
+path = "{xdir}/quickstart-kmod/report/store.json"
+tier = "system"
+product = "qs_wordcount"
+files = ["{project}/module/qs_main.c", "{project}/module/wordcount.c"]
+
+[[capture.store_sources]]
+path = "{xdir}/quickstart-kmod/report/store.json"
+tier = "manual"
+product = "qs_wordcount"
+files = ["{project}/module/qs_main.c", "{project}/module/wordcount.c"]
+
+[[capture.store_sources]]
+path = "{xdir}/quickstart-kmod/report/store.json"
+tier = "unit"
+files = ["{project}/module/wordcount.c"]
+
+[[capture]]
+id = "qs-kmod-monitor"
+project = "quickstart-kmod"
+timeout = 300
+argv = ["{otto}", "--lab", "example_lab", "test", "--no-cov", "--no-random", "TestMonitoring"]
+redact = [
+    ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
+    ["=+ (\\d+ passed[^=\\n]*?) in [\\d.]+s =+", "=== \\1 in <t>s ==="],
+]
+
+[[capture]]
+id = "qs-kmod-cleanup"
+project = "quickstart-kmod"
+record = false
+timeout = 300
+argv = ["{otto}", "--lab", "example_lab", "run", "cleanup"]
+
+# cleanup's unload wrote the exit dump; leave no counters on the shared host.
+[[capture]]
+id = "qs-kmod-cov-clean-after"
+project = "quickstart-kmod"
+record = false
+argv = ["{otto}", "--lab", "example_lab", "cov", "clean"]

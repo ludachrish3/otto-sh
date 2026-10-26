@@ -1,0 +1,11 @@
+/build/
+__pycache__/
+# What kbuild writes beside the module's sources.
+/module/*.o
+/module/*.ko
+/module/*.mod
+/module/*.mod.c
+/module/.*.cmd
+/module/*.gcno
+/module/modules.order
+/module/Module.symvers

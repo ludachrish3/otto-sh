@@ -1,0 +1,48 @@
+$ otto --lab example_lab test --cov --cov-dir /tmp/otto-gs/xdir/quickstart-kmod/e2e/cov --no-random TestWordcount
+INFO     fleet of interest: 1 of 2 lab hosts (1 project(s), 0 excluded)
+======================================= test session starts ========================================
+INFO     @dut   | sudo -S -p 'otto-sudo:' sh -c '! test -d /tmp/qs_wordcount || find
+         /tmp/qs_wordcount -name '"'"'*.gcda'"'"' -type f -delete'
+INFO     coverage counters cleared before the run on 1 product(s) across 1 host(s)
+INFO     === test_counts_words[one-1] ===
+INFO     @dut   | qs_wordcount: staged
+INFO     @dut   | mkdir -p /tmp
+INFO     @dut   | sudo -S -p 'otto-sudo:' insmod /tmp/qs_wordcount.ko cov_dir=/tmp/qs_wordcount
+INFO     @dut   | rm -f /tmp/qs_wordcount.ko
+INFO     @dut   | qs_wordcount: installed
+INFO     @dut   | sudo -S -p 'otto-sudo:' sh -c 'printf %s one >
+         /sys/module/qs_wordcount/parameters/line'
+INFO     @dut   | cat /sys/module/qs_wordcount/parameters/words
+INFO     @dut > | 1
+INFO     === test_counts_words[one two-2] ===
+INFO     @dut   | sudo -S -p 'otto-sudo:' sh -c 'printf %s '"'"'one two'"'"' >
+         /sys/module/qs_wordcount/parameters/line'
+INFO     @dut   | cat /sys/module/qs_wordcount/parameters/words
+INFO     @dut > | 2
+INFO     === test_counts_words[one  two three-3] ===
+INFO     @dut   | sudo -S -p 'otto-sudo:' sh -c 'printf %s '"'"'one  two three'"'"' >
+         /sys/module/qs_wordcount/parameters/line'
+INFO     @dut   | cat /sys/module/qs_wordcount/parameters/words
+INFO     @dut > | 3
+INFO     @dut   | sudo -S -p 'otto-sudo:' rmmod qs_wordcount
+INFO     @dut   | qs_wordcount: uninstalled
+
+------------- generated xml file: /tmp/otto-gs/xdir/test/<run>/junit.xml -------------
+=== 3 passed, 1 deselected in <t>s ===
+INFO     Archiving .gcda for qs_wordcount on dut:/tmp/qs_wordcount
+INFO     @dut   | ! test -d /tmp/qs_wordcount && echo otto-no-cov-dir || (t=$(mktemp
+         "${TMPDIR:-/tmp}/otto-fetch-<id>.XXXXXX") && echo "otto-archive:$t" && cd
+         /tmp/qs_wordcount && tar -cf "$t" .)
+INFO     @dut > | otto-archive:/tmp/otto-fetch-<id>.<tmp>
+INFO     @dut   | rm -f "${TMPDIR:-/tmp}"/otto-fetch-<id>.*
+INFO     Coverage data collected to /tmp/otto-gs/xdir/quickstart-kmod/e2e/cov (1 product dir(s))
+INFO     === Capturing dut / qs_wordcount ===
+INFO     lcov capture: 2 file(s) ->
+         /tmp/otto-gs/xdir/quickstart-kmod/e2e/cov/dut/qs_wordcount/board.info
+INFO     dut/qs_wordcount: skipped 1 source file(s) outside the project root
+INFO     Coverage captures produced: 1 board(s)
+INFO     @dut   | sudo -S -p 'otto-sudo:' sh -c '! test -d /tmp/qs_wordcount || find
+         /tmp/qs_wordcount -name '"'"'*.gcda'"'"' -type f -delete'
+INFO     coverage counters cleared after collection on 1 product(s) across 1 host(s)
+
+Output directory: /tmp/otto-gs/xdir/test/<run>
