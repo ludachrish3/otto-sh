@@ -9,7 +9,7 @@ double (:func:`project_double`) is for the tests that stub the pytest session
 itself and only need a project with a test directory.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -88,15 +88,85 @@ def one_project_double(tmp_path, monkeypatch) -> MagicMock:
     return project
 
 
+TMPFS = Path("/dev/shm")
+"""Where a test finds a tmpfs: a directory whose ``st_size`` counts its entries."""
+
+
+def _tmpfs_unusable() -> "str | None":
+    """Why :data:`TMPFS` cannot hold a project whose directories shrink on unlink, or ``None``.
+
+    The capability is probed, not read from the mount table: inside a fresh
+    directory there, one file is created and unlinked, and the directory's
+    ``st_size`` must have shrunk, as tmpfs's per-entry size does.
+    """
+    import shutil
+    import tempfile
+
+    if not TMPFS.is_dir():
+        return f"{TMPFS} is absent"
+    try:
+        probe = Path(tempfile.mkdtemp(dir=TMPFS))
+    except OSError as error:
+        return f"{TMPFS} is not writable: {error}"
+    try:
+        entry = probe / "entry"
+        entry.touch()
+        before = probe.stat().st_size
+        entry.unlink()
+        after = probe.stat().st_size
+    except OSError as error:
+        return f"{TMPFS} probe failed: {error}"
+    finally:
+        shutil.rmtree(probe, ignore_errors=True)
+    if after >= before:
+        return f"a directory on {TMPFS} does not shrink on unlink (st_size {before} -> {after})"
+    return None
+
+
 @pytest.fixture
-def _generated_modules_evicted(tmp_path, monkeypatch):
-    """Drop the modules an in-process pytest session imported from *tmp_path*; restore sys.path.
+def tmpfs_root() -> Iterator[Path]:
+    """A fresh directory on tmpfs, removed afterwards; skips where none is usable.
+
+    On tmpfs a directory's ``st_size`` is 20 bytes per entry, so an unlink moves
+    its stat even with the mtime restored, as on a CI runner whose ``/tmp`` is
+    tmpfs; ext4 (a dev VM's ``/tmp``) hides that. A missing or read-only tmpfs,
+    or one that does not shrink, is a missing filesystem capability: the test
+    is skipped with that reason.
+    """
+    import shutil
+    import tempfile
+
+    reason = _tmpfs_unusable()
+    if reason is not None:
+        pytest.skip(reason)
+    root = Path(tempfile.mkdtemp(prefix="otto-tmpfs-", dir=TMPFS))
+    yield root
+    shutil.rmtree(root, ignore_errors=True)
+
+
+@pytest.fixture
+def project_root(request, tmp_path) -> Path:
+    """The directory :func:`one_project` builds its project in: *tmp_path*, unless overridden.
+
+    A test that needs its project on tmpfs selects it indirectly,
+    ``@pytest.mark.parametrize("project_root", ["tmp_path", "tmpfs_root"], indirect=True)``:
+    the parameter names the fixture that supplies the root. The suite as a
+    whole is not parametrized.
+    """
+    name = getattr(request, "param", "tmp_path")
+    return request.getfixturevalue(name)
+
+
+@pytest.fixture
+def _generated_modules_evicted(tmp_path, project_root, monkeypatch):
+    """Drop the modules an in-process session imported from this test's roots; restore sys.path.
 
     ``run_tests`` runs its pytest sessions in THIS interpreter, and pytest's
     default import mode caches a generated ``tests/test_c.py`` as the top-level
     module ``test_c``. A later test that writes its own ``test_c.py`` elsewhere
     would then collide with the stale entry, so every module whose file lives
-    under this test's *tmp_path* is evicted afterwards. ``PYTEST_ADDOPTS``
+    under this test's *tmp_path*, or under its :func:`project_root` when that
+    is elsewhere, is evicted afterwards. ``PYTEST_ADDOPTS``
     reaches an inner ``pytest.main`` despite its ``addopts=`` override, and
     pytest-playwright refuses a nested session, so the variable is pinned too.
     """
@@ -106,9 +176,9 @@ def _generated_modules_evicted(tmp_path, monkeypatch):
     saved_path = list(sys.path)
     yield
     sys.path[:] = saved_path
-    root = str(tmp_path)
+    roots = (str(tmp_path), str(project_root))
     for name, module in list(sys.modules.items()):
-        if (getattr(module, "__file__", None) or "").startswith(root):
+        if (getattr(module, "__file__", None) or "").startswith(roots):
             del sys.modules[name]
 
 
@@ -122,15 +192,16 @@ def _wire_projects(monkeypatch, roots):
 
 
 @pytest.fixture
-def one_project(tmp_path, monkeypatch, _generated_modules_evicted):
+def one_project(project_root, monkeypatch, _generated_modules_evicted):
     """Build one project (``tests/`` is its test root) and make it the lab's only project.
 
-    Called as ``one_project(files={...})``; returns the project's directory.
+    Called as ``one_project(files={...})``; returns the project's directory,
+    ``<project_root>/<name>`` (:func:`project_root`).
     """
     from tests._fixtures.project_scaffold import make_project
 
     def build(*, files: dict[str, str], name: str = "sut") -> Path:
-        sut = make_project(tmp_path / name, name=name, tests=["tests"], files=files)
+        sut = make_project(project_root / name, name=name, tests=["tests"], files=files)
         _wire_projects(monkeypatch, [sut])
         return sut
 

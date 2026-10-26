@@ -35,6 +35,8 @@ from tests._fixtures.project_scaffold import make_project
 from tests._fixtures.run_projects import (  # noqa: F401 — fixtures, shared with tests/unit/suite
     _generated_modules_evicted,
     one_project,
+    project_root,
+    tmpfs_root,
     two_projects,
 )
 

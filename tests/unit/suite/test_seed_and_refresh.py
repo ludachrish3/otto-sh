@@ -44,9 +44,13 @@ def _the_project():
 
 
 @pytest.fixture
-def project(one_project, tmp_path) -> ImportLogProject:
-    """``tests/test_a.py`` (``TestA``), ``tests/test_b.py``, ``tests/sub/test_c.py``, a conftest."""
-    shell = ImportLogProject(tmp_path / "sut")
+def project(one_project, project_root) -> ImportLogProject:
+    """``tests/test_a.py`` (``TestA``), ``tests/test_b.py``, ``tests/sub/test_c.py``, a conftest.
+
+    Built under :func:`~tests._fixtures.run_projects.project_root`, so a test
+    that selects ``tmpfs_root`` there gets this project, and its logs, on tmpfs.
+    """
+    shell = ImportLogProject(project_root / "sut")
     shell.root = one_project(
         files={
             "tests/test_a.py": shell.module("test_a", _A),
@@ -55,6 +59,8 @@ def project(one_project, tmp_path) -> ImportLogProject:
             "tests/sub/test_c.py": shell.module("test_c", logged_test("test_c1")),
         }
     )
+    assert shell.root.parent == project_root, "one_project builds under the selected root"
+    assert shell.imports.parent == project_root, "the logs sit beside the built project"
     return shell
 
 
@@ -228,13 +234,22 @@ def test_a_project_with_no_test_directory_collects_nothing_wherever_otto_runs(
 # ── the refresh: only what moved ─────────────────────────────────────────────
 
 
+@pytest.mark.parametrize("project_root", ["tmp_path", "tmpfs_root"], indirect=True)
 def test_a_deleted_file_is_dropped_without_a_session(project, sessions):
-    """Its directory's stat is as it was (a rename elsewhere, a restored mtime): nothing to read."""
-    _seed(project, sessions)
+    """Its directory's stat is as it was (a rename elsewhere, a restored mtime): nothing to read.
+
+    ``test_b.py`` is renamed in place to a name of the same length that
+    pytest does not collect, not unlinked: a directory's ``st_size`` counts its
+    entries on tmpfs and their name lengths on btrfs, so only a same-length
+    rename leaves ``[mtime_ns, size]`` as it was on every filesystem. Run on
+    tmpfs too, the ``/tmp`` of a CI runner, where an unlink would move the stat.
+    """
+    seeded = _seed(project, sessions)
     tests = project.root / "tests"
     st = tests.stat()
-    (tests / "test_b.py").unlink()
+    (tests / "test_b.py").rename(tests / "test_b.px")
     os.utime(tests, ns=(st.st_atime_ns, st.st_mtime_ns))
+    assert tr._stat_pair(tests) == seeded.dirs[str(tests)], "the premise: its stat is as it was"
 
     table = _refresh()
 
@@ -244,6 +259,29 @@ def test_a_deleted_file_is_dropped_without_a_session(project, sessions):
     assert "test_b1" not in table.names
     assert tr.read_table(_the_project()) == table
     assert tr.classify(_the_project(), table).is_current
+
+
+@pytest.mark.parametrize("project_root", ["tmpfs_root"], indirect=True)
+def test_on_tmpfs_an_unlink_moves_its_directory_despite_a_restored_mtime(project, sessions):
+    """The contract a restored mtime cannot hide: on tmpfs the size counts entries.
+
+    The directory really lost an entry, and ``[mtime_ns, size]`` says so, so it
+    is a candidate for the next collection (what a CI runner, whose ``/tmp`` is
+    tmpfs, saw the unlink-based test start).
+    """
+    seeded = _seed(project, sessions)
+    tests = project.root / "tests"
+    st = tests.stat()
+    (tests / "test_b.py").unlink()
+    os.utime(tests, ns=(st.st_atime_ns, st.st_mtime_ns))
+    pair = tr._stat_pair(tests)
+    assert pair is not None
+    assert pair != seeded.dirs[str(tests)]
+    mtime_ns, size = pair
+    assert mtime_ns == st.st_mtime_ns, "the mtime is restored"
+    assert size < st.st_size, "the size is what moved"
+
+    assert tr.classify(_the_project(), tr.read_table(_the_project())).candidate_dirs == [tests]
 
 
 def test_cold_only_leaves_a_warm_table_whose_files_moved_alone(project, sessions):

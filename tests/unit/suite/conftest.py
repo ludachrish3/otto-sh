@@ -10,6 +10,8 @@ from tests._fixtures.run_projects import (  # noqa: F401 — fixtures, shared wi
     _generated_modules_evicted,
     one_project,
     one_project_double,
+    project_root,
+    tmpfs_root,
     two_projects,
 )
 
