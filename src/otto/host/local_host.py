@@ -528,16 +528,25 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
     @override
     async def _walk_remote(self, path: "str | Path") -> "RemoteListing":
         """Walk the filesystem directly — the runner IS the host, same rules as the shell script."""
-        from .recursive_transfer import ListingError, RemoteListing
+        from .recursive_transfer import _CANNOT_TELL, ListingError, RemoteListing
 
         root = Path(path)
         if "\n" in root.name:
             raise ListingError(
                 f"{root}: a name in this tree contains a newline; rename it and retry"
             )
-        if not root.is_dir():
-            kind = "f" if root.exists() or root.is_symlink() else "-"
-            return RemoteListing(kind=kind, dirs=[], files=[])
+        # Under a directory that cannot be searched, `[ -d ]` is just false;
+        # Path.is_dir raises there before Python 3.14, so read it the shell's way.
+        try:
+            is_dir = root.is_dir()
+        except PermissionError:
+            is_dir = False
+        if not is_dir:
+            if os.path.lexists(root):
+                return RemoteListing(kind="f", dirs=[], files=[])
+            if not _nearest_existing_ancestor_searchable(root):
+                raise ListingError(f"{root}: {_CANNOT_TELL}")
+            return RemoteListing(kind="-", dirs=[], files=[])
         dirs: list[Path] = []
         files: list[Path] = []
         unreadable: list[OSError] = []
@@ -591,3 +600,16 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
     async def _close(self) -> None:
         session_mgr = self._session_mgr
         await session_mgr.close_all()
+
+
+def _nearest_existing_ancestor_searchable(path: Path) -> bool:
+    """Whether the closest directory above *path* that exists may be searched.
+
+    The shell walk's rule for "missing" (``recursive_transfer._ABSENT_OR_UNKNOWN``):
+    a path that does not show is missing only when the directory it would sit
+    in could be looked into.
+    """
+    ancestor = path.parent
+    while not os.path.lexists(ancestor) and ancestor != ancestor.parent:
+        ancestor = ancestor.parent
+    return os.access(ancestor, os.X_OK)

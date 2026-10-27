@@ -76,6 +76,29 @@ async def test_listing_classifies_a_file_and_a_missing_path(tmp_path: Path, walk
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("walk", ["shell", "local"])
+@pytest.mark.parametrize("depth", ["child", "grandchild"])
+async def test_a_path_under_an_unsearchable_directory_is_unknown_not_missing(
+    tmp_path: Path, walk: str, depth: str
+):
+    """``[ -e ]`` is false under a directory the host may not search; reading that as
+    "missing" would let a caller act on an absence nobody established."""
+    if os.geteuid() == 0:
+        pytest.skip("root searches everything")
+    locked = tmp_path / "locked"
+    (locked / "there").mkdir(parents=True)
+    root = locked / "there" if depth == "child" else locked / "there" / "inner"
+    host = LocalHost()
+    call = (lambda p: PosixFileOps._walk_remote(host, p)) if walk == "shell" else host._walk_remote
+    locked.chmod(0o600)  # readable, not searchable
+    try:
+        with pytest.raises(ListingError, match="cannot tell whether it exists"):
+            await call(root)
+    finally:
+        locked.chmod(0o700)  # so tmp_path cleanup can remove it
+
+
+@pytest.mark.asyncio
 async def test_top_level_symlink_to_a_directory_is_walked(tmp_path: Path):
     real = tmp_path / "real"
     real.mkdir()

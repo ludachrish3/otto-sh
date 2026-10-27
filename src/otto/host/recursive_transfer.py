@@ -31,6 +31,9 @@ from ..result import Result
 from ..utils import Status
 from .transfer.base import aggregate_transfer, parse_file_mode
 
+_CANNOT_TELL = "cannot tell whether it exists: a directory above it cannot be searched"
+"""Why a path under an unsearchable directory is neither listed nor called missing."""
+
 
 class ListingError(OttoError, ValueError):
     """A remote tree could not be enumerated: the listing failed, or a name cannot ride it."""
@@ -70,7 +73,9 @@ def walk_script(quoted_root: str) -> str:
     that fails ``[ -r ] && [ -x ]`` is reported (``e``) but not descended. The
     root itself gets the same probe before it is walked — without it, an
     unreadable root's glob expands to nothing and reads as an empty tree
-    instead of a listing this host could not take.
+    instead of a listing this host could not take. A root that is not there
+    is ``t -`` only when the directory above it could be searched, and
+    ``t ?`` otherwise (see ``_ABSENT_OR_UNKNOWN``).
     """
     return (
         _WALK_FN
@@ -78,10 +83,25 @@ def walk_script(quoted_root: str) -> str:
         + f"if [ -r {quoted_root} ] && [ -x {quoted_root} ]; then w {quoted_root}; "
         + f"else printf 'e %s\\n' {quoted_root}; c=$((c+1)); fi; "
         + f"elif [ -e {quoted_root} ] || [ -L {quoted_root} ]; then printf 't f\\n'; "
-        + "else printf 't -\\n'; fi; "
+        + _ABSENT_OR_UNKNOWN.format(root=quoted_root)
+        + "fi; "
         + "printf 'n %s\\n' \"$c\""
     )
 
+
+_ABSENT_OR_UNKNOWN = (
+    "else a={root}; while :; do "
+    'case $a in */*) a=${{a%/*}};; *) a=.;; esac; [ -n "$a" ] || a=/; '
+    'if [ -e "$a" ] || [ "$a" = / ]; then break; fi; done; '
+    "if [ -x \"$a\" ]; then printf 't -\\n'; else printf 't ?\\n'; fi; "
+)
+"""The not-there branch of :func:`walk_script`: ``t -`` only when it is known.
+
+``[ -e ]`` is false both for a path that does not exist and for one under a
+directory the host may not search. So the nearest ancestor that does exist
+decides: searchable, and the path is missing (``t -``); not, and nobody can
+say (``t ?``), which :func:`parse_listing` refuses rather than read as
+missing."""
 
 _MIN_FRAMED_LINES = 2
 """A framed listing carries at least the ``t`` line and the ``n`` line."""
@@ -104,6 +124,8 @@ def parse_listing(text: str, root: Path) -> RemoteListing:
     ):
         raise ListingError(f"{root}: malformed tree listing ({len(lines)} lines)")
     kind = lines[0][2:]
+    if kind == "?":
+        raise ListingError(f"{root}: {_CANNOT_TELL}")
     try:
         declared = int(lines[-1][2:])
     except ValueError:
