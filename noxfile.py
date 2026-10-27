@@ -768,7 +768,10 @@ def lint(session: nox.Session) -> None:
     baseline — see its header); ast-grep enforces the scope-sensitive pattern
     rules in .ast-grep/rules/ and `ast-grep test` checks those rules against
     the pinned snippets in .ast-grep/rule-tests/ (a rule that stops matching
-    its own motivating example is a silent gate loss).
+    its own motivating example is a silent gate loss); the duplicate-code
+    ratchet (scripts/check_duplicate_code.py) refuses a clone pair pylint's
+    similarities checker reports that scripts/duplicate_code_baseline.txt
+    does not list, and a listed pair that no longer reports.
     The tach layer canary runs the installed tach on a throwaway project and
     fails if tach.toml's layer switch stops meaning what tach.toml assumes; the
     monitor boundary canary runs the monitor boundary test's fixtures through
@@ -790,6 +793,7 @@ def lint(session: nox.Session) -> None:
     session.run("python", "scripts/monitor_boundary_tach_canary.py")
     session.run("ast-grep", "scan", "src/otto", "web/src", "tests")
     session.run("ast-grep", "test", "--skip-snapshot-tests")
+    session.run("python", "scripts/check_duplicate_code.py")
 
 
 @nox_uv.session(uv_groups=["dev"])

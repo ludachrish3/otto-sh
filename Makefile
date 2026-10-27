@@ -1615,7 +1615,7 @@ lint-python: lint-arch ## (Quality) Ruff lint + format checks AND the architectu
 # count every import tach counts is about tach's behaviour, so
 # scripts/monitor_boundary_tach_canary.py re-checks it against the installed
 # tach beside the layer canary.
-lint-arch: check-breaking ## (Quality) Architecture gates: tach (module dependency contracts and layers) + the tach layer and monitor boundary canaries + the layer and import-string audits + ast-grep (pattern rules) + the lazy-export import rules + check-breaking (public-API golden marking)
+lint-arch: check-breaking ## (Quality) Architecture gates: tach (module dependency contracts and layers) + the tach layer and monitor boundary canaries + the layer and import-string audits + ast-grep (pattern rules) + the duplicate-code ratchet (pylint similarities against scripts/duplicate_code_baseline.txt) + the lazy-export import rules + check-breaking (public-API golden marking)
 	@$(SAY) "tach: module dependency contracts (tach.toml)"
 	@uv run --group lint tach check --exact
 	@$(SAY) "tach: the installed tach still enforces the layer switch"
@@ -1626,6 +1626,8 @@ lint-arch: check-breaking ## (Quality) Architecture gates: tach (module dependen
 	@uv run --group lint ast-grep scan src/otto web/src tests
 	@$(SAY) "ast-grep: rule tests (.ast-grep/rule-tests/)"
 	@uv run --group lint ast-grep test --skip-snapshot-tests
+	@$(SAY) "duplicate code: no clone pair beyond scripts/duplicate_code_baseline.txt, and none it lists has gone"
+	@uv run --group lint python scripts/check_duplicate_code.py
 	@$(SAY) "import rules: lazy exports patched where defined, read at call time, moved names spelled once, imported from their defining module"
 	@uv run pytest tests/unit/test_patch_targets.py tests/unit/test_no_import_time_lazy_exports.py tests/unit/test_moved_name_spellings.py tests/unit/test_internal_imports_skip_facades.py -q -n0 -p no:randomly -p no:cacheprovider --no-cov
 	@$(SAY) "layers and import strings: layer coverage, string audit, monitor boundary"

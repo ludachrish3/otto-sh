@@ -204,6 +204,7 @@ dev = [
 lint = [
     "tach>=0.35.0",
     "ast-grep-cli>=0.45.0",
+    "pylint>=3.3",
 ]
 
 [tool.doc8]

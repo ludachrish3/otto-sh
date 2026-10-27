@@ -297,7 +297,8 @@ the recommended "Biome" and "Vitest" VS Code extensions (see
 One asymmetry inside that shape, because it is the kind that bites: `make
 lint-python` also runs the architecture gates (`lint-arch` — tach, ast-grep,
 `ast-grep test`, which runs each rule's own valid/invalid snippets from
-`.ast-grep/rule-tests/`, and the four parse-only tests behind
+`.ast-grep/rule-tests/`, the [duplicate-code ratchet](#duplicated-code), and
+the four parse-only tests behind
 [Patching lazily exported names](#patching-lazily-exported-names)), so it
 matches CI's `lint-python` job, which is `nox -s lint` and has always run
 them; CI runs the four import-rule tests in its `tests` job. It ran ruff only until 2026-08-10, and the difference
@@ -1598,6 +1599,35 @@ layers name an edge that regrows:
   what a module may import anywhere, so a row names the dependencies its
   module imports only inside a function; those must not load at import, and
   every other declared dependency must.
+
+### Duplicated code
+
+Two kinds, caught two ways.
+
+A block copied between modules is the textual kind, and
+`scripts/check_duplicate_code.py` (`make lint-arch`, `nox -s lint`) catches
+it: pylint's similarities checker reports every pair of `src/otto` modules
+sharing six or more consecutive lines, comments, docstrings and imports left
+out, and the gate compares the pairs against
+`scripts/duplicate_code_baseline.txt`. The contract is `tach.toml`'s ratchet:
+a pair the baseline does not list fails, and so does a listed pair that no
+longer reports — remove its line in the same change, so the file only
+shrinks. Pairs are keyed on module names, not line numbers, so an edit above
+a clone does not move it out of the baseline. The remedy for a new pair is
+one function the copies call; `--write` regenerates the file, and an added
+line in its diff is a new clone to fold, not a baseline to accept.
+
+The same decision computed at two entry points in different words — a
+constant restated where another site calls a resolver, an open sequence
+re-spelled with a subset of its steps, a command string rebuilt by hand, a
+retry loop beside `otto.utils.wait_for` — is the semantic kind, and no
+detector sees it. AGENTS.md's "one decision, one place" rule is the gate:
+find the site that already decides it before writing, and a review names
+every restatement with the existing site's path. The deadline-poll rule
+(`.ast-grep/rules/no-handrolled-deadline-poll.yml`) covers the one shape of
+it that an AST pattern can express: a poll whose deadline is spelled as a
+`range()` count times a sleep is the same poll as a clock-spelled one, and
+goes through `wait_for` / `wait_for_async` like the rest.
 
 ## AI-Assisted Contributions
 
