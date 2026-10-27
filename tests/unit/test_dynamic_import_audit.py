@@ -1028,6 +1028,7 @@ STRING_EDGES: list[tuple[str, str, str]] = [
     ("otto/context.py", "otto.invocation:HostResolver", FACADE_BINDING),
     ("otto/context.py", "otto.invocation:RunPolicy", FACADE_BINDING),
     ("otto/context.py", "otto.invocation:Variant", FACADE_BINDING),
+    ("otto/context.py", "otto.run_context:HostOverrides", FACADE_BINDING),
     ("otto/context.py", "otto.run_context:OttoContext", FACADE_BINDING),
     ("otto/context.py", "otto.run_context:ProjectContextView", FACADE_BINDING),
     ("otto/context.py", "otto.run_context:get_context", FACADE_BINDING),

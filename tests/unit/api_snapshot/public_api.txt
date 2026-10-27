@@ -172,6 +172,16 @@ name	otto.context:ContextBinding	class
 mro	otto.context:ContextBinding	-
 call	otto.context:ContextBinding	sync	-
 abstract	otto.context:ContextBinding	-
+name	otto.context:HostOverrides	typeddict
+input	otto.context:HostOverrides	S:"ftp_options"	optional	-	S:"ftp_options"
+input	otto.context:HostOverrides	S:"nc_options"	optional	-	S:"nc_options"
+input	otto.context:HostOverrides	S:"scp_options"	optional	-	S:"scp_options"
+input	otto.context:HostOverrides	S:"sftp_options"	optional	-	S:"sftp_options"
+input	otto.context:HostOverrides	S:"ssh_options"	optional	-	S:"ssh_options"
+input	otto.context:HostOverrides	S:"telnet_options"	optional	-	S:"telnet_options"
+input	otto.context:HostOverrides	S:"term"	optional	-	S:"term"
+input	otto.context:HostOverrides	S:"transfer"	optional	-	S:"transfer"
+input	otto.context:HostOverrides	S:"userland_options"	optional	-	S:"userland_options"
 name	otto.context:HostResolver	protocol
 mro	otto.context:HostResolver	-
 member	otto.context:HostResolver.hosts	property:g--
@@ -186,7 +196,7 @@ member	otto.context:OttoContext.all_hosts	method	sync	PK:pattern:N KO:include_co
 member	otto.context:OttoContext.bind_verb_options	method	sync	PK:verb:- PK:kwargs:-
 member	otto.context:OttoContext.cov	property:g--
 member	otto.context:OttoContext.cov_decision	field
-member	otto.context:OttoContext.do_for_all_hosts	method	coroutine	PK:method:- VP:args:- KO:pattern:N KO:concurrent:B:true KO:include_containers:B:false KO:include_local:B:false KO:term:N KO:transfer:N KO:ssh_options:N KO:telnet_options:N KO:sftp_options:N KO:scp_options:N KO:ftp_options:N KO:nc_options:N KO:userland_options:N KO:_scope_owner:N VK:kwargs:-
+member	otto.context:OttoContext.do_for_all_hosts	method	coroutine	PK:method:- VP:args:- KO:pattern:N KO:concurrent:B:true KO:include_containers:B:false KO:include_local:B:false KO:_scope_owner:N VK:kwargs:-
 member	otto.context:OttoContext.dry_run	property:g--
 member	otto.context:OttoContext.exclude_projects	field
 member	otto.context:OttoContext.for_project	method	sync	PK:name:-
@@ -199,7 +209,7 @@ member	otto.context:OttoContext.ordered_projects	property:g--
 member	otto.context:OttoContext.output_dir	property:g--
 member	otto.context:OttoContext.policy	field
 member	otto.context:OttoContext.projects	property:g--
-member	otto.context:OttoContext.run_on_all_hosts	method	coroutine	PK:cmds:- PK:pattern:N PK:concurrent:B:true PK:timeout:F:0x1.e000000000000p+4 KO:_scope_owner:N KO:include_containers:B:false KO:term:N KO:transfer:N KO:ssh_options:N KO:telnet_options:N KO:sftp_options:N KO:scp_options:N KO:ftp_options:N KO:nc_options:N KO:userland_options:N
+member	otto.context:OttoContext.run_on_all_hosts	method	coroutine	PK:cmds:- PK:pattern:N PK:concurrent:B:true PK:timeout:F:0x1.e000000000000p+4 KO:_scope_owner:N KO:include_containers:B:false VK:overrides:-
 member	otto.context:OttoContext.sweep_loop	method	coroutine	PK:loop:- KO:label:- KO:deadline:N
 member	otto.context:OttoContext.verb	field
 member	otto.context:OttoContext.verb_binding_preserved	method	sync	-
@@ -3449,19 +3459,19 @@ member	otto.lab:Lab.resources	field
 member	otto.lab:Lab.static_links	method	sync	-
 abstract	otto.lab:Lab	-
 name	otto.lab:all_hosts	function
-call	otto.lab:all_hosts	sync	PK:pattern:N KO:include_containers:B:false KO:include_local:B:false KO:term:N KO:transfer:N KO:ssh_options:N KO:telnet_options:N KO:sftp_options:N KO:scp_options:N KO:ftp_options:N KO:nc_options:N KO:userland_options:N
+call	otto.lab:all_hosts	sync	PK:pattern:N KO:include_containers:B:false KO:include_local:B:false VK:overrides:-
 name	otto.lab:do_for_all_hosts	function
-call	otto.lab:do_for_all_hosts	coroutine	PK:method:- VP:args:- KO:pattern:N KO:concurrent:B:true KO:include_containers:B:false KO:include_local:B:false KO:term:N KO:transfer:N KO:ssh_options:N KO:telnet_options:N KO:sftp_options:N KO:scp_options:N KO:ftp_options:N KO:nc_options:N KO:userland_options:N VK:kwargs:-
+call	otto.lab:do_for_all_hosts	coroutine	PK:method:- VP:args:- KO:pattern:N KO:concurrent:B:true KO:include_containers:B:false KO:include_local:B:false VK:kwargs:-
 name	otto.lab:fleet_of_interest	function
 call	otto.lab:fleet_of_interest	sync	PK:lab:- PK:projects:- KO:owner:N KO:exclude_projects:N KO:include_containers:B:false KO:include_local:B:false
 name	otto.lab:get_host	function
-call	otto.lab:get_host	sync	PK:host_id:- KO:term:N KO:transfer:N KO:ssh_options:N KO:telnet_options:N KO:sftp_options:N KO:scp_options:N KO:ftp_options:N KO:nc_options:N KO:userland_options:N
+call	otto.lab:get_host	sync	PK:host_id:- VK:overrides:-
 name	otto.lab:get_lab	function
 call	otto.lab:get_lab	sync	-
 name	otto.lab:load_lab	function
 call	otto.lab:load_lab	sync	PK:labnames:- PK:search_paths:N PK:preferences:N PK:repository:N PK:inventory:N
 name	otto.lab:run_on_all_hosts	function
-call	otto.lab:run_on_all_hosts	coroutine	PK:cmds:- PK:pattern:N PK:concurrent:B:true PK:timeout:F:0x1.e000000000000p+4 KO:include_containers:B:false KO:term:N KO:transfer:N KO:ssh_options:N KO:telnet_options:N KO:sftp_options:N KO:scp_options:N KO:ftp_options:N KO:nc_options:N KO:userland_options:N
+call	otto.lab:run_on_all_hosts	coroutine	PK:cmds:- PK:pattern:N PK:concurrent:B:true PK:timeout:F:0x1.e000000000000p+4 KO:include_containers:B:false VK:overrides:-
 name	otto.labs:CompositeLabRepository	class
 mro	otto.labs:CompositeLabRepository	-
 call	otto.labs:CompositeLabRepository	sync	PK:sources:-
@@ -5745,7 +5755,7 @@ member	otto:OttoContext.all_hosts	method	sync	PK:pattern:N KO:include_containers
 member	otto:OttoContext.bind_verb_options	method	sync	PK:verb:- PK:kwargs:-
 member	otto:OttoContext.cov	property:g--
 member	otto:OttoContext.cov_decision	field
-member	otto:OttoContext.do_for_all_hosts	method	coroutine	PK:method:- VP:args:- KO:pattern:N KO:concurrent:B:true KO:include_containers:B:false KO:include_local:B:false KO:term:N KO:transfer:N KO:ssh_options:N KO:telnet_options:N KO:sftp_options:N KO:scp_options:N KO:ftp_options:N KO:nc_options:N KO:userland_options:N KO:_scope_owner:N VK:kwargs:-
+member	otto:OttoContext.do_for_all_hosts	method	coroutine	PK:method:- VP:args:- KO:pattern:N KO:concurrent:B:true KO:include_containers:B:false KO:include_local:B:false KO:_scope_owner:N VK:kwargs:-
 member	otto:OttoContext.dry_run	property:g--
 member	otto:OttoContext.exclude_projects	field
 member	otto:OttoContext.for_project	method	sync	PK:name:-
@@ -5758,7 +5768,7 @@ member	otto:OttoContext.ordered_projects	property:g--
 member	otto:OttoContext.output_dir	property:g--
 member	otto:OttoContext.policy	field
 member	otto:OttoContext.projects	property:g--
-member	otto:OttoContext.run_on_all_hosts	method	coroutine	PK:cmds:- PK:pattern:N PK:concurrent:B:true PK:timeout:F:0x1.e000000000000p+4 KO:_scope_owner:N KO:include_containers:B:false KO:term:N KO:transfer:N KO:ssh_options:N KO:telnet_options:N KO:sftp_options:N KO:scp_options:N KO:ftp_options:N KO:nc_options:N KO:userland_options:N
+member	otto:OttoContext.run_on_all_hosts	method	coroutine	PK:cmds:- PK:pattern:N PK:concurrent:B:true PK:timeout:F:0x1.e000000000000p+4 KO:_scope_owner:N KO:include_containers:B:false VK:overrides:-
 member	otto:OttoContext.sweep_loop	method	coroutine	PK:loop:- KO:label:- KO:deadline:N
 member	otto:OttoContext.verb	field
 member	otto:OttoContext.verb_binding_preserved	method	sync	-
@@ -5870,7 +5880,7 @@ enum	otto:Status	Unstable	I:3
 enum	otto:Status	Skipped	I:4
 enum	otto:Status	NotRun	I:5
 name	otto:all_hosts	function
-call	otto:all_hosts	sync	PK:pattern:N KO:include_containers:B:false KO:include_local:B:false KO:term:N KO:transfer:N KO:ssh_options:N KO:telnet_options:N KO:sftp_options:N KO:scp_options:N KO:ftp_options:N KO:nc_options:N KO:userland_options:N
+call	otto:all_hosts	sync	PK:pattern:N KO:include_containers:B:false KO:include_local:B:false VK:overrides:-
 name	otto:app	callable
 call	otto:app	sync	VP:args:- VK:kwargs:-
 name	otto:cli_command	function
@@ -5878,7 +5888,7 @@ call	otto:cli_command	sync	KO:options:N KO:name:N KO:help:N KO:lab_free:B:false 
 name	otto:get_context	function
 call	otto:get_context	sync	-
 name	otto:get_host	function
-call	otto:get_host	sync	PK:host_id:- KO:term:N KO:transfer:N KO:ssh_options:N KO:telnet_options:N KO:sftp_options:N KO:scp_options:N KO:ftp_options:N KO:nc_options:N KO:userland_options:N
+call	otto:get_host	sync	PK:host_id:- VK:overrides:-
 name	otto:get_lab	function
 call	otto:get_lab	sync	-
 name	otto:load_lab	function
@@ -5898,7 +5908,7 @@ call	otto:register_project_actions	sync	PK:cls:- KO:overwrite:B:false
 name	otto:register_session_setup	function
 call	otto:register_session_setup	sync	PK:name:- PK:fn:- KO:overwrite:B:false
 name	otto:run_on_all_hosts	function
-call	otto:run_on_all_hosts	coroutine	PK:cmds:- PK:pattern:N PK:concurrent:B:true PK:timeout:F:0x1.e000000000000p+4 KO:include_containers:B:false KO:term:N KO:transfer:N KO:ssh_options:N KO:telnet_options:N KO:sftp_options:N KO:scp_options:N KO:ftp_options:N KO:nc_options:N KO:userland_options:N
+call	otto:run_on_all_hosts	coroutine	PK:cmds:- PK:pattern:N PK:concurrent:B:true PK:timeout:F:0x1.e000000000000p+4 KO:include_containers:B:false VK:overrides:-
 name	otto:run_tests	function
 call	otto:run_tests	sync	PK:names:N KO:run_options:O KO:options:N KO:output_dir:N
 name	otto:try_get_context	function

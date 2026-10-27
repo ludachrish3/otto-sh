@@ -12,40 +12,26 @@ from typing import (
 from .host.host import DEFAULT_COMMAND_TIMEOUT
 
 if TYPE_CHECKING:
+    from typing_extensions import Unpack
+
     from .config.project import Project
-    from .host.options import (
-        FtpOptions,
-        NcOptions,
-        ScpOptions,
-        SftpOptions,
-        SshOptions,
-        TelnetOptions,
-        UserlandOptions,
-    )
     from .host.remote_host import RemoteHost
     from .host.unix_host import UnixHost
     from .labs.loader import Lab
     from .result import Results
+    from .run_context import HostOverrides
 
 T = TypeVar("T")
 
 logger = logging.getLogger(__name__)
 
 
-def all_hosts(  # noqa: PLR0913 — wide host-dispatch API (mirrors do_for_all_hosts)
+def all_hosts(
     pattern: re.Pattern[str] | None = None,
     *,
     include_containers: bool = False,
     include_local: bool = False,
-    term: str | None = None,
-    transfer: str | None = None,
-    ssh_options: "SshOptions | None" = None,
-    telnet_options: "TelnetOptions | None" = None,
-    sftp_options: "SftpOptions | None" = None,
-    scp_options: "ScpOptions | None" = None,
-    ftp_options: "FtpOptions | None" = None,
-    nc_options: "NcOptions | None" = None,
-    userland_options: "UserlandOptions | None" = None,
+    **overrides: "Unpack[HostOverrides]",
 ) -> Generator["RemoteHost", Any, Any]:
     """Yield this run's fleet of interest, optionally narrowed by regex.
 
@@ -85,10 +71,9 @@ def all_hosts(  # noqa: PLR0913 — wide host-dispatch API (mirrors do_for_all_h
             (the default), the whole base set is yielded.
         include_containers: When ``True``, also yield
             :class:`~otto.host.docker_host.DockerContainerHost` entries. Defaults to ``False``.
-        term, transfer: optional active-protocol override; see
-            ``otto.run_context._apply_option_overrides``.
-        ssh_options, telnet_options, sftp_options, scp_options,
-        ftp_options, nc_options, userland_options: Optional per-call overrides. When
+        **overrides: The per-call host overrides of
+            :class:`~otto.context.HostOverrides` — ``term`` / ``transfer``
+            to switch the active protocol, and the ``*_options`` tables. When
             supplied, each yielded host is a fresh
             :func:`dataclasses.replace`-style copy whose corresponding
             ``*_options`` field is replaced by the caller's instance
@@ -122,34 +107,17 @@ def all_hosts(  # noqa: PLR0913 — wide host-dispatch API (mirrors do_for_all_h
         pattern,
         include_containers=include_containers,
         include_local=include_local,
-        term=term,
-        transfer=transfer,
-        ssh_options=ssh_options,
-        telnet_options=telnet_options,
-        sftp_options=sftp_options,
-        scp_options=scp_options,
-        ftp_options=ftp_options,
-        nc_options=nc_options,
-        userland_options=userland_options,
+        **overrides,
     )
 
 
-async def do_for_all_hosts(  # noqa: PLR0913 — wide host-dispatch API
+async def do_for_all_hosts(
     method: Callable[..., Awaitable[T]],
     *args: Any,
     pattern: re.Pattern[str] | None = None,
     concurrent: bool = True,
     include_containers: bool = False,
     include_local: bool = False,
-    term: str | None = None,
-    transfer: str | None = None,
-    ssh_options: "SshOptions | None" = None,
-    telnet_options: "TelnetOptions | None" = None,
-    sftp_options: "SftpOptions | None" = None,
-    scp_options: "ScpOptions | None" = None,
-    ftp_options: "FtpOptions | None" = None,
-    nc_options: "NcOptions | None" = None,
-    userland_options: "UserlandOptions | None" = None,
     **kwargs: Any,
 ) -> dict[str, T | BaseException]:
     """Call an async host method on every matching host.
@@ -165,13 +133,10 @@ async def do_for_all_hosts(  # noqa: PLR0913 — wide host-dispatch API
             ``False`` (default), container hosts are excluded.
         include_local: Forwarded to :func:`all_hosts`. When ``False``
             (default), the built-in ``local`` runner host is excluded.
-        term, transfer: optional active-protocol override; see
-            ``otto.run_context._apply_option_overrides``.
-        ssh_options, telnet_options, sftp_options, scp_options,
-        ftp_options, nc_options, userland_options: Optional per-call overrides
-            forwarded to :func:`all_hosts`. See its docstring for
-            semantics.
-        **kwargs: Keyword arguments forwarded to *method*.
+        **kwargs: The per-call host overrides of
+            :class:`~otto.context.HostOverrides` go to :func:`all_hosts`
+            (see its docstring for semantics); every other keyword is
+            forwarded to *method*.
 
     Returns:
         A dict keyed by host ID.  Values are the return of *method*,
@@ -198,35 +163,18 @@ async def do_for_all_hosts(  # noqa: PLR0913 — wide host-dispatch API
         concurrent=concurrent,
         include_containers=include_containers,
         include_local=include_local,
-        term=term,
-        transfer=transfer,
-        ssh_options=ssh_options,
-        telnet_options=telnet_options,
-        sftp_options=sftp_options,
-        scp_options=scp_options,
-        ftp_options=ftp_options,
-        nc_options=nc_options,
-        userland_options=userland_options,
         **kwargs,
     )
 
 
-async def run_on_all_hosts(  # noqa: PLR0913 — wide host-dispatch API
+async def run_on_all_hosts(
     cmds: list[str] | str,
     pattern: re.Pattern[str] | None = None,
     concurrent: bool = True,
     timeout: float = DEFAULT_COMMAND_TIMEOUT,
     *,
     include_containers: bool = False,
-    term: str | None = None,
-    transfer: str | None = None,
-    ssh_options: "SshOptions | None" = None,
-    telnet_options: "TelnetOptions | None" = None,
-    sftp_options: "SftpOptions | None" = None,
-    scp_options: "ScpOptions | None" = None,
-    ftp_options: "FtpOptions | None" = None,
-    nc_options: "NcOptions | None" = None,
-    userland_options: "UserlandOptions | None" = None,
+    **overrides: "Unpack[HostOverrides]",
 ) -> "dict[str, Results | BaseException]":
     """Run commands on every matching host via :meth:`~otto.host.host.BaseHost.run`.
 
@@ -242,11 +190,9 @@ async def run_on_all_hosts(  # noqa: PLR0913 — wide host-dispatch API
             :data:`~otto.host.host.DEFAULT_COMMAND_TIMEOUT`.
         include_containers: Forwarded to :func:`do_for_all_hosts`. When
             ``False`` (default), container hosts are excluded.
-        term, transfer: optional active-protocol override; see
-            ``otto.run_context._apply_option_overrides``.
-        ssh_options, telnet_options, sftp_options, scp_options,
-        ftp_options, nc_options, userland_options: Optional per-call overrides
-            forwarded to :func:`do_for_all_hosts`.
+        **overrides: The per-call host overrides of
+            :class:`~otto.context.HostOverrides`, forwarded to
+            :func:`do_for_all_hosts`.
 
     Returns:
         A dict keyed by host ID.  Values are :class:`~otto.result.Results` instances,
@@ -265,39 +211,20 @@ async def run_on_all_hosts(  # noqa: PLR0913 — wide host-dispatch API
         concurrent=concurrent,
         timeout=timeout,
         include_containers=include_containers,
-        term=term,
-        transfer=transfer,
-        ssh_options=ssh_options,
-        telnet_options=telnet_options,
-        sftp_options=sftp_options,
-        scp_options=scp_options,
-        ftp_options=ftp_options,
-        nc_options=nc_options,
-        userland_options=userland_options,
+        **overrides,
     )
 
 
 def get_host(
     host_id: str,
-    *,
-    term: str | None = None,
-    transfer: str | None = None,
-    ssh_options: "SshOptions | None" = None,
-    telnet_options: "TelnetOptions | None" = None,
-    sftp_options: "SftpOptions | None" = None,
-    scp_options: "ScpOptions | None" = None,
-    ftp_options: "FtpOptions | None" = None,
-    nc_options: "NcOptions | None" = None,
-    userland_options: "UserlandOptions | None" = None,
+    **overrides: "Unpack[HostOverrides]",
 ) -> "UnixHost":
     """Return the host registered under *host_id* in the active lab.
 
     Args:
         host_id: Unique host id (as produced by ``UnixHost.id``).
-        term, transfer: optional active-protocol override; see
-            ``otto.run_context._apply_option_overrides``.
-        ssh_options, telnet_options, sftp_options, scp_options,
-        ftp_options, nc_options, userland_options: Optional per-call overrides.
+        **overrides: The per-call host overrides of
+            :class:`~otto.context.HostOverrides`.
             Each non-``None`` argument **replaces** the corresponding
             ``*_options`` field on a returned copy wholesale; the copy is
             built via :func:`dataclasses.replace` so the new host's
@@ -312,15 +239,7 @@ def get_host(
 
     return get_context().get_host(
         host_id,
-        term=term,
-        transfer=transfer,
-        ssh_options=ssh_options,
-        telnet_options=telnet_options,
-        sftp_options=sftp_options,
-        scp_options=scp_options,
-        ftp_options=ftp_options,
-        nc_options=nc_options,
-        userland_options=userland_options,
+        **overrides,
     )
 
 

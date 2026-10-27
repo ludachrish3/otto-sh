@@ -19,7 +19,9 @@ import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, fields
-from typing import TYPE_CHECKING, Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypedDict, TypeVar, cast
+
+from typing_extensions import Unpack
 
 from .host.host import DEFAULT_COMMAND_TIMEOUT
 from .invocation import ContextBinding, RunPolicy, Variant
@@ -190,19 +192,37 @@ class _ContextResolver:
         return self._ctx.lab.hosts
 
 
-def _apply_option_overrides(
-    host: "RemoteHost",
-    *,
-    term: str | None = None,
-    transfer: str | None = None,
-    ssh_options: "SshOptions | None" = None,
-    telnet_options: "TelnetOptions | None" = None,
-    sftp_options: "SftpOptions | None" = None,
-    scp_options: "ScpOptions | None" = None,
-    ftp_options: "FtpOptions | None" = None,
-    nc_options: "NcOptions | None" = None,
-    userland_options: "UserlandOptions | None" = None,
-) -> "RemoteHost":
+class HostOverrides(TypedDict, total=False):
+    """The per-call host overrides every fleet entry accepts, named once.
+
+    ``otto.fleet``'s ``all_hosts`` / ``get_host`` / ``do_for_all_hosts`` /
+    ``run_on_all_hosts`` and :class:`OttoContext`'s methods of the same names
+    take these as ``**overrides``; ``_apply_option_overrides`` applies
+    them. A new override is a new key here and nowhere else: the entries
+    forward ``**overrides`` unchanged, and :meth:`OttoContext.do_for_all_hosts`
+    splits them from a method's own keywords by ``HOST_OVERRIDE_KEYS``.
+
+    ``term`` / ``transfer`` switch the host's active protocol; each
+    ``*_options`` replaces the field of that name on a copy of the host,
+    wholesale. See ``_apply_option_overrides`` for the semantics.
+    """
+
+    term: "str | None"
+    transfer: "str | None"
+    ssh_options: "SshOptions | None"
+    telnet_options: "TelnetOptions | None"
+    sftp_options: "SftpOptions | None"
+    scp_options: "ScpOptions | None"
+    ftp_options: "FtpOptions | None"
+    nc_options: "NcOptions | None"
+    userland_options: "UserlandOptions | None"
+
+
+HOST_OVERRIDE_KEYS: frozenset[str] = frozenset(HostOverrides.__annotations__)
+"""The keys of :class:`HostOverrides`: what a dispatch entry claims out of ``**kwargs``."""
+
+
+def _apply_option_overrides(host: "RemoteHost", **overrides: Unpack[HostOverrides]) -> "RemoteHost":
     """Return a copy of *host* with the given ``*_options`` fields replaced.
 
     Each non-``None`` argument **replaces** the corresponding field on the
@@ -244,42 +264,30 @@ def _apply_option_overrides(
     from .host.capability import TRANSFER_RESOLVER, console_transfer_menu
     from .host.os_profile import copy_host
 
-    candidates: dict[str, Any] = {
-        k: v
-        for k, v in (
-            ("term", term),
-            ("transfer", transfer),
-            ("ssh_options", ssh_options),
-            ("telnet_options", telnet_options),
-            ("sftp_options", sftp_options),
-            ("scp_options", scp_options),
-            ("ftp_options", ftp_options),
-            ("nc_options", nc_options),
-            ("userland_options", userland_options),
-        )
-        if v is not None
-    }
+    unknown = sorted(set(overrides) - HOST_OVERRIDE_KEYS)
+    if unknown:
+        msg = f"unknown host override(s) {unknown}; the overrides are {sorted(HOST_OVERRIDE_KEYS)}"
+        raise TypeError(msg)
+    candidates: dict[str, Any] = {k: v for k, v in overrides.items() if v is not None}
     if not candidates:
         return host
     # By NAME, never by position: the override set is intersected with the
     # concrete family's own fields, so a family that does not declare one of
     # these options is left alone rather than handed an unknown keyword.
     host_fields = {f.name for f in fields(host)}
-    overrides = {k: v for k, v in candidates.items() if k in host_fields}
-    if not overrides:
+    applied = {k: v for k, v in candidates.items() if k in host_fields}
+    if not applied:
         return host
-    effective_term = overrides.get("term", getattr(host, "term", None))
-    if effective_term == "console" and "transfer" in overrides:
+    effective_term = applied.get("term", getattr(host, "term", None))
+    if effective_term == "console" and "transfer" in applied:
         # An nc pin on a console is a config error, raised here as the
         # ValueError every override caller already maps (the CLI to a
         # --transfer parameter error) rather than as the ConsoleError the
         # copy's transfer backend would raise.
-        console_transfer_menu(
-            host.name, getattr(host, "valid_transfers", []), overrides["transfer"]
-        )
+        console_transfer_menu(host.name, getattr(host, "valid_transfers", []), applied["transfer"])
     if (
-        overrides.get("term") == "console"
-        and "transfer" not in overrides
+        applied.get("term") == "console"
+        and "transfer" not in applied
         and getattr(host, "transfer", None) == "nc"
     ):
         # The host resolved nc for its previous term; a single-client console
@@ -287,8 +295,8 @@ def _apply_option_overrides(
         # same nc-less menu the lab model uses for a console host. This call
         # sees no load-time transfer preference, so it takes the menu's order.
         usable = console_transfer_menu(host.name, getattr(host, "valid_transfers", []), None)
-        overrides["transfer"] = TRANSFER_RESOLVER.resolve_active(usable)
-    return copy_host(host, **overrides)
+        applied["transfer"] = TRANSFER_RESOLVER.resolve_active(usable)
+    return copy_host(host, **applied)
 
 
 def _flags_hiding_every_match(
@@ -649,7 +657,7 @@ class OttoContext:
         # coverage pipeline (tach) and needs no report, only the answer.
         return any(product.instrumented() is True for host in hosts for product in host.products)
 
-    def get_host(self, host_id: str, **overrides: Any) -> "UnixHost":
+    def get_host(self, host_id: str, **overrides: Unpack[HostOverrides]) -> "UnixHost":
         """Look up *host_id* in the active lab and apply any keyword overrides.
 
         Handing a host out registers nothing: the host registers with the
@@ -913,7 +921,7 @@ class OttoContext:
         include_containers: bool = False,
         include_local: bool = False,
         _scope_owner: "str | None" = None,
-        **overrides: Any,
+        **overrides: Unpack[HostOverrides],
     ) -> "Iterator[RemoteHost]":
         """Yield this run's fleet of interest, optionally narrowed by *pattern*.
 
@@ -1037,7 +1045,7 @@ class OttoContext:
                 continue
             yield _apply_option_overrides(cast("Any", host), **overrides)
 
-    async def do_for_all_hosts(  # noqa: PLR0913 — wide host-dispatch API
+    async def do_for_all_hosts(
         self,
         method: "Callable[..., Awaitable[T]]",
         *args: Any,
@@ -1045,15 +1053,6 @@ class OttoContext:
         concurrent: bool = True,
         include_containers: bool = False,
         include_local: bool = False,
-        term: "str | None" = None,
-        transfer: "str | None" = None,
-        ssh_options: "Any" = None,
-        telnet_options: "Any" = None,
-        sftp_options: "Any" = None,
-        scp_options: "Any" = None,
-        ftp_options: "Any" = None,
-        nc_options: "Any" = None,
-        userland_options: "Any" = None,
         _scope_owner: "str | None" = None,
         **kwargs: Any,
     ) -> "dict[str, T | BaseException]":
@@ -1067,27 +1066,27 @@ class OttoContext:
         universe, ``pattern`` as a fullmatch within it, its empty-selection
         guard, and the ``local`` exclusion unless ``include_local=True``.
 
+        ``**kwargs`` holds two things told apart by name: the per-call host
+        overrides of :class:`~otto.context.HostOverrides` (``HOST_OVERRIDE_KEYS``), which
+        shape the walk and never reach *method*, and everything else, which
+        is forwarded to *method* unchanged.
+
         ``_scope_owner`` is the same internal seam :meth:`all_hosts` documents
         and is forwarded verbatim. It is spelled with a leading underscore
         partly to stay out of ``**kwargs``, which is where a plain ``owner=``
         belongs: that one is forwarded to *method* for owner-accepting host
         verbs, and the two must never be the same word.
         """
+        overrides = cast(
+            "HostOverrides", {k: kwargs.pop(k) for k in list(kwargs) if k in HOST_OVERRIDE_KEYS}
+        )
         hosts = list(
             self.all_hosts(
                 pattern=pattern,
                 include_containers=include_containers,
                 include_local=include_local,
                 _scope_owner=_scope_owner,
-                term=term,
-                transfer=transfer,
-                ssh_options=ssh_options,
-                telnet_options=telnet_options,
-                sftp_options=sftp_options,
-                scp_options=scp_options,
-                ftp_options=ftp_options,
-                nc_options=nc_options,
-                userland_options=userland_options,
+                **overrides,
             )
         )
         if concurrent:
@@ -1104,7 +1103,7 @@ class OttoContext:
                 out[h.id] = exc
         return out
 
-    async def run_on_all_hosts(  # noqa: PLR0913 — wide host-dispatch API
+    async def run_on_all_hosts(
         self,
         cmds: "list[str] | str",
         pattern: "re.Pattern[str] | None" = None,
@@ -1113,15 +1112,7 @@ class OttoContext:
         *,
         _scope_owner: "str | None" = None,
         include_containers: bool = False,
-        term: "str | None" = None,
-        transfer: "str | None" = None,
-        ssh_options: "Any" = None,
-        telnet_options: "Any" = None,
-        sftp_options: "Any" = None,
-        scp_options: "Any" = None,
-        ftp_options: "Any" = None,
-        nc_options: "Any" = None,
-        userland_options: "Any" = None,
+        **overrides: Unpack[HostOverrides],
     ) -> "dict[str, Results | BaseException]":
         """Run one or more shell commands on every matching host and return a results mapping.
 
@@ -1146,15 +1137,7 @@ class OttoContext:
             concurrent=concurrent,
             _scope_owner=_scope_owner,
             include_containers=include_containers,
-            term=term,
-            transfer=transfer,
-            ssh_options=ssh_options,
-            telnet_options=telnet_options,
-            sftp_options=sftp_options,
-            scp_options=scp_options,
-            ftp_options=ftp_options,
-            nc_options=nc_options,
-            userland_options=userland_options,
+            **overrides,
         )
 
     def for_project(self, name: str) -> "ProjectContextView":

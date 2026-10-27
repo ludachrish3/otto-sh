@@ -12,6 +12,8 @@ documented there, once:
   :func:`~otto.run_context.set_context` and :func:`~otto.run_context.reset_context`:
   the active run;
 - :class:`~otto.run_context.ProjectContextView`, one project's view of a run;
+- :class:`~otto.run_context.HostOverrides`, the per-call host overrides every
+  fleet entry accepts, named once;
 - :func:`~otto.run_context.variant`, :func:`~otto.run_context.set_variant` and
   :func:`~otto.run_context.reset_variant`: the run's variant;
 - :class:`~otto.invocation.RunPolicy`, :class:`~otto.invocation.Variant`,
@@ -42,6 +44,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .invocation import ContextBinding, HostResolver, RunPolicy, Variant
     from .run_context import (
+        HostOverrides,
         OttoContext,
         ProjectContextView,
         get_context,
@@ -60,6 +63,7 @@ _LAZY_ATTRS: dict[str, str] = {
     "HostResolver": "otto.invocation",
     "RunPolicy": "otto.invocation",
     "Variant": "otto.invocation",
+    "HostOverrides": "otto.run_context",
     "OttoContext": "otto.run_context",
     "ProjectContextView": "otto.run_context",
     "get_context": "otto.run_context",
@@ -98,6 +102,7 @@ def __dir__() -> list[str]:
 
 __all__ = [
     "ContextBinding",
+    "HostOverrides",
     "HostResolver",
     "OttoContext",
     "ProjectContextView",
