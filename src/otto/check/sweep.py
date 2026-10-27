@@ -52,9 +52,9 @@ column + the UDP column + the run end:
   72 + 512.2 + 502.2 + 210 = 1296 s, about 22 min.
 
 ``otto link check`` (``otto.link.check.worst_case_run_s``), every feature, two
-placement hosts, ``--live`` in both directions: 2 x 574 (each host's sandbox
-pass) + 32 (``--live``'s state reads and listener sweep) + 2 x 638.5 (each
-direction's live cycle) + 120 (the run end) = 2577 s, about 43 min.
+placement hosts, ``--live`` in both directions: 2 x 547 (each host's sandbox
+pass) + 32 (``--live``'s state reads and listener sweep) + 2 x 611.5 (each
+direction's live cycle) + 120 (the run end) = 2469 s, about 41 min.
 
 65 minutes clears the longest of these by half again. A longer path, or a host
 slow on every command, can still run past it: a concurrent sweep may then take
