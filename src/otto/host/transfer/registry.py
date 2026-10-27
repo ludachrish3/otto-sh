@@ -312,8 +312,7 @@ def _register_builtin_backends() -> None:
                     get=16384,
                     note=(
                         "the stride is whatever `block_size` reaches `asyncssh` (default "
-                        "16384): the `scp_options.block_size` field, or an `extra` of the "
-                        "same name, which is applied last and wins"
+                        "16384): the `scp_options.block_size` field"
                     ),
                 ),
                 authenticates=False,

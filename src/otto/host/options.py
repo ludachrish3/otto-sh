@@ -23,7 +23,7 @@ Example::
 
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ConfigDict
@@ -43,6 +43,7 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from _typeshed import DataclassInstance
     from asyncssh import SSHClientConnection
 
     from .transfer import NcListenerCheck, NcPortStrategy
@@ -90,6 +91,33 @@ _EXTRA_IDENTITY_OVERRIDE_KEYS = frozenset({"username", "password", "tunnel"})
 duplicating one of these as a kwarg was a ``TypeError``; ``extra`` now wins
 silently on conflict (see ``SshOptions.extra``'s docstring), so ``_kwargs()``
 logs once instead of staying quiet about it."""
+
+
+def shadowed_fields(extra: dict[str, Any], cls: "type[DataclassInstance]") -> list[str]:
+    """Return the keys of *extra* that name a field of the options class *cls*, sorted.
+
+    ``extra`` is the pass-through for library kwargs otto has not curated; a
+    curated field's name in it would make two sources for one value (the
+    survey reading ``port`` while the connect dialled ``extra["port"]``).
+    The options dataclasses refuse such a key when they are built and the
+    lab specs (``otto.host.option_specs``) refuse it when the lab is read,
+    both through this one rule.
+    """
+    names = {f.name for f in fields(cls)}
+    return sorted(k for k in extra if k in names)
+
+
+def _refuse_shadowing(opts: "DataclassInstance") -> None:
+    """Raise if *opts*'s ``extra`` names one of its own fields."""
+    cls = type(opts)
+    extra = getattr(opts, "extra")  # noqa: B009 — a slots dataclass; the attribute is the field
+    shadowed = shadowed_fields(extra, cls)
+    if shadowed:
+        msg = (
+            f"{cls.__name__}.extra sets {shadowed}, which name(s) its own field(s); "
+            "set the field instead — a value has one source"
+        )
+        raise ValueError(msg)
 
 
 @dataclass(slots=True)
@@ -174,11 +202,15 @@ class SshOptions:
     """Arbitrary extra kwargs forwarded directly to ``asyncssh.connect()``.
 
     Anything kwarg-shaped on asyncssh's connect (``config``, ``proxy_command``,
-    ``x509_trusted_certs``, ``gss_host``, etc.) can be set here. Values in
-    ``extra`` override curated fields on conflict. The call sites spread these
-    after their own ``username``, ``password`` and ``tunnel``, so an ``extra``
-    key with one of those names replaces the credential or the hop tunnel
-    silently."""
+    ``x509_trusted_certs``, ``gss_host``, etc.) can be set here. A key that
+    names a curated field (``port``, ``known_hosts``, ...) is refused when the
+    options are built: the field is that value's one source. The call sites
+    spread these after their own ``username``, ``password`` and ``tunnel``,
+    so an ``extra`` key with one of those names replaces the credential or
+    the hop tunnel silently."""
+
+    def __post_init__(self) -> None:
+        _refuse_shadowing(self)
 
     post_connect: Callable[["SSHClientConnection"], Awaitable[None]] | None = None
     """Optional async hook called with the freshly opened connection,
@@ -189,9 +221,12 @@ class SshOptions:
     def _kwargs(self) -> dict[str, Any]:
         """Build the kwargs dict passed to ``asyncssh.connect()``, warning on identity overrides.
 
-        :meth:`_effective_kwargs` without the warning is what a caller reads
-        when it only needs a value, such as the connect timeout a budget
-        counts; the warning belongs to the connect.
+        Includes only fields the caller explicitly set, so asyncssh's own
+        defaults apply for everything we did not override. ``known_hosts``
+        is always included (default ``None``) since that is the historical
+        otto behavior callers rely on. A caller that needs one value reads
+        the field: ``extra`` cannot shadow it, so the field is what reaches
+        asyncssh.
         """
         overridden = sorted(self.extra.keys() & _EXTRA_IDENTITY_OVERRIDE_KEYS)
         if overridden:
@@ -199,16 +234,6 @@ class SshOptions:
                 f"SshOptions.extra sets {overridden}, silently overriding the caller's own "
                 "connect kwarg(s) of the same name (the credential or the hop tunnel)"
             )
-        return self._effective_kwargs()
-
-    def _effective_kwargs(self) -> dict[str, Any]:
-        """Build the kwargs ``asyncssh.connect()`` gets, curated fields then ``extra``.
-
-        Includes only fields the caller explicitly set, so asyncssh's own
-        defaults apply for everything we did not override. ``known_hosts``
-        is always included (default ``None``) since that is the historical
-        otto behavior callers rely on.
-        """
         kw: dict[str, Any] = {
             "port": self.port,
             "known_hosts": self.known_hosts,
@@ -328,6 +353,9 @@ class TelnetOptions:
     extra: dict[str, Any] = field(default_factory=dict)
     """Extra kwargs forwarded to ``telnetlib3.open_connection()``."""
 
+    def __post_init__(self) -> None:
+        _refuse_shadowing(self)
+
     def _open_kwargs(self) -> dict[str, Any]:
         """Build the kwargs dict passed to ``telnetlib3.open_connection()``."""
         kw: dict[str, Any] = {
@@ -422,6 +450,9 @@ class ConsoleOptions:
     extra: dict[str, Any] = field(default_factory=dict)
     """Extra kwargs forwarded to ``telnetlib3.open_connection()``."""
 
+    def __post_init__(self) -> None:
+        _refuse_shadowing(self)
+
     def _open_kwargs(self) -> dict[str, Any]:
         """Build the kwargs dict passed to ``telnetlib3.open_connection()``."""
         kw: dict[str, Any] = {
@@ -458,6 +489,9 @@ class SftpOptions:
 
     extra: dict[str, Any] = field(default_factory=dict)
     """Extra kwargs forwarded to ``SSHClientConnection.start_sftp_client()``."""
+
+    def __post_init__(self) -> None:
+        _refuse_shadowing(self)
 
     max_concurrent_transfers: int | None = None
     """How many files of one transfer may be in flight at once. ``None`` derives
@@ -507,6 +541,9 @@ class ScpOptions:
 
     extra: dict[str, Any] = field(default_factory=dict)
     """Extra kwargs forwarded to ``asyncssh.scp()``."""
+
+    def __post_init__(self) -> None:
+        _refuse_shadowing(self)
 
     max_concurrent_transfers: int | None = None
     """How many files of one transfer may be in flight at once. ``None`` derives
@@ -575,6 +612,9 @@ class FtpOptions:
     extra: dict[str, Any] = field(default_factory=dict)
     """Extra kwargs forwarded to ``aioftp.Client()``. aioftp also accepts
     arbitrary ``siosocks_asyncio_kwargs`` which can be routed through here."""
+
+    def __post_init__(self) -> None:
+        _refuse_shadowing(self)
 
     def _client_kwargs(self) -> dict[str, Any]:
         """Build the kwargs dict passed to ``aioftp.Client()``.

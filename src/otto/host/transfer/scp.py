@@ -216,18 +216,17 @@ class ScpFileTransfer(UnixFileTransfer):
     host_families = frozenset({"unix"})
 
     # The DEFAULT stride only. scp's real stride is whatever `block_size` reaches
-    # `asyncssh` -- the `ScpOptions.block_size` field, or an `extra` of the same
-    # name, which `_kwargs()` applies last and which therefore wins -- so the class
+    # `asyncssh` -- the `ScpOptions.block_size` field, its one source (an `extra`
+    # key of that name is refused when the options are built) -- so the class
     # attribute states only the default (pinned against `ScpOptions().block_size`
     # in the unit tests so the two cannot drift) and
-    # `effective_progress_granularity` reads `_kwargs()` to answer for the instance.
+    # `effective_progress_granularity` reads the field to answer for the instance.
     progress_granularity = ProgressGranularity(
         put=16384,
         get=16384,
         note=(
             "the stride is whatever `block_size` reaches `asyncssh` (default 16384): the "
-            "`scp_options.block_size` field, or an `extra` of the same name, which is "
-            "applied last and wins"
+            "`scp_options.block_size` field"
         ),
     )
 
@@ -306,15 +305,12 @@ class ScpFileTransfer(UnixFileTransfer):
         than the class states and every reader of the promise -- the
         conformance surface, the support-matrix page -- must ask the instance.
 
-        Read from ``_kwargs()`` rather than from ``block_size``, because THAT is
-        the dict asyncssh receives: ``_kwargs()`` ends ``kw.update(self.extra)``
-        and ``extra`` is user-settable ("Extra kwargs forwarded to
-        ``asyncssh.scp()``"), so ``extra = {"block_size": 65536}`` strides 65536
-        no matter what the dedicated field says. Reading the field alone would
-        make the promise and the reality two different numbers -- and this
-        method is what the ``transfer-progress`` conformance surface sizes its
-        payload from, so the gap would surface as a backend failure rather than
-        as the config choice it is.
+        The field is the stride's one source: an ``extra`` key named
+        ``block_size`` is refused when the options are built, so what this
+        method answers and what ``_kwargs()`` hands asyncssh cannot differ --
+        and this method is what the ``transfer-progress`` conformance surface
+        sizes its payload from, so a gap would surface as a backend failure
+        rather than as the config choice it is.
 
         A non-positive or non-int answer falls back to the class declaration.
         ``block_size`` carries no positivity constraint at either boundary, so
@@ -325,9 +321,7 @@ class ScpFileTransfer(UnixFileTransfer):
         transfer fails either way -- but a method whose only job is to ANSWER A
         QUESTION must not be the place a config error surfaces.
         """
-        size = self._scp_options._kwargs().get(  # noqa: SLF001 — intra-package access to ScpOptions._kwargs
-            "block_size"
-        )
+        size = self._scp_options.block_size
         if not isinstance(size, int) or size <= 0:
             return type(self).progress_granularity
         return ProgressGranularity(put=size, get=size, note=self.progress_granularity.note)

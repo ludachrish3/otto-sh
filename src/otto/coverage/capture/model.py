@@ -101,68 +101,29 @@ class Capture(OttoModel):
         return cls.model_validate_json(raw_text)
 
 
-def _parse_block_id(text: str) -> int | None:
-    r"""Parse a ``BRDA:`` block field, or ``None`` for an exception-tagged branch.
-
-    The field is ``[e]<digits>``. ``man geninfo`` places the tag before the
-    *line number* (``BRDA:<exception tag><line number>,<block
-    number>,...``), but that is wrong — lcov 2.0's own writer
-    (``lcovutil.pm`` ~5093, ``printf(INFO_HANDLE "BRDA:%u,%s%u,%s,%s\n",
-    $line, $br->is_exception() ? 'e' : '', $block_id, ...)``) and its own
-    parser (``lcovutil.pm`` ~4725, ``/^BRDA:(\d+),(e?)(\d+),(.+)$/``) agree
-    the tag sits between the line number and the block number instead.
-    "'exception tag' is 'e' if this is a branch related to exception
-    handling" (``man geninfo``). A leading ``e`` marks compiler-synthesised
-    exception-handling machinery, not a branch the product's own source
-    wrote (observed live: arm64 kernel headers' asm-goto alternatives,
-    pulled into a kmod product's translation unit) — otto's store has no
-    exception-branch concept, so the caller drops the whole record on
-    ``None``. An untagged id is always plain decimal.
-    Duplicated from ``otto.coverage.merge.lcov_loader._parse_block_id``
-    rather than imported: this module's BRDA parser is deliberately minimal
-    and independent of the report-merge pipeline (see the module docstring).
-    """
-    if text.startswith("e"):
-        return None
-    return int(text)
-
-
 def parse_info(
     info_path: Path,
 ) -> dict[str, tuple[dict[int, int], dict[int, list[tuple[int, int, int | None]]]]]:
-    """Minimal SF/DA/BRDA parser: source path → (line hits, branch triples).
+    """Read an ``.info`` into the capture's shape: source path → (line hits, branch triples).
 
-    Branch triples are ``(block, branch, taken)`` where ``taken`` is
-    ``None`` for lcov's ``-`` (branch never reached) and an ``int`` count
-    otherwise — preserving the never-reached/reached-but-not-taken
-    distinction through to the capture file. An exception-tagged ``BRDA:``
-    record (see ``_parse_block_id`` above) is dropped entirely: no triple is
-    appended for it.
+    One reader for lcov's text, :func:`otto.coverage.merge.lcov_loader.read_info`,
+    serves the capture and the store loader alike, so a repeated source adds
+    up the same way on both. Branch triples are ``(block, branch, taken)``
+    where ``taken`` is ``None`` for lcov's ``-`` (branch never reached) and
+    an ``int`` count otherwise — preserving the never-reached/reached-but-
+    not-taken distinction through to the capture file. An exception-tagged
+    ``BRDA:`` record is dropped by the reader: no triple is appended for it.
     """
+    # Here, not at the top: the merge pipeline imports the store, which a
+    # capture reader on the CLI's cov verbs need not load until it parses.
+    from ..merge.lcov_loader import read_info
+
     files: dict[str, tuple[dict[int, int], dict[int, list[tuple[int, int, int | None]]]]] = {}
-    lines: dict[int, int] = {}
-    branches: dict[int, list[tuple[int, int, int | None]]] = {}
-    current: str | None = None
-    with info_path.open() as f:
-        for raw in f:
-            line = raw.strip()
-            if line.startswith("SF:"):
-                current = line[3:]
-                lines = {}
-                branches = {}
-            elif line.startswith("DA:") and current is not None:
-                parts = line[3:].split(",")
-                lines[int(parts[0])] = lines.get(int(parts[0]), 0) + int(parts[1])
-            elif line.startswith("BRDA:") and current is not None:
-                lineno_s, block_s, branch_s, taken = line[5:].split(",")
-                block = _parse_block_id(block_s)
-                if block is None:
-                    continue  # exception-tagged: compiler machinery, not a product branch
-                count = None if taken == "-" else int(taken)
-                branches.setdefault(int(lineno_s), []).append((block, int(branch_s), count))
-            elif line == "end_of_record" and current is not None:
-                files[current] = (lines, branches)
-                current = None
+    for path, record in read_info(info_path).items():
+        branches: dict[int, list[tuple[int, int, int | None]]] = {}
+        for (lineno, block, branch), taken in record.branches.items():
+            branches.setdefault(lineno, []).append((block, branch, taken))
+        files[path] = (dict(record.lines), branches)
     return files
 
 

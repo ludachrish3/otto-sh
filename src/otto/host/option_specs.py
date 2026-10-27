@@ -8,13 +8,32 @@ modified here.
 """
 
 import re
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import Field, ValidationInfo, field_validator
 
 from ..models.base import OttoModel
 from . import options as rt
 from .transfer import NcListenerCheck, NcPortStrategy
+
+if TYPE_CHECKING:
+    from _typeshed import DataclassInstance
+
+
+def _extra_names_no_field(
+    extra: dict[str, Any], runtime: "type[DataclassInstance]"
+) -> dict[str, Any]:
+    """Refuse an ``extra`` key that names a field of *runtime*.
+
+    The same rule the runtime dataclass applies when it is built, run here so
+    a lab file is refused when it is read, naming the key, rather than when
+    the host is first built.
+    """
+    shadowed = rt.shadowed_fields(extra, runtime)
+    if shadowed:
+        msg = f"extra sets {shadowed}, which name(s) a field of this table; set the field instead"
+        raise ValueError(msg)
+    return extra
 
 
 class SshOptionsSpec(OttoModel):
@@ -45,6 +64,11 @@ class SshOptionsSpec(OttoModel):
     remote_forwards: list[rt.RemotePortForward] = Field(default_factory=list)
     socks_forwards: list[rt.SocksForward] = Field(default_factory=list)
     extra: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("extra")
+    @classmethod
+    def _extra_free_of_fields(cls, extra: dict[str, Any]) -> dict[str, Any]:
+        return _extra_names_no_field(extra, rt.SshOptions)
 
     def to_runtime(self) -> rt.SshOptions:
         """Build the ``SshOptions`` runtime dataclass from the validated spec fields."""
@@ -88,6 +112,11 @@ class FtpOptionsSpec(OttoModel):
     passive_commands: tuple[str, ...] = ("epsv", "pasv")
     extra: dict[str, Any] = Field(default_factory=dict)
 
+    @field_validator("extra")
+    @classmethod
+    def _extra_free_of_fields(cls, extra: dict[str, Any]) -> dict[str, Any]:
+        return _extra_names_no_field(extra, rt.FtpOptions)
+
     def to_runtime(self) -> rt.FtpOptions:
         """Build the ``FtpOptions`` runtime dataclass from the validated spec fields."""
         return rt.FtpOptions(
@@ -114,6 +143,12 @@ class SftpOptionsSpec(OttoModel):
     env: dict[str, str] | None = None
     send_env: list[str] | None = None
     extra: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("extra")
+    @classmethod
+    def _extra_free_of_fields(cls, extra: dict[str, Any]) -> dict[str, Any]:
+        return _extra_names_no_field(extra, rt.SftpOptions)
+
     # Bound as a `Field` kwarg, not as `Annotated[int, Field(ge=1)]`: autodoc's
     # annotation stringifier turns the metadata into dotted py:class targets
     # (`Ge`, `FieldInfo`, `NoneType`) and nitpicky -W fails the docs build on
@@ -142,6 +177,12 @@ class ScpOptionsSpec(OttoModel):
     recurse: bool = True
     block_size: int = 16384
     extra: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("extra")
+    @classmethod
+    def _extra_free_of_fields(cls, extra: dict[str, Any]) -> dict[str, Any]:
+        return _extra_names_no_field(extra, rt.ScpOptions)
+
     # Bound as a `Field` kwarg, not as `Annotated[int, Field(ge=1)]`: autodoc's
     # annotation stringifier turns the metadata into dotted py:class targets
     # (`Ge`, `FieldInfo`, `NoneType`) and nitpicky -W fails the docs build on
@@ -182,6 +223,11 @@ class TelnetOptionsSpec(OttoModel):
     single_client_console: bool = False
     auto_window_resize: bool = False
     extra: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("extra")
+    @classmethod
+    def _extra_free_of_fields(cls, extra: dict[str, Any]) -> dict[str, Any]:
+        return _extra_names_no_field(extra, rt.TelnetOptions)
 
     @field_validator("login_prompt", mode="before")
     @classmethod
@@ -233,6 +279,11 @@ class ConsoleOptionsSpec(OttoModel):
     encoding: str | bool = False
     echo_negotiation_timeout: float = 3.0
     extra: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("extra")
+    @classmethod
+    def _extra_free_of_fields(cls, extra: dict[str, Any]) -> dict[str, Any]:
+        return _extra_names_no_field(extra, rt.ConsoleOptions)
 
     @field_validator("login_prompt", "password_prompt")
     @classmethod

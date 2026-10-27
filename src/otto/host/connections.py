@@ -418,23 +418,17 @@ async def connect_and_describe(
     return conn
 
 
-def _seconds(value: Any, *, intervals: bool = False) -> float:
+def _seconds(value: Any) -> float:
     """Return a transport timeout as seconds; ``0`` for an unset or unreadable one.
 
-    A number; with *intervals*, also an interval string such as ``"10s"``,
-    which asyncssh accepts and parses with its own ``parse_time_interval``
-    (telnetlib3 takes numbers only). Budget sizing must not raise on a value
-    the transport itself would refuse or read differently.
+    The curated fields are numbers; a telnet ``extra`` value (which
+    telnetlib3 reads as a number) can be anything a lab file put there, and
+    budget sizing must not raise on a value the transport itself would refuse.
     """
     if value is None or isinstance(value, bool):
         return 0.0
     if isinstance(value, int | float):
         return float(value)
-    if intervals and isinstance(value, str):
-        from asyncssh.misc import parse_time_interval
-
-        with contextlib.suppress(ValueError):
-            return float(parse_time_interval(value))
     return 0.0
 
 
@@ -678,8 +672,7 @@ class ConnectionManager:
         """
         term = self._term if term is None else term
         if term == "ssh":
-            kwargs = self._ssh_options._effective_kwargs()  # noqa: SLF001 — intra-package access to SshOptions._effective_kwargs
-            return _seconds(kwargs.get("connect_timeout"), intervals=True)
+            return _seconds(self._ssh_options.connect_timeout)
         if term == "telnet":
             telnet = self._telnet_options
             return _telnetlib3_waits(telnet._open_kwargs()) + telnet.echo_negotiation_timeout  # noqa: SLF001 — intra-package access to TelnetOptions._open_kwargs
