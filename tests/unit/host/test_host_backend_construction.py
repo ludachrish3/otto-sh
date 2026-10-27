@@ -69,6 +69,12 @@ class TestInitTimeoutReachesTheSession:
         assert await self._deadline(_unix_host(init_timeout=42.0)) == 42.0
 
     @pytest.mark.asyncio
+    async def test_otto_init_timeout_fills_the_default_and_the_field_beats_it(self, monkeypatch):
+        monkeypatch.setenv("OTTO_INIT_TIMEOUT", "30")
+        assert await self._deadline(_unix_host()) == 30.0
+        assert await self._deadline(_unix_host(init_timeout=42.0)) == 42.0
+
+    @pytest.mark.asyncio
     async def test_the_value_survives_a_connection_rebuild(self):
         host = _unix_host(init_timeout=42.0)
         host._rebuild_connections()

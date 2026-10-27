@@ -15,8 +15,10 @@ import pytest
 
 from otto.host import userland as userland_module
 from otto.host.app_shell import AppShell
+from otto.host.command_frame import ZephyrFrame
 from otto.host.docker_host import DockerContainerHost
 from otto.host.element import Element
+from otto.host.embedded_host import EmbeddedHost
 from otto.host.file_ops import refuse_if_base64_is_absent
 from otto.host.host import HostFilter, is_dry_run
 from otto.host.local_host import LocalHost
@@ -496,6 +498,15 @@ def _docker(log: LogMode = LogMode.NORMAL) -> DockerContainerHost:
         service="api",
         compose_project="otto-project1-vagrant",
         log=log,
+    )
+
+
+def _embedded() -> EmbeddedHost:
+    return EmbeddedHost(
+        ip="192.0.2.1",
+        element=Element("zephyr37_fat"),
+        log=LogMode.QUIET,
+        command_frame=ZephyrFrame(),
     )
 
 
@@ -1791,6 +1802,17 @@ class TestADryRunOpensNoSessionOnAnyHost:
     container-id probe are spies, and the hostile condition is INJECTED with
     `active_context(dry_run=True)` around real host objects.
     """
+
+    @pytest.mark.parametrize("build", [*_FAMILIES, pytest.param(_embedded, id="embedded")])
+    @pytest.mark.asyncio
+    async def test_an_unusable_otto_init_timeout_does_not_fail_a_dry_run(self, build, monkeypatch):
+        # The declined handle never handshakes, so it must not read the
+        # readiness variable: a dry run on any family, embedded included,
+        # cannot fail on a deadline it never waits.
+        monkeypatch.setenv("OTTO_INIT_TIMEOUT", "abc")
+        host = build()
+        with active_context(dry_run=True):
+            assert isinstance(await host.open_session("monitor"), DeclinedSession)
 
     @pytest.mark.parametrize("build", _FAMILIES)
     @pytest.mark.asyncio

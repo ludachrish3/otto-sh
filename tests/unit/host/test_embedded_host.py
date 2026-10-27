@@ -8,7 +8,8 @@ framing is exercised in ``test_zephyr.py``; the console transfer backend in
 """
 
 from pathlib import Path
-from unittest.mock import AsyncMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -69,6 +70,32 @@ class TestGenericEmbeddedFailsLoud:
         assert h.os_name is None  # generic: no implicit OS name
         assert h.os_type == "embedded"
         assert isinstance(h.command_frame, ZephyrFrame)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("raised", "waits"), [("", 15.0), ("30", 30.0), ("5", 5.0)])
+    async def test_otto_init_timeout_replaces_the_embedded_default_too(
+        self, monkeypatch, raised, waits
+    ):
+        # 15 s is the family's default, not a host's own setting: the slow
+        # machine the variable is for starves an embedded console's client
+        # as much as a bash host's. Built through the host's own manager, so
+        # the family default has to reach the session it really builds.
+        monkeypatch.setenv("OTTO_INIT_TIMEOUT", raised)
+        h = EmbeddedHost(
+            ip="192.0.2.1",
+            element=Element("zephyr37_fat"),
+            log=LogMode.QUIET,
+            command_frame=ZephyrFrame(),
+        )
+        telnet_conn = SimpleNamespace(
+            reader=MagicMock(), writer=MagicMock(), options=TelnetOptions()
+        )
+        conn = MagicMock(term="telnet")
+        conn.telnet = AsyncMock(return_value=telnet_conn)
+        h._session_mgr._connections = conn
+        session = await h._session_mgr._build_session()
+        assert session._init_timeout == waits
+        assert h._session_mgr._readiness_deadline() == waits
 
 
 # ---------------------------------------------------------------------------

@@ -846,13 +846,48 @@ uv run pytest -k test_host    # run a subset by keyword
 
 Most make lanes stop each pytest leg after 40 minutes, so a hang fails the
 lane instead of stalling it (`conformance-bed` and `kmodcov` have their own
-caps, `CONFORMANCE_BED_TIMEOUT` and `KMODCOV_TIMEOUT`). On a slower machine,
-raise the cap from the environment with `LANE_TIMEOUT`, for example
-`LANE_TIMEOUT=10800s make coverage`; such a run is stamped as the gate like
-any other. Set on the make command line instead, like any variable there, it
-marks that `make coverage` run as overridden, so the run is not stamped, and
+caps, `CONFORMANCE_BED_TIMEOUT` and `KMODCOV_TIMEOUT`). A slower machine
+raises it from the environment with `LANE_TIMEOUT` ({ref}`slower-machines`).
+Set on the make command line instead, like any variable there, it marks that
+`make coverage` run as overridden, so the run is not stamped, and
 `make gate-tip` refuses it outright. The cap is separate from pytest-timeout's
 per-test limit (`timeout` in `pyproject.toml`).
+
+(slower-machines)=
+
+### On a slower machine
+
+The suite's bounds fit the project's own dev VM. On a machine that runs otto
+and the lab more slowly (a lab nested inside another VM, a busy host), raise
+them from the environment, once, in a shell profile. The tests run inside the
+`dev` VM, so three of them go in its `~/.bashrc` (an export on the machine you
+`vagrant ssh` from does not follow you in):
+
+```bash
+# in the dev VM's ~/.bashrc
+export OTTO_INIT_TIMEOUT=30          # each shell's readiness deadline (default 10, embedded 15)
+export PYTEST_TIMEOUT=540            # pytest-timeout's per-test limit (default 180)
+export LANE_TIMEOUT=10800s           # each make lane's per-leg cap (default 2400s)
+```
+
+The fourth goes where you run `vagrant`, on the machine hosting the lab:
+
+```bash
+export OTTO_LAB_BOOT_TIMEOUT=1800    # vagrant up's wait per lab VM (default 900)
+```
+
+Scale them by how much slower the machine is; three times is a reasonable
+start. Neither the Makefile nor the noxfile names them: every lane and nox
+session inherits your environment, the suite's `OTTO_*` strip lets
+`OTTO_INIT_TIMEOUT` through on purpose, the lab and e2e tests hand it to the
+otto they run, and a stamped lane
+(`make coverage`, `make gate-tip`) still stamps. `OTTO_INIT_TIMEOUT` is otto's
+own setting, described under
+[Shell readiness timeout](configuration/host-options.md#shell-readiness-timeout).
+`PYTEST_TIMEOUT` is pytest-timeout's, and does not override a test's own
+`@pytest.mark.timeout`: a test that trips one of those on your machine is worth
+an issue. The unit tests of the readiness default ignore `OTTO_INIT_TIMEOUT`,
+so they still check the 10 s otto ships with.
 
 ### The scoped lanes
 
@@ -932,6 +967,8 @@ leak into a run.
 Harness knobs like `OTTO_CHAOS_DOCKER`, `OTTO_CHAOS_SEED`, `OTTO_CHAOS_BED_HOST`
 and `OTTO_TUNNEL_SOAK_CYCLES` are exempt — but only because they are declared in
 `tests/_ambient_env.py`, which is the single source of truth for that allowlist.
+One product variable is declared there too, `OTTO_INIT_TIMEOUT`, so a slower
+machine's readiness deadline reaches the lab tests ({ref}`slower-machines`).
 
 Declare a new knob there and read it with `ambient("OTTO_...")`. Reading one
 straight from `os.environ` without declaring it does not raise; the variable is

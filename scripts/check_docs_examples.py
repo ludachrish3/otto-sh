@@ -22,6 +22,8 @@ from pathlib import Path
 
 import tomli
 
+from otto.config.env import without_otto_env
+
 ROOT = Path(__file__).resolve().parent.parent
 EXAMPLES = ROOT / "docs" / "examples"
 LITERAL_LAB = re.compile(r"[A-Za-z0-9_.-]+")
@@ -51,7 +53,7 @@ def examples(root: Path) -> "list[Path]":
 
 
 def _env(project: Path, scratch: Path) -> "dict[str, str]":
-    env = {k: v for k, v in os.environ.items() if not k.startswith("OTTO_") and k != "OTTOPATH"}
+    env = without_otto_env(os.environ)
     env.update(
         OTTOPATH=str(project),
         OTTO_HOME=str(scratch / "home"),

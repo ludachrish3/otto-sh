@@ -23,6 +23,7 @@ import tempfile
 from pathlib import Path
 
 from otto.logger.management import _LOG_DIR_NAME_RE
+from tests._ambient_env import ambient
 from tests._fixtures.paths import CHECKOUT_ROOT
 
 PROJECT1 = CHECKOUT_ROOT / "tests" / "project1"
@@ -121,6 +122,9 @@ def otto_subprocess_env(
     one (``<xdir>/otto-home`` — per-test, so a test's second run is
     legitimately WARM), a per-process scratch home otherwise. *extra_env*
     merges last, so tests probing home resolution itself still override.
+
+    ``OTTO_INIT_TIMEOUT`` passes through when set, so a slow machine's raised
+    readiness deadline reaches the otto under test, not only the test process.
     """
     env = coverage_subprocess_env()
     env["PYTEST_ADDOPTS"] = "-p no:tach"
@@ -131,6 +135,9 @@ def otto_subprocess_env(
         env["OTTO_XDIR"] = str(xdir)
     if term is not None:
         env["TERM"] = term
+    init_timeout = ambient("OTTO_INIT_TIMEOUT")
+    if init_timeout:
+        env["OTTO_INIT_TIMEOUT"] = init_timeout
     if extra_env:
         env.update(extra_env)
     return env

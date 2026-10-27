@@ -181,8 +181,8 @@ installed *right now* is `otto run status`'s question
 
 Most environment variables below back a global option; where one does, the
 flag always wins when both are present.  `OTTOPATH`, `OTTO_HOME`,
-`OTTO_TEARDOWN_DEADLINE`, `OTTO_SSH_DEBUG` and `PYDANTIC_DISABLE_PLUGINS` have
-no flag.
+`OTTO_TEARDOWN_DEADLINE`, `OTTO_INIT_TIMEOUT`, `OTTO_SSH_DEBUG` and
+`PYDANTIC_DISABLE_PLUGINS` have no flag.
 
 | Variable | Backs | Notes |
 | --- | --- | --- |
@@ -195,6 +195,7 @@ no flag.
 | `OTTOPATH` | *(no flag)* | The project roots under test. Required when a development project is under test. See [Projects, project roots and OTTOPATH](../overview.md#projects-project-roots-and-ottopath) |
 | `OTTO_HOME` | *(no flag)* | otto's user-level home; defaults to `~/.otto`.  Holds one workspace home per `OTTOPATH` set — see [The workspace home](#the-workspace-home) |
 | `OTTO_TEARDOWN_DEADLINE` | *(no flag)* | Seconds an interrupted command's graceful cleanup may run before it is abandoned; defaults to `10`; read when a run is prepared (the CLI, `open_context`, library `run_tests`). Outside them, the readers of this deadline (`run_command`, `sync_phase`, `compensate`) use 10 s, while a hand-built context's `ctx.sweep_loop(...)` without `deadline=` waits for every close — see {doc}`../architecture/lifecycle` |
+| `OTTO_INIT_TIMEOUT` | *(no flag)* | Seconds a newly opened shell has to answer otto's readiness probe, for every host without its own `init_timeout`; replaces the default of `10` (`15` on an embedded host). What it accepts and what beats it: [Shell readiness timeout](../configuration/host-options.md#shell-readiness-timeout) |
 | `OTTO_SSH_DEBUG` | *(no flag)* | asyncssh's own debug level, `1`..`3`; `2` prints the offered and chosen key-exchange, host-key, cipher and MAC lists under `--log-level DEBUG` (a valid value also lifts otto's own `asyncssh` logger floor to `DEBUG`) — see [Legacy SSH servers](../configuration/settings.md#legacy-ssh-servers) |
 | `PYDANTIC_DISABLE_PLUGINS` | *(no flag)* | pydantic's own switch, which the `otto` command sets to `__all__` when you have not set it. Looking for pydantic plugins opens a file in every installed package on the first model build, a network round trip each when the venv is on NFS, and otto uses no pydantic plugins. It covers everything in the process, including the tests `otto test` runs in-process, and every process otto starts inherits it (a host command on `local`, a subprocess of a test). To use pydantic plugins, set it to the empty string (`PYDANTIC_DISABLE_PLUGINS=`); any value you set is kept. Importing otto as a library leaves it alone |
 

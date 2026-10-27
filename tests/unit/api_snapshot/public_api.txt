@@ -2547,7 +2547,7 @@ enum	otto.host:SessionIdentity	bound_at_open	S:"bound\u0020at\u0020open"
 enum	otto.host:SessionIdentity	none	S:"none"
 name	otto.host:SessionManager	class
 mro	otto.host:SessionManager	-
-call	otto.host:SessionManager	sync	KO:connections:N KO:name:S:"" KO:log_command:O KO:log_output:O KO:session_factory:N KO:named_session_factory:N KO:exec_factory:N KO:command_frame:N KO:init_timeout:N KO:retry_backoff:N KO:creds:N KO:host_id:S:"" KO:shell_history:B:true KO:session_setup:N KO:landing_frame:N
+call	otto.host:SessionManager	sync	KO:connections:N KO:name:S:"" KO:log_command:O KO:log_output:O KO:session_factory:N KO:named_session_factory:N KO:exec_factory:N KO:command_frame:N KO:init_timeout:N KO:default_init_timeout:N KO:retry_backoff:N KO:creds:N KO:host_id:S:"" KO:shell_history:B:true KO:session_setup:N KO:landing_frame:N
 member	otto.host:SessionManager.ambient_user	property:g--
 member	otto.host:SessionManager.close_all	method	coroutine	-
 member	otto.host:SessionManager.current_user	property:g--

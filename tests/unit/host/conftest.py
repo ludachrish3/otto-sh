@@ -122,6 +122,20 @@ def _warm_multiprocessing() -> None:
 
 
 @pytest.fixture(autouse=True)
+def _no_ambient_init_timeout() -> Iterator[None]:
+    """Keep a contributor's ``OTTO_INIT_TIMEOUT`` out of the host unit tests.
+
+    The suite lets it through for the lab (tests/_ambient_env.py), but these
+    tests pin the readiness default and every deadline derived from it; the
+    tests of the variable itself set it. A private ``MonkeyPatch``, never the
+    shared fixture: see ``_hermetic_otto_home`` in tests/conftest.py.
+    """
+    with pytest.MonkeyPatch.context() as private:
+        private.delenv("OTTO_INIT_TIMEOUT", raising=False)
+        yield
+
+
+@pytest.fixture(autouse=True)
 def _fd_watermark() -> Iterator[None]:
     """The authority's bracket, at this lane's measured settings.
 

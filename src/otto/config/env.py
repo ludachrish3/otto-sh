@@ -1,5 +1,6 @@
 """Environment variables that are needed before parsing CLI arguments."""
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -16,6 +17,8 @@ LOG_RICH_ENV_VAR = "OTTO_LOG_RICH"
 # otto.host.connections, beside apply_ssh_debug_level.
 XDIR_ENV_VAR = "OTTO_XDIR"
 HOME_ENV_VAR = "OTTO_HOME"
+# OTTO_INIT_TIMEOUT is read only by the host layer: INIT_TIMEOUT_ENV_VAR lives
+# in otto.host.session, beside resolve_init_timeout.
 
 DEFAULT_LOG_RETENTION_DAYS = 30
 
@@ -30,6 +33,29 @@ def is_otto_env_var(name: str) -> bool:
     this, because ``OTTOPATH`` is the one variable the prefix does not catch.
     """
     return name == OTTOPATH_ENV_VAR or name.startswith(OTTO_ENV_PREFIX)
+
+
+def machine_env_vars() -> frozenset[str]:
+    """Return the otto settings that describe the machine, not a project.
+
+    A child environment stripped of otto's configuration
+    (:func:`without_otto_env`) keeps these: a slow machine is just as slow for
+    the otto a script or test starts.
+    """
+    # lazy: keep the host layer off the startup path
+    from ..host.session import INIT_TIMEOUT_ENV_VAR
+
+    return frozenset({INIT_TIMEOUT_ENV_VAR})
+
+
+def without_otto_env(environ: Mapping[str, str]) -> dict[str, str]:
+    """Copy *environ* without otto's configuration, keeping :func:`machine_env_vars`.
+
+    For a script that starts otto against a project of its own choosing, so
+    the caller's ``OTTOPATH``, lab or xdir cannot leak into it.
+    """
+    keep = machine_env_vars()
+    return {k: v for k, v in environ.items() if k in keep or not is_otto_env_var(k)}
 
 
 def validate_path(

@@ -400,8 +400,16 @@ out for the default, 10. The clock starts once the connection is up: over ssh
 when the channel opens, over telnet when the password has been sent, so on a
 telnet host it has to cover the login itself, the MOTD and the shell's startup
 files. Raise it for a host whose login is slow, or for a lab where the machine
-running otto is heavily loaded. To pick a value, time a manual telnet login on
-that host, from the password to the prompt, and allow a few times that:
+running otto is heavily loaded. When it is the machine running otto that is
+slow, so every host needs the same room, set `OTTO_INIT_TIMEOUT` (seconds) in
+the environment instead: it replaces the default, 10 s here and 15 s on an
+embedded host, for every host without its own `init_timeout`, which still
+wins. An empty value counts as unset; any other value must be a finite number
+greater than 0, and otto refuses anything else before it connects, naming the
+variable. For the test suite on a slow machine, see
+{ref}`the contributing guide <slower-machines>`. To pick a value,
+time a manual telnet login on that host, from the password to the prompt, and
+allow a few times that:
 
 ```json
 {
@@ -421,8 +429,10 @@ large value leaves its later checks less of that time, and those can report
 `survey budget exhausted`. A command's own timeout starts once the shell is
 ready, so it never cuts an open short; the exception is tunnel discovery's
 30 s check that a container host is running, which runs a command on the
-parent host and so includes opening the parent's shell when it needs one. Like `shell_history`, `init_timeout` can be
-defaulted for a class of hosts from an `[os_profiles.<name>]` block.
+parent host and so includes opening the parent's shell when it needs one.
+
+Like `shell_history`, `init_timeout` can be defaulted for a class of hosts from
+an `[os_profiles.<name>]` block.
 
 (per-host-shell-history)=
 

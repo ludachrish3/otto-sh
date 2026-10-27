@@ -301,3 +301,19 @@ def test_bootstrap_state_cannot_leak_between_tests():
     )
     # A rename of either test would otherwise make this pass vacuously.
     assert "2 passed" in result.stdout, f"the ordered pair did not run:\n{result.stdout}"
+
+
+def test_the_readiness_lever_reaches_the_otto_children(monkeypatch):
+    """A slow machine's OTTO_INIT_TIMEOUT must reach the otto an e2e test runs (#732).
+
+    Those children get an environment built from scratch, so a variable the
+    builder does not name never arrives; the lab failures this lever exists
+    for were mostly in such children.
+    """
+    from tests.e2e._otto_subprocess import otto_subprocess_env
+
+    monkeypatch.delenv("OTTO_INIT_TIMEOUT", raising=False)
+    assert "OTTO_INIT_TIMEOUT" not in otto_subprocess_env()
+    monkeypatch.setenv("OTTO_INIT_TIMEOUT", "30")
+    assert otto_subprocess_env()["OTTO_INIT_TIMEOUT"] == "30"
+    assert otto_subprocess_env(extra_env={"OTTO_INIT_TIMEOUT": "5"})["OTTO_INIT_TIMEOUT"] == "5"

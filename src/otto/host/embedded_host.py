@@ -87,7 +87,8 @@ logger = logging.getLogger(__name__)
 # Readiness-handshake ceiling for an embedded telnet console. The Zephyr shell
 # under QEMU can take a few seconds after the TCP connection opens before it
 # starts reading input, so the marker handshake needs a more generous ceiling
-# than the bash default (10 s). Passed to the SessionManager as ``init_timeout``.
+# than the bash default (10 s). Passed to the SessionManager as the family's
+# ``default_init_timeout``, so OTTO_INIT_TIMEOUT replaces it as it does bash's.
 _EMBEDDED_INIT_TIMEOUT = 15.0
 
 
@@ -287,7 +288,7 @@ class EmbeddedHost(UserlandHost, RemoteHost):
             log_command=self._log_command,
             log_output=self._log_output,
             command_frame=self.command_frame,
-            init_timeout=_EMBEDDED_INIT_TIMEOUT,
+            default_init_timeout=_EMBEDDED_INIT_TIMEOUT,
             # This family was the only one omitting it, so every session-layer
             # message that names a host — `perform_switch`'s proxy errors, a
             # dry run's `CommandNotRunError` — said `host ''` here. `self.id`

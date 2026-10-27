@@ -20,10 +20,19 @@ import asyncssh
 import pytest
 import pytest_asyncio
 
+from otto.errors import OttoError
 from otto.host.command_frame import BashFrame, CommandFrame, ZephyrFrame, ZephyrSerialFrame
 from otto.host.local_host import LocalHost
-from otto.host.session import LocalSession, SessionManager, ShellSession
+from otto.host.session import (
+    INIT_TIMEOUT_ENV_VAR,
+    LocalSession,
+    SessionManager,
+    ShellSession,
+    resolve_init_timeout,
+)
 from otto.utils import Status, wait_for_async
+from tests._ambient_env import AMBIENT_OPT_INS
+from tests._fixtures.clock import stepped_loop_clock
 from tests._fixtures.fake_shell import ShellModel
 from tests.unit.host._session_feed import (
     FeedAfterWriteMixin,
@@ -2665,6 +2674,112 @@ class TestOpenBudget:
             name="h", init_timeout=4.0, retry_backoff=1.0, command_frame=ZephyrFrame()
         )
         assert mgr.open_budget() == 2 * (4.0 + _CONSOLE_QUIESCE_BUDGET) + 1.0
+
+
+class TestInitTimeoutFromTheEnvironment:
+    """``OTTO_INIT_TIMEOUT`` replaces the readiness default for every session without its own."""
+
+    def test_unset_or_empty_keeps_the_class_default(self, monkeypatch):
+        assert resolve_init_timeout(None) is None
+        monkeypatch.setenv(INIT_TIMEOUT_ENV_VAR, " ")
+        assert resolve_init_timeout(None) is None
+        assert MockSession()._init_timeout == ShellSession._init_timeout
+
+    def test_a_set_value_becomes_the_session_deadline(self, monkeypatch):
+        monkeypatch.setenv(INIT_TIMEOUT_ENV_VAR, "30")
+        assert MockSession()._init_timeout == 30.0
+
+    def test_the_open_budget_uses_it(self, monkeypatch):
+        monkeypatch.setenv(INIT_TIMEOUT_ENV_VAR, "30")
+        assert SessionManager(name="h", retry_backoff=1.0).open_budget() == 2 * 30.0 + 1.0
+
+    def test_it_replaces_a_family_default_and_a_host_value_beats_both(self, monkeypatch):
+        assert resolve_init_timeout(None, 15.0) == 15.0
+        monkeypatch.setenv(INIT_TIMEOUT_ENV_VAR, "30")
+        assert resolve_init_timeout(None, 15.0) == 30.0
+        assert resolve_init_timeout(4.0, 15.0) == 4.0
+        mgr = SessionManager(name="h", default_init_timeout=15.0, retry_backoff=1.0)
+        assert mgr.open_budget() == 2 * 30.0 + 1.0
+
+    @pytest.mark.asyncio
+    async def test_factory_sessions_wait_what_the_budget_counts(self, monkeypatch):
+        # A factory builds its session with no arguments, so the manager
+        # must hand it the deadline it resolved, for default and named
+        # sessions alike, or the budget sizes an open the session never waits.
+        monkeypatch.setenv(INIT_TIMEOUT_ENV_VAR, "30")
+        mgr = SessionManager(
+            name="h", session_factory=MockSession, init_timeout=4.0, retry_backoff=0
+        )
+        assert (await mgr._build_session())._init_timeout == 4.0
+        assert mgr._from_factory(MockSession)._init_timeout == 4.0
+        assert mgr.open_budget() == 2 * 4.0
+        family = SessionManager(name="h", session_factory=MockSession, default_init_timeout=15.0)
+        assert (await family._build_session())._init_timeout == 30.0
+
+    def test_an_explicit_deadline_beats_it(self, monkeypatch):
+        monkeypatch.setenv(INIT_TIMEOUT_ENV_VAR, "30")
+        assert resolve_init_timeout(4.0) == 4.0
+        mgr = SessionManager(name="h", init_timeout=4.0, retry_backoff=1.0)
+        assert mgr.open_budget() == 2 * 4.0 + 1.0
+
+    @pytest.mark.parametrize("raw", ["abc", "30s", "0", "-1", "inf", "nan"])
+    def test_an_unusable_value_is_refused_naming_the_variable(self, monkeypatch, raw):
+        # A silent fall back to 10 s would defeat the lever it exists to be.
+        monkeypatch.setenv(INIT_TIMEOUT_ENV_VAR, raw)
+        with pytest.raises(OttoError, match=rf"^OTTO_INIT_TIMEOUT='{raw}' is not a number"):
+            MockSession()
+
+    @pytest.mark.asyncio
+    async def test_an_unusable_value_is_refused_before_anything_dials(self, monkeypatch):
+        # Refused after the connect, the connected client would be dropped
+        # unclosed (and a console would already have typed the password).
+        monkeypatch.setenv(INIT_TIMEOUT_ENV_VAR, "abc")
+        conn = MagicMock()
+        conn.term = "telnet"
+        conn.telnet = AsyncMock()
+        conn.ssh = AsyncMock()
+        conn.console = AsyncMock()
+        conn.telnet_target = AsyncMock()
+        mgr = SessionManager(connections=conn, name="h")
+        with pytest.raises(OttoError, match="OTTO_INIT_TIMEOUT"):
+            await mgr._open_transport_session(named=True)
+        conn.telnet_target.assert_not_called()
+        conn.telnet.assert_not_called()
+        conn.ssh.assert_not_called()
+        conn.console.assert_not_called()
+
+    def test_the_suite_spares_it_from_the_otto_env_strip(self):
+        # Stripped, a slow machine's lab sessions would silently wait 10 s.
+        assert INIT_TIMEOUT_ENV_VAR in AMBIENT_OPT_INS
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("raised", "lands"), [("30", True), ("", False)])
+    async def test_a_reply_after_ten_seconds_lands_only_under_a_raised_deadline(
+        self, monkeypatch, raised, lands
+    ):
+        monkeypatch.setenv(INIT_TIMEOUT_ENV_VAR, raised)
+        s = MockSession()
+        await s.open_transport()
+        with stepped_loop_clock() as clock:
+            init = asyncio.ensure_future(s._ensure_initialized())
+
+            async def written(count: int) -> None:
+                while len(s.written) < count and not init.done():  # noqa: ASYNC110 — the mock sets no event to wait on
+                    await asyncio.sleep(0)
+
+            await asyncio.wait_for(written(1), 5)
+            probes = len(s.written)
+            clock.advance(15.0)  # past the 10 s default, short of a raised 30 s
+            # The next probe goes out only while the deadline still holds.
+            await asyncio.wait_for(written(probes + 1), 5)
+            if not init.done():
+                s.feed(handshake_reply(s._frame, s._ready_marker))
+            if lands:
+                await asyncio.wait_for(init, 5)
+                assert s._initialized
+            else:
+                with pytest.raises(ConnectionError, match="never became ready"):
+                    await asyncio.wait_for(init, 5)
 
 
 class TestBridgeSetup:

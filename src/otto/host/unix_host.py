@@ -354,7 +354,8 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     init_timeout: float | None = None
     """Seconds a newly opened shell has to answer otto's readiness probe.
 
-    ``None`` (the default) keeps the session's own ceiling, 10 s. Over telnet
+    ``None`` (the default) keeps the session's own ceiling: ``OTTO_INIT_TIMEOUT``
+    when that is set, else 10 s. Over telnet
     the window opens once the password is written, so it covers the login
     itself, the MOTD and the shell's startup files; raise it for a host whose
     login is slow, or a lab where the machine running otto is heavily loaded.
@@ -786,6 +787,9 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             return
 
         conns = self._live_connections()
+        # Before anything dials: a bad OTTO_INIT_TIMEOUT is refused here, not
+        # once a connection is open (see SessionManager._readiness_deadline).
+        bridge = self._bridge_setup()
         target = user if user is not None else conns.login_target
         direct, hops = resolve_chain(self.creds, target, self.term)
 
@@ -805,7 +809,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                 proxy_hops=hops,
                 via_login=via_login,
                 host_id=self.id,
-                bridge_setup=self._bridge_setup(),
+                bridge_setup=bridge,
             )
             return
 
@@ -844,7 +848,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                 proxy_hops=hops,
                 via_login=login_user,
                 host_id=self.id,
-                bridge_setup=self._bridge_setup(),
+                bridge_setup=bridge,
             )
         finally:
             with teardown_step(host_name, "interactive telnet client close"):
@@ -904,6 +908,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         conns = self._live_connections()
         opts = conns.console_options
         login_user, _ = conns.credentials
+        bridge = self._bridge_setup()  # before the dial, as in run_login
         hops: list[Cred] = []
         target_login = user if user is not None else conns.login_target
         if target_login:
@@ -931,7 +936,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                 proxy_hops=hops,
                 via_login=login_user,
                 host_id=self.id,
-                bridge_setup=self._bridge_setup(),
+                bridge_setup=bridge,
                 transport_label="console",
                 notice=notice,
             )

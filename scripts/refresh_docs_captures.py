@@ -76,6 +76,8 @@ from typing import TYPE_CHECKING, Any
 
 import tomli
 
+from otto.config.env import without_otto_env
+
 if TYPE_CHECKING:
     from otto.coverage.store.model import CoverageStore, FileRecord
 
@@ -300,9 +302,9 @@ class RunContext:
         # variable, pin width and colour, then point at the example project.
         # The width matches termynal's: 100 columns is the widest text the
         # docs content column shows without scrolling in a 1440px window.
-        env = {
-            k: v for k, v in os.environ.items() if not (k.startswith("OTTO_") or k == "OTTOPATH")
-        }
+        # The machine's own settings (a slow machine's OTTO_INIT_TIMEOUT) are
+        # kept; see otto.config.env.machine_env_vars.
+        env = without_otto_env(os.environ)
         home = self.tmp / "home"
         home.mkdir(parents=True, exist_ok=True)
         env.update(

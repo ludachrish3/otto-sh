@@ -27,6 +27,12 @@ the run continues, green, doing something other than what was asked:
 - ``make stability-tunnel CYCLES=N`` passes ``OTTO_TUNNEL_SOAK_CYCLES``;
   while stripped, every soak ran at the default depth of 5 regardless.
 
+One product variable is spared on purpose: ``OTTO_INIT_TIMEOUT``, the
+readiness deadline a contributor on a slow machine raises for every lab
+session (docs/contributing.md, label ``slower-machines``). It steers otto rather than
+the harness, but a stripped value is exactly as silent: the lab tests fall
+back to 10 s and the failures it exists to stop come back.
+
 So: declare the variable in :data:`AMBIENT_OPT_INS` and read it through
 :func:`ambient`, which rejects anything undeclared. Reading an undeclared
 ``OTTO_*`` variable straight from ``os.environ`` still fails quietly — the
@@ -135,6 +141,15 @@ AMBIENT_OPT_INS: "dict[str, str]" = {
         "(tests/e2e/cov/test_kmodcov_kernel_builds.py); set by `make kmodcov` "
         "from KMODCOV_KERNELS_DIR. Stripped, the default "
         "/home/vagrant/build/kmodcov-kernels is used"
+    ),
+    "OTTO_INIT_TIMEOUT": (
+        "the PRODUCT readiness default of every host family, embedded included "
+        "(src/otto/host/session.py, resolve_init_timeout), spared so a "
+        "slow machine's lab and e2e runs get it: in-process sessions read it "
+        "directly, and tests/e2e/_otto_subprocess.py forwards it to otto "
+        "children. Set by hand (docs/contributing.md). Stripped, every lab "
+        "session silently waits the 10 s default. Unit tests of the default "
+        "remove it (tests/unit/host/conftest.py)"
     ),
     "OTTO_TUNNEL_SOAK_CYCLES": (
         "internal soak depth per tunnel stability test "

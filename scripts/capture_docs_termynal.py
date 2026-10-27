@@ -33,6 +33,8 @@ import textwrap
 import time
 from pathlib import Path
 
+from otto.config.env import without_otto_env
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 OUT_DIR = REPO_ROOT / "docs" / "_static" / "generated" / "termynal"
 STAMP = OUT_DIR / ".stamp"
@@ -121,8 +123,13 @@ def _write_placeholders() -> None:
 
 
 def _otto_env(demo: Path) -> dict[str, str]:
-    """Build a clean environment rooted at the demo project, with deterministic width."""
-    env = {k: v for k, v in os.environ.items() if not (k.startswith("OTTO_") or k == "OTTOPATH")}
+    """Build a clean environment rooted at the demo project, with deterministic width.
+
+    The machine's own settings survive the strip
+    (:func:`otto.config.env.machine_env_vars`): they change no output, only
+    how long a slow machine's shells may take.
+    """
+    env = without_otto_env(os.environ)
     env.update(
         OTTOPATH=str(demo),
         # A private user-level home beside the demo project, so the completion

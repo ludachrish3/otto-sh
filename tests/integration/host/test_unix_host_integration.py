@@ -26,7 +26,6 @@ import pytest
 from otto.host.connections import teardown_step
 from otto.host.host import Host
 from otto.host.login_proxy import Cred, LoginProxyError
-from otto.host.session import ShellSession
 from otto.host.unix_host import UnixHost
 from otto.utils import Status
 from tests._fixtures.labdata import element_for
@@ -383,17 +382,17 @@ class TestCredentials:
 
     @pytest.mark.serial_timing
     @pytest.mark.asyncio
-    async def test_telnet_bad_credentials_fails_fast(self, monkeypatch):
+    async def test_telnet_bad_credentials_fails_fast(self):
         """A telnet login with a wrong password must raise a clear error
         promptly — not hang.
 
         Telnet ``login()`` no longer drains to silence; the bounded marker
         handshake in ``_ensure_initialized`` is what catches a failed login
         (the device stays in its login-prompt loop, so the READY marker can
-        never appear). The timeout is shrunk here so the test stays fast.
+        never appear). The host's own deadline is shrunk so the test stays
+        fast; it beats OTTO_INIT_TIMEOUT, so a slow machine's raised default
+        does not slow this test down.
         """
-        monkeypatch.setattr(ShellSession, "_init_timeout", 3.0)
-
         data = host_data("test1")
         user = data["creds"][0]["login"]
         host = UnixHost(
@@ -403,6 +402,7 @@ class TestCredentials:
             board=data.get("board"),
             term="telnet",
             transfer="ftp",
+            init_timeout=3.0,
         )
         try:
             start = time.monotonic()

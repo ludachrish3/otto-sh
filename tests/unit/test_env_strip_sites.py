@@ -2,8 +2,9 @@
 
 ``OTTOPATH`` does not start with ``OTTO_``, so a sanitizer written as a prefix
 test silently lets it through. Code that imports otto calls
-:func:`otto.config.env.is_otto_env_var`. The noxfile and the scripts, which
-never import otto, spell ``"OTTOPATH"`` on the same line as the prefix test.
+:func:`otto.config.env.is_otto_env_var`, or :func:`otto.config.env.without_otto_env`
+to copy an environment without it. The noxfile and the scripts that do not
+import otto spell ``"OTTOPATH"`` on the same line as the prefix test.
 This scan finds every prefix test on a name and requires the second spelling
 wherever the first is not used.
 
@@ -39,9 +40,7 @@ NOT_THE_ENVIRONMENT = {
 }
 LITERAL_SITES = [
     "noxfile.py",
-    "scripts/capture_docs_termynal.py",
     "scripts/import_budget.py",
-    "scripts/refresh_docs_captures.py",
     "scripts/wheel_smoke.py",
 ]
 
@@ -91,3 +90,18 @@ def test_the_self_exemption_covers_only_the_planted_line():
     lines = (CHECKOUT_ROOT / THIS_FILE).read_text(encoding="utf-8").splitlines()
     hits = [line.strip() for line in lines if PREFIX_TEST.search(line)]
     assert hits == [f"PLANTED = {PLANTED!r}"]
+
+
+def test_the_shared_strip_keeps_only_the_machines_own_settings():
+    """``without_otto_env`` drops otto's configuration but keeps a slow machine's deadline."""
+    from otto.config.env import machine_env_vars, without_otto_env
+
+    env = {
+        "PATH": "/bin",
+        "OTTOPATH": "/p",
+        "OTTO_LAB": "lab",
+        "OTTO_XDIR": "/x",
+        "OTTO_INIT_TIMEOUT": "30",
+    }
+    assert without_otto_env(env) == {"PATH": "/bin", "OTTO_INIT_TIMEOUT": "30"}
+    assert {"OTTO_INIT_TIMEOUT"} == machine_env_vars()

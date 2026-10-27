@@ -13,6 +13,8 @@ Key features:
 """
 
 import asyncio
+import math
+import os
 import re
 import uuid
 from abc import ABC, abstractmethod
@@ -24,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 
 from typing_extensions import Never, Self, override
 
+from ..errors import OttoError
 from ..models.base import Cred
 from .command_frame import (
     AshFrame,
@@ -95,7 +98,8 @@ _RECOVERY_PROBE_TIMEOUT = 0.5
 # Ceiling on the post-open marker handshake (ShellSession._handshake, whose
 # ``timeout`` argument defaults to it and can override it per call — see
 # ShellSession.enter_frame). A Unix host sets it per host through its
-# ``init_timeout`` field, which defaults to this. Over telnet the window opens
+# ``init_timeout`` field, and OTTO_INIT_TIMEOUT replaces this default for
+# every host without one (see resolve_init_timeout). Over telnet the window opens
 # the moment the password is written, so it covers the peer's PAM check,
 # login(1), the MOTD and the shell's startup files, all read back through
 # telnetlib3 on a client that may itself be busy: 3 s was missed on a loaded
@@ -103,6 +107,45 @@ _RECOVERY_PROBE_TIMEOUT = 0.5
 # bounded, so a failed telnet login — where the READY marker can never
 # appear — surfaces as a clear error instead of hanging indefinitely.
 _INIT_TIMEOUT = 10.0
+
+INIT_TIMEOUT_ENV_VAR = "OTTO_INIT_TIMEOUT"
+"""Seconds that replace every host family's readiness default; read by
+:func:`resolve_init_timeout`."""
+
+# INIT_TIMEOUT_ENV_VAR replaces the readiness default of every host family:
+# bash's 10 s and an embedded host's 15 s alike; only a host's own
+# ``init_timeout`` field beats it. For a machine that runs otto slowly, where
+# every host needs the same room: read straight from the environment when a
+# session is built, never through the settings model, so the host layer
+# pulls in nothing to read it.
+
+
+def resolve_init_timeout(
+    explicit: float | None, family_default: float | None = None
+) -> float | None:
+    """Return the readiness deadline a session gets.
+
+    *explicit* (a host's own ``init_timeout``), else ``OTTO_INIT_TIMEOUT``,
+    else *family_default* (an embedded host's 15 s). ``None`` when none is
+    set, meaning the class default (``ShellSession._init_timeout``, 10 s). An
+    empty variable counts as unset; any other value must be a finite number of
+    seconds greater than 0, as the host field requires, and anything else
+    raises :class:`~otto.errors.OttoError` naming the variable rather than
+    falling back silently.
+    """
+    if explicit is not None:
+        return explicit
+    raw = os.environ.get(INIT_TIMEOUT_ENV_VAR, "").strip()
+    if not raw:
+        return family_default
+    try:
+        value = float(raw)
+    except ValueError:
+        value = math.nan
+    if not (math.isfinite(value) and value > 0):
+        raise OttoError(f"{INIT_TIMEOUT_ENV_VAR}={raw!r} is not a number of seconds greater than 0")
+    return value
+
 
 # Single-client console quiesce (issue #324). Before a single-client console
 # connection is released on a failed-handshake teardown, otto reads it until it
@@ -371,8 +414,9 @@ class ShellSession(ABC):
     # Default ceiling on the marker handshake in _handshake. Class-level so
     # tests can shrink it without patching the module constant. A session built
     # against a slow-to-start shell (e.g. a Zephyr QEMU telnet console) gets a
-    # more generous value via the ``init_timeout`` constructor argument, which
-    # shadows this with an instance attribute; one handshake can override both
+    # more generous value via the ``init_timeout`` constructor argument (or,
+    # without one, ``OTTO_INIT_TIMEOUT``), which shadows this with an instance
+    # attribute; one handshake can override both
     # for itself via ``_handshake(timeout=)`` / ``enter_frame(timeout=)``.
     _init_timeout: float = _INIT_TIMEOUT
 
@@ -428,6 +472,10 @@ class ShellSession(ABC):
         # A non-default readiness ceiling (slow embedded shells) is set as an
         # instance attribute so it shadows the monkeypatchable class default
         # only for the sessions that need it.
+        # A second read through the same resolver, reached only by a session
+        # no manager built: a manager passes the deadline it already resolved
+        # (with its host family's default), so this returns it unchanged.
+        init_timeout = resolve_init_timeout(init_timeout)
         if init_timeout is not None:
             self._init_timeout = init_timeout
         self._initialized = False
@@ -2186,7 +2234,10 @@ class _NoTransport(ShellSession):
     """
 
     def __init__(self, host_id: str = "") -> None:
-        super().__init__()
+        # Explicit, so OTTO_INIT_TIMEOUT is never read here: this session
+        # never handshakes, and a dry run on any host family (embedded
+        # included) must not fail on a deadline it never waits.
+        super().__init__(init_timeout=_INIT_TIMEOUT)
         self._host_id = host_id
 
     @override
@@ -2481,8 +2532,9 @@ class SessionManager:
     the host also declares a ``landing_frame``, in which case THAT is what
     sessions are built with and the ``command_frame`` is what the post-hook
     ``enter_frame()`` switches to. A slow target's readiness ceiling is raised
-    via ``init_timeout``; a ``session_setup`` hook runs once per session open,
-    after the handshake and every login-proxy hop.
+    via ``init_timeout`` (the host's own) or ``default_init_timeout`` (its
+    family's, which ``OTTO_INIT_TIMEOUT`` replaces); a ``session_setup`` hook
+    runs once per session open, after the handshake and every login-proxy hop.
     """
 
     def __init__(  # noqa: PLR0913 — wide session-construction API (transport/dialect/elevation seams)
@@ -2497,6 +2549,7 @@ class SessionManager:
         exec_factory: "Callable[[str, float], Awaitable[CommandResult]] | None" = None,
         command_frame: CommandFrame | None = None,
         init_timeout: float | None = None,
+        default_init_timeout: float | None = None,
         retry_backoff: float | None = None,
         creds: "list[Cred] | None" = None,
         host_id: str = "",
@@ -2543,9 +2596,12 @@ class SessionManager:
         # the hook. With no hook, nothing here changes a single byte.
         self._session_setup = session_setup
         self._landing_frame = landing_frame
-        # Optional readiness-handshake ceiling for slow shells (e.g. a Zephyr
-        # QEMU telnet console); ``None`` keeps the session's class default.
+        # The host's own readiness ceiling (``None``: none declared), and its
+        # family's default (``None``: the session's class default, 10 s), which
+        # OTTO_INIT_TIMEOUT replaces; a slow shell such as a Zephyr QEMU
+        # telnet console has a larger family default.
         self._init_timeout = init_timeout
+        self._default_init_timeout = default_init_timeout
         # Pause before the single handshake retry in ``_ensure_session``. ``None``
         # resolves to the production default; tests pass ``0`` to skip the real
         # wall-clock wait without changing the retry logic itself.
@@ -2607,8 +2663,18 @@ class SessionManager:
             landing_frame=self._landing_frame,
             target_frame=self._target_frame(),
             creds=self._creds,
-            init_timeout=self._init_timeout,
+            init_timeout=self._readiness_deadline(),
         )
+
+    def _readiness_deadline(self) -> float | None:
+        """Return the deadline this manager's sessions get; ``None`` for the class default.
+
+        The host's own ``init_timeout``, else ``OTTO_INIT_TIMEOUT``, else the
+        family default (see :func:`resolve_init_timeout`). Every session this
+        manager builds, the ``otto login`` bridge and :meth:`open_budget` read
+        it here, so all of them agree.
+        """
+        return resolve_init_timeout(self._init_timeout, self._default_init_timeout)
 
     def open_budget(self, term: str | None = None) -> float:
         """Seconds opening the default session can take to report a shell that never became ready.
@@ -2627,10 +2693,12 @@ class SessionManager:
         session raises. Waits otto leaves unbounded are not counted, so such a
         caller still adds a margin per attempt.
         """
-        # The class attribute, not the module constant: it is what a session
-        # built without an override actually waits, and the seam tests patch.
+        # Resolved as every session this manager builds resolves it; with
+        # neither override, the class attribute rather than the module
+        # constant: it is what such a session waits, and the seam tests patch.
+        resolved = self._readiness_deadline()
         default = ShellSession._init_timeout  # noqa: SLF001 — the class default every session without an override uses
-        deadline = default if self._init_timeout is None else self._init_timeout
+        deadline = default if resolved is None else resolved
         conns = self._connections
         connect = 0.0 if conns is None else conns.connect_allowance(term)
         retried = conns is None or conns.retries_failed_open(term)
@@ -2955,8 +3023,24 @@ class SessionManager:
         Split out from ``_ensure_session`` so the retry path can rebuild the transport cleanly.
         """
         if self._session_factory is not None:
-            return self._session_factory()
+            return self._from_factory(self._session_factory)
         return await self._open_transport_session(named=False)
+
+    def _from_factory(self, factory: "Callable[[], ShellSession]") -> "ShellSession":
+        """Build a session from *factory*, holding the deadline this manager resolves.
+
+        A factory takes no arguments, so the session it builds knows nothing
+        of the host's ``init_timeout`` or its family default; without this, a
+        LocalHost or Docker session would wait what the environment says
+        while :meth:`open_budget` sized the open for the host's own value.
+        Whatever deadline the factory set itself is replaced whenever the
+        manager resolves one: the manager's is the value the budget counts.
+        """
+        deadline = self._readiness_deadline()
+        session = factory()
+        if deadline is not None:
+            session._init_timeout = deadline  # noqa: SLF001 — intra-package: the manager owns its sessions' readiness deadline
+        return session
 
     async def _open_transport_session(self, *, named: bool) -> "ShellSession":
         """Build a ShellSession over the manager's term: ssh, telnet or console.
@@ -2971,13 +3055,17 @@ class SessionManager:
         console: :meth:`_exec_route` sends it to the default session.
         """
         assert self._connections is not None  # noqa: S101 — internal invariant: _connections required when no session_factory
+        # Resolved before anything dials: an unusable OTTO_INIT_TIMEOUT is
+        # refused here, not after a client is connected (or a console logged
+        # in) only to be dropped unclosed when the session refuses it.
+        init_timeout = self._readiness_deadline()
         term = self._connections.term
         if term == "ssh":
             ssh_conn = await self._connections.ssh()
             return SshSession(
                 ssh_conn,
                 command_frame=self._session_frame,
-                init_timeout=self._init_timeout,
+                init_timeout=init_timeout,
                 shell_history=self._shell_history,
             )
         if term == "telnet" and not named:
@@ -2990,7 +3078,7 @@ class SessionManager:
                 telnet_conn.reader,
                 telnet_conn.writer,
                 command_frame=self._session_frame,
-                init_timeout=self._init_timeout,
+                init_timeout=init_timeout,
                 write_chunk_size=telnet_conn.options.write_chunk_size,
                 write_chunk_delay=telnet_conn.options.write_chunk_delay,
                 shell_history=self._shell_history,
@@ -3027,7 +3115,7 @@ class SessionManager:
                 client.writer,
                 _owned_client=client,
                 command_frame=self._session_frame,
-                init_timeout=self._init_timeout,
+                init_timeout=init_timeout,
                 write_chunk_size=client.options.write_chunk_size,
                 write_chunk_delay=client.options.write_chunk_delay,
                 shell_history=self._shell_history,
@@ -3049,7 +3137,7 @@ class SessionManager:
                 console.writer,
                 console_client=console,
                 command_frame=self._session_frame,
-                init_timeout=self._init_timeout,
+                init_timeout=init_timeout,
                 write_chunk_size=opts.write_chunk_size,
                 write_chunk_delay=opts.write_chunk_delay,
                 shell_history=self._shell_history,
@@ -3567,7 +3655,7 @@ class SessionManager:
 
             named_factory = self._named_session_factory or self._session_factory
             if named_factory is not None:
-                shell_session: ShellSession = named_factory()
+                shell_session: ShellSession = self._from_factory(named_factory)
             else:
                 shell_session = await self._open_transport_session(named=True)
 
