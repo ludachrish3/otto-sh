@@ -586,20 +586,16 @@ class TestConnectAllowance:
         assert self._cm("ssh").connect_allowance() == 0.0
         assert self._cm("ssh", ssh_options=SshOptions(connect_timeout=5)).connect_allowance() == 5
 
-    def test_an_ssh_extra_connect_timeout_counts_as_it_applies(self):
-        opts = SshOptions(connect_timeout=5, extra={"connect_timeout": 11})
-        assert self._cm("ssh", ssh_options=opts).connect_allowance() == 11
-
     def test_telnet_counts_telnetlib3s_waits_and_the_echo_negotiation(self):
         # telnetlib3 waits up to connect_maxwait (3 s by default) for option
         # negotiation after the TCP connect, before otto's own DONT ECHO.
         cm = self._cm("telnet", telnet_options=TelnetOptions(connect_timeout=2.0))
         assert cm.connect_allowance() == 2.0 + _MAXWAIT + TelnetOptions().echo_negotiation_timeout
 
-    def test_a_telnet_extra_override_counts_as_it_applies(self):
-        opts = TelnetOptions(
-            connect_timeout=2.0, extra={"connect_timeout": 6, "connect_maxwait": 1}
-        )
+    def test_a_telnet_extra_maxwait_counts_as_it_applies(self):
+        # connect_maxwait is telnetlib3's own kwarg, not a curated field, so
+        # extra is where it lives; connect_timeout is a field and reads from it.
+        opts = TelnetOptions(connect_timeout=6, extra={"connect_maxwait": 1})
         cm = self._cm("telnet", telnet_options=opts)
         assert cm.connect_allowance() == 6 + 1 + opts.echo_negotiation_timeout
 
@@ -639,14 +635,7 @@ class TestConnectAllowance:
             cm.connect_allowance() == 1.0 + _MAXWAIT + opts.echo_negotiation_timeout + opts.settle
         )
 
-    def test_an_interval_string_counts_as_asyncssh_reads_it(self):
-        # asyncssh accepts "10s"; the budget must read it, not crash on it.
-        opts = SshOptions(extra={"connect_timeout": "10s"})
-        assert self._cm("ssh", ssh_options=opts).connect_allowance() == 10.0
-
     def test_an_unreadable_timeout_counts_nothing_rather_than_raising(self):
-        ssh = SshOptions(extra={"connect_timeout": "soon"})
-        assert self._cm("ssh", ssh_options=ssh).connect_allowance() == 0.0
         telnet = TelnetOptions(extra={"connect_maxwait": object()})
         cm = self._cm("telnet", telnet_options=telnet)
         assert cm.connect_allowance() == telnet.echo_negotiation_timeout

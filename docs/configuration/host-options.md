@@ -82,7 +82,11 @@ service listens elsewhere, prints the fragment to paste here — see
 {doc}`../cli/host/capabilities/protocols`.
 
 Anything supported by ``asyncssh.connect()`` but not surfaced as a
-curated field is reachable via ``extra``, which is forwarded verbatim:
+curated field is reachable via ``extra``, which is forwarded verbatim. A key
+in ``extra`` that names a curated field (``port``, ``known_hosts``, ...) is
+refused when the lab is read: a value has one source, the field, so what the
+survey declares and what the connect dials cannot differ. The same holds for
+every ``*_options`` table that carries an ``extra``.
 
 ```json
 {
@@ -343,7 +347,8 @@ finds `login:`.
 
 ``SftpOptions``, ``ScpOptions``, and ``FtpOptions`` each carry an ``extra``
 dict that is forwarded verbatim to the underlying library (``asyncssh``,
-``aioftp``) for any option not surfaced as a curated field.  ``NcOptions``
+``aioftp``) for any option not surfaced as a curated field; a key that names
+a curated field is refused, as for ``ssh_options`` above.  ``NcOptions``
 has no ``extra`` — all netcat knobs are curated fields.
 
 ``scp_options`` and ``sftp_options`` also carry ``max_concurrent_transfers``
@@ -354,8 +359,8 @@ SSH session each. ``null`` derives a bound that fits a default sshd — see
 Each of these backends reports transfer progress at a fixed stride — the most
 the bar may advance between two ticks: 16 KiB for ``sftp`` and ``scp``, 8 KiB
 for ``ftp`` and ``nc``.  Only ``scp``'s follows your configuration: whatever
-``block_size`` reaches ``asyncssh`` becomes the stride, whether you set it as
-the field above or through ``extra``, which is applied last and wins.
+``block_size`` reaches ``asyncssh`` becomes the stride, and the field above
+is the only way to set it.
 {ref}`The support-matrix page <matrix-progress-promises>` lists every backend's
 promise and how a run measures it.
 

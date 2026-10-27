@@ -3,8 +3,8 @@
 Trigger: #732–#737 work found features re-implemented at several entry points, so a systemic fix landed in one copy and missed the rest. AGENTS.md now carries the "ONE DECISION, ONE PLACE" rule. This file is the backlog the sweep produced. Delete it when every item is consolidated or explicitly ruled out.
 
 ## Verified live divergences (fix first)
-- [ ] Survey SSH port ignores `ssh_options.extra["port"]`: `survey/engine.py _declared_port_unix` reads `.port`; `SshOptions._kwargs` applies `extra` after it. `extra={"port": 2222}` surveys 22, connects 2222. (Astra #6)
-- [ ] LCOV repeated `SF:` records: capture parser (`coverage/capture/model.py` ~149–164) overwrites; report loader (`coverage/merge/lcov_loader.py` ~143–170) accumulates. 3 vs 5 on the same input. (Astra #1)
+- ✅ Survey SSH port ignores `ssh_options.extra["port"]` — fixed by refusing `extra` keys that name a field (#740 a): `survey/engine.py _declared_port_unix` reads `.port`; `SshOptions._kwargs` applies `extra` after it. `extra={"port": 2222}` surveys 22, connects 2222. (Astra #6)
+- ✅ LCOV repeated `SF:` records — one reader, `lcov_loader.read_info` (#740 a): capture parser (`coverage/capture/model.py` ~149–164) overwrites; report loader (`coverage/merge/lcov_loader.py` ~143–170) accumulates. 3 vs 5 on the same input. (Astra #1)
 - [ ] `otto login` bridge via-cred `Cred(login=via)` vs manager `cred_for(...)` — #736.
 - [ ] compose `up -d` race retry only in `compose_up`, not `deploy` — #737. Plus: `docker compose -p` built in 7 sites (incl. compose.py:474 remedy string, deployment.py:455 token list); rollback undo sets differ (compose pops placeholders, deploy leaves stale registrations and drops a returned down failure); build-then-raise loop, 3× host stamping, 4× project-name expression, 3× first-line id parsers, 2nd `docker ps` label probe (fix-737 session).
 - [ ] DOCKER, handed off from #737 (design §1/§9 in .claude/worktrees/fix-737/.superpowers/sdd/2026-10-26-737/design.md; #737 itself covers the compose builder, up+retry, rollback, teardown, id poll — these are the leftovers, owned here):

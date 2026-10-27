@@ -31,7 +31,7 @@ product's translation unit) — see ``_parse_block_id`` below.
 
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -98,6 +98,80 @@ def _parse_block_id(text: str) -> int | None:
     return int(text)
 
 
+def _add_taken(have: "int | None", more: "int | None") -> "int | None":
+    """Combine two ``BRDA`` taken counts: reached in either record is reached, counts add."""
+    if have is None:
+        return more
+    if more is None:
+        return have
+    return have + more
+
+
+@dataclass
+class SourceRecord:
+    """Everything one ``.info`` says about one source path, its records added up.
+
+    A path can appear under more than one ``SF:`` in one file (an
+    ``lcov -a`` concatenation, a per-object ``geninfo`` run); the counts add,
+    as lcov's own merge adds them. Insertion order is the file's.
+    """
+
+    path: str
+    lines: dict[int, int] = field(default_factory=dict)
+    """``DA``: line number to hit count, summed across records."""
+    branches: dict[tuple[int, int, int], int | None] = field(default_factory=dict)
+    """``BRDA``: ``(line, block, branch)`` to taken count, ``None`` for never reached in
+    any record; exception-tagged branches are dropped (``_parse_block_id``)."""
+    functions: dict[str, FunctionRecord] = field(default_factory=dict)
+    """``FN``: name to its record; the first record of a name wins."""
+    function_hits: dict[str, int] = field(default_factory=dict)
+    """``FNDA``: name to hit count, summed across records."""
+
+
+def read_info(info_path: Path) -> dict[str, SourceRecord]:
+    """Read an ``.info`` file into one :class:`SourceRecord` per source path.
+
+    The one reader of lcov's text: the capture
+    (:func:`otto.coverage.capture.model.parse_info`) and the store loader
+    (:class:`LCOVLoader`) both consume these records, so a rule about the
+    format — what a repeated path means, which branches count — lives here
+    once.
+    """
+    records: dict[str, SourceRecord] = {}
+    current: SourceRecord | None = None
+    with info_path.open() as f:
+        for raw_line in f:
+            line = raw_line.strip()
+            if line.startswith("SF:"):
+                path = line[3:]
+                current = records.get(path)
+                if current is None:
+                    current = records[path] = SourceRecord(path)
+            elif current is None:
+                continue
+            elif line.startswith("FNDA:"):
+                hit = parse_fnda_record(line[5:])
+                current.function_hits[hit.name] = current.function_hits.get(hit.name, 0) + hit.count
+            elif line.startswith("FN:"):
+                parsed = parse_fn_record(line[3:])
+                current.functions.setdefault(parsed.name, parsed)
+            elif line.startswith("DA:"):
+                parts = line[3:].split(",")
+                lineno = int(parts[0])
+                current.lines[lineno] = current.lines.get(lineno, 0) + int(parts[1])
+            elif line.startswith("BRDA:"):
+                lineno_s, block_s, branch_s, taken = line[5:].split(",")
+                block = _parse_block_id(block_s)
+                if block is None:
+                    continue  # exception-tagged: compiler machinery, not a product branch
+                key = (int(lineno_s), block, int(branch_s))
+                count = None if taken == "-" else int(taken)
+                current.branches[key] = _add_taken(current.branches.get(key), count)
+            elif line == "end_of_record":
+                current = None
+    return records
+
+
 class LCOVLoader:
     """Parse ``.info`` files into a :class:`~otto.coverage.store.model.CoverageStore` under a tier.
 
@@ -133,74 +207,45 @@ class LCOVLoader:
         logger.info("Loading %s as %s coverage", info_path.name, tier)
         self.store.register_tier(tier)
 
-        current_file: FileRecord | None = None
-        files_loaded = 0
+        records = read_info(info_path)
+        for raw_path, record in records.items():
+            resolved = self.resolver.resolve(raw_path) if self.resolver else None
+            current_file: FileRecord = self.store.get_or_create_file(resolved or Path(raw_path))
 
-        with info_path.open() as f:
-            for raw_line in f:
-                line = raw_line.strip()
+            for name, parsed in record.functions.items():
+                if name not in current_file.functions:
+                    current_file.functions[name] = parsed
+            for name, count in record.function_hits.items():
+                fn = current_file.functions.get(name)
+                if fn is None:
+                    logger.warning(
+                        "FNDA for %s in %s has no FN record; keeping its count at line 0",
+                        name,
+                        current_file.path,
+                    )
+                    fn = current_file.get_or_create_function(name)
+                fn.hits.add(tier, count)
 
-                if line.startswith("SF:"):
-                    raw_path = line[3:]
-                    resolved = self.resolver.resolve(raw_path) if self.resolver else None
-                    current_file = self.store.get_or_create_file(resolved or Path(raw_path))
+            for lineno, count in record.lines.items():
+                lr = current_file.get_or_create_line(lineno)
+                lr.hits.add(tier, count)
+                if run_id is not None and count > 0:
+                    lr.run_hits[run_id] = lr.run_hits.get(run_id, 0) + count
 
-                elif line.startswith("FNDA:") and current_file is not None:
-                    hit = parse_fnda_record(line[5:])
-                    fn = current_file.functions.get(hit.name)
-                    if fn is None:
-                        logger.warning(
-                            "FNDA for %s in %s has no FN record; keeping its count at line 0",
-                            hit.name,
-                            current_file.path,
-                        )
-                        fn = current_file.get_or_create_function(hit.name)
-                    fn.hits.add(tier, hit.count)
+            for (lineno, block, branch), taken in record.branches.items():
+                reachable = taken is not None
+                count = taken or 0
+                lr = current_file.get_or_create_line(lineno)
+                existing_map = {(b.block, b.branch): b for b in lr.branches}
+                key = (block, branch)
+                if key not in existing_map:
+                    bh = BranchHits(block=block, branch=branch)
+                    lr.branches.append(bh)
+                    existing_map[key] = bh
+                bh = existing_map[key]
+                bh.set_reachable(tier, reachable)
+                if reachable and count > 0:
+                    bh.hits.add(tier, count)
 
-                elif line.startswith("FN:") and current_file is not None:
-                    parsed = parse_fn_record(line[3:])
-                    if parsed.name not in current_file.functions:
-                        current_file.functions[parsed.name] = parsed
-
-                elif line.startswith("DA:") and current_file is not None:
-                    parts = line[3:].split(",")
-                    lineno = int(parts[0])
-                    count = int(parts[1])
-                    lr = current_file.get_or_create_line(lineno)
-                    lr.hits.add(tier, count)
-                    if run_id is not None and count > 0:
-                        lr.run_hits[run_id] = lr.run_hits.get(run_id, 0) + count
-
-                elif line.startswith("BRDA:") and current_file is not None:
-                    parts = line[5:].split(",")
-                    block = _parse_block_id(parts[1])
-                    if block is None:
-                        continue  # exception-tagged: compiler machinery, not a product branch
-                    lineno = int(parts[0])
-                    branch = int(parts[2])
-                    taken = parts[3]
-
-                    reachable = taken != "-"
-                    count = int(taken) if reachable else 0
-
-                    lr = current_file.get_or_create_line(lineno)
-                    key = (block, branch)
-                    existing_map = {(b.block, b.branch): b for b in lr.branches}
-
-                    if key not in existing_map:
-                        bh = BranchHits(block=block, branch=branch)
-                        lr.branches.append(bh)
-                        existing_map[key] = bh
-
-                    bh = existing_map[key]
-                    bh.set_reachable(tier, reachable)
-                    if reachable and count > 0:
-                        bh.hits.add(tier, count)
-
-                elif line == "end_of_record":
-                    if current_file is not None:
-                        files_loaded += 1
-                    current_file = None
-
-        logger.info("Loaded %d files from %s", files_loaded, info_path.name)
-        return files_loaded
+        logger.info("Loaded %d files from %s", len(records), info_path.name)
+        return len(records)

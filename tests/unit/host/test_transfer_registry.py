@@ -319,20 +319,20 @@ def test_scp_effective_granularity_is_its_configured_block_size():
     assert ScpFileTransfer.progress_granularity.put == ScpOptions().block_size == 16384
 
 
-def test_scp_extra_block_size_wins_the_promise_because_it_wins_for_asyncssh():
-    """`extra` is applied LAST into the kwargs asyncssh gets, so it decides the stride.
+def test_the_scp_promise_is_the_block_size_asyncssh_receives():
+    """The field is the stride's one source, so the promise and the kwargs agree.
 
-    `ScpOptions._kwargs()` ends `kw.update(self.extra)`, and `extra` is
-    user-settable from `[scp_options]` in lab data and documented as "Extra
-    kwargs forwarded to ``asyncssh.scp()``". A promise read from the dedicated
-    field alone would answer 16384 while asyncssh strode 65536 -- and the
-    conformance surface sizes its payload from the promise, so the mismatch
-    would surface as a backend failure rather than as the config choice it is.
+    An `extra` key named `block_size` is refused when the options are built
+    (tests/unit/host/test_options_extra_shadowing.py), so there is no second
+    place the stride could come from: what `effective_progress_granularity`
+    answers is what `_kwargs()` hands asyncssh. The conformance surface sizes
+    its payload from the promise, so this agreement is what keeps a raised
+    stride from surfacing as a backend failure.
     """
     from otto.host.options import ScpOptions
     from otto.host.transfer.scp import ScpFileTransfer
 
-    opts = ScpOptions(extra={"block_size": 65536})
+    opts = ScpOptions(block_size=65536)
     # The premise: this is what actually reaches asyncssh.scp.
     assert opts._kwargs()["block_size"] == 65536
     backend = ScpFileTransfer.create(_ctx(scp_options=opts))
@@ -354,7 +354,7 @@ def test_a_non_positive_scp_block_size_answers_the_default_instead_of_raising():
     from otto.host.options import ScpOptions
     from otto.host.transfer.scp import ScpFileTransfer
 
-    for hostile in (ScpOptions(block_size=0), ScpOptions(extra={"block_size": -1})):
+    for hostile in (ScpOptions(block_size=0), ScpOptions(block_size=-1)):
         backend = ScpFileTransfer.create(_ctx(scp_options=hostile))
         answered = backend.effective_progress_granularity()
         assert answered == ScpFileTransfer.progress_granularity

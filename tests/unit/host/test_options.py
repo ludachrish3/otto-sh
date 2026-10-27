@@ -61,10 +61,12 @@ class TestSshOptions:
         assert kw["config"] == ["/tmp/ssh_config"]
         assert kw["proxy_command"] == "pc"
 
-    def test_extra_overrides_curated_fields(self):
-        opts = SshOptions(port=22, extra={"known_hosts": "/etc/ssh/known_hosts"})
-        kw = opts._kwargs()
-        assert kw["known_hosts"] == "/etc/ssh/known_hosts"
+    def test_extra_cannot_name_a_curated_field(self):
+        """One value, one source: a field's name in ``extra`` is refused when the
+        options are built (tests/unit/host/test_options_extra_shadowing.py has
+        the rule across every class and the lab spec)."""
+        with pytest.raises(ValueError, match="known_hosts"):
+            SshOptions(port=22, extra={"known_hosts": "/etc/ssh/known_hosts"})
 
     @pytest.mark.parametrize("key", ["username", "password", "tunnel"])
     def test_extra_overriding_an_identity_key_warns_once_and_names_the_key(self, caplog, key):
@@ -166,10 +168,6 @@ class TestTelnetOptions:
     def test_connect_timeout_bounds_the_tcp_connect(self):
         assert "connect_timeout" not in TelnetOptions()._open_kwargs()
         assert TelnetOptions(connect_timeout=2.5)._open_kwargs()["connect_timeout"] == 2.5
-
-    def test_extra_overrides_the_connect_timeout(self):
-        opts = TelnetOptions(connect_timeout=2.5, extra={"connect_timeout": 9.0})
-        assert opts._open_kwargs()["connect_timeout"] == 9.0
 
     def test_single_client_console_defaults_false(self):
         from otto.host.options import TelnetOptions
