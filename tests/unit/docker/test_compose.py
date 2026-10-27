@@ -18,9 +18,11 @@ from otto import declared as declared_mod
 from otto.config.project import Project
 from otto.config.scope import DockerCompose, DockerUseCase, ProjectScopeConfig
 from otto.declared import DeclaredEntry
+from otto.docker import compose as compose_mod
 from otto.docker.compose import (
     StartedStack,
     _project_parent_host,
+    _resolve_container_id,
     _safe_username,
     _stack_already_up,
     compose_command,
@@ -53,6 +55,7 @@ from otto.labs.loader import Lab
 from otto.registry import registering_project
 from otto.result import CommandNotRunError, CommandResult, Result
 from otto.utils import Status
+from tests._fixtures.clock import LONG_DEADLINE
 from tests._fixtures.docker_outputs import NETWORK_RACE
 from tests._fixtures.fake_project import fake_project
 from tests._fixtures.project_scaffold import make_project
@@ -69,6 +72,17 @@ def _ok(out: str = "") -> CommandResult:
 
 def _fail(out: str = "") -> CommandResult:
     return CommandResult(Status.Failed, value=out, command="", retcode=1)
+
+
+_SHIPPED_RESOLVE_TIMEOUT_S = compose_mod._CONTAINER_ID_RESOLVE_TIMEOUT_S
+"""The container-id budget as shipped, read before any fixture zeroes it."""
+
+
+@pytest.fixture(autouse=True)
+def _no_container_id_wait(monkeypatch):
+    """A zero resolve budget: a container that never shows probes once instead of
+    waiting the real 5 s. A test about the wait sets its own budget."""
+    monkeypatch.setattr("otto.docker.compose._CONTAINER_ID_RESOLVE_TIMEOUT_S", 0.0)
 
 
 @pytest.fixture(autouse=True)
@@ -760,7 +774,8 @@ async def test_compose_up_polls_for_container_id_after_start(tmp_path, monkeypat
     """A just-Started container can briefly not appear in `docker ps` on a busy
     daemon; the container-id lookup must poll past that empty first result so
     the service is registered instead of silently skipped (0 containers)."""
-    monkeypatch.setattr("otto.docker.compose._CONTAINER_ID_RESOLVE_BACKOFF_S", 0.0, raising=False)
+    monkeypatch.setattr("otto.docker.compose._CONTAINER_ID_RESOLVE_TIMEOUT_S", LONG_DEADLINE)
+    monkeypatch.setattr("otto.docker.compose._CONTAINER_ID_RESOLVE_INTERVAL_S", 0.0)
     project = _make_project(tmp_path)
     lab = _make_lab()
     parent = lab.hosts["test3"]
@@ -797,8 +812,8 @@ async def test_compose_up_resolve_gives_up_after_bounded_polls(tmp_path, monkeyp
     that came up but registered no host used to return {}, which
     `otto docker compose up` printed as "0 container(s) registered" in green, exit 0.
     """
-    monkeypatch.setattr("otto.docker.compose._CONTAINER_ID_RESOLVE_BACKOFF_S", 0.0, raising=False)
-    monkeypatch.setattr("otto.docker.compose._CONTAINER_ID_RESOLVE_ATTEMPTS", 3, raising=False)
+    # A zero budget: one probe, then the wait is over.
+    monkeypatch.setattr("otto.docker.compose._CONTAINER_ID_RESOLVE_TIMEOUT_S", 0.0)
     project = _make_project(tmp_path)
     lab = _make_lab()
     parent = lab.hosts["test3"]
@@ -821,7 +836,7 @@ async def test_compose_up_resolve_gives_up_after_bounded_polls(tmp_path, monkeyp
 
     with pytest.raises(RuntimeError, match="1 service\\(s\\) resolved to a running"):
         await compose_up(project, lab)
-    assert resolve_calls == 3, "must poll exactly _CONTAINER_ID_RESOLVE_ATTEMPTS times then stop"
+    assert resolve_calls == 1, "a spent budget must stop the polling"
 
 
 @pytest.mark.asyncio
@@ -833,8 +848,7 @@ async def test_compose_up_still_skips_one_unresolvable_service_among_several(tmp
     "no hosts" guard could be satisfied by making any unresolved service fatal,
     which would turn a one-shot sidecar into a broken `otto docker compose up`.
     """
-    monkeypatch.setattr("otto.docker.compose._CONTAINER_ID_RESOLVE_BACKOFF_S", 0.0, raising=False)
-    monkeypatch.setattr("otto.docker.compose._CONTAINER_ID_RESOLVE_ATTEMPTS", 2, raising=False)
+    monkeypatch.setattr("otto.docker.compose._CONTAINER_ID_RESOLVE_TIMEOUT_S", 0.0)
     project = _make_project(tmp_path, services=("api", "sidecar"))
     lab = _make_lab()
     parent = lab.hosts["test3"]
@@ -2621,3 +2635,44 @@ async def _ids_by_service(cmd, *_, **__):
     if "docker inspect" in cmd:
         return _ok("[]")
     return _ok()
+
+
+@pytest.mark.asyncio
+async def test_the_container_id_lookup_waits_through_the_shared_poll_for_five_seconds():
+    """The one deadline poll (otto.utils.wait_for_async), never a hand-rolled loop:
+    5 s of budget at 0.5 s between probes."""
+    lab = _make_lab()
+    parent = lab.hosts["test3"]
+    parent.exec.return_value = _ok("cid-api\n")  # type: ignore[union-attr]
+    seen: list = []
+
+    async def spy(predicate, timeout, **kw):
+        seen.append((timeout, kw["interval"]))
+        assert await predicate()
+
+    with (
+        patch("otto.docker.compose._CONTAINER_ID_RESOLVE_TIMEOUT_S", _SHIPPED_RESOLVE_TIMEOUT_S),
+        patch("otto.docker.compose.wait_for_async", new=spy),
+    ):
+        assert await _resolve_container_id(parent, "p", "api") == "cid-api"
+    assert seen == [(5.0, 0.5)]
+
+
+@pytest.mark.asyncio
+async def test_a_failing_container_lookup_warns_once_not_on_every_probe(monkeypatch, caplog):
+    monkeypatch.setattr("otto.docker.compose._CONTAINER_ID_RESOLVE_TIMEOUT_S", LONG_DEADLINE)
+    monkeypatch.setattr("otto.docker.compose._CONTAINER_ID_RESOLVE_INTERVAL_S", 0.0)
+    lab = _make_lab()
+    parent = lab.hosts["test3"]
+    parent.exec.side_effect = [  # type: ignore[union-attr]
+        _fail("permission denied"),
+        _fail("permission denied"),
+        _ok("cid-api\n"),
+    ]
+
+    with caplog.at_level(logging.WARNING, logger="otto.docker.compose"):
+        assert await _resolve_container_id(parent, "p", "api") == "cid-api"
+
+    assert [r.getMessage() for r in caplog.records].count(
+        "[docker] looking up p/api on test3 failed: permission denied"
+    ) == 1

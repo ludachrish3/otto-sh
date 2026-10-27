@@ -339,7 +339,7 @@ class TestTheReadProbesRefuseInsteadOfInventing:
 
     @pytest.mark.asyncio
     async def test_compose_resolve_container_id_refuses_instead_of_polling(self):
-        """Four bounded polls for a container nobody asked docker about."""
+        """The whole resolve budget, spent waiting for a container nobody asked docker about."""
         parent = _bare_parent()
         parent.exec = AsyncMock(return_value=await _real_decline())  # type: ignore[method-assign]
 

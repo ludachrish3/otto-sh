@@ -170,7 +170,9 @@ lab. This walks each project's `[docker]` settings and registers
 When a stack starts (the use-case deploy behind `otto docker compose up`, or
 `compose_up()` from an instruction or a test), each service's placeholder is
 overwritten with a real entry whose `container_id` is resolved by the label
-probe `compose_container_probe` (`docker ps -q --filter label=…`). `compose_down()` closes
+probe {func}`~otto.host.docker_host.compose_container_probe` (`docker ps -q --filter label=…`),
+polled through the shared deadline poll for a few seconds in case the daemon has
+not listed the container yet. `compose_down()` closes
 each container host before removing its entry — sessions must drain
 while the parent's connection is still alive, so container hosts
 close before their parent, the same teardown discipline described in

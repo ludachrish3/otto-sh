@@ -68,8 +68,8 @@ def _admit_all_scopes():
 
 
 @pytest.fixture(autouse=True)
-def _no_container_id_backoff():
-    with patch("otto.docker.compose._CONTAINER_ID_RESOLVE_BACKOFF_S", 0):
+def _no_container_id_wait():
+    with patch("otto.docker.compose._CONTAINER_ID_RESOLVE_TIMEOUT_S", 0):
         yield
 
 

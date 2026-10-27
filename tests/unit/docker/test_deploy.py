@@ -231,9 +231,9 @@ def _admit_all_scopes():
 
 
 @pytest.fixture(autouse=True)
-def _no_container_id_backoff():
-    """Zero the resolve backoff so the not-visible path does not sleep 1.5s."""
-    with patch("otto.docker.compose._CONTAINER_ID_RESOLVE_BACKOFF_S", 0):
+def _no_container_id_wait():
+    """A zero resolve budget: the not-visible path probes once instead of waiting 5 s."""
+    with patch("otto.docker.compose._CONTAINER_ID_RESOLVE_TIMEOUT_S", 0):
         yield
 
 

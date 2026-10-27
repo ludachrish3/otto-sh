@@ -29,7 +29,7 @@ from ..host.host import Host, is_dry_run, refuse_declined_fact
 from ..host.mount import Mount
 from ..host.unix_host import UnixHost
 from ..result import CommandNotRunError, CommandResult
-from ..utils import Status
+from ..utils import Status, WaitTimeoutError, wait_for_async
 
 if TYPE_CHECKING:
     from ..labs.loader import Lab
@@ -42,11 +42,11 @@ logger = logging.getLogger(__name__)
 _NETWORK_RACE_RETRY_BACKOFF_S = 1.0
 
 # A just-Started container can briefly not appear in `docker ps` on a busy
-# remote daemon, so resolving its id polls up to this many times, sleeping this
-# long between attempts. Module-level so tests can shrink them. The common case
-# (container already visible) returns on the first attempt with no sleep.
-_CONTAINER_ID_RESOLVE_ATTEMPTS = 4
-_CONTAINER_ID_RESOLVE_BACKOFF_S = 0.5
+# remote daemon, so resolving its id polls for up to this long, this far
+# apart. Module-level so tests can shrink them. The common case (container
+# already visible) returns on the first probe with no sleep.
+_CONTAINER_ID_RESOLVE_TIMEOUT_S = 5.0
+_CONTAINER_ID_RESOLVE_INTERVAL_S = 0.5
 
 
 def _is_transient_network_race(output: str) -> bool:
@@ -258,38 +258,49 @@ async def _resolve_container_id(
     reported the container Started — but on a busy remote daemon the just-
     Started container can briefly not yet appear in ``docker ps``. A single-shot
     lookup then misses it and the service is silently skipped (0 containers
-    registered). Poll up to ``_CONTAINER_ID_RESOLVE_ATTEMPTS`` times with a
-    short backoff; since compose has guaranteed the container exists, this only
-    waits out the visibility lag rather than masking a missing container.
-    Returns ``None`` if it never becomes visible within the bounded polls.
+    registered). It polls through the shared deadline poll for up to
+    ``_CONTAINER_ID_RESOLVE_TIMEOUT_S``; since compose has guaranteed the
+    container exists, this only waits out the visibility lag rather than
+    masking a missing container. A probe already running when the budget runs
+    out is not cut off. Returns ``None`` if it never becomes visible in time.
 
     A dry run's decline is refused rather than polled: ``None`` would mean
     "compose started it and it never appeared", the caller warns and skips
-    the service, and four rounds of ``_CONTAINER_ID_RESOLVE_BACKOFF_S`` would
-    be spent waiting for a container nobody asked docker about.
+    the service, and the whole budget would be spent waiting for a container
+    nobody asked docker about.
     """
-    # #737 moves this lookup onto wait_for_async with a deadline; the count
-    # loop stays as it is until then so the two changes do not cross.
-    # ast-grep-ignore: no-handrolled-deadline-poll
-    for attempt in range(_CONTAINER_ID_RESOLVE_ATTEMPTS):
+    found: "list[str]" = []
+    warned: "list[str]" = []
+
+    async def visible() -> bool:
         result = await parent.exec(compose_container_probe(project_name, service))
         refuse_declined_fact(result, asked=f"resolve_container_id({project_name}/{service})")
         if result.status.is_ok:
-            cid = result.value.strip().splitlines()
-            if cid:
-                return cid[0]
-        else:
-            # Not folded silently into "not visible yet": a permission-denied
-            # or timed-out `docker ps` is a different problem from a slow
-            # daemon, and compose_up's "none resolved" error tells the user to
-            # read these warnings.
+            found[:] = result.value.strip().splitlines()[:1]
+            return bool(found)
+        # Not folded silently into "not visible yet": a permission-denied or
+        # timed-out `docker ps` is a different problem from a slow daemon, and
+        # compose_up's "none resolved" error tells the user to read these
+        # warnings. Once per lookup: the same failure on every probe of the
+        # budget says nothing the first one did not.
+        if not warned:
+            warned.append(result.value)
             logger.warning(
                 f"[docker] looking up {project_name}/{service} on {parent.id} failed: "
                 f"{result.value}"
             )
-        if attempt < _CONTAINER_ID_RESOLVE_ATTEMPTS - 1:
-            await asyncio.sleep(_CONTAINER_ID_RESOLVE_BACKOFF_S)
-    return None
+        return False
+
+    try:
+        await wait_for_async(
+            visible,
+            _CONTAINER_ID_RESOLVE_TIMEOUT_S,
+            interval=_CONTAINER_ID_RESOLVE_INTERVAL_S,
+            on_timeout=f"{project_name}/{service} never appeared in docker ps on {parent.id}",
+        )
+    except WaitTimeoutError:
+        return None
+    return found[0]
 
 
 async def compose_up(
