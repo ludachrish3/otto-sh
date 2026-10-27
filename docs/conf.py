@@ -394,6 +394,9 @@ _EXTERNAL_DOC_LINKS = {
     # role-scoped lookup (missing_reference) never matches it even after
     # retargeting. A direct link sidesteps that mismatch instead of fighting it.
     "Self": "https://docs.python.org/3/library/typing.html#typing.Self",
+    # typing_extensions.Unpack (the ``**overrides`` of otto.fleet and
+    # otto.run_context): the same py:data-vs-py:class mismatch as Self.
+    "Unpack": "https://docs.python.org/3/library/typing.html#typing.Unpack",
     # annotated-types ships no Sphinx docs / objects.inv (README-only project).
     # LinkSpec.endpoints (models/link.py) uses ``Field(min_length=2,
     # max_length=2)``, which pydantic renders in the signature as

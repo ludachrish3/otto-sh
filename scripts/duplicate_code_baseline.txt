@@ -10,7 +10,6 @@ otto.context otto.run_context
 otto.coverage.attribution otto.coverage.capture.treediff
 otto.coverage.capture.model otto.coverage.store.model
 otto.creds.json_store otto.inventory.json_backend
-otto.fleet otto.run_context
 otto.host.connections otto.host.transport
 otto.host.console otto.host.telnet
 otto.host.docker_image_kind otto.host.kmod_kind
