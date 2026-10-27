@@ -163,6 +163,14 @@ class TestTelnetOptions:
         kw = TelnetOptions(extra={"term": "vt100"})._open_kwargs()
         assert kw["term"] == "vt100"
 
+    def test_connect_timeout_bounds_the_tcp_connect(self):
+        assert "connect_timeout" not in TelnetOptions()._open_kwargs()
+        assert TelnetOptions(connect_timeout=2.5)._open_kwargs()["connect_timeout"] == 2.5
+
+    def test_extra_overrides_the_connect_timeout(self):
+        opts = TelnetOptions(connect_timeout=2.5, extra={"connect_timeout": 9.0})
+        assert opts._open_kwargs()["connect_timeout"] == 9.0
+
     def test_single_client_console_defaults_false(self):
         from otto.host.options import TelnetOptions
 

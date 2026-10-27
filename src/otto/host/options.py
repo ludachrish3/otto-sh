@@ -327,6 +327,8 @@ class TelnetOptions:
             "cols": self.cols,
             "rows": self.rows,
         }
+        if self.connect_timeout is not None:
+            kw["connect_timeout"] = self.connect_timeout
         kw.update(self.extra)
         return kw
 
