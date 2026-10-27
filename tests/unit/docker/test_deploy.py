@@ -7,6 +7,7 @@ facts, the adapter call, staging, the merged command, registration, rollback
 """
 
 import logging
+import re
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -1232,6 +1233,8 @@ async def test_a_rollback_that_itself_fails_is_reported_and_never_masks(single, 
 
     # The ORIGINAL error propagates, not the rollback's.
     assert "resolved to a running container" in str(excinfo.value)
+    # Its remedy names the command, spelled by the one builder.
+    assert re.search(r"`docker compose -p \S+ logs` on test3", str(excinfo.value))
     assert "could not be rolled back" in caplog.text
     assert "parent went away" in caplog.text
 

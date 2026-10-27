@@ -1,0 +1,35 @@
+id: compose-command-through-builder
+language: python
+severity: error
+message: this spells a `docker compose -p` command by hand. Build it with otto.docker.compose.compose_command, where quoting, the -f/--env-file order and the env prefix live once.
+note: >
+  The use-case deploy once rebuilt `up` beside compose_up's and lost
+  compose_up's libnetwork-race retry, and six sites spelled
+  `docker compose -p` with three quoting habits. Every compose command,
+  dry-run previews and remedy text included, now comes from one builder.
+
+  Flagged: a string (plain or f-string) where `docker compose` is followed
+  by a flag (`-p`, `-f`, `--env-file`, ...), by an interpolation, or by the
+  end of the string (the head of a concatenation); and a list or tuple that
+  starts `"docker", "compose"`. Prose such as "docker compose up failed" is
+  not a command and is not flagged. Exempt: docstrings (a string that is a
+  whole statement is prose, not a command), and the builder's own line,
+  which carries an inline `# ast-grep-ignore` -- so a second builder of the
+  same name elsewhere is still flagged. Tests may hand-roll a command on
+  purpose (a reap that must not depend on the code under test), so the
+  rule is scoped to src/otto.
+files:
+- src/otto/**/*.py
+rule:
+  any:
+  - all:
+    - kind: string
+      regex: 'docker compose(\s+-|\s*\{|\s*["'']$)'
+    - not:
+        inside:
+          kind: expression_statement
+          stopBy: neighbor
+  - pattern: '["docker", "compose"]'
+  - pattern: '["docker", "compose", $$$REST]'
+  - pattern: '("docker", "compose")'
+  - pattern: '("docker", "compose", $$$REST)'

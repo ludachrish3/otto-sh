@@ -15,8 +15,9 @@ import getpass
 import logging
 import re
 import shlex
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
 from dataclasses import replace
+from pathlib import PurePath
 from typing import TYPE_CHECKING
 
 from ..config.project import Project
@@ -135,16 +136,46 @@ def _project_parent_host(lab: "Lab", parent: str | None) -> UnixHost:
     return docker_parent(lab, parent)
 
 
+def compose_command(
+    project: str,
+    *args: str,
+    files: "Sequence[str | PurePath]" = (),
+    env_file: "str | PurePath | None" = None,
+    env: "Mapping[str, str] | None" = None,
+) -> str:
+    """``[env K=V …] docker compose -p P [-f F …] [--env-file E] ARGS…``, every token quoted.
+
+    The one place a ``docker compose`` command is spelled: the use-case and
+    per-project paths, their dry-run previews and the observe verbs all build
+    here, so quoting and flag order cannot drift between them.
+
+    *args* are the subcommand, docker's own flags and any service names, one
+    token each; each is shell-quoted here, so no caller pre-quotes. *files*
+    keep their order (later files override earlier ones). *env* becomes an
+    ``env K=V`` prefix, keys sorted so the command is stable, each key and
+    each value quoted on its own.
+    """
+    # ast-grep-ignore: compose-command-through-builder
+    words: "list[str]" = ["docker", "compose", "-p", project]
+    for path in files:
+        words += ["-f", str(path)]
+    if env_file is not None:
+        words += ["--env-file", str(env_file)]
+    words += args
+    prefix = (
+        ["env", *(f"{shlex.quote(k)}={shlex.quote(env[k])}" for k in sorted(env))] if env else []
+    )
+    return " ".join([*prefix, *(shlex.quote(w) for w in words)])
+
+
 async def _compose_cmd(
-    parent: Host, project_name: str, files: list[str], action: str, *, extra: str = ""
+    parent: Host, project_name: str, files: list[str], *args: str
 ) -> CommandResult:
-    file_args = " ".join(f"-f {shlex.quote(f)}" for f in files)
-    cmd = f"docker compose -p {shlex.quote(project_name)} {file_args} {action}"
-    if extra:
-        cmd += f" {extra}"
     # Unbounded on purpose: an image build/pull has no defensible bound, and a
     # made-up constant would be wrong on a slower builder. `inf` states that.
-    return await parent.exec(cmd, timeout=float("inf"))
+    return await parent.exec(
+        compose_command(project_name, *args, files=files), timeout=float("inf")
+    )
 
 
 async def _stack_already_up(parent: Host, project_name: str) -> bool | None:
@@ -474,7 +505,7 @@ async def register_stack_hosts(
             f"none of compose stack {compose_project}'s {len(services)} service(s) resolved to a "
             f"running container on {parent.id}, so no host was registered — the usual "
             f"cause is that they all exited immediately; see the per-service warnings "
-            f"above, then `docker compose -p {compose_project} logs` on {parent.id}"
+            f"above, then `{compose_command(compose_project, 'logs')}` on {parent.id}"
         )
 
     return hosts
@@ -515,7 +546,7 @@ async def _up_and_register(
     # state (the rule's note names it); #737 replaces the loop.
     # ast-grep-ignore: no-handrolled-deadline-poll
     for attempt in range(2):
-        up = await _compose_cmd(parent, proj, remote_file_strs, "up -d --remove-orphans")
+        up = await _compose_cmd(parent, proj, remote_file_strs, "up", "-d", "--remove-orphans")
         if up.is_ok:
             break
         if attempt == 0 and _is_transient_network_race(up.value):
@@ -534,7 +565,7 @@ async def _up_and_register(
         declared_services.extend(compose.services)
     declared_services = list(dict.fromkeys(declared_services))  # dedupe, preserve order
 
-    live = await _compose_cmd(parent, proj, remote_file_strs, "config", extra="--services")
+    live = await _compose_cmd(parent, proj, remote_file_strs, "config", "--services")
     live_services: set[str] = set()
     if live.is_ok:
         live_services = {s.strip() for s in live.value.splitlines() if s.strip()}
@@ -663,7 +694,8 @@ async def compose_down(
         proj,
         [str(p) for p in remote_files],
         "down",
-        extra=f"--timeout {int(stop_timeout)}",
+        "--timeout",
+        str(int(stop_timeout)),
     )
     if not result.is_ok:
         logger.error(f"[docker] compose down failed: {result.value}")
@@ -717,8 +749,9 @@ async def compose_down_project(
         )
 
     result = await parent.exec(
-        f"docker compose -p {shlex.quote(compose_project)} down --remove-orphans "
-        f"--timeout {int(stop_timeout)}",
+        compose_command(
+            compose_project, "down", "--remove-orphans", "--timeout", str(int(stop_timeout))
+        ),
         timeout=float("inf"),
     )
     if not result.is_ok:

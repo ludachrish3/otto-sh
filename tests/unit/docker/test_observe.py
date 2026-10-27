@@ -238,8 +238,14 @@ def _resolved_each(lab, tmp_path):
 
 
 def test_logs_flags_spells_dockers_flags_in_dockers_order():
-    assert logs_flags(tail=None, since=None, timestamps=False) == ""
-    assert logs_flags(tail="50", since="10m", timestamps=True) == " --tail 50 --since 10m -t"
+    assert logs_flags(tail=None, since=None, timestamps=False) == []
+    assert logs_flags(tail="50", since="10m", timestamps=True) == [
+        "--tail",
+        "50",
+        "--since",
+        "10m",
+        "-t",
+    ]
 
 
 @pytest.mark.asyncio

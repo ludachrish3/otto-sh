@@ -57,6 +57,15 @@ mapping). Purity is the design constraint, not an accident: it is what lets
 what lets `--dry-run` print the *exact* compose command rather than a
 description of one.
 
+Every `docker compose` command otto runs comes from one builder,
+{func}`~otto.docker.compose.compose_command`. That covers the use-case `up` and
+teardown, the per-project `compose_up`/`compose_down`, `compose ps` and
+`compose logs`, the use-case deploy's dry-run preview and the commands quoted
+in error text. Quoting, the
+`-f`/`--env-file` order and the `env K=V` prefix live there once, so a preview
+and the live run cannot spell the command differently. The ast-grep rule
+`compose-command-through-builder` flags a command spelled by hand anywhere else.
+
 The parent has one owner, `observe.default_docker_parent`, and the rule is
 stated once, for users, under "Which host" on {doc}`../../cli/docker/index`.
 Two properties of it matter here. It reads the lab and nothing else, so no

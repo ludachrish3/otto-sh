@@ -18,7 +18,7 @@ from ..host.unix_host import UnixHost
 from ..logger.mode import LogMode
 from ..result import CommandNotRunError, CommandResult
 from ..utils import Status
-from .compose import use_case_project
+from .compose import compose_command, use_case_project
 
 if TYPE_CHECKING:
     from ..labs.loader import Lab
@@ -137,11 +137,6 @@ class LogsTarget:
     follow_command: "str | None" = None
     """The same command with docker's ``-f``, for ``follow_logs``; ``None`` when
     the verb has no live form (a listing)."""
-
-
-def _logs_target(parent: UnixHost, prefix: str, flags: str, names: str) -> LogsTarget:
-    """``<prefix> logs<flags><names>`` and its live form, ``-f`` right after the verb."""
-    return LogsTarget(parent, f"{prefix} logs{flags}{names}", f"{prefix} logs -f{flags}{names}")
 
 
 async def _exec_targets(targets: "list[LogsTarget]", *, asked: str) -> ObserveReport:
@@ -334,16 +329,16 @@ async def observed_containers(host_id: str) -> ObservedContainers:
     return ObservedContainers(names, ids, _answered(text, names))
 
 
-def logs_flags(*, tail: "str | None", since: "str | None", timestamps: bool) -> str:
-    """Docker's own log flags, in docker's spelling, as a suffix (leading space) or ``""``."""
-    parts: "list[str]" = []
+def logs_flags(*, tail: "str | None", since: "str | None", timestamps: bool) -> "list[str]":
+    """Docker's own log flags, in docker's spelling and order, one unquoted token each."""
+    tokens: "list[str]" = []
     if tail is not None:
-        parts.append(f"--tail {shlex.quote(tail)}")
+        tokens += ["--tail", tail]
     if since is not None:
-        parts.append(f"--since {shlex.quote(since)}")
+        tokens += ["--since", since]
     if timestamps:
-        parts.append("-t")
-    return "".join(f" {p}" for p in parts)
+        tokens.append("-t")
+    return tokens
 
 
 @dataclass(frozen=True)
@@ -351,10 +346,10 @@ class _ComposeSite:
     """One acting host of a use-case: where a compose verb runs, and on what."""
 
     parent: UnixHost
-    prefix: str
-    """``docker compose -p <project>``: the project label is the whole input."""
-    names: str
-    """The services the verb names on this host, as a quoted suffix, or ``""``."""
+    project: str
+    """The compose project: the project label is the whole input."""
+    services: "list[str]"
+    """The services the verb names on this host; empty names none (docker's "all")."""
 
 
 def _compose_sites(
@@ -391,11 +386,9 @@ def _compose_sites(
         )
         for host in acting:
             parent_host = deployment.parent_for(resolution.lab, host.host_id)
-            project = shlex.quote(use_case_project(parent_host.source_lab, use_case))
-            names = (
-                "".join(f" {shlex.quote(s)}" for s in host.services) if wanted is not None else ""
-            )
-            sites.append(_ComposeSite(parent_host, f"docker compose -p {project}", names))
+            project = use_case_project(parent_host.source_lab, use_case)
+            named = list(host.services) if wanted is not None else []
+            sites.append(_ComposeSite(parent_host, project, named))
     return sites
 
 
@@ -407,9 +400,9 @@ async def compose_ps(
     provide: "Mapping[str, str] | None" = None,
 ) -> ObserveReport:
     """``docker compose -p <project> ps [-a]`` on *parent*, or on every docker-capable host."""
-    verb = "ps -a" if all else "ps"
+    flags = ["-a"] if all else []
     targets = [
-        LogsTarget(site.parent, f"{site.prefix} {verb}")
+        LogsTarget(site.parent, compose_command(site.project, "ps", *flags))
         for site in _compose_sites(use_case, (), parent=parent, provide=provide, fleet=True)
     ]
     return await _exec_targets(targets, asked="compose_ps")
@@ -435,7 +428,11 @@ def resolve_compose_logs(
     """
     flags = logs_flags(tail=tail, since=since, timestamps=timestamps)
     return [
-        _logs_target(site.parent, site.prefix, flags, site.names)
+        LogsTarget(
+            site.parent,
+            compose_command(site.project, "logs", *flags, *site.services),
+            compose_command(site.project, "logs", "-f", *flags, *site.services),
+        )
         for site in _compose_sites(use_case, services, parent=parent, provide=provide)
     ]
 
@@ -490,7 +487,11 @@ async def resolve_logs(
     if follow:
         _require_ssh_parent(parent_host)
     flags = logs_flags(tail=tail, since=since, timestamps=timestamps)
-    return _logs_target(parent_host, "docker", flags, f" {shlex.quote(container)}")
+    return LogsTarget(
+        parent_host,
+        shlex.join(["docker", "logs", *flags, container]),
+        shlex.join(["docker", "logs", "-f", *flags, container]),
+    )
 
 
 async def container_logs(

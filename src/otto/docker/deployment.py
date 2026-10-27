@@ -15,7 +15,6 @@ up, unless ``own=True``).
 
 import logging
 import os
-import shlex
 import tempfile
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -32,6 +31,7 @@ from .adapter import AdapterResult, adapter_for
 from .build import build_images, check_project_images
 from .compose import (
     _stack_already_up,
+    compose_command,
     compose_down_project,
     merge_declared_users,
     register_stack_hosts,
@@ -448,21 +448,14 @@ def _up_command(
     ``--pull`` policy is docker's to judge, so it is quoted for the shell and
     never validated here.
     """
-    parts: "list[str]" = []
-    if env:
-        parts.append("env")
-        parts += [f"{k}={shlex.quote(env[k])}" for k in sorted(env)]
-    parts += ["docker", "compose", "-p", shlex.quote(compose_project)]
-    for path in compose_paths:
-        parts += ["-f", shlex.quote(str(path))]
-    parts += ["--env-file", shlex.quote(str(env_file)), "up", "-d", "--remove-orphans"]
+    args = ["up", "-d", "--remove-orphans"]
     if force_recreate:
-        parts.append("--force-recreate")
+        args.append("--force-recreate")
     if pull is not None:
-        parts += ["--pull", shlex.quote(pull)]
+        args += ["--pull", pull]
     if narrowed:
-        parts += [shlex.quote(s) for s in services]
-    return " ".join(parts)
+        args += services
+    return compose_command(compose_project, *args, files=compose_paths, env_file=env_file, env=env)
 
 
 def _unit_services(unit: _ProjectUnit) -> "set[str]":
@@ -966,16 +959,13 @@ async def teardown(
         wanted = [s for s in declared if s in services_filter]
         if not wanted:
             continue
-        names = " ".join(shlex.quote(s) for s in wanted)
-        quoted = shlex.quote(proj)
         ran: "list[CommandResult]" = []
-        for action in (f"stop -t {int(stop_timeout)} {names}", f"rm -f {names}"):
-            result = await parent_host.exec(f"docker compose -p {quoted} {action}")
+        for verb, flags in (("stop", ["-t", str(int(stop_timeout))]), ("rm", ["-f"])):
+            result = await parent_host.exec(compose_command(proj, verb, *flags, *wanted))
             ran.append(result)
             if not result.is_ok:
                 logger.error(
-                    f"[docker] `{action.split()[0]}` failed for {proj} on "
-                    f"{parent_host.id}: {result.value}"
+                    f"[docker] `{verb}` failed for {proj} on {parent_host.id}: {result.value}"
                 )
         await unregister_container_hosts(resolution.lab, prefix, services=wanted)
         hosts[host_id] = ran

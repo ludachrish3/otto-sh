@@ -22,6 +22,7 @@ from otto.docker.compose import (
     _project_parent_host,
     _safe_username,
     _stack_already_up,
+    compose_command,
     compose_down,
     compose_down_project,
     compose_up,
@@ -2320,3 +2321,86 @@ async def test_compose_up_build_dry_run_refuses_a_missing_dockerfile(tmp_path):
         await compose_up(project, lab, build=True)
     assert "\n" not in str(caught.value)
     assert parent.exec.await_count == 0
+
+
+@pytest.mark.parametrize(
+    ("call", "expected"),
+    [
+        pytest.param(
+            lambda: compose_command(
+                "p", "up", "-d", "--remove-orphans", files=["/a.yml", "/b c.yml"]
+            ),
+            "docker compose -p p -f /a.yml -f '/b c.yml' up -d --remove-orphans",
+            id="compose_up",
+        ),
+        pytest.param(
+            lambda: compose_command("p", "config", "--services", files=["/a.yml"]),
+            "docker compose -p p -f /a.yml config --services",
+            id="config",
+        ),
+        pytest.param(
+            lambda: compose_command(
+                "a b",
+                "up",
+                "-d",
+                "--remove-orphans",
+                "--pull",
+                "x;y",
+                "svc one",
+                files=[Path("/s/c.yml")],
+                env_file=Path("/s/.env"),
+                env={"Z": "1", "A": "v w"},
+            ),
+            "env A='v w' Z=1 docker compose -p 'a b' -f /s/c.yml --env-file /s/.env "
+            "up -d --remove-orphans --pull 'x;y' 'svc one'",
+            id="deploy-up-env-sorted-and-quoted",
+        ),
+        pytest.param(
+            lambda: compose_command("p", "down", "--remove-orphans", "--timeout", "1"),
+            "docker compose -p p down --remove-orphans --timeout 1",
+            id="down",
+        ),
+        pytest.param(
+            lambda: compose_command("p", "stop", "-t", "5", "x;y"),
+            "docker compose -p p stop -t 5 'x;y'",
+            id="partial-stop",
+        ),
+        pytest.param(
+            lambda: compose_command("p", "logs", "-f", "--tail", "5", "--since", "1h", "-t"),
+            "docker compose -p p logs -f --tail 5 --since 1h -t",
+            id="logs-follow",
+        ),
+        pytest.param(
+            lambda: compose_command("p", "rm", "-f", "api", "x;y"),
+            "docker compose -p p rm -f api 'x;y'",
+            id="partial-rm",
+        ),
+        pytest.param(
+            lambda: compose_command("p", "logs", "--tail", "5", "api"),
+            "docker compose -p p logs --tail 5 api",
+            id="logs",
+        ),
+        pytest.param(
+            lambda: compose_command("otto-a b", "logs"),
+            "docker compose -p 'otto-a b' logs",
+            id="remedy-logs",
+        ),
+        pytest.param(
+            lambda: compose_command("p", "ps"),
+            "docker compose -p p ps",
+            id="ps",
+        ),
+        pytest.param(
+            lambda: compose_command("p", "ps", "-a"),
+            "docker compose -p p ps -a",
+            id="ps-all",
+        ),
+        pytest.param(
+            lambda: compose_command("p", env={"a b": "1"}),
+            "env 'a b'=1 docker compose -p p",
+            id="env-key-quoted",
+        ),
+    ],
+)
+def test_compose_command_renders_every_caller_shape_quoted(call, expected):
+    assert call() == expected

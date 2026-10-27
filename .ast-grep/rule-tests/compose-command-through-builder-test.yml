@@ -1,0 +1,49 @@
+# Rule test for .ast-grep/rules/compose-command-through-builder.yml.
+# `valid` snippets must NOT match, `invalid` snippets must. Run by
+# `make lint-arch` (`ast-grep test`), whose test dir is sgconfig.yml's
+# testConfigs entry.
+# The builder's own exemption is an inline `# ast-grep-ignore` comment,
+# which `ast-grep scan` honours and `ast-grep test` does not, so it is
+# not pinned here; the last `invalid` case pins that a builder without it
+# is flagged.
+id: compose-command-through-builder
+valid:
+# A docstring that names the command is prose.
+- |
+  def teardown():
+      """Full teardown is ``docker compose -p <proj> down`` with no ``-f``."""
+# otto's own verb in help text is not a docker command.
+- |
+  HELP = "otto docker compose up"
+# Calling the builder is the spelling the rule steers to.
+- |
+  cmd = compose_command(p, "logs")
+# Prose that names a compose verb is not a command.
+- |
+  raise X(f"docker compose up failed for {p}: {out}")
+invalid:
+- |
+  cmd = f"docker compose -f {f} config --services"
+- |
+  parts = ["docker", "compose"] + ["-p", p]
+- |
+  parts = ("docker", "compose", "-p", p)
+- |
+  cmd = "docker compose " + "-p " + p
+- |
+  cmd = ("docker compose " f"-p {p} down")
+- |
+  cmd = f"docker compose {flags} up"
+- |
+  cmd = f"docker compose -p {p} down"
+- |
+  cmd = "docker compose --project-name x ps"
+- |
+  parts += ["docker", "compose", "-p", p]
+- |
+  raise X(f"see `docker compose -p {p} logs` on the parent")
+# A second builder of the same name, without the exemption, is flagged.
+- |
+  def compose_command(project, *args):
+      words = ["docker", "compose", "-p", project]
+      return " ".join(words)
