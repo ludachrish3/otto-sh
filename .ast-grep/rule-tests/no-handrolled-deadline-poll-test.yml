@@ -1,0 +1,64 @@
+# Rule test for .ast-grep/rules/no-handrolled-deadline-poll.yml.
+# `valid` snippets must NOT match, `invalid` snippets must. Run by
+# `make lint-arch` (`ast-grep test`), whose test dir is sgconfig.yml's
+# testConfigs entry.
+id: no-handrolled-deadline-poll
+valid:
+# The remedy: the deadline said once, expiry raises.
+- |
+  await wait_for_async(_daemon_ready, 30.0, interval=1.0, on_timeout="docker never came back")
+- |
+  wait_for(lambda: not pidfile.exists(), 5.0, interval=0.1, on_timeout="grandchild survived")
+# A paced writer: sleeps between chunks, never leaves early — not a poll.
+- |
+  for i in range(0, total, chunk):
+      writer.write(encoded[i : i + chunk])
+      if delay:
+          await asyncio.sleep(delay)
+# Spaced round trips, each one asserted on its own — no predicate exit.
+- |
+  for i in range(rounds):
+      round_trip(target)
+      if i < rounds - 1:
+          time.sleep(settle)
+# A yield loop: sleep(0) hands the loop a turn, it waits for nothing.
+- |
+  for _ in range(3):
+      await asyncio.sleep(0)
+      if task.done():
+          break
+# A range loop that leaves early without sleeping is a search, not a poll.
+- |
+  for attempt in range(3):
+      if lookup(attempt):
+          return attempt
+invalid:
+# The motivating shape: a readiness poll with its deadline spelled as a count.
+- |
+  for _ in range(30):
+      info = await parent.exec("docker info && echo ready || true")
+      if "ready" in info.value:
+          break
+      await asyncio.sleep(1.0)
+# Sleep-first, `return` as the exit.
+- |
+  for attempt in range(tries):
+      if attempt:
+          await sleep(interval)
+      result = await run(probe)
+      if result.is_ok:
+          return None
+# The synchronous twin.
+- |
+  for _ in range(50):
+      try:
+          os.kill(pid, 0)
+      except ProcessLookupError:
+          return
+      time.sleep(0.1)
+# A clock arm, so the test also pins the shape the rule began with.
+- |
+  while time.monotonic() < deadline:
+      if ready():
+          break
+      time.sleep(0.1)

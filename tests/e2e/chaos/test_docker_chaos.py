@@ -42,7 +42,7 @@ from otto.host.docker_host import DockerContainerHost
 from otto.host.host import Host
 from otto.host.unix_host import UnixHost
 from otto.labs.loader import Lab
-from otto.utils import Status
+from otto.utils import Status, wait_for_async
 from tests._fixtures._host_pool import lease_unix_host
 from tests._fixtures.bed_hygiene import (
     _DOCKER_NET_PROBE,
@@ -417,15 +417,19 @@ def test_daemon_restart_under_open_session(api_host, docker_parent):
         assert opened.status == Status.Success, opened.only.value
         bounce = await docker_parent.exec("sudo -n systemctl restart docker", timeout=90)
         assert bounce.status == Status.Success, bounce.value
-        for _ in range(30):  # daemon readiness poll, <=30s
+
+        async def _daemon_ready() -> bool:
             info = await docker_parent.exec(
                 "docker info >/dev/null 2>&1 && echo ready || true", timeout=15
             )
-            if "ready" in info.value:
-                break
-            await asyncio.sleep(1.0)
-        else:
-            raise AssertionError(f"{docker_parent.element.name}: docker daemon never came back")
+            return "ready" in info.value
+
+        await wait_for_async(
+            _daemon_ready,
+            30.0,
+            interval=1.0,
+            on_timeout=f"{docker_parent.element.name}: docker daemon never came back",
+        )
         mid = await api_host.run("echo during", timeout=15)
         assert mid.status == Status.Error, "a stopped container must not answer"
         start = await docker_parent.exec(f"docker start {cid}", timeout=60)

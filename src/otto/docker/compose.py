@@ -201,6 +201,9 @@ async def _resolve_container_id(
     the service, and four rounds of ``_CONTAINER_ID_RESOLVE_BACKOFF_S`` would
     be spent waiting for a container nobody asked docker about.
     """
+    # #737 moves this lookup onto wait_for_async with a deadline; the count
+    # loop stays as it is until then so the two changes do not cross.
+    # ast-grep-ignore: no-handrolled-deadline-poll
     for attempt in range(_CONTAINER_ID_RESOLVE_ATTEMPTS):
         result = await parent.exec(compose_container_probe(project_name, service))
         refuse_declined_fact(result, asked=f"resolve_container_id({project_name}/{service})")
@@ -508,6 +511,9 @@ async def _up_and_register(
     # Levers, roughly in order: widen the retry (range(2) -> range(3) and/or
     # a longer _NETWORK_RACE_RETRY_BACKOFF_S); a pre-`up` `docker network
     # prune` on the parent; or restart the daemon between runs.
+    # A retry of a one-shot operation on one classified error, not a poll of a
+    # state (the rule's note names it); #737 replaces the loop.
+    # ast-grep-ignore: no-handrolled-deadline-poll
     for attempt in range(2):
         up = await _compose_cmd(parent, proj, remote_file_strs, "up -d --remove-orphans")
         if up.is_ok:

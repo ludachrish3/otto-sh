@@ -5,11 +5,11 @@ import os
 import shutil
 import signal
 import subprocess
-import time
 from pathlib import Path
 
 import pytest
 
+from otto.utils import WaitTimeoutError, wait_for
 from scripts import api_regen
 from tests._fixtures.api_dump import write_tree
 from tests._fixtures.gitrepo import TmpGitRepo
@@ -429,14 +429,19 @@ def test_timeout_kills_the_whole_process_group(tmp_path):
     with pytest.raises(api_regen.EnvError, match="timed out"):
         api_regen.run_child(api_regen.CurrentEnv().python(tmp_path), src, ["otto"], timeout=3)
     pid = int(pidfile.read_text())
-    for _ in range(50):
+
+    def _gone() -> bool:
         try:
             os.kill(pid, 0)
         except ProcessLookupError:
-            return
-        time.sleep(0.1)
-    os.kill(pid, signal.SIGKILL)
-    pytest.fail("the grandchild survived the timeout")
+            return True
+        return False
+
+    try:
+        wait_for(_gone, 5.0, interval=0.1, on_timeout="the grandchild survived the timeout")
+    except WaitTimeoutError:
+        os.kill(pid, signal.SIGKILL)
+        raise
 
 
 @pytest.mark.skipif(shutil.which("uv") is None, reason="uv is not on PATH")
