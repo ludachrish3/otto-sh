@@ -283,8 +283,15 @@ M_QUICK := not stability and not busybox and not conformance and not kmodcov and
 # stability/soak tests are excluded from `coverage` (the `stability` marker)
 # and run only via `make stability` / `stability-embedded`.
 # --kill-after escalates SIGTERM → SIGKILL if xdist workers don't drain.
-PYTEST_TIMEOUT := 2400s
-TIMEOUT_CMD := timeout --foreground --kill-after=10s $(PYTEST_TIMEOUT)
+# A slower machine raises the cap from the environment
+# (`LANE_TIMEOUT=7200s make <lane>`, hence `?=`), which a stamped lane still
+# stamps; on the make command line it marks the run overridden. It is
+# not called PYTEST_TIMEOUT: make exports command-line variables to recipes,
+# and pytest-timeout reads PYTEST_TIMEOUT as its per-test timeout, a plain
+# number, so `PYTEST_TIMEOUT=7200s` aborted every leg at startup (#734).
+LANE_TIMEOUT ?= 2400s
+$(if $(strip $(LANE_TIMEOUT)),,$(error LANE_TIMEOUT is empty: unset it, or give a duration such as 7200s))
+TIMEOUT_CMD := timeout --foreground --kill-after=10s $(LANE_TIMEOUT)
 
 # Arms the asyncio transport-leak detector (tests/conftest.py +
 # tests/_fixtures/_transport_leaks.py). One token so "which lanes are armed"
@@ -911,7 +918,7 @@ COVERAGE_STAMP := uv run python scripts/coverage_stamp.py
 COVERAGE_STAMP_GATE = --threshold "$(COVERAGE_THRESHOLD)" --selection "$(M_COVERAGE)" --browsers "$(DASHBOARD_BROWSERS)" --primary "$(NOX_PRIMARY)"
 # Every variable given on the command line, by name — whatever it is. The
 # legs expand far more than the four gate variables (junitxml, LEAK_DETECT,
-# TIMEOUT_CMD, PYTEST_TIMEOUT, BROWSER_WORKERS, …), so the honest rule is
+# TIMEOUT_CMD, LANE_TIMEOUT, BROWSER_WORKERS, …), so the honest rule is
 # "any command-line variable makes this run not the declared gate", with an
 # allowlist for the release's own knobs: the version it bumps to, and the
 # import-budget approvals (they change what the delta accepts, never what
@@ -1219,13 +1226,12 @@ conformance: ## Run the host-contract conformance suite (`conformance`-marked; e
 # iterating: `make conformance-bed CONFORMANCE_CELLS=8` samples off the
 # session seed exactly as the hermetic lane does.
 #
-# ITS OWN WALL-CLOCK CAP, larger than PYTEST_TIMEOUT and stated rather than
-# inherited: 657 items reach real hardware here, the seven single-client
+# ITS OWN WALL-CLOCK CAP, stated rather than inherited: 657 items reach real hardware here, the seven single-client
 # console cells serialize against each other through
 # `tests/conformance/_console_safety.py`'s exclusive lock, the BusyBox cells
 # serialize against each other on that module's family lock, and the
 # integration tree measured full one-group bed serialization at >450s.
-# PYTEST_TIMEOUT is the cap for lanes whose slowest leg is a local VM; this
+# LANE_TIMEOUT is the cap for lanes whose slowest leg is a local VM; this
 # one is not that lane.
 #
 # The item count was 284 until the support matrix's POSITIVE CONTROLS landed

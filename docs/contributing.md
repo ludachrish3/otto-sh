@@ -844,6 +844,16 @@ make coverage                 # run the full suite and enforce the coverage gate
 uv run pytest -k test_host    # run a subset by keyword
 ```
 
+Most make lanes stop each pytest leg after 40 minutes, so a hang fails the
+lane instead of stalling it (`conformance-bed` and `kmodcov` have their own
+caps, `CONFORMANCE_BED_TIMEOUT` and `KMODCOV_TIMEOUT`). On a slower machine,
+raise the cap from the environment with `LANE_TIMEOUT`, for example
+`LANE_TIMEOUT=10800s make coverage`; such a run is stamped as the gate like
+any other. Set on the make command line instead, like any variable there, it
+marks that `make coverage` run as overridden, so the run is not stamped, and
+`make gate-tip` refuses it outright. The cap is separate from pytest-timeout's
+per-test limit (`timeout` in `pyproject.toml`).
+
 ### The scoped lanes
 
 `make quick PATHS="<dirs or files>"` runs just those paths, uninstrumented, in

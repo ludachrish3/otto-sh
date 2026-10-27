@@ -2,7 +2,7 @@
 
 ONE rule, stated in full: the vitest configs, the browser lane's ``expect()``
 ceiling, pytest's per-test ``timeout``, and the Makefile's session-wide
-``PYTEST_TIMEOUT`` wrap must each be written down in this repository, at or above a
+``LANE_TIMEOUT`` wrap must each be written down in this repository, at or above a
 floor. Nothing here inspects test bodies or reasons about assertions — "What
 this does NOT cover" below is exhaustive.
 
@@ -45,6 +45,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._fixtures.make_caps import makefile_session_cap
 from tests._fixtures.paths import CHECKOUT_ROOT, TESTS_ROOT
 
 # ── Part A: every lane declares its own runaway guard ───────────────────────
@@ -335,7 +336,7 @@ def test_python_lane_declares_its_per_test_timeout() -> None:
     )
 
 
-# The Makefile wraps every coverage leg in `timeout $(PYTEST_TIMEOUT)`: a
+# The Makefile wraps every coverage leg in `timeout $(LANE_TIMEOUT)`: a
 # session-wide runaway guard on top of the per-test one. Same rule, one level
 # up — nothing passes or fails because of where it sits, so it belongs far
 # above the leg's runtime. It sat at 360s over a coverage-python leg measured at
@@ -349,30 +350,10 @@ def test_python_lane_declares_its_per_test_timeout() -> None:
 # red builds.
 
 
-def makefile_session_cap(text: str) -> int:
-    """The declared ``PYTEST_TIMEOUT`` in seconds; loud on absence or duplication.
-
-    Refuses a second declaration rather than reading the first or the last:
-    Make's ``:=`` lets a later line win at runtime (the same trap
-    :func:`ts_bound_gaps` reads the LAST vitest bound for), and a reader that
-    picked either silently would green the gate on the wrong number.
-    """
-    matches = re.findall(r"^PYTEST_TIMEOUT\s*:?=\s*(\d+)s\s*$", text, re.MULTILINE)
-    assert matches, (
-        "the Makefile no longer declares PYTEST_TIMEOUT — the coverage legs would run "
-        "unbounded and a hung integration test would stall the pipeline until the CI "
-        "job limit killed it with no per-leg attribution"
-    )
-    assert len(matches) == 1, (
-        f"the Makefile declares PYTEST_TIMEOUT {len(matches)} times: {matches}"
-    )
-    return int(matches[0])
-
-
 def test_make_declares_a_session_cap_far_above_the_leg() -> None:
     cap = makefile_session_cap((CHECKOUT_ROOT / "Makefile").read_text())
     assert cap >= _MAKE_SESSION_CAP_FLOOR_S, (
-        f"PYTEST_TIMEOUT is {cap}s, below the {_MAKE_SESSION_CAP_FLOOR_S}s floor. "
+        f"LANE_TIMEOUT is {cap}s, below the {_MAKE_SESSION_CAP_FLOOR_S}s floor. "
         f"The coverage-python leg runs 800-900s on the dev VM; a cap inside that band is "
         f"a runaway guard turned discriminator, and it reddens builds on machine load alone"
     )
@@ -486,11 +467,13 @@ def test_declared_bound_scanners_observe_red() -> None:
     assert pytest_ini_section("[tool.other]\ntimeout = 600\n") == ""
 
     # The Makefile session-cap reader: absent and duplicated are both loud.
-    assert makefile_session_cap("PYTEST_TIMEOUT := 900s\n") == 900
+    assert makefile_session_cap("LANE_TIMEOUT := 900s\n") == 900
+    # `?=`, so a slower machine raises it from the environment; the default still reads.
+    assert makefile_session_cap("LANE_TIMEOUT ?= 900s\n") == 900
     with pytest.raises(AssertionError, match="no longer declares"):
         makefile_session_cap("TIMEOUT := 900s\n")
     with pytest.raises(AssertionError, match="2 times"):
-        makefile_session_cap("PYTEST_TIMEOUT := 900s\nPYTEST_TIMEOUT := 120s\n")
+        makefile_session_cap("LANE_TIMEOUT := 900s\nLANE_TIMEOUT := 120s\n")
     # The wrapped-target closure follows prerequisites and $(MAKE) recursion.
     toy = (
         "outer: inner\n\t@echo\n"

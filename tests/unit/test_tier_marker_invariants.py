@@ -1742,7 +1742,7 @@ def _expand_makefile_refs(value: str, variables: "dict[str, str]") -> str:
     """*value* with every ``$(NAME)`` reference to a known variable substituted.
 
     Iterated, because these definitions nest (``TIMEOUT_CMD`` names
-    ``PYTEST_TIMEOUT``), and bounded so a variable that referenced itself
+    ``LANE_TIMEOUT``), and bounded so a variable that referenced itself
     cannot spin. Unknown references — ``$(call ...)``, ``$(1)``, a function
     call — are left in place ON PURPOSE: this returns text for a caller to
     judge, and a silent drop is how a scanner starts reading a recipe that is

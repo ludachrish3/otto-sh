@@ -56,6 +56,7 @@ from tests._fixtures.busybox import (
     require_interpreter,
     upstream_drift_report,
 )
+from tests._fixtures.make_caps import makefile_session_cap
 from tests._fixtures.paths import CHECKOUT_ROOT
 
 # The checkout root. Sourced from tests/_fixtures/paths.py rather than derived
@@ -907,12 +908,12 @@ def test_the_fetch_budget_fits_inside_both_timeouts():
         f"otherwise replace the fetch's own actionable error with a bare timeout"
     )
 
-    # `make busybox` wraps the whole session in `timeout <PYTEST_TIMEOUT>`, so
+    # `make busybox` wraps the whole session in `timeout <LANE_TIMEOUT>`, so
     # the arithmetic has to survive the matrix, not just one entry. Computed
     # for the worst case — every artifact stalling, one after another, in a
     # single worker — because `-n auto` can only improve on that.
     makefile = (_REPO_ROOT / "Makefile").read_text()
-    session_cap = int(re.search(r"^PYTEST_TIMEOUT\s*:?=\s*(\d+)s", makefile, re.MULTILINE).group(1))
+    session_cap = makefile_session_cap(makefile)
     worst_session = len(BUSYBOX_MATRIX) * per_artifact
     assert worst_session < session_cap, (
         f"{len(BUSYBOX_MATRIX)} artifacts x {per_artifact}s = {worst_session}s exceeds "

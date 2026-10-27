@@ -308,7 +308,7 @@ jobs:
   # nothing writes would be a check that cannot fail.
   conformance-hermetic:
     runs-on: ubuntu-latest
-    # ABOVE the Makefile's PYTEST_TIMEOUT wrap (2400s) around `make
+    # ABOVE the Makefile's LANE_TIMEOUT wrap (2400s) around `make
     # conformance`, plus the sync / sshd / `make busybox-cache` setup ahead of
     # it, so a stall reports through `timeout`'s exit 124 rather than a
     # GitHub cancel. Pinned by tests/unit/test_declared_harness_bounds.py.
@@ -498,7 +498,7 @@ jobs:
     name: Next-Python canary (expected-rung ratchet)
     runs-on: ubuntu-latest
     # The climb reaches `make conformance`, wrapped at the Makefile's
-    # PYTEST_TIMEOUT, and runs every other nightly lane's tests besides — so
+    # LANE_TIMEOUT, and runs every other nightly lane's tests besides — so
     # this bound is well above the sum, and above the wrap plus setup that
     # tests/unit/test_declared_harness_bounds.py pins.
     timeout-minutes: 60
