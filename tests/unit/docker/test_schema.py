@@ -73,6 +73,17 @@ def test_duplicate_compose_names_refused(tmp_path):
         Project(root=make_project(tmp_path / "r", name="r", extra=toml, files=_FILES))
 
 
+@pytest.mark.parametrize("name", ["sub/core", "sub\\core", ".."])
+def test_a_compose_name_that_is_a_path_is_refused_at_load(tmp_path, name):
+    """It names the staged file; a path there would deploy and then refuse every
+    narrow teardown, so it is refused before anything is staged."""
+    toml = _UC_TOML.replace('name = "core"', f"name = '{name}'").replace(
+        'composes = ["core"]', f"composes = ['{name}']"
+    )
+    with pytest.raises(Exception, match="must be one path segment"):
+        Project(root=make_project(tmp_path / "r", name="r", extra=toml, files=_FILES))
+
+
 def test_compose_users_round_trip(tmp_path):
     toml = (
         '[[docker.composes]]\npath = "docker/compose.yml"\n'

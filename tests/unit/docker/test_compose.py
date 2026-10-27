@@ -1929,7 +1929,11 @@ async def test_compose_down_failure_relays_dockers_output_verbatim(tmp_path, cap
         await compose_down(project, lab)
 
     rendered = [shown(r) for r in caplog.records]
-    assert f"[docker] compose down failed: {output}" in rendered, rendered
+    assert any(
+        r.startswith("[docker] compose down failed for otto-project1")
+        and r.endswith(f" on test3: {output}")
+        for r in rendered
+    ), rendered
 
 
 @pytest.mark.asyncio

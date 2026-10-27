@@ -181,6 +181,20 @@ class DockerComposeSpec(OttoModel):
         """The handle this compose is known by -- ``name``, or the path stem when unset."""
         return self.name or self.path.stem
 
+    @field_validator("name")
+    @classmethod
+    def _name_is_one_path_segment(cls, name: "str | None") -> "str | None":
+        # The handle names the staged file on the parent (`<index>/<name>.yml`),
+        # and a teardown reads that layout back, so a name that is a path would
+        # deploy and then never tear down narrowly.
+        if name is not None and ("/" in name or "\\" in name or name in {".", ".."}):
+            raise ValueError(
+                f"[[docker.composes]] name {name!r} must be one path segment "
+                f"(no '/' or '\\', not '.' or '..'): it names the compose file "
+                f"otto stages on the parent"
+            )
+        return name
+
     @model_validator(mode="after")
     def _users_name_declared_services(self) -> "DockerComposeSpec":
         unknown = [k for k in self.users if k not in self.services]

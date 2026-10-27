@@ -28,11 +28,16 @@ import tarfile
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ..config.scope import DockerCompose, DockerImage
 from ..host.errors import HostCommandError, HostUnreachableError
 from ..host.host import Host, is_dry_run
 from ..result import CommandNotRunError, CommandResult
+
+if TYPE_CHECKING:
+    from ..host.recursive_transfer import RemoteListing
+    from ..host.unix_host import UnixHost
 
 logger = logging.getLogger(__name__)
 
@@ -253,7 +258,7 @@ async def stage_compose_files(
             # below reports an unreadable/unstageable compose file.
             authored = ""
         if warn:
-            # Index 0's directory, not `sub`: `_compose_cmd` passes only `-f`
+            # Index 0's directory, not `sub`: `compose_command` is given only `-f`
             # and no `--project-directory`, so compose resolves EVERY
             # relative bind source (whichever file declares it) against the
             # directory of the first `-f` file, not each file's own.
@@ -291,6 +296,10 @@ class StagedUseCase:
     env_file: Path
 
 
+_COMPOSE_SUFFIX = ".yml"
+"""The suffix every staged use-case compose file carries; the read-back keys on it."""
+
+
 def use_case_compose_paths(compose_project: str, files: "list[ComposeFileToStage]") -> list[Path]:
     """Where :func:`stage_use_case` will put each rendered compose file. PURE.
 
@@ -302,7 +311,7 @@ def use_case_compose_paths(compose_project: str, files: "list[ComposeFileToStage
     cannot drift: one of them changing the layout changes both.
     """
     base = compose_dir(compose_project)
-    return [base / str(idx) / f"{f.handle}.yml" for idx, f in enumerate(files)]
+    return [base / str(idx) / f"{f.handle}{_COMPOSE_SUFFIX}" for idx, f in enumerate(files)]
 
 
 def use_case_env_file(compose_project: str) -> Path:
@@ -513,6 +522,95 @@ def _dest_for_relative_name(root: Path, rel: str) -> Path:
     return root / rel_parent if str(rel_parent) != "." else root
 
 
+def _read_back(listing: "RemoteListing", base: Path, compose_project: str) -> StagedUseCase:
+    """Read a walk of *base* as the staging :func:`stage_use_case` leaves there.
+
+    Pure. Exactly one compose file (``<handle>`` plus the layout's suffix)
+    directly in every numbered directory, the numbers contiguous from 0, and
+    the env file at the top. Everything else is ignored: a sidecar of another
+    suffix, anything nested deeper, an unreferenced extra at the top.
+
+    Raises:
+        ValueError: what is there is not such a staging, named in the message.
+    """
+    if listing.kind != "d":
+        raise ValueError("it is not a directory")
+    env_file = use_case_env_file(compose_project)
+    by_index: "dict[int, list[str]]" = {}
+    env_found = False
+    for path in listing.files:
+        match path.relative_to(base).parts:
+            case (name,) if name == env_file.name:
+                env_found = True
+            case (index, name) if index.isdigit() and name.endswith(_COMPOSE_SUFFIX):
+                by_index.setdefault(int(index), []).append(name)
+            case _:
+                pass
+    if not env_found:
+        raise ValueError(f"no {env_file.name}")
+    if not by_index:
+        raise ValueError("no compose file")
+    index_dirs = {
+        int(p.relative_to(base).name)
+        for p in listing.dirs
+        if len(p.relative_to(base).parts) == 1 and p.name.isdigit()
+    }
+    empty = sorted(index_dirs - set(by_index))
+    if empty:
+        raise ValueError(f"index directories {empty} hold no compose file")
+    if sorted(by_index) != list(range(len(by_index))):
+        raise ValueError(f"index directories {sorted(by_index)} are not contiguous from 0")
+    crowded = {i: sorted(names) for i, names in by_index.items() if len(names) != 1}
+    if crowded:
+        raise ValueError(f"more than one compose file in an index directory: {crowded}")
+    return StagedUseCase(
+        compose_paths=[base / str(i) / by_index[i][0] for i in sorted(by_index)],
+        env_file=env_file,
+    )
+
+
+async def staged_use_case(parent: "UnixHost", compose_project: str) -> "StagedUseCase | None":
+    """Read back what the last :func:`stage_use_case` left on *parent*, or ``None`` if nothing.
+
+    :func:`stage_use_case` wipes :func:`compose_dir` on every deploy, so what
+    is there is exactly the last deploy's ``-f`` set: one compose file per
+    numbered directory, in the deploy's order, plus its env file. A teardown
+    that goes through those files removes only what they declare, without
+    re-running an adapter or re-staging a file. The listing is the host's own
+    tree walk, the one every recursive transfer uses.
+
+    Returns ``None`` only when the directory is confirmed absent (the
+    parent's ``/tmp`` was cleared, or nothing was ever deployed from here).
+
+    Raises:
+        HostCommandError: the walk failed, or what is there is not a staging
+            this module wrote (see ``_read_back``). Unknown is never read
+            as absent: a caller that falls back to the project label would
+            remove more than the deploy started.
+        ~otto.result.CommandNotRunError: this is a dry run; the walk refuses
+            to read a declined listing as an empty one.
+    """
+    # Function-scope: only a teardown reaches this, and the walk is a host
+    # module this one does not otherwise import.
+    from ..host.recursive_transfer import ListingError
+
+    base = compose_dir(compose_project)
+    where = f"the staged compose files for {compose_project} in {base} on {parent.id}"
+    try:
+        listing = await parent._walk_remote(base)  # noqa: SLF001 — the host's declared walk hook
+    except ListingError as e:
+        raise HostCommandError(f"cannot read {where}: {e}") from e
+    if listing.kind == "-":
+        return None
+    try:
+        return _read_back(listing, base, compose_project)
+    except ValueError as e:
+        raise HostCommandError(
+            f"{where} are not what a deploy leaves there ({e}); "
+            f"remove {base} to tear the stack down by its project label instead"
+        ) from e
+
+
 async def stage_use_case(
     parent: Host,
     compose_project: str,
@@ -569,7 +667,7 @@ async def stage_use_case(
     for idx, f in enumerate(files):
         # compose_paths[0].parent, not compose_paths[idx].parent: this
         # function's stack is brought up by `_up_command`, which -- like
-        # `_compose_cmd` on the legacy path -- passes only `-f` and no
+        # compose_up's `up` on the per-project path -- passes only `-f` and no
         # `--project-directory`. So compose resolves every relative bind
         # source (whichever file declares it) against the directory of the
         # FIRST `-f` file, not each file's own.

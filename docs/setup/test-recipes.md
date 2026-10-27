@@ -177,6 +177,6 @@ here (`parent=`, `provide=`, `env=`, `services=`); see
 The per-project primitives stay public and supported —
 {func}`~otto.docker.compose.composed`, `compose_up`, `compose_down`,
 `build_images`. `composed(project, lab, own=True)` scopes **one project's** compose
-files with the same sharing contract, and is what `deploy` is built from;
+files with the same sharing contract, and shares `deploy`'s compose primitives;
 reach for it when you genuinely want a single project's stack rather than a
 use-case.

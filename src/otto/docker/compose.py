@@ -214,12 +214,6 @@ def compose_command(
     return " ".join([*prefix, *(shlex.quote(w) for w in words)])
 
 
-async def _compose_cmd(
-    parent: Host, project_name: str, files: list[str], *args: str
-) -> CommandResult:
-    return await _run_compose(parent, compose_command(project_name, *args, files=files))
-
-
 async def _stack_already_up(parent: Host, project_name: str) -> bool | None:
     """True/False if any container runs under *project_name*, ``None`` if unknown.
 
@@ -641,7 +635,9 @@ async def _up_and_register(
         declared_services.extend(compose.services)
     declared_services = list(dict.fromkeys(declared_services))  # dedupe, preserve order
 
-    live = await _compose_cmd(parent, proj, remote_file_strs, "config", "--services")
+    live = await _run_compose(
+        parent, compose_command(proj, "config", "--services", files=remote_file_strs)
+    )
     live_services: set[str] = set()
     if live.is_ok:
         live_services = {s.strip() for s in live.value.splitlines() if s.strip()}
@@ -765,22 +761,17 @@ async def compose_down(
             f"[docker] cannot stage compose files to tear {proj} down: {e}"
         )
         return CommandResult(Status.Failed, value=str(e), command="", retcode=1)
-    result = await _compose_cmd(
+    # Through the files just staged, so only what they declare goes; then the
+    # hosts that came from this stack are unregistered (the use-case teardown
+    # sweeps `<parent>.<usecase>.` instead).
+    return await compose_down_project(
         parent_host,
         proj,
-        [str(p) for p in remote_files],
-        "down",
-        "--timeout",
-        str(int(stop_timeout)),
+        lab=lab,
+        remove_ids_under=f"{parent_host.id}.{project.name.lower()}.",
+        stop_timeout=stop_timeout,
+        files=remote_files,
     )
-    if not result.is_ok:
-        logger.error(f"[docker] compose down failed: {result.value}")
-
-    # Unregister any hosts that came from this stack (shared with the
-    # use-case teardown path, which sweeps `<parent>.<usecase>.` instead).
-    await unregister_container_hosts(lab, f"{parent_host.id}.{project.name.lower()}.")
-
-    return result
 
 
 async def compose_down_project(

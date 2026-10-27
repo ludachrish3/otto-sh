@@ -1,12 +1,13 @@
-"""Use-case deployment (spec §8): one merged compose stack on one parent.
+"""Use-case deployment: one merged compose stack on one parent.
 
-This is where Tasks 6-10's pure engine meets the parent host. Everything
-above the first device touch — selection (§4), the parent (§2), facts (§7),
-the adapter call (§7), the env mapping (§6) and the rendered compose texts —
-is settled from configuration, which is what lets ``--dry-run`` decline with
-a resolved plan rather than a shrug.
+This is where the pure selection engine meets the parent host. Everything
+above the first device touch — selection, the parent, facts, the adapter
+call, the env mapping and the rendered compose texts — is settled from
+configuration, which is what lets ``--dry-run`` decline with a resolved plan
+rather than a shrug.
 
-The three verbs mirror the per-project primitives one layer up:
+The three verbs are built on the same ``compose.py`` primitives as the
+per-project ones:
 :func:`deploy` / :func:`teardown` / :func:`deployed` are to a use-case what
 ``compose_up`` / ``compose_down`` / ``composed`` are to one project's stack, and
 they keep the same sharing contract (tear down only what this call brought
@@ -53,6 +54,7 @@ from .resolve import (
 from .staging import (
     ComposeFileToStage,
     stage_use_case,
+    staged_use_case,
     use_case_compose_paths,
     use_case_env_file,
 )
@@ -878,9 +880,13 @@ async def teardown(
 ) -> "TeardownReport":
     """Tear *use_case* down and unregister its container hosts (spec §8).
 
-    Full teardown is ``docker compose -p <proj> down`` with NO ``-f``: the
-    project label is enough to find the stack, so DELETING a deployment never
-    re-runs an adapter, re-renders a template or re-stages a file. Partial
+    Full teardown goes through the compose files the last deploy staged on
+    the parent, read back rather than re-rendered or re-staged, so it removes
+    only the services those files declare: a container another file set
+    started under the same project label stays. When the parent holds no
+    staged files (its ``/tmp`` was cleared), it falls back to
+    ``docker compose -p <proj> down --remove-orphans``, by the project label
+    alone, and logs that it did. Partial
     teardown (``services=[...]``) is ``stop`` then ``rm -f`` on just those
     services — stable across compose versions, and it leaves the rest of the
     stack and its network standing.
@@ -892,14 +898,18 @@ async def teardown(
     Returns:
         ~otto.docker.reports.TeardownReport: the commands run per host;
             ``ok`` is false when any failed. Container hosts are
-            unregistered either way — a stale registration is the worse
-            outcome.
+            unregistered whether the ``down`` succeeded or failed — a stale
+            registration is the worse outcome.
 
     Raises:
         ~otto.docker.resolve.UseCaseResolutionError: a configuration refusal,
             identical to :func:`deploy`'s.
         ~otto.docker.observe.DockerVerbError: the parent refusal, identical
             to :func:`deploy`'s.
+        ~otto.host.errors.HostCommandError: the staged files could not be read
+            back (see :func:`~otto.docker.staging.staged_use_case`); nothing
+            was stopped, so the container hosts stay registered: the
+            containers they name are still up.
         ~otto.result.CommandNotRunError: this is a dry run. Armed here rather
             than inherited, for ``compose_down``'s reason: the second half of
             this verb mutates ``lab.hosts``, which a dry run must leave alone.
@@ -921,9 +931,15 @@ async def teardown(
         proj = project_name or use_case_project(parent_host.source_lab, use_case)
         prefix = f"{parent_host.id}.{use_case.lower()}."
         if services_filter is None:
-            # No -f, and no render either: the project label is the whole
-            # input, so a full teardown never re-reads a compose file (and so
-            # cannot be blocked by one that has since been edited away).
+            # The files the last deploy staged on the parent, read back, never
+            # re-rendered or re-staged: only what they declare goes. With none
+            # there, the project label is all that is left to go by.
+            staged = await staged_use_case(parent_host, proj)
+            if staged is None:
+                logger.info(
+                    f"[docker] no staged compose files for {proj} on {parent_host.id}; "
+                    f"tearing it down by its project label, orphans included"
+                )
             hosts[host_id] = [
                 await compose_down_project(
                     parent_host,
@@ -931,6 +947,8 @@ async def teardown(
                     lab=resolution.lab,
                     remove_ids_under=prefix,
                     stop_timeout=stop_timeout,
+                    files=staged.compose_paths if staged else None,
+                    env_file=staged.env_file if staged else None,
                 )
             ]
             continue
@@ -976,9 +994,10 @@ async def deployed(
             ``composed()``'s reason: the decline would otherwise come from
             one of two different callees depending on ``own``.
         ~otto.host.errors.HostCommandError: this call's own teardown (the one
-            it owes on exit) failed and the body did not already raise — a
-            compensating action never masks the real failure, so a body
-            exception always wins and the teardown failure is logged instead.
+            it owes on exit) failed or refused, and the body did not already
+            raise — a compensating action never masks the real failure, so a
+            body exception always wins and the teardown failure is logged
+            instead.
     """
     resolution = resolve_use_case(use_case, parent=kw.get("parent"), provide=kw.get("provide"))
     services_filter = validated_services(resolution.selection, kw.get("services"))
@@ -1033,18 +1052,30 @@ async def deployed(
                 for k, v in kw.items()
                 if k in ("services", "parent", "provide", "stop_timeout", "project_name")
             }
-            report = await compensate(
-                teardown(use_case, **teardown_kw),
-                what=f"docker use-case teardown {use_case}",
-            )
-            if report is not None and not report.ok:
-                detail = "; ".join(
-                    f"{host}: " + " | ".join(f"{r.command}: {r.value}" for r in results)
-                    for host, results in report.failed.items()
+            failure: "Exception | None" = None
+            message = ""
+            try:
+                report = await compensate(
+                    teardown(use_case, **teardown_kw),
+                    what=f"docker use-case teardown {use_case}",
                 )
-                message = f"teardown of {use_case} failed on {', '.join(report.failed)}: {detail}"
-                if body_failed:
-                    # A compensating action never masks the real failure.
-                    logger.error(f"[docker] {message}")
-                else:
-                    raise HostCommandError(message)
+            except Exception as e:  # noqa: BLE001 — held, then re-raised unless the body failed
+                # It refused (the staged files could not be read back) or
+                # failed outright.
+                failure, message = e, f"teardown of {use_case} failed: {e}"
+            else:
+                if report is not None and not report.ok:
+                    detail = "; ".join(
+                        f"{host}: " + " | ".join(f"{r.command}: {r.value}" for r in results)
+                        for host, results in report.failed.items()
+                    )
+                    message = (
+                        f"teardown of {use_case} failed on {', '.join(report.failed)}: {detail}"
+                    )
+                    failure = HostCommandError(message)
+            if failure is not None:
+                # A compensating action never masks the real failure: a body
+                # exception wins, and the teardown's is logged instead.
+                if not body_failed:
+                    raise failure
+                logger.error(f"[docker] {message}")

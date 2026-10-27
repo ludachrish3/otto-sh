@@ -23,6 +23,7 @@ from otto.docker.deployment import UseCaseStack, deploy, deployed, teardown
 from otto.docker.observe import DockerVerbError
 from otto.docker.reports import ImageBuild, TeardownReport
 from otto.docker.resolve import UseCaseResolutionError
+from otto.docker.staging import compose_dir, use_case_env_file
 from otto.host.element import Element
 from otto.host.errors import HostCommandError
 from otto.host.login_proxy import Cred
@@ -130,6 +131,8 @@ def _wire(host: UnixHost, *, already_up: bool = False, cid: str = "cid1") -> Uni
             return _ok(cid)
         if "docker ps -q --filter label=com.docker.compose.project=" in cmd:
             return _ok("running-cid" if already_up else "")
+        if "w() { for p in" in cmd:
+            return _staged_walk(cmd, staged)
         return _ok(command=cmd)
 
     async def _put(paths, dest):
@@ -141,6 +144,29 @@ def _wire(host: UnixHost, *, already_up: bool = False, cid: str = "cid1") -> Uni
     host.commands = commands  # type: ignore[attr-defined]
     host.staged = staged  # type: ignore[attr-defined]
     return host
+
+
+def _staged_walk(probe: str, staged: "list[tuple[str, str, str]]") -> CommandResult:
+    """Answer the host's tree walk (``walk_script``) the way its shell would.
+
+    Every directory and file ``put`` under the walked root, in the walk's
+    framing, or ``t -`` when nothing was put there: the parent's view of what
+    staging left behind.
+    """
+    root = re.search(r"if \[ -d (\S+) \]; then printf 't d", probe).group(1)  # type: ignore[union-attr]
+    files = sorted(f"{d}/{name}" for name, d, _ in staged if d == root or d.startswith(root + "/"))
+    if not files:
+        return _ok("t -\nn 0\n", command=probe)
+    dirs = sorted(
+        {
+            str(parent)
+            for f in files
+            for parent in Path(f).parents
+            if str(parent).startswith(root + "/")
+        }
+    )
+    lines = ["t d", *(f"d {d}" for d in dirs), *(f"f {f}" for f in files)]
+    return _ok("\n".join([*lines, f"n {len(lines) - 1}"]) + "\n", command=probe)
 
 
 def _lab(*hosts: UnixHost, name: str = "unix") -> Lab:
@@ -1039,7 +1065,7 @@ async def test_deployed_dry_run_declines(single):
 
 
 @pytest.mark.asyncio
-async def test_full_teardown_downs_by_project_and_unregisters(single, monkeypatch):
+async def test_full_teardown_downs_through_the_staged_files_and_unregisters(single, monkeypatch):
     monkeypatch.setenv("OTTO_COMPOSE_SUFFIX", "u")
     with _install(single.lab, [single.project]):
         await deploy("integration", parent="test3")
@@ -1048,8 +1074,12 @@ async def test_full_teardown_downs_by_project_and_unregisters(single, monkeypatc
         await teardown("integration", parent="test3")
 
     (down,) = [c for c in single.host.commands if " down " in c]
-    assert down == "docker compose -p unix-integration-u down --remove-orphans --timeout 1"
-    assert " -f " not in down
+    proj = "unix-integration-u"
+    assert down == (
+        f"docker compose -p {proj} "
+        f"-f {compose_dir(proj) / '0' / 'core.yml'} --env-file {use_case_env_file(proj)} "
+        f"down --timeout 1"
+    )
     assert "test3.integration.api" not in single.lab.hosts
 
 
@@ -1272,7 +1302,8 @@ async def test_displacements_are_logged_without_claiming_the_loser_ranked_lower(
 
 @pytest.mark.asyncio
 async def test_full_teardown_never_reads_a_compose_file(tmp_path, monkeypatch):
-    """Teardown by label survives a compose file that has since been deleted."""
+    """Teardown reads the parent's staged files back, so a local compose file deleted
+    since the deploy is never needed."""
     monkeypatch.setenv("OTTO_COMPOSE_SUFFIX", "u")
     compose = _compose_file(tmp_path, "core")
     project = _project("a", _frag(), composes=[compose])
@@ -1282,10 +1313,66 @@ async def test_full_teardown_never_reads_a_compose_file(tmp_path, monkeypatch):
         await deploy("integration", parent="test3")
         compose.path.unlink()
         host.commands.clear()
+        staged_before = len(host.staged)  # type: ignore[attr-defined]
         await teardown("integration", parent="test3")
 
-    assert [c for c in host.commands if " down " in c]
+    # Through the files the deploy staged on the parent, never re-staged:
+    # only what they declare goes.
+    (down,) = [c for c in host.commands if " down " in c]
+    assert down.startswith("docker compose -p ")
+    assert " --env-file " in down
+    assert "--remove-orphans" not in down
+    assert len(host.staged) == staged_before, "the teardown re-staged"  # type: ignore[attr-defined]
     assert "test3.integration.api" not in lab.hosts
+
+
+@pytest.mark.asyncio
+async def test_teardown_with_no_staged_files_goes_by_the_project_label_and_says_so(
+    tmp_path, monkeypatch, caplog
+):
+    """Files gone from the parent (its /tmp cleared): the label is compose's only
+    definition of the stack left, so the down takes everything under it."""
+    monkeypatch.setenv("OTTO_COMPOSE_SUFFIX", "u")
+    project = _project("a", _frag(), composes=[_compose_file(tmp_path, "core")])
+    host = _wire(_host("test3", "10.10.200.13"))
+    lab = _lab(host)
+    with caplog.at_level(logging.INFO, logger="otto.docker.deployment"), _install(lab, [project]):
+        await deploy("integration", parent="test3")
+        host.staged.clear()  # type: ignore[attr-defined]
+        host.commands.clear()  # type: ignore[attr-defined]
+        await teardown("integration", parent="test3")
+
+    (down,) = [c for c in host.commands if " down " in c]  # type: ignore[attr-defined]
+    assert down == "docker compose -p unix-integration-u down --remove-orphans --timeout 1"
+    assert "by its project label" in caplog.text
+    assert "test3.integration.api" not in lab.hosts
+
+
+@pytest.mark.asyncio
+async def test_teardown_refuses_when_it_cannot_tell_what_was_staged(tmp_path, monkeypatch):
+    """An unreadable staging is unknown, not absent: never widen to the whole label."""
+    monkeypatch.setenv("OTTO_COMPOSE_SUFFIX", "u")
+    project = _project("a", _frag(), composes=[_compose_file(tmp_path, "core")])
+    host = _wire(_host("test3", "10.10.200.13"))
+    lab = _lab(host)
+    with _install(lab, [project]):
+        await deploy("integration", parent="test3")
+        wired = host.exec.side_effect
+
+        async def _probe_fails(cmd, *a, **kw):
+            if "w() { for p in" in cmd:
+                host.commands.append(cmd)  # type: ignore[attr-defined]
+                return _fail("ssh: connection reset")
+            return await wired(cmd, *a, **kw)
+
+        host.exec.side_effect = _probe_fails  # type: ignore[attr-defined]
+        host.commands.clear()  # type: ignore[attr-defined]
+        with pytest.raises(HostCommandError, match="connection reset"):
+            await teardown("integration", parent="test3")
+
+    assert not [c for c in host.commands if " down " in c]  # type: ignore[attr-defined]
+    # Nothing was stopped, so the hosts still name running containers.
+    assert "test3.integration.api" in lab.hosts
 
 
 # --- Fix round 1: the arms the coverage report showed as dead ---------------
@@ -1724,8 +1811,8 @@ async def test_teardown_and_deployed_dry_runs_carry_the_same_plan(single, verb):
     message = str(excinfo.value)
     assert "Resolved plan: test3 <- a[core]" in message
     # No compose command here, and no gap clause either: neither verb renders
-    # one. `teardown` runs `-p <proj> down` with NO `-f` at all, and
-    # `deployed` declines above `deploy`. The clause the §12 ruling deleted
+    # one. `teardown` reads its files back from the parent, which a dry run
+    # does not touch, and `deployed` declines above `deploy`. The clause the §12 ruling deleted
     # was the one that described the ABSENCE as a shortfall.
     assert "the exact compose command cannot be shown" not in message
     assert "docker compose -p" not in message
@@ -1744,7 +1831,9 @@ async def test_full_teardown_returns_one_down_result_per_host(single):
     assert report.use_case == "integration"
     assert list(report.hosts) == [single.host.id]
     (result,) = report.hosts[single.host.id]
-    assert " down --remove-orphans" in result.command
+    # Nothing was deployed from here, so nothing is staged: the label is all
+    # there is to go by.
+    assert result.command.endswith(" down --remove-orphans --timeout 1")
     assert report.ok
 
 
@@ -1754,12 +1843,14 @@ async def test_full_teardown_reports_a_failed_down_and_still_unregisters(single)
         await deploy("integration", parent="test3")
     assert "test3.integration.api" in single.lab.hosts
 
-    async def _exec(cmd, *_a, **_kw):
-        if " down --remove-orphans" in cmd:
-            return _fail("error during connect", command=cmd)
-        return _ok(command=cmd)
+    wired = single.host.exec.side_effect
 
-    single.host.exec = AsyncMock(side_effect=_exec)
+    async def _exec(cmd, *a, **kw):
+        if " down " in cmd:
+            return _fail("error during connect", command=cmd)
+        return await wired(cmd, *a, **kw)
+
+    single.host.exec.side_effect = _exec
     with _install(single.lab, [single.project]):
         report = await teardown("integration")
     assert not report.ok
@@ -1821,14 +1912,14 @@ async def test_partial_teardown_reports_a_failed_stop_in_the_report(tmp_path):
 
 @pytest.mark.asyncio
 async def test_deployed_raises_when_its_teardown_fails(single):
-    async def _exec(cmd, *_a, **_kw):
-        if " down --remove-orphans" in cmd:
-            return _fail("error during connect", command=cmd)
-        if "com.docker.compose.service=" in cmd:
-            return _ok("cid1")
-        return _ok()
+    wired = single.host.exec.side_effect
 
-    single.host.exec = AsyncMock(side_effect=_exec)
+    async def _exec(cmd, *a, **kw):
+        if " down " in cmd:
+            return _fail("error during connect", command=cmd)
+        return await wired(cmd, *a, **kw)
+
+    single.host.exec.side_effect = _exec
     with (
         _install(single.lab, [single.project]),
         patch.object(deploy_mod, "build_images", AsyncMock(return_value={})),
@@ -1836,7 +1927,7 @@ async def test_deployed_raises_when_its_teardown_fails(single):
             HostCommandError,
             match=(
                 r"teardown of integration failed on test3.*"
-                r"down --remove-orphans.*error during connect"
+                r"down --timeout 1.*error during connect"
             ),
         ),
     ):
@@ -1846,14 +1937,14 @@ async def test_deployed_raises_when_its_teardown_fails(single):
 
 @pytest.mark.asyncio
 async def test_deployed_body_exception_wins_over_a_failed_teardown(single, caplog):
-    async def _exec(cmd, *_a, **_kw):
-        if " down --remove-orphans" in cmd:
-            return _fail("error during connect")
-        if "com.docker.compose.service=" in cmd:
-            return _ok("cid1")
-        return _ok()
+    wired = single.host.exec.side_effect
 
-    single.host.exec = AsyncMock(side_effect=_exec)
+    async def _exec(cmd, *a, **kw):
+        if " down " in cmd:
+            return _fail("error during connect")
+        return await wired(cmd, *a, **kw)
+
+    single.host.exec.side_effect = _exec
     with (
         _install(single.lab, [single.project]),
         patch.object(deploy_mod, "build_images", AsyncMock(return_value={})),
@@ -1863,6 +1954,29 @@ async def test_deployed_body_exception_wins_over_a_failed_teardown(single, caplo
         async with deployed("integration", own=True):
             raise ValueError("body failed")
     assert "teardown of integration failed on test3" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_deployed_body_exception_wins_over_a_teardown_that_refuses(single, caplog):
+    """A teardown that cannot read its staging back raises; under a failed body that
+    raise is logged, never allowed to replace the body's own exception."""
+    wired = single.host.exec.side_effect
+
+    async def _exec(cmd, *a, **kw):
+        if "w() { for p in" in cmd:
+            return _fail("ssh: connection reset")
+        return await wired(cmd, *a, **kw)
+
+    single.host.exec.side_effect = _exec
+    with (
+        _install(single.lab, [single.project]),
+        patch.object(deploy_mod, "build_images", AsyncMock(return_value={})),
+        caplog.at_level(logging.ERROR),
+        pytest.raises(ValueError, match="body failed"),
+    ):
+        async with deployed("integration", own=True):
+            raise ValueError("body failed")
+    assert "teardown of integration failed: cannot read the staged compose files" in caplog.text
 
 
 @pytest.mark.asyncio

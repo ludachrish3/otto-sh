@@ -98,7 +98,7 @@ async def test_stage_compose_files_warns_with_index_0s_directory_for_the_second_
     tmp_path, caplog
 ):
     """Compose resolves every relative bind source against the FIRST `-f`
-    file's directory (`_compose_cmd` passes only `-f`, no
+    file's directory (`compose_command` is given only `-f`, no
     `--project-directory`) -- so a warning about the SECOND file's bind
     source must still name `compose/0/`, not `compose/1/`, or it points a
     reader at a directory docker will never bind."""

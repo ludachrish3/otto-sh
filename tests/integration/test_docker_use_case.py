@@ -24,6 +24,7 @@ Requires:
     vagrant up test3
 """
 
+import logging
 import shlex
 import uuid
 from unittest.mock import patch
@@ -33,8 +34,9 @@ import pytest_asyncio
 
 from otto.config.project import Project
 from otto.docker import resolve as resolve_mod
-from otto.docker.compose import use_case_project
+from otto.docker.compose import compose_down_project, use_case_project
 from otto.docker.deployment import deploy, teardown
+from otto.docker.staging import cleanup_project
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from otto.labs.loader import Lab
@@ -155,15 +157,18 @@ async def _reap(parent, project_name: str) -> None:
     await parent.exec(f"docker compose -p {shlex.quote(project_name)} down -t 1")
 
 
-async def _container_of(parent, project_name: str, service: str) -> str:
-    """The RUNNING container id for one service of *project_name*, or ``""``.
+async def _container_of(
+    parent, project_name: str, service: str, *, all_states: bool = False
+) -> str:
+    """The container id for one service of *project_name*, or ``""``: a running
+    one, or with *all_states* one in any state (``docker ps -a``).
 
     Read off the daemon's own compose labels rather than off the returned
     ``UseCaseStack``: the stack is what otto believes it registered, and half
     of what these tests exist to check is whether that belief is true.
     """
     result = await parent.exec(
-        "docker ps -q "
+        f"docker ps -q{' -a' if all_states else ''} "
         f"--filter label=com.docker.compose.project={shlex.quote(project_name)} "
         f"--filter label=com.docker.compose.service={shlex.quote(service)}"
     )
@@ -324,3 +329,104 @@ async def test_teardown_removes_stack_and_hosts(parent, lab, project):
         assert not stranded, f"teardown left container hosts registered in the lab: {stranded}"
     finally:
         await _reap(parent, project)
+
+
+@pytest.mark.asyncio
+async def test_teardown_leaves_a_service_another_file_set_started_under_the_project(
+    parent, project, suffix
+):
+    """A teardown removes what its deploy staged, not everything under the label.
+
+    The extra service is started by a second file set under the SAME compose
+    project, so it carries compose's own project and service labels: a
+    label-wide ``down`` would take it, a ``down`` through the deploy's files
+    must not.
+    """
+    extra_dir = f"/tmp/otto-e2e-extra-{suffix}"
+    extra_file = f"{extra_dir}/extra.yml"
+    try:
+        await deploy(USE_CASE, parent=parent.id, build=True)
+        image = await _image_of(parent, await _container_of(parent, project, "api"))
+        extra_yaml = f"services:\n  extra:\n    image: {image}\n"
+        wrote = await parent.exec(
+            f"mkdir -p {shlex.quote(extra_dir)} && "
+            f"printf %s {shlex.quote(extra_yaml)} > {shlex.quote(extra_file)}"
+        )
+        assert wrote.is_ok, wrote.value
+        started = await parent.exec(
+            f"docker compose -p {shlex.quote(project)} -f {shlex.quote(extra_file)} up -d"
+        )
+        assert started.is_ok, started.value
+        extra = await _container_of(parent, project, all_states=True, service="extra")
+        assert extra, "the extra service did not start under the project"
+
+        report = await teardown(USE_CASE, parent=parent.id)
+
+        # The extra service still holds the project's network, which compose
+        # leaves standing; the teardown itself must still report success.
+        assert report.ok, report.failed
+
+        for service in ("api", "edge", "worker"):
+            assert not await _container_of(parent, project, all_states=True, service=service), (
+                f"{service} survived the teardown of {project}"
+            )
+        assert await _container_of(parent, project, all_states=True, service="extra") == extra, (
+            "the teardown removed a container its deploy's files do not declare"
+        )
+    finally:
+        await _reap(parent, project)
+        await parent.exec(f"rm -rf {shlex.quote(extra_dir)}")
+
+
+@pytest.mark.asyncio
+async def test_teardown_with_the_staged_files_gone_goes_by_the_label_and_says_so(
+    parent, project, caplog
+):
+    """With nothing staged left on the parent, the label is all there is to go by."""
+    try:
+        await deploy(USE_CASE, parent=parent.id, build=True)
+        cleaned = await cleanup_project(parent, project)
+        assert cleaned.is_ok, cleaned.value
+
+        with caplog.at_level(logging.INFO, logger="otto.docker.deployment"):
+            await teardown(USE_CASE, parent=parent.id)
+
+        remaining = await parent.exec(
+            f"docker ps -aq --filter label=com.docker.compose.project={shlex.quote(project)}"
+        )
+        assert remaining.is_ok, remaining.value
+        assert not remaining.value.strip(), f"containers survived: {remaining.value!r}"
+        assert "by its project label" in caplog.text
+    finally:
+        await _reap(parent, project)
+
+
+@pytest.mark.asyncio
+async def test_a_down_on_a_project_with_nothing_running_is_a_clean_no_op(parent, lab, suffix):
+    """Both shapes of the one ``down``, against a project the daemon has never seen."""
+    project = use_case_project(LAB, "empty", suffix)
+    work = f"/tmp/otto-e2e-empty-{suffix}"
+    compose_file = f"{work}/c.yml"
+    env_file = f"{work}/otto.env"
+    try:
+        idle_yaml = "services:\n  idle:\n    image: otto-none:never\n"
+        wrote = await parent.exec(
+            f"mkdir -p {shlex.quote(work)} && : > {shlex.quote(env_file)} && "
+            f"printf %s {shlex.quote(idle_yaml)} > {shlex.quote(compose_file)}"
+        )
+        assert wrote.is_ok, wrote.value
+
+        with_files = await compose_down_project(
+            parent,
+            project,
+            lab=lab,
+            remove_ids_under=None,
+            files=[compose_file],
+            env_file=env_file,
+        )
+        label_only = await compose_down_project(parent, project, lab=lab, remove_ids_under=None)
+
+        assert with_files.is_ok, with_files.value
+        assert label_only.is_ok, label_only.value
+    finally:
+        await parent.exec(f"rm -rf {shlex.quote(work)}")

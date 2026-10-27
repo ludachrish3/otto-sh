@@ -424,6 +424,59 @@ provider displaces a mock, the mock's still-running container is an orphan of
 the merged file set — and the same `up` removes it. The swap is one command,
 not a teardown plus a deploy.
 
+### What `down` removes
+
+A whole-deployment `down` removes only what the deployment started. It goes
+through the compose files the last `up` staged on the parent, read back as
+they are, never re-rendered or re-staged, so only the services those files
+declare are removed, with the networks compose created for them. A container
+that another file set started under the same compose project stays up. The
+limits of that rule are compose's own:
+
+- a container with the same project **and** the same service name is removed,
+  whichever file set started it;
+- a declared network that is not `external` is removed unless something still
+  uses it;
+- volumes and bind-mounted data stay: `down` passes no `-v`;
+- a service behind a compose `profiles:` entry that a narrowed `up` started by
+  name survives a whole-deployment `down`, as it does a plain `docker compose
+  down`; name it (`down <usecase> <service>`) to remove it;
+- with `COMPOSE_PROJECT_NAME` exported in the parent's environment, a staged
+  file that compose can no longer load makes compose fall back to that name and
+  tear down everything under it, as the same command typed on the parent would;
+- a variable exported in the parent's environment wins over the staged
+  `otto.env` when `down` loads the files (compose's own precedence), while `up`
+  sets otto's values on its command line; a file that needs such a variable
+  can fail to load on `down` after `up` succeeded.
+
+A compose handle is one path segment: a `name` containing `/` or `\`, or one
+that is `.` or `..`, is refused when the lab configuration loads, since each
+staged file sits directly in its own numbered directory.
+
+The files are the last `up`'s, whether or not that `up` succeeded: an `up` of a
+different selection that failed leaves its own files staged, so a later `down`
+goes through those, and a service only the earlier deployment declared
+survives it.
+
+Because `down` reads the files back, compose loads and checks them again: a
+staged file compose now rejects (after a compose upgrade, say) fails the
+`down` with compose's own error.
+
+When the parent no longer holds the staged files (its `/tmp` was cleared, or
+the stack was started outside otto), the project label is all that is left to
+go by: `down` falls back to `docker compose -p <project> down
+--remove-orphans`, which removes every container under the label, and says so
+in an INFO log line.
+
+If otto cannot tell whether the files are there (the parent cannot be read, or
+what it holds is not what an `up` leaves), `down` refuses with an error naming
+the staging directory and stops nothing, rather than widen the teardown on a
+guess. The container hosts stay registered, since their containers are still
+up. Removing that directory on the parent makes the next `down` go by the
+project label instead, which removes every container under it. An `up` that
+failed while copying its files leaves such a directory: its compose files
+without the `otto.env` beside them.
+
 ### Dry run
 
 `otto --dry-run docker compose up <usecase>` prints the resolved plan and declines at

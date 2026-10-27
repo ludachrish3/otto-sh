@@ -8,7 +8,17 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from otto.docker.resolve import UseCaseResolutionError
-from otto.docker.staging import ComposeFileToStage, stage_use_case
+from otto.docker.staging import (
+    ComposeFileToStage,
+    _read_back,
+    compose_dir,
+    stage_use_case,
+    staged_use_case,
+    use_case_compose_paths,
+    use_case_env_file,
+)
+from otto.host.errors import HostCommandError
+from otto.host.recursive_transfer import ListingError, RemoteListing
 from otto.result import CommandResult, Result
 from otto.utils import Status
 
@@ -472,3 +482,104 @@ async def test_stage_use_case_warns_with_index_0s_directory_for_the_second_file(
 
     assert "compose/0/data" in caplog.text
     assert "compose/1/data" not in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# staged_use_case: reading back what the last deploy staged
+# ---------------------------------------------------------------------------
+
+
+def _top_dirs(files: "list[str]") -> "list[str]":
+    """The index directories a list of staged files implies."""
+    return sorted({f.split("/")[0] for f in files if "/" in f})
+
+
+def _walked(base: Path, files: "list[str]", dirs: "list[str] | None" = None) -> RemoteListing:
+    """A walk of *base* as the host reports it: every path absolute, in no promised order."""
+    return RemoteListing(
+        kind="d",
+        dirs=[base / d for d in (dirs if dirs is not None else _top_dirs(files))],
+        files=[base / f for f in files],
+    )
+
+
+def test_read_back_orders_the_files_by_their_index_not_by_the_walk():
+    """Index 10 sorts after index 2, and the walk's own order is never trusted."""
+    base = compose_dir("p")
+    files = [f"{i}/h{i}.yml" for i in range(11)]
+    walk = _walked(base, [*reversed(files), "otto.env", "extra.yml", "0/app.env", "3/conf/x.yml"])
+
+    staged = _read_back(walk, base, "p")
+
+    assert staged.compose_paths == [base / str(i) / f"h{i}.yml" for i in range(11)]
+    assert staged.env_file == use_case_env_file("p")
+
+
+@pytest.mark.parametrize(
+    ("files", "dirs", "why"),
+    [
+        (["0/a.yml", "0/b.yml", "otto.env"], None, "more than one compose file"),
+        (["0/a.yml"], None, "no otto.env"),
+        (["1/a.yml", "otto.env"], None, "not contiguous"),
+        (["otto.env"], None, "no compose file"),
+        (
+            ["0/a.yml", "1/sub/b.yml", "otto.env"],
+            ["0", "1", "1/sub"],
+            r"\[1\] hold no compose file",
+        ),
+    ],
+    ids=["two-in-one-index", "no-env-file", "gap", "empty", "nested-handle"],
+)
+def test_read_back_refuses_what_is_not_a_staging(files, dirs, why):
+    base = compose_dir("p")
+    with pytest.raises(ValueError, match=why):
+        _read_back(_walked(base, files, dirs), base, "p")
+
+
+@pytest.mark.asyncio
+async def test_what_stage_use_case_puts_is_what_the_read_back_reads(tmp_path):
+    """The layout the read-back trusts is the one staging writes: the walk here is
+    built from staging's own recorded transfers, not from a second spelling of it."""
+    parent = _parent(tmp_path)
+    files = [
+        ComposeFileToStage(handle=f"h{i}", text="services: {}\n", source_dir=tmp_path)
+        for i in range(11)
+    ]
+    await stage_use_case(parent, "p", files, "A=1\n", extra_files={"conf/extra.yml": "x: 1\n"})
+    base = compose_dir("p")
+    put = [Path(d) / name for name, d, _ in parent._staged]
+    walk = RemoteListing(
+        kind="d",
+        dirs=sorted({q for f in put for q in f.parents if base in q.parents}),
+        files=list(reversed(put)),
+    )
+
+    staged = _read_back(walk, base, "p")
+
+    assert staged.compose_paths == use_case_compose_paths("p", files)
+    assert staged.env_file == use_case_env_file("p")
+
+
+@pytest.mark.asyncio
+async def test_staged_use_case_is_none_only_when_the_directory_is_absent(tmp_path):
+    parent = _parent(tmp_path)
+    parent._walk_remote = AsyncMock(return_value=RemoteListing(kind="-", dirs=[], files=[]))
+    assert await staged_use_case(parent, "p") is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "walk",
+    [
+        AsyncMock(side_effect=ListingError("/tmp/otto-docker/p/compose: tree listing failed")),
+        AsyncMock(return_value=RemoteListing(kind="f", dirs=[], files=[])),
+        AsyncMock(return_value=RemoteListing(kind="d", dirs=[], files=[])),
+    ],
+    ids=["walk-failed", "not-a-directory", "empty"],
+)
+async def test_staged_use_case_refuses_what_it_cannot_read_as_a_staging(tmp_path, walk):
+    """Unknown is never read as absent: that would widen a teardown to the whole label."""
+    parent = _parent(tmp_path)
+    parent._walk_remote = walk
+    with pytest.raises(HostCommandError, match="staged compose files for p"):
+        await staged_use_case(parent, "p")
