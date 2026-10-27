@@ -192,12 +192,34 @@ uv run pytest         # run the test suite
 
 `make dev` places `otto` at `otto-sh/.venv/bin/otto`.
 
-`strace` (≥ 5.3) is a separate dev prerequisite `make dev` does not install,
-used by the import-budget tests to count file operations: `sudo apt-get install
-strace`. So are `gcc-11`, `clang` and `llvm-cov`, used by the kmodcov reader
-tests (`tests/unit/cov/test_kmodcov_reader.py`), which build `otto_kmodcov`'s
-own C with a gcc before 12, the default gcc and clang and read what it writes
-with each compiler's gcov: `sudo apt-get install gcc-11 clang llvm`.
+Some of the suite needs system packages that `make dev` does not install.
+Provisioning the dev VM (the `dev-root` step) installs them; on a dev VM
+provisioned before they were added, `vagrant provision dev` installs them. On a
+machine set up another way, install them yourself:
+
+- `strace` (≥ 5.3): the import-budget tests count file operations with it.
+- `gcc-11`, `clang` and `llvm`: the kmodcov reader tests
+  (`tests/unit/cov/test_kmodcov_reader.py`) build `otto_kmodcov`'s own C with
+  a gcc before 12, the default gcc and clang, and read what it writes with
+  each compiler's gcov.
+- `libgtest-dev`: the GoogleTest product the hierarchical coverage e2e builds.
+- `sshpass`: lab SSH for `make vm-health` and the integration tests' wedge
+  diagnostics.
+- `linux-headers-$(uname -r)`: the kmod coverage e2e builds its module
+  against the running kernel. If the archive no longer carries your kernel's
+  headers, `dev-root` fetches them from Launchpad.
+
+```bash
+sudo apt-get install strace gcc-11 clang llvm libgtest-dev sshpass
+sudo apt-get install "linux-headers-$(uname -r)"   # on its own: it may have left the archive
+```
+
+If the archive no longer has them, do what `dev-root` does: from
+<https://launchpad.net/ubuntu/+archive/primary/+files>, fetch
+`linux-headers-$(uname -r)_<build>_<arch>.deb` (the build is the second field
+of `/proc/version_signature`, up to the flavour, e.g. `6.8.0-86.87`), then the
+common headers deb its `Depends` names, and install both with `apt-get install
+./<file>.deb`.
 
 The test suite caches its bytecode under `$XDG_CACHE_HOME/otto/pytest-pycache`
 (falling back to `~/.cache`, then the system temp dir), never in `src/otto` —

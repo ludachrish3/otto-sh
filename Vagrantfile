@@ -324,7 +324,8 @@ Vagrant.configure("2") do |config|
             # binary fails ENOEXEC here even though CONFIG_COMPAT=y (measured,
             # not assumed). Running the x86_64 artifact under binfmt also means
             # the dev VM and CI (x86_64) exercise identical bytes rather than
-            # two different builds. The package registers its binfmt_misc
+            # two different builds. On an x86_64 dev VM it is harmless: the
+            # artifact runs natively. The package registers its binfmt_misc
             # handlers itself at install time, so nothing else is provisioned;
             # what it DOES need is a fresh package index — installed by hand on
             # a box whose apt lists have gone stale it 404s on the .deb and
@@ -427,10 +428,56 @@ Vagrant.configure("2") do |config|
                             libxcursor1                    \
                             libxi6                         \
                             libxrender1                    \
+                || { echo "dev-root: could not install the dev VM's packages" >&2; exit 1; }
 
             # Set MTU to 1350 on all ethernet interfaces to support mobile
             # connections that have a smaller MTU size
             printf '[Match]\\nType=ether\\n\\n[Link]\\nMTUBytes=1350\\n' > /etc/systemd/network/10-mtu.link
+
+            # Test prerequisites (and curl, for the header fallback below).
+            # Without these a fresh dev VM fails parts of the suite:
+            #   sshpass             lab SSH for `make vm-health` and the
+            #                       integration conftest's wedge diagnostics
+            #   strace              the import-budget tests count file
+            #                       operations with it
+            #   gcc-11 clang llvm   the kmodcov reader tests build otto_kmodcov
+            #                       with a gcc before 12 and with clang, and
+            #                       read the result with each one's gcov
+            #   libgtest-dev        the GoogleTest product of the hierarchical
+            #                       coverage e2e
+            # Kept apart from the list above so each failure names what it
+            # stopped on; either one stops the provisioner.
+            apt-get install -y curl sshpass strace gcc-11 clang llvm libgtest-dev \
+                || { echo "dev-root: could not install the test prerequisites" >&2; exit 1; }
+
+            # Kernel headers for the running kernel, which the kmod coverage
+            # e2e builds its module against (KDIR=/lib/modules/<release>/build).
+            # Installed on their own: the box's kernel can be older than
+            # anything the archive still carries (bento/ubuntu-24.04 ships
+            # 6.8.0-86, whose headers have left it), and one package with no
+            # candidate makes apt refuse a whole install line. Launchpad keeps
+            # every published build, so that is the fallback. The build is
+            # /proc/version_signature's second field up to its flavour
+            # (6.8.0-86.87 of 6.8.0-86.87-generic). The flavour deb comes
+            # first because its Depends names the common headers package,
+            # which is not always linux-headers-<abi> (HWE and lowlatency
+            # kernels use other source names).
+            kver=$(uname -r)
+            if ! apt-get install -y "linux-headers-$kver"; then
+                sig=$(awk '{print $2}' /proc/version_signature)
+                ver=${sig%%-[a-z]*}
+                arch=$(dpkg --print-architecture)
+                base=https://launchpad.net/ubuntu/+archive/primary/+files
+                hdr=$(mktemp -d)
+                chmod 755 "$hdr"
+                curl -fsSL -o "$hdr/flavour.deb" "$base/linux-headers-${kver}_${ver}_${arch}.deb" \
+                    && common=$(dpkg-deb -f "$hdr/flavour.deb" Depends | tr ',' '\\n' | awk '$1 ~ /^linux-.*headers-[0-9]/ {print $1; exit}') \
+                    && [ -n "$common" ] \
+                    && curl -fsSL -o "$hdr/common.deb" "$base/${common}_${ver}_all.deb" \
+                    && apt-get install -y "$hdr/common.deb" "$hdr/flavour.deb" \
+                    || { echo "dev-root: no headers for kernel $kver in the archive or on Launchpad ($base)" >&2; rm -rf "$hdr"; exit 1; }
+                rm -rf "$hdr"
+            fi
         SHELL
 
         # Node.js, the exact version in .nvmrc, for the web/ toolchain:
