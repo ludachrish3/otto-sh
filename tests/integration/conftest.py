@@ -11,6 +11,7 @@ import json
 import os
 import re
 import socket
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,7 @@ from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from otto.labs.loader import Lab
 from otto.logger.mode import LogMode
+from tests._fixtures._host_pool import DOCKER_HOST, docker_host_lease
 from tests._fixtures.labdata import element_for, flatten_lab_doc, host_data, lab_data_path
 from tests._fixtures.paths import default_project_root
 from tests._fixtures.run_state import preserved_run_state
@@ -159,6 +161,15 @@ _LAB_DATA = lab_data_path()
 # Docker host the e2e/compose tests target (test VM "test3" / test3).
 _DOCKER_HOST_IP = "10.10.200.13"
 
+
+@pytest.fixture(scope="module")
+def test3_lease(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
+    """Hold the docker host's lease for the entire module, so no e2e docker test
+    can race the integration docker tests on the same daemon."""
+    with docker_host_lease(tmp_path_factory) as element:
+        yield element
+
+
 # Compose-project name INFIXES that only ever appear in *disposable* test
 # stacks. Matched as infixes, never as a prefix, which is what let them
 # survive the use-case cutover (spec §9) unchanged: a compose project is
@@ -187,7 +198,7 @@ async def _reap_orphan_docker_stacks() -> None:
     """
     host = UnixHost(
         ip=_DOCKER_HOST_IP,
-        element=Element("test3"),
+        element=Element(DOCKER_HOST),
         creds=[Cred(login="vagrant", password="vagrant")],
         is_virtual=True,
         term="ssh",
@@ -228,10 +239,12 @@ def _declares_docker(item: pytest.Item) -> bool:
 
 
 @pytest.fixture(scope="session")
-def reap_orphan_docker_stacks(request: pytest.FixtureRequest) -> None:
+def reap_orphan_docker_stacks(
+    request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
+) -> None:
     """Sweep orphaned docker test stacks once, before the first test that DRIVES docker.
 
-    Requested by name from the four docker modules (their ``pytestmark``
+    Requested by name from the five docker modules (their ``pytestmark``
     carries ``usefixtures("reap_orphan_docker_stacks")`` next to
     ``xdist_group("docker_e2e")``), never autouse. It was autouse at session
     scope, keyed on directory membership: running ANY test under
@@ -261,6 +274,12 @@ def reap_orphan_docker_stacks(request: pytest.FixtureRequest) -> None:
     lab-only courtesy, not a test, so nothing here fails or skips a test)
     from "host up, something else went wrong" (still attempt the reap and
     suppress as before).
+
+    The reap runs under :func:`docker_host_lease`, the lock every stack owner
+    in this session holds for its stack's whole life. Without it, the first
+    test to request the reaper on one xdist worker ``docker rm -f``'d another
+    group's live ``-e2e-`` stack mid-test (the ``coverage_e2e`` container,
+    2026-10-27).
     """
     offenders = [
         item.nodeid
@@ -278,7 +297,7 @@ def reap_orphan_docker_stacks(request: pytest.FixtureRequest) -> None:
             pass
     except OSError:
         return
-    with contextlib.suppress(Exception):
+    with docker_host_lease(tmp_path_factory), contextlib.suppress(Exception):
         asyncio.run(_reap_orphan_docker_stacks())
 
 

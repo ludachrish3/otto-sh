@@ -38,7 +38,6 @@ from otto.docker.deployment import deploy, teardown
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from otto.labs.loader import Lab
-from tests._fixtures._host_pool import lease_unix_host
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result
 from tests._fixtures.labdata import element_for, host_data
 from tests._fixtures.paths import TESTS_ROOT
@@ -64,15 +63,6 @@ pytestmark = [
     pytest.mark.xdist_group("docker_e2e"),
     pytest.mark.usefixtures("reap_orphan_docker_stacks"),
 ]
-
-
-@pytest.fixture(scope="module")
-def test3_lease(tmp_path_factory):
-    """Hold the test3 fd-flock for the entire module so no e2e docker test
-    can race against the integration docker tests on the same daemon."""
-    lock_dir = tmp_path_factory.getbasetemp().parent
-    with lease_unix_host(lock_dir, ["test3"]) as _element:
-        yield _element
 
 
 @pytest_asyncio.fixture

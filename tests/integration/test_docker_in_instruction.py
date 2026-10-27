@@ -17,7 +17,6 @@ from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from otto.labs.loader import Lab
 from otto.utils import Status
-from tests._fixtures._host_pool import lease_unix_host
 from tests._fixtures.paths import TESTS_ROOT
 
 PROJECT1_DIR = TESTS_ROOT / "project1"
@@ -31,15 +30,6 @@ pytestmark = [
     # The reap is requested, never ambient (tests/unit/test_docker_reaper_scope.py).
     pytest.mark.usefixtures("reap_orphan_docker_stacks"),
 ]
-
-
-@pytest.fixture(scope="module")
-def test3_lease(tmp_path_factory):
-    """Hold the test3 fd-flock for the entire module so no e2e docker test
-    can race against the integration docker tests on the same daemon."""
-    lock_dir = tmp_path_factory.getbasetemp().parent
-    with lease_unix_host(lock_dir, ["test3"]) as _element:
-        yield _element
 
 
 @pytest_asyncio.fixture

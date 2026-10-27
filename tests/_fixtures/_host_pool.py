@@ -16,9 +16,14 @@ from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 
+import pytest
+
 # The unix-lab Unix peers with identical transfer backends. test3 is leased
 # directly (no test1 hop — see the Phase-1 lab-data simplification).
 UNIX_POOL: tuple[str, ...] = ("test1", "test2", "test3")
+
+DOCKER_HOST = "test3"
+"""The lab host whose docker daemon the suite's ``-e2e-`` compose stacks run on."""
 
 _POLL_SECONDS = 0.05
 
@@ -50,3 +55,16 @@ def lease_unix_host(lock_dir: Path, candidates: Sequence[str] = UNIX_POOL) -> It
             finally:
                 os.close(fd)  # releases the flock
         time.sleep(_POLL_SECONDS)  # all busy — back off and retry
+
+
+@contextmanager
+def docker_host_lease(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
+    """Lease :data:`DOCKER_HOST` for the session's xdist workers; yield its element.
+
+    Every ``-e2e-`` stack on the docker host lives under this lock for its
+    whole life, and ``tests/integration/conftest.py``'s orphan reaper takes it
+    too, so the reap waits for a live stack instead of removing it.
+    """
+    lock_dir = tmp_path_factory.getbasetemp().parent
+    with lease_unix_host(lock_dir, [DOCKER_HOST]) as element:
+        yield element

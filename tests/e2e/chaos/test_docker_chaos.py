@@ -9,10 +9,9 @@ the DOCKER parent rather than the lane's leased unix bed host — this
 module opts out of the base ``_bed_hygiene_bracket`` (``no_hygiene_bracket``)
 since the loopback venue has no bed route to lease at all.
 
-test3 is serialized against ``tests/integration/test_docker_compose.py``'s
-own docker suite via the same fd-flock lease that module holds
-(``lease_unix_host(..., ["test3"])``), so this lane's docker chaos never
-races that daemon.
+test3 is serialized against every other docker stack in the session via
+the fd-flock lease they all hold (``docker_host_lease``), so this lane's
+docker chaos never races that daemon.
 
 NO BUSYBOX GUEST ARM: every scenario here needs one of the venue's two
 roles, and a bed guest can hold neither. The PARENT role runs a docker
@@ -43,7 +42,7 @@ from otto.host.host import Host
 from otto.host.unix_host import UnixHost
 from otto.labs.loader import Lab
 from otto.utils import Status, wait_for_async
-from tests._fixtures._host_pool import lease_unix_host
+from tests._fixtures._host_pool import docker_host_lease
 from tests._fixtures.bed_hygiene import (
     _DOCKER_NET_PROBE,
     _DOCKER_PS_PROBE,
@@ -155,8 +154,7 @@ def docker_parent(tmp_path_factory) -> "Iterator[UnixHost]":
                 _active_hosts.remove(host)
                 _close(host)
         return
-    lock_dir = tmp_path_factory.getbasetemp().parent
-    with lease_unix_host(lock_dir, ["test3"]) as _element:
+    with docker_host_lease(tmp_path_factory):
         host = bed_parent()
         _active_hosts.append(host)
         try:

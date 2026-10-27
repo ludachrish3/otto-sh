@@ -124,6 +124,48 @@ def test_docker_capable_hosts_are_built_only_in_docker_modules() -> None:
     )
 
 
+def reaps_under_the_lease(conftest_source: str) -> bool:
+    """Whether the reaper fixture calls the reap only inside a ``with docker_host_lease(...)``."""
+    tree = ast.parse(conftest_source)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == _FIXTURE:
+            reaps = [
+                call
+                for call in ast.walk(node)
+                if isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Name)
+                and call.func.id == "_reap_orphan_docker_stacks"
+            ]
+            leased = {
+                call
+                for block in ast.walk(node)
+                if isinstance(block, ast.With)
+                and any(
+                    isinstance(item.context_expr, ast.Call)
+                    and isinstance(item.context_expr.func, ast.Name)
+                    and item.context_expr.func.id == "docker_host_lease"
+                    for item in block.items
+                )
+                for call in ast.walk(block)
+                if call in reaps
+            }
+            return bool(reaps) and len(leased) == len(reaps)
+    raise AssertionError(f"{_CONFTEST} no longer defines `{_FIXTURE}`")
+
+
+def test_the_reap_waits_for_every_live_stack_in_the_session() -> None:
+    """The reap holds test3's pool lease, the lock each stack owner holds while its stack lives.
+
+    The reaper runs once per xdist worker, at that worker's first docker test,
+    while other groups (``coverage_e2e``, ``run_exec_e2e``) may hold a live
+    ``-e2e-`` stack on test3 — which the reap matches and ``docker rm -f``'s.
+    """
+    assert reaps_under_the_lease(_CONFTEST.read_text()), (
+        f"`{_FIXTURE}` reaps outside `docker_host_lease` — it would remove a stack another "
+        f"xdist worker is using mid-test (2026-10-27: the coverage_e2e container)"
+    )
+
+
 def test_the_scanners_see_the_shapes_they_judge() -> None:
     """Positive controls: an autouse decorator, and both agreement failures, read correctly."""
     autouse = (
@@ -139,6 +181,13 @@ def test_the_scanners_see_the_shapes_they_judge() -> None:
         True,
     )
     assert modules_declaring("x = 1\n") == (False, False)
+    head = f"import pytest\n\n@pytest.fixture(scope='session')\ndef {_FIXTURE}():\n"
+    leased = head + "    with docker_host_lease(f):\n        _reap_orphan_docker_stacks()\n"
+    other = head + "    with lease_unix_host(d):\n        _reap_orphan_docker_stacks()\n"
+    bare = head + "    _reap_orphan_docker_stacks()\n"
+    assert reaps_under_the_lease(leased)
+    assert not reaps_under_the_lease(bare)
+    assert not reaps_under_the_lease(other)  # any pool host, maybe not the docker host
 
 
 def orphan_project_fragments(conftest_source: str) -> tuple[str, ...]:

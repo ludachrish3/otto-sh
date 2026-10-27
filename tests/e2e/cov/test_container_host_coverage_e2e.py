@@ -37,13 +37,13 @@ import pytest
 from otto.coverage.capture.model import Capture
 from otto.coverage.store.model import CoverageStore
 from otto.docker.compose import use_case_project
-from tests._fixtures._host_pool import lease_unix_host
+from tests._fixtures._host_pool import DOCKER_HOST, docker_host_lease
 from tests._fixtures.gitrepo import git_env
 from tests.e2e._otto_subprocess import PROJECT_CTR, run_otto
 from tests.e2e.cov._project5_build import _artifacts_are_stale, _hits, _line_of, _record
 
 _LAB = "unix"
-_PARENT = "test3"
+_PARENT = DOCKER_HOST
 _USE_CASE = "covctr"
 CONTAINER = "test3.covctr.app"
 PRODUCT = "counter"
@@ -222,8 +222,7 @@ def ctr_run(tmp_path_factory):
     suffix = "e2e-" + uuid.uuid4().hex[:8]
     project = use_case_project(_LAB, _USE_CASE, suffix)
     otto = _Otto(xdir, suffix)
-    lock_dir = tmp_path_factory.getbasetemp().parent
-    with lease_unix_host(lock_dir, [_PARENT]):
+    with docker_host_lease(tmp_path_factory):
         _ensure_runtime_image(otto)
         # Cleanup always runs; a leftover is asserted only when the body
         # succeeded, so it never masks the body's own failure.
