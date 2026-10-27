@@ -19,6 +19,7 @@ from otto.config.project import Project
 from otto.config.scope import DockerCompose, DockerUseCase, ProjectScopeConfig
 from otto.declared import DeclaredEntry
 from otto.docker.compose import (
+    StartedStack,
     _project_parent_host,
     _safe_username,
     _stack_already_up,
@@ -32,6 +33,7 @@ from otto.docker.compose import (
     merge_declared_users,
     register_declared_container_hosts,
     register_stack_hosts,
+    roll_back,
     unregister_container_hosts,
     use_case_project,
 )
@@ -599,7 +601,7 @@ async def test_compose_up_always_reissues_up_when_already_running(tmp_path):
     compose's job (a convergent re-run), not a skip on otto's side — the
     already-up probe answers ownership for rollback ONLY (see
     test_compose_up_second_call_reregisters_without_raising and
-    _rollback_partial_up's ``brought_up_here`` gate)."""
+    compose_up's ``brought_up_here`` gate)."""
     project = _make_project(tmp_path)
     lab = _make_lab()
     parent = lab.hosts["test3"]
@@ -2424,3 +2426,194 @@ async def test_compose_up_build_dry_run_refuses_a_missing_dockerfile(tmp_path):
 )
 def test_compose_command_renders_every_caller_shape_quoted(call, expected):
     assert call() == expected
+
+
+# ---------------------------------------------------------------------------
+# rollback: one rule for compose_up and the use-case deploy
+# ---------------------------------------------------------------------------
+
+
+def _files(cmd: str) -> "list[str]":
+    """The ``-f`` set of a compose command, in order."""
+    return re.findall(r" -f (\S+)", cmd)
+
+
+@pytest.mark.asyncio
+async def test_roll_back_takes_the_stack_down_through_its_own_files():
+    """The ``up`` command minus its verb, naming what ``up`` named: no label-wide
+    reach, and nothing otto adds on top of docker's own ``down``."""
+    lab = _make_lab()
+    parent = lab.hosts["test3"]
+    sent: list[str] = []
+
+    async def exec_side_effect(cmd, *_, **__):
+        sent.append(cmd)
+        return _ok()
+
+    parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
+    await roll_back(
+        lab,
+        [StartedStack(parent, "p", ["/s/a.yml", "/s/b.yml"], env_file="/s/.env", services=["api"])],
+    )
+
+    assert sent == [
+        ("docker compose -p p -f /s/a.yml -f /s/b.yml --env-file /s/.env down --timeout 1 api")
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "answer",
+    [_fail("daemon said no"), OSError("daemon said no")],
+    ids=["returned", "raised"],
+)
+async def test_roll_back_reports_a_down_that_fails_and_never_raises(answer, caplog):
+    lab = _make_lab()
+    parent = lab.hosts["test3"]
+    parent.exec.side_effect = answer if isinstance(answer, Exception) else None  # type: ignore[union-attr]
+    if not isinstance(answer, Exception):
+        parent.exec.return_value = answer  # type: ignore[union-attr]
+
+    with caplog.at_level(logging.ERROR, logger="otto.docker.compose"):
+        await roll_back(lab, [StartedStack(parent, "p", ["/a.yml"])])
+
+    assert (
+        "p could not be rolled back on test3; whatever its up created there is still up: "
+        "daemon said no"
+    ) in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_a_down_given_an_empty_file_list_refuses_rather_than_go_by_the_label():
+    """``files=[]`` is a caller's bug: read as "no files" it would widen the down to
+    every container under the project label."""
+    lab = _make_lab()
+    parent = lab.hosts["test3"]
+    with pytest.raises(ValueError, match="names no file"):
+        await compose_down_project(parent, "p", lab=lab, remove_ids_under=None, files=[])
+    parent.exec.assert_not_awaited()  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+async def test_roll_back_finishes_its_down_when_the_caller_is_cancelled():
+    """A half-run rollback is worse than none: the cancellation waits for the down."""
+    lab = _make_lab()
+    parent = lab.hosts["test3"]
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    finished: list[str] = []
+
+    async def exec_side_effect(cmd, *_, **__):
+        entered.set()
+        await release.wait()
+        finished.append(cmd)
+        return _ok()
+
+    parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
+    task = asyncio.create_task(roll_back(lab, [StartedStack(parent, "p", ["/a.yml"])]))
+    await entered.wait()
+    task.cancel()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert len(finished) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_failed_compose_up_rolls_back_through_its_staged_files_and_keeps_placeholders(
+    tmp_path,
+):
+    """The rollback takes down the files it brought up, re-stages nothing, and
+    unregisters nothing it did not register (the declared placeholders stay)."""
+    project = _make_project(tmp_path)
+    lab = _make_lab()
+    parent = lab.hosts["test3"]
+    register_declared_container_hosts(lab, [project])
+    before = dict(lab.hosts)
+    sent: list[str] = []
+
+    async def exec_side_effect(cmd, *_, **__):
+        sent.append(cmd)
+        if "label=com.docker.compose.project=" in cmd and "service=" not in cmd:
+            return _ok("")
+        if " up -d" in cmd:
+            return _fail("port is already allocated")
+        return _ok()
+
+    parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
+    with pytest.raises(HostCommandError, match="port is already allocated"):
+        await compose_up(project, lab)
+
+    up_at = next(i for i, c in enumerate(sent) if " up -d" in c)
+    after_up = sent[up_at + 1 :]
+    downs = [c for c in after_up if " down " in c]
+    assert len(downs) == 1
+    assert downs[0].startswith("docker compose -p otto-project1")
+    assert downs[0].endswith(" down --timeout 1")
+    assert _files(downs[0]) == _files(sent[up_at])
+    assert not [c for c in after_up if "rm -rf" in c or "mkdir" in c], "the rollback re-staged"
+    assert lab.hosts == before
+
+
+@pytest.mark.asyncio
+async def test_register_stack_hosts_registers_all_or_nothing_when_a_provider_raises(
+    tmp_path, monkeypatch
+):
+    project = _make_project(tmp_path, services=("api", "db"))
+    lab = _make_lab()
+    parent = lab.hosts["test3"]
+    register_declared_container_hosts(lab, [project])
+    before = dict(lab.hosts)
+    parent.exec.side_effect = _ids_by_service  # type: ignore[union-attr]
+    calls = 0
+
+    def provider_that_fails_second(_host):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("provider blew up")
+
+    monkeypatch.setattr("otto.docker.compose.apply_providers", provider_that_fails_second)
+    with pytest.raises(RuntimeError, match="provider blew up"):
+        await register_stack_hosts(
+            lab, parent, compose_project="otto-p", id_project="project1", services=["api", "db"]
+        )
+    assert lab.hosts == before
+
+
+@pytest.mark.asyncio
+async def test_register_stack_hosts_restores_what_it_replaced_when_adding_fails(
+    tmp_path, monkeypatch
+):
+    project = _make_project(tmp_path, services=("api", "db"))
+    lab = _make_lab()
+    parent = lab.hosts["test3"]
+    register_declared_container_hosts(lab, [project])
+    before = dict(lab.hosts)
+    parent.exec.side_effect = _ids_by_service  # type: ignore[union-attr]
+    real_add = lab.add_host
+    adds = 0
+
+    def add_that_fails_second(host):
+        nonlocal adds
+        adds += 1
+        if adds == 2:
+            raise ValueError("refused")
+        real_add(host)
+
+    monkeypatch.setattr(lab, "add_host", add_that_fails_second)
+    with pytest.raises(ValueError, match="refused"):
+        await register_stack_hosts(
+            lab, parent, compose_project="otto-p", id_project="project1", services=["api", "db"]
+        )
+    assert lab.hosts == before
+
+
+async def _ids_by_service(cmd, *_, **__):
+    """A daemon where each service's container is visible at once, with no mounts."""
+    for service in ("api", "db"):
+        if f"com.docker.compose.service={service}" in cmd:
+            return _ok(f"cid-{service}\n")
+    if "docker inspect" in cmd:
+        return _ok("[]")
+    return _ok()

@@ -182,7 +182,7 @@ def _split_by_project(by_project: "dict[str, str]"):
     """Patch ``place`` to put each project's fragments on its own host.
 
     A use-case deploys on one parent (spec §2), so real configuration never
-    hands ``acting_hosts``/``_rollback``/``teardown`` more than one host.
+    hands ``acting_hosts``/``roll_back``/``teardown`` more than one host.
     Their multi-host shapes are KEPT (spec §6); this seam is the only way
     left to reach them, and it is how these tests keep those shapes pinned.
     """
@@ -667,7 +667,10 @@ async def test_rollback_on_registration_failure(single):
 
     downs = [c for c in single.host.commands if " down " in c]  # type: ignore[attr-defined]
     assert len(downs) == 1
-    assert "--remove-orphans" in downs[0]
+    # Through the stack's own files, never by the label with orphan removal.
+    assert downs[0].startswith("docker compose -p ")
+    assert " -f " in downs[0]
+    assert "--remove-orphans" not in downs[0]
 
 
 @pytest.mark.asyncio
@@ -729,7 +732,39 @@ async def test_failed_up_command_raises_and_rolls_back(single):
     assert len([c for c in single.host.commands if " up -d" in c]) == 1, (
         "a real failure is not retried"
     )
-    assert [c for c in single.host.commands if " down " in c]
+    # The one rollback compose_up shares: the stack's own files and env file,
+    # never a label-wide down.
+    (up,) = [c for c in single.host.commands if " up -d" in c]
+    (down,) = [c for c in single.host.commands if " down " in c]
+    assert down.startswith("docker compose -p ")
+    assert down.endswith(" down --timeout 1")
+    assert re.findall(r" (?:-f|--env-file) (\S+)", down) == re.findall(
+        r" (?:-f|--env-file) (\S+)", up
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_narrowed_deploy_rolls_back_only_the_services_it_named(tmp_path):
+    """``down [SERVICES]``, docker's own narrowing: a narrowed ``up`` that fails is
+    undone for the services it started, never for the rest of the files' stack."""
+    project = _project(
+        "a", _frag(), composes=[_compose_file(tmp_path, "core", services=("api", "db"))]
+    )
+    host = _wire(_host("test3", "10.10.200.13"))
+    wired = host.exec.side_effect
+
+    async def _exec(cmd, *a, **kw):
+        if " up -d" in cmd:
+            host.commands.append(cmd)  # type: ignore[attr-defined]
+            return _fail("port is already allocated")
+        return await wired(cmd, *a, **kw)
+
+    host.exec.side_effect = _exec  # type: ignore[attr-defined]
+    with _install(_lab(host), [project]), pytest.raises(HostCommandError):
+        await deploy("integration", parent="test3", services=["api"])
+
+    (down,) = [c for c in host.commands if " down " in c]  # type: ignore[attr-defined]
+    assert down.endswith(" down --timeout 1 api")
 
 
 @pytest.mark.asyncio
@@ -861,7 +896,6 @@ def test_up_command_renders_force_recreate_and_pull_after_remove_orphans():
         Path("/s/otto.env"),
         {},
         ["api"],
-        narrowed=True,
         force_recreate=True,
         pull="always",
     )
@@ -872,15 +906,13 @@ def test_up_command_renders_force_recreate_and_pull_after_remove_orphans():
 
 
 def test_up_command_without_the_flags_is_unchanged():
-    cmd = deploy_mod._up_command(
-        "proj", [Path("/s/a.yml")], Path("/s/otto.env"), {}, [], narrowed=False
-    )
+    cmd = deploy_mod._up_command("proj", [Path("/s/a.yml")], Path("/s/otto.env"), {}, [])
     assert cmd == "docker compose -p proj -f /s/a.yml --env-file /s/otto.env up -d --remove-orphans"
 
 
 def test_up_command_quotes_a_pull_policy_it_does_not_validate():
     cmd = deploy_mod._up_command(
-        "proj", [Path("/s/a.yml")], Path("/s/otto.env"), {}, [], narrowed=False, pull="a b"
+        "proj", [Path("/s/a.yml")], Path("/s/otto.env"), {}, [], pull="a b"
     )
     assert cmd.endswith("--pull 'a b'")
 
@@ -1279,11 +1311,10 @@ async def test_a_rollback_that_itself_fails_is_reported_and_never_masks(single, 
     """The propagating error is the one the user needs; the residue still gets named."""
     _wire(single.host, cid="")  # registration will fail -> rollback runs
     with (
-        caplog.at_level(logging.ERROR, logger="otto.docker.deployment"),
+        caplog.at_level(logging.ERROR, logger="otto.docker.compose"),
         _install(single.lab, [single.project]),
-        patch.object(
-            deploy_mod,
-            "compose_down_project",
+        patch(
+            "otto.docker.compose.compose_down_project",
             AsyncMock(side_effect=OSError("parent went away")),
         ),
         pytest.raises(HostCommandError) as excinfo,

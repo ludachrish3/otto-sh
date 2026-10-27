@@ -201,6 +201,23 @@ the already-created container. The re-run is gated on that one signature, so a
 genuine failure (a bad file, a denied pull, a port clash) is reported at once,
 and a race that recurs points at a degraded daemon rather than a race.
 
+When a start fails once it has run `up` (the `up` itself included), both paths
+roll back through the same {func}`~otto.docker.compose.roll_back`, under one
+rule: a rollback undoes exactly what its call did. A call owns the stack unless
+the probe said it was already up (an unknown answer counts as owned, so a stack
+nobody claims is never stranded). An owned stack is taken down with its own
+`up` command minus the verb: the files it was started from, naming the services
+that `up` named (docker's `down [SERVICES]`), so containers under the same
+project label that it did not start stay up. The `down` is a compensating action
+({func}`~otto.lifecycle.compensate`): an interrupt that lands while it runs
+waits for it, up to the run's teardown deadline. A down that fails, raised or
+returned, is logged as "could not be rolled back … whatever its up created
+there is still up"; under an
+interrupt, compensate's own warning names it instead. Nothing is unregistered:
+on a start's one parent, registering the stack's container hosts is the last
+step and is all or nothing, so a failed start registered nothing, and a
+declared placeholder or a peer's id is never the rollback's to remove.
+
 ## Mounts come from compose, not settings
 
 otto derives mounts from the product's own compose file, the only place

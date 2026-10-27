@@ -16,7 +16,7 @@ import logging
 import re
 import shlex
 from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from pathlib import PurePath
 from typing import TYPE_CHECKING
 
@@ -399,31 +399,77 @@ async def compose_up(
         # failing loud without this would be strictly worse than the bug.
         # Only what WE started; a stack that was already up is someone else's.
         if brought_up_here:
-            await _rollback_partial_up(project, lab, parent_host, proj)
+            await roll_back(lab, [StartedStack(parent_host, proj, remote_file_strs)])
         raise
 
 
-async def _rollback_partial_up(project: Project, lab: "Lab", parent: UnixHost, proj: str) -> None:
-    """Best-effort teardown of a stack ``compose_up`` started but cannot hand over.
+@dataclass
+class StartedStack:
+    """A stack one call started, and the files it was started from: what a rollback undoes."""
+
+    parent: UnixHost
+    project: str
+    files: "list[str]"
+    """The staged ``-f`` set, in order, exactly as ``up`` was given it."""
+    env_file: "str | None" = None
+    """The staged ``--env-file``, when ``up`` was given one."""
+    services: "list[str]" = field(default_factory=list)
+    """The services ``up`` named, when it named any; empty means all the files declare."""
+
+
+async def roll_back(lab: "Lab", started: "list[StartedStack]") -> None:
+    """Take down every stack in *started*: the one rollback for every path that starts one.
+
+    The rule: a rollback undoes exactly what its call did. Each stack goes
+    down through the files it was started from, naming the services its ``up``
+    named, so containers under the same project label that its ``up`` did not
+    start stay up, and nothing is
+    unregistered. On a start's one parent, registration is the last step and
+    is all or nothing (:func:`register_stack_hosts`), so a failed start
+    registered nothing, and a placeholder or a peer's id is never this call's
+    to remove.
+
+    Each ``down`` is a compensating action: an interrupt that lands while it
+    runs waits for it, up to the run's teardown deadline
+    (:func:`~otto.lifecycle.compensate`), because a half-run rollback is worse
+    than none.
 
     Never raises and never masks: the caller is already propagating the real
-    error, and a failed rollback must not replace it. It is reported, though —
-    residue the user has to clean up by hand deserves to be named.
+    error. A failed ``down``, raised or returned, is reported, though: residue
+    the user has to clean up by hand deserves to be named. Under a held
+    interrupt, compensate re-raises the cancellation once the ``down``
+    resolves, so its own warning names a failure instead of this function's
+    line, and any later stack in *started* is not reached.
     """
-    try:
-        result = await compose_down(project, lab, parent=parent.id, project_name=proj)
-    except Exception as e:  # noqa: BLE001 — a rollback may not mask the real error
-        # .error, not .exception: the traceback the user needs belongs to the
-        # error we are propagating, not to the rollback that failed after it.
-        logger.error(  # noqa: TRY400 — see above
-            f"[docker] {proj} could not be rolled back on {parent.id} and is still up: {e}"
+    # Imported here, not at module scope: otto.lifecycle is only needed once a
+    # compensating action actually runs (import-budget guard).
+    from ..lifecycle import compensate
+
+    for stack in started:
+        what = (
+            f"{stack.project} could not be rolled back on {stack.parent.id}; "
+            f"whatever its up created there is still up"
         )
-        return
-    if not result.is_ok:
-        logger.error(
-            f"[docker] {proj} could not be rolled back on {parent.id} and is still up: "
-            f"{result.value}"
-        )
+        try:
+            result = await compensate(
+                compose_down_project(
+                    stack.parent,
+                    stack.project,
+                    lab=lab,
+                    remove_ids_under=None,
+                    files=stack.files,
+                    env_file=stack.env_file,
+                    services=stack.services,
+                ),
+                what=f"rolling back {stack.project} on {stack.parent.id}",
+            )
+        except Exception as e:  # noqa: BLE001 — a rollback may not mask the real error
+            # .error, not .exception: the traceback the user needs belongs to the
+            # error being propagated, not to the rollback that failed after it.
+            logger.error(f"[docker] {what}: {e}")  # noqa: TRY400 — see above
+            continue
+        if not result.is_ok:
+            logger.error(f"[docker] {what}: {result.value}")
 
 
 def merge_declared_users(composes: "Iterable[DockerCompose]") -> "dict[str, str]":
@@ -496,6 +542,8 @@ async def register_stack_hosts(
     if resolved:
         mounts_by_id = await inspect_mounts(parent, [cid for _, cid in resolved])
 
+    # Built and stamped in full before the lab is touched, so a raising
+    # provider leaves the lab exactly as it was.
     hosts: dict[str, DockerContainerHost] = {}
     for service, cid in resolved:
         host = DockerContainerHost(
@@ -527,15 +575,25 @@ async def register_stack_hosts(
         # AFTER the source_lab stamp — that is what the project-targeting gate on
         # both seams reads to decide whether a project may reach this host.
         apply_providers(host)
-        # Register in the lab so otto host <id> finds it. compose_up is
-        # idempotent and re-registers on every call — replacing a placeholder
-        # from register_declared_container_hosts, or a prior compose_up's
-        # entry for the same service (e.g. after a container restart changed
-        # its id) — so this is an explicit delete-then-add rather than a
-        # silent overwrite (add_host would reject the duplicate id outright).
-        lab.hosts.pop(host.id, None)
-        lab.add_host(host)
         hosts[service] = host
+
+    # Register in the lab so otto host <id> finds it, all or nothing: a start
+    # re-registers on every call, replacing a placeholder from
+    # register_declared_container_hosts or a prior start's entry for the same
+    # service (e.g. after a container restart changed its id), so this is an
+    # explicit delete-then-add (add_host would reject the duplicate id
+    # outright), and a failure part-way puts back every entry it replaced.
+    replaced: "list[tuple[str, Host | None]]" = []
+    try:
+        for host in hosts.values():
+            replaced.append((host.id, lab.hosts.pop(host.id, None)))
+            lab.add_host(host)
+    except BaseException:
+        for host_id, previous in reversed(replaced):
+            lab.hosts.pop(host_id, None)
+            if previous is not None:
+                lab.hosts[host_id] = previous
+        raise
 
     if not hosts:
         # Same silent-success shape as `_up_and_register`'s empty-`services`
@@ -732,27 +790,39 @@ async def compose_down_project(
     lab: "Lab",
     remove_ids_under: "str | None",
     stop_timeout: int = 1,
+    files: "Sequence[str | PurePath] | None" = None,
+    env_file: "str | PurePath | None" = None,
+    services: "Sequence[str]" = (),
 ) -> CommandResult:
-    """Tear a merged stack down by PROJECT LABEL, then unregister its hosts.
+    """Take a compose stack down, then unregister its hosts: the one ``down``.
 
-    No ``-f`` on purpose: ``docker compose -p <proj> down`` finds the stack by
-    the project label docker already carries, so a use-case teardown never
-    has to re-run adapters, re-render templates or re-stage files merely to
-    DELETE what they produced (spec §8). ``--remove-orphans`` is what makes a
-    provider transition concrete — a displaced mock's container is an orphan
-    of the merged file set and goes with the rest.
+    Two shapes, chosen by *files* (``None`` for none; an empty list is refused):
+
+    - **Files given** (with *env_file* when ``up`` had one): the ``up``
+      command minus its verb, ``-f … [--env-file E] down [SERVICES]``, and
+      nothing otto adds. Docker removes only the services those files declare
+      (or *services*, when named) and the networks compose created for them;
+      other containers under the same project label stay. Everything else is
+      docker's own: its orphan setting, its interpolation (the shell's
+      environment over the env file), its profiles.
+    - **No files**: ``down --remove-orphans`` by the project label alone, which
+      docker already carries, so nothing has to be re-rendered or re-staged
+      merely to delete what it produced. It removes every container under the
+      label, a displaced provider's orphan included.
 
     *remove_ids_under* is the container-host id prefix to unregister
-    (``<parent>.<usecase>.``), or ``None`` to unregister nothing.
-    :func:`~otto.docker.deployment.deploy`'s rollback passes ``None``: it is
-    compensating for a call that never got as far as registering anything, and
-    popping ids it did not put there would yank a peer's registrations out of
-    the lab.
+    (``<parent>.<usecase>.``), or ``None`` to unregister nothing. A rollback
+    (:func:`roll_back`) passes ``None``: the call it compensates for registered
+    nothing, and popping ids it did not put there would yank a placeholder or
+    a peer's registrations out of the lab.
 
     Never raises for a failed ``down``: the result is returned so a sweep over
     several hosts keeps going, exactly like :func:`compose_down`.
 
     Raises:
+        ValueError: *files* is an empty list, a caller's bug: read as "no
+            files" it would widen the down to every container under the
+            project label.
         ~otto.result.CommandNotRunError: this is a dry run. Armed here, not
             inherited from ``exec``, because the second half of this function
             MUTATES ``lab.hosts`` -- a dry run must leave the lab alone, and a
@@ -766,12 +836,19 @@ async def compose_down_project(
             "No container was stopped and no host was unregistered from the lab.",
         )
 
-    result = await _run_compose(
-        parent,
-        compose_command(
-            compose_project, "down", "--remove-orphans", "--timeout", str(int(stop_timeout))
-        ),
-    )
+    timeout_args = ["--timeout", str(int(stop_timeout))]
+    if files is not None:
+        if not files:
+            # An empty list is a caller's bug, never "no files": read as the
+            # label-only shape it would widen the down to every container
+            # under the project.
+            raise ValueError(f"compose_down_project({compose_project}): files=[] names no file")
+        command = compose_command(
+            compose_project, "down", *timeout_args, *services, files=files, env_file=env_file
+        )
+    else:
+        command = compose_command(compose_project, "down", "--remove-orphans", *timeout_args)
+    result = await _run_compose(parent, command)
     if not result.is_ok:
         logger.error(
             f"[docker] compose down failed for {compose_project} on {parent.id}: {result.value}"

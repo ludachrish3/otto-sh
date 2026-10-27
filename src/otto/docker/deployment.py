@@ -30,11 +30,13 @@ from ..result import CommandNotRunError
 from .adapter import AdapterResult, adapter_for
 from .build import build_images, check_project_images
 from .compose import (
+    StartedStack,
     _stack_already_up,
     compose_command,
     compose_down_project,
     merge_declared_users,
     register_stack_hosts,
+    roll_back,
     unregister_container_hosts,
     up_stack,
     use_case_project,
@@ -434,11 +436,10 @@ def _up_command(
     env: "Mapping[str, str]",
     services: "Sequence[str]",
     *,
-    narrowed: bool,
     force_recreate: bool = False,
     pull: "str | None" = None,
 ) -> str:
-    """Build the one merged ``up`` command (spec §8 step 4).
+    """Build the one merged ``up`` command, naming *services* (none names all).
 
     The mapping feeds BOTH sinks: ``--env-file`` (what compose interpolates
     the YAML with) and an ``env K=V`` prefix (what the compose PROCESS sees,
@@ -454,8 +455,7 @@ def _up_command(
         args.append("--force-recreate")
     if pull is not None:
         args += ["--pull", pull]
-    if narrowed:
-        args += services
+    args += services
     return compose_command(compose_project, *args, files=compose_paths, env_file=env_file, env=env)
 
 
@@ -554,7 +554,12 @@ class UseCaseResolution:
     parent: UnixHost
     """The one host the use-case deploys on (spec §2)."""
     placed: "dict[str, list[SelectedFragment]]"
-    """The parent's id to every fragment that won; one key."""
+    """The parent's id to every fragment that won; one key.
+
+    One key is what lets a failed deploy's rollback unregister nothing: on
+    one parent, registration is the start's last step and is all or nothing.
+    A deploy across several parents would need its rollback to track and
+    unregister what the earlier parents registered."""
     order: "dict[str, int]"
     """Project name to its dependency-order position."""
 
@@ -671,7 +676,7 @@ async def deploy(
     if not dry:
         _log_displacements(use_case, resolution.selection)
     stack = UseCaseStack(use_case=use_case, selection=resolution.selection)
-    brought_up: "list[tuple[UnixHost, str]]" = []
+    brought_up: "list[StartedStack]" = []
     previews: "list[tuple[str, str]]" = []  # (host id, the command it would run)
     acting_list = acting_hosts(
         resolution.placed, resolution.order, services_filter, use_case=use_case, report=True
@@ -686,6 +691,9 @@ async def deploy(
     try:
         for acting in acting_list:
             host_id, frags, wanted = acting.host_id, acting.fragments, acting.services
+            # The services `up` names, and so the ones its rollback names; none
+            # (no narrowing) means all the files declare.
+            named = list(wanted) if services_filter is not None else []
             parent_host = parent_for(resolution.lab, host_id)
             proj = project_name or use_case_project(parent_host.source_lab, use_case)
             units = _units(frags)
@@ -717,8 +725,7 @@ async def deploy(
                             use_case_compose_paths(proj, plan.files),
                             use_case_env_file(proj),
                             plan.env,
-                            wanted,
-                            narrowed=services_filter is not None,
+                            named,
                             force_recreate=force_recreate,
                             pull=pull,
                         ),
@@ -742,7 +749,15 @@ async def deploy(
             # default would strand a stack nobody claims.
             was_up = await _stack_already_up(parent_host, proj) is True
             if not was_up:
-                brought_up.append((parent_host, proj))
+                brought_up.append(
+                    StartedStack(
+                        parent_host,
+                        proj,
+                        [str(p) for p in staged.compose_paths],
+                        env_file=str(staged.env_file),
+                        services=named,
+                    )
+                )
             logger.info(f"[docker] deploying {use_case} as {proj} on {parent_host.id}")
             await up_stack(
                 parent_host,
@@ -751,8 +766,7 @@ async def deploy(
                     staged.compose_paths,
                     staged.env_file,
                     plan.env,
-                    wanted,
-                    narrowed=services_filter is not None,
+                    named,
                     force_recreate=force_recreate,
                     pull=pull,
                 ),
@@ -771,9 +785,10 @@ async def deploy(
             stack.hosts.update(hosts)
             stack.env = plan.env
     except BaseException:
-        # Only what THIS call brought up — compose_up's rollback. A stack
-        # that was already running belongs to someone else and is left alone.
-        await _rollback(resolution.lab, brought_up)
+        # Only what THIS call brought up, through the one rollback both start
+        # paths share. A stack that was already running belongs to someone
+        # else and is left alone.
+        await roll_back(resolution.lab, brought_up)
         raise
     if dry:
         raise CommandNotRunError(
@@ -850,34 +865,6 @@ def _plan(placed: "dict[str, list[SelectedFragment]]", selection: Selection) -> 
         f"Resolved plan: {per_host}.{displaced_note}{env_note} No image was built, "
         f"no file was staged and no container was started."
     )
-
-
-async def _rollback(lab: "Lab", brought_up: "list[tuple[UnixHost, str]]") -> None:
-    """Best-effort teardown of every stack this call started. Never masks.
-
-    The caller is already propagating the real error, so a rollback that
-    itself fails is reported and swallowed — but it IS reported: residue the
-    user has to clean up by hand deserves to be named.
-
-    ``remove_ids_under=None``: this call did not finish registering, and
-    popping ids it never put in ``lab.hosts`` would unregister a peer's
-    containers.
-    """
-    for parent, proj in brought_up:
-        await _rollback_one(lab, parent, proj)
-
-
-async def _rollback_one(lab: "Lab", parent: UnixHost, compose_project: str) -> None:
-    """Roll one host's stack back, swallowing (but reporting) its own failure."""
-    try:
-        await compose_down_project(parent, compose_project, lab=lab, remove_ids_under=None)
-    except Exception as e:  # noqa: BLE001 — a rollback may not mask the real error
-        # .error, not .exception: the traceback the user needs belongs to the
-        # error being propagated, not to the rollback that failed after it.
-        logger.error(  # noqa: TRY400 — see above
-            f"[docker] {compose_project} could not be rolled back on {parent.id} "
-            f"and is still up: {e}"
-        )
 
 
 async def teardown(
