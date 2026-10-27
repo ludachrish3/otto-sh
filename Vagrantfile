@@ -181,6 +181,10 @@ end
 Vagrant.configure("2") do |config|
 
   config.vm.box = "bento/ubuntu-24.04"
+  # Vagrant's own default is 300 s. Nested virtualisation with several lab VMs
+  # booting at once can take longer than that to reach SSH, so the wait here is
+  # longer, and OTTO_LAB_BOOT_TIMEOUT changes it.
+  config.vm.boot_timeout = Integer(ENV.fetch("OTTO_LAB_BOOT_TIMEOUT", "900"))
   config.hostmanager.enabled = true
   config.hostmanager.manage_host = true
   # Keep halted machines in the generated /etc/hosts block. hostmanager drops
@@ -1693,9 +1697,10 @@ SQL
     end
 
     # test2's serial console, as a virtual null-modem built inside the guests.
-    # VirtualBox on this arm64 host exposes no UART to the aarch64 guests (its
+    # On an arm64 host VirtualBox exposes no UART to the aarch64 guests (its
     # UART is an x86 16550A at I/O 0x3f8, and the guests have no ISA bus), so
-    # the "cable" is socat over the lab network: test2 (the console HOST)
+    # the "cable" is socat over the lab network, and the lab is built the same
+    # way on an x86_64 host so it has one shape: test2 (the console HOST)
     # holds a pty at /dev/ttyV0 with a getty on it and listens for its far end
     # on 10.10.200.12:4102; test1 (the console SERVER) dials that listener,
     # holds its own /dev/ttyV0, and serves it with ser2net on port 4001. otto
@@ -1867,9 +1872,10 @@ EOF
     # so they can reach their /30 peer and nothing else: unlike slirp, this
     # arrangement gives them NO egress.
     #
-    # The host VM is aarch64, the guests are x86 — same TCG arrangement the
-    # zephyr VM already runs. The guest kernel is Ubuntu's amd64 generic
-    # vmlinuz (fetched via foreign-arch apt; one kernel serves i686
+    # The guests are x86 and run under TCG, the arrangement the zephyr VM
+    # already uses; on an arm64 host the host VM is aarch64. The guest kernel
+    # is Ubuntu's amd64 generic vmlinuz (through foreign-arch apt on an arm64
+    # host, the stock archive on an x86_64 one; one kernel serves i686
     # userlands too via IA32 emulation) plus its e1000.ko, decompressed at
     # provision time because BusyBox insmod cannot read .ko.zst.
     def provision_busybox_bed(vm)
@@ -1881,20 +1887,32 @@ EOF
             BED=/home/vagrant/busybox-bed
             mkdir -p "$BED"
 
-            # amd64 foreign arch, scoped: pin the existing ports source to
-            # arm64 first or `apt-get update` 404s chasing amd64 indexes
-            # on ports.ubuntu.com.
-            if ! grep -q '^Architectures:' /etc/apt/sources.list.d/ubuntu.sources; then
-                sed -i '/^Components:/a Architectures: arm64' /etc/apt/sources.list.d/ubuntu.sources
-            fi
-            dpkg --print-foreign-architectures | grep -qx amd64 || dpkg --add-architecture amd64
-            cat > /etc/apt/sources.list.d/amd64-archive.sources <<'EOF'
+            # The guest kernel and the dropbear libcrypt debs below are amd64
+            # packages. On an x86_64 host this box is amd64 itself and its
+            # stock sources already serve them; on an arm64 host it needs
+            # amd64 as a foreign arch.
+            if [ "$(dpkg --print-architecture)" = amd64 ]; then
+                # Native. Undo the arm64 setup below if an earlier run of this
+                # provisioner applied it: pinning this box's own archive to
+                # arm64 makes every index fetch 404.
+                sed -i '/^Architectures: arm64$/d' /etc/apt/sources.list.d/ubuntu.sources
+                rm -f /etc/apt/sources.list.d/amd64-archive.sources
+            else
+                # amd64 foreign arch, scoped: pin the existing ports source to
+                # arm64 first or `apt-get update` 404s chasing amd64 indexes
+                # on ports.ubuntu.com.
+                if ! grep -q '^Architectures:' /etc/apt/sources.list.d/ubuntu.sources; then
+                    sed -i '/^Components:/a Architectures: arm64' /etc/apt/sources.list.d/ubuntu.sources
+                fi
+                dpkg --print-foreign-architectures | grep -qx amd64 || dpkg --add-architecture amd64
+                cat > /etc/apt/sources.list.d/amd64-archive.sources <<'EOF'
 Types: deb
 URIs: http://archive.ubuntu.com/ubuntu
 Suites: noble noble-updates noble-security
 Components: main universe
 Architectures: amd64
 EOF
+            fi
             apt-get update
 
             if [ ! -f "$BED/vmlinuz" ] || [ ! -f "$BED/e1000.ko" ]; then
@@ -1909,7 +1927,8 @@ EOF
                     # `[^ :]*`, not `[^ ]*`: apt-cache prints the arch
                     # qualifier for every NON-native package, so this line
                     # reads `Depends: linux-image-6.8.0-51-generic:amd64` on
-                    # this arm64 host. Swallowing the `:amd64` would make
+                    # an arm64 host (an amd64 one, where the package is
+                    # native, prints no qualifier). Swallowing the `:amd64` would make
                     # kver `...-generic:amd64` and the download below ask for
                     # `linux-image-...-generic:amd64:amd64`, which apt cannot
                     # resolve. Kernel package names carry no colon of their
@@ -1958,8 +1977,8 @@ EOF
                     cd "$workdir"
                     # glibc dropped crypt(); no *-amd64-cross package carries
                     # libxcrypt, so this downloads the amd64 archive's own .deb
-                    # via the foreign-arch source (amd64-archive.sources) the
-                    # kernel-fetch block above already set up. Deliberately
+                    # (on an arm64 host, through the foreign-arch source the
+                    # kernel-fetch block above set up). Deliberately
                     # unpinned: the archive moves these debs; the build proved
                     # reproducible with libcrypt1 sha256 9474785c… and
                     # libcrypt-dev 2edff420… on 2026-09-23.
@@ -1970,12 +1989,17 @@ EOF
                     tar xjf "$tarball" -C native --strip-components=1
                     tar xjf "$tarball" -C cross --strip-components=1
                     # The packaged config.sub/config.guess are copied in because
-                    # the 2012 tarball's own predate aarch64. --build below stays
-                    # explicit anyway, so the cross tree's build triplet is
-                    # pinned rather than re-guessed.
+                    # the 2012 tarball's own predate aarch64. --build below names
+                    # the machine through that fresh config.guess
+                    # (aarch64-unknown-linux-gnu on an arm64 host,
+                    # x86_64-pc-linux-gnu on an x86_64 one) rather than the
+                    # tarball's own guess. Configure cross-compiles either way:
+                    # autoconf does whenever the --build and --host strings
+                    # differ, and x86_64-pc-linux-gnu differs from
+                    # x86_64-linux-gnu.
                     for d in native cross; do cp /usr/share/misc/config.sub /usr/share/misc/config.guess "$d/"; done
                     ( cd native && ./configure --disable-zlib && make PROGRAMS=dropbearkey )
-                    ( cd cross && ./configure --build=aarch64-unknown-linux-gnu --host=x86_64-linux-gnu --disable-zlib \
+                    ( cd cross && ./configure --build="$(./config.guess)" --host=x86_64-linux-gnu --disable-zlib \
                           LDFLAGS="-static -L$workdir/sysroot/usr/lib/x86_64-linux-gnu" \
                       && make PROGRAMS=dropbear STATIC=1 && x86_64-linux-gnu-strip dropbear )
                     install -m 0755 cross/dropbear "$BED/dropbear"
@@ -2033,7 +2057,7 @@ EOF
                 cat > /home/vagrant/run-busybox-qemu-${ver}.sh <<EOF
 #!/usr/bin/env bash
 # Launch the BusyBox ${ver} bed guest on TAP ${tap} (telnet ${gip}:23).
-# TCG (no KVM on this aarch64 VM). -no-reboot + panic=-1 turn a guest
+# TCG, so the same script runs on any host. -no-reboot + panic=-1 turn a guest
 # kernel panic — or any in-guest reboot — into a qemu EXIT instead of an
 # endless in-place reset. That exit carries status 0: qemu forces a
 # failure status only for host errors and for a pvpanic-reported panic

@@ -72,7 +72,8 @@ term ({ref}`console-term`):
 | the three ARM Zephyr guests | `test4`, on the ports in the table above (loopback) | the Zephyr shell; no login |
 
 `test2`'s console is a virtual null-modem, because VirtualBox offers no
-usable UART to the arm64 guests. `test2` runs a getty on a pseudo-terminal
+usable UART to the arm64 guests; the lab is built the same way on an x86_64
+host. `test2` runs a getty on a pseudo-terminal
 and listens for its far end on `10.10.200.12:4102` (socat); `test1` dials
 that into a pseudo-terminal of its own, which `ser2net` serves on port 4001,
 one client at a time, on every address. Start the two VMs in either order:
@@ -91,6 +92,11 @@ vagrant ssh                             # connect to dev (the default)
 
 Develop and test from the `dev` VM — integration and end-to-end tests
 assume connectivity to the test hosts.
+
+Each VM gets 900 s to come up before `vagrant up` gives up on it, more than
+Vagrant's own 300 s, because several VMs booting at once (especially on a host
+that is itself a VM) can take longer than that to reach SSH. Set `OTTO_LAB_BOOT_TIMEOUT` (seconds) to change
+it, for example `OTTO_LAB_BOOT_TIMEOUT=1800 vagrant up test1 test2`.
 
 ### Files required at provision time
 
