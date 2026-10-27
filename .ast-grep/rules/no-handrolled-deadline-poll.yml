@@ -46,9 +46,22 @@ note: >
   suite/plugin.py's iteration-AND-duration work loop, is not a poll, and a
   relational arm would flag it); operand-reversed elapsed spellings;
   bare-name clock imports (`from time import monotonic`) and
-  time.perf_counter(), both zero-in-tree and foreign to otto's style; and
-  count-based `for _ in range(N)` retry loops (a different primitive, out of
-  this gate's charter).
+  time.perf_counter(), both zero-in-tree and foreign to otto's style.
+
+  Count-spelled polls (`for _ in range(N)` whose body sleeps and leaves on a
+  predicate) joined the arms on 2026-10-26: the deadline is N × the sleep,
+  so it is the same poll with the clock hidden in a count, and the copies
+  that grew under the clock arms (seven at landing: a container-id lookup,
+  a compose retry, a listener-readiness probe, four tests) each restated
+  the deadline arithmetic the clock arms exist to centralise. The arm needs
+  all three parts — a `range()` loop, a non-zero sleep in the body, an exit
+  on a predicate (`break` or `return`) — so a paced writer that sleeps
+  between chunks and never leaves early, a spaced sequence of round trips,
+  and the `asyncio.sleep(0)` yield loops in unit tests are not matches: none
+  of them waits for a state. A bounded retry-on-error of a one-shot
+  operation (compose `up`'s libnetwork-race retry) has the same three parts
+  and is the one in-tree exemption, suppressed inline until #737 replaces
+  the loop.
 files:
 - src/otto/**
 - tests/**
@@ -106,3 +119,24 @@ rule:
   - pattern: 'if $D < time.monotonic(): $$$B'
   - pattern: 'if $D <= $C.time(): $$$B'
   - pattern: 'if $D < $C.time(): $$$B'
+  # Count-spelled: a range() loop that sleeps and leaves on a predicate. The
+  # deadline is the count times the sleep; wait_for's timeout says it once.
+  - all:
+    - pattern: 'for $I in range($$$ARGS): $$$B'
+    - has:
+        stopBy: end
+        any:
+        - pattern: 'await asyncio.sleep($T)'
+        - pattern: 'await sleep($T)'
+        - pattern: 'time.sleep($T)'
+    - has:
+        stopBy: end
+        any:
+        - kind: break_statement
+        - kind: return_statement
+constraints:
+  # asyncio.sleep(0) is a yield to the loop, not a wait; the unit tests'
+  # tick loops use it and are not polls.
+  T:
+    not:
+      regex: '^0(\.0*)?$'

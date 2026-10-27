@@ -29,6 +29,7 @@ from ..check.fingerprint import HostFingerprint, check_read, check_root_run
 from ..check.sweep import COMMAND_ALLOWANCE_S, probe_worst_s
 from ..check.verdict import FeatureResult, UnmeasuredReason, Verdict
 from ..result import CommandResult
+from ..utils import WaitTimeoutError, wait_for_async
 from .judge import judge_control, judge_delay, judge_loss, judge_port_range, judge_rate, judge_side
 from .model import Link, LinkEndpoint
 from .params import ImpairmentParams, Selector
@@ -67,8 +68,10 @@ RANGE_SELECTOR = Selector(5200, "tcp", end=5210, side="dst")
 SIDE_SELECTOR = Selector(IN_RANGE_PORT, "tcp", side="src")
 CONNECT_SAMPLES = 3
 """Connects per measurement in the connect-differential rows; their median is the reading."""
-_READY_TRIES = 10
 _READY_INTERVAL_S = 0.5
+# The readiness wait: ten probes at the old count, now a deadline the probe
+# runs against, so :func:`listeners_worst_s` and the wait read one number.
+_READY_WAIT_S = 9 * _READY_INTERVAL_S
 """Listener readiness: about five seconds of connects before the probe rows are skipped."""
 _READY_PROBE_S = 1
 """One readiness connect's bound: nothing is impaired yet, so an echo answers at once."""
@@ -440,12 +443,23 @@ async def start_listeners(
     probe = timed_connect_command(ctx.backend, ctx.target, RATE_PORT, within=_READY_PROBE_S)
     ran.append(probe)
     result: CommandResult | None = None
-    for attempt in range(_READY_TRIES):
-        if attempt:
-            await sleep(_READY_INTERVAL_S)
+
+    async def _listening() -> bool:
+        nonlocal result
         result = await check_root_run(ctx.host, probe)
-        if result.is_ok:
-            return None
+        return result.is_ok
+
+    try:
+        await wait_for_async(
+            _listening,
+            _READY_WAIT_S,
+            interval=_READY_INTERVAL_S,
+            on_timeout=f"no listener answered on {RATE_PORT} within {_READY_WAIT_S}s",
+        )
+    except WaitTimeoutError:
+        pass
+    else:
+        return None
     if result is not None and result.value:
         said.append(result.value)
     return FeatureResult(
@@ -500,16 +514,13 @@ def transfer_worst_s() -> float:
 
 
 def listeners_worst_s() -> float:
-    """Start every echo listener, then try the readiness connect until the tries run out.
+    """Start every echo listener, then try the readiness connect until its wait runs out.
 
     Hand-counted: update it when adding a probe or host command to
-    :func:`start_listeners`.
+    :func:`start_listeners`. The wait's last probe may start just before the
+    deadline and run its full allowance after it.
     """
-    return (
-        len(LISTEN_PORTS) * COMMAND_ALLOWANCE_S
-        + _READY_TRIES * probe_worst_s(_READY_PROBE_S)
-        + (_READY_TRIES - 1) * _READY_INTERVAL_S
-    )
+    return len(LISTEN_PORTS) * COMMAND_ALLOWANCE_S + _READY_WAIT_S + probe_worst_s(_READY_PROBE_S)
 
 
 def kill_pattern(tag: str) -> str:

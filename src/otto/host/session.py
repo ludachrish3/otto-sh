@@ -2812,6 +2812,9 @@ class SessionManager:
                 await self._session.close()
 
             last_exc: ConnectionError | None = None
+            # A retry of the one-shot build on a handshake race, not a poll of
+            # a state (the rule's note names it).
+            # ast-grep-ignore: no-handrolled-deadline-poll
             for attempt in range(2):
                 new_session = await self._build_session()
                 new_session._on_output = _sink_for(self._log_output, LogMode.NORMAL)  # noqa: SLF001 — intra-package wiring of output callback on freshly-built ShellSession

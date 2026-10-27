@@ -19,6 +19,7 @@ race for the same leased VM and subprocess-coverage finalisation stays on a
 single worker.
 """
 
+import contextlib
 import json
 import subprocess
 import time
@@ -28,6 +29,7 @@ from pathlib import Path
 import pytest
 
 from otto.config.home import workspace_key
+from otto.utils import WaitTimeoutError, wait_for
 from tests._fixtures._host_pool import UNIX_POOL as _UNIX_POOL
 from tests._fixtures._host_pool import lease_unix_host
 from tests._fixtures.labdata import lab_json_v2
@@ -156,15 +158,17 @@ def test_remote_completion_lists_live_host(monkeypatch, tmp_path: Path, unix_hos
         # skip, no widened product deadline. Later assertions ride the cache.
         started = time.monotonic()
         got: "list[str]" = []
-        for attempt in range(3):
-            if attempt:
-                time.sleep(1.5)
+
+        def _listed() -> bool:
+            nonlocal got
             got = remote_path_completer(_ctx(unix_host, term="ssh"), f"{remote_dir}/")
-            if got:
-                break
+            return bool(got)
+
+        with contextlib.suppress(WaitTimeoutError):
+            wait_for(_listed, 3.0, interval=1.5, on_timeout="listing never succeeded")
         assert got == [f"{remote_dir}/file.txt", f"{remote_dir}/sub/"], (
             f"Live remote-path completion on host {unix_host!r} for {remote_dir!r} "
-            f"returned {got!r} after 3 attempts; the completer fails closed to [] on "
+            f"returned {got!r} after 3 s of attempts; the completer fails closed to [] on "
             f"any error, so an empty list here means the exec-based listing did not "
             f"succeed (SSH-only; 2s listing deadline)."
         )

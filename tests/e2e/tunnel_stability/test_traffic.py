@@ -4,6 +4,7 @@ carrying sequence-numbered datagrams while neighbors churn. Delivery ratio
 are both recorded from what each side actually emitted."""
 
 import asyncio
+import contextlib
 import shlex
 import socket
 import sys
@@ -13,6 +14,7 @@ import pytest
 
 from otto.logger.mode import LogMode
 from otto.tunnel import add_tunnel, remove_tunnel
+from otto.utils import WaitTimeoutError, wait_for_async
 from tests._fixtures.tunnel_bed import (
     random_outfile,
     remove_remote_file,
@@ -140,15 +142,22 @@ async def test_survivor_traffic_during_neighbor_churn(tunnel_lab, reap_tunnels) 
         # Post-churn liveness probe: a DISTINCT payload must still arrive.
         final_probe = f"{run_tag}-final"
         received_text = ""
-        for _attempt in range(5):
-            send_udp(resolved_ip("test1"), PORT_SURVIVOR, final_probe.encode())
-            await asyncio.sleep(1.0)
+
+        async def _arrived() -> bool:
+            # Read first, then send again: each probe gives the previous
+            # datagram the interval to land before it is looked for.
+            nonlocal received_text
             result = await test2.exec(
                 f"cat {shlex.quote(outfile)} 2>/dev/null || true", timeout=15, log=LogMode.QUIET
             )
             received_text = result.value or ""
             if final_probe in received_text:
-                break
+                return True
+            send_udp(resolved_ip("test1"), PORT_SURVIVOR, final_probe.encode())
+            return False
+
+        with contextlib.suppress(WaitTimeoutError):
+            await wait_for_async(_arrived, 5.0, interval=1.0, on_timeout="survivor tunnel dead")
         assert final_probe in received_text, "survivor tunnel dead after churn ended"
 
         for _ in range(5):  # STOP is UDP too; send it redundantly
