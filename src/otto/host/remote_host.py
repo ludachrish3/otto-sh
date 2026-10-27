@@ -57,7 +57,6 @@ if TYPE_CHECKING:
     from .host import Expect
     from .interface import Interface
     from .options import SnmpOptions
-    from .session import HostSession
     from .session_setup import SessionSetup
     from .transport import SshHopTransport
 
@@ -524,67 +523,6 @@ class RemoteHost(BaseHost):
         return await self._live_session_mgr().run_cmd(
             cmd, expects=expects, timeout=timeout, log=self._effective_log(log)
         )
-
-    @override
-    async def open_session(self, name: str) -> "HostSession":
-        """Open a named persistent shell session.
-
-        Unlike :meth:`~otto.host.host.BaseHost.run`, which uses a single default session,
-        this method
-        creates an additional named session that can run commands concurrently
-        with the default session (or other named sessions).
-
-        The session is established eagerly — any connection errors surface here.
-        Call :meth:`~otto.host.session.HostSession.close` when done, or use the async context
-        manager protocol::
-
-            async with await host.open_session("monitor") as mon:
-                result = await mon.run("stat /tmp/file.bin")
-
-        Args:
-            name: Identifier for this session. Reusing an existing name returns
-                the existing session if it is still alive, or replaces it if dead.
-
-        Returns:
-            A :class:`~otto.host.session.HostSession` proxy exposing ``run``, ``send``,
-            ``expect``, and ``close``.
-
-        Under a dry run nothing is dialled and the handle is a
-        :class:`~otto.host.session.DeclinedSession` — see
-        ``BaseHost._dry_run_session``.
-
-        See Also:
-            :meth:`~otto.host.host.BaseHost.exec`: stateless alternative for one-off commands.
-            :meth:`~otto.host.host.BaseHost.run`: default persistent session.
-        """
-        if is_dry_run():
-            return self._dry_run_session(name)
-        return await self._live_session_mgr().open_session(name)
-
-    @override
-    async def send(self, text: str, log: LogMode = LogMode.NORMAL) -> None:
-        """Send raw text to the host's persistent session."""
-        effective = self._effective_log(log)
-        if is_dry_run():
-            # The folded mode, not the default NORMAL: a dry run must not put a
-            # send on the console that a real run keeps off it. No NEVER guard
-            # here on purpose -- `_log_command` returns before it logs on NEVER,
-            # and that is the ONE home for the decision; a second copy here
-            # reads as redundant and gets deleted, taking the real one's twin
-            # with it. Building the f-string first costs nothing that matters:
-            # `text` is already a live `str` and `repr` only copies it.
-            self._log_command(f"[DRY RUN] send({text!r})", effective)
-            return
-        await self._live_session_mgr().send(text, log=effective)
-
-    @override
-    async def _expect_one(
-        self,
-        pattern: str | re.Pattern[str],
-        timeout: float,
-    ) -> str:
-        """Wait for a pattern in the host's session output stream."""
-        return await self._live_session_mgr().expect(pattern, timeout)
 
     ####################
     #  Dest dir resolution

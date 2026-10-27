@@ -2107,7 +2107,7 @@ class HostSession:
     async def send(self, text: str, log: LogMode = LogMode.NORMAL) -> None:
         """Send raw text to this session's stdin.
 
-        See :meth:`~otto.host.remote_host.RemoteHost.send`. Under a dry run the
+        See :meth:`~otto.host.host.BaseHost.send`. Under a dry run the
         text is announced and nothing is written to the transport — the same
         arm the host-level ``send`` carries, and for the same reason: a raw
         write is an action, and returning ``None`` invents no device fact.
