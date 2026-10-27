@@ -1200,14 +1200,10 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                     f"{self.name}: get(user=...) over ftp — the ftp backend "
                     f"authenticates separately with its own creds"
                 ) from None
-        if not isinstance(src_files, list):
-            src_files = [src_files]
+        src_files = self._as_sources(src_files)
         if recursive:
-            from .recursive_transfer import get_tree
-
             with SuppressCommandOutput(host=cast("Host", self)):
-                return await get_tree(
-                    self,
+                return await self._get_tree(
                     src_files,
                     dest_dir,
                     user=user,
@@ -1271,15 +1267,11 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                     f"{self.name}: put(user=...) over ftp — the ftp backend "
                     f"authenticates separately with its own creds"
                 ) from None
-        if not isinstance(src_files, list):
-            src_files = [src_files]
+        src_files = self._as_sources(src_files)
         dest_dir = self._resolve_dest(dest_dir)
         if recursive:
-            from .recursive_transfer import put_tree
-
             with SuppressCommandOutput(host=cast("Host", self)):
-                return await put_tree(
-                    self,
+                return await self._put_tree(
                     src_files,
                     dest_dir,
                     mode=mode,

@@ -636,12 +636,10 @@ class TestExpectSurfaceConsistency:
             )
 
     def test_no_subclass_overrides_expect(self):
-        """expect is final; family behavior belongs in _expect_one.
-
-        The hook check is MRO-aware (not ``vars``): since the Tier-1.1 dedup
-        the remote families inherit one ``_expect_one`` from ``RemoteHost``,
-        and what matters is that the family hook is overridden somewhere below
-        ``BaseHost`` — never that each leaf class carries its own copy.
+        """expect is final: the timeout validation and the advertised default
+        cannot drift per family. The wait itself, ``_expect_one``, is the
+        base's too (one session policy, with ``_prepare_live_session`` as the
+        family hook) — see tests/unit/host/test_session_policy_one_place.py.
         """
         from otto.host.docker_host import DockerContainerHost
         from otto.host.embedded_host import EmbeddedHost
@@ -649,10 +647,7 @@ class TestExpectSurfaceConsistency:
         from otto.host.local_host import LocalHost
 
         for cls in (LocalHost, UnixHost, EmbeddedHost, DockerContainerHost):
-            assert "expect" not in vars(cls), f"{cls.__name__} must override _expect_one"
-            assert cls._expect_one is not BaseHost._expect_one, (
-                f"{cls.__name__} must provide _expect_one below BaseHost"
-            )
+            assert "expect" not in vars(cls), f"{cls.__name__} must not override expect"
             assert BaseHost.expect is cls.expect
 
     @pytest.mark.asyncio

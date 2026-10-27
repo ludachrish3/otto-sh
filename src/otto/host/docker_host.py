@@ -29,7 +29,7 @@ from dataclasses import (
     replace,
 )
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated
+from typing import Annotated
 
 from typing_extensions import override
 
@@ -52,12 +52,7 @@ from .host import (
 )
 from .mount import Mount, mount_for, mount_for_parent, translate
 from .privilege import PosixPrivilege
-
-if TYPE_CHECKING:
-    import re
-
-
-from .session import Expect, HostSession, SessionManager, ShellSession, _DockerSshSession
+from .session import Expect, SessionManager, ShellSession, _DockerSshSession
 
 
 def compose_container_probe(
@@ -808,53 +803,16 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             self._pending_run_user = None
 
     @override
-    async def open_session(self, name: str) -> "HostSession":
-        """Open a named persistent shell session inside the container.
+    async def _prepare_live_session(self) -> None:
+        """Resolve the container before any live session arm touches it.
 
-        The dry-run arm sits ABOVE ``_ensure_running()``, which is the whole
-        point of it: the previous shape logged the ``[DRY RUN]`` line and then
-        ran ``_ensure_running()`` anyway, so a dry run could ask the daemon
-        for the container's id (and, while otto still started containers on
-        use, START ONE). The daemon is not asked, and the handle is a
-        :class:`~otto.host.session.DeclinedSession` — see
-        ``BaseHost._dry_run_session``.
-
-        **User:** a named session opens as whatever the run channel machinery
-        would bind at the time this session opens — see
-        ``_user_for_an_imminent_open``. In practice that is the LIVE run
-        channel's own user if there is one, and the declared :attr:`user`
-        otherwise. It READS that record but never writes it: opening a named
-        session neither refuses because the run channel is on another user nor
-        makes a later ``run(user=...)`` refuse. ``user`` is not a parameter
-        here; a named session on a different user is out of scope.
+        The base's dry-run arm runs first, which is the whole point of the
+        hook: the previous shape logged the ``[DRY RUN]`` line and then ran
+        ``_ensure_running()`` anyway, so a dry run could ask the daemon for
+        the container's id (and, while otto still started containers on use,
+        START ONE).
         """
-        if is_dry_run():
-            return self._dry_run_session(name)
         await self._ensure_running()
-        return await self._live_session_mgr().open_session(name)
-
-    @override
-    async def send(self, text: str, log: LogMode = LogMode.NORMAL) -> None:
-        """Send raw text to the container's persistent session."""
-        effective = self._effective_log(log)
-        if is_dry_run():
-            # The folded mode, not the default NORMAL: a dry run must not put a
-            # send on the console that a real run keeps off it. No NEVER guard
-            # here on purpose -- `_log_command` returns before it logs on NEVER,
-            # and that is the ONE home for the decision; a second copy here
-            # reads as redundant and gets deleted, taking the real one's twin
-            # with it. Building the f-string first costs nothing that matters:
-            # `text` is already a live `str` and `repr` only copies it.
-            self._log_command(f"[DRY RUN] send({text!r})", effective)
-            return
-        await self._ensure_running()
-        await self._live_session_mgr().send(text, log=effective)
-
-    @override
-    async def _expect_one(self, pattern: "str | re.Pattern[str]", timeout: float) -> str:
-        """Wait for a pattern in the container's session output stream."""
-        await self._ensure_running()
-        return await self._live_session_mgr().expect(pattern, timeout)
 
     ####################
     #  Interactive shell
@@ -986,14 +944,11 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         """
         from .transfer import aggregate_transfer, chmod_command, parse_file_mode
 
-        files = src_files if isinstance(src_files, list) else [src_files]
+        files = self._as_sources(src_files)
         if user is not None:
             _validate_user(user)
         if recursive:
-            from .recursive_transfer import put_tree
-
-            return await put_tree(
-                self,
+            return await self._put_tree(
                 files,
                 dest_dir,
                 mode=mode,
@@ -1166,14 +1121,12 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         """
         from .transfer import aggregate_transfer
 
-        files = src_files if isinstance(src_files, list) else [src_files]
+        files = self._as_sources(src_files)
         if user is not None:
             _validate_user(user)
         if recursive:
-            from .recursive_transfer import get_tree
-
-            return await get_tree(
-                self, files, dest_dir, user=user, show_progress=show_progress, concurrent=concurrent
+            return await self._get_tree(
+                files, dest_dir, user=user, show_progress=show_progress, concurrent=concurrent
             )
         if is_dry_run():
             return self._dry_run_transfer("GET", files, dest_dir)

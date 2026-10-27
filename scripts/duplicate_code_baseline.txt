@@ -13,7 +13,6 @@ otto.creds.json_store otto.inventory.json_backend
 otto.host.connections otto.host.transport
 otto.host.console otto.host.telnet
 otto.host.docker_image_kind otto.host.kmod_kind
-otto.host.local_host otto.host.remote_host
 otto.host.local_host otto.host.unix_host
 otto.host.option_specs otto.host.options
 otto.host.specs otto.models.lab

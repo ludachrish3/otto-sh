@@ -12,7 +12,6 @@ import asyncio
 import contextlib
 import logging
 import os
-import re
 import shutil
 from dataclasses import (
     dataclass,
@@ -36,7 +35,6 @@ from .host import _EXEC_REAP_TIMEOUT, CONCURRENT_HELP, BaseHost, is_dry_run
 from .privilege import PosixPrivilege
 from .session import (
     Expect,
-    HostSession,
     LocalSession,
     SessionManager,
 )
@@ -414,43 +412,6 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
             # transport already finished, which is every non-timeout path.
             transport.close()
 
-    @override
-    async def open_session(self, name: str) -> HostSession:
-        """Open a named persistent shell session.
-
-        Under a dry run no subprocess shell is spawned and the handle is a
-        :class:`~otto.host.session.DeclinedSession` — see
-        ``BaseHost._dry_run_session``.
-        """
-        if is_dry_run():
-            return self._dry_run_session(name)
-        return await self._live_session_mgr().open_session(name)
-
-    @override
-    async def send(self, text: str, log: LogMode = LogMode.NORMAL) -> None:
-        """Send raw text to the host's persistent session."""
-        effective = self._effective_log(log)
-        if is_dry_run():
-            # The folded mode, not the default NORMAL: a dry run must not put a
-            # send on the console that a real run keeps off it. No NEVER guard
-            # here on purpose -- `_log_command` returns before it logs on NEVER,
-            # and that is the ONE home for the decision; a second copy here
-            # reads as redundant and gets deleted, taking the real one's twin
-            # with it. Building the f-string first costs nothing that matters:
-            # `text` is already a live `str` and `repr` only copies it.
-            self._log_command(f"[DRY RUN] send({text!r})", effective)
-            return
-        await self._live_session_mgr().send(text, log=effective)
-
-    @override
-    async def _expect_one(
-        self,
-        pattern: str | re.Pattern[str],
-        timeout: float,
-    ) -> str:
-        """Wait for a pattern in the host's session output stream."""
-        return await self._live_session_mgr().expect(pattern, timeout)
-
     ####################
     #  File transfer
     ####################
@@ -490,18 +451,10 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
                 f"{self.name}: get(user=...) is not supported on LocalHost — "
                 f"local transfers keep the invoking user's ownership"
             ) from None
-        if not isinstance(src_files, list):
-            src_files = [src_files]
+        src_files = self._as_sources(src_files)
         if recursive:
-            from .recursive_transfer import get_tree
-
-            return await get_tree(
-                self,
-                src_files,
-                dest_dir,
-                user=user,
-                show_progress=show_progress,
-                concurrent=concurrent,
+            return await self._get_tree(
+                src_files, dest_dir, user=user, show_progress=show_progress, concurrent=concurrent
             )
         if is_dry_run():
             return self._dry_run_transfer("GET", src_files, dest_dir)
@@ -552,13 +505,9 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
                 f"{self.name}: put(user=...) is not supported on LocalHost — "
                 f"local transfers keep the invoking user's ownership"
             ) from None
-        if not isinstance(src_files, list):
-            src_files = [src_files]
+        src_files = self._as_sources(src_files)
         if recursive:
-            from .recursive_transfer import put_tree
-
-            return await put_tree(
-                self,
+            return await self._put_tree(
                 src_files,
                 dest_dir,
                 mode=mode,

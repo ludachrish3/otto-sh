@@ -2043,8 +2043,67 @@ class BaseHost(ABC):
         self,
         name: str,
     ) -> "HostSession":
-        """Open a named auxiliary session on this host. Subclasses must override."""
-        raise NotImplementedError from None
+        """Open a named persistent shell session.
+
+        Unlike :meth:`~otto.host.host.BaseHost.run`, which uses a single default
+        session, this method
+        creates an additional named session that can run commands
+        concurrently with the default session (or other named sessions).
+
+        The session is established eagerly — any connection errors surface
+        here. Call :meth:`~otto.host.session.HostSession.close` when done, or
+        use the async context manager protocol::
+
+            async with await host.open_session("monitor") as mon:
+                result = await mon.run("stat /tmp/file.bin")
+
+        Under a dry run nothing is dialled, spawned or asked of a daemon and
+        the handle is a :class:`~otto.host.session.DeclinedSession` — see
+        ``_dry_run_session``. The dry-run arm sits ABOVE
+        ``_prepare_live_session``, which is the whole point of the order:
+        a family whose preparation reaches the device (a container host
+        resolving its container on the daemon) must not do so for a run that
+        sends nothing.
+
+        **User:** a named session opens as whatever the run channel machinery
+        would bind at the time this session opens — the LIVE run channel's
+        own user if there is one, and the declared ``user`` otherwise. It
+        READS that record but never writes it: opening a named session
+        neither refuses because the run channel is on another user nor makes
+        a later ``run(user=...)`` refuse. ``user`` is not a parameter here; a
+        named session on a different user is out of scope.
+
+        Args:
+            name: Identifier for this session. Reusing an existing name
+                returns the existing session if it is still alive, or
+                replaces it if dead.
+
+        Returns:
+            A :class:`~otto.host.session.HostSession` proxy exposing ``run``,
+            ``send``, ``expect``, and ``close``.
+
+        See Also:
+            :meth:`~otto.host.host.BaseHost.exec`: stateless alternative for one-off commands.
+            :meth:`~otto.host.host.BaseHost.run`: default persistent session.
+        """
+        if is_dry_run():
+            return self._dry_run_session(name)
+        await self._prepare_live_session()
+        return await self._live_session_mgr().open_session(name)
+
+    async def _prepare_live_session(self) -> None:
+        """Make the device ready for the live session arm; nothing, for most families.
+
+        Called by :meth:`~otto.host.host.BaseHost.open_session`,
+        :meth:`~otto.host.host.BaseHost.send` and
+        :meth:`~otto.host.host.BaseHost.expect` after
+        their dry-run arm and before the session manager is touched. The one
+        family that overrides it is the container host, whose preparation
+        resolves (and refuses a stopped) container on the daemon. Any other
+        per-family step that must precede every live session belongs here,
+        not in a copy of the three methods above.
+        """
+        return
 
     @asynccontextmanager
     async def app_shell(
@@ -2085,8 +2144,25 @@ class BaseHost(ABC):
         text: str,
         log: LogMode = LogMode.NORMAL,
     ) -> None:
-        """Send raw text to the host's persistent session. Subclasses must override."""
-        raise NotImplementedError from None
+        """Send raw text to the host's persistent session.
+
+        Use this for driving interactive programs (REPLs, custom CLIs). The
+        caller is responsible for including line endings. Under a dry run
+        the text is announced and nothing is written to the transport.
+        """
+        effective = self._effective_log(log)
+        if is_dry_run():
+            # The folded mode, not the default NORMAL: a dry run must not put a
+            # send on the console that a real run keeps off it. No NEVER guard
+            # here on purpose -- `_log_command` returns before it logs on NEVER,
+            # and that is the ONE home for the decision; a second copy here
+            # reads as redundant and gets deleted, taking the real one's twin
+            # with it. Building the f-string first costs nothing that matters:
+            # `text` is already a live `str` and `repr` only copies it.
+            self._log_command(f"[DRY RUN] send({text!r})", effective)
+            return
+        await self._prepare_live_session()
+        await self._live_session_mgr().send(text, log=effective)
 
     async def expect(
         self,
@@ -2124,12 +2200,57 @@ class BaseHost(ABC):
         pattern: str | re.Pattern[str],
         timeout: float,
     ) -> str:
-        """Family-specific pattern wait. Subclasses override."""
-        raise NotImplementedError from None
+        """Wait for a pattern in the host's session output stream."""
+        await self._prepare_live_session()
+        return await self._live_session_mgr().expect(pattern, timeout)
 
     ####################
     #  File transfer
     ####################
+
+    @staticmethod
+    def _as_sources(src_files: list[Path] | Path) -> list[Path]:
+        """Return the one list a transfer walks: a lone path becomes a list of one."""
+        return src_files if isinstance(src_files, list) else [src_files]
+
+    async def _get_tree(
+        self,
+        src_files: list[Path],
+        dest_dir: Path,
+        *,
+        user: str | None,
+        show_progress: bool,
+        concurrent: bool,
+    ) -> Result:
+        """Walk the trees for a family's ``get(recursive=True)``; see :ref:`recursive-transfers`."""
+        from .recursive_transfer import get_tree
+
+        return await get_tree(
+            self, src_files, dest_dir, user=user, show_progress=show_progress, concurrent=concurrent
+        )
+
+    async def _put_tree(
+        self,
+        src_files: list[Path],
+        dest_dir: Path,
+        *,
+        mode: int | str | None,
+        user: str | None,
+        show_progress: bool,
+        concurrent: bool,
+    ) -> Result:
+        """Walk the trees for a family's ``put(recursive=True)``; see :ref:`recursive-transfers`."""
+        from .recursive_transfer import put_tree
+
+        return await put_tree(
+            self,
+            src_files,
+            dest_dir,
+            mode=mode,
+            user=user,
+            show_progress=show_progress,
+            concurrent=concurrent,
+        )
 
     async def get(
         self,
