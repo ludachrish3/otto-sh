@@ -34,6 +34,13 @@ docker's to judge: a policy docker rejects is docker's error. `up` is
 convergent — re-running a broader deployment adds to a live stack, and
 `--remove-orphans` reaps what a provider swap left behind.
 
+One failure is re-run rather than reported: docker's transient "failed to set
+up container networking: network … not found", which clears once the
+just-created network settles. otto runs the same `up` once more after a short
+pause; any other failure, or that race twice in a row, is reported with
+docker's own text. Why it is safe to re-run is under "One compose
+implementation" in {doc}`../../../architecture/subsystems/docker-hosts`.
+
 {doc}`../use-cases` is the workflow home: which fragments take part, how the
 env mapping is assembled, and what a `--dry-run` preview shows. Once the
 stack is running, its services are addressable as

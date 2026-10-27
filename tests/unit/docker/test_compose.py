@@ -51,6 +51,7 @@ from otto.labs.loader import Lab
 from otto.registry import registering_project
 from otto.result import CommandNotRunError, CommandResult, Result
 from otto.utils import Status
+from tests._fixtures.docker_outputs import NETWORK_RACE
 from tests._fixtures.fake_project import fake_project
 from tests._fixtures.project_scaffold import make_project
 from tests.conftest import active_context
@@ -83,17 +84,6 @@ def _daemon_lists_the_built_image():
 
     with patch("otto.docker.build._read_back", new=listed):
         yield
-
-
-# The libnetwork race compose_up retries past: the network is Created, the
-# container is Created, then attaching it at "Starting" fails because the
-# just-created network isn't yet visible to the daemon's networking setup.
-_TRANSIENT_NETWORK_RACE_OUTPUT = (
-    " Network otto-project1-x_default  Created\n"
-    " Container otto-project1-x-api-1  Starting\n"
-    "Error response from daemon: failed to set up container networking: "
-    "network otto-project1-x_default not found\n"
-)
 
 
 def _make_project(
@@ -675,7 +665,7 @@ async def test_compose_up_retries_once_on_transient_network_race(tmp_path, monke
     """A transient libnetwork "network ... not found" on the first `up -d` is
     retried once; the convergent re-run then starts the already-created
     container and succeeds."""
-    monkeypatch.setattr("otto.docker.compose._NETWORK_RACE_RETRY_BACKOFF_S", 0.0, raising=False)
+    monkeypatch.setattr("otto.docker.compose._NETWORK_RACE_RETRY_BACKOFF_S", 0.0)
     project = _make_project(tmp_path)
     lab = _make_lab()
     parent = lab.hosts["test3"]
@@ -690,7 +680,7 @@ async def test_compose_up_retries_once_on_transient_network_race(tmp_path, monke
         if "compose" in cmd and " up -d" in cmd:
             up_attempts += 1
             if up_attempts == 1:
-                return _fail(_TRANSIENT_NETWORK_RACE_OUTPUT)
+                return _fail(NETWORK_RACE)
             return _ok()
         if "config" in cmd and "--services" in cmd:
             return _ok("api\n")
@@ -707,11 +697,38 @@ async def test_compose_up_retries_once_on_transient_network_race(tmp_path, monke
 
 
 @pytest.mark.asyncio
+async def test_compose_up_raises_when_the_race_recurs_on_the_retry(tmp_path, monkeypatch):
+    """A pin of the shape compose_up already had, now through the shared
+    ``up_stack``: a race on both ``up``s is a degraded daemon, so it raises with
+    docker's text after exactly two. The deploy's twin is the one that was red."""
+    monkeypatch.setattr("otto.docker.compose._NETWORK_RACE_RETRY_BACKOFF_S", 0.0)
+    project = _make_project(tmp_path)
+    lab = _make_lab()
+    parent = lab.hosts["test3"]
+    call_log: list[str] = []
+
+    async def exec_side_effect(cmd, *_, **__):
+        call_log.append(cmd)
+        if "label=com.docker.compose.project=" in cmd and "service=" not in cmd:
+            return _ok("")
+        if "compose" in cmd and " up -d" in cmd:
+            return _fail(NETWORK_RACE)
+        return _ok()
+
+    parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
+
+    with pytest.raises(HostCommandError, match="network otto-project1-x_default not found"):
+        await compose_up(project, lab)
+    assert len([c for c in call_log if "compose" in c and "up -d" in c]) == 2
+
+
+@pytest.mark.asyncio
 async def test_compose_up_does_not_retry_real_compose_failure(tmp_path, monkeypatch):
-    """A genuine compose failure (not the network race) is NOT retried — it
-    propagates as RuntimeError after a single attempt, so the retry can't
-    mask real errors (bad compose file, pull denied, port clash)."""
-    monkeypatch.setattr("otto.docker.compose._NETWORK_RACE_RETRY_BACKOFF_S", 0.0, raising=False)
+    """A genuine compose failure (not the network race) is NOT retried: it raises
+    HostCommandError after a single attempt, as "docker compose up failed for
+    <project> on <parent>: <docker's output>", so the retry can't mask real
+    errors (bad compose file, pull denied, port clash)."""
+    monkeypatch.setattr("otto.docker.compose._NETWORK_RACE_RETRY_BACKOFF_S", 0.0)
     project = _make_project(tmp_path)
     lab = _make_lab()
     parent = lab.hosts["test3"]
@@ -727,7 +744,10 @@ async def test_compose_up_does_not_retry_real_compose_failure(tmp_path, monkeypa
 
     parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
-    with pytest.raises(RuntimeError, match="docker compose up failed"):
+    with pytest.raises(
+        HostCommandError,
+        match=r"docker compose up failed for otto-\S+ on test3: Error response from daemon: pull",
+    ):
         await compose_up(project, lab)
     up_cmds = [c for c in call_log if "compose" in c and "up -d" in c]
     assert len(up_cmds) == 1, "a non-transient failure must NOT be retried"

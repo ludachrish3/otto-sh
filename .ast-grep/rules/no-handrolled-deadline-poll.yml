@@ -59,9 +59,11 @@ note: >
   between chunks and never leaves early, a spaced sequence of round trips,
   and the `asyncio.sleep(0)` yield loops in unit tests are not matches: none
   of them waits for a state. A bounded retry-on-error of a one-shot
-  operation (compose `up`'s libnetwork-race retry) has the same three parts
-  and is the one in-tree exemption, suppressed inline until #737 replaces
-  the loop.
+  operation is not a poll either. Spelled as one re-run with no loop
+  (compose's `up_stack` on the libnetwork race) it does not match. Spelled
+  as a `range()` loop it has the same three parts and is suppressed inline
+  with a comment naming it a retry: the session build's retry on a
+  handshake race is the in-tree case.
 files:
 - src/otto/**
 - tests/**

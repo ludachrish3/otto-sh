@@ -57,15 +57,6 @@ mapping). Purity is the design constraint, not an accident: it is what lets
 what lets `--dry-run` print the *exact* compose command rather than a
 description of one.
 
-Every `docker compose` command otto runs comes from one builder,
-{func}`~otto.docker.compose.compose_command`. That covers the use-case `up` and
-teardown, the per-project `compose_up`/`compose_down`, `compose ps` and
-`compose logs`, the use-case deploy's dry-run preview and the commands quoted
-in error text. Quoting, the
-`-f`/`--env-file` order and the `env K=V` prefix live there once, so a preview
-and the live run cannot spell the command differently. The ast-grep rule
-`compose-command-through-builder` flags a command spelled by hand anywhere else.
-
 The parent has one owner, `observe.default_docker_parent`, and the rule is
 stated once, for users, under "Which host" on {doc}`../../cli/docker/index`.
 Two properties of it matter here. It reads the lab and nothing else, so no
@@ -176,10 +167,10 @@ lab. This walks each project's `[docker]` settings and registers
    `ContainerNotRunningError`, carrying Docker's own text. A parent that
    cannot complete the probe raises `HostUnreachableError` instead.
 
-When `compose_up()` runs (from CLI or directly from an instruction),
-it overwrites the placeholder with a real entry whose `container_id`
-is resolved from
-`docker compose -p <proj> ps -q <service>`. `compose_down()` closes
+When a stack starts (the use-case deploy behind `otto docker compose up`, or
+`compose_up()` from an instruction or a test), each service's placeholder is
+overwritten with a real entry whose `container_id` is resolved by the label
+probe `compose_container_probe` (`docker ps -q --filter label=…`). `compose_down()` closes
 each container host before removing its entry — sessions must drain
 while the parent's connection is still alive, so container hosts
 close before their parent, the same teardown discipline described in
@@ -189,6 +180,26 @@ close before their parent, the same teardown discipline described in
 This avoids writing back to `lab.json` at runtime — that file stays
 read-only — while still keeping `--list-hosts` and tab completion
 populated immediately.
+
+### One compose implementation
+
+Every `docker compose` command otto runs comes from one builder,
+{func}`~otto.docker.compose.compose_command`. That covers the use-case `up` and
+teardown, the per-project `compose_up`/`compose_down`, `compose ps` and
+`compose logs`, the use-case deploy's dry-run preview and the commands quoted
+in error text. Quoting, the `-f`/`--env-file` order and the `env K=V` prefix
+live there once, so a preview and the live run cannot spell the command
+differently. The ast-grep rule
+`compose-command-through-builder` flags a command spelled by hand anywhere else.
+
+The use-case deploy and the per-project `compose_up` start a stack through the
+same {func}`~otto.docker.compose.up_stack`. A path that re-implemented `up` would silently lose
+the hardening this holds. `up -d` is convergent, so docker's libnetwork race
+(the `<proj>_default` network is created, then reported "not found" when a
+container attaches) is re-run once after a short pause: the second run starts
+the already-created container. The re-run is gated on that one signature, so a
+genuine failure (a bad file, a denied pull, a port clash) is reported at once,
+and a race that recurs points at a degraded daemon rather than a race.
 
 ## Mounts come from compose, not settings
 

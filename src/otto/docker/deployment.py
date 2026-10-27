@@ -20,7 +20,7 @@ from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NoReturn
+from typing import TYPE_CHECKING, Any
 
 from ..host.docker_host import DockerContainerHost
 from ..host.errors import HostCommandError
@@ -36,6 +36,7 @@ from .compose import (
     merge_declared_users,
     register_stack_hosts,
     unregister_container_hosts,
+    up_stack,
     use_case_project,
 )
 from .reports import TeardownReport
@@ -743,7 +744,8 @@ async def deploy(
             if not was_up:
                 brought_up.append((parent_host, proj))
             logger.info(f"[docker] deploying {use_case} as {proj} on {parent_host.id}")
-            result = await parent_host.exec(
+            await up_stack(
+                parent_host,
                 _up_command(
                     proj,
                     staged.compose_paths,
@@ -754,11 +756,8 @@ async def deploy(
                     force_recreate=force_recreate,
                     pull=pull,
                 ),
-                # Unbounded on purpose: this can pull images. See _compose_cmd.
-                timeout=float("inf"),
+                project=proj,
             )
-            if not result.is_ok:
-                _refuse_failed_up(proj, parent_host.id, result.value)
             hosts = await register_stack_hosts(
                 resolution.lab,
                 parent_host,
@@ -818,13 +817,6 @@ def _log_displacements(use_case: str, selection: Selection) -> None:
     """
     for d in selection.displaced:
         logger.info(f"[docker] use-case {use_case}: {d.describe()}")
-
-
-def _refuse_failed_up(compose_project: str, parent_id: str, output: str) -> "NoReturn":
-    """Raise the ``up`` failure. Its own function so the loop stays readable."""
-    raise HostCommandError(
-        f"docker compose up failed for {compose_project} on {parent_id}: {output}"
-    )
 
 
 def _plan(placed: "dict[str, list[SelectedFragment]]", selection: Selection) -> str:

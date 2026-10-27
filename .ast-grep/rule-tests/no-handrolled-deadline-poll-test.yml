@@ -32,6 +32,13 @@ valid:
   for attempt in range(3):
       if lookup(attempt):
           return attempt
+# One re-run of a one-shot operation on one classified error (compose's
+# `up_stack`): a retry, not a poll of a state.
+- |
+  result = await parent.exec(command, timeout=float("inf"))
+  if not result.is_ok and _is_transient_network_race(result.value):
+      await asyncio.sleep(_NETWORK_RACE_RETRY_BACKOFF_S)
+      result = await parent.exec(command, timeout=float("inf"))
 invalid:
 # The motivating shape: a readiness poll with its deadline spelled as a count.
 - |

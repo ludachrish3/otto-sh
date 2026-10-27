@@ -31,6 +31,7 @@ from otto.labs.loader import Lab
 from otto.result import CommandNotRunError, CommandResult, Result
 from otto.utils import Status
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result
+from tests._fixtures.docker_outputs import NETWORK_RACE
 from tests._fixtures.fake_project import fake_project
 from tests.conftest import active_context
 
@@ -725,7 +726,65 @@ async def test_failed_up_command_raises_and_rolls_back(single):
     ):
         await deploy("integration", parent="test3")
 
+    assert len([c for c in single.host.commands if " up -d" in c]) == 1, (
+        "a real failure is not retried"
+    )
     assert [c for c in single.host.commands if " down " in c]
+
+
+@pytest.mark.asyncio
+async def test_a_transient_network_race_on_up_is_retried_once(single):
+    """compose's libnetwork race (network Created, then "not found" at Starting) clears on a
+    convergent re-run, so the deployment's ``up`` retries it once, as ``compose_up`` does."""
+    ups = 0
+
+    async def _exec(cmd, *_a, **_kw):
+        nonlocal ups
+        single.host.commands.append(cmd)
+        if " up -d" in cmd:
+            ups += 1
+            return _fail(NETWORK_RACE) if ups == 1 else _ok()
+        if "com.docker.compose.service=" in cmd:
+            return _ok("cid1")
+        if "docker ps -q --filter label=com.docker.compose.project=" in cmd:
+            return _ok("")
+        return _ok()
+
+    single.host.exec = AsyncMock(side_effect=_exec)
+    with (
+        _install(single.lab, [single.project]),
+        patch("otto.docker.compose._NETWORK_RACE_RETRY_BACKOFF_S", 0),
+    ):
+        stack = await deploy("integration", parent="test3")
+
+    assert ups == 2
+    assert stack.hosts
+    assert not [c for c in single.host.commands if " down " in c]
+
+
+@pytest.mark.asyncio
+async def test_a_network_race_that_recurs_on_the_retry_raises_and_rolls_back(single):
+    """One retry, not a loop: a race on both ``up``s is a degraded daemon, so it raises
+    with docker's text and the stack this call brought up is taken down once."""
+
+    async def _exec(cmd, *_a, **_kw):
+        single.host.commands.append(cmd)
+        if " up -d" in cmd:
+            return _fail(NETWORK_RACE)
+        if "docker ps -q --filter label=com.docker.compose.project=" in cmd:
+            return _ok("")
+        return _ok()
+
+    single.host.exec = AsyncMock(side_effect=_exec)
+    with (
+        _install(single.lab, [single.project]),
+        patch("otto.docker.compose._NETWORK_RACE_RETRY_BACKOFF_S", 0),
+        pytest.raises(HostCommandError, match="network otto-project1-x_default not found"),
+    ):
+        await deploy("integration", parent="test3")
+
+    assert len([c for c in single.host.commands if " up -d" in c]) == 2
+    assert len([c for c in single.host.commands if " down " in c]) == 1
 
 
 # ---------------------------------------------------------------------------

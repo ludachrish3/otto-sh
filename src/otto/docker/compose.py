@@ -66,6 +66,52 @@ def _is_transient_network_race(output: str) -> bool:
     return "failed to set up container networking" in low and "not found" in low
 
 
+async def _run_compose(parent: Host, command: str) -> CommandResult:
+    """Run one built ``docker compose`` *command* on *parent*, unbounded.
+
+    Unbounded on purpose: an image build or pull has no defensible bound, and
+    a made-up constant would be wrong on a slower builder. Every whole-stack
+    ``up``, ``config`` and ``down`` runs through here, so that decision is
+    stated once. A per-service ``stop``/``rm`` and the observe verbs keep the
+    host's default bound: they never pull or build.
+    """
+    return await parent.exec(command, timeout=float("inf"))
+
+
+async def up_stack(parent: Host, command: str, *, project: str) -> CommandResult:
+    """Run one ``docker compose … up`` *command* on *parent*, re-running it once on the race.
+
+    The one ``up`` for every path that starts a stack, so the retry cannot be
+    left behind by one of them. ``up -d`` is convergent: after the libnetwork
+    race (``_is_transient_network_race``) the re-run starts the
+    already-created container once the network settles. Any other failure
+    fails the same way twice, so it is never retried.
+
+    If the race recurs on the re-run, the parent's daemon is degraded, not
+    merely racing: read ``journalctl -u docker`` there around the failure.
+    The levers, roughly in order, are a longer
+    ``_NETWORK_RACE_RETRY_BACKOFF_S`` or a third attempt, a
+    ``docker network prune`` before ``up``, or a daemon restart between runs.
+
+    Raises:
+        HostCommandError: ``up`` failed for another reason, or raced twice;
+            the message carries docker's own output.
+    """
+    result = await _run_compose(parent, command)
+    if not result.is_ok and _is_transient_network_race(result.value):
+        logger.debug(
+            f"[docker] {project} hit a transient network race on up; "
+            f"retrying once after {_NETWORK_RACE_RETRY_BACKOFF_S}s"
+        )
+        await asyncio.sleep(_NETWORK_RACE_RETRY_BACKOFF_S)
+        result = await _run_compose(parent, command)
+    if not result.is_ok:
+        raise HostCommandError(
+            f"docker compose up failed for {project} on {parent.id}: {result.value}"
+        )
+    return result
+
+
 def get_user_compose_project(project_name: str, suffix: str | None = None) -> str:
     """Return a compose project name unique enough to coexist with other runs.
 
@@ -171,11 +217,7 @@ def compose_command(
 async def _compose_cmd(
     parent: Host, project_name: str, files: list[str], *args: str
 ) -> CommandResult:
-    # Unbounded on purpose: an image build/pull has no defensible bound, and a
-    # made-up constant would be wrong on a slower builder. `inf` states that.
-    return await parent.exec(
-        compose_command(project_name, *args, files=files), timeout=float("inf")
-    )
+    return await _run_compose(parent, compose_command(project_name, *args, files=files))
 
 
 async def _stack_already_up(parent: Host, project_name: str) -> bool | None:
@@ -528,35 +570,11 @@ async def _up_and_register(
     """
     settings = project.docker_settings
     logger.info(f"[docker] composing {proj} on {parent.id} (convergent)")
-    # `up -d` is convergent, so a transient libnetwork race (network
-    # Created then reported "not found" when the container attaches) is
-    # retried once with a brief backoff — the re-run starts the already-
-    # created container cleanly. A genuine failure fails identically on
-    # the retry and propagates, so this never masks a real error.
-    #
-    # Follow-up if this single retry doesn't stabilize `otto docker compose up`:
-    # the tell is the RuntimeError below STILL reporting "network ... not
-    # found" *after* the retry (i.e. attempt 1 raced too). That means the
-    # parent daemon is degraded, not merely racing — pull `journalctl -u
-    # docker` on the parent (the docker_capable host) around the failure.
-    # Levers, roughly in order: widen the retry (range(2) -> range(3) and/or
-    # a longer _NETWORK_RACE_RETRY_BACKOFF_S); a pre-`up` `docker network
-    # prune` on the parent; or restart the daemon between runs.
-    # A retry of a one-shot operation on one classified error, not a poll of a
-    # state (the rule's note names it); #737 replaces the loop.
-    # ast-grep-ignore: no-handrolled-deadline-poll
-    for attempt in range(2):
-        up = await _compose_cmd(parent, proj, remote_file_strs, "up", "-d", "--remove-orphans")
-        if up.is_ok:
-            break
-        if attempt == 0 and _is_transient_network_race(up.value):
-            logger.debug(
-                f"[docker] {proj} hit a transient network race on up; "
-                f"retrying once after {_NETWORK_RACE_RETRY_BACKOFF_S}s"
-            )
-            await asyncio.sleep(_NETWORK_RACE_RETRY_BACKOFF_S)
-            continue
-        raise HostCommandError(f"docker compose up failed: {up.value}")
+    await up_stack(
+        parent,
+        compose_command(proj, "up", "-d", "--remove-orphans", files=remote_file_strs),
+        project=proj,
+    )
 
     # Enumerate services. Project-declared list is authoritative for the
     # mapping we return; cross-check against the live list and warn on drift.
@@ -748,11 +766,11 @@ async def compose_down_project(
             "No container was stopped and no host was unregistered from the lab.",
         )
 
-    result = await parent.exec(
+    result = await _run_compose(
+        parent,
         compose_command(
             compose_project, "down", "--remove-orphans", "--timeout", str(int(stop_timeout))
         ),
-        timeout=float("inf"),
     )
     if not result.is_ok:
         logger.error(

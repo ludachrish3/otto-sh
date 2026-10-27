@@ -12,12 +12,13 @@ import os
 import subprocess
 import sys
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
 from otto.cli import docker as docker_cli
 from otto.console import CONSOLE
-from otto.docker.deployment import _refuse_failed_up
+from otto.docker.compose import up_stack
 from otto.docker.reports import BuildReport, ImageBuild, ProjectBuild
 from otto.host.errors import HostCommandError
 from otto.host.host import BaseHost
@@ -304,14 +305,26 @@ def test_names_a_missing_image_reads_the_reference_not_found_form_by_its_referen
     assert not names_a_missing_image("not found")
 
 
-def test_names_a_missing_image_reads_the_failure_otto_wraps_it_in():
+@pytest.mark.asyncio
+async def test_names_a_missing_image_reads_the_failure_otto_wraps_it_in():
+    """Driven through the one ``up`` both deploy paths raise from, so the parser is
+    pinned to the sentence the product actually raises."""
+    denied = (
+        "Error response from daemon: pull access denied for project1-api, repository does not "
+        "exist or may require 'docker login': denied: requested access to the resource is "
+        "denied"
+    )
+    parent = SimpleNamespace(
+        id="test3",
+        exec=AsyncMock(
+            return_value=CommandResult(Status.Failed, value=denied, command="", retcode=1)
+        ),
+    )
     with pytest.raises(HostCommandError) as raised:
-        _refuse_failed_up(
-            "unix-project1-e2e-1a2b3c4d",
-            "test3",
-            "Error response from daemon: pull access denied for project1-api, repository does not "
-            "exist or may require 'docker login': denied: requested access to the resource is "
-            "denied",
+        await up_stack(
+            parent,  # type: ignore[arg-type]
+            "docker compose -p unix-project1-e2e-1a2b3c4d up -d",
+            project="unix-project1-e2e-1a2b3c4d",
         )
     wrapped = str(raised.value)
 
