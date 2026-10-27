@@ -48,7 +48,7 @@ async def test_enter_frame_delegates_to_the_target_frame(landed):
 async def test_enter_frame_forwards_timeout_to_the_handshake(landed, caplog):
     h = _handle(landed, target_frame=ZephyrFrame(), establishing=True)
     # Never answered: the handshake must time out at the *forwarded* deadline,
-    # not ShellSession's class default (_INIT_TIMEOUT, 3.0s). The
+    # not ShellSession's class default (_INIT_TIMEOUT). The
     # handshake-start debug line carries the resolved deadline, which pins the
     # forward without a wall-clock assert — same pattern as
     # test_session_enter_frame.py::test_enter_frame_failure_closes_and_raises_connection_error.

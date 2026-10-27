@@ -104,6 +104,7 @@ from .power import power_control_from_spec
 from .privilege import PosixPrivilege
 from .remote_host import RemoteHost
 from .session import (
+    BridgeSetup,
     SessionManager,
 )
 from .telnet import TelnetClient
@@ -350,6 +351,16 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     were never recorded in the first place, and ``otto login`` deliberately
     leaves a human's shell alone."""
 
+    init_timeout: float | None = None
+    """Seconds a newly opened shell has to answer otto's readiness probe.
+
+    ``None`` (the default) keeps the session's own ceiling, 10 s. Over telnet
+    the window opens once the password is written, so it covers the login
+    itself, the MOTD and the shell's startup files; raise it for a host whose
+    login is slow, or a lab where the machine running otto is heavily loaded.
+    A login that never yields a shell fails after this long, and the default
+    session retries once, so a lower value surfaces bad credentials sooner."""
+
     _file_transfer: UnixFileTransfer = field(init=False, repr=False)
     """Handles all file transfer protocols for this host."""
 
@@ -481,18 +492,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         IMPAIRER_RESOLVER.validate_choice(self.valid_impairers, self.impairer)
 
         self._connections = self._build_connections()
-        self._session_mgr = SessionManager(
-            connections=self._connections,
-            name=self.name,
-            log_command=self._log_command,
-            log_output=self._log_output,
-            command_frame=self.command_frame,
-            creds=self.creds,
-            host_id=self.id,
-            shell_history=self.shell_history,
-            landing_frame=self.landing_frame,
-            session_setup=self.session_setup,
-        )
+        self._session_mgr = self._build_session_mgr()
         self._file_transfer = self._build_file_transfer()
 
     @property
@@ -525,7 +525,22 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         # is how a host moves to a fresh loop, so it starts a fresh lock.
         self._console_exec_lock = None
         self._connections = self._build_connections()
-        self._session_mgr = SessionManager(
+        self._session_mgr = self._build_session_mgr()
+        self._file_transfer = self._build_file_transfer()
+        self._user_transfers = {}
+
+    def _bridge_setup(self) -> BridgeSetup | None:
+        """Return what ``otto login``'s bridge needs to run this host's hook, or ``None``."""
+        return self._live_session_mgr()._bridge_setup()  # noqa: SLF001 — intra-package: the host's own manager builds the bundle
+
+    def _build_session_mgr(self) -> SessionManager:
+        """Build the session manager over the current connections from this host's session fields.
+
+        The one place a UnixHost's fields become session behavior: both
+        ``__post_init__`` and ``_rebuild_connections`` build through it, so a
+        session field added here reaches the sessions either way.
+        """
+        return SessionManager(
             connections=self._connections,
             name=self.name,
             log_command=self._log_command,
@@ -533,12 +548,11 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             command_frame=self.command_frame,
             creds=self.creds,
             host_id=self.id,
+            init_timeout=self.init_timeout,
             shell_history=self.shell_history,
             landing_frame=self.landing_frame,
             session_setup=self.session_setup,
         )
-        self._file_transfer = self._build_file_transfer()
-        self._user_transfers = {}
 
     def _build_connections(self) -> ConnectionManager:
         """Construct the connection backend for the current ``term`` via the registry seam.
@@ -791,10 +805,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                 proxy_hops=hops,
                 via_login=via_login,
                 host_id=self.id,
-                session_setup=self.session_setup,
-                landing_frame=self.landing_frame,
-                target_frame=self.command_frame,
-                creds=self.creds,
+                bridge_setup=self._bridge_setup(),
             )
             return
 
@@ -833,10 +844,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                 proxy_hops=hops,
                 via_login=login_user,
                 host_id=self.id,
-                session_setup=self.session_setup,
-                landing_frame=self.landing_frame,
-                target_frame=self.command_frame,
-                creds=self.creds,
+                bridge_setup=self._bridge_setup(),
             )
         finally:
             with teardown_step(host_name, "interactive telnet client close"):
@@ -923,10 +931,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                 proxy_hops=hops,
                 via_login=login_user,
                 host_id=self.id,
-                session_setup=self.session_setup,
-                landing_frame=self.landing_frame,
-                target_frame=self.command_frame,
-                creds=self.creds,
+                bridge_setup=self._bridge_setup(),
                 transport_label="console",
                 notice=notice,
             )

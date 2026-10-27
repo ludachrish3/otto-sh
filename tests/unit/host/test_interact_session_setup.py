@@ -1,6 +1,7 @@
 """The login bridge runs the session-setup hook before the pumps start."""
 
 import asyncio
+import dataclasses
 import signal
 import sys
 from types import SimpleNamespace
@@ -12,6 +13,7 @@ from otto.host import interact
 from otto.host.command_frame import BashFrame, RawFrame, ZephyrFrame
 from otto.host.element import Element
 from otto.host.login_proxy import Cred
+from otto.host.session import BridgeSetup
 from otto.host.session_setup import SESSION_SETUPS, SessionSetup, register_session_setup
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
@@ -146,10 +148,13 @@ async def test_bridge_sequence_for_a_hook_host(hook):
         newline=b"\n",
         host_name="h",
         host_id="h",
-        setup=SessionSetup(name="t7-export"),
-        landing_frame=None,
-        target_frame=BashFrame(),
-        creds=[Cred(login="admin", password="pw")],
+        bridge=BridgeSetup(
+            setup=SessionSetup(name="t7-export"),
+            landing_frame=None,
+            target_frame=BashFrame(),
+            creds=[Cred(login="admin", password="pw")],
+            init_timeout=None,
+        ),
         proxy_hops=[],
         via_login="admin",
         log_line=lambda _l: None,
@@ -181,10 +186,13 @@ async def test_bridge_replays_hops_over_the_framed_session_before_the_hook(hook,
         newline=b"\n",
         host_name="h",
         host_id="h",
-        setup=SessionSetup(name="t7-export"),
-        landing_frame=None,
-        target_frame=BashFrame(),
-        creds=[Cred(login="admin", password="pw"), hop],
+        bridge=BridgeSetup(
+            setup=SessionSetup(name="t7-export"),
+            landing_frame=None,
+            target_frame=BashFrame(),
+            creds=[Cred(login="admin", password="pw"), hop],
+            init_timeout=None,
+        ),
         proxy_hops=[hop],
         via_login="admin",
         log_line=lambda _l: None,
@@ -211,10 +219,13 @@ async def test_raw_landing_on_the_bridge_sends_nothing_before_the_hook():
             newline=b"\n",
             host_name="h",
             host_id="h",
-            setup=SessionSetup(name="t7-raw"),
-            landing_frame=RawFrame(),
-            target_frame=ZephyrFrame(),
-            creds=[],
+            bridge=BridgeSetup(
+                setup=SessionSetup(name="t7-raw"),
+                landing_frame=RawFrame(),
+                target_frame=ZephyrFrame(),
+                creds=[],
+                init_timeout=None,
+            ),
             proxy_hops=[],
             via_login="",
             log_line=lambda _l: None,
@@ -367,9 +378,13 @@ async def test_run_ssh_login_with_a_hook_uses_the_bridge_session(hook):
         await interact.run_ssh_login(
             conn=conn,
             host_name="h",
-            session_setup=SessionSetup(name="t7-export"),
-            target_frame=BashFrame(),
-            creds=[],
+            bridge_setup=BridgeSetup(
+                setup=SessionSetup(name="t7-export"),
+                landing_frame=None,
+                target_frame=BashFrame(),
+                creds=[],
+                init_timeout=None,
+            ),
         )
     replay.assert_not_awaited()
     setup.assert_awaited_once()
@@ -426,10 +441,13 @@ async def test_the_hook_sees_the_identity_the_hops_left_the_bridge_in():
             newline=b"\n",
             host_name="h",
             host_id="h",
-            setup=SessionSetup(name="t7-identity"),
-            landing_frame=None,
-            target_frame=BashFrame(),
-            creds=[Cred(login="admin", password="pw"), hop],
+            bridge=BridgeSetup(
+                setup=SessionSetup(name="t7-identity"),
+                landing_frame=None,
+                target_frame=BashFrame(),
+                creds=[Cred(login="admin", password="pw"), hop],
+                init_timeout=None,
+            ),
             proxy_hops=[hop],
             via_login="admin",
             log_line=lambda _l: None,
@@ -478,10 +496,13 @@ async def test_the_default_bridge_leaves_shell_history_alone(hook):
         newline=b"\n",
         host_name="h",
         host_id="h",
-        setup=SessionSetup(name="t7-export"),
-        landing_frame=None,
-        target_frame=BashFrame(),
-        creds=[],
+        bridge=BridgeSetup(
+            setup=SessionSetup(name="t7-export"),
+            landing_frame=None,
+            target_frame=BashFrame(),
+            creds=[],
+            init_timeout=None,
+        ),
         proxy_hops=[],
         via_login="admin",
         log_line=lambda _l: None,
@@ -499,10 +520,13 @@ async def test_the_residual_is_what_the_console_said_after_the_last_framed_match
         newline=b"\n",
         host_name="h",
         host_id="h",
-        setup=SessionSetup(name="t7-export"),
-        landing_frame=None,
-        target_frame=BashFrame(),
-        creds=[],
+        bridge=BridgeSetup(
+            setup=SessionSetup(name="t7-export"),
+            landing_frame=None,
+            target_frame=BashFrame(),
+            creds=[],
+            init_timeout=None,
+        ),
         proxy_hops=[],
         via_login="admin",
         log_line=lambda _l: None,
@@ -538,6 +562,26 @@ async def test_a_hooks_own_switch_user_is_not_quieted_on_the_bridge():
         assert not any("HISTFILE" in p for p in probes), probes
     finally:
         SESSION_SETUPS.unregister("t7-switch")
+
+
+@pytest.mark.asyncio
+async def test_the_bridge_handshake_waits_the_host_init_timeout(hook):
+    """`otto login` on a hooked host gives its landing shell the host's own deadline (#732)."""
+    console = _Console(DialectShell())
+    host = dataclasses.replace(
+        _hooked_host([Cred(login="admin", password="pw")], "t7-export"), init_timeout=33.0
+    )
+    built = []
+    real = interact._BridgeShellSession
+
+    def spy(*args, **kwargs):
+        session = real(*args, **kwargs)
+        built.append(session)
+        return session
+
+    with patch.object(interact, "_BridgeShellSession", side_effect=spy):
+        await _login_over_a_console(host, console, login_target="admin")
+    assert [s._init_timeout for s in built] == [33.0]
 
 
 # ---------------------------------------------------------------------------
@@ -577,10 +621,13 @@ def _console_bridge_kwargs(console: _Console, **extra):
         newline=b"\n",
         host_name="test2",
         host_id="test2",
-        setup=SessionSetup(name="t10-console-login"),
-        landing_frame=RawFrame(),
-        target_frame=BashFrame(),
-        creds=[Cred(login="test", password="Password1")],
+        bridge=BridgeSetup(
+            setup=SessionSetup(name="t10-console-login"),
+            landing_frame=RawFrame(),
+            target_frame=BashFrame(),
+            creds=[Cred(login="test", password="Password1")],
+            init_timeout=None,
+        ),
         proxy_hops=[],
         via_login="test",
         log_line=lambda _l: None,
@@ -658,9 +705,13 @@ async def _run_telnet_login_with_hook(**kw):
         interact.sys.stdin.fileno = lambda: 0
         await interact.run_telnet_login(
             host_name="h",
-            session_setup=SessionSetup(name="t7-export"),
-            target_frame=BashFrame(),
-            creds=[],
+            bridge_setup=BridgeSetup(
+                setup=SessionSetup(name="t7-export"),
+                landing_frame=None,
+                target_frame=BashFrame(),
+                creds=[],
+                init_timeout=None,
+            ),
             **kw,
         )
     return setup.await_args.kwargs
@@ -705,9 +756,13 @@ async def test_run_ssh_login_names_the_ssh_term_to_the_hook_bridge(hook):
         await interact.run_ssh_login(
             conn=conn,
             host_name="h",
-            session_setup=SessionSetup(name="t7-export"),
-            target_frame=BashFrame(),
-            creds=[],
+            bridge_setup=BridgeSetup(
+                setup=SessionSetup(name="t7-export"),
+                landing_frame=None,
+                target_frame=BashFrame(),
+                creds=[],
+                init_timeout=None,
+            ),
         )
     kw = setup.await_args.kwargs
     assert kw["term"] == "ssh"

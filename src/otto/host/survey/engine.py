@@ -29,6 +29,7 @@ from .login import (
     attempt_ftp_login,
     attempt_term_login,
     classify_login_error,
+    session_login,
 )
 from .owners import DEFAULT_PORTS, SSH_SWEEP_PORTS, SWEEP_ALTERNATES, protocol_for_owner
 from .snmp_check import check_snmp
@@ -36,6 +37,7 @@ from .sweep import SweepRow, parse_scan_ports, sweep_port_set, sweep_ports
 from .verdict import (
     DIAL_TIMEOUT_S,
     INVENTORY_TIMEOUT_S,
+    LOGIN_MARGIN_S,
     LOGIN_TIMEOUT_S,
     SNMP_RETRIES,
     SNMP_TIMEOUT_S,
@@ -142,6 +144,21 @@ def _own_login_name(host: "BaseHost") -> str:
     return f"login {manager.login_target!r}" if manager is not None else "login <local>"
 
 
+def _shell_login_budget(host: "BaseHost", term: "str | None" = None) -> float:
+    """Return the budget for one shell login on *host* over *term*, never under ``LOGIN_TIMEOUT_S``.
+
+    A login that never yields a shell is reported only once the session has
+    spent its whole ``open_budget``, which grows with the host's
+    ``init_timeout`` and *term*'s connect waits (*term* defaults to the
+    host's own). Anything shorter would cut the attempt off first and turn a
+    refused password into ``timeout``, a state the drift table and the pin
+    discard. ``LOGIN_MARGIN_S`` is added per attempt, for the waits the
+    session leaves unbounded.
+    """
+    mgr = host._session_mgr  # noqa: SLF001 — intra-package read of the host's own session manager
+    return max(LOGIN_TIMEOUT_S, mgr.open_budget(term) + 2 * LOGIN_MARGIN_S)
+
+
 async def _open_own_session(
     host: "BaseHost", timeout: float, *, who: "str | None" = None
 ) -> LoginOutcome:
@@ -150,14 +167,7 @@ async def _open_own_session(
     *who* names the identity when ``--user`` forced one, so the row says the
     login was asked for rather than picked; otherwise the session's own cred.
     """
-    who = who or _own_login_name(host)
-    try:
-        await asyncio.wait_for(host.run("true", timeout=timeout, log=LogMode.NEVER), timeout)
-    except Exception as exc:  # noqa: BLE001 — every wire failure becomes a classified verdict
-        return classify_login_error(exc, who=who)
-    return LoginOutcome(
-        "supported", f"{who}: session opened", terminal_mapping=host.terminal_mapping
-    )
+    return await session_login(host, who=who or _own_login_name(host), timeout=timeout)
 
 
 async def _run_only(host: "BaseHost", cmd: str, *, sudo: bool = False) -> "CommandResult":
@@ -507,24 +517,25 @@ class _UnixSurvey:
 
     async def _declared_login(self, c: Candidate) -> "LoginOutcome | None":
         """One login attempt on a declared port the dial found open."""
-        if c.protocol == "ftp":
+        return await self._candidate_login(c.protocol, c.port)
+
+    async def _candidate_login(self, protocol: str, port: int) -> "LoginOutcome | None":
+        """One login attempt over *protocol* on *port*, declared or discovered alike.
+
+        ``None`` when the survey's own budget ran out first.
+        """
+        login = self._login_for(protocol)
+        if protocol == "ftp":
             return await _bounded(
                 self.deadline,
                 LOGIN_TIMEOUT_S,
-                attempt_ftp_login(
-                    self.host, c.port, login=self._login_for("ftp"), timeout=LOGIN_TIMEOUT_S
-                ),
+                attempt_ftp_login(self.host, port, login=login, timeout=LOGIN_TIMEOUT_S),
             )
+        budget = _shell_login_budget(self.host, protocol)
         return await _bounded(
             self.deadline,
-            LOGIN_TIMEOUT_S,
-            attempt_term_login(
-                self.host,
-                c.protocol,
-                c.port,
-                login=self._login_for(c.protocol),
-                timeout=LOGIN_TIMEOUT_S,
-            ),
+            budget,
+            attempt_term_login(self.host, protocol, port, login=login, timeout=budget),
         )
 
     async def _own_session(self) -> "LoginOutcome | None":
@@ -536,15 +547,12 @@ class _UnixSurvey:
         """
         host, user = self.host, self.user
         cred = cred_for(host.creds, user, host.term) if user is not None else None
+        budget = _shell_login_budget(host)
         if cred is None or user is None:
-            return await _bounded(
-                self.deadline, LOGIN_TIMEOUT_S, _open_own_session(host, LOGIN_TIMEOUT_S)
-            )
+            return await _bounded(self.deadline, budget, _open_own_session(host, budget))
         who = f"login {cred_identity(cred.login, cred.protocols)!r} (--user)"
         async with host.as_user(user):
-            return await _bounded(
-                self.deadline, LOGIN_TIMEOUT_S, _open_own_session(host, LOGIN_TIMEOUT_S, who=who)
-            )
+            return await _bounded(self.deadline, budget, _open_own_session(host, budget, who=who))
 
     def _no_session_detail(self) -> str:
         """Name the term that DID log in, if one did: the session tier never falls back to it.
@@ -890,21 +898,8 @@ class _UnixSurvey:
         c = Candidate(
             got.service, "term" if got.service in _LOGIN_TERMS else "transfer", port, declared=False
         )
-        login = self._login_for(got.service)
-        if got.service == "ftp":
-            out = await _bounded(
-                self.deadline,
-                LOGIN_TIMEOUT_S,
-                attempt_ftp_login(self.host, port, login=login, timeout=LOGIN_TIMEOUT_S),
-            )
-        else:
-            out = await _bounded(
-                self.deadline,
-                LOGIN_TIMEOUT_S,
-                attempt_term_login(
-                    self.host, got.service, port, login=login, timeout=LOGIN_TIMEOUT_S
-                ),
-            )
+        out = await self._candidate_login(got.service, port)
+        if got.service != "ftp":
             self._note_mapping(got.service, out)
         if out is None:
             self._budget_row(c, "login")
@@ -1080,7 +1075,8 @@ def _local_not_applicable(survey: Survey) -> Survey:
 async def _survey_local(host: "BaseHost") -> Survey:
     deadline = _Deadline(SURVEY_BUDGET_S)
     survey = Survey()
-    got = await _bounded(deadline, LOGIN_TIMEOUT_S, _open_own_session(host, LOGIN_TIMEOUT_S))
+    budget = _shell_login_budget(host)
+    got = await _bounded(deadline, budget, _open_own_session(host, budget))
     if got is None or got.state != "supported":
         survey.footnotes.append("no local session: inventory not run")
         return _local_not_applicable(survey)

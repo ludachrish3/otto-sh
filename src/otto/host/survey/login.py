@@ -21,6 +21,7 @@ from ..os_profile import copy_host
 from .verdict import State
 
 if TYPE_CHECKING:
+    from ..host import BaseHost
     from ..remote_host import RemoteHost
     from ..unix_host import UnixHost
 
@@ -258,6 +259,21 @@ async def _close_on_cancel(copy: "UnixHost | RemoteHost", name: str, step: str) 
         await compensate(copy.close(), what=f"{name}: {step}")
 
 
+async def session_login(host: "BaseHost", *, who: str, timeout: float) -> LoginOutcome:
+    """Open *host*'s session with a no-op, bounded by *timeout*; classify it as *who*'s login.
+
+    The one login check behind the host's own session and every port copy.
+    A cancellation propagates, for the caller to tear down what it opened.
+    """
+    try:
+        await asyncio.wait_for(host.run("true", timeout=timeout, log=LogMode.NEVER), timeout)
+    except Exception as exc:  # noqa: BLE001 — every wire failure becomes a classified verdict
+        return classify_login_error(exc, who=who)
+    return LoginOutcome(
+        "supported", f"{who}: session opened", terminal_mapping=host.terminal_mapping
+    )
+
+
 async def attempt_term_login(
     host: "UnixHost", protocol: str, port: int, *, login: str | None, timeout: float
 ) -> LoginOutcome:
@@ -270,15 +286,10 @@ async def attempt_term_login(
         return LoginOutcome("not-checkable", str(exc))
     who = _who(copy, protocol, login=login)
     try:
-        await asyncio.wait_for(copy.run("true", timeout=timeout, log=LogMode.NEVER), timeout)
-        outcome = LoginOutcome(
-            "supported", f"{who}: session opened", terminal_mapping=copy.terminal_mapping
-        )
+        outcome = await session_login(copy, who=who, timeout=timeout)
     except asyncio.CancelledError:
         await _close_on_cancel(copy, host.name, "survey login close")
         raise
-    except Exception as exc:  # noqa: BLE001 — every wire failure becomes a classified verdict
-        outcome = classify_login_error(exc, who=who)
     with teardown_step(host.name, "survey login close"):
         await copy.close()
     return outcome

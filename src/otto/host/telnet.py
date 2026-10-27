@@ -30,6 +30,19 @@ from .options import TelnetOptions
 logger = logging.getLogger(__name__)
 
 
+def open_connection_default(name: str) -> Any:
+    """Return the default :func:`telnetlib3.open_connection` gives keyword *name*.
+
+    For a caller sizing a wait otto leaves to telnetlib3 (its option
+    negotiation, ``connect_maxwait``) without restating the library's value.
+    """
+    import inspect
+
+    from telnetlib3 import open_connection
+
+    return inspect.signature(open_connection).parameters[name].default
+
+
 async def open_telnet_connection(*args: Any, **kwargs: Any) -> Any:
     """Lazy, patchable wrapper around :func:`telnetlib3.open_connection`.
 

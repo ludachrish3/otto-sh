@@ -379,6 +379,51 @@ service listens elsewhere, prints the fragment to paste here — see
 
 Netcat has additional options and auto-detection strategies — see {doc}`../cli/host/netcat`.
 
+(per-host-init-timeout)=
+
+## Shell readiness timeout
+
+Every shell otto opens on a Unix host must answer a readiness probe before
+otto sends it a command: the session behind `run`, the named sessions of
+`open_session`, the shells `exec` uses, and the landing shell of an
+`otto login` on a host with a `session_setup` hook. Over ssh, `exec` uses a
+shell only under a proxied login, on a host with a `session_setup` hook, or
+for a call that needs one (an elevation, a user switch, a prompt to answer);
+otherwise it runs on a bare channel and is probed by nothing. If no answer
+comes back in time, the open fails with `shell never became ready after open`.
+The session behind `run` then retries once, on a fresh connection, after a 2 s
+pause (not on a console whose login has already typed the password); the
+others fail at the first deadline.
+
+`init_timeout` sets that deadline in seconds, a number greater than 0; leave it
+out for the default, 10. The clock starts once the connection is up: over ssh
+when the channel opens, over telnet when the password has been sent, so on a
+telnet host it has to cover the login itself, the MOTD and the shell's startup
+files. Raise it for a host whose login is slow, or for a lab where the machine
+running otto is heavily loaded. To pick a value, time a manual telnet login on
+that host, from the password to the prompt, and allow a few times that:
+
+```json
+{
+    "ip": "10.10.200.12",
+    "creds": [{ "login": "admin", "password": "secret" }],
+    "init_timeout": 30
+}
+```
+
+A higher value costs nothing when the shell answers quickly. It changes how
+long a telnet login that never yields a shell (a wrong password, for example)
+takes to fail: for the `run` session, two connection attempts, each up to the
+deadline plus the time to connect, and the 2 s pause between them.
+`otto host survey` sizes each login check from this, so it still reports such
+a host as `login-failed`. The survey has 90 s for the whole host, though, so a
+large value leaves its later checks less of that time, and those can report
+`survey budget exhausted`. A command's own timeout starts once the shell is
+ready, so it never cuts an open short; the exception is tunnel discovery's
+30 s check that a container host is running, which runs a command on the
+parent host and so includes opening the parent's shell when it needs one. Like `shell_history`, `init_timeout` can be
+defaulted for a class of hosts from an `[os_profiles.<name>]` block.
+
 (per-host-shell-history)=
 
 ## Shell history

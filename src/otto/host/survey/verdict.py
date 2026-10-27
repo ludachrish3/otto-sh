@@ -38,6 +38,11 @@ DIAL_TIMEOUT_S = 2.0
 SWEEP_DIAL_TIMEOUT_S = 0.5
 SWEEP_CONCURRENCY = 2
 LOGIN_TIMEOUT_S = 10.0
+LOGIN_MARGIN_S = 2.0
+"""Room a shell login gets per attempt beyond what its session may spend failing
+to open (``SessionManager.open_budget``): the waits the session leaves
+unbounded, such as the login and password prompts. Keeps a refused telnet
+password reaching the row as ``login-failed`` instead of ``timeout``."""
 SNMP_TIMEOUT_S = 2.0
 SNMP_RETRIES = 1
 SNMP_SYSUPTIME_OID = "1.3.6.1.2.1.1.3.0"

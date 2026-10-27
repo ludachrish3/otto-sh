@@ -50,6 +50,31 @@ class TestShellHistoryReachesTheShell:
         assert _unix_host().shell_history is False
 
 
+class TestInitTimeoutReachesTheSession:
+    """UnixHost.init_timeout must become the readiness deadline its sessions use (#732)."""
+
+    @staticmethod
+    async def _deadline(host: UnixHost) -> float:
+        session = await host._session_mgr._build_session()
+        return session._init_timeout
+
+    @pytest.mark.asyncio
+    async def test_the_default_leaves_room_for_a_slow_telnet_login(self):
+        # 3 s was missed by a telnet login on a loaded lab; the default must
+        # stay well above that.
+        assert await self._deadline(_unix_host()) >= 10.0
+
+    @pytest.mark.asyncio
+    async def test_a_declared_value_is_the_deadline(self):
+        assert await self._deadline(_unix_host(init_timeout=42.0)) == 42.0
+
+    @pytest.mark.asyncio
+    async def test_the_value_survives_a_connection_rebuild(self):
+        host = _unix_host(init_timeout=42.0)
+        host._rebuild_connections()
+        assert await self._deadline(host) == 42.0
+
+
 # ---------------------------------------------------------------------------
 # Switching a host's active protocol goes through the override-copy seam
 # (dataclasses.replace -> __post_init__), which rebuilds the backend via the

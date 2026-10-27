@@ -1133,3 +1133,110 @@ async def test_the_own_session_reads_the_hosts_mapping_after_it_opens(monkeypatc
     monkeypatch.setattr(UnixHost, "terminal_mapping", property(lambda self: "identity"))
     out = await engine._open_own_session(_unix(), 5.0)
     assert out.terminal_mapping == "identity"
+
+
+class TestShellLoginBudget:
+    """A refused telnet password must reach the row as login-failed, never timeout (#732).
+
+    The session reports a shell that never became ready only after spending
+    its whole ``open_budget``; a survey budget under that cuts the attempt
+    off first.
+    """
+
+    def test_the_default_budget_outlasts_a_failed_open(self):
+        host = _unix()
+        assert engine._shell_login_budget(host) > host._session_mgr.open_budget()
+
+    def test_the_budget_follows_the_host_init_timeout(self):
+        assert engine._shell_login_budget(_unix(init_timeout=30.0)) > 2 * 30.0
+
+    def test_a_telnet_login_from_an_ssh_host_counts_telnet_connect_waits(self):
+        # The survey logs in over each declared term on a copy of the host,
+        # so the budget is sized for the term it dials, not the host's own.
+        host = _unix(term="ssh", telnet_options=TelnetOptions(port=1, echo_negotiation_timeout=9.0))
+        assert engine._shell_login_budget(host, "telnet") > host._session_mgr.open_budget("telnet")
+        assert host._session_mgr.open_budget("telnet") >= host._session_mgr.open_budget() + 2 * 9.0
+
+    def test_a_fast_host_keeps_the_floor(self):
+        host = _unix(init_timeout=0.1, ssh_options=SshOptions(port=1))
+        assert engine._shell_login_budget(host, "ssh") == engine.LOGIN_TIMEOUT_S
+
+
+@pytest.mark.asyncio
+async def test_every_shell_login_the_survey_makes_outlasts_a_failed_open(seams, monkeypatch):
+    """Own session, declared port and discovered port all get the same sized budget (#732).
+
+    Checked at the call sites, not only the helper: a discovered port once
+    kept the flat ``LOGIN_TIMEOUT_S`` while declared ones moved on.
+    """
+    budgets: dict[str, float] = {}
+
+    async def own(host, timeout, *, who=None):
+        budgets["own"] = timeout
+        return LoginOutcome("supported", "login 'admin': session opened")
+
+    async def term(host, protocol, port, *, login, timeout):
+        budgets[f"{protocol}:{port}"] = timeout
+        return LoginOutcome("closed", "refused")
+
+    async def inventory(run, *, elevate):
+        return Inventory(
+            tool="ss", elevated=True, listeners=[Listener("tcp", "0.0.0.0", 2222, "sshd")]
+        )
+
+    monkeypatch.setattr(engine, "_open_own_session", own)
+    monkeypatch.setattr(engine, "attempt_term_login", term)
+    monkeypatch.setattr(engine, "run_inventory", inventory)
+    host = _unix(
+        ssh_options=SshOptions(port=22),
+        telnet_options=TelnetOptions(port=23),
+        valid_terms=["telnet", "ssh"],
+        term="telnet",
+        valid_transfers=["scp"],
+        init_timeout=30.0,
+    )
+    await engine.run_survey(host)
+    mgr = host._session_mgr
+    assert set(budgets) >= {"own", "ssh:22", "ssh:2222"}, budgets
+    # Each login against its own term's open: telnet for the host's own
+    # session, ssh for the declared and discovered ssh ports.
+    assert budgets["own"] > mgr.open_budget(), budgets
+    assert all(budgets[k] > mgr.open_budget("ssh") for k in ("ssh:22", "ssh:2222")), budgets
+
+
+@pytest.mark.asyncio
+async def test_an_ssh_host_sizes_its_telnet_logins_for_telnet(seams, monkeypatch):
+    """A telnet port on an ssh host gets telnet's budget, declared or discovered (#732).
+
+    Telnet's connect waits are the larger ones, so a budget sized for the
+    host's own term (ssh) would cut a telnet login short.
+    """
+    budgets: dict[str, float] = {}
+
+    async def term(host, protocol, port, *, login, timeout):
+        budgets[f"{protocol}:{port}"] = timeout
+        return LoginOutcome("closed", "refused")
+
+    async def inventory(run, *, elevate):
+        return Inventory(
+            tool="ss", elevated=True, listeners=[Listener("tcp", "0.0.0.0", 2323, "telnetd")]
+        )
+
+    async def dial(ip, port, *, timeout):
+        return DialOutcome(state="open", service="telnet", banner="\xff\xfd\x18", detail="IAC")
+
+    monkeypatch.setattr(engine, "attempt_term_login", term)
+    monkeypatch.setattr(engine, "run_inventory", inventory)
+    monkeypatch.setattr(engine, "dial_direct", dial)
+    host = _unix(
+        ssh_options=SshOptions(port=22),
+        telnet_options=TelnetOptions(port=23),
+        valid_terms=["ssh", "telnet"],
+        term="ssh",
+        valid_transfers=["scp"],
+        init_timeout=30.0,
+    )
+    await engine.run_survey(host)
+    telnet_open = host._session_mgr.open_budget("telnet")
+    assert set(budgets) >= {"telnet:23", "telnet:2323"}, budgets
+    assert all(budgets[k] > telnet_open for k in ("telnet:23", "telnet:2323")), budgets

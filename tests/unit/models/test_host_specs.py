@@ -1223,3 +1223,32 @@ class TestConsoleRefusesNc:
         )
         with pytest.raises(HostValidationError, match=r"cons1.*second command channel"):
             hc.spec.validate_in(hc.context)
+
+
+class TestInitTimeout:
+    """``init_timeout`` is a plain lab field: a positive number of seconds, or absent (#732)."""
+
+    def _entry(self, **extra):
+        return {"ip": "10.0.0.9", "creds": [{"login": "u", "password": "p"}], **extra}
+
+    def test_a_declared_value_reaches_the_host(self):
+        host = build_host(self._entry(init_timeout=25), element=Element("e"))
+        assert host.init_timeout == 25.0
+
+    def test_absent_leaves_the_session_default(self):
+        assert build_host(self._entry(), element=Element("e")).init_timeout is None
+
+    @pytest.mark.parametrize(
+        ("bad", "why"),
+        [
+            (0, "greater than 0"),
+            (-1, "greater than 0"),
+            ("slow", "valid number"),
+            ("10", "valid number"),
+            (True, "valid number"),
+            (float("inf"), "finite number"),
+        ],
+    )
+    def test_a_non_positive_or_non_numeric_value_is_refused(self, bad, why):
+        with pytest.raises(ValidationError, match=rf"init_timeout\n\s+Input should be (a )?{why}"):
+            validate_host_dict(self._entry(init_timeout=bad), element=Element("e"))

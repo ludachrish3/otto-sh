@@ -24,6 +24,7 @@ from pydantic import (
     ConfigDict,
     Discriminator,
     Field,
+    StrictFloat,
     StrictInt,
     Tag,
     field_validator,
@@ -1067,6 +1068,9 @@ class UnixHostSpec(HostSpec):
     impairer: Annotated[str | None, Resolve(_selection("impairer"))] = None
     docker_capable: bool = False
     shell_history: bool = False
+    init_timeout: StrictFloat | None = Field(default=None, gt=0, allow_inf_nan=False)
+    """Seconds a newly opened shell has to answer otto's readiness probe;
+    ``None`` keeps the session's own ceiling. See ``UnixHost.init_timeout``."""
     docker_priority: StrictInt = 0
     """Which docker-capable host a use-case deploys on when ``--parent`` is
     omitted and the lab selection has several. Highest wins; a tie at the top

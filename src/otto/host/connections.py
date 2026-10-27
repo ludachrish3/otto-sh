@@ -40,7 +40,7 @@ from ..models.base import Cred
 from ..registry import BackendRegistry, Ref, class_backend, registration_boundary
 from .login_proxy import LoginProxyError, default_login, resolve_chain
 from .options import ConsoleOptions, FtpOptions, SftpOptions, SshOptions, TelnetOptions
-from .telnet import TelnetClient
+from .telnet import TelnetClient, open_connection_default
 
 if TYPE_CHECKING:
     import aioftp
@@ -418,6 +418,39 @@ async def connect_and_describe(
     return conn
 
 
+def _seconds(value: Any, *, intervals: bool = False) -> float:
+    """Return a transport timeout as seconds; ``0`` for an unset or unreadable one.
+
+    A number; with *intervals*, also an interval string such as ``"10s"``,
+    which asyncssh accepts and parses with its own ``parse_time_interval``
+    (telnetlib3 takes numbers only). Budget sizing must not raise on a value
+    the transport itself would refuse or read differently.
+    """
+    if value is None or isinstance(value, bool):
+        return 0.0
+    if isinstance(value, int | float):
+        return float(value)
+    if intervals and isinstance(value, str):
+        from asyncssh.misc import parse_time_interval
+
+        with contextlib.suppress(ValueError):
+            return float(parse_time_interval(value))
+    return 0.0
+
+
+def _telnetlib3_waits(open_kwargs: dict[str, Any]) -> float:
+    """Seconds ``telnetlib3.open_connection(**open_kwargs)`` can wait.
+
+    The TCP connect (``connect_timeout``, unbounded when unset), then option
+    negotiation (``connect_maxwait``, telnetlib3's default when not passed).
+    """
+    if "connect_maxwait" in open_kwargs:
+        maxwait = _seconds(open_kwargs["connect_maxwait"])
+    else:
+        maxwait = open_connection_default("connect_maxwait")
+    return _seconds(open_kwargs.get("connect_timeout")) + maxwait
+
+
 class ConnectionManager:
     """Owns all raw transport connections for a single remote host.
 
@@ -614,6 +647,64 @@ class ConnectionManager:
     @term.setter
     def term(self, value: str) -> None:
         self._term = value
+
+    def connect_allowance(self, term: str | None = None) -> float:
+        """Seconds one session open on *term* waits, bounded, besides the readiness deadline.
+
+        *term* defaults to the active one; a caller sizing a login over another
+        term of the same host (the survey's copies) names it. What a caller
+        bounding a session open must allow per attempt on top of the shell's
+        readiness deadline, read from the kwargs the transport is opened with
+        (so an ``extra`` override counts as it applies):
+
+        - ``ssh``: asyncssh's ``connect_timeout``, when set (it covers the TCP
+          connect, key exchange and authentication). Unset, authentication is
+          left to asyncssh's own ``login_timeout`` (120 s), which is not
+          counted.
+        - ``telnet``: telnetlib3's ``connect_timeout``, when set, and its option
+          negotiation (``connect_maxwait``), plus the ``DONT ECHO`` negotiation
+          (``echo_negotiation_timeout``).
+        - ``console``: the same telnetlib3 waits (its ``connect_timeout``
+          defaults to ``login_timeout``), the ECHO negotiation and the settle
+          window. A console that logs in adds one ``login_timeout`` each for
+          the login and password prompts, then, after a failed handshake, the
+          longer of the two ways out: two reads that find the login refused,
+          or one read and the close's logout (a read, a settle and another
+          read, when ``logout`` is on).
+
+        A wait otto leaves unbounded (an unset ``connect_timeout``, a telnet
+        login prompt that never comes) adds nothing, so a caller still needs a
+        margin of its own. Any other term counts ``0``.
+        """
+        term = self._term if term is None else term
+        if term == "ssh":
+            kwargs = self._ssh_options._effective_kwargs()  # noqa: SLF001 — intra-package access to SshOptions._effective_kwargs
+            return _seconds(kwargs.get("connect_timeout"), intervals=True)
+        if term == "telnet":
+            telnet = self._telnet_options
+            return _telnetlib3_waits(telnet._open_kwargs()) + telnet.echo_negotiation_timeout  # noqa: SLF001 — intra-package access to TelnetOptions._open_kwargs
+        if term == "console":
+            console = self._console_options
+            dial = _telnetlib3_waits(console._open_kwargs())  # noqa: SLF001 — intra-package access to ConsoleOptions._open_kwargs
+            opened = dial + console.echo_negotiation_timeout + console.settle
+            if not console.login:
+                return opened
+            each = console.login_timeout
+            logout = 2 * each + console.settle if console.logout else 0.0
+            way_out = max(2 * each, each + logout)
+            return opened + 2 * each + way_out
+        return 0.0
+
+    def retries_failed_open(self, term: str | None = None) -> bool:
+        """Return whether ``SessionManager._ensure_session`` retries a failed open on *term*.
+
+        Every term but a console that logs in: once its client has typed the
+        password, the session refuses a retry, which would type it again
+        (``TelnetSession`` clears ``_retry_failed_handshake`` for a logged-in
+        console client).
+        """
+        term = self._term if term is None else term
+        return not (term == "console" and self._console_options.login)
 
     @property
     def connected(self) -> bool:

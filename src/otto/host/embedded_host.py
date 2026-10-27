@@ -87,7 +87,7 @@ logger = logging.getLogger(__name__)
 # Readiness-handshake ceiling for an embedded telnet console. The Zephyr shell
 # under QEMU can take a few seconds after the TCP connection opens before it
 # starts reading input, so the marker handshake needs a more generous ceiling
-# than the bash default (3 s). Passed to the SessionManager as ``init_timeout``.
+# than the bash default (10 s). Passed to the SessionManager as ``init_timeout``.
 _EMBEDDED_INIT_TIMEOUT = 15.0
 
 

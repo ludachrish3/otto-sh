@@ -2262,6 +2262,28 @@ class TestOpenSession:
         )
         await h.close()
 
+    @pytest.mark.asyncio
+    async def test_telnet_session_gets_the_host_init_timeout(self):
+        # The exec pool's sessions are named telnet sessions: the path #732's
+        # failures took. The host's deadline must reach them.
+        h = UnixHost(
+            ip="10.0.0.1",
+            element=Element("box"),
+            creds=[Cred(login="u", password="p")],
+            term="telnet",
+            log=LogMode.QUIET,
+            init_timeout=30.0,
+        )
+        with (
+            patch("otto.host.session.TelnetClient", return_value=self._mock_telnet_client()),
+            patch(
+                "otto.host.session.TelnetSession", return_value=self._mock_shell_session()
+            ) as MockTelnetSession,  # noqa: N806 — CapWords for a class mock
+        ):
+            await h.open_session("monitor")
+        assert MockTelnetSession.call_args.kwargs["init_timeout"] == 30.0
+        await h.close()
+
     # --- Multiple SSH sessions ---
 
     @pytest.mark.asyncio

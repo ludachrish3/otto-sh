@@ -503,3 +503,16 @@ def test_a_first_register_os_profile_imports_the_host_class_whole():
     assert "_fresh" in first["names"].pop(profiles)
     reference["names"].pop(profiles)
     assert first["names"] == reference["names"]
+
+
+def test_a_profile_can_default_the_readiness_deadline():
+    """`init_timeout` is a plain field, so an `[os_profiles]` block can default it (#732)."""
+    from otto.host.factory import create_host_from_dict
+
+    register_os_profile("t-slow-login", base="unix", defaults={"init_timeout": 25})
+    host = create_host_from_dict(
+        {"os_type": "t-slow-login", "ip": "10.0.0.1", "creds": [{"login": "v", "password": "v"}]},
+        element=Element("slow1"),
+    )
+    assert host.init_timeout == 25
+    assert host._session_mgr.open_budget("ssh") == 2 * 25 + 2.0

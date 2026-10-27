@@ -11,13 +11,16 @@ transport, keyed by login, distinct from the primary ``ssh()``/``sftp()``
 slot that authenticates as ``login_target``.
 """
 
+import inspect
 from unittest.mock import AsyncMock
 
 import pytest
+import telnetlib3
 from asyncssh import SSHClientConnection
 
 from otto.host.connections import ConnectionManager
 from otto.host.login_proxy import Cred, LoginProxyError
+from otto.host.options import ConsoleOptions, SshOptions, TelnetOptions
 
 ADMIN = Cred(login="admin", password="hunter2")
 MYSQL = Cred(login="mysql", password="sqlpw", proxy="su", via="admin")
@@ -566,3 +569,95 @@ async def test_console_login_failure_tears_the_client_down(monkeypatch):
         await mgr.console()
     assert writer.closed is True
     assert mgr._console_conn is None
+
+
+_MAXWAIT = inspect.signature(telnetlib3.open_connection).parameters["connect_maxwait"].default
+
+
+class TestConnectAllowance:
+    """The bounded waits one connect spends before the shell's readiness clock starts (#732)."""
+
+    def _cm(self, term, **options):
+        return ConnectionManager(
+            ip="10.0.0.1", creds=[Cred(login="u", password="p")], term=term, name="h1", **options
+        )
+
+    def test_ssh_counts_only_a_set_connect_timeout(self):
+        assert self._cm("ssh").connect_allowance() == 0.0
+        assert self._cm("ssh", ssh_options=SshOptions(connect_timeout=5)).connect_allowance() == 5
+
+    def test_an_ssh_extra_connect_timeout_counts_as_it_applies(self):
+        opts = SshOptions(connect_timeout=5, extra={"connect_timeout": 11})
+        assert self._cm("ssh", ssh_options=opts).connect_allowance() == 11
+
+    def test_telnet_counts_telnetlib3s_waits_and_the_echo_negotiation(self):
+        # telnetlib3 waits up to connect_maxwait (3 s by default) for option
+        # negotiation after the TCP connect, before otto's own DONT ECHO.
+        cm = self._cm("telnet", telnet_options=TelnetOptions(connect_timeout=2.0))
+        assert cm.connect_allowance() == 2.0 + _MAXWAIT + TelnetOptions().echo_negotiation_timeout
+
+    def test_a_telnet_extra_override_counts_as_it_applies(self):
+        opts = TelnetOptions(
+            connect_timeout=2.0, extra={"connect_timeout": 6, "connect_maxwait": 1}
+        )
+        cm = self._cm("telnet", telnet_options=opts)
+        assert cm.connect_allowance() == 6 + 1 + opts.echo_negotiation_timeout
+
+    def test_a_named_term_overrides_the_active_one(self):
+        assert (
+            self._cm("ssh").connect_allowance("telnet")
+            == _MAXWAIT + TelnetOptions().echo_negotiation_timeout
+        )
+
+    def test_a_console_counts_its_dial_and_its_prompt_and_refusal_waits_when_it_logs_in(self):
+        opts = ConsoleOptions(server="s", port=1, login_timeout=4.0, settle=0.5)
+        cm = self._cm("console", console_options=opts)
+        # Dial bounded by login_timeout, then telnetlib3's negotiation, the
+        # ECHO negotiation and the settle; then two prompts and, after a
+        # failed handshake, the longer way out: one read plus the close's
+        # logout (read, settle, read) outlasts the two refusal reads.
+        dial = 4.0 + _MAXWAIT
+        opened = dial + opts.echo_negotiation_timeout + 0.5
+        assert cm.connect_allowance() == opened + 2 * 4.0 + (4.0 + 2 * 4.0 + 0.5)
+        no_logout = ConsoleOptions(server="s", port=1, login_timeout=4.0, settle=0.5, logout=False)
+        assert self._cm("console", console_options=no_logout).connect_allowance() == (
+            opened + 2 * 4.0 + 2 * 4.0
+        )
+        quiet_opts = ConsoleOptions(server="s", port=1, login=False)
+        quiet = self._cm("console", console_options=quiet_opts)
+        assert quiet.connect_allowance() == (
+            quiet_opts.login_timeout
+            + _MAXWAIT
+            + quiet_opts.echo_negotiation_timeout
+            + quiet_opts.settle
+        )
+
+    def test_a_console_extra_connect_timeout_replaces_the_login_timeout_dial(self):
+        opts = ConsoleOptions(server="s", port=1, login=False, extra={"connect_timeout": 1.0})
+        cm = self._cm("console", console_options=opts)
+        assert (
+            cm.connect_allowance() == 1.0 + _MAXWAIT + opts.echo_negotiation_timeout + opts.settle
+        )
+
+    def test_an_interval_string_counts_as_asyncssh_reads_it(self):
+        # asyncssh accepts "10s"; the budget must read it, not crash on it.
+        opts = SshOptions(extra={"connect_timeout": "10s"})
+        assert self._cm("ssh", ssh_options=opts).connect_allowance() == 10.0
+
+    def test_an_unreadable_timeout_counts_nothing_rather_than_raising(self):
+        ssh = SshOptions(extra={"connect_timeout": "soon"})
+        assert self._cm("ssh", ssh_options=ssh).connect_allowance() == 0.0
+        telnet = TelnetOptions(extra={"connect_maxwait": object()})
+        cm = self._cm("telnet", telnet_options=telnet)
+        assert cm.connect_allowance() == telnet.echo_negotiation_timeout
+
+    def test_only_a_console_that_logs_in_is_not_retried(self):
+        assert self._cm("ssh").retries_failed_open() is True
+        assert self._cm("ssh").retries_failed_open("telnet") is True
+        logs_in = self._cm("console", console_options=ConsoleOptions(server="s", port=1))
+        assert logs_in.retries_failed_open() is False
+        quiet_opts = ConsoleOptions(server="s", port=1, login=False)
+        assert self._cm("console", console_options=quiet_opts).retries_failed_open() is True
+
+    def test_an_unknown_term_counts_nothing(self):
+        assert self._cm("ssh").connect_allowance("xmodem") == 0.0

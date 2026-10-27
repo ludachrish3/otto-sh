@@ -150,7 +150,9 @@ class TestFraming:
         """The QEMU telnet shell needs warm-up; the embedded session's
         handshake ceiling is raised above the bash default.
         """
-        assert MockZephyrSession()._init_timeout >= 10.0
+        from otto.host import session as session_mod
+
+        assert MockZephyrSession()._init_timeout > session_mod._INIT_TIMEOUT
 
     @pytest.mark.asyncio
     async def test_run_cmd_writes_framed_command(self, session: MockZephyrSession):

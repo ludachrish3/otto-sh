@@ -47,18 +47,13 @@ from typing_extensions import override
 
 from ..logger.mode import LogMode
 from ..models.base import Cred
-from .command_frame import BashFrame, CommandFrame
+from .command_frame import CommandFrame
 from .host import DEFAULT_COMMAND_TIMEOUT
 from .login_proxy import run_proxy
-from .session import HostSession, ShellSession, _SessionProxyIO
+from .session import BridgeSetup, HostSession, ShellSession, _SessionProxyIO
 
 if TYPE_CHECKING:
-    # `otto.host.session_setup` is off the CLI startup import graph and this
-    # module is on it (`unix_host` imports it at module level), so the name is
-    # available for annotations only; the runtime names it needs are imported
-    # inside `_run_session_setup_on_bridge`.
     from .console import ConsoleClient
-    from .session_setup import SessionSetup
 
 logger = logging.getLogger(__name__)
 
@@ -493,8 +488,9 @@ class _BridgeShellSession(ShellSession):
         newline: bytes,
         command_frame: "CommandFrame | None",
         console_client: "ConsoleClient | None" = None,
+        init_timeout: float | None = None,
     ) -> None:
-        super().__init__(command_frame=command_frame, shell_history=True)
+        super().__init__(command_frame=command_frame, init_timeout=init_timeout, shell_history=True)
         self._write_remote = write_remote
         self._read_remote = read_remote
         self._newline = newline
@@ -556,10 +552,7 @@ async def _run_session_setup_on_bridge(  # noqa: PLR0913 — wide bridge entry p
     newline: bytes,
     host_name: str,
     host_id: str,
-    setup: "SessionSetup",
-    landing_frame: "CommandFrame | None",
-    target_frame: "CommandFrame",
-    creds: "list[Cred] | None",
+    bridge: "BridgeSetup",
     proxy_hops: Sequence[Cred],
     via_login: str,
     log_line: Callable[[str], None],
@@ -584,20 +577,22 @@ async def _run_session_setup_on_bridge(  # noqa: PLR0913 — wide bridge entry p
     *term* is the transport the bridge runs over (``ssh``, ``telnet`` or
     ``console``), named in the hook handle's refusals. *console_client* is the
     console bridge's client, so the hook's ``console_login()`` can run it;
-    ``None`` on every other transport.
+    ``None`` on every other transport. *bridge* carries the hook and the
+    host's session fields, as the host's own session manager holds them.
     """
     # Local, like SessionManager._apply_session_setup's: `otto.host.session_setup`
     # is off the CLI startup import graph and this module is on it, so a host
     # without a hook must not pull it in (pinned in test_import_contracts.py).
     from .session_setup import SetupContext, apply_session_setup
 
-    landing_dialect = landing_frame or target_frame
+    setup, target_frame, creds = bridge.setup, bridge.target_frame, bridge.creds
     session = _BridgeShellSession(
         write_remote,
         read_remote,
         newline=newline,
-        command_frame=landing_dialect,
+        command_frame=bridge.landing_frame or target_frame,
         console_client=console_client,
+        init_timeout=bridge.init_timeout,
     )
     await session._ensure_initialized()  # noqa: SLF001 — the bridge is this session's manager
     # Empty, always: nothing this function writes may suppress the history of
@@ -605,7 +600,10 @@ async def _run_session_setup_on_bridge(  # noqa: PLR0913 — wide bridge entry p
     # hook's handle both take their prefix from here.
     prefix = ""
     # Seed the identity before the hops and stamp it after them, mirroring
-    # SessionManager._seed_user / _apply_login_proxy. Without it a hook calling
+    # SessionManager._seed_user / _apply_login_proxy. A hand copy of that
+    # sequence, and it already differs: each hop's via is a bare
+    # Cred(login=via) where the manager resolves the via account's full cred.
+    # Folding both into one SessionManager entry point is issue #736. Without it a hook calling
     # as_user() reads `current_user == ""`, and perform_switch inserts a
     # spurious hop to the via account that the unwind then over-pops.
     session.current_user = via_login
@@ -672,6 +670,7 @@ async def _replay_proxy_hops(
     _print_stderr(f"[otto] proxying to {proxy_hops[-1].login}...")
     bridge_io = _BridgeProxyIO(write_remote, read_remote, newline)
     via = via_login
+    # A third copy of the hop replay, with the same bare via cred (#736).
     for hop in proxy_hops:
         await run_proxy(bridge_io, hop, via=Cred(login=via), host_id=host_id)
         via = hop.login
@@ -822,10 +821,7 @@ async def run_ssh_login(
     proxy_hops: Sequence[Cred] = (),
     via_login: str = "",
     host_id: str = "",
-    session_setup: "SessionSetup | None" = None,
-    landing_frame: "CommandFrame | None" = None,
-    target_frame: "CommandFrame | None" = None,
-    creds: "list[Cred] | None" = None,
+    bridge_setup: "BridgeSetup | None" = None,
 ) -> int | None:
     """Open a PTY-backed SSH shell on ``conn`` and bridge it to the terminal.
 
@@ -859,11 +855,12 @@ async def run_ssh_login(
     is passed through to :func:`~otto.host.login_proxy.run_proxy` for error
     context.
 
-    With *session_setup* the hops are replayed over a framed bridge session
+    With *bridge_setup* the hops are replayed over a framed bridge session
     and the hook runs before the pumps (see
     ``_run_session_setup_on_bridge()``); without it, today's path is taken
-    byte for byte. *landing_frame*/*target_frame*/*creds* are the host's own
-    fields, and are read only on that path. The host's ``shell_history`` is
+    byte for byte. *bridge_setup* comes from the host's own session manager
+    (``SessionManager._bridge_setup()``) and is read only on
+    that path. The host's ``shell_history`` is
     NOT among them: ``login`` never suppresses a human's shell history.
     """
     import asyncssh
@@ -918,7 +915,7 @@ async def run_ssh_login(
 
     try:
         prelude: bytes | None = None
-        if session_setup is None:
+        if bridge_setup is None:
             await _replay_proxy_hops(
                 write_remote=write_remote,
                 read_remote=read_remote,
@@ -934,10 +931,7 @@ async def run_ssh_login(
                 newline=b"\n",
                 host_name=host_name,
                 host_id=host_id,
-                setup=session_setup,
-                landing_frame=landing_frame,
-                target_frame=target_frame or BashFrame(),
-                creds=creds,
+                bridge=bridge_setup,
                 proxy_hops=proxy_hops,
                 via_login=via_login,
                 log_line=log_file_effective.write_line,
@@ -970,17 +964,14 @@ async def run_ssh_login(
         _print_stderr(f"[otto] disconnected from {host_name}.")
 
 
-async def run_telnet_login(  # noqa: PLR0913 — wide bridge entry point: the host fields plus the transport label and a notice
+async def run_telnet_login(
     *,
     client: Any,
     host_name: str,
     proxy_hops: Sequence[Cred] = (),
     via_login: str = "",
     host_id: str = "",
-    session_setup: "SessionSetup | None" = None,
-    landing_frame: "CommandFrame | None" = None,
-    target_frame: "CommandFrame | None" = None,
-    creds: "list[Cred] | None" = None,
+    bridge_setup: "BridgeSetup | None" = None,
     transport_label: str = "telnet",
     notice: str | None = None,
 ) -> None:
@@ -1006,11 +997,12 @@ async def run_telnet_login(  # noqa: PLR0913 — wide bridge entry point: the ho
     but before ``_run_bridge`` starts the pumps, using ``b"\\r"`` as the
     line terminator (telnet's convention, vs. SSH PTY's ``b"\\n"``).
 
-    With *session_setup* the hops are replayed over a framed bridge session
+    With *bridge_setup* the hops are replayed over a framed bridge session
     and the hook runs before the pumps (see
     ``_run_session_setup_on_bridge()``); without it, today's path is taken
-    byte for byte. *landing_frame*/*target_frame*/*creds* are the host's own
-    fields, and are read only on that path. The host's ``shell_history`` is
+    byte for byte. *bridge_setup* comes from the host's own session manager
+    (``SessionManager._bridge_setup()``) and is read only on
+    that path. The host's ``shell_history`` is
     NOT among them: ``login`` never suppresses a human's shell history.
     """
     reader = client.reader
@@ -1061,7 +1053,7 @@ async def run_telnet_login(  # noqa: PLR0913 — wide bridge entry point: the ho
             _print_stderr(f"[otto] {notice}")
             log_file.write_line(f"[otto] {notice}")
         prelude: bytes | None = None
-        if session_setup is None:
+        if bridge_setup is None:
             await _replay_proxy_hops(
                 write_remote=write_remote,
                 read_remote=read_remote,
@@ -1077,10 +1069,7 @@ async def run_telnet_login(  # noqa: PLR0913 — wide bridge entry point: the ho
                 newline=b"\r",
                 host_name=host_name,
                 host_id=host_id,
-                setup=session_setup,
-                landing_frame=landing_frame,
-                target_frame=target_frame or BashFrame(),
-                creds=creds,
+                bridge=bridge_setup,
                 proxy_hops=proxy_hops,
                 via_login=via_login,
                 log_line=log_file.write_line,

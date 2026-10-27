@@ -2625,3 +2625,94 @@ async def test_an_echoed_password_never_reaches_the_handshake_message(monkeypatc
     message = str(exc_info.value)
     assert "s3cret" not in message
     assert "***" in message
+
+
+class TestOpenBudget:
+    """How long opening the default session can take to report a shell that never became ready."""
+
+    def test_two_attempts_of_connect_and_deadline_and_the_backoff(self):
+        conn = MagicMock()
+        conn.connect_allowance.return_value = 3.0
+        mgr = SessionManager(connections=conn, name="h", init_timeout=4.0, retry_backoff=1.0)
+        assert mgr.open_budget() == 2 * (3.0 + 4.0) + 1.0
+        conn.connect_allowance.assert_called_once_with(None)
+
+    def test_a_term_that_is_not_retried_counts_one_attempt_and_no_pause(self):
+        conn = MagicMock()
+        conn.connect_allowance.return_value = 3.0
+        conn.retries_failed_open.return_value = False
+        mgr = SessionManager(connections=conn, name="h", init_timeout=4.0, retry_backoff=1.0)
+        assert mgr.open_budget("console") == 3.0 + 4.0
+        conn.retries_failed_open.assert_called_once_with("console")
+
+    def test_a_named_term_is_asked_for_its_own_connect_waits(self):
+        conn = MagicMock()
+        conn.connect_allowance.return_value = 0.0
+        SessionManager(connections=conn, name="h").open_budget("telnet")
+        conn.connect_allowance.assert_called_once_with("telnet")
+
+    def test_no_override_uses_the_class_default(self, monkeypatch):
+        # The class attribute is what a session without an override waits,
+        # and the seam tests patch, so the budget follows it.
+        monkeypatch.setattr(ShellSession, "_init_timeout", 7.0)
+        mgr = SessionManager(name="h", retry_backoff=0.5)
+        assert mgr.open_budget() == 2 * 7.0 + 0.5
+
+    def test_a_single_client_console_dialect_counts_the_drain_of_each_failed_attempt(self):
+        from otto.host.session import _CONSOLE_QUIESCE_BUDGET
+
+        mgr = SessionManager(
+            name="h", init_timeout=4.0, retry_backoff=1.0, command_frame=ZephyrFrame()
+        )
+        assert mgr.open_budget() == 2 * (4.0 + _CONSOLE_QUIESCE_BUDGET) + 1.0
+
+
+class TestBridgeSetup:
+    """`otto login`'s hook bridge gets a bundle the manager builds from its own session fields."""
+
+    def test_no_hook_means_no_bridge_setup(self):
+        assert SessionManager(connections=MagicMock(), name="h")._bridge_setup() is None
+
+    def test_the_bundle_carries_the_manager_fields(self):
+        from otto.host.command_frame import BashFrame, RawFrame
+        from otto.host.session_setup import SessionSetup
+
+        creds = [Cred(login="admin", password="pw")]
+        setup = SessionSetup(name="t-bridge")
+        mgr = SessionManager(
+            connections=MagicMock(),
+            name="h",
+            creds=creds,
+            init_timeout=33.0,
+            session_setup=setup,
+            landing_frame=RawFrame(),
+        )
+        got = mgr._bridge_setup()
+        assert got is not None
+        assert (got.setup, got.creds, got.init_timeout) == (setup, creds, 33.0)
+        assert isinstance(got.landing_frame, RawFrame)
+        # No command_frame declared: the hook hands over a bash shell.
+        assert isinstance(got.target_frame, BashFrame)
+
+
+@pytest.mark.parametrize("login", [True, False])
+def test_the_budgets_retry_rule_agrees_with_the_console_session(login):
+    """``retries_failed_open`` predicts what the built session decides (#732).
+
+    The budget needs the answer before any session exists, so it states the
+    rule statically; the session decides it from its console client. A
+    console that logs in has typed the password, and must not be retried.
+    """
+    from otto.host.connections import ConnectionManager
+    from otto.host.options import ConsoleOptions
+
+    conns = ConnectionManager(
+        ip="10.0.0.1",
+        creds=[Cred(login="u", password="p")],
+        term="console",
+        name="h",
+        console_options=ConsoleOptions(server="s", port=1, login=login),
+    )
+    client = SimpleNamespace(logged_in=login)
+    session = TelnetSession(reader=object(), writer=object(), console_client=client)
+    assert conns.retries_failed_open() is session._retry_failed_handshake

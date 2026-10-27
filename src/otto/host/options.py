@@ -187,7 +187,22 @@ class SshOptions:
     forwards, X11, custom subsystems."""
 
     def _kwargs(self) -> dict[str, Any]:
-        """Build the kwargs dict passed to ``asyncssh.connect()``.
+        """Build the kwargs dict passed to ``asyncssh.connect()``, warning on identity overrides.
+
+        :meth:`_effective_kwargs` without the warning is what a caller reads
+        when it only needs a value, such as the connect timeout a budget
+        counts; the warning belongs to the connect.
+        """
+        overridden = sorted(self.extra.keys() & _EXTRA_IDENTITY_OVERRIDE_KEYS)
+        if overridden:
+            logger.warning(
+                f"SshOptions.extra sets {overridden}, silently overriding the caller's own "
+                "connect kwarg(s) of the same name (the credential or the hop tunnel)"
+            )
+        return self._effective_kwargs()
+
+    def _effective_kwargs(self) -> dict[str, Any]:
+        """Build the kwargs ``asyncssh.connect()`` gets, curated fields then ``extra``.
 
         Includes only fields the caller explicitly set, so asyncssh's own
         defaults apply for everything we did not override. ``known_hosts``
@@ -222,12 +237,6 @@ class SshOptions:
             kw["kex_algs"] = self.kex_algs
         if self.mac_algs is not None:
             kw["mac_algs"] = self.mac_algs
-        overridden = sorted(self.extra.keys() & _EXTRA_IDENTITY_OVERRIDE_KEYS)
-        if overridden:
-            logger.warning(
-                f"SshOptions.extra sets {overridden}, silently overriding the caller's own "
-                "connect kwarg(s) of the same name (the credential or the hop tunnel)"
-            )
         kw.update(self.extra)
         return kw
 
@@ -419,6 +428,9 @@ class ConsoleOptions:
             "encoding": self.encoding,
             "cols": self.cols,
             "rows": self.rows,
+            # telnetlib3's connect_timeout bounds only the TCP connect, never
+            # its option-negotiation wait (``connect_maxwait``).
+            "connect_timeout": self.login_timeout,
         }
         kw.update(self.extra)
         return kw

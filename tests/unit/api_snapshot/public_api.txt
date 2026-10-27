@@ -1534,6 +1534,7 @@ mro	otto.host:ConnectionManager	-
 call	otto.host:ConnectionManager	sync	PK:ip:- PK:creds:- PK:term:- PK:name:- PK:hop:N PK:ssh_options:N PK:telnet_options:N PK:sftp_options:N PK:ftp_options:N KO:console_options:N KO:console_endpoint:N
 member	otto.host:ConnectionManager.abandon_console	method	sync	-
 member	otto.host:ConnectionManager.close	method	coroutine	-
+member	otto.host:ConnectionManager.connect_allowance	method	sync	PK:term:N
 member	otto.host:ConnectionManager.connected	property:g--
 member	otto.host:ConnectionManager.console	method	coroutine	-
 member	otto.host:ConnectionManager.console_options	property:g--
@@ -1548,6 +1549,7 @@ member	otto.host:ConnectionManager.ip	property:g--
 member	otto.host:ConnectionManager.login_target	property:g--
 member	otto.host:ConnectionManager.login_target_for	method	sync	PK:protocol:-
 member	otto.host:ConnectionManager.proxy_hops	property:g--
+member	otto.host:ConnectionManager.retries_failed_open	method	sync	PK:term:N
 member	otto.host:ConnectionManager.sftp	method	coroutine	-
 member	otto.host:ConnectionManager.sftp_as	method	coroutine	PK:user:-
 member	otto.host:ConnectionManager.ssh	method	coroutine	-
@@ -2555,6 +2557,7 @@ member	otto.host:SessionManager.exec_on	method	coroutine	PK:conn:- PK:cmd:- PK:t
 member	otto.host:SessionManager.expect	method	coroutine	PK:pattern:- PK:timeout:F:0x1.e000000000000p+4
 member	otto.host:SessionManager.has_live_default_session	property:g--
 member	otto.host:SessionManager.has_live_sessions	property:g--
+member	otto.host:SessionManager.open_budget	method	sync	PK:term:N
 member	otto.host:SessionManager.open_session	method	coroutine	PK:name:-
 member	otto.host:SessionManager.run_cmd	method	coroutine	PK:cmd:- PK:expects:N PK:timeout:F:0x1.e000000000000p+4 PK:log:E:{otto.logger:LogMode}:NORMAL=S:"normal" PK:write_progress:N
 member	otto.host:SessionManager.send	method	coroutine	PK:text:- PK:log:E:{otto.logger:LogMode}:NORMAL=S:"normal"
@@ -2735,7 +2738,7 @@ abstract	otto.host:TransferMetadata	-
 name	otto.host:TransferProgressHandler	alias
 name	otto.host:UnixHost	class
 mro	otto.host:UnixHost	{otto.host:PosixPrivilege} {otto.host:PosixFileOps} {otto.host:RemoteHost} {otto.host:BaseHost}
-call	otto.host:UnixHost	sync	PK:ip:- PK:creds:O KO:name:S:"" KO:log:E:{otto.logger:LogMode}:NORMAL=S:"normal" KO:lab_info:O KO:resources:O KO:element:- KO:inventory_ref:O KO:products:O KO:dev_tools:O KO:shadowed_products:O KO:shadowed_dev_tools:O KO:toolchain:O KO:power_control:N KO:debug_log_globs:O KO:has_bash:B:true KO:board:N KO:slot:N KO:site:N KO:rack:N KO:shelf:N KO:hop:N KO:os_type:S:"unix" KO:os_name:S:"Linux" KO:os_version:N KO:hw_version:N KO:sw_version:N KO:term:S:"ssh" KO:transfer:S:"scp" KO:valid_terms:O KO:valid_transfers:O KO:is_virtual:B:false KO:command_frame:N KO:landing_frame:N KO:session_setup:N KO:default_dest_dir:O KO:max_filename_len:I:255 KO:telnet_options:O KO:console_options:O KO:snmp:N KO:metadata:O KO:interfaces:O KO:_lab:N KO:docker_capable:B:false KO:docker_priority:I:0 KO:impairer:S:"netem" KO:valid_impairers:O KO:ssh_options:O KO:sftp_options:O KO:scp_options:O KO:ftp_options:O KO:nc_options:O KO:userland_options:O KO:shell_history:B:false
+call	otto.host:UnixHost	sync	PK:ip:- PK:creds:O KO:name:S:"" KO:log:E:{otto.logger:LogMode}:NORMAL=S:"normal" KO:lab_info:O KO:resources:O KO:element:- KO:inventory_ref:O KO:products:O KO:dev_tools:O KO:shadowed_products:O KO:shadowed_dev_tools:O KO:toolchain:O KO:power_control:N KO:debug_log_globs:O KO:has_bash:B:true KO:board:N KO:slot:N KO:site:N KO:rack:N KO:shelf:N KO:hop:N KO:os_type:S:"unix" KO:os_name:S:"Linux" KO:os_version:N KO:hw_version:N KO:sw_version:N KO:term:S:"ssh" KO:transfer:S:"scp" KO:valid_terms:O KO:valid_transfers:O KO:is_virtual:B:false KO:command_frame:N KO:landing_frame:N KO:session_setup:N KO:default_dest_dir:O KO:max_filename_len:I:255 KO:telnet_options:O KO:console_options:O KO:snmp:N KO:metadata:O KO:interfaces:O KO:_lab:N KO:docker_capable:B:false KO:docker_priority:I:0 KO:impairer:S:"netem" KO:valid_impairers:O KO:ssh_options:O KO:sftp_options:O KO:scp_options:O KO:ftp_options:O KO:nc_options:O KO:userland_options:O KO:shell_history:B:false KO:init_timeout:N
 member	otto.host:UnixHost.__aenter__	method	coroutine	-
 member	otto.host:UnixHost.__aexit__	method	coroutine	VP:exc:-
 member	otto.host:UnixHost.__eq__	method	sync	PK:other:-
@@ -2778,6 +2781,7 @@ member	otto.host:UnixHost.hop_host	method	sync	-
 member	otto.host:UnixHost.hw_version	field
 member	otto.host:UnixHost.id	field
 member	otto.host:UnixHost.impairer	field
+member	otto.host:UnixHost.init_timeout	field
 member	otto.host:UnixHost.install	method	coroutine	PK:stage_only:B:false PK:owner:N
 member	otto.host:UnixHost.install_dev_tools	method	coroutine	PK:owner:N
 member	otto.host:UnixHost.install_toolchain_tools	method	coroutine	-
@@ -2876,6 +2880,7 @@ input	otto.host:UnixHostSpec	S:"has_bash"	optional	B:true	S:"has_bash"
 input	otto.host:UnixHostSpec	S:"hop"	optional	N	S:"hop"
 input	otto.host:UnixHostSpec	S:"hw_version"	optional	N	S:"hw_version"
 input	otto.host:UnixHostSpec	S:"impairer"	optional	N	S:"impairer"
+input	otto.host:UnixHostSpec	S:"init_timeout"	optional	N	S:"init_timeout"
 input	otto.host:UnixHostSpec	S:"interfaces"	optional	O	S:"interfaces"
 input	otto.host:UnixHostSpec	S:"inventory"	optional	N	S:"inventory"
 input	otto.host:UnixHostSpec	S:"ip"	required	-	S:"ip"
@@ -2925,6 +2930,7 @@ member	otto.host:UnixHostSpec.has_bash	field
 member	otto.host:UnixHostSpec.hop	field
 member	otto.host:UnixHostSpec.hw_version	field
 member	otto.host:UnixHostSpec.impairer	field
+member	otto.host:UnixHostSpec.init_timeout	field
 member	otto.host:UnixHostSpec.interfaces	field
 member	otto.host:UnixHostSpec.inventory	field
 member	otto.host:UnixHostSpec.ip	field

@@ -18,6 +18,7 @@ import uuid
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager, suppress
+from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
@@ -93,10 +94,15 @@ _RECOVERY_PROBE_TIMEOUT = 0.5
 
 # Ceiling on the post-open marker handshake (ShellSession._handshake, whose
 # ``timeout`` argument defaults to it and can override it per call — see
-# ShellSession.enter_frame). Generous enough for slow MOTD generation on real
-# hardware, but bounded so a failed telnet login — where the READY marker can
-# never appear — surfaces as a clear error instead of hanging indefinitely.
-_INIT_TIMEOUT = 3.0
+# ShellSession.enter_frame). A Unix host sets it per host through its
+# ``init_timeout`` field, which defaults to this. Over telnet the window opens
+# the moment the password is written, so it covers the peer's PAM check,
+# login(1), the MOTD and the shell's startup files, all read back through
+# telnetlib3 on a client that may itself be busy: 3 s was missed on a loaded
+# nested-virtualisation lab (#732) while 10 s leaves room for that. Still
+# bounded, so a failed telnet login — where the READY marker can never
+# appear — surfaces as a clear error instead of hanging indefinitely.
+_INIT_TIMEOUT = 10.0
 
 # Single-client console quiesce (issue #324). Before a single-client console
 # connection is released on a failed-handshake teardown, otto reads it until it
@@ -2431,6 +2437,34 @@ class _ExecRoute(Enum):
     """A term this manager cannot exec on at all; ``exec`` raises for it."""
 
 
+@dataclass(frozen=True)
+class BridgeSetup:
+    """A host's session-setup hook and the session fields it runs with, for ``otto login``.
+
+    ``otto login`` drives its own interactive bridge rather than a managed
+    session, so it cannot read the manager's fields the way ``run`` and
+    ``exec`` sessions do. Built only by ``SessionManager._bridge_setup()``,
+    from the same fields the manager's sessions are built with, so the hook
+    runs under the dialects, creds and readiness deadline every other session
+    of the host gets.
+    """
+
+    setup: "SessionSetup"
+    """The hook to run once the bridge's landing shell is ready."""
+
+    landing_frame: CommandFrame | None
+    """The dialect the bridge lands in; ``None`` lands in :attr:`target_frame`."""
+
+    target_frame: CommandFrame
+    """The dialect the hook leaves the shell in, entered after it."""
+
+    creds: "list[Cred] | None"
+    """The host's creds, for elevation from inside the hook."""
+
+    init_timeout: float | None
+    """The readiness deadline for the landing handshake; ``None`` keeps the session default."""
+
+
 class SessionManager:
     """Manages persistent shell sessions for any host type.
 
@@ -2563,6 +2597,49 @@ class SessionManager:
         if self._session and self._session.alive:
             return True
         return any(s.alive for s in self._named_sessions.values())
+
+    def _bridge_setup(self) -> BridgeSetup | None:
+        """Return what ``otto login`` needs to run this host's hook, or ``None`` without one."""
+        if self._session_setup is None:
+            return None
+        return BridgeSetup(
+            setup=self._session_setup,
+            landing_frame=self._landing_frame,
+            target_frame=self._target_frame(),
+            creds=self._creds,
+            init_timeout=self._init_timeout,
+        )
+
+    def open_budget(self, term: str | None = None) -> float:
+        """Seconds opening the default session can take to report a shell that never became ready.
+
+        Two attempts when ``_ensure_session`` retries a failed handshake on a
+        rebuilt transport, with the pause before the retry between them; one
+        on a term it does not retry (a console that logs in, see
+        :meth:`~otto.host.connections.ConnectionManager.retries_failed_open`).
+        Each attempt is the transport's bounded waits on *term* (the active
+        one by default; see
+        :meth:`~otto.host.connections.ConnectionManager.connect_allowance`)
+        plus the readiness deadline. On a single-client console dialect a failed attempt
+        also drains the line before releasing it (``_CONSOLE_QUIESCE_BUDGET``).
+        A caller that bounds the open with less reports a refused telnet
+        password as its own timeout rather than as the ``ConnectionError`` the
+        session raises. Waits otto leaves unbounded are not counted, so such a
+        caller still adds a margin per attempt.
+        """
+        # The class attribute, not the module constant: it is what a session
+        # built without an override actually waits, and the seam tests patch.
+        default = ShellSession._init_timeout  # noqa: SLF001 — the class default every session without an override uses
+        deadline = default if self._init_timeout is None else self._init_timeout
+        conns = self._connections
+        connect = 0.0 if conns is None else conns.connect_allowance(term)
+        retried = conns is None or conns.retries_failed_open(term)
+        frame = self._session_frame
+        quiesce = (
+            _CONSOLE_QUIESCE_BUDGET if frame is not None and frame.single_client_console else 0.0
+        )
+        attempt = connect + deadline + quiesce
+        return 2 * attempt + self._retry_backoff if retried else attempt
 
     def _login_user(self) -> str:
         """Return the host's login username, or '' when loginless / no creds.

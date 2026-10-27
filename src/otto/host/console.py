@@ -523,10 +523,10 @@ class ConsoleClient:
         """Run steps 1-2: dial, negotiate, register as single-client, settle.
 
         Every phase is bounded: the TCP connect by ``login_timeout`` (passed
-        as telnetlib3's ``connect_timeout``, which bounds only the connect,
-        never its option-negotiation wait; ``options.extra`` may override
-        it), echo negotiation by ``echo_negotiation_timeout``, and the settle
-        window by ``settle``. A dial that is refused or times out raises a
+        as telnetlib3's ``connect_timeout``; ``options.extra`` may override
+        it), telnetlib3's option negotiation by its ``connect_maxwait``, echo
+        negotiation by ``echo_negotiation_timeout``, and the settle window by
+        ``settle``. A dial that is refused or times out raises a
         :class:`~otto.host.errors.ConsoleError` naming host, server, port and
         dial mode.
         """
@@ -538,7 +538,6 @@ class ConsoleClient:
         )
         open_kwargs = self.options._open_kwargs()  # noqa: SLF001 — intra-package access
         open_kwargs["port"] = self.port
-        open_kwargs.setdefault("connect_timeout", self.options.login_timeout)
         try:
             self.reader, self.writer = await open_telnet_connection(self.host, **open_kwargs)
         except ConsoleError:
