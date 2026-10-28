@@ -52,8 +52,10 @@ _ZIP = ".zip"
 _WHITEOUT = ".wh."
 _OPAQUE = ".wh..wh..opq"
 _ELF_HEADER_SIZE = 64  # the 64-bit header; a 32-bit one is shorter
+_ELFCLASS32 = 1
 _ELFCLASS64 = 2
 _ELFDATA2LSB = 1
+_ELFDATA2MSB = 2
 _PT_LOAD = 1
 _PT_DYNAMIC = 2
 _DT_NEEDED = 1
@@ -104,6 +106,40 @@ class _UnreadableError(Exception):
     """An artifact this module cannot read; the message is the reason."""
 
 
+@dataclass(frozen=True)
+class ElfIdent:
+    """An ELF image's class and byte order, from its identification bytes."""
+
+    is64: bool
+    """A 64-bit image (``EI_CLASS``); otherwise 32-bit."""
+    big_endian: bool
+    """The target's byte order (``EI_DATA``), which every word in the image uses."""
+
+    @property
+    def pointer_bits(self) -> int:
+        """The target's pointer width, 32 or 64."""
+        return 64 if self.is64 else 32
+
+    @property
+    def order(self) -> str:
+        """The :mod:`struct` byte-order prefix the image's words use."""
+        return ">" if self.big_endian else "<"
+
+
+def elf_ident(data: bytes) -> ElfIdent | None:
+    """Return an ELF image's class and byte order, or ``None`` when *data* is no ELF.
+
+    An image whose class or data byte is neither of the two defined values is
+    no ELF either: guessing a width or an order would misread every word.
+    """
+    if not data.startswith(_ELF_MAGIC) or len(data) < _ELF_HEADER_SIZE:
+        return None
+    ei_class, ei_data = data[4], data[5]
+    if ei_class not in {_ELFCLASS32, _ELFCLASS64} or ei_data not in {_ELFDATA2LSB, _ELFDATA2MSB}:
+        return None
+    return ElfIdent(is64=ei_class == _ELFCLASS64, big_endian=ei_data == _ELFDATA2MSB)
+
+
 def coverage_stems(data: bytes) -> list[str]:
     """Return the distinct coverage stems embedded in *data*, in first-seen order."""
     seen: dict[str, None] = {}
@@ -116,10 +152,10 @@ def coverage_stems(data: bytes) -> list[str]:
 
 def needed_sonames(data: bytes) -> list[str]:
     """Return the ``DT_NEEDED`` sonames of an ELF image, or ``[]`` when it has none."""
-    if not data.startswith(_ELF_MAGIC) or len(data) < _ELF_HEADER_SIZE:
+    ident = elf_ident(data)
+    if ident is None:
         return []
-    is64 = data[4] == _ELFCLASS64
-    end = "<" if data[5] == _ELFDATA2LSB else ">"
+    is64, end = ident.is64, ident.order
     if is64:
         (phoff,) = struct.unpack_from(end + "Q", data, 32)
         phentsize, phnum = struct.unpack_from(end + "HH", data, 54)

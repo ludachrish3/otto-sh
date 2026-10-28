@@ -141,41 +141,13 @@ if ! west build -b "$BOARD" -d "$BUILD_DIR" "$PRODUCT_DIR" -- -DCOV_STARTER_DIR=
     west build -p always -b "$BOARD" -d "$BUILD_DIR" "$PRODUCT_DIR" -- -DCOV_STARTER_DIR="$COV_STARTER_DIR"
 fi
 
-# 4. Strip the sections LLEXT 3.7 cannot relocate (-ENOEXEC on .init_array etc.);
-#    cov_init calls the gcov constructor explicitly via an __asm__ alias instead.
-echo "=== strip -> cov_ext.stripped.llext ==="
-"$OBJCOPY" \
-    --remove-section='.init_array*' --remove-section='.fini_array*' \
-    --remove-section='.rel.init_array*' --remove-section='.rel.fini_array*' \
-    --strip-debug \
-    "$BUILD_DIR/zephyr/cov_ext.llext" "$BUILD_DIR/zephyr/cov_ext.stripped.llext"
-
-# 5. Coherence guard (defense in depth). The extension we load and the .gcno used
-#    to decode its .gcda must share a gcov stamp, or geninfo fails late with
-#    "stamp mismatch with notes file" and silently reports 0% coverage. The stamp
-#    is a 32-bit word: in the .gcno it sits at byte offset 8; in the (stripped)
-#    extension it sits in gcov_info, two words past the gcov version marker (the
-#    .gcno's bytes[4:8]). Verify they agree here so a build-graph regression
-#    surfaces as an actionable build error instead of a silent miscount.
-echo "=== verify gcov stamp: cov_ext.stripped.llext vs cov_ext.c.gcno ==="
-python3 - "$BUILD_DIR" <<'PY'
-import glob, struct, sys, pathlib
-bd = pathlib.Path(sys.argv[1])
-gcnos = glob.glob(str(bd / "CMakeFiles" / "*" / "src" / "cov_ext.c.gcno"))
-if not gcnos:
-    sys.exit("coherence guard: no cov_ext.c.gcno under %s" % bd)
-gcno = pathlib.Path(gcnos[0]).read_bytes()
-ver, stamp_notes = gcno[4:8], struct.unpack_from("<I", gcno, 8)[0]
-blob = (bd / "zephyr" / "cov_ext.stripped.llext").read_bytes()
-stamps = [struct.unpack_from("<I", blob, i + 8)[0]
-          for i in range(len(blob) - 12) if blob[i:i + 4] == ver]
-if not stamps:
-    sys.exit("coherence guard: no gcov_info (version %r) found in stripped.llext" % ver)
-if stamp_notes not in stamps:
-    sys.exit("coherence guard FAILED: .gcno stamp %#x not in loaded extension "
-             "stamps %s — the shipped binary does not match the notes (stale link)."
-             % (stamp_notes, [hex(s) for s in stamps]))
-print("coherence guard OK: stamp %#x matches" % stamp_notes)
-PY
+# 4. Strip the sections LLEXT 3.7 cannot relocate and check that the extension
+#    still shares its gcov stamp with the .gcno that decodes its counters (a stale
+#    link would otherwise surface late, as a silent 0% report). One command owns
+#    both, so no build script restates the strip list or the check.
+echo "=== finish -> cov_ext.stripped.llext (strip + gcov stamp) ==="
+"$OTTO" cov embedded-gcov finish \
+    "$BUILD_DIR/zephyr/cov_ext.llext" "$BUILD_DIR/zephyr/cov_ext.stripped.llext" \
+    --objcopy "$OBJCOPY" --gcno-dir "$BUILD_DIR/CMakeFiles/cov_ext_llext_lib.dir"
 
 echo "=== built $BUILD_DIR/zephyr/cov_ext.stripped.llext ==="

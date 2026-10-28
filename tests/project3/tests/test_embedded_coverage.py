@@ -179,7 +179,10 @@ def _embedded_hosts() -> list[EmbeddedHost]:
 async def _call(host: EmbeddedHost, fn: str, timeout: float = 60) -> None:
     """Invoke an exported extension entry point over the console."""
     ext = _extension(host)
-    result = await host.exec(f"llext call_fn {ext} {fn}", timeout=timeout)
+    loader = _loader_of(host)
+    result = await host.exec(loader.call_command(ext, fn), timeout=timeout)
+    if loader.reports_not_loaded(result.value, ext):
+        raise RuntimeError(f"call_fn {fn}: extension {ext} is not resident on {host.id}")
     if result.status != Status.Success:
         raise RuntimeError(f"call_fn {fn} failed on {host.id}: {result.value}")
 

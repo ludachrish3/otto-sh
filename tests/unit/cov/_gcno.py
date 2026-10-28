@@ -100,3 +100,29 @@ def gcc9_data(
         out += struct.pack("<IIIII", TAG_FUNCTION, 3, ident, lineno, cfg)
         out += struct.pack("<II", TAG_ARCS_COUNTER, 2) + struct.pack("<Q", 1)
     return out + struct.pack("<I", 0)
+
+
+STAMP_VERSION = "B24*"
+"""The gcov version the stamp-guard fixtures write (gcc 12.4)."""
+
+
+def stamp_notes(stamp: int, version: str = STAMP_VERSION, *, big_endian: bool = False) -> bytes:
+    """A notes file's 12-byte header (magic, version, stamp) in the given byte order."""
+    if big_endian:
+        return b"gcno" + version.encode() + struct.pack(">I", stamp)
+    return b"oncg" + version.encode()[::-1] + struct.pack("<I", stamp)
+
+
+def stamp_image(
+    *stamps: int, version: str = STAMP_VERSION, bits: int = 32, big_endian: bool = False
+) -> bytes:
+    """An ELF image holding one ``gcov_info`` head (version, next pointer, stamp) per stamp.
+
+    It opens with the ELF identification its class and byte order are read
+    from; every word after it is in that byte order.
+    """
+    ident = b"\x7fELF" + bytes([1 if bits == 32 else 2, 2 if big_endian else 1]) + bytes(58)
+    word = version.encode() if big_endian else version.encode()[::-1]
+    gap = bytes(4 if bits == 32 else 12)  # the next pointer, and 64-bit alignment padding
+    fmt = ">I" if big_endian else "<I"
+    return ident + b"".join(b"\xaa" * 8 + word + gap + struct.pack(fmt, s) for s in stamps)

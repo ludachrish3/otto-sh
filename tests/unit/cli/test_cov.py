@@ -1751,6 +1751,148 @@ class TestEmbeddedGcov:
             assert leaf.__cli_output_dir__ is False
 
 
+class TestEmbeddedGcovFinish:
+    """``otto cov embedded-gcov finish``: strip, then verify the gcov stamp; lab-free."""
+
+    @staticmethod
+    def _args(tmp_path, *, stamp=0x8372DF94, image_stamp=0x8372DF94):
+        import struct
+
+        objcopy = tmp_path / "objcopy"
+        objcopy.write_text('#!/bin/bash\ncp "${@: -2:1}" "${@: -1}"\n')
+        objcopy.chmod(0o755)
+        elf = tmp_path / "ext.llext"
+        elf.write_bytes(
+            b"\x7fELF\x01\x01" + bytes(58) + b"*42B" + b"\0\0\0\0" + struct.pack("<I", image_stamp)
+        )
+        notes = tmp_path / "notes"
+        notes.mkdir()
+        (notes / "u.c.gcno").write_bytes(b"oncg*42B" + struct.pack("<I", stamp))
+        return [
+            "embedded-gcov", "finish", str(elf), str(tmp_path / "out.llext"),
+            "--objcopy", str(objcopy), "--gcno-dir", str(notes),
+        ]  # fmt: skip
+
+    def test_a_matching_build_exits_zero_and_writes_the_output(self, tmp_path):
+        result = runner.invoke(cov_app, self._args(tmp_path))
+        assert result.exit_code == 0, result.output
+        assert (tmp_path / "out.llext").is_file()
+        assert "0x8372df94" in result.output
+
+    def test_a_stale_extension_exits_one_naming_the_gcno(self, tmp_path):
+        result = runner.invoke(cov_app, self._args(tmp_path, image_stamp=0x1))
+        assert result.exit_code == 1
+        assert "u.c.gcno" in result.output
+
+    def test_the_leaf_is_lab_free_and_makes_no_output_dir(self):
+        from otto.cli.cov import embedded_gcov_finish
+
+        assert embedded_gcov_finish.__cli_lab_free__ is True
+        assert embedded_gcov_finish.__cli_output_dir__ is False
+
+    def test_finish_runs_through_the_bridge_without_a_lab(self, tmp_path, monkeypatch):
+        """Exit 1 here is the stamp refusal, not a missing-lab refusal."""
+        from tests._fixtures.dispatch import DispatchRunner
+
+        monkeypatch.delenv("OTTO_LAB", raising=False)
+        result = DispatchRunner().invoke(
+            cov_app, self._args(tmp_path, image_stamp=0x1), spec_name="cov", lab_free=False
+        )
+        assert "Missing option '--lab'" not in result.output
+        assert result.exit_code == 1
+        assert "u.c.gcno" in result.output
+
+    def test_an_unreadable_gcno_exits_one_naming_it_and_leaves_no_output(self, tmp_path):
+        args = self._args(tmp_path)
+        (tmp_path / "notes" / "gone.c.gcno").symlink_to(tmp_path / "nowhere.gcno")
+        result = runner.invoke(cov_app, args)
+        assert result.exit_code == 1
+        assert "gone.c.gcno" in result.output
+        assert not (tmp_path / "out.llext").exists()
+
+
+class TestCheckStamp:
+    """``otto cov check-stamp``: the stamp guard alone, over any built ELF; lab-free."""
+
+    @staticmethod
+    def _args(tmp_path, *, stamp=0x8372DF94, image_stamp=0x8372DF94, big_endian_elf=False):
+        from tests.unit.cov._gcno import stamp_image, stamp_notes
+
+        binary = tmp_path / "app"
+        binary.write_bytes(stamp_image(image_stamp, bits=64, big_endian=big_endian_elf))
+        notes = tmp_path / "notes"
+        notes.mkdir()
+        (notes / "app.gcno").write_bytes(stamp_notes(stamp))
+        return ["check-stamp", str(binary), "--gcno-dir", str(notes)]
+
+    def test_listed_in_help(self):
+        result = runner.invoke(cov_app, ["--help"])
+        assert result.exit_code == 0
+        assert "check-stamp" in result.output
+
+    def test_a_matching_binary_exits_zero(self, tmp_path):
+        result = runner.invoke(cov_app, self._args(tmp_path))
+        assert result.exit_code == 0, result.output
+        assert "1 .gcno stamp(s) match" in result.output
+
+    def test_a_big_endian_binary_beside_little_endian_notes_matches(self, tmp_path):
+        result = runner.invoke(cov_app, self._args(tmp_path, big_endian_elf=True))
+        assert result.exit_code == 0, result.output
+
+    def test_a_stale_binary_exits_one_naming_the_gcno(self, tmp_path):
+        result = runner.invoke(cov_app, self._args(tmp_path, image_stamp=0x1))
+        assert result.exit_code == 1
+        assert "app.gcno" in result.output
+        assert "stale" in result.output
+
+    def test_a_missing_gcno_dir_exits_one_naming_it(self, tmp_path):
+        args = self._args(tmp_path)
+        args[-1] = str(tmp_path / "typo")
+        result = runner.invoke(cov_app, args)
+        assert result.exit_code == 1
+        assert "typo" in result.output
+
+    def test_the_leaf_is_lab_free_and_makes_no_output_dir(self):
+        from otto.cli.cov import check_stamp
+
+        assert check_stamp.__cli_lab_free__ is True
+        assert check_stamp.__cli_output_dir__ is False
+
+    def test_check_stamp_runs_through_the_bridge_without_a_lab(self, tmp_path, monkeypatch):
+        """Exit 1 here is the stamp refusal, not a missing-lab refusal.
+
+        ``lab_free=False`` drives the synthetic ``CommandSpec`` to lab-bound, so only
+        the leaf's own ``__cli_lab_free__`` marker lets it run; the negative control is
+        ``test_cov_report_through_the_bridge_without_a_lab_is_refused`` above.
+        """
+        from tests._fixtures.dispatch import DispatchRunner
+
+        monkeypatch.delenv("OTTO_LAB", raising=False)
+        result = DispatchRunner().invoke(
+            cov_app, self._args(tmp_path, image_stamp=0x1), spec_name="cov", lab_free=False
+        )
+        assert "Missing option '--lab'" not in result.output
+        assert result.exit_code == 1
+        assert "app.gcno" in result.output
+
+    @pytest.mark.parametrize("image_stamp", [0x8372DF94, 0x1], ids=["match", "stale"])
+    def test_finish_and_check_stamp_give_one_verdict_on_one_input(self, tmp_path, image_stamp):
+        """The same binary and notes: the same exit and, but for the binary's name, one message."""
+        check = runner.invoke(cov_app, self._args(tmp_path, image_stamp=image_stamp))
+        objcopy = tmp_path / "objcopy"
+        objcopy.write_text('#!/bin/bash\ncp "${@: -2:1}" "${@: -1}"\n')
+        objcopy.chmod(0o755)
+        out = tmp_path / "out"
+        finish = runner.invoke(
+            cov_app,
+            ["embedded-gcov", "finish", str(tmp_path / "app"), str(out),
+             "--objcopy", str(objcopy), "--gcno-dir", str(tmp_path / "notes")],
+        )  # fmt: skip
+        assert finish.exit_code == check.exit_code
+        if check.exit_code:
+            assert finish.output.replace(str(out), str(tmp_path / "app")) == check.output
+
+
 def test_embedded_gcov_check_runs_through_the_bridge_without_a_lab(tmp_path, monkeypatch):
     """Exit 2 here means "absent", not a missing-lab refusal.
 

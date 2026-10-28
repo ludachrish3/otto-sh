@@ -142,6 +142,42 @@ def parse_header(data: bytes) -> GcovHeader | None:
     return GcovHeader(notes=notes, big_endian=big_endian, version=version, stamp=stamp)
 
 
+INFO_STAMP_OFFSETS = {32: 8, 64: 16}
+"""Where the build stamp sits in a ``gcov_info``, by pointer width: past the 4-byte version
+word and the ``next`` pointer, which a 64-bit target aligns to 8 bytes."""
+
+
+def version_word(version: str, *, big_endian: bool) -> bytes:
+    """Return the 4 bytes a target of the given byte order stores for gcov *version*.
+
+    The word is a 32-bit integer whose bytes spell *version* most significant
+    first, so a big-endian target stores the characters in order and a
+    little-endian one reversed.
+    """
+    raw = version.encode()
+    return raw if big_endian else raw[::-1]
+
+
+def info_stamps(image: bytes, version: str, *, pointer_bits: int, big_endian: bool) -> list[int]:
+    """Return every build stamp of the ``gcov_info`` structs baked into *image*.
+
+    A ``gcov_info`` opens with the version word for *version*; the stamp follows
+    ``INFO_STAMP_OFFSETS[pointer_bits]`` bytes in. Both are words of the target
+    the image was built for, so *pointer_bits* and *big_endian* come from the
+    image's own ELF header: the notes file's byte order is the compiler's choice
+    and need not be the target's.
+    """
+    offset = INFO_STAMP_OFFSETS[pointer_bits]
+    word = version_word(version, big_endian=big_endian)
+    fmt = ">I" if big_endian else "<I"
+    stamps = []
+    at = image.find(word)
+    while at != -1 and at + offset + _WORD <= len(image):
+        stamps.append(struct.unpack_from(fmt, image, at + offset)[0])
+        at = image.find(word, at + 1)
+    return stamps
+
+
 def read_gcov_version(path: Path) -> str | None:
     """Return a ``.gcno``/``.gcda`` file's 4-char version (``'B33*'``, ``'408*'``).
 

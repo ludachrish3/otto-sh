@@ -35,10 +35,12 @@ validity, and why only manual captures are committed.
 otto cov get    [OPTIONS]
 otto cov clean
 otto cov report [OUTPUT_DIR...] [OPTIONS]
+otto cov check-stamp BINARY --gcno-dir DIR
 otto cov kmodcov export DIR
 otto cov kmodcov check DIR
 otto cov embedded-gcov export DIR
 otto cov embedded-gcov check DIR
+otto cov embedded-gcov finish ELF OUT_LLEXT --objcopy PATH --gcno-dir DIR
 ```
 
 | Subcommand | Description |
@@ -46,8 +48,9 @@ otto cov embedded-gcov check DIR
 | `get` | Fetch `.gcda` counters from each coverage host's instrumented products and write one `capture.json` per host per product, anchored to `base_commit` (also run implicitly by `otto test --cov`) |
 | `clean` | Zero each product's remote `.gcda` counters ahead of a fresh session, each product its own way — see {doc}`clean` |
 | `report` | Assemble every tier — e2e captures, unit harvest, committed manual store — into an HTML report |
+| `check-stamp` | Check that a GCC-built ELF binary carries the gcov stamp of every `.gcno` under `--gcno-dir`, before it ships: exit 0 when all match, 1 naming the file at fault. Lab-free. See {ref}`coverage-gcc-stamp-guard`. |
 | `kmodcov` | Vendor the `otto_kmodcov` kernel-module library into a project (`export`), or compare a vendored copy with this otto (`check`: exit 0 current, 1 differs, 2 absent). Lab-free. See {doc}`instrumenting/kernel-modules`. |
-| `embedded-gcov` | Write the patch that lets NASA's embedded-gcov runtime build under GCC 12 through 14 (`export`), or compare a copy with this otto's (`check`: exit 0 current, 1 differs, 2 absent). For GNU compilers and the gcov format; lab-free. See {doc}`instrumenting/embedded`. |
+| `embedded-gcov` | Write the patch that lets NASA's embedded-gcov runtime build under GCC 12 through 14 (`export`), or compare a copy with this otto's (`check`: exit 0 current, 1 differs, 2 absent), or strip a built extension with the objcopy you name and run `check-stamp`'s check on it (`finish`: exit 1 names the file at fault). For GNU compilers and the gcov format; lab-free. See {doc}`instrumenting/embedded`. |
 
 ## Examples
 

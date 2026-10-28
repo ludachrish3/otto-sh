@@ -104,10 +104,18 @@ has already been retrieved::
 It prints one line per host and product and exits 1 when any reset failed;
 under ``--dry-run`` each reset is printed as not run.
 
+``otto cov check-stamp BINARY --gcno-dir DIR`` is the build-time stamp guard
+for a GCC-built ELF binary: it exits 0 when every ``.gcno`` under ``DIR``
+shares its stamp with a ``gcov_info`` in ``BINARY``, and 1 with a message
+naming the file at fault otherwise. It reaches no lab::
+
+    otto cov check-stamp build/app --gcno-dir build/CMakeFiles/app.dir
+
 Each verb is a thin leaf over one library call —
 :func:`~otto.coverage.get.get_coverage`,
-``otto.coverage.collect.clean_coverage`` and
-:func:`~otto.coverage.reporter.run_coverage_report` — which owns every rule;
+``otto.coverage.collect.clean_coverage``,
+:func:`~otto.coverage.reporter.run_coverage_report` and
+``otto.coverage.stamp_guard.verify_stamps`` — which owns every rule;
 the leaf renders the result and spells a refused input in its flags.
 """
 
@@ -617,6 +625,34 @@ def _render_clean_report(cleaned: "CleanReport") -> None:
 
 
 # ---------------------------------------------------------------------------
+# check-stamp — the .gcno stamp guard over a built binary (verify_stamps)
+# ---------------------------------------------------------------------------
+
+
+@cov_app.command("check-stamp")
+def check_stamp(
+    binary: Annotated[Path, typer.Argument(help="The built ELF binary about to ship.")],
+    gcno_dir: Annotated[
+        Path,
+        typer.Option("--gcno-dir", help="The directory holding the binary's .gcno files."),
+    ],
+) -> None:
+    """Check BINARY carries the gcov stamp of every .gcno under --gcno-dir; exit 1 names a miss."""
+    from ..coverage.stamp_guard import StampError, verify_stamps
+
+    try:
+        stamps = verify_stamps(binary, gcno_dir)
+    except StampError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(f"{binary}: {len(stamps)} .gcno stamp(s) match {gcno_dir}")
+
+
+check_stamp.__cli_output_dir__ = False  # ty: ignore[unresolved-attribute]
+check_stamp.__cli_lab_free__ = True  # ty: ignore[unresolved-attribute]
+
+
+# ---------------------------------------------------------------------------
 # otto cov kmodcov — vendor the otto_kmodcov library and check a vendored copy
 # ---------------------------------------------------------------------------
 
@@ -705,8 +741,9 @@ embedded_gcov_app = typer.Typer(
     no_args_is_help=True,
     context_settings={"help_option_names": ["-h", "--help"]},
     help=(
-        "Write the patch for the embedded-gcov runtime (GNU compilers, the gcov format), "
-        "or check a copy of it."
+        "Write, or check a copy of, the patch that builds the embedded-gcov runtime under "
+        "GCC 12 and later (for GNU compilers and the gcov format); strip a built extension "
+        "and check its gcov stamp."
     ),
 )
 
@@ -719,7 +756,9 @@ def embedded_gcov_callback(ctx: typer.Context) -> None:
     relies on a GNU compiler and the gcov format. otto does not vendor it, only
     the patch that lets it build under GCC 12 through 14. `export` writes the
     patch this otto ships, overwriting; `check` compares byte for byte and
-    exits 0 current / 1 differs / 2 absent.
+    exits 0 current / 1 differs / 2 absent; `finish` strips a built extension
+    with the objcopy it is given and runs `otto cov check-stamp`'s check on the
+    result (exit 1 names the file at fault).
     """
     if ctx.resilient_parsing:
         return
@@ -769,5 +808,36 @@ def embedded_gcov_check(
 
 embedded_gcov_check.__cli_output_dir__ = False  # ty: ignore[unresolved-attribute]
 embedded_gcov_check.__cli_lab_free__ = True  # ty: ignore[unresolved-attribute]
+
+
+@embedded_gcov_app.command("finish")
+def embedded_gcov_finish(
+    elf: Annotated[Path, typer.Argument(help="The built extension, before stripping.")],
+    out_llext: Annotated[Path, typer.Argument(help="Where to write the stripped extension.")],
+    objcopy: Annotated[
+        Path,
+        typer.Option(
+            "--objcopy",
+            help="The target toolchain's objcopy (GNU or llvm-objcopy); otto never searches.",
+        ),
+    ],
+    gcno_dir: Annotated[
+        Path, typer.Option("--gcno-dir", help="The directory holding the extension's .gcno files.")
+    ],
+) -> None:
+    """Strip ELF into OUT_LLEXT, then check its gcov stamp matches the .gcno files."""
+    from ..coverage.embedded_finish import finish
+    from ..coverage.stamp_guard import StampError
+
+    try:
+        stamps = finish(elf, out_llext, objcopy, gcno_dir)
+    except StampError as exc:  # FinishError included
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(f"{out_llext}: stamp {', '.join(f'{s:#x}' for s in stamps)} matches {gcno_dir}")
+
+
+embedded_gcov_finish.__cli_output_dir__ = False  # ty: ignore[unresolved-attribute]
+embedded_gcov_finish.__cli_lab_free__ = True  # ty: ignore[unresolved-attribute]
 
 cov_app.add_typer(embedded_gcov_app, name="embedded-gcov")

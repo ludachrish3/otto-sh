@@ -44,6 +44,7 @@ from otto.coverage.capture.gitio import (
     NotAGitRepoError,
 )
 from otto.coverage.config import DestinationError
+from otto.coverage.embedded_finish import FinishError
 from otto.coverage.errors import (
     CaptureCommitError,
     CaptureFailedError,
@@ -58,6 +59,7 @@ from otto.coverage.errors import (
     PairingError,
 )
 from otto.coverage.overrides import OverrideConfigError
+from otto.coverage.stamp_guard import StampError
 from otto.coverage.tickets import TicketConfigError
 from otto.creds.errors import CredsConstructionError, CredsError
 from otto.docker.build import DockerImageConfigError
@@ -187,6 +189,8 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (PairingError, ValueError),
     (OverrideConfigError, ValueError),
     (TicketConfigError, ValueError),
+    (StampError, Exception),
+    (FinishError, Exception),
     (CredsError, Exception),
     (CredsConstructionError, ValueError),
     (UseCaseResolutionError, ValueError),
@@ -259,6 +263,10 @@ DELIBERATELY_ROOTLESS: frozenset[type[BaseException]] = frozenset(
         DependencyError,
         ProjectScopeError,
         DuplicateProjectError,
+        # The gcov stamp guard's verdict (and finish's, which extends it): a
+        # binary and its notes disagree. Otto's own check, never a stdlib type.
+        StampError,
+        FinishError,
         # The shared base for every input refusal that names its offending
         # field (DockerVerbError, CoverageInputError): no stdlib type ever
         # carried a `.field` attribute, so Exception is its honest root —

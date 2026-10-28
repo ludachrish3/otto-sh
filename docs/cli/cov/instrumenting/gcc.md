@@ -251,40 +251,29 @@ shipped.  The stamp is the 32-bit word at byte offset 8 of the `.gcno`;
 in the binary it sits inside each `gcov_info`, following the 4-byte gcov
 format-version marker (the `.gcno`'s bytes 4–8) — 8 bytes after it on
 32-bit targets, 16 on 64-bit (the struct's `next` pointer plus alignment
-padding sit between):
+padding sit between).  `otto cov check-stamp` runs it, without a lab:
 
-```python
-import glob, struct, sys, pathlib
-
-build, binary = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
-notes = {
-    f: (b[4:8], struct.unpack_from("<I", b, 8)[0])
-    for f in glob.glob(str(build / "**" / "*.gcno"), recursive=True)
-    for b in [pathlib.Path(f).read_bytes()]
-}
-blob = binary.read_bytes()
-embedded = {
-    struct.unpack_from("<I", blob, i + off)[0]
-    for ver in {v for v, _ in notes.values()}
-    for off in (8, 16)  # 32-bit / 64-bit gcov_info layouts
-    for i in range(len(blob) - 24)
-    if blob[i : i + 4] == ver
-}
-stale = {f: s for f, (_, s) in notes.items() if s not in embedded}
-if stale:
-    sys.exit(
-        "stamp guard: %s does not embed the stamp of %s "
-        "— it is stale relative to the notes; re-link before deploying"
-        % (binary, ", ".join("%s (%#x)" % kv for kv in stale.items()))
-    )
-print("stamp guard OK: %d notes file(s) match" % len(notes))
+```bash
+otto cov check-stamp build/app --gcno-dir build/CMakeFiles/app.dir
 ```
 
+It reads GCC's gcov format: the notes header, and the `gcov_info` layout
+GCC links into an ELF binary.  The binary's ELF header gives the pointer
+width and the byte order the version marker and stamp are read in, which
+need not be the notes file's order (a cross compiler may write its notes in
+the build machine's).  It exits 0 when every `.gcno` under `--gcno-dir`
+matches, and 1 with a message naming the file at fault otherwise: a stale
+notes file, a binary with no `gcov_info` (not built with
+`-fprofile-arcs`), no `.gcno` under the directory at all, or a file it
+cannot read.
+
 Run it as the last step of the build (or the first step of the deploy),
-pointed at a build tree containing only the objects that actually link
-into the shipped binary — `.gcno` files from other targets sharing the
-tree (unit tests, tools) would false-positive.  The embedded flavor of
-the same guard — where the ship step is `llext load_hex` — is on the
+with `--gcno-dir` naming a directory that holds only the `.gcno` files of
+the objects that actually link into the shipped binary — `.gcno` files
+from other targets sharing the tree (unit tests, tools) would
+false-positive.  The embedded flavor of the same guard — where the ship
+step is `llext load_hex`, and `otto cov embedded-gcov finish` runs this
+same check on the extension it strips — is on the
 {ref}`embedded page <coverage-embedded-stamp-guard>`; clang products
 need a different approach entirely — see
 {ref}`the clang page <coverage-clang-stale-deploys>`.

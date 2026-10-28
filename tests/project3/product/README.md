@@ -87,10 +87,11 @@ submodule if not already done (the submodule itself must be initialized, see
 One-time setup above), runs
 an incremental `west build` for `mps2_an385` (falling back to a pristine rebuild
 if the build dir was previously initialized for a different source tree), then
-strips the sections LLEXT 3.7 cannot relocate. It runs on the machine executing
-the suite (the dev VM, where `build_dir` lives); toolchain paths default to the
-Vagrant-provisioned locations and are overridable via `ZEPHYR_VENV` /
-`ZEPHYR_WORKSPACE` / `ZEPHYR_SDK_INSTALL_DIR`.
+runs `otto cov embedded-gcov finish`, which strips the sections LLEXT 3.7 cannot
+relocate and checks the extension's gcov stamp against its `.gcno`. It runs on
+the machine executing the suite (the dev VM, where `build_dir` lives);
+toolchain paths default to the Vagrant-provisioned locations and are
+overridable via `ZEPHYR_VENV` / `ZEPHYR_WORKSPACE` / `ZEPHYR_SDK_INSTALL_DIR`.
 
 That command is the manual build too; there is no separate recipe.
 [`build.sh`](build.sh) is the build's one home, and its comments explain each

@@ -186,66 +186,52 @@ add_dependencies(app my_product_cov)
 (`-O0` keeps the line table predictable; without the `add_dependencies` a
 plain `west build` never produces the `.llext`.)
 
-### Post-build: strip the constructor sections
+(coverage-embedded-stamp-guard)=
+### Post-build: strip, and guard the `.gcno` stamp
 
 The instrumented object carries the `.init_array` entry for the gcov ctor,
 and **Zephyr 3.7's loader refuses any extension containing one**
-(`-ENOEXEC` on `.rel.init_array`). Strip it after the build — the ctor
-*function* stays in `.text`, where `cov_init`'s alias reaches it:
+(`-ENOEXEC` on `.rel.init_array`). The ctor *function* stays in `.text`,
+where `cov_init`'s alias reaches it, so the table is stripped after the build.
 
-```bash
-arm-zephyr-eabi-objcopy \
-    --remove-section='.init_array*' --remove-section='.fini_array*' \
-    --remove-section='.rel.init_array*' --remove-section='.rel.fini_array*' \
-    --strip-debug \
-    my_product_cov.llext my_product_cov.stripped.llext
-```
-
-(coverage-embedded-stamp-guard)=
-### The `.gcno` stamp guard
-
-Every compilation stamps a random 32-bit value into both the `.gcno` notes
-file and the `gcov_info` struct baked into the object. The report step
+Every compilation also stamps a random 32-bit value into both the `.gcno`
+notes file and the `gcov_info` struct baked into the object. The report step
 refuses a `.gcda` whose stamp doesn't match the `.gcno` (*"stamp mismatch
 with notes file"*) — and the classic way to hit that is a build graph that
 recompiles the source (fresh `.gcno`, fresh stamp) but re-ships a **stale**
 `.llext`. The failure surfaces minutes later, at report time, as a confusing
 0%.
 
-Guard against it *in the build*: after producing the stripped extension,
-check that the `.gcno`'s stamp actually appears in the shipped binary. The
-stamp sits at byte offset 8 of the `.gcno`; in the extension it follows the
-4-byte gcov format-version marker (the `.gcno`'s bytes 4–8) inside each
-`gcov_info`:
+One command does both, so the guard runs on every build:
 
-```python
-import glob, struct, sys, pathlib
-
-build = pathlib.Path(sys.argv[1])
-gcno = pathlib.Path(glob.glob(str(build / "**" / "*.gcno"), recursive=True)[0]).read_bytes()
-ver, stamp = gcno[4:8], struct.unpack_from("<I", gcno, 8)[0]
-blob = (build / "zephyr" / "my_product_cov.stripped.llext").read_bytes()
-stamps = [
-    struct.unpack_from("<I", blob, i + 8)[0]
-    for i in range(len(blob) - 12)
-    if blob[i : i + 4] == ver
-]
-if stamp not in stamps:
-    sys.exit(
-        f"stamp guard: .gcno {stamp:#x} not in extension {list(map(hex, stamps))} "
-        "— the shipped .llext is stale relative to the notes file"
-    )
+```bash
+otto cov embedded-gcov finish \
+    build/zephyr/my_product_cov.llext build/zephyr/my_product_cov.stripped.llext \
+    --objcopy "$(command -v arm-zephyr-eabi-objcopy)" \
+    --gcno-dir build/CMakeFiles/my_product_cov_llext_lib.dir
 ```
 
-`tests/project3/product/build.sh` runs exactly this check on every build; copy
-it. It converts a silent wrong-coverage report into an immediate,
-actionable build failure.
+`finish` strips the ELF into the second path, removing the constructor tables
+and the debug info, with the objcopy `--objcopy` names. GNU objcopy,
+`llvm-objcopy` and an SDK's prefixed objcopy all take the same flags; otto
+never looks for one itself, so your build script names your toolchain's.
+`finish` then runs the check `otto cov check-stamp` runs, on the stripped
+extension: every `.gcno` under `--gcno-dir` must have its stamp in a
+`gcov_info` there. Point `--gcno-dir` at the extension's own object
+directory, since a tree holding several instrumented extensions fails. Exit 0
+means they agree. Any mismatch, missing or unreadable input, or objcopy
+failure exits 1 with a message naming the file at fault, which turns a silent
+wrong-coverage report into an immediate, actionable build failure. `finish`
+writes the stripped file under a temporary name beside the second path and
+renames it into place only once the check passes. When anything fails it
+removes that file and any earlier one at the second path, so a stale
+extension is never left to install.
 
-The same guard exists for Unix targets, where the ship step is a deploy
-rather than `llext load_hex` — see the
-{ref}`GCC page <coverage-gcc-stamp-guard>` (note the stamp offset inside
-`gcov_info` differs with pointer width: +8 here on 32-bit Cortex-M, +16
-on 64-bit Unix hosts).
+The {ref}`GCC page <coverage-gcc-stamp-guard>` describes the check, where the
+ship step is a deploy rather than `llext load_hex`: where the stamp sits, and
+how the binary's ELF header gives the pointer width and byte order it is read
+in. To check a built extension without stripping it, run
+`otto cov check-stamp EXTENSION --gcno-dir DIR`.
 
 ## Embedded coverage configuration
 

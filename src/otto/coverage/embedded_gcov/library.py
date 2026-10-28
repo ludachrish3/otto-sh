@@ -18,6 +18,10 @@ SHIPPED_FILES = ["embedded-gcov-zephyr-gcc12plus.patch"]
 STARTER_FILES = ["starter/cov_entry.c"]
 """Package data an init copies into a project; an export never writes them."""
 
+STRIPPED_SECTIONS = [".init_array*", ".fini_array*", ".rel.init_array*", ".rel.fini_array*"]
+"""The sections ``finish`` removes: Zephyr 3.7's loader refuses an extension holding a
+constructor table, and ``cov_init`` runs the gcov constructor itself."""
+
 LIBRARY_DIR = Path(__file__).parent
 """Where the shipped files live (the package directory, beside this module)."""
 

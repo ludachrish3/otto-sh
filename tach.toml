@@ -278,6 +278,8 @@ depends_on = [
     "otto.version",
     "otto.errors",
     "otto.models.base",
+    # embedded_finish strips with the section list the embedded-gcov area holds once.
+    "otto.coverage.embedded_gcov",
     # clean_coverage and the product reset hooks build per-product Result
     # values for the CleanReport. otto.result is a leaf (otto.utils,
     # otto.errors) that otto.docker already depends on, so no cycle.
