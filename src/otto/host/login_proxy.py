@@ -19,6 +19,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from typing import Protocol, TypeVar, runtime_checkable
 
+from pydantic import SecretStr
+
 from ..errors import OttoError
 from ..logger.mode import LogMode
 from ..models.base import Cred, cred_identity
@@ -45,8 +47,12 @@ class ProxyIO(Protocol):
     used at session establishment, and the interact bridge adapter.
     """
 
-    async def send(self, text: str, *, log: LogMode = LogMode.NORMAL) -> None:
-        """Send text to the proxy IO."""
+    async def send(self, text: str | SecretStr, *, log: LogMode = LogMode.NORMAL) -> None:
+        """Send text to the proxy IO.
+
+        A ``SecretStr`` is a password answering a prompt: sent as its value
+        and a newline, and unwrapped only inside the transport's write.
+        """
         ...
 
     async def expect(
@@ -483,7 +489,7 @@ async def _resync_shell(
     history_prefix: str = "",
     *,
     prompt: str | None = None,
-    password: str | None = None,
+    password: SecretStr | None = None,
     expect_user: str | None = None,
 ) -> None:
     """Resync with the shell after a su/sudo/exit transition, and prove who it is.
@@ -541,7 +547,7 @@ async def _resync_shell(
                 f"first failed, and would spend another authentication attempt."
             )
         answered = True
-        await io.send(password + "\n", log=LogMode.NEVER)
+        await io.send(password, log=LogMode.NEVER)
 
     prompt_re = re.compile(prompt) if prompt else None
 
@@ -689,7 +695,7 @@ async def perform_switch(
     io: ProxyIO,
     creds: list[Cred],
     user: str,
-    password: str | None,
+    password: str | SecretStr | None,
     current_user: str,
     host_id: str,
     history_prefix: str = "",

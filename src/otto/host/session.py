@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
+from pydantic import SecretStr
 from typing_extensions import Never, Self, override
 
 from ..errors import OttoError
@@ -38,8 +39,9 @@ from .command_frame import (
 )
 from .errors import ConsoleError, RawLandingError, SessionSetupError
 from .login_proxy import LoginProxyError, cred_for, perform_switch, run_proxy, run_undo
+from .secret_wire import reveal, shown
 from .shell_liveness import confirm_live
-from .telnet import TelnetClient
+from .telnet import TELNET_EOL, TelnetClient, telnet_line_ends
 from .terminal_mapping import ONLCR, UNMEASURED, is_unknown, measure
 from .userland import ASH_TYPED_LINE_MAX, refuse_if_gapped
 
@@ -538,12 +540,17 @@ class ShellSession(ABC):
         ...
 
     @abstractmethod
-    async def write_transport(self, data: str) -> None:
+    async def write_transport(self, data: str | SecretStr) -> None:
         """Write raw text to the transport's stdin.
 
         A hook: a transport implements it, and callers use
         :meth:`~otto.host.session.ShellSession.send`, which checks the session is
         alive first and marks it for recovery if the write is cancelled.
+
+        A ``SecretStr`` is a password answering a prompt: an implementation
+        writes :func:`~otto.host.secret_wire.reveal` of it (its value and a
+        newline) inside the transport call expression itself, so no otto
+        frame binds the raw value.
         """
         ...
 
@@ -890,11 +897,13 @@ class ShellSession(ABC):
         if not self._alive:
             raise RuntimeError(f"{self._log_tag}: session is not alive")
 
-    async def send(self, text: str) -> None:
+    async def send(self, text: str | SecretStr) -> None:
         """Send raw text to the session's stdin.
 
         Use this for driving interactive programs (REPLs, custom CLIs).
-        The caller is responsible for including line endings.
+        The caller is responsible for including line endings; a
+        ``SecretStr`` is written as its value and a newline (see
+        :meth:`write_transport`).
         """
         await self._ensure_ready()
         self._require_alive()
@@ -1372,9 +1381,9 @@ class SshSession(ShellSession):
             )
 
     @override
-    async def write_transport(self, data: str) -> None:
+    async def write_transport(self, data: str | SecretStr) -> None:
         assert self._process is not None  # noqa: S101 — internal invariant: open_transport() must run before write_transport()
-        self._process.stdin.write(data)
+        self._process.stdin.write(reveal(data))
 
     @override
     async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
@@ -1438,15 +1447,14 @@ class TelnetSession(ShellSession):
         pass
 
     @override
-    async def write_transport(self, data: str) -> None:
-        # Use CR (\r) as the sole line terminator. Sending \r\n causes two
-        # inputs: the \r executes the command in readline raw mode, and the
-        # trailing \n triggers an extra empty prompt (e.g. an extra ">>> " in
-        # Python REPL). This stale prompt then matches the next expect() call
-        # before the real output arrives.  Using \r alone works for both:
-        # - canonical mode (icrnl maps \r → \n, so the shell sees one newline)
-        # - readline raw mode (treats \r as Enter / execute)
-        data = re.sub(r"\r?\n", "\r", data)
+    async def write_transport(self, data: str | SecretStr) -> None:
+        # Line ends are TELNET_EOL (CR alone); see its docstring for why.
+        if isinstance(data, SecretStr):
+            # A password is one short line: never chunked, and unwrapped only
+            # inside the write itself.
+            self._writer.write(reveal(data, TELNET_EOL).encode())
+            return
+        data = telnet_line_ends(data)
         encoded = data.encode()
         total = len(encoded)
         chunk = self._write_chunk_size
@@ -1600,10 +1608,10 @@ class LocalSession(ShellSession):
         self._pid = self._process.pid
 
     @override
-    async def write_transport(self, data: str) -> None:
+    async def write_transport(self, data: str | SecretStr) -> None:
         assert self._process is not None  # noqa: S101 — internal invariant: process created in open_transport() before write_transport()
         assert self._process.stdin is not None  # noqa: S101 — internal invariant: process created in open_transport() before write_transport()
-        self._process.stdin.write(data.encode())
+        self._process.stdin.write(reveal(data).encode())
         await self._process.stdin.drain()
 
     @override
@@ -1886,7 +1894,7 @@ class HostSession:
         """
         refuse_declined_elevation(verb, user, self._host_id, self._log_command)
 
-    async def switch_user(self, user: str = "", password: str | None = None) -> None:
+    async def switch_user(self, user: str = "", password: str | SecretStr | None = None) -> None:
         """``su`` *this* session to *user* (default root), tracking :attr:`current_user`.
 
         Posix-only — raises ``NotImplementedError`` on
@@ -1918,7 +1926,7 @@ class HostSession:
 
     @asynccontextmanager
     async def as_user(
-        self, user: str = "root", password: str | None = None
+        self, user: str = "root", password: str | SecretStr | None = None
     ) -> "AsyncIterator[HostSession]":
         """Run a block as *user* on this session, restoring the prior user on exit.
 
@@ -2104,7 +2112,7 @@ class HostSession:
             [self._decline_command(_resolve_command(c, default_expects, None, log)) for c in items]
         )
 
-    async def send(self, text: str, log: LogMode = LogMode.NORMAL) -> None:
+    async def send(self, text: str | SecretStr, log: LogMode = LogMode.NORMAL) -> None:
         """Send raw text to this session's stdin.
 
         See :meth:`~otto.host.host.BaseHost.send`. Under a dry run the
@@ -2121,7 +2129,7 @@ class HostSession:
             self._log_command(f"[DRY RUN] send({text!r})", mode)
             return
         if mode is not LogMode.NEVER:
-            self._log_command(text.rstrip(), mode)
+            self._log_command(shown(text).rstrip(), mode)
         await self._session.send(text)
 
     async def expect(
@@ -2245,8 +2253,8 @@ class _NoTransport(ShellSession):
         raise CommandNotRunError("open a shell session", self._host_id)
 
     @override
-    async def write_transport(self, data: str) -> None:
-        raise CommandNotRunError(data, self._host_id)
+    async def write_transport(self, data: str | SecretStr) -> None:
+        raise CommandNotRunError(shown(data), self._host_id)
 
     @override
     async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
@@ -2359,7 +2367,7 @@ class DeclinedSession(HostSession):
         return self._declined_results(cmds, expects, timeout, log)
 
     @override
-    async def send(self, text: str, log: LogMode = LogMode.NORMAL) -> None:
+    async def send(self, text: str | SecretStr, log: LogMode = LogMode.NORMAL) -> None:
         """Announce the text and write nothing."""
         self._log_command(f"[DRY RUN] send({text!r})", log)
 
@@ -2381,7 +2389,7 @@ class DeclinedSession(HostSession):
         refuse_declined_match(pattern, self._host_id, self._log_command)
 
     @override
-    async def switch_user(self, user: str = "", password: str | None = None) -> None:
+    async def switch_user(self, user: str = "", password: str | SecretStr | None = None) -> None:
         """Announce the elevation and refuse to claim it happened.
 
         The dry-run stand-in for :meth:`HostSession.switch_user`; its scoped
@@ -2396,7 +2404,7 @@ class DeclinedSession(HostSession):
     @asynccontextmanager
     @override
     async def as_user(
-        self, user: str = "root", password: str | None = None
+        self, user: str = "root", password: str | SecretStr | None = None
     ) -> "AsyncIterator[HostSession]":
         """Announce the elevation and refuse to claim it happened.
 
@@ -2438,9 +2446,9 @@ class _SessionProxyIO:
         self._log_command = log_command
         self._log_output = log_output
 
-    async def send(self, text: str, *, log: LogMode = LogMode.NORMAL) -> None:
+    async def send(self, text: str | SecretStr, *, log: LogMode = LogMode.NORMAL) -> None:
         if log is not LogMode.NEVER:
-            self._log_command(text.rstrip(), log)
+            self._log_command(shown(text).rstrip(), log)
         await self._session.send(text)
 
     async def expect(
@@ -3093,7 +3101,7 @@ class SessionManager:
             client = TelnetClient(
                 target.host,
                 user=user,
-                password=password or "",
+                password=password,
                 options=self._connections.telnet_options,
                 connect_port=target.port,
             )
@@ -3713,12 +3721,12 @@ class SessionManager:
             self._named_sessions[name] = host_session
             return host_session
 
-    async def send(self, text: str, log: LogMode = LogMode.NORMAL) -> None:
+    async def send(self, text: str | SecretStr, log: LogMode = LogMode.NORMAL) -> None:
         """Send raw text to the default session, creating it if needed."""
         await self._ensure_session()
         mode = log
         if mode is not LogMode.NEVER:
-            self._log_command(text.rstrip(), mode)
+            self._log_command(shown(text).rstrip(), mode)
         assert self._session is not None  # noqa: S101 — internal invariant: _ensure_session() always sets _session or raises
         await self._session.send(text)
 

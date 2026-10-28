@@ -39,7 +39,9 @@ def merge_creds(
     file, the one layer written with otto's default-login rule in mind,
     decides the order (spec §3 statement 3).
 
-    Plain dicts in, plain dicts out — the join's currency. Raises
+    Plain dicts in, plain dicts out — the join's currency. A password value is
+    passed through as the layer holds it: a ``SecretStr`` from a dumped record
+    or store cred, a ``str`` from the lab file. Raises
     :class:`~otto.inventory.errors.InventoryError` for an entry with no
     non-empty string ``login``, for a non-``list``-of-``str`` ``protocols``,
     and for an identity repeated within ONE layer; the message names the
@@ -78,6 +80,16 @@ def merge_creds(
     merged = [{**low.get(identity, {}), **fields} for identity, fields in high.items()]
     merged.extend(fields for identity, fields in low.items() if identity not in high)
     return merged
+
+
+def _dump_for_merge(cred: CredSpec) -> dict[str, Any]:
+    """Return what *cred* states, its password still the ``SecretStr``.
+
+    Stated fields only, in python mode: the merge result is validated back
+    into a :class:`CredSpec`, which takes the ``SecretStr`` as it is, and no
+    merge local ever holds the plain password a traceback's locals would show.
+    """
+    return cred.model_dump(exclude_unset=True, exclude_none=True)
 
 
 def _revalidate_merged_cred(c: dict[str, Any], *, key: "str | None", label: str) -> CredSpec:
@@ -145,10 +157,8 @@ class CredsOverlay:
             supplied = self.store.lookup(key)
         except CredsError as e:
             raise InventoryError(str(e)) from e
-        lower = [c.model_dump(mode="json", exclude_unset=True, exclude_none=True) for c in supplied]
-        higher = [
-            c.model_dump(mode="json", exclude_unset=True, exclude_none=True) for c in record.creds
-        ]
+        lower = [_dump_for_merge(c) for c in supplied]
+        higher = [_dump_for_merge(c) for c in record.creds]
         merged = merge_creds(
             lower, higher, key=key, lower_name="creds store", higher_name="inventory record"
         )

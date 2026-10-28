@@ -19,10 +19,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import asyncssh
 import pytest
 import pytest_asyncio
+from pydantic import SecretStr
 
 from otto.errors import OttoError
 from otto.host.command_frame import BashFrame, CommandFrame, ZephyrFrame, ZephyrSerialFrame
 from otto.host.local_host import LocalHost
+from otto.host.secret_wire import reveal
 from otto.host.session import (
     INIT_TIMEOUT_ENV_VAR,
     LocalSession,
@@ -76,7 +78,7 @@ class MockSession(FeedAfterWriteMixin, ShellSession):
         if self._write_broken_pipe_pending:
             self._write_broken_pipe_pending = False
             raise BrokenPipeError("Channel not open for sending")
-        self.written.append(data)
+        self.written.append(reveal(data))  # what the transport writes
 
     async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
         assert self._out_reader is not None
@@ -1427,7 +1429,8 @@ async def test_host_session_switch_user_elevates_and_stamps():
     assert shell.current_user == "root"
     sent = [c.args[0] for c in shell.send.await_args_list]
     assert "su - root\n" in sent
-    assert "rootpw\n" in sent
+    # The password reaches the session still wrapped.
+    assert SecretStr("rootpw") in sent
 
 
 @pytest.mark.asyncio
@@ -1512,7 +1515,7 @@ async def test_default_session_seeds_current_user_from_login():
 
     from otto.host.session import SessionManager
 
-    conn = types.SimpleNamespace(credentials=("alice", "pw"))
+    conn = types.SimpleNamespace(credentials=("alice", SecretStr("pw")))
     built: list[MockSession] = []
     feeders: list[asyncio.Task[None]] = []
 
@@ -1542,7 +1545,7 @@ async def test_open_session_seeds_named_session_current_user_from_login():
 
     from otto.host.session import SessionManager
 
-    conn = types.SimpleNamespace(credentials=("alice", "pw"))
+    conn = types.SimpleNamespace(credentials=("alice", SecretStr("pw")))
     built: list[MockSession] = []
     feeders: list[asyncio.Task[None]] = []
 
@@ -1632,7 +1635,13 @@ async def test_host_session_as_user_undo_via_ordering_observable():
         await io.send(f"become {ctx.target.login}\n")
 
     async def fake_undo(io, ctx):
-        captured.append((ctx.target.login, ctx.via.login, ctx.via.password))
+        captured.append(
+            (
+                ctx.target.login,
+                ctx.via.login,
+                None if ctx.via.password is None else ctx.via.password.get_secret_value(),
+            )
+        )
         await io.send("leave\n")
 
     register_login_proxy("task6-fake-undo-session", fake_fn, undo=fake_undo, overwrite=True)
@@ -1710,7 +1719,8 @@ class _ImmediateSession(ShellSession):
 
     async def open_transport(self) -> None: ...
 
-    async def write_transport(self, data: str) -> None:
+    async def write_transport(self, data: str | SecretStr) -> None:
+        data = reveal(data)  # what the transport writes
         self.writes.append(data)
         self.model.wrote(data)
 
@@ -1747,7 +1757,7 @@ async def _task7_hop_with_password(io, ctx) -> None:
     """Fake registered proxy: send + a redacted password line — no expect() needed."""
     await io.send(f"su {ctx.target.login}\n")
     if ctx.target.password is not None:
-        await io.send(ctx.target.password + "\n", log=LogMode.NEVER)
+        await io.send(ctx.target.password.get_secret_value() + "\n", log=LogMode.NEVER)
 
 
 def _without_resync_writes(writes: list[str]) -> list[str]:
@@ -1786,7 +1796,7 @@ class TestLoginProxyAtSessionEstablishment:
     @pytest.mark.asyncio
     async def test_ensure_session_no_hops_stamps_login_target_only(self):
         """No proxy_hops -> plain direct login: existing behavior intact, no proxy sends."""
-        conn = _proxy_connections([], login_target="alice", credentials=("alice", "pw"))
+        conn = _proxy_connections([], login_target="alice", credentials=("alice", SecretStr("pw")))
         built: list[_ImmediateSession] = []
 
         def factory() -> _ImmediateSession:
@@ -1869,7 +1879,13 @@ class TestLoginProxyAtSessionEstablishment:
         captured: list[tuple[str, str, str | None]] = []
 
         async def _record_via(io, ctx) -> None:
-            captured.append((ctx.target.login, ctx.via.login, ctx.via.password))
+            captured.append(
+                (
+                    ctx.target.login,
+                    ctx.via.login,
+                    None if ctx.via.password is None else ctx.via.password.get_secret_value(),
+                )
+            )
             await io.send(f"become {ctx.target.login}\n")
 
         register_login_proxy("task7-record-via", _record_via, overwrite=True)
@@ -2013,7 +2029,8 @@ class _StubExecSession(ShellSession):
 
     async def open_transport(self) -> None: ...
 
-    async def write_transport(self, data: str) -> None:
+    async def write_transport(self, data: str | SecretStr) -> None:
+        data = reveal(data)  # what the transport writes
         self.writes.append(data)
         self.model.wrote(data)
 
@@ -2199,7 +2216,7 @@ class TestExecLogsCommandExactlyOnce:
             create_process=AsyncMock(return_value=_FakeSshProcess(["out\n"]))
         )
         conn = SimpleNamespace(
-            credentials=("alice", "pw"),
+            credentials=("alice", SecretStr("pw")),
             login_target="alice",
             proxy_hops=[],
             term="ssh",
@@ -2215,7 +2232,7 @@ class TestExecLogsCommandExactlyOnce:
     async def test_pooled_route_logs_once(self):
         logged: list[tuple[str, LogMode]] = []
         conn = SimpleNamespace(
-            credentials=("alice", "pw"),
+            credentials=("alice", SecretStr("pw")),
             login_target="alice",
             proxy_hops=[],
             term="telnet",

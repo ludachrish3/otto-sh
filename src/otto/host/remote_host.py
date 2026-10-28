@@ -671,14 +671,18 @@ class RemoteHost(BaseHost):
             hop_options = getattr(hop_host, "ssh_options", None) or SshOptions()
             kwargs: dict[str, Any] = {
                 "username": cred.login,
-                "password": cred.password,
                 "tunnel": parent_tunnel,
                 **hop_options._kwargs(),  # noqa: SLF001 — intra-package access to SshOptions._kwargs
             }
             tag = f"{host_name} via {hop_id}"
             logger.debug(f"Opening SSH tunnel through {hop_id} for {host_name}")
             return await connect_and_describe(
-                tag, hop_host.ip, kwargs, hop_options, apply_post_connect=False
+                tag,
+                hop_host.ip,
+                kwargs,
+                hop_options,
+                password=cred.password,
+                apply_post_connect=False,
             )
 
         outer._factory = _create_tunnel  # noqa: SLF001 — intra-package assignment to SshHopTransport._factory closure

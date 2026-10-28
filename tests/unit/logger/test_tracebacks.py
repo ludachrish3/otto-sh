@@ -20,6 +20,7 @@ import time
 import weakref
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pytest
 from rich.console import Console
@@ -553,3 +554,171 @@ def test_typer_and_click_frames_are_written_without_their_locals(tmp_path):
         assert "in boom" in text, name
         assert re.search(r"typer.*\.py:\d+ in ", text), f"{name} lost the typer frames:\n{text}"
         assert _TYPER_MARKER not in text, f"{name} wrote a typer/click frame's locals:\n{text}"
+
+
+# ---------------------------------------------------------------------------
+# The frames of the libraries that receive passwords are written by location
+# ---------------------------------------------------------------------------
+
+_PLANTED = "PLANTED-SECRET-7f3a"
+"""The password each library below receives; a module constant, so no source line shows it."""
+
+
+def _package_dirs(names: list[str]) -> list[str]:
+    """The directories of *names*, located as ``suppressed_traceback_packages`` does."""
+    from importlib.util import find_spec
+
+    dirs: list[str] = []
+    for name in names:
+        spec = find_spec(name)
+        assert spec is not None, name
+        assert spec.origin is not None, name
+        dirs.append(str(Path(spec.origin).parent))
+    return dirs
+
+
+async def _asyncssh_connect_refused(marker_local: object) -> None:
+    """asyncssh's ``connect`` binds the password in its ``kwargs``, then the dial is refused."""
+    import asyncssh
+
+    from tests._fixtures.loopback_servers import closed_port
+
+    with closed_port() as port:
+        await asyncssh.connect(
+            "127.0.0.1", port=port, password=_PLANTED, known_hosts=None, client_keys=[]
+        )
+
+
+async def _telnet_write_after_eof(marker_local: object) -> None:
+    """telnetlib3's ``write`` and asyncio's transport ``write`` both bind the bytes, then raise."""
+    from tests._fixtures.loopback_servers import telnet_writer_after_eof
+
+    async with telnet_writer_after_eof() as writer:
+        writer.write(_PLANTED.encode())
+
+
+async def _aioftp_login_refused(marker_local: object) -> None:
+    """aioftp's ``login`` binds the password and the ``PASS`` command, then the server says 530."""
+    import aioftp
+
+    from tests._fixtures.loopback_servers import refusing_ftp_server
+
+    async with refusing_ftp_server("admin") as port:
+        client = aioftp.Client()
+        await client.connect("127.0.0.1", port)
+        try:
+            await client.login("admin", _PLANTED)
+        finally:
+            client.close()
+
+
+_LIBRARY_FAILURES = {
+    "asyncssh": ("asyncssh", _asyncssh_connect_refused),
+    "telnetlib3": ("telnetlib3", _telnet_write_after_eof),
+    "aioftp": ("aioftp", _aioftp_login_refused),
+    "asyncio_transport": ("asyncio", _telnet_write_after_eof),
+}
+
+
+async def _log_a_library_failure(out: Path, drive: Any) -> dict[str, str]:
+    """Drive one real library failure, log it, and return both log files."""
+    install(log_level="INFO", output_dir=out)
+    try:
+        await drive(_MARKER)
+    except Exception:
+        logging.getLogger("acme.product").exception("the library failed")
+    else:
+        raise AssertionError("the library call was expected to fail")
+    return _log_files(out)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lib", list(_LIBRARY_FAILURES))
+async def test_log_file_traceback_hides_library_locals(lib, tmp_path, monkeypatch):
+    """A real library frame holding the password is written by location, never its locals.
+
+    Three renders of the same real failure. With the list as it was (Typer and
+    click only), and again with only this library left out of today's list,
+    the password IS in the file: the library's own frame holds it, so the
+    library's entry is load-bearing. With today's list it is gone, while the
+    locals of the calling frame outside the library still render.
+    """
+    package, drive = _LIBRARY_FAILURES[lib]
+    full = formatters.suppressed_traceback_packages()
+    (own_dir,) = _package_dirs([package])
+
+    exposures = {
+        "typer and click only": _package_dirs(["typer", "click"]),
+        f"all but {package}": [d for d in full if d != own_dir],
+    }
+    for label, suppress in exposures.items():
+        with monkeypatch.context() as m:
+            m.setattr(
+                # A fresh list per call, as the real function returns.
+                formatters,
+                "suppressed_traceback_packages",
+                lambda suppress=suppress: list(suppress),
+            )
+            files = await _log_a_library_failure(tmp_path / label.replace(" ", "_"), drive)
+        for name, text in files.items():
+            assert _PLANTED in text, f"{label}: {name} does not expose the password:\n{text}"
+
+    for name, text in (await _log_a_library_failure(tmp_path / "hidden", drive)).items():
+        assert _PLANTED not in text, f"{name} shows a password-holding library frame:\n{text}"
+        assert re.search(r"marker_local\s*=\s*'distinctive local value'", text), (
+            f"{name} lost the calling frame's locals:\n{text}"
+        )
+    # Else "all but this library" above was the whole list, and proved nothing about it.
+    assert own_dir in full, f"{package} is not in the suppressed packages: {full}"
+
+
+def test_the_console_hides_the_same_library_frames(tmp_path):
+    """The console's Rich traceback takes the one list too."""
+    install(log_level="INFO", output_dir=tmp_path / "out")
+    handler = management._state.console_handler
+    assert handler is not None
+    assert list(handler.tracebacks_suppress) == list(formatters.suppressed_traceback_packages())
+
+
+@pytest.mark.asyncio
+async def test_the_console_shows_a_library_frame_by_location_without_its_source(
+    tmp_path, capsys, monkeypatch
+):
+    """A real aioftp frame on the console: its file and line are there, its code is not."""
+    import linecache
+
+    from rich.console import ConsoleDimensions
+
+    from otto.console import CONSOLE
+
+    # Wide enough that no frame's path wraps, so its location reads as one line.
+    monkeypatch.setattr(CONSOLE, "size", ConsoleDimensions(400, 50))
+    install(log_level="INFO", output_dir=tmp_path / "out")
+    try:
+        await _aioftp_login_refused(_MARKER)
+    except Exception as exc:
+        failure = exc
+        logging.getLogger("acme.product").exception("the library failed")
+    else:
+        raise AssertionError("aioftp was expected to refuse the login")
+    management.reset()
+    shown = capsys.readouterr().out
+
+    (aioftp_dir,) = _package_dirs(["aioftp"])
+    library_frames = []
+    tb = failure.__traceback__
+    while tb is not None:
+        code = tb.tb_frame.f_code
+        if code.co_filename.startswith(aioftp_dir):
+            library_frames.append((code.co_filename, tb.tb_lineno, code.co_name))
+        tb = tb.tb_next
+    assert library_frames, "the failure never ran through aioftp"
+    for filename, lineno, name in library_frames:
+        assert f"{filename}:{lineno} in {name}" in shown, (
+            f"{name} is not located on the console:\n{shown}"
+        )
+        source = linecache.getline(filename, lineno).strip()
+        assert source, (filename, lineno)
+        assert source not in shown, f"the console shows aioftp's code {source!r}:\n{shown}"
+    # The calling frame outside the library still shows its code.
+    assert "await client.login(" in shown, shown

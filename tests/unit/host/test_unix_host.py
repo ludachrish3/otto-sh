@@ -17,6 +17,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import SecretStr
 
 from otto.host import HostSession, UnixHost
 from otto.host.capability_grid import UserSupport
@@ -204,7 +205,7 @@ class TestCreds:
     def test_returns_first_pair(self, host: UnixHost):
         user, password = host._creds
         assert user == "user"
-        assert password == "pass"
+        assert password == SecretStr("pass")
 
     @pytest.mark.asyncio
     async def test_returns_first_pair_from_multiple_creds(self):
@@ -219,7 +220,7 @@ class TestCreds:
         )
         user, password = h._creds
         assert user == "vagrant"
-        assert password == "vagrant"
+        assert password == SecretStr("vagrant")
         await h.close()
 
     def test_cred_lookup_prefers_the_active_terms_scope(self):
@@ -228,8 +229,8 @@ class TestCreds:
             Cred(login="admin", password="tn-pw", protocols=["telnet"]),
         ]
         host = UnixHost(ip="10.0.0.1", element=Element("lab"), creds=creds, term="telnet")
-        assert host.cred("admin").password == "tn-pw"
-        assert host._sudo_password() == "tn-pw"
+        assert host.cred("admin").password == SecretStr("tn-pw")
+        assert host._sudo_password() == SecretStr("tn-pw")
         assert host.default_cred is not None
         assert host.default_cred.login == "admin"
 
@@ -3884,7 +3885,7 @@ def _real_session_mgr(*, creds=None):
     from otto.host.session import SessionManager
     from tests.unit.host.test_session import _proxy_connections, _StubExecSession
 
-    conn = _proxy_connections([], login_target="admin", credentials=("admin", "pw"))
+    conn = _proxy_connections([], login_target="admin", credentials=("admin", SecretStr("pw")))
     conn.term = "telnet"
     conn.ssh = AsyncMock()
     return SessionManager(

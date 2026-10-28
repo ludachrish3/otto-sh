@@ -77,6 +77,10 @@ connect timeout:
 }
 ```
 
+An encrypted private key in `client_keys` is decrypted with
+`"passphrase": "..."`, which otto keeps wrapped and never logs or shows; it
+cannot be given through `extra`.
+
 `otto host <id> probe` reports whether this port answers and, when the
 service listens elsewhere, prints the fragment to paste here — see
 {doc}`../cli/host/capabilities/protocols`.

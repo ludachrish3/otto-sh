@@ -10,6 +10,7 @@ TelnetSession for command execution.
 
 import asyncio
 import logging
+import re
 import shutil
 import signal
 import struct
@@ -23,11 +24,31 @@ from typing import (
 )
 from weakref import WeakSet
 
+from pydantic import SecretStr
 from typing_extensions import Self
 
+from ..models.base import as_secret
 from .options import TelnetOptions
+from .secret_wire import reveal
 
 logger = logging.getLogger(__name__)
+
+TELNET_EOL = "\r"
+"""The line end otto types into a telnet shell session, a console's included.
+
+CR alone, never CRLF: the CR executes the line in readline raw mode, and a
+trailing LF would add a stray empty prompt (an extra ``>>> `` in a Python
+REPL) that the next expect matches before the real output. In canonical mode
+``icrnl`` maps the CR to the newline the shell expects.
+
+Not used for a telnet daemon's own login: :meth:`TelnetClient.login` answers
+the login and password prompts with CRLF, the line end a telnet login is
+written to accept, before any shell exists."""
+
+
+def telnet_line_ends(text: str) -> str:
+    r"""Return *text* with every ``\n`` (or ``\r\n``) line end as :data:`TELNET_EOL`."""
+    return re.sub(r"\r?\n", TELNET_EOL, text)
 
 
 def open_connection_default(name: str) -> Any:
@@ -208,7 +229,11 @@ class TelnetClient:
 
     host: str
     user: str
-    password: str
+    password: SecretStr | None = field(repr=False)
+    """The login password, or ``None`` to answer the prompt with an empty line.
+
+    A ``SecretStr``, unwrapped only inside the write that types it, and never
+    shown by ``repr()``. A plain ``str`` given here is wrapped on construction."""
 
     options: TelnetOptions = field(default_factory=TelnetOptions)
     """Connection options. Default reproduces otto's historical behavior."""
@@ -224,6 +249,9 @@ class TelnetClient:
 
     reader: Any = field(init=False, repr=False, default=None)
     writer: Any = field(init=False, repr=False, default=None)
+
+    def __post_init__(self) -> None:
+        self.password = as_secret(self.password)
 
     async def connect(self, interactive: bool = False) -> None:
         """Open the telnet connection, negotiate options, and log in.
@@ -307,7 +335,7 @@ class TelnetClient:
 
         # Wait for the password prompt ("Password:", "password:", etc.)
         await self.reader.readuntil(prompt_delim)
-        self.writer.write(self.password.encode() + b"\r\n")
+        self.writer.write(reveal(self.password, "\r\n").encode())
 
         if self.prompt is not None:
             # Opt-in fast path: a caller with a stable prompt can have login

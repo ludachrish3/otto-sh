@@ -20,9 +20,10 @@ from otto.host.login_proxy import (
     run_proxy,
     run_undo,
 )
+from otto.host.secret_wire import reveal
 from otto.logger.mode import LogMode
 from otto.utils import wait_for_async
-from tests._fixtures.fake_shell import ShellModel
+from tests._fixtures.fake_shell import ModelIO, ShellModel
 
 
 @pytest.fixture(autouse=True)
@@ -94,6 +95,8 @@ class RecorderIO:
         self.shell = ShellModel(user=user, challenges=prompts)
 
     async def send(self, text: str, *, log: LogMode = LogMode.NORMAL) -> None:
+
+        text = reveal(text)  # what the transport writes
         self.sent.append((text, log))
         self.shell.wrote(text)
 
@@ -191,31 +194,6 @@ async def test_su_proxy_login_shell_true_is_the_default_spelling():
     cred = Cred(login="svc", proxy="su", params={"login_shell": True})
     await run_proxy(io, cred, via=ADMIN, host_id="h1")
     assert _without_resync(io.sent) == [("su - svc\n", LogMode.NORMAL)]
-
-
-class ModelIO:
-    """ProxyIO backed by :class:`ShellModel` -- an honest shell, not a script.
-
-    ``expect`` honours its timeout for real (``asyncio.wait_for`` over an
-    event that never fires when the shell has nothing to say), so the engine's
-    own settle and probe budgets are exercised rather than waved through by a
-    fake that returns instantly no matter what it was asked for.
-    """
-
-    def __init__(self, shell: ShellModel) -> None:
-        self.shell = shell
-        self.sent: list[tuple[str, LogMode]] = []
-
-    async def send(self, text: str, *, log: LogMode = LogMode.NORMAL) -> None:
-        self.sent.append((text, log))
-        self.shell.wrote(text)
-
-    async def expect(self, pattern, timeout: float = 10.0) -> str:
-        reply = self.shell.reply()
-        if reply is None or not re.search(pattern, reply):
-            await asyncio.wait_for(asyncio.Event().wait(), timeout)
-            raise AssertionError("unreachable")
-        return reply
 
 
 def _passwords(io: ModelIO) -> list[str]:
@@ -495,6 +473,8 @@ class _FlakyResyncIO:
         self._sleep_on_fail = sleep_on_fail
 
     async def send(self, text: str, *, log: LogMode = LogMode.NORMAL) -> None:
+
+        text = reveal(text)  # what the transport writes
         self.sent.append(text)
 
     async def expect(self, pattern: str, timeout: float = 10.0) -> str:
@@ -686,7 +666,7 @@ async def test_a_root_caller_is_not_watched_for_a_prompt_it_cannot_get():
     """
     io = RecorderIO(user="root")
     await run_proxy(io, MYSQL, via=Cred(login="root"), host_id="h1")
-    assert not any(text == f"{MYSQL.password}\n" for text, _ in io.sent), (
+    assert not any(text == f"{MYSQL.password.get_secret_value()}\n" for text, _ in io.sent), (
         "sent a password to a `su` that never asks"
     )
 
@@ -701,7 +681,7 @@ async def test_an_unknown_caller_is_still_watched():
     """
     io = RecorderIO(replies=["Password:"], user="", prompts=True)
     await run_proxy(io, MYSQL, via=Cred(login=""), host_id="h1")
-    assert any(text == f"{MYSQL.password}\n" for text, _ in io.sent), (
+    assert any(text == f"{MYSQL.password.get_secret_value()}\n" for text, _ in io.sent), (
         "an unidentified caller was treated as root and left unanswered"
     )
 
@@ -712,7 +692,7 @@ async def test_a_host_that_challenges_root_can_force_the_watch_back_on():
     forced = replace(MYSQL, params={**MYSQL.params, "expect_prompt": True})
     io = RecorderIO(replies=["Password:"], user="root", prompts=True)
     await run_proxy(io, forced, via=Cred(login="root"), host_id="h1")
-    assert any(text == f"{forced.password}\n" for text, _ in io.sent), (
+    assert any(text == f"{forced.password.get_secret_value()}\n" for text, _ in io.sent), (
         "params={'expect_prompt': True} did not re-arm the prompt watch"
     )
 
@@ -734,6 +714,8 @@ class _SlowPromptIO:
         self._prompted = False
 
     async def send(self, text: str, *, log: LogMode = LogMode.NORMAL) -> None:
+
+        text = reveal(text)  # what the transport writes
         self.sent.append(text)
         if text.startswith("su"):
             self._su_at = asyncio.get_running_loop().time()

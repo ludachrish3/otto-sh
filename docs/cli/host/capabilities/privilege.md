@@ -27,7 +27,10 @@ The command is wrapped as `sudo -S -p 'otto-sudo:' <cmd>`. On a
 {class}`~otto.host.unix_host.UnixHost` the login user's password (from `creds`)
 is auto-answered through the expect channel; `LocalHost`/Docker assume
 passwordless sudo by default. Caller-supplied `expects` are preserved (the
-password expect is tried first). Embedded/RTOS hosts raise `NotImplementedError`.
+password expect is tried first). The password travels as the cred's own
+`SecretStr` and is unwrapped only inside the session's transport write, so no
+otto frame on a failing traceback shows it; a caller's own expect may answer
+with a `SecretStr` the same way. Embedded/RTOS hosts raise `NotImplementedError`.
 
 ## Scoped: `async with host.as_user(...)`
 

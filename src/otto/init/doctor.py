@@ -325,6 +325,7 @@ def _parse_lab_documents(root: Path) -> "tuple[list[str], list[LabDocument]]":
     """
     from ..labs.errors import LabRepositoryError
     from ..labs.json_repository import SeenElement, parse_lab_document, parse_lab_sections
+    from ..models.base import wrap_secret_values
 
     problems: list[str] = []
     documents: list[LabDocument] = []
@@ -340,6 +341,7 @@ def _parse_lab_documents(root: Path) -> "tuple[list[str], list[LabDocument]]":
                 # raw bytes would accept a BOM or UTF-16 the loader refuses.
                 # ValueError covers malformed JSON and undecodable bytes.
                 data = json.loads(lab_file.read_bytes().decode())
+                wrap_secret_values(data)
             except (OSError, ValueError) as e:
                 problems.append(f"{lab_file}: {e}")
                 continue

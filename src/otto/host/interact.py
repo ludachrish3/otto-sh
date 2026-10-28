@@ -43,6 +43,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from pydantic import SecretBytes, SecretStr
 from typing_extensions import override
 
 from ..logger.mode import LogMode
@@ -50,12 +51,27 @@ from ..models.base import Cred
 from .command_frame import CommandFrame
 from .host import DEFAULT_COMMAND_TIMEOUT
 from .login_proxy import run_proxy
+from .secret_wire import reveal, reveal_bytes
 from .session import BridgeSetup, HostSession, ShellSession, _SessionProxyIO
+from .telnet import TELNET_EOL, telnet_line_ends
 
 if TYPE_CHECKING:
     from .console import ConsoleClient
 
 logger = logging.getLogger(__name__)
+
+_TELNET_NEWLINE = TELNET_EOL.encode()
+"""The telnet bridge's line end, as the bytes its ``write_remote`` takes."""
+
+_WriteRemote = Callable[[bytes | SecretBytes], Awaitable[None]]
+"""A bridge's raw write to the remote. A password arrives as ``SecretBytes``
+and is unwrapped (:func:`~otto.host.secret_wire.reveal_bytes`) only inside
+the transport's own write call."""
+
+
+def _secret_line(secret: SecretStr, newline: bytes) -> SecretBytes:
+    """Return *secret* as the bytes of one answered line, still wrapped."""
+    return SecretBytes(reveal(secret, newline.decode()).encode())
 
 
 # Ctrl+] — the classic telnet(1) escape character. Single byte, no common
@@ -201,7 +217,7 @@ def _session_log_path() -> Path | None:
 
 async def _pump_stdin_to_remote(
     stdin_queue: "asyncio.Queue[bytes | None]",
-    write_remote: Callable[[bytes], Awaitable[None]],
+    write_remote: _WriteRemote,
 ) -> None:
     """Forward stdin chunks to the remote side until EOF or ``Ctrl+]``.
 
@@ -400,7 +416,7 @@ class _BridgeProxyIO:
 
     def __init__(
         self,
-        write_remote: Callable[[bytes], Awaitable[None]],
+        write_remote: _WriteRemote,
         read_remote: Callable[[], Awaitable[bytes]],
         newline: bytes,
     ) -> None:
@@ -409,13 +425,18 @@ class _BridgeProxyIO:
         self._newline = newline
         self._buffer = ""
 
-    async def send(self, text: str, *, log: LogMode = LogMode.NORMAL) -> None:  # noqa: ARG002 — `log` is part of the ProxyIO protocol; this adapter has no sink to leak a password to either way
+    async def send(self, text: str | SecretStr, *, log: LogMode = LogMode.NORMAL) -> None:  # noqa: ARG002 — `log` is part of the ProxyIO protocol; this adapter has no sink to leak a password to either way
         r"""Send *text*, translating a trailing ``"\n"`` to the transport newline.
 
         Never logs or echoes anything itself — ``log`` is accepted only to
         satisfy :class:`~otto.host.login_proxy.ProxyIO`; a password hop sends
         with ``log=LogMode.NEVER`` and this adapter has no sink to leak it to.
+        A ``SecretStr`` is sent as its value and the transport newline, still
+        wrapped until ``write_remote`` hands it to the transport.
         """
+        if isinstance(text, SecretStr):
+            await self._write_remote(_secret_line(text, self._newline))
+            return
         if text.endswith("\n"):
             data = text[:-1].encode("utf-8") + self._newline
         else:
@@ -482,7 +503,7 @@ class _BridgeShellSession(ShellSession):
 
     def __init__(
         self,
-        write_remote: Callable[[bytes], Awaitable[None]],
+        write_remote: _WriteRemote,
         read_remote: Callable[[], Awaitable[bytes]],
         *,
         newline: bytes,
@@ -502,9 +523,12 @@ class _BridgeShellSession(ShellSession):
         return None
 
     @override
-    async def write_transport(self, data: str) -> None:
-        if self._newline == b"\r":
-            data = re.sub(r"\r?\n", "\r", data)
+    async def write_transport(self, data: str | SecretStr) -> None:
+        if isinstance(data, SecretStr):
+            await self._write_remote(_secret_line(data, self._newline))
+            return
+        if self._newline == _TELNET_NEWLINE:
+            data = telnet_line_ends(data)
         await self._write_remote(data.encode("utf-8"))
 
     @override
@@ -547,7 +571,7 @@ class _BridgeShellSession(ShellSession):
 
 async def _run_session_setup_on_bridge(  # noqa: PLR0913 — wide bridge entry point: the byte closures plus every field the hook's session needs
     *,
-    write_remote: Callable[[bytes], Awaitable[None]],
+    write_remote: _WriteRemote,
     read_remote: Callable[[], Awaitable[bytes]],
     newline: bytes,
     host_name: str,
@@ -651,7 +675,7 @@ async def _run_session_setup_on_bridge(  # noqa: PLR0913 — wide bridge entry p
 
 async def _replay_proxy_hops(
     *,
-    write_remote: Callable[[bytes], Awaitable[None]],
+    write_remote: _WriteRemote,
     read_remote: Callable[[], Awaitable[bytes]],
     newline: bytes,
     proxy_hops: Sequence[Cred],
@@ -678,7 +702,7 @@ async def _replay_proxy_hops(
 
 async def _run_bridge(
     *,
-    write_remote: Callable[[bytes], Awaitable[None]],
+    write_remote: _WriteRemote,
     read_remote: Callable[[], Awaitable[bytes]],
     install_sigwinch: Callable[[], Callable[[], None]],
     on_output_line: Callable[[str], None],
@@ -879,8 +903,8 @@ async def run_ssh_login(
         process_kwargs["command"] = command
     process = await conn.create_process(**process_kwargs)
 
-    async def write_remote(data: bytes) -> None:
-        process.stdin.write(data)
+    async def write_remote(data: bytes | SecretBytes) -> None:
+        process.stdin.write(reveal_bytes(data))
 
     async def read_remote() -> bytes:
         try:
@@ -1008,8 +1032,8 @@ async def run_telnet_login(
     reader = client.reader
     writer = client.writer
 
-    async def write_remote(data: bytes) -> None:
-        writer.write(data)
+    async def write_remote(data: bytes | SecretBytes) -> None:
+        writer.write(reveal_bytes(data))
 
     async def read_remote() -> bytes:
         try:
@@ -1057,7 +1081,7 @@ async def run_telnet_login(
             await _replay_proxy_hops(
                 write_remote=write_remote,
                 read_remote=read_remote,
-                newline=b"\r",
+                newline=_TELNET_NEWLINE,
                 proxy_hops=proxy_hops,
                 via_login=via_login,
                 host_id=host_id,
@@ -1066,7 +1090,7 @@ async def run_telnet_login(
             prelude = await _run_session_setup_on_bridge(
                 write_remote=write_remote,
                 read_remote=read_remote,
-                newline=b"\r",
+                newline=_TELNET_NEWLINE,
                 host_name=host_name,
                 host_id=host_id,
                 bridge=bridge_setup,

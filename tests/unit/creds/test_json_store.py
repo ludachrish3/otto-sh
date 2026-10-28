@@ -3,6 +3,7 @@
 import json
 
 import pytest
+from pydantic import SecretStr
 
 from otto.creds import CredsError, CredsStore, JsonCredsStore, parse_creds_document
 from otto.inventory.protocol import SupportsStatPaths
@@ -28,7 +29,7 @@ def test_lookup_returns_entries_and_an_unknown_key_is_empty(tmp_path):
     )
     creds = store.lookup("k")
     assert [(c.login, c.password, c.proxy, c.via) for c in creds] == [
-        ("root", "x", None, None),
+        ("root", SecretStr("x"), None, None),
         ("svc", None, "su", "root"),
     ]
     assert store.lookup("absent") == []

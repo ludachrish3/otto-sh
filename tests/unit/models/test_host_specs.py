@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Annotated, ClassVar
 
 import pytest
-from pydantic import Field, ValidationError
+from pydantic import Field, SecretStr, ValidationError
 
 from otto.host import HostValidationError, host_context
 from otto.host.command_frame import ZephyrFrame
@@ -842,7 +842,7 @@ class TestCredSpec:
     def test_creds_list_minimal(self):
         host = _cred_host([{"login": "admin", "password": "pw"}])
         assert host.creds[0].login == "admin"
-        assert host.creds[0].password == "pw"
+        assert host.creds[0].password == SecretStr("pw")
 
     def test_creds_proxied_entry_roundtrip(self):
         host = _cred_host(
@@ -942,7 +942,7 @@ class TestCredSpec:
                 {"login": "admin", "password": "ftp-pw", "protocols": ["ftp"]},
             ]
         )
-        assert [c.password for c in spec.creds] == ["unix", "ftp-pw"]
+        assert [c.password for c in spec.creds] == [SecretStr("unix"), SecretStr("ftp-pw")]
 
     def test_creds_duplicate_login_and_scope_rejected_by_identity(self):
         with pytest.raises(ValidationError, match=r"duplicate cred entries: \['admin \[ftp\]'\]"):

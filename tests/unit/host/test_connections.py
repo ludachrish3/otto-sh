@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock
 import pytest
 import telnetlib3
 from asyncssh import SSHClientConnection
+from pydantic import SecretStr
 
 from otto.host.connections import ConnectionManager
 from otto.host.login_proxy import Cred, LoginProxyError
@@ -32,21 +33,21 @@ def _mgr(creds):
 
 def test_credentials_resolves_direct_cred_for_proxied_target():
     mgr = _mgr([MYSQL, ADMIN])
-    assert mgr.credentials == ("admin", "hunter2")
+    assert mgr.credentials == ("admin", SecretStr("hunter2"))
     assert mgr.login_target == "mysql"
     assert [c.login for c in mgr.proxy_hops] == ["mysql"]
 
 
 def test_credentials_plain_first_entry_default():
     mgr = _mgr([ADMIN, MYSQL])
-    assert mgr.credentials == ("admin", "hunter2")
+    assert mgr.credentials == ("admin", SecretStr("hunter2"))
     assert mgr.login_target == "admin"
     assert mgr.proxy_hops == []
 
 
 def test_credentials_empty_creds_loginless():
     mgr = _mgr([])
-    assert mgr.credentials == ("", "")
+    assert mgr.credentials == ("", SecretStr(""))
     assert mgr.login_target == ""
     assert mgr.proxy_hops == []
 
@@ -146,7 +147,7 @@ def test_transport_cred_for_ftp_is_the_scoped_cred_and_the_term_pick_is_untouche
     mgr = _mgr([FTP_USER, MYSQL, ADMIN])
     assert mgr.transport_cred_for("ftp") == FTP_USER
     assert mgr.login_target_for("ftp") == "ftpuser"
-    assert mgr.credentials == ("admin", "hunter2")
+    assert mgr.credentials == ("admin", SecretStr("hunter2"))
     assert mgr.login_target == "mysql"
 
 
@@ -168,7 +169,7 @@ def test_a_term_every_cred_is_scoped_away_from_is_loginless():
     """
     mgr = _mgr([FTP_USER, TELNET_ROOT])
     assert mgr.login_target == ""
-    assert mgr.credentials == ("", "")
+    assert mgr.credentials == ("", SecretStr(""))
     assert mgr.proxy_hops == []
 
 
@@ -273,7 +274,9 @@ async def test_a_refused_ftp_login_raises_an_otto_error_naming_the_login(monkeyp
     with pytest.raises(LoginProxyError) as caught:
         await mgr.ftp()
     assert caught.value.__cause__ is refusal, "the aioftp refusal must stay the cause"
-    assert FTP_USER.password not in str(caught.value), "the password must never be in the message"
+    assert FTP_USER.password is not None
+    secret = FTP_USER.password.get_secret_value()
+    assert secret not in str(caught.value), "the password must never be in the message"
 
 
 @pytest.mark.asyncio
@@ -288,7 +291,7 @@ async def test_ssh_under_a_telnet_term_authenticates_as_the_ssh_pick(monkeypatch
     ssh_ops = Cred(login="ops", password="ops-pw", protocols=["ssh"])
     mgr = ConnectionManager(ip="10.0.0.1", creds=[TELNET_ROOT, ssh_ops], term="telnet", name="h1")
     await mgr.ssh()
-    assert seen["auth"] == ("ops", "ops-pw")
+    assert seen["auth"] == ("ops", SecretStr("ops-pw"))
     assert mgr.login_target == "root"
 
 
@@ -304,7 +307,7 @@ async def test_ssh_as_resolves_against_ssh(monkeypatch):
     ssh_admin = Cred(login="admin", password="ssh-pw", protocols=["ssh"])
     mgr = _mgr([ADMIN, ssh_admin])
     await mgr.ssh_as("admin")
-    assert seen["auth"] == ("admin", "ssh-pw")
+    assert seen["auth"] == ("admin", SecretStr("ssh-pw"))
 
 
 def test_console_term_is_registered_for_both_families():

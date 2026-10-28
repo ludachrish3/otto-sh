@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
-from ..models.base import compact_validation_error
+from ..models.base import compact_validation_error, wrap_secret_values
 from ..models.inventory import FILLABLE_INVENTORY_FIELDS, INVENTORY_KEY_FIELDS, InventoryRecord
 from ..tls import DEFAULT_TIMEOUT_SECONDS, _checked_timeout, os_trust_session
 from .errors import InventoryError, InventoryKeyError
@@ -323,7 +323,11 @@ class NetBoxInventory:
             raw["board"] = str(d.device_type.model)
         if d.platform is not None:
             raw["os_name"] = str(d.platform.name)
+        # Wrapped before anything else holds it: an extra custom field may be
+        # named like a secret (``password``), and this frame's locals reach the
+        # log files if the record below fails to validate.
         cf = dict(d.custom_fields or {})
+        wrap_secret_values(cf)
         for field, cf_name in self.custom_fields.items():
             if cf.get(cf_name) is not None:
                 raw[field] = cf[cf_name]

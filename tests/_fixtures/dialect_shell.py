@@ -49,6 +49,9 @@ second handshake, so the bridge is friendlier in production than it is here.
 import asyncio
 import re
 
+from pydantic import SecretStr
+
+from otto.host.secret_wire import reveal
 from otto.host.session import ShellSession
 from otto.host.terminal_mapping import CALIBRATION_COMMAND
 from tests._fixtures.fake_shell import replay
@@ -215,8 +218,8 @@ class DialectSession(ShellSession):
     async def open_transport(self) -> None:
         self.opens += 1
 
-    async def write_transport(self, data: str) -> None:
-        self.shell.wrote(data)
+    async def write_transport(self, data: str | SecretStr) -> None:
+        self.shell.wrote(reveal(data))  # what the transport writes
 
     async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
         reply = self.shell.reply()

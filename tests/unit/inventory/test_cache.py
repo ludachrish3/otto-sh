@@ -608,3 +608,19 @@ def test_end_to_end_against_the_stub_one_round_per_ttl(tmp_path, monkeypatch):
         assert second.lookup("d2").ip == "10.0.0.1"
         assert len(stub.queries) == rounds  # not one request
         assert second.fingerprint() == first.fingerprint()
+
+
+def test_a_changed_passphrase_changes_the_slug_and_neither_holds_it():
+    from pydantic import SecretStr
+
+    from otto.inventory.cache import snapshot_slug_material
+
+    def slug(secret: str) -> str:
+        normalized = {"url": "https://nb", "ssh_options": {"passphrase": SecretStr(secret)}}
+        return snapshot_slug_material("netbox", "netbox:x", normalized, cache_ttl=timedelta(0))
+
+    first, again, changed = slug("hunter2-first"), slug("hunter2-first"), slug("hunter2-second")
+    assert first == again  # stable: the slug names one snapshot across processes
+    assert first != changed
+    assert "hunter2" not in first + changed
+    assert "**********" not in first  # not SecretStr's mask, which every secret shares

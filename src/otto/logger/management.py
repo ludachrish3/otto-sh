@@ -57,6 +57,7 @@ from .formatters import (
     EXC_ID_ATTR,
     TRACE_ATTR,
     RichFormatter,
+    _SuppressedPackages,
     capture_exception,
     format_log_time,
 )
@@ -275,6 +276,7 @@ def install_console(log_level: str, *, show_time: bool = False) -> None:
     # No locals on the console: a logged exception is often routine (a
     # teardown step, an asyncio task nobody awaited, a dashboard request), and
     # a locals panel per frame would bury the terminal. The files keep them.
+    # The suppressed packages are shown by location only, as in the files.
     # markup=False: a record is printed as written unless it opts in with
     # ``extra={"markup": True}``, which ``RichHandler`` reads off the record.
     stdout_handler = _ConsoleHandler(
@@ -284,6 +286,7 @@ def install_console(log_level: str, *, show_time: bool = False) -> None:
         rich_tracebacks=True,
         tracebacks_max_frames=CONSOLE_TRACEBACK_MAX_FRAMES,
         tracebacks_show_locals=False,
+        tracebacks_suppress=_SuppressedPackages(),
         markup=False,
         highlighter=NullHighlighter(),
         show_path=log_level == "DEBUG",

@@ -1,8 +1,8 @@
 """A failure that ends a command is documented in both log files, through the real ``entry()``.
 
 A subprocess, like ``test_entry_cache_rebuild.py``, because the behaviour sits
-where no ``CliRunner`` reaches: ``entry()``'s frames around ``app()``, Typer's
-excepthook, and the exit of the process with the logging listener still
+where no ``CliRunner`` reaches: ``entry()``'s frames around ``app()``, its
+crash print, and the exit of the process with the logging listener still
 running. A run that leaves the traceback in the queue at exit fails here,
 which an in-process test cannot show.
 
@@ -202,8 +202,11 @@ def test_a_crash_writes_its_traceback_to_both_log_files(workspace):
     )
     for name, text in files.items():
         assert "uncaught RuntimeError ended the command" in text, name
-    # The terminal is unchanged: Typer's own traceback, once, on stderr.
+    # The terminal: otto's own crash print (``render_crash``), once, on stderr,
+    # with the locals the files keep; Typer's pretty traceback is off.
     assert p.stderr.count("RuntimeError: the crash message") == 1, p.stderr
+    assert p.stderr.count("Traceback") == 1, p.stderr
+    assert re.search(r"marker_local\s*=\s*'\[bold\]kept\[/bold\] verbatim'", p.stderr), p.stderr
     assert "the crash message" not in p.stdout
 
 
@@ -211,7 +214,8 @@ def test_a_leaked_cancellation_is_recorded_as_a_crash(workspace):
     """``CancelledError`` is a BaseException, and one that leaves the command is a failure."""
     p, files = _otto(workspace, "cancel")
 
-    assert p.returncode != 0, p.stderr
+    assert p.returncode == 1, p.stderr
+    assert p.stderr.count("CancelledError: the leaked cancellation") == 1, p.stderr
     _assert_traceback(
         files,
         headline="CancelledError: the leaked cancellation",

@@ -24,10 +24,12 @@ Example::
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import MISSING, dataclass, field, fields
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
-from pydantic import ConfigDict
+from pydantic import ConfigDict, SecretStr
 from pydantic.dataclasses import dataclass as pydantic_dataclass
+
+from ..models.base import as_secret
 
 __all__ = [
     "FtpOptions",
@@ -85,12 +87,13 @@ class SocksForward:
     listen_port: int
 
 
-_EXTRA_IDENTITY_OVERRIDE_KEYS = frozenset({"username", "password", "tunnel"})
+_EXTRA_IDENTITY_OVERRIDE_KEYS = frozenset({"username", "tunnel"})
 """``extra`` keys that collide with what the SSH call sites pass explicitly
-(the credential and the hop tunnel). Before this options layer existed,
+(the login and the hop tunnel). Before this options layer existed,
 duplicating one of these as a kwarg was a ``TypeError``; ``extra`` now wins
 silently on conflict (see ``SshOptions.extra``'s docstring), so ``_kwargs()``
-logs once instead of staying quiet about it."""
+logs once instead of staying quiet about it. ``password`` is not among them:
+it is refused outright (``SshOptions._reserved_extra``)."""
 
 
 def field_default(options_cls: "type[DataclassInstance]", name: str) -> Any:
@@ -114,16 +117,20 @@ def field_default(options_cls: "type[DataclassInstance]", name: str) -> Any:
 
 
 def shadowed_fields(extra: dict[str, Any], cls: "type[DataclassInstance]") -> list[str]:
-    """Return the keys of *extra* that name a field of the options class *cls*, sorted.
+    """Return the keys of *extra* that *cls* refuses: its fields and its reserved names, sorted.
 
     ``extra`` is the pass-through for library kwargs otto has not curated; a
     curated field's name in it would make two sources for one value (the
     survey reading ``port`` while the connect dialled ``extra["port"]``).
-    The options dataclasses refuse such a key when they are built and the
-    lab specs (``otto.host.option_specs``) refuse it when the lab is read,
-    both through this one rule.
+    A reserved name (the class's ``_reserved_extra``) is a value otto must
+    set itself: ``SshOptions`` reserves ``password`` and ``passphrase``,
+    which reach asyncssh only from the host's creds, wrapped, and never sit
+    raw in a kwargs dict. The options dataclasses refuse such a key when they
+    are built and the lab specs (``otto.host.option_specs``) refuse it when
+    the lab is read, both through this one rule.
     """
-    names = {f.name for f in fields(cls)}
+    reserved = getattr(cls, "_reserved_extra")  # noqa: B009 — a ClassVar every options class with an ``extra`` declares
+    names = {f.name for f in fields(cls)}.union(reserved)
     return sorted(k for k in extra if k in names)
 
 
@@ -134,8 +141,8 @@ def _refuse_shadowing(opts: "DataclassInstance") -> None:
     shadowed = shadowed_fields(extra, cls)
     if shadowed:
         msg = (
-            f"{cls.__name__}.extra sets {shadowed}, which name(s) its own field(s); "
-            "set the field instead — a value has one source"
+            f"{cls.__name__}.extra sets {shadowed}, which otto sets from its own "
+            "field(s) or the host's creds; set those instead — a value has one source"
         )
         raise ValueError(msg)
 
@@ -218,25 +225,39 @@ class SshOptions:
     Applied on the host's own sessions only, never on a tunnel connection
     opened through this host acting as a hop."""
 
+    _reserved_extra: ClassVar[frozenset[str]] = frozenset({"password", "passphrase"})
+    """``extra`` keys refused by name (see :func:`shadowed_fields`): a password
+    comes from the host's creds and a key passphrase from :attr:`passphrase`,
+    never from ``extra``, where it would sit raw in a kwargs dict."""
+
     extra: dict[str, Any] = field(default_factory=dict)
     """Arbitrary extra kwargs forwarded directly to ``asyncssh.connect()``.
 
     Anything kwarg-shaped on asyncssh's connect (``config``, ``proxy_command``,
     ``x509_trusted_certs``, ``gss_host``, etc.) can be set here. A key that
     names a curated field (``port``, ``known_hosts``, ...) is refused when the
-    options are built: the field is that value's one source. The call sites
-    spread these after their own ``username``, ``password`` and ``tunnel``,
-    so an ``extra`` key with one of those names replaces the credential or
-    the hop tunnel silently."""
+    options are built: the field is that value's one source. So is
+    ``password`` or ``passphrase``: a secret reaches asyncssh only from the
+    host's creds or :attr:`passphrase`, wrapped until the library call. The call sites spread these
+    after their own ``username`` and ``tunnel``, so an ``extra`` key with one
+    of those names replaces the login or the hop tunnel (with a warning)."""
 
     def __post_init__(self) -> None:
         _refuse_shadowing(self)
+        self.passphrase = as_secret(self.passphrase)
 
     post_connect: Callable[["SSHClientConnection"], Awaitable[None]] | None = None
     """Optional async hook called with the freshly opened connection,
     after the structured forward lists have been applied. Use for anything
     not expressible as a kwarg or a structured forward — e.g. UNIX-socket
     forwards, X11, custom subsystems."""
+
+    passphrase: SecretStr | None = field(default=None, repr=False)
+    """Passphrase that decrypts encrypted ``client_keys``. ``None`` = keys are not encrypted.
+
+    A ``SecretStr`` (a plain ``str`` is wrapped on construction), never shown
+    by ``repr()``, and unwrapped only inside the ``asyncssh.connect`` call
+    (:func:`~otto.host.connections.ssh_connect`)."""
 
     def _kwargs(self) -> dict[str, Any]:
         """Build the kwargs dict passed to ``asyncssh.connect()``, warning on identity overrides.
@@ -268,6 +289,8 @@ class SshOptions:
             kw["client_keys"] = self.client_keys
         if self.client_host_keys is not None:
             kw["client_host_keys"] = self.client_host_keys
+        if self.passphrase is not None:
+            kw["passphrase"] = self.passphrase  # still wrapped: ssh_connect unwraps it
         if self.agent_forwarding:
             kw["agent_forwarding"] = True
         if self.preferred_auth is not None:
@@ -370,6 +393,11 @@ class TelnetOptions:
     a NAWS update on every resize so remote TUIs reflow. Off by default;
     opt in for interactive telnet sessions."""
 
+    _reserved_extra: ClassVar[frozenset[str]] = frozenset()
+    """``extra`` keys refused although no field has the name: none here.
+
+    See :func:`shadowed_fields`."""
+
     extra: dict[str, Any] = field(default_factory=dict)
     """Extra kwargs forwarded to ``telnetlib3.open_connection()``."""
 
@@ -467,6 +495,11 @@ class ConsoleOptions:
     echo_negotiation_timeout: float = 3.0
     """Seconds to wait for the remote to honor ``DONT ECHO`` during connect."""
 
+    _reserved_extra: ClassVar[frozenset[str]] = frozenset()
+    """``extra`` keys refused although no field has the name: none here.
+
+    See :func:`shadowed_fields`."""
+
     extra: dict[str, Any] = field(default_factory=dict)
     """Extra kwargs forwarded to ``telnetlib3.open_connection()``."""
 
@@ -506,6 +539,11 @@ class SftpOptions:
 
     send_env: list[str] | None = None
     """Local env vars to forward to the remote SFTP process."""
+
+    _reserved_extra: ClassVar[frozenset[str]] = frozenset()
+    """``extra`` keys refused although no field has the name: none here.
+
+    See :func:`shadowed_fields`."""
 
     extra: dict[str, Any] = field(default_factory=dict)
     """Extra kwargs forwarded to ``SSHClientConnection.start_sftp_client()``."""
@@ -558,6 +596,11 @@ class ScpOptions:
 
     block_size: int = 16384
     """Chunk size for SCP transfers. Larger = faster on fast links, more RAM."""
+
+    _reserved_extra: ClassVar[frozenset[str]] = frozenset()
+    """``extra`` keys refused although no field has the name: none here.
+
+    See :func:`shadowed_fields`."""
 
     extra: dict[str, Any] = field(default_factory=dict)
     """Extra kwargs forwarded to ``asyncssh.scp()``."""
@@ -628,6 +671,11 @@ class FtpOptions:
 
     passive_commands: tuple[str, ...] = ("epsv", "pasv")
     """Passive-mode commands to attempt, in order."""
+
+    _reserved_extra: ClassVar[frozenset[str]] = frozenset()
+    """``extra`` keys refused although no field has the name: none here.
+
+    See :func:`shadowed_fields`."""
 
     extra: dict[str, Any] = field(default_factory=dict)
     """Extra kwargs forwarded to ``aioftp.Client()``. aioftp also accepts

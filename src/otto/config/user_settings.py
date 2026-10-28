@@ -12,6 +12,7 @@ from pathlib import Path
 import tomli
 from pydantic import ValidationError
 
+from ..models.base import load_toml_settings
 from ..models.settings import UserSettingsModel
 from .home import otto_home
 
@@ -43,7 +44,7 @@ def load_user_settings(path: "Path | None" = None) -> "UserSettingsModel | None"
     if not p.is_file():
         return None
     try:
-        data = tomli.loads(p.read_text())
+        data = load_toml_settings(p.read_text())
     except (OSError, UnicodeDecodeError, tomli.TOMLDecodeError) as e:
         raise ValueError(f"{p}: {e}") from e
     try:

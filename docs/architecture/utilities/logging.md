@@ -30,7 +30,7 @@ print land after it. So on the CLI path the listener is the terminal's only
 writer: when `create_output_dir` builds the sinks it replaces `sys.stdout`
 and `sys.stderr` with proxies that put each finished piece of text on the
 same queue as the log records, and the listener writes both in the order they
-were produced. `rich.print`, `print`, `typer.echo`, Typer's crash traceback
+were produced. `rich.print`, `print`, `typer.echo`, otto's crash traceback
 and the report of the `otto test` session (which runs with `-s`, so pytest
 captures no descriptor) need nothing at the call site, and neither a log
 call nor a print waits for the terminal. Terminal output does wait behind the
@@ -146,7 +146,7 @@ frame's local variables:
 | --- | --- | --- |
 | logged: `logger.exception(...)`, or any call with `exc_info=` | the message and a Rich traceback (up to 20 frames, no locals), if `--log-level` admits the record | the message and the traceback, in each file whose level admits the record |
 | an `OttoError` ends the command | the one-line `error: ...`, plus a plain traceback on stderr at `--log-level DEBUG` only | `error: <message>` and the traceback, in both files at any `--log-level` |
-| any other exception ends the command (a crash, including a leaked `asyncio.CancelledError`) | the interpreter's traceback on stderr, once (Typer's, for an `Exception`) | `uncaught <Type> ended the command` and the traceback, in both files at any `--log-level` |
+| any other exception ends the command (a crash, including a leaked `asyncio.CancelledError`) | a Rich traceback with locals on stderr, once, and exit status 1 | `uncaught <Type> ended the command` and the traceback, in both files at any `--log-level` |
 
 The console leaves locals out because a logged exception is often routine: a
 teardown step, an asyncio task nobody awaited, a dashboard request that failed.
@@ -173,9 +173,10 @@ Two kinds of failure leave no traceback in the files:
 In the files a traceback is written below its message, each line with the
 usual timestamp and level prefix, at a fixed 160 columns so a frame is not
 folded to the width of the terminal the run started in. It shows up to 100
-frames; frames inside Typer and click are shown by location only, as Typer's
-own traceback does. It is plain text; with `--rich-log-file` it keeps Rich's
-colours, whether or not otto was started in a terminal. It never passes
+frames; frames inside the
+{ref}`hidden libraries <hidden-library-frames>` are shown by location only. It
+is plain text; with `--rich-log-file` it keeps Rich's colours, whether or not
+otto was started in a terminal. It never passes
 through the markup rendering above, so a source line or a local whose value is
 `"[bold]x[/bold]"` appears exactly as written.
 
@@ -189,19 +190,55 @@ chain.
 
 ```{warning}
 Local variables are written to both log files as Rich shows them, in every
-frame outside Typer and click. Each value is bounded: a string past 120
-characters is truncated, a container past 10 items is cut short, and nesting
-stops three levels down. The bounds hold in every frame of the traceback,
-including the frames of an exception group's members (a `TaskGroup`, anyio or
-`except*` failure). Containers, dataclasses (an `OttoContext`, a host)
-and pydantic models are expanded field by field down to that depth. The
-bounds shorten a secret but do not hide it. Nothing is redacted, and
-`LogMode.NEVER` does not apply (it gates command I/O, not tracebacks). A
-password, a token or a credential object in scope when the exception is
-raised ends up in `console.log` and `verbose.log`. The one exception is the
-monitor dashboard: `uvicorn.error` records are written without locals, because
-every request passes through the frame that holds the dashboard's access key.
+frame outside the {ref}`hidden libraries <hidden-library-frames>`. Each value
+is bounded: a string past 120 characters is truncated, a container past 10
+items is cut short, and nesting stops three levels down. The bounds hold in
+every frame of the traceback, including the frames of an exception group's
+members (a `TaskGroup`, anyio or `except*` failure). Containers, dataclasses
+(an `OttoContext`, a host) and pydantic models are expanded field by field down
+to that depth. The bounds shorten a secret but do not hide it. Nothing is
+redacted, and `LogMode.NEVER` does not apply (it gates command I/O, not
+tracebacks). otto's own passwords are pydantic `SecretStr`s, which render as a
+mask, but a plain string a test or a project holds (a token, a password it
+unwrapped) in scope when the exception is raised ends up in `console.log` and
+`verbose.log`, and in a crash's traceback on the terminal. The one exception is
+the monitor dashboard: `uvicorn.error` records are written without locals,
+because every request passes through the frame that holds the dashboard's
+access key.
 ```
+
+(hidden-library-frames)=
+### Hidden library frames
+
+Every Rich traceback otto prints shows the frames of a few packages by file and
+line only, without their code or locals: the log files, the console, and the
+crash on the terminal. They are the packages
+{func}`~otto.logger.formatters.suppressed_traceback_packages` names:
+
+- `typer` and `click`, the command line's own machinery;
+- `asyncssh`, `telnetlib3` and `aioftp`, which receive the raw password from
+  otto, and `asyncio`, whose transport `write` holds the bytes of a password a
+  failed telnet write was given;
+- `json`, whose parse frames hold the whole text of a lab file or creds store,
+  passwords included, before otto has wrapped them; `tomli` (and the standard
+  library's `tomllib`) likewise for a settings file; and `pynetbox`, which holds
+  NetBox's device payloads before otto sees them.
+
+otto keeps a password a `SecretStr` in its own frames and unwraps it only inside
+the call to one of these libraries, so no frame a traceback shows in full holds
+it. Every loader of lab, creds-store and NetBox data wraps each `password` and
+`passphrase` value it parsed as a `SecretStr` before any other otto frame holds
+the document ({func}`~otto.models.base.wrap_secret_values`), so a lab file that
+fails to load does not show its passwords either. Settings files are parsed the
+same way ({func}`~otto.models.base.load_toml_settings`): a `passphrase` at any
+depth, such as `[host_preferences.".*".ssh_options] passphrase`, is a
+`SecretStr` from the parse on. Where otto serializes parsed settings to JSON (an
+inventory snapshot's identity, the OS-profile digest), each secret becomes a
+digest of its value ({func}`~otto.models.base.secret_safe_json_default`), never
+the value, and the result still changes when the secret does.
+
+Hiding a frame does not hide the exception's message, which Rich prints
+whatever the frame; otto never puts a password in one.
 
 ### How it works
 

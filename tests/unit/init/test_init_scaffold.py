@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 
 import pytest
+from pydantic import SecretStr
 
 from otto.init import (
     AREA_NAMES,
@@ -128,7 +129,7 @@ def test_lab_scaffold_writes_three_files_that_resolve_to_one_host(tmp_path: Path
     validate_host_dict(resolved, element=element.to_element())
     spec = UnixHostSpec.model_validate(resolved)
     assert spec.ip == "192.0.2.1"
-    assert [(c.login, c.password) for c in spec.creds] == [("admin", "CHANGE_ME")]
+    assert [(c.login, c.password) for c in spec.creds] == [("admin", SecretStr("CHANGE_ME"))]
     assert data["$schema"] == "../.otto/schemas/lab.schema.json"
     assert json.loads((lab_dir / "inventory.json").read_text())["$schema"] == (
         "../.otto/schemas/inventory.schema.json"

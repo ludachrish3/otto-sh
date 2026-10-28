@@ -520,7 +520,10 @@ app = typer.Typer(
     no_args_is_help=True,
     help=DESCRIPTION,
     invoke_without_command=True,
-    pretty_exceptions_show_locals=True,
+    # A crash is rendered by `render_crash` in `entry()`, which hides the
+    # frames of the libraries that receive passwords; Typer's own hook would
+    # print it a second time, with a suppress list otto cannot extend.
+    pretty_exceptions_enable=False,
     cls=_OttoGroup,
     context_settings={
         "help_option_names": ["-h", "--help"],
@@ -1012,6 +1015,20 @@ def _cached_names_payload(projects: "list[Project]") -> "dict[str, Any] | None":
     return payload
 
 
+def render_crash(exc: BaseException) -> None:
+    """Print *exc* to stderr as the Rich traceback of a crash, with every frame's locals.
+
+    The CLI's only crash printer, called from :func:`entry`'s last ``except``
+    leg; the rendering is :func:`otto.logger.formatters.print_crash_traceback`,
+    beside the suppress list and the console width it uses. Typer's own
+    excepthook cannot do this: it builds its own suppress list, with no
+    setting to extend it.
+    """
+    from ..logger.formatters import print_crash_traceback
+
+    print_crash_traceback(exc)
+
+
 def print_traceback_if_debug() -> None:
     """Print the exception being handled to stderr, only when logging at DEBUG.
 
@@ -1320,22 +1337,23 @@ def entry(cache_stale: bool = False) -> None:
         print_error(f"error: {render_instrumentation_refusal(e)}")
         raise SystemExit(1) from e
     except BaseException as e:
-        # A crash. An Exception was marked by Typer for its own excepthook,
-        # which prints the rich traceback once the re-raise leaves the
-        # process; anything else (a leaked `asyncio.CancelledError`) gets the
-        # interpreter's. All this frame adds is the same failure in both log
-        # files, written as soon as the logging listener reaches it.
+        # A crash, an Exception or a leaked `asyncio.CancelledError` alike: the
+        # same failure goes to both log files, written as soon as the logging
+        # listener reaches it, and `render_crash` prints it once on stderr
+        # (Typer's own pretty traceback is off) before the exit status 1.
         #
         # The three exits that are not failures pass untouched. Click's own
         # control flow never lands here as anything else: in standalone mode a
         # usage error, `typer.Exit`, `--help` and Ctrl-C all leave `app()` as
         # SystemExit, and an interrupt otto raises itself is a
         # KeyboardInterrupt.
-        if not isinstance(e, (SystemExit, KeyboardInterrupt, GeneratorExit)):
-            from ..logger.management import record_command_failure
+        if isinstance(e, (SystemExit, KeyboardInterrupt, GeneratorExit)):
+            raise
+        from ..logger.management import record_command_failure
 
-            record_command_failure(e, f"uncaught {type(e).__name__} ended the command")
-        raise
+        record_command_failure(e, f"uncaught {type(e).__name__} ended the command")
+        render_crash(e)
+        raise SystemExit(1) from e
     finally:
         if completion:
             # After the answer is printed: a completer that answered from a

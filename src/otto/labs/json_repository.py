@@ -14,7 +14,7 @@ from ..host.factory import (
 )
 from ..host.os_profile import ProfileContext
 from ..host.remote_host import describe_identity
-from ..models.base import OttoModel, compact_validation_error
+from ..models.base import OttoModel, compact_validation_error, wrap_secret_values
 from ..models.lab import ElementSpec, LabEntrySpec
 from ..utils import anchor_path
 from .errors import (
@@ -680,6 +680,7 @@ class JsonFileLabRepository:
         try:
             with lab_file.open() as f:
                 data = json.load(f)
+            wrap_secret_values(data)
         except json.JSONDecodeError as e:
             raise LabRepositoryError(f"Lab file '{lab_file}' contains malformed JSON: {e}") from e
         return parse_lab_sections(data, str(lab_file))

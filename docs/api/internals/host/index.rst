@@ -18,6 +18,7 @@ host internals
    loop_owner
    transport
    telnet
+   secret_wire
    nvt
    console
    terminal_mapping

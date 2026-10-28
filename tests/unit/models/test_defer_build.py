@@ -1,11 +1,8 @@
 """Every OttoModel builds lazily, and every one of them still builds (spec 2026-09-26 §5.3)."""
 
-import importlib
-import pkgutil
-
-import otto
 from otto.models.base import OttoModel
 from otto.models.monitor import EventCreateBody, EventUpdateBody
+from tests._fixtures.otto_modules import import_otto_modules
 
 
 def _all_subclasses(cls):
@@ -25,19 +22,6 @@ def _all_subclasses(cls):
         yield from _all_subclasses(sub)
 
 
-def _import_all_otto_modules():
-    for info in pkgutil.walk_packages(otto.__path__, "otto."):
-        if ".tests" in info.name or info.name.startswith("otto._webassets"):
-            continue
-        # otto.__main__ runs `main()` at module scope (the ``python -m otto``
-        # entry point) so the real console script and `python -m otto` can
-        # never diverge. Importing it here would dispatch the CLI against
-        # pytest's own argv and exit/raise; it carries no OttoModel.
-        if info.name == "otto.__main__":
-            continue
-        importlib.import_module(info.name)
-
-
 # Sanctioned exceptions: request-body models FastAPI wraps in its own
 # `TypeAdapter(Annotated[<model>, Field(alias=<param name>)])`, built inside a
 # `warnings.catch_warnings()` block that only covers an EAGER build. A
@@ -51,7 +35,7 @@ _EAGER_BUILD_EXCEPTIONS = frozenset({EventCreateBody, EventUpdateBody})
 
 
 def test_every_otto_model_defers_its_build():
-    _import_all_otto_modules()
+    import_otto_modules()
     subclasses = list(_all_subclasses(OttoModel))
     assert subclasses
     found_exceptions = set()
@@ -67,7 +51,7 @@ def test_every_otto_model_defers_its_build():
 
 
 def test_every_otto_model_builds():
-    _import_all_otto_modules()
+    import_otto_modules()
     for cls in _all_subclasses(OttoModel):
         cls.model_rebuild(force=True)
         assert cls.__pydantic_complete__, cls.__qualname__

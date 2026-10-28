@@ -3,6 +3,7 @@
 import json
 
 import pytest
+from pydantic import SecretStr
 
 from otto.creds import CredsError, JsonCredsStore
 from otto.inventory import CredsOverlay, Inventory, InventoryError
@@ -40,7 +41,7 @@ def test_overlay_supplies_creds_from_the_store(tmp_path):
     assert inv.label == "fake:mem"
     assert inv.store is store
     rec = inv.lookup("k")
-    assert [(c.login, c.password) for c in rec.creds] == [("root", "x")]
+    assert [(c.login, c.password) for c in rec.creds] == [("root", SecretStr("x"))]
     assert "creds" in rec.model_fields_set  # the join reads STATED fields; this one is
     assert inv.list_keys() == ["k"]
 
@@ -63,9 +64,9 @@ def test_record_creds_layer_over_store_creds_by_login(tmp_path):
     )
     rec = CredsOverlay(inner, store=store).lookup("k")
     assert [(c.login, c.password, c.proxy) for c in rec.creds] == [
-        ("test", "override", None),
+        ("test", SecretStr("override"), None),
         ("svc", None, "su"),
-        ("vagrant", "v", None),
+        ("vagrant", SecretStr("v"), None),
     ]
 
 

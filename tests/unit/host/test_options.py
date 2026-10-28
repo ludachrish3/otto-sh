@@ -68,12 +68,13 @@ class TestSshOptions:
         with pytest.raises(ValueError, match="known_hosts"):
             SshOptions(port=22, extra={"known_hosts": "/etc/ssh/known_hosts"})
 
-    @pytest.mark.parametrize("key", ["username", "password", "tunnel"])
+    @pytest.mark.parametrize("key", ["username", "tunnel"])
     def test_extra_overriding_an_identity_key_warns_once_and_names_the_key(self, caplog, key):
-        """M6: before the options layer existed, duplicating username/password/
-        tunnel as a kwarg was a TypeError; extra now overrides them silently.
-        A warning naming the key keeps the old loudness without the crash —
-        and must never print a password VALUE, only the key name."""
+        """M6: before the options layer existed, duplicating username/tunnel as
+        a kwarg was a TypeError; extra now overrides them silently. A warning
+        naming the key keeps the old loudness without the crash, and prints
+        only the key name, never the value. (``password`` is refused outright:
+        tests/unit/host/test_options_extra_shadowing.py.)"""
         import logging
 
         opts = SshOptions(extra={key: "s3cret-value"})

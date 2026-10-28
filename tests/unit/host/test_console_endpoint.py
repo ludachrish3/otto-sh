@@ -44,7 +44,7 @@ def ssh_connects(monkeypatch):
     """Record every hop-tunnel SSH connect as ``(tag, host, username)``; no network."""
     seen = []
 
-    async def fake(tag, host, kwargs, options, *, apply_post_connect=True):
+    async def fake(tag, host, kwargs, options, *, password, alias=None, apply_post_connect=True):
         seen.append((tag, host, kwargs["username"]))
         return object()
 

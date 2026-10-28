@@ -26,6 +26,7 @@ functions needed.
 
 import asyncio
 import contextlib
+import functools
 import logging
 import os
 import warnings
@@ -33,6 +34,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 
+from pydantic import SecretStr
 from typing_extensions import override
 
 from ..errors import OttoError
@@ -117,7 +119,7 @@ class TermContext:
 
 logger = logging.getLogger(__name__)
 
-LOGINLESS = Cred(login="", password="")
+LOGINLESS = Cred(login="", password=SecretStr(""))
 """The auth a transport uses when no cred applies — today's ``('', '')`` as a ``Cred``."""
 
 
@@ -296,6 +298,19 @@ _SSH_DEBUG_LEVELS = range(1, 4)
 """asyncssh's own accepted debug levels: 1..3."""
 
 
+_SSH_PACKET_DUMP_LEVEL = 3
+"""The asyncssh debug level that dumps raw packets, passwords included."""
+
+
+@functools.cache
+def _warn_packet_dump() -> None:
+    """Warn, once per process, that ``OTTO_SSH_DEBUG=3`` logs passwords in clear."""
+    logger.warning(
+        f"{SSH_DEBUG_ENV_VAR}=3 logs raw SSH packets: passwords and sudo/su answers "
+        "appear in clear in the log; use it only on a test host and delete the log after"
+    )
+
+
 def _parse_ssh_debug_level(raw: str) -> int | None:
     """Parse *raw* as an asyncssh debug level, or ``None`` if it is not one of 1..3."""
     try:
@@ -323,6 +338,11 @@ def apply_ssh_debug_level() -> None:
     trace beats a standing noise-floor entry. Unset ``OTTO_SSH_DEBUG`` to get
     the project's floor back. A value outside 1..3 is reported and ignored
     rather than turned into a ValueError on every connect, and lifts nothing.
+
+    Level 3 is asyncssh's raw packet dump: the password-auth request and every
+    channel byte (a sudo or su answer included) reach the log in clear. It is
+    kept as an explicit debug tool, and its first use in a process logs one
+    WARNING saying so.
     """
     raw = os.environ.get(SSH_DEBUG_ENV_VAR)
     if raw is None:
@@ -336,6 +356,8 @@ def apply_ssh_debug_level() -> None:
     import asyncssh
 
     asyncssh.set_debug_level(level)
+    if level == _SSH_PACKET_DUMP_LEVEL:
+        _warn_packet_dump()
 
     from ..logger import management
 
@@ -347,7 +369,9 @@ def describe_connect_kwargs(name: str, host: str, kwargs: dict[str, Any]) -> str
 
     Secrets are replaced by ``'***'`` when present; an absent password is
     shown as ``None`` because a login-less connect is worth seeing. Only
-    ``password`` and ``passphrase`` are redacted; otto's curated
+    ``password`` (passed beside *kwargs*) and ``passphrase`` (in *kwargs*,
+    from ``SshOptions.passphrase``) are redacted; both arrive as
+    ``SecretStr``, and ``extra`` can name neither. otto's curated
     ``client_keys`` field carries paths, but key DATA handed in through
     ``extra`` would be printed verbatim at DEBUG.
     """
@@ -374,7 +398,13 @@ def describe_negotiated(name: str, conn: Any) -> str:
     )
 
 
-async def ssh_connect(*args: Any, **kwargs: Any) -> Any:
+async def ssh_connect(
+    host: str,
+    *,
+    password: SecretStr | None,
+    passphrase: SecretStr | None = None,
+    **kwargs: Any,
+) -> Any:
     """Lazy, patchable wrapper around :func:`asyncssh.connect`.
 
     Kept as a module-level seam (tests monkeypatch it) while deferring the heavy
@@ -383,12 +413,22 @@ async def ssh_connect(*args: Any, **kwargs: Any) -> Any:
     comes through here, including the hop tunnels, which is what makes it the
     right place for the two pieces of process-wide asyncssh state otto sets:
     the FFDH deprecation filter and the ``OTTO_SSH_DEBUG`` level.
+
+    *password* and *passphrase* (``SshOptions.passphrase``, the key
+    passphrase) stay ``SecretStr`` here and are unwrapped inside the
+    ``connect(...)`` call itself, so no otto frame on a failing connect's
+    traceback holds a raw value (see :mod:`otto.host.secret_wire`).
     """
     install_asyncssh_warning_filters()
     apply_ssh_debug_level()
     from asyncssh import connect
 
-    return await connect(*args, **kwargs)
+    return await connect(
+        host,
+        password=password.get_secret_value() if password is not None else None,
+        passphrase=passphrase.get_secret_value() if passphrase is not None else None,
+        **kwargs,
+    )
 
 
 async def connect_and_describe(
@@ -397,6 +437,8 @@ async def connect_and_describe(
     kwargs: dict[str, Any],
     options: SshOptions,
     *,
+    password: SecretStr | None,
+    alias: str | None = None,  # noqa: ARG001 — accepted now; the host-key check reads it
     apply_post_connect: bool = True,
 ) -> "SSHClientConnection":
     """Open one SSH connection through the seam and say what happened.
@@ -406,13 +448,20 @@ async def connect_and_describe(
     hook run in between — so every connect otto makes (target, per-user, hop)
     answers "were my options respected" in the same two DEBUG lines.
 
+    *password* is passed apart from *kwargs*, which never carry one
+    (``SshOptions.extra`` cannot name it), and stays a ``SecretStr`` down to
+    :func:`ssh_connect`, which unwraps it inside the library call.
+
+    *alias* is the host's lab id, the name its host key is recorded under; it
+    is accepted here and not yet read.
+
     *apply_post_connect* is ``False`` for a hop tunnel connection: a tunnel is
     a transport to the hop, not a session on it, so the hop host's structured
     forwards and ``post_connect`` hook belong to the hop's own session and
     must not run once per hopped target — see ``RemoteHost._build_hop_transport``.
     """
-    logger.debug(describe_connect_kwargs(name, host, kwargs))
-    conn = await ssh_connect(host, **kwargs)
+    logger.debug(describe_connect_kwargs(name, host, {**kwargs, "password": password}))
+    conn = await ssh_connect(host, password=password, **kwargs)
     if apply_post_connect:
         await options._apply_post_connect(conn)  # noqa: SLF001 — intra-package access to SshOptions._apply_post_connect
     logger.debug(describe_negotiated(name, conn))
@@ -607,15 +656,16 @@ class ConnectionManager:
     @property
     # DEBT(no-tuple-return): a (user, password) pair; wants a frozen dataclass.
     # ast-grep-ignore: no-tuple-return
-    def credentials(self) -> tuple[str, str | None]:
+    def credentials(self) -> tuple[str, SecretStr | None]:
         """(username, password) for the active term's TRANSPORT auth.
 
         For a proxied ``login_target`` this is the via-chain's directly
         loginable end; the hops are applied post-handshake (see
-        ``proxy_hops``). ``('', '')`` when no cred applies to the term.
+        ``proxy_hops``). :data:`LOGINLESS`'s empty pair when no cred applies
+        to the term.
         """
-        cred = self.transport_cred_for(self._term)
-        return ("", "") if cred is None else (cred.login, cred.password)
+        cred = self.transport_cred_for(self._term) or LOGINLESS
+        return (cred.login, cred.password)
 
     @property
     def proxy_hops(self) -> list[Cred]:
@@ -752,11 +802,12 @@ class ConnectionManager:
                 tunnel = await self._ensure_tunnel()
             kwargs: dict[str, Any] = {
                 "username": cred.login,
-                "password": cred.password,
                 "tunnel": tunnel,
                 **self._ssh_options._kwargs(),  # noqa: SLF001 — intra-package access to SshOptions._kwargs
             }
-            conn = await connect_and_describe(self._name, self._ip, kwargs, self._ssh_options)
+            conn = await connect_and_describe(
+                self._name, self._ip, kwargs, self._ssh_options, password=cred.password
+            )
             self._ssh_conn = conn
             logger.debug(f"Connected to {self._name} via SSH")
             return conn
@@ -826,12 +877,13 @@ class ConnectionManager:
                 tunnel = await self._ensure_tunnel()
             kwargs: dict[str, Any] = {
                 "username": direct.login,
-                "password": direct.password,
                 "tunnel": tunnel,
                 **self._ssh_options._kwargs(),  # noqa: SLF001 — intra-package access to SshOptions._kwargs
             }
             tag = f"{self._name} as {user!r}"
-            conn = await connect_and_describe(tag, self._ip, kwargs, self._ssh_options)
+            conn = await connect_and_describe(
+                tag, self._ip, kwargs, self._ssh_options, password=direct.password
+            )
             self._user_ssh_conns[user] = conn
             return conn
 
@@ -876,7 +928,9 @@ class ConnectionManager:
                 logger.debug(f"Connecting to {self._name} via FTP")
                 await client.connect(self._ip, ftp_port)
             try:
-                await client.login(cred.login, cred.password or "")
+                await client.login(
+                    cred.login, cred.password.get_secret_value() if cred.password else ""
+                )
             except BaseException as err:
                 # A rejected login (bad password, a scoped cred that doesn't
                 # match) still leaves a connected control socket. Mirror
@@ -976,7 +1030,7 @@ class ConnectionManager:
             client = TelnetClient(
                 target.host,
                 user=cred.login,
-                password=cred.password or "",
+                password=cred.password,
                 options=self._telnet_options,
                 connect_port=target.port,
             )
@@ -1081,7 +1135,7 @@ class ConnectionManager:
                 host=target.host,
                 port=target.port,
                 user=cred.login,
-                password=cred.password or "",
+                password=cred.password,
                 options=opts,
                 name=self._name,
                 server=opts.server,

@@ -211,8 +211,9 @@ layer = "specs"
 # the home otto.config.home owns (spec 2026-10-11 placement-and-phases §2.2,
 # §3.6). A module of its own, so the inventory reads the user file without
 # importing otto.config. Its ancestor's one eager import, otto.config.env,
-# loads with it (§4.3).
-depends_on = ["otto.config.home", "otto.models"]
+# loads with it (§4.3). otto.models.base parses the file
+# (load_toml_settings), so a secret in it is wrapped from the parse on.
+depends_on = ["otto.config.home", "otto.models", "otto.models.base"]
 
 [[modules]]
 path = "otto.console"

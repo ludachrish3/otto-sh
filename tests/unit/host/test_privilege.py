@@ -8,6 +8,7 @@ from typing import get_args
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import SecretStr
 
 from otto.host import host as host_module
 from otto.host.element import Element
@@ -15,6 +16,7 @@ from otto.host.errors import UnsupportedOnUserlandError
 from otto.host.login_proxy import Cred, register_login_proxy
 from otto.host.option_specs import UserlandOptionsSpec
 from otto.host.options import UserlandOptions
+from otto.host.secret_wire import reveal
 from otto.host.userland import Userland
 from otto.logger.mode import LogMode
 from otto.result import CommandResult
@@ -34,7 +36,8 @@ def _without_resync(sent: list[str]) -> list[str]:
     (the ``UnixHost`` default) the probe line is preceded by a ``HISTFILE=…``
     statement, so the echo is no longer first on it.
     """
-    return [s for s in sent if 'echo "__OTTO_' not in s]
+    wire = [reveal(s) for s in sent]  # a password send arrives as SecretStr
+    return [s for s in wire if 'echo "__OTTO_' not in s]
 
 
 def _model_io(*, prompts: bool = True, user: str = "admin", **model_kw):
@@ -97,6 +100,7 @@ async def test_perform_switch_builds_command_and_returns_target():
 
     class _Io:
         async def send(self, text, log=LogMode.NORMAL):
+            text = reveal(text)  # what the transport writes
             sent.append((text, log))
             wrote(text)
 
@@ -123,6 +127,7 @@ async def test_perform_switch_no_user_means_root_no_quote():
 
     class _Io:
         async def send(self, text, log=LogMode.NORMAL):
+            text = reveal(text)  # what the transport writes
             sent.append(text)
             wrote(text)
 
@@ -238,7 +243,7 @@ async def test_unix_run_sudo_wraps_and_injects_password_expect():
     ):
         await host.run("apt update", sudo=True)
     assert captured["cmd"] == "sudo -S -p 'otto-sudo:' apt update"
-    assert ("otto-sudo:", "secret\n") in captured["expects"]
+    assert ("otto-sudo:", SecretStr("secret")) in captured["expects"]
 
 
 @pytest.mark.asyncio
@@ -270,7 +275,7 @@ async def test_sudo_preserves_caller_expects():
     ):
         await host.run("rm -i x", expects=("remove.*\\?", "y\n"), sudo=True)
     # password expect first, caller's expect preserved after
-    assert captured["expects"][0] == ("otto-sudo:", "secret\n")
+    assert captured["expects"][0] == ("otto-sudo:", SecretStr("secret"))
     assert ("remove.*\\?", "y\n") in captured["expects"]
 
 
@@ -287,7 +292,7 @@ async def test_switch_user_sends_su_and_password():
     host._session_mgr = _mock_session_mgr()
     await host.switch_user("root")
     host._session_mgr.send.assert_any_await("su - root\n", log=LogMode.NORMAL)
-    host._session_mgr.send.assert_any_await("rootpw\n", log=LogMode.NEVER)
+    host._session_mgr.send.assert_any_await(SecretStr("rootpw"), log=LogMode.NEVER)
 
 
 @pytest.mark.asyncio
@@ -551,14 +556,14 @@ async def test_sudo_password_reflects_current_user_after_switch():
     host._session_mgr._session = mock_transport
 
     # Before any switch: sudo uses the login user's (admin's) password.
-    assert host._sudo_password() == "adminpw"
+    assert host._sudo_password() == SecretStr("adminpw")
 
     await host.switch_user("root")
 
     # After switching: current_user is root, and sudo must use ROOT's
     # password — not admin's (the login user's) — for the *current* user.
     assert host.current_user == "root"
-    assert host._sudo_password() == "rootpw"
+    assert host._sudo_password() == SecretStr("rootpw")
 
 
 # Chain used by the undo-observability tests: root (direct) -> admin -> mysql,
@@ -592,7 +597,13 @@ async def test_as_user_undo_via_ordering_observable_host():
         await io.send(f"become {ctx.target.login}\n")
 
     async def fake_undo(io, ctx):
-        captured.append((ctx.target.login, ctx.via.login, ctx.via.password))
+        captured.append(
+            (
+                ctx.target.login,
+                ctx.via.login,
+                None if ctx.via.password is None else ctx.via.password.get_secret_value(),
+            )
+        )
         await io.send("leave\n")
 
     register_login_proxy("task6-fake-undo-host", fake_fn, undo=fake_undo, overwrite=True)
@@ -641,11 +652,23 @@ async def test_as_user_resolves_the_via_cred_under_the_terms_scope_both_ways():
     undone: list[tuple[str, str, str | None]] = []
 
     async def fake_fn(io, ctx):
-        forward.append((ctx.target.login, ctx.via.login, ctx.via.password))
+        forward.append(
+            (
+                ctx.target.login,
+                ctx.via.login,
+                None if ctx.via.password is None else ctx.via.password.get_secret_value(),
+            )
+        )
         await io.send(f"become {ctx.target.login}\n")
 
     async def fake_undo(io, ctx):
-        undone.append((ctx.target.login, ctx.via.login, ctx.via.password))
+        undone.append(
+            (
+                ctx.target.login,
+                ctx.via.login,
+                None if ctx.via.password is None else ctx.via.password.get_secret_value(),
+            )
+        )
         await io.send("leave\n")
 
     register_login_proxy("cred-scope-term-via", fake_fn, undo=fake_undo, overwrite=True)
@@ -744,7 +767,7 @@ async def test_as_user_undo_survives_cancellation():
 # command and expects below; elevating "id" on a passwordless, credless
 # LocalHost produced "sudo -S -p 'otto-sudo:' id" with an empty expects list.
 _TODAYS_SUDO_CMD = "sudo -S -p 'otto-sudo:' apt update"
-_TODAYS_SUDO_EXPECTS = [("otto-sudo:", "secret\n")]
+_TODAYS_SUDO_EXPECTS = [("otto-sudo:", SecretStr("secret"))]
 
 # Two DIFFERENT passwords on purpose. sudo authenticates as the current user
 # (admin) and `su` authenticates as the target (root), so a `su` arm that
@@ -870,7 +893,7 @@ async def test_a_resolved_sudo_userland_builds_the_identical_command():
 async def test_a_host_without_sudo_elevates_with_su():
     """BusyBox has no sudo at all; ``sudo: not found`` is not an answer."""
     host = await _host_with_userland("su")
-    assert host._elevate("id -u") == ("su -c 'id -u'", [("[Pp]assword:", "rootpw\n")])
+    assert host._elevate("id -u") == ("su -c 'id -u'", [("[Pp]assword:", SecretStr("rootpw"))])
 
 
 @pytest.mark.asyncio
@@ -927,7 +950,7 @@ async def test_su_answers_the_prompt_with_the_target_creds_password_not_the_chai
             Cred(login="root", password="rootpw", proxy="su", via="admin"),
         ],
     )
-    assert host._elevate("id -u") == ("su -c 'id -u'", [("[Pp]assword:", "rootpw\n")])
+    assert host._elevate("id -u") == ("su -c 'id -u'", [("[Pp]assword:", SecretStr("rootpw"))])
 
 
 @pytest.mark.asyncio
@@ -965,12 +988,12 @@ async def test_exec_as_another_user_answers_sudo_with_that_users_password():
 
     await host.exec("id", sudo=True, user="alice")
     assert seen[-1]["user"] == "alice"
-    assert seen[-1]["expects"] == [("otto-sudo:", "alicepw\n")]
+    assert seen[-1]["expects"] == [("otto-sudo:", SecretStr("alicepw"))]
 
     # No user: the ambient/login identity still answers, exactly as `run` does.
     await host.exec("id", sudo=True)
     assert seen[-1]["user"] is None
-    assert seen[-1]["expects"] == [("otto-sudo:", "adminpw\n")]
+    assert seen[-1]["expects"] == [("otto-sudo:", SecretStr("adminpw"))]
 
 
 def _declared_elevations() -> set[str]:

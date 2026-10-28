@@ -1002,7 +1002,7 @@ member	otto.host.options:SnmpOptions.version	field
 abstract	otto.host.options:SnmpOptions	-
 name	otto.host.options:SshOptions	class
 mro	otto.host.options:SshOptions	-
-call	otto.host.options:SshOptions	sync	PK:port:I:22 PK:known_hosts:N PK:connect_timeout:N PK:keepalive_interval:N PK:keepalive_count_max:N PK:client_keys:N PK:client_host_keys:N PK:agent_forwarding:B:false PK:preferred_auth:N PK:encryption_algs:N PK:server_host_key_algs:N PK:compression_algs:N PK:kex_algs:N PK:mac_algs:N PK:local_forwards:O PK:remote_forwards:O PK:socks_forwards:O PK:extra:O PK:post_connect:N
+call	otto.host.options:SshOptions	sync	PK:port:I:22 PK:known_hosts:N PK:connect_timeout:N PK:keepalive_interval:N PK:keepalive_count_max:N PK:client_keys:N PK:client_host_keys:N PK:agent_forwarding:B:false PK:preferred_auth:N PK:encryption_algs:N PK:server_host_key_algs:N PK:compression_algs:N PK:kex_algs:N PK:mac_algs:N PK:local_forwards:O PK:remote_forwards:O PK:socks_forwards:O PK:extra:O PK:post_connect:N PK:passphrase:N
 member	otto.host.options:SshOptions.__eq__	method	sync	PK:other:-
 member	otto.host.options:SshOptions.agent_forwarding	field
 member	otto.host.options:SshOptions.client_host_keys	field
@@ -1017,6 +1017,7 @@ member	otto.host.options:SshOptions.kex_algs	field
 member	otto.host.options:SshOptions.known_hosts	field
 member	otto.host.options:SshOptions.local_forwards	field
 member	otto.host.options:SshOptions.mac_algs	field
+member	otto.host.options:SshOptions.passphrase	field
 member	otto.host.options:SshOptions.port	field
 member	otto.host.options:SshOptions.post_connect	field
 member	otto.host.options:SshOptions.preferred_auth	field
@@ -4368,6 +4369,7 @@ input	otto.models:SshOptionsSpec	S:"kex_algs"	optional	N	S:"kex_algs"
 input	otto.models:SshOptionsSpec	S:"known_hosts"	optional	N	S:"known_hosts"
 input	otto.models:SshOptionsSpec	S:"local_forwards"	optional	O	S:"local_forwards"
 input	otto.models:SshOptionsSpec	S:"mac_algs"	optional	N	S:"mac_algs"
+input	otto.models:SshOptionsSpec	S:"passphrase"	optional	N	S:"passphrase"
 input	otto.models:SshOptionsSpec	S:"port"	optional	I:22	S:"port"
 input	otto.models:SshOptionsSpec	S:"preferred_auth"	optional	N	S:"preferred_auth"
 input	otto.models:SshOptionsSpec	S:"remote_forwards"	optional	O	S:"remote_forwards"
@@ -4387,6 +4389,7 @@ member	otto.models:SshOptionsSpec.known_hosts	field
 member	otto.models:SshOptionsSpec.local_forwards	field
 member	otto.models:SshOptionsSpec.mac_algs	field
 member	otto.models:SshOptionsSpec.model_config	attribute
+member	otto.models:SshOptionsSpec.passphrase	field
 member	otto.models:SshOptionsSpec.port	field
 member	otto.models:SshOptionsSpec.preferred_auth	field
 member	otto.models:SshOptionsSpec.remote_forwards	field

@@ -93,7 +93,11 @@ def resolve_host_entry(
                 f"{element.name!r}, inventory key {key!r} says {theirs!r}"
             )
     resolved = {k: v for k, v in host_data.items() if k != "inventory"}
-    stated = record.model_dump(mode="json", exclude_none=True, exclude_unset=True)
+    # Python mode: the record's creds below are merged and built into the
+    # host, and keep their ``SecretStr`` passwords all the way (a JSON dump
+    # would replace each with the mask; a revealed one would leave the plain
+    # password in this frame's locals for a traceback to show).
+    stated = record.model_dump(exclude_none=True, exclude_unset=True)
     for name in sorted(inventory.supplies - INVENTORY_KEY_FIELDS - MERGED_INVENTORY_FIELDS):
         if name in stated:
             resolved[name] = stated[name]

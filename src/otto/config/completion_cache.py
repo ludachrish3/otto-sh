@@ -1985,12 +1985,19 @@ def _read_lab_links(lab_file: Path) -> list[dict[str, Any]]:
 
     Completion must never crash on bad user data, so malformed shapes are
     silently empty here. Links have no repository seam yet — hosts moved to
-    ``LabRepository`` enumeration, this stayed a direct read.
+    ``LabRepository`` enumeration, this stayed a direct read. Like every
+    lab-file reader it wraps the passwords it parsed
+    (:func:`~otto.models.base.wrap_secret_values`) before anything else holds
+    the document.
     """
+    # Function-local: a Project (already parsed here) has loaded the models.
+    from ..models.base import wrap_secret_values
+
     try:
         data = json.loads(lab_file.read_text())
     except (OSError, json.JSONDecodeError):
         return []
+    wrap_secret_values(data)
     if not isinstance(data, dict):
         return []
     links = data.get("links", [])

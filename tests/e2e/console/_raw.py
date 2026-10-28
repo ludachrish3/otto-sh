@@ -21,6 +21,7 @@ from typing import Any
 
 import asyncssh
 import telnetlib3
+from pydantic import SecretStr
 
 from otto.host.login_proxy import Cred
 from tests._fixtures.labdata import host_data
@@ -54,7 +55,7 @@ def server_cred(server: str) -> Cred:
 
 @asynccontextmanager
 async def raw_console(
-    server_ip: str, user: str, password: str, port: int
+    server_ip: str, user: str, password: SecretStr | None, port: int
 ) -> AsyncIterator[RawLine]:
     """Telnet to ``localhost:<port>`` INSIDE *server_ip* through an SSH local forward.
 
@@ -65,7 +66,7 @@ async def raw_console(
     conn = await asyncssh.connect(
         server_ip,
         username=user,
-        password=password,
+        password=password.get_secret_value() if password is not None else None,
         known_hosts=None,
         connect_timeout=_CONNECT_TIMEOUT,
     )
@@ -161,7 +162,9 @@ async def console_answer(server: str, port: int, timeout: float = 12.0) -> bytes
         return await collect(line, timeout, _ends_at_a_prompt)
 
 
-async def login_and_abandon(server: str, port: int, login: str, login_password: str) -> None:
+async def login_and_abandon(
+    server: str, port: int, login: str, login_password: SecretStr | None
+) -> None:
     """Log in over raw telnet and DROP the connection: the line keeps its shell.
 
     Asserts each step (login prompt, password prompt, shell prompt) so a
@@ -176,9 +179,10 @@ async def login_and_abandon(server: str, port: int, login: str, login_password: 
         line.writer.write(login.encode() + b"\r")
         out = await collect(line, 10.0, lambda b: b"assword:" in b)
         assert b"assword:" in out, f"{server}:{port}: no password prompt after {login!r}: {out!r}"
-        line.writer.write(login_password.encode() + b"\r")
+        secret = login_password.get_secret_value().encode() if login_password else b""
+        line.writer.write(secret + b"\r")
         out = await collect(line, 15.0, _at_shell_prompt)
-        shown = strip_ansi_bytes(out).replace(login_password.encode(), b"***")
+        shown = strip_ansi_bytes(out).replace(secret, b"***") if secret else strip_ansi_bytes(out)
         assert _at_shell_prompt(out), (
             f"{server}:{port}: {login!r} reached no shell prompt: {shown!r}"
         )

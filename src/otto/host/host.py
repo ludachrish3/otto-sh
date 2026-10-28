@@ -37,6 +37,7 @@ from typing import (
     cast,
 )
 
+from pydantic import SecretStr
 from typing_extensions import Never, Self, final, override
 
 from .. import layout
@@ -79,11 +80,14 @@ if TYPE_CHECKING:
     # which would blow the import-budget guard on a bare ``import otto``.
     AppShellT = TypeVar("AppShellT", bound=AppShell)
 
-# The one home of the expect-pattern alias: (regex_pattern, response_text). It
+# The one home of the expect-pattern alias: (regex_pattern, response). It
 # lives HERE rather than in session.py so ``get_type_hints`` can resolve it
 # without a circular import — session.py imports from host.py at module level,
-# and imports this name back from here.
-Expect = tuple[str | re.Pattern[str], str]
+# and imports this name back from here. A ``str`` response is written as it is;
+# a ``SecretStr`` response (a password) is written as its value and a newline,
+# unwrapped only inside the session's transport write
+# (:func:`otto.host.secret_wire.reveal`).
+Expect = tuple[str | re.Pattern[str], str | SecretStr]
 
 DEFAULT_COMMAND_TIMEOUT = 30.0
 """Seconds a single command may run before otto gives up on it.
@@ -337,7 +341,7 @@ def _is_expect_pair(item: object) -> "TypeGuard[Expect]":
         isinstance(item, tuple)
         and len(item) == _EXPECT_PAIR_LEN
         and isinstance(item[0], (str, re.Pattern))
-        and isinstance(item[1], str)
+        and isinstance(item[1], (str, SecretStr))
     )
 
 
@@ -612,7 +616,7 @@ class Host(Protocol):
         """
         ...
 
-    async def switch_user(self, user: str = "", password: str | None = None) -> None:
+    async def switch_user(self, user: str = "", password: str | SecretStr | None = None) -> None:
         """``su`` the persistent session to *user* and keep it there.
 
         Families whose :attr:`~otto.host.capability_grid.HostCapabilities.session_identity`
@@ -621,7 +625,7 @@ class Host(Protocol):
         ...
 
     def as_user(
-        self, user: str = "root", password: str | None = None
+        self, user: str = "root", password: str | SecretStr | None = None
     ) -> "AbstractAsyncContextManager[Any]":
         """Run a block as *user*, restoring the prior identity on exit.
 
@@ -753,13 +757,15 @@ class Host(Protocol):
 
     async def send(
         self,
-        text: str,
+        text: str | SecretStr,
         log: LogMode = LogMode.NORMAL,
     ) -> None:
         """Send raw text to the host's persistent session without waiting for a response.
 
         Useful for driving interactive prompts or menu-driven interfaces where
-        a full :meth:`run` round-trip is not appropriate.
+        a full :meth:`run` round-trip is not appropriate. A ``SecretStr`` (a
+        password answering a prompt) is sent as its value and a newline, and
+        unwrapped only inside the transport's write.
         """
         ...
 
@@ -1535,7 +1541,7 @@ class BaseHost(ABC):
         """
         return
 
-    async def switch_user(self, user: str = "", password: str | None = None) -> None:
+    async def switch_user(self, user: str = "", password: str | SecretStr | None = None) -> None:
         """Switch the persistent session to another user via ``su``.
 
         Default raises — only posix-shell hosts (via ``PosixPrivilege``) support
@@ -1549,7 +1555,7 @@ class BaseHost(ABC):
     async def as_user(
         self,
         user: str = "root",  # noqa: ARG002 — named by the Host protocol; this refusing default never reads it
-        password: str | None = None,  # noqa: ARG002 — named by the Host protocol; this refusing default never reads it
+        password: str | SecretStr | None = None,  # noqa: ARG002 — named by the Host protocol; this refusing default never reads it
     ) -> "AsyncIterator[BaseHost]":
         """Async context manager to run a block as *user*.
 
@@ -1761,6 +1767,9 @@ class BaseHost(ABC):
             expects: Default ``(pattern, response)`` pair(s) for interactive prompts.
                 Accepts a single ``Expect`` tuple or a list of them. Each command
                 inherits this value unless its own :attr:`ShellCommand.expects` is set.
+                A ``str`` response is written as it is; a pydantic ``SecretStr``
+                response (a password) is written as its value and a newline,
+                unwrapped only inside the transport's write.
             timeout: For a single command, the per-command timeout. For a sequence, a
                 cumulative timeout shared across all commands — each command receives
                 the remaining budget; when exhausted, remaining commands are skipped
@@ -2216,14 +2225,17 @@ class BaseHost(ABC):
 
     async def send(
         self,
-        text: str,
+        text: str | SecretStr,
         log: LogMode = LogMode.NORMAL,
     ) -> None:
         """Send raw text to the host's persistent session.
 
         Use this for driving interactive programs (REPLs, custom CLIs). The
-        caller is responsible for including line endings. Under a dry run
-        the text is announced and nothing is written to the transport.
+        caller is responsible for including line endings, except for a
+        ``SecretStr`` (a password answering a prompt), which is sent as its
+        value and a newline and unwrapped only inside the transport's write.
+        Under a dry run the text is announced and nothing is written to the
+        transport.
         """
         effective = self._effective_log(log)
         if is_dry_run():
@@ -2233,7 +2245,9 @@ class BaseHost(ABC):
             # and that is the ONE home for the decision; a second copy here
             # reads as redundant and gets deleted, taking the real one's twin
             # with it. Building the f-string first costs nothing that matters:
-            # `text` is already a live `str` and `repr` only copies it.
+            # `repr` of a `str` only copies it, and of a `SecretStr` (a
+            # password answer) gives its mask, so the announcement never
+            # carries a password.
             self._log_command(f"[DRY RUN] send({text!r})", effective)
             return
         await self._prepare_live_session()

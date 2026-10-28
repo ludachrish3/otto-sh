@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from pydantic import SecretStr
 
 from otto.host import EmbeddedHost, RemoteHost, ZephyrHost
 from otto.host.binary_loader import LlextHexLoader
@@ -812,7 +813,7 @@ async def test_exec_refuses_an_ambient_user_on_an_embedded_host(host: EmbeddedHo
     from otto.host.session import SessionManager
     from tests.unit.host.test_session import _proxy_connections, _StubExecSession
 
-    conn = _proxy_connections([], login_target="admin", credentials=("admin", "pw"))
+    conn = _proxy_connections([], login_target="admin", credentials=("admin", SecretStr("pw")))
     conn.term = "telnet"
     mgr = SessionManager(
         connections=conn,

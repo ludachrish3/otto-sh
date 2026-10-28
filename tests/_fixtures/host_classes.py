@@ -1,10 +1,9 @@
 """Shared walk over the ``BaseHost`` subclasses otto itself defines."""
 
-import importlib
-import pkgutil
 import sys
 
 from otto.host.host import BaseHost
+from tests._fixtures.otto_modules import import_otto_modules
 
 
 def host_classes_in_the_tree() -> "list[type]":
@@ -21,8 +20,7 @@ def host_classes_in_the_tree() -> "list[type]":
     import otto.host
 
     for package in (otto.host, otto.docker):
-        for module in pkgutil.walk_packages(package.__path__, package.__name__ + "."):
-            importlib.import_module(module.name)
+        import_otto_modules(package)
 
     def descendants(cls: type) -> "list[type]":
         found = []

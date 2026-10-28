@@ -8,11 +8,13 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import SecretStr
 
 from otto.host import interact
 from otto.host.command_frame import BashFrame, RawFrame, ZephyrFrame
 from otto.host.element import Element
 from otto.host.login_proxy import Cred
+from otto.host.secret_wire import reveal_bytes
 from otto.host.session import BridgeSetup
 from otto.host.session_setup import SESSION_SETUPS, SessionSetup, register_session_setup
 from otto.host.unix_host import UnixHost
@@ -110,7 +112,7 @@ async def _login_over_a_console(host: UnixHost, console: _Console, *, login_targ
         return conn
 
     host._connections = SimpleNamespace(
-        credentials=("admin", "pw"), login_target=login_target, ssh=ssh
+        credentials=("admin", SecretStr("pw")), login_target=login_target, ssh=ssh
     )
     fake_asyncssh = _make_fake_asyncssh()
     with (
@@ -240,6 +242,8 @@ async def test_telnet_bridge_translates_every_newline_of_a_multiline_payload():
     sent: list[bytes] = []
 
     async def write_remote(data: bytes) -> None:
+
+        data = reveal_bytes(data)  # what the transport writes
         sent.append(data)
 
     async def read_remote() -> bytes:

@@ -25,8 +25,14 @@ adapter should block or time out, never return empty (which reads as EOF) and
 never repeat itself (which spins).
 """
 
+import asyncio
 import re
 import shlex
+
+from pydantic import SecretBytes, SecretStr
+
+from otto.host.secret_wire import reveal, reveal_bytes
+from otto.logger.mode import LogMode
 
 _PROBE_RE = re.compile(r"__OTTO_([0-9a-f]+)_RECOVER__")
 _SWITCH_RE = re.compile(r"^\s*(?:sudo\s+)?su\b(.*)$", re.MULTILINE)
@@ -73,8 +79,13 @@ class ShellModel:
         # an undo is who you were before the hop -- not a guess, a stack.
         self._stack: list[str] = []
 
-    def wrote(self, text: str) -> None:
-        """Record a write and advance the shell's state the way a real one would."""
+    def wrote(self, text: "str | SecretStr") -> None:
+        """Record a write and advance the shell's state the way a real one would.
+
+        A ``SecretStr`` (a password answer) is recorded as the transport writes
+        it (:func:`~otto.host.secret_wire.reveal`): the shell sees the wire.
+        """
+        text = reveal(text)
         self.writes.append(text)
         if self._pending_prompt:
             supplied = text.rstrip("\n")
@@ -168,6 +179,15 @@ def drive(mock, *, user: str = "admin", prompts: bool = True, **model_kw) -> She
     return model
 
 
+def _wire_text(write: "bytes | str | SecretStr | SecretBytes") -> str:
+    """Decode a recorded write the way the device received it."""
+    if isinstance(write, SecretBytes):
+        write = reveal_bytes(write)
+    if isinstance(write, bytes):
+        return write.decode("utf-8", "replace")
+    return reveal(write)
+
+
 def replay(writes, *, user: str = "admin", **model_kw) -> ShellModel:
     """Rebuild a shell's identity by replaying a write log through a model.
 
@@ -181,5 +201,31 @@ def replay(writes, *, user: str = "admin", **model_kw) -> ShellModel:
     """
     model = ShellModel(user=user, **model_kw)
     for write in writes:
-        model.wrote(write.decode("utf-8", "replace") if isinstance(write, bytes) else write)
+        model.wrote(_wire_text(write))
     return model
+
+
+class ModelIO:
+    """ProxyIO backed by :class:`ShellModel` -- an honest shell, not a script.
+
+    ``expect`` honours its timeout for real (``asyncio.wait_for`` over an
+    event that never fires when the shell has nothing to say), so the engine's
+    own settle and probe budgets are exercised rather than waved through by a
+    fake that returns instantly no matter what it was asked for.
+    """
+
+    def __init__(self, shell: ShellModel) -> None:
+        self.shell = shell
+        self.sent: list[tuple[str, LogMode]] = []
+
+    async def send(self, text: "str | SecretStr", *, log: LogMode = LogMode.NORMAL) -> None:
+        text = reveal(text)  # what the transport writes
+        self.sent.append((text, log))
+        self.shell.wrote(text)
+
+    async def expect(self, pattern: "str | re.Pattern[str]", timeout: float = 10.0) -> str:
+        reply = self.shell.reply()
+        if reply is None or not re.search(pattern, reply):
+            await asyncio.wait_for(asyncio.Event().wait(), timeout)
+            raise AssertionError("unreachable")
+        return reply

@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from asyncssh import SSHClientConnection
+from pydantic import SecretStr
 
 from otto.host.connections import ConnectionManager
 from otto.host.element import Element
@@ -143,7 +144,7 @@ class TestConnectionManagerTunnel:
             mock_connect.assert_awaited_once_with(
                 "10.0.0.1",
                 username="user",
-                password="pass",
+                password=SecretStr("pass"),
                 tunnel=mock_tunnel,
                 port=22,
                 known_hosts=None,
@@ -207,7 +208,7 @@ class TestConnectionManagerTunnel:
             mock_connect.assert_awaited_once_with(
                 "10.0.0.1",
                 username="user",
-                password="pass",
+                password=SecretStr("pass"),
                 tunnel=None,
                 port=22,
                 known_hosts=None,
@@ -237,7 +238,7 @@ class TestConnectionManagerTunnel:
             call_args = MockTelnet.call_args
             assert call_args.args == ("localhost",)
             assert call_args.kwargs["user"] == "user"
-            assert call_args.kwargs["password"] == "pass"
+            assert call_args.kwargs["password"] == SecretStr("pass")
             assert call_args.kwargs["connect_port"] == 54321
             mock_tunnel.forward_local_port.assert_awaited_once_with("localhost", 0, "10.0.0.1", 23)
 
@@ -347,6 +348,7 @@ class TestConnectionManagerTunnel:
             "10.10.0.1",
             username="admin",
             password="secret",
+            passphrase=None,
             tunnel=None,
             port=2222,
             known_hosts=None,

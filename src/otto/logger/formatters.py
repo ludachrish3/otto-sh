@@ -6,6 +6,7 @@ import functools
 import io
 import itertools
 import re
+from collections.abc import Iterator
 from datetime import datetime
 from logging import (
     Formatter,
@@ -257,24 +258,112 @@ def _extract_stack(
     return stack
 
 
-@functools.cache
-def _suppressed_packages() -> tuple[str, ...]:
-    """Directories of Typer and click, whose frames are shown without code or locals.
+def suppressed_traceback_packages() -> list[str]:
+    """Directories whose frames a traceback shows by file and line only, without code or locals.
 
-    The same suppression Typer's own excepthook applies (Typer vendors its
-    click under its own directory; a standalone click is covered if one is
-    installed). Located with ``find_spec``, which finds a top-level package
-    without importing it, so rendering a traceback never loads either; and
-    asked once per process, on the first traceback.
+    The one list every Rich traceback otto renders passes as ``suppress=``:
+    the log files (:func:`render_traceback`), the console log handler, and
+    the CLI's crash (:func:`print_crash_traceback`). Traceback locals stay
+    on everywhere, and otto keeps a password a ``SecretStr`` in its own
+    frames (:mod:`otto.host.secret_wire`), so what is left to hide is the
+    frames of the libraries that receive the raw value:
+
+    - ``typer`` and ``click``: the command line's own machinery, suppressed
+      as Typer's own excepthook does (Typer vendors its click under its own
+      directory; a standalone click is covered if one is installed). They
+      hold the parsed arguments, which is noise in a crash, not a cause.
+    - ``asyncssh``: ``connect`` binds the password and key passphrase in its
+      keyword arguments, and its auth frames hold them while they run.
+    - ``telnetlib3``: its writer's ``write`` holds the bytes of a typed
+      password, as do the frames below it.
+    - ``aioftp``: ``Client.login`` binds the password and the ``PASS``
+      command built from it.
+    - ``asyncio``: a transport's ``write`` binds the raw bytes it was given,
+      so a write that fails (a telnet password after the peer closed) leaves
+      them in asyncio's own frame.
+    - ``json``: its parse frames hold the whole text of the document being
+      parsed (a lab file, a creds store) before otto can wrap the passwords
+      in it (:func:`~otto.models.base.wrap_secret_values`), so a decode error
+      would show them.
+    - ``tomli`` (and the standard library's ``tomllib``, its copy): its
+      parse frames hold the whole text of a settings file before otto wraps
+      a ``passphrase`` or ``password`` in it
+      (:func:`~otto.models.base.load_toml_settings`), so a decode error
+      would show them.
+    - ``pynetbox``: it holds NetBox's device payloads, custom fields
+      included, before otto sees and wraps them.
+
+    Hiding a frame does not hide the exception's MESSAGE, which Rich prints
+    whatever the frame; otto never puts a password in one.
+
+    Located with ``find_spec``, which finds a top-level package without
+    importing it, so rendering a traceback never loads any of them; and
+    asked once per process, on the first traceback. Each call returns a
+    fresh list, so a caller cannot change what the next one gets.
     """
+    return list(_located_suppressed_packages())
+
+
+def print_crash_traceback(exc: BaseException) -> None:
+    """Print *exc* to stderr as the Rich traceback of a crash, with every frame's locals.
+
+    The frames of :func:`suppressed_traceback_packages` (Typer, click and the
+    libraries that receive passwords) are shown by file and line only, as in
+    the log files. It is as wide as the rest of otto's output
+    (``otto.console.CONSOLE``): an in-process run (``otto test``) leaves fds
+    0/1/2 non-tty, and a fresh probe would fall to 80. The traceback fills
+    that width (``width=None``), as Typer's did.
+    """
+    from rich.traceback import Traceback
+
+    Console(stderr=True, width=CONSOLE.width).print(
+        Traceback.from_exception(
+            type(exc),
+            exc,
+            exc.__traceback__,
+            show_locals=True,
+            suppress=suppressed_traceback_packages(),
+            width=None,
+            code_width=None,
+            word_wrap=True,
+        )
+    )
+
+
+@functools.cache
+def _located_suppressed_packages() -> tuple[str, ...]:
+    """Locate :func:`suppressed_traceback_packages`' directories once per process."""
     from importlib.util import find_spec
 
     dirs: list[str] = []
-    for name in ("typer", "click"):
+    for name in (
+        "typer",
+        "click",
+        "asyncssh",
+        "telnetlib3",
+        "aioftp",
+        "asyncio",
+        "json",
+        "tomli",
+        "tomllib",
+        "pynetbox",
+    ):
         spec = find_spec(name)
         if spec is not None and spec.origin is not None:
             dirs.append(str(Path(spec.origin).parent))
     return tuple(dirs)
+
+
+class _SuppressedPackages:
+    """:func:`suppressed_traceback_packages`, located when first iterated, not when built.
+
+    For a consumer that takes the list when it is constructed, like the
+    console handler built at every CLI start: the packages are then still
+    located on the first traceback, not by every command that never prints one.
+    """
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(suppressed_traceback_packages())
 
 
 def render_traceback(record: LogRecord, *, color: bool) -> str:
@@ -284,8 +373,9 @@ def render_traceback(record: LogRecord, *, color: bool) -> str:
     traceback as a renderable, never as markup, so a ``[bold]`` in a source
     line or a local's value comes out as written. The width is
     :data:`TRACEBACK_FILE_WIDTH` whatever the terminal is; *color* keeps
-    Rich's ANSI styling, otherwise the text is plain. Frames inside Typer and
-    click are shown by location only.
+    Rich's ANSI styling, otherwise the text is plain. Frames inside the
+    packages :func:`suppressed_traceback_packages` names are shown by
+    location only.
 
     Returns the record's plain ``exc_text`` when there is no trace to render,
     and ``""`` when the record carries no exception. Raises if Rich fails, so
@@ -318,7 +408,7 @@ def render_traceback(record: LogRecord, *, color: bool) -> str:
             locals_max_length=LOCALS_MAX_LENGTH,
             locals_max_string=LOCALS_MAX_STRING,
             locals_max_depth=LOCALS_MAX_DEPTH,
-            suppress=_suppressed_packages(),
+            suppress=suppressed_traceback_packages(),
             max_frames=TRACEBACK_MAX_FRAMES,
         )
     )

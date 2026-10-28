@@ -709,6 +709,8 @@ class ProfileContext:
 
     def digest(self) -> str:
         """Return the sha256 of the profiles' canonical JSON, stable across processes."""
+        from ..models.base import secret_safe_json_default
+
         canonical = {
             name: [
                 p.base,
@@ -718,7 +720,8 @@ class ProfileContext:
             ]
             for name, p in sorted(self.profiles.items())
         }
-        return hashlib.sha256(json.dumps(canonical, sort_keys=True).encode()).hexdigest()
+        text = json.dumps(canonical, sort_keys=True, default=secret_safe_json_default)
+        return hashlib.sha256(text.encode()).hexdigest()
 
 
 def _check_data_profile(profile: OsProfile, *, owner: str) -> None:

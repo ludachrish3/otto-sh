@@ -22,9 +22,14 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from pydantic import SecretBytes, SecretStr
+
+from ..models.base import as_secret
 from .errors import ConsoleError
 from .options import ConsoleOptions
+from .secret_wire import reveal, reveal_bytes
 from .telnet import (
+    TELNET_EOL,
     _register_console_transport,
     _unregister_console_transport,
     negotiate_no_echo,
@@ -118,9 +123,11 @@ class ConsoleClient:
     host: str
     port: int
     user: str
-    password: str = field(repr=False)
-    """Never shown by ``repr()`` — a bare ``{client!r}`` in a log line, a rich
-    traceback, or a pytest assertion-rewrite dump must not print it."""
+    password: SecretStr | None = field(repr=False)
+    """The login password, or ``None`` to answer the prompt with an empty line.
+
+    A ``SecretStr``, unwrapped only inside the write that types it, and never
+    shown by ``repr()``. A plain ``str`` given here is wrapped on construction."""
     options: ConsoleOptions = field(default_factory=ConsoleOptions)
     name: str = ""
     server: str = ""
@@ -132,6 +139,9 @@ class ConsoleClient:
     """True from the moment the password is typed until the line speaks
     again: ``login(1)`` flushes the tty before it starts the shell, so
     anything typed in that window is discarded (measured on the bed)."""
+
+    def __post_init__(self) -> None:
+        self.password = as_secret(self.password)
 
     # -- addressing words for messages ------------------------------------
 
@@ -170,8 +180,12 @@ class ConsoleClient:
 
     # -- I/O primitives ----------------------------------------------------
 
-    def _write(self, data: bytes) -> None:
-        self.writer.write(data)
+    def _write(self, data: bytes | SecretBytes) -> None:
+        """Write *data* to the line: the one console write primitive.
+
+        A ``SecretBytes`` (the password) is unwrapped only inside the call.
+        """
+        self.writer.write(reveal_bytes(data))
 
     def _send_naws(self, cols: int, rows: int) -> None:
         """Transmit a NAWS subnegotiation with the given terminal size.
@@ -270,7 +284,7 @@ class ConsoleClient:
         """
         shown = strip_ansi(text)
         if self.password:
-            shown = shown.replace(self.password, "***")
+            shown = shown.replace(self.password.get_secret_value(), "***")
         return repr(shown[-_QUOTE_BYTES:])
 
     def _seen_suffix(self, text: str) -> str:
@@ -325,7 +339,7 @@ class ConsoleClient:
                 f"Seen: {self._quote(text)}. Run `otto host <id> logout` to reset it"
             )
 
-        self._write(self.user.encode() + b"\r")
+        self._write((self.user + TELNET_EOL).encode())
         text, eof, _any_byte = await self._collect(
             self.options.login_timeout,
             lambda t: classify_tail(t, login_re, password_re) is not None,
@@ -337,7 +351,7 @@ class ConsoleClient:
             what = "closed the connection" if eof else "showed no password prompt"
             raise self._fail(f"{what} after the username {self.user!r}; seen: {self._quote(text)}")
 
-        self._write(self.password.encode() + b"\r")
+        self._write(SecretBytes(reveal(self.password, TELNET_EOL).encode()))
         self._logged_in = True
         self._shell_unheard = True
         logger.debug(f"{self._prefix()}logged in as {self.user!r}")

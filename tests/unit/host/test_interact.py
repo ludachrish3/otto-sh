@@ -17,6 +17,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import SecretStr
 
 from otto import lifecycle
 from otto.host import interact
@@ -40,6 +41,7 @@ from otto.host.login_proxy import (
     register_login_proxy,
     run_proxy,
 )
+from otto.host.secret_wire import reveal_bytes
 from otto.logger.mode import LogMode
 from tests._fixtures.fake_shell import replay
 
@@ -266,6 +268,8 @@ class TestRunBridge:
         sent: list[bytes] = []
 
         async def write_remote(data: bytes) -> None:
+
+            data = reveal_bytes(data)  # what the transport writes
             sent.append(data)
 
         logged: list[str] = []
@@ -593,7 +597,7 @@ class TestUnixHostLoginDispatch:
         construct_kwargs = mock_cls.call_args.kwargs
         assert construct_kwargs["options"].auto_window_resize is True
         assert construct_kwargs["user"] == "u"
-        assert construct_kwargs["password"] == "p"
+        assert construct_kwargs["password"] == SecretStr("p")
 
         fake_client.connect.assert_awaited_once_with(interactive=True)
         mock_login.assert_awaited_once()
@@ -1033,6 +1037,8 @@ class TestReplaySuHopOverBridge:
         chunks = [b"Password:"]
 
         async def write_remote(data: bytes) -> None:
+
+            data = reveal_bytes(data)  # what the transport writes
             sent.append(data)
 
         async def read_remote() -> bytes:
@@ -1083,6 +1089,8 @@ class TestReplayProxyHops:
         sent: list[bytes] = []
 
         async def write_remote(data: bytes) -> None:
+
+            data = reveal_bytes(data)  # what the transport writes
             sent.append(data)
 
         async def read_remote() -> bytes:
@@ -1104,6 +1112,8 @@ class TestReplayProxyHops:
         replies = [b"Password:", b"Password:"]
 
         async def write_remote(data: bytes) -> None:
+
+            data = reveal_bytes(data)  # what the transport writes
             sent.append(data)
 
         async def read_remote() -> bytes:
@@ -1141,6 +1151,8 @@ class TestReplayProxyHops:
         prompts = [b"Password:", b"Password:"]
 
         async def write_remote(data: bytes) -> None:
+
+            data = reveal_bytes(data)  # what the transport writes
             sent.append(data)
 
         async def read_remote() -> bytes:
@@ -1184,6 +1196,8 @@ class TestReplayProxyHops:
         try:
 
             async def write_remote(data: bytes) -> None:
+
+                data = reveal_bytes(data)  # what the transport writes
                 sent.append(data)
 
             async def read_remote() -> bytes:
@@ -1255,6 +1269,8 @@ class TestResyncSoundInBothEchoModes:
         reads = 0
 
         async def write_remote(data: bytes) -> None:
+
+            data = reveal_bytes(data)  # what the transport writes
             sent.append(data)
 
         async def read_remote() -> bytes:
@@ -1289,6 +1305,8 @@ class TestResyncSoundInBothEchoModes:
         sent: list[bytes] = []
 
         async def write_remote(data: bytes) -> None:
+
+            data = reveal_bytes(data)  # what the transport writes
             sent.append(data)
 
         async def read_remote() -> bytes:

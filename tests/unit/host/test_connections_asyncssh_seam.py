@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from cryptography.utils import CryptographyDeprecationWarning
+from pydantic import SecretStr
 
 from otto.host.connections import (
     FFDH_DEPRECATION_MESSAGE,
@@ -111,6 +112,45 @@ def test_ssh_debug_env_outside_asyncssh_s_range_warns_and_changes_nothing(
     assert SSHLogger._debug_level == 1
     assert "OTTO_SSH_DEBUG" in caplog.text
     assert "1..3" in caplog.text
+
+
+@pytest.mark.parametrize("value", ["1", "2"])
+def test_ssh_debug_below_the_packet_dump_does_not_warn(monkeypatch, caplog, value):
+    import asyncssh
+
+    from otto.host import connections
+
+    connections._warn_packet_dump.cache_clear()
+    monkeypatch.setenv("OTTO_SSH_DEBUG", value)
+    try:
+        with caplog.at_level(logging.WARNING, logger="otto.host.connections"):
+            apply_ssh_debug_level()
+    finally:
+        asyncssh.set_debug_level(1)
+        connections._warn_packet_dump.cache_clear()
+    assert "raw SSH packets" not in caplog.text
+
+
+def test_ssh_debug_level_3_warns_once_that_passwords_are_logged(monkeypatch, caplog):
+    """Level 3 is asyncssh's packet dump, which carries password-auth payloads and
+    the channel bytes of a sudo or su answer: the user is told, once per process."""
+    import asyncssh
+
+    from otto.host import connections
+
+    connections._warn_packet_dump.cache_clear()
+    monkeypatch.setenv("OTTO_SSH_DEBUG", "3")
+    try:
+        with caplog.at_level(logging.WARNING, logger="otto.host.connections"):
+            apply_ssh_debug_level()
+            apply_ssh_debug_level()  # the second connect of the same process
+    finally:
+        asyncssh.set_debug_level(1)
+        connections._warn_packet_dump.cache_clear()
+    warnings_ = [r for r in caplog.records if "raw SSH packets" in r.getMessage()]
+    assert len(warnings_) == 1
+    assert warnings_[0].levelno == logging.WARNING
+    assert "passwords" in warnings_[0].getMessage()
 
 
 def test_ssh_debug_env_lifts_the_asyncssh_logger_floor_so_level_2_prints(monkeypatch):
@@ -265,9 +305,13 @@ async def test_ssh_connect_prepares_the_seam_before_connecting(monkeypatch):
     ):
         warnings.simplefilter("error")
         try:
-            result = await ssh_connect("10.0.0.1", username="u", password="p")
+            result = await ssh_connect("10.0.0.1", username="u", password=SecretStr("p"))
             assert result is fake
-            connect.assert_awaited_once_with("10.0.0.1", username="u", password="p")
+            # The password arrives wrapped and is unwrapped inside the call;
+            # no key passphrase was set, so asyncssh is given its own default.
+            connect.assert_awaited_once_with(
+                "10.0.0.1", password="p", passphrase=None, username="u"
+            )
             assert len(_ffdh_filters()) == 1
             assert SSHLogger._debug_level == 3
         finally:

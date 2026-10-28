@@ -1,6 +1,7 @@
 """resolve_host_entry: the join between a lab entry and its inventory record (spec §2, §5, §6)."""
 
 import pytest
+from pydantic import SecretStr
 
 from otto.host.element import Element
 from otto.host.inventory_ref import InventoryRef
@@ -88,7 +89,7 @@ def test_referenced_entry_is_filled_from_the_record_and_keeps_otto_fields():
     assert out.host_data["is_virtual"] is True
     assert out.host_data["site"] == "lab-a"
     assert out.host_data["rack"] == 3
-    assert out.host_data["creds"] == [{"login": "u", "password": "p"}]
+    assert out.host_data["creds"] == [{"login": "u", "password": SecretStr("p")}]
     assert out.host_data["hop"] == "gw"
     assert out.host_data["os_type"] == "unix"
     assert out.ref == InventoryRef(key="k", backend="fake:mem", extra={"asset": "A-7"})
@@ -221,7 +222,7 @@ def test_inline_creds_beside_a_reference_compose_over_the_record():
     out = resolve_host_entry(entry, inv, _DUT)
     assert out.host_data["creds"] == [
         {"login": "root", "proxy": "su", "via": "u"},
-        {"login": "u", "password": "p"},  # null inline states nothing; the record's password stands
+        {"login": "u", "password": SecretStr("p")},  # null inline states nothing; the record stands
     ]
     assert out.host_data["ip"] == "10.0.0.7"  # every other supplied field still fills
 

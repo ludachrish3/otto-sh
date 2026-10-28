@@ -468,7 +468,13 @@ and in `ps`. A proxy that handles its own credentials simply omits `prompt=`.
 
 Note the `log=LogMode.NEVER` otto puts on every password send — the
 password-hygiene convention for logged output applies inside a proxy step
-exactly as it does everywhere else a credential is sent.
+exactly as it does everywhere else a credential is sent. `ctx.target.password`
+and `ctx.via.password` are pydantic `SecretStr`s, so a traceback's locals show
+only a mask. Send one as it is: `io.send` writes a `SecretStr` as its value and
+a newline, unwrapping it only inside the transport's own write, so no frame of
+your proxy or of otto holds the raw password:
+`await io.send(ctx.target.password, log=LogMode.NEVER)`. Never wrap a formatted
+string (`SecretStr(f"{pw}\n")`): formatting a `SecretStr` gives its mask.
 
 It sends the **login-shell** form, `su - <login>`: the target's environment
 is set up from its own profile, the new shell starts in the **target's home

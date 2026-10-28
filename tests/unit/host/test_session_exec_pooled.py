@@ -5,6 +5,7 @@ import logging
 from unittest.mock import AsyncMock
 
 import pytest
+from pydantic import SecretStr
 
 from otto.host.login_proxy import Cred, LoginProxyError
 from otto.host.session import SessionManager, _ExecRoute
@@ -17,6 +18,10 @@ async def _factory(cmd: str, timeout: float | None) -> CommandResult:
     return CommandResult(status=Status.Success, value="factory", command=cmd, retcode=0)
 
 
+_PW = SecretStr("pw")
+"""The password every fake ``credentials`` pair here carries."""
+
+
 def _mgr(
     *,
     hops=(),
@@ -24,7 +29,7 @@ def _mgr(
     factory=_factory,
     creds=None,
     login_target="admin",
-    credentials=("admin", "pw"),
+    credentials=("admin", _PW),
 ):
     # login_target/credentials match `_StubExecSession`'s hardcoded
     # `ShellModel(user="admin", ...)` seed: with no proxy hops, nothing
@@ -216,7 +221,12 @@ class TestAmbientUser:
 
     @pytest.mark.asyncio
     async def test_the_user_the_session_opened_as_is_not_ambient(self):
-        mgr = _mgr(factory=None, term="telnet", login_target="alice", credentials=("alice", "pw"))
+        mgr = _mgr(
+            factory=None,
+            term="telnet",
+            login_target="alice",
+            credentials=("alice", _PW),
+        )
         await mgr.run_cmd("id")  # opens the default session as the login user
         assert mgr.current_user == "alice"
         assert mgr.ambient_user is None
@@ -229,7 +239,7 @@ class TestAmbientUser:
             term="telnet",
             hops=[hop],
             login_target="mysql",
-            credentials=("alice", "pw"),
+            credentials=("alice", _PW),
         )
         await mgr.run_cmd("id")
         assert mgr.current_user == "mysql", "proxy hops replayed at open"
@@ -237,7 +247,12 @@ class TestAmbientUser:
 
     @pytest.mark.asyncio
     async def test_a_switched_default_session_is_ambient_until_switched_back(self):
-        mgr = _mgr(factory=None, term="telnet", login_target="alice", credentials=("alice", "pw"))
+        mgr = _mgr(
+            factory=None,
+            term="telnet",
+            login_target="alice",
+            credentials=("alice", _PW),
+        )
         await mgr.run_cmd("id")
         mgr._set_current_user("root")  # what PosixPrivilege.as_user records after a switch
         assert mgr.ambient_user == "root"
@@ -246,7 +261,12 @@ class TestAmbientUser:
 
     @pytest.mark.asyncio
     async def test_close_all_forgets_the_baseline(self):
-        mgr = _mgr(factory=None, term="telnet", login_target="alice", credentials=("alice", "pw"))
+        mgr = _mgr(
+            factory=None,
+            term="telnet",
+            login_target="alice",
+            credentials=("alice", _PW),
+        )
         await mgr.run_cmd("id")
         await mgr.close_all()
         assert mgr.ambient_user is None

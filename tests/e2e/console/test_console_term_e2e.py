@@ -83,7 +83,9 @@ async def test_already_logged_in_fails_loud():
     try:
         with pytest.raises(ConsoleError, match=rf"already logged in.*{_OTHER.login}@test2") as ei:
             await h.run("true")
-        assert _OTHER.password not in str(ei.value), "the refusal quotes the password"
+        assert _OTHER.password is not None
+        secret = _OTHER.password.get_secret_value()
+        assert secret not in str(ei.value), "the refusal quotes the password"
     finally:
         await h.logout()  # the abandoned shell back to login:
         await h.close()

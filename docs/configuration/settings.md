@@ -67,7 +67,11 @@ pins it at `WARNING` by default), so the trace actually reaches the console
 under `--log-level DEBUG`. The `[logging.levels] asyncssh = "DEBUG"` entry
 below does the same without the env var — but a valid `OTTO_SSH_DEBUG`
 overrides it from the first connect on, for the rest of the process; unset
-the env var to get the project entry back.
+the env var to get the project entry back. `OTTO_SSH_DEBUG=3` is asyncssh's
+raw packet dump: it logs the password-authentication request and every
+channel byte, so passwords and sudo/su answers appear in clear in the log.
+otto logs a warning saying so the first time it applies level 3. Use it only
+against a test host, and delete the log afterwards.
 
 ### Path resolution
 

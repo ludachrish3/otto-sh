@@ -26,12 +26,12 @@ this file pins the specific names the cutover retired.
 
 import ast
 import importlib
-import pkgutil
 import re
 from pathlib import Path
 
 import pytest
 
+from tests._fixtures.otto_modules import import_otto_modules
 from tests._fixtures.paths import CHECKOUT_ROOT
 
 # The frozen rename inventory, spelled literally: this guard never reads the JSON.
@@ -167,10 +167,7 @@ def _otto_host_classes() -> "set[type]":
     """Every class an otto.host module defines, after importing all of them."""
     import otto.host
 
-    modules = [
-        importlib.import_module(info.name)
-        for info in pkgutil.walk_packages(otto.host.__path__, "otto.host.")
-    ]
+    modules = import_otto_modules(otto.host)
     return {
         obj
         for module in modules

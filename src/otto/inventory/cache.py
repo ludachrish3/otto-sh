@@ -29,6 +29,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from ..models.base import secret_safe_json_default
 from ..models.inventory import InventoryRecord
 from .creds import CredsOverlay
 from .errors import InventoryError, InventoryKeyError
@@ -146,7 +147,8 @@ def snapshot_slug_material(
     }
     residue = {key: value for key, value in config.items() if key not in adopted}
     ttl = int(cache_ttl.total_seconds())
-    return f"{backend}|{label}|{json.dumps(residue, sort_keys=True, default=str)}|ttl={ttl}"
+    dumped = json.dumps(residue, sort_keys=True, default=secret_safe_json_default)
+    return f"{backend}|{label}|{dumped}|ttl={ttl}"
 
 
 @dataclass(frozen=True)

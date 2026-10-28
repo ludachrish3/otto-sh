@@ -229,7 +229,7 @@ def validate_settings(root: Path) -> list[str]:
     """
     from pydantic import ValidationError
 
-    from ..models.base import compact_validation_error
+    from ..models.base import compact_validation_error, load_toml_settings
 
     # Absolute, as ``Project.__post_init__`` makes it, so anchored paths and the
     # file named in the problem line match what the loader sees.
@@ -238,7 +238,7 @@ def validate_settings(root: Path) -> list[str]:
 
     path = root / TOML_SETTINGS_PATH
     try:
-        data = tomli.loads(path.read_bytes().decode())
+        data = load_toml_settings(path.read_bytes().decode())
     except (tomli.TOMLDecodeError, UnicodeDecodeError, OSError) as e:
         return [f"{path}: {e}"]
     try:
@@ -558,10 +558,11 @@ class Project:
 
     def parse_settings(self) -> None:
         """Parse + validate the project's ``.otto/settings.toml`` via :func:`compile_settings`."""
-        import tomli
+        from ..models.base import load_toml_settings
 
-        settings_text = self.read_settings()
-        self.settings = tomli.loads(settings_text)  # raw — coverage/reservation read it
+        # Raw (secrets wrapped): coverage/reservation read it. Never bound to a
+        # local first — a traceback's locals would show the file text.
+        self.settings = load_toml_settings(self.read_settings())
 
         compiled = compile_settings(self.settings, self.root)
 

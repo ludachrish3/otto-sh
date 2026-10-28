@@ -55,6 +55,7 @@ from typing import (
     cast,
 )
 
+from pydantic import SecretStr
 from typing_extensions import override
 
 from ..logger.mode import LogMode
@@ -398,7 +399,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     ####################
 
     @override
-    def _sudo_password(self, user: str | None = None) -> str | None:
+    def _sudo_password(self, user: str | None = None) -> SecretStr | None:
         """Return the password ``sudo -S`` must be answered with.
 
         *user* is the identity the elevated command runs as — an
@@ -497,7 +498,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         self._file_transfer = self._build_file_transfer()
 
     @property
-    def _creds(self) -> tuple[str, str | None]:
+    def _creds(self) -> tuple[str, SecretStr | None]:
         """Provide the (username, password) pair from creds. Delegates to ConnectionManager."""
         return self._connections.credentials
 
@@ -834,7 +835,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         client = TelnetClient(
             host=connect_host,
             user=login_user,
-            password=password or "",
+            password=password,
             options=interactive_options,
             connect_port=connect_port,
             prompt=None,
@@ -876,7 +877,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             host=target.host,
             port=target.port,
             user=login_user,
-            password=password or "",
+            password=password,
             options=opts,
             name=self.name,
             server=opts.server,

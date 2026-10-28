@@ -13,6 +13,7 @@ from typing import (
     TYPE_CHECKING,
     Annotated,
     Any,
+    ForwardRef,
     Literal,
     cast,
     get_args,
@@ -151,9 +152,17 @@ def contains_secret_type(tp: Any) -> bool:
     so checking that first would ``issubclass`` it against ``SecretStr``
     directly (a silent ``False``, never reached) instead of recursing into
     its own args.
+
+    A reference left unresolved (a string, or a ``ForwardRef`` from
+    ``_field_types``' fallback) is judged by its text: one naming
+    ``SecretStr`` or ``SecretBytes`` counts, so an annotation that cannot be
+    evaluated never hides a secret field.
     """
     import pydantic
 
+    if isinstance(tp, (str, ForwardRef)):
+        text = tp if isinstance(tp, str) else tp.__forward_arg__
+        return "SecretStr" in text or "SecretBytes" in text
     if get_origin(tp) is not None:
         return any(contains_secret_type(arg) for arg in get_args(tp))
     if isinstance(tp, type):
@@ -161,10 +170,44 @@ def contains_secret_type(tp: Any) -> bool:
     return False
 
 
-def sensitive_field_names(cls: "type[DataclassInstance]") -> "set[str]":
+def _field_types(cls: type) -> "dict[str, Any]":
+    """Return the bare type of each annotated field of dataclass *cls*, base classes included.
+
+    :func:`typing.get_type_hints`, unless an annotation names something only
+    imported for type checking (``Callable[["SSHClientConnection"], ...]``).
+    Python 3.14 evaluates such a name inside a ``collections.abc`` generic,
+    where 3.10 to 3.13 leave the string alone, so ``get_type_hints`` raises
+    ``NameError`` there. Python 3.14 then reads the annotations with
+    :mod:`annotationlib`'s ``FORWARDREF`` format instead: every name it
+    cannot resolve stays a ``ForwardRef``, which :func:`contains_secret_type`
+    judges by its text.
+    """
+    import sys
+
+    try:
+        return get_type_hints(cls, include_extras=False)
+    except NameError:
+        if sys.version_info < (3, 14):
+            raise
+    import annotationlib
+
+    hints: dict[str, Any] = {}
+    for klass in reversed(cls.__mro__):
+        found = annotationlib.get_annotations(klass, format=annotationlib.Format.FORWARDREF)
+        hints.update({name: _strip_annotated(tp) for name, tp in found.items()})
+    return hints
+
+
+def _strip_annotated(tp: Any) -> Any:
+    """Return *tp* without an outer ``Annotated[...]``, as ``include_extras=False`` would."""
+    return get_args(tp)[0] if get_origin(tp) is Annotated else tp
+
+
+def sensitive_field_names(cls: "type[DataclassInstance | pydantic.BaseModel]") -> "set[str]":
     """Return the field names on *cls* whose VALUE must never be shown or stored.
 
-    A field is sensitive when it sets ``repr=False`` (``dataclasses.field``,
+    *cls* is a dataclass (stdlib or pydantic) or a pydantic model. A field is
+    sensitive when it sets ``repr=False`` (``dataclasses.field``,
     or a pydantic ``Field``), or when its declared type IS, or CONTAINS
     (:func:`contains_secret_type` -- a union, an optional, a container), a
     ``pydantic.SecretStr``/``SecretBytes``. The second case is technically
@@ -178,8 +221,19 @@ def sensitive_field_names(cls: "type[DataclassInstance]") -> "set[str]":
     ``pydantic`` is imported function-local, for the same reason
     :func:`options` defers it: this runs at command-build time, not at import
     time.
+
+    The secret-fields guard (``tests/unit/models/test_secret_fields_guard.py``)
+    asks this same question of every otto dataclass and model.
     """
-    bare_types = get_type_hints(cls, include_extras=False)
+    import pydantic
+
+    if issubclass(cls, pydantic.BaseModel):
+        return {
+            name
+            for name, info in cls.model_fields.items()
+            if info.repr is False or contains_secret_type(info.annotation)
+        }
+    bare_types = _field_types(cls)
     names: set[str] = set()
     for f in dataclasses.fields(cls):
         if not f.repr:

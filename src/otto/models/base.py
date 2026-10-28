@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
 if TYPE_CHECKING:
     from pydantic import ValidationError
@@ -79,9 +79,16 @@ class Cred:
     login: str
     """The account name."""
 
-    password: str | None = None
+    password: SecretStr | None = None
     """Password, or None (key/agent auth on SSH; empty line on telnet; no
-    password exchange in the built-in su proxy)."""
+    password exchange in the built-in su proxy).
+
+    A ``SecretStr``, so neither the cred's repr nor a traceback's locals show
+    it; read it with ``get_secret_value()``. A plain ``str`` given here is
+    wrapped on construction, so after construction the attribute is always
+    ``SecretStr | None``. The annotation states that read type; a static type
+    checker therefore flags ``Cred(password="...")``, which runs correctly
+    (pass ``SecretStr("...")`` to satisfy it)."""
 
     proxy: str | None = None
     """Login-proxy registry key; None means directly loginable (switch via
@@ -112,6 +119,100 @@ class Cred:
     and takes part in the cred's identity (:func:`cred_identity`).
     """
 
+    def __post_init__(self) -> None:
+        # frozen: the one sanctioned write, before anyone can read the field
+        object.__setattr__(self, "password", as_secret(self.password))
+
+
+def as_secret(password: "str | SecretStr | None") -> "SecretStr | None":
+    """Wrap a plain-``str`` *password* in ``SecretStr``; a ``SecretStr`` or ``None`` passes through.
+
+    What every holder of a password field does on construction (:class:`Cred`,
+    the telnet and console clients), so a caller's plain string never stays
+    plain past the constructor.
+    """
+    return SecretStr(password) if isinstance(password, str) else password
+
+
+SECRET_DATA_KEYS = frozenset({"password", "passphrase"})
+"""The keys whose value is a secret in parsed lab, creds and inventory data.
+
+Exactly the fields :func:`otto.params.sensitive_field_names` reports across
+otto's models (``CredSpec.password``, ``SshOptionsSpec.passphrase``); the
+secret-fields guard (``tests/unit/models/test_secret_fields_guard.py``) fails
+when the two disagree. :func:`wrap_secret_values` reads it."""
+
+
+def wrap_secret_values(data: object) -> None:
+    """Wrap, in place, each ``str`` under a :data:`SECRET_DATA_KEYS` key in *data* as ``SecretStr``.
+
+    *data* is a parsed JSON document (or record), walked at every depth: a
+    ``creds`` entry's ``password`` and an ``ssh_options`` table's
+    ``passphrase`` alike. Every loader of creds-bearing data calls this on
+    what it parsed before any other otto frame holds it, so a traceback's
+    locals (or in the log files) never show the plain value; the models then
+    take the ``SecretStr`` as it is.
+    """
+    pending = [data]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key in SECRET_DATA_KEYS and isinstance(value, str):
+                    node[key] = SecretStr(value)
+                elif isinstance(value, (dict, list)):
+                    pending.append(value)
+        elif isinstance(node, list):
+            pending.extend(item for item in node if isinstance(item, (dict, list)))
+
+
+def load_toml_settings(text: str) -> dict[str, Any]:
+    """Parse a settings TOML document, its secret values wrapped by :func:`wrap_secret_values`.
+
+    The one parse of every otto settings file (a project's
+    ``.otto/settings.toml``, the user settings file), so a ``passphrase`` or
+    ``password`` key at any depth — ``[host_preferences."x".ssh_options]
+    passphrase`` — is a ``SecretStr`` before any otto frame holds the parsed
+    table. A decode error's traceback starts at this frame, with *text*
+    already dropped from its locals: the parser's frames, and this one's
+    argument, hold the whole file text, secrets included, and a logged
+    traceback shows every shown frame's locals. (``tomli`` is also in
+    :func:`otto.logger.formatters.suppressed_traceback_packages`.) The error's
+    message still names the line and column.
+
+    Raises
+    ------
+    tomli.TOMLDecodeError
+        When *text* is not valid TOML.
+    """
+    import tomli
+
+    try:
+        data = tomli.loads(text)
+    except tomli.TOMLDecodeError as e:
+        del text
+        raise e.with_traceback(None) from None
+    wrap_secret_values(data)
+    return data
+
+
+def secret_safe_json_default(value: object) -> object:
+    """Serialize *value* for ``json.dumps``: the ``default=`` hook over parsed settings data.
+
+    A ``SecretStr`` (see :func:`wrap_secret_values`) becomes
+    ``"secret:sha256:<hex>"``, the digest of its value: stable across
+    processes and changed by any change to the secret, so a fingerprint built
+    from the dump still tells two configurations apart, while the plain value
+    is never part of what is dumped or stored. Anything else becomes its
+    ``str()``.
+    """
+    if isinstance(value, SecretStr):
+        import hashlib
+
+        digest = hashlib.sha256(value.get_secret_value().encode()).hexdigest()
+        return f"secret:sha256:{digest}"
+    return str(value)
+
 
 def cred_identity(login: str, protocols: list[str]) -> str:
     """Build the display identity of a cred: ``login``, or ``login [p1, p2]`` when scoped.
@@ -130,7 +231,7 @@ class CredSpec(OttoModel):
     """One ``creds`` entry: a login plus (optionally) how to become it."""
 
     login: str
-    password: str | None = None
+    password: SecretStr | None = None
     proxy: str | None = None
     via: str | None = None
     params: dict[str, Any] = Field(default_factory=dict)
@@ -181,14 +282,18 @@ class JsonFileSource:
     def read_document(self, refuse: "type[Exception]") -> Any:
         """Parse the file, raising *refuse* as ``<path>: <reason>`` when it cannot be read.
 
+        Its secrets are wrapped as it is parsed (:func:`wrap_secret_values`).
+
         ``<path>: …`` is the one prefix the source's errors use: a reader
         scanning a log for the file should not have to know which layer
         refused it.
         """
         try:
-            return json.loads(self.path.read_text())
+            data = json.loads(self.path.read_text())
         except (OSError, json.JSONDecodeError) as e:
             raise refuse(f"{self.path}: {e}") from e
+        wrap_secret_values(data)
+        return data
 
     def fingerprint(self) -> "str | None":
         """Return the file's path, mtime and size, or ``|missing`` if it does not exist."""

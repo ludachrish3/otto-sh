@@ -32,8 +32,10 @@ def settings_data(root: Path) -> dict[str, Any] | None:
     path = settings_path(root)
     if not path.is_file():
         return None
+    from ..models.base import load_toml_settings
+
     try:
-        return tomli.loads(path.read_bytes().decode())
+        return load_toml_settings(path.read_bytes().decode())
     except (tomli.TOMLDecodeError, UnicodeDecodeError, OSError):
         return None
 

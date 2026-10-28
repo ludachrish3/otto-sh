@@ -10,7 +10,7 @@ modified here.
 import re
 from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic import Field, ValidationInfo, field_validator
+from pydantic import Field, SecretStr, ValidationInfo, field_validator
 
 from ..models.base import OttoModel
 from . import options as rt
@@ -23,15 +23,18 @@ if TYPE_CHECKING:
 def _extra_names_no_field(
     extra: dict[str, Any], runtime: "type[DataclassInstance]"
 ) -> dict[str, Any]:
-    """Refuse an ``extra`` key that names a field of *runtime*.
+    """Refuse an ``extra`` key that names a field of *runtime*, or a name it reserves.
 
     The same rule the runtime dataclass applies when it is built, run here so
-    a lab file is refused when it is read, naming the key, rather than when
-    the host is first built.
+    a lab file is refused when it is read, naming the key (never its value),
+    rather than when the host is first built.
     """
     shadowed = rt.shadowed_fields(extra, runtime)
     if shadowed:
-        msg = f"extra sets {shadowed}, which name(s) a field of this table; set the field instead"
+        msg = (
+            f"extra sets {shadowed}, which otto sets from a field of this table or "
+            "the host's creds; set those instead"
+        )
         raise ValueError(msg)
     return extra
 
@@ -52,6 +55,7 @@ class SshOptionsSpec(OttoModel):
     keepalive_interval: float | None = rt.field_default(rt.SshOptions, "keepalive_interval")
     keepalive_count_max: int | None = rt.field_default(rt.SshOptions, "keepalive_count_max")
     client_keys: list[str] | None = rt.field_default(rt.SshOptions, "client_keys")
+    passphrase: SecretStr | None = rt.field_default(rt.SshOptions, "passphrase")
     client_host_keys: list[str] | None = rt.field_default(rt.SshOptions, "client_host_keys")
     agent_forwarding: bool = rt.field_default(rt.SshOptions, "agent_forwarding")
     preferred_auth: str | list[str] | None = rt.field_default(rt.SshOptions, "preferred_auth")
@@ -79,6 +83,7 @@ class SshOptionsSpec(OttoModel):
             keepalive_interval=self.keepalive_interval,
             keepalive_count_max=self.keepalive_count_max,
             client_keys=self.client_keys,
+            passphrase=self.passphrase,
             client_host_keys=self.client_host_keys,
             agent_forwarding=self.agent_forwarding,
             preferred_auth=self.preferred_auth,

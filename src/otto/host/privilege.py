@@ -42,6 +42,8 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
+from pydantic import SecretStr
+
 from ..logger.mode import LogMode
 from ..models.base import Cred
 from .command_frame import history_prefix
@@ -74,7 +76,7 @@ class _HostProxyIO:
     def __init__(self, host: "PosixPrivilege") -> None:
         self._host = host
 
-    async def send(self, text: str, *, log: LogMode = LogMode.NORMAL) -> None:
+    async def send(self, text: str | SecretStr, *, log: LogMode = LogMode.NORMAL) -> None:
         await self._host.send(text, log=log)  # ty: ignore[unresolved-attribute]
 
     async def expect(
@@ -97,7 +99,7 @@ class PosixPrivilege(UserlandHost):
 
     __slots__ = ()
 
-    def _sudo_password(self, user: str | None = None) -> str | None:  # noqa: ARG002 — the parameter belongs to the seam: this default knows no passwords for any user
+    def _sudo_password(self, user: str | None = None) -> SecretStr | None:  # noqa: ARG002 — the parameter belongs to the seam: this default knows no passwords for any user
         """Password for ``sudo -S``, or None when sudo is passwordless here.
 
         *user* is the identity the elevated command runs as; ``None`` means the
@@ -116,7 +118,7 @@ class PosixPrivilege(UserlandHost):
         """
         return getattr(self, "creds", [])
 
-    def _su_password(self) -> str | None:
+    def _su_password(self) -> SecretStr | None:
         """Password for ``su``, or None when the switch needs none.
 
         NOT :meth:`_sudo_password`, and the difference is the point: ``sudo``
@@ -246,16 +248,21 @@ class PosixPrivilege(UserlandHost):
         elevation = "sudo" if userland is None else userland.elevation
         # Declared once, ahead of the branches: an `Expect` pattern is
         # `str | re.Pattern`, and annotating inside the first arm lets the
-        # second infer the narrower `list[tuple[str, str]]` and fail to match
-        # the return type.
+        # second infer the narrower `list[tuple[str, SecretStr]]` and fail to
+        # match the return type.
+        #
+        # The response is the cred's own SecretStr, never a formatted
+        # `SecretStr(f"{pw}\n")` (that would wrap the mask): the session
+        # writes it as its value and a newline, unwrapped inside the
+        # transport write (`otto.host.secret_wire.reveal`).
         expects: "list[Expect]"
         if elevation == "sudo":
             pw = self._sudo_password(user)
-            expects = [] if pw is None else [(_SUDO_PROMPT, f"{pw}\n")]
+            expects = [] if pw is None else [(_SUDO_PROMPT, pw)]
             return f"sudo -S -p '{_SUDO_PROMPT}' {cmd}", expects
         if elevation == "su":
             pw = self._su_password()
-            expects = [] if pw is None else [(_SU_PROMPT, f"{pw}\n")]
+            expects = [] if pw is None else [(_SU_PROMPT, pw)]
             return f"su -c {shlex.quote(cmd)}", expects
         raise UnsupportedOnUserlandError(
             f"{getattr(self, 'name', '')}: this host's userland provides no elevation "
@@ -301,7 +308,7 @@ class PosixPrivilege(UserlandHost):
             self._log_command,  # ty: ignore[unresolved-attribute]
         )
 
-    async def switch_user(self, user: str = "", password: str | None = None) -> None:
+    async def switch_user(self, user: str = "", password: str | SecretStr | None = None) -> None:
         """``su`` the persistent (default) session to *user* (default root).
 
         Performs the real switch (recursively hopping through any ``via``
@@ -336,7 +343,7 @@ class PosixPrivilege(UserlandHost):
 
     @asynccontextmanager
     async def as_user(
-        self, user: str = "root", password: str | None = None
+        self, user: str = "root", password: str | SecretStr | None = None
     ) -> AsyncIterator["PosixPrivilege"]:
         """Run a block as *user*, returning to the original user on exit.
 

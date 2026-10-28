@@ -5,6 +5,7 @@ from contextlib import suppress
 from types import SimpleNamespace
 
 import pytest
+from pydantic import SecretStr
 
 from otto.host import session as session_mod
 from otto.host.app_shell import AppShell
@@ -25,8 +26,11 @@ from otto.utils import Status
 from tests._fixtures.dialect_shell import DialectSession, DialectShell
 from tests.conftest import active_context
 
+_PW = SecretStr("pw")
+"""The password every fake ``credentials`` pair here carries."""
 
-def _conn(hops=(), login_target="admin", credentials=("admin", "pw")):
+
+def _conn(hops=(), login_target="admin", credentials=("admin", _PW)):
     return SimpleNamespace(
         credentials=credentials, login_target=login_target, proxy_hops=list(hops), term="ssh"
     )
@@ -579,7 +583,7 @@ def _term_conn(term):
 
     return SimpleNamespace(
         term=term,
-        credentials=("admin", "pw"),
+        credentials=("admin", _PW),
         login_target="admin",
         proxy_hops=[],
         telnet_options=opts,
