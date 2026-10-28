@@ -11,7 +11,9 @@ placement-and-phases §3.3). ``Cred`` keeps its public path,
 ``otto.host.login_proxy.Cred``, and ``CredSpec`` its, ``otto.models.CredSpec``.
 """
 
+import json
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -160,6 +162,72 @@ class CredSpec(OttoModel):
             params=dict(self.params),
             protocols=list(self.protocols),
         )
+
+
+class JsonFileSource:
+    """One JSON file a source reads once, on first use.
+
+    What the json creds store and the json inventory share: the label, the
+    change fingerprint (path, mtime and size, or ``|missing``), the one path
+    that fingerprint stats, and the read that refuses an unreadable or
+    malformed file as ``<path>: <reason>`` in the source's own error class.
+    The parse of the document, and its cache, are the subclass's.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self.path = Path(path)
+        self.label = f"json:{self.path}"
+
+    def read_document(self, refuse: "type[Exception]") -> Any:
+        """Parse the file, raising *refuse* as ``<path>: <reason>`` when it cannot be read.
+
+        ``<path>: …`` is the one prefix the source's errors use: a reader
+        scanning a log for the file should not have to know which layer
+        refused it.
+        """
+        try:
+            return json.loads(self.path.read_text())
+        except (OSError, json.JSONDecodeError) as e:
+            raise refuse(f"{self.path}: {e}") from e
+
+    def fingerprint(self) -> "str | None":
+        """Return the file's path, mtime and size, or ``|missing`` if it does not exist."""
+        try:
+            st = self.path.stat()
+        except OSError:
+            return f"{self.path}|missing"
+        return f"{self.path}|{st.st_mtime_ns}|{st.st_size}"
+
+    def stat_paths(self) -> "list[Path] | None":
+        """Return the one file the fingerprint is derived from."""
+        return [self.path]
+
+
+def strip_comment_keys(data: object) -> object:
+    """Drop ``_``-prefixed keys before validation — the JSON comment idiom.
+
+    A lab, host, link or inventory entry cannot carry real comments, so keys
+    like ``_comment`` are sanctioned annotation space. Only the
+    leading-underscore form is exempt from ``extra='forbid'``; any other
+    unknown key still errors. Every spec that accepts the idiom strips
+    through this from a ``mode="before"`` model validator, and
+    ``otto.models.jsonschema`` mirrors it in the emitted schema.
+    """
+    if isinstance(data, dict):
+        return {k: v for k, v in data.items() if not (isinstance(k, str) and k.startswith("_"))}
+    return data
+
+
+def nonnegative(v: int | None) -> int | None:
+    """Refuse a negative position (an element id, a slot, a shelf); ``None`` passes.
+
+    One rule for every spec level that carries one:
+    :class:`~otto.models.lab.ElementSpec`, :class:`~otto.host.specs.HostSpec`
+    and :class:`~otto.models.inventory.InventoryRecord`.
+    """
+    if v is not None and v < 0:
+        raise ValueError(f"must be >= 0, got {v}")
+    return v
 
 
 def resources_nonempty(v: set[str]) -> set[str]:

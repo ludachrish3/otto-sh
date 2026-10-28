@@ -46,7 +46,7 @@ from .product import (
     stage_dir_key,
     sudo_line,
 )
-from .shell_kind import stage_dir_param, str_param
+from .shell_kind import refuse_unknown_params, stage_dir_param, str_param
 
 if TYPE_CHECKING:
     from .host import Host
@@ -271,11 +271,7 @@ def _kmod_tool_kind(entry: DeclaredEntry, host: "Host") -> KmodTool:
     stage_dir = stage_dir_param(entry, params)
     module_name = str_param(entry, params, "module_name") or ""
     insmod_params = _params_param(entry, params)
-    if params:
-        raise ValueError(
-            f"[[dev_tools]] {entry.name!r}: kind 'kmod' got unknown param(s): "
-            f"{sorted(params)}; valid: {_VALID}"
-        )
+    refuse_unknown_params(entry, params, "kind 'kmod'", _VALID)
     return KmodTool(
         name=entry.name,
         artifact=artifact,
@@ -418,11 +414,7 @@ def _kmodcov_tool_kind(entry: DeclaredEntry, host: "Host") -> KmodcovTool:
             "consumer's parameter, which otto passes to the product's own insmod"
         )
     source = str_param(entry, params, "source")
-    if params:
-        raise ValueError(
-            f"[[dev_tools]] {entry.name!r}: kind 'kmodcov' got unknown param(s): "
-            f"{sorted(params)}; valid: {_VALID_KMODCOV}"
-        )
+    refuse_unknown_params(entry, params, "kind 'kmodcov'", _VALID_KMODCOV)
     tool = KmodcovTool(
         name=entry.name,
         artifact=artifact,

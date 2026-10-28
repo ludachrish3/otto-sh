@@ -7,7 +7,7 @@ are resolved against the loaded host set at lab-load time
 
 from pydantic import Field, field_validator, model_validator
 
-from .base import OttoModel
+from .base import OttoModel, strip_comment_keys
 
 
 class LinkEndpointSpec(OttoModel):
@@ -43,10 +43,8 @@ class LinkSpec(OttoModel):
     @model_validator(mode="before")
     @classmethod
     def _strip_comment_keys(cls, data: object) -> object:
-        """Drop ``_``-prefixed keys — the JSON comment idiom (see HostSpec)."""
-        if isinstance(data, dict):
-            return {k: v for k, v in data.items() if not (isinstance(k, str) and k.startswith("_"))}
-        return data
+        """Drop ``_``-prefixed keys; see :func:`~otto.models.base.strip_comment_keys`."""
+        return strip_comment_keys(data)
 
     @field_validator("protocol")
     @classmethod

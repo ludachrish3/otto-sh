@@ -2450,6 +2450,9 @@ def run_collect_child() -> bool:
 def spawn_collect_child() -> bool:
     """Start the collect child detached, and do not wait for it; ``True`` when one started.
 
+    Mirrored by ``otto._shim_complete.spawn_refresh``, which may not import
+    this module: change both or neither (tests/unit/shim/test_differential.py).
+
     The check behind a TAB whose tables are due one: the child re-reads what
     moved while the shell has its answer. It gets its own session
     (``start_new_session``), ``/dev/null`` for every stream and no inherited
@@ -2742,7 +2745,11 @@ def _load_docker_observed_hosts(projects: list["Project"]) -> dict[str, Any]:
 def _fresh_lists(
     entry: Any, ttl: int, keys: tuple[str, str], now: float
 ) -> tuple[list[str], list[str]]:
-    """Both lists of a sub-entry inside *ttl*, else two empty lists."""
+    """Both lists of a sub-entry inside *ttl*, else two empty lists.
+
+    Mirrored by ``otto._shim_complete._fresh_sub_entry``, which may not import
+    this module: change both or neither (tests/unit/shim/test_differential.py).
+    """
     if not isinstance(entry, dict):
         return [], []
     observed_at = entry.get("observed_at")

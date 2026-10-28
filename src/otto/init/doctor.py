@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from ..host.element import Element
     from ..host.os_profile import ProfileContext
     from ..inventory.protocol import Inventory
+    from ..labs.json_repository import LabDocument
 
 VerdictState = Literal["ok", "failed", "absent", "blocked"]
 
@@ -297,19 +298,13 @@ def _labels(root: Path, cache: "dict[Path, Inventory | Exception | None]") -> li
     return [inventory.label, creds]
 
 
-_ParsedLab = tuple[str, dict[str, Any], list[Any], list[Any]]
-"""One parsed lab file: ``(path, labs table, elements, raw links)``."""
-
-
-def _parse_lab_documents(root: Path) -> tuple[list[str], list[_ParsedLab]]:
+def _parse_lab_documents(root: Path) -> "tuple[list[str], list[LabDocument]]":
     """Parse every lab file the settings name: ``(problems, parsed documents)``.
 
     The section shape, the ``labs`` table, the ``elements`` entries and the
     in-source duplicate rules are all applied by the SAME code the runtime
-    loader uses (:func:`otto.labs.json_repository.parse_lab_sections`,
-    :func:`~otto.labs.json_repository.parse_lab_entries`,
-    :func:`~otto.labs.json_repository.parse_elements`,
-    :func:`~otto.labs.json_repository.check_in_source_duplicates`), so the
+    loader uses (:func:`otto.labs.json_repository.parse_lab_sections` and
+    :func:`~otto.labs.json_repository.parse_lab_document`), so the
     doctor cannot drift from what otto accepts: an unknown ``routes`` section,
     a v1 top-level ``hosts`` array, a host entry carrying a hoisted key and a
     lab declared twice within one source are all rejected here exactly as they
@@ -323,16 +318,10 @@ def _parse_lab_documents(root: Path) -> tuple[list[str], list[_ParsedLab]]:
     projects otto loads happily.
     """
     from ..labs.errors import LabRepositoryError
-    from ..labs.json_repository import (
-        SeenElement,
-        check_in_source_duplicates,
-        parse_elements,
-        parse_lab_entries,
-        parse_lab_sections,
-    )
+    from ..labs.json_repository import SeenElement, parse_lab_document, parse_lab_sections
 
     problems: list[str] = []
-    documents: list[_ParsedLab] = []
+    documents: list[LabDocument] = []
     for group in lab_file_groups(root):
         # Reset per source: the duplicate rules are in-source rules.
         seen_labs: dict[str, Path] = {}
@@ -349,12 +338,8 @@ def _parse_lab_documents(root: Path) -> tuple[list[str], list[_ParsedLab]]:
                 problems.append(f"{lab_file}: {e}")
                 continue
             try:
-                sections = parse_lab_sections(data, str(lab_file))
-                entries = parse_lab_entries(sections["labs"], str(lab_file))
-                elements = parse_elements(sections["elements"], str(lab_file))
-                check_in_source_duplicates(
-                    entries,
-                    elements,
+                document = parse_lab_document(
+                    parse_lab_sections(data, str(lab_file)),
                     lab_file,
                     seen_labs=seen_labs,
                     seen_elements=seen_elements,
@@ -362,7 +347,7 @@ def _parse_lab_documents(root: Path) -> tuple[list[str], list[_ParsedLab]]:
             except LabRepositoryError as e:
                 problems.append(str(e))
                 continue
-            documents.append((str(lab_file), entries, elements, sections["links"]))
+            documents.append(document)
     return problems, documents
 
 
@@ -451,7 +436,8 @@ def _validate_lab(
             profiles=profiles,
         )
 
-    for lab_file, _, elements, links in documents:
+    for document in documents:
+        lab_file, elements, links = str(document.path), document.elements, document.links
         for element in elements:
             # Bound rather than passed alongside: _item_problem calls its
             # validator with the item and nothing else.
@@ -512,7 +498,7 @@ def _lab_warnings(
     from ..labs.doctor import lab_warnings
 
     _, documents = _parse_lab_documents(root)
-    warnings = lab_warnings([(src, entries, elements) for src, entries, elements, _ in documents])
+    warnings = lab_warnings([(str(d.path), d.entries, d.elements) for d in documents])
     try:
         inventory = _inventory_for(root, cache)
     except (InventoryError, ValueError):
@@ -520,7 +506,7 @@ def _lab_warnings(
     if inventory is not None:
         try:
             orphan = orphan_warning(
-                inventory, referenced=referenced_keys(elements for _, _, elements, _ in documents)
+                inventory, referenced=referenced_keys(d.elements for d in documents)
             )
             orphan_creds = orphan_creds_warning(inventory)
         except InventoryError as e:

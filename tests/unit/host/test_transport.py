@@ -801,7 +801,7 @@ class TestCloseRacesWithInFlightWork:
 
     @pytest.mark.asyncio
     async def test_teardown_defuses_the_asyncio_zombie_transport(self):
-        """The stated reason ``_teardown_connection`` exists, asserted.
+        """The stated reason ``teardown_ssh_connection`` exists, asserted.
 
         asyncssh's ``wait_closed()`` returns before the asyncio transport's
         ``connection_lost`` fires, leaving ``_closing=False`` on a socket that is

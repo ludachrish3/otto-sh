@@ -266,7 +266,7 @@ class SeenElement:
 
 
 @dataclass(frozen=True)
-class _Document:
+class LabDocument:
     """One parsed lab file of a source: its labs table, elements and raw links."""
 
     path: Path
@@ -604,7 +604,7 @@ class JsonFileLabRepository:
             return []
         return sorted({n for doc in docs for n in doc.entries})
 
-    def _load_documents(self, *, best_effort: bool = False) -> list[_Document]:
+    def _load_documents(self, *, best_effort: bool = False) -> list[LabDocument]:
         """Parse every lab file: its path, labs table, elements and raw links.
 
         Within ONE source a duplicate is a typo, never an override: the same
@@ -612,17 +612,13 @@ class JsonFileLabRepository:
         *best_effort* (completion paths) skips a malformed or duplicating file
         with a debug log instead of raising.
         """
-        docs: list[_Document] = []
+        docs: list[LabDocument] = []
         seen_elements: dict[str, SeenElement] = {}
         seen_labs: dict[str, Path] = {}
         for lab_file in self._find_lab_files():
             try:
-                sections = self._load_lab_file(lab_file)
-                entries = parse_lab_entries(sections["labs"], str(lab_file))
-                elements = parse_elements(sections["elements"], str(lab_file))
-                check_in_source_duplicates(
-                    entries,
-                    elements,
+                doc = parse_lab_document(
+                    self._load_lab_file(lab_file),
                     lab_file,
                     seen_labs=seen_labs,
                     seen_elements=seen_elements,
@@ -637,7 +633,7 @@ class JsonFileLabRepository:
                 )
                 record_drop(str(lab_file), str(e))
                 continue
-            docs.append(_Document(lab_file, entries, elements, sections["links"]))
+            docs.append(doc)
         return docs
 
     def _find_lab_files(self) -> list[Path]:
@@ -819,6 +815,31 @@ def _add_host(
             raise LabRepositoryError(
                 f"Lab file '{path}': element {element.name!r} hosts[{idx}]: {e}"
             ) from e
+
+
+def parse_lab_document(
+    sections: dict[str, Any],
+    lab_file: Path,
+    *,
+    seen_labs: dict[str, Path],
+    seen_elements: "dict[str, SeenElement]",
+) -> LabDocument:
+    """Parse one lab file's validated *sections* into its document.
+
+    The labs table and the elements are parsed, then the in-source duplicate
+    rules run against the source's *seen_labs* / *seen_elements* (which this
+    updates). The runtime loader and ``otto init`` doctor both read a lab file
+    through this, so what one accepts the other accepts.
+
+    Raises:
+        LabRepositoryError: a malformed entry, or a duplicate within the source.
+    """
+    entries = parse_lab_entries(sections["labs"], str(lab_file))
+    elements = parse_elements(sections["elements"], str(lab_file))
+    check_in_source_duplicates(
+        entries, elements, lab_file, seen_labs=seen_labs, seen_elements=seen_elements
+    )
+    return LabDocument(lab_file, entries, elements, sections["links"])
 
 
 def check_in_source_duplicates(

@@ -6,14 +6,13 @@ over NetBox) produces the same file. ``$schema`` and ``_``-prefixed top-level
 keys are comment space.
 """
 
-import json
 from collections.abc import Iterable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
 
-from ..models.base import compact_validation_error
+from ..models.base import JsonFileSource, compact_validation_error
 from ..models.inventory import SUPPLIES_EXEMPT_FIELDS, InventoryRecord
 from .errors import InventoryError, InventoryKeyError
 from .protocol import check_supplies
@@ -63,27 +62,18 @@ def parse_inventory_document(
     return records
 
 
-class JsonInventory:
+class JsonInventory(JsonFileSource):
     """Inventory over one stage-1 JSON file; parsed once, on first use."""
 
     def __init__(self, path: Path, *, supplies: "Iterable[str] | None" = None) -> None:
-        self.path = Path(path)
+        super().__init__(path)
         self.supplies = check_supplies(supplies)
-        self.label = f"json:{self.path}"
         self._records: dict[str, InventoryRecord] | None = None
 
     def _load(self) -> dict[str, InventoryRecord]:
         if self._records is None:
-            try:
-                data: Any = json.loads(self.path.read_text())
-            except (OSError, json.JSONDecodeError) as e:
-                # `<path>: …`, the one prefix this file's errors use: the three
-                # in `parse_inventory_document` read `<path>: key '<k>': …`,
-                # and a reader scanning a log for the file should not have to
-                # know which layer refused it.
-                raise InventoryError(f"{self.path}: {e}") from e
             self._records = parse_inventory_document(
-                data, source=str(self.path), supplies=self.supplies
+                self.read_document(InventoryError), source=str(self.path), supplies=self.supplies
             )
         return self._records
 
@@ -98,18 +88,6 @@ class JsonInventory:
     def list_keys(self) -> list[str]:
         """Every key in the file, sorted; parses the file on the first call."""
         return sorted(self._load())
-
-    def fingerprint(self) -> str | None:
-        """Return the file's mtime and size, or ``|missing`` if it does not exist."""
-        try:
-            st = self.path.stat()
-        except OSError:
-            return f"{self.path}|missing"
-        return f"{self.path}|{st.st_mtime_ns}|{st.st_size}"
-
-    def stat_paths(self) -> "list[Path] | None":
-        """Return the one file this backend's fingerprint is derived from."""
-        return [self.path]
 
 
 def _json_inventory(c: "Configured[JsonInventoryConfig, InventoryEnv]") -> JsonInventory:

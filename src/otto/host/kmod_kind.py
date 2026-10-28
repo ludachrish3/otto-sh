@@ -44,15 +44,15 @@ from .product import (
     ProductPlan,
     ShellProduct,
     cov_dir_of,
-    cov_dir_of_name,
     ensure_stage_dir,
     planned_stage_dir,
     sudo_gcda_delete,
 )
 from .shell_kind import (
-    bool_param,
+    coverage_params,
+    placeholder_values,
+    refuse_unknown_params,
     stage_dir_param,
-    str_list_param,
     str_param,
     substitute_placeholders,
 )
@@ -456,25 +456,17 @@ def _kmod_kind(entry: DeclaredEntry, host: "Host") -> KmodProduct:
             f"[[products]] {entry.name!r}: 'params' must not set cov_dir — otto passes the "
             "entry's cov_dir"
         )
-    cov_dir = str_param(entry, params, "cov_dir")
-    if cov_dir == "":
-        raise ValueError(f"[[products]] {entry.name!r}: 'cov_dir' must not be empty")
-    instrumented = bool_param(entry, params, "instrumented")
-    debug_log_globs = str_list_param(entry, params, "debug_log_globs")
-    if params:
-        raise ValueError(
-            f"[[products]] {entry.name!r}: kind 'kmod' got unknown param(s): "
-            f"{sorted(params)}; valid: {_VALID}"
-        )
-    values = {"cov_dir": cov_dir or cov_dir_of_name(entry.name), "name": entry.name}
+    cov = coverage_params(entry, params)
+    refuse_unknown_params(entry, params, "kind 'kmod'", _VALID)
+    values = placeholder_values(entry, cov.cov_dir)
     expanded = substitute_placeholders(entry, "params", insmod_params, values) or ""
     return KmodProduct(
         artifact=anchor_path(Path(artifact), entry.base_dir),
         name=entry.name,
         stage_dir=stage_dir,
-        cov_dir=cov_dir,
-        debug_log_globs=debug_log_globs,
-        instrumented_override=instrumented,
+        cov_dir=cov.cov_dir,
+        debug_log_globs=cov.debug_log_globs,
+        instrumented_override=cov.instrumented,
         module_name=module_name or "",
         params=expanded,
         coverage=coverage,

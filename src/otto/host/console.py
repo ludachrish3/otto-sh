@@ -18,7 +18,6 @@ import asyncio
 import contextlib
 import logging
 import re
-import struct
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -28,7 +27,9 @@ from .options import ConsoleOptions
 from .telnet import (
     _register_console_transport,
     _unregister_console_transport,
+    negotiate_no_echo,
     open_telnet_connection,
+    send_naws,
 )
 
 logger = logging.getLogger(__name__)
@@ -183,17 +184,7 @@ class ConsoleClient:
         framing IAC bytes; a literal 0xFF inside the size is still doubled.
         The initial size comes from ``options.cols``/``options.rows`` at open.
         """
-        if self.writer is None:
-            return
-        from telnetlib3.telopt import IAC, NAWS, SB, SE
-
-        payload = struct.pack(">HH", max(0, cols), max(0, rows))
-        payload = payload.replace(IAC, IAC + IAC)
-        frame = IAC + SB + NAWS + payload + IAC + SE
-        try:
-            self.writer.send_iac(frame)
-        except Exception as exc:  # noqa: BLE001 — best-effort NAWS write, any failure is non-fatal
-            logger.debug(f"{self._prefix()}NAWS write failed: {exc}")
+        send_naws(self.writer, cols, rows, label=self.name)
 
     async def _read_chunk(self, timeout: float) -> bytes | None:
         """One read bounded by *timeout*; ``None`` on timeout, ``b""`` on EOF.
@@ -530,8 +521,6 @@ class ConsoleClient:
         :class:`~otto.host.errors.ConsoleError` naming host, server, port and
         dial mode.
         """
-        from telnetlib3.telopt import DONT, ECHO
-
         logger.debug(
             f"ConsoleClient.open {self.host}:{self.port} user={self.user!r} "
             f"login={self.options.login} dial={self.options.dial} interactive={interactive}"
@@ -546,14 +535,7 @@ class ConsoleClient:
             raise self._fail(f"could not be dialled: {exc}") from exc
         _register_console_transport(getattr(self.writer, "transport", None))
         if not interactive:
-            self.writer.iac(DONT, ECHO)
-            try:
-                await asyncio.wait_for(
-                    self.writer.wait_for(remote={"ECHO": False}),
-                    timeout=self.options.echo_negotiation_timeout,
-                )
-            except asyncio.TimeoutError:
-                logger.debug("ECHO negotiation timed out — proceeding anyway")
+            await negotiate_no_echo(self.writer, self.options.echo_negotiation_timeout)
         await self._settle()
 
     async def connect(self, interactive: bool = False) -> None:

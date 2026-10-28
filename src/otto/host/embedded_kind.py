@@ -26,7 +26,13 @@ from ..declared import DeclaredEntry
 from ..result import Result
 from ..utils import Status, anchor_path
 from .product import ProductPlan, ShellProduct
-from .shell_kind import bool_param, reject_retired_params, str_list_param, str_param
+from .shell_kind import (
+    bool_param,
+    refuse_unknown_params,
+    reject_retired_params,
+    str_list_param,
+    str_param,
+)
 
 if TYPE_CHECKING:
     from .binary_loader import BinaryLoader
@@ -267,11 +273,7 @@ def _embedded_kind(entry: DeclaredEntry, host: "Host") -> EmbeddedProduct:
         raise ValueError(f"[[products]] {entry.name!r}: 'reset_fn' must not be empty")
     instrumented = bool_param(entry, params, "instrumented")
     debug_log_globs = str_list_param(entry, params, "debug_log_globs")
-    if params:
-        raise ValueError(
-            f"[[products]] {entry.name!r}: kind 'embedded' got unknown param(s): "
-            f"{sorted(params)}; valid: {_VALID}"
-        )
+    refuse_unknown_params(entry, params, "kind 'embedded'", _VALID)
     return EmbeddedProduct(
         # Local path: forward slashes in TOML, anchored to the declaring project's root
         # (never the CWD). There is no dest_dir — the load has no destination.

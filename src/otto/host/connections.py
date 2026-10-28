@@ -41,6 +41,7 @@ from ..registry import BackendRegistry, Ref, class_backend, registration_boundar
 from .login_proxy import LoginProxyError, default_login, resolve_chain
 from .options import ConsoleOptions, FtpOptions, SftpOptions, SshOptions, TelnetOptions
 from .telnet import TelnetClient, open_connection_default
+from .transport import teardown_ssh_connection
 
 if TYPE_CHECKING:
     import aioftp
@@ -1166,18 +1167,7 @@ class ConnectionManager:
 
         for login, conn in user_ssh.items():
             with teardown_step(self._name, f"ssh-as-{login}"):
-                # Mirror the primary ssh slot's zombie-transport mitigation
-                # below: without it a hopped per-user connection can leave an
-                # asyncio transport with ``_closing=False`` after the OS
-                # socket is gone, firing a ``ResourceWarning`` on GC that
-                # pytest escalates against a later, unrelated test.
-                asyncio_transport = getattr(conn, "_transport", None)
-                try:
-                    conn.close()
-                    await conn.wait_closed()
-                finally:
-                    if asyncio_transport is not None:
-                        asyncio_transport.close()
+                await teardown_ssh_connection(conn)
 
         if sftp:
             with teardown_step(self._name, "sftp"):
@@ -1185,26 +1175,8 @@ class ConnectionManager:
 
         if ssh:
             with teardown_step(self._name, "ssh"):
-                # asyncssh's ``wait_closed()`` returns when the SSH session
-                # finishes — but in some teardown paths (notably hopped
-                # connections where the parent tunnel survives the child) the
-                # underlying asyncio ``_SelectorSocketTransport`` is left with
-                # ``_closing=False`` even though the OS socket is gone (fd=-1).
-                # That zombie transport sits in GC until later, when its
-                # ``__del__`` fires ``ResourceWarning`` on a closed loop and
-                # pytest's ``[unraisable]`` plugin escalates it into a flake on
-                # whichever next test happens to be running. Grab the asyncio
-                # transport before close and explicitly close() it after — this
-                # sets ``_closing=True`` so ``__del__`` is a no-op. In a
-                # ``finally`` so a raising/cancelled ``wait_closed`` still gets
-                # the mitigation.
-                asyncio_transport = getattr(ssh, "_transport", None)
-                try:
-                    ssh.close()
-                    await ssh.wait_closed()
-                finally:
-                    if asyncio_transport is not None:
-                        asyncio_transport.close()
+                # The zombie-transport mitigation is the primitive's; see it.
+                await teardown_ssh_connection(ssh)
 
         if ftp:
             with teardown_step(self._name, "ftp"):

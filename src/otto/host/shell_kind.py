@@ -263,6 +263,56 @@ def _own_field_names(cls: type[DeclaredProduct]) -> list[str]:
     return [f.name for f in dataclasses.fields(cls) if f.name not in _BASE_FIELDS and f.init]
 
 
+@dataclasses.dataclass(frozen=True)
+class CoverageParams:
+    """The coverage params every product kind pops off its entry."""
+
+    cov_dir: str | None
+    """Where the product's coverage lands; ``None`` derives it from the name."""
+
+    instrumented: bool | None
+    """The entry's answer to "is this build instrumented", or ``None`` to detect."""
+
+    debug_log_globs: list[str]
+    """Logs hauled on a failure, ``[]`` when none."""
+
+
+def coverage_params(entry: DeclaredEntry, params: dict[str, Any]) -> CoverageParams:
+    """Pop the coverage params (``_COVERAGE_PARAMS``) every product kind shares.
+
+    An empty ``cov_dir`` is refused: the key is "derive it" by absence, never
+    by an empty string.
+    """
+    cov_dir = str_param(entry, params, "cov_dir")
+    if cov_dir == "":
+        raise ValueError(f"[[{entry.seam}]] {entry.name!r}: 'cov_dir' must not be empty")
+    return CoverageParams(
+        cov_dir=cov_dir,
+        instrumented=bool_param(entry, params, "instrumented"),
+        debug_log_globs=str_list_param(entry, params, "debug_log_globs"),
+    )
+
+
+def refuse_unknown_params(
+    entry: DeclaredEntry, params: dict[str, Any], who: str, valid: str
+) -> None:
+    """Refuse whatever is left in *params* after a kind popped everything it knows.
+
+    *who* is how the entry named itself (``kind 'kmod'``) and *valid* the
+    kind's own list of keys, so every kind's refusal reads the same way.
+    """
+    if params:
+        raise ValueError(
+            f"[[{entry.seam}]] {entry.name!r}: {who} got unknown param(s): "
+            f"{sorted(params)}; valid: {valid}"
+        )
+
+
+def placeholder_values(entry: DeclaredEntry, cov_dir: str | None) -> dict[str, str]:
+    """Return what a product's command placeholders (``_PLACEHOLDERS``) expand to."""
+    return {"cov_dir": cov_dir or cov_dir_of_name(entry.name), "name": entry.name}
+
+
 def build_declared(
     entry: DeclaredEntry,
     host: "Host",  # noqa: ARG001 — the KindFactory signature; this kind ignores host
@@ -288,20 +338,11 @@ def build_declared(
     install = str_param(entry, params, "install")
     uninstall = str_param(entry, params, "uninstall")
     check = str_param(entry, params, "check")
-    cov_dir = str_param(entry, params, "cov_dir")
-    if cov_dir == "":
-        raise ValueError(f"[[{entry.seam}]] {entry.name!r}: 'cov_dir' must not be empty")
-    debug_log_globs = str_list_param(entry, params, "debug_log_globs")
-    instrumented = bool_param(entry, params, "instrumented")
+    cov = coverage_params(entry, params)
     extra = _subclass_fields(entry, cls, params)
-    if params:
-        valid = ", ".join([_VALID, *_own_field_names(cls)])
-        raise ValueError(
-            f"[[{entry.seam}]] {entry.name!r}: {_who(entry)} got unknown param(s): "
-            f"{sorted(params)}; valid: {valid}"
-        )
+    refuse_unknown_params(entry, params, _who(entry), ", ".join([_VALID, *_own_field_names(cls)]))
     if entry.seam == "products":
-        values = {"cov_dir": cov_dir or cov_dir_of_name(entry.name), "name": entry.name}
+        values = placeholder_values(entry, cov.cov_dir)
         install = substitute_placeholders(entry, "install", install, values)
         uninstall = substitute_placeholders(entry, "uninstall", uninstall, values)
         check = substitute_placeholders(entry, "check", check, values)
@@ -312,12 +353,12 @@ def build_declared(
         artifact=anchor_path(Path(artifact), entry.base_dir),
         name=entry.name,
         stage_dir=stage_dir,
-        cov_dir=cov_dir,
-        debug_log_globs=debug_log_globs,
+        cov_dir=cov.cov_dir,
+        debug_log_globs=cov.debug_log_globs,
         install_cmd=install,
         uninstall_cmd=uninstall,
         check_cmd=check,
-        instrumented_override=instrumented,
+        instrumented_override=cov.instrumented,
         **extra,
     )
 
