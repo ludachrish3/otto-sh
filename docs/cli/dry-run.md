@@ -359,8 +359,8 @@ while a test marked `ensure("clean")` calls the converge directly.
 a description. Selection, env assembly and a project's compose adapter
 are all pure — they contact no device — so otto runs the whole resolution and
 declines at the first real touch, printing the resolved plan **and the exact
-`docker compose` command it would have issued on the parent**, env prefix
-included.
+`docker compose` command it would have issued on the parent**, with the env
+launcher it would run under.
 For `up` that is the exact `up` command, carrying `--force-recreate` and
 `--pull` when given; the build `--build` adds is not part of it — that is
 `compose build`'s preview. `down` declines the same way with its resolved plan. See

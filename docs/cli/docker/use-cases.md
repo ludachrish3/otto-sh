@@ -207,11 +207,42 @@ fragment sets, or pin it from the caller with `--env`, which beats every
 fragment. `otto docker use-cases` lists each fragment's env KEY names, so an
 overlap is visible before you deploy.
 
-The final mapping is fed to **both** sinks: a staged env file passed as
-`docker compose --env-file`, and the remote process environment of the compose
-invocation itself (`env K=V ... docker compose ...`), so the deployment
-behaves exactly as if you had exported the mapping and run compose by hand,
-whatever your compose version.
+The final mapping reaches compose as its **process environment**. otto stages
+an env launcher, `otto-env.sh`, beside the compose files: one line,
+`exec env 'K=V' … "$@"`, each value quoted for the shell and never evaluated.
+Every compose command that loads the deployment's files runs under it: `up`,
+a whole `down` and the rollback of a failed start, as
+`sh …/otto-env.sh docker compose …`. So those behave as if you had exported
+the mapping on the parent and run compose by hand, with nothing to set up
+there, and `up` and `down` see the same values:
+
+- a key in the mapping wins over the same variable in the parent's own
+  environment;
+- a variable the mapping does not name is the parent's, as it would be for
+  compose typed by hand;
+- `COMPOSE_*` and `DOCKER_*` settings in the mapping reach those commands the
+  way an export would.
+
+The commands that go by the project label alone do not run under the
+launcher: a `down` that names services (`stop` and `rm`), `otto docker compose
+ps` and `logs`, the label-only `down` when the staging is gone, otto's own
+`docker` probes and the `docker exec` behind each container host. A
+`DOCKER_HOST` or `DOCKER_CONTEXT` in the mapping therefore moves only the
+commands above it; everything else talks to the parent's default daemon
+([#749](https://github.com/ludachrish3/otto-sh/issues/749)).
+
+otto passes no `--env-file`, so compose falls back to its own `.env` lookup,
+below the mapping, exactly as compose typed by hand on the parent would:
+
+- it reads a `.env` in the first compose file's staged directory when one is
+  there. otto puts one there only when the first compose file declares
+  `env_file: .env`, or an adapter generates an extra file named `0/.env`; that
+  file then also feeds `${VAR}` interpolation and settings such as
+  `COMPOSE_PROFILES`;
+- some compose versions (v2.27.1, for one) also read a `.env` in the directory
+  compose runs from: the connecting account's working directory on the
+  parent, usually its home. A variable there that the mapping does not set
+  reaches compose.
 
 ## Provider competition: swapping a mock for the real thing
 
@@ -441,13 +472,10 @@ limits of that rule are compose's own:
 - a service behind a compose `profiles:` entry that a narrowed `up` started by
   name survives a whole-deployment `down`, as it does a plain `docker compose
   down`; name it (`down <usecase> <service>`) to remove it;
-- with `COMPOSE_PROJECT_NAME` exported in the parent's environment, a staged
-  file that compose can no longer load makes compose fall back to that name and
-  tear down everything under it, as the same command typed on the parent would;
-- a variable exported in the parent's environment wins over the staged
-  `otto.env` when `down` loads the files (compose's own precedence), while `up`
-  sets otto's values on its command line; a file that needs such a variable
-  can fail to load on `down` after `up` succeeded.
+- with `COMPOSE_PROJECT_NAME` exported in the parent's environment or set in
+  the mapping, a staged file that compose can no longer load makes compose
+  fall back to that name and tear down everything under it, as the same
+  command typed on the parent would.
 
 A compose handle is one path segment: a `name` containing `/` or `\`, or one
 that is `.` or `..`, is refused when the lab configuration loads, since each
@@ -475,14 +503,16 @@ guess. The container hosts stay registered, since their containers are still
 up. Removing that directory on the parent makes the next `down` go by the
 project label instead, which removes every container under it. An `up` that
 failed while copying its files leaves such a directory: its compose files
-without the `otto.env` beside them.
+without the `otto-env.sh` beside them. So does a staging left by an otto
+older than the env launcher.
 
 ### Dry run
 
 `otto --dry-run docker compose up <usecase>` prints the resolved plan and declines at
 the first device touch — see {doc}`../dry-run` for the contract. Because
 selection, env assembly and the adapters are all pure, the preview
-includes the **exact** compose command on the parent, not a description of one:
+includes the **exact** compose command on the parent and the env launcher it
+would run under, not a description of them:
 
 ```console
 $ otto --lab unix --dry-run docker compose up integration
@@ -492,9 +522,10 @@ Displaced: edge goes to project1 (priority 10); project2 (priority 0) stands dow
 Fragment env keys: ['EDGE_ADDR']. No image was built, no file was staged and
 no container was started. The adapters ran (plain data; the only thing one may
 write is its own scratch dir), so this is the command itself, not a
-description of it. On test3, would run: env EDGE_ADDR=10.10.200.13 docker
-compose -p unix-integration-vagrant -f …/core.yml -f …/edge.yml -f …/core.yml
---env-file …/otto.env up -d --remove-orphans
+description of it. On test3, with the env launcher `exec env
+EDGE_ADDR=10.10.200.13 "$@"`, would run: sh …/otto-env.sh docker compose -p
+unix-integration-vagrant -f …/core.yml -f …/edge.yml -f …/core.yml up -d
+--remove-orphans
 ```
 
 `otto docker use-cases` answers a different question — what is *declared* —

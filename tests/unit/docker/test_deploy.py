@@ -23,7 +23,7 @@ from otto.docker.deployment import UseCaseStack, deploy, deployed, teardown
 from otto.docker.observe import DockerVerbError
 from otto.docker.reports import ImageBuild, TeardownReport
 from otto.docker.resolve import UseCaseResolutionError
-from otto.docker.staging import compose_dir, use_case_env_file
+from otto.docker.staging import compose_dir, use_case_launcher
 from otto.host.element import Element
 from otto.host.errors import HostCommandError
 from otto.host.login_proxy import Cred
@@ -135,7 +135,7 @@ def _wire(host: UnixHost, *, already_up: bool = False, cid: str = "cid1") -> Uni
             return _staged_walk(cmd, staged)
         return _ok(command=cmd)
 
-    async def _put(paths, dest):
+    async def _put(paths, dest, mode=None):
         staged.extend((Path(p).name, str(dest), Path(p).read_text()) for p in paths)
         return Result(Status.Success, value={})
 
@@ -183,8 +183,8 @@ def _up_command(host: UnixHost) -> str:
     return ups[0]
 
 
-def _staged_env_text(host: UnixHost) -> str:
-    (text,) = [c for name, _dir, c in host.staged if name == "otto.env"]  # type: ignore[attr-defined]
+def _staged_launcher_text(host: UnixHost) -> str:
+    (text,) = [c for name, _dir, c in host.staged if name == "otto-env.sh"]  # type: ignore[attr-defined]
     return text
 
 
@@ -260,10 +260,11 @@ async def test_deploy_single_project_merged_command(single, monkeypatch):
     cmd = _up_command(single.host)
     assert "docker compose -p unix-integration-u " in cmd
     assert not cmd.split("docker compose -p ")[1].startswith("otto-")
-    assert "--env-file " in cmd
+    assert cmd.startswith(
+        "sh /tmp/otto-docker/unix-integration-u/compose/otto-env.sh docker compose "
+    )
     assert cmd.endswith("up -d --remove-orphans")
-    assert "EDGE_ADDR=10.10.200.13" in cmd
-    assert cmd.index("EDGE_ADDR=") < cmd.index("docker compose")
+    assert "EDGE_ADDR=10.10.200.13" in _staged_launcher_text(single.host)
     assert list(stack.hosts) == ["api"]
     assert stack.projects == {"test3": "unix-integration-u"}
     assert list(stack.by_host) == ["test3"]
@@ -376,7 +377,7 @@ async def test_every_staged_compose_file_gets_its_own_f_flag(tmp_path):
     assert cmd.count(" -f ") == 2
     for name in ("acore.yml", "bcore.yml"):
         assert f"-f {staged[name]}/{name} " in cmd
-    assert f"--env-file {staged['otto.env']}/otto.env " in cmd
+    assert cmd.startswith(f"sh {staged['otto-env.sh']}/otto-env.sh docker compose ")
 
 
 # ---------------------------------------------------------------------------
@@ -483,7 +484,7 @@ async def test_adapter_env_beats_static_and_caller_beats_adapter(tmp_path):
     with _install(lab, [project]), patch.object(deploy_mod, "adapter_for", return_value=_adapter):
         stack = await deploy("integration", parent="test3", env={"K": "caller"})
 
-    text = _staged_env_text(host)
+    text = _staged_launcher_text(host)
     assert "K=caller" in text
     assert "A=adapter" in text
     assert "S=static" in text
@@ -526,16 +527,17 @@ async def test_pass_env_miss_is_warned_not_fatal(tmp_path, caplog, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_newline_in_an_env_value_is_refused(tmp_path):
+async def test_a_nul_in_an_env_value_is_refused_before_anything_is_staged(tmp_path):
     compose = _compose_file(tmp_path, "core")
     project = _project("a", _frag(), composes=[compose])
     host = _wire(_host("test3", "10.10.200.13"))
     lab = _lab(host)
     with (
         _install(lab, [project]),
-        pytest.raises(UseCaseResolutionError, match="cannot be written to an env file"),
+        pytest.raises(UseCaseResolutionError, match="cannot be passed to compose"),
     ):
-        await deploy("integration", parent="test3", env={"K": "line1\nline2"})
+        await deploy("integration", parent="test3", env={"K": "a\0b"})
+    assert host.staged == []  # type: ignore[attr-defined]
 
 
 # ---------------------------------------------------------------------------
@@ -694,7 +696,7 @@ async def test_rollback_on_registration_failure(single):
     downs = [c for c in single.host.commands if " down " in c]  # type: ignore[attr-defined]
     assert len(downs) == 1
     # Through the stack's own files, never by the label with orphan removal.
-    assert downs[0].startswith("docker compose -p ")
+    assert downs[0].startswith("sh /tmp/otto-docker/")
     assert " -f " in downs[0]
     assert "--remove-orphans" not in downs[0]
 
@@ -758,15 +760,12 @@ async def test_failed_up_command_raises_and_rolls_back(single):
     assert len([c for c in single.host.commands if " up -d" in c]) == 1, (
         "a real failure is not retried"
     )
-    # The one rollback compose_up shares: the stack's own files and env file,
+    # The one rollback compose_up shares: the stack's own launcher and files,
     # never a label-wide down.
     (up,) = [c for c in single.host.commands if " up -d" in c]
     (down,) = [c for c in single.host.commands if " down " in c]
-    assert down.startswith("docker compose -p ")
     assert down.endswith(" down --timeout 1")
-    assert re.findall(r" (?:-f|--env-file) (\S+)", down) == re.findall(
-        r" (?:-f|--env-file) (\S+)", up
-    )
+    assert down.split(" down ")[0] == up.split(" up ")[0]
 
 
 @pytest.mark.asyncio
@@ -919,27 +918,24 @@ def test_up_command_renders_force_recreate_and_pull_after_remove_orphans():
     cmd = deploy_mod._up_command(
         "proj",
         [Path("/s/a.yml")],
-        Path("/s/otto.env"),
-        {},
+        Path("/s/otto-env.sh"),
         ["api"],
         force_recreate=True,
         pull="always",
     )
     assert cmd == (
-        "docker compose -p proj -f /s/a.yml --env-file /s/otto.env up -d --remove-orphans "
+        "sh /s/otto-env.sh docker compose -p proj -f /s/a.yml up -d --remove-orphans "
         "--force-recreate --pull always api"
     )
 
 
 def test_up_command_without_the_flags_is_unchanged():
-    cmd = deploy_mod._up_command("proj", [Path("/s/a.yml")], Path("/s/otto.env"), {}, [])
-    assert cmd == "docker compose -p proj -f /s/a.yml --env-file /s/otto.env up -d --remove-orphans"
+    cmd = deploy_mod._up_command("proj", [Path("/s/a.yml")], Path("/s/otto-env.sh"), [])
+    assert cmd == "sh /s/otto-env.sh docker compose -p proj -f /s/a.yml up -d --remove-orphans"
 
 
 def test_up_command_quotes_a_pull_policy_it_does_not_validate():
-    cmd = deploy_mod._up_command(
-        "proj", [Path("/s/a.yml")], Path("/s/otto.env"), {}, [], pull="a b"
-    )
+    cmd = deploy_mod._up_command("proj", [Path("/s/a.yml")], Path("/s/otto-env.sh"), [], pull="a b")
     assert cmd.endswith("--pull 'a b'")
 
 
@@ -1076,11 +1072,23 @@ async def test_full_teardown_downs_through_the_staged_files_and_unregisters(sing
     (down,) = [c for c in single.host.commands if " down " in c]
     proj = "unix-integration-u"
     assert down == (
-        f"docker compose -p {proj} "
-        f"-f {compose_dir(proj) / '0' / 'core.yml'} --env-file {use_case_env_file(proj)} "
-        f"down --timeout 1"
+        f"sh {use_case_launcher(proj)} docker compose -p {proj} "
+        f"-f {compose_dir(proj) / '0' / 'core.yml'} down --timeout 1"
     )
     assert "test3.integration.api" not in single.lab.hosts
+
+
+@pytest.mark.asyncio
+async def test_teardown_runs_compose_exactly_as_the_up_did_up_to_the_verb(single):
+    """`up` and the teardown reach compose the same way: same launcher, project and files."""
+    with _install(single.lab, [single.project]):
+        await deploy("integration", parent="test3", env={"K": "a # b"})
+        up = _up_command(single.host)
+        single.host.commands.clear()
+        await teardown("integration", parent="test3")
+
+    (down,) = [c for c in single.host.commands if " down " in c]
+    assert down.split(" down ")[0] == up.split(" up ")[0]
 
 
 @pytest.mark.asyncio
@@ -1319,8 +1327,8 @@ async def test_full_teardown_never_reads_a_compose_file(tmp_path, monkeypatch):
     # Through the files the deploy staged on the parent, never re-staged:
     # only what they declare goes.
     (down,) = [c for c in host.commands if " down " in c]
-    assert down.startswith("docker compose -p ")
-    assert " --env-file " in down
+    assert down.startswith("sh /tmp/otto-docker/")
+    assert "/compose/otto-env.sh docker compose -p " in down
     assert "--remove-orphans" not in down
     assert len(host.staged) == staged_before, "the teardown re-staged"  # type: ignore[attr-defined]
     assert "test3.integration.api" not in lab.hosts
@@ -1594,10 +1602,10 @@ async def test_a_collision_warns_once_whether_or_not_services_is_passed(tmp_path
 
 @pytest.mark.asyncio
 async def test_an_env_key_with_a_leading_dash_is_refused(single):
-    """M10: the same mapping is spliced into `env K=V ...`, where `-i` wipes it."""
+    """The launcher hands the mapping to `env`, which reads `-i` as an option that wipes it."""
     with (
         _install(single.lab, [single.project]),
-        pytest.raises(UseCaseResolutionError, match="WIPES the environment"),
+        pytest.raises(UseCaseResolutionError, match="which `env` reads as an option"),
     ):
         await deploy("integration", parent="test3", env={"-i": "x"})
 
@@ -1651,6 +1659,19 @@ async def test_dry_run_plan_shows_displacements_as_they_are(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_dry_run_shows_the_env_launcher_exactly_as_it_would_be_staged(single):
+    with (
+        _install(single.lab, [single.project]),
+        patch.object(deploy_mod, "is_dry_run", return_value=True),
+        pytest.raises(CommandNotRunError) as excinfo,
+    ):
+        await deploy("integration", parent="test3", env={"K": "b c"})
+
+    launcher = deploy_mod._launcher_text({"EDGE_ADDR": "10.10.200.13", "K": "b c"}).strip()
+    assert f"with the env launcher `{launcher}`, would run: sh " in str(excinfo.value)
+
+
+@pytest.mark.asyncio
 async def test_dry_run_plan_shows_the_exact_compose_command(single, monkeypatch):
     """§12 promises "the exact compose command" — so print it, gap clause deleted.
 
@@ -1672,9 +1693,12 @@ async def test_dry_run_plan_shows_the_exact_compose_command(single, monkeypatch)
     assert "the exact compose command cannot be shown" not in message, (
         "the §12 gap clause survived the move: " + message
     )
-    assert "EDGE_ADDR=10.10.200.13 docker compose -p unix-integration-u " in message
-    assert "-f /tmp/otto-docker/unix-integration-u/compose/0/core.yml" in message
-    assert "--env-file /tmp/otto-docker/unix-integration-u/compose/otto.env" in message
+    assert "EDGE_ADDR=10.10.200.13" in message
+    assert (
+        "would run: sh /tmp/otto-docker/unix-integration-u/compose/otto-env.sh "
+        "docker compose -p unix-integration-u "
+        "-f /tmp/otto-docker/unix-integration-u/compose/0/core.yml up"
+    ) in message
     assert message.rstrip().endswith("up -d --remove-orphans")
     assert "test3" in message
 

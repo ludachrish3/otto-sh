@@ -13,7 +13,7 @@ Layout::
         build/<image>.<archive>            # an archive context, uploaded unopened
         compose/<n>/<basename>.yml         # one numbered dir per compose file
         compose/<n>/<sidecar relative path> # env_file: sidecars, same numbering
-        compose/otto.env                   # generated env file for the use case
+        compose/otto-env.sh                # the use case's env launcher
 
 Cleanup is the caller's responsibility (and is best-effort: a previous
 crash is recovered from on the next stage). The directory layout is
@@ -293,7 +293,7 @@ class StagedUseCase:
     """Where staging put things on the parent."""
 
     compose_paths: list[Path]
-    env_file: Path
+    launcher: Path
 
 
 _COMPOSE_SUFFIX = ".yml"
@@ -314,12 +314,13 @@ def use_case_compose_paths(compose_project: str, files: "list[ComposeFileToStage
     return [base / str(idx) / f"{f.handle}{_COMPOSE_SUFFIX}" for idx, f in enumerate(files)]
 
 
-def use_case_env_file(compose_project: str) -> Path:
-    """Where :func:`stage_use_case` will put the generated ``otto.env``. PURE.
+def use_case_launcher(compose_project: str) -> Path:
+    """Where :func:`stage_use_case` will put the use case's env launcher. PURE.
 
-    Same reasoning as :func:`use_case_compose_paths`.
+    Every compose call of the deployment runs under it (``sh <launcher>
+    docker compose …``). Same reasoning as :func:`use_case_compose_paths`.
     """
-    return compose_dir(compose_project) / "otto.env"
+    return compose_dir(compose_project) / "otto-env.sh"
 
 
 def _resolution_error(message: str) -> Exception:
@@ -527,7 +528,7 @@ def _read_back(listing: "RemoteListing", base: Path, compose_project: str) -> St
 
     Pure. Exactly one compose file (``<handle>`` plus the layout's suffix)
     directly in every numbered directory, the numbers contiguous from 0, and
-    the env file at the top. Everything else is ignored: a sidecar of another
+    the env launcher at the top. Everything else is ignored: a sidecar of another
     suffix, anything nested deeper, an unreferenced extra at the top.
 
     Raises:
@@ -535,19 +536,19 @@ def _read_back(listing: "RemoteListing", base: Path, compose_project: str) -> St
     """
     if listing.kind != "d":
         raise ValueError("it is not a directory")
-    env_file = use_case_env_file(compose_project)
+    launcher = use_case_launcher(compose_project)
     by_index: "dict[int, list[str]]" = {}
-    env_found = False
+    launcher_found = False
     for path in listing.files:
         match path.relative_to(base).parts:
-            case (name,) if name == env_file.name:
-                env_found = True
+            case (name,) if name == launcher.name:
+                launcher_found = True
             case (index, name) if index.isdigit() and name.endswith(_COMPOSE_SUFFIX):
                 by_index.setdefault(int(index), []).append(name)
             case _:
                 pass
-    if not env_found:
-        raise ValueError(f"no {env_file.name}")
+    if not launcher_found:
+        raise ValueError(f"no {launcher.name}")
     if not by_index:
         raise ValueError("no compose file")
     index_dirs = {
@@ -565,7 +566,7 @@ def _read_back(listing: "RemoteListing", base: Path, compose_project: str) -> St
         raise ValueError(f"more than one compose file in an index directory: {crowded}")
     return StagedUseCase(
         compose_paths=[base / str(i) / by_index[i][0] for i in sorted(by_index)],
-        env_file=env_file,
+        launcher=launcher,
     )
 
 
@@ -574,7 +575,7 @@ async def staged_use_case(parent: "UnixHost", compose_project: str) -> "StagedUs
 
     :func:`stage_use_case` wipes :func:`compose_dir` on every deploy, so what
     is there is exactly the last deploy's ``-f`` set: one compose file per
-    numbered directory, in the deploy's order, plus its env file. A teardown
+    numbered directory, in the deploy's order, plus its env launcher. A teardown
     that goes through those files removes only what they declare, without
     re-running an adapter or re-staging a file. The listing is the host's own
     tree walk, the one every recursive transfer uses.
@@ -603,22 +604,32 @@ async def staged_use_case(parent: "UnixHost", compose_project: str) -> "StagedUs
     if listing.kind == "-":
         return None
     try:
-        return _read_back(listing, base, compose_project)
+        staged = _read_back(listing, base, compose_project)
     except ValueError as e:
-        raise HostCommandError(
-            f"{where} are not what a deploy leaves there ({e}); "
-            f"remove {base} to tear the stack down by its project label instead"
-        ) from e
+        raise _not_a_staging(where, base, str(e)) from e
+    # A transfer that dropped before its first write leaves the launcher empty,
+    # and `sh <empty file> docker compose down` exits 0 having run nothing.
+    held = await parent.exec(f"test -s {shlex.quote(str(staged.launcher))}")
+    if not held.status.is_ok:
+        raise _not_a_staging(where, base, f"{staged.launcher.name} is empty")
+    return staged
+
+
+def _not_a_staging(where: str, base: Path, why: str) -> HostCommandError:
+    return HostCommandError(
+        f"{where} are not what a deploy leaves there ({why}); "
+        f"remove {base} to tear the stack down by its project label instead"
+    )
 
 
 async def stage_use_case(
     parent: Host,
     compose_project: str,
     files: list[ComposeFileToStage],
-    env_text: str,
+    launcher_text: str,
     extra_files: dict[str, str] | None = None,
 ) -> StagedUseCase:
-    """Stage a use-case's compose files, sidecars, and otto.env (spec §8).
+    """Stage a use-case's compose files, sidecars, and env launcher.
 
     *extra_files* is the vehicle for ADAPTER-GENERATED ``env_file:``
     sidecars (spec §7's ``AdapterResult.extra_files``: "relative name -> text
@@ -646,7 +657,7 @@ async def stage_use_case(
         raise CommandNotRunError(
             f"stage_use_case({compose_project})",
             getattr(parent, "id", ""),
-            "No compose file, sidecar or env file was copied to the parent.",
+            "No compose file, sidecar or env launcher was copied to the parent.",
         )
 
     extra_files_map = dict(extra_files or {})
@@ -692,8 +703,14 @@ async def stage_use_case(
     unreferenced_extras = [
         (name, text) for name, text in extra_files_map.items() if name not in claimed_extra_keys
     ]
+    launcher_remote = use_case_launcher(compose_project)
     for name, _text in unreferenced_extras:
         _refuse_if_path_escapes("extra_files key", name)
+        if os.path.normpath(name) == launcher_remote.name:
+            raise _resolution_error(
+                f"extra_files key {name!r} is the name otto stages the use case's env "
+                f"launcher under; rename the extra file"
+            )
 
     base = compose_dir(compose_project)
     prepared = await parent.exec(
@@ -728,13 +745,15 @@ async def stage_use_case(
                 await _mkdir_and_put(parent, _dest_for_relative_name(sub, rel), [materialized])
 
         # The NAME comes from the same helper that names the returned path and
-        # the dry-run preview -- not a second literal. A helper that renamed the
-        # file while this line kept writing `otto.env` would produce a live
-        # `docker compose --env-file <path>` pointing at a file nothing staged.
-        env_remote = use_case_env_file(compose_project)
-        env_local = tmpdir / env_remote.name
-        env_local.write_text(env_text)
-        await _mkdir_and_put(parent, env_remote.parent, [env_local])
+        # the dry-run preview -- not a second literal, so every compose call's
+        # `sh <launcher>` names the file this line stages.
+        launcher_local = tmpdir / launcher_remote.name
+        launcher_local.write_text(launcher_text)
+        # The mapping can carry secrets, so the launcher is left readable by the
+        # connecting account only. `put` applies the mode once the bytes land,
+        # which narrows the launcher's exposure; the staging directories and the
+        # compose files' sidecars keep the parent's default permissions.
+        await _mkdir_and_put(parent, launcher_remote.parent, [launcher_local], mode=0o600)
 
         for name, text in unreferenced_extras:
             materialized = tmpdir / "extra" / name
@@ -742,14 +761,16 @@ async def stage_use_case(
             materialized.write_text(text)
             await _mkdir_and_put(parent, _dest_for_relative_name(base, name), [materialized])
 
-    return StagedUseCase(compose_paths=compose_paths, env_file=env_remote)
+    return StagedUseCase(compose_paths=compose_paths, launcher=launcher_remote)
 
 
-async def _mkdir_and_put(parent: Host, dest: Path, paths: list[Path]) -> None:
+async def _mkdir_and_put(
+    parent: Host, dest: Path, paths: list[Path], *, mode: "int | None" = None
+) -> None:
     made = await parent.exec(f"mkdir -p {shlex.quote(str(dest))}")
     if not made.status.is_ok:
         raise _staging_failure(made, f"failed to create {dest} on the parent: {made.value}")
-    put_result = await parent.put(paths, dest)
+    put_result = await parent.put(paths, dest, mode=mode)
     if not put_result.is_ok:
         raise HostCommandError(
             f"failed to stage {[p.name for p in paths]} to {dest}: {put_result.msg}"

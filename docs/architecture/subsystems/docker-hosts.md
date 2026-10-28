@@ -90,12 +90,21 @@ the same stack. If a change to otto ever broke that, otto would be the thing
 that is wrong. Keeping fact references on otto's side is what keeps the
 product deployable with no otto installed at all.
 
-The resolved mapping is fed to **both** sinks — a staged `--env-file` and the
-remote process environment of the compose invocation — because compose
-consumes env at three different moments (parse-time `${VAR}` interpolation,
-`environment:` pass-through, and its own `COMPOSE_*`/`DOCKER_*` knobs) and the
-rules differ across compose versions. Feeding both makes the version
-differences moot, which is the decoupling test again.
+The resolved mapping reaches compose as its process environment, through a
+staged env launcher every compose command that loads the deployment's files
+runs under (`sh <staging>/otto-env.sh docker compose …`): `up`, the whole
+`down` and the rollback. The commands that go by the project label alone,
+otto's own `docker` probes and container-host `docker exec` do not;
+{doc}`../../cli/docker/use-cases` lists them. Compose consumes env at three
+moments: parse-time `${VAR}` interpolation, `environment:` pass-through, and
+its own `COMPOSE_*`/`DOCKER_*` settings. Some versions read some of those
+settings only from the process. The process environment serves all three
+alike, which is the decoupling test again: it is what exporting the values
+and running compose by hand gives. The docker parent is almost always a
+remote host reached over a non-interactive session, so asking the user to
+export anything there has no reliable home. The launcher carries the values
+with the deployment instead, and `up`, `down` and the rollback run under the
+same one.
 
 ## Naming scheme
 
@@ -189,8 +198,8 @@ Every `docker compose` command otto runs comes from one builder,
 {func}`~otto.docker.compose.compose_command`. That covers the use-case `up` and
 teardown, the per-project `compose_up`/`compose_down`, `compose ps` and
 `compose logs`, the use-case deploy's dry-run preview and the commands quoted
-in error text. Quoting, the `-f`/`--env-file` order and the `env K=V` prefix
-live there once, so a preview and the live run cannot spell the command
+in error text. Quoting, the `-f` order and the `sh <launcher>` in front live
+there once, so a preview and the live run cannot spell the command
 differently. The ast-grep rule
 `compose-command-through-builder` flags a command spelled by hand anywhere else.
 

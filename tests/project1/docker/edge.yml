@@ -14,6 +14,6 @@ services:
       - EDGE_ADDR
       # Native interpolation with a native default: compose resolves this at
       # PARSE time. It reads `unset` unless otto's env mapping actually
-      # reached the compose invocation, so the pair proves both consumption
-      # points spec §6's two sinks exist to cover.
+      # reached the compose invocation, so the pair proves the mapping reaches
+      # both consumption points.
       - EDGE_ORIGIN=${EDGE_ADDR:-unset}

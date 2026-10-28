@@ -703,7 +703,8 @@ def test_e2e_dry_run_prints_the_plan_and_starts_nothing(docker_host, tmp_path):
 
     The decline carries the resolved plan AND the exact per-host compose
     command, which is what makes it a preview rather than a shrug — and the
-    caller's `--env-file` is visible in that command, proving the merge ran.
+    caller's `--env-file` is visible in its previewed env launcher, proving the
+    merge ran.
     A `docker ps` afterwards proves no container was started.
 
     No `teardown_after`: this test brings nothing up. If it ever did, the
@@ -739,7 +740,7 @@ def test_e2e_dry_run_prints_the_plan_and_starts_nothing(docker_host, tmp_path):
     assert f"docker compose -p unix-{_MERGED_USE_CASE}-{suffix}" in out, out
     assert "up -d --remove-orphans" in out, out
     assert "CALLER_KEY=caller-value" in out, (
-        f"the caller's --env-file must have merged into the previewed command:\n{out}"
+        f"the caller's --env-file must have merged into the previewed launcher:\n{out}"
     )
 
     ps = _run_otto("docker", "ps", "--parent", docker_host, xdir=tmp_path, compose_suffix=suffix)

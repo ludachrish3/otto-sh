@@ -1,7 +1,7 @@
 id: compose-command-through-builder
 language: python
 severity: error
-message: this spells a `docker compose -p` command by hand. Build it with otto.docker.compose.compose_command, where quoting, the -f/--env-file order and the env prefix live once.
+message: this spells a `docker compose -p` command by hand. Build it with otto.docker.compose.compose_command, where quoting, the -f order and the `sh <launcher>` in front live once.
 note: >
   The use-case deploy once rebuilt `up` beside compose_up's and lost
   compose_up's libnetwork-race retry, and six sites spelled

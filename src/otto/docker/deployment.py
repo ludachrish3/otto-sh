@@ -16,6 +16,7 @@ up, unless ``own=True``).
 
 import logging
 import os
+import shlex
 import tempfile
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -56,7 +57,7 @@ from .staging import (
     stage_use_case,
     staged_use_case,
     use_case_compose_paths,
-    use_case_env_file,
+    use_case_launcher,
 )
 
 if TYPE_CHECKING:
@@ -278,7 +279,7 @@ def _env_file_pairs(path: Path) -> "dict[str, str]":
 
     Verbatim is the conservative choice here because these values do not stay
     in a file otto merely read — they are merged into the mapping otto then
-    WRITES as ``otto.env`` and splices into an ``env K=V`` shell prefix. A
+    hands, value for value, to compose through the staged env launcher. A
     parser that quietly unquoted ``K="a b"`` to ``a b`` would change what the
     product's container receives, in a direction the caller never asked for
     and cannot see. If you want a quoted value, quote it where the shell can
@@ -306,12 +307,23 @@ def _env_file_pairs(path: Path) -> "dict[str, str]":
 
 
 @dataclass
+class _Preview:
+    """What a dry run shows for one host: the ``up`` it would run and its env launcher."""
+
+    host_id: str
+    command: str
+    launcher_text: str
+
+
+@dataclass
 class _HostPlan:
     """Everything one host needs, settled before the first device touch."""
 
     env: "dict[str, str]"
     files: "list[ComposeFileToStage]"
     extra_files: "dict[str, str]"
+    launcher_text: str
+    """The env launcher rendered from *env*, so a mapping it cannot carry is refused here."""
 
 
 def _plan_host(
@@ -404,38 +416,45 @@ def _plan_host(
             rendered.append(
                 ComposeFileToStage(handle=handle, text=text, source_dir=entry.path.parent)
             )
-    return _HostPlan(env=env, files=rendered, extra_files=extra)
+    return _HostPlan(env=env, files=rendered, extra_files=extra, launcher_text=_launcher_text(env))
 
 
-def _env_text(env: "Mapping[str, str]") -> str:
-    """Render the mapping as an ``--env-file`` body: one ``K=V`` line per key.
+def _launcher_text(env: "Mapping[str, str]") -> str:
+    """Render the mapping as the staged env launcher: ``exec env 'K=V' … "$@"``.
 
-    Sorted, so a redeploy that changed nothing stages a byte-identical file.
-    A newline anywhere is refused rather than escaped: compose's env-file
-    parser is line-based, so a value carrying one would silently become a
-    second assignment (or corrupt the next).
+    Every compose call of a deployment runs as ``sh <launcher> docker compose
+    …``, so the mapping reaches compose's process environment the same way on
+    ``up``, ``down`` and the rollback, over whatever the parent's own
+    environment holds, with nothing set up on the parent. Each ``K=V`` is one
+    shell-quoted operand of ``env``, so no value is ever evaluated, and a key
+    need not be a shell identifier. ``"$@"`` is the command the builder
+    appends. Sorted, so a redeploy that changed nothing stages a
+    byte-identical file.
+
+    Raises:
+        UseCaseResolutionError: a key ``env`` would read as something other
+            than an assignment (empty, containing ``=``, or leading ``-``,
+            which ``env`` takes for an option such as ``-i``, wiping the
+            environment), or a NUL in a key or value, which no argument can
+            carry.
     """
-    lines: "list[str]" = []
+    operands: "list[str]" = []
     for key in sorted(env):
         value = env[key]
-        if "\n" in key or "\n" in value or "=" in key or key.startswith("-"):
+        if not key or "=" in key or key.startswith("-") or "\0" in key or "\0" in value:
             raise UseCaseResolutionError(
-                f"env entry {key!r} cannot be written to an env file: a key with "
-                f"'=', a leading '-', or a newline in either half would be read "
-                f"back as something other than the assignment you set. A leading "
-                f"'-' is the sharp one — the same mapping is spliced into an "
-                f"`env K=V ...` prefix, where `env -i` WIPES the environment "
-                f"instead of adding to it."
+                f"env entry {key!r} cannot be passed to compose: a key must be "
+                f"non-empty, without '=' and not start with '-' (which `env` reads "
+                f"as an option), and neither half may contain a NUL"
             )
-        lines.append(f"{key}={value}")
-    return "".join(f"{line}\n" for line in lines)
+        operands.append(shlex.quote(f"{key}={value}"))
+    return " ".join(["exec", "env", *operands, '"$@"']) + "\n"
 
 
 def _up_command(
     compose_project: str,
     compose_paths: "Sequence[Path]",
-    env_file: Path,
-    env: "Mapping[str, str]",
+    launcher: Path,
     services: "Sequence[str]",
     *,
     force_recreate: bool = False,
@@ -443,10 +462,9 @@ def _up_command(
 ) -> str:
     """Build the one merged ``up`` command, naming *services* (none names all).
 
-    The mapping feeds BOTH sinks: ``--env-file`` (what compose interpolates
-    the YAML with) and an ``env K=V`` prefix (what the compose PROCESS sees,
-    which is what a ``${VAR}`` in a shell-ish field resolves against). One
-    mapping, two sinks — never two mappings that could disagree.
+    Compose runs under the staged env launcher (:func:`_launcher_text`), the
+    same one the teardown and the rollback run under, so every verb sees the
+    deployment's mapping as its process environment.
 
     *force_recreate* and *pull* are docker's own flags, rendered verbatim: a
     ``--pull`` policy is docker's to judge, so it is quoted for the shell and
@@ -458,7 +476,7 @@ def _up_command(
     if pull is not None:
         args += ["--pull", pull]
     args += services
-    return compose_command(compose_project, *args, files=compose_paths, env_file=env_file, env=env)
+    return compose_command(compose_project, *args, files=compose_paths, launcher=launcher)
 
 
 def _unit_services(unit: _ProjectUnit) -> "set[str]":
@@ -679,7 +697,7 @@ async def deploy(
         _log_displacements(use_case, resolution.selection)
     stack = UseCaseStack(use_case=use_case, selection=resolution.selection)
     brought_up: "list[StartedStack]" = []
-    previews: "list[tuple[str, str]]" = []  # (host id, the command it would run)
+    previews: "list[_Preview]" = []
     acting_list = acting_hosts(
         resolution.placed, resolution.order, services_filter, use_case=use_case, report=True
     )
@@ -720,17 +738,17 @@ async def deploy(
                 # functions, so the previewed `-f` set is the one staging
                 # would produce, not a second guess at it.
                 previews.append(
-                    (
+                    _Preview(
                         parent_host.id,
                         _up_command(
                             proj,
                             use_case_compose_paths(proj, plan.files),
-                            use_case_env_file(proj),
-                            plan.env,
+                            use_case_launcher(proj),
                             named,
                             force_recreate=force_recreate,
                             pull=pull,
                         ),
+                        plan.launcher_text,
                     )
                 )
                 continue
@@ -744,7 +762,11 @@ async def deploy(
                 # running, so nothing of theirs needs an image.
                 await _build_for([u for u in units if _unit_services(u) & set(wanted)], parent_host)
             staged = await stage_use_case(
-                parent_host, proj, plan.files, _env_text(plan.env), extra_files=plan.extra_files
+                parent_host,
+                proj,
+                plan.files,
+                plan.launcher_text,
+                extra_files=plan.extra_files,
             )
             # `is True`, so an UNKNOWN probe answer counts as "we brought it
             # up" and the rollback below will clean up after us. The opposite
@@ -756,7 +778,7 @@ async def deploy(
                         parent_host,
                         proj,
                         [str(p) for p in staged.compose_paths],
-                        env_file=str(staged.env_file),
+                        launcher=str(staged.launcher),
                         services=named,
                     )
                 )
@@ -766,8 +788,7 @@ async def deploy(
                 _up_command(
                     proj,
                     staged.compose_paths,
-                    staged.env_file,
-                    plan.env,
+                    staged.launcher,
                     named,
                     force_recreate=force_recreate,
                     pull=pull,
@@ -801,7 +822,7 @@ async def deploy(
     return stack
 
 
-def _command_preview(previews: "list[tuple[str, str]]") -> str:
+def _command_preview(previews: "list[_Preview]") -> str:
     """Render spec §12's exact per-host compose command(s) for a dry run.
 
     The adapters DID run to produce these (they are plain data, spec §7), and
@@ -811,7 +832,10 @@ def _command_preview(previews: "list[tuple[str, str]]") -> str:
     """
     if not previews:
         return "No host was left with a service to start, so there is no compose command to show."
-    commands = " ".join(f"On {host_id}, would run: {cmd}" for host_id, cmd in previews)
+    commands = " ".join(
+        f"On {p.host_id}, with the env launcher `{p.launcher_text.strip()}`, would run: {p.command}"
+        for p in previews
+    )
     return (
         f"The adapters ran (plain data; the only thing one may write is its own "
         f"scratch dir), so this is the command itself, not a description of it. "
@@ -948,7 +972,7 @@ async def teardown(
                     remove_ids_under=prefix,
                     stop_timeout=stop_timeout,
                     files=staged.compose_paths if staged else None,
-                    env_file=staged.env_file if staged else None,
+                    launcher=staged.launcher if staged else None,
                 )
             ]
             continue

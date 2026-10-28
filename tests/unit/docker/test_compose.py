@@ -2388,12 +2388,11 @@ async def test_compose_up_build_dry_run_refuses_a_missing_dockerfile(tmp_path):
                 "x;y",
                 "svc one",
                 files=[Path("/s/c.yml")],
-                env_file=Path("/s/.env"),
-                env={"Z": "1", "A": "v w"},
+                launcher=Path("/s/otto-env.sh"),
             ),
-            "env A='v w' Z=1 docker compose -p 'a b' -f /s/c.yml --env-file /s/.env "
+            "sh /s/otto-env.sh docker compose -p 'a b' -f /s/c.yml "
             "up -d --remove-orphans --pull 'x;y' 'svc one'",
-            id="deploy-up-env-sorted-and-quoted",
+            id="deploy-up-under-the-launcher-quoted",
         ),
         pytest.param(
             lambda: compose_command("p", "down", "--remove-orphans", "--timeout", "1"),
@@ -2436,9 +2435,9 @@ async def test_compose_up_build_dry_run_refuses_a_missing_dockerfile(tmp_path):
             id="ps-all",
         ),
         pytest.param(
-            lambda: compose_command("p", env={"a b": "1"}),
-            "env 'a b'=1 docker compose -p p",
-            id="env-key-quoted",
+            lambda: compose_command("p", launcher="/s s/otto-env.sh"),
+            "sh '/s s/otto-env.sh' docker compose -p p",
+            id="launcher-path-quoted",
         ),
     ],
 )
@@ -2471,11 +2470,15 @@ async def test_roll_back_takes_the_stack_down_through_its_own_files():
     parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
     await roll_back(
         lab,
-        [StartedStack(parent, "p", ["/s/a.yml", "/s/b.yml"], env_file="/s/.env", services=["api"])],
+        [
+            StartedStack(
+                parent, "p", ["/s/a.yml", "/s/b.yml"], launcher="/s/otto-env.sh", services=["api"]
+            )
+        ],
     )
 
     assert sent == [
-        ("docker compose -p p -f /s/a.yml -f /s/b.yml --env-file /s/.env down --timeout 1 api")
+        ("sh /s/otto-env.sh docker compose -p p -f /s/a.yml -f /s/b.yml down --timeout 1 api")
     ]
 
 

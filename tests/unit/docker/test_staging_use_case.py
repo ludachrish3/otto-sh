@@ -1,4 +1,4 @@
-"""stage_use_case: rendered texts, otto.env, env_file: sidecars (spec §8)."""
+"""stage_use_case: rendered texts, otto-env.sh, env_file: sidecars."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from otto.docker.staging import (
     stage_use_case,
     staged_use_case,
     use_case_compose_paths,
-    use_case_env_file,
+    use_case_launcher,
 )
 from otto.host.errors import HostCommandError
 from otto.host.recursive_transfer import ListingError, RemoteListing
@@ -37,12 +37,17 @@ def _parent(tmp_path):
     parent.exec = AsyncMock(return_value=_ok())
     staged: list[tuple[str, str, str]] = []  # (local basename, remote dir, staged content)
 
-    async def _put(paths, dest):
+    modes: dict[str, int] = {}  # remote path -> the mode `put` was asked to set
+
+    async def _put(paths, dest, mode=None):
         staged.extend((Path(p).name, str(dest), Path(p).read_text()) for p in paths)
+        if mode is not None:
+            modes.update({f"{dest}/{Path(p).name}": mode for p in paths})
         return Result(Status.Success)
 
     parent.put = AsyncMock(side_effect=_put)
     parent._staged = staged
+    parent._modes = modes
     return parent
 
 
@@ -62,8 +67,8 @@ async def test_order_env_and_remote_paths(tmp_path):
     assert [p.name for p in out.compose_paths] == ["core.yml", "edge.yml"]
     assert str(out.compose_paths[0].parent).endswith("/compose/0")
     assert str(out.compose_paths[1].parent).endswith("/compose/1")
-    assert out.env_file.name == "otto.env"
-    assert ("otto.env", str(out.env_file.parent), "A=1\n") in parent._staged
+    assert out.launcher.name == "otto-env.sh"
+    assert ("otto-env.sh", str(out.launcher.parent), "A=1\n") in parent._staged
     # Content reached the recorded transport paired with the right handle —
     # not just "a put happened" (review I5).
     assert ("core.yml", str(out.compose_paths[0].parent), files[0].text) in parent._staged
@@ -71,26 +76,27 @@ async def test_order_env_and_remote_paths(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_the_env_file_uploaded_is_the_one_the_return_value_names(tmp_path):
+async def test_the_launcher_uploaded_is_the_one_the_return_value_names(tmp_path):
     """DRIFT PIN: ONE helper names the preview, the return value AND the upload.
 
     Every value here is read OFF the returned path — nothing re-types
-    ``otto.env`` — which is what makes this fail when the two ends disagree.
+    ``otto-env.sh`` — which is what makes this fail when the two ends disagree.
     The `-f` set got exactly this treatment (``sub = compose_paths[idx].parent``);
-    the env file was staged from a separate literal, so renaming it in
-    :func:`use_case_env_file` moved the previewed and RETURNED path while the
-    upload stayed put: a live ``docker compose --env-file <path>`` pointing at a
-    file nothing staged. The test above pins the NAME; this one pins that all
-    three ends move together whatever the name is.
+    a launcher staged from a separate literal would let a rename in
+    :func:`use_case_launcher` move the previewed and RETURNED path while the
+    upload stayed put: a live ``sh <path> docker compose …`` naming a file
+    nothing staged. The test above pins the NAME; this one pins that all three
+    ends move together whatever the name is.
     """
     parent = _parent(tmp_path)
     files = [ComposeFileToStage("core", "services: {api: {image: x}}\n", tmp_path)]
 
     out = await stage_use_case(parent, "otto-integration-u", files, "A=1\n")
 
-    assert (out.env_file.name, str(out.env_file.parent), "A=1\n") in parent._staged, (
-        f"the env file the return value names was never uploaded: {parent._staged}"
+    assert (out.launcher.name, str(out.launcher.parent), "A=1\n") in parent._staged, (
+        f"the launcher the return value names was never uploaded: {parent._staged}"
     )
+    assert parent._modes == {str(out.launcher): 0o600}, "only the launcher is narrowed"
 
 
 @pytest.mark.asyncio
@@ -144,7 +150,7 @@ async def test_a_sidecar_referenced_twice_in_one_file_is_staged_once(tmp_path):
     await stage_use_case(parent, "p", [ComposeFileToStage("core", text, tmp_path)], "")
     matches = [row for row in parent._staged if row[0] == "shared.env"]
     assert len(matches) == 1, matches
-    # core.yml + the deduped shared.env + otto.env — never two shared.env round trips.
+    # core.yml + the deduped shared.env + otto-env.sh — never two shared.env round trips.
     assert parent.put.call_count == 3
 
 
@@ -507,28 +513,30 @@ def test_read_back_orders_the_files_by_their_index_not_by_the_walk():
     """Index 10 sorts after index 2, and the walk's own order is never trusted."""
     base = compose_dir("p")
     files = [f"{i}/h{i}.yml" for i in range(11)]
-    walk = _walked(base, [*reversed(files), "otto.env", "extra.yml", "0/app.env", "3/conf/x.yml"])
+    walk = _walked(
+        base, [*reversed(files), "otto-env.sh", "extra.yml", "0/app.env", "3/conf/x.yml"]
+    )
 
     staged = _read_back(walk, base, "p")
 
     assert staged.compose_paths == [base / str(i) / f"h{i}.yml" for i in range(11)]
-    assert staged.env_file == use_case_env_file("p")
+    assert staged.launcher == use_case_launcher("p")
 
 
 @pytest.mark.parametrize(
     ("files", "dirs", "why"),
     [
-        (["0/a.yml", "0/b.yml", "otto.env"], None, "more than one compose file"),
-        (["0/a.yml"], None, "no otto.env"),
-        (["1/a.yml", "otto.env"], None, "not contiguous"),
-        (["otto.env"], None, "no compose file"),
+        (["0/a.yml", "0/b.yml", "otto-env.sh"], None, "more than one compose file"),
+        (["0/a.yml"], None, "no otto-env.sh"),
+        (["1/a.yml", "otto-env.sh"], None, "not contiguous"),
+        (["otto-env.sh"], None, "no compose file"),
         (
-            ["0/a.yml", "1/sub/b.yml", "otto.env"],
+            ["0/a.yml", "1/sub/b.yml", "otto-env.sh"],
             ["0", "1", "1/sub"],
             r"\[1\] hold no compose file",
         ),
     ],
-    ids=["two-in-one-index", "no-env-file", "gap", "empty", "nested-handle"],
+    ids=["two-in-one-index", "no-launcher", "gap", "empty", "nested-handle"],
 )
 def test_read_back_refuses_what_is_not_a_staging(files, dirs, why):
     base = compose_dir("p")
@@ -557,7 +565,7 @@ async def test_what_stage_use_case_puts_is_what_the_read_back_reads(tmp_path):
     staged = _read_back(walk, base, "p")
 
     assert staged.compose_paths == use_case_compose_paths("p", files)
-    assert staged.env_file == use_case_env_file("p")
+    assert staged.launcher == use_case_launcher("p")
 
 
 @pytest.mark.asyncio
@@ -583,3 +591,49 @@ async def test_staged_use_case_refuses_what_it_cannot_read_as_a_staging(tmp_path
     parent._walk_remote = walk
     with pytest.raises(HostCommandError, match="staged compose files for p"):
         await staged_use_case(parent, "p")
+
+
+def _a_staging(base):
+    return RemoteListing(
+        kind="d",
+        dirs=[base / "0"],
+        files=[base / "0" / "core.yml", base / "otto-env.sh"],
+    )
+
+
+@pytest.mark.asyncio
+async def test_staged_use_case_reads_a_staging_whose_launcher_holds_something(tmp_path):
+    parent = _parent(tmp_path)
+    base = compose_dir("p")
+    parent._walk_remote = AsyncMock(return_value=_a_staging(base))
+
+    staged = await staged_use_case(parent, "p")
+
+    assert staged is not None
+    assert staged.launcher == use_case_launcher("p")
+    parent.exec.assert_awaited_once_with(f"test -s {use_case_launcher('p')}")
+
+
+@pytest.mark.asyncio
+async def test_an_empty_launcher_is_refused_not_run_as_a_successful_no_op(tmp_path):
+    """`sh <empty file> docker compose down` exits 0 and runs nothing."""
+    parent = _parent(tmp_path)
+    parent._walk_remote = AsyncMock(return_value=_a_staging(compose_dir("p")))
+    parent.exec = AsyncMock(return_value=_fail(""))
+
+    with pytest.raises(HostCommandError, match=r"otto-env\.sh is empty"):
+        await staged_use_case(parent, "p")
+
+
+@pytest.mark.asyncio
+async def test_an_extra_file_named_like_the_launcher_is_refused_before_anything_is_staged(
+    tmp_path,
+):
+    parent = _parent(tmp_path)
+    files = [ComposeFileToStage("core", "services: {api: {image: x}}\n", tmp_path)]
+
+    with pytest.raises(UseCaseResolutionError, match="env launcher"):
+        await stage_use_case(parent, "p", files, "", extra_files={"./otto-env.sh": "x"})
+
+    parent.exec.assert_not_awaited()
+    parent.put.assert_not_awaited()

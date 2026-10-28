@@ -13,8 +13,8 @@ What only a real daemon can prove, and why each case is here:
   marker file baked into it are what say which fragment actually ran.
 * **Both env consumption points.** ``EDGE_ADDR`` reaches the container as a
   compose ``environment:`` pass-through; ``EDGE_ORIGIN`` is interpolated into
-  its value at compose PARSE time. A mapping delivered to only one of the two
-  sinks (spec §6) satisfies one and leaves the other reading ``unset``.
+  its value at compose PARSE time. A mapping that reached compose for one of
+  the two and not the other leaves the other reading ``unset``.
 * **Convergence and orphan removal.** ``up`` is convergent, so a second deploy
   must leave a running container alone; and when a provider loses, its whole
   fragment is excluded — ``--remove-orphans`` must then reap what it had left
@@ -24,6 +24,7 @@ Requires:
     vagrant up test3
 """
 
+import json
 import logging
 import shlex
 import uuid
@@ -33,8 +34,9 @@ import pytest
 import pytest_asyncio
 
 from otto.config.project import Project
+from otto.docker import deployment as deploy_mod
 from otto.docker import resolve as resolve_mod
-from otto.docker.compose import compose_down_project, use_case_project
+from otto.docker.compose import compose_command, compose_down_project, use_case_project
 from otto.docker.deployment import deploy, teardown
 from otto.docker.staging import cleanup_project
 from otto.host.login_proxy import Cred
@@ -407,11 +409,12 @@ async def test_a_down_on_a_project_with_nothing_running_is_a_clean_no_op(parent,
     project = use_case_project(LAB, "empty", suffix)
     work = f"/tmp/otto-e2e-empty-{suffix}"
     compose_file = f"{work}/c.yml"
-    env_file = f"{work}/otto.env"
+    launcher = f"{work}/otto-env.sh"
     try:
         idle_yaml = "services:\n  idle:\n    image: otto-none:never\n"
         wrote = await parent.exec(
-            f"mkdir -p {shlex.quote(work)} && : > {shlex.quote(env_file)} && "
+            f"mkdir -p {shlex.quote(work)} && "
+            f"printf %s {shlex.quote(deploy_mod._launcher_text({}))} > {shlex.quote(launcher)} && "
             f"printf %s {shlex.quote(idle_yaml)} > {shlex.quote(compose_file)}"
         )
         assert wrote.is_ok, wrote.value
@@ -422,11 +425,69 @@ async def test_a_down_on_a_project_with_nothing_running_is_a_clean_no_op(parent,
             lab=lab,
             remove_ids_under=None,
             files=[compose_file],
-            env_file=env_file,
+            launcher=launcher,
         )
         label_only = await compose_down_project(parent, project, lab=lab, remove_ids_under=None)
 
         assert with_files.is_ok, with_files.value
         assert label_only.is_ok, label_only.value
+    finally:
+        await parent.exec(f"rm -rf {shlex.quote(work)}")
+
+
+@pytest.mark.asyncio
+async def test_the_launcher_hands_compose_every_value_as_written_over_the_parent_env(
+    parent, suffix
+):
+    """The staged launcher, read by the parent's real ``sh`` and compose's real parser.
+
+    Each key is interpolated into a service's ``environment:`` and read back
+    from ``docker compose config``. Two keys are also exported by the parent
+    with other values (one empty), so a launcher that lost to the parent's
+    environment, or a value the shell or compose re-read, fails here.
+    """
+    mapping = {
+        "DOLLAR": "${OTHER}",
+        "REPEATED": "$$x$",
+        "HASH": "a # b",
+        "QUOTES": "'single' \"double\"",
+        "BACKSLASHES": "a\\b\\",
+        "SPACES": "  padded  ",
+        "EMPTY": "",
+        "BACKTICK": "`id`",
+        "NEWLINE": "line1\nline2",
+        "IMAGE": "alpine:3",
+    }
+    project = use_case_project(LAB, "launcher", suffix)
+    work = f"/tmp/otto-e2e-launcher-{suffix}"
+    compose_file = f"{work}/c.yml"
+    launcher = f"{work}/otto-env.sh"
+    compose_yaml = "services:\n  probe:\n    image: ${IMAGE}\n    environment:\n" + "".join(
+        f"      {key}: ${{{key}}}\n" for key in mapping
+    )
+    try:
+        launcher_text = deploy_mod._launcher_text(mapping)
+        wrote = await parent.exec(
+            f"mkdir -p {shlex.quote(work)} && "
+            f"printf %s {shlex.quote(launcher_text)} > {shlex.quote(launcher)} && "
+            f"printf %s {shlex.quote(compose_yaml)} > {shlex.quote(compose_file)}"
+        )
+        assert wrote.is_ok, wrote.value
+
+        # The parent's own exports, set in front of the command the deployment runs.
+        config = await parent.exec(
+            "IMAGE= HASH=from-the-parent "
+            + compose_command(
+                project, "config", "--format", "json", files=[compose_file], launcher=launcher
+            )
+        )
+
+        assert config.is_ok, config.value
+        service = json.loads(config.value)["services"]["probe"]
+        # `config` prints a model compose can load again, so it writes each
+        # literal `$` of a resolved value as `$$`; undo only that escape.
+        environment = {k: v.replace("$$", "$") for k, v in service["environment"].items()}
+        assert service["image"] == mapping["IMAGE"]
+        assert environment == mapping
     finally:
         await parent.exec(f"rm -rf {shlex.quote(work)}")

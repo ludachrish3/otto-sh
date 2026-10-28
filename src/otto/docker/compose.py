@@ -15,7 +15,7 @@ import getpass
 import logging
 import re
 import shlex
-from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
+from collections.abc import AsyncIterator, Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import PurePath
 from typing import TYPE_CHECKING
@@ -186,10 +186,9 @@ def compose_command(
     project: str,
     *args: str,
     files: "Sequence[str | PurePath]" = (),
-    env_file: "str | PurePath | None" = None,
-    env: "Mapping[str, str] | None" = None,
+    launcher: "str | PurePath | None" = None,
 ) -> str:
-    """``[env K=V …] docker compose -p P [-f F …] [--env-file E] ARGS…``, every token quoted.
+    """``[sh LAUNCHER] docker compose -p P [-f F …] ARGS…``, every token quoted.
 
     The one place a ``docker compose`` command is spelled: the use-case and
     per-project paths, their dry-run previews and the observe verbs all build
@@ -197,21 +196,18 @@ def compose_command(
 
     *args* are the subcommand, docker's own flags and any service names, one
     token each; each is shell-quoted here, so no caller pre-quotes. *files*
-    keep their order (later files override earlier ones). *env* becomes an
-    ``env K=V`` prefix, keys sorted so the command is stable, each key and
-    each value quoted on its own.
+    keep their order (later files override earlier ones). *launcher* is a
+    use-case's staged env launcher: compose runs under it, so the deployment's
+    mapping is its process environment on every verb alike.
     """
     # ast-grep-ignore: compose-command-through-builder
     words: "list[str]" = ["docker", "compose", "-p", project]
     for path in files:
         words += ["-f", str(path)]
-    if env_file is not None:
-        words += ["--env-file", str(env_file)]
     words += args
-    prefix = (
-        ["env", *(f"{shlex.quote(k)}={shlex.quote(env[k])}" for k in sorted(env))] if env else []
-    )
-    return " ".join([*prefix, *(shlex.quote(w) for w in words)])
+    if launcher is not None:
+        words = ["sh", str(launcher), *words]
+    return " ".join(shlex.quote(w) for w in words)
 
 
 async def _stack_already_up(parent: Host, project_name: str) -> bool | None:
@@ -416,8 +412,8 @@ class StartedStack:
     project: str
     files: "list[str]"
     """The staged ``-f`` set, in order, exactly as ``up`` was given it."""
-    env_file: "str | None" = None
-    """The staged ``--env-file``, when ``up`` was given one."""
+    launcher: "str | None" = None
+    """The staged env launcher, when ``up`` ran under one."""
     services: "list[str]" = field(default_factory=list)
     """The services ``up`` named, when it named any; empty means all the files declare."""
 
@@ -463,7 +459,7 @@ async def roll_back(lab: "Lab", started: "list[StartedStack]") -> None:
                     lab=lab,
                     remove_ids_under=None,
                     files=stack.files,
-                    env_file=stack.env_file,
+                    launcher=stack.launcher,
                     services=stack.services,
                 ),
                 what=f"rolling back {stack.project} on {stack.parent.id}",
@@ -793,20 +789,20 @@ async def compose_down_project(
     remove_ids_under: "str | None",
     stop_timeout: int = 1,
     files: "Sequence[str | PurePath] | None" = None,
-    env_file: "str | PurePath | None" = None,
+    launcher: "str | PurePath | None" = None,
     services: "Sequence[str]" = (),
 ) -> CommandResult:
     """Take a compose stack down, then unregister its hosts: the one ``down``.
 
     Two shapes, chosen by *files* (``None`` for none; an empty list is refused):
 
-    - **Files given** (with *env_file* when ``up`` had one): the ``up``
-      command minus its verb, ``-f … [--env-file E] down [SERVICES]``, and
-      nothing otto adds. Docker removes only the services those files declare
-      (or *services*, when named) and the networks compose created for them;
-      other containers under the same project label stay. Everything else is
-      docker's own: its orphan setting, its interpolation (the shell's
-      environment over the env file), its profiles.
+    - **Files given** (with *launcher* when ``up`` ran under one): the ``up``
+      command minus its verb, ``[sh L] docker compose -f … down [SERVICES]``,
+      and nothing otto adds. Docker removes only the services those files
+      declare (or *services*, when named) and the networks compose created for
+      them; other containers under the same project label stay. Everything
+      else is docker's own: its orphan setting, its interpolation (under the
+      same environment ``up`` had), its profiles.
     - **No files**: ``down --remove-orphans`` by the project label alone, which
       docker already carries, so nothing has to be re-rendered or re-staged
       merely to delete what it produced. It removes every container under the
@@ -846,7 +842,7 @@ async def compose_down_project(
             # under the project.
             raise ValueError(f"compose_down_project({compose_project}): files=[] names no file")
         command = compose_command(
-            compose_project, "down", *timeout_args, *services, files=files, env_file=env_file
+            compose_project, "down", *timeout_args, *services, files=files, launcher=launcher
         )
     else:
         command = compose_command(compose_project, "down", "--remove-orphans", *timeout_args)
