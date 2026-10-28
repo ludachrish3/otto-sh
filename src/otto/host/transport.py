@@ -26,6 +26,36 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+async def teardown_ssh_connection(conn: "SSHClientConnection") -> None:
+    """Close an asyncssh connection and defuse asyncio's zombie transport.
+
+    asyncssh's ``wait_closed()`` returns when the SSH session finishes, but
+    in some teardown paths (notably hopped connections where the parent
+    tunnel survives the child) the underlying asyncio
+    ``_SelectorSocketTransport`` is left with ``_closing=False`` even though
+    the OS socket is gone (fd=-1). That zombie transport sits in GC until
+    later, when its ``__del__`` fires ``ResourceWarning`` on a closed loop
+    and pytest's ``[unraisable]`` plugin escalates it into a flake on
+    whichever next test happens to be running. Grab the asyncio transport
+    before close and explicitly ``close()`` it after: that sets
+    ``_closing=True`` so ``__del__`` is a no-op. In a ``finally`` so a
+    raising or cancelled ``wait_closed`` still gets the mitigation.
+
+    This is the one close for every asyncssh connection otto owns: the hop
+    transport's cascade and abandonment paths and
+    ``ConnectionManager.close``'s primary and per-user ssh slots. A bare
+    ``conn.close()`` anywhere else leaves behind the very warning this
+    exists to prevent.
+    """
+    asyncio_transport = getattr(conn, "_transport", None)
+    try:
+        conn.close()
+        await conn.wait_closed()
+    finally:
+        if asyncio_transport is not None:
+            asyncio_transport.close()
+
+
 class HopTransportTornDownError(OttoError, RuntimeError):
     """A ``close()`` overtook this operation while it was still building.
 
@@ -180,7 +210,7 @@ class SshHopTransport:
                 # handed its parent through the constructor documents that the
                 # parent is "closed automatically when THIS transport is
                 # closed", and clearing the slot silently ends that.
-                await self._teardown_connection(conn)
+                await teardown_ssh_connection(conn)
                 if self._parent is not None:
                     await self._parent.close()
                 raise HopTransportTornDownError(
@@ -324,35 +354,7 @@ class SshHopTransport:
                 listener.close()
 
         if conn is not None:
-            await self._teardown_connection(conn)
+            await teardown_ssh_connection(conn)
 
         if self._parent is not None:
             await self._parent.close()
-
-    @staticmethod
-    async def _teardown_connection(conn: "SSHClientConnection") -> None:
-        """Close *conn* and defuse asyncio's zombie transport.
-
-        See ``ConnectionManager.close`` for the full story: asyncssh's
-        ``wait_closed()`` returns before the underlying asyncio transport's
-        ``connection_lost`` callback fires, which leaves ``_closing=False``
-        even though the OS socket is already torn down. The zombie transport
-        then triggers ``ResourceWarning`` from ``__del__`` on a closed loop,
-        which pytest's ``[unraisable]`` plugin escalates into a flake on the
-        *next* test. Capture the asyncio transport before close and explicitly
-        ``close()`` it after.
-
-        Shared with ``get_tunnel``'s post-close path rather than inlined
-        twice: a connection abandoned there is abandoned for exactly this
-        reason, so a bare ``conn.close()`` would leave behind the very warning
-        the caller is trying to prevent. In a ``finally`` so a raising or
-        cancelled ``wait_closed`` still gets the mitigation, matching
-        ``ConnectionManager.close``.
-        """
-        asyncio_transport = getattr(conn, "_transport", None)
-        try:
-            conn.close()
-            await conn.wait_closed()
-        finally:
-            if asyncio_transport is not None:
-                asyncio_transport.close()

@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ..formats import STORE_READ_VERSIONS, STORE_WRITE_VERSIONS
+from ..formats import STORE_READ_VERSIONS, STORE_WRITE_VERSIONS, found_version_label
 
 TIER_SYSTEM = "system"
 """Conventional tier name used by the merged .gcda pipeline.
@@ -703,20 +703,10 @@ class CoverageStore:
         data = json.loads(path.read_text())
         found_format = data.get("format") if isinstance(data, dict) else None
         if found_format not in STORE_READ_VERSIONS:
-            # Distinguish "no format key at all" (found_format is None) from
-            # "a format key was present but isn't the int we expect" (e.g. a
-            # hand-edited store.json with "format": "3") — the latter must
-            # not silently collapse to "none", which would hide that a value
-            # actually was found, just the wrong shape.
-            if found_format is None:
-                found_label = "none"
-            elif isinstance(found_format, int):
-                found_label = f"v{found_format}"
-            else:
-                found_label = f"{found_format!r} (expected an int)"
             raise ValueError(
                 f"coverage store format {' or '.join(f'v{v}' for v in STORE_READ_VERSIONS)} "
-                f"required; found {found_label} — regenerate with otto cov get/report"
+                f"required; found {found_version_label(found_format)} — regenerate with "
+                "otto cov get/report"
             )
 
         tier_order = data.get("tier_order") or []

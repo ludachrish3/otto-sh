@@ -5,15 +5,15 @@
 # pair that stops reporting comes out of this file in the same change, so it
 # only shrinks. `--write` regenerates it from the tree; review the diff, since
 # an added line is a new clone, not a baseline update.
+# The shim mirrors the completion cache on purpose: otto._shim_complete may
+# import only the stdlib modules tests/unit/test_shim.py names, so its copies of
+# _fresh_lists and spawn_collect_child cannot call the cache's. Change both or
+# neither; tests/unit/shim/test_differential.py is the net.
 otto._shim_complete otto.config.completion_cache
+# otto.context re-exports otto.run_context's names, and
+# tests/unit/test_lazy_packages.py requires a lazy facade's __all__ to be one
+# literal list, so the two lists spell the same names on purpose.
 otto.context otto.run_context
-otto.coverage.attribution otto.coverage.capture.treediff
-otto.coverage.capture.model otto.coverage.store.model
-otto.creds.json_store otto.inventory.json_backend
-otto.host.connections otto.host.transport
-otto.host.console otto.host.telnet
-otto.host.docker_image_kind otto.host.kmod_kind
+# What remains between these two is one formatted _put_tree(...) call and the
+# dry-run line beneath it, the same call site spelled twice, not a decision.
 otto.host.local_host otto.host.unix_host
-otto.host.option_specs otto.host.options
-otto.host.specs otto.models.lab
-otto.init.doctor otto.labs.json_repository

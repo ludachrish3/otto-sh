@@ -114,7 +114,7 @@ def _decorate(doc: dict[str, Any], stem: str, title: str) -> dict[str, Any]:
 def _allow_comment_keys(schema: dict[str, Any]) -> None:
     """Allow ``_``-prefixed keys on an entry schema, mirroring the runtime strip.
 
-    ``HostSpec._strip_comment_keys`` / ``LinkSpec._strip_comment_keys`` drop
+    :func:`~otto.models.base.strip_comment_keys` (every spec's ``before`` validator) drops
     ``_``-prefixed keys before validation (the JSON comment idiom), so the
     emitted schema must not squiggle them — `otto init` itself scaffolds a
     host-level ``_comment``.

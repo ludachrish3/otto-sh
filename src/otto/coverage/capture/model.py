@@ -13,7 +13,7 @@ from pathlib import Path
 from pydantic import ConfigDict, Field
 
 from ...models.base import OttoModel
-from ..formats import CAPTURE_READ_VERSIONS, CAPTURE_WRITE_VERSIONS
+from ..formats import CAPTURE_READ_VERSIONS, CAPTURE_WRITE_VERSIONS, found_version_label
 from . import gitio
 from .remap import LineRemapper, parse_u0_hunks
 
@@ -84,19 +84,9 @@ class Capture(OttoModel):
         raw = json.loads(raw_text)
         found_format = raw.get("schema") if isinstance(raw, dict) else None
         if found_format not in CAPTURE_READ_VERSIONS:
-            # Distinguish "no schema key at all" from "a schema key was
-            # present but isn't the int we expect" (e.g. a hand-edited
-            # capture.json with "schema": "2") — see the identical fix in
-            # otto.coverage.store.model.CoverageStore.load.
-            if found_format is None:
-                found_label = "none"
-            elif isinstance(found_format, int):
-                found_label = f"v{found_format}"
-            else:
-                found_label = f"{found_format!r} (expected an int)"
             raise ValueError(
                 f"capture format {' or '.join(f'v{v}' for v in CAPTURE_READ_VERSIONS)} required; "
-                f"found {found_label} — re-capture with otto cov get"
+                f"found {found_version_label(found_format)} — re-capture with otto cov get"
             )
         return cls.model_validate_json(raw_text)
 

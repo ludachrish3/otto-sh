@@ -46,20 +46,20 @@ class SshOptionsSpec(OttoModel):
     ``to_runtime()``.
     """
 
-    port: int = 22
-    known_hosts: Any = None
-    connect_timeout: float | None = None
-    keepalive_interval: float | None = None
-    keepalive_count_max: int | None = None
-    client_keys: list[str] | None = None
-    client_host_keys: list[str] | None = None
-    agent_forwarding: bool = False
-    preferred_auth: str | list[str] | None = None
-    encryption_algs: list[str] | None = None
-    server_host_key_algs: list[str] | None = None
-    compression_algs: list[str] | None = None
-    kex_algs: list[str] | None = None
-    mac_algs: list[str] | None = None
+    port: int = rt.field_default(rt.SshOptions, "port")
+    known_hosts: Any = rt.field_default(rt.SshOptions, "known_hosts")
+    connect_timeout: float | None = rt.field_default(rt.SshOptions, "connect_timeout")
+    keepalive_interval: float | None = rt.field_default(rt.SshOptions, "keepalive_interval")
+    keepalive_count_max: int | None = rt.field_default(rt.SshOptions, "keepalive_count_max")
+    client_keys: list[str] | None = rt.field_default(rt.SshOptions, "client_keys")
+    client_host_keys: list[str] | None = rt.field_default(rt.SshOptions, "client_host_keys")
+    agent_forwarding: bool = rt.field_default(rt.SshOptions, "agent_forwarding")
+    preferred_auth: str | list[str] | None = rt.field_default(rt.SshOptions, "preferred_auth")
+    encryption_algs: list[str] | None = rt.field_default(rt.SshOptions, "encryption_algs")
+    server_host_key_algs: list[str] | None = rt.field_default(rt.SshOptions, "server_host_key_algs")
+    compression_algs: list[str] | None = rt.field_default(rt.SshOptions, "compression_algs")
+    kex_algs: list[str] | None = rt.field_default(rt.SshOptions, "kex_algs")
+    mac_algs: list[str] | None = rt.field_default(rt.SshOptions, "mac_algs")
     local_forwards: list[rt.LocalPortForward] = Field(default_factory=list)
     remote_forwards: list[rt.RemotePortForward] = Field(default_factory=list)
     socks_forwards: list[rt.SocksForward] = Field(default_factory=list)
@@ -101,14 +101,14 @@ class FtpOptionsSpec(OttoModel):
     passive-mode command order. Builds a ``FtpOptions`` runtime dataclass via ``to_runtime()``.
     """
 
-    port: int = 21
-    encoding: str = "utf-8"
-    socket_timeout: float | None = None
-    connection_timeout: float | None = None
-    path_timeout: float | None = None
-    read_speed_limit: int | None = None
-    write_speed_limit: int | None = None
-    ssl: Any = None
+    port: int = rt.field_default(rt.FtpOptions, "port")
+    encoding: str = rt.field_default(rt.FtpOptions, "encoding")
+    socket_timeout: float | None = rt.field_default(rt.FtpOptions, "socket_timeout")
+    connection_timeout: float | None = rt.field_default(rt.FtpOptions, "connection_timeout")
+    path_timeout: float | None = rt.field_default(rt.FtpOptions, "path_timeout")
+    read_speed_limit: int | None = rt.field_default(rt.FtpOptions, "read_speed_limit")
+    write_speed_limit: int | None = rt.field_default(rt.FtpOptions, "write_speed_limit")
+    ssl: Any = rt.field_default(rt.FtpOptions, "ssl")
     passive_commands: tuple[str, ...] = ("epsv", "pasv")
     extra: dict[str, Any] = Field(default_factory=dict)
 
@@ -140,8 +140,8 @@ class SftpOptionsSpec(OttoModel):
     dict for pass-through kwargs. Builds a ``SftpOptions`` runtime dataclass via ``to_runtime()``.
     """
 
-    env: dict[str, str] | None = None
-    send_env: list[str] | None = None
+    env: dict[str, str] | None = rt.field_default(rt.SftpOptions, "env")
+    send_env: list[str] | None = rt.field_default(rt.SftpOptions, "send_env")
     extra: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("extra")
@@ -173,9 +173,9 @@ class ScpOptionsSpec(OttoModel):
     via ``to_runtime()``.
     """
 
-    preserve: bool = False
-    recurse: bool = True
-    block_size: int = 16384
+    preserve: bool = rt.field_default(rt.ScpOptions, "preserve")
+    recurse: bool = rt.field_default(rt.ScpOptions, "recurse")
+    block_size: int = rt.field_default(rt.ScpOptions, "block_size")
     extra: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("extra")
@@ -210,18 +210,18 @@ class TelnetOptionsSpec(OttoModel):
     via ``to_runtime()``.
     """
 
-    port: int = 23
-    write_chunk_size: int = 0
-    write_chunk_delay: float = 0.0
-    cols: int = 400
-    rows: int = 24
-    encoding: str | bool = False
-    connect_timeout: float | None = None
-    echo_negotiation_timeout: float = 3.0
-    login_prompt: bytes = b":"
-    login: bool = True
-    single_client_console: bool = False
-    auto_window_resize: bool = False
+    port: int = rt.field_default(rt.TelnetOptions, "port")
+    write_chunk_size: int = rt.field_default(rt.TelnetOptions, "write_chunk_size")
+    write_chunk_delay: float = rt.field_default(rt.TelnetOptions, "write_chunk_delay")
+    cols: int = rt.field_default(rt.TelnetOptions, "cols")
+    rows: int = rt.field_default(rt.TelnetOptions, "rows")
+    encoding: str | bool = rt.field_default(rt.TelnetOptions, "encoding")
+    connect_timeout: float | None = rt.field_default(rt.TelnetOptions, "connect_timeout")
+    echo_negotiation_timeout: float = rt.field_default(rt.TelnetOptions, "echo_negotiation_timeout")
+    login_prompt: bytes = rt.field_default(rt.TelnetOptions, "login_prompt")
+    login: bool = rt.field_default(rt.TelnetOptions, "login")
+    single_client_console: bool = rt.field_default(rt.TelnetOptions, "single_client_console")
+    auto_window_resize: bool = rt.field_default(rt.TelnetOptions, "auto_window_resize")
     extra: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("extra")
@@ -263,21 +263,23 @@ class ConsoleOptionsSpec(OttoModel):
     Builds a ``ConsoleOptions`` runtime dataclass via ``to_runtime()``.
     """
 
-    server: str = ""
+    server: str = rt.field_default(rt.ConsoleOptions, "server")
     port: int = Field(default=0, ge=0, le=65535)
-    dial: Literal["ssh", "direct"] = "ssh"
-    login: bool = True
-    login_prompt: str | None = None
-    password_prompt: str | None = None
+    dial: Literal["ssh", "direct"] = rt.field_default(rt.ConsoleOptions, "dial")
+    login: bool = rt.field_default(rt.ConsoleOptions, "login")
+    login_prompt: str | None = rt.field_default(rt.ConsoleOptions, "login_prompt")
+    password_prompt: str | None = rt.field_default(rt.ConsoleOptions, "password_prompt")
     login_timeout: float = Field(default=10.0, gt=0)
     settle: float = Field(default=0.5, ge=0)
-    logout: bool = True
-    write_chunk_size: int = 0
-    write_chunk_delay: float = 0.0
-    cols: int = 400
-    rows: int = 24
-    encoding: str | bool = False
-    echo_negotiation_timeout: float = 3.0
+    logout: bool = rt.field_default(rt.ConsoleOptions, "logout")
+    write_chunk_size: int = rt.field_default(rt.ConsoleOptions, "write_chunk_size")
+    write_chunk_delay: float = rt.field_default(rt.ConsoleOptions, "write_chunk_delay")
+    cols: int = rt.field_default(rt.ConsoleOptions, "cols")
+    rows: int = rt.field_default(rt.ConsoleOptions, "rows")
+    encoding: str | bool = rt.field_default(rt.ConsoleOptions, "encoding")
+    echo_negotiation_timeout: float = rt.field_default(
+        rt.ConsoleOptions, "echo_negotiation_timeout"
+    )
     extra: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("extra")
@@ -326,13 +328,13 @@ class NcOptionsSpec(OttoModel):
     a ``NcOptions`` runtime dataclass via ``to_runtime()``.
     """
 
-    exec_name: str = "nc"
-    port: int = 9000
-    port_strategy: NcPortStrategy = "auto"
-    port_cmd: str | None = None
-    listener_check: NcListenerCheck = "auto"
-    listener_cmd: str | None = None
-    listener_timeout: float = 30.0
+    exec_name: str = rt.field_default(rt.NcOptions, "exec_name")
+    port: int = rt.field_default(rt.NcOptions, "port")
+    port_strategy: NcPortStrategy = rt.field_default(rt.NcOptions, "port_strategy")
+    port_cmd: str | None = rt.field_default(rt.NcOptions, "port_cmd")
+    listener_check: NcListenerCheck = rt.field_default(rt.NcOptions, "listener_check")
+    listener_cmd: str | None = rt.field_default(rt.NcOptions, "listener_cmd")
+    listener_timeout: float = rt.field_default(rt.NcOptions, "listener_timeout")
     # Bound as a `Field` kwarg, not as `Annotated[int, Field(ge=1)]`: autodoc's
     # annotation stringifier turns the metadata into dotted py:class targets
     # (`Ge`, `FieldInfo`, `NoneType`) and nitpicky -W fails the docs build on
@@ -362,10 +364,10 @@ class SnmpOptionsSpec(OttoModel):
     """
 
     oids: tuple[str, ...] = ()
-    community: str = "public"
-    port: int = 161
-    version: Literal["1", "2c"] = "2c"
-    address: str | None = None
+    community: str = rt.field_default(rt.SnmpOptions, "community")
+    port: int = rt.field_default(rt.SnmpOptions, "port")
+    version: Literal["1", "2c"] = rt.field_default(rt.SnmpOptions, "version")
+    address: str | None = rt.field_default(rt.SnmpOptions, "address")
 
     def to_runtime(self) -> rt.SnmpOptions:
         """Build the ``SnmpOptions`` runtime dataclass from the validated spec fields."""
@@ -385,10 +387,10 @@ class TftpOptionsSpec(OttoModel):
     Builds a ``TftpOptions`` runtime dataclass via ``to_runtime()``.
     """
 
-    port: int = 69
-    server_ip: str | None = None
-    block_size: int = 512
-    timeout: float = 5.0
+    port: int = rt.field_default(rt.TftpOptions, "port")
+    server_ip: str | None = rt.field_default(rt.TftpOptions, "server_ip")
+    block_size: int = rt.field_default(rt.TftpOptions, "block_size")
+    timeout: float = rt.field_default(rt.TftpOptions, "timeout")
 
     def to_runtime(self) -> rt.TftpOptions:
         """Build the ``TftpOptions`` runtime dataclass from the validated spec fields."""
@@ -408,26 +410,48 @@ class UserlandOptionsSpec(OttoModel):
     naming the key, instead of silently selecting a fallback at runtime.
     """
 
-    shell_dialect: str | None = None
-    elevation: Literal["sudo", "su", "none"] | None = None
-    base64_flag: Literal["-d", "--decode", "absent"] | None = None
-    stat_size: Literal["stat", "wc", "absent"] | None = None
-    checksum: Literal["md5sum", "absent"] | None = None
-    timeout_style: Literal["coreutils", "dash-t", "absent"] | None = None
+    shell_dialect: str | None = rt.field_default(rt.UserlandOptions, "shell_dialect")
+    elevation: Literal["sudo", "su", "none"] | None = rt.field_default(
+        rt.UserlandOptions, "elevation"
+    )
+    base64_flag: Literal["-d", "--decode", "absent"] | None = rt.field_default(
+        rt.UserlandOptions, "base64_flag"
+    )
+    stat_size: Literal["stat", "wc", "absent"] | None = rt.field_default(
+        rt.UserlandOptions, "stat_size"
+    )
+    checksum: Literal["md5sum", "absent"] | None = rt.field_default(rt.UserlandOptions, "checksum")
+    timeout_style: Literal["coreutils", "dash-t", "absent"] | None = rt.field_default(
+        rt.UserlandOptions, "timeout_style"
+    )
     # One field per name in `otto.host.userland.PROBED_APPLETS`, spelled out
     # rather than generated: `extra='forbid'` is what turns `applet_scpp` in
     # lab.json into an error naming the key, and it can only do that for fields
     # the model actually declares. The list is not imported — a boundary that
     # read its field names from the runtime could not be caught drifting from
     # it — so `tests/unit/host/test_userland.py` pins the two sets equal.
-    applet_base64: Literal["present", "absent"] | None = None
-    applet_nc: Literal["present", "absent"] | None = None
-    applet_poweroff: Literal["present", "absent"] | None = None
-    applet_scp: Literal["present", "absent"] | None = None
-    applet_shutdown: Literal["present", "absent"] | None = None
-    applet_uudecode: Literal["present", "absent"] | None = None
-    applet_uuencode: Literal["present", "absent"] | None = None
-    version: str | None = None
+    applet_base64: Literal["present", "absent"] | None = rt.field_default(
+        rt.UserlandOptions, "applet_base64"
+    )
+    applet_nc: Literal["present", "absent"] | None = rt.field_default(
+        rt.UserlandOptions, "applet_nc"
+    )
+    applet_poweroff: Literal["present", "absent"] | None = rt.field_default(
+        rt.UserlandOptions, "applet_poweroff"
+    )
+    applet_scp: Literal["present", "absent"] | None = rt.field_default(
+        rt.UserlandOptions, "applet_scp"
+    )
+    applet_shutdown: Literal["present", "absent"] | None = rt.field_default(
+        rt.UserlandOptions, "applet_shutdown"
+    )
+    applet_uudecode: Literal["present", "absent"] | None = rt.field_default(
+        rt.UserlandOptions, "applet_uudecode"
+    )
+    applet_uuencode: Literal["present", "absent"] | None = rt.field_default(
+        rt.UserlandOptions, "applet_uuencode"
+    )
+    version: str | None = rt.field_default(rt.UserlandOptions, "version")
 
     def to_runtime(self) -> rt.UserlandOptions:
         """Build the ``UserlandOptions`` runtime dataclass from validated fields."""

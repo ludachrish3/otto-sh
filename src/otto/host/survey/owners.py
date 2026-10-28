@@ -5,13 +5,14 @@ evidence beyond the port number. The sweep alternates below are the one place
 the spec allows port literals; the defaults come from the options classes.
 """
 
-from dataclasses import MISSING, fields
-from typing import TYPE_CHECKING
-
-from ..options import FtpOptions, SnmpOptions, SshOptions, TelnetOptions, TftpOptions
-
-if TYPE_CHECKING:
-    from _typeshed import DataclassInstance
+from ..options import (
+    FtpOptions,
+    SnmpOptions,
+    SshOptions,
+    TelnetOptions,
+    TftpOptions,
+    field_default,
+)
 
 OWNER_BASENAMES: dict[str, list[str]] = {
     "ssh": ["sshd", "dropbear"],
@@ -28,22 +29,12 @@ SSH_SWEEP_PORTS: list[int] = [22, 2222]
 """Dialed on embedded hosts for the footnote only: ssh is not a family backend there."""
 
 
-def _default_port(options_cls: "type[DataclassInstance]") -> int:
-    for f in fields(options_cls):
-        if f.name == "port":
-            if f.default is not MISSING:
-                return int(f.default)
-            break
-    msg = f"{options_cls.__name__} has no defaulted `port` field"
-    raise TypeError(msg)
-
-
 DEFAULT_PORTS: dict[str, int] = {
-    "ssh": _default_port(SshOptions),
-    "telnet": _default_port(TelnetOptions),
-    "ftp": _default_port(FtpOptions),
-    "snmp": _default_port(SnmpOptions),
-    "tftp": _default_port(TftpOptions),
+    "ssh": field_default(SshOptions, "port"),
+    "telnet": field_default(TelnetOptions, "port"),
+    "ftp": field_default(FtpOptions, "port"),
+    "snmp": field_default(SnmpOptions, "port"),
+    "tftp": field_default(TftpOptions, "port"),
 }
 """Each backend's default port, read from its options class."""
 

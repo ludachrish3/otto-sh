@@ -25,8 +25,7 @@ from ..host.specs import InterfaceSpec, IntOrStr
 from ..host.specs import (
     coerce_digit_string as coerce_digit_string,  # noqa: PLC0414 — explicit re-export
 )
-from .base import CredSpec, OttoModel
-from .lab import _strip_comment_keys
+from .base import CredSpec, OttoModel, nonnegative, strip_comment_keys
 
 
 class InventoryRecord(OttoModel):
@@ -56,7 +55,7 @@ class InventoryRecord(OttoModel):
     @model_validator(mode="before")
     @classmethod
     def _strip(cls, data: object) -> object:
-        return _strip_comment_keys(data)
+        return strip_comment_keys(data)
 
     @field_validator("interfaces", mode="before")
     @classmethod
@@ -69,9 +68,7 @@ class InventoryRecord(OttoModel):
     @field_validator("element_id", "slot", "shelf")
     @classmethod
     def _nonnegative(cls, v: int | None) -> int | None:
-        if v is not None and v < 0:
-            raise ValueError(f"must be >= 0, got {v}")
-        return v
+        return nonnegative(v)
 
 
 INVENTORY_KEY_FIELDS: frozenset[str] = frozenset({"element_id"})

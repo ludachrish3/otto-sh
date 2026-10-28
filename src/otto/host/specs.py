@@ -38,7 +38,14 @@ if TYPE_CHECKING:
 
 from ..link.impairer import IMPAIRERS, _is_unresolved_stock, build_impairer
 from ..logger.mode import LogMode
-from ..models.base import Cred, CredSpec, OttoModel, resources_nonempty
+from ..models.base import (
+    Cred,
+    CredSpec,
+    OttoModel,
+    nonnegative,
+    resources_nonempty,
+    strip_comment_keys,
+)
 from .binary_loader import LOADER_CLASSES, build_binary_loader
 from .capability import (
     IMPAIRER_RESOLVER,
@@ -480,6 +487,22 @@ def _check_pins_in_menus(
             resolver.validate_choice(getattr(spec, menu_field), pin)
 
 
+def name_slugs_nonempty(v: str) -> str:
+    """Refuse a name that slugs to an empty ``[a-z0-9-]`` token: it cannot form an id.
+
+    The host board (:class:`HostSpec`) and the element name
+    (:class:`~otto.models.lab.ElementSpec`) are held to the one rule here;
+    the runtime :class:`~otto.host.element.Element` restates it with the
+    element named. Lives in the host package, beside the slug itself, because
+    ``otto.models.base`` imports nothing from otto.
+    """
+    from .remote_host import slug
+
+    if not slug(v):
+        raise ValueError(f"{v!r} slugs to an empty id (needs at least one letter or digit)")
+    return v
+
+
 class HostSpec(OttoModel):
     """Abstract boundary spec for a ``lab.json`` host entry.
 
@@ -598,15 +621,8 @@ class HostSpec(OttoModel):
     @model_validator(mode="before")
     @classmethod
     def _strip_comment_keys(cls, data: object) -> object:
-        """Drop ``_``-prefixed keys before validation — the JSON comment idiom.
-
-        lab.json cannot carry real comments, so keys like ``_comment`` are
-        sanctioned annotation space. Only the leading-underscore form is
-        exempt from ``extra='forbid'``; any other unknown key still errors.
-        """
-        if isinstance(data, dict):
-            return {k: v for k, v in data.items() if not (isinstance(k, str) and k.startswith("_"))}
-        return data
+        """Drop ``_``-prefixed keys; see :func:`~otto.models.base.strip_comment_keys`."""
+        return strip_comment_keys(data)
 
     @model_validator(mode="before")
     @classmethod
@@ -657,20 +673,12 @@ class HostSpec(OttoModel):
         token (else it cannot form a valid id). The element name is held to the
         same rule by :class:`~otto.host.element.Element`.
         """
-        if v is None:
-            return v
-        from .remote_host import slug
-
-        if not slug(v):
-            raise ValueError(f"{v!r} slugs to an empty id (needs at least one letter or digit)")
-        return v
+        return None if v is None else name_slugs_nonempty(v)
 
     @field_validator("slot", "shelf")
     @classmethod
     def _validate_nonnegative(cls, v: int | None) -> int | None:
-        if v is not None and v < 0:
-            raise ValueError(f"must be >= 0, got {v}")
-        return v
+        return nonnegative(v)
 
     @field_validator("resources")
     @classmethod

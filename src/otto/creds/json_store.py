@@ -5,13 +5,12 @@ A JSON object mapping inventory key → list of cred entries. ``$schema`` and
 construction does no I/O, so a lab with no referenced entry never opens it.
 """
 
-import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
-from ..models.base import CredSpec, compact_validation_error
+from ..models.base import CredSpec, JsonFileSource, compact_validation_error
 from .errors import CredsError
 
 if TYPE_CHECKING:
@@ -55,21 +54,18 @@ def parse_creds_document(data: object, *, source: str) -> dict[str, list[CredSpe
     return out
 
 
-class JsonCredsStore:
+class JsonCredsStore(JsonFileSource):
     """Creds store over one JSON file; parsed once, on first use."""
 
     def __init__(self, path: Path) -> None:
-        self.path = Path(path)
-        self.label = f"json:{self.path}"
+        super().__init__(path)
         self._creds: "dict[str, list[CredSpec]] | None" = None
 
     def _load(self) -> dict[str, list[CredSpec]]:
         if self._creds is None:
-            try:
-                data: Any = json.loads(self.path.read_text())
-            except (OSError, json.JSONDecodeError) as e:
-                raise CredsError(f"{self.path}: {e}") from e
-            self._creds = parse_creds_document(data, source=str(self.path))
+            self._creds = parse_creds_document(
+                self.read_document(CredsError), source=str(self.path)
+            )
         return self._creds
 
     def lookup(self, key: str) -> list[CredSpec]:
@@ -79,18 +75,6 @@ class JsonCredsStore:
     def list_keys(self) -> "list[str] | None":
         """Every key in the file, sorted."""
         return sorted(self._load())
-
-    def fingerprint(self) -> "str | None":
-        """Return the file's path, mtime and size, or ``|missing`` if it does not exist."""
-        try:
-            st = self.path.stat()
-        except OSError:
-            return f"{self.path}|missing"
-        return f"{self.path}|{st.st_mtime_ns}|{st.st_size}"
-
-    def stat_paths(self) -> "list[Path] | None":
-        """Return the one file this store's fingerprint is derived from."""
-        return [self.path]
 
 
 def _json_creds(c: "Configured[JsonCredsConfig, CredsEnv]") -> JsonCredsStore:

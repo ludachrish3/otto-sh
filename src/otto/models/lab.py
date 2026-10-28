@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import Field, field_validator, model_validator
 
-from .base import OttoModel, resources_nonempty
+from .base import OttoModel, nonnegative, resources_nonempty, strip_comment_keys
 
 if TYPE_CHECKING:
     from ..host.element import Element
@@ -31,12 +31,6 @@ membership.
 ``resources`` left this set with spec 2026-08-28 three-level-reservations: a
 host entry may declare its own (a slot), beside the element's and the lab's.
 """
-
-
-def _strip_comment_keys(data: object) -> object:
-    if isinstance(data, dict):
-        return {k: v for k, v in data.items() if not (isinstance(k, str) and k.startswith("_"))}
-    return data
 
 
 def _reject_bad_pattern(element: str, pattern: str) -> None:
@@ -66,7 +60,7 @@ class LabEntrySpec(OttoModel):
     @model_validator(mode="before")
     @classmethod
     def _strip(cls, data: object) -> object:
-        return _strip_comment_keys(data)
+        return strip_comment_keys(data)
 
     @field_validator("resources")
     @classmethod
@@ -105,23 +99,19 @@ class ElementSpec(OttoModel):
     @model_validator(mode="before")
     @classmethod
     def _strip(cls, data: object) -> object:
-        return _strip_comment_keys(data)
+        return strip_comment_keys(data)
 
     @field_validator("name")
     @classmethod
     def _name_slugs_nonempty(cls, v: str) -> str:
-        from ..host.remote_host import slug
+        from ..host.specs import name_slugs_nonempty
 
-        if not slug(v):
-            raise ValueError(f"{v!r} slugs to an empty id (needs at least one letter or digit)")
-        return v
+        return name_slugs_nonempty(v)
 
     @field_validator("id")
     @classmethod
     def _id_nonnegative(cls, v: int | None) -> int | None:
-        if v is not None and v < 0:
-            raise ValueError(f"must be >= 0, got {v}")
-        return v
+        return nonnegative(v)
 
     @field_validator("resources")
     @classmethod

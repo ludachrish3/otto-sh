@@ -18,6 +18,7 @@ from ...logger.mode import LogMode
 from ...models.base import cred_identity
 from ..connections import TERM_BACKENDS, TermMetadata
 from ..login_proxy import cred_for
+from ..options import SnmpOptions
 from ..transfer.registry import TRANSFER_BACKENDS
 from ..transfer.sftp import open_sftp_or_attribute
 from ..userland import APPLET_PRESENT, applet_capability
@@ -287,7 +288,8 @@ def _snmp_target(host: "RemoteHost") -> "tuple[str, int, str, str] | None":
             host.snmp.version,
         )
     if host.hop is None:
-        return (host.ip, DEFAULT_PORTS["snmp"], "public", "2c")
+        defaults = SnmpOptions()
+        return (host.ip, defaults.port, defaults.community, defaults.version)
     return None
 
 

@@ -23,7 +23,7 @@ Example::
 
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field, fields
+from dataclasses import MISSING, dataclass, field, fields
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ConfigDict
@@ -91,6 +91,26 @@ _EXTRA_IDENTITY_OVERRIDE_KEYS = frozenset({"username", "password", "tunnel"})
 duplicating one of these as a kwarg was a ``TypeError``; ``extra`` now wins
 silently on conflict (see ``SshOptions.extra``'s docstring), so ``_kwargs()``
 logs once instead of staying quiet about it."""
+
+
+def field_default(options_cls: "type[DataclassInstance]", name: str) -> Any:
+    """Return the default an options class declares for *name*.
+
+    The runtime dataclass is where a transport's defaults are decided, once.
+    Its boundary spec (:mod:`otto.host.option_specs`) and the survey's port
+    table read them through this rather than restating the values, so a
+    default changed here cannot be contradicted anywhere else. A field with
+    a ``default_factory`` has no single value to read and is refused.
+
+    Raises:
+        TypeError: *name* is not a field of *options_cls*, or has no plain default.
+    """
+    for f in fields(options_cls):
+        if f.name == name:
+            if f.default is not MISSING:
+                return f.default
+            break
+    raise TypeError(f"{options_cls.__name__} has no defaulted `{name}` field")
 
 
 def shadowed_fields(extra: dict[str, Any], cls: "type[DataclassInstance]") -> list[str]:

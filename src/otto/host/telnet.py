@@ -85,6 +85,49 @@ _naws_handler_installed: bool = False
 _live_console_transports: set[Any] = set()
 
 
+def send_naws(writer: Any, cols: int, rows: int, *, label: str) -> None:
+    """Transmit a NAWS subnegotiation (RFC 1073) with the given terminal size.
+
+    Sends the raw ``IAC SB NAWS <cols> <rows> IAC SE`` frame through
+    the writer's ``send_iac`` rather than ``write``: ``write``
+    escapes every 0xFF in the buffer to ``IAC IAC`` on the assumption the
+    caller is passing literal payload bytes, which would corrupt the framing
+    bytes of a raw command. The NAWS *payload itself* still doubles any
+    literal 0xFF per telnet framing, and negative sizes clamp to 0. A failed
+    write is logged against *label* and ignored: NAWS is best-effort. A
+    ``None`` *writer* (not connected) sends nothing. Every telnet-framed
+    client (the telnet and console clients) resizes through this.
+    """
+    if writer is None:
+        return
+    from telnetlib3.telopt import IAC, NAWS, SB, SE
+
+    payload = struct.pack(">HH", max(0, cols), max(0, rows))
+    payload = payload.replace(IAC, IAC + IAC)
+    frame = IAC + SB + NAWS + payload + IAC + SE
+    try:
+        writer.send_iac(frame)
+    except Exception as exc:  # noqa: BLE001 — best-effort NAWS write, any failure is non-fatal
+        logger.debug(f"NAWS write failed for {label}: {exc}")
+
+
+async def negotiate_no_echo(writer: Any, timeout: float) -> None:
+    """Ask the server to stop echoing and wait up to *timeout* for it to agree.
+
+    The non-interactive opener's step, on every telnet-framed client: with
+    the remote echo on, each command would come back inside its own output.
+    A negotiation that does not complete in time is logged and the
+    connection proceeds anyway.
+    """
+    from telnetlib3.telopt import DONT, ECHO
+
+    writer.iac(DONT, ECHO)
+    try:
+        await asyncio.wait_for(writer.wait_for(remote={"ECHO": False}), timeout=timeout)
+    except asyncio.TimeoutError:
+        logger.debug("ECHO negotiation timed out — proceeding anyway")
+
+
 def _register_console_transport(transport: Any) -> None:
     """Track a live single-client console transport (no-op if None)."""
     if transport is not None:
@@ -192,8 +235,6 @@ class TelnetClient:
                 what they type. Non-interactive callers (the default) get
                 ``DONT ECHO`` so command echoes don't mix with captured output.
         """
-        from telnetlib3.telopt import DONT, ECHO
-
         port = self.connect_port if self.connect_port is not None else self.options.port
         # Detailed entry log so a future-embedded-OS bring-up has the
         # parameters that drove the connect right next to whatever went wrong.
@@ -216,16 +257,7 @@ class TelnetClient:
             _register_console_transport(getattr(self.writer, "transport", None))
 
         if not interactive:
-            # Tell the server not to echo our input so commands don't appear in output,
-            # then wait for the negotiation to complete before proceeding to login.
-            self.writer.iac(DONT, ECHO)  # type: ignore[union-attr]
-            try:
-                await asyncio.wait_for(
-                    self.writer.wait_for(remote={"ECHO": False}),  # type: ignore[union-attr]
-                    timeout=self.options.echo_negotiation_timeout,
-                )
-            except asyncio.TimeoutError:
-                logger.debug("ECHO negotiation timed out — proceeding anyway")
+            await negotiate_no_echo(self.writer, self.options.echo_negotiation_timeout)
         if self.options.login:
             logger.debug(f"Performing telnet login for {self.host}")
             await self.login()
@@ -255,18 +287,7 @@ class TelnetClient:
         corrupt the framing bytes (``IAC SB``/``IAC SE``) of a raw command.
         The NAWS *payload itself* still escapes any literal 0xFF per RFC 1073.
         """
-        if self.writer is None:
-            return
-        from telnetlib3.telopt import IAC, NAWS, SB, SE
-
-        payload = struct.pack(">HH", max(0, cols), max(0, rows))
-        # Double any 0xFF (IAC) bytes inside the payload per telnet framing.
-        payload = payload.replace(IAC, IAC + IAC)
-        frame = IAC + SB + NAWS + payload + IAC + SE
-        try:
-            self.writer.send_iac(frame)  # type: ignore[union-attr]
-        except Exception as exc:  # noqa: BLE001 — best-effort NAWS write, any failure is non-fatal  # pragma: no cover
-            logger.debug(f"NAWS write failed for {self.host}: {exc}")
+        send_naws(self.writer, cols, rows, label=str(self.host))
 
     async def login(self) -> None:
         """Send credentials through an established telnet stream.

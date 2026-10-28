@@ -459,6 +459,7 @@ call	otto.creds:JsonCredsStore	sync	PK:path:-
 member	otto.creds:JsonCredsStore.fingerprint	method	sync	-
 member	otto.creds:JsonCredsStore.list_keys	method	sync	-
 member	otto.creds:JsonCredsStore.lookup	method	sync	PK:key:-
+member	otto.creds:JsonCredsStore.read_document	method	sync	PK:refuse:-
 member	otto.creds:JsonCredsStore.stat_paths	method	sync	-
 abstract	otto.creds:JsonCredsStore	-
 name	otto.creds:compile_creds	function
@@ -3338,6 +3339,7 @@ call	otto.inventory:JsonInventory	sync	PK:path:- KO:supplies:N
 member	otto.inventory:JsonInventory.fingerprint	method	sync	-
 member	otto.inventory:JsonInventory.list_keys	method	sync	-
 member	otto.inventory:JsonInventory.lookup	method	sync	PK:key:-
+member	otto.inventory:JsonInventory.read_document	method	sync	PK:refuse:-
 member	otto.inventory:JsonInventory.stat_paths	method	sync	-
 abstract	otto.inventory:JsonInventory	-
 name	otto.inventory:JsonInventoryConfig	model

@@ -22,7 +22,7 @@ from pathlib import Path
 
 from .capture import gitio
 from .capture.remap import Hunk, LineRemapper, parse_u0_hunks
-from .capture.treediff import strip_side, unquote
+from .capture.treediff import iter_diff_sections, read_section_header, unquote
 from .tickets import TicketSpec
 
 logger = logging.getLogger(__name__)
@@ -46,41 +46,12 @@ def parse_commit_diff(diff_text: str) -> dict[str, CommitFileDiff]:
     unattributed. Deletions are dropped — they have no new-side lines.
     """
     out: dict[str, CommitFileDiff] = {}
-    section: list[str] = []
-
-    def flush() -> None:
-        if not section:
-            return
-        old: str | None = None
-        new: str | None = None
-        saw_new_marker = False
-        in_hunks = False
-        for line in section:
-            if line.startswith("@@ "):
-                in_hunks = True
-            if in_hunks:
-                continue
-            if line.startswith("rename from "):
-                old = unquote(line[len("rename from ") :])
-            elif line.startswith("rename to "):
-                new = unquote(line[len("rename to ") :])
-            elif line.startswith("--- "):
-                old = strip_side(line[4:], "a/")
-            elif line.startswith("+++ "):
-                new = strip_side(line[4:], "b/")
-                saw_new_marker = True
-        if new is None:
-            return  # deletion (new side /dev/null) or unparsable
-        hunks = parse_u0_hunks("\n".join(section)) if saw_new_marker else []
-        out[new] = CommitFileDiff(new_path=new, old_path=old, hunks=hunks)
-
-    for line in diff_text.splitlines():
-        if line.startswith("diff --git "):
-            flush()
-            section = [line]
-        elif section:
-            section.append(line)
-    flush()
+    for section in iter_diff_sections(diff_text):
+        header = read_section_header(section)
+        if header.new is None:
+            continue  # deletion (new side /dev/null) or unparsable
+        hunks = parse_u0_hunks("\n".join(section)) if header.has_hunks else []
+        out[header.new] = CommitFileDiff(new_path=header.new, old_path=header.old, hunks=hunks)
     return out
 
 

@@ -41,7 +41,6 @@ from .product import (
     ProductPlan,
     ShellProduct,
     cov_dir_of,
-    cov_dir_of_name,
     ensure_stage_dir,
     planned_stage_dir,
     stage_lines,
@@ -49,8 +48,10 @@ from .product import (
 )
 from .shell_kind import (
     bool_param,
+    coverage_params,
+    placeholder_values,
+    refuse_unknown_params,
     stage_dir_param,
-    str_list_param,
     str_param,
     substitute_placeholders,
 )
@@ -408,17 +409,9 @@ def _docker_image_kind(entry: DeclaredEntry, host: "Host") -> DockerImageProduct
     stage_dir = stage_dir_param(entry, params)
     run_args = str_param(entry, params, "run_args") or ""
     container_name = str_param(entry, params, "container_name")
-    cov_dir = str_param(entry, params, "cov_dir")
-    if cov_dir == "":
-        raise ValueError(f"[[products]] {entry.name!r}: 'cov_dir' must not be empty")
-    instrumented = bool_param(entry, params, "instrumented")
-    debug_log_globs = str_list_param(entry, params, "debug_log_globs")
-    if params:
-        raise ValueError(
-            f"[[products]] {entry.name!r}: kind 'docker_image' got unknown param(s): "
-            f"{sorted(params)}; valid: {_VALID}"
-        )
-    values = {"cov_dir": cov_dir or cov_dir_of_name(entry.name), "name": entry.name}
+    cov = coverage_params(entry, params)
+    refuse_unknown_params(entry, params, "kind 'docker_image'", _VALID)
+    values = placeholder_values(entry, cov.cov_dir)
     expanded = substitute_placeholders(entry, "run_args", run_args, values) or ""
     # `artifact` only satisfies ShellProduct's constructor here — instrumented()
     # is overridden to never scan it (see DockerImageProduct.instrumented), so
@@ -428,9 +421,9 @@ def _docker_image_kind(entry: DeclaredEntry, host: "Host") -> DockerImageProduct
         artifact=artifact,
         name=entry.name,
         stage_dir=stage_dir,
-        cov_dir=cov_dir,
-        debug_log_globs=debug_log_globs,
-        instrumented_override=instrumented,
+        cov_dir=cov.cov_dir,
+        debug_log_globs=cov.debug_log_globs,
+        instrumented_override=cov.instrumented,
         image=image,
         is_tarball=is_tarball,
         pull=pull,

@@ -25,3 +25,19 @@ CAPTURE_WRITE_VERSIONS: list[int] = [3]
 
 TICKETS_WRITE_VERSIONS: list[int] = [2]
 """``tickets.json`` versions ``build_ticket_export`` writes."""
+
+
+def found_version_label(found: object) -> str:
+    """Name the version stamp a retained file carried, for a reader's refusal.
+
+    Distinguishes "no version key at all" (``"none"``) from "a key was
+    present but is not the int the reader expects" (``"'2' (expected an
+    int)"``, say, for a hand-edited file): the latter must not collapse to
+    "none", which would hide that a value was found, just the wrong shape.
+    Every reader of a ``*_READ_VERSIONS`` list phrases its refusal with this.
+    """
+    if found is None:
+        return "none"
+    if isinstance(found, int):
+        return f"v{found}"
+    return f"{found!r} (expected an int)"
