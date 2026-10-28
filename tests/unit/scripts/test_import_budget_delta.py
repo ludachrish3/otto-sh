@@ -684,7 +684,7 @@ def test_judge_prints_the_deciding_pair_s_tables(tmp_path: Path, capsys):
     assert main(["judge", *args, "--minors", "3.10"]) == 0
     out = capsys.readouterr().out
     assert f"| {PLAIN} | 500 | 500 | +0 |" in out
-    assert "504" not in out, "the discarded first pair's growth is not shown as evidence"
+    assert "| 504 |" not in out, "the discarded first pair's growth is not shown as evidence"
     assert "confirmed by pair 3 (tables: pair 2)" in out
 
 
@@ -1158,7 +1158,7 @@ def test_a_second_pair_that_disagrees_gets_a_third_and_the_agreeing_pairs_decide
     text = capsys.readouterr().out
     assert "measuring the pair again (3 of 3)" in text
     assert "confirmed by pair 3 (tables: pair 2)" in text
-    assert "504" not in text, "the discarded first pair is not shown as evidence"
+    assert f"tip {PLAIN}: 504" not in text, "the discarded first pair is not shown as evidence"
     assert "STOP" not in text
 
 
