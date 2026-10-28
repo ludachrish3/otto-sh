@@ -252,6 +252,23 @@ lacks, instrumenting a module of your own, and the alternative
 `coverage = "kernel"` method. {doc}`tracks/kmod` builds one module from start to
 finish.
 
+## A Zephyr extension
+
+A loadable extension on a Zephyr board is a product too, declared with
+`kind = "embedded"`. The board has no filesystem for otto to fetch `.gcda`
+files from, so the extension carries the embedded-gcov runtime and dumps its
+counters as a hexdump over the console, which otto decodes:
+
+```{literalinclude} ../examples/quickstart-embedded/.otto/settings.toml
+:language: toml
+:start-after: "# doc: begin declare"
+:end-before: "# doc: end declare"
+```
+
+{doc}`../cli/cov/instrumenting/embedded` has the rest: the runtime, its
+patch for current compilers, and what the build must do.
+{doc}`tracks/embedded` builds one extension from start to finish.
+
 ## A container image
 
 A container image run by a docker daemon is a product too, declared with

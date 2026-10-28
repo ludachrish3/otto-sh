@@ -27,8 +27,8 @@ below.
 **The coverage runtime ships inside your extension, not in the base
 image**: an instrumented extension is self-contained — it carries its
 product code, the embedded-gcov runtime, and the entry points otto calls.
-The complete working example in the otto repository is `tests/project3/product/`
-(build script, CMake, and extension source).
+The complete working example is the one {doc}`../../../setup/tracks/embedded`
+builds: its build script, CMake, and extension source.
 
 ### One extension, one translation unit
 
@@ -50,6 +50,7 @@ product sources and the embedded-gcov runtime sources are included into one
 /* … your product code … */
 ```
 
+(coverage-embedded-vendoring)=
 ### Vendoring embedded-gcov, and the modern-GCC patch
 
 Vendor embedded-gcov (a git submodule works well) — and note that upstream
@@ -95,28 +96,23 @@ extension is a single TU) is an exported wrapper that calls the constructor
 through an assembler alias. The same pattern exports a reset entry point, so
 one complete set of exports looks like this:
 
-```c
-/* Verify the generated ctor name with:  nm <ext>.llext | grep _sub_I  */
-extern void gcov_ctor(void) __asm__("_sub_I_00100_0");
-void cov_init(void) { gcov_ctor(); }        /* registers this TU */
-
-void cov_dump(void) { __gcov_exit(); }      /* hexdump over the console */
-void cov_reset(void) { __gcov_clear(); }    /* zero the counters in place */
-
-LL_EXTENSION_SYMBOL(cov_init);
-LL_EXTENSION_SYMBOL(cov_dump);
-LL_EXTENSION_SYMBOL(cov_reset);
+```{literalinclude} ../../../../src/otto/coverage/embedded_gcov/starter/cov_entry.c
+:language: c
+:start-after: "// doc: begin entry-points"
+:end-before: "// doc: end entry-points"
 ```
+
+`otto init --embedded-gcov` writes this starter under `third_party/embedded-gcov-patch-consumer/`; copy it into your extension's sources. If the
+alias fails to link, find the generated constructor's name with
+`nm <ext>.llext | grep _sub_I`.
 
 The runtime lifecycle over the console is then:
 `llext load_hex` → `call_fn <ext> cov_init` → exercise the product →
 `call_fn <ext> cov_dump`, and `call_fn <ext> cov_reset` whenever counters are
-cleared (`otto cov clean`, `otto cov get --clean`, `otto test --cov
---cov-clean`, and after an `otto test --cov` collection). Otto issues all of
+cleared ({ref}`coverage-embedded-reset` lists when). Otto issues all of
 them: the load and `cov_init` are the `embedded` product's `install`, the
 dump is collection's, and the reset belongs to {doc}`../clean` — see
-configuration below and {ref}`coverage-embedded-reset` for the reset export
-in full.
+configuration below.
 
 (coverage-embedded-reset)=
 ### Resetting counters
@@ -169,22 +165,10 @@ zephyr37-llext/cov_ext: reset_fn 'cov_reset' failed: the board did not confirm t
 With Zephyr's `add_llext_target()`, coverage flags attach to the extension's
 library target — the (throwaway) host app stays uninstrumented:
 
-```cmake
-add_llext_target(my_product_cov
-  OUTPUT  ${ZEPHYR_BINARY_DIR}/my_product_cov.llext
-  SOURCES ${PROJECT_SOURCE_DIR}/src/my_product_cov.c)
-
-target_include_directories(my_product_cov_llext_lib PRIVATE
-  ${PROJECT_SOURCE_DIR}/../third_party/embedded-gcov/code)
-
-target_compile_options(my_product_cov_llext_lib PRIVATE
-  -fprofile-arcs -ftest-coverage -O0)
-
-add_dependencies(app my_product_cov)
+```{literalinclude} ../../../examples/quickstart-embedded/ext/CMakeLists.txt
+:language: cmake
+:caption: ext/CMakeLists.txt
 ```
-
-(`-O0` keeps the line table predictable; without the `add_dependencies` a
-plain `west build` never produces the `.llext`.)
 
 (coverage-embedded-stamp-guard)=
 ### Post-build: strip, and guard the `.gcno` stamp
@@ -204,11 +188,11 @@ recompiles the source (fresh `.gcno`, fresh stamp) but re-ships a **stale**
 
 One command does both, so the guard runs on every build:
 
-```bash
-otto cov embedded-gcov finish \
-    build/zephyr/my_product_cov.llext build/zephyr/my_product_cov.stripped.llext \
-    --objcopy "$(command -v arm-zephyr-eabi-objcopy)" \
-    --gcno-dir build/CMakeFiles/my_product_cov_llext_lib.dir
+```{literalinclude} ../../../examples/quickstart-embedded/ext/build.sh
+:language: bash
+:caption: ext/build.sh
+:start-at: '"$OTTO" cov embedded-gcov finish'
+:end-at: '--gcno-dir'
 ```
 
 `finish` strips the ELF into the second path, removing the constructor tables
@@ -257,7 +241,7 @@ runs the embedded-gcov constructor, which has to happen before any dump.
 `uninstall` unloads it, and `is_installed` asks the loader's own list command
 what is resident. `dump_fn` names the exported function the collector calls
 to dump counters, defaulting to `cov_dump`. `reset_fn` names the export
-`clean_coverage` calls to zero them, defaulting to `cov_reset` — see
+every counter reset calls to zero them, defaulting to `cov_reset` — see
 {ref}`coverage-embedded-reset` above.
 
 {doc}`../../../configuration/declared-products-tools` has the full param
@@ -276,9 +260,10 @@ counters come back over the console, not out of a directory.
 cross-gcov decodes the counters against, which is a build-tree fact, not a
 product one.
 
-The `dump_command` timeout is generous (120 s) because the hexdump is emitted
+The dump's timeout is generous (120 s) because the hexdump is emitted
 one `printk` character at a time and can take several seconds for large binaries.
 
+(coverage-embedded-toolchain)=
 ## Toolchain for embedded coverage
 
 Embedded hosts that need a cross-`gcov` binary for the report step can declare
@@ -307,6 +292,7 @@ Note that `lcov` is a host-side Perl orchestrator and is **not** part of the
 cross toolchain — point it at the host's `lcov` binary (e.g. `/usr/bin/lcov`),
 not a path under the sysroot.
 
+(coverage-embedded-operational-notes)=
 ## Operational notes
 
 - **The base image needs headroom, not coverage code.** The loader base must

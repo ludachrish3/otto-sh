@@ -1,0 +1,27 @@
+$ otto --lab example_lab cov get --tier manual --ticket QS-1 --tester-name docs --tester-email docs@example.invalid
+INFO     fleet of interest: 2 of 3 lab hosts (1 project(s), 0 excluded)
+INFO     Dumping embedded coverage for mathops from dut via 'llext call_fn mathops cov_dump'
+INFO     Connected to <Peer 127.0.0.1 <port>>
+INFO     @dut   | llext call_fn mathops cov_dump
+INFO     @dut > | gcov_exit
+         @dut > | Emitting 2208 bytes for
+         /tmp/otto-gs/quickstart-embedded/build/ext/CMakeFiles/mathops_llext_lib.dir/src/ext.c.gcda
+         @dut > | <gcda hexdump>
+         @dut > |
+         @dut > |
+         /tmp/otto-gs/quickstart-embedded/build/ext/CMakeFiles/mathops_llext_lib.dir/src/ext.c.gcda
+         @dut > | Gcov End
+INFO     Decoded 1 .gcda file(s) for mathops from dut into
+         /tmp/otto-gs/xdir/cov/<run>_get/cov/dut/mathops
+INFO     Coverage data collected to /tmp/otto-gs/xdir/cov/<run>_get/cov (1 product
+         dir(s))
+INFO     === Capturing dut / mathops ===
+INFO     lcov capture: 1 file(s) ->
+         /tmp/otto-gs/xdir/cov/<run>_get/cov/dut/mathops/board.info
+INFO     dut/mathops: skipped 3 source file(s) outside the project root
+INFO     Coverage captures produced: 1 board(s)
+INFO     Connection closed to <Peer 127.0.0.1 <port>>
+/tmp/otto-gs/xdir/cov/<run>_get/cov/dut/mathops/capture.json
+Coverage captured: 1 product(s) -> /tmp/otto-gs/xdir/cov/<run>_get/cov
+
+Output directory: /tmp/otto-gs/xdir/cov/<run>_get

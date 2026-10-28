@@ -192,7 +192,6 @@ ROOT = Path(__file__).resolve().parents[1]
 # page can swap unseen.
 EXEMPT: dict[str, Exemption] = {
     "cli/cov/instrumenting/containers.md": Exemption("L4.5 docker track", 10),
-    "cli/cov/instrumenting/embedded.md": Exemption("L4.3 embedded track", 1),
     "setup/coverage.md": Exemption("L4.5 docker track", 1),
 }
 

@@ -30,7 +30,6 @@ FILES = [
 # added to EXEMPT, or a ceiling raised above this pin, fails the test below.
 FIRST_CEILINGS: dict[str, int] = {
     "cli/cov/instrumenting/containers.md": 10,
-    "cli/cov/instrumenting/embedded.md": 2,
     "setup/coverage.md": 2,
 }
 

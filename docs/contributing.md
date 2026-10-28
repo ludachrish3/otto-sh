@@ -1089,6 +1089,7 @@ first time a patch reaches further. The module docstring records the two
 incidents that made this the rule; `tests/unit/test_fake_project_fixture.py` pins
 the factory against a parsed `Project`.
 
+(embedded-coverage-bed)=
 ### Embedded coverage bed
 
 `zephyr37_llext` is the embedded coverage instance: an ARM `mps2_an385` Zephyr in the

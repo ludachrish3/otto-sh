@@ -11,4 +11,5 @@ own tests run on.
 ../release_process
 bed-case-study/index
 kmodcov-provisioning
+embedded-boards
 ```

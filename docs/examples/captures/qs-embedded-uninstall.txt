@@ -1,0 +1,11 @@
+$ otto --lab example_lab run uninstall
+INFO     fleet of interest: 2 of 3 lab hosts (1 project(s), 0 excluded)
+INFO     Connected to <Peer 127.0.0.1 <port>>
+INFO     @dut   | llext unload mathops
+INFO     @dut > | Unloaded extension mathops
+INFO     @dut   | llext unload mathops
+INFO     @dut > | No such extension mathops
+INFO     @dut   | mathops: uninstalled
+INFO     Connection closed to <Peer 127.0.0.1 <port>>
+
+Output directory: /tmp/otto-gs/xdir/run/<run>_uninstall

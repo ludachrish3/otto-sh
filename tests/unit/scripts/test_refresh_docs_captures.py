@@ -102,7 +102,7 @@ def test_check_reports_drift_and_missing(tmp_path, capsys):
 
 def test_placeholders_render_as_a_reader_would_type_them():
     line = rdc.render_command(
-        ["{python}", "{repo}/scripts/x.py", "{tmp}/out.json", "--path", "{project}/lab"]
+        ["{python}", "{checkout}/scripts/x.py", "{tmp}/out.json", "--path", "{project}/lab"]
     )
     assert line == "$ python ./scripts/x.py /tmp/otto-gs/out.json --path ./lab"
 

@@ -1851,12 +1851,17 @@ coverage-gate-args: ## (internal) Print the declared coverage gate, one argv ele
 # tach.toml with its renderer for the architecture docs' module dependencies page.
 # Every file under docs/examples is a literalinclude or a download-archive input,
 # so editing one must rebuild the pages that show it (build output and bytecode
-# excluded: they are not what a page shows).
+# excluded: they are not what a page shows). Only `.py` files under src/otto are globbed;
+# any other file a page literalincludes (the starter, kmodcov.h, consumer.mk) is listed by
+# name, and tests/unit/docs/test_sphinx_srcs_cover_included_sources.py fails on a missing one.
 SPHINX_SRCS :=  docs/conf.py                        \
                 $(shell find docs -name '*.rst')    \
                 $(shell find docs -name '*.md')    \
                 $(shell find docs/examples -type f -not -path '*/build/*' -not -path '*/__pycache__/*') \
                 $(shell find src/otto -name '*.py') \
+                src/otto/coverage/embedded_gcov/starter/cov_entry.c \
+                src/otto/kmodcov/kmodcov.h          \
+                src/otto/kmodcov/consumer.mk        \
                 schemas/support_matrix.json         \
                 scripts/render_support_matrix.py    \
                 schemas/kmodcov_matrix.json           \

@@ -1,0 +1,17 @@
+$ otto --lab example_lab -n run install
+INFO     [DRY RUN] Commands and file transfers will be skipped. No device will be contacted.
+INFO     fleet of interest: 2 of 3 lab hosts (1 project(s), 0 excluded)
+quickstart-embedded
+  dut
+    install  mathops  LOAD /tmp/otto-gs/quickstart-embedded/build/ext/zephyr/mathops.stripped.llext as mathops
+                      llext call_fn mathops cov_init
+  test4
+  not checked:
+    dut: mathops: the device's answer to the load and to each unload round (at most 16 rounds)
+dry run: no command body was run and no device was contacted
+  would run: otto run install
+  options:
+    InstallOptions: ensure=False, recover_partial=True
+  lab: example_lab (3 hosts)
+
+Output directory: /tmp/otto-gs/xdir/run/<run>_install

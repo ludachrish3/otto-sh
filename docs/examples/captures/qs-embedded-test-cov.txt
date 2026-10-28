@@ -1,0 +1,66 @@
+$ otto --lab example_lab test --cov --cov-dir /tmp/otto-gs/xdir/quickstart-embedded/e2e/cov --no-random TestMathops
+INFO     fleet of interest: 2 of 3 lab hosts (1 project(s), 0 excluded)
+======================================= test session starts ========================================
+INFO     Connected to <Peer 127.0.0.1 <port>>
+INFO     @dut   | llext call_fn mathops cov_reset
+INFO     @dut > | No such extension mathops
+INFO     coverage counters cleared before the run on 1 product(s) across 1 host(s)
+INFO     Connection closed to <Peer 127.0.0.1 <port>>
+INFO     === test_result_is_printed[op_clamp_lo-op_clamp_lo=0] ===
+INFO     Connected to <Peer 127.0.0.1 <port>>
+INFO     @dut   | llext list
+INFO     @dut > | | Name             | Size         |
+INFO     @dut   | mathops: staged
+INFO     @dut   | llext call_fn mathops cov_init
+INFO     @dut > | __gcov_init called for
+         /tmp/otto-gs/quickstart-embedded/build/ext/CMakeFiles/mathops_llext_lib.dir/src/ext.c.gcda
+INFO     @dut   | mathops: installed
+INFO     @dut   | llext call_fn mathops op_clamp_lo
+INFO     @dut > | op_clamp_lo=0
+INFO     === test_result_is_printed[op_clamp_in-op_clamp_in=7] ===
+INFO     @dut   | llext list
+INFO     @dut > | | Name             | Size         |
+         @dut > | |          mathops |        48752 |
+INFO     @dut   | llext call_fn mathops op_clamp_in
+INFO     @dut > | op_clamp_in=7
+INFO     === test_result_is_printed[op_div_ok-op_div_ok=0,5] ===
+INFO     @dut   | llext list
+INFO     @dut > | | Name             | Size         |
+         @dut > | |          mathops |        48752 |
+INFO     @dut   | llext call_fn mathops op_div_ok
+INFO     @dut > | op_div_ok=0,5
+INFO     === test_result_is_printed[op_div_zero-op_div_zero=-1,0] ===
+INFO     @dut   | llext list
+INFO     @dut > | | Name             | Size         |
+         @dut > | |          mathops |        48752 |
+INFO     @dut   | llext call_fn mathops op_div_zero
+INFO     @dut > | op_div_zero=-1,0
+INFO     Connection closed to <Peer 127.0.0.1 <port>>
+
+------------- generated xml file: /tmp/otto-gs/xdir/test/<run>/junit.xml -------------
+=== 4 passed in <t>s ===
+INFO     Dumping embedded coverage for mathops from dut via 'llext call_fn mathops cov_dump'
+INFO     Connected to <Peer 127.0.0.1 <port>>
+INFO     @dut   | llext call_fn mathops cov_dump
+INFO     @dut > | gcov_exit
+         @dut > | Emitting 2208 bytes for
+         /tmp/otto-gs/quickstart-embedded/build/ext/CMakeFiles/mathops_llext_lib.dir/src/ext.c.gcda
+         @dut > | <gcda hexdump>
+         @dut > |
+         @dut > |
+         /tmp/otto-gs/quickstart-embedded/build/ext/CMakeFiles/mathops_llext_lib.dir/src/ext.c.gcda
+         @dut > | Gcov End
+INFO     Decoded 1 .gcda file(s) for mathops from dut into
+         /tmp/otto-gs/xdir/quickstart-embedded/e2e/cov/dut/mathops
+INFO     Coverage data collected to /tmp/otto-gs/xdir/quickstart-embedded/e2e/cov (1 product dir(s))
+INFO     === Capturing dut / mathops ===
+INFO     lcov capture: 1 file(s) ->
+         /tmp/otto-gs/xdir/quickstart-embedded/e2e/cov/dut/mathops/board.info
+INFO     dut/mathops: skipped 3 source file(s) outside the project root
+INFO     Coverage captures produced: 1 board(s)
+INFO     @dut   | llext call_fn mathops cov_reset
+INFO     @dut > | gcov_clear
+INFO     coverage counters cleared after collection on 1 product(s) across 1 host(s)
+INFO     Connection closed to <Peer 127.0.0.1 <port>>
+
+Output directory: /tmp/otto-gs/xdir/test/<run>

@@ -1,0 +1,23 @@
+$ ./build/tests/unit/unit_tests
+Running main() from ./googletest/src/gtest_main.cc
+[==========] Running 5 tests from 2 test suites.
+[----------] Global test environment set-up.
+[----------] 3 tests from Clamp
+[ RUN      ] Clamp.BelowRangeGivesTheLowBound
+[       OK ] Clamp.BelowRangeGivesTheLowBound (<n> ms)
+[ RUN      ] Clamp.InsideRangeIsUnchanged
+[       OK ] Clamp.InsideRangeIsUnchanged (<n> ms)
+[ RUN      ] Clamp.AboveRangeGivesTheHighBound
+[       OK ] Clamp.AboveRangeGivesTheHighBound (<n> ms)
+[----------] 3 tests from Clamp (<n> ms total)
+
+[----------] 2 tests from Div
+[ RUN      ] Div.DividesWhenTheDivisorIsNotZero
+[       OK ] Div.DividesWhenTheDivisorIsNotZero (<n> ms)
+[ RUN      ] Div.RefusesZeroAndLeavesTheOutputAlone
+[       OK ] Div.RefusesZeroAndLeavesTheOutputAlone (<n> ms)
+[----------] 2 tests from Div (<n> ms total)
+
+[----------] Global test environment tear-down
+[==========] 5 tests from 2 test suites ran. (<n> ms total)
+[  PASSED  ] 5 tests.

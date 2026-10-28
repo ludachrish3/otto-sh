@@ -1,0 +1,12 @@
+$ otto --lab example_lab cov report /tmp/otto-gs/xdir/quickstart-embedded/e2e --dir /tmp/otto-gs/xdir/quickstart-embedded/report
+INFO     unit unit: kept 1 product source files, dropped <n> not in any product
+INFO     lcov capture -> /tmp/otto-gs/xdir/quickstart-embedded/report/_work/unit_unit_0.raw.info
+INFO     Loading unit_unit_0.info as unit coverage
+INFO     Loaded 1 files from unit_unit_0.info
+INFO     === Rendering coverage report ===
+INFO     Report written to /tmp/otto-gs/xdir/quickstart-embedded/report/index.html
+INFO     Done. Report: /tmp/otto-gs/xdir/quickstart-embedded/report/index.html
+INFO     Coverage: 96.2% overall (3 files)
+INFO     Report: /tmp/otto-gs/xdir/quickstart-embedded/report/index.html
+
+Output directory: /tmp/otto-gs/xdir/cov/<run>_report

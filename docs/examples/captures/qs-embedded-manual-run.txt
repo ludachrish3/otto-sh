@@ -1,0 +1,8 @@
+$ otto --lab example_lab host dut exec 'llext call_fn mathops op_clamp_in'
+INFO     fleet of interest: 2 of 3 lab hosts (1 project(s), 0 excluded)
+INFO     Connected to <Peer 127.0.0.1 <port>>
+INFO     @dut   | llext call_fn mathops op_clamp_in
+INFO     @dut > | op_clamp_in=7
+INFO     Connection closed to <Peer 127.0.0.1 <port>>
+
+Output directory: /tmp/otto-gs/xdir/host/<run>_exec

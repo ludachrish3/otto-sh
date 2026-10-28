@@ -292,7 +292,7 @@ class RunContext:
             "{python}": sys.executable,
             "{tmp}": str(self.tmp),
             "{project}": project,
-            "{repo}": str(ROOT),  # captures run from {tmp}; repo scripts need an absolute path
+            "{checkout}": str(ROOT),  # captures run from {tmp}; scripts need an absolute path
             "{xdir}": str(self.tmp / "xdir"),  # the capture's OTTO_XDIR
         }
 
@@ -632,7 +632,7 @@ def render_command(argv: list[str]) -> str:
         "{python}": "python",
         "{tmp}": str(SCRATCH_DIR),
         "{project}": ".",
-        "{repo}": ".",
+        "{checkout}": ".",
         "{xdir}": str(SCRATCH_DIR / "xdir"),
     }
     rendered = []

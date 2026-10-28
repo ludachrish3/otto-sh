@@ -1,0 +1,55 @@
+# The embedded track's example project (Set up a project > Tracks > Embedded).
+# The track page includes the sections between `# doc: begin <id>` and
+# `# doc: end <id>`.
+name = "quickstart-embedded"
+version = "0.1.0"
+
+# doc: begin libs
+libs = ["pylib"]
+tests = ["tests"]
+# doc: end libs
+
+[[lab.sources]]
+backend = "json"
+paths = ["lab_data"]
+
+[project]
+lab_patterns = ["example_lab"]
+
+# doc: begin declare
+# The extension under test: loaded onto dut by `otto run install`, which then
+# calls cov_init, and unloaded by `otto run uninstall`.
+[[products]]
+name = "mathops"
+kind = "embedded"
+artifact = "build/ext/zephyr/mathops.stripped.llext"
+call_after_load = ["cov_init"]
+match = { id = "dut" }
+# doc: end declare
+
+# doc: begin coverage
+[coverage]
+hosts = "dut"
+
+# What the e2e tests exercised, collected by `otto test --cov`.
+[coverage.tiers.system]
+kind = "e2e"
+precedence = 1
+
+# What someone exercised by hand, fetched by `otto cov get --tier manual`
+# and committed under .otto/coverage/manual/.
+[coverage.tiers.manual]
+kind = "manual"
+precedence = 2
+
+# What the unit tests exercised: their counters in the build tree, read at
+# report time. Only the gtest objects are read, never the extension's build.
+[coverage.tiers.unit]
+kind = "unit"
+precedence = 3
+harvest_dirs = ["build/tests"]
+
+# Where the extension's .gcno files are: the report's source root.
+[coverage.embedded]
+build_dir = "build/ext"
+# doc: end coverage

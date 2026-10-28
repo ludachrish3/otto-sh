@@ -57,14 +57,12 @@ GIT_SENSE: dict[str, list[str]] = {
     "AGENTS.md": ["treat the main checkout at the repo root as READ-ONLY"],
     # otto's own checkout: upstream drift cannot change its bytes.
     "Makefile": ["upstream drift cannot change a byte this repo"],
-    # otto's own checkout: the {repo} manifest token and the <repo> placeholder
-    # name it, and the scrub orders its root against the examples root.
+    # otto's own checkout: the <repo> placeholder names it, and the scrub orders
+    # its root against the examples root.
     "scripts/refresh_docs_captures.py": [
         "# root before the repo root (an examples root under ROOT is a",
         "# substring of it and must win), and the repo root before the",
         '(re.escape(str(ROOT)), "<repo>"),',
-        '"{repo}": str(ROOT),  # captures run from {tmp}; repo scripts need an absolute path',
-        '"{repo}": ".",',
     ],
     # otto's own checkout: the child's cwd, the script's sys.path and a
     # failure message's relative path.

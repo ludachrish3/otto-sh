@@ -72,13 +72,15 @@ def _extension_artifacts() -> list[Path]:
 
 @pytest.fixture
 def clean_zephyr37_llext():
-    """Fail loud unless ``zephyr37_llext`` answers, and clear any loaded extension.
+    """Fail loud unless ``zephyr37_llext`` answers; clear ``cov_ext`` before and after.
 
     Populates the active :class:`~otto.context.OttoContext` with the
     ``test4`` hop (as the integration host conftest does) so the embedded
     host's ``test4`` hop resolves, probes the console, and best-effort
     unloads ``cov_ext`` so the suite's ``load_hex`` starts from a clean slate
-    (``--cov`` runs leave it resident).
+    (``--cov`` runs leave it resident). It unloads it again once the test is
+    done, so the board is left as found: a later run on the same board (the
+    docs captures quote ``llext list``) never sees this test's extension.
     """
     import asyncio
 
@@ -106,9 +108,10 @@ def clean_zephyr37_llext():
     )
     set_context(OttoContext(lab=lab))
 
-    host = create_host_from_dict(host_data("zephyr37_llext"), element=element_for("zephyr37_llext"))
-
     async def _prep() -> bool:
+        host = create_host_from_dict(
+            host_data("zephyr37_llext"), element=element_for("zephyr37_llext")
+        )
         try:
             res = (await host.run("kernel version", timeout=20)).only
             # Result-family API: the command's output lives in .value (the
@@ -127,6 +130,9 @@ def clean_zephyr37_llext():
             "This is a hard failure by design (not a skip) so a dead bed can't hide "
             "behind a green run."
         )
+    yield
+    # Leave the board as found: the same probe-and-unload, its verdict unused.
+    asyncio.run(_prep())
 
 
 def _run_otto(*args: str, xdir: Path, timeout: int = 300) -> subprocess.CompletedProcess[str]:

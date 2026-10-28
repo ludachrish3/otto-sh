@@ -1,0 +1,41 @@
+{
+  "labs": { "example_lab": {} },
+  "elements": [
+    {
+      "name": "dut",
+      "labs": ["example_lab"],
+      "hosts": [
+        {
+          "ip": "192.0.2.10",
+          "os_type": "zephyr",
+          "os_version": "3.7",
+          "command_frame": "zephyr-serial",
+          "valid_transfers": ["console"],
+          "valid_terms": ["console"],
+          "filesystem": "none",
+          "loader": "llext-hex",
+          "max_filename_len": 32,
+          "console_options": {
+            "server": "console",
+            "port": 2323,
+            "write_chunk_size": 64,
+            "write_chunk_delay": 0.015
+          },
+          "toolchain": {
+            "sysroot": "/opt/zephyr-sdk/arm-zephyr-eabi",
+            "gcov": "bin/arm-zephyr-eabi-gcov",
+            "lcov": "/usr/bin/lcov"
+          }
+        }
+      ]
+    },
+    {
+      "name": "console",
+      "labs": ["example_lab"],
+      "hosts": [
+        { "ip": "192.0.2.20", "os_type": "unix",
+          "creds": [{ "login": "admin", "password": "changeme" }] }
+      ]
+    }
+  ]
+}

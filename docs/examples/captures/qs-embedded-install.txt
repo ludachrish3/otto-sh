@@ -1,0 +1,11 @@
+$ otto --lab example_lab run install
+INFO     fleet of interest: 2 of 3 lab hosts (1 project(s), 0 excluded)
+INFO     @dut   | mathops: staged
+INFO     Connected to <Peer 127.0.0.1 <port>>
+INFO     @dut   | llext call_fn mathops cov_init
+INFO     @dut > | __gcov_init called for
+         /tmp/otto-gs/quickstart-embedded/build/ext/CMakeFiles/mathops_llext_lib.dir/src/ext.c.gcda
+INFO     @dut   | mathops: installed
+INFO     Connection closed to <Peer 127.0.0.1 <port>>
+
+Output directory: /tmp/otto-gs/xdir/run/<run>_install

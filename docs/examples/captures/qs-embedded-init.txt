@@ -1,0 +1,17 @@
+$ otto init --embedded-gcov --path .
+created third_party/embedded-gcov-patch/embedded-gcov-zephyr-gcc12plus.patch
+created third_party/embedded-gcov-patch-consumer/cov_entry.c
+created third_party/embedded-gcov-patch-consumer/README.md
+                     otto init — /tmp/otto-gs/quickstart-embedded
+┏━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ area          ┃ status      ┃ detail                                               ┃
+┡━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ settings      │ ✓           │                                                      │
+│ schemas       │ not present │ no .otto/schemas/*.schema.json                       │
+│ lab           │ ✓           │                                                      │
+│ tests         │ ✓           │                                                      │
+│ instructions  │ not present │ no init modules declared                             │
+│ kmodcov       │ not present │ no kmodcov dev tool declared and no vendored library │
+│ embedded-gcov │ scaffolded  │                                                      │
+└───────────────┴─────────────┴──────────────────────────────────────────────────────┘
+<next steps: shell completion, then the commands to try>

@@ -1,0 +1,5 @@
+/build/
+# Written by `otto init --embedded-gcov`; ext/src/cov_entry.c is its starter,
+# copied here and committed like any source you own.
+/third_party/
+__pycache__/
