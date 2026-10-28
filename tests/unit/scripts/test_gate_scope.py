@@ -228,6 +228,18 @@ def test_a_leaf_test_change_runs_its_package():
     assert scope.full_at_tip == []
 
 
+def test_the_vendoring_core_routes_to_both_exports_that_run_on_it():
+    scope = _scope(
+        [gs.Change("src/otto/vendoring.py", "M")],
+        head_paths=_head_paths(),
+    )
+    assert scope.classes == [gs.SRC_LEAF]
+    assert "tests/unit/test_kmodcov_export.py" in scope.quick_paths
+    assert "tests/unit/cov/test_embedded_gcov_export.py" in scope.quick_paths
+    assert "tests/unit/test_vendoring.py" in scope.quick_paths
+    assert scope.unknown == []
+
+
 def test_a_family_module_runs_the_guards_instead_of_quick():
     text = "import pytest\npytestmark = pytest.mark.interpreter_agnostic\ndef test_a(): pass\n"
     scope = _scope(

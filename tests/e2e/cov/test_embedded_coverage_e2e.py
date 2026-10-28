@@ -170,9 +170,10 @@ _PRODUCT_FUNCTIONS = [
     "op_div_ok",
     "op_div_zero",
 ]
-"""cov_ext.c's product functions — everything in it but the coverage entry
-points (``cov_init``/``cov_dump``/``cov_reset``), whose own counters tick
-whenever otto initialises, dumps or resets the extension."""
+"""cov_ext.c's product functions. The coverage entry points
+(``cov_init``/``cov_dump``/``cov_reset``) live in the shipped starter
+``cov_entry.c``, under their own ``SF:`` record; their counters tick whenever
+otto initialises, dumps or resets the extension."""
 
 
 def _product_function_hits(info_file: Path) -> dict[str, int]:

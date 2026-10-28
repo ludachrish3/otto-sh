@@ -620,6 +620,7 @@ def _render_clean_report(cleaned: "CleanReport") -> None:
 # otto cov kmodcov — vendor the otto_kmodcov library and check a vendored copy
 # ---------------------------------------------------------------------------
 
+
 kmodcov_app = typer.Typer(
     name="kmodcov",
     no_args_is_help=True,
@@ -681,13 +682,8 @@ def kmodcov_check(
         typer.echo(f"{result.directory}: current{origin}{override}")
     else:
         origin = f" (exported by otto {result.exported_by})" if result.exported_by else ""
-        parts = []
-        if result.differing:
-            parts.append(f"differs: {', '.join(result.differing)}")
-        if result.missing:
-            parts.append(f"missing: {', '.join(result.missing)}")
         typer.echo(
-            f"{result.directory}: not this otto's library{origin} — {'; '.join(parts)}. "
+            f"{result.directory}: not this otto's library{origin} — {result.differences}. "
             f"Re-export with `otto cov kmodcov export {result.directory}` and review the diff."
         )
     if result.exit_code:
@@ -698,3 +694,80 @@ kmodcov_check.__cli_output_dir__ = False  # ty: ignore[unresolved-attribute]
 kmodcov_check.__cli_lab_free__ = True  # ty: ignore[unresolved-attribute]
 
 cov_app.add_typer(kmodcov_app, name="kmodcov")
+
+
+# ---------------------------------------------------------------------------
+# otto cov embedded-gcov — write the embedded-gcov runtime's patch, check a copy
+# ---------------------------------------------------------------------------
+
+embedded_gcov_app = typer.Typer(
+    name="embedded-gcov",
+    no_args_is_help=True,
+    context_settings={"help_option_names": ["-h", "--help"]},
+    help=(
+        "Write the patch for the embedded-gcov runtime (GNU compilers, the gcov format), "
+        "or check a copy of it."
+    ),
+)
+
+
+@embedded_gcov_app.callback()
+def embedded_gcov_callback(ctx: typer.Context) -> None:
+    """Write the embedded-gcov runtime's patch (`export`) or compare a copy with it (`check`).
+
+    embedded-gcov is NASA's coverage runtime for targets with no filesystem; it
+    relies on a GNU compiler and the gcov format. otto does not vendor it, only
+    the patch that lets it build under GCC 12 through 14. `export` writes the
+    patch this otto ships, overwriting; `check` compares byte for byte and
+    exits 0 current / 1 differs / 2 absent.
+    """
+    if ctx.resilient_parsing:
+        return
+
+
+@embedded_gcov_app.command("export")
+def embedded_gcov_export(
+    directory: Annotated[
+        Path, typer.Argument(help="Where to write the patch (created if absent).")
+    ],
+) -> None:
+    """Write the embedded-gcov patch this otto ships into DIRECTORY."""
+    from ..coverage.embedded_gcov.library import SHIPPED_FILES, export_patch
+
+    changed = export_patch(directory)
+    if changed:
+        typer.echo(f"{directory}: {len(changed)} file(s) written: {', '.join(changed)}")
+    else:
+        typer.echo(f"{directory}: already current ({', '.join(SHIPPED_FILES)})")
+
+
+embedded_gcov_export.__cli_output_dir__ = False  # ty: ignore[unresolved-attribute]
+embedded_gcov_export.__cli_lab_free__ = True  # ty: ignore[unresolved-attribute]
+
+
+@embedded_gcov_app.command("check")
+def embedded_gcov_check(
+    directory: Annotated[Path, typer.Argument(help="The directory holding the patch copy.")],
+) -> None:
+    """Compare DIRECTORY with the patch this otto ships; exit 0 current, 1 differs, 2 absent."""
+    from ..coverage.embedded_gcov.library import check_patch
+
+    result = check_patch(directory)
+    if result.state == "absent":
+        typer.echo(f"{result.directory}: no embedded-gcov patch there")
+    elif result.state == "current":
+        typer.echo(f"{result.directory}: current")
+    else:
+        typer.echo(
+            f"{result.directory}: not this otto's patch — {result.differences}. "
+            f"Re-export with `otto cov embedded-gcov export {result.directory}` "
+            "and review the diff."
+        )
+    if result.exit_code:
+        raise typer.Exit(result.exit_code)
+
+
+embedded_gcov_check.__cli_output_dir__ = False  # ty: ignore[unresolved-attribute]
+embedded_gcov_check.__cli_lab_free__ = True  # ty: ignore[unresolved-attribute]
+
+cov_app.add_typer(embedded_gcov_app, name="embedded-gcov")

@@ -737,6 +737,16 @@ wheel-check: clean-dist web build ## (Build & Release) Rebuild the dashboard + w
 		exit 1; \
 	fi; \
 	echo "wheel-check: OK — otto/kmodcov/ library sources embedded (incl. kmodcov.h)."
+	@if ! unzip -l dist/*.whl | grep -q 'otto/coverage/embedded_gcov/embedded-gcov-zephyr-gcc12plus\.patch$$'; then \
+		echo "wheel-check: FAIL — otto/coverage/embedded_gcov/embedded-gcov-zephyr-gcc12plus.patch missing from dist/*.whl; the patch ships inside the package (otto cov embedded-gcov export/check read it from there), so an installed otto could export nothing." >&2; \
+		exit 1; \
+	fi; \
+	echo "wheel-check: OK — otto/coverage/embedded_gcov/ patch embedded."
+	@if ! unzip -l dist/*.whl | grep -q 'otto/coverage/embedded_gcov/starter/cov_entry\.c$$'; then \
+		echo "wheel-check: FAIL — otto/coverage/embedded_gcov/starter/cov_entry.c missing from dist/*.whl; the starter source ships inside the package (otto init copies it from there)." >&2; \
+		exit 1; \
+	fi; \
+	echo "wheel-check: OK — otto/coverage/embedded_gcov/ starter source embedded."
 	@mode=$$(uv run python -c "import glob, zipfile; z = zipfile.ZipFile(glob.glob('dist/*.whl')[0]); i = z.NameToInfo.get('otto/kmodcov/build.sh'); print(oct(i.external_attr >> 16 & 0o777) if i else 'absent')"); \
 	if [ "$$mode" != "0o755" ]; then \
 		echo "wheel-check: FAIL — otto/kmodcov/build.sh is stored in dist/*.whl as $$mode, not 0o755; an exported copy would not be executable and the documented 'build.sh <build-dir>' could not be run." >&2; \
@@ -1950,7 +1960,7 @@ clean: web-clean ## (Dev) Remove all generated artifacts
 	@rm -rf docs/_build
 # Reset the embedded-gcov submodule(s) to pristine. This discards the gcc-12+
 # patch that product/build.sh applies; that patch is tracked
-# (tests/project3/third_party/patches/) and re-applied idempotently on the next
+# (src/otto/coverage/embedded_gcov/) and re-applied idempotently on the next
 # build, so resetting here keeps the submodule from drifting between builds (a
 # stale patch/build is what desyncs .gcno and trips gcov's "stamp mismatch").
 	@$(SAY) "resetting submodules to pristine"

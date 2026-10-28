@@ -1692,3 +1692,108 @@ def test_cov_report_through_the_bridge_without_a_lab_is_refused(monkeypatch):
     result = bridge.invoke(cov_app, ["report"], spec_name="cov", lab_free=False)
     assert "Missing option '--lab'" in result.output
     assert result.exit_code == 2
+
+
+# ── embedded-gcov subgroup — the same lab-free export/check shape as kmodcov ────
+
+
+class TestEmbeddedGcov:
+    """``otto cov embedded-gcov export|check``: thin over the shared export core, lab-free."""
+
+    def test_listed_in_help(self):
+        result = runner.invoke(cov_app, ["--help"])
+        assert result.exit_code == 0
+        assert "embedded-gcov" in result.output
+
+    def test_help_names_the_runtime_and_the_compiler_it_relies_on(self):
+        result = runner.invoke(cov_app, ["embedded-gcov", "--help"])
+        assert result.exit_code == 0
+        assert "GNU" in result.output
+        assert "the gcov format" in " ".join(result.output.split())
+
+    def test_export_writes_the_patch_and_is_idempotent(self, tmp_path):
+        from otto.coverage.embedded_gcov import library
+
+        result = runner.invoke(cov_app, ["embedded-gcov", "export", str(tmp_path / "out")])
+        assert result.exit_code == 0, result.output
+        assert (tmp_path / "out" / library.SHIPPED_FILES[0]).is_file()
+        assert f"{len(library.SHIPPED_FILES)} file(s) written" in result.output
+        again = runner.invoke(cov_app, ["embedded-gcov", "export", str(tmp_path / "out")])
+        assert again.exit_code == 0
+        assert "already current" in again.output
+
+    def test_check_exits_zero_on_a_current_copy(self, tmp_path):
+        runner.invoke(cov_app, ["embedded-gcov", "export", str(tmp_path)])
+        result = runner.invoke(cov_app, ["embedded-gcov", "check", str(tmp_path)])
+        assert result.exit_code == 0, result.output
+        assert "current" in result.output
+
+    def test_check_exits_one_and_names_a_modified_patch(self, tmp_path):
+        from otto.coverage.embedded_gcov import library
+
+        runner.invoke(cov_app, ["embedded-gcov", "export", str(tmp_path)])
+        (tmp_path / library.SHIPPED_FILES[0]).write_text("edited\n")
+        result = runner.invoke(cov_app, ["embedded-gcov", "check", str(tmp_path)])
+        assert result.exit_code == 1
+        assert library.SHIPPED_FILES[0] in result.output
+        assert "otto cov embedded-gcov export" in result.output
+
+    def test_check_exits_two_where_there_is_no_patch(self, tmp_path):
+        result = runner.invoke(cov_app, ["embedded-gcov", "check", str(tmp_path / "nowhere")])
+        assert result.exit_code == 2
+        assert "no embedded-gcov patch" in result.output
+
+    def test_the_leaves_are_lab_free_and_make_no_output_dir(self):
+        from otto.cli.cov import embedded_gcov_check, embedded_gcov_export
+
+        for leaf in (embedded_gcov_export, embedded_gcov_check):
+            assert leaf.__cli_lab_free__ is True
+            assert leaf.__cli_output_dir__ is False
+
+
+def test_embedded_gcov_check_runs_through_the_bridge_without_a_lab(tmp_path, monkeypatch):
+    """Exit 2 here means "absent", not a missing-lab refusal.
+
+    ``lab_free=False`` drives the synthetic ``CommandSpec`` to lab-bound, so only the
+    leaf's own ``__cli_lab_free__`` marker lets it run; the negative control is
+    ``test_cov_report_through_the_bridge_without_a_lab_is_refused`` above.
+    """
+    from tests._fixtures.dispatch import DispatchRunner
+
+    monkeypatch.delenv("OTTO_LAB", raising=False)
+    bridge = DispatchRunner()
+    result = bridge.invoke(
+        cov_app, ["embedded-gcov", "check", str(tmp_path)], spec_name="cov", lab_free=False
+    )
+    assert "Missing option '--lab'" not in result.output
+    assert result.exit_code == 2
+    assert "no embedded-gcov patch" in result.output
+
+
+@pytest.mark.parametrize(
+    ("verb", "edited", "absent_text", "deleted_code"),
+    [
+        # kmodcov ships many files: one gone is "differs", with the missing clause.
+        ("kmodcov", "kmodcov.c", "no otto_kmodcov", 1),
+        # embedded-gcov ships one: it gone is "absent".
+        ("embedded-gcov", "embedded-gcov-zephyr-gcc12plus.patch", "no embedded-gcov patch", 2),
+    ],
+)
+def test_both_check_verbs_answer_the_same_input_the_same_way(
+    tmp_path, verb, edited, absent_text, deleted_code
+):
+    """One input through each ``check``: 0 current, 1 differs naming the file, 2 absent."""
+    assert runner.invoke(cov_app, [verb, "export", str(tmp_path)]).exit_code == 0
+    assert runner.invoke(cov_app, [verb, "check", str(tmp_path)]).exit_code == 0
+    (tmp_path / edited).write_text("edited\n")
+    differs = runner.invoke(cov_app, [verb, "check", str(tmp_path)])
+    assert differs.exit_code == 1
+    assert f"differs: {edited}" in differs.output
+    (tmp_path / edited).unlink()
+    deleted = runner.invoke(cov_app, [verb, "check", str(tmp_path)])
+    assert deleted.exit_code == deleted_code
+    if deleted_code == 1:
+        assert f"missing: {edited}" in deleted.output
+    absent = runner.invoke(cov_app, [verb, "check", str(tmp_path / "nowhere")])
+    assert absent.exit_code == 2
+    assert absent_text in absent.output

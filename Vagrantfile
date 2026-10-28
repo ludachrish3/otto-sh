@@ -158,7 +158,7 @@ VERS
     echo ""
     echo "Zephyr build envs ready: ~/zephyrproject-{v2_7,v3_7,v4_4}."
     echo "Build the coverage product (3.7/4.4) — see tests/project3/product/README.md, e.g.:"
-    echo "  tests/project3/product/build.sh ~/build/cov_ext_app_v3_7 v3_7"
+    echo '  OTTO=$PWD/.venv/bin/otto tests/project3/product/build.sh ~/build/cov_ext_app_v3_7 v3_7'
   SHELL
 end
 

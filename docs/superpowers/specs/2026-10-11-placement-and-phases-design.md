@@ -1666,6 +1666,8 @@ replaces with their final ones.
 
 **Amended by P9b, 2026-10-17.** P9b layers 74 modules, as amended by P8, and `LAYERED_AT["P9b"]` is 74; the table's 77 is superseded.
 
+**Amended 2026-10-28.** Two modules joined the foundation layer after P9b: `otto.vendoring` (the copy/compare core under `otto cov kmodcov` and `otto cov embedded-gcov`) and `otto.coverage.embedded_gcov` (the shipped embedded-gcov patch and starter). `LAYERED_AT["P9b"]`, the last landing's exact row, is 76.
+
 The model finds no layer violation at any landing.
 
 ### 5.3 String audit (lands in P1a)

@@ -12,6 +12,10 @@
 #   The venv, workspace, SDK, and board are all auto-selected from zver; each
 #   can be overridden individually via the env vars below.
 #
+# Required env (no default; a guess would be whichever otto PATH finds):
+#   OTTO                     the otto whose shipped patch and starter this build
+#                            consumes, e.g. <checkout>/.venv/bin/otto
+#
 # Env overrides (default to the dev VM's Vagrant-provisioned locations):
 #   ZVER                     Zephyr version tag                (v3_7)
 #   ZEPHYR_VENV              python venv with west            (~/zephyr-venv-<zver>)
@@ -38,7 +42,24 @@ PRODUCT_DIR="$SCRIPT_DIR"                       # tests/project3/product
 PROJECT3_DIR="$(dirname "$SCRIPT_DIR")"            # tests/project3
 TOPLEVEL="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 SUBMODULE="$PROJECT3_DIR/third_party/embedded-gcov"
-PATCH="$PROJECT3_DIR/third_party/patches/embedded-gcov-zephyr-gcc12plus.patch"
+
+# Both shipped inputs (the patch and the starter source) come from ONE otto, so say
+# which: never whichever `otto` PATH happens to find (it can be another checkout's,
+# with another version's patch). Its interpreter sits beside it.
+if [ -z "${OTTO:-}" ]; then
+    echo "ERROR: OTTO is not set. Point it at the otto whose shipped embedded-gcov patch and" >&2
+    echo "       starter to use, e.g. OTTO=\"$TOPLEVEL/.venv/bin/otto\" bash $0 <build-dir> [zver]" >&2
+    exit 1
+fi
+if [ ! -x "$OTTO" ]; then
+    echo "ERROR: OTTO=$OTTO is not executable; point it at an otto console script." >&2
+    exit 1
+fi
+if [ ! -x "$(dirname "$OTTO")/python" ]; then
+    echo "ERROR: no python beside OTTO=$OTTO; point it at an otto inside a virtualenv," >&2
+    echo "       e.g. OTTO=\"$TOPLEVEL/.venv/bin/otto\"." >&2
+    exit 1
+fi
 
 ZEPHYR_VENV="${ZEPHYR_VENV:-$HOME/zephyr-venv-${ZVER}}"
 ZEPHYR_WORKSPACE="${ZEPHYR_WORKSPACE:-$HOME/zephyrproject-${ZVER}}"
@@ -63,12 +84,24 @@ if [ -z "$OBJCOPY" ]; then
 fi
 
 # 1. embedded-gcov submodule + gcc-12+ patch (idempotent). The runtime is NASA's
-#    embedded-gcov (a submodule otto doesn't own); the patch is `#if __GNUC__>=12`
-#    gated, so it covers gcc 12 through 14 (3.7's gcc 12.2 and 4.4's gcc 14.3).
+#    embedded-gcov (a submodule otto doesn't own); the patch is the one otto
+#    ships (`otto cov embedded-gcov export`), `#if __GNUC__>=12` gated, so it
+#    covers gcc 12 through 14 (3.7's gcc 12.2 and 4.4's gcc 14.3).
+#    An uninitialized submodule fails here, loudly, rather than as a stale-bed
+#    error much later (#401): this script never initializes it for you.
 if [ ! -e "$SUBMODULE/code" ]; then
-    echo "=== embedded-gcov: initializing submodule ==="
-    git -C "$TOPLEVEL" submodule update --init -- "${SUBMODULE#"$TOPLEVEL"/}"
+    echo "ERROR: the embedded-gcov submodule is not initialized ($SUBMODULE/code is missing)." >&2
+    echo "       Run: git -C \"$TOPLEVEL\" submodule update --init -- ${SUBMODULE#"$TOPLEVEL"/}" >&2
+    exit 1
 fi
+PATCH_DIR="$(mktemp -d)"
+trap 'rm -rf "$PATCH_DIR"' EXIT
+"$OTTO" cov embedded-gcov export "$PATCH_DIR" >/dev/null
+# The starter source ships beside the patch; ask the same otto's interpreter where
+# (the library's own constants, not a path spelled here).
+COV_STARTER_DIR="$("$(dirname "$OTTO")/python" -c \
+    'import otto.coverage.embedded_gcov.library as m; print((m.LIBRARY_DIR / m.STARTER_FILES[0]).parent)')"
+PATCH="$PATCH_DIR/embedded-gcov-zephyr-gcc12plus.patch"
 if git -C "$SUBMODULE" apply --reverse --check "$PATCH" 2>/dev/null; then
     echo "=== embedded-gcov: gcc-12+ patch already applied ==="
 else
@@ -103,9 +136,9 @@ source zephyr/zephyr-env.sh
 #    below, not a full Zephyr rebuild.
 rm -f "$BUILD_DIR/llext/cov_ext_debug.elf" "$BUILD_DIR/zephyr/cov_ext.llext"
 echo "=== west build ($BOARD) -> $BUILD_DIR ==="
-if ! west build -b "$BOARD" -d "$BUILD_DIR" "$PRODUCT_DIR"; then
+if ! west build -b "$BOARD" -d "$BUILD_DIR" "$PRODUCT_DIR" -- -DCOV_STARTER_DIR="$COV_STARTER_DIR"; then
     echo "=== incremental build rejected the existing dir; retrying pristine ==="
-    west build -p always -b "$BOARD" -d "$BUILD_DIR" "$PRODUCT_DIR"
+    west build -p always -b "$BOARD" -d "$BUILD_DIR" "$PRODUCT_DIR" -- -DCOV_STARTER_DIR="$COV_STARTER_DIR"
 fi
 
 # 4. Strip the sections LLEXT 3.7 cannot relocate (-ENOEXEC on .init_array etc.);

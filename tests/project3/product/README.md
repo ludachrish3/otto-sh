@@ -10,7 +10,7 @@ product/
   prj.conf         CONFIG_LLEXT=y
   src/
     main.c         throwaway host app (the .llext is the real artifact)
-    cov_ext.c      math ops + cov_init/cov_dump + the #included gcov runtime
+    cov_ext.c      math ops + the #included starter (gcov runtime + cov_* entry points)
 ```
 
 **Approach A (self-contained):** `cov_ext.c` `#include`s the embedded-gcov
@@ -28,13 +28,24 @@ report step's `source_root` (`[coverage.embedded].build_dir`).
 
 The gcov runtime is NASA's [embedded-gcov](../third_party/embedded-gcov)
 (vendored as a git submodule — otto does not own it). It targets gcc ≤ 11, so a
-patch adds gcc 12–14 support. Apply it over the pristine submodule before building:
+patch adds gcc 12–14 support. The patch ships inside otto itself, so export it
+and apply it over the pristine submodule before building:
 
 ```bash
 git submodule update --init tests/project3/third_party/embedded-gcov
+otto cov embedded-gcov export /tmp/embedded-gcov-patch
 git -C tests/project3/third_party/embedded-gcov apply \
-    ../patches/embedded-gcov-zephyr-gcc12plus.patch
+    /tmp/embedded-gcov-patch/embedded-gcov-zephyr-gcc12plus.patch
 ```
+
+`build.sh` does the export and the apply itself (idempotently), but it does NOT
+initialize the submodule: with `third_party/embedded-gcov` uninitialized it
+stops and names the `git submodule update --init` command above.
+
+The `cov_init` / `cov_dump` / `cov_reset` entry points are not in this tree:
+`src/cov_ext.c` `#include`s the starter otto ships
+(`src/otto/coverage/embedded_gcov/starter/cov_entry.c`), so their one home is
+the package.
 
 **GCC coupling:** the `.gcda`/`.gcno` format and `struct gcov_info` are
 GCC-internal, so the patch is version-gated and **must** be kept in step with
@@ -64,11 +75,16 @@ project1 recompiling its binary each run). To build by hand into the configured
 `[coverage.embedded].build_dir`:
 
 ```bash
-tests/project3/product/build.sh ~/build/cov_ext_app
+OTTO="$PWD/.venv/bin/otto" tests/project3/product/build.sh ~/build/cov_ext_app v3_7
 ```
 
-It is **idempotent**: it initializes the embedded-gcov submodule and applies the
-gcc 12–14 patch if not already done (making the One-time setup above optional), runs
+`OTTO` is required: the patch and the starter source both come from that one
+otto's installation, never from whichever `otto` is on `PATH`. The suite passes
+the otto running it.
+
+It is **idempotent**: it applies the shipped gcc 12–14 patch to the embedded-gcov
+submodule if not already done (the submodule itself must be initialized, see
+One-time setup above), runs
 an incremental `west build` for `mps2_an385` (falling back to a pristine rebuild
 if the build dir was previously initialized for a different source tree), then
 strips the sections LLEXT 3.7 cannot relocate. It runs on the machine executing
@@ -76,22 +92,12 @@ the suite (the dev VM, where `build_dir` lives); toolchain paths default to the
 Vagrant-provisioned locations and are overridable via `ZEPHYR_VENV` /
 `ZEPHYR_WORKSPACE` / `ZEPHYR_SDK_INSTALL_DIR`.
 
-The equivalent manual steps (what `build.sh` runs):
-
-```bash
-source ~/zephyr-venv-v3_7/bin/activate
-cd ~/zephyrproject-v3_7 && source zephyr/zephyr-env.sh
-
-west build -b mps2_an385 -d ~/build/cov_ext_app /path/to/tests/project3/product
-
-# Strip the sections LLEXT 3.7 cannot relocate (its loader -ENOEXECs on
-# .init_array/.fini_array relocations; cov_init calls the ctor explicitly).
-arm-zephyr-eabi-objcopy \
-    --remove-section='.init_array*' --remove-section='.fini_array*' \
-    --remove-section='.rel.init_array*' --remove-section='.rel.fini_array*' \
-    --strip-debug \
-    ~/build/cov_ext_app/zephyr/cov_ext.llext ~/build/cov_ext_app/zephyr/cov_ext.stripped.llext
-```
+That command is the manual build too; there is no separate recipe.
+[`build.sh`](build.sh) is the build's one home, and its comments explain each
+step, including two that a bare `west build` misses: CMake requires
+`COV_STARTER_DIR`, the starter directory of the same otto that supplies the
+patch, and an incremental build must delete the extension's link-tail outputs so
+the extension is re-linked from the recompiled object.
 
 `cov_ext.stripped.llext` (~15 KB) is what otto sends via `llext load_hex`. See
 [`../docs/feasibility.md`](../docs/feasibility.md) for why these specific

@@ -24,6 +24,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..vendoring import CheckResult as BaseCheckResult
+from ..vendoring import check_result, compare_files, export_files
 from .formats import KMODCOV_INTERFACE_READ_VERSIONS
 
 [INTERFACE] = KMODCOV_INTERFACE_READ_VERSIONS
@@ -108,20 +110,11 @@ class ExportResult:
 
 
 @dataclass
-class CheckResult:
-    """What :func:`check_tree` found; ``state`` is ``current``, ``differs`` or ``absent``."""
+class CheckResult(BaseCheckResult):
+    """What :func:`check_tree` found: the shared result plus what only this library reports."""
 
-    directory: Path
-    state: str
-    differing: list[str] = field(default_factory=list)
-    missing: list[str] = field(default_factory=list)
     exported_by: str | None = None
     local_override: bool = False
-
-    @property
-    def exit_code(self) -> int:
-        """Map :attr:`state` to the exit status ``check`` leaves behind."""
-        return {"current": 0, "differs": 1, "absent": 2}[self.state]
 
 
 def export_tree(dest: Path) -> ExportResult:
@@ -134,24 +127,8 @@ def export_tree(dest: Path) -> ExportResult:
     from ..version import get_version
 
     version = get_version()
-    dest.mkdir(parents=True, exist_ok=True)
     result = ExportResult(directory=dest, version=version)
-    for name in SHIPPED_FILES:
-        source = LIBRARY_DIR / name
-        data = source.read_bytes()
-        # Only the EXECUTE bits travel with the copy, because they are the
-        # only mode bits version control tracks: an installed wheel's 0644
-        # against a umask-002 checkout's 0664 is not a difference, and
-        # reporting it would name every file as written over a clean tree.
-        x_bits = source.stat().st_mode & 0o111
-        target = dest / name
-        content_changed = not target.is_file() or target.read_bytes() != data
-        if content_changed:
-            target.write_bytes(data)
-        mode = target.stat().st_mode & 0o777
-        if content_changed or (mode & 0o111) != x_bits:
-            target.chmod((mode & ~0o111) | x_bits)
-            result.changed.append(name)
+    result.changed = export_files(LIBRARY_DIR, list(SHIPPED_FILES), dest)
     header = version_header(version)
     target = dest / VERSION_HEADER
     if not target.is_file() or target.read_text(encoding="utf-8") != header:
@@ -169,20 +146,10 @@ def check_tree(directory: Path) -> CheckResult:
     the tree says ``"source"``), and :data:`LOCAL_HEADER` is reported, never
     compared.
     """
-    if not (directory / "kmodcov.h").is_file():
-        return CheckResult(directory=directory, state="absent")
-    result = CheckResult(
-        directory=directory,
-        state="current",
+    found = compare_files(LIBRARY_DIR, list(SHIPPED_FILES), directory)
+    base = check_result(directory, found, absent=not (directory / "kmodcov.h").is_file())
+    return CheckResult(
+        **vars(base),
         exported_by=exported_version(directory),
         local_override=(directory / LOCAL_HEADER).is_file(),
     )
-    for name in SHIPPED_FILES:
-        target = directory / name
-        if not target.is_file():
-            result.missing.append(name)
-        elif target.read_bytes() != (LIBRARY_DIR / name).read_bytes():
-            result.differing.append(name)
-    if result.missing or result.differing:
-        result.state = "differs"
-    return result

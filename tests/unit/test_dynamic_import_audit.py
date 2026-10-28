@@ -949,7 +949,7 @@ CURRENT_LANDING = "P9b"
 # The last landing's row is exact. P3 and P4 share both counts (43 and 13), so
 # no count separates them; nothing grandfathered expires in P4, so a landing
 # left named P3 through P4 loses nothing, and P5's counts then demand the bump.
-# P9a and P9b share the cycle count (0) but not the layered one (62 and 74).
+# P9a and P9b share the cycle count (0) but not the layered one (62 and 76).
 # P7 layers otto.labs alone: the lab model stayed with its loader in otto.labs, so no
 # module was carved for it (spec §3.7 and §5.2 as amended by P7), and its row is 55.
 # P8 layers otto.reservations alone: the active run is a slot in otto.invocation, a module
@@ -959,7 +959,9 @@ CURRENT_LANDING = "P9b"
 # (spec §3.9 and §5.2 as amended by P9a), and its row is 62.
 # P9b layers the last twelve: the root package, otto.lab, otto.env, otto._shim and
 # otto.__main__, the run context's home otto.run_context, and session's six files
-# (spec §3.9, §3.12 and §5.2 as amended by P9b), and its row is 74.
+# (spec §3.9, §3.12 and §5.2 as amended by P9b), and its row was 74. Two modules joined the
+# foundation layer after it, otto.vendoring and otto.coverage.embedded_gcov (the shared
+# copy/compare core and the package that ships the embedded-gcov patch), so the row is 76.
 LAYERED_AT = {
     "P1a": 19,
     "P1b": 35,
@@ -971,7 +973,7 @@ LAYERED_AT = {
     "P7": 55,
     "P8": 56,
     "P9a": 62,
-    "P9b": 74,
+    "P9b": 76,
 }
 CYCLE_AT = {
     "P1a": 22,
@@ -1450,10 +1452,10 @@ def test_the_landing_anchor_allows_a_landing_in_progress_only() -> None:
     assert landing_problems(43, 13, "P4") == []
     assert "bump CURRENT_LANDING to P5" in landing_problems(48, 11, "P3")[0]
     assert landing_problems(70, 0, "P9a") == []
-    assert "bump CURRENT_LANDING to P9b" in landing_problems(74, 0, "P9a")[0]
-    assert landing_problems(74, 0, "P9b") == []
-    for counts in [[73, 0], [75, 0], [74, 1]]:
-        assert "the last landing, has exactly [74, 0]" in landing_problems(*counts, "P9b")[0]
+    assert "bump CURRENT_LANDING to P9b" in landing_problems(76, 0, "P9a")[0]
+    assert landing_problems(76, 0, "P9b") == []
+    for counts in [[75, 0], [77, 0], [76, 1]]:
+        assert "the last landing, has exactly [76, 0]" in landing_problems(*counts, "P9b")[0]
     assert "'P0' is not one of LANDINGS" in landing_problems(19, 22, "P0")[0]
 
 

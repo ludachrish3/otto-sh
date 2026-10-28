@@ -30,7 +30,9 @@ hosts share the same Zephyr version.
 
 import logging
 import re
+import shlex
 import struct
+import sys
 from pathlib import Path
 
 import pytest
@@ -137,7 +139,10 @@ async def _build_extension_for(build_dir: str, zver: "str | None") -> None:
     When *zver* is ``None`` the argument is omitted and ``build.sh``'s default
     (``v3_7``) is used.
     """
-    cmd = f"bash {BUILD_SCRIPT} {build_dir}"
+    # The otto running this suite supplies the shipped patch (the console script
+    # beside the interpreter), never whichever `otto` PATH happens to find.
+    otto = Path(sys.executable).parent / "otto"
+    cmd = f"OTTO={shlex.quote(str(otto))} bash {BUILD_SCRIPT} {build_dir}"
     if zver is not None:
         cmd = f"{cmd} {zver}"
     localhost = LocalHost()

@@ -55,7 +55,9 @@ the hop instead, and cannot reach these three:
 
 The two `_llext` guests run the stock LLEXT `shell_loader` sample, into which
 an instrumented `.llext` is loaded at runtime; that is what backs embedded
-coverage. Every other guest runs `shell_module`.
+coverage. Every other guest runs `shell_module`. Building that extension
+needs the embedded-gcov submodule initialized first; `tests/project3/product/README.md`
+has the command and the rest of its setup.
 
 See `tests/firmware/zephyr/README.md` in the repository for the per-config
 overlay layout.

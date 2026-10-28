@@ -127,8 +127,8 @@ Implemented and ran on `mps2_an385` (Approach C: runtime in base, product-only e
 
 > The embedded-gcov patches above live in the test4 spike copy only. In project3 they
 > must be applied as a **patch over the submodule** (don't edit the vendored
-> sources), e.g. `tests/project3/third_party/patches/embedded-gcov-gcc12.patch` applied
-> by the product's CMake, so the submodule stays pristine.
+> sources), e.g. `src/otto/coverage/embedded_gcov/embedded-gcov-zephyr-gcc12plus.patch` applied
+> by the product's `build.sh`, so the submodule stays pristine.
 
 ## Compiler-version bounds & clang support (future work)
 

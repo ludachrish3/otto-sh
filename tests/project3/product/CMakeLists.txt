@@ -11,9 +11,15 @@ add_llext_target(cov_ext
   OUTPUT  ${ZEPHYR_BINARY_DIR}/cov_ext.llext
   SOURCES ${PROJECT_SOURCE_DIR}/src/cov_ext.c)
 
-# cov_ext.c #includes the embedded-gcov sources from the *patched* submodule.
-# One canonical copy — no vendoring. See README for the submodule init + patch.
+# cov_ext.c #includes otto's shipped starter (cov_entry.c), which #includes the
+# embedded-gcov sources from the *patched* submodule. One canonical copy of each
+# -- no vendoring. build.sh passes COV_STARTER_DIR, the starter directory of the
+# same otto that supplied the patch. See README for the submodule init + patch.
+if(NOT DEFINED COV_STARTER_DIR)
+  message(FATAL_ERROR "COV_STARTER_DIR is not set; build through product/build.sh")
+endif()
 target_include_directories(cov_ext_llext_lib PRIVATE
+  ${COV_STARTER_DIR}
   ${PROJECT_SOURCE_DIR}/../third_party/embedded-gcov/code)
 
 # Instrument only the extension TU (-O0 keeps the line table predictable).

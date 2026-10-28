@@ -37,6 +37,8 @@ otto cov clean
 otto cov report [OUTPUT_DIR...] [OPTIONS]
 otto cov kmodcov export DIR
 otto cov kmodcov check DIR
+otto cov embedded-gcov export DIR
+otto cov embedded-gcov check DIR
 ```
 
 | Subcommand | Description |
@@ -45,6 +47,7 @@ otto cov kmodcov check DIR
 | `clean` | Zero each product's remote `.gcda` counters ahead of a fresh session, each product its own way — see {doc}`clean` |
 | `report` | Assemble every tier — e2e captures, unit harvest, committed manual store — into an HTML report |
 | `kmodcov` | Vendor the `otto_kmodcov` kernel-module library into a project (`export`), or compare a vendored copy with this otto (`check`: exit 0 current, 1 differs, 2 absent). Lab-free. See {doc}`instrumenting/kernel-modules`. |
+| `embedded-gcov` | Write the patch that lets NASA's embedded-gcov runtime build under GCC 12 through 14 (`export`), or compare a copy with this otto's (`check`: exit 0 current, 1 differs, 2 absent). For GNU compilers and the gcov format; lab-free. See {doc}`instrumenting/embedded`. |
 
 ## Examples
 

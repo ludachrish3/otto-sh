@@ -125,7 +125,7 @@ layer = "entry"
 # (inspect_shim, inspect_tests).
 # otto.labs: the `--lab` grammar (split_lab_names, LAB_SEPARATOR) is the lab
 # model's, in otto.labs.loader. Function-local, so no verb's `--help` loads it.
-depends_on = ["otto._shim_complete", "otto.invocation", "otto.instruction_catalog", "otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.link.params", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.labs", "otto.kmodcov", "otto.params", "otto.version", "otto.result", "otto.lifecycle", "otto.run_context", "otto.errors", "otto.check", "otto.project", "otto.init", "otto.env", "otto.session.activation", "otto.session.dependencies", "otto.session.errors", "otto.session.lab", "otto.session.logs", "otto.session.projects", "otto.monitor.errors", "otto.config.scope", "otto.models.dependencies", "otto.config.home", "otto.config.user_settings", "otto.declared", "otto.fleet"]
+depends_on = ["otto._shim_complete", "otto.invocation", "otto.instruction_catalog", "otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.link.params", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.labs", "otto.kmodcov", "otto.coverage.embedded_gcov", "otto.params", "otto.version", "otto.result", "otto.lifecycle", "otto.run_context", "otto.errors", "otto.check", "otto.project", "otto.init", "otto.env", "otto.session.activation", "otto.session.dependencies", "otto.session.errors", "otto.session.lab", "otto.session.logs", "otto.session.projects", "otto.monitor.errors", "otto.config.scope", "otto.models.dependencies", "otto.config.home", "otto.config.user_settings", "otto.declared", "otto.fleet"]
 
 [[modules]]
 path = "otto.config"
@@ -602,7 +602,25 @@ layer = "foundation"
 # otto.version: export_tree() writes the exporting otto's version into the
 # vendored copy's generated header. Function-local (this package sits inside
 # an import-budgeted CLI surface, see otto.cli below).
-depends_on = ["otto.version"]
+# otto.vendoring: export_tree()/check_tree() copy and compare the shipped
+# sources on the shared core.
+depends_on = ["otto.version", "otto.vendoring"]
+
+[[modules]]
+path = "otto.vendoring"
+layer = "foundation"
+# The copy/compare core under every shipped-sources export (otto cov kmodcov,
+# otto cov embedded-gcov): a leaf over the standard library.
+depends_on = []
+
+[[modules]]
+path = "otto.coverage.embedded_gcov"
+layer = "foundation"
+# The embedded-gcov runtime patch and starter source the wheel ships, with the
+# export and check over them. Declared on its own because otto.coverage sits in
+# the root layer, above the layers that consume this package (otto.cli now).
+# otto.vendoring: export_patch()/check_patch() run on the shared core.
+depends_on = ["otto.vendoring"]
 
 [[modules]]
 path = "otto.labs"

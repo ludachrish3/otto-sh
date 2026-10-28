@@ -207,6 +207,11 @@ UNIT_TREES = {
         # kmod tool kind `kmodcov` builds (the standalone-name pin cannot see it)
         "tests/unit/host/test_kmod_tool_kind.py",
     ],
+    "vendoring": [
+        "tests/unit/test_vendoring.py",
+        "tests/unit/test_kmodcov_export.py",
+        "tests/unit/cov/test_embedded_gcov_export.py",
+    ],
     "monitor": [
         "tests/unit/monitor",
         "tests/e2e/monitor",

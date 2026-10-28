@@ -28,6 +28,7 @@ coverage internals
    tickets
    overrides
    attribution
+   embedded_gcov
    ticket_export
    exclusions
    colors

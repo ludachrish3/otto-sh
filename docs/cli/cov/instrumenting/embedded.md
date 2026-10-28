@@ -64,14 +64,18 @@ GCC 12+, and the stock runtime miscompiles against them in two ways**:
    `N*2` → `N*2*4`). Without it `gcov` reports *"record size mismatch"*
    and 0% coverage despite a valid dump.
 
-The otto repository ships a patch covering both (plus routing the runtime's
-serial output through `printk`) that supports GCC 12 through 14:
-`tests/project3/third_party/patches/embedded-gcov-zephyr-gcc12plus.patch`.
-Apply it to your vendored copy:
+otto ships a patch covering both (plus routing the runtime's serial output
+through `printk`) that supports GCC 12 through 14. Write it out of the installed
+otto, then apply it to your vendored copy:
 
 ```bash
-git -C third_party/embedded-gcov apply embedded-gcov-zephyr-gcc12plus.patch
+otto cov embedded-gcov export patches
+git -C third_party/embedded-gcov apply ../../patches/embedded-gcov-zephyr-gcc12plus.patch
 ```
+
+`otto cov embedded-gcov check patches` compares a copy you keep with the one
+this otto ships: exit 0 current, 1 differs, 2 absent. The patch applies to
+upstream commit `7cc670697d0b9fa23f7d22ed5f6776164d7732e2`.
 
 Build the extension and run the report's cross-`gcov` with the **same** GCC
 (i.e. the same Zephyr SDK) — the runtime hard-codes gcc's internal structs,

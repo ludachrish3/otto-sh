@@ -408,3 +408,23 @@ def test_the_demo_projects_vendored_copy_is_current():
     assert result.state == "current", (result.differing, result.missing)
     assert result.local_override is False
     assert (PROJECT5_VENDORED / "build.sh").stat().st_mode & 0o111, "build.sh lost its x bit"
+
+
+@pytest.mark.parametrize("state", ["absent", "differs", "current"])
+def test_check_tree_carries_every_field_of_the_shared_result(tmp_path: Path, state: str):
+    """A field added to the shared result must reach kmodcov's: compare field by field."""
+    import dataclasses
+
+    from otto.vendoring import CheckResult, check_result, compare_files
+
+    directory = tmp_path / "copy"
+    if state != "absent":
+        kmodcov.export_tree(directory)
+    if state == "differs":
+        (directory / "kmodcov.c").write_text("// edited\n")
+    found = compare_files(PACKAGE, list(kmodcov.SHIPPED_FILES), directory)
+    expected = check_result(directory, found, absent=state == "absent")
+    got = kmodcov.check_tree(directory)
+    assert got.state == state
+    for field in dataclasses.fields(CheckResult):
+        assert getattr(got, field.name) == getattr(expected, field.name), field.name
