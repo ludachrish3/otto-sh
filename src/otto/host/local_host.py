@@ -218,34 +218,13 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
     ####################
 
     @override
-    async def _run_one(
-        self,
-        cmd: str,
-        timeout: float,
-        expects: list[Expect] | None = None,
-        log: LogMode = LogMode.NORMAL,
-        user: "str | None" = None,
-    ) -> CommandResult:
-        """Execute a command via the persistent local shell session.
-
-        Shell state (working directory, environment variables) persists between
-        calls, matching UnixHost behavior.
-
-        The *user* refusal sits ABOVE the dry-run arm: this family can never honour
-        the parameter, and a dry run must say so rather than decline as though
-        it could have.
-        """
-        if user is not None:
-            raise NotImplementedError(
-                f"{self.name}: run(user=...) is not supported on LocalHost — otto "
-                f"already runs as the invoking user; as_user() still switches the "
-                f"persistent session"
-            ) from None
-        if is_dry_run():
-            return self._dry_run_result(cmd, log)
-        return await self._live_session_mgr().run_cmd(
-            cmd, expects=expects, timeout=timeout, log=self._effective_log(log)
-        )
+    def _refuse_run_user(self, user: str) -> None:
+        """Refuse ``run(user=...)``: otto already runs as the invoking user."""
+        raise NotImplementedError(
+            f"{self.name}: run(user=...) is not supported on LocalHost — otto "
+            f"already runs as the invoking user; as_user() still switches the "
+            f"persistent session"
+        ) from None
 
     @override
     async def _exec_one(

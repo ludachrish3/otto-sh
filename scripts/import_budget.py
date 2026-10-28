@@ -67,6 +67,8 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from otto.cli.builtin_commands import builtin_command_names
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CEILINGS_DIR = REPO_ROOT / "tests" / "unit" / "import_budget" / "ceilings"
 
@@ -301,20 +303,16 @@ def _verb_surface(
     )
 
 
-_TRACKED_VERBS = [
-    "init",
-    "env",
-    "cache",
-    "docker",
-    "link",
-    "tunnel",
-    "monitor",
-    "cov",
-    "reservation",
-    "inventory",
-    "schema",
-]
-"""The top-level verbs with no gated surface of their own; each is measured at ``--help``."""
+_GATED_VERBS = {"run", "test", "host"}
+"""The verbs with a gated surface of their own above; every other registered verb is tracked."""
+
+_TRACKED_VERBS = [verb for verb in builtin_command_names() if verb not in _GATED_VERBS]
+"""The top-level verbs with no gated surface of their own; each is measured at ``--help``.
+
+Read off the CLI's own registry (by origin, so a command a test planted in
+the same process is not one), so a new command is tracked the day it
+is registered; ``scripts/import_budget_delta.py``'s ``KNOWN_SURFACES``
+pins the resulting set literally."""
 
 
 SURFACES: list[Surface] = [

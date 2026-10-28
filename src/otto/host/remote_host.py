@@ -37,7 +37,6 @@ from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 from typing_extensions import override
 
-from ..logger.mode import LogMode
 from ..models.base import Cred
 from ..result import CommandResult
 from ..utils import Status
@@ -54,7 +53,6 @@ if TYPE_CHECKING:
     from .command_frame import CommandFrame
     from .connections import ConnectionManager
     from .element import Element
-    from .host import Expect
     from .interface import Interface
     from .options import SnmpOptions
     from .session_setup import SessionSetup
@@ -464,65 +462,19 @@ class RemoteHost(BaseHost):
         return self._live_session_mgr().ambient_user
 
     @override
-    async def _run_one(
-        self,
-        cmd: str,
-        timeout: float,
-        expects: "list[Expect] | None" = None,
-        log: LogMode = LogMode.NORMAL,
-        user: "str | None" = None,
-    ) -> CommandResult:
-        """Execute a single command on the host via the **persistent shell session**.
+    def _refuse_run_user(self, user: str) -> None:
+        """Refuse ``run(user=...)``: this family has no user to switch to.
 
-        Called by :meth:`run` for both the single-string and list forms. The session
-        is stateful: working directory changes (``cd``), exported environment variables,
-        and other shell state persist between calls, just as they would in an
-        interactive terminal.
-
-        Limitations:
-            - **Sequential only.** The session is a single shell — calling ``run()``
-              concurrently from multiple coroutines will corrupt the session output.
-              Use :meth:`exec` instead when you need concurrent execution (where
-              the family supports it — embedded targets share one console).
-            - **Stateful.** Commands affect each other; a ``cd`` in one call changes
-              the directory for the next.
-
-        Args:
-            cmd: Shell command to run. Passed to the remote shell as-is.
-            expects: Optional list of ``(pattern, response)`` tuples for interactive
-                prompts (e.g. sudo password, confirmation dialogs). Each pattern is
-                matched against output as it arrives; the corresponding response is
-                sent automatically.
-            timeout: Seconds before the command is considered hung. On expiry,
-                Ctrl+C is sent and ``Status.Error`` is returned. Pass
-                ``float("inf")`` for a deliberately unbounded command.
-            user: Accepted for signature parity with the container family and
-                REFUSED — see Raises below. Families that *can* switch
-                identity (unix) never reach this parameter: ``run()`` wraps
-                the whole call in :meth:`~otto.host.privilege.PosixPrivilege.as_user`
-                and calls back in with ``user=None``. Only a family with no
-                user to switch to (embedded) reaches this refusal.
-
-        Returns:
-            A :class:`~otto.result.CommandResult`; ``value`` holds the output.
-            Exit code 0 → ``Status.Success``; non-zero → ``Status.Failed``.
-
-        Raises:
-            NotImplementedError: *user* is not None. The refusal is the FIRST
-                line of the body, above the dry-run arm, so a dry run refuses
-                too rather than reporting a decline for a call this family
-                could never honour.
+        Only a family with no user to switch to reaches this: the unix family
+        honours *user* by wrapping the whole call in
+        :meth:`~otto.host.privilege.PosixPrivilege.as_user` and calling back in
+        with ``user=None``. The message names the CONCRETE class, so an
+        embedded host's refusal says so.
         """
-        if user is not None:
-            raise NotImplementedError(
-                f"{self.name}: run(user=...) is not supported on "
-                f"{type(self).__name__} — this family has no user to switch to"
-            ) from None
-        if is_dry_run():
-            return self._dry_run_result(cmd, log)
-        return await self._live_session_mgr().run_cmd(
-            cmd, expects=expects, timeout=timeout, log=self._effective_log(log)
-        )
+        raise NotImplementedError(
+            f"{self.name}: run(user=...) is not supported on "
+            f"{type(self).__name__} — this family has no user to switch to"
+        ) from None
 
     ####################
     #  Dest dir resolution

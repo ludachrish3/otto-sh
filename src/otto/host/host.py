@@ -7,7 +7,12 @@ import shlex
 import uuid
 from abc import ABC
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from contextlib import (
+    AbstractAsyncContextManager,
+    AbstractContextManager,
+    asynccontextmanager,
+    nullcontext,
+)
 from dataclasses import (
     dataclass,
     field,
@@ -1879,8 +1884,78 @@ class BaseHost(ABC):
         log: LogMode = LogMode.NORMAL,
         user: "str | None" = None,
     ) -> CommandResult:
-        """Per-command runner for the persistent shell session. Subclasses override."""
-        raise NotImplementedError from None
+        """Run one command on the persistent shell session: the one policy for every family.
+
+        Called by :meth:`run` for both the single-string and list forms. The
+        session is stateful — ``cd``, exported variables and other shell state
+        persist between calls, as in an interactive terminal — and sequential:
+        ``run()`` from two coroutines at once corrupts the session's output
+        (:meth:`exec` is the concurrent shape). The arms, in order:
+
+        1. ``_refuse_run_user``: a family that can never honour *user* refuses
+           here, ABOVE the dry-run arm, so a dry run of such a call refuses
+           rather than declining as though it could have.
+        2. The dry-run decline (``_dry_run_result``), which contacts nothing.
+        3. ``_prepare_live_session``: the container host resolves its
+           container on the daemon here; every other family does nothing.
+        4. The command on the session manager, inside ``_run_user_binding``:
+           the container host declares the user the channel open must bind.
+
+        A family contributes those hooks and nothing else; the unix family
+        wraps this method in a line lock on a ``console`` term. The *user*
+        the unix family honours never reaches here: :meth:`run` wraps the call
+        in ``as_user`` and calls back in with ``user=None``.
+
+        Args:
+            cmd: Shell command to run, passed to the shell as-is.
+            timeout: Seconds before the command is considered hung. On expiry,
+                Ctrl+C is sent and ``Status.Error`` is returned; ``float("inf")``
+                for a deliberately unbounded command.
+            expects: ``(pattern, response)`` pairs for interactive prompts,
+                matched against the output as it arrives.
+            log: Logging disposition for this call, folded with the host's own.
+            user: Run as this user. Refused by the local and remote families
+                (``_refuse_run_user``), bound by the container family
+                (``_run_user_binding``).
+
+        Returns:
+            A :class:`~otto.result.CommandResult`; ``value`` holds the output.
+            Exit code 0 → ``Status.Success``; non-zero → ``Status.Failed``.
+
+        Raises:
+            NotImplementedError: *user* is not None on a family that has no
+                user to switch to.
+        """
+        if user is not None:
+            self._refuse_run_user(user)
+        if is_dry_run():
+            return self._dry_run_result(cmd, log)
+        await self._prepare_live_session()
+        with self._run_user_binding(user):
+            return await self._live_session_mgr().run_cmd(
+                cmd, expects=expects, timeout=timeout, log=self._effective_log(log)
+            )
+
+    def _refuse_run_user(self, user: str) -> None:  # noqa: B027 — an empty default is the POINT: the families that honour user= have nothing to refuse
+        """Refuse a ``run(user=...)`` this family can never honour, above the dry-run arm.
+
+        The ``run`` twin of :meth:`_refuse_exec_user`, with the same contract:
+        synchronous, no I/O, answered from the host's own configuration. The
+        default refuses nothing; the local family (otto already runs as the
+        invoking user) and the remote family (no user to switch to) override
+        it with the message that names them.
+        """
+
+    def _run_user_binding(self, user: "str | None") -> "AbstractContextManager[None]":  # noqa: ARG002 — the hook's signature; the default binds nothing
+        """Wrap the live command in the family's user binding; nothing, for most families.
+
+        Entered after ``_prepare_live_session``, around the session manager's
+        ``run_cmd``. The default binds nothing. The container host's override
+        refuses a user the live channel is already bound to another of, and
+        declares the intent the channel open reads — scoped to that one
+        attempt, so a failed open leaves nothing behind.
+        """
+        return nullcontext()
 
     @cli_exposed(help_="Run one command on the host and exit with the command's own status.")
     async def exec(
@@ -2094,14 +2169,14 @@ class BaseHost(ABC):
     async def _prepare_live_session(self) -> None:
         """Make the device ready for the live session arm; nothing, for most families.
 
-        Called by :meth:`~otto.host.host.BaseHost.open_session`,
+        Called by ``_run_one``, :meth:`~otto.host.host.BaseHost.open_session`,
         :meth:`~otto.host.host.BaseHost.send` and
         :meth:`~otto.host.host.BaseHost.expect` after
         their dry-run arm and before the session manager is touched. The one
         family that overrides it is the container host, whose preparation
         resolves (and refuses a stopped) container on the daemon. Any other
         per-family step that must precede every live session belongs here,
-        not in a copy of the three methods above.
+        not in a copy of the four methods above.
         """
         return
 

@@ -3163,8 +3163,8 @@ class SessionManager:
         reused until it dies).
 
         THE PER-COMMAND PATH OF :meth:`otto.host.host.BaseHost.run`, for every
-        host family (``RemoteHost._run_one``, ``LocalHost``,
-        ``DockerContainerHost``, ``EmbeddedHost``) -- and ``exec()`` on a
+        host family (``BaseHost._run_one``, which every family runs) -- and
+        ``exec()`` on a
         ``console`` term, which runs on this same session. Everywhere else
         ``exec()`` and named sessions reach a :class:`ShellSession` without
         passing through here. That is what makes this the right and only home

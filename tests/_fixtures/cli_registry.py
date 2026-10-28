@@ -10,22 +10,15 @@ removed).
 
 
 def builtin_command_names() -> list[str]:
-    """The groups ``register_builtin_commands`` itself registered, by ORIGIN.
+    """:func:`otto.cli.builtin_commands.builtin_command_names`, with a floor on its count.
 
-    Not every name in the registry: a third-party plugin — or a test that
-    registered one and is running in the same process — is not a first-party
-    group, and counting those would make this assertion drift with whatever
-    else the worker had done.
+    The derivation (by ORIGIN, never a hand-typed list) is the product's; this
+    wrapper only refuses an answer so short that every consumer would pass
+    vacuously.
     """
-    from otto.cli.builtin_commands import register_builtin_commands
-    from otto.cli.registry import CLI_COMMANDS
+    from otto.cli.builtin_commands import builtin_command_names as derive
 
-    register_builtin_commands()  # idempotent
-    names = [
-        name
-        for name in CLI_COMMANDS.names()
-        if CLI_COMMANDS.origin(name) == "otto.cli.builtin_commands"
-    ]
+    names = derive()
     # A floor, not the exact count: this is the one place both the in-process
     # unit tree and the subprocess e2e tree derive their group set from, so a
     # collapse here (a resolve_spec_command signature change, an origin
