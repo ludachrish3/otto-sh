@@ -17,15 +17,16 @@ created third_party/otto_kmodcov-consumer/kmodcov_begin.c
 created third_party/otto_kmodcov-consumer/kmodcov_end.c
 created third_party/otto_kmodcov-consumer/Kbuild.example
 created third_party/otto_kmodcov-consumer/README.md
-           otto init — /tmp/otto-gs/quickstart-kmod
-┏━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃ area         ┃ status      ┃ detail                         ┃
-┡━━━━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
-│ settings     │ ✓           │                                │
-│ schemas      │ not present │ no .otto/schemas/*.schema.json │
-│ lab          │ ✓           │                                │
-│ tests        │ ✓           │                                │
-│ instructions │ ✓           │                                │
-│ kmodcov      │ scaffolded  │                                │
-└──────────────┴─────────────┴────────────────────────────────┘
+                           otto init — /tmp/otto-gs/quickstart-kmod
+┏━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ area          ┃ status      ┃ detail                                                       ┃
+┡━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ settings      │ ✓           │                                                              │
+│ schemas       │ not present │ no .otto/schemas/*.schema.json                               │
+│ lab           │ ✓           │                                                              │
+│ tests         │ ✓           │                                                              │
+│ instructions  │ ✓           │                                                              │
+│ kmodcov       │ scaffolded  │                                                              │
+│ embedded-gcov │ not present │ no embedded-gcov patch under third_party/embedded-gcov-patch │
+└───────────────┴─────────────┴──────────────────────────────────────────────────────────────┘
 <next steps: shell completion, then the commands to try>

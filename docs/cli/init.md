@@ -13,6 +13,7 @@ again after upgrading otto to refresh the generated editor schemas.
 ```text
 otto init [--all | --schemas | --lab | --tests | --instructions] [--name NAME]
           [--version X.Y.Z] [--path DIR] [--kmodcov [--kmodcov-dir DIR]]
+          [--embedded-gcov [--embedded-gcov-dir DIR]]
 ```
 
 `otto init` is **lab-free**: it needs no `--lab` and no `OTTOPATH`, and
@@ -27,6 +28,8 @@ it never creates an output directory.
 | `--instructions` | `False` | Scaffold the instructions area (the init module; `pylib/<name>_instructions/` in a fresh project) |
 | `--kmodcov` | `False` | Scaffold (or refresh) the kmodcov area: vendor the `otto_kmodcov` library at `--kmodcov-dir` (default `third_party/otto_kmodcov`), write a consumer starter beside it, and append a commented `[[dev_tools]]` entry to `.otto/settings.toml` when it has none. Never scaffolded by `--all` or the prompts |
 | `--kmodcov-dir DIR` | `third_party/otto_kmodcov` | Where `--kmodcov` vendors the library (project-relative) |
+| `--embedded-gcov` | `False` | Scaffold (or refresh) the embedded-gcov area: write otto's embedded-gcov runtime patch at `--embedded-gcov-dir` (default `third_party/embedded-gcov-patch`), write a consumer starter beside it, and append a commented `[coverage.embedded]` block to `.otto/settings.toml` when it has none. Never scaffolded by `--all` or the prompts |
+| `--embedded-gcov-dir DIR` | `third_party/embedded-gcov-patch` | Where `--embedded-gcov` writes the patch (project-relative) |
 | `--name NAME` | directory name | Product name for `settings.toml` |
 | `--version X.Y.Z` | `0.1.0` | Product version for `settings.toml` |
 | `--path DIR` | current dir | Project root to operate on (must already exist) |
@@ -37,24 +40,26 @@ With no flags, `otto init` runs interactively: it asks every question first
 answer is in. `--all` scaffolds every missing area with no prompts. Passing
 one or more of `--lab`/`--tests`/`--instructions` scaffolds those areas when
 missing, plus their prerequisites (below). `settings` is a prerequisite of every other area, so it is scaffolded
-whenever any other area is, and `otto init` says so. `--kmodcov` is
-**opt-in**: it is never scaffolded by `--all` and never offered by the
-interactive prompt, only by its own flag.
+whenever any other area is, and `otto init` says so. `--kmodcov` and
+`--embedded-gcov` are **opt-in**: neither is ever scaffolded by `--all` or
+offered by the interactive prompt, only by its own flag, and the two flags
+compose (`--kmodcov --embedded-gcov` writes both).
 
 ## What gets written, and what is never touched
 
 Every file goes through one write policy. Otto-owned files are regenerated
 from the installed otto, so they are refreshed; user-owned files are created
-once and never edited again — apart from the commented kmodcov entry `--kmodcov`
-appends to an existing `settings.toml` (see the kmodcov section below).
+once and never edited again — apart from the commented block `--kmodcov` or `--embedded-gcov`
+appends to an existing `settings.toml` (see the kmodcov and embedded-gcov
+sections below).
 
 | Owner | Files | When the file exists |
 | ----- | ----- | -------------------- |
-| otto | `.otto/schemas/*.schema.json`, `.vscode/otto.code-snippets`, the vendored `otto_kmodcov` library | refreshed |
-| you | `.otto/settings.toml`; `lab_data/{lab,inventory,creds}.json` and `lab_data/README.md`; `tests/test_example.py` and `tests/conftest.py`; the init module; `.vscode/settings.json` and `.vscode/extensions.json`; the kmodcov consumer starter | kept, byte for byte |
+| otto | `.otto/schemas/*.schema.json`, `.vscode/otto.code-snippets`, the vendored `otto_kmodcov` library, the embedded-gcov patch | refreshed |
+| you | `.otto/settings.toml`; `lab_data/{lab,inventory,creds}.json` and `lab_data/README.md`; `tests/test_example.py` and `tests/conftest.py`; the init module; `.vscode/settings.json` and `.vscode/extensions.json`; the kmodcov and embedded-gcov consumer starters | kept, byte for byte |
 
 Each file in the run is listed as `created`, `refreshed`, `kept` or (for the
-kmodcov entry added to an existing `settings.toml`, the one edit `otto init`
+kmodcov entry or embedded-gcov block added to an existing `settings.toml`, the one edit `otto init`
 makes to a file of yours) `appended`; refreshing
 `.otto/schemas` also lists each orphaned `*.schema.json` it deleted as
 `pruned` — see {doc}`schema/export` for exactly what is pruned. So `--tests`
@@ -65,7 +70,7 @@ block, nothing `otto init` does ever edits a file you own.
 
 An area that already exists is validated with the same ingestion code otto
 uses elsewhere, and does not modify it, except that an explicit
-`--schemas` or `--kmodcov` refreshes (and, for schemas, prunes) the otto-owned
+`--schemas`, `--kmodcov` or `--embedded-gcov` refreshes (and, for schemas, prunes) the otto-owned
 files. The summary table gives each area one status:
 
 | Status | Meaning |
@@ -80,7 +85,7 @@ files. The summary table gives each area one status:
 | --------- | ------- |
 | `0` | no area failed |
 | `1` | at least one area is `✗` |
-| `2` | a bad flag value: `--path` is not a directory, or `--kmodcov-dir` is not strictly inside the project root (`.` and an empty value are refused too) |
+| `2` | a bad flag value: `--path` is not a directory, `--kmodcov-dir` or `--embedded-gcov-dir` is not strictly inside the project root (`.` and an empty value are refused too) |
 
 The name used for areas scaffolded on a later run is read from the existing
 `settings.toml`'s `name` field, falling back to the directory name.
@@ -206,6 +211,32 @@ export` remedy.
 See {doc}`cov/instrumenting/kernel-modules` for how the library attaches to a
 module and how otto loads/removes it around a run.
 
+## embedded-gcov
+
+`otto init --embedded-gcov` writes otto's patch to NASA's embedded-gcov runtime
+into the project (`--embedded-gcov-dir`, default
+`third_party/embedded-gcov-patch`) and a consumer starter beside it,
+`<dir>-consumer/`: `cov_entry.c`, a copy of the starter otto ships, and a
+`README.md`. The runtime itself is not shipped; the patch is applied to your
+own embedded-gcov checkout. The area needs a GNU compiler and the gcov format.
+Re-running `--embedded-gcov` refreshes the patch (otto-owned) and keeps every
+starter file you already have.
+
+When the settings declare no `[coverage.embedded]` table (commented or not),
+it appends a commented one to the end of `.otto/settings.toml`, lists the file
+as `appended`, and appends nothing on a second run; a `settings.toml` created
+in the same run already includes it. A symlinked `settings.toml` is never
+written through: the run prints the block to paste instead.
+
+The area is present when the patch is under the default directory. Unlike
+kmodcov, no settings key names the patch directory, so a copy under a custom
+`--embedded-gcov-dir` is neither detected nor checked for drift. A present
+patch that differs from the installed otto's is a *warning*, never a failure,
+naming the differing files and the `otto cov embedded-gcov export` remedy.
+
+See {doc}`cov/instrumenting/embedded` for applying the patch and building the
+extension.
+
 For a full first-project walkthrough, see {doc}`../setup/index`, then
 {doc}`../setup/running-instructions` and
 {doc}`../setup/running-tests`; for the
@@ -220,7 +251,8 @@ there), the tab-completion commands, and the commands to try first. Only
 commands the project can run are listed: `otto --lab example_lab --list-hosts`
 when the lab files declare `example_lab`, `otto test --list-tests` when there
 are tests, the example test and instruction runs when both the lab and those
-exist, and `otto cov kmodcov check <dir>` when the kmodcov library is vendored
+exist, `otto cov kmodcov check <dir>` when the kmodcov library is vendored, and
+`otto cov embedded-gcov check <dir>` when the embedded-gcov patch is there
 — so `otto init --kmodcov` in an empty directory, which writes no lab, never
 points you at one. When a command would not fit inside the
 box at your terminal's width (a long project-root path), the same steps print

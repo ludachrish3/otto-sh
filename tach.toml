@@ -416,6 +416,9 @@ depends_on = [
     "otto.inventory",
     "otto.host",
     "otto.kmodcov",
+    # otto.coverage.embedded_gcov: the embedded-gcov area exports, detects and
+    # compares the shipped patch through library.py.
+    "otto.coverage.embedded_gcov",
     # otto.config.user_settings: the doctor reads the user settings file.
     "otto.config.user_settings",
 ]

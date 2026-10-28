@@ -3226,10 +3226,12 @@ member	otto.init:FileWrite.path	field
 abstract	otto.init:FileWrite	-
 name	otto.init:InitConfig	class
 mro	otto.init:InitConfig	-
-call	otto.init:InitConfig	sync	PK:root:- PK:name:- PK:version:- PK:kmodcov_dir:S:"third_party/otto_kmodcov"
+call	otto.init:InitConfig	sync	PK:root:- PK:name:- PK:version:- PK:kmodcov_dir:S:"third_party/otto_kmodcov" PK:embedded_gcov_dir:S:"third_party/embedded-gcov-patch"
 member	otto.init:InitConfig.__eq__	method	sync	PK:other:-
 member	otto.init:InitConfig.__hash__	method	sync	-
-member	otto.init:InitConfig.for_project	classmethod	sync	PK:root:- KO:name:S:"" KO:version:S:"0.1.0" KO:kmodcov_dir:S:"third_party/otto_kmodcov"
+member	otto.init:InitConfig.embedded_gcov_dir	field
+member	otto.init:InitConfig.embedded_gcov_path	property:g--
+member	otto.init:InitConfig.for_project	classmethod	sync	PK:root:- KO:name:S:"" KO:version:S:"0.1.0" KO:kmodcov_dir:S:"third_party/otto_kmodcov" KO:embedded_gcov_dir:S:"third_party/embedded-gcov-patch"
 member	otto.init:InitConfig.init_module	property:g--
 member	otto.init:InitConfig.kmodcov_dir	field
 member	otto.init:InitConfig.kmodcov_path	property:g--

@@ -36,6 +36,25 @@ def test_a_kmodcov_dir_strictly_inside_the_root_is_accepted(
     assert cfg.kmodcov_path == tmp_path / kmodcov_dir
 
 
+@pytest.mark.parametrize("embedded_gcov_dir", ["/etc/egcov", "../escaped", ".", ""])
+def test_an_embedded_gcov_dir_outside_or_onto_the_root_is_refused(
+    tmp_path: Path, embedded_gcov_dir: str
+) -> None:
+    with pytest.raises(InitInputError) as caught:
+        InitConfig(tmp_path, "widget", "0.1.0", embedded_gcov_dir=embedded_gcov_dir)
+    assert caught.value.field == "embedded_gcov_dir"
+    assert repr(embedded_gcov_dir) in str(caught.value)
+    assert "--" not in str(caught.value)
+
+
+@pytest.mark.parametrize("embedded_gcov_dir", ["third_party/embedded-gcov-patch", "vendor/egcov/"])
+def test_an_embedded_gcov_dir_strictly_inside_the_root_is_accepted(
+    tmp_path: Path, embedded_gcov_dir: str
+) -> None:
+    cfg = InitConfig(tmp_path, "widget", "0.1.0", embedded_gcov_dir=embedded_gcov_dir)
+    assert cfg.embedded_gcov_path == tmp_path / embedded_gcov_dir
+
+
 def test_init_input_error_is_a_field_error() -> None:
     assert issubclass(InitInputError, FieldError)
 

@@ -1,13 +1,14 @@
 """The commands ``otto init``'s Next steps panel offers to try, from what the project holds.
 
 A pure read of the project root: lab files, detected areas, the vendored
-kmodcov library. The CLI draws the answer (:func:`otto.cli.init.next_steps_panel`).
+kmodcov library and embedded-gcov patch. The CLI draws the answer
+(:func:`otto.cli.init.next_steps_panel`).
 """
 
 import json
 from pathlib import Path
 
-from .areas import detect_areas, lab_files
+from .areas import detect_areas, lab_files, library_present, patch_present
 from .templates import EXAMPLE_LAB_NAME
 
 
@@ -31,13 +32,23 @@ def declares_lab(root: Path, name: str) -> bool:
     return False
 
 
-def try_it_commands(root: Path, kmodcov_dir: str, *, cwd: Path) -> list[str]:
+def _shown(path: Path, cwd: Path) -> Path:
+    """Return *path* relative to *cwd* when it lies beneath it, else as given."""
+    here = cwd.resolve()
+    resolved = path.resolve()
+    return resolved.relative_to(here) if resolved.is_relative_to(here) else path
+
+
+def try_it_commands(
+    root: Path, kmodcov_dir: str, embedded_gcov_dir: str, *, cwd: Path
+) -> list[str]:
     """Return the commands worth trying in *root*: only those whose lab, tests or library it has.
 
     ``otto init --kmodcov`` on an empty directory scaffolds settings and the
     library but no lab and no tests, so it is never told to run against an
-    ``example_lab`` it does not have. The library check names *kmodcov_dir*
-    relative to *cwd* when it lies beneath it, else absolute.
+    ``example_lab`` it does not have. The library check names *kmodcov_dir*, and
+    the patch check *embedded_gcov_dir*, relative to *cwd* when it lies beneath
+    it, else absolute.
     """
     areas = detect_areas(root)
     lab = declares_lab(root, EXAMPLE_LAB_NAME)
@@ -52,9 +63,9 @@ def try_it_commands(root: Path, kmodcov_dir: str, *, cwd: Path) -> list[str]:
     if lab and "instructions" in areas:
         commands.append(f"otto --lab {EXAMPLE_LAB_NAME} run smoke")
     library = root / kmodcov_dir
-    if (library / "kmodcov.h").is_file():
-        here = cwd.resolve()
-        resolved = library.resolve()
-        shown = resolved.relative_to(here) if resolved.is_relative_to(here) else library
-        commands.append(f"otto cov kmodcov check {shown}")
+    if library_present(library):
+        commands.append(f"otto cov kmodcov check {_shown(library, cwd)}")
+    patch = root / embedded_gcov_dir
+    if patch_present(patch):
+        commands.append(f"otto cov embedded-gcov check {_shown(patch, cwd)}")
     return commands

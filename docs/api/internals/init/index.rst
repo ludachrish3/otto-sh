@@ -3,6 +3,7 @@ init internals
 
 .. toctree::
 
+   area_dirs
    areas
    config
    doctor

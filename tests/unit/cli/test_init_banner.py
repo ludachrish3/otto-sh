@@ -176,6 +176,39 @@ def test_a_kmodcov_only_project_is_never_told_to_use_a_lab_it_does_not_have(
     assert "otto cov kmodcov check third_party/otto_kmodcov" in steps, steps
 
 
+def test_an_embedded_gcov_only_project_is_told_to_check_the_patch(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path.resolve()
+    monkeypatch.chdir(root)
+    result = _invoke(["--embedded-gcov", "--name", "widget", "--path", str(root)])
+    assert result.exit_code in (0, 1), result.output
+    steps = _try_it(_render(root, str(root)))
+    assert not [line for line in steps if "example_lab" in line], steps
+    assert "otto cov embedded-gcov check third_party/embedded-gcov-patch" in steps, steps
+
+
+def test_a_custom_embedded_gcov_dir_reaches_the_next_steps(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path.resolve()
+    monkeypatch.chdir(root)
+    result = _invoke(
+        [
+            "--embedded-gcov",
+            "--embedded-gcov-dir",
+            "vendor/egcov",
+            "--name",
+            "w",
+            "--path",
+            str(root),
+        ]
+    )
+    assert result.exit_code in (0, 1), result.output
+    assert (root / "vendor" / "egcov" / "embedded-gcov-zephyr-gcc12plus.patch").is_file()
+    assert "otto cov embedded-gcov check vendor/egcov" in result.output.replace("\n", " ").replace(
+        "│", ""
+    )
+
+
 def test_no_try_it_step_for_a_root_with_nothing_to_try(tmp_path: Path) -> None:
     text = _render(tmp_path.resolve(), "")
     assert "3. Try it:" not in text

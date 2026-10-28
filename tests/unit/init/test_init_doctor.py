@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from otto.init import (
+    AREA_NAMES,
     AreaVerdict,
     DoctorReport,
     InitConfig,
@@ -190,6 +191,7 @@ def test_valid_project_reports_all_ok(tmp_path: Path) -> None:
         ("tests", "ok"),
         ("instructions", "ok"),
         ("kmodcov", "absent"),
+        ("embedded-gcov", "absent"),
     ]
     assert report.warnings == []  # spec 2026-09-06 §8.1: a fresh scaffold warns of nothing
 
@@ -795,11 +797,12 @@ def test_a_missing_creds_store_file_warns_rather_than_failing_the_check(tmp_path
     assert "CredsError" not in _text(report)
 
 
-def test_all_never_scaffolds_the_kmodcov_area(tmp_path: Path) -> None:
-    assert "kmodcov" not in scaffold_candidates(tmp_path, all_areas=True)
+@pytest.mark.parametrize("area", ["kmodcov", "embedded-gcov"])
+def test_all_never_scaffolds_an_opt_in_area(tmp_path: Path, area: str) -> None:
+    assert area not in scaffold_candidates(tmp_path, all_areas=True)
     _scaffold_all(tmp_path)
     assert not (tmp_path / "third_party").exists()
-    assert check_project(tmp_path).verdict("kmodcov").state == "absent"
+    assert check_project(tmp_path).verdict(area).state == "absent"
 
 
 def test_kmodcov_scaffolds_the_area_and_refreshes_it(tmp_path: Path) -> None:
@@ -1172,3 +1175,77 @@ def test_the_doctor_reports_a_bad_power_table_naming_the_host(tmp_path: Path, ki
         "hosts[0]" in line and "host 'example-device'" in line and reason in line
         for line in text.splitlines()
     )
+
+
+def test_embedded_gcov_scaffolds_the_area_and_refreshes_it(tmp_path: Path) -> None:
+    from otto.coverage.embedded_gcov.library import check_patch
+
+    _scaffold_all(tmp_path)
+    _scaffold(tmp_path, "embedded-gcov")
+    vendored = tmp_path / "third_party" / "embedded-gcov-patch"
+    patch_file = vendored / "embedded-gcov-zephyr-gcc12plus.patch"
+    assert check_patch(vendored).state == "current"
+    assert check_project(tmp_path).verdict("embedded-gcov").state == "ok"
+    patch_file.write_text("stale\n")
+    again = _scaffold(tmp_path, "embedded-gcov")
+    assert check_patch(vendored).state == "current"
+    outcomes = {w.path: w.outcome for w in again.writes}
+    assert outcomes[patch_file] == "refreshed"
+    starter = tmp_path / "third_party" / "embedded-gcov-patch-consumer"
+    assert {p: o for p, o in outcomes.items() if p.parent == starter} == {
+        starter / name: "kept" for name in ("cov_entry.c", "README.md")
+    }
+
+
+def test_a_differing_embedded_gcov_patch_is_a_warning_not_a_failure(tmp_path: Path) -> None:
+    _scaffold_all(tmp_path)
+    _scaffold(tmp_path, "embedded-gcov")
+    patch_file = (
+        tmp_path / "third_party" / "embedded-gcov-patch" / "embedded-gcov-zephyr-gcc12plus.patch"
+    )
+    patch_file.write_text("edited\n")
+    report = check_project(tmp_path)
+    assert report.ok, _text(report)
+    assert report.verdict("embedded-gcov").state == "ok"
+    (warning,) = [w for w in report.warnings if "embedded-gcov-zephyr-gcc12plus.patch" in w]
+    assert f"otto cov embedded-gcov export {patch_file.parent}" in warning
+    assert warning.startswith(f"{patch_file.parent} differs from the installed otto's copy: ")
+
+
+def test_a_current_embedded_gcov_patch_warns_of_nothing(tmp_path: Path) -> None:
+    _scaffold_all(tmp_path)
+    _scaffold(tmp_path, "embedded-gcov")
+    assert check_project(tmp_path).warnings == []
+
+
+def test_a_patch_under_a_custom_directory_gets_no_drift_warning(tmp_path: Path) -> None:
+    _scaffold_all(tmp_path)
+    scaffold(
+        InitConfig(tmp_path, "widget", "0.1.0", embedded_gcov_dir="vendor/egcov"), ["embedded-gcov"]
+    )
+    (tmp_path / "vendor" / "egcov" / "embedded-gcov-zephyr-gcc12plus.patch").write_text("edited\n")
+    report = check_project(tmp_path)
+    assert report.warnings == []
+    assert report.verdict("embedded-gcov").state == "absent"
+
+
+def test_every_area_without_a_dedicated_branch_has_a_validator() -> None:
+    """A new area must name its validator; none may fall through to another area's."""
+    from otto.init.doctor import _AREA_VALIDATORS
+
+    dedicated = {"settings", "schemas", "lab", "tests", "instructions"}
+    assert set(AREA_NAMES) - dedicated == set(_AREA_VALIDATORS)
+
+
+def test_a_failing_kmodcov_area_does_not_fail_the_embedded_gcov_verdict(tmp_path: Path) -> None:
+    """The verdict of one area is its own validator's: embedded-gcov never runs kmodcov's."""
+    _scaffold_all(tmp_path)
+    _scaffold(tmp_path, "embedded-gcov")
+    settings = tmp_path / ".otto" / "settings.toml"
+    settings.write_text(  # scaffold-exempt: appends to a settings.toml otto init itself scaffolded
+        settings.read_text() + '\n[[dev_tools]]\nname = "kmodcov-6.8"\nkind = "kmodcov"\n'
+        'artifact = "build/otto_kmodcov.ko"\nsource = "vendor/missing"\nmatch = { id = ".*" }\n'
+    )
+    report = check_project(tmp_path)
+    assert report.verdict("kmodcov").state == "failed"
+    assert report.verdict("embedded-gcov").state == "ok"

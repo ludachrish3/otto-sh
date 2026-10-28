@@ -670,3 +670,34 @@ loads the library before the module and removes it at cleanup are on the
 kernel-modules page of otto's docs:
 <https://otto-sh.readthedocs.io/en/stable/cli/cov/instrumenting/kernel-modules.html>.
 """
+
+EMBEDDED_GCOV_SETTINGS_TEMPLATE = """\
+
+# embedded-gcov: otto's patch to NASA's embedded-gcov runtime, written to
+# {embedded_gcov_dir} by `otto init --embedded-gcov` (re-run it, or
+# `otto cov embedded-gcov export {embedded_gcov_dir}`, after upgrading otto).
+# The runtime itself is not shipped: apply the patch to your own checkout. It
+# needs a GNU compiler and the gcov format — see
+# https://otto-sh.readthedocs.io/en/stable/cli/cov/instrumenting/embedded.html
+# — and `build_dir` names the build tree holding the .gcno files the report
+# decodes the board's counters against. Uncomment and fill in:
+#[coverage.embedded]
+#build_dir = "<build tree holding the .gcno files>"
+"""
+
+EMBEDDED_GCOV_STARTER_README_TEMPLATE = """\
+# embedded-gcov consumer starter
+
+`cov_entry.c` is a starting point for an embedded coverage extension: the
+embedded-gcov runtime and the three entry points otto drives (`cov_init`,
+`cov_dump`, `cov_reset`), compiled into one translation unit. It needs a GNU
+compiler and the gcov format. Copy it beside your sources and put the code to
+measure in the same translation unit.
+
+otto's patch to the embedded-gcov runtime is written to `{embedded_gcov_dir}`
+(`otto cov embedded-gcov check {embedded_gcov_dir}` compares it with the
+installed otto). Applying it to your embedded-gcov checkout, building the
+extension, and the entry points' lifecycle are on the embedded page of otto's
+docs:
+<https://otto-sh.readthedocs.io/en/stable/cli/cov/instrumenting/embedded.html>.
+"""

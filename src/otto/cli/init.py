@@ -12,21 +12,27 @@ from typing import TYPE_CHECKING, Annotated
 
 import typer
 
+from ..init.area_dirs import DEFAULT_EMBEDDED_GCOV_DIR, DEFAULT_KMODCOV_DIR
+
 if TYPE_CHECKING:
     # Annotation-only: ``otto.cli.init`` sits on a budgeted CLI surface
     # (scripts/import_budget.py), so every real ``otto.init`` use below is a
-    # function-local import.
+    # function-local import, except the import-free ``area_dirs`` leaf above.
     from rich.console import RenderableType
 
     from ..init.config import InitConfig
     from ..init.doctor import DoctorReport
     from ..init.scaffolder import ScaffoldReport
 
-_FLAGS = {"root": "--path", "kmodcov_dir": "--kmodcov-dir"}
+_FLAGS = {
+    "root": "--path",
+    "kmodcov_dir": "--kmodcov-dir",
+    "embedded_gcov_dir": "--embedded-gcov-dir",
+}
 """Field-to-flag spelling for usage_error_from. No "areas": every area flag names a fixed area."""
 
 
-async def init_command(
+async def init_command(  # noqa: PLR0913, PLR0917 — one parameter per init flag, by design
     all_areas: Annotated[
         bool, typer.Option("--all", help="Scaffold every missing area without prompting.")
     ] = False,
@@ -79,7 +85,25 @@ async def init_command(
             "--kmodcov-dir",
             help="Where --kmodcov vendors the library (relative to the project root).",
         ),
-    ] = "third_party/otto_kmodcov",
+    ] = DEFAULT_KMODCOV_DIR,
+    embedded_gcov: Annotated[
+        bool,
+        typer.Option(
+            "--embedded-gcov",
+            help=(
+                "Scaffold (or refresh, if present) the embedded-gcov area: write otto's "
+                "embedded-gcov runtime patch, a consumer starter, and a commented "
+                "\\[coverage.embedded] block."
+            ),
+        ),
+    ] = False,
+    embedded_gcov_dir: Annotated[
+        str,
+        typer.Option(
+            "--embedded-gcov-dir",
+            help="Where --embedded-gcov writes the patch (relative to the project root).",
+        ),
+    ] = DEFAULT_EMBEDDED_GCOV_DIR,
     name: Annotated[
         str,
         typer.Option("--name", help="Product name for settings.toml (default: directory name)."),
@@ -111,12 +135,19 @@ async def init_command(
             ("tests", tests),
             ("instructions", instructions),
             ("kmodcov", kmodcov),
+            ("embedded-gcov", embedded_gcov),
         )
         if on
     ]
     interactive = not (all_areas or requested)
     try:
-        config = _config(path, name=name, version=version, kmodcov_dir=kmodcov_dir)
+        config = _config(
+            path,
+            name=name,
+            version=version,
+            kmodcov_dir=kmodcov_dir,
+            embedded_gcov_dir=embedded_gcov_dir,
+        )
         candidates = scaffold_candidates(
             config.root, requested=requested, all_areas=all_areas or interactive
         )
@@ -137,6 +168,7 @@ async def init_command(
         roots=os.environ.get(_ottopath_var(), ""),
         width=console.width,
         kmodcov_dir=config.kmodcov_dir,
+        embedded_gcov_dir=config.embedded_gcov_dir,
     )
     console.print(steps.renderable, soft_wrap=steps.soft_wrap)
     if not doctor.ok:
@@ -301,7 +333,9 @@ class NextSteps:
     soft_wrap: bool
 
 
-def _next_steps_lines(root: Path, roots: str, kmodcov_dir: str) -> list[_Line]:
+def _next_steps_lines(
+    root: Path, roots: str, kmodcov_dir: str, embedded_gcov_dir: str
+) -> list[_Line]:
     export = [] if _already_active(root, roots) else [f"export {_ottopath_var()}={root}"]
     source = f"source {_COMPLETION_SCRIPT}"
     blank = _Line()
@@ -320,7 +354,7 @@ def _next_steps_lines(root: Path, roots: str, kmodcov_dir: str) -> list[_Line]:
 
     from ..init.next_steps import try_it_commands
 
-    tried = try_it_commands(root, kmodcov_dir, cwd=Path.cwd())
+    tried = try_it_commands(root, kmodcov_dir, embedded_gcov_dir, cwd=Path.cwd())
     try_it = [blank, heading("3. Try it:"), blank, *commands(*tried)] if tried else []
     bashrc = [
         "`otto --install-completion` already added the `source` line to",
@@ -352,7 +386,12 @@ def _next_steps_lines(root: Path, roots: str, kmodcov_dir: str) -> list[_Line]:
 
 
 def next_steps_panel(
-    root: Path, *, roots: str, width: int, kmodcov_dir: str | None = None
+    root: Path,
+    *,
+    roots: str,
+    width: int,
+    kmodcov_dir: str | None = None,
+    embedded_gcov_dir: str | None = None,
 ) -> NextSteps:
     """Build the Next steps block ``otto init`` prints last, for a *width*-column console.
 
@@ -363,7 +402,8 @@ def next_steps_panel(
     omitted when *roots* already names *root*. The "Try it" step lists only
     the commands *root* can run (:func:`otto.init.next_steps.try_it_commands`), and is left out
     when there are none; *kmodcov_dir* is where ``--kmodcov`` vendored the
-    library (``None``: the default directory).
+    library and *embedded_gcov_dir* where ``--embedded-gcov`` wrote the patch
+    (``None``: the default directory for each).
 
     Boxed when every command fits inside the box. Otherwise the same lines
     print unboxed under a rule, soft-wrapped: rich folds or crops a line that
@@ -376,11 +416,12 @@ def next_steps_panel(
     from rich.rule import Rule
     from rich.text import Text
 
-    if kmodcov_dir is None:
-        from ..init.config import DEFAULT_KMODCOV_DIR
-
-        kmodcov_dir = DEFAULT_KMODCOV_DIR
-    lines = _next_steps_lines(root, roots, kmodcov_dir)
+    lines = _next_steps_lines(
+        root,
+        roots,
+        DEFAULT_KMODCOV_DIR if kmodcov_dir is None else kmodcov_dir,
+        DEFAULT_EMBEDDED_GCOV_DIR if embedded_gcov_dir is None else embedded_gcov_dir,
+    )
     widest = max(len(line.text) for line in lines if line.command)
     if widest + _COMMAND_INDENT + _BOX_OVERHEAD <= width:
         body = [

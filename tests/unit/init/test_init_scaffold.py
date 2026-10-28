@@ -41,6 +41,7 @@ def test_area_order_is_settings_first() -> None:
         "tests",
         "instructions",
         "kmodcov",
+        "embedded-gcov",
     ]
 
 
@@ -448,9 +449,10 @@ def test_lab_files_empty_when_settings_declare_no_lab_table(tmp_path: Path) -> N
     assert lab_files(project) == []
 
 
-def test_area_order_ends_with_the_opt_in_kmodcov_area() -> None:
-    """kmodcov comes last; that it is opt-in is pinned by the all-areas candidate test."""
-    assert AREA_NAMES[-1] == "kmodcov"
+def test_area_order_ends_with_the_opt_in_areas() -> None:
+    """kmodcov, then embedded-gcov, come last; that they are opt-in is pinned by the all-areas
+    candidate test."""
+    assert AREA_NAMES[-2:] == ["kmodcov", "embedded-gcov"]
 
 
 def test_kmodcov_scaffold_exports_the_library_and_appends_the_wiring_entry(
@@ -614,6 +616,8 @@ def test_fresh_settings_scaffolded_with_kmodcov_carry_the_block_and_no_notice(
     assert "settings" in report.prerequisites
     assert '#kind = "kmodcov"' in (tmp_path / ".otto" / "settings.toml").read_text()
     assert not [n for n in report.notices if "[[dev_tools]]" in n]
+    # The settings area wrote the block itself: the area must not append it a second time.
+    assert tmp_path / ".otto" / "settings.toml" not in _paths(report, "appended")
 
 
 def test_scaffolding_never_prints(tmp_path: Path, capsys) -> None:
@@ -699,7 +703,7 @@ def test_a_declared_init_that_is_no_module_name_is_never_written_as_a_path(tmp_p
 
 
 def test_settings_is_a_prerequisite_of_every_area(tmp_path: Path) -> None:
-    for area in ("schemas", "lab", "tests", "instructions", "kmodcov"):
+    for area in ("schemas", "lab", "tests", "instructions", "kmodcov", "embedded-gcov"):
         assert scaffold_prerequisites(tmp_path, [area])[0] == "settings", area
     assert scaffold_prerequisites(tmp_path, []) == []
 
@@ -735,16 +739,19 @@ def test_an_unknown_area_is_refused_naming_areas(tmp_path: Path) -> None:
         _scaffold(tmp_path, "labs")
 
 
-def test_schemas_and_kmodcov_refresh_when_present_others_do_not(tmp_path: Path) -> None:
+def test_the_otto_owned_areas_refresh_when_present_others_do_not(tmp_path: Path) -> None:
     _scaffold(tmp_path, *AREA_NAMES)
-    assert scaffold_candidates(tmp_path, requested=["schemas", "kmodcov", "lab", "tests"]) == [
+    requested = ["schemas", "kmodcov", "embedded-gcov", "lab", "tests"]
+    assert scaffold_candidates(tmp_path, requested=requested) == [
         "schemas",
         "kmodcov",
+        "embedded-gcov",
     ]
 
 
-def test_kmodcov_is_never_an_all_areas_candidate(tmp_path: Path) -> None:
-    assert "kmodcov" not in scaffold_candidates(tmp_path, all_areas=True)
+@pytest.mark.parametrize("area", ["kmodcov", "embedded-gcov"])
+def test_an_opt_in_area_is_never_an_all_areas_candidate(tmp_path: Path, area: str) -> None:
+    assert area not in scaffold_candidates(tmp_path, all_areas=True)
 
 
 def test_an_orphan_schema_is_pruned_and_reported(tmp_path: Path) -> None:
@@ -855,3 +862,261 @@ def test_the_scaffolded_test_uses_the_fixture_the_scaffolded_conftest_defines() 
     assert "def project_marker() -> str:" in CONFTEST_TEMPLATE
     assert "project_marker: str" in TEST_EXAMPLE_TEMPLATE
     assert "repo_marker" not in CONFTEST_TEMPLATE + TEST_EXAMPLE_TEMPLATE
+
+
+# ── embedded-gcov ──────────────────────────────────────────────────────────────
+
+_EGCOV = Path("third_party") / "embedded-gcov-patch"
+
+
+def test_embedded_gcov_scaffold_exports_the_patch_and_writes_the_starter(tmp_path: Path) -> None:
+    from otto.coverage.embedded_gcov.library import LIBRARY_DIR, STARTER_FILES, check_patch
+
+    _scaffold(tmp_path, "settings")
+    report = _scaffold(tmp_path, "embedded-gcov")
+    vendored = tmp_path / _EGCOV
+    assert check_patch(vendored).state == "current"
+    assert vendored / "embedded-gcov-zephyr-gcc12plus.patch" in _paths(report)
+    starter = tmp_path / "third_party" / "embedded-gcov-patch-consumer"
+    assert (starter / "cov_entry.c").read_bytes() == (LIBRARY_DIR / STARTER_FILES[0]).read_bytes()
+    assert "instrumenting/embedded.html" in (starter / "README.md").read_text()
+    settings = (tmp_path / ".otto" / "settings.toml").read_text()
+    assert "#[coverage.embedded]" in settings
+    assert tmp_path / ".otto" / "settings.toml" in _paths(report, "appended")
+    assert "embedded-gcov" in detect_areas(tmp_path)
+
+
+def test_embedded_gcov_scaffold_refreshes_the_patch_but_never_the_starter_or_a_second_block(
+    tmp_path: Path,
+) -> None:
+    from otto.coverage.embedded_gcov.library import check_patch
+
+    _scaffold(tmp_path, "settings")
+    _scaffold(tmp_path, "embedded-gcov")
+    vendored = tmp_path / _EGCOV
+    patch_file = vendored / "embedded-gcov-zephyr-gcc12plus.patch"
+    patch_file.write_text("edited\n")
+    starter = tmp_path / "third_party" / "embedded-gcov-patch-consumer" / "cov_entry.c"
+    starter.write_text("// mine\n")
+    before = (tmp_path / ".otto" / "settings.toml").read_text()
+    report = _scaffold(tmp_path, "embedded-gcov")
+    assert check_patch(vendored).state == "current"
+    assert patch_file in _paths(report, "refreshed")
+    assert starter.read_text() == "// mine\n"
+    assert starter in _paths(report, "kept")
+    assert (tmp_path / ".otto" / "settings.toml").read_text() == before
+
+
+def test_embedded_gcov_scaffold_honours_the_configured_directory(tmp_path: Path) -> None:
+    cfg = InitConfig(tmp_path, "widget", "0.1.0", embedded_gcov_dir="vendor/egcov")
+    scaffold(cfg, ["settings"])
+    scaffold(cfg, ["embedded-gcov"])
+    assert (tmp_path / "vendor" / "egcov" / "embedded-gcov-zephyr-gcc12plus.patch").is_file()
+    assert (tmp_path / "vendor" / "egcov-consumer" / "cov_entry.c").is_file()
+    assert "vendor/egcov" in (tmp_path / ".otto" / "settings.toml").read_text()
+
+
+def test_embedded_gcov_is_detected_only_by_the_patch_under_the_default_directory(
+    tmp_path: Path,
+) -> None:
+    bare = tmp_path / "bare"
+    make_project(bare, name="widget", version="0.1.0")
+    assert "embedded-gcov" not in detect_areas(bare)
+    custom = tmp_path / "custom"
+    make_project(custom, name="widget", version="0.1.0")
+    scaffold(
+        InitConfig(custom, "widget", "0.1.0", embedded_gcov_dir="vendor/egcov"), ["embedded-gcov"]
+    )
+    assert "embedded-gcov" not in detect_areas(custom)
+    default = tmp_path / "default"
+    make_project(default, name="widget", version="0.1.0")
+    _scaffold(default, "embedded-gcov")
+    assert "embedded-gcov" in detect_areas(default)
+
+
+def test_kmodcov_is_detected_by_the_library_header_under_its_default_directory(
+    tmp_path: Path,
+) -> None:
+    from otto.init.config import DEFAULT_KMODCOV_DIR
+
+    make_project(tmp_path, name="widget", version="0.1.0")
+    library = tmp_path / DEFAULT_KMODCOV_DIR
+    library.mkdir(parents=True)
+    (library / "kmodcov.h").write_text("")
+    assert "kmodcov" in detect_areas(tmp_path)
+
+
+def test_embedded_gcov_appends_the_documented_block_to_existing_settings_once(
+    tmp_path: Path,
+) -> None:
+    from otto.init.templates import EMBEDDED_GCOV_SETTINGS_TEMPLATE
+
+    _scaffold(tmp_path, "settings")
+    settings = tmp_path / ".otto" / "settings.toml"
+    before = settings.read_text()
+    report = _scaffold(tmp_path, "embedded-gcov")
+    after = settings.read_text()
+    assert after.startswith(before)
+    block = EMBEDDED_GCOV_SETTINGS_TEMPLATE.format(
+        embedded_gcov_dir="third_party/embedded-gcov-patch"
+    )
+    assert after[len(before) :].strip("\n") == block.strip("\n")
+    assert not [n for n in report.notices if "[coverage.embedded]" in n]
+    import tomli
+
+    assert tomli.loads(after) == tomli.loads(before)
+    again = _scaffold(tmp_path, "embedded-gcov")
+    assert settings.read_text() == after
+    assert settings not in _paths(again, "appended")
+
+
+def test_embedded_gcov_never_writes_through_a_symlinked_settings_file(tmp_path: Path) -> None:
+    _scaffold(tmp_path, "settings")
+    settings = tmp_path / ".otto" / "settings.toml"
+    real = tmp_path / "real-settings.toml"
+    settings.rename(real)
+    settings.symlink_to(real)
+    before = real.read_bytes()
+    report = _scaffold(tmp_path, "embedded-gcov")
+    assert real.read_bytes() == before
+    assert settings in _paths(report, "kept")
+    (notice,) = [n for n in report.notices if "[coverage.embedded]" in n]
+    assert "#[coverage.embedded]" in notice
+
+
+def test_embedded_gcov_leaves_settings_alone_when_a_coverage_embedded_table_is_declared(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "declared"
+    make_project(
+        root,
+        name="widget",
+        version="0.1.0",
+        extra='[coverage.embedded]\nbuild_dir = "build"\n',
+    )
+    settings = root / ".otto" / "settings.toml"
+    before = settings.read_bytes()
+    report = _scaffold(root, "embedded-gcov")
+    assert settings.read_bytes() == before
+    assert settings not in _paths(report, "appended")
+
+
+def test_fresh_settings_scaffolded_with_both_areas_carry_both_blocks_once_and_no_notice(
+    tmp_path: Path,
+) -> None:
+    report = _scaffold(tmp_path, "kmodcov", "embedded-gcov")
+    text = (tmp_path / ".otto" / "settings.toml").read_text()
+    assert text.count('#kind = "kmodcov"') == 1
+    assert text.count("#[coverage.embedded]") == 1
+    assert not [n for n in report.notices if "[[dev_tools]]" in n or "[coverage.embedded]" in n]
+    assert (tmp_path / "third_party" / "otto_kmodcov" / "kmodcov.h").is_file()
+    assert (tmp_path / _EGCOV / "embedded-gcov-zephyr-gcc12plus.patch").is_file()
+    # The settings area wrote the block itself: the area must not append it a second time.
+    assert tmp_path / ".otto" / "settings.toml" not in _paths(report, "appended")
+
+
+def test_existing_settings_get_both_blocks_when_both_areas_run_together(tmp_path: Path) -> None:
+    _scaffold(tmp_path, "settings")
+    _scaffold(tmp_path, "kmodcov", "embedded-gcov")
+    text = (tmp_path / ".otto" / "settings.toml").read_text()
+    assert text.count('#kind = "kmodcov"') == 1
+    assert text.count("#[coverage.embedded]") == 1
+
+
+def test_fresh_settings_scaffolded_with_embedded_gcov_carry_the_block_and_no_notice(
+    tmp_path: Path,
+) -> None:
+    report = _scaffold(tmp_path, "embedded-gcov")
+    assert "settings" in report.prerequisites
+    text = (tmp_path / ".otto" / "settings.toml").read_text()
+    assert text.count("#[coverage.embedded]") == 1
+    assert not [n for n in report.notices if "[coverage.embedded]" in n]
+    # The settings area wrote the block itself: the area must not append it a second time.
+    assert tmp_path / ".otto" / "settings.toml" not in _paths(report, "appended")
+
+
+def test_a_commented_block_with_a_space_after_the_hash_counts_as_wired(tmp_path: Path) -> None:
+    _scaffold(tmp_path, "settings")
+    settings = tmp_path / ".otto" / "settings.toml"
+    settings.write_text(  # scaffold-exempt: in-place edit
+        settings.read_text() + "\n# [coverage.embedded]\n# build_dir = 'b'\n"
+    )
+    before = settings.read_text()
+    report = _scaffold(tmp_path, "embedded-gcov")
+    assert settings.read_text() == before
+    assert settings not in _paths(report, "appended")
+
+
+def test_an_unparseable_settings_file_declaring_the_table_is_left_alone(tmp_path: Path) -> None:
+    _scaffold(tmp_path, "settings")
+    settings = tmp_path / ".otto" / "settings.toml"
+    settings.write_text(  # scaffold-exempt: in-place corruption
+        settings.read_text() + "\n[coverage.embedded]\nbuild_dir = \n"
+    )
+    before = settings.read_text()
+    _scaffold(tmp_path, "embedded-gcov")
+    assert settings.read_text() == before
+
+
+# ── the shared vendored-area core ──────────────────────────────────────────────
+
+_VENDORED_AREAS = {
+    "kmodcov": ("kmodcov_dir", "vendor/kmod", '#kind = "kmodcov"'),
+    "embedded-gcov": ("embedded_gcov_dir", "vendor/egcov", "#[coverage.embedded]"),
+}
+
+
+@pytest.mark.parametrize("area", list(_VENDORED_AREAS))
+def test_both_vendored_areas_run_through_one_core_with_the_same_input(
+    tmp_path: Path, area: str
+) -> None:
+    """The same input drives both areas: outcomes, consumer-dir naming, append once, paste."""
+    field, directory, marker = _VENDORED_AREAS[area]
+    cfg = InitConfig(tmp_path, "widget", "0.1.0", **{field: directory})
+    scaffold(cfg, ["settings"])
+    settings = tmp_path / ".otto" / "settings.toml"
+    first = scaffold(cfg, [area])
+    created = [w for w in first.writes if w.path.parent == tmp_path / directory]
+    assert created
+    assert {w.outcome for w in created} == {"created"}
+    consumer = tmp_path / f"{directory}-consumer"
+    assert {w.outcome for w in first.writes if w.path.parent == consumer} == {"created"}
+    assert settings in _paths(first, "appended")
+    assert settings.read_text().count(marker) == 1
+    again = scaffold(cfg, [area])
+    assert {w.outcome for w in again.writes if w.path.parent == tmp_path / directory} == {
+        "refreshed"
+    }
+    assert {w.outcome for w in again.writes if w.path.parent == consumer} == {"kept"}
+    assert settings not in _paths(again, "appended")
+    assert settings.read_text().count(marker) == 1
+
+
+@pytest.mark.parametrize("area", list(_VENDORED_AREAS))
+def test_both_vendored_areas_paste_instead_of_writing_through_a_symlink(
+    tmp_path: Path, area: str
+) -> None:
+    _, _, marker = _VENDORED_AREAS[area]
+    _scaffold(tmp_path, "settings")
+    settings = tmp_path / ".otto" / "settings.toml"
+    real = tmp_path / "real-settings.toml"
+    settings.rename(real)
+    settings.symlink_to(real)
+    before = real.read_bytes()
+    report = _scaffold(tmp_path, area)
+    assert real.read_bytes() == before
+    (notice,) = [n for n in report.notices if marker in n]
+    assert notice.startswith("add this commented")
+
+
+def test_an_unparseable_settings_file_declaring_a_kmodcov_entry_is_left_alone(
+    tmp_path: Path,
+) -> None:
+    _scaffold(tmp_path, "settings")
+    settings = tmp_path / ".otto" / "settings.toml"
+    settings.write_text(  # scaffold-exempt: in-place corruption
+        settings.read_text() + '\n[[dev_tools]]\nkind = "kmodcov"\nartifact = \n'
+    )
+    before = settings.read_text()
+    _scaffold(tmp_path, "kmodcov")
+    assert settings.read_text() == before

@@ -1,8 +1,8 @@
 """The areas of an otto project, and how ``otto init`` tells which are present.
 
 An *area* is one unit of project setup the doctor checks and the scaffolder
-writes: ``settings``, ``schemas``, ``lab``, ``tests``, ``instructions`` and
-``kmodcov``, in that order (:data:`AREA_NAMES`). Detection only asks "is
+writes: ``settings``, ``schemas``, ``lab``, ``tests``, ``instructions``,
+``kmodcov`` and ``embedded-gcov``, in that order (:data:`AREA_NAMES`). Detection only asks "is
 this area here?" — whether it is any good is the doctor's question
 (:func:`otto.init.doctor.check_project`). Scaffolding writes one area's files
 through :func:`~otto.init.write_policy.write_file` (:func:`scaffold_area`);
@@ -11,16 +11,20 @@ which areas a run writes is :mod:`otto.init.scaffolder`'s question.
 
 import dataclasses
 import json
+import re
 from collections.abc import Callable
 from importlib.machinery import ModuleSpec
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from .area_dirs import DEFAULT_EMBEDDED_GCOV_DIR, DEFAULT_KMODCOV_DIR
 from .config import InitConfig
 from .settings_file import declared_init, settings_data, settings_path, settings_paths
 from .templates import (
     CONFTEST_TEMPLATE,
     CREDS_JSON_TEMPLATE,
+    EMBEDDED_GCOV_SETTINGS_TEMPLATE,
+    EMBEDDED_GCOV_STARTER_README_TEMPLATE,
     INSTRUCTIONS_TEMPLATE,
     INVENTORY_JSON_TEMPLATE,
     KMODCOV_DEV_TOOL_TEMPLATE,
@@ -225,10 +229,16 @@ def _detect_instructions(root: Path) -> bool:
 
 
 def _detect_kmodcov(root: Path) -> bool:
-    return (
-        bool(kmodcov_entries(root))
-        or (root / "third_party" / "otto_kmodcov" / "kmodcov.h").is_file()
-    )
+    return bool(kmodcov_entries(root)) or library_present(root / DEFAULT_KMODCOV_DIR)
+
+
+def _detect_embedded_gcov(root: Path) -> bool:
+    """Report the patch present under :data:`~otto.init.area_dirs.DEFAULT_EMBEDDED_GCOV_DIR`.
+
+    No settings key names the patch directory, so a copy under a custom
+    ``--embedded-gcov-dir`` is not detected.
+    """
+    return patch_present(root / DEFAULT_EMBEDDED_GCOV_DIR)
 
 
 _DETECT: dict[str, Callable[[Path], bool]] = {
@@ -238,6 +248,7 @@ _DETECT: dict[str, Callable[[Path], bool]] = {
     "tests": _detect_tests,
     "instructions": _detect_instructions,
     "kmodcov": _detect_kmodcov,
+    "embedded-gcov": _detect_embedded_gcov,
 }
 
 AREA_NAMES: list[str] = list(_DETECT)
@@ -264,12 +275,14 @@ _VSCODE_SETTINGS_KEPT = (
 
 
 def _scaffold_settings(config: InitConfig, areas: list[str]) -> AreaWrite:
-    """Write the settings template; with ``kmodcov`` in the same run, its commented entry too."""
+    """Write the settings template, plus the commented block of each coverage area in the run."""
     text = SETTINGS_TEMPLATE.format(
         name=config.name, version=config.version, init_module=config.init_module
     )
     if "kmodcov" in areas:
         text += KMODCOV_DEV_TOOL_TEMPLATE.format(kmodcov_dir=config.kmodcov_dir)
+    if "embedded-gcov" in areas:
+        text += EMBEDDED_GCOV_SETTINGS_TEMPLATE.format(embedded_gcov_dir=config.embedded_gcov_dir)
     write = write_file(settings_path(config.root), text, "user")
     # Pre-wired paths must exist so later areas (and bootstrap) never trip
     # over a missing conventional directory.
@@ -396,53 +409,137 @@ def _module_path(spec: ModuleSpec) -> Path:
     return Path(next(iter(spec.submodule_search_locations or []), spec.name))
 
 
-def _kmodcov_wired(root: Path) -> bool:
-    """Return True when the settings declare a kmodcov entry or already carry the commented one.
+def library_present(directory: Path) -> bool:
+    """Return True when *directory* holds the vendored otto_kmodcov library (its header)."""
+    return (directory / "kmodcov.h").is_file()
+
+
+def patch_present(directory: Path) -> bool:
+    """Return True when *directory* holds any of the shipped embedded-gcov patch files."""
+    from ..coverage.embedded_gcov.library import check_patch
+
+    return check_patch(directory).state != "absent"
+
+
+def _text_declares(root: Path, pattern: str) -> bool:
+    """Return True when a line of the settings file matches *pattern*.
 
     Decoded leniently: a settings file that is not UTF-8 is the settings
     area's problem to report, never a scaffold traceback.
     """
-    if kmodcov_entries(root):
-        return True
-    return '#kind = "kmodcov"' in settings_path(root).read_bytes().decode(errors="replace")
+    text = settings_path(root).read_bytes().decode(errors="replace")
+    return re.search(pattern, text, re.MULTILINE) is not None
 
 
-def _scaffold_kmodcov(config: InitConfig, areas: list[str]) -> AreaWrite:  # noqa: ARG001 — uniform signature
-    """Export the library (otto-owned, refreshed whole), then the consumer starter (user-owned).
+def _kmodcov_wired(root: Path) -> bool:
+    """Return True when the settings declare a kmodcov entry or already carry the commented one."""
+    return bool(kmodcov_entries(root)) or _text_declares(root, r'^\s*#?\s*kind\s*=\s*"kmodcov"')
 
-    When ``settings.toml`` exists and declares no kmodcov entry (commented or
-    not), the commented ``[[dev_tools]]`` entry is appended to it
-    (:func:`~otto.init.write_policy.append_block`) — the one edit ``init``
-    makes to a user-owned file — so a second run finds it and appends nothing.
+
+def _embedded_gcov_wired(root: Path) -> bool:
+    """Return True when the settings declare ``[coverage.embedded]``, commented or not.
+
+    The text fallback also covers a settings file that does not parse, where
+    the parsed table is unavailable.
     """
-    from ..kmodcov.library import SHIPPED_FILES, VERSION_HEADER, export_tree
+    data = settings_data(root)
+    coverage = data.get("coverage") if data is not None else None
+    if isinstance(coverage, dict) and "embedded" in coverage:
+        return True
+    return _text_declares(root, r"^\s*#?\s*\[coverage\.embedded\]")
 
-    vendored = config.kmodcov_path
-    library = [vendored / name for name in (*SHIPPED_FILES, VERSION_HEADER)]
-    existed = {path: path.exists() for path in library}
-    export_tree(vendored)
-    writes = [FileWrite(path, "refreshed" if existed[path] else "created") for path in library]
-    starter = vendored.parent / f"{vendored.name}-consumer"
-    for name, text in (
-        ("kmodcov_begin.c", '#include "kmodcov.h"\nKMODCOV_SENTINEL_BEGIN;\n'),
-        ("kmodcov_end.c", '#include "kmodcov.h"\nKMODCOV_SENTINEL_END;\n'),
-        ("Kbuild.example", KMODCOV_STARTER_KBUILD_TEMPLATE.format(kmodcov_dir_name=vendored.name)),
-        ("README.md", KMODCOV_STARTER_README_TEMPLATE.format(kmodcov_dir=config.kmodcov_dir)),
-    ):
-        writes.append(write_file(starter / name, text, "user"))
+
+def _scaffold_vendored_area(
+    config: InitConfig,
+    *,
+    vendored: Path,
+    shipped: list[Path],
+    export: Callable[[Path], object],
+    starter: dict[str, str],
+    block: str,
+    wired: Callable[[Path], bool],
+) -> AreaWrite:
+    """Scaffold one vendored area: export (otto-owned), starter (user-owned), settings block.
+
+    *export* writes the area's files into *vendored*; each of *shipped* is
+    listed ``created`` or ``refreshed`` by whether it was there before. The
+    *starter* files (name to text) go to ``<vendored>-consumer/`` and are
+    never edited once written. When ``settings.toml`` exists and *wired* says
+    it holds no declaration of the area (commented or not), *block* is
+    appended to it (:func:`~otto.init.write_policy.append_block`), the one edit
+    ``init`` makes to a user-owned file, so a second run appends nothing. A
+    symlinked settings file is never written through: the notice says what to
+    paste.
+    """
+    existed = {path: path.exists() for path in shipped}
+    export(vendored)
+    writes = [FileWrite(path, "refreshed" if existed[path] else "created") for path in shipped]
+    consumer = vendored.parent / f"{vendored.name}-consumer"
+    writes.extend(write_file(consumer / name, text, "user") for name, text in starter.items())
     settings = settings_path(config.root)
-    if settings.is_file() and not _kmodcov_wired(config.root):
-        block = KMODCOV_DEV_TOOL_TEMPLATE.format(kmodcov_dir=config.kmodcov_dir)
+    if settings.is_file() and not wired(config.root):
         appended = append_block(settings, block)
         writes.append(appended)
         if appended.outcome == "kept":
-            # A symlinked settings file is never written through: say what to paste.
             paste = (
-                "add this commented [[dev_tools]] entry to .otto/settings.toml and fill "
-                f"it in:\n{block.strip()}"
+                f"add this commented block to .otto/settings.toml and fill it in:\n{block.strip()}"
             )
             return AreaWrite(writes, [paste])
     return AreaWrite(writes)
+
+
+def _scaffold_kmodcov(config: InitConfig, areas: list[str]) -> AreaWrite:  # noqa: ARG001 — uniform signature
+    """Export the library (otto-owned, refreshed whole), then the consumer starter (user-owned)."""
+    from ..kmodcov.library import SHIPPED_FILES, VERSION_HEADER, export_tree
+
+    vendored = config.kmodcov_path
+    return _scaffold_vendored_area(
+        config,
+        vendored=vendored,
+        shipped=[vendored / name for name in (*SHIPPED_FILES, VERSION_HEADER)],
+        export=export_tree,
+        starter={
+            "kmodcov_begin.c": '#include "kmodcov.h"\nKMODCOV_SENTINEL_BEGIN;\n',
+            "kmodcov_end.c": '#include "kmodcov.h"\nKMODCOV_SENTINEL_END;\n',
+            "Kbuild.example": KMODCOV_STARTER_KBUILD_TEMPLATE.format(
+                kmodcov_dir_name=vendored.name
+            ),
+            "README.md": KMODCOV_STARTER_README_TEMPLATE.format(kmodcov_dir=config.kmodcov_dir),
+        },
+        block=KMODCOV_DEV_TOOL_TEMPLATE.format(kmodcov_dir=config.kmodcov_dir),
+        wired=_kmodcov_wired,
+    )
+
+
+def _scaffold_embedded_gcov(config: InitConfig, areas: list[str]) -> AreaWrite:  # noqa: ARG001 — uniform signature
+    """Export the patch (otto-owned, refreshed whole), then the consumer starter (user-owned).
+
+    The starter is a copy of the shipped ``cov_entry.c`` (ASCII with LF, so
+    the text round trip is byte for byte).
+    """
+    from ..coverage.embedded_gcov.library import (
+        LIBRARY_DIR,
+        SHIPPED_FILES,
+        STARTER_FILES,
+        export_patch,
+    )
+
+    vendored = config.embedded_gcov_path
+    starter = {
+        Path(name).name: (LIBRARY_DIR / name).read_text(encoding="utf-8") for name in STARTER_FILES
+    }
+    starter["README.md"] = EMBEDDED_GCOV_STARTER_README_TEMPLATE.format(
+        embedded_gcov_dir=config.embedded_gcov_dir
+    )
+    return _scaffold_vendored_area(
+        config,
+        vendored=vendored,
+        shipped=[vendored / name for name in SHIPPED_FILES],
+        export=export_patch,
+        starter=starter,
+        block=EMBEDDED_GCOV_SETTINGS_TEMPLATE.format(embedded_gcov_dir=config.embedded_gcov_dir),
+        wired=_embedded_gcov_wired,
+    )
 
 
 _SCAFFOLD: dict[str, Callable[[InitConfig, list[str]], AreaWrite]] = {
@@ -452,6 +549,7 @@ _SCAFFOLD: dict[str, Callable[[InitConfig, list[str]], AreaWrite]] = {
     "tests": _scaffold_tests,
     "instructions": _scaffold_instructions,
     "kmodcov": _scaffold_kmodcov,
+    "embedded-gcov": _scaffold_embedded_gcov,
 }
 
 

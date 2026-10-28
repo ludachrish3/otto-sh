@@ -10,6 +10,7 @@ refusal rows on the ``Invalid value for --kmodcov-dir`` assertion (the output
 read ``Invalid value for --path``).
 """
 
+import dataclasses
 from pathlib import Path
 from unittest.mock import patch
 
@@ -37,6 +38,8 @@ def _invoke(argv, **kwargs):
         (["--tests"], ["tests"], False),
         (["--instructions"], ["instructions"], False),
         (["--kmodcov"], ["kmodcov"], False),
+        (["--embedded-gcov"], ["embedded-gcov"], False),
+        (["--kmodcov", "--embedded-gcov"], ["kmodcov", "embedded-gcov"], False),
         (["--lab", "--tests"], ["lab", "tests"], False),
         (["--all"], [], True),
     ],
@@ -82,11 +85,26 @@ def test_name_version_and_kmodcov_dir_reach_the_config(tmp_path: Path) -> None:
     assert (config.name, config.version, config.kmodcov_dir) == ("acme", "2.0.0", "vendor/k")
 
 
+def test_embedded_gcov_dir_reaches_the_config(tmp_path: Path) -> None:
+    with (
+        patch("otto.init.scaffolder.scaffold_candidates", return_value=[]),
+        patch("otto.init.scaffolder.scaffold", return_value=_EMPTY) as scaffold,
+        patch("otto.init.doctor.check_project", return_value=_OK),
+    ):
+        result = _invoke(
+            ["--embedded-gcov", "--embedded-gcov-dir", "vendor/e", "--path", str(tmp_path)]
+        )
+    assert result.exit_code == 0, result.output
+    assert scaffold.call_args.args[0].embedded_gcov_dir == "vendor/e"
+
+
 @pytest.mark.parametrize(
     ("argv", "flag"),
     [
         (["--kmodcov", "--kmodcov-dir", "/etc/escape"], "--kmodcov-dir"),
         (["--kmodcov", "--kmodcov-dir", "../escape"], "--kmodcov-dir"),
+        (["--embedded-gcov", "--embedded-gcov-dir", "/etc/escape"], "--embedded-gcov-dir"),
+        (["--embedded-gcov", "--embedded-gcov-dir", "../escape"], "--embedded-gcov-dir"),
         (["--path", "{tmp}/does-not-exist"], "--path"),
     ],
 )
@@ -139,3 +157,35 @@ def test_a_library_refusal_from_scaffold_reaches_the_user_in_flag_spelling(tmp_p
         result = _invoke(["--kmodcov", "--path", str(tmp_path)])
     assert result.exit_code == 2, result.output
     assert "Invalid value for --kmodcov-dir" in result.output
+
+
+def test_a_library_refusal_naming_embedded_gcov_dir_reaches_the_user_in_flag_spelling(
+    tmp_path: Path,
+) -> None:
+    from otto.init import InitInputError
+
+    refusal = InitInputError("'x' must stay inside the project", field="embedded_gcov_dir")
+    with (
+        patch("otto.init.scaffolder.scaffold_candidates", return_value=["embedded-gcov"]),
+        patch("otto.init.scaffolder.scaffold", side_effect=refusal),
+        patch("otto.init.doctor.check_project", return_value=_OK),
+    ):
+        result = _invoke(["--embedded-gcov", "--path", str(tmp_path)])
+    assert result.exit_code == 2, result.output
+    assert "Invalid value for --embedded-gcov-dir" in result.output
+
+
+@pytest.mark.parametrize(
+    ("option", "default"),
+    [("kmodcov_dir", "DEFAULT_KMODCOV_DIR"), ("embedded_gcov_dir", "DEFAULT_EMBEDDED_GCOV_DIR")],
+)
+def test_a_dir_flag_defaults_to_the_config_constant(option: str, default: str) -> None:
+    """The flag and InitConfig read one default: the very object, not an equal literal."""
+    import inspect
+
+    from otto.init import area_dirs
+    from otto.init.config import InitConfig
+
+    constant = getattr(area_dirs, default)
+    assert inspect.signature(init_command).parameters[option].default is constant
+    assert {f.name: f.default for f in dataclasses.fields(InitConfig)}[option] is constant

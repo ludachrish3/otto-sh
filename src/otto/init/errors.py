@@ -12,7 +12,7 @@ from ..errors import FieldError
 class InitInputError(FieldError):
     """An ``otto init`` input refusal; ``field`` is the parameter at fault.
 
-    One of ``"root"``, ``"kmodcov_dir"`` or ``"areas"``. The message names no
-    CLI flag: a CLI spells the field in its own flags at
+    One of ``"root"``, ``"kmodcov_dir"``, ``"embedded_gcov_dir"`` or ``"areas"``.
+    The message names no CLI flag: a CLI spells the field in its own flags at
     :func:`otto.cli.invoke.usage_error_from`.
     """

@@ -17,12 +17,13 @@ from .errors import InitInputError
 from .settings_file import declared_init, settings_path
 from .write_policy import FileWrite
 
-_OPT_IN = {"kmodcov"}
+_OPT_IN = {"kmodcov", "embedded-gcov"}
 """Areas only their own request scaffolds.
 
-A kernel-module coverage library is not for every project."""
+A kernel-module coverage library, or an embedded-gcov runtime patch, is not
+for every project."""
 
-_REFRESHABLE = {"schemas", "kmodcov"}
+_REFRESHABLE = {"schemas", "kmodcov", "embedded-gcov"}
 """Otto-owned areas an explicit request refreshes even when present."""
 
 _NEEDS = {"tests": ["instructions"]}
@@ -62,10 +63,11 @@ def scaffold_candidates(
 ) -> list[str]:
     """Return the areas a run would scaffold, in :data:`AREA_NAMES` order, without prerequisites.
 
-    A requested area is a candidate when missing; ``schemas`` and ``kmodcov``
-    also when present (they refresh). ``all_areas`` adds every other missing
-    area except the opt-in ``kmodcov``, and except instructions when the
-    settings declare no ``init`` (a project with no init modules is legitimate).
+    A requested area is a candidate when missing; ``schemas``, ``kmodcov``
+    and ``embedded-gcov`` also when present (they refresh). ``all_areas`` adds
+    every other missing area except the opt-in ``kmodcov`` and
+    ``embedded-gcov``, and except instructions when the settings declare no
+    ``init`` (a project with no init modules is legitimate).
 
     Raises:
         InitInputError: a requested name is not an area (``field="areas"``).

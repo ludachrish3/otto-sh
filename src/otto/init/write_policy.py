@@ -1,15 +1,17 @@
 """The one write policy every file ``otto init`` scaffolds goes through.
 
 Otto-owned files (the editor schemas, the VS Code snippets, the exported
-kmodcov library) are generated from the installed otto and refreshed on every
-write. User-owned files (settings, lab data, example tests, the init module,
-the VS Code settings, the kmodcov consumer starter) are created only when
-absent and never edited afterwards: once written, they are the user's.
+kmodcov library, the embedded-gcov patch) are generated from the installed
+otto and refreshed on every write. User-owned files (settings, lab data,
+example tests, the init module, the VS Code settings, the kmodcov and
+embedded-gcov consumer starters) are created only when absent and never
+edited afterwards: once written, they are the user's.
 
 The one exception is :func:`append_block`: a block of TOML comments added at
 the END of an existing ``settings.toml`` (the kmodcov area's commented
-``[[dev_tools]]`` entry). Nothing already in the file is changed, and a block
-of comments changes nothing the file means.
+``[[dev_tools]]`` entry, the embedded-gcov area's commented
+``[coverage.embedded]`` block). Nothing already in the file is changed, and a
+block of comments changes nothing the file means.
 """
 
 import dataclasses

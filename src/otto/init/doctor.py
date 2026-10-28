@@ -14,6 +14,7 @@ from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
+from .area_dirs import DEFAULT_EMBEDDED_GCOV_DIR
 from .areas import (
     AREA_NAMES,
     deferred_lab_sources,
@@ -34,6 +35,7 @@ if TYPE_CHECKING:
     from ..host.os_profile import ProfileContext
     from ..inventory.protocol import Inventory
     from ..labs.json_repository import LabDocument
+    from ..vendoring import CheckResult
 
 VerdictState = Literal["ok", "failed", "absent", "blocked"]
 
@@ -45,6 +47,7 @@ _ABSENT = {
     "tests": "no test_*.py found",
     "instructions": "no init modules declared",
     "kmodcov": "no kmodcov dev tool declared and no vendored library",
+    "embedded-gcov": "no embedded-gcov patch under " + DEFAULT_EMBEDDED_GCOV_DIR,
 }
 
 
@@ -98,7 +101,9 @@ def check_project(root: Path) -> DoctorReport:
     when ``init`` is omitted or empty (a project with no init modules is
     legitimate), ``blocked`` when the settings are not valid TOML, else
     every entry must resolve. kmodcov: a declared ``source`` must hold the
-    library. Warnings (lab, inventory, kmodcov drift) never fail the report.
+    library. embedded-gcov: present means the patch is under the default
+    directory, and it has nothing to fail. Warnings (lab, inventory, kmodcov and
+    embedded-gcov drift) never fail the report.
 
     Raises:
         InitInputError: *root* is not a directory (``field="root"``).
@@ -144,12 +149,13 @@ def check_project(root: Path) -> DoctorReport:
         elif name == "tests":
             verdict = _checked(name, _validate_tests(root))
         else:
-            verdict = _checked(name, _validate_kmodcov(root))
+            verdict = _checked(name, _AREA_VALIDATORS[name](root))
         if verdict is None and name == "lab" and deferred:
             verdict = AreaVerdict(name, "absent", detail=f"{_ABSENT[name]}; {deferred}")
         verdicts.append(verdict or AreaVerdict(name, "absent", detail=_ABSENT[name]))
     warnings = [] if lab_blocked or lab_unprepared else _lab_warnings(root, cache)
     warnings.extend(_kmodcov_warnings(root))
+    warnings.extend(_embedded_gcov_warnings(root))
     inventory_label, creds_label = _labels(root, cache)
     return DoctorReport(verdicts, warnings, inventory_label, creds_label)
 
@@ -635,9 +641,54 @@ def _kmodcov_warnings(root: Path) -> list[str]:
         if result.state != "differs":
             continue
         origin = f" (exported by otto {result.exported_by})" if result.exported_by else ""
-        names = ", ".join([*result.differing, *result.missing])
-        warnings.append(
-            f"{source}{origin} is not the installed otto's library: {names} — "
-            f"re-export with `otto cov kmodcov export {source}` and review the diff"
-        )
+        warnings.append(_drift_warning(source, origin, result, "kmodcov"))
     return warnings
+
+
+def _drift_warning(directory: Path, origin: str, result: "CheckResult", verb: str) -> str:
+    """Render the advisory line for a vendored copy that differs from the installed otto's.
+
+    One rendering for every vendored area: the absolute *directory*, the
+    differing and missing files by name, and the ``otto cov <verb> export``
+    remedy naming that same directory.
+    """
+    names = ", ".join([*result.differing, *result.missing])
+    return (
+        f"{directory}{origin} differs from the installed otto's copy: {names} — "
+        f"run `otto cov {verb} export {directory}` and review the diff"
+    )
+
+
+# ── embedded-gcov ──────────────────────────────────────────────────────────────
+
+
+def _validate_embedded_gcov(root: Path) -> list[str]:  # noqa: ARG001 — uniform signature
+    """Return no problems: the area is present only when the patch is, and drift is advisory.
+
+    Drift from the installed otto is never a failure — see
+    :func:`_embedded_gcov_warnings`.
+    """
+    return []
+
+
+def _embedded_gcov_warnings(root: Path) -> list[str]:
+    """Warn when the patch under the default directory differs from the installed otto's.
+
+    Only :data:`~otto.init.area_dirs.DEFAULT_EMBEDDED_GCOV_DIR` is looked at: no
+    settings key names the patch directory, so a copy under a custom
+    ``--embedded-gcov-dir`` gets no drift warning.
+    """
+    from ..coverage.embedded_gcov.library import check_patch
+
+    directory = root / DEFAULT_EMBEDDED_GCOV_DIR
+    result = check_patch(directory)
+    if result.state != "differs":
+        return []
+    return [_drift_warning(directory, "", result, "embedded-gcov")]
+
+
+_AREA_VALIDATORS: dict[str, Callable[[Path], list[str]]] = {
+    "kmodcov": _validate_kmodcov,
+    "embedded-gcov": _validate_embedded_gcov,
+}
+"""The validator of every area ``check_project`` has no dedicated branch for."""

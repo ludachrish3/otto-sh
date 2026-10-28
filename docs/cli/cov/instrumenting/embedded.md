@@ -65,8 +65,11 @@ GCC 12+, and the stock runtime miscompiles against them in two ways**:
    and 0% coverage despite a valid dump.
 
 otto ships a patch covering both (plus routing the runtime's serial output
-through `printk`) that supports GCC 12 through 14. Write it out of the installed
-otto, then apply it to your vendored copy:
+through `printk`) that supports GCC 12 through 14. `otto init --embedded-gcov`
+writes it into your project (`third_party/embedded-gcov-patch`, with a starter
+`cov_entry.c` beside it), and re-running it after an upgrade refreshes the
+patch; {doc}`../../init` has the area's contract. To write the patch alone,
+export it out of the installed otto, then apply it to your vendored copy:
 
 ```bash
 otto cov embedded-gcov export patches
