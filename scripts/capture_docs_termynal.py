@@ -33,6 +33,7 @@ import textwrap
 import time
 from pathlib import Path
 
+from otto.cli.builtin_commands import builtin_command_names
 from otto.config.env import without_otto_env
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -44,24 +45,10 @@ STAMP = OUT_DIR / ".stamp"
 # scaffold templates in otto/init/templates.py), so the stamp covers all of src/otto.
 _STAMP_INPUTS = [Path(__file__).resolve(), REPO_ROOT / "src" / "otto"]
 
-# The fourteen first-party commands, in the order `otto --help` lists them;
-# each command page embeds its own --help.
-COMMANDS = [
-    "init",
-    "env",
-    "host",
-    "cache",
-    "run",
-    "test",
-    "docker",
-    "link",
-    "tunnel",
-    "monitor",
-    "cov",
-    "reservation",
-    "inventory",
-    "schema",
-]
+# The fourteen first-party commands, in the order `otto --help` lists them:
+# the registry's own, by origin, which is the one place that list is decided.
+# Each command page embeds its own --help.
+COMMANDS = builtin_command_names()
 
 # Tab-completion showcases: snippet name -> the COMP_WORDS line completed.
 # Every candidate list is served by otto's real completion machinery — the

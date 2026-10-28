@@ -98,6 +98,21 @@ def load_lines(artifact: Path, where: str, params: str, *, elevated: bool) -> li
     ]
 
 
+async def module_resident(host: Any, module_name: str) -> bool:
+    """Resident when ``lsmod`` SUCCEEDS and lists *module_name*; a failed read is not-installed.
+
+    The one answer for the kmod product and the kmod dev tool, whose
+    ``is_installed`` both ask here.
+    """
+    listing = await host.lsmod()
+    return listing.is_ok and module_name in listing.value
+
+
+async def unload_module(host: Any, module_name: str) -> Result:
+    """``rmmod`` through the host's own verb: the kmod product's and the dev tool's uninstall."""
+    return await host.unload(module_name)
+
+
 def unload_line(module_name: str, *, elevated: bool) -> str:
     """Return the line :meth:`~otto.host.unix_host.UnixHost.unload` makes for a resident module.
 
@@ -188,13 +203,11 @@ class KmodTool(DevTool):
 
     @override
     async def uninstall(self, host: "Host") -> Result:
-        return await host.unload(self.module_name)  # ty: ignore[unresolved-attribute]
+        return await unload_module(host, self.module_name)
 
     @override
     async def is_installed(self, host: "Host") -> bool:
-        """Resident when ``lsmod`` SUCCEEDS and lists the name; a failed read is not-installed."""
-        listing = await host.lsmod()  # ty: ignore[unresolved-attribute]
-        return listing.is_ok and self.module_name in listing.value
+        return await module_resident(host, self.module_name)
 
     @override
     def plan(self, host: "Host", *, as_library: bool = False) -> ProductPlan:

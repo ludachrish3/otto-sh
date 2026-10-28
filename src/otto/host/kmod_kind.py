@@ -39,7 +39,15 @@ from typing_extensions import override
 from ..declared import DeclaredEntry
 from ..result import Result
 from ..utils import Status, anchor_path
-from .kmod_tool_kind import SUDO_ASSUMED, elevates, kmodcov_tool_for, load_lines, unload_line
+from .kmod_tool_kind import (
+    SUDO_ASSUMED,
+    elevates,
+    kmodcov_tool_for,
+    load_lines,
+    module_resident,
+    unload_line,
+    unload_module,
+)
 from .product import (
     ProductPlan,
     ShellProduct,
@@ -204,13 +212,11 @@ class KmodProduct(ShellProduct):
 
     @override
     async def uninstall(self, host: "Host") -> Result:
-        return await host.unload(self.module_name)  # ty: ignore[unresolved-attribute]
+        return await unload_module(host, self.module_name)
 
     @override
     async def is_installed(self, host: "Host") -> bool:
-        """Resident when ``lsmod`` SUCCEEDS and lists the name; a failed read is not-installed."""
-        listing = await host.lsmod()  # ty: ignore[unresolved-attribute]
-        return listing.is_ok and self.module_name in listing.value
+        return await module_resident(host, self.module_name)
 
     @override
     def plan(self, host: "Host") -> ProductPlan:

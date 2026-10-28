@@ -23,6 +23,8 @@ the per-call ``exec`` path still works against any parent.
 import asyncio
 import shlex
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import (
     dataclass,
     field,
@@ -276,8 +278,9 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         The probe still asks the docker daemon, **so every caller of this
         method owes a dry run an arm above its own call**, and the list of them
         is the invariant: ``_docker_exec`` (via ``_exec_via_parent``),
-        ``_run_one``, ``send``, ``put``, ``get`` and ``open_session`` return a
-        decline; ``_expect_one``'s caller (``BaseHost.expect``) raises above it;
+        ``put`` and ``get`` return a decline, as do the base's ``_run_one``,
+        ``send`` and ``open_session`` above ``_prepare_live_session``;
+        ``_expect_one``'s caller (``BaseHost.expect``) raises above it;
         ``login`` announces and returns. A new caller that forgets meets the
         probe's own refusal (``refuse_declined_fact``) instead of a decline,
         but only while the id is unresolved: a cached id is not probed, so once
@@ -744,24 +747,13 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         return replace(result, command=cmd)
 
     @override
-    async def _run_one(
-        self,
-        cmd: str,
-        timeout: float,
-        expects: "list[Expect] | None" = None,
-        log: LogMode = LogMode.NORMAL,
-        user: "str | None" = None,
-    ) -> CommandResult:
-        """Execute one command on the persistent in-container shell.
-
-        Shell state (``cd``, env vars, shell vars) persists across calls,
-        matching :class:`~otto.host.local_host.LocalHost` and
-        :class:`~otto.host.unix_host.UnixHost`. Requires an SSH-based
-        :class:`~otto.host.unix_host.UnixHost` parent.
+    @contextmanager
+    def _run_user_binding(self, user: "str | None") -> "Iterator[None]":
+        """Declare the user this ``run`` intends; the channel open binds it.
 
         The channel's user is BOUND, not per-call: ``docker exec -u`` is
         settled when the channel opens and cannot be renegotiated on a live
-        shell. So this method does not bind anything — it declares an INTENT
+        shell. So this binds nothing — it declares an INTENT
         (:attr:`_pending_run_user`) and lets the open do the binding, via
         :meth:`_record_run_channel_open`. ``send()`` and ``expect()`` open the
         very same channel and set no intent, which resolves to the declared
@@ -775,17 +767,16 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         ``USER``) is a binding like any other. :meth:`close` and
         :meth:`rebuild_connections` drop the channel and the record together.
 
-        The intent is scoped to THIS attempt: set only once the container is
-        known to be up, and dropped in a ``finally`` whether the command
-        succeeded, failed, or never reached a shell. An attempt that dies
-        before its channel opens must leave nothing behind, because the next
-        thing to open the channel may be ``send``/``expect``, which take no
-        ``user`` and so cannot correct a stale one — the residue would open
-        the channel as a user this caller never successfully obtained and
-        then refuse every plain ``run()`` against it.
+        The intent is scoped to THIS attempt: set once the container is known
+        to be up (the base's ``_prepare_live_session`` ran first), and dropped
+        in a ``finally`` whether the command succeeded, failed, or never
+        reached a shell. An attempt that dies before its channel opens must
+        leave nothing behind, because the next thing to open the channel may
+        be ``send``/``expect``, which take no ``user`` and so cannot correct a
+        stale one — the residue would open the channel as a user this caller
+        never successfully obtained and then refuse every plain ``run()``
+        against it.
         """
-        if is_dry_run():
-            return self._dry_run_result(cmd, log)
         effective = self._effective_user(user)
         if self._run_channel_is_bound and effective != self._bound_run_user:
             raise RuntimeError(
@@ -793,12 +784,9 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                 f"{self._bound_run_user!r} and this call asked for {effective!r} — "
                 f"close() or rebuild_connections() to rebind"
             )
-        await self._ensure_running()
         self._pending_run_user = user
         try:
-            return await self._live_session_mgr().run_cmd(
-                cmd, expects=expects, timeout=timeout, log=self._effective_log(log)
-            )
+            yield
         finally:
             self._pending_run_user = None
 

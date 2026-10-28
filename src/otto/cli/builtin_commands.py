@@ -163,3 +163,19 @@ def register_builtin_commands() -> None:
         output_dir=False,
         gate=False,
     )
+
+
+def builtin_command_names() -> list[str]:
+    """Return the first-party command names, in the order ``otto --help`` lists them.
+
+    The names :func:`register_builtin_commands` itself registered, by ORIGIN,
+    never a hand-typed list that drifts the moment a group is added, renamed
+    or removed. Not every name in the registry: a third-party plugin — or a
+    test that registered one in the same process — is not a first-party
+    group. Registers the built-ins first (idempotent), so the answer does not
+    depend on who imported the registry before.
+    """
+    from .registry import CLI_COMMANDS
+
+    register_builtin_commands()
+    return [name for name in CLI_COMMANDS.names() if CLI_COMMANDS.origin(name) == __name__]

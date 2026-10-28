@@ -1100,7 +1100,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         On a ``console`` term ``run`` and ``exec`` share the one session, so
         a ``run`` takes the same line lock ``exec`` does and a gathered
         ``run`` + ``exec`` cannot interleave on the line. Every other term
-        runs :meth:`~otto.host.remote_host.RemoteHost._run_one` unchanged.
+        runs ``BaseHost._run_one`` unchanged.
 
         Explicit two-argument ``super()``: a bare one raises on this
         ``@dataclass(slots=True)`` class, which is rebuilt after the methods
