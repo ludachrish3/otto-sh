@@ -458,11 +458,12 @@ in `scripts/release_events.py`, which `make release` also reads (see
 prints two command lists: one for **this commit** (`HEAD^1..HEAD`, the first
 parent, so a merge counts only what it brought in) and one for the **tip**
 (the merge base with `BASE`, default `origin/main`, to `HEAD`: what lands as a
-whole). The lists gate the commits that will **persist** on `main`: a branch
-that lands as one squash runs the tip list once, on its final tip, and its
-intermediate commits run only the tests in their likely breakage areas plus
-ruff on the files they changed; a landing whose commits persist one by one
-runs the commit list for each. It refuses a dirty tracked tree (commit first) and a `HEAD` with no
+whole). Only the **tip** of a landing is gated: whatever reaches `main` in one
+push, whether one squash or several commits that persist one by one, runs the
+tip list once, on its final tip. Every commit before the tip runs only the
+tests in its likely breakage areas plus ruff on the files it changed, never a
+gate. The commit list is a quick check you may run while working on a commit;
+it is not a landing gate. It refuses a dirty tracked tree (commit first) and a `HEAD` with no
 parent (exit 2), and exits 1 when git cannot answer (a missing base, no
 repository). `BASE` and `make quick`'s `PATHS` are read from the command line
 only, never from the environment.
@@ -500,9 +501,9 @@ for `src/otto/host/`, and a stability tier for `src/otto/link/`
 `src/otto/console.py` (`stability-embedded`). The stability tiers have two more
 areas, the stability test files (the files the `stability-*` Makefile targets
 run) and the tunnel-stability tree, which name their lanes in both columns. So a
-persisting commit that changes only a src leaf under `src/otto/link/` runs no
-stability lane (its *This commit* column is the `make quick` line, not the full
-gate), and the landing's tip, where a src leaf earns the full gate, runs it. Whichever area selects it, a
+commit that changes only a src leaf under `src/otto/link/` runs no stability
+lane before the tip, and the landing's tip, where a src leaf earns the full
+gate, runs it. Whichever area selects it, a
 stability lane runs **once**: `make stability-<tier> COUNT=1`, and for the tunnel
 tier, whose tests loop internally, `make stability-tunnel COUNT=1 CYCLES=2`, its
 smoke depth. It never runs at the Makefile's soak count or depth, and a diff

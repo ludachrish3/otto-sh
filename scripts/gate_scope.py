@@ -3,9 +3,10 @@
 Each changed path gets a class by location (and, for test modules, by whether the
 change is structural): ``none``, ``docs``, ``web``, ``tests-leaf``,
 ``tests-structural``, ``src-leaf``, ``scripts``, ``escalate``, ``full``. A path with no
-row is ``full``. The commands gate commits as they will persist on ``main``: a branch
-that lands as one squash runs the tip list once, at its final tip, and its intermediate
-commits run only their likely breakage areas plus ruff. The pure classifier, the command
+row is ``full``. Only a landing's tip is gated: whatever reaches ``main`` in one push,
+one squash or several persisting commits, runs the tip list once, at its final tip, and
+every earlier commit runs only its likely breakage areas plus ruff. The commit list is a
+working check, not a landing gate. The pure classifier, the command
 composition and the repository layer all live here. Exit codes: 0 ok, 1 repository command
 failure, 2 refusal or usage.
 """
