@@ -193,7 +193,7 @@ async def _teardown(project: Project, lab: Lab, parent: UnixHost, compose_projec
     # as a named assertion here instead of silently leaving a stack for the
     # autouse hygiene bracket's after-snapshot to (also silently) miss.
     assert down.is_ok, f"{compose_project}: teardown compose_down failed (status={down})"
-    await cleanup_project(parent, compose_project)
+    await cleanup_project(parent, compose_project, stack=True)
 
 
 @pytest.fixture
@@ -502,7 +502,7 @@ def test_composed_pileup_leaves_zero_accumulation(
             # strand this round's stack while the loop reads as green.
             assert down.is_ok, f"round {round_no}: recovery compose_down failed (status={down})"
         logger.info(f"[pileup] cancel landings: {'; '.join(landings)}")
-        await cleanup_project(docker_parent, proj)
+        await cleanup_project(docker_parent, proj, stack=True)
         end_ps = await docker_parent.exec(_DOCKER_PS_PROBE, timeout=30)
         end_net = await docker_parent.exec(_DOCKER_NET_PROBE, timeout=30)
         assert end_ps.is_ok, f"end docker ps probe failed: {end_ps.value}"

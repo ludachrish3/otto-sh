@@ -26,7 +26,10 @@ a project that adds a project instruction gets the same machinery otto's seven u
   dependency that is known to be missing produces a lab nobody can reason
   about. Tearing down and gathering logs are best-effort
   (``continue_on_failure``): every project is attempted, and the first failure is
-  what returns. A project that will not go must not strand the ones after it.
+  what returns -- else the first decline, a step that kept something on
+  purpose (``otto.project.actions._reported``), so a decline is never
+  folded into Success. A project that will not go must not strand the ones
+  after it.
 * **Host-global steps are the orchestrator's alone.** Debug logs and toolchain
   tools belong to a host, not to a project (spec section 5), so the per-project
   actions refuse to touch them and this layer performs each ONCE across the
@@ -56,6 +59,7 @@ from .actions import (
     PROJECT_ACTIONS,
     ProjectActions,
     _reduce_results,
+    _reported,
     actions_for,
 )
 from .options import (
@@ -462,51 +466,6 @@ def _scope_row(scope: "ProjectScope", *, skipped: bool) -> ProjectScopeSummary:
     )
 
 
-def _first(*results: Result) -> Result:
-    """Return the first non-ok result, else Success -- "first failure wins" as a value.
-
-    Every argument has already been awaited by the time this is called, so it
-    chooses what to REPORT, not what to attempt.
-    """
-    for result in results:
-        if not result.is_ok:
-            return result
-    return Result(Status.Success)
-
-
-def _reported(*results: Result) -> Result:
-    """Return the first failure, else the first DECLINE, else Success.
-
-    :func:`_first` with one more rung, and the rung exists for exactly one
-    caller: :func:`cleanup`'s impairment reset, which answers
-    ``Status.Skipped`` when :func:`otto.link.manage.repair_all` DECLINED a link
-    it might otherwise have repaired (a foreign qdisc, a management-interface
-    refusal) rather than failing on it. A decline is ``is_ok`` -- it must not
-    abort a best-effort teardown and it is not a failure, because otto never
-    applied what it is refusing to remove -- but it is not Success either:
-    something is still on the wire that ``cleanup`` did not take off, and
-    returning a bare ``Result(Success)`` over it would say the opposite in the
-    one field a caller reads.
-
-    A FAILURE OUTRANKS A DECLINE IN EITHER ARGUMENT ORDER, which is why the
-    failure pass runs over all of them BEFORE the decline pass starts rather
-    than one loop returning the first non-Success it meets. That one loop
-    passes every test written in the order the steps run -- and is wrong in
-    exactly the case a real lab produces: the impairment reset declines first
-    (any lab with an unreadable or foreign-qdisc link), the tunnel reap fails
-    after it, and "first non-Success" hands back the DECLINE. ``is_ok`` is
-    ``True`` on it, so ``otto run cleanup`` would exit 0 with tunnel processes
-    still running and ``ensure_clean`` would call the lab converged.
-    """
-    failure = _first(*results)
-    if not failure.is_ok:
-        return failure
-    for result in results:
-        if result.status is not Status.Success:
-            return result
-    return Result(Status.Success)
-
-
 def _source(opts: Any, default_cls: type) -> OptionsSource:
     """Normalise a public function's argument: an instance, a source, or None (defaults).
 
@@ -594,7 +553,11 @@ async def _run_bodies(
 
 
 def _combine(name: str, results: "dict[str, Any]") -> Any:
-    """Apply the spec's combiner, or the default: first failure, project name stamped in.
+    """Apply the spec's combiner, or the default ladder, project name stamped in.
+
+    The default is ``otto.project.actions._reported``'s: the first
+    failure, else the first decline (a project that answered an ``is_ok``
+    status other than Success, such as a kept docker stack), else Success.
 
     The project name is baked into the message because the
     :class:`~otto.result.Result` cannot carry it, and "install failed" without
@@ -612,12 +575,18 @@ def _combine(name: str, results: "dict[str, Any]") -> Any:
     spec = PROJECT_INSTRUCTIONS.get(name).spec
     if spec.combine_results is not None:
         return spec.combine_results(results)
-    for project_name, result in results.items():
-        if isinstance(result, Result) and not result.is_ok:
-            return Result(
-                result.status, msg=f"{name} failed in project {project_name!r}: {result.msg}"
-            )
-    return Result(Status.Success)
+    stamped = [
+        Result(
+            result.status,
+            msg=f"{name} {'failed' if not result.is_ok else 'declined'} in project "
+            f"{project_name!r}: {result.msg or result.status.name.lower()}",
+        )
+        for project_name, result in results.items()
+        if isinstance(result, Result) and result.status is not Status.Success
+    ]
+    # The decline ladder (:func:`_reported`): a failure anywhere outranks a
+    # decline, and a decline is reported rather than flattened into Success.
+    return _reported(*stamped)
 
 
 async def _walk(
@@ -928,7 +897,7 @@ async def uninstall(opts: "UninstallOptions | OptionsSource | None" = None) -> R
     torn = await _walk("uninstall", ctx, projects, source)
     if not base.debug_logs:
         return torn
-    return _first(torn, await _sweep_debug_logs(ctx))
+    return _reported(torn, await _sweep_debug_logs(ctx))
 
 
 async def cleanup(opts: "CleanupOptions | OptionsSource | None" = None) -> Result:
@@ -999,7 +968,7 @@ async def get_logs(opts: "GetLogsOptions | OptionsSource | None" = None) -> Resu
     hauled = await _walk("get-logs", ctx, projects, source)
     if not base.debug_logs:
         return hauled
-    return _first(hauled, await _sweep_debug_logs(ctx))
+    return _reported(hauled, await _sweep_debug_logs(ctx))
 
 
 ####################
@@ -1026,7 +995,8 @@ async def install_tools(opts: "InstallToolsOptions | OptionsSource | None" = Non
     installed = await _walk("install-tools", ctx, projects, source)
     if not installed.is_ok or not base.toolchain:
         return installed
-    return _reduce_results(await ctx.do_for_all_hosts(_dispatch_install_toolchain_tools))
+    placed = _reduce_results(await ctx.do_for_all_hosts(_dispatch_install_toolchain_tools))
+    return _reported(installed, placed)
 
 
 async def uninstall_tools(opts: "UninstallToolsOptions | OptionsSource | None" = None) -> Result:

@@ -572,7 +572,7 @@ def _wire_status(monkeypatch, overall, projects=None, report=None, scoping=None)
     return probe
 
 
-_SECTIONS = ("products & dev tools", "toolchain tools", "impairments", "tunnels")
+_SECTIONS = ("products, dev tools & staging", "toolchain tools", "impairments", "tunnels")
 
 
 def _row_line(out: str, name: str) -> str:
@@ -681,7 +681,7 @@ async def test_status_full_prints_a_row_per_thing_and_heads_each_section_once(
     # project rows the same and still contain both words somewhere.
     assert "clean" in _row_line(out, "acme")
     assert "dirty" in _row_line(out, "widgets")
-    assert out.count("products & dev tools") == 1  # heading on the row the kind changes
+    assert out.count("products, dev tools & staging") == 1  # heading on the row the kind changes
     assert out.count("tunnels") == 1
     assert "lab is dirty" in out  # the aggregate, which no exit code carries
 

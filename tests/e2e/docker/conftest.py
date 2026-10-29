@@ -1,5 +1,6 @@
 """Fixtures shared by the docker e2e modules."""
 
+import logging
 import os
 import uuid
 
@@ -8,7 +9,14 @@ import pytest
 from tests._fixtures._host_pool import lease_unix_host
 from tests.e2e._otto_subprocess import PROJECT1
 
-from ._cli import _DEFAULT_PARENT, _MERGED_USE_CASE, _PROJECT1_USE_CASE, PROJECT2, _run_otto
+from ._cli import (
+    _DEFAULT_PARENT,
+    _MERGED_USE_CASE,
+    _PROJECT1_USE_CASE,
+    PROJECT2,
+    _run_otto,
+    staging_root_of,
+)
 
 # Docker container hosts require an SSH-based UnixHost parent (see
 # DockerContainerHost._make_session: term must be 'ssh').  test2 defaults
@@ -62,54 +70,75 @@ def fresh_suffix() -> str:
     return "e2e-" + uuid.uuid4().hex[:8]
 
 
-@pytest.fixture
-def teardown_after(fresh_suffix, docker_host, tmp_path):
-    """Yield the suffix; on test exit, ensure the stack is torn down even if
-    the test failed mid-flight. Idempotent — `down` is harmless when the
-    stack isn't up.
+def _tear_down(host: str, suffix: str, xdir) -> None:
+    """Take this suffix's stacks down on *host*, then remove what it staged there.
 
     Tears down BOTH declared use-cases (``project1`` and the merged
-    ``integration``), because a use-case is now the unit of deployment and
-    each one gets its own compose project: a test that brought up
-    ``integration`` leaves a stack ``down project1`` would never touch. A
-    half-torn-down stack leaks a docker network on each run; enough leaks
-    (~30) and the docker daemon runs out of subnet pools and subsequent
-    ``compose up``s fail with ``all predefined address pools have been fully
-    subnetted``.
+    ``integration``), because a use-case is the unit of deployment and each
+    one gets its own compose project: a test that brought up ``integration``
+    leaves a stack ``down project1`` would never touch. A half-torn-down stack
+    leaks a docker network on each run; enough leaks (~30) and the docker
+    daemon runs out of subnet pools and subsequent ``compose up``s fail with
+    ``all predefined address pools have been fully subnetted``.
+
+    Both projects are in OTTOPATH so the merged use-case resolves the same set
+    of fragments the test deployed. ``provide`` is deliberately NOT passed: the
+    compose project is derived from (lab, use-case, suffix) alone, so one
+    ``down`` reaps the stack whichever provider won.
+
+    ``down`` keeps what it staged (the next ``down`` reads it back), so the
+    staging this suffix owns is removed afterwards: each use-case's tree, only
+    after ITS ``down`` succeeded (a failed one leaves a stack whose next
+    ``down`` needs that tree, so it stays and a warning names it), and each
+    project's build key, which no ``down`` reads. All of them carry the test's
+    own suffix, so no other session's tree is touched.
     """
-    yield fresh_suffix
-    # Both projects in OTTOPATH so the merged use-case resolves the same set of
-    # fragments the test deployed. --parent <docker_host> targets the daemon the
-    # test used. `provide` is deliberately NOT passed: the compose project is
-    # derived from (lab, use-case, suffix) alone, so one `down` reaps the
-    # stack whichever provider won.
+    from otto.docker.build import build_staging_key
+    from otto.docker.compose import use_case_project
+    from otto.docker.staging import cleanup_command
+
+    keys = [build_staging_key(name, suffix) for name in ("project1", "project2")]
     for use_case in (_PROJECT1_USE_CASE, _MERGED_USE_CASE):
-        _run_otto(
+        down = _run_otto(
             "docker",
             "compose",
             "down",
             use_case,
             "--parent",
-            docker_host,
+            host,
             roots=f"{PROJECT1}{os.pathsep}{PROJECT2}",
-            xdir=tmp_path,
-            compose_suffix=fresh_suffix,
+            xdir=xdir,
+            compose_suffix=suffix,
         )
+        key = use_case_project("unix", use_case, suffix)
+        if down.returncode == 0:
+            keys.append(key)
+        else:
+            logging.getLogger(__name__).warning(
+                "%s: `down %s` failed, so its staging %s stays for the next down:\n%s%s",
+                host,
+                use_case,
+                key,
+                down.stdout,
+                down.stderr,
+            )
+    root = staging_root_of(host)
+    _run_otto("host", host, "exec", " && ".join(cleanup_command(root, k) for k in keys), xdir=xdir)
+
+
+@pytest.fixture
+def teardown_after(fresh_suffix, docker_host, tmp_path):
+    """Yield the suffix; on test exit, tear its stacks and staging down (:func:`_tear_down`).
+
+    Runs even if the test failed mid-flight. Idempotent: ``down`` is harmless
+    when the stack isn't up, and ``rm -rf`` when the tree is gone.
+    """
+    yield fresh_suffix
+    _tear_down(docker_host, fresh_suffix, tmp_path)
 
 
 @pytest.fixture
 def teardown_default_parent_after(fresh_suffix, default_parent_host, tmp_path):
     """``teardown_after``, for the tests that lease :data:`_DEFAULT_PARENT`."""
     yield fresh_suffix
-    for use_case in (_PROJECT1_USE_CASE, _MERGED_USE_CASE):
-        _run_otto(
-            "docker",
-            "compose",
-            "down",
-            use_case,
-            "--parent",
-            default_parent_host,
-            roots=f"{PROJECT1}{os.pathsep}{PROJECT2}",
-            xdir=tmp_path,
-            compose_suffix=fresh_suffix,
-        )
+    _tear_down(default_parent_host, fresh_suffix, tmp_path)

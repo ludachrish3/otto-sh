@@ -12,6 +12,7 @@ import pytest
 
 from otto import layout
 from otto.context import OttoContext, ProjectContextView
+from otto.errors import OttoError
 from otto.labs.loader import Lab
 from otto.project import (
     PROJECT_ACTIONS,
@@ -370,6 +371,197 @@ async def test_cleanup_still_removes_dev_tools_after_a_failed_uninstall():
     assert not result.is_ok
     assert "busy" in result.msg  # the FIRST failure is what is reported
     assert hosts[0].calls[-1] == ("uninstall_dev_tools", {"owner": "acme"})
+
+
+@pytest.fixture
+def staging_removals(monkeypatch):
+    """Record each docker-staging removal cleanup asks for, as ``(host, project)``.
+
+    Patched where it is defined: the step's own behaviour on a docker parent is
+    pinned in tests/unit/docker/test_project_staging_cleanup.py. What this
+    layer owes is asking it on every fleet host, for this project, after the
+    dev tools.
+    """
+    from otto.docker import compose as compose_mod
+
+    seen = []
+    outcomes = {}
+
+    async def _record(host, project):
+        seen.append((host.id, project.name))
+        host.calls.append(("remove_project_staging", {}))
+        return outcomes.get(host.id, Result(Status.Success))
+
+    monkeypatch.setattr(compose_mod, "remove_project_staging", _record)
+    _record.seen = seen
+    _record.outcomes = outcomes
+    return _record
+
+
+@pytest.mark.asyncio
+async def test_cleanup_removes_the_project_s_docker_staging_on_every_host_last(staging_removals):
+    ctx, hosts = _fake_ctx(n=2, dev_tools=[_FakeItem("probe", "acme")])
+    result = await _actions(ctx).cleanup(CleanupOptions())
+    assert result.is_ok
+    assert staging_removals.seen == [("h0", "acme"), ("h1", "acme")]
+    for host in hosts:
+        assert [verb for verb, _ in host.calls] == [
+            "uninstall",
+            "uninstall_dev_tools",
+            "remove_project_staging",
+        ]
+
+
+@pytest.mark.asyncio
+async def test_cleanup_reports_a_failed_staging_removal(staging_removals):
+    ctx, _hosts = _fake_ctx(n=2)
+    staging_removals.outcomes["h1"] = _fail("rm: cannot remove: Permission denied")
+    result = await _actions(ctx).cleanup(CleanupOptions())
+    assert not result.is_ok
+    assert "h1" in result.msg
+    assert "Permission denied" in result.msg
+    assert staging_removals.seen == [("h0", "acme"), ("h1", "acme")]
+
+
+@pytest.mark.asyncio
+async def test_cleanup_still_removes_the_staging_after_the_earlier_steps_failed(staging_removals):
+    ctx, hosts = _fake_ctx(n=1, dev_tools=[_FakeItem("probe", "acme")])
+    hosts[0].script("uninstall", _fail("busy"))
+    hosts[0].script("uninstall_dev_tools", _fail("locked"))
+    result = await _actions(ctx).cleanup(CleanupOptions())
+    assert "busy" in result.msg  # the FIRST failure is what is reported
+    assert staging_removals.seen == [("h0", "acme")]
+
+
+@pytest.fixture
+def staging_survey(monkeypatch):
+    """Script the one survey both ``cleanup`` and ``is_clean`` ask, and record removals.
+
+    ``staging_to_remove`` and ``staging_keys_on`` are patched where they are
+    defined, so the REAL ``remove_project_staging`` and the real ``is_clean``
+    pass both read the same scripted survey: the same input through both entry
+    points.
+    """
+    from otto.docker import compose as compose_mod
+    from otto.docker import staging as staging_mod
+    from otto.docker.compose import StagingKey, StagingSurvey
+
+    # A removed tree: the command succeeded and printed nothing.
+    removed = Result(Status.Success, value="")
+    state = {"survey": StagingSurvey([], [], []), "removed": [], "rm": removed}
+
+    async def _survey(host, project):
+        del host, project
+        return state["survey"]
+
+    async def _cleanup_project(host, key, *, stack):
+        del stack
+        state["removed"].append((host.id, key))
+        return state["rm"]
+
+    monkeypatch.setattr(compose_mod, "staging_keys_on", lambda h, p: [StagingKey("s", True)])
+    monkeypatch.setattr(compose_mod, "staging_to_remove", _survey)
+    monkeypatch.setattr(staging_mod, "cleanup_project", _cleanup_project)
+
+    def _script(remove=(), kept=(), unreadable=()):
+        state["survey"] = StagingSurvey(
+            [StagingKey(k, True) for k in remove], list(kept), list(unreadable)
+        )
+
+    _script.state = state
+    return _script
+
+
+@pytest.mark.asyncio
+async def test_cleanup_and_is_clean_agree_on_a_staging_leftover(staging_survey):
+    staging_survey(remove=["stack-a"])
+    ctx, _hosts = _fake_ctx(n=1)
+    actions = _actions(ctx)
+
+    assert await actions.is_clean() is False
+    result = await actions.cleanup(CleanupOptions())
+
+    assert result.status is Status.Success, result.msg
+    assert staging_survey.state["removed"] == [("h0", "stack-a")]
+
+
+@pytest.mark.asyncio
+async def test_cleanup_and_is_clean_agree_on_a_kept_live_stack(staging_survey):
+    """A kept stack is clean (cleanup will not touch it) AND named in cleanup's result."""
+    staging_survey(kept=["stack-a"])
+    ctx, _hosts = _fake_ctx(n=1)
+    actions = _actions(ctx)
+
+    assert await actions.is_clean() is True
+    result = await actions.cleanup(CleanupOptions())
+
+    assert result.status is Status.Skipped
+    assert "h0" in result.msg
+    assert "stack-a" in result.msg
+    assert staging_survey.state["removed"] == []
+
+
+@pytest.mark.asyncio
+async def test_cleanup_and_is_clean_agree_on_a_stack_nobody_could_list(staging_survey):
+    staging_survey(unreadable=["stack-a"])
+    ctx, _hosts = _fake_ctx(n=1)
+    actions = _actions(ctx)
+
+    with pytest.raises(OttoError, match="stack-a"):
+        await actions.is_clean()
+    result = await actions.cleanup(CleanupOptions())
+
+    assert result.status is Status.Skipped
+    assert "stack-a" in result.msg
+    assert staging_survey.state["removed"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_failed_staging_removal_outranks_a_declined_dev_tool_removal(staging_survey):
+    """The ladder's other order: the decline comes first, the failure after it."""
+    from otto.result import CommandResult
+
+    staging_survey(remove=["stack-a"])
+    staging_survey.state["rm"] = CommandResult(
+        Status.Failed, value="rm: Permission denied", command="rm", retcode=1
+    )
+    ctx, hosts = _fake_ctx(n=1, dev_tools=[_FakeItem("probe", "acme")])
+    hosts[0].script("uninstall_dev_tools", Result(Status.Skipped, msg="h0: container not running"))
+
+    result = await _actions(ctx).cleanup(CleanupOptions())
+
+    assert not result.is_ok
+    assert "Permission denied" in result.msg
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("required", [True, False])
+async def test_get_logs_reports_a_passed_over_host_whatever_the_requirement(required):
+    """A decline in the haul is reported with or without ``require_product_logs``.
+
+    The host verb opens its message with the host's id; the reduction names
+    the host once.
+    """
+    ctx, hosts = _fake_ctx(n=1)
+    hosts[0].script("get_product_logs", Result(Status.Skipped, msg="h0: container not running"))
+
+    result = await _actions(ctx).get_logs(GetLogsOptions(require_product_logs=required))
+
+    assert result.status is Status.Skipped
+    assert result.msg == "host 'h0': container not running"
+
+
+@pytest.mark.asyncio
+async def test_a_failure_outranks_a_kept_stack_in_cleanup_s_result(staging_survey):
+    """The decline ladder: a failed step is reported over a kept stack that comes after it."""
+    staging_survey(kept=["stack-a"])
+    ctx, hosts = _fake_ctx(n=1, dev_tools=[_FakeItem("probe", "acme")])
+    hosts[0].script("uninstall_dev_tools", _fail("locked"))
+
+    result = await _actions(ctx).cleanup(CleanupOptions())
+
+    assert not result.is_ok
+    assert "locked" in result.msg
 
 
 @pytest.mark.asyncio

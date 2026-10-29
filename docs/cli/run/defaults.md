@@ -183,7 +183,7 @@ value fails at init, naming the keyword:
 | `walk` | `"forward"` (a dependency before its dependents) or `"reverse"` (the order a teardown wants). |
 | `continue_on_failure` | `True` attempts every project and reports the first failure seen; `False` stops the walk at the first failing project. |
 | `require_dependencies` | `True` refuses to start when a kept project's required dependency was dropped by the loaded lab; `False` walks whatever is present. |
-| `combine_results` | Folds `{project name: that body's return}` into the instruction's single return value; the default reports the first failure with the project name stamped into the message. |
+| `combine_results` | Folds `{project name: that body's return}` into the instruction's single return value; the default reports the first failure, else the first decline (a step that answered `Skipped`), with the project name stamped into the message. |
 | `render` | Turns that combined value into what the command prints and exits on; `None` leaves the leaf's ordinary handling in place. |
 | `dry_run_preview` | `True` makes `otto -n run <name>` print the plan of what the instruction would do before the dry-run block ({ref}`the lab-level verbs <dry-run-lab-verbs>`). Honoured only for `install`, `uninstall`, `cleanup`, `install-tools` and `uninstall-tools`, otto's own; declaring it on any other name is refused at init. |
 
@@ -430,6 +430,32 @@ fails the cleanup: those are the two ways a tunnel outlives its own reap.
 **Order: the tunnel reap is last of all** — a tunnel can *be* the access path
 to a host — with the impairment reset immediately before it.
 
+**Docker staging goes with each project.** On every docker-capable host,
+each project's `cleanup` also removes what otto staged for it in the
+parent's private staging directory ({ref}`docker-staging`): its compose
+stack's files (where its builds stage too) and each of its use-cases' files. `otto docker compose down` never removes
+them, because the next `down` reads them back to scope what it stops. So a
+compose project that still has containers under its label, running or stopped,
+keeps its staging, and `cleanup` comes back `Skipped` naming it: `cleanup`
+never takes a stack down. A stack whose containers cannot be listed keeps its
+staging the same way, and `--full` shows its project's row as unknown. The
+trees are named for the current `OTTO_COMPOSE_SUFFIX` (or your login when it
+is unset; see
+{func}`~otto.docker.compose.get_user_compose_project`), so a deployment made
+under another suffix, or under an explicit compose project name, is not
+found. `--full` and `ensure_clean` ask the same question: a tree `cleanup`
+would remove makes its project's `products, dev tools & staging` row dirty,
+and a kept stack's tree does not.
+
+Do not run `cleanup` while the same stack is being deployed or built: the same
+project under the same login and `OTTO_COMPOSE_SUFFIX`, from another terminal
+or session. Nothing locks a staging tree against that. The removal of a
+stack's tree checks its containers again in the same shell command, so a stack
+whose containers appeared since the survey is kept, but a deployment that has
+staged its files and not yet started a container can still lose them: its
+`up` then fails, or a later `down` without them falls back to removing by
+label. A distinct suffix per session keeps sessions apart.
+
 ## Many projects: composition and order
 
 Composition is by *iteration over resolved projects in dependency order*, never by
@@ -445,7 +471,11 @@ cross-project subclassing.
   bring the dependent down before the thing it depends on.
 - **Building is fail-fast, tearing down is best-effort.** On teardown every
   project is attempted and the first failure is what gets reported — named:
-  `uninstall failed in project 'widget': …`.
+  `uninstall failed in project 'widget': …`. With no failure, the first
+  decline is reported instead of success — a step that kept something on
+  purpose, such as a stopped container passed over or a docker stack's
+  staging kept: `cleanup declined in project 'widget': host 'test3': …`. The
+  exit status stays 0.
 - **Host-global steps happen once, at the ends.** The debug sweep runs after
   every project has torn down, so it captures teardown-time activity; the
   toolchain removal follows it, so no log retrieval depends on tooling that
@@ -562,13 +592,13 @@ axis — everything [`cleanup` takes off the lab](#what-cleanup-takes-off-the-la
 ```text
 acme     installed
 widgets  uninstalled
-products & dev tools  acme     clean
-                      widgets  dirty
-toolchain tools       test1    clean
-                      test2    unknown — the toolchain probe did not answer: …
-impairments           core     dirty — a->b
-                      edge     clean
-tunnels               lab      unknown — the scan could not reach test2
+products, dev tools & staging  acme     clean
+                               widgets  dirty
+toolchain tools                test1    clean
+                               test2    unknown — the toolchain probe did not answer: …
+impairments                    core     dirty — a->b
+                               edge     clean
+tunnels                        lab      unknown — the scan could not reach test2
 lab is dirty — otto run cleanup takes it off
 ```
 

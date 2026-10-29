@@ -54,7 +54,7 @@ means anything.
 """
 
 _CLEANLINESS_LABELS: "dict[CleanlinessKind, str]" = {
-    CleanlinessKind.PROJECT: "products & dev tools",
+    CleanlinessKind.PROJECT: "products, dev tools & staging",
     CleanlinessKind.TOOLCHAIN: "toolchain tools",
     CleanlinessKind.IMPAIRMENT: "impairments",
     CleanlinessKind.TUNNEL: "tunnels",

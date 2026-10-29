@@ -337,6 +337,45 @@ async def test_teardown_removes_stack_and_hosts(parent, lab, project):
 
 
 @pytest.mark.asyncio
+async def test_cleanup_s_staging_step_keeps_a_live_stack_and_removes_a_downed_one(
+    parent, project, projects
+):
+    """The step ``otto run cleanup`` takes on a docker parent, on the leased host only.
+
+    Called in-process against this module's one parent, never through ``otto run
+    cleanup``: that verb walks the whole lab, and the bed is shared. While the
+    stack runs, its staging is kept (its next ``down`` reads it back); once it
+    is down, the same call removes it.
+    """
+    from otto.docker.compose import remove_project_staging
+    from otto.docker.staging import compose_staging_root
+    from otto.utils import Status
+
+    project1 = next(p for p in projects if p.name == "project1")
+    root = compose_staging_root(parent_staging_root(parent), project)
+    try:
+        await deploy(USE_CASE, parent=parent.id, build=True)
+
+        kept = await remove_project_staging(parent, project1)
+        assert kept.status is Status.Skipped, kept.msg
+        assert project in kept.msg
+        assert (await parent.exec(f"test -e {shlex.quote(str(root))}")).is_ok, (
+            f"cleanup removed the staging of the live stack {project}"
+        )
+
+        await teardown(USE_CASE, parent=parent.id)
+
+        removed = await remove_project_staging(parent, project1)
+        assert removed.status is Status.Success, removed.msg
+        assert not (await parent.exec(f"test -e {shlex.quote(str(root))}")).is_ok, (
+            f"{root} left on {parent.id} after the stack went down"
+        )
+    finally:
+        await _reap(parent, project)
+        await cleanup_project(parent, project, stack=True)
+
+
+@pytest.mark.asyncio
 async def test_teardown_leaves_a_service_another_file_set_started_under_the_project(
     parent, project, suffix
 ):
@@ -390,7 +429,8 @@ async def test_teardown_with_the_staged_files_gone_goes_by_the_label_and_says_so
     """With nothing staged left on the parent, the label is all there is to go by."""
     try:
         await deploy(USE_CASE, parent=parent.id, build=True)
-        cleaned = await cleanup_project(parent, project)
+        # The stack is up: remove its files regardless of its containers.
+        cleaned = await cleanup_project(parent, project, stack=False)
         assert cleaned.is_ok, cleaned.value
 
         with caplog.at_level(logging.INFO, logger="otto.docker.deployment"):
@@ -553,4 +593,4 @@ async def test_a_staged_build_context_keeps_its_file_modes(parent, suffix, tmp_p
         mode, _owner = (await _mode_and_owner(parent, staged / "run.sh")).split()
         assert mode == "755", f"run.sh was staged as {mode}"
     finally:
-        await cleanup_project(parent, key)
+        await cleanup_project(parent, key, stack=False)

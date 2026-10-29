@@ -7,6 +7,7 @@ against otto's real output by a hostless unit test.
 """
 
 import re
+import shlex
 import tarfile
 from pathlib import Path
 
@@ -15,7 +16,7 @@ import pytest
 from tests._fixtures.paths import CHECKOUT_ROOT
 from tests._fixtures.project_scaffold import make_project
 
-from ._cli import _PROJECT1_USE_CASE, _WIDE, _run_otto
+from ._cli import _PROJECT1_USE_CASE, _WIDE, _run_otto, staging_root_of
 from ._honesty import (
     DAEMON_LIST_COMMAND,
     names_a_missing_image,
@@ -184,32 +185,35 @@ context = "{archive}"
     )
 
 
-def _build_archive_image(host: str, sut: Path, xdir):
+def _build_archive_image(host: str, sut: Path, xdir, suffix: str):
     return _run_otto(
-        "docker", "build", _ARCHIVE_IMAGE, "--parent", host, roots=str(sut), xdir=xdir, env=_WIDE
-    )
-
-
-def _archive_left_on_host(host: str, xdir) -> bool:
-    """Whether the build directory on *host* still holds an uploaded archive of the image."""
-    # The parent's private staging root is named for the login its commands run
-    # as, which is what `id -un` answers there.
-    listing = _run_otto(
-        "host",
+        "docker",
+        "build",
+        _ARCHIVE_IMAGE,
+        "--parent",
         host,
-        "exec",
-        f'ls "/tmp/otto-docker-$(id -un)/{_ARCHIVE_REPO}/build"',
+        roots=str(sut),
         xdir=xdir,
+        compose_suffix=suffix,
         env=_WIDE,
     )
+
+
+def _archive_left_on_host(host: str, xdir, suffix: str) -> bool:
+    """Whether the build directory on *host* still holds an uploaded archive of the image."""
+    from otto.docker.build import build_staging_key
+    from otto.docker.staging import build_root
+
+    build = build_root(staging_root_of(host), build_staging_key(_ARCHIVE_REPO, suffix))
+    listing = _run_otto("host", host, "exec", f"ls {shlex.quote(str(build))}", xdir=xdir, env=_WIDE)
     return re.search(rf"{_ARCHIVE_IMAGE}\..*\.tar\.gz", listing.stdout + listing.stderr) is not None
 
 
-def test_an_archive_context_builds_what_the_daemon_lists(docker_host, tmp_path):
+def test_an_archive_context_builds_what_the_daemon_lists(docker_host, tmp_path, fresh_suffix):
     sut = _archive_project(tmp_path, "Dockerfile")
     line = None
     try:
-        built = _build_archive_image(docker_host, sut, tmp_path)
+        built = _build_archive_image(docker_host, sut, tmp_path, fresh_suffix)
         assert built.returncode == 0, built.stdout + built.stderr
         line = parse_built_line(built.stdout, f"{_ARCHIVE_REPO}/{_ARCHIVE_IMAGE}")
         assert line, built.stdout
@@ -218,15 +222,17 @@ def test_an_archive_context_builds_what_the_daemon_lists(docker_host, tmp_path):
         for reference in line.refs:
             assert daemon.get(reference) == line.image_id, (reference, line.image_id, daemon)
         # The uploaded archive is removed once docker has read it.
-        assert not _archive_left_on_host(docker_host, tmp_path)
+        assert not _archive_left_on_host(docker_host, tmp_path, fresh_suffix)
     finally:
         if line:
             _rmi(docker_host, tmp_path, line.image_id)
 
 
-def test_a_wrong_dockerfile_path_inside_the_archive_is_dockers_error(docker_host, tmp_path):
+def test_a_wrong_dockerfile_path_inside_the_archive_is_dockers_error(
+    docker_host, tmp_path, fresh_suffix
+):
     sut = _archive_project(tmp_path, "nope/Dockerfile")
-    built = _build_archive_image(docker_host, sut, tmp_path)
+    built = _build_archive_image(docker_host, sut, tmp_path, fresh_suffix)
     output = built.stdout + built.stderr
 
     assert built.returncode == 1, output
@@ -239,7 +245,7 @@ def test_a_wrong_dockerfile_path_inside_the_archive_is_dockers_error(docker_host
         or "failed to read dockerfile" in low
         or "no such file" in low
     ), output
-    assert not _archive_left_on_host(docker_host, tmp_path)
+    assert not _archive_left_on_host(docker_host, tmp_path, fresh_suffix)
 
 
 def test_compose_up_without_build_on_a_missing_image_is_dockers_error_and_no_build_ran(

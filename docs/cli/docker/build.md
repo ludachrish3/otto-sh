@@ -11,8 +11,10 @@ otto docker build [--parent HOST] [--project NAME] [IMAGE...]
 `build` builds images and nothing else. Like `docker build`, it knows nothing
 about a composition: the context of each `[[docker.images]]` entry is staged
 onto the parent and `docker build` runs on that host's daemon; the parent is
-chosen as {ref}`Which host <docker-which-host>` describes. To build the images a
-deployment would use, run {doc}`compose/build` instead.
+chosen as {ref}`Which host <docker-which-host>` describes. The staged context
+is removed from the parent after the build, whether the build succeeded or
+not. To build the images a deployment would use, run {doc}`compose/build`
+instead.
 
 Every build runs. Otto keeps no record of earlier builds and skips nothing:
 docker's own layer cache decides what a rebuild reuses, and `--no-cache`

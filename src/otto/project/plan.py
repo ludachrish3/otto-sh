@@ -28,6 +28,7 @@ from .options import (
 from .orchestrator import _walk_order
 
 if TYPE_CHECKING:
+    from ..config.project import Project
     from ..host.dev_tool import DevTool
     from ..host.host import Host
     from ..host.product import Product
@@ -182,16 +183,42 @@ def _add_entries(
     return gaps
 
 
+def _docker_staging_gap(host: "Host", project: "Project") -> str | None:
+    """Say which ``rm -rf`` cleanup's docker-staging step runs on *host*, or None.
+
+    The keys and the command come from the step's own functions, so the
+    preview names what the run removes. Whether a tree exists and whether a
+    stack still has containers are live reads, so the line names every key the
+    step would consider and says which removals depend on a stack.
+    """
+    # Lazy: the docker layer is needed only when a cleanup is previewed.
+    from ..docker.compose import staging_keys_on
+    from ..docker.staging import cleanup_command
+    from ..host.docker_host import parent_staging_root
+
+    keys = staging_keys_on(host, project)
+    if not keys:
+        return None
+    root = parent_staging_root(host)
+    removals = [
+        cleanup_command(root, k.key)
+        + (" unless that stack still has containers" if k.stack else "")
+        for k in keys
+    ]
+    return f"docker staging: {'; '.join(removals)}"
+
+
 def _cleanup_host_plan(
-    host: "Host", owner: str, *, uninstall_replaced: bool, product_logs: bool
+    host: "Host", project: "Project", *, uninstall_replaced: bool, product_logs: bool
 ) -> HostPlan:
-    """Plan ``cleanup``'s two halves on *host*: *owner*'s products, then its dev tools.
+    """Plan ``cleanup``'s three steps on *host*: *project*'s products, dev tools, docker staging.
 
     The product half is ``self.uninstall(...)``, so a project override of
     ``uninstall`` (*uninstall_replaced*) leaves it unpreviewed and the project
     names it; a host class override of either host verb is named on the host,
-    and the other half is still previewed.
+    and the other steps are still previewed.
     """
+    owner = project.name
     host_plan = HostPlan(host.id)
     if not uninstall_replaced:
         replaced = _host_override(host, "uninstall")
@@ -206,6 +233,9 @@ def _cleanup_host_plan(
         host_plan.gaps.append(replaced)
     else:
         host_plan.gaps += _add_entries(host, _owned(host.dev_tools, owner), host_plan.dev_tools)
+    staging = _docker_staging_gap(host, project)
+    if staging is not None:
+        host_plan.gaps.append(staging)
     return host_plan
 
 
@@ -299,7 +329,7 @@ def plan_instruction(name: str, ctx: "OttoContext", kwargs: "dict[str, Any]") ->
                 project_plan.hosts += [
                     _cleanup_host_plan(
                         host,
-                        project.name,
+                        project,
                         uninstall_replaced=uninstall_replaced,
                         product_logs=cleanup.product_logs,
                     )

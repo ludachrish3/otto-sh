@@ -27,6 +27,8 @@ import uuid
 
 import pytest
 
+from otto.docker.build import build_staging_key
+from otto.docker.staging import build_root
 from tests.e2e._otto_subprocess import PROJECT1, assert_no_output_dir, assert_output_dir
 
 from ._cli import (
@@ -37,6 +39,7 @@ from ._cli import (
     PROJECT2,
     _flat,
     _run_otto,
+    staging_root_of,
 )
 
 # Each test leases one docker-capable host from UNIX_POOL via the
@@ -84,6 +87,20 @@ def test_e2e_up_then_down(teardown_after, docker_host, tmp_path):
     assert f"{docker_host}.project1.api" in up.stdout
     assert "pull access denied" not in (up.stdout + up.stderr), (
         "`--build` must build before composing — a pull error means it did not"
+    )
+    # The build removed the context it staged. The compose staging stays: it is
+    # what the `down` below reads back.
+    build_staging = build_root(staging_root_of(docker_host), build_staging_key("project1", suffix))
+    gone = _run_otto(
+        "host",
+        docker_host,
+        "exec",
+        f"test ! -e {build_staging}",
+        xdir=tmp_path,
+        compose_suffix=suffix,
+    )
+    assert gone.returncode == 0, (
+        f"{build_staging} left on {docker_host}:\n{gone.stdout}{gone.stderr}"
     )
 
     down = _run_otto(

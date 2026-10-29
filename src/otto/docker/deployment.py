@@ -36,6 +36,7 @@ from .compose import (
     _stack_already_up,
     compose_command,
     compose_down_project,
+    is_docker_capable,
     merge_declared_users,
     register_stack_hosts,
     roll_back,
@@ -121,7 +122,7 @@ def parent_for(lab: "Lab", host_id: str) -> UnixHost:
     turns the id an acting host carries back into that host.
     """
     host = lab.hosts.get(host_id)
-    if not isinstance(host, UnixHost) or not host.docker_capable:
+    if not is_docker_capable(host):
         kind = "absent from the lab" if host is None else f"a {type(host).__name__}"
         raise UseCaseResolutionError(
             f"the parent resolved to host {host_id!r}, which is {kind} and not a "

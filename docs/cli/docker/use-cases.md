@@ -367,12 +367,14 @@ uploads authenticate as a different account than its commands, is refused,
 and the error names both accounts. Declare the account that runs docker as a
 direct cred on the parent instead (see
 [Credentials and login proxies](../../configuration/host-sources.md#credentials-and-login-proxies)).
+Since otto cannot stage anything on such a parent, `otto run cleanup` and
+`otto run status --full` treat it as having nothing staged.
 
 A `down` leaves the staged files in place: the next `down` reads the same
-files back, so it removes nothing the first one kept. otto never removes
-`/tmp/otto-docker-<login>/<project>/`; they stay readable only by your
-account. Once the deployment is down and you no longer need its files, delete
-that directory on the parent by hand.
+files back, so it removes nothing the first one kept. `otto run cleanup`
+removes a project's staging once its stack has no containers left (see
+[What `cleanup` takes off the lab](../run/defaults.md#what-cleanup-takes-off-the-lab));
+until then the files stay readable only by your account.
 
 ### Staging left by otto 0.17
 

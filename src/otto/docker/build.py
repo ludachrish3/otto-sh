@@ -22,6 +22,7 @@ from ..result import CommandNotRunError, CommandResult
 from ..utils import Status
 from .reports import ImageBuild
 from .staging import (
+    build_input_cleanup_command,
     image_archive_path,
     image_build_dir,
     stage_image_archive,
@@ -214,10 +215,50 @@ async def _read_back(
     return found, image_id, listed
 
 
+def build_staging_key(project_name: str, suffix: "str | None" = None) -> str:
+    """Return the staging key *project_name*'s builds stage under: its per-project stack's.
+
+    Suffix-bearing (:func:`~otto.docker.compose.get_user_compose_project`), so
+    builds of one project on one parent under distinct ``OTTO_COMPOSE_SUFFIX``
+    values (or, with none set, as distinct users) never share a context, and
+    ``otto run cleanup`` finds the tree under the key it already removes. Two
+    sessions with the same suffix, or the same login and no suffix, resolve the
+    same key and share it: independent sessions need distinct suffixes.
+    *suffix* is the resolver's own, for a caller naming another session's key.
+    """
+    from .compose import get_user_compose_project  # lazy: compose imports this module
+
+    return get_user_compose_project(project_name, suffix)
+
+
+async def _remove_build_input(parent: Host, root: Path, key: str, path: Path) -> None:
+    """Remove a staged build input after its build, and the dirs it leaves empty. Best-effort.
+
+    *root* is the parent's staging root
+    (:func:`~otto.host.docker_host.parent_staging_root`), which staging the
+    input has just verified.
+
+    The one removal both build forms use: an uploaded archive and an extracted
+    context are equally spent once ``docker build`` has run. A failure is a
+    warning and never replaces the build's own outcome.
+    """
+    from ..host.connections import teardown_step  # lazy: keeps the import budget
+
+    with teardown_step(parent.id, "build input removal"):
+        removed = await parent.exec(build_input_cleanup_command(root, key, path))
+        if not removed.is_ok:
+            logger.warning(
+                f"{parent.id}: could not remove the staged build input {path}: "
+                f"{removed.value.strip()}"
+            )
+
+
 async def _build_one(
-    parent: Host, project: str, image: DockerImage, options: BuildOptions
+    parent: Host, key: str, image: DockerImage, options: BuildOptions
 ) -> ImageBuild:
     """Build a single image on *parent* and read back what the daemon lists for it.
+
+    *key* is the staging key (:func:`build_staging_key`) the inputs go under.
 
     Nothing is asked of the daemon first and nothing is skipped: docker's layer
     cache decides what a rebuild reuses. A failed build returns its own result
@@ -227,32 +268,17 @@ async def _build_one(
     """
     references = image_references(image, options)
     logger.info(f"[docker] building {references[0]}")
-    # Unbounded on purpose: an image build/pull has no defensible bound, and a
-    # made-up constant would be wrong on a slower builder. `inf` states that.
     if image.is_archive:
-        from ..host.connections import teardown_step  # lazy: keeps the import budget
-
-        remote = await stage_image_archive(parent, project, image)
-        try:
-            result = await parent.exec(
-                build_command(parent_staging_root(parent), project, image, options),
-                timeout=float("inf"),
-            )
-        finally:
-            # Best effort: a failed removal must not replace the build's own outcome.
-            with teardown_step(parent.id, "build archive removal"):
-                removed = await parent.exec(f"rm -f {path_operand(remote)}")
-                if not removed.is_ok:
-                    logger.warning(
-                        f"{parent.id}: could not remove the uploaded archive {remote}: "
-                        f"{removed.value.strip()}"
-                    )
+        staged = await stage_image_archive(parent, key, image)
     else:
-        await stage_image_context(parent, project, image)
-        result = await parent.exec(
-            build_command(parent_staging_root(parent), project, image, options),
-            timeout=float("inf"),
-        )
+        staged = await stage_image_context(parent, key, image)
+    root = parent_staging_root(parent)
+    try:
+        # Unbounded on purpose: an image build/pull has no defensible bound, and a
+        # made-up constant would be wrong on a slower builder. `inf` states that.
+        result = await parent.exec(build_command(root, key, image, options), timeout=float("inf"))
+    finally:
+        await _remove_build_input(parent, root, key, staged)
     if not result.is_ok:
         return ImageBuild(image.name, [], None, result)
     found, image_id, read = await _read_back(parent, references)
@@ -322,9 +348,8 @@ async def build_images(
             "No context was staged and no image was built.",
         )
 
+    key = build_staging_key(project.name)
     results: dict[str, ImageBuild] = {}
     for image in selected:
-        results[image.name] = await _build_one(
-            parent, project.name, image, options or BuildOptions()
-        )
+        results[image.name] = await _build_one(parent, key, image, options or BuildOptions())
     return results

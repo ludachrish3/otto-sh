@@ -68,6 +68,20 @@ from .shell_quote import path_operand, shell_operand
 from .transfer.registry import connection_protocol
 
 
+def stack_containers_command(
+    project: str,
+    *,
+    all: bool = False,  # noqa: A002 -- docker's flag name
+) -> str:
+    """Build the ``docker ps`` command listing compose project *project*'s container ids.
+
+    Matches by the compose project label. *all* adds ``-a`` so a stopped
+    container is listed too.
+    """
+    flags = "-aq" if all else "-q"
+    return f"docker ps {flags} --filter label=com.docker.compose.project={shlex.quote(project)}"
+
+
 def compose_container_probe(
     project: str,
     service: str,
@@ -76,15 +90,13 @@ def compose_container_probe(
 ) -> str:
     """Build the ``docker ps`` command that finds one compose service's container id.
 
-    Matches by the compose project and service labels. ``oneoff=False`` keeps a
-    ``docker compose run`` one-off, which carries the same two labels, from
-    being taken for the service's container. *all* adds ``-a`` so a stopped
-    container is found too.
+    :func:`stack_containers_command`, narrowed by the service label.
+    ``oneoff=False`` keeps a ``docker compose run`` one-off, which carries the
+    same two labels, from being taken for the service's container. *all* adds
+    ``-a`` so a stopped container is found too.
     """
-    flags = "-aq" if all else "-q"
     return (
-        f"docker ps {flags} "
-        f"--filter label=com.docker.compose.project={shlex.quote(project)} "
+        f"{stack_containers_command(project, all=all)} "
         f"--filter label=com.docker.compose.service={shlex.quote(service)} "
         "--filter label=com.docker.compose.oneoff=False"
     )

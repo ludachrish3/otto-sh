@@ -79,3 +79,17 @@ def _run_otto(
         extra_env=extra_env,
         timeout=timeout,
     )
+
+
+def staging_root_of(host: str) -> Path:
+    """The private docker staging root of the lab's *host*, as otto resolves it.
+
+    The same resolver the otto subprocess calls
+    (:func:`~otto.host.docker_host.parent_staging_root`), over the host built
+    from the lab data the subprocess reads, so a test names the tree otto
+    staged without restating its path.
+    """
+    from otto.host.docker_host import parent_staging_root
+    from tests._fixtures.labdata import make_host
+
+    return parent_staging_root(make_host(host))

@@ -19,7 +19,13 @@ from ..host.host import is_dry_run
 from ..host.unix_host import UnixHost
 from ..result import CommandNotRunError
 from . import deployment
-from .build import BuildOptions, build_command, build_images, check_declared_paths
+from .build import (
+    BuildOptions,
+    build_command,
+    build_images,
+    build_staging_key,
+    check_declared_paths,
+)
 from .observe import DockerVerbError, docker_parent
 from .reports import BuildReport, ProjectBuild
 from .staging import stage_key
@@ -195,7 +201,8 @@ def _plan_text(
     displaced_text = ". ".join(d.describe() for d in displaced)
     displaced_note = f" Displaced: {displaced_text}." if displaced_text else ""
     commands = [
-        f"on {parent.id}: {build_command(parent_staging_root(parent), project.name, img, options)}"
+        f"on {parent.id}: "
+        + build_command(parent_staging_root(parent), build_staging_key(project.name), img, options)
         for parent, project, names in plan
         for img in project.docker_settings.images
         if names is None or img.name in names

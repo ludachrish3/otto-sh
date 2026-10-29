@@ -18,7 +18,7 @@ from ..host.unix_host import UnixHost
 from ..logger.mode import LogMode
 from ..result import CommandNotRunError, CommandResult
 from ..utils import Status
-from .compose import compose_command, use_case_project
+from .compose import compose_command, is_docker_capable, use_case_project
 
 if TYPE_CHECKING:
     from ..labs.loader import Lab
@@ -37,7 +37,7 @@ class DockerVerbError(FieldError, ValueError):
 def _capable(lab: "Lab") -> "Iterator[tuple[str, UnixHost]]":
     """Yield ``(id, host)`` for each docker-capable unix host of *lab*, in lab order."""
     for hid, host in lab.hosts.items():
-        if isinstance(host, UnixHost) and host.docker_capable:
+        if is_docker_capable(host):
             yield hid, host
 
 
@@ -77,7 +77,7 @@ def docker_parent(lab: "Lab", parent: "str | None") -> UnixHost:
     if parent is None:
         return default_docker_parent(lab)
     candidate = lab.hosts.get(parent)
-    if not isinstance(candidate, UnixHost) or not candidate.docker_capable:
+    if not is_docker_capable(candidate):
         raise DockerVerbError(
             f"{parent!r} is not a docker-capable unix host in lab {lab.name!r}; "
             f"docker-capable hosts here: {capable_ids(lab)}",

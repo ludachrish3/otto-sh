@@ -477,6 +477,70 @@ def test_cleanup_lists_each_projects_products_then_its_dev_tools(monkeypatch):
     assert project.gaps == []
 
 
+def test_cleanup_names_the_docker_staging_it_removes_on_a_docker_parent(monkeypatch):
+    from pathlib import Path
+
+    from otto.config.scope import DockerImage, DockerSettings, DockerUseCase
+    from otto.host.docker_host import staging_root
+    from otto.host.element import Element
+    from otto.host.login_proxy import Cred
+    from otto.host.unix_host import UnixHost
+
+    monkeypatch.setenv("OTTO_COMPOSE_SUFFIX", "u")
+    parent = UnixHost(
+        ip="10.10.200.13",
+        element=Element("test3"),
+        creds=[Cred(login="vagrant", password="vagrant")],
+        docker_capable=True,
+    )
+    parent.source_lab = "unix"
+    ctx = _Ctx([parent, _Host("h1")])
+    [project] = _wire(monkeypatch, ["r1"], ctx)
+    project.docker_settings = DockerSettings(
+        images=(DockerImage(name="api", dockerfile=Path("/r1/Dockerfile"), context=Path("/r1")),),
+        use_cases=(DockerUseCase(name="integration", composes=("core",)),),
+    )
+
+    [plan] = plan_instruction("cleanup", ctx, {"product_logs": False})
+
+    on_parent, on_h1 = plan.hosts
+    root = staging_root("vagrant")
+    assert on_parent.gaps == [
+        (
+            f"docker staging: rm -rf {root}/unix-integration-u unless that stack "
+            f"still has containers; rm -rf {root}/otto-r1-u"
+        )
+    ]
+    assert on_h1.gaps == []
+
+
+def test_cleanup_names_no_docker_staging_on_a_parent_without_a_staging_root(monkeypatch):
+    """The preview shares the survey's keys: a parent with no private root has nothing staged.
+
+    Red if the preview resolves the root itself: ``otto -n run cleanup``
+    raises for a parent otto could never have staged on.
+    """
+    from pathlib import Path
+
+    from otto.config.scope import DockerImage, DockerSettings, DockerUseCase
+    from otto.host.element import Element
+    from otto.host.unix_host import UnixHost
+
+    monkeypatch.setenv("OTTO_COMPOSE_SUFFIX", "u")
+    parent = UnixHost(ip="10.10.200.13", element=Element("test3"), creds=[], docker_capable=True)
+    parent.source_lab = "unix"
+    ctx = _Ctx([parent])
+    [project] = _wire(monkeypatch, ["r1"], ctx)
+    project.docker_settings = DockerSettings(
+        images=(DockerImage(name="api", dockerfile=Path("/r1/Dockerfile"), context=Path("/r1")),),
+        use_cases=(DockerUseCase(name="integration", composes=("core",)),),
+    )
+
+    [plan] = plan_instruction("cleanup", ctx, {"product_logs": False})
+
+    assert plan.hosts[0].gaps == []
+
+
 def test_cleanup_walks_projects_in_reverse(monkeypatch):
     ctx = _Ctx([_Host("h1")])
     _wire(monkeypatch, ["r1", "r2"], ctx)

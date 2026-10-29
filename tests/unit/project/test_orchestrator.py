@@ -222,10 +222,13 @@ class _FakeCtx:
         return out
 
 
-def _recording_actions(events, flags, questions=None, failing=None, state=None, dirty=()):
+def _recording_actions(
+    events, flags, questions=None, failing=None, state=None, dirty=(), declining=None
+):
     """A ``ProjectActions`` subclass recording ``(project, verb)`` and the flags it got.
 
-    *failing* is one ``(project, verb)`` pair that answers Failed; *state* scripts
+    *failing* is one ``(project, verb)`` pair that answers Failed; *declining* is
+    one that answers Skipped (``"<verb> kept something"``); *state* scripts
     ``status()`` (one state for every project, or a ``{project: state}`` mapping when
     they differ); *dirty* names the projects whose ``is_clean()`` answers False.
 
@@ -243,6 +246,8 @@ def _recording_actions(events, flags, questions=None, failing=None, state=None, 
             flags.append((self.project.name, verb, kwargs))
             if failing == (self.project.name, verb):
                 return Result(Status.Failed, msg=f"{verb} refused")
+            if declining == (self.project.name, verb):
+                return Result(Status.Skipped, msg=f"{verb} kept something")
             return Result(Status.Success)
 
         async def install(self, opts):
@@ -1818,6 +1823,101 @@ async def test_ensure_clean_cleans_only_a_dirty_lab(monkeypatch):
     lab = _wire(monkeypatch, projects=["app"], hosts=1, dirty=("app",))
     assert (await project.ensure_clean()).is_ok
     assert "cleanup" in _verbs(lab.events)
+
+
+_DECLINING_VERBS = [
+    ("uninstall", "uninstall", lambda on: project.uninstall(UninstallOptions(debug_logs=on))),
+    ("get-logs", "get_logs", lambda on: project.get_logs(GetLogsOptions(debug_logs=on))),
+    (
+        "install-tools",
+        "install_tools",
+        lambda on: project.install_tools(InstallToolsOptions(toolchain=on)),
+    ),
+    (
+        "uninstall-tools",
+        "uninstall_tools",
+        lambda on: project.uninstall_tools(UninstallToolsOptions(toolchain=on)),
+    ),
+    ("cleanup", "cleanup", lambda on: project.cleanup(CleanupOptions(debug_logs=on))),
+]
+"""Every lab verb that walks projects, and the unrelated flag that adds a host-global step."""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("on", [True, False], ids=["flag-on", "flag-off"])
+@pytest.mark.parametrize(
+    ("name", "verb", "run"), _DECLINING_VERBS, ids=[v[0] for v in _DECLINING_VERBS]
+)
+async def test_a_project_s_decline_reaches_the_result_whatever_the_flag(
+    monkeypatch, name, verb, run, on
+):
+    """One decline, one rendering: the host-global step a flag adds never folds it away.
+
+    Also the default combiner's decline arm: the project's Skipped reaches the
+    lab verb's result, stamped with the project, instead of becoming Success.
+    """
+    _wire(monkeypatch, projects=["app"], hosts=1, declining=("app", verb))
+
+    result = await run(on)
+
+    assert result.status is Status.Skipped, result.msg
+    assert result.msg == f"{name} declined in project 'app': {verb} kept something"
+
+
+@pytest.mark.asyncio
+async def test_a_project_s_failure_outranks_another_s_decline_in_either_order(monkeypatch):
+    for failing, declining in (
+        (("a", "cleanup"), ("b", "cleanup")),
+        (("b", "cleanup"), ("a", "cleanup")),
+    ):
+        _wire(monkeypatch, projects=["a", "b"], hosts=1, failing=failing, declining=declining)
+
+        result = await project.cleanup()
+
+        assert result.status is Status.Failed, result.msg
+        assert "cleanup refused" in result.msg
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("left", [True, False])
+async def test_ensure_clean_cleans_a_lab_dirty_only_in_docker_staging(monkeypatch, left):
+    """Staging cleanup would remove is a leftover: ensure_clean must not call it clean.
+
+    The project keeps otto's own actions, so its ``is_clean`` and ``cleanup``
+    both reach the one staging survey, scripted here.
+    """
+    from otto.docker import compose as compose_mod
+    from otto.docker import staging as staging_mod
+    from otto.docker.compose import StagingKey, StagingSurvey
+
+    removed = []
+
+    async def _survey(host, project):
+        del host, project
+        return StagingSurvey([StagingKey("stack-a", True)] if left else [], [], [])
+
+    async def _cleanup_project(host, key, *, stack):
+        del stack
+        removed.append((host.id, key))
+        return Result(Status.Success, value="")  # a removed tree prints nothing
+
+    monkeypatch.setattr(compose_mod, "staging_keys_on", lambda h, p: [StagingKey("stack-a", True)])
+    monkeypatch.setattr(compose_mod, "staging_to_remove", _survey)
+    monkeypatch.setattr(staging_mod, "cleanup_project", _cleanup_project)
+    events = []
+    ctx = _FakeCtx([_FakeHost("h0", events)])
+    _wire_lab(monkeypatch, ["app"], ctx)
+    _wire_infra(monkeypatch, events)
+
+    result = await project.ensure_clean()
+
+    if left:
+        assert result.msg != "already clean"
+        assert removed == [("h0", "stack-a")]
+    else:
+        assert result.status is Status.Skipped
+        assert result.msg == "already clean"
+        assert removed == []
 
 
 @pytest.mark.asyncio

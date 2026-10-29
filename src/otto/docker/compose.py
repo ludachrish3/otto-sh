@@ -18,17 +18,22 @@ import shlex
 from collections.abc import AsyncIterator, Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import PurePath
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeGuard
 
 from ..config.project import Project
 from ..config.scope import DockerCompose
-from ..host.docker_host import DockerContainerHost, compose_container_probe
-from ..host.errors import HostCommandError
+from ..host.docker_host import (
+    DockerContainerHost,
+    compose_container_probe,
+    parent_staging_root,
+    stack_containers_command,
+)
+from ..host.errors import HostCommandError, StagingRefusedError
 from ..host.factory import apply_providers
 from ..host.host import Host, is_dry_run, refuse_declined_fact
 from ..host.mount import Mount
 from ..host.unix_host import UnixHost
-from ..result import CommandNotRunError, CommandResult
+from ..result import CommandNotRunError, CommandResult, Result
 from ..utils import Status, WaitTimeoutError, wait_for_async
 
 if TYPE_CHECKING:
@@ -168,6 +173,11 @@ def _safe_username() -> str:
         return "anon"
 
 
+def is_docker_capable(host: object) -> "TypeGuard[UnixHost]":
+    """Whether *host* is a docker parent: a unix host marked ``docker_capable``."""
+    return isinstance(host, UnixHost) and host.docker_capable
+
+
 def _project_parent_host(lab: "Lab", parent: str | None) -> UnixHost:
     """Pick the parent host for a project's compose stack (spec §2).
 
@@ -210,10 +220,19 @@ def compose_command(
     return " ".join(shlex.quote(w) for w in words)
 
 
-async def _stack_already_up(parent: Host, project_name: str) -> bool | None:
+async def _stack_already_up(
+    parent: Host,
+    project_name: str,
+    *,
+    all: bool = False,  # noqa: A002 -- docker's flag name, as in compose_container_probe
+) -> bool | None:
     """True/False if any container runs under *project_name*, ``None`` if unknown.
 
-    Three states, because the two callers want opposite things from a failed
+    *all* counts a stopped container too (``docker ps -a``): the question
+    cleanup asks before it removes a stack's staging, which a stopped stack's
+    ``down`` still reads back.
+
+    Three states, because the callers want different things from a failed
     ``docker ps`` and folding it into False served only one of them:
 
     - :func:`compose_up` treats unknown as "not up" and runs ``up -d``, which
@@ -224,15 +243,15 @@ async def _stack_already_up(parent: Host, project_name: str) -> bool | None:
       Unknown read as False means "nobody had it", so the teardown yanks a
       stack an outer fixture is holding — precisely what that contract
       promises not to do. It raises instead.
+    - :func:`staging_to_remove` reads unknown as "cannot say": cleanup keeps
+      that stack's staging, and ``is_clean`` raises rather than guess.
 
     ``None`` is NOT the answer for a dry run, even though the type can hold
     it: "unknown" here means *the probe ran and could not tell*, and
     ``compose_up`` responds to it by running the convergent ``up -d`` — an
     ACTION. A dry run must not buy that arm with a shrug, so it refuses.
     """
-    result = await parent.exec(
-        f"docker ps -q --filter label=com.docker.compose.project={shlex.quote(project_name)}"
-    )
+    result = await parent.exec(stack_containers_command(project_name, all=all))
     refuse_declined_fact(result, asked=f"stack_already_up({project_name!r})")
     if not result.status.is_ok:
         logger.warning(
@@ -1151,3 +1170,196 @@ def get_container_host(host_id: str) -> DockerContainerHost:
             f"Did you call `otto docker compose up` (or `compose_up`) first?"
         )
     return host
+
+
+@dataclass(frozen=True)
+class StagingKey:
+    """One staging tree a project owns on a docker parent."""
+
+    key: str
+    """The tree's path segment under the parent's private staging root.
+
+    See :func:`~otto.docker.staging.compose_staging_root`.
+    """
+
+    stack: bool
+    """Whether *key* is a compose project, whose staging a later ``down`` reads back."""
+
+
+def project_staging_keys(project: Project, lab_name: str) -> "list[StagingKey]":
+    """Every staging key *project* owns on a parent of lab *lab_name*.
+
+    Each comes from the resolver its stager uses: the per-project stack's
+    :func:`get_user_compose_project`, each declared use-case's
+    :func:`use_case_project`, and the builds'
+    :func:`~otto.docker.build.build_staging_key` (the stack's key, so a
+    project with composes has its builds inside the stack's tree). A project
+    with no ``[docker]`` settings owns none.
+    """
+    from .build import build_staging_key  # lazy: build imports this module
+
+    settings = project.docker_settings
+    keys: list[StagingKey] = []
+    if settings.composes:
+        keys.append(StagingKey(get_user_compose_project(project.name), stack=True))
+    keys += [
+        StagingKey(use_case_project(lab_name, use_case), stack=True)
+        for use_case in dict.fromkeys(fragment.name for fragment in settings.use_cases)
+    ]
+    if settings.images:
+        build = build_staging_key(project.name)
+        if build not in {k.key for k in keys}:
+            keys.append(StagingKey(build, stack=False))
+    return keys
+
+
+def staging_keys_on(host: Host, project: Project) -> "list[StagingKey]":
+    """Return the staging keys *project* owns on *host*: none off a docker parent.
+
+    The one answer to "does cleanup's docker step concern this host", shared by
+    the step (:func:`staging_to_remove`), ``is_clean``, ``otto run status
+    --full`` and the ``cleanup`` preview. A parent whose private staging root
+    cannot be named (:func:`~otto.host.docker_host.parent_staging_root` refuses
+    it: not a unix host, no cred names its login, or a login proxy) owns none
+    either: otto cannot stage anything there, so nothing of it is staged there.
+    """
+    if not is_docker_capable(host):
+        return []
+    try:
+        parent_staging_root(host)
+    except StagingRefusedError:
+        return []
+    return project_staging_keys(project, host.source_lab)
+
+
+@dataclass(frozen=True)
+class StagingSurvey:
+    """What :func:`staging_to_remove` found on one parent, key by key."""
+
+    remove: "list[StagingKey]"
+    """Trees that exist and no stack needs, which cleanup removes."""
+
+    kept: "list[str]"
+    """Trees whose stack still has containers, kept because its next ``down`` reads them back."""
+
+    unreadable: "list[str]"
+    """Trees whose stack's containers nobody could list."""
+
+
+async def staging_to_remove(host: Host, project: Project) -> StagingSurvey:
+    """Survey *project*'s staging on *host*: the one decision cleanup and ``is_clean`` share.
+
+    Read-only. One command lists which of the project's staging roots exist;
+    each present stack key is then asked whether containers, running or
+    stopped, remain under its label. A stack that has some is kept, and one
+    nobody could list is ``unreadable``: cleanup keeps it, ``is_clean`` raises.
+
+    Raises:
+        ~otto.result.CommandNotRunError: this is a dry run (nothing was read).
+        ~otto.host.errors.HostCommandError: the listing of staging roots failed.
+    """
+    from .staging import compose_staging_root, present_roots_command
+
+    keys = staging_keys_on(host, project)
+    if not keys:
+        return StagingSurvey([], [], [])
+    if is_dry_run():
+        raise CommandNotRunError(
+            f"staging_to_remove({project.name})",
+            host.id,
+            "Nothing was listed, so what cleanup would remove is unknown.",
+        )
+    root = parent_staging_root(host)
+    listed = await host.exec(present_roots_command(root, [k.key for k in keys]))
+    refuse_declined_fact(listed, asked=f"staging_to_remove({project.name})")
+    if not listed.is_ok:
+        raise HostCommandError(
+            f"{host.id}: could not list the docker staging of {project.name}: "
+            f"{listed.value.strip()}"
+        )
+    present = set(listed.value.split())
+    remove: list[StagingKey] = []
+    kept: list[str] = []
+    unreadable: list[str] = []
+    for staging in keys:
+        if str(compose_staging_root(root, staging.key)) not in present:
+            continue
+        live = await _stack_already_up(host, staging.key, all=True) if staging.stack else False
+        if live is None:
+            unreadable.append(staging.key)
+        elif live:
+            kept.append(staging.key)
+        else:
+            remove.append(staging)
+    return StagingSurvey(remove, kept, unreadable)
+
+
+async def remove_project_staging(host: Host, project: Project) -> Result:
+    """Remove what :func:`staging_to_remove` names on *host*: cleanup's docker step.
+
+    A stack that still has containers keeps its staging and is named in a
+    warning and in the result: that staging scopes the stack's next ``down``,
+    and cleanup never takes a stack down. A stack whose containers nobody could
+    list keeps its staging too (the probe has already warned). Best-effort:
+    every key is tried, and a failed removal is reported without stopping the
+    rest.
+
+    The survey runs before the removals, as separate commands, so each stack's
+    removal asks again in its own shell command
+    (:func:`~otto.docker.staging.stack_cleanup_command`): a stack whose
+    containers appeared in between is kept, like one the survey kept. That
+    narrows the race with a deployment of the same key to one shell command but
+    does not exclude it, so cleanup must not run while the same stack (same
+    user and ``OTTO_COMPOSE_SUFFIX``) is being deployed or built: a removal
+    that lands between a deployment's staging and its ``up`` takes the files
+    the ``up`` needs, and a later ``down`` without them falls back to removing
+    by label.
+
+    Returns ``Status.Success`` when everything went (or there was nothing to
+    remove), ``Status.Skipped`` naming each kept stack, ``Status.Failed``
+    naming each failure, and ``Status.NotRun`` under a dry run, which removes
+    nothing.
+    """
+    from .staging import STAGING_KEPT, STAGING_UNREADABLE, cleanup_outcome, cleanup_project
+
+    if not staging_keys_on(host, project):
+        return Result(Status.Success)
+    if is_dry_run():
+        return Result(Status.NotRun, msg=f"{host.id}: dry run, no docker staging was removed")
+    try:
+        survey = await staging_to_remove(host, project)
+    except Exception as e:  # noqa: BLE001 -- best-effort: reported in the result, like a failed rm
+        return Result(Status.Failed, msg=f"{host.id}: {e}")
+    kept = list(survey.kept)
+    unreadable = list(survey.unreadable)
+    failed: list[str] = []
+    for staging in survey.remove:
+        try:
+            removed = await cleanup_project(host, staging.key, stack=staging.stack)
+        except Exception as e:  # noqa: BLE001 -- best-effort: one key must not strand the rest
+            failed.append(f"{staging.key}: {e}")
+            continue
+        outcome = cleanup_outcome(removed)
+        if not removed.is_ok:
+            failed.append(f"{staging.key}: {removed.value.strip()}")
+        elif outcome == STAGING_KEPT:
+            kept.append(staging.key)
+        elif outcome == STAGING_UNREADABLE:
+            logger.warning(f"{host.id}: could not list the containers of {staging.key}")
+            unreadable.append(staging.key)
+    for key in kept:
+        logger.warning(
+            f"{host.id}: kept the staging of {key}: the stack still has containers, "
+            "and its next `down` reads that staging back"
+        )
+    if failed:
+        return Result(
+            Status.Failed,
+            msg=f"{host.id}: could not remove the docker staging of {'; '.join(failed)}",
+        )
+    held = [*kept, *(f"{k} (containers could not be listed)" for k in unreadable)]
+    if held:
+        return Result(
+            Status.Skipped, msg=f"{host.id}: kept the docker staging of {', '.join(held)}"
+        )
+    return Result(Status.Success)

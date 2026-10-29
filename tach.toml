@@ -915,8 +915,15 @@ layer = "workflows"
 #
 # Neither edge added a member to the import cycle: otto.project was already
 # in it.
+#
+# otto.docker: `cleanup`'s last per-project step removes what otto staged for
+# the project on each docker parent, and the cleanup preview names that step.
+# Both reach the docker layer at function scope
+# (actions._dispatch_remove_docker_staging, plan._docker_staging_gap); the edge
+# points down (workflows -> run), and otto.docker never imports this layer.
 depends_on = [
     "otto.registry",
+    "otto.docker",
     "otto.result",
     "otto.utils",
     "otto.host",

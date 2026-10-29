@@ -7,11 +7,19 @@ host that runs the docker daemon. This module wraps that with a small,
 predictable layout under the parent's private staging root,
 ``/tmp/otto-docker-<login>/`` (:func:`~otto.host.docker_host.staging_root`),
 which :func:`~otto.host.docker_host.ensure_private_root` creates with mode
-0700, or verifies, before every write there.
+0700, or verifies, before every write there. Under the root, each tree is
+keyed by a compose project name: the per-project stack's
+(:func:`~otto.docker.compose.get_user_compose_project`, which also keys a
+project's builds) or a use-case's
+(:func:`~otto.docker.compose.use_case_project`). Both carry the
+``OTTO_COMPOSE_SUFFIX`` (or user), so one account's sessions on one parent
+under distinct suffixes never share a tree. Two sessions of one account with
+the same suffix, or with none set, share one: independent sessions need
+distinct suffixes.
 
 Layout, under the root::
 
-    <project>/
+    <key>/
         build/<image>/<context-as-tar>     # extracted build context
         build/<image>.<archive>            # an archive context, uploaded unopened
         compose/<n>/<basename>.yml         # one numbered dir per compose file
@@ -23,9 +31,23 @@ one decision whichever root it lands under: the private one, or the older
 shared one a teardown may still read back from
 (:func:`trusted_legacy_staging`).
 
-Cleanup is the caller's responsibility (and is best-effort: a previous
-crash is recovered from on the next stage). The directory layout is
-stable across runs so nothing leaks into per-invocation subdirs.
+Who removes what, under the private root:
+
+- ``build/`` — the build removes its staged input, archive or context, once
+  ``docker build`` has run, and the dirs that leaves empty. Best-effort: a
+  failed removal is a warning, and the next stage recovers from it.
+- the whole ``<key>/`` tree of a compose stack — never ``down``: it is the
+  record a later ``down`` reads back to scope what it removes.
+- every tree a project owns — ``otto run cleanup``, through
+  :func:`cleanup_project` (:func:`~otto.docker.compose.remove_project_staging`),
+  except a stack's while that stack still has containers. A stack's removal
+  checks that in the same shell command (:func:`stack_cleanup_command`); it
+  does not lock the tree, so cleanup must not run while the same stack (same
+  user and suffix) is being deployed or built. Nothing removes staging under
+  the older shared root; that stays a manual step.
+
+The directory layout is stable across runs so nothing leaks into
+per-invocation subdirs.
 """
 
 import logging
@@ -50,6 +72,8 @@ from ..host.shell_quote import path_operand
 from ..result import CommandNotRunError, CommandResult
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from ..host.recursive_transfer import RemoteListing
     from ..host.unix_host import UnixHost
 
@@ -86,9 +110,14 @@ def stage_key(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", name)
 
 
+def build_root(root: Path, project: str) -> Path:
+    """Where *project*'s build inputs are staged under the parent's staging *root*."""
+    return compose_staging_root(root, project) / "build"
+
+
 def image_build_dir(root: Path, project: str, image_name: str) -> Path:
     """Where this image's context will live on the parent."""
-    return compose_staging_root(root, project) / "build" / stage_key(image_name)
+    return build_root(root, project) / stage_key(image_name)
 
 
 def compose_dir(root: Path, project: str) -> Path:
@@ -98,11 +127,7 @@ def compose_dir(root: Path, project: str) -> Path:
 
 def image_archive_path(root: Path, project: str, image: DockerImage) -> Path:
     """Where an archive context is uploaded on the parent."""
-    return (
-        compose_staging_root(root, project)
-        / "build"
-        / f"{stage_key(image.name)}.{image.context.name}"
-    )
+    return build_root(root, project) / f"{stage_key(image.name)}.{image.context.name}"
 
 
 async def stage_image_archive(parent: Host, project: str, image: DockerImage) -> Path:
@@ -164,10 +189,7 @@ async def stage_image_context(
     # Checked, because `&&` makes a failed rm skip the mkdir silently and the
     # `tar -xf` below OVERLAYS rather than replaces: docker build would then
     # see a context still holding a file the user deleted locally, and produce
-    # an image that still holds the deleted file. Build staging
-    # is keyed on the project name (unlike compose staging, keyed on the
-    # suffix-bearing project), so two runs by one account with different
-    # suffixes really do collide here; two accounts have two roots.
+    # an image that still holds the deleted file.
     prepared = await parent.exec(
         f"rm -rf {path_operand(remote_dir)} && mkdir -p {path_operand(remote_dir)}"
     )
@@ -291,18 +313,83 @@ async def stage_compose_files(
     return out
 
 
-async def cleanup_project(parent: Host, project: str) -> CommandResult:
-    """Remove the per-project staging tree on the parent. Best-effort.
+STAGING_KEPT = "otto-staging-kept"
+"""What :func:`stack_cleanup_command` prints when the stack had containers: its staging stays."""
+
+STAGING_UNREADABLE = "otto-staging-unreadable"
+"""What :func:`stack_cleanup_command` prints when the stack's containers could not be listed."""
+
+
+async def cleanup_project(parent: Host, project: str, *, stack: bool) -> CommandResult:
+    """Remove the staging tree under *project* on the parent. Best-effort.
 
     The tree is under the parent's private staging root, which is verified
     first (:func:`~otto.host.docker_host.ensure_private_root`): a root otto
     cannot trust raises rather than have ``rm -rf`` run through it.
 
-    Returns the ``rm -rf``'s own :class:`~otto.result.CommandResult` — callers
-    that care check ``.is_ok``; best-effort callers ignore it.
+    A compose stack's tree (*stack*) goes through :func:`stack_cleanup_command`,
+    which checks the stack's containers in the same shell command as the
+    removal; any other key's through :func:`cleanup_command`. Returns the
+    command's own :class:`~otto.result.CommandResult` — callers that care check
+    ``.is_ok`` and :func:`cleanup_outcome`; best-effort callers ignore it.
     """
-    tree = compose_staging_root(await ensure_private_root(parent), project)
-    return await parent.exec(f"rm -rf {path_operand(tree)}")
+    root = await ensure_private_root(parent)
+    command = stack_cleanup_command(root, project) if stack else cleanup_command(root, project)
+    return await parent.exec(command)
+
+
+def cleanup_command(root: Path, project: str) -> str:
+    """Return the ``rm -rf`` of *project*'s tree under *root*: what cleanup removes, previewed."""
+    return f"rm -rf {path_operand(compose_staging_root(root, project))}"
+
+
+def stack_cleanup_command(root: Path, project: str) -> str:
+    """Return :func:`cleanup_command` guarded by the stack's own container check, as one command.
+
+    The survey (:func:`~otto.docker.compose.staging_to_remove`) decides which
+    trees to remove, but runs before the removal, as separate commands. A
+    stack whose containers appeared since (a deployment of the same key) keeps
+    its staging: the removal asks again, in the same shell, and prints
+    :data:`STAGING_KEPT` instead of removing; a listing that fails prints
+    :data:`STAGING_UNREADABLE`. This narrows the window between the check and
+    the ``rm -rf`` to one shell command; it does not exclude a concurrent
+    deployment, so cleanup must not run while the same stack (same user and
+    suffix) is being deployed or built.
+    """
+    from ..host.docker_host import stack_containers_command  # lazy: only cleanup needs it
+
+    return (
+        f"if c=$({stack_containers_command(project, all=True)}); then "
+        f'if [ -z "$c" ]; then {cleanup_command(root, project)}; else echo {STAGING_KEPT}; fi; '
+        f"else echo {STAGING_UNREADABLE}; fi"
+    )
+
+
+def cleanup_outcome(result: CommandResult) -> "str | None":
+    """Return :data:`STAGING_KEPT` or :data:`STAGING_UNREADABLE` when *result* ends with one."""
+    lines = result.value.strip().splitlines()
+    last = lines[-1].strip() if lines else ""
+    return last if last in (STAGING_KEPT, STAGING_UNREADABLE) else None
+
+
+def build_input_cleanup_command(root: Path, project: str, path: Path) -> str:
+    """Return the removal of one staged build input, then of the dirs it leaves empty.
+
+    The ``rmdir`` is quiet and never fails the command: a dir another input or
+    the compose staging still uses is not empty, and stays. The private *root*
+    itself is never removed.
+    """
+    emptied = (
+        f"{path_operand(build_root(root, project))} "
+        f"{path_operand(compose_staging_root(root, project))}"
+    )
+    return f"rm -rf {path_operand(path)} && {{ rmdir {emptied} 2>/dev/null || true; }}"
+
+
+def present_roots_command(root: Path, projects: "Sequence[str]") -> str:
+    """Return a command printing each of *projects*' trees under *root* that exists, one a line."""
+    trees = " ".join(path_operand(compose_staging_root(root, p)) for p in projects)
+    return f'for d in {trees}; do [ -e "$d" ] && echo "$d"; done; true'
 
 
 @dataclass

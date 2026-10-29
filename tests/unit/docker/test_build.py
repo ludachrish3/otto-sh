@@ -284,6 +284,13 @@ def _archive_img(tmp: Path) -> DockerImage:
     )
 
 
+_ARCHIVE_REMOVAL = (
+    f"rm -rf {ROOT}/project1/build/api.ctx.tar.gz && "
+    f"{{ rmdir {ROOT}/project1/build {ROOT}/project1 2>/dev/null || true; }}"
+)
+"""The one removal both build forms render, here for the archive."""
+
+
 def test_an_archive_is_given_to_docker_on_stdin_with_the_inner_dockerfile(tmp_path):
     cmd = build_command(ROOT, "project1", _archive_img(tmp_path), BuildOptions())
     assert " -f docker/Dockerfile " in cmd
@@ -308,7 +315,7 @@ async def test_an_archive_is_uploaded_unopened_and_removed_after_a_failed_build(
     assert put_sources == [img.context], "the user's file itself, not a re-tarred copy"
     cmds = [c.args[0] for c in parent.exec.call_args_list]
     assert not any(c.startswith("tar ") for c in cmds), "otto never opens the archive"
-    assert cmds[-1] == f"rm -f {ROOT}/project1/build/api.ctx.tar.gz"
+    assert cmds[-1] == _ARCHIVE_REMOVAL
 
 
 @pytest.mark.asyncio
@@ -321,7 +328,7 @@ async def test_an_archive_is_removed_before_the_daemon_is_read_after_a_good_buil
 
     assert built.references == ["api:latest"]
     cmds = [c.args[0] for c in parent.exec.call_args_list]
-    removed = cmds.index(f"rm -f {ROOT}/project1/build/api.ctx.tar.gz")
+    removed = cmds.index(_ARCHIVE_REMOVAL)
     assert "docker build " in cmds[removed - 1]
     assert cmds[removed + 1].startswith("docker image inspect")
 
@@ -333,7 +340,7 @@ async def test_a_failed_archive_removal_does_not_replace_the_builds_outcome(tmp_
     failure = _fail("docker's own error", command="docker build ...")
 
     async def exec_side_effect(cmd, *_, **__):
-        if cmd.startswith("rm -f "):
+        if cmd.startswith("rm -rf "):
             raise OSError("transport gone")
         return failure if "docker build " in cmd else _ok(command=cmd)
 
@@ -352,7 +359,7 @@ async def test_an_archive_removal_that_exits_non_zero_warns_and_keeps_the_builds
     failure = _fail("docker's own error", command="docker build ...")
 
     async def exec_side_effect(cmd, *_, **__):
-        if cmd.startswith("rm -f "):
+        if cmd.startswith("rm -rf "):
             return _fail("rm: cannot remove: Permission denied", command=cmd)
         return failure if "docker build " in cmd else _ok(command=cmd)
 
@@ -367,3 +374,52 @@ async def test_an_archive_removal_that_exits_non_zero_warns_and_keeps_the_builds
     assert "test3" in warned[0]
     assert f"{ROOT}/project1/build/api.ctx.tar.gz" in warned[0]
     assert "Permission denied" in warned[0]
+
+
+# ---------------------------------------------------------------------------
+# A directory context
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("build_ok", [True, False])
+async def test_a_directory_context_is_removed_after_its_build(tmp_path, build_ok):
+    parent = _mock_parent()
+    img = _img(tmp_path)
+    _daemon(parent, listing="api:latest cbd8571d4b6e\n")
+    if not build_ok:
+
+        async def exec_side_effect(cmd, *_, **__):
+            if "docker build " in cmd:
+                return _fail("boom", command=cmd)
+            return _ok(command=cmd)
+
+        parent.exec.side_effect = exec_side_effect
+    await _build_one(parent, "project1", img, BuildOptions())
+    cmds = [c.args[0] for c in parent.exec.call_args_list]
+    # Exact, not a prefix: staging's own wipe also starts `rm -rf <context> `.
+    removal = (
+        f"rm -rf {ROOT}/project1/build/api && "
+        f"{{ rmdir {ROOT}/project1/build {ROOT}/project1 2>/dev/null || true; }}"
+    )
+    assert removal in cmds, cmds
+    build = next(i for i, c in enumerate(cmds) if "docker build " in c)
+    assert cmds.index(removal) > build
+
+
+@pytest.mark.asyncio
+async def test_build_images_stages_under_the_suffixed_stack_key(tmp_path, monkeypatch):
+    """A build stages under the suffixed key, so distinct suffixes never share a context."""
+    from otto.config.scope import DockerSettings
+    from otto.docker.build import build_images
+    from tests._fixtures.fake_project import fake_project
+
+    monkeypatch.setenv("OTTO_COMPOSE_SUFFIX", "u")
+    parent = _mock_parent()
+    _daemon(parent, listing="api:latest cbd8571d4b6e\n")
+    project = fake_project("project1", docker_settings=DockerSettings(images=(_img(tmp_path),)))
+
+    await build_images(project, parent)
+
+    cmds = [c.args[0] for c in parent.exec.call_args_list]
+    assert any(c.endswith(f" {ROOT}/otto-project1-u/build/api") for c in cmds), cmds

@@ -192,7 +192,7 @@ async def test_two_projects_may_declare_names_that_share_a_staging_key(install, 
 @pytest.mark.asyncio
 async def test_a_dry_run_names_the_exact_docker_build_per_image(install, builds, lab, tmp_path):
     from otto.config.scope import DockerImage
-    from otto.docker.build import build_command
+    from otto.docker.build import build_command, build_staging_key
 
     df = tmp_path / "Dockerfile"
     df.write_text("FROM alpine\n")
@@ -208,7 +208,7 @@ async def test_a_dry_run_names_the_exact_docker_build_per_image(install, builds,
         await build_on("test3", no_cache=True)
 
     text = str(excinfo.value)
-    assert build_command(ROOT, "a", image, BuildOptions(no_cache=True)) in text
+    assert build_command(ROOT, build_staging_key("a"), image, BuildOptions(no_cache=True)) in text
     assert "No context was staged and no image was built." in text
     assert builds == []
 

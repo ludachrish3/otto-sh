@@ -163,27 +163,90 @@ def _failure_reason(outcome: Result) -> str:
     return f"failed ({outcome.status.name}) with no reason given"
 
 
+def _first(*results: Result) -> Result:
+    """Return the first non-ok result, else Success -- "first failure wins" as a value.
+
+    Every argument has already been awaited by the time this is called, so it
+    chooses what to REPORT, not what to attempt.
+    """
+    for result in results:
+        if not result.is_ok:
+            return result
+    return Result(Status.Success)
+
+
+def _reported(*results: Result) -> Result:
+    """Return the first failure, else the first DECLINE, else Success.
+
+    :func:`_first` with one more rung, for a step that DECLINES rather than
+    fails: :func:`~otto.project.orchestrator.cleanup`'s impairment reset,
+    which answers ``Status.Skipped`` when :func:`otto.link.manage.repair_all`
+    DECLINED a link it might otherwise have repaired (a foreign qdisc, a
+    management-interface refusal), and the docker-staging step, which keeps a
+    stack's staging while the stack has containers. The same ladder reduces a
+    fleet walk (:func:`_reduce_results`), one project's steps
+    (:meth:`ProjectActions.cleanup`) and the projects (the orchestrator's
+    default combiner), so a decline reaches the result at every level.
+
+    A decline is ``is_ok`` -- it must not abort a best-effort teardown and it
+    is not a failure, because otto never applied what it is refusing to
+    remove -- but it is not Success either:
+    something is still on the wire that ``cleanup`` did not take off, and
+    returning a bare ``Result(Success)`` over it would say the opposite in the
+    one field a caller reads.
+
+    A FAILURE OUTRANKS A DECLINE IN EITHER ARGUMENT ORDER, which is why the
+    failure pass runs over all of them BEFORE the decline pass starts rather
+    than one loop returning the first non-Success it meets. That one loop
+    passes every test written in the order the steps run -- and is wrong in
+    exactly the case a real lab produces: the impairment reset declines first
+    (any lab with an unreadable or foreign-qdisc link), the tunnel reap fails
+    after it, and "first non-Success" hands back the DECLINE. ``is_ok`` is
+    ``True`` on it, so ``otto run cleanup`` would exit 0 with tunnel processes
+    still running and ``ensure_clean`` would call the lab converged.
+    """
+    failure = _first(*results)
+    if not failure.is_ok:
+        return failure
+    for result in results:
+        if result.status is not Status.Success:
+            return result
+    return Result(Status.Success)
+
+
 def _reduce_results(results: "dict[str, Result | BaseException]") -> Result:
     """Reduce a ``do_for_all_hosts`` mapping to one Result, naming the host.
 
-    The first non-ok entry wins -- every host has already run by the time this
-    is called (``do_for_all_hosts`` gathers them), so this chooses what to
-    REPORT, not what to attempt. An exception is a value in that mapping, not a
+    The first non-ok entry wins, else the first decline (an ``is_ok`` status
+    that is not Success, such as a step that kept something on purpose), else
+    Success: the :func:`_reported` ladder. Every host has already run by the
+    time this is called (``do_for_all_hosts`` gathers them), so this chooses
+    what to REPORT, not what to attempt. An exception is a value in that mapping, not a
     raise, and a reduction that only understood Results would read a crashed
     host as a pass.
 
-    Only ``status`` and the reason (:func:`_failure_reason`) are lifted out of
-    the failing entry -- never ``value`` whole, which RAISES on a dry run's
+    Only ``status`` and the reason (:func:`_failure_reason`, or a decline's
+    own ``msg``) are lifted out of the entry -- never ``value`` whole, which RAISES on a dry run's
     :class:`~otto.result.NotRunResult`. The host id has to come from the
     mapping's key because the Result itself does not carry it, which is why
     this repacks rather than returning the entry whole.
     """
+    stamped: list[Result] = []
     for host_id, outcome in results.items():
         if isinstance(outcome, BaseException):
-            return Result(Status.Error, msg=f"host {host_id!r}: {outcome!r}")
+            stamped.append(Result(Status.Error, msg=f"host {host_id!r}: {outcome!r}"))
+            continue
         if not outcome.is_ok:
-            return Result(outcome.status, msg=f"host {host_id!r}: {_failure_reason(outcome)}")
-    return Result(Status.Success)
+            reason = _failure_reason(outcome)
+        elif outcome.status is not Status.Success:
+            reason = outcome.msg or outcome.status.name.lower()
+        else:
+            continue
+        # A host verb may already open its message with the host's id; this
+        # reducer names the host, so the id is not said twice.
+        reason = reason.removeprefix(f"{host_id}: ")
+        stamped.append(Result(outcome.status, msg=f"host {host_id!r}: {reason}"))
+    return _reported(*stamped)
 
 
 def _options_for(actions: "ProjectActions", name: str, base: Any, caller: str) -> Any:
@@ -348,6 +411,39 @@ async def _dispatch_uninstall_dev_tools(host: "Host", owner: "str | None" = None
     return await host.uninstall_dev_tools(owner=owner)
 
 
+async def _dispatch_remove_docker_staging(host: "Host", project: "Project") -> Result:
+    """Remove what *project* staged on *host* when it is a docker parent; else nothing.
+
+    The docker layer decides everything -- which hosts are docker parents, which
+    staging keys the project owns, and which a live stack keeps -- so this is
+    only the hand-off.
+    """
+    from ..docker.compose import remove_project_staging  # lazy: keeps this module import-light
+
+    return await remove_project_staging(host, project)
+
+
+async def _docker_staging_left(host: "Host", project: "Project") -> bool:
+    """Whether :meth:`ProjectActions.cleanup` would remove any of *project*'s staging on *host*.
+
+    The same survey the cleanup step removes from
+    (:func:`~otto.docker.compose.staging_to_remove`), so the question cannot
+    drift from the verb. A kept stack's staging is not a leftover: cleanup
+    provably will not touch it. A stack nobody could list RAISES, because
+    "clean" and "dirty" would both be guesses.
+    """
+    from ..docker.compose import staging_to_remove  # lazy: keeps this module import-light
+    from ..host.errors import HostCommandError
+
+    survey = await staging_to_remove(host, project)
+    if survey.unreadable:
+        raise HostCommandError(
+            f"{host.id}: could not list the containers of {', '.join(survey.unreadable)}, "
+            "so whether cleanup would remove their staging is unknown"
+        )
+    return bool(survey.remove)
+
+
 class ProjectActions:
     """One project's lifecycle across the lab; subclass to override any part of it.
 
@@ -460,12 +556,21 @@ class ProjectActions:
         dry_run_preview=True,
     )
     async def cleanup(self, opts: CleanupOptions) -> Result:
-        """Uninstall this project's products, then remove its dev tools.
+        """Uninstall this project's products, remove its dev tools, then its docker staging.
 
         Strictly more than :meth:`uninstall`, in that order: products first (a
-        dev tool may be what a product's uninstall needs), then the tooling.
-        Best-effort -- the tools are removed even when the product teardown
-        failed, and the first failure seen is what returns.
+        dev tool may be what a product's uninstall needs), then the tooling,
+        then the files otto staged for this project on each docker parent
+        (:func:`~otto.docker.compose.remove_project_staging`; a stack that still
+        has containers keeps its own, because its next ``down`` reads them back).
+        Best-effort -- every step runs even when an earlier one failed. The
+        first failure seen is what returns, else the first decline (a kept
+        stack, a stopped container passed over), else Success: the
+        ``_reported`` ladder.
+
+        The staging step is the project's, not the orchestrator's: every
+        staging key is derived from one project's settings, so it is as
+        owner-scoped as the dev tools and runs on the same fleet walk.
 
         Toolchain tools are NOT removed here. One toolchain serves every owner
         on a host, so removing it is the orchestrator's final host-global step;
@@ -489,7 +594,12 @@ class ProjectActions:
             )
         )
         tools = _reduce_results(await self.ctx.do_for_all_hosts(_dispatch_uninstall_dev_tools))
-        return uninstalled if not uninstalled.is_ok else tools
+        staging = _reduce_results(
+            await self.ctx.do_for_all_hosts(
+                _dispatch_remove_docker_staging, self.project, with_owner=False
+            )
+        )
+        return _reported(uninstalled, tools, staging)
 
     ####################
     #  Logs
@@ -557,7 +667,10 @@ class ProjectActions:
                     Status.Error,
                     msg=f"require_product_logs: no product logs retrieved from {host.id}{why}",
                 )
-        return Result(Status.Success)
+        # The haul itself, not a fresh Success: a decline in it (a stopped
+        # container passed over) is reported whether or not the requirement
+        # was asked, so one flag cannot fold it away.
+        return haul
 
     ####################
     #  Tools
@@ -693,11 +806,15 @@ class ProjectActions:
         return await self.status(probe) is InstallState.UNINSTALLED
 
     async def is_clean(self) -> bool:
-        """Whether none of this project's products or dev tools remain installed.
+        """Whether nothing :meth:`cleanup` removes is left: products, dev tools, docker staging.
 
         The matching question to :meth:`cleanup`, asked with the same scope:
         another project's leftovers are not this project's uncleanliness. Toolchain
         tools are host-global and are checked by the orchestrator, not here.
+
+        The docker staging is asked on every fleet host, in its own pass: a
+        docker parent usually carries none of this project's products, and the
+        products pass skips such a host.
         """
         for host in self.ctx.all_hosts():
             products = _owned(host.products, self.project.name)
@@ -710,6 +827,9 @@ class ProjectActions:
             for tool in tools:
                 if await tool.is_installed(host):
                     return False
+        for host in self.ctx.all_hosts():
+            if await _docker_staging_left(host, self.project):
+                return False
         return True
 
 

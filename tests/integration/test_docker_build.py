@@ -22,9 +22,10 @@ from tests._fixtures.scope_boundary import held_for_scope
 
 PROJECT1_DIR = TESTS_ROOT / "project1"
 
-# All docker integration tests share /tmp/otto-docker/project1/ on test3
-# (build-context staging dir). Pin them to one xdist worker so concurrent
-# `rm -rf` calls during stage_image_context don't race.
+# All docker integration tests share one staging tree on test3: project1's
+# build key (otto.docker.build.build_staging_key) under the parent's private
+# staging root. Pin them to one xdist worker so concurrent `rm -rf` calls
+# during stage_image_context don't race.
 pytestmark = [
     pytest.mark.xdist_group("docker_e2e"),
     # This module drives docker on test3: it asks for the orphan-stack reap.
