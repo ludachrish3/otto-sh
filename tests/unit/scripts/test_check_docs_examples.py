@@ -217,3 +217,51 @@ def test_a_missing_tool_fails_that_example_without_aborting(tmp_path, monkeypatc
     monkeypatch.setenv("PATH", str(tmp_path / "empty"))
     failures = cde.check(example, root, otto=_fake_otto(tmp_path))
     assert any("`cmake -S` failed" in f and "not found" in f for f in failures)
+
+
+# One use-case declared by two fragments; settings name only compose handles they declare.
+_DOCKER = (
+    '[project]\nlab_patterns = ["bench"]\n'
+    "[docker]\n"
+    '[[docker.composes]]\nname = "c"\npath = "c.yml"\n'
+    '[[docker.composes]]\nname = "d"\npath = "d.yml"\n'
+    '[[docker.use_cases]]\nname = "uc"\ncomposes = ["c"]\n'
+    '[[docker.use_cases]]\nname = "uc"\ncomposes = ["d"]\n'
+)
+
+
+def test_a_docker_example_previews_its_compose_build_and_up(tmp_path):
+    root = tmp_path / "examples"
+    example = make_project(root / "a", extra=_DOCKER)
+    otto, log = _recording_otto(tmp_path, ["bench"])
+    assert cde.check(example, root, otto=otto) == []
+    assert log.read_text().splitlines()[-2:] == [
+        "--lab bench -n docker compose build uc",
+        "--lab bench -n docker compose up uc",
+    ]
+
+
+def test_an_example_without_docker_previews_no_compose(tmp_path):
+    root = tmp_path / "examples"
+    example = make_project(root / "a", extra='[project]\nlab_patterns = ["bench"]\n')
+    otto, log = _recording_otto(tmp_path, ["bench"])
+    cde.check(example, root, otto=otto)
+    assert not [c for c in log.read_text().splitlines() if "docker" in c]
+
+
+def test_a_failing_compose_preview_names_the_command(tmp_path):
+    root = tmp_path / "examples"
+    example = make_project(root / "a", extra=_DOCKER)
+    failures = cde.check(example, root, otto=_fake_otto(tmp_path, fail_on="compose up"))
+    assert failures == ["a: `otto -n docker compose up uc` failed (exit 3: )"]
+
+
+def test_settings_that_do_not_validate_fail_in_one_line_without_their_values(tmp_path):
+    root = tmp_path / "examples"
+    bad = '[[docker.use_cases]]\nname = "uc"\ncomposes = ["undeclared"]\n'
+    example = make_project(root / "a", extra=bad)
+    [failure] = cde.check(example, root, otto=_fake_otto(tmp_path))
+    assert failure.startswith("a: cannot load .otto/settings.toml: ")
+    assert "undeclared" in failure
+    assert "\n" not in failure
+    assert "input_value" not in failure

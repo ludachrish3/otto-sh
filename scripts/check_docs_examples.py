@@ -7,8 +7,12 @@ install`` with that copy as its only project. The lab is the one a reader of the
 example uses: the project's single literal ``[project] lab_patterns`` entry, or
 else the only lab ``otto --list-labs`` reports. A project with a
 ``CMakeLists.txt`` is also configured, built and has its tests run by
-``ctest``. Every example is checked even after one fails; the exit status is 1
-if any failed.
+``ctest``. A project that declares ``[[docker.use_cases]]`` (as otto reads
+them: :func:`otto.config.scope.declared_use_case_names`) then has each
+use-case previewed with ``otto --lab <lab> -n docker compose build <use-case>``
+and ``... -n docker compose up <use-case>``, after the build, since an image's
+context may be a build directory. Every example is checked even after one
+fails; the exit status is 1 if any failed.
 """
 
 import os
@@ -20,9 +24,13 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
-import tomli
+from pydantic import ValidationError
 
 from otto.config.env import without_otto_env
+from otto.config.project import Project
+from otto.config.scope import declared_use_case_names
+from otto.errors import OttoError
+from otto.models.base import compact_validation_error
 
 ROOT = Path(__file__).resolve().parent.parent
 EXAMPLES = ROOT / "docs" / "examples"
@@ -37,6 +45,9 @@ NOT_COPIED = {"__pycache__"}
 """Never copied anywhere in the examples tree: bytecode."""
 EXAMPLE_BUILD_DIR = "build"
 """An example's own build output, not copied: its CMake cache names the checkout's paths."""
+
+
+_CANNOT_LOAD = "cannot load .otto/settings.toml"
 
 
 class _ExampleError(Exception):
@@ -92,21 +103,32 @@ def _reason(done: "subprocess.CompletedProcess[str] | str") -> "str | None":
     return f"exit {done.returncode}: {tail[0]}"
 
 
-def _lab(project: Path, otto: str, env: "dict[str, str]") -> str:
+def _load(project: Path) -> Project:
+    """Return *project* parsed and validated the way otto loads it.
+
+    Raises:
+        _ExampleError: The settings cannot be read or do not validate.
+    """
+    try:
+        return Project(root=project)
+    except ValidationError as exc:
+        # One line, and never ``input_value=``: the rendering otto's own loader uses.
+        raise _ExampleError(f"{_CANNOT_LOAD}: {compact_validation_error(exc)}") from exc
+    except (OSError, ValueError, OttoError) as exc:
+        raise _ExampleError(f"{_CANNOT_LOAD}: {exc}") from exc
+
+
+def _lab(project: Project, otto: str, env: "dict[str, str]") -> str:
     """Return the lab a reader of *project* targets.
 
     Raises:
-        _ExampleError: The settings cannot be read, the lab listing failed, or
-            neither names exactly one lab.
+        _ExampleError: The lab listing failed, or neither it nor the settings
+            name exactly one lab.
     """
-    try:
-        settings = tomli.loads((project / ".otto" / "settings.toml").read_text())
-    except (OSError, UnicodeDecodeError, tomli.TOMLDecodeError) as exc:
-        raise _ExampleError(f"cannot read .otto/settings.toml: {exc}") from exc
-    patterns = settings.get("project", {}).get("lab_patterns", [])
+    patterns = project.settings.get("project", {}).get("lab_patterns", [])
     if len(patterns) == 1 and LITERAL_LAB.fullmatch(patterns[0]):
         return patterns[0]
-    listed = _execute([otto, "--list-labs"], project, env)
+    listed = _execute([otto, "--list-labs"], project.root, env)
     reason = _reason(listed)
     if reason is not None:
         raise _ExampleError(f"`otto --list-labs` failed ({reason})")
@@ -138,7 +160,8 @@ def check(example: Path, examples_root: Path, *, otto: str) -> "list[str]":
         project = copy_root / example.name
         env = _env(project, scratch)
         try:
-            lab = _lab(project, otto, env)
+            loaded = _load(project)
+            lab = _lab(loaded, otto, env)
         except _ExampleError as exc:
             return [f"{example.name}: {exc}"]
         commands = [
@@ -155,6 +178,16 @@ def check(example: Path, examples_root: Path, *, otto: str) -> "list[str]":
                     ["ctest", "--test-dir", str(build), "--output-on-failure", "--no-tests=error"],
                 )
             )
+        # After the build: an image's context may be a build directory, and the
+        # build checks its contexts before its dry-run branch.
+        commands.extend(
+            (
+                ["otto", "-n", "docker", "compose", verb, use_case],
+                [otto, "--lab", lab, "-n", "docker", "compose", verb, use_case],
+            )
+            for use_case in declared_use_case_names([loaded])
+            for verb in ("build", "up")
+        )
         for shown, argv in commands:
             reason = _run(argv, project, env)
             if reason is not None:

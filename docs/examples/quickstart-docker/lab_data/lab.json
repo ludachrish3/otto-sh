@@ -1,0 +1,13 @@
+{
+  "labs": { "example_lab": {} },
+  "elements": [
+    {
+      "name": "docker-host",
+      "labs": ["example_lab"],
+      "hosts": [
+        { "ip": "192.0.2.10", "os_type": "unix", "docker_capable": true,
+          "creds": [{ "login": "admin", "password": "changeme" }] }
+      ]
+    }
+  ]
+}

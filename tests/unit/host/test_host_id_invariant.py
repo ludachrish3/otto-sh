@@ -31,6 +31,8 @@ _LABS = [
     CHECKOUT_ROOT / "docs/examples/bed/quickstart-kmod/lab_data/lab.json",
     CHECKOUT_ROOT / "docs/examples/quickstart-embedded/lab_data/lab.json",
     CHECKOUT_ROOT / "docs/examples/bed/quickstart-embedded/lab_data/lab.json",
+    CHECKOUT_ROOT / "docs/examples/quickstart-docker/lab_data/lab.json",
+    CHECKOUT_ROOT / "docs/examples/bed/quickstart-docker/lab_data/lab.json",
 ]
 
 

@@ -1,0 +1,6 @@
+# One service, running the image otto builds from the Dockerfile beside this file.
+# `pull_policy: never`: the image is built on the parent, never pulled.
+services:
+  tools:
+    image: quickstart-runtime:latest
+    pull_policy: never

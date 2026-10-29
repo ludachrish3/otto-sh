@@ -1328,10 +1328,13 @@ a complete project a reader can build: sources, `.otto/` settings, tests.
 `make docs` (and `nox -s docs`) checks each one without a lab with
 `scripts/check_docs_examples.py`: `otto --list-products`, `otto --lab <lab> -n
 run install`, and, when it has a `CMakeLists.txt`, a cmake build and `ctest`.
-The lab is the project's single literal `[project] lab_patterns` entry, or the
-only lab it has. At build time `scripts/build_example_archives.py` packs the
-project's tracked files into `docs/_static/generated/examples/<track>.tar.gz`,
-and the track's page links that archive:
+Then, for each `[[docker.use_cases]]` name it declares, it previews `otto --lab
+<lab> -n docker compose build <use-case>` and `... up <use-case>`. These come
+after the build because an image's context may be a build directory. The lab is
+the project's single literal `[project] lab_patterns` entry, or the only lab it
+has. At build time `scripts/build_example_archives.py` packs the project's
+tracked files into `docs/_static/generated/examples/<track>.tar.gz`, and the
+track's page links that archive:
 
 ```text
 {download}`quickstart-shell.tar.gz </_static/generated/examples/quickstart-shell.tar.gz>`

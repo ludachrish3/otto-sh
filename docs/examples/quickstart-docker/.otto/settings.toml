@@ -1,0 +1,103 @@
+# The docker track's example project (Set up a project > Tracks > Docker).
+# The track page includes the sections between `# doc: begin <id>` and
+# `# doc: end <id>`.
+name = "quickstart-docker"
+version = "0.1.0"
+
+# doc: begin libs
+libs = ["pylib"]
+tests = ["tests"]
+# doc: end libs
+
+[[lab.sources]]
+backend = "json"
+paths = ["lab_data"]
+
+[project]
+lab_patterns = ["example_lab"]
+
+# doc: begin docker
+[docker]
+
+# The compose service's image, and the singleton image. Both are built on the
+# parent and tagged <name>:latest. Each has its own context: runtime's is its
+# own subfolder, banner's is the build directory holding the binary.
+[[docker.images]]
+name = "quickstart-runtime"
+dockerfile = "docker/runtime/Dockerfile"
+context = "docker/runtime"
+
+[[docker.images]]
+name = "quickstart-banner"
+dockerfile = "docker/banner/Dockerfile"
+context = "build/src/banner"
+
+[[docker.composes]]
+name = "tools"
+path = "docker/runtime/compose.yml"
+services = ["tools"]
+
+# Its container is the lab host docker-host.quickstart.tools.
+[[docker.use_cases]]
+name = "quickstart"
+composes = ["tools"]
+# doc: end docker
+
+# doc: begin compose-products
+# wordcount and shout are installed into the compose container. A container
+# host has no default staging directory, so stage_dir is absolute.
+[[products]]
+name = "wordcount"
+kind = "shell"
+artifact = "build/src/wordcount/wordcount"
+stage_dir = "/opt/quickstart"
+check = "test -x /opt/quickstart/wordcount"
+uninstall = "rm -rf /opt/quickstart/wordcount {cov_dir}"
+match = { id = "docker-host\\.quickstart\\.tools" }
+
+[[products]]
+name = "shout"
+kind = "shell"
+artifact = "build/src/shout/shout"
+stage_dir = "/opt/quickstart"
+check = "test -x /opt/quickstart/shout"
+uninstall = "rm -rf /opt/quickstart/shout {cov_dir}"
+match = { id = "docker-host\\.quickstart\\.tools" }
+# doc: end compose-products
+
+# doc: begin image-product
+# banner is the image itself, run on the parent with `docker run -d`. Its
+# cov_dir is bind-mounted at the same path, so its counters land on the parent.
+[[products]]
+name = "banner"
+kind = "docker_image"
+image = "quickstart-banner:latest"
+container_name = "quickstart-banner"
+instrumented = true
+cov_dir = "/tmp/quickstart-docker/banner"
+run_args = "-e GCOV_PREFIX={cov_dir}"
+match = { id = "docker-host" }
+# doc: end image-product
+
+# doc: begin coverage
+[coverage]
+hosts = "docker-host|docker-host\\.quickstart\\.tools"
+
+# What the e2e tests exercised, collected by `otto test --cov`.
+[coverage.tiers.system]
+kind = "e2e"
+precedence = 1
+
+# What someone exercised by hand, fetched by `otto cov get --tier manual`
+# and committed under .otto/coverage/manual/.
+[coverage.tiers.manual]
+kind = "manual"
+precedence = 2
+
+# What the unit tests exercised: their counters in the build tree, read at
+# report time. Only the products' own sources count.
+[coverage.tiers.unit]
+kind = "unit"
+precedence = 3
+harvest_dirs = ["build"]
+# doc: end coverage

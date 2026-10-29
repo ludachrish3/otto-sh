@@ -1,0 +1,4 @@
+/build/
+__pycache__/
+# otto's run output, when OTTO_XDIR does not send it elsewhere.
+otto-output/
