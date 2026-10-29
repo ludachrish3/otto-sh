@@ -34,6 +34,7 @@ from ...errors import OttoError
 from ...result import CommandResult, Result
 from ...utils import Status, WaitTimeoutError, wait_for_async
 from ..errors import HostCommandError, HostUnreachableError
+from ..shell_quote import path_operand
 from .base import (
     SSH_CHANNEL_HEADROOM,
     SSHD_DEFAULT_MAX_SESSIONS,
@@ -1140,7 +1141,9 @@ class NcFileTransfer(UnixFileTransfer):
         drive ``_put_files_nc`` with mocked exec_cmd can patch the verify
         step without hand-rolling a stat response.
         """
-        verify = await self._exec_cmd(f"stat -c %s {dst} 2>/dev/null || echo MISSING")
+        verify = await self._exec_cmd(
+            f"stat -c %s -- {path_operand(dst)} 2>/dev/null || echo MISSING"
+        )
         actual_output = verify.value.strip()
         if actual_output == "MISSING":
             return Result(
@@ -1289,7 +1292,7 @@ class NcFileTransfer(UnixFileTransfer):
         sizes: dict[Path, int] = {}
         stat_failures: dict[Path, Result] = {}
         for src in src_files:
-            stat_result = await self._control_run(f"{_NC_GET_STAT_FORMAT} {src}")
+            stat_result = await self._control_run(f"{_NC_GET_STAT_FORMAT} -- {path_operand(src)}")
             verdict = _nc_get_stat_verdict(src, stat_result)
             if verdict.is_ok:
                 sizes[src] = verdict.value
@@ -1414,7 +1417,7 @@ class NcFileTransfer(UnixFileTransfer):
                 # on every userland measured 2026-08-25.
                 send_task = asyncio.create_task(
                     self._exec_cmd(
-                        f"{self._nc_exec} {local_ip} {port} < {src} 2>/dev/null",
+                        f"{self._nc_exec} {local_ip} {port} < {path_operand(src)} 2>/dev/null",
                         # Unbounded on purpose: the command's duration *is* the
                         # transfer, which scales with file size.
                         timeout=float("inf"),
@@ -1477,7 +1480,7 @@ class NcFileTransfer(UnixFileTransfer):
         sizes: dict[Path, int] = {}
         stat_failures: dict[Path, Result] = {}
         for src in src_files:
-            stat_result = await self._control_run(f"{_NC_GET_STAT_FORMAT} {src}")
+            stat_result = await self._control_run(f"{_NC_GET_STAT_FORMAT} -- {path_operand(src)}")
             verdict = _nc_get_stat_verdict(src, stat_result)
             if verdict.is_ok:
                 sizes[src] = verdict.value
@@ -1536,7 +1539,7 @@ class NcFileTransfer(UnixFileTransfer):
                 listen_task = asyncio.create_task(
                     self._exec_cmd(
                         f"{self._nc_listener_prefix}{self._nc_exec} -l -p {port} "
-                        f"< {src} 2>/dev/null",
+                        f"< {path_operand(src)} 2>/dev/null",
                         # No otto-side timeout: a healthy transfer of any size
                         # must not be cut off mid-flight, and this task is the
                         # only thing that observes the transfer finishing. The
@@ -1869,7 +1872,7 @@ class NcFileTransfer(UnixFileTransfer):
                 listen_task = asyncio.create_task(
                     self._exec_cmd(
                         f"{self._nc_listener_prefix}{self._nc_exec} -l -p {port} "
-                        f"< /dev/null > {dst} 2>/dev/null",
+                        f"< /dev/null > {path_operand(dst)} 2>/dev/null",
                         # No otto-side timeout: a healthy transfer of any size
                         # must not be cut off mid-flight. The orphan case is
                         # bounded by `_cancel_and_reap` on every error path

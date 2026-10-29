@@ -18,7 +18,6 @@ which calls each product's own ``reset_coverage`` hook directly.
 import contextlib
 import logging
 import re
-import shlex
 import shutil
 import tarfile
 import uuid
@@ -26,6 +25,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ... import layout
+from ...host.shell_quote import path_operand
 from ...utils import Status
 
 if TYPE_CHECKING:
@@ -116,7 +116,7 @@ async def _fetch_one_product(host: Any, product: "Product", staging_root: Path) 
             prepared.msg,
         )
         return None
-    q = shlex.quote(cov_dir)
+    q = path_operand(cov_dir)
     # The archive goes to a file mktemp makes in the host's temp dir ($TMPDIR,
     # else /tmp), never into cov_dir: reading cov_dir is all a fetch needs, so
     # a root-owned one (a container's bind mount, a kernel's dump) fetches

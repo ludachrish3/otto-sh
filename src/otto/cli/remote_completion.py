@@ -57,16 +57,19 @@ def listing_command(directory: str) -> str:
     symlinked dir must complete as a dir), ``-p`` marks dirs with ``/`` —
     parsing is just "trailing slash = directory".  A leading ``~`` is
     rewritten to ``"$HOME"`` (unquoted) so the remote shell expands it;
-    everything else goes through :func:`shlex.quote`.  ``~user`` forms are
-    not supported and are quoted literally.
+    everything else goes through :func:`~otto.host.shell_quote.path_operand`.
+    ``~user`` forms are not supported and are quoted literally.
     """
+    # Function-local: a warm TAB imports nothing it does not use.
+    from ..host.shell_quote import path_operand
+
     if directory == "~":
         quoted = '"$HOME"'
     elif directory.startswith("~/"):
         rest = directory[2:]
         quoted = '"$HOME"/' + shlex.quote(rest) if rest else '"$HOME"'
     else:
-        quoted = shlex.quote(directory)
+        quoted = path_operand(directory)
     return f"LC_ALL=C ls -1ALp -- {quoted}"
 
 

@@ -13,16 +13,22 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 from ..connections import teardown_step
+from ..shell_quote import bash_script, shell_operand
 
 if TYPE_CHECKING:
     from ...result import CommandResult
     from ..userland import Userland
 
 HOP_DIAL_BASH = (
-    "timeout {t} bash -c 'exec 3<>/dev/tcp/{ip}/{port} && echo OTTO_STATE=open && "
-    "timeout {r:g} cat <&3 | head -c {n} | od -An -v -tx1' 2>&1; echo OTTO_RC=$?"
+    'exec 3<>/dev/tcp/"$1"/"$2" && echo OTTO_STATE=open && '
+    "timeout {r:g} cat <&3 | head -c {n} | od -An -v -tx1"
 )
-"""Connect, then read the banner with ONLY the reader under the inner timeout.
+"""The bash arm's script: connect, then read the banner with only the reader under a timeout.
+
+:func:`hop_dial_script` runs it as ``timeout {t} bash -c '<this>' _ <ip>
+<port> 2>&1; echo OTTO_RC=$?`` (:func:`~otto.host.shell_quote.bash_script`):
+the address and port reach it as ``$1`` and ``$2``, so a value from lab data
+is never part of the script text.
 
 The reader has to be the last thing killed and the only thing killed. The
 first shape of this script was ``timeout {t} ... head -c 256 <&3 | od``, and
@@ -51,6 +57,8 @@ never completed.
 """
 HOP_DIAL_NC = "{prefix}nc -z -w {t} {ip} {port} 2>&1; echo OTTO_RC=$?"
 """The applet fallback: ``nc -z`` is zero-I/O by construction, so no banner.
+
+*ip* arrives quoted as one operand (:func:`~otto.host.shell_quote.shell_operand`).
 
 Nothing here reads bytes, so the buffering defect HOP_DIAL_BASH had cannot
 exist in this arm, and its ``open (... no banner read)`` detail already says
@@ -157,10 +165,11 @@ def hop_dial_script(
     """Return the command the hop runs, or ``None`` when the hop offers no dial tool."""
     t = int(max(1, round(timeout)))
     if userland is None or userland.shell_dialect == "bash":
-        return HOP_DIAL_BASH.format(t=t, r=_reader_timeout(t), n=_BANNER_BYTES, ip=ip, port=port)
+        body = HOP_DIAL_BASH.format(r=_reader_timeout(t), n=_BANNER_BYTES)
+        return f"timeout {t} {bash_script(body, ip, str(port))} 2>&1; echo OTTO_RC=$?"
     if userland.has_applet("nc") == "present":
         prefix = _TIMEOUT_PREFIX.get(userland.timeout_style, "").format(t=t)
-        return HOP_DIAL_NC.format(prefix=prefix, t=t, ip=ip, port=port)
+        return HOP_DIAL_NC.format(prefix=prefix, t=t, ip=shell_operand(ip), port=port)
     return None
 
 
@@ -225,7 +234,10 @@ async def dial_via_hop(
     userland: "Userland | None",
 ) -> DialOutcome:
     """Dial *ip*:*port* from the hop and classify what came back."""
-    script = hop_dial_script(ip, port, timeout=timeout, userland=userland)
+    try:
+        script = hop_dial_script(ip, port, timeout=timeout, userland=userland)
+    except ValueError as exc:  # an address the nc arm refuses to pass as an operand
+        return DialOutcome(state="not-checkable", detail=f"hop {hop_id}: {exc}")
     if script is None:
         return DialOutcome(state="not-checkable", detail=f"hop {hop_id} offers no dial tool")
     try:

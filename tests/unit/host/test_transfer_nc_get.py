@@ -32,6 +32,7 @@ from otto.host.transfer import NcFileTransfer
 from otto.host.userland import Userland
 from otto.result import CommandResult, Result
 from otto.utils import Status
+from tests._fixtures.argv_stub import recorded, run_sh, stub_env
 from tests._fixtures.progress import ProgressEvent, assert_progress_invariants
 
 # ---------------------------------------------------------------------------
@@ -853,7 +854,7 @@ class TestThePlainGetIsSizeTerminated:
 
         assert status is Status.Success, msg
         stats = [c.args[0] for c in exec_cmd.await_args_list if c.args[0].startswith("stat")]
-        assert stats == ["stat -L -c '%s %F' /remote/data.bin"], stats
+        assert stats == ["stat -L -c '%s %F' -- /remote/data.bin"], stats
 
     @pytest.mark.asyncio
     async def test_a_non_regular_file_is_refused_before_anything_is_bound(
@@ -1558,7 +1559,7 @@ class TestTheTunneledGetIsSizeTerminated:
 
         assert status is Status.Success, msg
         stats = [c.args[0] for c in exec_cmd.await_args_list if c.args[0].startswith("stat")]
-        assert stats == ["stat -L -c '%s %F' /remote/data.bin"], stats
+        assert stats == ["stat -L -c '%s %F' -- /remote/data.bin"], stats
 
     @pytest.mark.asyncio
     async def test_a_non_regular_file_is_refused_before_anything_is_spawned(
@@ -2048,3 +2049,48 @@ class TestNcGetStallSemantics:
         assert (dst_dir / "growing.log").read_bytes() == b"a" * 100, (
             "the read did not stop at the measured size"
         )
+
+
+class TestTheGetQuotesTheRemotePath:
+    """A remote path holding shell syntax reaches ``stat`` and the redirection as one word."""
+
+    @pytest.mark.parametrize("name", ["a b;$(touch {m}).bin", "-rf`touch {m}`.bin"])
+    @pytest.mark.asyncio
+    async def test_a_hostile_path_runs_nothing(self, tmp_path: Path, name: str) -> None:
+        marker = tmp_path / "pwned"
+        src_remote = Path(name.format(m=marker.name))
+        dst_dir = tmp_path / "dst"
+        dst_dir.mkdir()
+
+        async def exec_side(cmd: str, timeout=None, **kw):
+            if cmd.startswith("stat"):
+                return _ok("5 regular file\n")
+            return _ok()
+
+        exec_cmd = AsyncMock(side_effect=exec_side)
+        ft = _make_ft(exec_cmd)
+        captured: list = []
+
+        async def fake_start_server(callback, host, port):
+            captured.append(callback)
+            return _fake_server(54339)
+
+        with patch.object(transfer_mod.asyncio, "start_server", new=fake_start_server):
+            get_task = asyncio.create_task(ft._get_files_nc([src_remote], dst_dir))
+            on_connect = await _captured_callback(captured)
+            await on_connect(FakeReader([b"hello"]), _fake_writer())
+            await asyncio.wait_for(get_task, timeout=5.0)
+
+        commands = [c.args[0] for c in exec_cmd.await_args_list]
+        stat = [cmd for cmd in commands if cmd.startswith("stat")]
+        send = [cmd for cmd in commands if " < " in cmd]
+        assert stat
+        assert send
+        env = stub_env(tmp_path, ["stat", "nc"])
+        # The marker is relative: run where it would land, so a spliced path would create it.
+        for cmd in stat + send:
+            run_sh(f"cd {tmp_path} && {cmd}", env)
+        # One word, after `--`; a leading `-` is spelled `./-…` (path_operand), the same file.
+        operand = f"./{src_remote}" if name.startswith("-") else str(src_remote)
+        assert [call[-2:] for call in recorded(tmp_path, "stat")] == [["--", operand]]
+        assert not marker.exists()

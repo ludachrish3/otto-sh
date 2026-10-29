@@ -46,6 +46,7 @@ from ..models.base import (
     resources_nonempty,
     strip_comment_keys,
 )
+from .address import validate_address
 from .binary_loader import LOADER_CLASSES, build_binary_loader
 from .capability import (
     IMPAIRER_RESOLVER,
@@ -205,11 +206,7 @@ class InterfaceSpec(OttoModel):
     @field_validator("ip")
     @classmethod
     def _validate_ip(cls, v: str) -> str:
-        try:
-            ip_address(v)
-        except ValueError:
-            raise ValueError(f"interface address {v!r} is not a valid IP") from None
-        return v
+        return validate_address(v, allow_hostname=False)
 
     @field_validator("subnet")
     @classmethod
@@ -663,6 +660,11 @@ class HostSpec(OttoModel):
         if isinstance(v, dict):
             return {k: ({"ip": e} if isinstance(e, str) else e) for k, e in v.items()}
         return v
+
+    @field_validator("ip")
+    @classmethod
+    def _validate_ip(cls, v: str) -> str:
+        return validate_address(v, allow_hostname=True)
 
     @field_validator("board")
     @classmethod

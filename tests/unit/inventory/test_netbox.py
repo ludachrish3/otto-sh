@@ -161,6 +161,19 @@ def test_ip_source_variants(ip_source, expected):
         assert _inv(stub, ip_source=ip_source).lookup("d1").ip == expected
 
 
+def test_a_custom_field_address_that_is_not_an_address_is_refused_naming_the_field():
+    """A NetBox editor's custom field must never reach a command on a hop."""
+    d = device(1, "d1", custom_fields={"mgmt": "1.2.3.4'; touch /tmp/pwned; '"})
+    with (
+        NetBoxStub([d]) as stub,
+        pytest.raises(
+            InventoryError,
+            match=r"device 'd1' \(id 1\): ip: .* \(ip read from ip_source 'cf:mgmt'\)",
+        ),
+    ):
+        _inv(stub, ip_source="cf:mgmt").list_keys()
+
+
 def test_ip_source_must_name_a_source_the_backend_can_read():
     with pytest.raises(
         ValueError,

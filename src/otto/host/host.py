@@ -62,7 +62,7 @@ from .construction import RuntimeOnly
 from .inventory_ref import InventoryRef
 from .lab_info import LabInfo
 from .log_haul import haul_globs
-from .toolchain import Toolchain
+from .toolchain import Toolchain, toolchain_removal_command
 
 if TYPE_CHECKING:
     from ..invocation import HostRegistration
@@ -183,13 +183,21 @@ def _validate_timeout(timeout: float) -> float:
 
 
 def _validate_user(user: str) -> None:
-    """Refuse a user value docker or chown could misparse; forms are otherwise verbatim."""
+    """Refuse a user value docker or chown could misparse; forms are otherwise verbatim.
+
+    The one place a user is validated, before anything runs: a ``put``/``get``
+    never fails part-way at its ``chown`` over a user it took at the start.
+    """
     if not isinstance(user, str):
         raise TypeError(
             f"user must be a string (e.g. 'root', '1000', '1000:1000'); got {type(user).__name__}"
         )
     if not user or any(c.isspace() for c in user):
         raise ValueError(f"user must be a non-empty string with no whitespace; got {user!r}")
+    if user.startswith("-"):
+        raise ValueError(
+            f"user must not begin with '-' (chown would read it as an option); got {user!r}"
+        )
 
 
 logger = getLogger(__name__)
@@ -3033,7 +3041,9 @@ class BaseHost(ABC):
         Default implementation, per tool: ``put`` it with its declared mode,
         then as root ``mv`` it to its declared
         :attr:`~otto.host.toolchain.ToolchainTool.name` if that differs from
-        the source basename, and ``chown`` it to its declared user. Projects
+        the source basename, and ``chown`` it to its declared user. Every
+        declared user is validated as ``put``'s is before anything runs.
+        Projects
         whose toolchain installs need more than that override this — that is
         expected, not a failure of the default.
 
@@ -3046,6 +3056,14 @@ class BaseHost(ABC):
         dry-run decline into a traceback. Pinned by
         ``test_install_toolchain_tools_declines_before_elevating_under_dry_run``.
         """
+        # Function-local: every host imports this module, and only the
+        # toolchain verbs need the quoting module.
+        from .shell_quote import path_operand
+
+        # Every declared user first, as put/get do: a bad one never leaves the
+        # host with half its tools installed.
+        for tool in self.toolchain.tools:
+            _validate_user(tool.user)
         for tool in self.toolchain.tools:
             result = await self.put(tool.source, tool.dest, mode=tool.mode)
             if not result.is_ok:
@@ -3054,8 +3072,8 @@ class BaseHost(ABC):
             # backend renames — so a declared name that differs is a rename
             # this verb owes, and nothing can address the tool by that name
             # (chown included) until it is done.
-            landed = shlex.quote(str(tool.dest / tool.source.name))
-            installed = shlex.quote(str(tool.dest / tool.name))
+            landed = path_operand(tool.dest / tool.source.name)
+            installed = path_operand(tool.dest / tool.name)
             async with self.as_user("root"):
                 if tool.name != tool.source.name:
                     moved = await self.exec(f"mv {landed} {installed}")
@@ -3090,7 +3108,7 @@ class BaseHost(ABC):
         for tc_tool in self.toolchain.tools:
             # dest/name, NOT dest/source.name: install_toolchain_tools renames
             # each tool to its declared name, and that is what is on the host.
-            result = await self.exec(f"rm -f {shlex.quote(str(tc_tool.dest / tc_tool.name))}")
+            result = await self.exec(toolchain_removal_command(tc_tool))
             if not result.is_ok and first_failure is None:
                 first_failure = result
         return first_failure if first_failure is not None else Result(Status.Success)
@@ -3108,8 +3126,10 @@ class BaseHost(ABC):
         looked for. Python-only, unlike its removal twin: ``otto host <id>
         is-clean`` is the CLI-shaped question, and this is one term of it.
         """
+        from .shell_quote import path_operand  # function-local: see install_toolchain_tools
+
         for tc_tool in self.toolchain.tools:
-            present = await self.exec(f"test -e {shlex.quote(str(tc_tool.dest / tc_tool.name))}")
+            present = await self.exec(f"test -e {path_operand(tc_tool.dest / tc_tool.name)}")
             refuse_declined_fact(present, asked=f"toolchain_tools_absent({tc_tool.name!r})")
             if present.status.is_ok:
                 return False

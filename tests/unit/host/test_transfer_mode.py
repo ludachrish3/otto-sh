@@ -96,19 +96,18 @@ def test_chmod_command_quotes_hostile_paths():
     assert shlex.split(cmd)[3:] == ["/opt/my file", "/opt/it's"]
 
 
-def test_chmod_command_terminates_options_before_paths():
+def test_chmod_command_never_passes_a_path_chmod_reads_as_options():
     # shlex.quote leaves "-rf" bare (no metacharacters), and a relative
-    # dest_dir collapses Path() / "-rf" to exactly that — without `--`, chmod
-    # would parse the destination as option flags. Path() is not contrived:
-    # it is the literal default of UnixHost.default_dest_dir.
+    # dest_dir collapses Path() / "-rf" to exactly that. Path() is not
+    # contrived: it is the literal default of UnixHost.default_dest_dir. The
+    # path is spelled ./-rf (the same file), and `--` ends the options too.
     dest = Path() / "-rf"
     assert str(dest) == "-rf"
     assert shlex.quote(str(dest)) == "-rf"
 
     cmd = chmod_command(0o600, [dest])
     argv = shlex.split(cmd)
-    assert argv == ["chmod", "600", "--", "-rf"]
-    assert argv.index("--") < argv.index("-rf")
+    assert argv == ["chmod", "600", "--", "./-rf"]
 
 
 # ---------------------------------------------------------------------------

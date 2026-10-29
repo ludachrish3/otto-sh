@@ -342,9 +342,13 @@ class NetBoxInventory:
         try:
             return InventoryRecord.model_validate(raw)
         except ValidationError as e:
+            # `ip` is read from a NetBox field the record does not name, so
+            # say which one: a custom field holds whatever an editor typed.
+            bad_ip = any(err["loc"][:1] == ("ip",) for err in e.errors(include_input=False))
+            source = f" (ip read from ip_source {self.ip_source!r})" if bad_ip else ""
             raise InventoryError(
                 f"netbox inventory {self.url}: device {d.name!r} (id {d.id}): "
-                f"{compact_validation_error(e)}"
+                f"{compact_validation_error(e)}{source}"
             ) from e
 
     # -- protocol ----------------------------------------------------------

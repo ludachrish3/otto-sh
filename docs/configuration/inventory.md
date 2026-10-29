@@ -130,7 +130,7 @@ A record is a subset of these. Names are host-field names, one for one.
 
 | Field | Type | Notes |
 | ----- | ---- | ----- |
-| `ip` | string | **Required.** The management address every record must carry. |
+| `ip` | string | **Required.** The management address every record must carry. It takes what a host's `ip` takes ({ref}`host-ip-field`). |
 | `interfaces` | object | Test-network interfaces, `{"eth2": {"ip": ..., "subnet": ...}}`; a bare string is shorthand for `{"ip": ...}`. |
 | `creds` | array of objects | `{"login": ..., "password": ...}` entries, optionally with a route. The **middle** creds layer: overridden by the lab file, overriding the creds store — see {ref}`credentials-layered`. |
 | `hw_version` | string | Hardware version. |
@@ -399,7 +399,7 @@ How record fields map to NetBox device fields:
 | Record field | NetBox device |
 | ------------ | ------------- |
 | the key | `name` |
-| `ip` | the address at `ip_source`, prefix length stripped |
+| `ip` | the address at `ip_source`, prefix length stripped; a value that is not an address ({ref}`host-ip-field`) fails the fetch, naming the device and the `ip_source` |
 | `site` | `site.name` |
 | `rack` | `rack.name` (absent when unracked) |
 | `shelf` | the integer part of `position` — which NetBox serialises as a string, and which may be a half-U value like `"3.5"` |

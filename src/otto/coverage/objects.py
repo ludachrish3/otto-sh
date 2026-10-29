@@ -38,6 +38,7 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Literal
 
 from ..host.product import ARCHIVE_SUFFIXES
+from ..host.shell_quote import path_operand, shell_operand
 
 if TYPE_CHECKING:
     from ..host.host import Host
@@ -434,7 +435,7 @@ class ObjectListCache:
         for n, path in enumerate(paths):
             dest = f"{hostdir}/{n}"
             copied = await host.exec(
-                f"docker cp {shlex.quote(f'{container}:{path}')} {shlex.quote(dest)}",
+                f"docker cp {shell_operand(f'{container}:{path}')} {path_operand(dest)}",
                 timeout=_COPY_TIMEOUT,
             )
             if copied.status is Status.NotRun:
@@ -580,7 +581,7 @@ def _scan_script(root: str = "", limit: int = 0) -> str:
     without them it runs to completion, bounded only by the host-side timeout and
     the reap that follows it.
     """
-    r = shlex.quote(root) if root else ""
+    r = path_operand(root) if root else ""
     skipped = "|".join(f"{r}/{name}" for name in _SKIPPED_TOP_DIRS)
     return (
         "unset OTTO_SCAN_END; "

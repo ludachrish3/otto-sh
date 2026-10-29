@@ -25,7 +25,6 @@ but a shell.
 
 import base64
 import binascii
-import shlex
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
@@ -157,7 +156,14 @@ class PosixFileOps(UserlandHost):
 
     @staticmethod
     def _q(path: "str | Path") -> str:
-        return shlex.quote(str(path))
+        """Quote *path* with :func:`~otto.host.shell_quote.path_operand`.
+
+        Only so the quoting module is imported when a file verb first runs
+        (every host imports this module); the decision is ``path_operand``'s.
+        """
+        from .shell_quote import path_operand
+
+        return path_operand(path)
 
     @cli_exposed(output_dir=False, help_="Check whether path exists on the host (`test -e`).")
     async def exists(self, path: "str | Path") -> bool:

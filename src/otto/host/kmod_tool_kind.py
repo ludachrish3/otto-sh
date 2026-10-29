@@ -88,7 +88,9 @@ def load_lines(artifact: Path, where: str, params: str, *, elevated: bool) -> li
     directory first (:func:`~otto.host.product.ensure_stage_dir`).
     *elevated* is whether the ``insmod`` runs under ``sudo`` (:func:`elevates`).
     """
-    staged = shlex.quote(str(PurePosixPath(where) / artifact.name))
+    from .shell_quote import path_operand  # function-local: off the host import path
+
+    staged = path_operand(PurePosixPath(where) / artifact.name)
     extra = f" {params.strip()}" if params.strip() else ""
     return [
         mkdir_line(where),

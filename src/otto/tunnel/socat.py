@@ -2,7 +2,9 @@
 
 Bidirectional ingress/relay/egress builders (#2b); every value is a string or
 list of strings destined for ``host.exec``; running nothing keeps the whole
-module unit-testable (assert exact argv).
+module unit-testable (assert exact argv). Each address reaches its socat
+address through :func:`~otto.host.shell_quote.socat_host`, so it cannot add
+an option; the launcher quotes each argv word for the shell.
 """
 
 import re
@@ -11,6 +13,7 @@ from typing import ClassVar, Protocol
 from typing_extensions import override
 
 from ..errors import OttoError
+from ..host.shell_quote import socat_host
 from .carrier import TunnelCarrier
 
 
@@ -111,8 +114,8 @@ def ingress_socat_args(
     """
     return [
         *_socat(protocol, idle_timeout),
-        f"{_LISTEN[protocol]}:{service_port},bind={bind_ip},fork,reuseaddr",
-        f"{_CONNECT[protocol]}:{next_ip}:{carrier_port}",
+        f"{_LISTEN[protocol]}:{service_port},bind={socat_host(bind_ip)},fork,reuseaddr",
+        f"{_CONNECT[protocol]}:{socat_host(next_ip)}:{carrier_port}",
     ]
 
 
@@ -123,7 +126,7 @@ def relay_socat_args(
     return [
         *_socat(protocol, idle_timeout),
         f"{_LISTEN[protocol]}:{carrier_port},fork,reuseaddr",
-        f"{_CONNECT[protocol]}:{next_ip}:{carrier_port}",
+        f"{_CONNECT[protocol]}:{socat_host(next_ip)}:{carrier_port}",
     ]
 
 
@@ -139,7 +142,7 @@ def egress_socat_args(
     return [
         *_socat(protocol, idle_timeout),
         f"{_LISTEN[protocol]}:{carrier_port},fork,reuseaddr",
-        f"{_CONNECT[protocol]}:{deliver_ip}:{service_port}",
+        f"{_CONNECT[protocol]}:{socat_host(deliver_ip)}:{service_port}",
     ]
 
 

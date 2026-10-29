@@ -9,8 +9,10 @@ JSON writer. It imports no check of its own, so each check builds on it
 without depending on the others. See :doc:`/cli/check-verdicts` for what the verdicts and labels
 mean to a user, and the :doc:`link check </cli/link/check>` and
 :doc:`tunnel check </cli/tunnel/check>` guides for the two checks built on
-it. ``otto.check.clock`` holds the probe clock both checks time with: bash's
-``$EPOCHREALTIME``, and the bounds every timed socat client runs under.
+it. ``otto.check.clock`` holds the bounds every timed socat client runs under
+and reads back the elapsed time bash's ``$EPOCHREALTIME`` measured; the bash
+wrapper the probe scripts run under is
+:func:`otto.host.shell_quote.bash_script`.
 ``otto.check.sweep`` holds the age rule both checks' leftover sweeps follow,
 the bound it uses, and how that bound is derived.
 

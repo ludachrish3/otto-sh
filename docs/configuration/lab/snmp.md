@@ -13,7 +13,7 @@ descriptor registry, not by lab data.
 | Field | Type | Description |
 |-------|------|-------------|
 | `snmp` | object | The SNMP polling block.  Omit it to leave the host unpolled. |
-| `snmp.address` | string | SNMP agent IP address. |
+| `snmp.address` | string | SNMP agent address: an IP address or hostname, as a host's `ip` takes ({ref}`host-ip-field`). |
 | `snmp.port` | integer | SNMP UDP port. |
 | `snmp.community` | string | SNMP community string. |
 | `snmp.oids` | array of strings | OIDs to poll — raw dotted OIDs, named bundles (below), or a mix of both. |

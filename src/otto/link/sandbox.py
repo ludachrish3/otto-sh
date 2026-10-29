@@ -28,6 +28,7 @@ from typing import Any
 
 from ..check.fingerprint import check_exec, check_root_run
 from ..check.sweep import left_line, sweepable, swept_note
+from ..host.shell_quote import shell_operand
 from ..result import CommandResult
 
 NETNS_DIR = "/var/run/netns"
@@ -139,16 +140,21 @@ def sandbox_from_name(name: str) -> Sandbox:
 
 
 def setup_commands(sb: Sandbox) -> list[str]:
-    """Build the ordered privileged commands that bring *sb* up."""
-    ns = f"ip netns exec {sb.name} "
+    """Build the ordered privileged commands that bring *sb* up.
+
+    Every name is one shell operand (:func:`~otto.host.shell_quote.shell_operand`);
+    the generated names never need quoting, so the commands read the same.
+    """
+    name, veth, peer = (shell_operand(word) for word in (sb.name, sb.veth, sb.peer))
+    ns = f"ip netns exec {name} "
     return [
-        f"ip netns add {sb.name}",
-        f"ip link add {sb.veth} type veth peer name {sb.peer}",
-        f"ip link set {sb.peer} netns {sb.name}",
-        f"ip addr add {sb.root_ip}/30 dev {sb.veth}",
-        f"ip link set {sb.veth} up",
-        f"{ns}ip addr add {sb.ns_ip}/30 dev {sb.peer}",
-        f"{ns}ip link set {sb.peer} up",
+        f"ip netns add {name}",
+        f"ip link add {veth} type veth peer name {peer}",
+        f"ip link set {peer} netns {name}",
+        f"ip addr add {sb.root_ip}/30 dev {veth}",
+        f"ip link set {veth} up",
+        f"{ns}ip addr add {sb.ns_ip}/30 dev {peer}",
+        f"{ns}ip link set {peer} up",
         f"{ns}ip link set lo up",
     ]
 

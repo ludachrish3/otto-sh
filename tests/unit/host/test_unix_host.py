@@ -1950,7 +1950,7 @@ class TestNcFileTransfer:
         assert (dest / "file.txt").read_bytes() == file_data
         # The file-size stat ran as a control-plane exec.
         assert any(
-            c.args and c.args[0] == "stat -L -c '%s %F' /remote/file.txt"
+            c.args and c.args[0] == "stat -L -c '%s %F' -- /remote/file.txt"
             for c in mock_os.await_args_list
         )
         await h.close()

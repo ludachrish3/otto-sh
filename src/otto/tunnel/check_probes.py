@@ -8,16 +8,21 @@ discovered the same way a real tunnel process is (:mod:`otto.host.daemon`).
 Every function here is a pure string builder or a pure parser — nothing in
 this module touches a device. The scripts are handed to a host's shell
 through ``sh -c`` (see :func:`otto.check.fingerprint.one_command`), so each
-one is wrapped in :func:`otto.check.clock.bash_script` to opt into bash's
-``$EPOCHREALTIME`` clock regardless of the host's default shell.
+one is wrapped in :func:`otto.host.shell_quote.bash_script` to opt into bash's
+``$EPOCHREALTIME`` clock regardless of the host's default shell. An address
+reaches socat through :func:`~otto.host.shell_quote.socat_host`, so it cannot
+add a socat option, and the socat address is one quoted word of the script,
+so bash expands nothing in it.
 """
 
 import re
+import shlex
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from ..check.clock import PROBE_TIMEOUT_S, SOCAT_CONNECT_S, bash_script, parse_elapsed_ms
+from ..check.clock import PROBE_TIMEOUT_S, SOCAT_CONNECT_S, parse_elapsed_ms
 from ..host.daemon import encode_token, launch_command, split_token
+from ..host.shell_quote import bash_script, socat_host
 from .model import CHECK_ECHO_READ_VERSIONS, CHECK_ECHO_WRITE_VERSIONS
 
 if TYPE_CHECKING:
@@ -139,12 +144,13 @@ def echo_argv(protocol: str, bind_ip: str, port: int) -> list[str]:
     socket never sees a peer disconnect. It bounds children only; neither
     listening parent ever times out, so the check's sweep is what ends them.
     """
+    bind = socat_host(bind_ip)
     if protocol == "tcp":
         return [
             "socat",
             "-b",
             "65535",
-            f"TCP4-LISTEN:{port},bind={bind_ip},fork,reuseaddr",
+            f"TCP4-LISTEN:{port},bind={bind},fork,reuseaddr",
             "PIPE",
         ]
     if protocol == "udp":
@@ -154,7 +160,7 @@ def echo_argv(protocol: str, bind_ip: str, port: int) -> list[str]:
             "65535",
             "-T",
             "30",
-            f"UDP4-RECVFROM:{port},bind={bind_ip},fork",
+            f"UDP4-RECVFROM:{port},bind={bind},fork",
             "PIPE",
         ]
     raise ValueError(f"unknown protocol {protocol!r}")
@@ -174,12 +180,13 @@ def _client(protocol: str, ip: str, port: int, *, eof_wait: int = PROBE_TIMEOUT_
     :data:`_BULK_UDP_EOF_WAIT_S` for UDP instead of the full
     :data:`PROBE_TIMEOUT_S` — see that constant's docstring for why.
     """
+    host = socat_host(ip)
     addr = (
-        f"TCP4:{ip}:{port},connect-timeout={SOCAT_CONNECT_S}"
+        f"TCP4:{host}:{port},connect-timeout={SOCAT_CONNECT_S}"
         if protocol == "tcp"
-        else f"UDP4:{ip}:{port}"
+        else f"UDP4:{host}:{port}"
     )
-    return f"socat -b 65535 -T {PROBE_TIMEOUT_S} -t {eof_wait} - {addr}"
+    return f"socat -b 65535 -T {PROBE_TIMEOUT_S} -t {eof_wait} - {shlex.quote(addr)}"
 
 
 def trips_script(protocol: str, ip: str, port: int, size: int, trips: int = TRIPS) -> str:
@@ -324,8 +331,9 @@ def handshake_script(ip: str, port: int) -> str:
     channel gone), the watchdog ignores ``SIGPIPE`` and kills socat anyway.
     """
     cutoff = SOCAT_CONNECT_S + HANDSHAKE_DRAIN_S
+    address = f"TCP4:{socat_host(ip)}:{port},connect-timeout={SOCAT_CONNECT_S}"
     body = (
-        f"socat -t {HANDSHAKE_DRAIN_S} - TCP4:{ip}:{port},connect-timeout={SOCAT_CONNECT_S} "
+        f"socat -t {HANDSHAKE_DRAIN_S} - {shlex.quote(address)} "
         "</dev/null 2>&1 >/dev/null & p=$!; "
         f"{{ read -t {cutoff} <> <(:); [ $? -gt 128 ] && {{ trap '' PIPE; "
         f'echo "still sending after {cutoff}s: drain cut off"; kill "$p"; }}; }} 2>/dev/null '

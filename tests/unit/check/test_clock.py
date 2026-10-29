@@ -1,12 +1,8 @@
-"""The shared probe clock: bash's $EPOCHREALTIME wrapping and elapsed-time parsing."""
+"""The shared probe clock: elapsed-time parsing and the probe bounds."""
 
 import pytest
 
-from otto.check.clock import PROBE_TIMEOUT_S, SOCAT_CONNECT_S, bash_script, parse_elapsed_ms
-
-
-def test_bash_script_is_one_quoted_bash_word() -> None:
-    assert bash_script('s=$EPOCHREALTIME; echo "$s"') == "bash -c 's=$EPOCHREALTIME; echo \"$s\"'"
+from otto.check.clock import PROBE_TIMEOUT_S, SOCAT_CONNECT_S, parse_elapsed_ms
 
 
 def test_parses_a_start_end_pair_in_seconds() -> None:

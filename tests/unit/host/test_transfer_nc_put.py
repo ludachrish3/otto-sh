@@ -33,6 +33,7 @@ from otto.host.options import NcOptions
 from otto.host.transfer import NcFileTransfer
 from otto.result import CommandResult
 from otto.utils import Status
+from tests._fixtures.argv_stub import recorded, run_sh, stub_env
 from tests._fixtures.progress import ProgressEvent, assert_progress_invariants
 
 
@@ -1122,3 +1123,44 @@ class TestNcPutStallSemantics:
 
         assert status is Status.Error
         assert "no send progress" in msg, msg
+
+
+class TestThePutQuotesTheRemotePath:
+    """A destination holding shell syntax reaches the redirection and ``stat`` as one word."""
+
+    @pytest.mark.parametrize("dest", ["a b;$(touch pwned)", "-rf`touch pwned`"])
+    @pytest.mark.asyncio
+    async def test_a_hostile_destination_runs_nothing(self, tmp_path: Path, dest: str) -> None:
+        src = tmp_path / "payload.bin"
+        src.write_bytes(b"x" * 16)
+
+        async def fake_connect(host: str, port: int, timeout: float = 2.0):
+            return None, _FakeWriter()
+
+        exec_cmd = AsyncMock(return_value=_ok("9000\n"))
+        ft = _make_ft(exec_cmd)
+
+        with (
+            patch.object(transfer_mod, "_connect_with_retry", new=fake_connect),
+            patch.object(
+                NcFileTransfer, "_wait_for_remote_listener", new=AsyncMock(return_value=None)
+            ),
+        ):
+            await ft._put_files_nc([src], Path(dest))
+
+        commands = [c.args[0] for c in exec_cmd.await_args_list if c.args]
+        listen = [cmd for cmd in commands if "nc -l" in cmd]
+        stat = [cmd for cmd in commands if cmd.startswith("stat -c %s")]
+        assert listen
+        assert stat
+        env = stub_env(tmp_path, ["stat", "nc", "timeout"])
+        # `pwned` is relative: run where it would land, so a spliced path would create it.
+        for cmd in listen + stat:
+            run_sh(f"cd {tmp_path} && {cmd}", env)
+        # One word, after `--`; a leading `-` is spelled `./-…` (path_operand), the same file.
+        remote = str(Path(dest) / "payload.bin")
+        remote = f"./{remote}" if remote.startswith("-") else remote
+        stats = recorded(tmp_path, "stat")
+        assert stats
+        assert all(call[-2:] == ["--", remote] for call in stats), stats
+        assert not (tmp_path / "pwned").exists()

@@ -147,11 +147,15 @@ class DockerImageProduct(ShellProduct):
 
     def _load_command(self, staged: str) -> str:
         """``docker load`` of the staged tarball at *staged* (quoted here)."""
-        return f"docker load -i {shlex.quote(staged)}"
+        from .shell_quote import path_operand  # function-local: off the host import path
+
+        return f"docker load -i {path_operand(staged)}"
 
     def _cleanup_command(self, staged: str) -> str:
         """Remove the staged tarball at *staged* (quoted here)."""
-        return f"rm -f {shlex.quote(staged)}"
+        from .shell_quote import path_operand  # function-local: off the host import path
+
+        return f"rm -f {path_operand(staged)}"
 
     def _pull_command(self) -> str:
         """``docker pull`` of :attr:`image`."""

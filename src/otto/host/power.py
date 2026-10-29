@@ -12,6 +12,7 @@ config model parses the host's ``power_control`` table and a factory builds
 the controller with the host's id (:class:`PowerEnv`).
 """
 
+import string
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -68,7 +69,10 @@ class CommandPowerConfig(OttoModel):
     """What :class:`CommandPowerController` runs, and where.
 
     Commands are ``str.format``-templated with the target host's ``name``,
-    ``ip`` and ``id``.
+    ``ip`` and ``id``, each shell-quoted as one word: a display name built
+    from inventory data (a NetBox device type, say) is data to the command,
+    never part of it. Write the placeholder bare (``virsh start {name}``),
+    not inside quotes of your own.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -129,7 +133,8 @@ class CommandPowerController(PowerController):
     """Generic controller that runs configured commands on a *controller* host.
 
     Its :class:`CommandPowerConfig` holds the commands,
-    ``str.format``-templated with the target host's ``name``/``ip``/``id``, and
+    ``str.format``-templated with the target host's ``name``/``ip``/``id``
+    (each value shell-inert, inserted as it stands), and
     ``controller``, the lab host the commands run on (via its ``exec``);
     ``None`` runs them on the local otto machine.
     """
@@ -171,7 +176,56 @@ class CommandPowerController(PowerController):
         return lab.hosts[controller]
 
     def _fmt(self, template: str, host: "Host") -> str:
-        return template.format(name=host.name, ip=getattr(host, "ip", ""), id=host.id)
+        """Fill *template*'s placeholders, refusing a value a shell could act on.
+
+        A template may hand a value to a second shell (``ssh hv virsh start
+        {name}``), where quoting for the first one no longer holds, so a value
+        is inserted as it stands and must be shell-inert
+        (:func:`~otto.host.shell_quote.shell_active_char`) at any depth. Only
+        the placeholders *template* uses are checked: a host whose name holds a
+        space still powers on through ``virsh start {id}``. A missing value (a
+        host with no ip) renders as nothing. Each placeholder must be bare
+        (``{name}``, ``{ip}``, ``{id}``): a conversion (``{name!r}``), a format
+        spec (``{id:>8}``, and a field nested in one, ``{id:{name}}``), an
+        attribute or an index would format a value this check never saw.
+
+        Raises:
+            ValueError: a placeholder is not one of the three bare names, or a
+                placeholder the template uses holds a character outside the
+                inert set; the message names the placeholder and the host (and
+                the character).
+        """
+        # Function-local: every host imports this module, and only a power verb
+        # needs the quoting module.
+        from .shell_quote import shell_active_char
+
+        values = {
+            "name": host.name or "",
+            "ip": getattr(host, "ip", None) or "",
+            "id": host.id or "",
+        }
+        used: set[str] = set()
+        for _, field, spec, conversion in string.Formatter().parse(template):
+            if field is None:
+                continue
+            if field not in values or conversion is not None or spec:
+                written = "{" + field + (f"!{conversion}" if conversion else "")
+                written += (f":{spec}" if spec else "") + "}"
+                raise ValueError(
+                    f"power controller for {host.id!r}: placeholder {written} is not "
+                    "one a power command takes; use only the bare {name}, {ip} or "
+                    "{id}, with no conversion, format spec, attribute or index"
+                )
+            used.add(field)
+        for key in sorted(used):
+            active = shell_active_char(values[key])
+            if active is not None:
+                raise ValueError(
+                    f"power controller for {host.id!r}: placeholder {{{key}}} holds "
+                    f"{active!r}, which a shell would act on; a power command takes "
+                    "only letters, digits and _.:@%+=,/- in a placeholder value"
+                )
+        return template.format(**values)
 
     async def _exec(self, template: str, host: "Host") -> "CommandResult":
         runner = await self._runner(host)

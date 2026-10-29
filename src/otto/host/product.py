@@ -134,7 +134,9 @@ def mkdir_line(directory: str) -> str:
     Quoted as the host's ``mkdir`` quotes it; :data:`LOGIN_HOME_PLACEHOLDER`
     is shown as is, since it names a directory rather than spelling one.
     """
-    shown = directory if directory == LOGIN_HOME_PLACEHOLDER else shlex.quote(directory)
+    from .shell_quote import path_operand  # function-local: off the host import path
+
+    shown = directory if directory == LOGIN_HOME_PLACEHOLDER else path_operand(directory)
     return f"mkdir -p {shown}"
 
 
@@ -556,7 +558,9 @@ def gcda_find_cmd(cov_dir: str) -> str:
     an unquoted ``/opt/My App/cov`` would reach ``find`` as TWO start points,
     the second of them relative to the shell's cwd.
     """
-    return f"find {shlex.quote(cov_dir)} -name '*.gcda' -type f"
+    from .shell_quote import path_operand  # function-local: off the host import path
+
+    return f"find {path_operand(cov_dir)} -name '*.gcda' -type f"
 
 
 def gcda_delete_cmd(cov_dir: str) -> str:
@@ -570,7 +574,9 @@ def gcda_delete_cmd(cov_dir: str) -> str:
     is still a failure. The line uses ``!`` and ``||``, so it needs a shell;
     an elevated caller must wrap it whole (:func:`sudo_gcda_delete`).
     """
-    return f"! test -d {shlex.quote(cov_dir)} || {gcda_find_cmd(cov_dir)} -delete"
+    from .shell_quote import path_operand  # function-local: off the host import path
+
+    return f"! test -d {path_operand(cov_dir)} || {gcda_find_cmd(cov_dir)} -delete"
 
 
 # Spec: docs/superpowers/specs/2026-08-15-dry-run-contract-design.md

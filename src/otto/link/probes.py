@@ -22,7 +22,8 @@ import statistics
 from dataclasses import dataclass, field
 from typing import Literal
 
-from ..check.clock import PROBE_TIMEOUT_S, SOCAT_CONNECT_S, bash_script, parse_elapsed_ms
+from ..check.clock import PROBE_TIMEOUT_S, SOCAT_CONNECT_S, parse_elapsed_ms
+from ..host.shell_quote import bash_script, shell_operand, socat_host
 
 __all__ = [
     "PROBE_TIMEOUT_S",
@@ -149,7 +150,7 @@ PING_REPLY_WAIT_S = 2
 
 def ping_command(target: str, *, count: int, interval: float) -> str:
     """Build a ``ping`` invocation."""
-    return f"ping -c {count} -i {interval} -W {PING_REPLY_WAIT_S} {target}"
+    return f"ping -c {count} -i {interval} -W {PING_REPLY_WAIT_S} {shell_operand(target)}"
 
 
 ProbeBackend = Literal["python3", "socat"]
@@ -207,15 +208,16 @@ def listener_command(
     silently here since the listener's output is redirected to
     ``/dev/null``.
     """
-    prefix = f"ip netns exec {netns} " if netns else ""
+    prefix = f"ip netns exec {shell_operand(netns)} " if netns else ""
     if backend == "python3":
         # Python binds every address to the empty host string.
         program = _PY_ECHO.format(bind=bind or "", port=port)
         body = f"python3 -c {shlex.quote(program)} {shlex.quote(tag)}"
     else:
-        where = f",bind={bind}" if bind else ""
-        body = f"exec -a {tag} socat TCP-LISTEN:{port}{where},fork,reuseaddr PIPE"
-    return f"{prefix}setsid bash -c {shlex.quote(body)} >/dev/null 2>&1 < /dev/null &"
+        where = f",bind={socat_host(bind)}" if bind else ""
+        listen = shlex.quote(f"TCP-LISTEN:{port}{where},fork,reuseaddr")
+        body = f"exec -a {shlex.quote(tag)} socat {listen} PIPE"
+    return f"{prefix}setsid {bash_script(body)} >/dev/null 2>&1 < /dev/null &"
 
 
 _PY_CLOCK = (
@@ -239,7 +241,8 @@ def _socat(ip: str, port: int, within: float) -> str:
     ends within *within* seconds of the last byte that moved.
     """
     connect = min(SOCAT_CONNECT_S, within)
-    return f"socat -T {within:g} -t {within:g} - TCP:{ip}:{port},connect-timeout={connect:g}"
+    address = shlex.quote(f"TCP:{socat_host(ip)}:{port},connect-timeout={connect:g}")
+    return f"socat -T {within:g} -t {within:g} - {address}"
 
 
 def timed_connect_command(
@@ -255,7 +258,7 @@ def timed_connect_command(
         return "python3 -c " + shlex.quote(
             _PY_CLOCK.format(within=within) + "got = None\n"
             "try:\n"
-            f"    s = socket.create_connection(('{ip}', {port}), timeout=left())\n"
+            f"    s = socket.create_connection(({ip!r}, {port}), timeout=left())\n"
             "    s.sendall(b'x'); s.settimeout(left()); got = s.recv(1); s.close()\n"
             "except OSError as e:\n"
             "    print(repr(e))\n"
@@ -282,7 +285,7 @@ def timed_transfer_command(
         return "python3 -c " + shlex.quote(
             _PY_CLOCK.format(within=within) + "n = 0\n"
             "try:\n"
-            f"    s = socket.create_connection(('{ip}', {port}), timeout=left())\n"
+            f"    s = socket.create_connection(({ip!r}, {port}), timeout=left())\n"
             f"    s.sendall(b'\\0' * {nbytes}); s.shutdown(socket.SHUT_WR)\n"
             "    while True:\n"
             "        s.settimeout(left())\n"

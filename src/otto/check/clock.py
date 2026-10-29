@@ -4,11 +4,10 @@
 probes on hosts whose default shell is not bash: the check hands every
 command to ``sh -c`` (dash or BusyBox ash on many hosts), where
 ``$EPOCHREALTIME`` expands to nothing and the elapsed time would not parse.
-:func:`bash_script` wraps a probe script so it runs under bash regardless,
-and :func:`parse_elapsed_ms` reads back what that clock printed.
+:func:`otto.host.shell_quote.bash_script` wraps a probe script so it runs
+under bash regardless, and :func:`parse_elapsed_ms` reads back what that
+clock printed.
 """
-
-import shlex
 
 PROBE_TIMEOUT_S = 15
 """How long a timed probe client may take before it gives up on its own.
@@ -21,16 +20,6 @@ host that stopped answering."""
 
 SOCAT_CONNECT_S = 5
 """socat's ``connect-timeout``, capped at the probe's bound: a link-local connect is instant."""
-
-
-def bash_script(script: str) -> str:
-    """Run *script* under bash: the socat clients' clock is bash's ``$EPOCHREALTIME``.
-
-    The check hands every command to ``sh -c`` (dash or BusyBox ash on many
-    hosts), where ``$EPOCHREALTIME`` expands to nothing and the elapsed time
-    would not parse.
-    """
-    return f"bash -c {shlex.quote(script)}"
 
 
 def parse_elapsed_ms(output: str) -> float | None:

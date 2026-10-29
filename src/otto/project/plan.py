@@ -9,12 +9,12 @@ a project whose actions override the body, a host class that overrides the verb,
 ``--ensure``'s "already installed" check, the log hauls.
 """
 
-import shlex
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from ..host.host import BaseHost
 from ..host.product import ProductPlan
+from ..host.toolchain import toolchain_removal_command
 from ..instruction_catalog import PREVIEWABLE_INSTRUCTIONS
 from ..params import OptionsSource
 from .actions import ProjectActions, _owned
@@ -150,7 +150,7 @@ def _debug_log_gap(host: "Host") -> str:
 
 def _toolchain_removals(host: "Host") -> list[str]:
     """Return each ``rm -f`` that :meth:`~otto.host.host.BaseHost.remove_toolchain_tools` runs."""
-    return [f"rm -f {shlex.quote(str(tool.dest / tool.name))}" for tool in host.toolchain.tools]
+    return [toolchain_removal_command(tool) for tool in host.toolchain.tools]
 
 
 def _toolchain_removal_gap(host: "Host") -> str:

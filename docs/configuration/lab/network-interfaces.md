@@ -7,7 +7,7 @@ specific device directly instead of just the host's management `ip`.
 | Field | Type | Description |
 |-------|------|-------------|
 | `interfaces` | object | Map of netdev name (e.g. `"eth0"`, `"eth1"`) to an interface definition. |
-| `interfaces.<name>` | object or string | `{"ip": "10.0.0.5"}`, or the bare string `"10.0.0.5"` as shorthand for the same object. |
+| `interfaces.<name>` | object or string | `{"ip": "10.0.0.5"}`, or the bare string `"10.0.0.5"` as shorthand for the same object. The `ip` is an IP address, never a hostname ({ref}`host-ip-field`). |
 | `interfaces.<name>.subnet` | string | Optional network the interface belongs to, in CIDR form (`"192.168.1.0/24"` — the network address, not a host address). Declares the interface's L3 neighborhood for topology and reachability tooling; when set, the interface `ip` must fall inside it (validated at load). |
 
 ```json

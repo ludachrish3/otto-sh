@@ -114,10 +114,9 @@ async def test_install_toolchain_tools_chowns_the_installed_path_as_root(recordi
 async def test_install_toolchain_tools_quotes_the_declared_user(recording_host):
     """*user* is lab-declared data, so it is quoted exactly as the path is.
 
-    Kills: interpolating ``tool.user`` bare. A declared user carrying a space
-    makes ``chown`` a three-argument command that chowns the wrong file (and
-    one carrying a metacharacter makes it two commands) — the same hazard the
-    path is already quoted against, on the other half of the same line.
+    Kills: interpolating ``tool.user`` bare. A declared user carrying a shell
+    metacharacter would make ``chown`` two commands — the same hazard the path
+    is already quoted against, on the other half of the same line.
     """
     recording_host.toolchain = Toolchain(
         tools=[
@@ -125,12 +124,37 @@ async def test_install_toolchain_tools_quotes_the_declared_user(recording_host):
                 name="libfoo.so",
                 source=Path("/build/out/libfoo.so"),
                 dest=Path("/usr/lib"),
-                user="app user",
+                user="app;id",
             )
         ]
     )
     assert (await recording_host.install_toolchain_tools()).is_ok
-    assert recording_host.exec_calls == ["chown 'app user' /usr/lib/libfoo.so"]
+    assert recording_host.exec_calls == ["chown 'app;id' /usr/lib/libfoo.so"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("user", "match"), [("-R", "must not begin with '-'"), ("app user", "no whitespace")]
+)
+async def test_install_toolchain_tools_refuses_a_bad_user_before_anything_runs(
+    recording_host, user, match
+):
+    """The declared user goes through the one user check ``put``/``get`` use.
+
+    Kills: a ``chown -R`` the quoting alone lets through (``'-R'`` is still an
+    option to chown), and validating per tool inside the loop, which would
+    leave the first tool installed before the second's bad user is refused.
+    """
+    recording_host.toolchain = Toolchain(
+        tools=[
+            ToolchainTool(name="ok", source=Path("/tc/ok"), dest=Path("/usr/bin")),
+            ToolchainTool(name="bad", source=Path("/tc/bad"), dest=Path("/usr/bin"), user=user),
+        ]
+    )
+    with pytest.raises(ValueError, match=match):
+        await recording_host.install_toolchain_tools()
+    assert recording_host.put_calls == []
+    assert recording_host.exec_calls == []
 
 
 @pytest.mark.asyncio

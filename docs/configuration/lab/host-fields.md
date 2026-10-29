@@ -13,7 +13,22 @@ host field — the third reservation level, beside the
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `ip` | string | IP address or DNS name otto will connect to. |
+| `ip` | string | IP address or DNS hostname otto will connect to; see {ref}`host-ip-field` for what it accepts. |
+
+(host-ip-field)=
+#### What `ip` accepts
+
+`ip` takes an IPv4 or IPv6 address, or a DNS hostname: dot-separated labels
+of letters, digits, `_` and inner hyphens, such as `router1.lab` or
+`dc_01.corp.example`, with at most one trailing dot. A last label made only of
+digits is refused, because `10.0.0.256` is a mistyped address, not a name. A
+link-local IPv6 address may carry a scope ID, which must be an interface name
+(`fe80::1%eth0`: 1 to 15 of letters, digits, `_`, `.`, `:`, `@` and `-`, not
+starting with `-`). Anything else, such
+as a space, a quote or a `;`, fails the load, and the error names the field.
+The same rule holds for an inventory record's `ip`, including one NetBox
+supplies, and for `snmp.address`. An interface's `ip` takes an address
+only, never a hostname.
 
 ### Common optional
 

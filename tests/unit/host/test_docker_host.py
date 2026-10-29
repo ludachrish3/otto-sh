@@ -1529,6 +1529,17 @@ async def test_get_validates_user():
 
 
 @pytest.mark.asyncio
+async def test_put_refuses_an_option_shaped_user_before_any_transfer():
+    """A user beginning with ``-`` is refused by ``_validate_user`` up front,
+    never part-way through at the chown after the files have landed."""
+    parent = _mock_parent()
+    h = _make_container(parent)
+    with pytest.raises(ValueError, match="must not begin with '-'"):
+        await h.put(Path("a.bin"), Path("/data"), user="-R")
+    parent.exec.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_put_dry_run_validates_user_before_declining():
     """`_validate_user` sits ABOVE the dry-run arm: a typo'd `user` under a
     dry run raises rather than being folded into a harmless preview."""

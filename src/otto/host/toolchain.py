@@ -73,6 +73,21 @@ class ToolchainTool:
     """Octal permission string applied on transfer."""
 
 
+def toolchain_removal_command(tool: ToolchainTool) -> str:
+    """Return the ``rm -f`` that removes *tool* from its host: the one spelling of it.
+
+    What :meth:`~otto.host.host.BaseHost.remove_toolchain_tools` runs and what a
+    project's plan previews, so the two cannot drift. The installed path is
+    ``dest/name`` (the declared name, after the rename), quoted by
+    :func:`~otto.host.shell_quote.path_operand`.
+    """
+    # Function-local: every host imports this module, and only a removal or
+    # its preview needs the quoting module.
+    from .shell_quote import path_operand
+
+    return f"rm -f {path_operand(tool.dest / tool.name)}"
+
+
 @dataclass(slots=True)
 class Toolchain:
     """Describes the toolchain associated with a host's products.

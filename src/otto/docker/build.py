@@ -131,7 +131,7 @@ def build_command(project: str, image: DockerImage, options: BuildOptions) -> st
     flags: list[str] = []
     for reference in image_references(image, options):
         flags.extend(["-t", shlex.quote(reference)])
-    flags.extend(["-f", shlex.quote(dockerfile_arg)])
+    flags.extend(["-f", path_operand(dockerfile_arg)])
     target = options.target or image.target
     if target:
         flags.extend(["--target", shlex.quote(target)])

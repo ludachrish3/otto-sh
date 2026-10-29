@@ -9,7 +9,6 @@ aliases consumed by the progress-bar wiring layer.
 """
 
 import asyncio
-import shlex
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
@@ -205,12 +204,15 @@ def chmod_command(mode: int, paths: list[Path]) -> str:
     bare octal because that is what ``chmod(1)`` expects — a ``0o`` prefix
     would be parsed as a filename on most implementations.
 
-    The ``--`` terminator matters: ``shlex.quote`` leaves a leading-dash path
-    like ``-rf`` unquoted (it contains no shell metacharacters), and a
-    relative ``dest_dir`` collapses ``Path(".") / "-rf"`` to exactly that, so
-    without ``--`` ``chmod`` would read the destination as option flags.
+    A relative ``dest_dir`` collapses ``Path(".") / "-rf"`` to ``-rf``, which
+    :func:`~otto.host.shell_quote.path_operand` spells ``./-rf`` so ``chmod``
+    never reads it as option flags; the ``--`` ends the options all the same.
     """
-    quoted = " ".join(shlex.quote(str(p)) for p in paths)
+    # Function-local: every SSH-capable host imports this module, and only a
+    # transfer that sets a mode needs the quoting module.
+    from ..shell_quote import path_operand
+
+    quoted = " ".join(path_operand(p) for p in paths)
     return f"chmod {mode:o} -- {quoted}"
 
 

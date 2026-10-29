@@ -64,6 +64,7 @@ from .shell_kind import (
     str_param,
     substitute_placeholders,
 )
+from .shell_quote import path_operand
 
 if TYPE_CHECKING:
     from .host import Host
@@ -286,13 +287,13 @@ class KmodProduct(ShellProduct):
                 # lsmod itself declined: residency is unknowable, so announce
                 # the write a real run might issue too (declined in turn by
                 # the same session) — the shared delete below closes it out.
-                reset_file = shlex.quote(self._kmodcov_file("reset"))
+                reset_file = path_operand(self._kmodcov_file("reset"))
                 await self._run_sudo(host, f"echo 1 > {reset_file}")
             else:
                 if not loaded.is_ok:
                     return loaded
                 if loaded.value:
-                    reset_file = shlex.quote(self._kmodcov_file("reset"))
+                    reset_file = path_operand(self._kmodcov_file("reset"))
                     zero = await self._run_sudo(host, f"echo 1 > {reset_file}")
                     if not zero.is_ok:
                         if zero.status is Status.NotRun:
@@ -306,7 +307,7 @@ class KmodProduct(ShellProduct):
             # script is: an empty `find` (a missing gcov_path) would otherwise
             # exit 0 via the trailing loop's own status. See that method's
             # comment for the full rationale; paths are quoted the same way.
-            gcov_path_q = shlex.quote(self.gcov_path or "")
+            gcov_path_q = path_operand(self.gcov_path or "")
             script = (
                 f'test -d {gcov_path_q} && find {gcov_path_q} -name "*.gcda" -type f | '
                 'while read -r f; do echo 1 > "$f" || exit 1; done'
@@ -384,7 +385,7 @@ class KmodProduct(ShellProduct):
         # sysfs write either way — a decline here becomes the session's own
         # [DRY RUN] line, and the overall result mirrors it (Status.NotRun).
         dump = self._kmodcov_file("dump")
-        result = await self._run_sudo(host, f"echo 1 > {shlex.quote(dump)}")
+        result = await self._run_sudo(host, f"echo 1 > {path_operand(dump)}")
         if result.status is Status.NotRun or result.is_ok:
             return result
         return Result(
@@ -404,11 +405,11 @@ class KmodProduct(ShellProduct):
         # `test -d` first: an empty `find` (a missing gcov_path) would
         # otherwise exit 0 via the trailing `while` loop's own status —
         # nothing to iterate is not the same as "reached the path". Paths are
-        # individually shlex.quoted; the whole script is wrapped once more by
-        # _run_sudo when it needs `sh -c`.
-        gcov_root = shlex.quote(KERNEL_GCOV_DEBUGFS)
-        rel_q = shlex.quote(rel)
-        dest = shlex.quote(cov_dir)
+        # individually quoted (path_operand); the whole script is wrapped once
+        # more by _run_sudo when it needs `sh -c`.
+        gcov_root = path_operand(KERNEL_GCOV_DEBUGFS)
+        rel_q = path_operand(rel)
+        dest = path_operand(cov_dir)
         script = (
             f'cd {gcov_root} && test -d {rel_q} && find {rel_q} -name "*.gcda" -type f | '
             f'while read -r f; do mkdir -p {dest}/"$(dirname "$f")" && '

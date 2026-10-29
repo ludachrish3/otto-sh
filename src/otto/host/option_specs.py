@@ -14,6 +14,7 @@ from pydantic import Field, SecretStr, ValidationInfo, field_validator
 
 from ..models.base import OttoModel
 from . import options as rt
+from .address import validate_address
 from .transfer import NcListenerCheck, NcPortStrategy
 
 if TYPE_CHECKING:
@@ -380,6 +381,11 @@ class SnmpOptionsSpec(OttoModel):
     port: int = rt.field_default(rt.SnmpOptions, "port")
     version: Literal["1", "2c"] = rt.field_default(rt.SnmpOptions, "version")
     address: str | None = rt.field_default(rt.SnmpOptions, "address")
+
+    @field_validator("address")
+    @classmethod
+    def _validate_address(cls, v: str | None) -> str | None:
+        return None if v is None else validate_address(v, allow_hostname=True)
 
     def to_runtime(self) -> rt.SnmpOptions:
         """Build the ``SnmpOptions`` runtime dataclass from the validated spec fields."""

@@ -84,6 +84,7 @@ if TYPE_CHECKING:
 from ...result import CommandResult, Result
 from ...utils import Status
 from ..errors import UnsupportedOnUserlandError
+from ..shell_quote import path_operand
 from ..userland import APPLET_ABSENT, applet_capability
 from .base import (
     ProgressGranularity,
@@ -450,7 +451,7 @@ class PutChunkLoop:
     """The staged remote temp, for MESSAGES -- never interpolate this into a command."""
 
     quoted_temp: str
-    """:func:`shlex.quote`\\ d *temp*, which is what a command may interpolate."""
+    """*temp* quoted by :func:`~otto.host.shell_quote.path_operand`, for a command."""
 
     on_sent: "Callable[[bytes], None]"
     """Report one chunk's PLAINTEXT bytes, once the device has accepted them.
@@ -1043,7 +1044,7 @@ class UuencodeCodec(ShellCodec):
         the file has already failed.
         """
         scratch = self._scratch_for(loop.temp)
-        quoted_scratch = shlex.quote(str(scratch))
+        quoted_scratch = path_operand(scratch)
         sent = 0
         with loop.src.open("rb") as f:
             while True:
@@ -1504,14 +1505,14 @@ class ShellFileTransfer(UnixFileTransfer):
         :attr:`ChunkLoopOutcome.chunks` is how this method learns that
         happened.
 
-        The temp and destination paths are quoted with ``shlex.quote`` plus a
-        ``--`` terminator on every command that takes a path as a positional
-        argument (``mv``, ``rm``), matching
-        :func:`~otto.host.transfer.base.chmod_command`'s precedent, because
-        ``shlex.quote`` alone leaves a leading-dash basename like ``-rf``
-        unquoted and a command without ``--`` would then read it as flags. The
-        codec is handed the already-quoted form
-        (:attr:`PutChunkLoop.quoted_temp`) so it cannot get that wrong either.
+        The temp and destination paths are quoted with
+        :func:`~otto.host.shell_quote.path_operand`, which spells a
+        leading-dash relative path like ``-rf`` as ``./-rf`` so no command
+        reads it as flags; every command that takes a path as a positional
+        argument (``mv``, ``rm``) also ends its options with ``--``, matching
+        :func:`~otto.host.transfer.base.chmod_command`. The codec is handed the
+        already-quoted form (:attr:`PutChunkLoop.quoted_temp`) so it cannot get
+        that wrong either.
 
         Any failure -- a chunk write, the temp's creation, a failed or
         mismatched integrity check, or the final ``mv`` -- removes the temp
@@ -1544,7 +1545,7 @@ class ShellFileTransfer(UnixFileTransfer):
         second local read pass over *src*.
         """
         temp = dst.parent / staged_temp_name(dst.name, self._max_filename_len)
-        quoted_temp = shlex.quote(str(temp))
+        quoted_temp = path_operand(temp)
         try:
             total = src.stat().st_size
             bytes_done = 0
@@ -1601,7 +1602,7 @@ class ShellFileTransfer(UnixFileTransfer):
                 await self._cleanup_temp(quoted_temp)
                 return Result(Status.Error, msg=f"{src}: integrity check failed -- {mismatch}")
 
-            mv_result = await self._exec_cmd(f"mv -- {quoted_temp} {shlex.quote(str(dst))}")
+            mv_result = await self._exec_cmd(f"mv -- {quoted_temp} {path_operand(dst)}")
             if not mv_result.is_ok:
                 await self._cleanup_temp(quoted_temp)
                 return Result(
@@ -1959,7 +1960,7 @@ class ShellFileTransfer(UnixFileTransfer):
         same size can still differ), and the caller's message says so
         rather than reporting it identically to a hash match.
         """
-        quoted = shlex.quote(str(remote_path))
+        quoted = path_operand(remote_path)
         if checksum == "md5sum":
             result = await self._exec_cmd(f"md5sum -- {quoted}")
             if not result.is_ok:
@@ -2031,7 +2032,7 @@ class ShellFileTransfer(UnixFileTransfer):
         catches). The name predates that second caller and stays generic on
         purpose -- despite the parameter name, nothing here is GET-specific.
         """
-        quoted_src = shlex.quote(str(src))
+        quoted_src = path_operand(src)
         cmd = f"stat -c %s -- {quoted_src}" if stat_size == "stat" else f"wc -c < {quoted_src}"
         result = await self._exec_cmd(cmd)
         if not result.is_ok:

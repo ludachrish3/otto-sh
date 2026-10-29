@@ -60,6 +60,121 @@ async def test_command_controller_on_runs_formatted_command_on_controller():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "hostile",
+    [
+        "vm1; touch /tmp/pwned",
+        "vm1 $(touch /tmp/pwned)",
+        "vm1'; touch /tmp/pwned; '",
+        "vm1`id`",
+        "vm1\nreboot",
+    ],
+)
+async def test_a_placeholder_value_a_shell_could_act_on_is_refused(hostile):
+    """A template may hand the value to a second shell (``ssh hv virsh start
+    {name}``), where quoting for the first no longer holds: the value is
+    refused before anything runs, naming the placeholder, host and character."""
+    runner = AsyncMock()
+    target = _target_with_controller(runner)
+    target.name = hostile
+    pc = CommandPowerController(
+        CommandPowerConfig(on_cmd="ssh hv virsh start {name}", off_cmd="off", controller="hyp")
+    )
+    with pytest.raises(ValueError, match=r"placeholder \{name\}") as refused:
+        await pc.on(target)
+    assert target.id in str(refused.value)
+    assert "touch" not in str(refused.value)  # the character, never the whole value
+    runner.exec.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("name", "ip"),
+    [("vm1", "10.0.0.9"), ("vm-1.lab_a", "fe80::1%eth0"), ("dom:a@b+c=d,e/f", "2001:db8::7")],
+)
+async def test_an_inert_placeholder_value_renders_as_plain_substitution(name, ip):
+    """Names, IDs and addresses, IPv6 with a scope included, render byte-identical to
+    ``str.format`` with the values as they are: nothing quoted, at any nesting depth."""
+    runner = AsyncMock()
+    runner.exec.return_value = _fake_command_result("c", "", Status.Success, 0)
+    target = _target_with_controller(runner)
+    target.name = name
+    target.ip = ip
+    template = "ssh hv 'virsh start {name}' {ip} {id}"
+    pc = CommandPowerController(
+        CommandPowerConfig(on_cmd=template, off_cmd="off", controller="hyp")
+    )
+    await pc.on(target)
+    runner.exec.assert_awaited_once_with(template.format(name=name, ip=ip, id=target.id))
+
+
+@pytest.mark.asyncio
+async def test_only_the_placeholders_a_template_uses_are_checked():
+    """A display name with a space does not stop a template that never uses it."""
+    runner = AsyncMock()
+    runner.exec.return_value = _fake_command_result("c", "", Status.Success, 0)
+    target = _target_with_controller(runner)
+    target.name = "vm one; reboot"
+    pc = CommandPowerController(
+        CommandPowerConfig(on_cmd="virsh start {id}", off_cmd="off", controller="hyp")
+    )
+    result = await pc.on(target)
+    assert result.status is Status.Success
+    runner.exec.assert_awaited_once_with(f"virsh start {target.id}")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "placeholder",
+    ["{name!r}", "{id:>8}", "{id:{name}}", "{name.upper}", "{id[0]}", "{}", "{host}"],
+)
+async def test_a_placeholder_that_is_not_bare_is_refused(placeholder):
+    """Only the bare ``{name}``, ``{ip}`` and ``{id}`` are taken: a conversion, a format
+    spec (a field nested inside one included, which a check of the outer field misses),
+    an attribute, an index, a positional or an unknown name is refused before anything
+    runs, naming the placeholder as written."""
+    runner = AsyncMock()
+    target = _target_with_controller(runner)
+    target.name = "vm one; reboot"
+    pc = CommandPowerController(
+        CommandPowerConfig(on_cmd=f"virsh start {placeholder}", off_cmd="off", controller="hyp")
+    )
+    with pytest.raises(ValueError, match="bare") as refused:
+        await pc.on(target)
+    assert placeholder in str(refused.value)
+    assert "reboot" not in str(refused.value)
+    runner.exec.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_none_ip_renders_as_nothing():
+    """A host whose ``ip`` is ``None`` renders ``{ip}`` empty instead of raising."""
+    runner = AsyncMock()
+    runner.exec.return_value = _fake_command_result("c", "", Status.Success, 0)
+    target = _target_with_controller(runner)
+    target.ip = None
+    pc = CommandPowerController(
+        CommandPowerConfig(on_cmd="on {name}{ip}", off_cmd="off", controller="hyp")
+    )
+    await pc.on(target)
+    runner.exec.assert_awaited_once_with("on vm1")
+
+
+@pytest.mark.asyncio
+async def test_command_controller_renders_an_empty_placeholder_as_nothing():
+    """A host with no ip renders ``{ip}`` as it always has: empty, not the word ``''``."""
+    runner = AsyncMock()
+    runner.exec.return_value = _fake_command_result("c", "", Status.Success, 0)
+    target = _target_with_controller(runner)
+    target.ip = ""
+    pc = CommandPowerController(
+        CommandPowerConfig(on_cmd="on {name}{ip}", off_cmd="off", controller="hyp")
+    )
+    await pc.on(target)
+    runner.exec.assert_awaited_once_with("on vm1")
+
+
+@pytest.mark.asyncio
 async def test_command_controller_status_parses_on_marker():
     runner = AsyncMock()
     runner.exec.return_value = _fake_command_result(

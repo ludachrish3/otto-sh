@@ -35,6 +35,8 @@ host internals
    mount
    inventory_ref
    daemon
+   address
+   shell_quote
    toolchain
    userland
    interface

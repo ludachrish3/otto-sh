@@ -21,6 +21,7 @@ from typing import Any
 
 from pydantic import Field, field_validator, model_validator
 
+from ..host.address import validate_address
 from ..host.specs import InterfaceSpec, IntOrStr
 from ..host.specs import (
     coerce_digit_string as coerce_digit_string,  # noqa: PLC0414 — explicit re-export
@@ -56,6 +57,12 @@ class InventoryRecord(OttoModel):
     @classmethod
     def _strip(cls, data: object) -> object:
         return strip_comment_keys(data)
+
+    @field_validator("ip")
+    @classmethod
+    def _validate_ip(cls, v: str) -> str:
+        # The host field's own rule: a record's ip becomes the host's ip.
+        return validate_address(v, allow_hostname=True)
 
     @field_validator("interfaces", mode="before")
     @classmethod

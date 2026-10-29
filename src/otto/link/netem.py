@@ -8,6 +8,7 @@ and old iproute2 formatting (``50ms`` vs ``50.0ms``).
 """
 
 import re
+import shlex
 from dataclasses import dataclass
 from typing import ClassVar
 
@@ -445,6 +446,18 @@ def parse_scoped_outputs(qdisc_output: str, filter_output: str) -> ScopedState:
     return ScopedState.from_selectors(selectors)
 
 
+def _dev(netdev: str) -> str:
+    """``dev <netdev>``, the name quoted as one shell word (interface names come from lab data).
+
+    ``shlex.quote`` itself rather than :func:`otto.host.shell_quote.shell_operand`:
+    this foundation module may import only :mod:`otto.link.params` (``tach.toml``),
+    and the name is the argument of tc's ``dev`` keyword, which tc never reads
+    as an option, so the operand rule (refusing a leading ``-``) has nothing to
+    add here.
+    """
+    return f"dev {shlex.quote(netdev)}"
+
+
 class NetEmImpairer(LinkImpairer):
     """tc/netem on a unix host's interface."""
 
@@ -454,17 +467,17 @@ class NetEmImpairer(LinkImpairer):
     @override
     def apply_command(self, netdev: str, params: ImpairmentParams) -> str:
         """Idempotent ``tc qdisc replace`` command applying *params* to *netdev*."""
-        return f"tc qdisc replace dev {netdev} root netem {netem_args(params)}"
+        return f"tc qdisc replace {_dev(netdev)} root netem {netem_args(params)}"
 
     @override
     def read_command(self, netdev: str) -> str:
         """``tc qdisc show`` command; output is understood by :func:`parse_qdisc_show`."""
-        return f"tc qdisc show dev {netdev}"
+        return f"tc qdisc show {_dev(netdev)}"
 
     @override
     def clear_command(self, netdev: str) -> str:
         """``tc qdisc del`` command removing the root netem qdisc from *netdev*."""
-        return f"tc qdisc del dev {netdev} root"
+        return f"tc qdisc del {_dev(netdev)} root"
 
     @override
     def parse_read(self, output: str) -> ImpairmentParams | None:
@@ -475,7 +488,7 @@ class NetEmImpairer(LinkImpairer):
     def scoped_root_command(self, netdev: str) -> str:
         """Idempotent 11-band prio root; bands 1-3 keep kernel-default semantics."""
         return (
-            f"tc qdisc replace dev {netdev} root handle 1: "
+            f"tc qdisc replace {_dev(netdev)} root handle 1: "
             f"prio bands {_SCOPED_BANDS} priomap {_KERNEL_DEFAULT_PRIOMAP}"
         )
 
@@ -483,7 +496,7 @@ class NetEmImpairer(LinkImpairer):
     def scoped_band_command(self, netdev: str, band: int, params: ImpairmentParams) -> str:
         """Idempotent netem leaf for *band*. classid/handle minors are HEX."""
         return (
-            f"tc qdisc replace dev {netdev} parent 1:{band:x} "
+            f"tc qdisc replace {_dev(netdev)} parent 1:{band:x} "
             f"handle {band:x}0: netem {netem_args(params)}"
         )
 
@@ -496,7 +509,7 @@ class NetEmImpairer(LinkImpairer):
         """
         prefixes = port_prefixes(selector.port, selector.last)
         return [
-            f"tc filter add dev {netdev} parent 1: pref {_filter_pref(selector, band, slot)} "
+            f"tc filter add {_dev(netdev)} parent 1: pref {_filter_pref(selector, band, slot)} "
             f"protocol ip u32 match ip protocol {_PROTO_NUM[slot.proto]} 0xff "
             f"match ip {_SIDE_MATCH[slot.side]} {prefix.value} 0x{prefix.mask:04x} "
             f"flowid 1:{band:x}"
@@ -510,11 +523,11 @@ class NetEmImpairer(LinkImpairer):
     ) -> list[str]:
         """Delete *selector*'s slots (one ``tc filter del`` per pref) then its band's leaf."""
         cmds = [
-            f"tc filter del dev {netdev} parent 1: pref {_filter_pref(selector, band, slot)} "
+            f"tc filter del {_dev(netdev)} parent 1: pref {_filter_pref(selector, band, slot)} "
             "protocol ip u32"
             for slot in _selector_slots(selector)
         ]
-        cmds.append(f"tc qdisc del dev {netdev} parent 1:{band:x} handle {band:x}0:")
+        cmds.append(f"tc qdisc del {_dev(netdev)} parent 1:{band:x} handle {band:x}0:")
         return cmds
 
     @override
@@ -531,8 +544,8 @@ class NetEmImpairer(LinkImpairer):
         error.
         """
         return [
-            f"tc qdisc show dev {netdev}",
-            f"tc filter show dev {netdev} parent 1: 2>/dev/null || true",
+            f"tc qdisc show {_dev(netdev)}",
+            f"tc filter show {_dev(netdev)} parent 1: 2>/dev/null || true",
         ]
 
     @override

@@ -1,6 +1,7 @@
 """Dial tier: banners decide; direct and hop-side arms share one outcome type."""
 
 import asyncio
+import shlex
 import socket
 import struct
 
@@ -205,8 +206,12 @@ class _Userland:
 
 
 def _bash_script(t: int, ip: str, port: int) -> str:
-    """The bash arm as :func:`hop_dial_script` renders it, for the expectation side."""
-    return HOP_DIAL_BASH.format(t=t, r=_reader_timeout(t), n=256, ip=ip, port=port)
+    """The bash arm as :func:`hop_dial_script` renders it, for the expectation side.
+
+    The address and port follow the quoted script as bash's ``$1`` and ``$2``.
+    """
+    body = HOP_DIAL_BASH.format(r=_reader_timeout(t), n=256)
+    return f"timeout {t} bash -c {shlex.quote(body)} _ {ip} {port} 2>&1; echo OTTO_RC=$?"
 
 
 def test_hop_script_prefers_bash_dev_tcp_then_nc_z_then_none():

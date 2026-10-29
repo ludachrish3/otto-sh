@@ -23,6 +23,8 @@ entry:
 source basename, so a tool whose `name` differs is `mv`'d there before it is
 chowned — which is how `arm-linux-gnueabihf-gdb` installs as plain `gdb`. Those
 destinations are usually root-owned, hence the per-tool `user` and `mode`.
+A `user` that is empty, holds whitespace or begins with `-` is refused before
+any tool is installed.
 
 One toolchain serves every owner on a host, so placing and removing it is a
 host-wide step: no project's actions touch it (see

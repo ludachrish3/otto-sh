@@ -12,12 +12,12 @@ import edge.
 """
 
 import re
-import shlex
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote, unquote
 
+from .shell_quote import bash_script
 from .userland import refuse_if_gapped
 
 # Ceiling (seconds) on the *real* ``systemd-run --user`` invocation folded into
@@ -86,8 +86,7 @@ def launch_command(sentinel: str, argv: list[str]) -> str:
     (``systemd-run --user --collect`` or the backgrounded ``setsid`` subshell)
     and exits; the final ``exec -a``'d process is unaffected either way).
     """
-    inner = shlex.quote('exec -a "$1" "${@:2}"')
-    tagged = " ".join(shlex.quote(a) for a in (sentinel, *argv))
+    tagged = bash_script('exec -a "$1" "${@:2}"', sentinel, *argv)
     # Linger is what lets the daemon outlive the LOGIN SESSIONS on the host:
     # without it, systemd stops the user manager — collecting its transient
     # units, i.e. this daemon — the moment the user's last session ends, so a
@@ -99,15 +98,14 @@ def launch_command(sentinel: str, argv: list[str]) -> str:
     # that is the fix — and is a no-op when already enabled.
     linger = "(loginctl enable-linger >/dev/null 2>&1 || true)"
     systemd = (
-        f"timeout {_SYSTEMD_RUN_PROBE_TIMEOUT} systemd-run --user --collect --quiet "
-        f"-- bash -c {inner} _ {tagged}"
+        f"timeout {_SYSTEMD_RUN_PROBE_TIMEOUT} systemd-run --user --collect --quiet -- {tagged}"
     )
-    setsid = f"setsid bash -c {inner} _ {tagged} </dev/null >/dev/null 2>&1 &"
+    setsid = f"setsid {tagged} </dev/null >/dev/null 2>&1 &"
     body = (
         f"if command -v systemd-run >/dev/null 2>&1 && {linger} && {systemd} 2>/dev/null; "
         f"then :; else ( {setsid} ); fi"
     )
-    return f"bash -c {shlex.quote(body)}"
+    return bash_script(body)
 
 
 def refuse_if_launch_wrapper_needs_bash(host: Any, *, attempted: str = "") -> None:

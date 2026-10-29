@@ -347,6 +347,13 @@ class TestValidateUser:
         with pytest.raises(ValueError, match="non-empty string with no whitespace"):
             _validate_user(bad)
 
+    @pytest.mark.parametrize("bad", ["-R", "--reference=/etc/shadow", "-1000"])
+    def test_rejects_an_option_shaped_user(self, bad):
+        from otto.host.host import _validate_user
+
+        with pytest.raises(ValueError, match="must not begin with '-'"):
+            _validate_user(bad)
+
 
 class TestTimedOutFlag:
     """Every timeout path marks the result, so callers need no string matching."""
