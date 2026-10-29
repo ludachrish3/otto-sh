@@ -24,7 +24,9 @@ from datetime import timedelta
 from enum import Enum
 from pathlib import Path
 from typing import (
+    TYPE_CHECKING,
     Any,
+    Generic,
     Literal,
     TypeVar,
     Union,
@@ -34,6 +36,9 @@ from typing import (
 )
 
 from .errors import OttoError
+
+if TYPE_CHECKING:
+    import asyncio
 
 __all__ = ["Arg", "Exclude", "Opt", "Status", "cli_exposed"]
 
@@ -700,6 +705,50 @@ def is_literal(value: Any, literal_type: type[T]) -> T:
     if value not in valid:
         raise TypeError(f"{value!r} is not a valid value. Expected one of: {valid}")
     return value
+
+
+class PerLoop(Generic[T]):
+    """One asyncio primitive per event loop, made by *factory* on first use in each.
+
+    The one answer to "may this lock (semaphore, event) be used on the running
+    loop?" for an object that outlives a loop: a host, its resolved facts, a
+    transfer backend, a process-wide map. An ``asyncio`` primitive binds to the
+    loop that first has to wait on it, and waiting on it from any other loop
+    raises ``RuntimeError: ... is bound to a different event loop`` — but only
+    under contention, so code that never contends on both loops never sees it.
+    :meth:`get` hands the running loop its own primitive instead. A loop that
+    finished has no task left holding the old one, so nothing is lost by the
+    swap.
+
+    It is for loops that run one after another, never side by side. Two
+    loops running at once would thrash the one slot, each ``get`` replacing
+    the other's primitive, and two tasks on one loop could then hold
+    different locks: mutual exclusion would be lost without a word. A host
+    refuses a second live loop before it gets here
+    (:class:`~otto.host.loop_owner.HostLoopError`), and otto runs no event
+    loops on threads. One slot rather than a map keyed weakly by loop: a
+    primitive bound to a loop holds that loop, so a weak key would never die
+    and the map would keep every loop it ever saw.
+    """
+
+    __slots__ = ("_factory", "_loop", "_value")
+
+    def __init__(self, factory: Callable[[], T]) -> None:
+        self._factory = factory
+        self._loop: "asyncio.AbstractEventLoop | None" = None
+        self._value: T | None = None
+
+    def get(self) -> T:
+        """Return the running loop's primitive, making it on this loop's first call."""
+        # Here, not at the top: every command's help imports this module, and
+        # only a caller already on an event loop reaches this line.
+        import asyncio
+
+        loop = asyncio.get_running_loop()
+        if self._value is None or self._loop is not loop:
+            self._value = self._factory()
+            self._loop = loop
+        return self._value
 
 
 # TODO: Restructure this file into a directory names utils and then a file per group of functionality:  # noqa: E501 — TODO comment

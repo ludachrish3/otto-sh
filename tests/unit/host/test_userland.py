@@ -2054,3 +2054,23 @@ def test_the_batch_fits_the_line_bound_the_tighter_transport_imposes():
     is line-edited exactly like a typed command.
     """
     refuse_if_line_editor_would_truncate(AshFrame(), _P_APPLETS, host="probe")
+
+
+def test_one_userland_serves_contending_resolvers_on_a_second_loop(monkeypatch):
+    """A host keeps its Userland across loops; its lock must not stay bound to the first.
+
+    Each round holds the lock across an await, as a real probe round does, so
+    the second resolver on each loop has to wait on it.
+    """
+
+    async def unsettled_round(self) -> None:
+        await asyncio.sleep(0)
+
+    monkeypatch.setattr(Userland, "_resolve_once", unsettled_round)
+    userland = Userland(UserlandOptions(), _Runner())
+
+    async def both() -> None:
+        await asyncio.gather(userland.resolve(), userland.resolve())
+
+    asyncio.run(both())
+    asyncio.run(both())  # raised "bound to a different event loop" before the fix

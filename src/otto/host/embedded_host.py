@@ -245,7 +245,7 @@ class EmbeddedHost(UserlandHost, RemoteHost):
 
         This family's override of the ``_rebuild_connections`` hook that
         :meth:`~otto.host.host.BaseHost.rebuild_connections` calls: how a host
-        leaves a closed event loop (or a rebooted board). The old
+        moves to another event loop (or a rebooted board). The old
         manager's transports may belong to a dead loop, so they are abandoned
         rather than closed, except a cached console client, whose line is
         released at once: the console server serves one client, so a client

@@ -15,6 +15,7 @@ from ..host.daemon import kill_command, launch_command
 from ..host.errors import HostCommandError, HostUnreachableError
 from ..host.host import is_dry_run
 from ..logger.mode import LogMode
+from ..utils import PerLoop
 from .carrier import DEFAULT_CARRIER, TunnelCarrier, build_carrier
 from .discovery import (
     _TUNNEL_HOST_TIMEOUT,
@@ -66,8 +67,10 @@ _LOOPBACK = "127.0.0.1"
 # NOT reach here) — see tests/e2e/tunnel_stability/test_concurrency.py.
 # Remove paths (remove_tunnel / remove_all_tunnels) deliberately do not
 # participate: only add-vs-add shares a deterministic id's fate, and an add
-# racing a remove just fails its verify and rolls back clean.
-_ADD_LOCKS: dict[str, asyncio.Lock] = {}
+# racing a remove just fails its verify and rolls back clean. Process
+# state, so each lock is the running loop's own: a library caller's second
+# asyncio.run must not wait on a lock bound to its first.
+_ADD_LOCKS: dict[str, PerLoop[asyncio.Lock]] = {}
 
 _carrier_rng = random.SystemRandom()
 """Draws each real add's two carrier ports (see :func:`pick_random_free_port`).
@@ -90,7 +93,7 @@ matching seam on the check side)."""
 
 
 def _add_lock(tunnel_id: str) -> asyncio.Lock:
-    return _ADD_LOCKS.setdefault(tunnel_id, asyncio.Lock())
+    return _ADD_LOCKS.setdefault(tunnel_id, PerLoop(asyncio.Lock)).get()
 
 
 @dataclass(frozen=True, slots=True)

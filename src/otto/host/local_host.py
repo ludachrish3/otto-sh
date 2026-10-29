@@ -193,7 +193,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
     def _rebuild_connections(self) -> None:
         """Recreate the session manager and transfer backend, dropping the old ones unclosed.
 
-        How a host leaves a closed event loop: the old shell's pipes belong
+        How a host moves to another event loop: the old shell's pipes belong
         to that loop and cannot be driven from another, so they are abandoned
         rather than closed. ``__post_init__`` builds through here too.
         """

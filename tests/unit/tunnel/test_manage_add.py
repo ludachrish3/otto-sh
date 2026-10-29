@@ -1100,3 +1100,22 @@ class TestAddDryRunWithAContainerEndpoint:
 def _lab_from(*hosts) -> "FakeLab":
     """A FakeLab keyed by each host's own id — for mixed unix/container beds."""
     return _lab(**{h.id: h for h in hosts})
+
+
+def test_the_add_lock_serves_a_second_event_loop(monkeypatch):
+    """Two adds of one tunnel contend its lock on one loop, then on another.
+
+    The lock map is process state; a library caller's second ``asyncio.run``
+    must not inherit a lock bound to the first.
+    """
+    monkeypatch.setattr(manage, "_ADD_LOCKS", {})
+
+    async def hold() -> None:
+        async with manage._add_lock("t1"):
+            await asyncio.sleep(0)  # the other add now has to wait
+
+    async def both() -> None:
+        await asyncio.gather(hold(), hold())
+
+    asyncio.run(both())
+    asyncio.run(both())  # raised "bound to a different event loop" before the fix

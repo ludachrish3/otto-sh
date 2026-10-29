@@ -512,8 +512,9 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         """Recreate the ConnectionManager and dependents.
 
         This family's hook for :meth:`~otto.host.host.BaseHost.rebuild_connections`,
-        which ``_claim_loop`` reaches when the loop that owned the connection
-        has closed, so the next use dials fresh on the loop it runs on.
+        which ``_claim_loop`` reaches when a loop other than the one the
+        connection last served claims the host, so the next use dials fresh
+        on the loop it runs on.
 
         The old manager is dropped, not closed (its transports may belong to
         a dead loop or a rebooted device), except for a cached console

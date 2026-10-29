@@ -1385,6 +1385,17 @@ class BaseHost(ABC):
     (``dataclasses.replace``, which is how option overrides build one)
     starts unowned, with its own freshly built managers."""
 
+    _served_loop: "asyncio.AbstractEventLoop | None" = field(
+        default=None, init=False, repr=False, compare=False
+    )
+    """The event loop this host's current connection managers last served; ``None`` while fresh.
+
+    Unlike :attr:`_owner_loop`, a close leaves it set: a close shuts the
+    transports but keeps the managers, and a lock in them that two callers
+    contended stays bound to that loop. :meth:`_claim_loop` therefore rebuilds
+    the managers whenever a loop other than this one claims the host, and a
+    rebuild clears it."""
+
     _generation: int = field(default=0, init=False, repr=False, compare=False)
     """This host's connection epoch: bumped whenever its connection managers are replaced
     (:meth:`rebuild_connections`, abandonment) and whenever a loop takes ownership.
@@ -2507,6 +2518,10 @@ class BaseHost(ABC):
           :class:`~otto.host.loop_owner.HostLoopError` — its transports can
           only be driven by that loop, even while it sits idle;
         - the owner closed: drop its dead connection state and fall through;
+        - the connection managers last served another loop (the host was
+          closed there, so no loop owns it): rebuild them, with no I/O. The
+          close shut their transports but kept them, and a lock in them that
+          two callers contended is bound to that loop for good;
         - otherwise the running loop becomes the owner, and the host
           registers with that loop's registry (``otto.invocation``), context
           or not; the loop's cleanup closes it.
@@ -2523,8 +2538,13 @@ class BaseHost(ABC):
 
             raise HostLoopError(self.id, owner, loop)
         if owner is not None:
-            self._drop_dead_connections()
+            self._release_owner()  # a closed loop: nothing left to close, only to forget
+        # The one rebuild decision: managers that served another loop, closed
+        # or merely closed on, never serve this one.
+        if self._served_loop is not None and self._served_loop is not loop:
+            self.rebuild_connections()
         self._owner_loop = loop
+        self._served_loop = loop
         self._generation += 1
         from ..invocation import register  # function-scope: the leaf is read when a loop is claimed
 
@@ -2549,7 +2569,7 @@ class BaseHost(ABC):
     def rebuild_connections(self) -> None:
         """Replace this host's connection managers, dropping the old ones unclosed.
 
-        How a host leaves a closed event loop or a rebooted device, and
+        How a host moves to another event loop or past a rebooted device, and
         what to call after changing its ``hop``: the next use dials fresh.
         Bumps the host's connection epoch first, so a close still running
         on the old managers cannot touch the new ones. A host whose owning
@@ -2560,7 +2580,10 @@ class BaseHost(ABC):
         self._generation += 1
         self._rebuild_connections()
         owner = self._owner_loop
+        # The fresh managers serve the live owner, if any; otherwise no loop yet.
+        self._served_loop = None
         if owner is not None and not owner.is_closed():
+            self._served_loop = owner
             from ..invocation import register
 
             register(owner, self._registration())  # one record per host, at its new generation
@@ -2568,19 +2591,23 @@ class BaseHost(ABC):
     def _rebuild_connections(self) -> None:  # noqa: B027 — an empty default is the POINT: a family with no connections has nothing to rebuild
         """Replace the family's connection state. Families with connections override it."""
 
-    def _drop_dead_connections(self) -> None:
-        """Abandon connection state no loop can close, with no I/O.
-
-        The owner is cleared first, then the old record is unregistered at its
-        generation, then the connections are rebuilt (which registers nothing,
-        since no loop owns the host now).
-        """
+    def _release_owner(self) -> None:
+        """Make the host unowned: clear the owner, then unregister its record at this generation."""
         owner, generation = self._owner_loop, self._generation
-        self._owner_loop = None  # first, so the rebuild below registers nothing
+        self._owner_loop = None  # first, so a rebuild after this registers nothing
         if owner is not None:
             from ..invocation import unregister
 
             unregister(owner, id(self), generation)
+
+    def _drop_dead_connections(self) -> None:
+        """Abandon connection state no loop can close, with no I/O.
+
+        The owner is released first (:meth:`_release_owner`), then the
+        connections are rebuilt (which registers nothing, since no loop owns
+        the host now).
+        """
+        self._release_owner()
         self.rebuild_connections()
 
     def _abandon_registration(self, loop: "asyncio.AbstractEventLoop", generation: int) -> bool:

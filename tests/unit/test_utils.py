@@ -156,3 +156,46 @@ def test_ottopath_entries_keeps_whitespace_as_part_of_an_entry(tmp_path, monkeyp
     """``/a: b `` names ``" b "``, a relative entry, joined to the cwd as written."""
     monkeypatch.chdir(tmp_path)
     assert ottopath_entries(f"/a{os.pathsep} b ") == ["/a", f"{tmp_path}/ b "]
+
+
+# ---------------------------------------------------------------------------
+# PerLoop: one asyncio primitive per event loop
+# ---------------------------------------------------------------------------
+
+
+def _contend(lock_of) -> None:
+    """Make two callers wait on the lock *lock_of* returns, on a fresh loop."""
+    import asyncio
+
+    async def hold() -> None:
+        async with lock_of():
+            await asyncio.sleep(0)  # the other caller now has to wait
+
+    async def both() -> None:
+        await asyncio.gather(hold(), hold())
+
+    asyncio.run(both())
+
+
+def test_per_loop_hands_each_loop_a_primitive_it_can_wait_on():
+    """A primitive contended on one loop binds to it; the next loop gets its own."""
+    import asyncio
+
+    from otto.utils import PerLoop
+
+    per_loop = PerLoop(asyncio.Lock)
+    _contend(per_loop.get)
+    _contend(per_loop.get)
+
+
+def test_per_loop_keeps_one_primitive_within_a_loop():
+    import asyncio
+
+    from otto.utils import PerLoop
+
+    per_loop = PerLoop(asyncio.Lock)
+
+    async def twice() -> bool:
+        return per_loop.get() is per_loop.get()
+
+    assert asyncio.run(twice())

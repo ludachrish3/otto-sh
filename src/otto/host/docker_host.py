@@ -675,8 +675,8 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             ~otto.result.CommandNotRunError: this is a dry run and the
                 container id is not already cached (from the probe).
         """
-        # Claimed before the lock: ``_ensure_lock`` is per-loop state that a
-        # stale owner's rebuild replaces.
+        # Claimed before the lock: ``_ensure_lock`` is per-loop state, which
+        # the rebuild a claim from another loop makes replaces.
         self._claim_loop()
         if self.container_id:
             return
@@ -1580,8 +1580,8 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
 
         This family's override of the ``_rebuild_connections`` hook that
         :meth:`~otto.host.host.BaseHost.rebuild_connections` calls: how the
-        host leaves an event loop that has closed (``_claim_loop`` reaches it
-        when the loop that owned the session is gone). The container
+        host moves to another event loop (``_claim_loop`` reaches it when a
+        loop other than the one its managers last served claims it). The container
         host doesn't own any raw transport (the parent does), but its
         ``_session_mgr`` may hold a ``ShellSession`` whose ``asyncssh``
         process is bound to the old loop. Replacing the manager forces lazy

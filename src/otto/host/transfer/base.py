@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from ...result import CommandResult, Result
-from ...utils import Status
+from ...utils import PerLoop, Status
 
 if TYPE_CHECKING:
     from ..connections import ConnectionManager
@@ -433,18 +433,12 @@ class BaseFileTransfer(ABC):
         ``CancelledError`` holds the drain for as long as it takes -- bounded
         in practice by each backend's own cancellation cleanup timeouts.
 
-        The semaphore is rebuilt whenever the running loop is not the one it
-        was made for. ``asyncio.Semaphore`` binds to a loop the first time a
-        waiter has to be created, and a later acquire from another loop
-        raises; the old loop's tasks cannot still be running, so a fresh
-        semaphore loses no permit and one transfer object survives being
-        reused across separate ``asyncio.run`` calls.
+        The semaphore is the running loop's own (``otto.utils.PerLoop``):
+        the old loop's tasks cannot still be running, so a fresh semaphore
+        loses no permit and one transfer object survives being reused across
+        separate ``asyncio.run`` calls.
         """
-        loop = asyncio.get_running_loop()
-        if self._semaphore is None or self._semaphore_loop is not loop:
-            self._semaphore = asyncio.Semaphore(self.concurrency_limit)
-            self._semaphore_loop = loop
-        semaphore = self._semaphore
+        semaphore = self._semaphore.get()
 
         async def _bounded(src: Path) -> Result:
             async with semaphore:
@@ -498,13 +492,13 @@ class BaseFileTransfer(ABC):
         self._max_filename_len = max_filename_len
         # One budget per INSTANCE: the ceiling it stands for is per connection,
         # so a semaphore made per call would hand every overlapping transfer
-        # on the same object its own full budget. Built lazily because a
+        # on the same object its own full budget. Made on first use because a
         # subclass sets the options `concurrency_limit` reads AFTER this runs,
-        # and keyed to the loop that built it: an asyncio.Semaphore binds to
-        # the first loop that waits on it, so an object reused across separate
-        # asyncio.run() calls needs a fresh one rather than a bound leftover.
-        self._semaphore: asyncio.Semaphore | None = None
-        self._semaphore_loop: asyncio.AbstractEventLoop | None = None
+        # and one per loop: an object reused across separate asyncio.run()
+        # calls needs a fresh one rather than a leftover bound to the last.
+        self._semaphore: PerLoop[asyncio.Semaphore] = PerLoop(
+            lambda: asyncio.Semaphore(self.concurrency_limit)
+        )
 
     async def put_files(
         self,

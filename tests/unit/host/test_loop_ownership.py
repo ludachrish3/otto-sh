@@ -577,3 +577,79 @@ def test_many_loops_do_not_grow_the_registry_table(ctx):
     for _ in range(20):
         asyncio.run(touch())
     assert sum(loop.is_closed() for loop in inv._REGISTRIES) == 1  # only the last one
+
+
+class _ClosableConn:
+    """Stands in for an SSH connection: all ``ConnectionManager.close`` calls on it."""
+
+    def close(self) -> None:
+        pass
+
+    async def wait_closed(self) -> None:
+        pass
+
+
+def test_a_host_closed_on_one_loop_serves_contending_callers_on_the_next(ctx, monkeypatch):
+    """Two callers racing for the first connection on each of two loops, closed in between.
+
+    What ``otto test --cov`` does to a host its pre-run clean and its fetch
+    both reach concurrently: each phase runs on its own loop and closes the
+    host when that loop ends. A lock that two callers contend binds to the
+    loop it was contended on, so a close that keeps it hands the next loop a
+    lock it cannot wait on.
+    """
+    from otto.host import connections
+
+    async def connect(*_args, **_kwargs):
+        await asyncio.sleep(0)  # yield while holding the lock, so the other caller waits on it
+        return _ClosableConn()
+
+    monkeypatch.setattr(connections, "connect_and_describe", connect)
+    host = make_host("test1")
+
+    async def phase() -> None:
+        try:
+            await asyncio.gather(*(host._live_connections().ssh() for _ in range(2)))
+        finally:
+            await host.close()
+
+    asyncio.run(phase())
+    asyncio.run(phase())  # raised "bound to a different event loop" before the fix
+
+
+def test_a_containers_exec_through_its_parent_contends_safely_on_the_next_loop(ctx, monkeypatch):
+    """The docker quickstart's shape: a container execs through its parent while
+    the parent runs a command of its own, both racing for the parent's first SSH
+    connection, on one loop and then, after both hosts are closed, on the next."""
+    from otto.host import connections
+    from otto.host.session import SessionManager
+    from otto.result import CommandResult
+    from otto.utils import Status
+
+    async def connect(*_args, **_kwargs):
+        await asyncio.sleep(0)  # yield while holding the lock, so the other caller waits on it
+        return _ClosableConn()
+
+    async def exec_on(self, conn, cmd, timeout=0.0, log=None):
+        return CommandResult(Status.Success, value="", command=cmd, retcode=0)
+
+    monkeypatch.setattr(connections, "connect_and_describe", connect)
+    monkeypatch.setattr(SessionManager, "exec_on", exec_on)
+    parent = make_host("test1")
+    container = DockerContainerHost(
+        parent=parent,
+        container_id="6efa1772c390",
+        project="qs",
+        service="tools",
+        compose_project="lab-qs",
+    )
+
+    async def phase() -> None:
+        try:
+            await asyncio.gather(container.exec("true"), parent.exec("true"))
+        finally:
+            await container.close()  # before its parent, as a loop's sweep orders them
+            await parent.close()
+
+    asyncio.run(phase())
+    asyncio.run(phase())  # raised "bound to a different event loop" before the fix

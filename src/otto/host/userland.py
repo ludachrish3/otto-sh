@@ -154,7 +154,7 @@ from typing import TYPE_CHECKING, Annotated, Any, cast
 
 from ..logger.mode import LogMode
 from ..result import CommandResult, Result
-from ..utils import Opt, Status, cli_exposed
+from ..utils import Opt, PerLoop, Status, cli_exposed
 from .errors import UnsupportedOnUserlandError
 from .host import is_dry_run
 from .options import UserlandOptions
@@ -665,7 +665,9 @@ class Userland:
         # Keys whose value came from a declaration or a real answer, as opposed
         # to _UNASKABLE_DEFAULTS. Only these make resolve() idempotent.
         self._settled: set[str] = set()
-        self._lock = asyncio.Lock()
+        # The host keeps this object across event loops (its answers are worth
+        # keeping); the lock is the running loop's own.
+        self._lock: PerLoop[asyncio.Lock] = PerLoop(asyncio.Lock)
         self._deadline = 0.0
         # Monotonic time before which another attempt is refused. Zero until an
         # attempt leaves something unasked, so the first caller never waits.
@@ -822,7 +824,7 @@ class Userland:
         The module docstring's table says which capabilities are read at all
         and why the round is whole anyway.
         """
-        async with self._lock:
+        async with self._lock.get():
             if len(self._settled) == len(_UNASKABLE_DEFAULTS):
                 return
             if _monotonic() < self._retry_after:

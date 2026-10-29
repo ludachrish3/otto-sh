@@ -1042,7 +1042,7 @@ layer = "topology"
 # NOTE: no otto.link here (and none the other way) — see otto.link above.
 # otto.check IS allowed: it's the shared check core (otto tunnel check uses
 # it the same way otto link check does), and otto.check imports neither.
-depends_on = ["otto.host", "otto.models", "otto.registry", "otto.lifecycle", "otto.logger", "otto.errors", "otto.check"]
+depends_on = ["otto.host", "otto.models", "otto.registry", "otto.lifecycle", "otto.logger", "otto.errors", "otto.check", "otto.utils"]
 
 [[modules]]
 path = "otto.utils"
