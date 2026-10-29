@@ -201,6 +201,17 @@ def compile_host_pattern(text: str) -> "re.Pattern[str]":
         raise ValueError(f"host pattern {text!r} is not a valid regex: {exc}") from exc
 
 
+def ellipsize(text: str, cap: int) -> str:
+    """Return *text* if it fits in *cap* characters, else its first *cap* and ``…``.
+
+    >>> ellipsize("abcdef", 3)
+    'abc…'
+    >>> ellipsize("abc", 3)
+    'abc'
+    """
+    return text if len(text) <= cap else text[:cap] + "…"
+
+
 def split_on(values: list[str] | str, sep: str = ",") -> list[str]:
     """Split a string or list of strings on *sep* into a flat list.
 

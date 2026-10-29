@@ -436,6 +436,14 @@ class OttoContext:
     )
     """The projects' scope verdicts, once resolved."""
 
+    def __otto_summary__(self) -> str:
+        """Return the one-line identity a failing ``expect()`` report shows.
+
+        For example ``<OttoContext lab=bench>``: the lab's name only; its
+        hosts, their credentials and the run policy stay out of the report.
+        """
+        return f"<{type(self).__name__} lab={self.lab.name}>"
+
     def __init__(
         self,
         lab: "Lab",

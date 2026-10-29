@@ -143,6 +143,14 @@ class Lab:
         if not self.component_names:
             self.component_names = [self.name]
 
+    def __otto_summary__(self) -> str:
+        """Return the one-line identity a failing ``expect()`` report shows.
+
+        For example ``<Lab bench>``: only the name; the hosts it holds, and
+        their credentials, stay out of the report.
+        """
+        return f"<{type(self).__name__} {self.name}>"
+
     def add_host(
         self,
         host: "Host",

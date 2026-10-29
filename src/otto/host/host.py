@@ -1289,6 +1289,15 @@ class BaseHost(ABC):
         """
         return self.name
 
+    def __otto_summary__(self) -> str:
+        """Return the one-line identity a failing ``expect()`` report shows.
+
+        For example ``<UnixHost router1>``: the class and :meth:`__str__`'s
+        display name; never the fields, so no credential or connection state
+        reaches the report.
+        """
+        return f"<{type(self).__name__} {self}>"
+
     ####################
     #  Dry-run helpers
     ####################

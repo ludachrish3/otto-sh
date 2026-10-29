@@ -24,7 +24,7 @@ from typing import Any, overload
 from typing_extensions import Never, override
 
 from otto.errors import OttoError
-from otto.utils import Status
+from otto.utils import Status, ellipsize
 
 __all__ = [
     "CommandNotRunError",
@@ -62,6 +62,10 @@ class CommandNotRunError(OttoError, RuntimeError):
             f"which contacts no device. Build previews from configuration; "
             f"if you need the device's answer, drop --dry-run." + (f" {detail}" if detail else "")
         )
+
+
+_SUMMARY_VALUE_CAP = 60
+"""How much of a result's value repr its one-line summary keeps."""
 
 
 @dataclass(frozen=True)
@@ -135,6 +139,21 @@ class CommandResult(Result):
         if self.retcode != 0:
             return self.retcode
         return self.status.value
+
+    def __otto_summary__(self) -> str:
+        """Return the one line a failing ``expect()`` report shows for this result.
+
+        Status, retcode and the start of :attr:`~otto.result.Result.value`,
+        through the value's own repr so a control character stays visible::
+
+            <CommandResult status=Failed retcode=1 value='ping: unknown host'>
+        """
+        return self._summary(ellipsize(repr(self.value), _SUMMARY_VALUE_CAP))
+
+    def _summary(self, value: str) -> str:
+        """Build the summary line around an already-rendered *value*."""
+        name = type(self).__name__
+        return f"<{name} status={self.status.name} retcode={self.retcode} value={value}>"
 
 
 class NotRunResult(CommandResult):
@@ -210,6 +229,11 @@ class NotRunResult(CommandResult):
         """
 
     # ── Handling the object: none of these may raise ──────────────────────
+
+    @override
+    def __otto_summary__(self) -> str:
+        """Return the summary with ``value=<not run>``: there is no value to read."""
+        return self._summary("<not run>")
 
     @override
     def __repr__(self) -> str:

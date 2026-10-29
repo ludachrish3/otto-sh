@@ -199,8 +199,8 @@ first run is in {doc}`../../setup/running-tests`.
 
 ## Non-fatal assertions
 
-The `expect` fixture records a failed expectation — with the captured source
-line and locals — and *keeps the test running*; the accumulated failures
+The `expect` fixture records a failed expectation — with the call's source
+and the values it reads — and *keeps the test running*; the accumulated failures
 fail the test at the end of its body, in the call phase
 ({class}`~otto.suite.expect.ExpectCollector`). This exists because hardware
 tests are expensive to reach: when a board takes minutes to provision, "check

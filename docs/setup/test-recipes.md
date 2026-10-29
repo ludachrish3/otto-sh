@@ -39,9 +39,15 @@ async def test_device_config(dut, expect) -> None:
     # All three are checked; the test fails at the end with every failure listed
 ```
 
-Each failure is logged as it happens with its source line; the full report in
-`expect.failures` adds the caller's locals. A hard `assert` in the body
-still stops the test at once.
+Each failure is logged as it happens with its call's source; the full report
+in `expect.failures` adds `Values:`, holding only the variables the call reads.
+Hosts, labs, the run context and command results show as a one-line summary,
+and a class of your own can do the same by defining `__otto_summary__`
+({class}`~otto.suite.expect.OttoSummary`). Masking is by name and by mapping
+key: a credential-looking variable, or the value under a credential-looking
+key in a dict, shows as `'***'`.
+{meth}`~otto.suite.expect.ExpectCollector.expect` describes the format. A hard
+`assert` in the body still stops the test at once.
 
 You can also use {class}`~otto.suite.expect.ExpectCollector` directly,
 outside of a test:
