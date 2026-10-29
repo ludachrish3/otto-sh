@@ -578,7 +578,7 @@ async def test_compose_up_builds_images_first_when_asked(tmp_path):
 
     await compose_up(project, lab, build=True)
     # The build path must have run: `docker build` itself.
-    assert any(c.startswith("docker build ") for c in call_log), call_log
+    assert any("docker build " in c for c in call_log), call_log
 
 
 @pytest.mark.asyncio
@@ -603,7 +603,7 @@ async def test_compose_up_builds_nothing_by_default(tmp_path):
     parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
     await compose_up(project, lab)
-    assert not any(c.startswith("docker build ") for c in call_log), (
+    assert not any("docker build " in c for c in call_log), (
         "the default is docker's own: up builds nothing"
     )
 
@@ -970,7 +970,7 @@ async def test_composed_builds_nothing_by_default(tmp_path):
         pass
 
     assert any(" up -d" in c for c in call_log), "the stack must have come up"
-    assert not any(c.startswith("docker build ") for c in call_log), call_log
+    assert not any("docker build " in c for c in call_log), call_log
 
 
 @pytest.mark.asyncio

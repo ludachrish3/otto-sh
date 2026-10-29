@@ -266,6 +266,10 @@ directories" section.
 
 Every build runs `docker build` on the parent; otto keeps no record of
 earlier builds and skips nothing, so docker's layer cache is the only cache.
+It runs with `BUILDX_NO_DEFAULT_ATTESTATIONS=1`, so buildx attaches no
+provenance attestation and a fully cached rebuild keeps its image ID, which
+lets a later `up` leave the image's containers running (the legacy builder
+ignores the variable).
 The image is named exactly as declared (`<name>:latest`, or the tags typed
 with `--tag`), and the build is read back from the parent's daemon, never
 composed by otto: the references and id in the report are what

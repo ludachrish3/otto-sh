@@ -109,8 +109,23 @@ def image_references(image: DockerImage, options: BuildOptions) -> list[str]:
     return list(options.tags) or [f"{image.name}:latest"]
 
 
+_BUILD_ENV = "BUILDX_NO_DEFAULT_ATTESTATIONS=1"
+"""The environment every ``docker build`` otto runs is given, as a command prefix.
+
+buildx (the default builder from Docker 23) attaches a provenance attestation
+to each image unless told not to, and that attestation records the build's
+own invocation. Under the containerd image store the image ID is the digest
+of a manifest list that includes it, so even a fully cached rebuild gets a new
+ID and compose recreates every container of the image. This variable turns
+the default attestations off; the legacy builder, which has no attestations,
+ignores it, where the ``--provenance`` flag would make it fail."""
+
+
 def build_command(root: Path, project: str, image: DockerImage, options: BuildOptions) -> str:
     """Render the one ``docker build`` command for *image*; pure, so a dry run can show it.
+
+    The command runs under ``_BUILD_ENV``, so a rebuild that changed
+    nothing keeps its image ID and a later ``up`` leaves its containers be.
 
     *root* is the parent's staging root
     (:func:`~otto.host.docker_host.parent_staging_root`). A directory context
@@ -147,7 +162,7 @@ def build_command(root: Path, project: str, image: DockerImage, options: BuildOp
         flags.append("--no-cache")
     if options.pull:
         flags.append("--pull")
-    return f"docker build {' '.join(flags)} {context_arg}"
+    return f"{_BUILD_ENV} docker build {' '.join(flags)} {context_arg}"
 
 
 _ID_FORMAT = "{{.Id}}"

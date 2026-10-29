@@ -89,12 +89,30 @@ def test_the_command_carries_dockers_flags_in_dockers_spelling(tmp_path):
 
     cmd = build_command(ROOT, "project1", img, options)
 
-    assert cmd.startswith("docker build ")
+    assert cmd.startswith("BUILDX_NO_DEFAULT_ATTESTATIONS=1 docker build ")
     assert " -t api:1.4 " in cmd
     assert " --no-cache" in cmd
     assert " --pull" in cmd
     assert " --target prod" in cmd
     assert cmd.endswith(f" {ROOT}/project1/build/api")
+
+
+def test_every_build_runs_without_buildx_default_attestations(tmp_path):
+    """A provenance attestation records the invocation, so under the containerd
+    image store every rebuild, cached or not, would get a new image ID and compose
+    would recreate its containers. The variable, not ``--provenance=false``: the
+    legacy builder rejects the flag and ignores the variable."""
+    archive = DockerImage(
+        name="api",
+        context=tmp_path / "api.tar",
+        dockerfile=tmp_path / "api.tar",
+        dockerfile_in_archive="Dockerfile",
+    )
+    for image in (_img(tmp_path), archive):
+        cmd = build_command(ROOT, "project1", image, BuildOptions())
+        assert cmd.startswith("BUILDX_NO_DEFAULT_ATTESTATIONS=1 docker build "), cmd
+        assert "--provenance" not in cmd
+        assert "--attest" not in cmd
 
 
 def test_a_flag_build_arg_wins_over_the_declared_one_and_is_passed_verbatim(tmp_path):
@@ -162,7 +180,7 @@ async def test_the_build_always_runs_and_asks_the_daemon_nothing_first(tmp_path)
 
     assert res.is_ok
     cmds = [c.args[0] for c in parent.exec.call_args_list]
-    builds = [c for c in cmds if c.startswith("docker build ")]
+    builds = [c for c in cmds if "docker build " in c]
     assert len(builds) == 1, cmds
     assert "-t api:latest" in builds[0]
     assert builds[0].count(" -t ") == 1, "one tag: the declared name at :latest, nothing invented"
@@ -183,7 +201,7 @@ async def test_build_failure_propagates(tmp_path):
     build_failure = _fail("syntax error in dockerfile", command="docker build ...")
 
     async def exec_side_effect(cmd, *_, **__):
-        if cmd.startswith("docker build "):
+        if "docker build " in cmd:
             return build_failure
         return _ok()
 
@@ -205,7 +223,7 @@ async def test_build_failure_propagates(tmp_path):
     # The failing result comes back WHOLE. `!= 0` would be vacuous: retcode
     # defaults to -1, so a rebuilt-and-summarized result would pass it.
     assert res.retcode == 1
-    assert res.command.startswith("docker build ")
+    assert "docker build " in res.command
 
 
 # ---------------------------------------------------------------------------
@@ -279,7 +297,7 @@ async def test_an_archive_is_uploaded_unopened_and_removed_after_a_failed_build(
     failure = _fail("no such file: docker/Dockerfile", command="docker build ...")
 
     async def exec_side_effect(cmd, *_, **__):
-        return failure if cmd.startswith("docker build ") else _ok(command=cmd)
+        return failure if "docker build " in cmd else _ok(command=cmd)
 
     parent.exec.side_effect = exec_side_effect
 
@@ -304,7 +322,7 @@ async def test_an_archive_is_removed_before_the_daemon_is_read_after_a_good_buil
     assert built.references == ["api:latest"]
     cmds = [c.args[0] for c in parent.exec.call_args_list]
     removed = cmds.index(f"rm -f {ROOT}/project1/build/api.ctx.tar.gz")
-    assert cmds[removed - 1].startswith("docker build ")
+    assert "docker build " in cmds[removed - 1]
     assert cmds[removed + 1].startswith("docker image inspect")
 
 
@@ -317,7 +335,7 @@ async def test_a_failed_archive_removal_does_not_replace_the_builds_outcome(tmp_
     async def exec_side_effect(cmd, *_, **__):
         if cmd.startswith("rm -f "):
             raise OSError("transport gone")
-        return failure if cmd.startswith("docker build ") else _ok(command=cmd)
+        return failure if "docker build " in cmd else _ok(command=cmd)
 
     parent.exec.side_effect = exec_side_effect
 
@@ -336,7 +354,7 @@ async def test_an_archive_removal_that_exits_non_zero_warns_and_keeps_the_builds
     async def exec_side_effect(cmd, *_, **__):
         if cmd.startswith("rm -f "):
             return _fail("rm: cannot remove: Permission denied", command=cmd)
-        return failure if cmd.startswith("docker build ") else _ok(command=cmd)
+        return failure if "docker build " in cmd else _ok(command=cmd)
 
     parent.exec.side_effect = exec_side_effect
 
