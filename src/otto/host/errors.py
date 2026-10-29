@@ -26,10 +26,15 @@ sequence is what repeats and the taxonomy is the caller's: ``otto.link`` names
 its own :class:`~otto.link.manage.LinkHostUnreachableError` /
 :class:`~otto.link.manage.LinkCommandFailedError` so an ``except`` around an
 impair can mean "link work failed" rather than "some host call failed", and it
-gets the same three checks by passing them in.
+gets the same three checks by passing them in. Its siblings share the same
+core: :func:`exec_or_unreachable` (the same run, a non-ok result returned),
+:func:`root_run_or_unreachable` (a privileged command sent as given,
+elevated unless the session already acts as root) and :func:`root_run`
+(that, a timeout returned).
 """
 
 import enum
+from collections.abc import Awaitable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -39,6 +44,7 @@ from typing_extensions import override
 from ..errors import OttoError
 from ..logger.mode import LogMode
 from ..result import CommandResult
+from .identity import is_root
 
 if TYPE_CHECKING:
     # Typing only, and deliberately so: `otto.host.userland` imports THIS
@@ -448,6 +454,53 @@ class CoverageToolMissingError(OttoError, RuntimeError):
     """
 
 
+async def _reached(
+    host: Any, cmd: str, call: "Awaitable[Any]", unreachable: type[OttoError]
+) -> Any:
+    """Await *call*, the run of *cmd* on *host*; a transport failure raises *unreachable*.
+
+    The first of the three checks, shared by every runner here: the
+    transport can fail before anything runs.
+    """
+    try:
+        return await call
+    except (OSError, ConnectionError) as e:
+        raise unreachable(f"host {host.id!r} unreachable running {cmd!r}: {e!r}") from e
+
+
+def _finished(
+    host: Any, cmd: str, result: CommandResult, timeout: float, unreachable: type[OttoError]
+) -> CommandResult:
+    """Return *result*, unless *cmd* hit *timeout* without completing: that raises *unreachable*."""
+    if result.timed_out:
+        raise unreachable(
+            f"host {host.id!r} unreachable running {cmd!r}: timed out after {timeout}s"
+        )
+    return result
+
+
+async def exec_or_unreachable(
+    host: Any,
+    cmd: str,
+    *,
+    timeout: float,
+    log: LogMode = LogMode.QUIET,
+    unreachable: type[OttoError] = HostUnreachableError,
+) -> CommandResult:
+    """Run one *cmd* on *host*; only a down host or a timed-out command raises.
+
+    A command that completes with a non-ok status is RETURNED: for a caller
+    whose failure is a verdict rather than the end of the run.
+    :func:`exec_or_raise` is this plus the non-ok check.
+
+    Raises:
+        HostUnreachableError: the transport raised, or the command hit
+            *timeout* without completing. (Or *unreachable*, if given.)
+    """
+    result = await _reached(host, cmd, host.exec(cmd, timeout=timeout, log=log), unreachable)
+    return _finished(host, cmd, result, timeout, unreachable)
+
+
 async def exec_or_raise(
     host: Any,
     cmd: str,
@@ -474,14 +527,68 @@ async def exec_or_raise(
         HostCommandError: the command completed with a non-ok status. (Or
             *failed*, if given.)
     """
-    try:
-        result = await host.exec(cmd, timeout=timeout, log=log)
-    except (OSError, ConnectionError) as e:
-        raise unreachable(f"host {host.id!r} unreachable running {cmd!r}: {e!r}") from e
-    if result.timed_out:
-        raise unreachable(
-            f"host {host.id!r} unreachable running {cmd!r}: timed out after {timeout}s"
-        )
+    result = await exec_or_unreachable(host, cmd, timeout=timeout, log=log, unreachable=unreachable)
     if not result.is_ok:
         raise failed(f"{cmd!r} failed on {host.id!r}: {result.msg or result.value}")
     return result
+
+
+async def root_run(
+    host: Any,
+    cmd: str,
+    *,
+    timeout: float,
+    log: LogMode = LogMode.QUIET,
+    unreachable: type[OttoError] = HostUnreachableError,
+    named: str | None = None,
+) -> CommandResult:
+    """Run privileged *cmd* on *host*'s shell, sudo'd unless the session already acts as root.
+
+    *cmd* is sent exactly as given: otto elevates the caller's command, never
+    a wrapper shell of its own, so a sudoers rule naming that command keeps
+    matching. A caller whose command is a compound script (a ``;`` list, a
+    pipe, a redirection) makes it one word itself first
+    (:func:`otto.check.fingerprint.one_command`). Elevated exactly when the
+    session user is not root (:func:`~otto.host.identity.is_root`).
+
+    *named* is the command an error names, when the caller wrapped its own
+    text into *cmd*; it defaults to *cmd*. A non-ok result and a timeout are
+    both RETURNED, for a probe that reads a timeout as its answer;
+    :func:`root_run_or_unreachable` raises on the timeout.
+
+    Raises:
+        HostUnreachableError: the transport raised. (Or *unreachable*, if given.)
+    """
+    elevate = not is_root(host.current_user)
+    results = await _reached(
+        host,
+        cmd if named is None else named,
+        host.run(cmd, sudo=elevate, timeout=timeout, log=log),
+        unreachable,
+    )
+    return results[0]
+
+
+async def root_run_or_unreachable(
+    host: Any,
+    cmd: str,
+    *,
+    timeout: float,
+    log: LogMode = LogMode.QUIET,
+    unreachable: type[OttoError] = HostUnreachableError,
+    named: str | None = None,
+) -> CommandResult:
+    """:func:`root_run`, where a command still running after *timeout* also raises.
+
+    A non-ok result is still returned: a rejected privileged command is a
+    verdict the caller judges, not a transport failure.
+
+    Raises:
+        HostUnreachableError: the transport raised, or the command hit
+            *timeout* without completing. (Or *unreachable*, if given.)
+    """
+    label = cmd if named is None else named
+    result = await root_run(
+        host, cmd, timeout=timeout, log=log, unreachable=unreachable, named=label
+    )
+    return _finished(host, label, result, timeout, unreachable)

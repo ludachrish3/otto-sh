@@ -1342,7 +1342,7 @@ _CATCHES_THE_REFUSAL = frozenset(
     {
         # `UnsupportedOnUserlandError` is `(OttoError, RuntimeError)`, so each of
         # these names a handler that would swallow it. `OSError` and
-        # `ConnectionError` deliberately do not appear: `otto.link`'s `_root_run`
+        # `ConnectionError` deliberately do not appear: `otto.host.errors.root_run`
         # catches exactly those, which is why it is already correct.
         "BaseException",
         "Exception",
@@ -1392,12 +1392,14 @@ def test_no_elevated_command_sits_inside_a_handler_that_swallows_the_refusal():
     **WHAT THIS DOES NOT SEE, so that it is not read as complete.** The sweep
     is intraprocedural and keys on the ``sudo=`` literal. A helper that holds
     the literal and is called from elsewhere hides its callers' handlers from
-    this query — ``otto.link.manage._root_run`` is exactly that shape, with 19
-    call sites none of which are examined here. Those were checked by hand
-    against this guard's own rule during review and none swallows the refusal;
-    ``_root_run`` itself catches only ``(OSError, ConnectionError)``, which is
-    why it does not appear below. Re-check by hand when a new indirection like
-    it appears, or teach this sweep to follow one hop.
+    this query — ``otto.host.errors.root_run`` is exactly that shape, reached
+    through ``otto.link.manage._root_run`` (19 call sites) and
+    ``otto.check.fingerprint.check_root_run``, none of which are examined
+    here. Those were checked by hand against this guard's own rule during
+    review and none swallows the refusal; ``root_run`` itself catches only
+    ``(OSError, ConnectionError)``, which is why it does not appear below.
+    Re-check by hand when a new indirection like it appears, or teach this
+    sweep to follow one hop.
     """
     from tests._fixtures.paths import CHECKOUT_ROOT
 
@@ -1453,7 +1455,7 @@ def test_no_elevated_command_sits_inside_a_handler_that_swallows_the_refusal():
                     elif not guarded:
                         offenders.append(f"{rel}:{site.lineno} (handler at line {handler.lineno})")
 
-    assert {"host/unix_host.py", "link/manage.py"} <= files_with_sites, (
+    assert {"host/unix_host.py", "host/errors.py"} <= files_with_sites, (
         f"the elevated-call-site query found sites only in {sorted(files_with_sites)} — "
         "it has rotted and would pass on anything"
     )

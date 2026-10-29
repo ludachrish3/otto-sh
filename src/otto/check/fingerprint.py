@@ -10,12 +10,18 @@ are different programs from their GNU namesakes.
 
 import re
 import shlex
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
-from ..host.errors import UnsupportedOnUserlandError, exec_or_raise
+from ..host.errors import (
+    UnsupportedOnUserlandError,
+    exec_or_raise,
+    exec_or_unreachable,
+    root_run,
+    root_run_or_unreachable,
+)
 from ..host.identity import is_root
-from ..logger.mode import LogMode
 from ..result import CommandResult
 from .errors import CheckCommandFailedError, CheckHostUnreachableError
 
@@ -100,37 +106,37 @@ async def check_read(host: Any, cmd: str) -> CommandResult:
 
     For the reads inside a check whose failure is a row's verdict rather
     than the end of the run. Only a down host or a timed-out command raises
-    :class:`~otto.check.errors.CheckHostUnreachableError`, host-named.
+    :class:`~otto.check.errors.CheckHostUnreachableError`, host-named
+    (:func:`~otto.host.errors.exec_or_unreachable`).
     """
-    try:
-        result = await host.exec(cmd, timeout=CHECK_HOST_TIMEOUT, log=LogMode.QUIET)
-    except (OSError, ConnectionError) as e:
-        raise CheckHostUnreachableError(
-            f"host {host.id!r} unreachable running {cmd!r}: {e!r}"
-        ) from e
-    if result.timed_out:
-        raise CheckHostUnreachableError(
-            f"host {host.id!r} unreachable running {cmd!r}: timed out after {CHECK_HOST_TIMEOUT}s"
-        )
-    return result
+    return await exec_or_unreachable(
+        host, cmd, timeout=CHECK_HOST_TIMEOUT, unreachable=CheckHostUnreachableError
+    )
+
+
+async def _wrapped(
+    runner: Callable[..., Awaitable[CommandResult]], host: Any, cmd: str, timeout: float
+) -> CommandResult:
+    """Run privileged *cmd* with *runner* as :func:`one_command`, an error naming *cmd* itself.
+
+    The one spelling of how a check hands its compound probes to the host
+    layer's root runners (:func:`~otto.host.errors.root_run` and
+    :func:`~otto.host.errors.root_run_or_unreachable`).
+    """
+    return await runner(
+        host, one_command(cmd), timeout=timeout, unreachable=CheckHostUnreachableError, named=cmd
+    )
 
 
 async def _elevated(host: Any, cmd: str, timeout: float) -> CommandResult:
-    """Run *cmd* as :func:`one_command`, sudo'd unless already root; a timeout is returned.
+    """Run privileged *cmd* on *host* as :func:`one_command`; a timeout is returned.
+
+    :func:`~otto.host.errors.root_run`, as :func:`check_root_run` uses it.
 
     Only a transport failure raises
     :class:`~otto.check.errors.CheckHostUnreachableError`, host-named.
     """
-    need_sudo = not is_root(host.current_user)
-    try:
-        results = await host.run(
-            one_command(cmd), sudo=need_sudo, timeout=timeout, log=LogMode.QUIET
-        )
-    except (OSError, ConnectionError) as e:
-        raise CheckHostUnreachableError(
-            f"host {host.id!r} unreachable running {cmd!r}: {e!r}"
-        ) from e
-    return results[0]
+    return await _wrapped(root_run, host, cmd, timeout)
 
 
 async def check_root_run(
@@ -138,20 +144,17 @@ async def check_root_run(
 ) -> CommandResult:
     """Run a privileged *cmd* on *host*, sudo'd unless already root.
 
-    *cmd* always runs as :func:`one_command` — sudo'd or not, so the root and
-    the sudo paths run exactly the same shell text.
+    :func:`~otto.host.errors.root_run_or_unreachable` with *cmd* as
+    :func:`one_command` — a check's privileged commands are compound scripts,
+    and wrapped sudo'd or not, so the root and the sudo paths run exactly the
+    same shell text. An error still names *cmd* itself.
 
     Unlike :func:`~otto.check.check_exec`, this NEVER raises on a non-ok result: a
     rejected ``tc`` command is a verdict the caller judges, not a transport
     failure. Only a down host or a command still running after *timeout*
     raises :class:`~otto.check.errors.CheckHostUnreachableError`, host-named.
     """
-    result = await _elevated(host, cmd, timeout)
-    if result.timed_out:
-        raise CheckHostUnreachableError(
-            f"host {host.id!r} unreachable running {cmd!r}: timed out after {timeout}s"
-        )
-    return result
+    return await _wrapped(root_run_or_unreachable, host, cmd, timeout)
 
 
 def _netem_probe(sys_root: str = "/sys", lib_root: str = "/lib") -> str:

@@ -99,7 +99,7 @@ path = "otto.check"
 layer = "topology"
 # Shared by otto.link and otto.tunnel, so it may import NEITHER (they stay
 # decoupled; see the otto.link entry). Host probing only.
-depends_on = ["otto.host", "otto.logger", "otto.version", "otto.errors", "otto.result"]
+depends_on = ["otto.host", "otto.version", "otto.errors", "otto.result"]
 
 [[modules]]
 path = "otto.cli"
@@ -677,7 +677,7 @@ layer = "topology"
 # impairer, each a foundation module of its own (below). No otto.registry:
 # the registry went to otto.link.impairer with IMPAIRERS.
 # otto.utils: _check_rows.py waits for the echo listeners through wait_for_async.
-depends_on = ["otto.lifecycle", "otto.logger", "otto.models", "otto.host", "otto.errors", "otto.check", "otto.result", "otto.utils", "otto.link.impairer", "otto.link.netem", "otto.link.params"]
+depends_on = ["otto.lifecycle", "otto.models", "otto.host", "otto.errors", "otto.check", "otto.result", "otto.utils", "otto.link.impairer", "otto.link.netem", "otto.link.params"]
 
 # The impairment vocabulary and the impairer registry, carved out of otto.link
 # into the foundation layer (spec 2026-10-11 placement-and-phases §3.3), so the

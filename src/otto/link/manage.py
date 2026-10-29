@@ -27,10 +27,8 @@ from typing import TYPE_CHECKING, Any
 from ..errors import OttoError
 from ..host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
 from ..host.daemon import kill_command, launch_command, refuse_if_launch_wrapper_needs_bash
-from ..host.errors import exec_or_raise
+from ..host.errors import exec_or_raise, root_run_or_unreachable
 from ..host.host import is_dry_run
-from ..host.identity import is_root
-from ..logger.mode import LogMode
 from ..result import CommandResult
 from .impairer import build_impairer
 from .model import Link
@@ -452,30 +450,24 @@ async def _exec(host: Any, cmd: str) -> Any:
 async def _root_run(host: Any, cmd: str) -> Any:
     """Run a mutating *cmd* on *host*, sudo'd unless already root.
 
-    *cmd* must be ONE simple command: elevation is a prefix, so a ``;`` list,
-    a pipe or a redirection would split around it (see
-    :func:`otto.check.fingerprint.one_command`, which the check's own
-    privileged commands go through).
+    *cmd* must be ONE simple command: it is sent exactly as given, and
+    elevation is a prefix, so a ``;`` list, a pipe or a redirection would
+    split around it (see :func:`otto.check.fingerprint.one_command`, which
+    the check's own compound probes go through). Every command here is one
+    -- the impairer's ``tc`` lines, ``kill_command``, and
+    ``launch_command``'s single ``bash -c`` word -- so a sudoers rule naming
+    ``tc`` keeps matching. The elevate-unless-root decision and the error
+    mapping are :func:`~otto.host.errors.root_run_or_unreachable`'s, the
+    core :func:`otto.check.fingerprint.check_root_run` shares.
 
     A non-ok result is deliberately NOT raised here — a command that reaches the
     host but reports failure is caught by the caller's own re-read
     (:func:`impair_link`'s post-apply verify, :func:`repair_link`'s post-clear
     re-read), never silently swallowed here.
     """
-    need_sudo = not is_root(host.current_user)
-    try:
-        results = await host.run(
-            cmd, sudo=need_sudo, timeout=_IMPAIR_HOST_TIMEOUT, log=LogMode.QUIET
-        )
-    except (OSError, ConnectionError) as e:
-        raise LinkHostUnreachableError(
-            f"host {host.id!r} unreachable running {cmd!r}: {e!r}"
-        ) from e
-    if results[0].timed_out:
-        raise LinkHostUnreachableError(
-            f"host {host.id!r} unreachable running {cmd!r}: timed out after {_IMPAIR_HOST_TIMEOUT}s"
-        )
-    return results[0]
+    return await root_run_or_unreachable(
+        host, cmd, timeout=_IMPAIR_HOST_TIMEOUT, unreachable=LinkHostUnreachableError
+    )
 
 
 def lab_host(lab: Any, host_id: str) -> Any:
