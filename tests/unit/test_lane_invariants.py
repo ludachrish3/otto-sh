@@ -79,6 +79,7 @@ from pathlib import Path
 import pytest
 from _pytest.mark.expression import Expression
 
+from scripts.gate_stamp_common import test_roots as pyproject_testpaths
 from tests._fixtures.paths import CHECKOUT_ROOT
 from tests.unit.test_tier_marker_invariants import (
     _expand_makefile_variables,
@@ -754,6 +755,16 @@ _COLLECT_ARGS = ("--collect-only", "-q", "--no-cov", "-p", "no:cacheprovider", "
 # exists so a wedged child is killed instead of inherited by the session.
 _COLLECT_TIMEOUT_S = 900
 
+# The budget of every test that takes `collect_marker_sets`. The fixture
+# collects lazily, so its child runs inside the first such test's call
+# phase, where `timeout_func_only` does not exclude it, and the pyproject
+# default of 180 s is shorter than a collection of testpaths on a loaded
+# nightly worker (#753). Derived from the child's own guard, so a wedged
+# testpaths child is killed by that guard (with its output) before the test
+# times out; a test that also spawns a fallback or dedicated child can run
+# two, and then the test's own budget is the one that fires.
+LANE_LEG_TIMEOUT_S = _COLLECT_TIMEOUT_S + 60
+
 
 @dataclasses.dataclass(frozen=True)
 class _Leg:
@@ -866,6 +877,11 @@ class _Item:
     nodeid: str
     markers: "frozenset[str]"
 
+    @property
+    def path(self) -> str:
+        """The file the item was collected from, relative to the checkout root."""
+        return self.nodeid.split("::", 1)[0]
+
 
 def _collect_marker_sets(plugin_dir: Path, roots: "tuple[str, ...]") -> "list[_Item]":
     """Collect *roots* for real in a child pytest, and return each item's node id and markers.
@@ -920,25 +936,154 @@ def _collect_marker_sets(plugin_dir: Path, roots: "tuple[str, ...]") -> "list[_I
     return items
 
 
-@pytest.fixture(scope="session")
-def collect_marker_sets(tmp_path_factory: pytest.TempPathFactory):
-    """Memoised real collection, keyed by path set.
+def _marker_set_collector(collect_child, reached: "tuple[str, ...]"):
+    """A memoised ``collect(roots)`` that pays for ONE child collection of testpaths.
 
-    Session-scoped and memoised because a collection costs seconds and the
-    legs share only a handful of distinct path sets; the tests that use it
-    share one ``xdist_group`` so a distributed run pays for one worker's
-    collections, not several workers' duplicates.
+    Every lane root lies under testpaths (*reached*), so the items under
+    *roots* are filtered out of that one collection (:func:`_within`) instead
+    of being re-collected: one child per root set re-imported and re-collected
+    `tests/unit` five times, which cost more than the default per-test
+    timeout on a slower host (#753). The filter answers what a dedicated
+    child would only because every conftest that edits markers at collection
+    (`tests/e2e`, `tests/busybox`, `tests/conformance`, `tests/integration`
+    and its `host` and `busybox_bed` subtrees) bounds itself to its own tree
+    by path. The host conftest's grouping hook once also marked hostless
+    `tests/unit` rows, so a full-tree run and a `tests/unit` run disagreed on
+    7 items. :func:`test_the_filtered_collection_is_what_a_dedicated_child_collects`
+    re-checks the agreement on `tests/unit`.
+
+    A root set the filter cannot answer is collected by a child of its own,
+    whole: one with a root outside *reached* (`tests/_fixtures`, or `tests`,
+    which reaches the fixture projects testpaths leaves out), or a root with
+    no item under it (a file pytest only collects when it is named).
     """
-    plugin_dir = tmp_path_factory.mktemp("lane_leg_collect")
-    (plugin_dir / f"{_DUMP_PLUGIN_MODULE}.py").write_text(_MARKER_DUMP_PLUGIN, encoding="utf-8")
     collected: "dict[tuple[str, ...], list[_Item]]" = {}
 
     def collect(roots: "tuple[str, ...]") -> "list[_Item]":
+        if () not in collected:
+            collected[()] = collect_child(())
         if roots not in collected:
-            collected[roots] = _collect_marker_sets(plugin_dir, roots)
+            within = [item for item in collected[()] if _within(item.path, roots)]
+            answerable = all(
+                any(_within(root, (path,)) for path in reached)
+                and any(_within(item.path, (root,)) for item in within)
+                for root in roots
+            )
+            collected[roots] = within if answerable else collect_child(roots)
         return collected[roots]
 
     return collect
+
+
+def _write_marker_dump_plugin(plugin_dir: Path) -> None:
+    """Write the plugin a collection child loads to dump each item's markers."""
+    (plugin_dir / f"{_DUMP_PLUGIN_MODULE}.py").write_text(_MARKER_DUMP_PLUGIN, encoding="utf-8")
+
+
+@pytest.fixture(scope="session")
+def collect_marker_sets(tmp_path_factory: pytest.TempPathFactory):
+    """Memoised real collection, keyed by path set (:func:`_marker_set_collector`).
+
+    The collection runs lazily, inside the first test that asks, so it counts
+    against that test's timeout: every consumer carries
+    ``@pytest.mark.timeout(LANE_LEG_TIMEOUT_S)``. The consumers share one
+    ``xdist_group`` so a distributed run pays for one worker's collection,
+    not several workers' duplicates.
+    """
+    plugin_dir = tmp_path_factory.mktemp("lane_leg_collect")
+    _write_marker_dump_plugin(plugin_dir)
+    return _marker_set_collector(
+        lambda roots: _collect_marker_sets(plugin_dir, roots), tuple(pyproject_testpaths(_REPO))
+    )
+
+
+def test_every_lane_root_is_answered_by_one_child_collection() -> None:
+    """The memo spawns ONE child for every root set the legs name (#753), answers
+    each with exactly the items under it, and collects a set for real when a root
+    lies outside testpaths or holds nothing the one collection saw."""
+    children: "list[tuple[str, ...]]" = []
+    roots = {leg.roots for leg in lane_legs() if not _is_parametric(leg)}
+    assert len(roots) > 1, "the legs must name several root sets, or this pins nothing"
+    paths = {path for root in roots for path in root}
+    reached = ("tests/unit", "tests/integration", "tests/e2e", "tests/elsewhere")
+    sentinels = ("tests/elsewhere", "tests/_fixtures", "tests/unit/test_named_only.py")
+    assert not paths & set(sentinels), "a lane names a sentinel root; pick another one"
+    assert all(any(_within(p, (r,)) for r in reached) for p in paths), "a lane root moved"
+    everything = [
+        _Item(f"{p}::t" if p.endswith(".py") else f"{p}/test_x.py::t", frozenset())
+        for p in sorted(paths | {"tests/elsewhere"})
+    ]
+
+    def child(asked: "tuple[str, ...]") -> "list[_Item]":
+        children.append(asked)
+        return everything if not asked else [_Item(f"{asked[0]}::own", frozenset())]
+
+    collect = _marker_set_collector(child, reached)
+    for root in sorted(roots - {()}):
+        expected = [item for item in everything if _within(item.path, root)]
+        assert expected, f"the fake tree must hold items under {root}"
+        assert collect(root) == expected, root
+    assert collect(()) == everything
+    # One answer spelled out rather than derived, so `_within` is not judging itself.
+    file_roots = next(root for root in roots if "tests/unit/host/test_unix_host.py" in root)
+    assert "tests/unit/host/test_unix_host.py::t" in {item.nodeid for item in collect(file_roots)}
+    assert "tests/unit/test_x.py::t" not in {item.nodeid for item in collect(file_roots)}
+    assert children == [()]
+
+    for unanswerable in (
+        ("tests/elsewhere", "tests/_fixtures"),  # a root outside testpaths
+        ("tests",),  # a root wider than testpaths
+        ("tests/elsewhere", "tests/unit/test_named_only.py"),  # a root nothing reached
+    ):
+        assert collect(unanswerable) == [_Item(f"{unanswerable[0]}::own", frozenset())]
+        assert children[-1] == unanswerable, "the whole set is collected for real"
+    assert len(children) == 4
+
+
+@pytest.mark.timeout(LANE_LEG_TIMEOUT_S)
+@pytest.mark.xdist_group("lane_leg_membership")
+def test_the_filtered_collection_is_what_a_dedicated_child_collects(
+    collect_marker_sets, tmp_path: Path
+) -> None:
+    """The filter is only as true as the conftests' path bounds: a hook that marks
+    items outside its own tree changes what a full-tree run sees, not what a
+    `tests/unit` lane sees. One dedicated child for the largest lane root re-checks
+    that both answers agree, item for item and marker for marker (#753)."""
+    _write_marker_dump_plugin(tmp_path)
+    dedicated = _collect_marker_sets(tmp_path, ("tests/unit",))
+    filtered = collect_marker_sets(("tests/unit",))
+    assert dedicated, "the dedicated child collected nothing, so this compares nothing"
+    differing = sorted(set(dedicated) ^ set(filtered), key=lambda item: item.nodeid)
+    assert differing == [], (
+        f"{len(differing)} item(s) differ between a `tests/unit` collection and the "
+        "full-tree one; a conftest hook is marking items outside its own tree:\n  "
+        + "\n  ".join(f"{item.nodeid} {sorted(item.markers)}" for item in differing[:20])
+    )
+
+
+def test_every_collection_consumer_carries_the_lane_leg_budget() -> None:
+    """A test that takes `collect_marker_sets` may be the one that pays for the
+    collection, so each carries `LANE_LEG_TIMEOUT_S`, never the 180 s default (#753)."""
+    expected = "pytest.mark.timeout(LANE_LEG_TIMEOUT_S)"
+    consumers: "list[str]" = []
+    offenders: "list[str]" = []
+    for path in sorted((_REPO / "tests").rglob("test_*.py")):
+        text = path.read_text(encoding="utf-8")
+        if "collect_marker_sets" not in text:
+            continue
+        for node in ast.walk(ast.parse(text)):
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            if not node.name.startswith("test_"):
+                continue
+            if "collect_marker_sets" not in {arg.arg for arg in node.args.args}:
+                continue
+            name = f"{path.relative_to(_REPO)}::{node.name}"
+            consumers.append(name)
+            if expected not in {ast.unparse(dec) for dec in node.decorator_list}:
+                offenders.append(name)
+    assert len(consumers) > 1, "the scan must find the consumers, or this pins nothing"
+    assert offenders == [], f"missing `@{expected}`:\n  " + "\n  ".join(offenders)
 
 
 def _lane_leg_offenders(legs: "list[_Leg]", collect) -> "list[str]":
@@ -974,6 +1119,7 @@ def _lane_leg_offenders(legs: "list[_Leg]", collect) -> "list[str]":
     return offenders
 
 
+@pytest.mark.timeout(LANE_LEG_TIMEOUT_S)
 @pytest.mark.xdist_group("lane_leg_membership")
 def test_every_lane_leg_selects_at_least_one_test(collect_marker_sets) -> None:
     """An empty lane leg is a red suite, not a quiet one — issue #229.
@@ -1038,6 +1184,7 @@ def test_every_lane_leg_selects_at_least_one_test(collect_marker_sets) -> None:
     )
 
 
+@pytest.mark.timeout(LANE_LEG_TIMEOUT_S)
 @pytest.mark.xdist_group("lane_leg_membership")
 def test_the_lane_leg_gate_reddens_on_the_issue_229_leg(collect_marker_sets) -> None:
     """Positive control: the incident itself, replayed against today's tree.
@@ -1118,6 +1265,7 @@ def test_an_unexpanded_variable_where_a_path_goes_is_refused() -> None:
     ], "a shell command after the pytest argv is not one of its roots"
 
 
+@pytest.mark.timeout(LANE_LEG_TIMEOUT_S)
 @pytest.mark.xdist_group("lane_leg_membership")
 def test_a_fixed_lane_with_an_empty_root_still_fails_the_pin(collect_marker_sets) -> None:
     """Only the parametric legs are exempt from the nonempty pin: a fixed lane over a root
@@ -1177,6 +1325,7 @@ def _count_leg_offenders(legs: "list[_Leg]", collect) -> "list[str]":
     return offenders
 
 
+@pytest.mark.timeout(LANE_LEG_TIMEOUT_S)
 @pytest.mark.xdist_group("lane_leg_membership")
 def test_every_count_leg_names_the_files_holding_its_selection(collect_marker_sets) -> None:
     """A `--count` soak names its paths, and a file list misses no marked test — issue #429.
@@ -1197,6 +1346,7 @@ def test_every_count_leg_names_the_files_holding_its_selection(collect_marker_se
     )
 
 
+@pytest.mark.timeout(LANE_LEG_TIMEOUT_S)
 @pytest.mark.xdist_group("lane_leg_membership")
 def test_the_count_leg_gate_reddens_on_both_rules(collect_marker_sets) -> None:
     """Positive control: the issue #429 leg itself, a file list short one file, and a pass.
@@ -1890,9 +2040,10 @@ def _release_census_gaps(rows: "tuple[_Leg, ...]", collect) -> "list[str]":
     compiled = [(row, Expression.compile(row.expr)) for row in rows]
     gaps: "list[str]" = []
     for item in collect(()):
-        path = item.nodeid.split("::", 1)[0]
         matcher = _marker_matcher(item.markers)
-        if not any(_within(path, row.roots) and expr.evaluate(matcher) for row, expr in compiled):
+        if not any(
+            _within(item.path, row.roots) and expr.evaluate(matcher) for row, expr in compiled
+        ):
             gaps.append(item.nodeid)
     return gaps
 
@@ -2112,6 +2263,7 @@ def test_a_reached_leg_selects_by_roots_and_marker_only() -> None:
     )
 
 
+@pytest.mark.timeout(LANE_LEG_TIMEOUT_S)
 @pytest.mark.xdist_group("lane_leg_membership")
 def test_every_collected_test_is_selected_by_a_release_stage(collect_marker_sets) -> None:
     """The census.
@@ -2130,6 +2282,7 @@ def test_every_collected_test_is_selected_by_a_release_stage(collect_marker_sets
     )
 
 
+@pytest.mark.timeout(LANE_LEG_TIMEOUT_S)
 @pytest.mark.xdist_group("lane_leg_membership")
 def test_the_exemptions_are_live_and_not_in_the_release(collect_marker_sets) -> None:
     """Each exempt row covers tests the release rows do not, and no release stage reaches it.
@@ -2151,6 +2304,7 @@ def test_the_exemptions_are_live_and_not_in_the_release(collect_marker_sets) -> 
     assert not stale, f"exempt rows `make release` reaches anyway: {stale}"
 
 
+@pytest.mark.timeout(LANE_LEG_TIMEOUT_S)
 @pytest.mark.xdist_group("lane_leg_membership")
 def test_the_exempt_rows_are_exactly_the_chaos_targets_legs(collect_marker_sets) -> None:
     """The exemption is spelled from the real lanes, and it covers the whole chaos tree.
@@ -2178,6 +2332,7 @@ def test_the_exempt_rows_are_exactly_the_chaos_targets_legs(collect_marker_sets)
     assert covered == chaos_items, sorted(covered ^ chaos_items)[:10]
 
 
+@pytest.mark.timeout(LANE_LEG_TIMEOUT_S)
 @pytest.mark.xdist_group("lane_leg_membership")
 def test_the_release_census_reddens_on_a_dropped_lane(collect_marker_sets) -> None:
     """Positive control: without the tunnel soak's row its tests are gaps; with every row, none."""
@@ -2191,6 +2346,7 @@ def test_the_release_census_reddens_on_a_dropped_lane(collect_marker_sets) -> No
     assert _release_census_gaps(every_row, collect_marker_sets) == []
 
 
+@pytest.mark.timeout(LANE_LEG_TIMEOUT_S)
 @pytest.mark.xdist_group("lane_leg_membership")
 def test_the_family_runs_on_the_primary_interpreter_only_in_the_release_rows(
     collect_marker_sets,

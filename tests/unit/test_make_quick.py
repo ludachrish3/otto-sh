@@ -14,7 +14,10 @@ from pathlib import Path
 import pytest
 
 from tests._fixtures.paths import CHECKOUT_ROOT
-from tests.unit.test_lane_invariants import collect_marker_sets  # noqa: F401 - fixture
+from tests.unit.test_lane_invariants import (
+    LANE_LEG_TIMEOUT_S,
+    collect_marker_sets,  # noqa: F401 - fixture
+)
 from tests.unit.test_make_release_lanes import _phony_targets, _rule
 
 pytestmark = pytest.mark.interpreter_agnostic
@@ -224,6 +227,7 @@ def test_a_failure_that_is_not_exit_5_aborts_the_lane(tmp_path: Path):
     assert "serial_timing twin" not in failed.stdout, "make must stop at the first red leg"
 
 
+@pytest.mark.timeout(LANE_LEG_TIMEOUT_S)
 @pytest.mark.xdist_group("lane_leg_membership")
 def test_the_family_has_no_serial_timing_member(collect_marker_sets) -> None:  # noqa: F811
     """`quick-guards` is one parallel leg: a serial_timing guard would error in a worker."""

@@ -20,6 +20,7 @@ from tests._fixtures.paths import CHECKOUT_ROOT
 from tests.unit import test_lane_invariants as _lane_invariants
 from tests.unit.test_lane_invariants import (
     _PATHS_TOKEN,
+    LANE_LEG_TIMEOUT_S,
     _Leg,
     _legs_including_markerless,
     _marker_matcher,
@@ -1488,7 +1489,7 @@ def _uncovered(path: str, lines: "list[str]", collect, makefile: str) -> "list[s
     compiled = [(leg, Expression.compile(leg.expr)) for leg in _oracle_legs(lines, makefile)]
     gaps = []
     for item in collect(()):
-        item_path = item.nodeid.split("::", 1)[0]
+        item_path = item.path
         if item_path != path:
             continue
         matcher = _marker_matcher(item.markers)
@@ -1499,7 +1500,7 @@ def _uncovered(path: str, lines: "list[str]", collect, makefile: str) -> "list[s
     return gaps
 
 
-@pytest.mark.timeout(600)
+@pytest.mark.timeout(LANE_LEG_TIMEOUT_S)
 @pytest.mark.xdist_group("lane_leg_membership")
 def test_every_collected_item_is_selected_by_the_oracles_commit_lanes(collect_marker_sets):
     """THE CENSUS. For every tracked test module changed alone, the commit column's
@@ -1520,6 +1521,7 @@ def test_every_collected_item_is_selected_by_the_oracles_commit_lanes(collect_ma
     assert gaps == [], f"{len(gaps)} item(s) no emitted lane selects:\n  " + "\n  ".join(gaps[:60])
 
 
+@pytest.mark.timeout(LANE_LEG_TIMEOUT_S)
 @pytest.mark.xdist_group("lane_leg_membership")
 def test_the_census_reddens_when_a_lane_row_is_removed(collect_marker_sets, monkeypatch):
     """Negative control through the SAME checker: without the busybox row (the tree row AND the
@@ -1543,6 +1545,7 @@ def test_the_census_reddens_when_a_lane_row_is_removed(collect_marker_sets, monk
     assert gaps, "the control removed the row but the census saw no gap — it proves nothing"
 
 
+@pytest.mark.timeout(LANE_LEG_TIMEOUT_S)
 @pytest.mark.xdist_group("lane_leg_membership")
 def test_the_busybox_tree_row_and_the_mark_route_are_redundant_on_purpose(
     collect_marker_sets, monkeypatch
@@ -1562,6 +1565,7 @@ def test_the_busybox_tree_row_and_the_mark_route_are_redundant_on_purpose(
     assert _uncovered(path, lines, collect_marker_sets, makefile) == []
 
 
+@pytest.mark.timeout(LANE_LEG_TIMEOUT_S)
 @pytest.mark.xdist_group("lane_leg_membership")
 def test_the_census_reddens_when_a_full_column_hides_a_lane(collect_marker_sets, monkeypatch):
     """Second control: without the chaos row a chaos module is a stray mark → the FULL
@@ -1596,6 +1600,7 @@ _QUICK_CONTROL = "tests/unit/cli/test_cache_cli.py"
 _PARALLEL_SELECTOR = '-m "$(M_QUICK) and not serial_timing" --no-cov'
 
 
+@pytest.mark.timeout(LANE_LEG_TIMEOUT_S)
 @pytest.mark.xdist_group("lane_leg_membership")
 def test_the_census_reads_quicks_recipe_not_a_copy_of_it(collect_marker_sets):
     """Negative controls through the SAME checker: quick's legs come from its recipe, so an
