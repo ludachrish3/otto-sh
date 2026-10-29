@@ -8,7 +8,9 @@ merge them.
 """
 
 import dataclasses
+import functools
 import inspect
+import re
 from typing import (
     TYPE_CHECKING,
     Annotated,
@@ -109,11 +111,30 @@ def _field_default(f: "dataclasses.Field[Any]") -> Any:
     return default
 
 
-def _is_secret(value: object) -> bool:
-    """Whether *value* is a pydantic secret, whose ``str()`` is a mask, not the value."""
+@functools.cache
+def _secret_types() -> "tuple[type, ...]":
+    """Return the pydantic secret types: a value of one ``str()``s as a mask, not the value.
+
+    A function, not a module constant, so ``pydantic`` stays a call-time
+    import (see :func:`sensitive_field_names`). Both questions read it:
+    whether a VALUE is a secret (:func:`_is_secret`) and whether a TYPE
+    holds one (:func:`contains_secret_type`).
+    """
     import pydantic
 
-    return isinstance(value, (pydantic.SecretStr, pydantic.SecretBytes, pydantic.Secret))
+    return (pydantic.SecretStr, pydantic.SecretBytes, pydantic.Secret)
+
+
+@functools.cache
+def _secret_type_name() -> "re.Pattern[str]":
+    """Return a pattern matching a secret type's name as a whole word in annotation text."""
+    names = "|".join(t.__name__ for t in _secret_types())
+    return re.compile(rf"\b(?:{names})\b")
+
+
+def _is_secret(value: object) -> bool:
+    """Whether *value* is a pydantic secret, whose ``str()`` is a mask, not the value."""
+    return isinstance(value, _secret_types())
 
 
 def drop_unset_secrets(opts_cls: type, kwargs: dict[str, Any]) -> dict[str, Any]:
@@ -134,7 +155,10 @@ def drop_unset_secrets(opts_cls: type, kwargs: dict[str, Any]) -> dict[str, Any]
 
 
 def contains_secret_type(tp: Any) -> bool:
-    """Return whether *tp* IS, or recursively CONTAINS, ``pydantic.SecretStr``/``SecretBytes``.
+    """Return whether *tp* IS, or recursively CONTAINS, a pydantic secret type.
+
+    The secret types are ``SecretStr``, ``SecretBytes`` and ``Secret`` (a
+    subscripted ``Secret[str]`` counts by its origin).
 
     Walks ``typing.get_args`` through every wrapper a field's bare type hint
     can carry -- ``Union``/``X | None``/``Optional[X]`` (a nested-``Union``
@@ -154,48 +178,89 @@ def contains_secret_type(tp: Any) -> bool:
     its own args.
 
     A reference left unresolved (a string, or a ``ForwardRef`` from
-    ``_field_types``' fallback) is judged by its text: one naming
-    ``SecretStr`` or ``SecretBytes`` counts, so an annotation that cannot be
-    evaluated never hides a secret field.
+    ``_field_types``' fallback) is judged by its text: one naming a secret
+    type as a whole word counts (``pydantic.SecretStr``,
+    ``Optional[SecretStr]`` and ``Secret[str]`` do, ``NotSecretStr`` does
+    not), so an annotation that cannot be evaluated never hides a secret
+    field. The limit is the text itself: an alias imported only for type
+    checking (``Password = SecretStr`` under ``TYPE_CHECKING``, annotated
+    ``"Password | None"``) does not name the type and is not seen; give such
+    a field ``repr=False``. A runtime alias is evaluated and seen.
     """
-    import pydantic
-
+    secret_types = _secret_types()
     if isinstance(tp, (str, ForwardRef)):
         text = tp if isinstance(tp, str) else tp.__forward_arg__
-        return "SecretStr" in text or "SecretBytes" in text
-    if get_origin(tp) is not None:
+        return _secret_type_name().search(text) is not None
+    origin = get_origin(tp)
+    if origin is not None:
+        if isinstance(origin, type) and issubclass(origin, secret_types):
+            return True
         return any(contains_secret_type(arg) for arg in get_args(tp))
     if isinstance(tp, type):
-        return issubclass(tp, (pydantic.SecretStr, pydantic.SecretBytes))
+        return issubclass(tp, secret_types)
     return False
 
 
 def _field_types(cls: type) -> "dict[str, Any]":
     """Return the bare type of each annotated field of dataclass *cls*, base classes included.
 
-    :func:`typing.get_type_hints`, unless an annotation names something only
-    imported for type checking (``Callable[["SSHClientConnection"], ...]``).
-    Python 3.14 evaluates such a name inside a ``collections.abc`` generic,
-    where 3.10 to 3.13 leave the string alone, so ``get_type_hints`` raises
-    ``NameError`` there. Python 3.14 then reads the annotations with
-    :mod:`annotationlib`'s ``FORWARDREF`` format instead: every name it
-    cannot resolve stays a ``ForwardRef``, which :func:`contains_secret_type`
-    judges by its text.
+    :func:`typing.get_type_hints`, unless an annotation cannot be evaluated:
+    one naming something imported only for type checking
+    (``output_dir: "Path | None"`` with ``Path`` under ``TYPE_CHECKING``, or
+    ``Callable[["SSHClientConnection"], ...]``) raises ``NameError`` on every
+    Python, ``"os.Nope"`` raises ``AttributeError``, and an invalid
+    subscription ``TypeError``. ``get_type_hints`` is all or nothing, so the
+    fallback goes field by field: it reads each class's own annotations over
+    the MRO -- Python 3.14's :mod:`annotationlib` ``FORWARDREF`` format,
+    below 3.14 :func:`inspect.get_annotations`' raw values -- and evaluates
+    each string one at a time, the way ``get_type_hints`` would
+    (:func:`_evaluated`). Only an annotation that itself fails stays a string
+    or a ``ForwardRef``, which :func:`contains_secret_type` judges by its
+    text; an unresolvable sibling never demotes a resolvable field to text.
+    An evaluated ``Annotated[X, ...]`` is stripped to ``X``.
     """
-    import sys
-
     try:
         return get_type_hints(cls, include_extras=False)
-    except NameError:
-        if sys.version_info < (3, 14):
-            raise
-    import annotationlib
-
+    except (NameError, AttributeError, TypeError):
+        pass
     hints: dict[str, Any] = {}
     for klass in reversed(cls.__mro__):
-        found = annotationlib.get_annotations(klass, format=annotationlib.Format.FORWARDREF)
-        hints.update({name: _strip_annotated(tp) for name, tp in found.items()})
+        found = _unevaluated_annotations(klass)
+        hints.update({name: _strip_annotated(_evaluated(tp, klass)) for name, tp in found.items()})
     return hints
+
+
+def _evaluated(tp: Any, klass: type) -> Any:
+    """Return string annotation *tp* of *klass* evaluated, or the string when it cannot be.
+
+    The same evaluation :func:`typing.get_type_hints` gives one annotation:
+    the text in the defining module's globals, with the class namespace as
+    locals. Anything else (an evaluated type, a ``ForwardRef`` 3.14 already
+    failed to resolve) is returned as it is.
+
+    The defining module is found with :func:`inspect.getmodule`, never
+    imported: a class whose module is gone (or was never a real module)
+    evaluates against no globals.
+    """
+    if not isinstance(tp, str):
+        return tp
+    module = inspect.getmodule(klass)
+    globalns = dict(vars(module)) if module is not None else {}
+    try:
+        return eval(tp, globalns, dict(vars(klass)))  # noqa: S307 -- get_type_hints evaluates this same text
+    except Exception:  # noqa: BLE001 -- any failure leaves the text for contains_secret_type
+        return tp
+
+
+def _unevaluated_annotations(klass: type) -> "dict[str, Any]":
+    """Return *klass*'s own annotations, any name that cannot be resolved left unresolved."""
+    import sys
+
+    if sys.version_info >= (3, 14):
+        import annotationlib
+
+        return annotationlib.get_annotations(klass, format=annotationlib.Format.FORWARDREF)
+    return inspect.get_annotations(klass)
 
 
 def _strip_annotated(tp: Any) -> Any:

@@ -124,8 +124,9 @@ def test_the_parsed_data_secret_keys_are_exactly_the_secret_model_fields():
 
 
 def test_an_annotation_that_cannot_be_resolved_never_hides_a_secret():
-    """On 3.14 an annotation naming a type-checking-only import is read as a
-    ``ForwardRef`` rather than raising; one naming ``SecretStr`` still counts."""
+    """An annotation naming a type-checking-only import is left unresolved (a
+    ``ForwardRef`` or a string) rather than raising; one naming ``SecretStr``
+    still counts."""
     from typing import ForwardRef
 
     from otto.params import contains_secret_type
