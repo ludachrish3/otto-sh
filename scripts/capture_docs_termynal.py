@@ -37,13 +37,22 @@ from otto.cli.builtin_commands import builtin_command_names
 from otto.config.env import without_otto_env
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+from scripts.docs_display_env import DISPLAY_ENV  # noqa: E402 -- path set up above
+
 OUT_DIR = REPO_ROOT / "docs" / "_static" / "generated" / "termynal"
 STAMP = OUT_DIR / ".stamp"
 
 # Help text and completion candidates can come from anywhere in the package
 # (verb docstrings live on host classes, help strings on CLI modules, the
 # scaffold templates in otto/init/templates.py), so the stamp covers all of src/otto.
-_STAMP_INPUTS = [Path(__file__).resolve(), REPO_ROOT / "src" / "otto"]
+# The render width and colour are the docs captures' shared table (DISPLAY_ENV).
+_STAMP_INPUTS = [
+    Path(__file__).resolve(),
+    REPO_ROOT / "scripts" / "docs_display_env.py",
+    REPO_ROOT / "src" / "otto",
+]
 
 # The fourteen first-party commands, in the order `otto --help` lists them:
 # the registry's own, by origin, which is the one place that list is decided.
@@ -112,9 +121,10 @@ def _write_placeholders() -> None:
 def _otto_env(demo: Path) -> dict[str, str]:
     """Build a clean environment rooted at the demo project, with deterministic width.
 
-    The machine's own settings survive the strip
-    (:func:`otto.config.env.machine_env_vars`): they change no output, only
-    how long a slow machine's shells may take.
+    The width and colour are the docs captures' own (``DISPLAY_ENV``), so a
+    termynal block and a command capture render alike. The machine's own
+    settings survive the strip (:func:`otto.config.env.machine_env_vars`):
+    they change no output, only how long a slow machine's shells may take.
     """
     env = without_otto_env(os.environ)
     env.update(
@@ -123,18 +133,15 @@ def _otto_env(demo: Path) -> dict[str, str]:
         # cache each capture writes dies with the TemporaryDirectory instead
         # of leaving a workspace in the real ~/.otto on every docs build.
         OTTO_HOME=str(demo.parent / ".otto-home"),
-        NO_COLOR="1",
-        TERM="dumb",
-        COLUMNS="100",
-        LINES="50",
+        **DISPLAY_ENV,
     )
     return env
 
 
-def _run_otto(args: list[str], demo: Path, *, no_repo: bool = False, **env_extra: str) -> str:
+def _run_otto(args: list[str], demo: Path, *, no_project: bool = False, **env_extra: str) -> str:
     otto_bin = Path(sys.executable).parent / "otto"  # console script; runs entry()
     env = _otto_env(demo)
-    if no_repo:  # `otto init` runs before the demo project exists to be discovered
+    if no_project:  # `otto init` runs before the demo project exists to be discovered
         env.pop("OTTOPATH", None)
     env.update(env_extra)
     proc = subprocess.run(  # noqa: S603 — venv otto binary + fixed argv, no shell
@@ -218,7 +225,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="otto-docs-demo-") as tmp:
         demo = Path(tmp) / "acme"
         demo.mkdir()
-        _run_otto(["init", "--all", "--path", str(demo), "--name", "acme"], demo, no_repo=True)
+        _run_otto(["init", "--all", "--path", str(demo), "--name", "acme"], demo, no_project=True)
         _capture(demo)
     STAMP.write_text(digest + "\n")
     count = len(_artifact_names())

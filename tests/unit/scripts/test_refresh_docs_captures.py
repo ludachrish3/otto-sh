@@ -5,13 +5,25 @@ tests exercise substitution, redaction, expected-exit handling and the
 --check diff without a bed or a project.
 """
 
+import contextlib
 import fcntl
+import json
+import os
+import signal
+import subprocess
+import sys
+import textwrap
 import threading
+import time
 from pathlib import Path
 
 import pytest
 
+from otto.config.env import without_otto_env
 from scripts import refresh_docs_captures as rdc
+from tests._fixtures._host_pool import DOCKER_HOST
+from tests._fixtures.bed_locks import bed_lock_root
+from tests._fixtures.paths import CHECKOUT_ROOT
 from tests._fixtures.project_scaffold import make_project
 
 pytestmark = pytest.mark.interpreter_agnostic
@@ -1168,3 +1180,511 @@ def test_no_two_projects_share_a_coverage_or_report_destination():
     # Checked after the clashes: a shared destination also lowers the count,
     # and the clash is the message that names the defect.
     assert len(owners) >= 4, owners  # both tracks' --cov-dir and report --dir
+
+
+# --- A capture's env, a set's always-run teardown, and the docker host lease ---
+
+_ECHO_SUFFIX = ["{python}", "-c", "import os; print(os.environ.get('OTTO_COMPOSE_SUFFIX'))"]
+
+
+def test_a_capture_env_reaches_the_command_after_the_otto_strip(tmp_path, monkeypatch):
+    monkeypatch.setenv("OTTO_COMPOSE_SUFFIX", "leaked")
+    cap = rdc.Capture(id="a", argv=_ECHO_SUFFIX, env={"OTTO_COMPOSE_SUFFIX": "docs"})
+    assert rdc.run_capture(cap, _ctx(tmp_path)).splitlines()[-1] == "docs"
+
+
+def test_a_capture_env_does_not_reach_the_next_capture(tmp_path):
+    ctx = _ctx(tmp_path)
+    rdc.run_capture(
+        rdc.Capture(id="a", argv=_ECHO_SUFFIX, env={"OTTO_COMPOSE_SUFFIX": "docs"}), ctx
+    )
+    assert rdc.run_capture(rdc.Capture(id="b", argv=_ECHO_SUFFIX), ctx).splitlines()[-1] == "None"
+
+
+@pytest.mark.parametrize(
+    "env", ['["A"]', "{ A = 1 }", '"A=1"', '{ "" = "v" }', '{ "A=B" = "v" }', '{ "1A" = "v" }']
+)
+def test_a_capture_env_is_a_table_of_strings(tmp_path, env):
+    m = _manifest(tmp_path, f'[[capture]]\nid = "a"\nargv = ["x"]\nenv = {env}\n')
+    with pytest.raises(rdc.CaptureError, match=r"'a': env is a table of strings"):
+        rdc.load_manifest(m)
+
+
+def test_a_capture_env_cannot_override_what_the_runner_pins(tmp_path):
+    ctx = _ctx(tmp_path)
+    (ctx.examples_root / "p").mkdir(parents=True)
+    for name in ctx.pinned_env(rdc.Capture(id="x", argv=[], project="p")):
+        cap = rdc.Capture(id="a", argv=["true"], project="p", env={name: "v"})
+        with pytest.raises(rdc.CaptureError, match=rf"env sets \['{name}'\]"):
+            rdc.run_capture(cap, ctx)
+
+
+def test_the_env_is_the_stripped_environ_plus_the_pins_plus_the_capture_s(tmp_path):
+    ctx = _ctx(tmp_path)
+    (ctx.examples_root / "p").mkdir(parents=True)
+    cap = rdc.Capture(id="a", argv=[], project="p", env={"OTTO_COMPOSE_SUFFIX": "docs"})
+    assert ctx.env(cap) == {**without_otto_env(os.environ), **ctx.pinned_env(cap), **cap.env}
+
+
+def test_the_termynal_captures_share_the_runner_s_display_pins(tmp_path, monkeypatch):
+    from scripts import capture_docs_termynal, docs_display_env
+
+    monkeypatch.setitem(docs_display_env.DISPLAY_ENV, "COLUMNS", "77")
+    ctx = _ctx(tmp_path)
+    pinned = ctx.pinned_env(rdc.Capture(id="a", argv=[]))
+    termynal = capture_docs_termynal._otto_env(tmp_path / "demo")
+    for name, value in docs_display_env.DISPLAY_ENV.items():
+        assert termynal[name] == pinned[name] == value
+
+
+def test_leases_parse_and_default_to_none(tmp_path):
+    body = '[[capture]]\nid = "a"\nproject = "p"\nargv = ["x"]\n'
+    assert rdc.read_manifest(_manifest(tmp_path, body)).leases == {}
+    leased = body + '[leases]\ndocker_host = ["p"]\n'
+    assert rdc.read_manifest(_manifest(tmp_path, leased)).leases == {"docker_host": ["p"]}
+
+
+@pytest.mark.parametrize(
+    ("table", "said"),
+    [
+        ('[leases]\nconsole = ["p"]\n', "maps a lease"),
+        ('[leases]\ndocker_host = "p"\n', "maps a lease"),
+        ('[leases]\ndocker_host = ["q"]\n', "no capture runs project 'q'"),
+    ],
+)
+def test_a_bad_leases_table_is_refused(tmp_path, table, said):
+    body = '[[capture]]\nid = "a"\nproject = "p"\nargv = ["x"]\n' + table
+    with pytest.raises(rdc.CaptureError, match=said):
+        rdc.read_manifest(_manifest(tmp_path, body))
+
+
+def test_only_a_selection_holding_a_leased_project_takes_the_lease():
+    caps = [rdc.Capture(id="a", argv=[], project="p"), rdc.Capture(id="b", argv=[], labless=True)]
+    assert rdc.leased(caps, {"docker_host": ["p"]}) == ["docker_host"]
+    assert rdc.leased(caps[1:], {"docker_host": ["p"]}) == []
+
+
+def test_an_always_capture_followed_by_an_ordinary_one_is_refused(tmp_path):
+    body = (
+        '[[capture]]\nid = "a"\nproject = "p"\nalways = true\nargv = ["x"]\n'
+        '[[capture]]\nid = "b"\nproject = "p"\nargv = ["x"]\n'
+    )
+    with pytest.raises(rdc.CaptureError, match="'b' follows the always capture 'a'"):
+        rdc.load_manifest(_manifest(tmp_path, body))
+
+
+def test_the_tail_rule_names_projectless_captures_as_one_group(tmp_path):
+    body = (
+        '[[capture]]\nid = "a"\nalways = true\nargv = ["x"]\n[[capture]]\nid = "b"\nargv = ["x"]\n'
+    )
+    with pytest.raises(rdc.CaptureError) as err:
+        rdc.load_manifest(_manifest(tmp_path, body))
+    assert "'b' follows the always capture 'a' of the captures with no project" in str(err.value)
+
+
+def test_every_lease_a_manifest_may_name_is_one_held_leases_takes(monkeypatch):
+    taken: list[str] = []
+
+    @contextlib.contextmanager
+    def taker(name: str):
+        taken.append(name)
+        yield
+
+    monkeypatch.setattr(rdc, "_LEASE_TAKERS", {n: (lambda n=n: taker(n)) for n in rdc.LEASES})
+    with rdc.held_leases(list(rdc.LEASES)):
+        assert taken == list(rdc.LEASES)
+
+
+def test_always_must_be_a_boolean(tmp_path):
+    m = _manifest(tmp_path, '[[capture]]\nid = "a"\nalways = "yes"\nargv = ["x"]\n')
+    with pytest.raises(rdc.CaptureError, match="'a': always is true or false"):
+        rdc.load_manifest(m)
+
+
+def test_unordered_must_be_a_boolean(tmp_path):
+    m = _manifest(tmp_path, '[[capture]]\nid = "a"\nunordered = "yes"\nargv = ["x"]\n')
+    with pytest.raises(rdc.CaptureError, match="'a': unordered is true or false"):
+        rdc.load_manifest(m)
+
+
+_TWO_LINES = '[[capture]]\nid = "u"\n{flag}argv = ["{{python}}", "-c", "print(1); print(2)"]\n'
+_TWO_LINES_HEAD = "$ python -c 'print(1); print(2)'\n"
+
+
+@pytest.mark.parametrize(
+    ("body", "unordered", "drifts"),
+    [
+        ("2\n1\n", True, False),  # reordered: the same lines
+        ("2\n1\n", False, True),  # an ordered capture still sees the order
+        ("1\n2\n2\n", True, True),  # an extra copy of a line
+        ("1\n", True, True),  # a missing line
+        ("1\n3\n", True, True),  # a changed line
+    ],
+    ids=["reordered", "ordered-reordered", "extra", "missing", "changed"],
+)
+def test_an_unordered_check_ignores_only_the_order(tmp_path, capsys, body, unordered, drifts):
+    ctx = _ctx(tmp_path)
+    flag = "unordered = true\n" if unordered else ""
+    caps = rdc.load_manifest(_manifest(tmp_path, _TWO_LINES.format(flag=flag)))
+    rdc.refresh(caps, ctx)
+    assert (ctx.captures_dir / "u.txt").read_text() == _TWO_LINES_HEAD + "1\n2\n"
+    (ctx.captures_dir / "u.txt").write_text(_TWO_LINES_HEAD + body)
+    capsys.readouterr()
+    assert rdc.check(caps, ctx) == (1 if drifts else 0)
+    assert ("DRIFT u" in capsys.readouterr().out) is drifts
+
+
+def _probe(lock: Path, out: Path) -> list[str]:
+    """A capture argv that appends to *out* whether *lock* is held by someone else."""
+    code = (
+        "import fcntl, os, sys; fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT)\n"
+        "try:\n    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB); state = 'free'\n"
+        "except BlockingIOError:\n    state = 'held'\n"
+        "open(sys.argv[2], 'a').write(state + '\\n')\n"
+    )
+    return ["{python}", "-c", code, str(lock), str(out)]
+
+
+def _leased_manifest(tmp_path: Path, monkeypatch, captures: str) -> Path:
+    examples = tmp_path / "examples"
+    make_project(examples / "p")
+    monkeypatch.setattr(rdc, "EXAMPLES", examples)
+    # main() runs in this test's own scratch dir, never the machine-wide one.
+    monkeypatch.setattr(rdc, "SCRATCH_DIR", tmp_path / "scratch")
+    return _manifest(tmp_path, '[leases]\ndocker_host = ["p"]\n' + captures)
+
+
+def test_every_capture_runs_inside_the_lease_cleanup_included(tmp_path, monkeypatch):
+    lock = bed_lock_root() / f"unix_pool.{DOCKER_HOST}"  # the autouse per-test root
+    seen = tmp_path / "seen"
+    probe = json.dumps(_probe(lock, seen))
+    m = _leased_manifest(
+        tmp_path,
+        monkeypatch,
+        f'[[capture]]\nid = "body"\nproject = "p"\nrecord = false\nargv = {probe}\n'
+        '[[capture]]\nid = "boom"\nproject = "p"\n'
+        'argv = ["{python}", "-c", "raise SystemExit(3)"]\n'
+        f'[[capture]]\nid = "skipped"\nproject = "p"\nrecord = false\nargv = {probe}\n'
+        '[[capture]]\nid = "clean"\nproject = "p"\nalways = true\nrecord = false\n'
+        f"argv = {probe}\n",
+    )
+    with pytest.raises(rdc.CaptureError, match="'boom' exited 3"):
+        rdc.main(["--manifest", str(m), "--captures-dir", str(tmp_path / "out")])
+    # body and clean ran, both while the lease was held; skipped never ran.
+    assert seen.read_text().splitlines() == ["held", "held"]
+    assert _lease_is_free()  # released once main returned
+
+
+def test_a_failing_cleanup_after_a_failure_keeps_the_first_error(tmp_path, monkeypatch, capsys):
+    m = _leased_manifest(
+        tmp_path,
+        monkeypatch,
+        '[[capture]]\nid = "boom"\nproject = "p"\n'
+        'argv = ["{python}", "-c", "raise SystemExit(3)"]\n'
+        '[[capture]]\nid = "clean"\nproject = "p"\nalways = true\nrecord = false\n'
+        'argv = ["{python}", "-c", "raise SystemExit(4)"]\n',
+    )
+    with pytest.raises(rdc.CaptureError, match="'boom' exited 3"):
+        rdc.main(["--manifest", str(m), "--captures-dir", str(tmp_path / "out")])
+    assert "'clean' exited 4" in capsys.readouterr().err
+
+
+def test_a_failing_cleanup_on_a_good_run_fails_the_run(tmp_path, monkeypatch):
+    m = _leased_manifest(
+        tmp_path,
+        monkeypatch,
+        '[[capture]]\nid = "clean"\nproject = "p"\nalways = true\nrecord = false\n'
+        'argv = ["{python}", "-c", "raise SystemExit(4)"]\n',
+    )
+    with pytest.raises(rdc.CaptureError, match="'clean' exited 4"):
+        rdc.main(["--manifest", str(m), "--captures-dir", str(tmp_path / "out")])
+
+
+@pytest.mark.parametrize("mode", [[], ["--check"]])
+def test_after_a_failure_an_always_capture_writes_no_artifact(tmp_path, monkeypatch, capsys, mode):
+    """Refreshed or checked, a teardown run after a failure is recorded nowhere."""
+    m = _leased_manifest(
+        tmp_path,
+        monkeypatch,
+        '[[capture]]\nid = "boom"\nproject = "p"\n'
+        'argv = ["{python}", "-c", "raise SystemExit(3)"]\n'
+        '[[capture]]\nid = "clean"\nproject = "p"\nalways = true\nargv = ["true"]\n',
+    )
+    with pytest.raises(rdc.CaptureError, match="'boom' exited 3"):
+        rdc.main([*mode, "--manifest", str(m), "--captures-dir", str(tmp_path / "out")])
+    assert not (tmp_path / "out" / "clean.txt").exists()
+    out = capsys.readouterr().out
+    assert "captured clean" not in out
+    assert "MISSING" not in out
+    assert "DRIFT" not in out
+
+
+def test_a_store_assertion_failure_still_runs_the_cleanup(tmp_path, monkeypatch):
+    """The report step fails on its assertion, after its command succeeded."""
+    marker = tmp_path / "cleaned"
+    m = _leased_manifest(
+        tmp_path,
+        monkeypatch,
+        '[[capture]]\nid = "report"\nproject = "p"\nargv = ["true"]\n'
+        '[[capture.store]]\npath = "{tmp}/missing.json"\nfile = "x"\nline = 1\n'
+        'tier = "system"\nhits = 1\n'
+        f'[[capture]]\nid = "clean"\nproject = "p"\nalways = true\nrecord = false\n'
+        f'argv = ["touch", "{marker}"]\n',
+    )
+    with pytest.raises(rdc.CaptureError, match="cannot read the store"):
+        rdc.main(["--manifest", str(m), "--captures-dir", str(tmp_path / "out")])
+    assert marker.exists()
+
+
+def test_the_runner_waits_for_a_pooled_docker_lease_held_elsewhere(tmp_path):
+    """The docker e2e's pooled fixture, in another process, holds test3: the runner waits.
+
+    The holder releases only after the runner has started asking, and stamps the
+    moment it lets go; the runner's lease must come after that stamp. Order, not
+    a duration, so a loaded machine cannot pass or fail it by timing. The holder
+    inherits this test's own bed-lock root through the environment.
+    """
+    asking = tmp_path / "asking"
+    with subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            textwrap.dedent("""
+                import pathlib, sys, time
+                from tests._fixtures._host_pool import DOCKER_HOST, lease_unix_host
+                asking = pathlib.Path(sys.argv[1])
+                with lease_unix_host((DOCKER_HOST,)):
+                    print("held", flush=True)
+                    while not asking.exists():
+                        time.sleep(0.01)
+                    time.sleep(0.5)
+                    print(time.time(), flush=True)
+            """),
+            str(asking),
+        ],
+        env={**os.environ, "PYTHONPATH": str(CHECKOUT_ROOT)},
+        stdout=subprocess.PIPE,
+        text=True,
+    ) as holder:  # closes the pipe on the way out
+        assert holder.stdout is not None
+        assert holder.stdout.readline().strip() == "held"
+        asking.touch()
+        with rdc.held_leases(["docker_host"]):
+            acquired = time.time()
+        released = float(holder.stdout.readline())
+        holder.wait(timeout=10)
+    assert acquired >= released
+
+
+def test_list_takes_no_lease(tmp_path, monkeypatch):
+    from tests._fixtures import _host_pool
+
+    monkeypatch.setattr(_host_pool, "docker_host_lease", lambda: pytest.fail("leased"))
+    body = '[leases]\ndocker_host = ["p"]\n[[capture]]\nid = "a"\nproject = "p"\nargv = ["x"]\n'
+    assert rdc.main(["--list", "--manifest", str(_manifest(tmp_path, body))]) == 0
+
+
+def test_an_interrupt_propagates_without_the_teardown():
+    stepped: list[str] = []
+
+    def step(cap: rdc.Capture, recorded: bool) -> None:
+        stepped.append(cap.id)
+        if cap.id == "a":
+            raise KeyboardInterrupt
+
+    caps = [rdc.Capture(id="a", argv=[]), rdc.Capture(id="t", argv=[], always=True)]
+    with pytest.raises(KeyboardInterrupt):
+        rdc._run_set(caps, step)
+    assert stepped == ["a"]
+
+
+def _lease_is_free() -> bool:
+    fd = os.open(bed_lock_root() / f"unix_pool.{DOCKER_HOST}", os.O_RDWR)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return False
+    finally:
+        os.close(fd)
+    return True
+
+
+def test_an_interrupt_still_releases_the_lease(tmp_path, monkeypatch):
+    m = _leased_manifest(
+        tmp_path, monkeypatch, '[[capture]]\nid = "a"\nproject = "p"\nargv = ["true"]\n'
+    )
+
+    def interrupted(cap: rdc.Capture, ctx: rdc.RunContext) -> str:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(rdc, "run_capture", interrupted)
+    with pytest.raises(KeyboardInterrupt) as err:
+        rdc.main(["--manifest", str(m), "--captures-dir", str(tmp_path / "out")])
+    # The traceback keeps main's frame alive, so a lease left to the garbage
+    # collector is still held here; only one released on the way out is free.
+    assert err.traceback
+    assert _lease_is_free()
+
+
+def test_a_sigterm_to_the_runner_alone_kills_the_capture_before_the_lease_ends(
+    tmp_path, monkeypatch
+):
+    """The capture signals only its parent, the runner; its own child must die with the run."""
+    pid_file = tmp_path / "child.pid"
+    code = (
+        "import os, signal, sys, time; open(sys.argv[1], 'w').write(str(os.getpid()));"
+        " os.kill(os.getppid(), signal.SIGTERM); time.sleep(3)"
+    )
+    argv = json.dumps(["{python}", "-c", code, str(pid_file)])
+    m = _leased_manifest(
+        tmp_path, monkeypatch, f'[[capture]]\nid = "a"\nproject = "p"\nargv = {argv}\n'
+    )
+    seen: list[int] = []
+
+    # Without the runner's own handler, this one only records the signal, so
+    # the run finishes normally and the test fails instead of pytest dying.
+    def record(signum: int, frame: object) -> None:
+        seen.append(signum)
+
+    previous = signal.signal(signal.SIGTERM, record)
+    try:
+        with pytest.raises(rdc.Terminated):
+            rdc.main(["--manifest", str(m), "--captures-dir", str(tmp_path / "out")])
+        assert signal.getsignal(signal.SIGTERM) is record  # put back
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+    with pytest.raises(ProcessLookupError):  # killed and reaped, not a zombie
+        os.kill(int(pid_file.read_text()), 0)
+    assert _lease_is_free()
+
+
+# --- A set's teardown armed by its own preflight ---
+
+
+def _armed(*, arm_fails: bool = False, earlier_fails: bool = False) -> "tuple[list[str], str]":
+    """Run an arming set through ``_run_set``; return what ran and the first error's text."""
+    caps = [
+        rdc.Capture(id="other", argv=[], project="q"),
+        rdc.Capture(id="pre", argv=[], project="p", arms_teardown=True),
+        rdc.Capture(id="body", argv=[], project="p"),
+        rdc.Capture(id="down", argv=[], project="p", always=True, armed_by="pre"),
+        rdc.Capture(id="sweep", argv=[], project="p", always=True, armed_by="pre"),
+    ]
+    stepped: list[str] = []
+    failing = {"pre"} if arm_fails else {"other"} if earlier_fails else {"body"}
+
+    def step(cap: rdc.Capture, recorded: bool) -> None:
+        stepped.append(cap.id)
+        if cap.id in failing:
+            raise rdc.CaptureError(f"{cap.id} failed")
+
+    with pytest.raises(rdc.CaptureError) as err:
+        rdc._run_set(caps, step)
+    return stepped, str(err.value)
+
+
+def test_a_failed_arming_capture_skips_its_set_s_teardown(capsys):
+    stepped, first = _armed(arm_fails=True)
+    assert stepped == ["other", "pre"]
+    assert first == "pre failed"
+    err = capsys.readouterr().err
+    assert "skipped down: pre did not succeed in this run" in err
+    assert "skipped sweep: pre did not succeed in this run" in err
+
+
+def test_an_arming_capture_that_never_ran_skips_its_set_s_teardown():
+    stepped, first = _armed(earlier_fails=True)
+    assert stepped == ["other"]
+    assert first == "other failed"
+
+
+def test_an_armed_teardown_runs_after_a_later_failure():
+    stepped, first = _armed()
+    assert stepped == ["other", "pre", "body", "down", "sweep"]
+    assert first == "body failed"
+
+
+def test_an_unselected_arming_capture_leaves_the_teardown_unarmed(tmp_path, capsys):
+    m = _manifest(
+        tmp_path,
+        '[[capture]]\nid = "pre"\nproject = "p"\narms_teardown = true\nargv = ["x"]\n'
+        '[[capture]]\nid = "down"\nproject = "p"\nalways = true\nargv = ["x"]\n',
+    )
+    caps = rdc.select(rdc.load_manifest(m), labless=False, only=["down"])
+    assert [c.armed_by for c in caps] == ["pre"]
+    stepped: list[str] = []
+    rdc._run_set(caps, lambda cap, _recorded: stepped.append(cap.id))
+    assert stepped == []
+    assert "skipped down" in capsys.readouterr().err
+
+
+def test_the_manifest_binds_each_always_capture_to_its_set_s_arming_capture(tmp_path):
+    m = _manifest(
+        tmp_path,
+        '[[capture]]\nid = "pre"\nproject = "p"\narms_teardown = true\nargv = ["x"]\n'
+        '[[capture]]\nid = "down"\nproject = "p"\nalways = true\nargv = ["x"]\n'
+        '[[capture]]\nid = "clean"\nproject = "q"\nalways = true\nargv = ["x"]\n',
+    )
+    assert {c.id: c.armed_by for c in rdc.load_manifest(m)} == {
+        "pre": None,
+        "down": "pre",
+        "clean": None,
+    }
+
+
+@pytest.mark.parametrize(
+    ("body", "said"),
+    [
+        ('[[capture]]\nid = "a"\narms_teardown = "yes"\nargv = ["x"]\n', "arms_teardown is true"),
+        ('[[capture]]\nid = "a"\narms_teardown = true\nargv = ["x"]\n', "needs project"),
+        (
+            (
+                '[[capture]]\nid = "a"\nproject = "p"\nalways = true\narms_teardown = true\n'
+                'argv = ["x"]\n'
+            ),
+            "cannot be an always capture",
+        ),
+        (
+            (
+                '[[capture]]\nid = "a"\nproject = "p"\narms_teardown = true\nargv = ["x"]\n'
+                '[[capture]]\nid = "b"\nproject = "p"\narms_teardown = true\nargv = ["x"]\n'
+            ),
+            "already has 'a'",
+        ),
+    ],
+)
+def test_load_manifest_refuses_a_bad_arming_capture(tmp_path, body, said):
+    with pytest.raises(rdc.CaptureError, match=said):
+        rdc.load_manifest(_manifest(tmp_path, body))
+
+
+# --- [snippets]: one text several captures share ---
+
+
+def test_a_snippet_is_expanded_where_an_argv_entry_names_it(tmp_path):
+    m = _manifest(
+        tmp_path,
+        "[snippets]\nprobe = 'test -d /x'\n"
+        '[[capture]]\nid = "a"\nargv = ["sh", "-c", "{snippet:probe} && {snippet:probe}"]\n'
+        '[[capture]]\nid = "b"\nargv = ["{snippet:probe}", "{tmp}"]\n',
+    )
+    manifest = rdc.read_manifest(m)
+    assert manifest.snippets == {"probe": "test -d /x"}
+    assert [c.argv for c in manifest.captures] == [
+        ["sh", "-c", "test -d /x && test -d /x"],
+        ["test -d /x", "{tmp}"],
+    ]
+
+
+def test_a_snippet_no_entry_defines_is_refused(tmp_path):
+    m = _manifest(tmp_path, '[[capture]]\nid = "a"\nargv = ["{snippet:nope}"]\n')
+    with pytest.raises(rdc.CaptureError, match="capture 'a': no \\[snippets\\] entry 'nope'"):
+        rdc.load_manifest(m)
+
+
+@pytest.mark.parametrize(
+    "table", ["snippets = 1\n", "[snippets]\nx = 1\n", "[snippets]\n'a-b' = 'x'\n"]
+)
+def test_snippets_map_a_name_to_a_text(tmp_path, table):
+    with pytest.raises(rdc.CaptureError, match=r"\[snippets\] maps a name"):
+        rdc.load_manifest(_manifest(tmp_path, table))

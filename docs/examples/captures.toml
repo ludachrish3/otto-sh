@@ -12,6 +12,15 @@
 # list its project under [ordered] (below), and an --only that names some of
 # its captures but not all is refused.
 #
+# env = { K = "v" } -> variables for this capture alone, set after the caller's
+#   OTTO_* variables are stripped (so a set can pin OTTO_COMPOSE_SUFFIX). It may
+#   not change what the runner pins for every capture: NO_COLOR, TERM, COLUMNS,
+#   LINES, OTTO_HOME, OTTO_XDIR, OTTOPATH.
+# always = true   -> a set's teardown: once a capture fails, only the remaining
+#   always captures run, unrecorded, and the first failure is the one reported.
+#   On a clean run it is an ordinary capture. An always capture may not be
+#   followed by an ordinary one of its project: teardown is the tail of a set.
+#
 # kind = "gtest"  -> argv is a GoogleTest binary: colour off, timings redacted
 # [[capture.store]] -> after the run, a hit count the coverage store must hold:
 #   path and file (as the store records it) may use {project}/{tmp}/{xdir};
@@ -27,6 +36,11 @@
 #   project's scratch copy. A downloadable example ships placeholder hosts; its
 #   overlay carries the bed's lab data, so the captures still reach the bed.
 #   The key is a project some capture runs; the dir stays under docs/examples.
+#
+# [leases] -> docker_host = ["<project>", ...]: a run selecting any capture of
+#   these projects holds the docker host lease for its whole length, teardown
+#   included -- the lock the docker e2e tests take, so the two never share the
+#   docker host. --list takes no lease.
 #
 # [ordered] -> sets = ["<project>", ...]: each project's captures form one
 #   ordered set, selected whole or not at all. Each is a project some capture

@@ -12,7 +12,8 @@ seconds it may run before it is killed, directories to make under the scratch
 dir before it runs, a settings fragment to append to the project copy for that
 capture alone, redaction rules, and whether its output is recorded — ``id``,
 ``argv``, ``labless``, ``project``, ``expect_exit``, ``timeout``, ``mkdir``,
-``settings_append``, ``redact``, ``record``.
+``settings_append``, ``redact``, ``record``, ``env``, ``always``,
+``arms_teardown``, ``unordered``.
 The runner executes each one in a clean environment, redacts
 the output, and either writes
 ``captures/<id>.txt`` (refresh) or diffs against it (``--check``, exit 1 on
@@ -35,6 +36,54 @@ its ``path``. With ``marker``, the line must also hold that text in the
 committed example (``verify_markers``), so an edit that moves the line fails
 before any capture runs. ``[[capture.store_sources]]`` asserts the exact set of
 source files in a tier, whatever their hit count (``_check_sources``).
+
+``env = { K = "v" }`` sets variables for one capture alone. They are applied
+after every ``OTTO_*`` variable of the caller is stripped, so a set can pin one
+(``OTTO_COMPOSE_SUFFIX``) for its own commands. A capture may not change what
+the runner pins for every capture (``RunContext.pinned_env``): width, colour,
+``OTTO_HOME``, ``OTTO_XDIR`` and the project's ``OTTOPATH``.
+
+``always = true`` marks a set's teardown. Captures run in order; once one
+fails, only the remaining ``always`` captures run, unrecorded, and the first
+failure is the error raised: a teardown that fails beside it is printed, never
+raised in its place. On a run with no failure an ``always`` capture is
+ordinary, recorded and exit-checked. An ``always`` capture may not be followed
+by an ordinary capture of its own project: teardown is the tail of a set. Only
+a capture's own failure triggers it; an interrupt propagates at once.
+
+``arms_teardown = true`` marks the one capture of a set that proves the set
+owns what its teardown removes (a preflight). A set that has one runs its
+``always`` captures only once that capture has succeeded in this run: if it
+failed, or never ran because an earlier capture (of any set) failed first, each
+``always`` capture is skipped and said to be, never run. The teardown of such a
+set removes what this run made, and a refused preflight leaves the host
+exactly as it found it. A set without one tears down as above.
+
+The lease ends with the runner, so the command a capture is running must end
+first. Ctrl-C, ``make`` and ``timeout`` signal the whole process group, which
+ends both. A SIGTERM sent to the runner's PID alone would leave the child
+driving the bed after the lease is gone, so the runner turns SIGTERM into
+``Terminated`` for the run (``_sigterm_interrupts``): ``subprocess.run`` then
+kills and reaps the running command before the lease is released.
+
+``unordered = true`` is for a command whose log lines interleave work otto
+does on several hosts at once, so their order varies from run to run.
+Refreshing writes the artifact exactly as printed. ``--check`` compares the
+redacted lines as a multiset (``_same_lines``): it ignores their order, but a
+missing, extra or changed line is still drift.
+
+A top-level ``[leases]`` table names the projects whose captures need a bed
+lease (``docker_host = ["<project>", ...]``). A run selecting any capture of
+such a project holds the lease for its whole length, teardown included: the
+docker host lease the docker e2e tests and the orphan reaper take, from
+``tests/_fixtures/_host_pool``, so a capture set and a test session never
+share the docker host. ``--list`` takes no lease.
+
+A top-level ``[snippets]`` table names a piece of text several captures share
+(``<name> = "<text>"``); an argv entry spells it ``{snippet:<name>}``, and the
+manifest is read with each one put in its place (``_expand_snippets``). It is
+how one decision several shell texts make (which docker cache records are
+private) is written once. A name no snippet defines is refused at load.
 
 A top-level ``[overlays]`` table maps a project to a directory under the
 examples root (``<project> = "<dir>"``) that is copied over that project's
@@ -68,9 +117,12 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
+from collections import Counter
 from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -86,6 +138,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from scripts.check_docs_examples import not_copied  # noqa: E402 -- path set up above
+from scripts.docs_display_env import DISPLAY_ENV  # noqa: E402 -- path set up above
 
 EXAMPLES = ROOT / "docs" / "examples"
 DEFAULT_MANIFEST = EXAMPLES / "captures.toml"
@@ -203,6 +256,16 @@ class Capture:
     record: bool = True
     """A step a later capture needs, run but not recorded: no artifact is written or compared."""
     store_sources: list[StoreSources] = dataclasses.field(default_factory=list)
+    env: dict[str, str] = dataclasses.field(default_factory=dict)
+    """Variables set for this capture alone, after otto's own are stripped (``RunContext.env``)."""
+    always: bool = False
+    """Part of its set's teardown: still run, unrecorded, after an earlier capture fails."""
+    arms_teardown: bool = False
+    """Its success in this run is what lets its set's ``always`` captures run at all."""
+    armed_by: "str | None" = None
+    """For an ``always`` capture, the id of its set's ``arms_teardown`` capture, if it has one."""
+    unordered: bool = False
+    """``--check`` ignores the order of its lines, never their count or text (``_same_lines``)."""
 
 
 @dataclasses.dataclass
@@ -300,29 +363,35 @@ class RunContext:
             "{xdir}": str(self.tmp / "xdir"),  # the capture's OTTO_XDIR
         }
 
+    def pinned_env(self, cap: Capture) -> dict[str, str]:
+        """Return the variables every capture runs with; a capture's ``env`` may not change them."""
+        pinned = {
+            **DISPLAY_ENV,
+            "OTTO_HOME": str(self.tmp / "home"),
+            "OTTO_XDIR": str(self.tmp / "xdir"),
+        }
+        if cap.project:
+            pinned["OTTOPATH"] = str(self.project_dir(cap))
+        return pinned
+
     def env(self, cap: Capture) -> dict[str, str]:
         """Build the clean environment a capture's subprocess runs in."""
         # Same shape as scripts/capture_docs_termynal.py: strip every OTTO_*
-        # variable, pin width and colour, then point at the example project.
-        # The width matches termynal's: 100 columns is the widest text the
-        # docs content column shows without scrolling in a 1440px window.
+        # variable, pin width and colour (scripts/docs_display_env.py, shared
+        # with it), then
+        # point at the example project.
         # The machine's own settings (a slow machine's OTTO_INIT_TIMEOUT) are
-        # kept; see otto.config.env.machine_env_vars.
-        env = without_otto_env(os.environ)
-        home = self.tmp / "home"
-        home.mkdir(parents=True, exist_ok=True)
-        env.update(
-            NO_COLOR="1",
-            TERM="dumb",
-            COLUMNS="100",
-            LINES="50",
-            OTTO_HOME=str(home),
-            OTTO_XDIR=str(self.tmp / "xdir"),
-        )
+        # kept; see otto.config.env.machine_env_vars. The capture's own
+        # ``env`` goes last, so it survives the strip, but it may not change a pin.
+        pinned = self.pinned_env(cap)
+        clash = sorted(set(cap.env) & set(pinned))
+        if clash:
+            raise CaptureError(
+                f"capture {cap.id!r}: env sets {clash}, which the runner sets for every capture"
+            )
+        (self.tmp / "home").mkdir(parents=True, exist_ok=True)
         (self.tmp / "xdir").mkdir(parents=True, exist_ok=True)
-        if cap.project:
-            env["OTTOPATH"] = str(self.project_dir(cap))
-        return env
+        return {**without_otto_env(os.environ), **pinned, **cap.env}
 
 
 def _store_assertions(
@@ -445,6 +514,72 @@ def _ordered(doc: dict[str, Any], path: Path, caps: list[Capture]) -> list[str]:
     return list(sets)
 
 
+@contextlib.contextmanager
+def _docker_host_lease() -> Iterator[None]:
+    """Take the docker host lease: the lock the docker e2e holds on the docker host.
+
+    Imported here, not at module load: only a bed run that needs a lease pays
+    for it. The lock lives under ``bed_lock_root()``, as every session's does.
+    """
+    from tests._fixtures import _host_pool
+
+    print(
+        f"docs captures: taking the docker host lease on {_host_pool.DOCKER_HOST}; "
+        "a session holding it is waited for",
+        file=sys.stderr,
+    )
+    with _host_pool.docker_host_lease():
+        yield
+
+
+_LEASE_TAKERS: dict[str, Callable[[], AbstractContextManager[None]]] = {
+    "docker_host": _docker_host_lease,
+}
+"""Each bed lease a ``[leases]`` table may name, and how ``held_leases`` takes it."""
+
+LEASES = tuple(_LEASE_TAKERS)
+"""The bed leases a ``[leases]`` table may name; ``held_leases`` takes each."""
+
+
+def _leases(doc: dict[str, Any], path: Path, caps: list[Capture]) -> dict[str, list[str]]:
+    """Parse the ``[leases]`` table: a lease -> the projects whose captures need it.
+
+    Each project must be one some capture runs, so a typo fails at load
+    rather than silently running a set without its lease.
+    """
+    raw = doc.get("leases", {})
+    shape = f"manifest {path}: [leases] maps a lease ({', '.join(LEASES)}) to a list of projects"
+    if not isinstance(raw, dict) or set(raw) - set(LEASES):
+        raise CaptureError(shape)
+    projects = {cap.project for cap in caps if cap.project}
+    out: dict[str, list[str]] = {}
+    for lease, names in raw.items():
+        if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+            raise CaptureError(shape)
+        for name in names:
+            if name not in projects:
+                raise CaptureError(
+                    f"manifest {path}: [leases] {lease}: no capture runs project {name!r}"
+                )
+        out[lease] = list(names)
+    return out
+
+
+def leased(caps: list[Capture], leases: dict[str, list[str]]) -> list[str]:
+    """Return the leases a run of ``caps`` must hold: those naming a selected capture's project."""
+    projects = {cap.project for cap in caps if cap.project}
+    return [lease for lease, names in leases.items() if projects & set(names)]
+
+
+@contextlib.contextmanager
+def held_leases(names: list[str]) -> Iterator[None]:
+    """Hold each named bed lease (``_LEASE_TAKERS``) for the block, in the order given."""
+    with contextlib.ExitStack() as stack:
+        for name in names:
+            stack.enter_context(_LEASE_TAKERS[name]())
+        yield
+
+
 @dataclasses.dataclass(frozen=True)
 class Manifest:
     """The whole manifest, parsed and checked once."""
@@ -453,13 +588,24 @@ class Manifest:
     overlays: dict[str, str]
     ordered: list[str]
     """Projects whose captures form one ordered set, selected whole or not at all."""
+    leases: dict[str, list[str]] = dataclasses.field(default_factory=dict)
+    """Each bed lease, mapped to the projects whose captures run under it."""
+    snippets: dict[str, str] = dataclasses.field(default_factory=dict)
+    """Each ``[snippets]`` text by name, already expanded in ``captures``."""
 
 
 def read_manifest(path: Path) -> Manifest:
-    """Parse the TOML manifest at ``path``: its captures, overlays and ordered sets."""
+    """Parse the TOML manifest at ``path``: captures, overlays, ordered sets, leases, snippets."""
     doc = _read_toml(path)
-    caps = _captures(doc, path)
-    return Manifest(captures=caps, overlays=_overlays(doc, path), ordered=_ordered(doc, path, caps))
+    snippets = _snippets(doc, path)
+    caps = _captures(doc, path, snippets)
+    return Manifest(
+        captures=caps,
+        overlays=_overlays(doc, path),
+        ordered=_ordered(doc, path, caps),
+        leases=_leases(doc, path, caps),
+        snippets=snippets,
+    )
 
 
 def _overlay_paths(project: str, overlay: str, examples_root: Path, scratch: Path) -> list[Path]:
@@ -509,8 +655,35 @@ def load_manifest(path: Path) -> list[Capture]:
     return read_manifest(path).captures
 
 
-def _captures(doc: dict[str, Any], path: Path) -> list[Capture]:
-    """Parse the ``[[capture]]`` entries, in manifest order."""
+_SNIPPET = re.compile(r"\{snippet:([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def _snippets(doc: dict[str, Any], path: Path) -> dict[str, str]:
+    """Parse the top-level ``[snippets]`` table: a name -> the text it stands for."""
+    raw = doc.get("snippets", {})
+    if not isinstance(raw, dict) or not all(
+        isinstance(k, str) and _ENV_NAME.fullmatch(k) and isinstance(v, str) for k, v in raw.items()
+    ):
+        raise CaptureError(
+            f"manifest {path}: [snippets] maps a name, spelled like a shell variable, to a text"
+        )
+    return dict(raw)
+
+
+def _expand_snippets(arg: str, snippets: dict[str, str], where: str) -> str:
+    """Put each ``{snippet:<name>}`` in *arg* in its text's place, refusing an undefined name."""
+
+    def text(match: re.Match[str]) -> str:
+        name = match.group(1)
+        if name not in snippets:
+            raise CaptureError(f"{where}: no [snippets] entry {name!r}")
+        return snippets[name]
+
+    return _SNIPPET.sub(text, arg)
+
+
+def _captures(doc: dict[str, Any], path: Path, snippets: dict[str, str]) -> list[Capture]:
+    """Parse the ``[[capture]]`` entries, in manifest order, with their *snippets* expanded."""
     caps = []
     for n, raw in enumerate(doc.get("capture", []), start=1):
         for key in ("id", "argv"):
@@ -547,10 +720,28 @@ def _captures(doc: dict[str, Any], path: Path) -> list[Capture]:
         record = raw.get("record", True)
         if not isinstance(record, bool):
             raise CaptureError(f"manifest {path}: capture {raw['id']!r}: record is true or false")
+        always = raw.get("always", False)
+        if not isinstance(always, bool):
+            raise CaptureError(f"manifest {path}: capture {raw['id']!r}: always is true or false")
+        arms = raw.get("arms_teardown", False)
+        if not isinstance(arms, bool):
+            raise CaptureError(
+                f"manifest {path}: capture {raw['id']!r}: arms_teardown is true or false"
+            )
+        unordered = raw.get("unordered", False)
+        if not isinstance(unordered, bool):
+            raise CaptureError(
+                f"manifest {path}: capture {raw['id']!r}: unordered is true or false"
+            )
         caps.append(
             Capture(
                 id=raw["id"],
-                argv=list(raw["argv"]),
+                argv=[
+                    _expand_snippets(a, snippets, f"manifest {path}: capture {raw['id']!r}")
+                    if isinstance(a, str)
+                    else a
+                    for a in raw["argv"]
+                ],
                 labless=bool(raw.get("labless", False)),
                 project=raw.get("project", ""),
                 expect_exit=int(raw.get("expect_exit", 0)),
@@ -564,13 +755,86 @@ def _captures(doc: dict[str, Any], path: Path) -> list[Capture]:
                 ),
                 record=record,
                 store_sources=_store_sources(path, raw["id"], raw.get("store_sources", [])),
+                env=_capture_env(path, raw["id"], raw.get("env", {})),
+                always=always,
+                arms_teardown=arms,
+                unordered=unordered,
             )
         )
     ids = [c.id for c in caps]
     dupes = sorted({i for i in ids if ids.count(i) > 1})
     if dupes:
         raise CaptureError(f"duplicate capture ids: {dupes}")
-    return caps
+    _check_teardown_tails(caps, path)
+    return _armed_teardowns(caps, path)
+
+
+_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def _capture_env(path: Path, cap_id: str, raw: object) -> dict[str, str]:
+    """Parse a capture's ``env``: its shape and names; ``RunContext.env`` refuses a pinned name.
+
+    A name the environment cannot carry (empty, holding ``=``) is refused
+    here, at load, rather than by ``subprocess`` once the set is running.
+    """
+    if not isinstance(raw, dict) or not all(
+        isinstance(k, str) and _ENV_NAME.fullmatch(k) and isinstance(v, str) for k, v in raw.items()
+    ):
+        raise CaptureError(
+            f"manifest {path}: capture {cap_id!r}: env is a table of strings, "
+            "each named like a shell variable"
+        )
+    return dict(raw)
+
+
+def _check_teardown_tails(caps: list[Capture], path: Path) -> None:
+    """Refuse an ``always`` capture followed by an ordinary one of its project.
+
+    Teardown is the tail of a set: after a failure only the ``always``
+    captures run, so an ordinary step after one would be skipped exactly when
+    its teardown ran. The captures with no project are checked as one group.
+    """
+    first_always: dict[str, str] = {}
+    for cap in caps:
+        first = first_always.get(cap.project)
+        if first is not None and not cap.always:
+            group = f"project {cap.project!r}" if cap.project else "the captures with no project"
+            raise CaptureError(
+                f"manifest {path}: capture {cap.id!r} follows the always capture "
+                f"{first!r} of {group}"
+            )
+        if cap.always:
+            first_always.setdefault(cap.project, cap.id)
+
+
+def _armed_teardowns(caps: list[Capture], path: Path) -> list[Capture]:
+    """Bind each ``always`` capture to its set's ``arms_teardown`` capture, checking the latter.
+
+    An arming capture belongs to a project, is no teardown itself, and is its
+    project's only one. It precedes the project's ``always`` captures, since
+    no ordinary capture may follow one (``_check_teardown_tails``).
+    """
+    arming: dict[str, str] = {}
+    for cap in caps:
+        if not cap.arms_teardown:
+            continue
+        where = f"manifest {path}: capture {cap.id!r}: arms_teardown"
+        if not cap.project:
+            raise CaptureError(f"{where} needs project")
+        if cap.always:
+            raise CaptureError(f"{where} cannot be an always capture: it arms the teardown")
+        if cap.project in arming:
+            raise CaptureError(
+                f"{where}: project {cap.project!r} already has {arming[cap.project]!r}"
+            )
+        arming[cap.project] = cap.id
+    return [
+        dataclasses.replace(cap, armed_by=arming[cap.project])
+        if cap.always and cap.project in arming
+        else cap
+        for cap in caps
+    ]
 
 
 def verify_markers(caps: list[Capture], examples_root: Path) -> None:
@@ -828,18 +1092,73 @@ def _substitute(arg: str, subs: dict[str, str]) -> str:
     return arg
 
 
+def _same_lines(committed: str, fresh: str, *, unordered: bool) -> bool:
+    """Whether a fresh capture matches its artifact: exactly, or as a multiset of lines.
+
+    The multiset keeps each line's count, so an order-insensitive check
+    still sees a line that went missing, appeared, or changed.
+    """
+    if not unordered:
+        return committed == fresh
+    return Counter(committed.splitlines()) == Counter(fresh.splitlines())
+
+
+def _run_set(caps: list[Capture], step: Callable[[Capture, bool], None]) -> None:
+    """Run each capture through *step*; after a failure, only the remaining ``always`` ones.
+
+    *step*'s second argument says whether the capture may be recorded: after a
+    failure nothing is, because the set did not run as the artifacts describe.
+    The first failure is re-raised once the cleanup has run; a cleanup's own
+    failure is printed beside it, never in its place. Only a ``CaptureError``
+    counts: an interrupt or a bug propagates at once, without teardown.
+
+    An ``always`` capture bound to an arming capture (``armed_by``) runs only
+    once that capture has succeeded here, in this call; otherwise it is
+    skipped, and said to be, whether or not anything failed.
+    """
+    first: CaptureError | None = None
+    succeeded: set[str] = set()
+    for cap in caps:
+        if first is not None and not cap.always:
+            continue
+        if cap.armed_by is not None and cap.armed_by not in succeeded:
+            print(
+                f"docs captures: skipped {cap.id}: {cap.armed_by} did not succeed in this run, "
+                "so nothing this teardown would remove is proven the set's",
+                file=sys.stderr,
+            )
+            continue
+        try:
+            step(cap, first is None)
+        except CaptureError as exc:
+            if first is None:
+                first = exc
+            else:
+                print(
+                    f"docs captures: cleanup after the failure also failed: {exc}",
+                    file=sys.stderr,
+                )
+        else:
+            succeeded.add(cap.id)
+    if first is not None:
+        raise first
+
+
 def refresh(caps: list[Capture], ctx: RunContext) -> None:
     """Run every capture in ``caps`` and (over)write its artifact."""
     if not caps:
         raise CaptureError("no captures selected")
     ctx.captures_dir.mkdir(parents=True, exist_ok=True)
-    for cap in caps:
+
+    def step(cap: Capture, recorded: bool) -> None:
         text = run_capture(cap, ctx)
-        if not cap.record:
+        if not (cap.record and recorded):
             print(f"ran {cap.id}", flush=True)
-            continue
+            return
         (ctx.captures_dir / f"{cap.id}.txt").write_text(text)
         print(f"captured {cap.id}", flush=True)
+
+    _run_set(caps, step)
 
 
 def check(caps: list[Capture], ctx: RunContext) -> int:
@@ -852,34 +1171,71 @@ def check(caps: list[Capture], ctx: RunContext) -> int:
         raise CaptureError("no captures selected")
     drift = 0
     checked = 0
-    for cap in caps:
+
+    def step(cap: Capture, recorded: bool) -> None:
+        nonlocal drift, checked
         target = ctx.captures_dir / f"{cap.id}.txt"
         fresh = run_capture(cap, ctx)
-        if not cap.record:
-            continue
+        if not (cap.record and recorded):
+            return
         checked += 1
         if not target.exists():
             print(f"MISSING {target.relative_to(ROOT) if target.is_relative_to(ROOT) else target}")
             drift += 1
-            continue
+            return
         committed = target.read_text()
-        if committed != fresh:
+        if not _same_lines(committed, fresh, unordered=cap.unordered):
             drift += 1
             print(f"DRIFT {cap.id}")
+            before = committed.splitlines(keepends=True)
+            after = fresh.splitlines(keepends=True)
+            if cap.unordered:
+                # Sorted, so the diff shows only what the multiset check saw,
+                # not every line that merely moved.
+                before, after = sorted(before), sorted(after)
             sys.stdout.writelines(
                 difflib.unified_diff(
-                    committed.splitlines(keepends=True),
-                    fresh.splitlines(keepends=True),
-                    fromfile=f"committed/{cap.id}.txt",
-                    tofile=f"fresh/{cap.id}.txt",
+                    before, after, fromfile=f"committed/{cap.id}.txt", tofile=f"fresh/{cap.id}.txt"
                 )
             )
+
+    _run_set(caps, step)
     print(f"{checked} capture(s) checked, {drift} drifted", flush=True)
     return 1 if drift else 0
 
 
+class Terminated(BaseException):
+    """SIGTERM reached the runner. Not a ``CaptureError``: it runs no teardown."""
+
+
+def _interrupt(signum: int, _frame: object) -> None:
+    raise Terminated(f"signal {signum}")
+
+
+@contextlib.contextmanager
+def _sigterm_interrupts() -> Iterator[None]:
+    """Raise ``Terminated`` on SIGTERM for the block, then put the old handler back.
+
+    ``subprocess.run`` kills its child when an exception interrupts the wait,
+    and, for any exception but ``KeyboardInterrupt``, waits for it, so a
+    SIGTERM aimed at the runner alone ends the capture's command before the
+    lease is released. The default action would let it outlive the lease;
+    ``KeyboardInterrupt`` would leave it unreaped, since ``Popen`` assumes the
+    child saw the same Ctrl-C.
+    """
+    previous = signal.signal(signal.SIGTERM, _interrupt)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
 def main(argv: list[str] | None = None) -> int:
-    """CLI entry point: parse args, select captures, then list/check/refresh."""
+    """CLI entry point: parse args, select captures, then list/check/refresh.
+
+    Call it from the main thread: a run installs a SIGTERM handler
+    (``_sigterm_interrupts``), which only the main thread may do.
+    """
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument(
         "--check", action="store_true", help="diff against committed artifacts; exit 1 on drift"
@@ -902,7 +1258,7 @@ def main(argv: list[str] | None = None) -> int:
         for cap in caps:
             print(f"{cap.id:32} {'labless' if cap.labless else 'bed':8} {render_command(cap.argv)}")
         return 0
-    with scratch_lock():
+    with _sigterm_interrupts(), scratch_lock(), held_leases(leased(caps, manifest.leases)):
         shutil.rmtree(SCRATCH_DIR, ignore_errors=True)
         SCRATCH_DIR.mkdir(parents=True)
         try:
@@ -926,3 +1282,5 @@ if __name__ == "__main__":
     except CaptureError as exc:
         print(f"docs captures: {exc}", file=sys.stderr)
         sys.exit(2)
+    except Terminated:
+        sys.exit(128 + signal.SIGTERM)
