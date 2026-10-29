@@ -48,6 +48,7 @@ host internals
    kmod_tool_kind
    docker_image_kind
    power
+   identity
    privilege
    file_ops
    recursive_transfer

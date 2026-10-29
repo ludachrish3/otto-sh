@@ -61,6 +61,7 @@ from .host import (
     is_dry_run,
     refuse_declined_fact,
 )
+from .identity import ROOT_LOGIN
 from .mount import Mount, mount_for, mount_for_parent, translate
 from .privilege import PosixPrivilege
 from .session import Expect, SessionManager, ShellSession, _DockerSshSession
@@ -1045,7 +1046,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                     f"choose the user; pass one"
                 ) from None
             return await super(DockerContainerHost, self).exec(
-                cmd, expects=expects, timeout=timeout, log=log, user="root"
+                cmd, expects=expects, timeout=timeout, log=log, user=ROOT_LOGIN
             )
         return await super(DockerContainerHost, self).exec(
             cmd, expects=expects, timeout=timeout, log=log, user=user
@@ -1396,7 +1397,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                         # The effective user may not own what docker cp landed;
                         # only root can be relied on to chmod it.
                         wrapped = await self._docker_exec(
-                            chmod_command(resolved_mode, landed), user="root"
+                            chmod_command(resolved_mode, landed), user=ROOT_LOGIN
                         )
                         chmod = await self.parent.exec(wrapped, timeout=float("inf"))
                     else:
@@ -1432,7 +1433,9 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         if not landed:
             return
         paths = " ".join(path_operand(p) for p in landed)
-        wrapped = await self._docker_exec(f"chown {shell_operand(effective)} {paths}", user="root")
+        wrapped = await self._docker_exec(
+            f"chown {shell_operand(effective)} {paths}", user=ROOT_LOGIN
+        )
         chown = await self.parent.exec(wrapped, timeout=float("inf"))
         if chown.status.is_ok:
             return
@@ -1572,7 +1575,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         subtype of type`` at call time. Naming the class explicitly resolves
         it fresh through the module's own name, which is the rebuilt one.
         """
-        return await super(DockerContainerHost, self)._mkdir_all(paths, user="root")
+        return await super(DockerContainerHost, self)._mkdir_all(paths, user=ROOT_LOGIN)
 
     @override
     def _rebuild_connections(self) -> None:

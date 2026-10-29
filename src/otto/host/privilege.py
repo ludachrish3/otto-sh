@@ -58,10 +58,9 @@ from .host import (
     is_dry_run,
     refuse_declined_elevation,
 )
+from .identity import ROOT_LOGIN, is_root
 from .login_proxy import (
     _SU_PROMPT,
-    _SU_TARGET,
-    _is_root,
     _may_challenge,
     cred_for,
     perform_switch,
@@ -174,10 +173,10 @@ class PosixPrivilege(UserlandHost):
         """Whether a command run as :meth:`_acting_user` already runs as root.
 
         The same identity rule ``su``'s challenge follows
-        (:func:`~otto.host.login_proxy._is_root`): a root session needs no
+        (:func:`~otto.host.identity.is_root`): a root session needs no
         elevation, and an unknown identity is not taken for root.
         """
-        return _is_root(self._acting_user(user))
+        return is_root(self._acting_user(user))
 
     def _su_cred(self) -> Cred | None:
         """Return the cred whose password answers ``su``, or None when none is declared.
@@ -219,7 +218,7 @@ class PosixPrivilege(UserlandHost):
         # getattr, not self.term: this mixin also backs LocalHost and
         # DockerContainerHost, neither of which has a term concept at all —
         # None there reproduces the untargeted lookup exactly as before.
-        return cred_for(self._switch_creds(), _SU_TARGET, getattr(self, "term", None))
+        return cred_for(self._switch_creds(), ROOT_LOGIN, getattr(self, "term", None))
 
     def _elevation_password(self, mechanism: str, user: str | None = None) -> SecretStr | None:
         """Return the password otto will answer *mechanism*'s prompt with, or None for no answer.
@@ -385,7 +384,7 @@ class PosixPrivilege(UserlandHost):
             return ElevatedCommand(f"SUDO_PROMPT='{prompt}' sudo -S {cmd}", answers)
         pw = self._elevation_password("su", user)
         if pw is not None:
-            answers.append(CredentialExpect(_SU_PROMPT, pw, user=_SU_TARGET, host=host))
+            answers.append(CredentialExpect(_SU_PROMPT, pw, user=ROOT_LOGIN, host=host))
         return ElevatedCommand(f"su -c {shlex.quote(cmd)}", answers)
 
     def _history_prefix(self) -> str:
@@ -443,7 +442,7 @@ class PosixPrivilege(UserlandHost):
                 :func:`~otto.host.host.refuse_declined_elevation`.
         """
         if is_dry_run():
-            self._refuse_elevation("switch_user", user or "root")
+            self._refuse_elevation("switch_user", user or ROOT_LOGIN)
         applied = await perform_switch(
             _HostProxyIO(self),
             self._switch_creds(),
@@ -456,11 +455,11 @@ class PosixPrivilege(UserlandHost):
             # mixin also backs term-less hosts (LocalHost, DockerContainerHost).
             protocol=getattr(self, "term", None),
         )
-        self._live_session_mgr()._set_current_user(applied[-1].login or "root")  # noqa: SLF001 — intra-package access to SessionManager._set_current_user for user elevation  # ty: ignore[unresolved-attribute]
+        self._live_session_mgr()._set_current_user(applied[-1].login or ROOT_LOGIN)  # noqa: SLF001 — intra-package access to SessionManager._set_current_user for user elevation  # ty: ignore[unresolved-attribute]
 
     @asynccontextmanager
     async def as_user(
-        self, user: str = "root", password: str | SecretStr | None = None
+        self, user: str = ROOT_LOGIN, password: str | SecretStr | None = None
     ) -> AsyncIterator["PosixPrivilege"]:
         """Run a block as *user*, returning to the original user on exit.
 
@@ -493,7 +492,7 @@ class PosixPrivilege(UserlandHost):
             self._history_prefix(),
             protocol=getattr(self, "term", None),
         )
-        self._live_session_mgr()._set_current_user(applied[-1].login or "root")  # noqa: SLF001 — intra-package access to SessionManager._set_current_user for user elevation  # ty: ignore[unresolved-attribute]
+        self._live_session_mgr()._set_current_user(applied[-1].login or ROOT_LOGIN)  # noqa: SLF001 — intra-package access to SessionManager._set_current_user for user elevation  # ty: ignore[unresolved-attribute]
         try:
             yield self
         finally:

@@ -38,6 +38,7 @@ from .command_frame import (
     history_prefix,
 )
 from .errors import ConsoleError, PasswordRefusedError, RawLandingError, SessionSetupError
+from .identity import ROOT_LOGIN
 from .login_proxy import LoginProxyError, cred_for, perform_switch, run_proxy, run_undo
 from .secret_wire import reveal, shown
 from .shell_liveness import confirm_live
@@ -1999,7 +2000,7 @@ class HostSession:
         if self._creds is None:
             raise NotImplementedError("switch_user is not supported on this host's sessions")
         if is_dry_run():
-            self._refuse_elevation("switch_user", user or "root")
+            self._refuse_elevation("switch_user", user or ROOT_LOGIN)
         applied = await perform_switch(
             self,
             self._creds,
@@ -2010,11 +2011,11 @@ class HostSession:
             self._history_prefix,
             protocol=self._term,
         )
-        self._session.current_user = applied[-1].login or "root"
+        self._session.current_user = applied[-1].login or ROOT_LOGIN
 
     @asynccontextmanager
     async def as_user(
-        self, user: str = "root", password: str | SecretStr | None = None
+        self, user: str = ROOT_LOGIN, password: str | SecretStr | None = None
     ) -> "AsyncIterator[HostSession]":
         """Run a block as *user* on this session, restoring the prior user on exit.
 
@@ -2046,7 +2047,7 @@ class HostSession:
             self._history_prefix,
             protocol=self._term,
         )
-        self._session.current_user = applied[-1].login or "root"
+        self._session.current_user = applied[-1].login or ROOT_LOGIN
         # Narrowed local: `self._creds` re-widens to `list[Cred] | None` once
         # captured by the nested `_undo` closure below (attribute narrowing
         # doesn't cross closure boundaries), so bind it here where the
@@ -2515,12 +2516,12 @@ class DeclinedSession(HostSession):
             ~otto.result.CommandNotRunError: always — see
                 ``HostSession._refuse_elevation``.
         """
-        self._refuse_elevation("switch_user", user or "root")
+        self._refuse_elevation("switch_user", user or ROOT_LOGIN)
 
     @asynccontextmanager
     @override
     async def as_user(
-        self, user: str = "root", password: str | SecretStr | None = None
+        self, user: str = ROOT_LOGIN, password: str | SecretStr | None = None
     ) -> "AsyncIterator[HostSession]":
         """Announce the elevation and refuse to claim it happened.
 

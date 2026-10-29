@@ -50,6 +50,7 @@ from ..check.sweep import (
 from ..check.verdict import FeatureResult, ReportVerdicts, Verdict
 from ..host.errors import UnsupportedOnUserlandError
 from ..host.host import is_dry_run
+from ..host.identity import is_root
 from ..result import CommandResult
 from . import _check_rows as rows
 from ._check_rows import ProbeCtx, far_end, origin_end
@@ -628,7 +629,7 @@ async def check_link(
 
 
 def _privilege(fp: HostFingerprint) -> str:
-    if fp.user == "root":
+    if is_root(fp.user or ""):
         return "root"
     return "elevated" if fp.privileged else "no privilege"
 

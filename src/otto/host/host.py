@@ -60,6 +60,7 @@ from ..utils import (
 # ``otto.errors`` for ``construction``), so none adds an edge beyond itself.
 from .capability_grid import UserSupport
 from .construction import RuntimeOnly
+from .identity import ROOT_LOGIN
 from .inventory_ref import InventoryRef
 from .lab_info import LabInfo
 from .log_haul import haul_globs
@@ -732,7 +733,7 @@ class Host(Protocol):
         ...
 
     def as_user(
-        self, user: str = "root", password: str | SecretStr | None = None
+        self, user: str = ROOT_LOGIN, password: str | SecretStr | None = None
     ) -> "AbstractAsyncContextManager[Any]":
         """Run a block as *user*, restoring the prior identity on exit.
 
@@ -1691,7 +1692,7 @@ class BaseHost(ABC):
     @asynccontextmanager
     async def as_user(
         self,
-        user: str = "root",  # noqa: ARG002 — named by the Host protocol; this refusing default never reads it
+        user: str = ROOT_LOGIN,  # noqa: ARG002 — named by the Host protocol; this refusing default never reads it
         password: str | SecretStr | None = None,  # noqa: ARG002 — named by the Host protocol; this refusing default never reads it
     ) -> "AsyncIterator[BaseHost]":
         """Async context manager to run a block as *user*.
@@ -3111,7 +3112,7 @@ class BaseHost(ABC):
             # (chown included) until it is done.
             landed = path_operand(tool.dest / tool.source.name)
             installed = path_operand(tool.dest / tool.name)
-            async with self.as_user("root"):
+            async with self.as_user(ROOT_LOGIN):
                 if tool.name != tool.source.name:
                     moved = await self.exec(f"mv {landed} {installed}")
                     if not moved.is_ok:

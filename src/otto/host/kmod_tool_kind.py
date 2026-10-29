@@ -36,6 +36,7 @@ from ..declared import DeclaredEntry
 from ..result import Result
 from ..utils import Status, anchor_path
 from .dev_tool import DevTool
+from .identity import is_root
 from .product import (
     ProductPlan,
     ensure_stage_dir,
@@ -73,7 +74,7 @@ def elevates(host: Any) -> bool:
     no host contact). A host that names no login is treated as not root.
     """
     configured = getattr(host, "configured_login_user", None)
-    return (configured() if callable(configured) else "") != "root"
+    return not is_root(configured() if callable(configured) else "")
 
 
 def _elevate(command: str, elevated: bool) -> str:

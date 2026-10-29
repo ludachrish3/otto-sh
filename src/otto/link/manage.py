@@ -1,7 +1,7 @@
 """Impair/repair/list orchestration — kernel qdisc state is the ONLY state.
 
 Reads go through ``host.exec`` (no privilege needed); mutations through
-``host.run(cmd, sudo=host.current_user != "root")``. Every host call passes
+``host.run(cmd, sudo=...)``, sudo'd unless the session user is root. Every host call passes
 ``timeout=_IMPAIR_HOST_TIMEOUT`` and a down host is a loud, host-named
 :class:`LinkHostUnreachableError` — never a skip (spec §9, dev-VM rule). A
 host that ANSWERS and reports failure is the other class,
@@ -29,6 +29,7 @@ from ..host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
 from ..host.daemon import kill_command, launch_command, refuse_if_launch_wrapper_needs_bash
 from ..host.errors import exec_or_raise
 from ..host.host import is_dry_run
+from ..host.identity import is_root
 from ..logger.mode import LogMode
 from ..result import CommandResult
 from .impairer import build_impairer
@@ -461,7 +462,7 @@ async def _root_run(host: Any, cmd: str) -> Any:
     (:func:`impair_link`'s post-apply verify, :func:`repair_link`'s post-clear
     re-read), never silently swallowed here.
     """
-    need_sudo = host.current_user != "root"
+    need_sudo = not is_root(host.current_user)
     try:
         results = await host.run(
             cmd, sudo=need_sudo, timeout=_IMPAIR_HOST_TIMEOUT, log=LogMode.QUIET

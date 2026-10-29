@@ -1453,7 +1453,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         put_result = await self.put(file, dest_dir, show_progress=show_progress)
         if not put_result.is_ok:
             return Result(put_result.status, msg=f"staging {file} failed: {put_result.msg}")
-        need_sudo = self.current_user != "root"
+        need_sudo = not self._acts_as_root()
         params = params.strip()
         extra = f" {params}" if params else ""
         result = await self.run(f"insmod {self._q(dest)}{extra}", sudo=need_sudo)
@@ -1487,7 +1487,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         # without ever naming an `rmmod`.
         if not is_dry_run() and resolved not in (await self._loaded_modules()).value:
             return Result(Status.Success)
-        need_sudo = self.current_user != "root"
+        need_sudo = not self._acts_as_root()
         result = await self.run(f"rmmod {self._q(resolved)}", sudo=need_sudo)
         if result.status.is_ok:
             return Result(Status.Success)

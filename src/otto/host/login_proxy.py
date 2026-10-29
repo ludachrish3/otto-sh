@@ -27,6 +27,7 @@ from ..models.base import Cred, cred_identity
 from ..registry import Registry, registration_boundary
 from .command_frame import BashFrame, SessionMarkers
 from .host import DEFAULT_COMMAND_TIMEOUT
+from .identity import ROOT_LOGIN, is_root
 from .shell_liveness import confirm_live
 
 __all__ = [
@@ -145,21 +146,6 @@ def register_login_proxy(
 # elevation cannot drift apart.
 _SU_PROMPT = r"[Pp]assword:"
 
-# The login a bare, argument-less `su` targets -- and so both the cred whose
-# password answers its prompt and the identity its resync must see. Defined
-# here rather than in `privilege.py` because it is a fact about `su`, and
-# `privilege` imports this module (never the reverse).
-_SU_TARGET = "root"
-
-
-def _is_root(login: str) -> bool:
-    """Whether *login* is the account ``su`` never challenges: root, positively named.
-
-    An empty login is an identity otto never established, and is NOT read as
-    root (see :func:`_may_challenge` for why that is the unsafe direction).
-    """
-    return login == _SU_TARGET
-
 
 def _may_challenge(hop: Cred, via: Cred) -> bool:
     """Whether *hop* can raise a credential prompt when reached from *via*.
@@ -193,11 +179,11 @@ def _may_challenge(hop: Cred, via: Cred) -> bool:
         return bool(forced)
     # POSITIVE identification of root only. An empty via login means otto does
     # not know who it is (a session whose identity was never established), and
-    # `via.login or _SU_TARGET` would quietly read that as "we are root" -- the
+    # `via.login or ROOT_LOGIN` would quietly read that as "we are root" -- the
     # unsafe direction, since it disarms answering for a hop that may well be
     # challenged. Unknown therefore falls through to True, which costs the
     # watch and nothing else.
-    return not _is_root(via.login)
+    return not is_root(via.login)
 
 
 async def _su_proxy(io: ProxyIO, ctx: ProxyContext) -> None:
@@ -649,7 +635,7 @@ async def run_proxy(
             history_prefix,
             prompt=proxy.prompt if _may_challenge(hop, via) else None,
             password=hop.password,
-            expect_user=hop.login or _SU_TARGET,
+            expect_user=hop.login or ROOT_LOGIN,
         )
     except LoginProxyError:
         raise

@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..host.errors import UnsupportedOnUserlandError, exec_or_raise
+from ..host.identity import is_root
 from ..logger.mode import LogMode
 from ..result import CommandResult
 from .errors import CheckCommandFailedError, CheckHostUnreachableError
@@ -120,7 +121,7 @@ async def _elevated(host: Any, cmd: str, timeout: float) -> CommandResult:
     Only a transport failure raises
     :class:`~otto.check.errors.CheckHostUnreachableError`, host-named.
     """
-    need_sudo = host.current_user != "root"
+    need_sudo = not is_root(host.current_user)
     try:
         results = await host.run(
             one_command(cmd), sudo=need_sudo, timeout=timeout, log=LogMode.QUIET
@@ -232,7 +233,7 @@ def parse_fingerprint(host_id: str, address: str, output: str) -> HostFingerprin
         isa=fields.get("isa") or None,
         userland=userland,
         user=user,
-        privileged=user == "root",
+        privileged=is_root(user or ""),
         netns=fields.get("netns") == "1",
         netem_module={"1": True, "0": False}.get(fields.get("netem", "?")),
         tools=tools,
