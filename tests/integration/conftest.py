@@ -163,10 +163,10 @@ _DOCKER_HOST_IP = "10.10.200.13"
 
 
 @pytest.fixture(scope="module")
-def test3_lease(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
+def test3_lease() -> Iterator[str]:
     """Hold the docker host's lease for the entire module, so no e2e docker test
     can race the integration docker tests on the same daemon."""
-    with docker_host_lease(tmp_path_factory) as element:
+    with docker_host_lease() as element:
         yield element
 
 
@@ -239,9 +239,7 @@ def _declares_docker(item: pytest.Item) -> bool:
 
 
 @pytest.fixture(scope="session")
-def reap_orphan_docker_stacks(
-    request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
-) -> None:
+def reap_orphan_docker_stacks(request: pytest.FixtureRequest) -> None:
     """Sweep orphaned docker test stacks once, before the first test that DRIVES docker.
 
     Requested by name from the five docker modules (their ``pytestmark``
@@ -297,7 +295,7 @@ def reap_orphan_docker_stacks(
             pass
     except OSError:
         return
-    with docker_host_lease(tmp_path_factory), contextlib.suppress(Exception):
+    with docker_host_lease(), contextlib.suppress(Exception):
         asyncio.run(_reap_orphan_docker_stacks())
 
 

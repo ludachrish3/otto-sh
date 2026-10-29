@@ -13,9 +13,9 @@ TEST2_CONSOLE = host_data_console("test2")
 
 
 @pytest.fixture
-def test2_lease(tmp_path_factory) -> Iterator[str]:
+def test2_lease() -> Iterator[str]:
     """Hold the unix-pool lease on test2 (its console is one serial line)."""
-    with lease_unix_host(tmp_path_factory.getbasetemp().parent, ("test2",)) as element:
+    with lease_unix_host(("test2",)) as element:
         yield element
 
 

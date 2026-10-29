@@ -15,7 +15,7 @@ at its prompt.
 
 Parametrized on the backend id rather than reading the element name inline:
 every single-console protection in this directory's conftest (per-device
-``xdist_group``, the cross-worker console lock, the wedged-backend fast-fail
+``xdist_group``, the cross-session console lock, the wedged-backend fast-fail
 and the wedge attribution) keys on an item's *parametrization* naming a known
 backend. An unparametrized module would silently opt out of all four.
 """

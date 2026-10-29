@@ -21,7 +21,7 @@ pid on EVERY probe, permanently poisoning the before/after diff with a
 spurious "new" line that is never a real orphaned listener.
 
 ``has_tunnel`` caveat (self-review finding, recorded here rather than swept
-under the rug): the leased unix hosts (test1/test2/test3) are reached
+under the rug): the leased unix hosts (test1/test2) are reached
 directly — no ``--hop`` — so ``NcFileTransfer._connections.has_tunnel`` is
 ``False`` for this bed, and GET dispatches to ``_get_files_nc`` (otto binds a
 local server; the remote runs plain ``nc`` as a *client* pushing bytes back —

@@ -36,7 +36,8 @@ from otto.host.embedded_filesystem import build_filesystem
 from otto.host.embedded_host import EmbeddedHost
 from otto.host.remote_host import RemoteHost
 from otto.result import CommandResult, Results, Status
-from tests._fixtures._console_lock import RESOURCE_NAME
+from tests._fixtures._console_lock import GATE_NAME, RESOURCE_NAME, console_access
+from tests._fixtures.bed_locks import BED_LOCK_ROOT_ENV
 from tests._fixtures.labdata import (
     element_of,
     entry_of,
@@ -75,7 +76,6 @@ from tests.conformance._bed import (
 from tests.conformance._cells import hermetic_space
 from tests.conformance._console_safety import (
     FAMILY_RESOURCE_NAME,
-    console_lock_dir,
     opens_a_single_client_console,
     serialized_console,
     serialized_family,
@@ -1125,7 +1125,7 @@ import tests.conformance.conftest as _conftest
 
 
 @contextlib.contextmanager
-def _no_lock(lock_dir):
+def _no_lock(lock_dir=None):
     yield
 
 
@@ -1139,7 +1139,7 @@ import contextlib
 
 
 @contextlib.contextmanager
-def _fake_console_access(lock_dir, *, exclusive):
+def _fake_console_access(lock_dir=None, *, exclusive):
     yield
 
 
@@ -1199,6 +1199,10 @@ def _run_conformance(tmp_path, *, shape: str, breakage: str):
             # Draw the whole hermetic space, so the `local` cell is present
             # whatever seed the inner run picks.
             "OTTO_CONFORMANCE_CELLS": "all",
+            # The console lock this run takes stays under the unit test's own
+            # bed-lock root, never beside a live lab session's. Named rather
+            # than inherited so a missing unit-tree fixture is a KeyError here.
+            BED_LOCK_ROOT_ENV: os.environ[BED_LOCK_ROOT_ENV],
         },
         capture_output=True,
         text=True,
@@ -1404,7 +1408,7 @@ def test_the_family_lock_excludes_a_second_holder_but_not_the_console(tmp_path):
         os.close(probe)
 
 
-def test_the_family_fixture_locks_busybox_cells_and_only_those(monkeypatch, tmp_path):
+def test_the_family_fixture_locks_busybox_cells_and_only_those(monkeypatch):
     """The conftest wiring: the autouse fixture takes the family lock for a
     BusyBox cell and stays a no-op for a unix one.
 
@@ -1418,7 +1422,7 @@ def test_the_family_fixture_locks_busybox_cells_and_only_those(monkeypatch, tmp_
     held: list[str] = []
 
     @contextlib.contextmanager
-    def _recording(lock_dir):
+    def _recording(lock_dir=None):
         held.append("family")
         yield
 
@@ -1433,13 +1437,9 @@ def test_the_family_fixture_locks_busybox_cells_and_only_those(monkeypatch, tmp_
         def __init__(self, resolved):
             self.callspec = types.SimpleNamespace(params={"resolved_cell": resolved})
 
-    class _Factory:
-        def getbasetemp(self):
-            return tmp_path / "basetemp"
-
     for triple, expect in ((("bb1281", "telnet", "nc"), ["family"]), (DEFAULT_CELL, [])):
         held.clear()
-        gen = fixture_fn(_Req(_Node(_resolved(triple))), _Factory())
+        gen = fixture_fn(_Req(_Node(_resolved(triple))))
         next(gen)
         assert held == expect, triple
         with pytest.raises(StopIteration):
@@ -1493,7 +1493,7 @@ def test_the_guard_reads_the_kernel_and_not_its_own_bookkeeping(monkeypatch, tmp
     """
 
     @contextlib.contextmanager
-    def _locks_nothing(lock_dir, *, exclusive):
+    def _locks_nothing(lock_dir=None, *, exclusive):
         yield
 
     monkeypatch.setattr(_console_safety, "console_access", _locks_nothing)
@@ -1543,25 +1543,27 @@ def test_console_transports_are_swept_before_the_lock_is_released(monkeypatch, t
     assert seen == [None], f"the sweep did not run inside the lock: {seen}"
 
 
-def test_both_trees_take_the_console_lock_in_the_same_directory():
-    """One spelling of the lock directory, because two would be two locks.
+def test_both_trees_take_the_console_lock_in_the_same_directory(tmp_path, monkeypatch):
+    """One directory for the console lock, because two would be two locks.
 
     ``tests/integration/host/conftest.py`` is the only other holder of this
-    lock, and it derives the directory inline. If that derivation moves and
-    this one does not, both trees keep passing and neither excludes the other
-    -- the failure has no symptom until a guest is wedged. Checked as source
-    text for want of anything to import; the constant it pins is one line.
+    lock. Both trees take ``console_access``'s default directory, the bed-lock
+    root, and neither derives one from the session: a directory derived from
+    ``getbasetemp()`` differs between sessions, and two sessions on one guest
+    would then lock different files with no symptom until it wedges.
     """
-    stub = SimpleNamespace(getbasetemp=lambda: Path("/tmp/pytest-of-x/pytest-3/popen-gw0"))
-    assert console_lock_dir(stub) == Path("/tmp/pytest-of-x/pytest-3")
-    integration_conftest = (
-        CHECKOUT_ROOT / "tests" / "integration" / "host" / "conftest.py"
-    ).read_text()
-    assert "lock_dir = tmp_path_factory.getbasetemp().parent" in integration_conftest, (
-        "tests/integration/host/conftest.py no longer derives its console lock directory "
-        "as getbasetemp().parent -- tests/conformance/_console_safety.console_lock_dir "
-        "must move with it or the two trees will lock different files"
-    )
+    for holder in (
+        CHECKOUT_ROOT / "tests" / "integration" / "host" / "conftest.py",
+        CHECKOUT_ROOT / "tests" / "conformance" / "_console_safety.py",
+    ):
+        assert "getbasetemp" not in holder.read_text(), (
+            f"{holder.relative_to(CHECKOUT_ROOT)} derives a lock directory from the session "
+            f"again -- console_access must take its default, the bed-lock root"
+        )
+    monkeypatch.setenv(BED_LOCK_ROOT_ENV, str(tmp_path))
+    with console_access(exclusive=True):
+        assert (tmp_path / GATE_NAME).is_file()
+        assert (tmp_path / RESOURCE_NAME).is_file()
 
 
 # --- What resolving the bed space drags in (Task 4) --------------------------

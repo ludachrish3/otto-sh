@@ -75,7 +75,7 @@ def _login_argv(term: str) -> list[str]:
 
 
 @pytest.fixture(scope="class")
-def leased_test1(tmp_path_factory) -> Iterator[str]:
+def leased_test1() -> Iterator[str]:
     """Hold the Unix-pool lease on test1 for the whole class.
 
     ``otto host <id> login`` is the *human-facing* bridge: it hands over a
@@ -99,8 +99,7 @@ def leased_test1(tmp_path_factory) -> Iterator[str]:
     test3 — because ``HOST_ID`` and ``HOST_NAME`` are baked into the banner
     and log-preamble assertions here. Blocks until test1 is free.
     """
-    lock_dir = tmp_path_factory.getbasetemp().parent
-    with lease_unix_host(lock_dir, [ELEMENT]) as element:
+    with lease_unix_host([ELEMENT]) as element:
         yield element
 
 

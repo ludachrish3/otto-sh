@@ -36,12 +36,16 @@ only its autouse wiring is tree-local, matching this file's established
 root-fixture-vs-local-activation split.
 """
 
+import itertools
 import sys
+from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
 from otto.context import OttoContext
 from otto.labs.loader import Lab
+from tests._fixtures.bed_locks import BED_LOCK_ROOT_ENV
 
 
 @pytest.fixture(autouse=True)
@@ -87,6 +91,33 @@ def _no_off_loopback_dials(refuse_off_loopback_dials: list[str]) -> None:
     design, and ``tests/e2e`` holds subprocess tests this in-process patch
     cannot reach anyway. See the root fixture for the mechanism and scope.
     """
+
+
+@pytest.fixture(scope="session")
+def _bed_lock_base(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """One parent per pytest process for the unit tests' bed-lock roots, under basetemp."""
+    return tmp_path_factory.mktemp("bed-locks")
+
+
+_BED_LOCK_SERIAL = itertools.count()
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_bed_lock_root(_bed_lock_base: Path) -> Iterator[None]:
+    """Point every tests/unit test's bed locks at its own directory, never the real root.
+
+    A unit test, or a pytest subprocess it starts from ``os.environ``, that
+    takes a host lease or a console lock with the default directory would
+    otherwise contend with live lab sessions on the real
+    :func:`~tests._fixtures.bed_locks.bed_lock_root`. Each test gets a fresh
+    name under one per-process parent; ``bed_lock_root()`` makes it only if
+    the test takes a lock, so the cost is nothing for the rest. A private
+    ``MonkeyPatch``, for the reason the root ``_hermetic_otto_home`` gives.
+    A test that needs the real default unsets ``BED_LOCK_ROOT`` itself.
+    """
+    with pytest.MonkeyPatch.context() as private:
+        private.setenv(BED_LOCK_ROOT_ENV, str(_bed_lock_base / str(next(_BED_LOCK_SERIAL))))
+        yield
 
 
 @pytest.fixture

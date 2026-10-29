@@ -139,20 +139,19 @@ _NC_SERIAL_GROUP = pytest.mark.xdist_group("nc-serial")
 
 
 @pytest.fixture
-def leased_host(tmp_path_factory) -> Iterator[tuple[str, str]]:
+def leased_host() -> Iterator[tuple[str, str]]:
     """Lease one Unix host from the pool; yield ``(element, ip)``.
 
     ``ip`` is read read-only from ``tech1/lab.json`` (the unix lab's
     real IP-to-element map) via :func:`tests._fixtures.labdata.host_data` —
     the shared file's ``creds`` are never consulted.
     """
-    lock_dir = tmp_path_factory.getbasetemp().parent
-    with lease_unix_host(lock_dir, _UNIX_POOL) as element:
+    with lease_unix_host(_UNIX_POOL) as element:
         yield element, host_data(element)["ip"]
 
 
 @pytest_asyncio.fixture
-async def proxied_host(request, tmp_path_factory):
+async def proxied_host(request):
     """Proxied-user (mysql) host leased from the Unix pool, by transfer backend.
 
     Parametrized ``indirect`` across ``["scp", "sftp", "ftp", "nc"]`` (see
@@ -161,8 +160,7 @@ async def proxied_host(request, tmp_path_factory):
     ``tests.conftest.transfer_host`` does for the non-proxied case.
     """
     transfer = request.param
-    lock_dir = tmp_path_factory.getbasetemp().parent
-    with lease_unix_host(lock_dir, _UNIX_POOL) as element:
+    with lease_unix_host(_UNIX_POOL) as element:
         ip = host_data(element)["ip"]
         host = create_host_from_dict(
             _mysql_host_dict(ip, element, login="mysql", transfer=transfer),

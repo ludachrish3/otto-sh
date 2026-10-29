@@ -223,7 +223,7 @@ def ctr_run(tmp_path_factory):
     suffix = "e2e-" + uuid.uuid4().hex[:8]
     project = use_case_project(_LAB, _USE_CASE, suffix)
     otto = _Otto(xdir, suffix)
-    with docker_host_lease(tmp_path_factory):
+    with docker_host_lease():
         _ensure_runtime_image(otto)
         # Cleanup always runs; a leftover is asserted only when the body
         # succeeded, so it never masks the body's own failure.

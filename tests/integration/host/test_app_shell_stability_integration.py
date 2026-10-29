@@ -168,10 +168,9 @@ class Select(Parsed):
 
 
 @pytest.fixture
-def leased_host(tmp_path_factory: pytest.TempPathFactory) -> Iterator[tuple[str, str]]:
+def leased_host() -> Iterator[tuple[str, str]]:
     """Lease one Unix host from the pool; yield ``(element, ip)`` (IP read-only)."""
-    lock_dir = tmp_path_factory.getbasetemp().parent
-    with lease_unix_host(lock_dir, _UNIX_POOL) as element:
+    with lease_unix_host(_UNIX_POOL) as element:
         yield element, host_data(element)["ip"]
 
 

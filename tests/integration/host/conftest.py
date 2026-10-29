@@ -495,7 +495,7 @@ def _referenced_backends(item: pytest.Item) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Fan-out vs per-device console serialization (cross-worker reader/writer lock)
+# Fan-out vs per-device console serialization (cross-session reader/writer lock)
 #
 # The grouping above pins each *device's* tests to one worker, so two clients
 # never hit one console from the per-backend suites. The fan-out tests
@@ -507,7 +507,7 @@ def _referenced_backends(item: pytest.Item) -> list[str]:
 # ``shell never became ready`` signature (an ``IncompleteReadError(0 bytes)``
 # on the telnet stream). Reproduced reliably; a serial (``-n0``) run is clean.
 #
-# A cross-worker reader/writer lock closes the gap without serializing the
+# A cross-session reader/writer lock closes the gap without serializing the
 # whole bed (the conftest grouping note measured full one-group serialization
 # at >450s, over the Makefile's 240s cap). Per-device tests take a SHARED lock
 # — different devices still parallelize across workers, preserving the run time
@@ -524,7 +524,7 @@ def _referenced_backends(item: pytest.Item) -> list[str]:
 
 
 @pytest.fixture(autouse=True)
-def _console_access_lock(request: pytest.FixtureRequest, tmp_path_factory):
+def _console_access_lock(request: pytest.FixtureRequest):
     """Serialize the fan-out console tests against the per-device tests.
 
     Autouse + function-scoped, and (having no dependency on ``host1``) set up
@@ -543,11 +543,10 @@ def _console_access_lock(request: pytest.FixtureRequest, tmp_path_factory):
     if "embedded" not in request.node.keywords:
         yield
         return
-    lock_dir = tmp_path_factory.getbasetemp().parent
     # A fan-out test references no single backend (it opens all of them); a
     # per-device test names exactly one — the same signal the wedge gate uses.
     exclusive = not _referenced_backends(request.node)
-    with console_access(lock_dir, exclusive=exclusive):
+    with console_access(exclusive=exclusive):
         try:
             yield
         finally:
@@ -594,7 +593,7 @@ def _unmarked_device_item(item: pytest.Item) -> list[str]:
 
     Every single-console protection in this file is keyed on that one keyword:
     the per-device ``xdist_group`` (:func:`pytest_collection_modifyitems`), the
-    cross-worker console lock (:func:`_console_access_lock`), the wedged-backend
+    cross-session console lock (:func:`_console_access_lock`), the wedged-backend
     fast-fail below, and the wedge attribution that captures the guest's journal
     (:func:`pytest_runtest_makereport`). A module that parametrizes over the
     devices but forgets the marker therefore opts out of ALL FOUR silently: its

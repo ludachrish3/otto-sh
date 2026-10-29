@@ -81,14 +81,13 @@ def _run_otto(
 
 
 @pytest.fixture
-def unix_host(tmp_path_factory) -> str:  # type: ignore[type-arg]
+def unix_host() -> str:  # type: ignore[type-arg]
     """Lease one Unix host from the pool; yield its host id (e.g. ``test1``).
 
     Uses the same fd-flock lease mechanism as the transfer e2e tests so that
-    concurrent workers never race on the same host.
+    concurrent workers and sessions never race on the same host.
     """
-    lock_dir = tmp_path_factory.getbasetemp().parent
-    with lease_unix_host(lock_dir, _UNIX_POOL) as element:
+    with lease_unix_host(_UNIX_POOL) as element:
         yield element
 
 

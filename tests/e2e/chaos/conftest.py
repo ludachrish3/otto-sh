@@ -16,9 +16,8 @@ from tests.e2e.chaos._bed import BusyboxChaosBed, ChaosBed, busybox_bed, leased_
 
 
 @pytest.fixture(scope="session")
-def chaos_bed(tmp_path_factory: pytest.TempPathFactory) -> Iterator[ChaosBed]:
-    lock_dir = tmp_path_factory.getbasetemp().parent
-    with leased_bed(lock_dir) as bed:
+def chaos_bed() -> Iterator[ChaosBed]:
+    with leased_bed() as bed:
         yield bed
 
 
@@ -27,7 +26,7 @@ def busybox_chaos_bed() -> Iterator[BusyboxChaosBed]:
     """The lane's BusyBox guest, session-scoped like ``chaos_bed`` — and,
     unlike it, UNLEASED and pool-free.
 
-    It takes no ``tmp_path_factory`` precisely because it needs no lock dir:
+    It takes no lease on purpose:
     requesting this fixture must never reach ``lease_unix_host``, or a guest
     scenario would hold a unix VM hostage for the whole session while
     touching only a QEMU guest and its hop. See ``_bed.busybox_bed`` for why

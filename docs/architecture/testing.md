@@ -537,29 +537,31 @@ A venue's gaps are worth more written down than rediscovered. Every item
 below is a real limitation of `make conformance-bed` as it ships, not a
 to-do list.
 
-**The console lock is cross-worker, not cross-session.** Zephyr's
+**The console lock covers pytest items, not every client.** Zephyr's
 `shell_telnet` backend serves exactly ONE client per guest, as does every
-serial console, and `tests/conformance/_console_safety.py` holds the repository's
+serial console, and `tests/conformance/_console_safety.py` holds the
 writer-fair console lock EXCLUSIVELY around every item whose drawn cell
-opens one. That lock is
-taken in `tmp_path_factory.getbasetemp().parent`, which resolves to
-`/tmp/pytest-of-<user>` under `-n0` but to `/tmp/pytest-of-<user>/pytest-<N>`
-under xdist, because a worker's basetemp is a child of the controller's. The
-suite's addopts turn xdist on, so **the lock serializes the workers of one
-session and nothing else**. Two pytest sessions on this dev VM — a
-`make conformance-bed` beside a `make coverage-embedded`, or two agent
-sessions — are not serialized against each other. Neither is a person on
-`telnet`, a `scripts/` tool, or a stale forward. Nor is an item that carries
-no `resolved_cell` param at all: the autouse fixture reads the cell off the
-item's callspec, so a test parametrized some other way gets no hold (the bed
-openers' witness is deliberately the only such test, and it deliberately
-opens no Zephyr guest). The same gap is true of `tests/integration/host/`
-today; closing it needs one lock directory adopted by both trees, and doing
-it in one only would be worse than doing it in neither. **The consequence of
-losing that race is not a failed test**: two clients on one console can make
-the guest re-initialise its telnet backend, after which it refuses every
-connection until `make qemu-restart` (issue #260). The re-init is terminal
-and does not self-clear.
+opens one. The lock lives under `tests._fixtures.bed_locks.bed_lock_root()`,
+as `tests/integration/host/`'s does, so two pytest sessions of one user on
+this dev VM — a `make conformance-bed` beside a `make coverage-embedded`, or
+two agent sessions — take turns on a console. These do not take it:
+
+- a person on `telnet`, a `scripts/` tool, or a stale forward;
+- another user's sessions, since the root is per user;
+- `make chaos-embedded`, whose console scenarios open a Zephyr guest's
+  console with no console lock;
+- `tests/e2e/console`, which guards `test2`'s serial line with the `test2`
+  host lease, a different lock from the one the conformance `console` cells
+  on `test2` take;
+- an item that carries no `resolved_cell` param at all: the autouse fixture
+  reads the cell off the item's callspec, so a test parametrized some other
+  way gets no hold (the bed openers' witness is deliberately the only such
+  test, and it deliberately opens no Zephyr guest).
+
+**The consequence of losing that race is not a failed test**: two clients on
+one console can make the guest re-initialise its telnet backend, after which
+it refuses every connection until `make qemu-restart` (issue #260). The
+re-init is terminal and does not self-clear.
 
 **The timeout contract does not apply to Zephyr cells, and is covered
 nowhere else.** `test_timeout_contract.applicable_cell` narrows the domain to

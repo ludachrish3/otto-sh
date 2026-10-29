@@ -34,9 +34,8 @@ _MARKER = "/tmp/otto-gs-provisioned"  # the path the documented hook writes
 
 
 @pytest.fixture
-def test1_lease(tmp_path_factory) -> Iterator[str]:
-    lock_dir = tmp_path_factory.getbasetemp().parent
-    with lease_unix_host(lock_dir, ("test1",)) as element:
+def test1_lease() -> Iterator[str]:
+    with lease_unix_host(("test1",)) as element:
         yield element
 
 

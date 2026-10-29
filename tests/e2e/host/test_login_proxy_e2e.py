@@ -160,7 +160,7 @@ def _mysql_host_dict(
 
 
 @pytest.fixture
-def leased_host(tmp_path_factory) -> Iterator[tuple[str, str]]:
+def leased_host() -> Iterator[tuple[str, str]]:
     """Lease one Unix host from the pool; yield ``(element, ip)``.
 
     ``ip`` is read read-only from ``tech1/lab.json`` (the unix lab's
@@ -168,8 +168,7 @@ def leased_host(tmp_path_factory) -> Iterator[tuple[str, str]]:
     the shared file's ``creds`` are never consulted, so this never depends on
     (or risks) anything mutated there.
     """
-    lock_dir = tmp_path_factory.getbasetemp().parent
-    with lease_unix_host(lock_dir, _UNIX_POOL) as element:
+    with lease_unix_host(_UNIX_POOL) as element:
         yield element, host_data(element)["ip"]
 
 

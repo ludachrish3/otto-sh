@@ -26,7 +26,7 @@ _DOCKER_POOL = ("test1", "test3")
 
 
 @pytest.fixture
-def docker_host(tmp_path_factory) -> str:  # type: ignore[type-arg]
+def docker_host() -> str:  # type: ignore[type-arg]
     """Lease one docker-capable, SSH-based host from the pool for this test's duration.
 
     Yields the host's id, e.g. ``"test1"``.  The fd-flock on
@@ -39,21 +39,19 @@ def docker_host(tmp_path_factory) -> str:  # type: ignore[type-arg]
     test2 defaults to telnet (telnet is first in its valid_terms),
     so it cannot serve as a docker container parent.
     """
-    lock_dir = tmp_path_factory.getbasetemp().parent
-    with lease_unix_host(lock_dir, _DOCKER_POOL) as element:
+    with lease_unix_host(_DOCKER_POOL) as element:
         yield element
 
 
 @pytest.fixture
-def default_parent_host(tmp_path_factory) -> str:  # type: ignore[type-arg]
+def default_parent_host() -> str:  # type: ignore[type-arg]
     """Lease :data:`_DEFAULT_PARENT` — the host a docker verb resolves to with no flag.
 
     Same fd-flock as ``docker_host``, narrowed to one element. Used by the
     tests that address a container id from a second otto process, where the
     id must be one the default parent minted rather than one ``--parent`` invented.
     """
-    lock_dir = tmp_path_factory.getbasetemp().parent
-    with lease_unix_host(lock_dir, [_DEFAULT_PARENT]) as element:
+    with lease_unix_host([_DEFAULT_PARENT]) as element:
         yield element
 
 

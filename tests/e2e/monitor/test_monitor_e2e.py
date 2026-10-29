@@ -255,7 +255,7 @@ def _run_monitor_briefly(
 
 
 @pytest.fixture
-def monitor_host(tmp_path_factory) -> str:  # type: ignore[type-arg]
+def monitor_host() -> str:  # type: ignore[type-arg]
     """Lease one Unix host from the pool for the monitor test's duration.
 
     Yields the host's *element* name (e.g. ``"test1"``).  ``otto monitor``
@@ -263,8 +263,7 @@ def monitor_host(tmp_path_factory) -> str:  # type: ignore[type-arg]
     so the element alone selects nothing — :func:`_run_monitor_briefly` appends
     the ``.*`` that turns it back into the prefix this fixture means.
     """
-    lock_dir = tmp_path_factory.getbasetemp().parent
-    with lease_unix_host(lock_dir, _MONITOR_POOL) as element:
+    with lease_unix_host(_MONITOR_POOL) as element:
         yield element
 
 

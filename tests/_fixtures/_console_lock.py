@@ -1,4 +1,4 @@
-"""Writer-fair cross-worker lock serializing access to single-client consoles.
+"""Writer-fair cross-session lock serializing access to single-client consoles.
 
 Per-device embedded tests take a SHARED lock (they touch only their own console;
 different devices parallelize across xdist workers); the fan-out / contention
@@ -22,13 +22,15 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+from tests._fixtures.bed_locks import lock_dir_or_root
+
 GATE_NAME = "zephyr_console.gate"
 RESOURCE_NAME = "zephyr_console.resource"
 
 
 @contextmanager
 def console_access(
-    lock_dir: Path,
+    lock_dir: Path | None = None,
     *,
     exclusive: bool,
     gate_name: str = GATE_NAME,
@@ -36,8 +38,9 @@ def console_access(
 ) -> Iterator[None]:
     """Acquire the fair console lock — SHARED (``exclusive=False``) or EXCLUSIVE.
 
-    ``lock_dir`` must be common to every xdist worker (use
-    ``tmp_path_factory.getbasetemp().parent``). Closing the fds in ``finally``
+    The lock files live under :func:`~tests._fixtures.bed_locks.bed_lock_root`,
+    shared by every session of this user; ``lock_dir`` replaces it only for a
+    test of this mechanism. Closing the fds in ``finally``
     releases the locks even if an explicit unlock is skipped — e.g. a
     pytest-timeout signal interrupts the holder.
 
@@ -46,8 +49,9 @@ def console_access(
     own pair gets an independent lock with the same writer-fair mechanics
     (``tests/conformance/_console_safety.py``'s BusyBox family lock).
     """
-    gate_fd = os.open(str(lock_dir / gate_name), os.O_RDWR | os.O_CREAT, 0o644)
-    resource_fd = os.open(str(lock_dir / resource_name), os.O_RDWR | os.O_CREAT, 0o644)
+    root = lock_dir_or_root(lock_dir)
+    gate_fd = os.open(str(root / gate_name), os.O_RDWR | os.O_CREAT, 0o644)
+    resource_fd = os.open(str(root / resource_name), os.O_RDWR | os.O_CREAT, 0o644)
     try:
         fcntl.flock(gate_fd, fcntl.LOCK_EX)  # enter the turnstile
         if exclusive:

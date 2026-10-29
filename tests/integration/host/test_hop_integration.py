@@ -74,10 +74,10 @@ _NC_SERIAL_GROUP = pytest.mark.xdist_group("nc-serial")
 
 
 @pytest.fixture
-def _test2_nc_lease(tmp_path_factory) -> "Iterator[None]":
+def _test2_nc_lease() -> "Iterator[None]":
     """Hold the host pool's test2 lease for the duration of an nc test.
 
-    The cross-worker half of the serialization story above: an nc transfer's
+    The cross-process half of the serialization story above: an nc transfer's
     port scan must never race another transfer on the same host, and the rest
     of the suite coordinates its test2 use through `lease_unix_host`. A
     single-candidate lease is that pool's per-host mutex — it polls until
@@ -85,8 +85,7 @@ def _test2_nc_lease(tmp_path_factory) -> "Iterator[None]":
     of cross-wiring with it. Scoped to the nc tests only: scp/sftp/ftp hop
     tests have no port scan to race.
     """
-    lock_dir = Path(tmp_path_factory.getbasetemp()).parent
-    with lease_unix_host(lock_dir, ("test2",)):
+    with lease_unix_host(("test2",)):
         yield
 
 

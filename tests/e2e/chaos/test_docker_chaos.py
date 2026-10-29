@@ -154,7 +154,7 @@ def docker_parent(tmp_path_factory) -> "Iterator[UnixHost]":
                 _active_hosts.remove(host)
                 _close(host)
         return
-    with docker_host_lease(tmp_path_factory):
+    with docker_host_lease():
         host = bed_parent()
         _active_hosts.append(host)
         try:

@@ -50,7 +50,6 @@ import pytest
 
 from tests.conformance._cells import resolve_space
 from tests.conformance._console_safety import (
-    console_lock_dir,
     opens_a_single_client_console,
     serialized_console,
     serialized_family,
@@ -343,7 +342,7 @@ def _cell_under_test(node) -> "ResolvedCell | None":
 
 
 @pytest.fixture(autouse=True)
-def _single_client_console(request: pytest.FixtureRequest, tmp_path_factory):
+def _single_client_console(request: pytest.FixtureRequest):
     """Hold the console EXCLUSIVELY for any item whose cell opens a single-client one.
 
     Autouse and function-scoped, and depending on neither ``resolved_cell`` nor
@@ -366,12 +365,12 @@ def _single_client_console(request: pytest.FixtureRequest, tmp_path_factory):
     if resolved is None or not opens_a_single_client_console(resolved):
         yield
         return
-    with serialized_console(console_lock_dir(tmp_path_factory)):
+    with serialized_console():
         yield
 
 
 @pytest.fixture(autouse=True)
-def _shared_cpu_family(request: pytest.FixtureRequest, tmp_path_factory):
+def _shared_cpu_family(request: pytest.FixtureRequest):
     """Serialize items of one shared-CPU guest family against each other.
 
     The BusyBox guests are multi-client (no console to protect) but five TCG
@@ -394,7 +393,7 @@ def _shared_cpu_family(request: pytest.FixtureRequest, tmp_path_factory):
     if resolved is None or not shares_a_family_cpu_budget(resolved):
         yield
         return
-    with serialized_family(console_lock_dir(tmp_path_factory)):
+    with serialized_family():
         yield
 
 

@@ -78,10 +78,9 @@ def _run_otto(
 
 
 @pytest.fixture
-def docker_host(tmp_path_factory) -> str:  # type: ignore[type-arg]
+def docker_host() -> str:  # type: ignore[type-arg]
     """Lease one SSH-capable docker host from the pool; yield its host id."""
-    lock_dir = tmp_path_factory.getbasetemp().parent
-    with lease_unix_host(lock_dir, _DOCKER_POOL) as element:
+    with lease_unix_host(_DOCKER_POOL) as element:
         yield element
 
 

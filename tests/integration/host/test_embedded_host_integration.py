@@ -248,7 +248,7 @@ async def test_concurrent_clients_to_one_console_contend_and_recover():
     cascade and leave the console wedged for later connects.
 
     This reproduces the contention *within a single test* (so it is immune to
-    the cross-worker serialization that prevents it in the suite at large) and
+    the cross-session serialization that prevents it in the suite at large) and
     pins the safe invariants:
 
     1. **At most one client wins** — the second never silently shares the one

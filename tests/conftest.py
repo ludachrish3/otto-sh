@@ -1887,7 +1887,7 @@ async def hop_host(request):
 
 
 @pytest_asyncio.fixture
-async def transfer_host(request, tmp_path_factory):
+async def transfer_host(request):
     """Integration host parameterized by transfer type.
 
     Three param shapes:
@@ -1924,8 +1924,7 @@ async def transfer_host(request, tmp_path_factory):
         finally:
             await h.close()
         return
-    lock_dir = tmp_path_factory.getbasetemp().parent
-    with lease_unix_host(lock_dir) as element:
+    with lease_unix_host() as element:
         if isinstance(param, tuple):
             transfer, term = param
             h = make_host(element, transfer=transfer, term=term)

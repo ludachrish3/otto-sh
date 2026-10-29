@@ -45,19 +45,20 @@ above. EXCLUSIVE costs the parallelism of running two DIFFERENT guests at
 once, which is 11 cells' worth of the space and, at the default budget of 8
 drawn from 55, usually one or two.
 
+ANOTHER PYTEST SESSION of the same user is serialized too: the lock lives
+under ``tests._fixtures.bed_locks.bed_lock_root()``, as the integration
+tree's does. So a second session driving the same guests (a concurrent
+``make coverage-embedded``, say) waits for this one, and this one for it.
+
 WHAT THIS DOES NOT PROTECT AGAINST, stated here rather than discovered later:
 
-- ANOTHER PYTEST SESSION on the same VM. Measured: ``getbasetemp().parent`` is
-  ``/tmp/pytest-of-<user>`` under ``-n0`` but ``/tmp/pytest-of-<user>/pytest-<N>``
-  under xdist, because each worker's basetemp is a child of the session's. So
-  the lock is cross-WORKER, not cross-SESSION, whenever xdist is on -- and the
-  suite's addopts turn it on. A second session driving the same guests (a
-  concurrent ``make coverage-embedded``, say) is not serialized against this
-  one. The derivation is kept identical to the integration tree's anyway: two
-  spellings would be two locks, and a divergent one would look like protection
-  while providing none.
 - ANY CLIENT THAT IS NOT A PYTEST ITEM -- a person on ``telnet``, a
   ``scripts/`` tool, a stale forward from an earlier run.
+- A PYTEST ITEM THAT TAKES ANOTHER LOCK, OR NONE. ``make chaos-embedded``
+  opens a Zephyr console with no console lock, and ``tests/e2e/console``
+  guards ``test2``'s serial line with the ``test2`` host lease, which this
+  lock does not exclude.
+- ANOTHER USER's sessions: the root is per user.
 - A SINGLE client wedging a guest on its own. #260's re-init path was not
   reproduced by any one- or two-client probe, so nothing here can claim it is
   impossible.
@@ -132,6 +133,7 @@ from pathlib import Path
 
 from otto.host.telnet import abort_console_transports
 from tests._fixtures._console_lock import RESOURCE_NAME, console_access
+from tests._fixtures.bed_locks import lock_dir_or_root
 from tests.conformance._bed import BED_BUSYBOX, BED_ZEPHYR
 from tests.conformance._resolved import ResolvedCell
 
@@ -186,10 +188,10 @@ def shares_a_family_cpu_budget(resolved: ResolvedCell) -> bool:
 
 
 @contextmanager
-def serialized_family(lock_dir: Path) -> "Iterator[None]":
+def serialized_family(lock_dir: Path | None = None) -> "Iterator[None]":
     """Hold the shared-CPU family lock EXCLUSIVELY for the duration of the block.
 
-    One family item at a time across this session's workers — the runtime-lock
+    One family item at a time across every session's workers — the runtime-lock
     translation of the integration tree's family ``xdist_group``. Unlike
     :func:`serialized_console` there is no held-path record and no transport
     sweep on exit: an interrupted BusyBox item leaves nothing wedged (its
@@ -205,30 +207,15 @@ def serialized_family(lock_dir: Path) -> "Iterator[None]":
         yield
 
 
-def console_lock_dir(tmp_path_factory) -> Path:
-    """The directory every process of this session takes the console lock in.
-
-    ``getbasetemp().parent``, which is what
-    ``tests/integration/host/conftest.py`` passes to the same lock -- one
-    spelling, so the two trees serialize against each other if they ever share
-    a session. Measured, and the measurement is the limitation this venue
-    carries: ``-n0`` resolves it to ``/tmp/pytest-of-<user>`` (machine-wide)
-    while xdist resolves it to ``/tmp/pytest-of-<user>/pytest-<N>``, because a
-    worker's basetemp is a child of the controller's. Under the suite's default
-    ``-n auto`` the lock is therefore per-SESSION.
-    """
-    return Path(tmp_path_factory.getbasetemp()).parent
-
-
 @contextmanager
-def serialized_console(lock_dir: Path) -> "Iterator[None]":
+def serialized_console(lock_dir: Path | None = None) -> "Iterator[None]":
     """Hold the console EXCLUSIVELY for the duration of the block.
 
     Three things in one context manager because their ORDER is the contract
     and a caller that got it wrong would still look right:
 
     1. the writer-fair EXCLUSIVE hold (``console_access``), so no other worker
-       of this session can be on any single-client console;
+       of any session can be on any single-client console;
     2. the record of WHICH lock file is held, which is the only thing
        :func:`unhonored_console_lock` will accept as evidence;
     3. ``abort_console_transports()`` on the way out, WHILE THE LOCK IS STILL
@@ -237,8 +224,9 @@ def serialized_console(lock_dir: Path) -> "Iterator[None]":
        occupied by a transport nobody owns; releasing the lock first would
        hand the next holder a console that is still taken.
     """
-    with console_access(lock_dir, exclusive=True):
-        _HELD.append(Path(lock_dir) / RESOURCE_NAME)
+    root = lock_dir_or_root(lock_dir)
+    with console_access(root, exclusive=True):
+        _HELD.append(root / RESOURCE_NAME)
         try:
             yield
         finally:

@@ -125,7 +125,7 @@ def test_docker_capable_hosts_are_built_only_in_docker_modules() -> None:
 
 
 def reaps_under_the_lease(conftest_source: str) -> bool:
-    """Whether the reaper fixture calls the reap only inside a ``with docker_host_lease(...)``."""
+    """Whether the reaper fixture calls the reap only inside a ``with docker_host_lease()``."""
     tree = ast.parse(conftest_source)
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef) and node.name == _FIXTURE:
@@ -182,8 +182,8 @@ def test_the_scanners_see_the_shapes_they_judge() -> None:
     )
     assert modules_declaring("x = 1\n") == (False, False)
     head = f"import pytest\n\n@pytest.fixture(scope='session')\ndef {_FIXTURE}():\n"
-    leased = head + "    with docker_host_lease(f):\n        _reap_orphan_docker_stacks()\n"
-    other = head + "    with lease_unix_host(d):\n        _reap_orphan_docker_stacks()\n"
+    leased = head + "    with docker_host_lease():\n        _reap_orphan_docker_stacks()\n"
+    other = head + "    with lease_unix_host():\n        _reap_orphan_docker_stacks()\n"
     bare = head + "    _reap_orphan_docker_stacks()\n"
     assert reaps_under_the_lease(leased)
     assert not reaps_under_the_lease(bare)

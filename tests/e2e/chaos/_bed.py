@@ -1,6 +1,6 @@
 """Leased live-bed target for the tier-3 chaos lane.
 
-The lane's spine: lease ONE free unix host (flock, cross-worker), prove it
+The lane's spine: lease ONE free unix host (flock, cross-session), prove it
 reachable (fail LOUD, host-named, never skip), and expose it both as a
 ``ChaosTarget`` (for the otto subprocess under test) and as fresh probe
 ``UnixHost``s (for oracle exec over an independent connection). The tier-2
@@ -34,7 +34,7 @@ from otto.labs.loader import Lab
 from otto.link.derive import addressing_from_dict, raw_endpoint_host_ids, resolve_declared_links
 from otto.logger.mode import LogMode
 from otto.result import Result
-from tests._fixtures._host_pool import lease_unix_host
+from tests._fixtures._host_pool import DOCKER_HOST, UNIX_POOL, lease_unix_host
 from tests._fixtures.bed_hygiene import _PROBE_TIMEOUT, check_probe_result
 from tests._fixtures.labdata import (
     element_for,
@@ -57,10 +57,16 @@ class ChaosBed:
     target: ChaosTarget  # aim the otto subprocess here
 
 
+# The bed's pool leaves out the docker host. The lane's docker scenarios lease
+# it later in the same process while the bed is still held, and a bed that had
+# drawn it would wait on its own lease.
+CHAOS_POOL: tuple[str, ...] = tuple(h for h in UNIX_POOL if h != DOCKER_HOST)
+
+
 @contextlib.contextmanager
-def leased_bed(lock_dir: Path) -> Iterator[ChaosBed]:
-    """Lease a free unix host; probe reachability; yield the bed handle."""
-    with lease_unix_host(lock_dir) as element:
+def leased_bed() -> Iterator[ChaosBed]:
+    """Lease a free unix host, not the docker host; probe reachability; yield the bed handle."""
+    with lease_unix_host(CHAOS_POOL) as element:
         ip = host_data(element)["ip"]
         asyncio.run(assert_reachable(element, ip))
         yield ChaosBed(element=element, ip=ip, target=make_bed_target(element))
