@@ -1685,9 +1685,15 @@ EOF
             # Install docker engine + compose v2 plugin from Ubuntu's repos.
             # `docker-compose-v2` provides `docker compose` (v2 plugin) which
             # is the spelling otto uses; the legacy `docker-compose` binary
-            # is intentionally not installed.
+            # is intentionally not installed. `docker-buildx` makes `docker
+            # build` use BuildKit: without it docker falls back to the
+            # deprecated legacy builder, prints a DEPRECATED warning into every
+            # build (and so into the docs captures), and keeps no BuildKit cache
+            # for `docker buildx du` / `docker builder prune --filter id=` to
+            # list or prune, which the docker quickstart's capture teardown uses.
             apt -y install  docker.io                \
-                            docker-compose-v2
+                            docker-compose-v2        \
+                            docker-buildx
 
             # Let the `vagrant` user (the credential otto authenticates as)
             # talk to the docker socket without sudo. Otto authenticates as
