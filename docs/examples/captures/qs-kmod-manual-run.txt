@@ -1,6 +1,6 @@
 $ otto --lab example_lab host dut exec --sudo 'sh -c "echo by hand > /sys/module/qs_wordcount/parameters/line; echo once more > /sys/module/qs_wordcount/parameters/line"'
 INFO     fleet of interest: 1 of 2 lab hosts (1 project(s), 0 excluded)
-INFO     @dut   | sudo -S -p 'otto-sudo:' sh -c "echo by hand >
+INFO     @dut   | SUDO_PROMPT='otto-sudo-<nonce>:' sudo -S sh -c "echo by hand >
          /sys/module/qs_wordcount/parameters/line; echo once more >
          /sys/module/qs_wordcount/parameters/line"
 

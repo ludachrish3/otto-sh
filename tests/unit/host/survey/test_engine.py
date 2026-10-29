@@ -440,6 +440,27 @@ async def test_an_unelevated_inventory_prints_the_owners_incomplete_notice(seams
     assert any(f.startswith(prefix) for f in s.footnotes)
 
 
+@pytest.mark.parametrize(("elevation", "elevated"), [("su", True), ("none", False)])
+@pytest.mark.asyncio
+async def test_a_root_login_gets_no_owners_incomplete_notice(
+    seams, monkeypatch, elevation, elevated
+):
+    """Root already sees every owner, so "ran without root" would be false.
+
+    su-only is the shape where a root login elevates with no answer armed (su
+    never asks root); ``none`` is the shape where nothing can elevate, so the
+    inventory runs unelevated as root. Mutation: drop the root check and the
+    ``none`` case prints the notice. The non-root half is
+    ``test_an_unelevated_inventory_prints_the_owners_incomplete_notice``.
+    """
+    monkeypatch.setattr(UnixHost, "userland", lambda self: _Userland(elevation=elevation))
+    host = _unix(creds=[Cred(login="root", password="r")])
+    assert host.current_user == "root"
+    s = await engine.run_survey(host)
+    assert seams["inventory"] == [elevated]
+    assert not any(f.startswith("owners incomplete") for f in s.footnotes), s.footnotes
+
+
 @pytest.mark.asyncio
 async def test_elevation_is_requested_only_with_a_mechanism_and_a_password(seams, monkeypatch):
     """Mutation: elevate whenever sudo exists, even a passwordless cred otto cannot use."""
@@ -449,6 +470,51 @@ async def test_elevation_is_requested_only_with_a_mechanism_and_a_password(seams
     seams["inventory"].clear()
     await engine.run_survey(_unix())
     assert seams["inventory"] == [True]
+
+
+@pytest.mark.parametrize(
+    ("elevation", "creds", "arms_answer", "expected"),
+    [
+        ("sudo", [Cred(login="admin", password="pw")], True, True),
+        ("sudo", [Cred(login="admin")], False, False),
+        ("su", [Cred(login="admin"), Cred(login="root", password="r")], True, True),
+        ("su", [Cred(login="admin", password="pw")], False, False),
+        # su never asks root: a root login arms no answer yet IS elevated.
+        ("su", [Cred(login="root", password="r")], False, True),
+        ("su", [Cred(login="root")], False, True),
+        ("sudo", [Cred(login="root")], False, True),
+    ],
+    ids=[
+        "sudo-pw",
+        "sudo-no-pw",
+        "su-root-pw",
+        "su-no-root-cred",
+        "su-as-root",
+        "su-as-root-no-pw",
+        "sudo-as-root-no-pw",
+    ],
+)
+@pytest.mark.asyncio
+async def test_the_inventory_elevates_exactly_when_the_session_can_elevate(
+    seams, monkeypatch, elevation, creds, arms_answer, expected
+):
+    """One decision: the survey elevates when ``_can_elevate`` says so, and only then.
+
+    The survey and the privilege layer are asked the same input. A non-root
+    session can elevate exactly when ``_elevate`` arms an answer; a root
+    session can elevate with no answer at all. Mutation: restate the decision
+    in the engine as "``_elevation_password`` is not None" (what a root su
+    session with ``elevation: su`` lost elevation to) and the ``*-as-root``
+    su cases go red.
+    """
+    userland = _Userland(elevation=elevation)
+    monkeypatch.setattr(UnixHost, "userland", lambda self: userland)
+    monkeypatch.setattr(UnixHost, "_userland", lambda self: userland)
+    host = _unix(creds=creds)
+    assert bool(host._elevate("id").expects) is arms_answer
+    assert host._can_elevate(elevation) is expected
+    await engine.run_survey(host)
+    assert seams["inventory"] == [expected]
 
 
 @pytest.mark.asyncio

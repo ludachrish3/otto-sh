@@ -203,11 +203,38 @@ async def _su(offered: Offered) -> None:
         offered.passwords.extend(text.rstrip("\n") for text in io.shell.writes)
 
 
+async def _sudo(offered: Offered) -> None:
+    """An elevated ``run`` whose sudo refuses the password: otto stops at the second prompt."""
+    from otto.host.element import Element
+    from otto.host.unix_host import UnixHost
+    from otto.logger.mode import LogMode
+    from otto.models.base import Cred
+    from tests._fixtures.elevation_shell import ElevationSession, ElevationShell, attach
+
+    class _Host(UnixHost):
+        def _userland(self) -> None:  # no resolver: sudo, as on a fresh host
+            return None
+
+    host = _Host(
+        ip="127.0.0.1",
+        element=Element("h1"),
+        creds=[Cred(login="admin", password=PLANTED)],
+        log=LogMode.QUIET,
+    )
+    shell = ElevationShell(password="the-right-one")
+    attach(host, ElevationSession(shell))
+    try:
+        await host.run("id", sudo=True, timeout=5)
+    finally:
+        offered.passwords.extend(text.rstrip("\n") for text in shell.writes)
+
+
 _AUTH_FAILURES: dict[str, Callable[[Offered], Awaitable[None]]] = {
     "ssh_auth": _ssh_auth,
     "telnet_login": _telnet_login,
     "ftp_login": _ftp_login,
     "su": _su,
+    "sudo": _sudo,
 }
 
 

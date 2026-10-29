@@ -66,6 +66,7 @@ from .embedded_filesystem import EmbeddedFileSystem, NoFileSystem
 from .host import (
     CONCURRENT_HELP,
     DEFAULT_COMMAND_TIMEOUT,
+    CredentialExpect,
     Expect,
     Host,
     SuppressCommandOutput,
@@ -375,7 +376,7 @@ class EmbeddedHost(UserlandHost, RemoteHost):
         log: LogMode = LogMode.NORMAL,
         user: str | None = None,
         *,
-        expects: "list[Expect] | None" = None,
+        expects: "list[Expect | CredentialExpect] | None" = None,
         needs_shell: bool = False,
     ) -> CommandResult:
         """Run a single command on the embedded host.

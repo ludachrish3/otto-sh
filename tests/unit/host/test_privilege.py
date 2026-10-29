@@ -13,6 +13,7 @@ from pydantic import SecretStr
 from otto.host import host as host_module
 from otto.host.element import Element
 from otto.host.errors import UnsupportedOnUserlandError
+from otto.host.host import CredentialExpect, ElevatedCommand
 from otto.host.login_proxy import Cred, register_login_proxy
 from otto.host.option_specs import UserlandOptionsSpec
 from otto.host.options import UserlandOptions
@@ -22,6 +23,28 @@ from otto.logger.mode import LogMode
 from otto.result import CommandResult
 from otto.utils import Status
 from tests._fixtures.fake_shell import ShellModel
+
+_SUDO_LINE = re.compile(r"SUDO_PROMPT='(otto-sudo-[A-Za-z0-9]{16}:)' sudo -S (.*)", re.DOTALL)
+"""The sudo line ``_elevate`` builds: group 1 the per-command prompt, group 2 sudo's argv."""
+
+
+def _sudo_parts(cmd: str) -> tuple[str, str]:
+    """Split a sudo line into (prompt, argv tail), failing if it is not one."""
+    m = _SUDO_LINE.fullmatch(cmd)
+    assert m is not None, f"not otto's sudo line: {cmd!r}"
+    return m.group(1), m.group(2)
+
+
+def _sudo_answer(cmd: str, password: str, user: str, host: str = "box") -> CredentialExpect:
+    """The one answer a sudo line *cmd* must carry: its own prompt, escaped, once."""
+    prompt, _tail = _sudo_parts(cmd)
+    return CredentialExpect(
+        re.escape(prompt), SecretStr(password), user=user, host=host, refused_on_repeat=True
+    )
+
+
+def _su_answer(password: str, host: str = "box") -> CredentialExpect:
+    return CredentialExpect("[Pp]assword:", SecretStr(password), user="root", host=host)
 
 
 def _without_resync(sent: list[str]) -> list[str]:
@@ -242,8 +265,8 @@ async def test_unix_run_sudo_wraps_and_injects_password_expect():
         patch.object(host, "exec", new=_every_probe_succeeds),
     ):
         await host.run("apt update", sudo=True)
-    assert captured["cmd"] == "sudo -S -p 'otto-sudo:' apt update"
-    assert ("otto-sudo:", SecretStr("secret")) in captured["expects"]
+    assert _sudo_parts(captured["cmd"])[1] == "apt update"
+    assert captured["expects"] == [_sudo_answer(captured["cmd"], "secret", "admin")]
 
 
 @pytest.mark.asyncio
@@ -254,7 +277,7 @@ async def test_localhost_sudo_wraps_without_password_expect():
     captured, fake = _capture_run_one(host)
     with patch.object(host, "_run_one", new=fake):
         await host.run("id", sudo=True)
-    assert captured["cmd"] == "sudo -S -p 'otto-sudo:' id"
+    assert _sudo_parts(captured["cmd"])[1] == "id"
     assert captured["expects"] == []  # passwordless: no injected expect
 
 
@@ -275,7 +298,7 @@ async def test_sudo_preserves_caller_expects():
     ):
         await host.run("rm -i x", expects=("remove.*\\?", "y\n"), sudo=True)
     # password expect first, caller's expect preserved after
-    assert captured["expects"][0] == ("otto-sudo:", SecretStr("secret"))
+    assert captured["expects"][0] == _sudo_answer(captured["cmd"], "secret", "admin")
     assert ("remove.*\\?", "y\n") in captured["expects"]
 
 
@@ -760,14 +783,19 @@ async def test_as_user_undo_survives_cancellation():
 # "contains sudo": the whole lab elevates through this one function.
 # ---------------------------------------------------------------------------
 
-# Today's construction, captured by running the PRE-CHANGE code before any of
-# this was written, so these are a RECORD of what shipped rather than a
-# restatement of what the new branch happens to build. Elevating "apt update"
-# on a UnixHost with creds admin/secret and user admin produced exactly the
-# command and expects below; elevating "id" on a passwordless, credless
-# LocalHost produced "sudo -S -p 'otto-sudo:' id" with an empty expects list.
-_TODAYS_SUDO_CMD = "sudo -S -p 'otto-sudo:' apt update"
-_TODAYS_SUDO_EXPECTS = [("otto-sudo:", SecretStr("secret"))]
+# The sudo construction: `SUDO_PROMPT='otto-sudo-<16 letters/digits>:' sudo
+# -S <cmd>`, the command appended raw as sudo's argv tail, and one
+# CredentialExpect matching exactly that prompt. Elevating "apt update" on a
+# UnixHost with creds admin/secret and user admin gives the tail and answer
+# below; elevating "id" on a passwordless, credless LocalHost gives the same
+# line shape with no answer at all.
+_TODAYS_SUDO_TAIL = "apt update"
+
+
+def _assert_todays_sudo(elevated: ElevatedCommand) -> None:
+    assert _sudo_parts(elevated.command)[1] == _TODAYS_SUDO_TAIL
+    assert elevated.expects == [_sudo_answer(elevated.command, "secret", "admin")]
+
 
 # Two DIFFERENT passwords on purpose. sudo authenticates as the current user
 # (admin) and `su` authenticates as the target (root), so a `su` arm that
@@ -841,9 +869,8 @@ def test_a_host_with_no_userland_builds_todays_exact_sudo_command():
     operations on those hosts in exchange for nothing, because a host with no
     resolver has told us nothing that contradicts sudo.
 
-    So the answer is sudo, byte for byte. The literals are the pre-change
-    output captured by running the old code, which is what makes this a
-    regression pin rather than a mirror of the new implementation. The
+    So the answer is sudo, in the exact line shape pinned by
+    ``_SUDO_LINE``: only the per-command random prompt varies. The
     password-carrying half needs ``creds``, which the two credless families do
     not have, so it runs on a host wired explicitly to ``None`` — that is the
     same branch of ``_elevate``, reached the only way a creds-carrying host
@@ -858,12 +885,14 @@ def test_a_host_with_no_userland_builds_todays_exact_sudo_command():
     # The premise: this really is the no-resolver path. Without it the tuple
     # below would still pass on a host that had somehow acquired one.
     assert unix._userland() is None
-    assert unix._elevate("apt update") == (_TODAYS_SUDO_CMD, _TODAYS_SUDO_EXPECTS)
+    _assert_todays_sudo(unix._elevate("apt update"))
 
     # Passwordless, and a host family with no ``creds`` field at all —
     # a production instance of the state above.
     assert LocalHost()._userland() is None
-    assert LocalHost()._elevate("id") == ("sudo -S -p 'otto-sudo:' id", [])
+    local = LocalHost()._elevate("id")
+    assert _sudo_parts(local.command)[1] == "id"
+    assert local.expects == []
 
     # Docker's is a class-level check because the class needs a live parent
     # host to instantiate. Stated as a three-way split rather than two
@@ -879,21 +908,54 @@ def test_a_host_with_no_userland_builds_todays_exact_sudo_command():
 async def test_a_resolved_sudo_userland_builds_the_identical_command():
     """A host that resolved ``sudo`` gets exactly what it got before.
 
-    Same literals as the un-wired test above, deliberately: consulting the
-    resolver must not perturb the string by so much as a space, since the
-    ``-p`` prompt is matched by the expect that types the password and the
-    command is appended as sudo's trailing argument list (a shape
+    Same shape as the un-wired test above, deliberately: consulting the
+    resolver must not perturb the line by so much as a space, since the
+    ``SUDO_PROMPT`` prompt is matched by the answer that types the password
+    and the command is appended as sudo's trailing argument list (a shape
     ``otto.host.daemon`` explicitly depends on).
     """
     host = await _host_with_userland("sudo")
-    assert host._elevate("apt update") == (_TODAYS_SUDO_CMD, _TODAYS_SUDO_EXPECTS)
+    _assert_todays_sudo(host._elevate("apt update"))
 
 
 @pytest.mark.asyncio
 async def test_a_host_without_sudo_elevates_with_su():
     """BusyBox has no sudo at all; ``sudo: not found`` is not an answer."""
     host = await _host_with_userland("su")
-    assert host._elevate("id -u") == ("su -c 'id -u'", [("[Pp]assword:", SecretStr("rootpw"))])
+    assert host._elevate("id -u") == ElevatedCommand("su -c 'id -u'", [_su_answer("rootpw")])
+
+
+@pytest.mark.parametrize(
+    ("mechanism", "creds", "expected"),
+    [
+        ("su", [Cred(login="root")], True),
+        ("sudo", [Cred(login="root")], True),
+        ("su", _ADMIN_AND_ROOT, True),
+        ("sudo", _ADMIN_AND_ROOT, True),
+        ("su", [Cred(login="admin", password="secret")], False),
+        ("sudo", [Cred(login="admin"), Cred(login="root", password="rootpw")], False),
+    ],
+    ids=[
+        "root-su",
+        "root-sudo",
+        "user-su-root-pw",
+        "user-sudo-pw",
+        "user-su-no-root-cred",
+        "user-sudo-no-pw",
+    ],
+)
+def test_a_session_can_elevate_as_root_or_with_the_prompts_password(mechanism, creds, expected):
+    """Root needs no password; anyone else needs the one *mechanism*'s prompt asks for.
+
+    The root cases carry no password at all, so only the root check can pass
+    them: ``_elevation_password`` is None for both (su never asks root, and
+    root's cred holds nothing for sudo to type). Mutation: answer "can
+    elevate" with ``_elevation_password(...) is not None`` and ``root-su`` and
+    ``root-sudo`` go red; drop the password half and the ``user-*-pw`` cases
+    do.
+    """
+    host = _host_wired_to(None, creds)
+    assert host._can_elevate(mechanism) is expected
 
 
 @pytest.mark.asyncio
@@ -906,7 +968,7 @@ async def test_su_quotes_the_command_into_one_word():
     different privilege, not an error anyone would notice.
     """
     host = await _host_with_userland("su")
-    wrapped, _expects = host._elevate("sh -c 'echo hi' > /root/out; id")
+    wrapped = host._elevate("sh -c 'echo hi' > /root/out; id").command
     assert wrapped == """su -c 'sh -c '"'"'echo hi'"'"' > /root/out; id'"""
 
 
@@ -919,7 +981,7 @@ async def test_su_sends_no_password_when_no_root_cred_is_declared():
     produce an expect instead of an empty list.
     """
     host = await _host_with_userland("su", [Cred(login="admin", password="secret")])
-    assert host._elevate("id -u") == ("su -c 'id -u'", [])
+    assert host._elevate("id -u") == ElevatedCommand("su -c 'id -u'", [])
 
 
 @pytest.mark.asyncio
@@ -928,7 +990,7 @@ async def test_su_answers_the_prompt_with_the_target_creds_password_not_the_chai
 
     ``perform_switch`` resolves a chain by running each hop and then answers the
     FINAL hop's prompt with that hop's own password (``_su_proxy`` reads
-    ``ctx.target.password``). ``_su_password`` matches on that point and only
+    ``ctx.target.password``). ``_su_cred`` matches on that point and only
     that point: root's password, not the directly-loginable account's.
 
     ``proxy="su"`` IS THE DISCRIMINATOR, not ``via``, and the distinction is the
@@ -941,7 +1003,7 @@ async def test_su_answers_the_prompt_with_the_target_creds_password_not_the_chai
 
     What the one-shot form cannot replay is a chain of MORE than one hop from
     the current user; this one-hop ``proxy="su"`` shape is precisely what
-    ``su -c`` already does. See ``_su_password`` for what is and is not served.
+    ``su -c`` already does. See ``_su_cred`` for what is and is not served.
     """
     host = await _host_with_userland(
         "su",
@@ -950,7 +1012,7 @@ async def test_su_answers_the_prompt_with_the_target_creds_password_not_the_chai
             Cred(login="root", password="rootpw", proxy="su", via="admin"),
         ],
     )
-    assert host._elevate("id -u") == ("su -c 'id -u'", [("[Pp]assword:", SecretStr("rootpw"))])
+    assert host._elevate("id -u") == ElevatedCommand("su -c 'id -u'", [_su_answer("rootpw")])
 
 
 @pytest.mark.asyncio
@@ -988,12 +1050,12 @@ async def test_exec_as_another_user_answers_sudo_with_that_users_password():
 
     await host.exec("id", sudo=True, user="alice")
     assert seen[-1]["user"] == "alice"
-    assert seen[-1]["expects"] == [("otto-sudo:", SecretStr("alicepw"))]
+    assert seen[-1]["expects"] == [_sudo_answer(seen[-1]["cmd"], "alicepw", "alice")]
 
     # No user: the ambient/login identity still answers, exactly as `run` does.
     await host.exec("id", sudo=True)
     assert seen[-1]["user"] is None
-    assert seen[-1]["expects"] == [("otto-sudo:", SecretStr("adminpw"))]
+    assert seen[-1]["expects"] == [_sudo_answer(seen[-1]["cmd"], "adminpw", "admin")]
 
 
 def _declared_elevations() -> set[str]:
@@ -1026,7 +1088,7 @@ async def test_every_declared_elevation_is_handled_explicitly():
     for member in sorted(vocabulary):
         host = await _host_with_userland(member)
         try:
-            wrapped, _expects = host._elevate("id -u")
+            wrapped = host._elevate("id -u").command
         except UnsupportedOnUserlandError:
             refused.add(member)
         else:
@@ -1037,7 +1099,12 @@ async def test_every_declared_elevation_is_handled_explicitly():
     # the two assertions above and such a line could never fail. What is NOT
     # fixed by them is whether each member builds ITS OWN mechanism.
     assert refused == {"none"}, f"refusals are {sorted(refused)}, expected just 'none'"
-    mismatched = {m: cmd for m, cmd in built.items() if cmd.split()[0] != m}
+    # The first word that is not an environment assignment is what runs.
+    mismatched = {
+        m: cmd
+        for m, cmd in built.items()
+        if next(w for w in cmd.split() if not re.match(r"[A-Z_]+=", w)) != m
+    }
     assert not mismatched, (
         f"these elevations build a command that invokes something else: {mismatched}"
     )

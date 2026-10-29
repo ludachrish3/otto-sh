@@ -1,6 +1,7 @@
 $ otto --lab example_lab cov get --tier manual --ticket QS-1 --tester-name docs --tester-email docs@example.invalid
 INFO     fleet of interest: 1 of 2 lab hosts (1 project(s), 0 excluded)
-INFO     @dut   | sudo -S -p 'otto-sudo:' sh -c 'echo 1 > /sys/module/qs_wordcount/kmodcov/dump'
+INFO     @dut   | SUDO_PROMPT='otto-sudo-<nonce>:' sudo -S sh -c 'echo 1 >
+         /sys/module/qs_wordcount/kmodcov/dump'
 INFO     Archiving .gcda for qs_wordcount on dut:/tmp/qs_wordcount
 INFO     @dut   | ! test -d /tmp/qs_wordcount && echo otto-no-cov-dir || (t=$(mktemp
          "${TMPDIR:-/tmp}/otto-fetch-<id>.XXXXXX") && echo "otto-archive:$t" && cd

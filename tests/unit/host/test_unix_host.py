@@ -3803,9 +3803,9 @@ def _assert_staged_at(host, directory, basename):
     assert line == f"insmod {directory}/{basename}"
     assert host.run.await_args.kwargs["sudo"] is True
     # `sudo=True` + this line is what the device receives as
-    # `sudo -S -p 'otto-sudo:' insmod <directory>/<basename>` (the composition
+    # `SUDO_PROMPT='…' sudo -S insmod <directory>/<basename>` (the composition
     # itself is PosixPrivilege's, covered in test_privilege.py). The bed's
-    # failing form was `sudo -S -p 'otto-sudo:' insmod ~/'~/otto_kmodcov.ko'`:
+    # failing form was `sudo -S insmod ~/'~/otto_kmodcov.ko'`:
     # the staging rule had been applied at BOTH hops, and `insmod` read the
     # result as a literal `~` directory under the login home.
     assert host.rm.await_args.args[0] == Path(f"{directory}/{basename}")

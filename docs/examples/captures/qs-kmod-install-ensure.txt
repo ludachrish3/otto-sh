@@ -2,7 +2,8 @@ $ otto --lab example_lab run install --ensure
 INFO     fleet of interest: 1 of 2 lab hosts (1 project(s), 0 excluded)
 INFO     @dut   | qs_wordcount: staged
 INFO     @dut   | mkdir -p /tmp
-INFO     @dut   | sudo -S -p 'otto-sudo:' insmod /tmp/qs_wordcount.ko cov_dir=/tmp/qs_wordcount
+INFO     @dut   | SUDO_PROMPT='otto-sudo-<nonce>:' sudo -S insmod /tmp/qs_wordcount.ko
+         cov_dir=/tmp/qs_wordcount
 INFO     @dut   | rm -f /tmp/qs_wordcount.ko
 INFO     @dut   | qs_wordcount: installed
 

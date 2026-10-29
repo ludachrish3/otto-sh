@@ -46,6 +46,7 @@ from .host import (
     CONCURRENT_HELP,
     DEFAULT_COMMAND_TIMEOUT,
     BaseHost,
+    CredentialExpect,
     Host,
     ShellCommand,
     _validate_user,
@@ -77,6 +78,29 @@ def compose_container_probe(
         f"--filter label=com.docker.compose.service={shlex.quote(service)} "
         "--filter label=com.docker.compose.oneoff=False"
     )
+
+
+def _caller_pairs(
+    expects: "list[Expect | CredentialExpect] | None", host: str
+) -> "list[Expect] | None":
+    """Return *expects* as the caller's own pairs, refusing an elevation answer.
+
+    A container's ``exec`` never builds one (its ``sudo`` is ``-u root``), and
+    the parent's public ``exec`` takes caller pairs only. One arriving here
+    means a new route started elevating through the container without a way
+    to carry its answer, which must fail loudly rather than drop it.
+    """
+    if expects is None:
+        return None
+    pairs: list[Expect] = []
+    for item in expects:
+        if isinstance(item, CredentialExpect):
+            raise TypeError(
+                f"{host}: an elevation password answer cannot be forwarded through "
+                "the parent's exec; a container elevates with `docker exec -u root`"
+            )
+        pairs.append(item)
+    return pairs
 
 
 @dataclass(slots=True, kw_only=True)
@@ -685,7 +709,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         log: LogMode = LogMode.NORMAL,
         user: "str | None" = None,
         *,
-        expects: "list[Expect] | None" = None,
+        expects: "list[Expect | CredentialExpect] | None" = None,
         needs_shell: bool = False,
     ) -> CommandResult:
         """Run a single command in the container via the parent.
@@ -705,7 +729,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         timeout: float,
         log: LogMode = LogMode.NORMAL,
         user: "str | None" = None,
-        expects: "list[Expect] | None" = None,
+        expects: "list[Expect | CredentialExpect] | None" = None,
     ) -> CommandResult:
         """Wrap *cmd* in ``docker exec`` and dispatch through the parent.
 
@@ -733,13 +757,16 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         *expects* forwards to the parent's own ``exec``, which answers
         prompts on its pooled shell — ``docker exec -i`` (never ``-t``) keeps
         stdin open across that hop so a response written there reaches the
-        container.
+        container. They are the caller's own pairs only: a container elevates
+        with ``docker exec -u root`` (see :meth:`exec`), so no elevation
+        password answer exists on this route to forward.
         """
         if is_dry_run():
             return self._dry_run_result(cmd, log)
+        pairs = _caller_pairs(expects, self.name)
         wrapped = await self._docker_exec(cmd, user=self._effective_user(user))
         result = await self.parent.exec(
-            wrapped, timeout=timeout, log=self._effective_log(log), expects=expects
+            wrapped, timeout=timeout, log=self._effective_log(log), expects=pairs
         )
         # Replace the wrapped command in the result so callers see what they
         # asked for, not the docker-exec wrapper. `replace` rather than a field

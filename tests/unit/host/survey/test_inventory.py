@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from otto.host.errors import UnsupportedOnUserlandError
-from otto.host.privilege import _SUDO_PROMPT
+from otto.host.errors import PasswordRefusedError, UnsupportedOnUserlandError
+from otto.host.local_host import LocalHost
 from otto.host.survey.inventory import (
     _INVENTORY_BODY,
     INVENTORY_SCRIPT,
@@ -144,8 +144,10 @@ def test_the_script_is_one_shell_word_carrying_the_body():
 
 
 _ELEVATED = {
-    # The two textual prefixes PosixPrivilege._elevate builds, verbatim.
-    "sudo": f"sudo -S -p '{_SUDO_PROMPT}' {INVENTORY_SCRIPT}",
+    # The two textual prefixes PosixPrivilege._elevate builds: sudo's from the
+    # real `_elevate` (a host with no resolver elevates with sudo), su's
+    # verbatim.
+    "sudo": LocalHost()._elevate(INVENTORY_SCRIPT).command,
     "su": "su -c " + shlex.quote(INVENTORY_SCRIPT),
 }
 
@@ -281,9 +283,9 @@ async def test_a_userland_elevation_refusal_propagates_instead_of_falling_back()
 
     Elevation is asked for only when the userland resolved ``sudo``/``su`` AND
     the cred has a password to answer it, so ``UnsupportedOnUserlandError`` is
-    the two disagreeing, which the operator has to see. A sudo the TARGET
-    refuses (non-zero retcode / NotRun) still falls back — that is the test
-    above, and it is unchanged.
+    the two disagreeing, which the operator has to see. A password the TARGET
+    refuses (``PasswordRefusedError`` from sudo, a non-zero retcode from su)
+    still falls back — those are the tests above and below.
 
     Mutation: swallow it in the broad handler and this falls back to a plain
     run, reporting an unelevated inventory as if nothing went wrong.
@@ -292,3 +294,15 @@ async def test_a_userland_elevation_refusal_propagates_instead_of_falling_back()
     with pytest.raises(UnsupportedOnUserlandError):
         await run_inventory(run, elevate=True)
     assert run.calls == [True]
+
+
+@pytest.mark.asyncio
+async def test_a_refused_sudo_password_falls_back_to_a_plain_run():
+    """sudo's refusal is an exception now, not a retcode; it still means "run plain"."""
+    run = _Run(
+        PasswordRefusedError("password refused for admin on box"), _ok(_load("ss_tulnp.txt"))
+    )
+    inv = await run_inventory(run, elevate=True)
+    assert run.calls == [True, False]
+    assert inv.elevated is False
+    assert inv.error == ""

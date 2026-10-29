@@ -377,7 +377,7 @@ def test_sigkill_mid_impair_recovers_via_repair_all(tmp_path):
     )
     try:
         # phase: qdisc being written. Not the brief's literal `\| (sudo )?tc
-        # qdisc` -- the real command is `sudo -S -p 'otto-sudo:' tc qdisc
+        # qdisc` -- the real command is `SUDO_PROMPT='…' sudo -S tc qdisc
         # replace ...` (otto's actual sudo invocation has flags between
         # "sudo" and "tc"), confirmed live; `tc qdisc replace` alone is the
         # unambiguous mutating command (unlike a bare `tc qdisc`, which would

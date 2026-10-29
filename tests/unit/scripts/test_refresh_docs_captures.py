@@ -658,6 +658,17 @@ def test_load_manifest_refuses_a_bad_kind_or_store_entry(tmp_path, body, said):
         rdc.load_manifest(m)
 
 
+def test_the_per_command_sudo_prompt_is_redacted_to_one_placeholder(tmp_path):
+    """A logged elevated command keeps its shape and loses only the nonce."""
+    from otto.host.local_host import LocalHost
+
+    ctx = _ctx(tmp_path)
+    first, second = (LocalHost()._elevate("insmod x.ko").command for _ in range(2))
+    assert first != second, "premise: each command gets its own prompt"
+    redacted = {rdc.redact(f"INFO @dut | {cmd}", ctx.default_rules()) for cmd in (first, second)}
+    assert redacted == {"INFO @dut | SUDO_PROMPT='otto-sudo-<nonce>:' sudo -S insmod x.ko"}
+
+
 def test_a_log_line_s_source_line_number_is_redacted(tmp_path):
     """The log's ``file.py:123`` column moves with every edit to that file.
 

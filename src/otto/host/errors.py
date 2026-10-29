@@ -60,6 +60,17 @@ class HostCommandError(OttoError, RuntimeError):
     """
 
 
+class PasswordRefusedError(HostCommandError):
+    """The elevation prompt came back after otto answered it: the password was refused.
+
+    Raised instead of typing the password a second time or waiting out the
+    command's timeout. The session has interrupted the command and probed
+    the shell before this is raised; a session the probe could not confirm
+    is discarded, so the next command on the host gets a working shell.
+    The message names the account and the host, never the password.
+    """
+
+
 class RawLandingError(OttoError, RuntimeError):
     """A framed operation was attempted in a ``raw`` landing.
 

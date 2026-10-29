@@ -1,6 +1,6 @@
 $ otto --lab example_lab run uninstall
 INFO     fleet of interest: 1 of 2 lab hosts (1 project(s), 0 excluded)
-INFO     @dut   | sudo -S -p 'otto-sudo:' rmmod qs_wordcount
+INFO     @dut   | SUDO_PROMPT='otto-sudo-<nonce>:' sudo -S rmmod qs_wordcount
 INFO     @dut   | qs_wordcount: uninstalled
 
 Output directory: /tmp/otto-gs/xdir/run/<run>_uninstall

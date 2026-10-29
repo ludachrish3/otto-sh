@@ -34,7 +34,7 @@ from otto.host.docker_host import DockerContainerHost
 from otto.host.element import Element
 from otto.host.errors import HostUnreachableError, UnsupportedOnUserlandError
 from otto.host.file_ops import PosixFileOps, refuse_if_base64_is_absent
-from otto.host.host import Expect
+from otto.host.host import ElevatedCommand, Expect
 from otto.host.local_host import LocalHost
 from otto.host.options import UserlandOptions
 from otto.host.privilege import PosixPrivilege
@@ -607,9 +607,11 @@ class TestWhyTheseTwoPathsAreStillOpen:
     async def test_a_resolver_here_moves_the_elevation_mechanism(self) -> None:
         """The alpine shape: ``su`` and no ``sudo``, measured on ``alpine:3.20``."""
         plain = LocalHost(log=LogMode.QUIET)
-        assert plain._elevate("id -u") == ("sudo -S -p 'otto-sudo:' id -u", []), (
+        elevated = plain._elevate("id -u")
+        assert elevated.command.endswith(" sudo -S id -u"), (
             "the premise: today this family builds sudo whatever the device has"
         )
+        assert elevated.expects == []
 
         wired = _WiredLocalHost(log=LogMode.QUIET)
         wired.userland = Userland(UserlandOptions(), _applets("su"))
@@ -622,7 +624,7 @@ class TestWhyTheseTwoPathsAreStillOpen:
         assert wired.userland.elevation == "su"
         # No password expect: neither of these two families has a `creds` field,
         # so `_switch_creds()` is empty and nothing answers `su`'s prompt.
-        assert wired._elevate("id -u") == ("su -c 'id -u'", [])
+        assert wired._elevate("id -u") == ElevatedCommand("su -c 'id -u'", [])
 
     @pytest.mark.asyncio
     async def test_a_resolver_here_can_turn_a_non_ok_result_into_a_raise(self) -> None:

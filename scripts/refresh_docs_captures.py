@@ -77,6 +77,7 @@ from typing import TYPE_CHECKING, Any
 import tomli
 
 from otto.config.env import without_otto_env
+from otto.host.privilege import SUDO_PROMPT_SHAPE
 
 if TYPE_CHECKING:
     from otto.coverage.store.model import CoverageStore, FileRecord
@@ -281,6 +282,9 @@ class RunContext:
             (re.escape(str(ROOT)), "<repo>"),
             (_TIMESTAMP.pattern, "<timestamp>"),
             (_LOG_SOURCE_LINE.pattern, _redact_log_source),
+            # Each elevated command's sudo prompt is fresh, so a logged
+            # command line would differ on every refresh.
+            (SUDO_PROMPT_SHAPE.pattern, "otto-sudo-<nonce>:"),
         ]
 
     def substitutions(self, cap: Capture) -> dict[str, str]:

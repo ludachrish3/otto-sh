@@ -13,11 +13,13 @@ all. A host with no resolver wired up keeps today's ``sudo`` construction
 exactly — see ``PosixPrivilege._elevate`` below for why that default, and for
 where resolution has to happen given that ``_elevate`` is synchronous.
 
-**sudo** auto-answers the password prompt through the
-``Expect`` channel (``run(expects=[...])``) — the
-response is written directly by the session machinery and is never logged.
-The one-shot ``su -c`` form answers the same prompt the same way, using the
-TARGET account's password rather than the current user's.
+**sudo** auto-answers its password prompt through a
+:class:`~otto.host.host.CredentialExpect`: the session answers it at most
+once, only after the command has begun, and never logs it. The prompt is a
+fresh random string per command, set through ``SUDO_PROMPT`` so it is in no
+process's argv, which is what makes output that merely looks like a prompt
+unanswerable. The one-shot ``su -c`` form answers ``su``'s own prompt the same
+way, using the TARGET account's password rather than the current user's.
 
 **su** (and any other registered login proxy) sends its password via
 ``send(..., log=LogMode.NEVER)`` so it is delivered to stdin without being
@@ -37,6 +39,7 @@ same cred list ``_sudo_password`` does.
 """
 
 import re
+import secrets
 import shlex
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -48,17 +51,53 @@ from ..logger.mode import LogMode
 from ..models.base import Cred
 from .command_frame import history_prefix
 from .errors import UnsupportedOnUserlandError
-from .host import DEFAULT_COMMAND_TIMEOUT, is_dry_run, refuse_declined_elevation
-from .login_proxy import _SU_PROMPT, _SU_TARGET, cred_for, perform_switch, run_undo
+from .host import (
+    DEFAULT_COMMAND_TIMEOUT,
+    CredentialExpect,
+    ElevatedCommand,
+    is_dry_run,
+    refuse_declined_elevation,
+)
+from .login_proxy import (
+    _SU_PROMPT,
+    _SU_TARGET,
+    _is_root,
+    _may_challenge,
+    cred_for,
+    perform_switch,
+    run_undo,
+)
 from .userland import UserlandHost
 
 if TYPE_CHECKING:
     from typing_extensions import Never
 
-    from .session import Expect
+    from .host import Expect
 
-# Recognizable, locale-independent sudo prompt we match on.
-_SUDO_PROMPT = "otto-sudo:"
+_SUDO_NONCE_LEN = 16
+"""Random characters in each sudo prompt: unguessable, and nothing sudo expands."""
+
+_SUDO_PROMPT_PREFIX = "otto-sudo-"
+
+SUDO_PROMPT_SHAPE = re.compile(
+    re.escape(_SUDO_PROMPT_PREFIX) + rf"[A-Za-z0-9]{{{_SUDO_NONCE_LEN}}}:"
+)
+"""Every sudo prompt ``_elevate`` can build, for text that must not vary by run.
+
+A captured log normalises the nonce with it, since each command's prompt differs.
+"""
+
+
+def _sudo_prompt() -> str:
+    """Return a fresh sudo prompt, ``otto-sudo-<16 random letters and digits>:``.
+
+    Letters and digits only: sudo expands ``%`` escapes (``%u``, ``%h``, ``%p``)
+    in a prompt, and the prompt is typed inside single quotes.
+    """
+    token = ""
+    while len(token) < _SUDO_NONCE_LEN:
+        token += "".join(c for c in secrets.token_urlsafe(_SUDO_NONCE_LEN) if c.isalnum())
+    return f"{_SUDO_PROMPT_PREFIX}{token[:_SUDO_NONCE_LEN]}:"
 
 
 class _HostProxyIO:
@@ -118,8 +157,27 @@ class PosixPrivilege(UserlandHost):
         """
         return getattr(self, "creds", [])
 
-    def _su_password(self) -> SecretStr | None:
-        """Password for ``su``, or None when the switch needs none.
+    def _acting_user(self, user: str | None) -> str:
+        """Who an elevated command runs as before it elevates: *user*, else the session's user.
+
+        *user* is an ``exec(user=X)``'s switch, made before the command runs;
+        ``None`` (every ``run``) means the default session's current user.
+        Whose password sudo asks for, and whether ``su`` challenges at all,
+        both follow from this one answer.
+        """
+        return user or self._live_session_mgr().current_user  # ty: ignore[unresolved-attribute]
+
+    def _acts_as_root(self, user: str | None = None) -> bool:
+        """Whether a command run as :meth:`_acting_user` already runs as root.
+
+        The same identity rule ``su``'s challenge follows
+        (:func:`~otto.host.login_proxy._is_root`): a root session needs no
+        elevation, and an unknown identity is not taken for root.
+        """
+        return _is_root(self._acting_user(user))
+
+    def _su_cred(self) -> Cred | None:
+        """Return the cred whose password answers ``su``, or None when none is declared.
 
         NOT :meth:`_sudo_password`, and the difference is the point: ``sudo``
         authenticates as the user already logged in, while ``su`` authenticates
@@ -158,8 +216,36 @@ class PosixPrivilege(UserlandHost):
         # getattr, not self.term: this mixin also backs LocalHost and
         # DockerContainerHost, neither of which has a term concept at all —
         # None there reproduces the untargeted lookup exactly as before.
-        cred = cred_for(self._switch_creds(), _SU_TARGET, getattr(self, "term", None))
-        return cred.password if cred else None
+        return cred_for(self._switch_creds(), _SU_TARGET, getattr(self, "term", None))
+
+    def _elevation_password(self, mechanism: str, user: str | None = None) -> SecretStr | None:
+        """Return the password otto will answer *mechanism*'s prompt with, or None for no answer.
+
+        The one decision behind :meth:`_elevate`'s answer, readable without
+        building a command: sudo answers with the acting user's password; su
+        with root's, and not at all when the acting user is root, whom su
+        never asks (:func:`~otto.host.login_proxy._may_challenge`, the rule
+        ``switch_user`` applies). *mechanism* is ``"sudo"`` or ``"su"``.
+        """
+        if mechanism == "sudo":
+            return self._sudo_password(user)
+        cred = self._su_cred()
+        if cred is None or not _may_challenge(cred, Cred(login=self._acting_user(user))):
+            return None
+        return cred.password
+
+    def _can_elevate(self, mechanism: str, user: str | None = None) -> bool:
+        """Return whether a command run with *mechanism* would get root without a stuck prompt.
+
+        The one answer to "can this session elevate": true when the acting
+        user already is root (no prompt: ``sudo`` and ``su`` both pass root
+        through, and :meth:`_elevation_password` rightly has no answer for su
+        then), or when otto has the password *mechanism*'s prompt asks for.
+        :meth:`_elevation_password` stays the answer to "which password to
+        type"; asking it "can I elevate" reads a root session as unable.
+        *mechanism* is ``"sudo"`` or ``"su"``.
+        """
+        return self._acts_as_root(user) or self._elevation_password(mechanism, user) is not None
 
     async def _prepare_elevation(self) -> None:
         """Resolve everything :meth:`_elevate` will read. Awaited by ``run(sudo=True)``.
@@ -191,15 +277,25 @@ class PosixPrivilege(UserlandHost):
             await userland.resolve()
 
     # Spec: docs/superpowers/specs/2026-08-11-busybox-host-support-design.md
-    def _elevate(self, cmd: str, user: str | None = None) -> tuple[str, list["Expect"]]:
-        """Wrap *cmd* in this host's elevation mechanism, with its password expect.
+    def _elevate(self, cmd: str, user: str | None = None) -> ElevatedCommand:
+        """Wrap *cmd* in this host's elevation mechanism, with its password answer.
 
         **Whose password.** ``sudo`` authenticates as the user running the
         command, so *user* — the effective identity of an ``exec(user=...)``,
         switched to before the command runs — decides which cred answers the
         prompt. ``None`` (every ``run``) keeps the session's current user. The
-        ``su`` arm does not read it: ``su -c`` authenticates as the account
-        being ENTERED (root), which no caller-side switch changes.
+        ``su`` arm answers with root's password, which no caller-side switch
+        changes; *user* decides only whether ``su`` will ask at all.
+
+        **The answer is a** :class:`~otto.host.host.CredentialExpect`: sent at
+        most once, only after the command's BEGIN marker, and a second prompt
+        raises :exc:`~otto.host.errors.PasswordRefusedError`. Output that
+        merely looks like the prompt gets no password, because the sudo
+        prompt is a fresh random string per command
+        (``SUDO_PROMPT='otto-sudo-<random>:' sudo -S <cmd>``). The variable
+        is set on the sudo invocation rather than passed as ``-p``, so the
+        prompt is in no process's argv, and sudo's ``env_reset`` keeps it out
+        of the command's environment.
 
         The mechanism is a MEASUREMENT, not an assumption:
         :attr:`~otto.host.userland.Userland.elevation` decides it. BusyBox
@@ -214,11 +310,11 @@ class PosixPrivilege(UserlandHost):
         hosts that reach otto's own machine —
         :class:`~otto.host.local_host.LocalHost` and
         :class:`~otto.host.docker_host.DockerContainerHost` — and there it must
-        stay byte-identical to the pre-change behaviour. The asymmetry is what
+        stay the sudo form. The asymmetry is what
         settles it: a host that has told otto nothing has told it nothing that
         contradicts sudo, and refusing instead would break privileged
-        operations everywhere at once in exchange for no information. Pinned as
-        an exact command-and-expects tuple by
+        operations everywhere at once in exchange for no information. The
+        command lines are pinned exactly by
         ``tests/unit/host/test_privilege.py``, because this one function is how
         the entire lab elevates.
 
@@ -229,10 +325,15 @@ class PosixPrivilege(UserlandHost):
         first word and a redirect or ``;`` would run unelevated instead of
         failing.
 
-        The su prompt is matched, not set. ``sudo -p`` lets otto choose a
+        The su prompt is matched, not set. ``SUDO_PROMPT`` lets otto choose a
         locale-independent prompt; ``su`` has no counterpart, so the pattern is
         ``login_proxy``'s (shared, not copied) and a non-English locale will
         not match it — the same limitation ``switch_user`` already has there.
+        ``su`` asks the caller for a password only when the caller is not
+        root, so a session that is already root arms no answer at all, by the
+        same identity rule ``switch_user`` applies
+        (:func:`~otto.host.login_proxy._may_challenge`): a ``Password:`` in
+        such a command's output is output.
 
         Raises:
             UnsupportedOnUserlandError: the host resolved an elevation of
@@ -246,24 +347,28 @@ class PosixPrivilege(UserlandHost):
         """
         userland = self._userland()
         elevation = "sudo" if userland is None else userland.elevation
-        # Declared once, ahead of the branches: an `Expect` pattern is
-        # `str | re.Pattern`, and annotating inside the first arm lets the
-        # second infer the narrower `list[tuple[str, SecretStr]]` and fail to
-        # match the return type.
-        #
+        host = getattr(self, "name", "")
+        acting = self._acting_user(user)
         # The response is the cred's own SecretStr, never a formatted
         # `SecretStr(f"{pw}\n")` (that would wrap the mask): the session
         # writes it as its value and a newline, unwrapped inside the
         # transport write (`otto.host.secret_wire.reveal`).
-        expects: "list[Expect]"
+        answers: list[Expect | CredentialExpect] = []
         if elevation == "sudo":
-            pw = self._sudo_password(user)
-            expects = [] if pw is None else [(_SUDO_PROMPT, pw)]
-            return f"sudo -S -p '{_SUDO_PROMPT}' {cmd}", expects
+            prompt = _sudo_prompt()
+            pw = self._elevation_password("sudo", user)
+            if pw is not None:
+                answers.append(
+                    CredentialExpect(
+                        re.escape(prompt), pw, user=acting, host=host, refused_on_repeat=True
+                    )
+                )
+            return ElevatedCommand(f"SUDO_PROMPT='{prompt}' sudo -S {cmd}", answers)
         if elevation == "su":
-            pw = self._su_password()
-            expects = [] if pw is None else [(_SU_PROMPT, pw)]
-            return f"su -c {shlex.quote(cmd)}", expects
+            pw = self._elevation_password("su", user)
+            if pw is not None:
+                answers.append(CredentialExpect(_SU_PROMPT, pw, user=_SU_TARGET, host=host))
+            return ElevatedCommand(f"su -c {shlex.quote(cmd)}", answers)
         raise UnsupportedOnUserlandError(
             f"{getattr(self, 'name', '')}: this host's userland provides no elevation "
             f"mechanism (resolved {elevation!r}: no sudo, no su), so {cmd!r} cannot be "
@@ -335,7 +440,7 @@ class PosixPrivilege(UserlandHost):
             self._live_session_mgr().current_user,  # ty: ignore[unresolved-attribute]
             getattr(self, "name", ""),
             self._history_prefix(),
-            # getattr, not self.term: see _su_password's note above -- this
+            # getattr, not self.term: see _su_cred's note above -- this
             # mixin also backs term-less hosts (LocalHost, DockerContainerHost).
             protocol=getattr(self, "term", None),
         )
@@ -405,7 +510,7 @@ class PosixPrivilege(UserlandHost):
             # custom undo that needs the via user's password sees it, and a
             # term-scoped cred cannot give the two directions different
             # passwords for one login.
-            # getattr, not self.term: see _su_password's note above — this
+            # getattr, not self.term: see _su_cred's note above — this
             # mixin also backs term-less hosts (LocalHost, DockerContainerHost).
             via = cred_for(creds, via_login, getattr(self, "term", None)) or Cred(login=via_login)
             await run_undo(

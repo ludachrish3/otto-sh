@@ -4,7 +4,7 @@ one-command differential against `run(cmd).only`."""
 
 import pytest
 
-from otto.host.host import BaseHost, ShellCommand
+from otto.host.host import BaseHost, ElevatedCommand, ShellCommand
 from otto.logger.mode import LogMode
 from otto.result import CommandResult
 from otto.utils import Status
@@ -125,7 +125,7 @@ class TestTheSharedCore:
 
             def _elevate(self, cmd, user=None):
                 self.elevated_as.append(user)
-                return f"sudo -S {cmd}", [("assword", "pw\n")]
+                return ElevatedCommand(f"sudo -S {cmd}", [("assword", "pw\n")])
 
         host = _Elevating()
         await host.exec("id", sudo=True)
@@ -165,7 +165,7 @@ class TestTheSharedCore:
                 pass
 
             def _elevate(self, cmd, user=None):
-                return f"sudo -S {cmd}", []
+                return ElevatedCommand(f"sudo -S {cmd}", [])
 
         host = _Elevating()
         with active_context(dry_run=True):

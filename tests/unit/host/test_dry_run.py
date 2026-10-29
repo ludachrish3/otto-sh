@@ -402,7 +402,10 @@ class TestDryRunMeasuresNothing:
             result = (await host.run("systemctl restart nginx", sudo=True)).only
 
             assert result.status == Status.NotRun
-            assert result.command == "sudo -S -p 'otto-sudo:' systemctl restart nginx"
+            assert re.fullmatch(
+                r"SUDO_PROMPT='otto-sudo-[A-Za-z0-9]{16}:' sudo -S systemctl restart nginx",
+                result.command,
+            ), result.command
             assert host._connections._ssh_conn is None
 
     @pytest.mark.asyncio

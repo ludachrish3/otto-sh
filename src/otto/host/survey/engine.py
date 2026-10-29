@@ -227,12 +227,6 @@ def _declared_port_unix(host: "UnixHost", name: str, _kind: Kind) -> int:
     return DEFAULT_PORTS.get(name, 0)
 
 
-def _has_password(host: "UnixHost", mechanism: str) -> bool:
-    target = host.current_user if mechanism == "sudo" else "root"
-    cred = cred_for(host.creds, target, host.term)
-    return cred is not None and cred.password is not None
-
-
 async def _hop_run(hop: "RemoteHost", timeout: float, cmd: str) -> "CommandResult":
     return (await hop.run(cmd, timeout=timeout + 2.0, log=LogMode.NEVER)).only
 
@@ -733,7 +727,9 @@ class _UnixSurvey:
                 )
         else:
             mech = self.userland.elevation if self.userland is not None else "none"
-            elevate = mech in ("sudo", "su") and _has_password(host, mech)
+            # Elevate only when the session can: already root, or otto will
+            # answer the prompt (the elevation seam's own decision).
+            elevate = mech in ("sudo", "su") and host._can_elevate(mech)  # noqa: SLF001 — the elevation seam's own decision, not a copy
             inv = await _bounded(
                 self.deadline, INVENTORY_TIMEOUT_S * 2 + 1.0, run_inventory(run, elevate=elevate)
             )
@@ -751,7 +747,9 @@ class _UnixSurvey:
     def _inventory_footnotes(self, inv: Inventory, *, elevation_refused: bool) -> None:
         """In the Interfaces order: owners-incomplete, loopback-dropped, then the failures."""
         host = self.host
-        if not inv.elevated and self.user is None:
+        # A root session already sees every owner: there is nothing to elevate to.
+        as_root = host._acts_as_root()  # noqa: SLF001 — the elevation seam's own identity rule
+        if not inv.elevated and self.user is None and not as_root:
             self.survey.footnotes.append(
                 f"owners incomplete: inventory ran as {host.current_user!r} without root; "
                 f"run otto host {host.id} probe --user root for owner names"

@@ -314,9 +314,12 @@ async def _sudo_answer(monkeypatch: pytest.MonkeyPatch, received: _Received) -> 
         creds=[Cred(login="admin", password=PLANTED)],
         log=LogMode.QUIET,
     )
-    cmd, expects = host._elevate("id")
-    session = _local_session(received, b"otto-sudo:")
-    await session.run_cmd(cmd, expects=expects, timeout=5)
+    elevated = host._elevate("id")
+    prompt = elevated.command.split("'")[1]
+    session = _local_session(received, b"")
+    # sudo prompts after BEGIN: the answer is armed only once the command began.
+    session._process.stdout.feed_data(f"{session._markers.begin}\n{prompt}".encode())  # type: ignore[union-attr]
+    await session.run_cmd(elevated.command, expects=elevated.expects, timeout=5)
 
 
 async def _interact_write(monkeypatch: pytest.MonkeyPatch, received: _Received) -> None:

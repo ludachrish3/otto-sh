@@ -8,7 +8,7 @@ On bed-unreachable they FAIL with a clear host-named error — they never skip.
 Scope
 -----
 - ``exec --sudo``: elevation to root via passwordless sudo on the Vagrant hosts.
-  Verified: the beds use passwordless sudo (``sudo -S -p 'otto-sudo:'``);
+  Verified: the beds use passwordless sudo (``SUDO_PROMPT='otto-sudo-<random>:' sudo -S``);
   no password is echoed in stdout/stderr.
 - ``lsmod``: read-only listing of loaded kernel modules from ``/proc/modules``.
   Vagrant Linux hosts always have loaded modules — the assertion is non-empty.
@@ -104,7 +104,7 @@ def test_host_run_sudo_elevates(unix_host: str, tmp_path: Path) -> None:
 
     Also asserts:
     - No password text is echoed into stdout or stderr (passwordless sudo;
-      otto's expect-based ``otto-sudo:`` prompt handling suppresses the sudo
+      otto's expect-based ``otto-sudo-<random>:`` prompt handling suppresses the sudo
       challenge from the visible output).
     - No "password" or "passwd" appears in captured stdout/stderr (extra
       guard against credential leaks from a misconfigured host).

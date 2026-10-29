@@ -84,6 +84,7 @@ from .errors import ConsoleError, HostCommandError, UnsupportedOnUserlandError
 from .file_ops import PosixFileOps
 from .host import (
     CONCURRENT_HELP,
+    CredentialExpect,
     Expect,
     Host,
     SuppressCommandOutput,
@@ -408,7 +409,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         an ``exec`` with no user) falls back to the default session's current
         user.
         """
-        c = cred_for(self.creds, user or self.current_user, self.term)
+        c = cred_for(self.creds, self._acting_user(user), self.term)
         return c.password if c else None
 
     @override
@@ -982,7 +983,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         log: LogMode = LogMode.NORMAL,
         user: str | None = None,
         *,
-        expects: "list[Expect] | None" = None,
+        expects: "list[Expect | CredentialExpect] | None" = None,
         needs_shell: bool = False,
     ) -> CommandResult:
         """Run a single command concurrent-safely, independent of the persistent shell.
@@ -1092,7 +1093,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         self,
         cmd: str,
         timeout: float,
-        expects: "list[Expect] | None" = None,
+        expects: "list[Expect | CredentialExpect] | None" = None,
         log: LogMode = LogMode.NORMAL,
         user: "str | None" = None,
     ) -> CommandResult:
@@ -1123,7 +1124,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         timeout: float,
         log: LogMode,
         user: str | None,
-        expects: "list[Expect] | None",
+        expects: "list[Expect | CredentialExpect] | None",
     ) -> CommandResult:
         """``exec`` on a ``console`` term: one command on the default session, one call at a time.
 

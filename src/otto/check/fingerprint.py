@@ -83,7 +83,7 @@ async def check_exec(host: Any, cmd: str) -> CommandResult:
 def one_command(cmd: str) -> str:
     """Wrap shell *cmd* as ``sh -c <cmd>``: one word an elevation prefix cannot split.
 
-    Otto elevates by prefixing (``sudo -S -p '…' <cmd>``), which only covers a
+    Otto elevates by prefixing (``SUDO_PROMPT='…' sudo -S <cmd>``), which only covers a
     single simple command. Anything else a check sends — a ``for`` loop, a
     ``;`` list, a pipe, a redirection, a trailing ``&`` — would otherwise be
     split by the login shell: a syntax error, the tail run unelevated, or the

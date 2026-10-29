@@ -31,7 +31,7 @@ from ..result import CommandResult, Result
 from ..utils import Arg, Exclude, Opt, Status, cli_exposed
 from .capability_grid import HostCapabilities, SessionIdentity, UserSupport
 from .file_ops import PosixFileOps
-from .host import _EXEC_REAP_TIMEOUT, CONCURRENT_HELP, BaseHost, is_dry_run
+from .host import _EXEC_REAP_TIMEOUT, CONCURRENT_HELP, BaseHost, CredentialExpect, is_dry_run
 from .privilege import PosixPrivilege
 from .session import (
     Expect,
@@ -234,7 +234,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         log: LogMode = LogMode.NORMAL,
         user: str | None = None,
         *,
-        expects: "list[Expect] | None" = None,
+        expects: "list[Expect | CredentialExpect] | None" = None,
         needs_shell: bool = False,
     ) -> CommandResult:
         """Run a command in a fresh subprocess (stateless, concurrent-safe).

@@ -290,7 +290,7 @@ more than this surface. `_userland()` is one hook read by two mixins, and
 `resolve()` has no scoped form, so a resolver added here also decides how
 `run(sudo=True)` elevates on the same host: on the shape `alpine` actually has
 (BusyBox 1.36.1, `/bin/su`, no `sudo`) it moves the built command from
-`sudo -S -p …` to `su -c …`, and on a host with neither applet it *raises* where
+`SUDO_PROMPT=… sudo -S …` to `su -c …`, and on a host with neither applet it *raises* where
 today the caller gets a non-ok result. See
 {class}`~otto.host.userland.UserlandHost` for the three findings and
 `todo/busybox-phase-5-followups-2026-08-13.md` §2 for the decomposition that

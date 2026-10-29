@@ -71,7 +71,7 @@ def launch_command(sentinel: str, argv: list[str]) -> str:
     ``bash -c '<body>'`` so the returned string is one opaque, quoted word —
     safe for a caller to compose into a larger command by naive textual
     prefixing (found via live-bed e2e: ``otto.host.privilege.PosixPrivilege
-    ._elevate`` builds ``f"sudo -S -p 'x' {cmd}"``; bash only recognizes ``if``
+    ._elevate`` builds ``f"SUDO_PROMPT='x' sudo -S {cmd}"``; bash only recognizes ``if``
     as the reserved word that opens a conditional in command-start position,
     so splicing it in as ``sudo``'s trailing argument list demotes ``if`` to a
     literal word and leaves the later ``then``/``else``/``fi`` as syntax errors

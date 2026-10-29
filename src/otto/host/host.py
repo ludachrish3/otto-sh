@@ -16,7 +16,6 @@ from contextlib import (
 from dataclasses import (
     dataclass,
     field,
-    replace,
 )
 from logging import (
     INFO,
@@ -88,6 +87,59 @@ if TYPE_CHECKING:
 # unwrapped only inside the session's transport write
 # (:func:`otto.host.secret_wire.reveal`).
 Expect = tuple[str | re.Pattern[str], str | SecretStr]
+
+
+@dataclass(frozen=True, slots=True)
+class CredentialExpect:
+    """A password answer the session sends at most once, and only after the command starts.
+
+    A plain :data:`Expect` answers its pattern every time it appears, from the
+    first byte the session reads, which includes the echo of the command line
+    otto typed. That is right for a ``[Y/n]`` and wrong for a password: the
+    session answers this pair only after the command's BEGIN marker, and only
+    once. What a later match means is the prompt's own fact, so it is a field:
+    with *refused_on_repeat* (sudo, whose prompt is unguessable and which
+    re-prompts after a wrong password) the session interrupts the command and
+    raises :exc:`~otto.host.errors.PasswordRefusedError` naming *user* and
+    *host*; without it (su, whose ``Password:`` is ordinary text and which
+    never re-prompts) a later match is output and gets no answer. The DEBUG
+    "expect matched" line shows the pattern and the answer's length, as it
+    does for every pair.
+
+    ``otto.host.privilege.PosixPrivilege._elevate`` builds one for the
+    sudo and su prompts.
+    """
+
+    pattern: str
+    """Regular expression for the prompt."""
+
+    response: SecretStr
+    """The password; written as its value and a newline, unwrapped only in the transport write."""
+
+    user: str
+    """The account whose password this is, named when it is refused."""
+
+    host: str
+    """The host it answers on, named when it is refused."""
+
+    refused_on_repeat: bool = False
+    """A second match is the prompt again, so the password was refused.
+
+    Set only for a prompt nothing else can print; otherwise a later match is
+    output and is neither answered nor an error.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class ElevatedCommand:
+    """What ``BaseHost._elevate`` returns: the elevated command line and its answers."""
+
+    command: str
+    """The command line to type, with the elevation wrapper applied."""
+
+    expects: "list[Expect | CredentialExpect]"
+    """The password answer for the elevation prompt; empty when none is needed."""
+
 
 DEFAULT_COMMAND_TIMEOUT = 30.0
 """Seconds a single command may run before otto gives up on it.
@@ -412,9 +464,53 @@ def _resolve_command(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _PreparedCommand:
+    """A resolved command as a family runner receives it, elevation applied.
+
+    :class:`ShellCommand` is the caller's shape, and its ``expects`` are the
+    caller's pairs. This is the internal one: its ``expects`` may also carry
+    the :class:`CredentialExpect` an elevation adds, which never appears in a
+    public signature.
+    """
+
+    cmd: str
+    expects: "list[Expect | CredentialExpect] | None"
+    timeout: float | None
+    log: "LogMode | None"
+
+
+def _prepared(sc: ShellCommand, elevated: ElevatedCommand | None = None) -> _PreparedCommand:
+    """Return *sc* ready to run: as written, or rewritten by *elevated* with its answer first."""
+    caller = _normalize_expects(sc.expects)
+    if elevated is None:
+        plain: list[Expect | CredentialExpect] | None = None if caller is None else [*caller]
+        return _PreparedCommand(sc.cmd, plain, sc.timeout, sc.log)
+    return _PreparedCommand(
+        elevated.command, [*elevated.expects, *(caller or [])], sc.timeout, sc.log
+    )
+
+
+class _Budgeted(Protocol):
+    """What :func:`_run_cmds_with_budget` reads of a command: its text and its own cap."""
+
+    @property
+    def cmd(self) -> str:
+        """The command text, named in a skipped command's result."""
+        ...
+
+    @property
+    def timeout(self) -> float | None:
+        """The command's own cap, or None for the remaining budget."""
+        ...
+
+
+_BudgetedT = TypeVar("_BudgetedT", bound=_Budgeted)
+
+
 async def _run_cmds_with_budget(
-    run_one: Callable[[ShellCommand, float], Awaitable[CommandResult]],
-    cmds: list[ShellCommand],
+    run_one: Callable[[_BudgetedT, float], Awaitable[CommandResult]],
+    cmds: list[_BudgetedT],
     timeout: float,
 ) -> Results:
     """Run a list of commands sequentially under a shared timeout budget.
@@ -692,6 +788,11 @@ class Host(Protocol):
         Returns:
             A :class:`~otto.result.Results` aggregating one :class:`~otto.result.CommandResult`
             per command.
+
+        Raises:
+            ~otto.host.errors.PasswordRefusedError: ``sudo=True`` and the
+                elevation prompt came back after otto answered it once: the
+                password was refused. The command is interrupted first.
         """
         ...
 
@@ -734,6 +835,11 @@ class Host(Protocol):
 
         Returns:
             A :class:`~otto.result.CommandResult`; ``value`` holds the output.
+
+        Raises:
+            ~otto.host.errors.PasswordRefusedError: ``sudo=True`` and the
+                elevation prompt came back after otto answered it once: the
+                password was refused. The command is interrupted first.
         """
         ...
 
@@ -1516,8 +1622,8 @@ class BaseHost(ABC):
     #  Privilege
     ####################
 
-    def _elevate(self, cmd: str, user: str | None = None) -> tuple[str, list["Expect"]]:
-        """Return *(wrapped_cmd, extra_expects)* to run *cmd* with elevation.
+    def _elevate(self, cmd: str, user: str | None = None) -> ElevatedCommand:
+        """Return the command line that runs *cmd* elevated, with its password answer.
 
         Default raises — only posix-shell hosts (via the ``PosixPrivilege``
         mixin) can elevate. Embedded/RTOS hosts have no ``sudo``.
@@ -1604,19 +1710,19 @@ class BaseHost(ABC):
         """
         return self._live_session_mgr().terminal_mapping
 
-    def _apply_sudo(self, sc: "ShellCommand", user: str | None = None) -> "ShellCommand":
-        """Rewrite a ``ShellCommand`` to run under sudo.
+    def _apply_sudo(self, sc: "ShellCommand", user: str | None = None) -> _PreparedCommand:
+        """Prepare a ``ShellCommand`` to run elevated.
 
-        Merges in the password ``Expect`` ahead of any caller-supplied expects.
+        Puts the elevation's password answer ahead of any caller-supplied
+        expects. The result is internal: the answer is a
+        :class:`CredentialExpect`, which no public signature carries.
 
         *user* threads ``exec(user=...)``'s effective identity through to
         :meth:`_elevate`, so the prompt is answered with the password of the
         user the command actually runs as. ``run``'s two call sites pass
         ``None`` — their commands run as the session's current user.
         """
-        wrapped, extra = self._elevate(sc.cmd, user)
-        base = _normalize_expects(sc.expects) or []
-        return replace(sc, cmd=wrapped, expects=extra + base)
+        return _prepared(sc, self._elevate(sc.cmd, user))
 
     ####################
     #  Command execution
@@ -1812,6 +1918,9 @@ class BaseHost(ABC):
             per command.
 
         Raises:
+            ~otto.host.errors.PasswordRefusedError: ``sudo=True`` and the
+                elevation prompt came back after otto answered it once: the
+                password was refused. The command is interrupted first.
             ~otto.host.errors.UnsupportedOnUserlandError: the host's declared
                 shell dialect is ``ash`` and a command's framed line would
                 exceed what BusyBox ash's line editor delivers intact — see
@@ -1859,13 +1968,11 @@ class BaseHost(ABC):
             # shapes, in `tests/unit/host/test_privilege.py`.
             await self._prepare_elevation()
         if isinstance(cmds, (str, ShellCommand)):
-            resolved = [_resolve_command(cmds, default_expects, timeout, log)]
-            if sudo:
-                resolved = [self._apply_sudo(sc) for sc in resolved]
-            single = resolved[0]
+            sc = _resolve_command(cmds, default_expects, timeout, log)
+            single = self._apply_sudo(sc) if sudo else _prepared(sc)
             result = await self._run_one(
                 single.cmd,
-                expects=_normalize_expects(single.expects),
+                expects=single.expects,
                 # _resolve_command collapsed the None sentinel into a concrete float.
                 timeout=single.timeout if single.timeout is not None else timeout,
                 # _resolve_command collapsed the None sentinel into a concrete LogMode.
@@ -1875,20 +1982,19 @@ class BaseHost(ABC):
             return Results.collect([result])
 
         resolved = [_resolve_command(c, default_expects, None, log) for c in cmds]
-        if sudo:
-            resolved = [self._apply_sudo(sc) for sc in resolved]
+        prepared = [self._apply_sudo(sc) if sudo else _prepared(sc) for sc in resolved]
 
-        async def _run_sc(sc: ShellCommand, t: float) -> CommandResult:
+        async def _run_pc(pc: _PreparedCommand, t: float) -> CommandResult:
             return await self._run_one(
-                sc.cmd,
-                expects=_normalize_expects(sc.expects),
+                pc.cmd,
+                expects=pc.expects,
                 timeout=t,
                 # _resolve_command collapsed the None sentinel into a concrete LogMode.
-                log=sc.log if sc.log is not None else LogMode.NORMAL,
+                log=pc.log if pc.log is not None else LogMode.NORMAL,
                 user=user,
             )
 
-        return await _run_cmds_with_budget(_run_sc, resolved, timeout)
+        return await _run_cmds_with_budget(_run_pc, prepared, timeout)
 
     def _effective_log(self, log: LogMode) -> LogMode:
         """Most-restrictive of this host's standing mode and the per-command mode."""
@@ -1898,7 +2004,7 @@ class BaseHost(ABC):
         self,
         cmd: str,
         timeout: float,
-        expects: list[Expect] | None = None,
+        expects: list[Expect | CredentialExpect] | None = None,
         log: LogMode = LogMode.NORMAL,
         user: "str | None" = None,
     ) -> CommandResult:
@@ -2038,6 +2144,11 @@ class BaseHost(ABC):
                 enclosing ``as_user()``'s identity, else the connection's own.
                 Which families accept it, and how, is declared per family on
                 :class:`~otto.host.capability_grid.HostCapabilities`.
+
+        Raises:
+            ~otto.host.errors.PasswordRefusedError: ``sudo=True`` and the
+                elevation prompt came back after otto answered it once: the
+                password was refused. The command is interrupted first.
         """
         if user is None:
             user = self._ambient_user()
@@ -2052,18 +2163,16 @@ class BaseHost(ABC):
             self._refuse_exec_expects()
         if sudo:
             await self._prepare_elevation()
-        if sudo:
-            sc = self._apply_sudo(sc, user)
+        pc = self._apply_sudo(sc, user) if sudo else _prepared(sc)
         if is_dry_run():
-            return self._dry_run_result(sc.cmd, log)
-        sc_expects = _normalize_expects(sc.expects)
+            return self._dry_run_result(pc.cmd, log)
         return await self._exec_one(
-            sc.cmd,
-            timeout=sc.timeout if sc.timeout is not None else timeout,
-            log=sc.log if sc.log is not None else log,
+            pc.cmd,
+            timeout=pc.timeout if pc.timeout is not None else timeout,
+            log=pc.log if pc.log is not None else log,
             user=user,
-            expects=sc_expects,
-            needs_shell=sudo or bool(sc_expects),
+            expects=pc.expects,
+            needs_shell=sudo or bool(pc.expects),
         )
 
     def _refuse_exec_user(self, user: str) -> None:  # noqa: B027 — an empty default is the POINT: most families honour user= and have nothing to refuse
@@ -2121,7 +2230,7 @@ class BaseHost(ABC):
         log: LogMode = LogMode.NORMAL,
         user: str | None = None,
         *,
-        expects: "list[Expect] | None" = None,
+        expects: "list[Expect | CredentialExpect] | None" = None,
         needs_shell: bool = False,
     ) -> CommandResult:
         """Family-specific runner for one command. Subclasses override.

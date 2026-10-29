@@ -152,6 +152,15 @@ _SU_PROMPT = r"[Pp]assword:"
 _SU_TARGET = "root"
 
 
+def _is_root(login: str) -> bool:
+    """Whether *login* is the account ``su`` never challenges: root, positively named.
+
+    An empty login is an identity otto never established, and is NOT read as
+    root (see :func:`_may_challenge` for why that is the unsafe direction).
+    """
+    return login == _SU_TARGET
+
+
 def _may_challenge(hop: Cred, via: Cred) -> bool:
     """Whether *hop* can raise a credential prompt when reached from *via*.
 
@@ -188,7 +197,7 @@ def _may_challenge(hop: Cred, via: Cred) -> bool:
     # unsafe direction, since it disarms answering for a hop that may well be
     # challenged. Unknown therefore falls through to True, which costs the
     # watch and nothing else.
-    return via.login != _SU_TARGET
+    return not _is_root(via.login)
 
 
 async def _su_proxy(io: ProxyIO, ctx: ProxyContext) -> None:

@@ -639,7 +639,7 @@ def _inner_bash_scripts(cmd: str) -> list[str]:
 
 
 class TestEveryCommandSurvivesElevation:
-    """Otto elevates by prefix (``sudo -S -p '…' <cmd>``), which covers one simple command.
+    """Otto elevates by prefix (``SUDO_PROMPT='…' sudo -S <cmd>``), which covers one simple command.
 
     So every command the check sends through ``check_root_run`` must reach
     ``host.run`` as ONE ``sh -c`` word, and the fully elevated line — built by
@@ -687,7 +687,7 @@ class TestEveryCommandSurvivesElevation:
                 f"premise: no inner bash script has {needle}"
             )
         for cmd in captured:
-            elevated, _expects = LocalHost()._elevate(cmd)
+            elevated = LocalHost()._elevate(cmd).command
             parsed = subprocess.run(
                 ["bash", "-n", "-c", elevated], check=False, capture_output=True, text=True
             )

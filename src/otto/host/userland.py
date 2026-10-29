@@ -2496,7 +2496,7 @@ GAPS: list[Gap] = [
                     "against a server that refuses excess channels rather than queueing "
                     "them, with no `userland_options` to pin them out. The elevation arm it "
                     "would take is measured rather than guessed: `alpine` has `su` and no "
-                    "`sudo`, so `run(sudo=True)` would move from today's `sudo -S -p ...` "
+                    "`sudo`, so `run(sudo=True)` would move from today's `sudo -S ...` "
                     "(rc 127, `sudo: not found`) to `su -c <cmd>`, which succeeds as root "
                     "and answers `su: must be suid to work properly` under `-u 1000`"
                 ),

@@ -37,7 +37,7 @@ from .command_frame import (
     SessionMarkers,
     history_prefix,
 )
-from .errors import ConsoleError, RawLandingError, SessionSetupError
+from .errors import ConsoleError, PasswordRefusedError, RawLandingError, SessionSetupError
 from .login_proxy import LoginProxyError, cred_for, perform_switch, run_proxy, run_undo
 from .secret_wire import reveal, shown
 from .shell_liveness import confirm_live
@@ -66,6 +66,7 @@ from ..utils import Status
 from .host import (
     _EXEC_REAP_TIMEOUT,
     DEFAULT_COMMAND_TIMEOUT,
+    CredentialExpect,
     Expect,
     ShellCommand,
     is_dry_run,
@@ -74,6 +75,21 @@ from .host import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class _CredentialRefusedError(Exception):
+    """A :class:`~otto.host.host.CredentialExpect` matched again after its one answer.
+
+    Raised inside the command's read loop and turned into
+    :exc:`~otto.host.errors.PasswordRefusedError` by
+    :meth:`ShellSession.run_cmd`, which recovers the shell first, outside the
+    command's timeout.
+    """
+
+    def __init__(self, expect: CredentialExpect) -> None:
+        super().__init__(expect.pattern)
+        self.expect = expect
+
 
 # Max length hint for asyncssh regex readuntil (performance optimization)
 _MAX_SEPARATOR_LEN = 256
@@ -951,7 +967,7 @@ class ShellSession(ABC):
     async def run_cmd(
         self,
         cmd: str,
-        expects: list[Expect] | None = None,
+        expects: list[Expect | CredentialExpect] | None = None,
         timeout: float = DEFAULT_COMMAND_TIMEOUT,
         on_output: Callable[[str], None] | None = None,
         redact: bool = False,
@@ -967,7 +983,9 @@ class ShellSession(ABC):
             expects: Optional list of (pattern, response) tuples. If a pattern
                 appears in the output before the end sentinel, the response is
                 automatically sent. Expects are inherently optional — if the
-                pattern never appears, the end sentinel matches normally.
+                pattern never appears, the end sentinel matches normally. A
+                :class:`~otto.host.host.CredentialExpect` is answered only
+                after the command's BEGIN marker, and at most once.
             timeout: Seconds before the command is considered hung. On expiry,
                 the session attempts recovery via Ctrl+C and returns
                 Status.Error. Defaults to :data:`~otto.host.host.DEFAULT_COMMAND_TIMEOUT`;
@@ -975,6 +993,12 @@ class ShellSession(ABC):
 
         Returns:
             CommandResult with exit code extracted from the sentinel.
+
+        Raises:
+            ~otto.host.errors.PasswordRefusedError: a
+                :class:`~otto.host.host.CredentialExpect`'s prompt came back
+                after it was answered. The command is interrupted and the
+                shell probed first, as on a timeout.
         """
         # An attached AppShell has this session parked inside an application
         # REPL (mysql, python3); typing the sentinel command frame into it would
@@ -1003,7 +1027,7 @@ class ShellSession(ABC):
                 timeout=timeout,
             )
         except asyncio.TimeoutError:
-            partial = await self._recover_session()
+            partial = await self._interrupt_command()
             return CommandResult(
                 status=Status.Error,
                 value=f"Command timed out after {timeout}s" + (f"\n{partial}" if partial else ""),
@@ -1011,6 +1035,15 @@ class ShellSession(ABC):
                 retcode=-1,
                 timed_out=True,
             )
+        except _CredentialRefusedError as refused:
+            # The prompt came back after the one answer: typing the password
+            # again would spend another authentication attempt on a password
+            # already refused, and waiting would cost the whole timeout.
+            await self._interrupt_command()
+            raise PasswordRefusedError(
+                f"password refused for {refused.expect.user or 'the session user'} "
+                f"on {refused.expect.host or 'this host'}"
+            ) from None
         except asyncio.CancelledError:
             # External cancellation (e.g., asyncio.wait_for at the caller
             # level) leaves the remote shell mid-command with buffered output
@@ -1046,10 +1079,25 @@ class ShellSession(ABC):
 
     # --- Internal implementation ---
 
+    async def _interrupt_command(self) -> str:
+        """Interrupt the running command and probe the shell, from outside the command's timeout.
+
+        The one recovery for a command otto gives up on (a timeout, a refused
+        password): :meth:`_recover_session`, which marks the session dead
+        when the probe fails so the next use opens a new one. A cancellation
+        landing mid-recovery leaves the shell mid-command, so it is marked
+        for recovery on next use, as a cancelled command is.
+        """
+        try:
+            return await self._recover_session()
+        except asyncio.CancelledError:
+            self._needs_recovery = True
+            raise
+
     async def _run_cmd_inner(
         self,
         cmd: str,
-        expects: list[Expect] | None,
+        expects: list[Expect | CredentialExpect] | None,
         on_output: Callable[[str], None],
         redact: bool = False,
         write_progress: Callable[[int, int], None] | None = None,
@@ -1100,6 +1148,7 @@ class ShellSession(ABC):
         # Read loop: handle expect responses and accumulate output
         buffer = ""
         seen_begin = False
+        answered: set[int] = set()
         while True:
             data = await self.read_transport_until(combined)
             buffer += data
@@ -1115,34 +1164,26 @@ class ShellSession(ABC):
                         on_output(pre)
                 break
 
-            # An expect pattern matched — find which one and send its response
-            expect_matched = False
-            if expects:
-                for pat_str, response in expects:
-                    pat = re.compile(pat_str) if isinstance(pat_str, str) else pat_str
-                    if pat.search(data):
-                        await self.write_transport(response)
-                        logger.debug(
-                            f"{self._log_tag}: expect matched "
-                            f"pattern={getattr(pat, 'pattern', pat)!r} response={response!r}"
-                        )
-                        expect_matched = True
-                        break
+            # BEGIN first, and on every chunk, including one an expect
+            # matches: a credential answer is gated on it. The begin marker
+            # check uses rstrip + startswith to avoid false matches when the
+            # shell echoes the wrapped command (which embeds the marker
+            # inside quotes on the same line).
+            began_before = seen_begin
+            if not seen_begin and self._frame.marks_begin(data, self._markers):
+                if not redact:
+                    logger.debug(f"{self._log_tag}: begin marker matched on chunk={data!r}")
+                seen_begin = True
+
+            expect_matched = await self._answer_expect(
+                data, expects or [], seen_begin=seen_begin, answered=answered, redact=redact
+            )
 
             # Stream each content line to the callback.
-            # The begin marker check uses rstrip + startswith to avoid
-            # false matches when the shell echoes the wrapped command
-            # (which embeds the marker inside quotes on the same line).
-            if not expect_matched:
-                if not seen_begin:
-                    if self._frame.marks_begin(data, self._markers):
-                        if not redact:
-                            logger.debug(f"{self._log_tag}: begin marker matched on chunk={data!r}")
-                        seen_begin = True
-                elif live:
-                    line = data.rstrip("\r\n").replace("\r", "")
-                    if line:
-                        on_output(line)
+            if live and began_before and not expect_matched:
+                line = data.rstrip("\r\n").replace("\r", "")
+                if line:
+                    on_output(line)
 
         if self.terminal_mapping == ONLCR:
             # Undo the terminal's \n -> \r\n and nothing else: every \n
@@ -1178,9 +1219,55 @@ class ShellSession(ABC):
             )
         return CommandResult(status=status, value=output, command=cmd, retcode=retcode)
 
+    async def _answer_expect(
+        self,
+        data: str,
+        expects: list[Expect | CredentialExpect],
+        *,
+        seen_begin: bool,
+        answered: set[int],
+        redact: bool,
+    ) -> bool:
+        """Answer the first expect whose pattern is in *data*; return whether one matched.
+
+        A plain pair answers whenever it matches. A
+        :class:`~otto.host.host.CredentialExpect` counts only once the
+        command has begun, since the typed command line is echoed before
+        BEGIN, and answers once: its index goes into *answered*. A later
+        match raises :exc:`_CredentialRefusedError` when the pair is
+        ``refused_on_repeat``, and is plain output otherwise.
+
+        The DEBUG line names the pattern and the answer's length, never the
+        answer; under ``LogMode.NEVER`` (*redact*) there is no line at all.
+        """
+        for i, expect in enumerate(expects):
+            if isinstance(expect, CredentialExpect):
+                if not seen_begin:
+                    continue
+                pattern, response = expect.pattern, expect.response
+            else:
+                pattern, response = expect
+            pat = re.compile(pattern) if isinstance(pattern, str) else pattern
+            if not pat.search(data):
+                continue
+            if isinstance(expect, CredentialExpect):
+                if i in answered:
+                    if expect.refused_on_repeat:
+                        raise _CredentialRefusedError(expect)
+                    continue  # answered once already: this match is output
+                answered.add(i)
+            await self.write_transport(response)
+            if not redact:
+                logger.debug(
+                    f"{self._log_tag}: expect matched "
+                    f"pattern={pat.pattern!r} response=<{len(response)} chars>"
+                )
+            return True
+        return False
+
     def _build_combined_pattern(
         self,
-        expects: list[Expect] | None,
+        expects: list[Expect | CredentialExpect] | None,
     ) -> re.Pattern[str]:
         r"""Build a combined regex: expect patterns | end sentinel | newline.
 
@@ -1190,7 +1277,8 @@ class ShellSession(ABC):
         """
         parts: list[str] = []
         if expects:
-            for i, (pattern, _) in enumerate(expects):
+            for i, expect in enumerate(expects):
+                pattern = expect.pattern if isinstance(expect, CredentialExpect) else expect[0]
                 pat_str = pattern.pattern if isinstance(pattern, re.Pattern) else pattern
                 parts.append(f"(?P<expect_{i}>{pat_str})")
         parts.append(f"(?P<sentinel>{self._end_pattern.pattern})")
@@ -2018,6 +2106,8 @@ class HostSession:
         """
         from .host import (
             _normalize_expects,
+            _prepared,
+            _PreparedCommand,
             _resolve_command,
             _run_cmds_with_budget,
             _validate_timeout,
@@ -2037,27 +2127,53 @@ class HostSession:
         timeout = _validate_timeout(timeout)
         default_expects = _normalize_expects(expects)
 
-        async def _run_sc(sc: ShellCommand, t: float) -> CommandResult:
-            # _resolve_command collapsed the None sentinel into a concrete LogMode.
-            mode = sc.log if sc.log is not None else LogMode.NORMAL
-            if mode is not LogMode.NEVER:
-                self._log_command(sc.cmd, mode)
-            return await self._session.run_cmd(
-                sc.cmd,
-                expects=_normalize_expects(sc.expects),
+        # `_prepared` is the one place a caller's expects become the internal
+        # list a session runs: `_resolve_command` leaves a ShellCommand's own
+        # scalar pair as it was given.
+        async def _run_pc(pc: _PreparedCommand, t: float) -> CommandResult:
+            return await self._run_one(
+                pc.cmd,
+                expects=pc.expects,
                 timeout=t,
-                on_output=_sink_for(self._log_output, mode),
-                redact=mode is LogMode.NEVER,
+                # _resolve_command collapsed the None sentinel into a concrete LogMode.
+                log=pc.log if pc.log is not None else LogMode.NORMAL,
             )
 
         if isinstance(cmds, (str, ShellCommand)):
-            sc = _resolve_command(cmds, default_expects, timeout, log)
+            pc = _prepared(_resolve_command(cmds, default_expects, timeout, log))
             # _resolve_command collapsed the None sentinel into a concrete float.
-            result = await _run_sc(sc, sc.timeout if sc.timeout is not None else timeout)
+            result = await _run_pc(pc, pc.timeout if pc.timeout is not None else timeout)
             return Results.collect([result])
 
-        resolved = [_resolve_command(c, default_expects, None, log) for c in cmds]
-        return await _run_cmds_with_budget(_run_sc, resolved, timeout)
+        prepared = [_prepared(_resolve_command(c, default_expects, None, log)) for c in cmds]
+        return await _run_cmds_with_budget(_run_pc, prepared, timeout)
+
+    async def _run_one(
+        self,
+        cmd: str,
+        *,
+        expects: list[Expect | CredentialExpect] | None,
+        timeout: float,
+        log: LogMode,
+    ) -> CommandResult:
+        """Log and run one command on this session: :meth:`run`'s step, and pooled ``exec``'s.
+
+        Internal because *expects* may carry an elevation's
+        :class:`~otto.host.host.CredentialExpect`, which no public signature
+        does; *timeout* is already validated. A dry run declines here too, so
+        no route reaches the session's ``run_cmd`` under one.
+        """
+        if is_dry_run():
+            return self._decline_command(ShellCommand(cmd, timeout=timeout, log=log))
+        if log is not LogMode.NEVER:
+            self._log_command(cmd, log)
+        return await self._session.run_cmd(
+            cmd,
+            expects=expects,
+            timeout=timeout,
+            on_output=_sink_for(self._log_output, log),
+            redact=log is LogMode.NEVER,
+        )
 
     def _decline_command(self, sc: ShellCommand) -> CommandResult:
         """Announce a command this session will not send, and return the decline.
@@ -3159,7 +3275,7 @@ class SessionManager:
     async def run_cmd(
         self,
         cmd: str,
-        expects: list[Expect] | None = None,
+        expects: list[Expect | CredentialExpect] | None = None,
         timeout: float = DEFAULT_COMMAND_TIMEOUT,
         log: LogMode = LogMode.NORMAL,
         write_progress: Callable[[int, int], None] | None = None,
@@ -3211,7 +3327,7 @@ class SessionManager:
         timeout: float = DEFAULT_COMMAND_TIMEOUT,
         log: LogMode = LogMode.NORMAL,
         *,
-        expects: "list[Expect] | None" = None,
+        expects: "list[Expect | CredentialExpect] | None" = None,
         user: str | None = None,
         needs_shell: bool = False,
     ) -> CommandResult:
@@ -3416,7 +3532,7 @@ class SessionManager:
         *,
         timeout: float,
         log: LogMode,
-        expects: "list[Expect] | None",
+        expects: "list[Expect | CredentialExpect] | None",
         user: str | None,
     ) -> CommandResult:
         """One command on the default session: ``exec`` on a single-client console.
@@ -3450,7 +3566,7 @@ class SessionManager:
         *,
         timeout: float,
         log: LogMode,
-        expects: "list[Expect] | None",
+        expects: "list[Expect | CredentialExpect] | None",
         user: str | None,
     ) -> CommandResult:
         """One command on a pooled shell session, switched to *user* for the call.
@@ -3486,13 +3602,14 @@ class SessionManager:
         switched_ok = user is None
         try:
             if user is None:
-                return (await session.run(cmd, expects=expects, timeout=timeout, log=log)).only
+                return await session._run_one(cmd, expects=expects, timeout=timeout, log=log)  # noqa: SLF001 — the manager's own pooled session, on its internal entry
             result: CommandResult | None = None
             try:
                 async with session.as_user(user):
                     switched_ok = True
-                    ran = await session.run(cmd, expects=expects, timeout=timeout, log=log)
-                    result = ran.only
+                    result = await session._run_one(  # noqa: SLF001 — as above
+                        cmd, expects=expects, timeout=timeout, log=log
+                    )
             except Exception as exc:
                 # A failure BEFORE the command produced a result -- the switch
                 # itself, or the command -- is the call's failure and

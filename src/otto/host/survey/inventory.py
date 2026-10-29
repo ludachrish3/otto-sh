@@ -34,7 +34,7 @@ INVENTORY_SCRIPT = "sh -c " + shlex.quote(_INVENTORY_BODY)
 """The inventory command: ONE shell word, so an elevating caller can prefix it.
 
 :meth:`otto.host.privilege.PosixPrivilege._elevate` composes elevation by
-textual prefixing -- ``sudo -S -p '<prompt>' <cmd>`` and
+textual prefixing -- ``SUDO_PROMPT='<prompt>' sudo -S <cmd>`` and
 ``su -c <shlex.quote(cmd)>`` -- so a bare multi-statement body arrives as
 sudo's trailing ARGUMENT LIST: bash only reads ``if`` as the reserved word
 that opens a conditional in command-start position, so spliced in as an
@@ -253,9 +253,10 @@ async def _run_once(
         # Elevation is asked for only when the userland resolved `sudo`/`su` AND
         # the session's cred has a password to answer it, so a refusal here is
         # the resolution and the host disagreeing -- a real error the operator
-        # has to see, never a quiet fall back to an unelevated run. A sudo the
-        # TARGET refuses arrives as a non-zero retcode (or NotRun) above and
-        # still falls back, with the spec's "elevation refused" footnote.
+        # has to see, never a quiet fall back to an unelevated run. A password
+        # the TARGET refuses arrives as `PasswordRefusedError` (sudo) or a
+        # non-zero retcode (su), and either one falls back below, with the
+        # spec's "elevation refused" footnote.
         raise
     except Exception as exc:  # noqa: BLE001 — every failure shape becomes one stated reason
         return f"{type(exc).__name__}: {exc}"
