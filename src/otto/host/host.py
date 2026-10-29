@@ -210,9 +210,7 @@ def get_logging_command_output_enabled() -> bool:
     A ``SuppressCommandOutput()`` (no host) entered in this task, or in the
     task that spawned it, turns it off for the block; see ``_SUPPRESSED_HOSTS``.
     """
-    from ..invocation import current_policy
-
-    return not _is_suppressed(None) and current_policy().log_command_output
+    return not _is_suppressed(None)
 
 
 def is_dry_run() -> bool:
@@ -2023,15 +2021,13 @@ class BaseHost(ABC):
     def _effective_log(self, log: LogMode) -> LogMode:
         """Most-restrictive of this host's standing mode, the per-command mode, and a suppression.
 
-        A :class:`SuppressCommandOutput` on this host, or on every host,
+        A run policy with ``log_command_output`` off quiets every command
+        (see ``_is_suppressed``). A :class:`SuppressCommandOutput` on this host, or on every host,
         quiets only the task that entered it (and the tasks it spawns); a
         sibling task's command on the same host logs as the host's own mode
         says.
         """
-        mode = effective_mode(self.log, log)
-        if _is_suppressed(self):
-            return effective_mode(mode, LogMode.QUIET)
-        return mode
+        return _quieted(self, effective_mode(self.log, log))
 
     async def _run_one(
         self,
@@ -3526,7 +3522,7 @@ class BaseHost(ABC):
             level,
             f"[bold]@{escape(self.name)}   | ",
             command,
-            extra={"host": self, "log_mode": mode},
+            extra={"host": self, "log_mode": _quieted(self, mode)},
         )
 
     def _log_outcome(self, name: str, done: str, result: Result) -> None:
@@ -3566,20 +3562,24 @@ class BaseHost(ABC):
             INFO,
             f"[yellow]@{escape(self.name)} > | ",
             output,
-            extra={"host": self, "log_mode": mode},
+            extra={"host": self, "log_mode": _quieted(self, mode)},
             per_line=True,
         )
 
 
 class HostFilter(Filter):
-    """Console-side suppress filter: drops QUIET/NEVER records and honors the global flag.
+    """Console-side suppress filter: drops a host record whose ``log_mode`` is QUIET or NEVER.
 
     Attached to the console + ``console.log`` handlers only —
     ``verbose.log`` keeps the records (see ``management``).
 
-    The per-host standing mode is now folded into each record's ``log_mode`` via
-    ``BaseHost._effective_log`` at the emit seam, so the filter decides purely on
-    ``record.log_mode`` plus the global command-output flag.
+    Whether a record is quiet is decided where it is logged, in the emitting
+    task: ``BaseHost._log_command`` and ``BaseHost._log_output`` stamp
+    ``log_mode`` with the host's mode, the command's mode, the run policy's
+    ``log_command_output`` and any :class:`SuppressCommandOutput` folded in
+    (see ``_quieted``). Once the file sinks are up this filter runs on the
+    logging listener's thread, where the run's context variables (the policy,
+    the suppressions) are not set, so it reads only the record.
     """
 
     @override
@@ -3589,9 +3589,7 @@ class HostFilter(Filter):
         if host is None:
             return True
         mode: LogMode = getattr(record, "log_mode", LogMode.NORMAL)  # ty: ignore[unsound-assignment] — dynamic LogRecord attr; getattr over stdlib records has no typed spelling
-        if mode is not LogMode.NORMAL:  # QUIET or NEVER → not on the console side
-            return False
-        return get_logging_command_output_enabled()
+        return mode is LogMode.NORMAL  # QUIET or NEVER → not on the console side
 
 
 _EVERY_HOST = "every host"
@@ -3613,9 +3611,24 @@ life, even after the block that spawned it has ended."""
 
 
 def _is_suppressed(host: object | None) -> bool:
-    """Whether this task quiets *host*'s commands, or every host's when *host* is ``None``."""
+    """Whether this task logs no command output for *host* (for every host when ``None``).
+
+    The one decision: the run policy turned command output off, or this task
+    entered a :class:`SuppressCommandOutput` for *host* or for every host. It
+    reads context variables, so it is only right in the emitting task, never
+    on the logging listener's thread.
+    """
+    from ..invocation import current_policy
+
+    if not current_policy().log_command_output:
+        return True
     suppressed = _SUPPRESSED_HOSTS.get()
     return _EVERY_HOST in suppressed or (host is not None and id(host) in suppressed)
+
+
+def _quieted(host: object, mode: LogMode) -> LogMode:
+    """*mode*, made at least QUIET when this task logs no command output for *host*."""
+    return effective_mode(mode, LogMode.QUIET) if _is_suppressed(host) else mode
 
 
 # TODO: Consider a way to make commands and their output log no matter what if the log level were debug.  # noqa: E501 — TODO comment

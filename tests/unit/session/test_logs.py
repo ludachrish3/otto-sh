@@ -187,3 +187,38 @@ def test_a_prior_cli_install_leaves_exactly_one_host_filter(monkeypatch):
     install_logging()
     console = management._state.console_handler
     assert sum(isinstance(f, HostFilter) for f in console.filters) == 1
+
+
+@pytest.mark.usefixtures("_clean_logging")
+@pytest.mark.parametrize("log_command_output", [False, True])
+@pytest.mark.asyncio
+async def test_a_run_that_turns_command_output_off_keeps_it_off_the_console(
+    monkeypatch, tmp_path, log_command_output
+):
+    """With the file sinks up, the console and ``console.log`` sit behind the sinks'
+    listener thread, where the run's policy is not set. A command run under
+    ``log_command_output=False`` must still reach neither of them, and only
+    ``verbose.log``; under ``True`` it reaches all three.
+    """
+    from otto.host import LocalHost
+    from tests.conftest import active_context
+
+    _projects(monkeypatch)
+    install_logging(output_dir=tmp_path)
+    assert management._state.listener is not None, "the listener is what this pins"
+    on_console = io.StringIO()
+    management._state.console_handler.console = Console(
+        file=on_console, width=200, color_system=None
+    )
+    marker = "policy-off-marker"
+    host = LocalHost()
+    try:
+        with active_context(log_command_output=log_command_output):
+            await host.run([f"echo {marker}"])
+    finally:
+        await host.close()
+    assert management.drain_log_queue()
+
+    assert (marker in on_console.getvalue()) is log_command_output
+    assert (marker in (tmp_path / "console.log").read_text()) is log_command_output
+    assert marker in (tmp_path / "verbose.log").read_text()
