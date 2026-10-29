@@ -7,11 +7,75 @@ hosts: they appear in `--list-hosts` and accept every `otto host` verb.
 A use-case is one named deployment that several active projects contribute
 fragments to; `compose build`, `compose up`, `compose down`, `compose ps` and
 `compose logs` all speak it.
-{doc}`use-cases` is the workflow home for that model — start there.
+{doc}`use-cases` is the workflow home for that model; read it after
+{ref}`First deploy <docker-first-deploy>` for the cross-project side.
 
 ```{raw} html
 :file: ../../_static/generated/termynal/help-docker.html
 ```
+
+(docker-first-deploy)=
+## First deploy
+
+The smallest project otto can deploy declares one image, one compose file
+and one use-case that names it:
+
+```{code-block} toml
+:caption: .otto/settings.toml
+
+[[docker.images]]
+name = "app"
+dockerfile = "docker/app/Dockerfile"
+context = "docker/app"
+
+[[docker.composes]]
+name = "app"
+path = "docker/app/compose.yml"
+services = ["app"]
+
+[[docker.use_cases]]
+name = "demo"
+composes = ["app"]
+```
+
+`docker/app/compose.yml` names the image as `app:latest`, the tag every
+build gives it:
+
+```{code-block} yaml
+:caption: docker/app/compose.yml
+
+services:
+  app:
+    image: app:latest
+```
+
+The image has its own subfolder so the build context holds only what the image
+needs. Each key is documented in {doc}`../../configuration/settings`, and
+what a use-case is in {doc}`use-cases`.
+
+A lab must be selected (`--lab` or `OTTO_LAB`) with a docker-capable host
+({doc}`../../configuration/lab/docker`). Check what is declared, then preview
+the build and the deployment. A dry run contacts no host and prints the exact
+`docker` commands:
+
+```bash
+otto docker use-cases demo
+otto -n docker compose build demo
+otto -n docker compose up demo
+```
+
+Then build and deploy:
+
+```bash
+otto docker compose build demo
+otto docker compose up demo
+```
+
+Both run on one parent: `--parent HOST`, or the lab's default
+({ref}`Which host <docker-which-host>`). The service is now a lab host,
+`<parent>.demo.app` ([Container hosts](#container-hosts)). otto never
+starts it for you: a later session or test run brings it up first
+({ref}`docker-start-first`). Remove it with `otto docker compose down demo`.
 
 (docker-verbs)=
 ## Verbs

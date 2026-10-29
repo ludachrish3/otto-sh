@@ -11,17 +11,21 @@ otto decides which fragments take part, assembles one env mapping, and runs
 **one** `docker compose up` on the parent over the merged file set. Which lab
 host the parent is, is {ref}`Which host <docker-which-host>`.
 
+The smallest declaration, one image, one compose file and one use-case, is
+shown in {ref}`First deploy <docker-first-deploy>`. A project that joins a
+cross-project use-case declares the same three tables, with the comments here:
+
 ```toml
 # project-a/.otto/settings.toml
 [[docker.images]]
 name = "project-a-api"                   # the image name, verbatim; only for an
                                       # image otto builds
-dockerfile = "docker/Dockerfile"
-context = "docker"
+dockerfile = "docker/api/Dockerfile"
+context = "docker/api"
 
 [[docker.composes]]
 name = "core"                         # a handle for this file
-path = "docker/compose.yml"
+path = "docker/api/compose.yml"
 services = ["api"]                    # the names in its services: block
 
 [[docker.use_cases]]
@@ -88,7 +92,7 @@ Two files, two languages, one boundary between them.
 ### The product side: plain compose, no otto anywhere
 
 ```yaml
-# project-a/docker/compose.yml — a deliverable product artifact
+# project-a/docker/api/compose.yml — a deliverable product artifact
 services:
   api:
     image: project-a-api:latest
@@ -138,10 +142,10 @@ A product's compose file also runs by hand, with no otto involved. From the
 project root, with the image already built:
 
 ```console
-$ EDGE_ADDR=10.0.0.5 LOG_LEVEL=debug docker compose -f docker/compose.yml up -d
+$ EDGE_ADDR=10.0.0.5 LOG_LEVEL=debug docker compose -f docker/api/compose.yml up -d
 ```
 
-(`-f` because the file above lives at `docker/compose.yml`; from inside that
+(`-f` because the file above lives at `docker/api/compose.yml`; from inside that
 directory a bare `docker compose up -d` is the same command.)
 
 Run by hand, with the values supplied yourself, that behaves **identically**
