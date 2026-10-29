@@ -56,12 +56,13 @@ def check_variant(value: object) -> Variant:
 class RunPolicy:
     """What this run does, read live by every host when it acts.
 
-    Mutable on purpose: ``SuppressCommandOutput()`` flips
-    :attr:`~otto.context.RunPolicy.log_command_output` on the installed
-    object, and the CLI stamps :attr:`~otto.context.RunPolicy.output_dir` once
-    the run's directory exists. A host never captures a value at construction,
-    because a host outlives the context it was built under. The variant is
-    validated when the policy is built; change it by building a new policy
+    Mutable on purpose: the CLI stamps
+    :attr:`~otto.context.RunPolicy.output_dir` once the run's directory
+    exists. (``SuppressCommandOutput()`` quiets a block without writing
+    :attr:`~otto.context.RunPolicy.log_command_output`.) A host never captures
+    a value at construction, because a host outlives the context it was built
+    under. The variant is validated when the policy is built; change it by
+    building a new policy
     (:func:`otto.context.set_variant`, ``open_context(variant=...)``), never by
     assigning it.
     """

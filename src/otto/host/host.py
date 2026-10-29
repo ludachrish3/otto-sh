@@ -13,6 +13,7 @@ from contextlib import (
     asynccontextmanager,
     nullcontext,
 )
+from contextvars import ContextVar
 from dataclasses import (
     dataclass,
     field,
@@ -204,10 +205,14 @@ logger = getLogger(__name__)
 
 
 def get_logging_command_output_enabled() -> bool:
-    """Return True if command-output logging is enabled by the installed run policy."""
+    """Return True if the run policy logs command output and this task has not suppressed it.
+
+    A ``SuppressCommandOutput()`` (no host) entered in this task, or in the
+    task that spawned it, turns it off for the block; see ``_SUPPRESSED_HOSTS``.
+    """
     from ..invocation import current_policy
 
-    return current_policy().log_command_output
+    return not _is_suppressed(None) and current_policy().log_command_output
 
 
 def is_dry_run() -> bool:
@@ -2016,8 +2021,17 @@ class BaseHost(ABC):
         return await _run_cmds_with_budget(_run_pc, prepared, timeout)
 
     def _effective_log(self, log: LogMode) -> LogMode:
-        """Most-restrictive of this host's standing mode and the per-command mode."""
-        return effective_mode(self.log, log)
+        """Most-restrictive of this host's standing mode, the per-command mode, and a suppression.
+
+        A :class:`SuppressCommandOutput` on this host, or on every host,
+        quiets only the task that entered it (and the tasks it spawns); a
+        sibling task's command on the same host logs as the host's own mode
+        says.
+        """
+        mode = effective_mode(self.log, log)
+        if _is_suppressed(self):
+            return effective_mode(mode, LogMode.QUIET)
+        return mode
 
     async def _run_one(
         self,
@@ -3580,41 +3594,53 @@ class HostFilter(Filter):
         return get_logging_command_output_enabled()
 
 
+_EVERY_HOST = "every host"
+"""The entry a ``SuppressCommandOutput()`` with no host puts in ``_SUPPRESSED_HOSTS``."""
+
+_SUPPRESSED_HOSTS: ContextVar[frozenset[int | str]] = ContextVar(
+    "otto_suppressed_hosts", default=frozenset()
+)
+"""What :class:`SuppressCommandOutput` quiets in this task: hosts by ``id``, or ``_EVERY_HOST``.
+
+The one suppression mechanism, per host and global alike. A context
+variable, not the host's own ``log`` nor the run policy: a host is shared by
+every task that uses it (a container's commands run through its parent), and
+the policy by the whole run, so a suppression written on either would quiet
+them all and restore out of order. Each task, and every task it spawns, sees
+only the suppressions it entered. A spawned task copies the variable when it
+is created, so one spawned inside a suppression stays quiet for its whole
+life, even after the block that spawned it has ended."""
+
+
+def _is_suppressed(host: object | None) -> bool:
+    """Whether this task quiets *host*'s commands, or every host's when *host* is ``None``."""
+    suppressed = _SUPPRESSED_HOSTS.get()
+    return _EVERY_HOST in suppressed or (host is not None and id(host) in suppressed)
+
+
 # TODO: Consider a way to make commands and their output log no matter what if the log level were debug.  # noqa: E501 — TODO comment
 @dataclass
 class SuppressCommandOutput:
     """Suppress command/output logging for one host or globally.
 
-    On enter, the prior state is snapshotted; on exit it is restored.
-    That makes nesting safe — an inner context cannot clobber an outer
-    one — and makes concurrent per-host suppressions race-free, since
-    each context only touches its own host's ``log`` attribute.
+    The per-host form quiets *host*'s commands in the running task and the
+    tasks it spawns, and nowhere else: a sibling task's commands on the same
+    host log as usual, and the host's own ``log`` is never touched. It is
+    held in a context variable (``_SUPPRESSED_HOSTS``) that enter sets and
+    exit resets by token, so nesting is safe and suppressions that overlap
+    in different tasks are race-free: none can restore another's state.
 
-    The no-host (global) path mutates ``log_command_output`` on the installed
-    run policy (:class:`otto.context.RunPolicy`) when one is present. When no
-    policy is installed the call is a no-op (there is nothing to suppress). Prefer the
-    per-host form when suppressing work that runs concurrently.
+    The no-host (global) form quiets every host's commands the same way, in
+    the same variable: the run policy's ``log_command_output`` is never
+    written, so two global suppressions that overlap cannot strand it off.
     """
 
     host: "Host | None" = None
     """Host object to suppress. If not provided, all host output is affected."""
 
     def __enter__(self) -> None:
-        if self.host is not None:
-            self._prev_host_log = self.host.log
-            self.host.log = LogMode.QUIET
-        else:
-            from ..invocation import installed_policy
-
-            self._policy = installed_policy()
-            self._prev_global = (
-                self._policy.log_command_output if self._policy is not None else True
-            )
-            if self._policy is not None:
-                self._policy.log_command_output = False
+        entry = _EVERY_HOST if self.host is None else id(self.host)
+        self._token = _SUPPRESSED_HOSTS.set(_SUPPRESSED_HOSTS.get() | {entry})
 
     def __exit__(self, *_: object) -> None:
-        if self.host is not None:
-            self.host.log = self._prev_host_log
-        elif self._policy is not None:
-            self._policy.log_command_output = self._prev_global
+        _SUPPRESSED_HOSTS.reset(self._token)

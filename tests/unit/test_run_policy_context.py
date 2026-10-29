@@ -19,11 +19,13 @@ from tests._fixtures.paths import CHECKOUT_ROOT
 from tests._fixtures.run_state import cleared_run_state, installed_run_state
 
 
-def test_with_no_policy_the_readers_see_the_defaults_and_suppression_is_a_no_op():
+def test_with_no_policy_the_readers_see_the_defaults_and_suppression_still_applies():
+    """No policy is installed, so nothing is written to one; the block is quiet all the same."""
     assert (is_dry_run(), get_logging_command_output_enabled()) == (False, True)
     with SuppressCommandOutput():
         assert installed_policy() is None
-        assert get_logging_command_output_enabled() is True
+        assert get_logging_command_output_enabled() is False
+    assert get_logging_command_output_enabled() is True
 
 
 def test_the_manual_pattern_runs_under_the_variant_set_before_the_context():
@@ -263,7 +265,8 @@ class _ConsoleSide(logging.Handler):
         self.kept.append(record.getMessage())
 
 
-def test_a_shared_host_reads_log_command_output_live():
+def test_a_global_suppression_silences_a_shared_hosts_command_line_for_the_block_only():
+    """A host built before any context still honours ``SuppressCommandOutput()`` live."""
     host = make_host("test1")  # built before any context: nothing captured
     console = _ConsoleSide()
     host_logger = logging.getLogger("otto.host.host")

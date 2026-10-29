@@ -500,10 +500,12 @@ class OttoContext:
 
     @property
     def log_command_output(self) -> bool:
-        """Whether hosts log each command and its output, read live off :attr:`policy`.
+        """The policy's setting for logging each command and its output, read live.
 
-        Read-only. Set it on the policy (``ctx.policy.log_command_output = False``),
-        or suppress it for a block with :class:`otto.host.host.SuppressCommandOutput`.
+        Read-only. Set it on the policy (``ctx.policy.log_command_output = False``).
+        It is the policy's value only: a :class:`otto.host.host.SuppressCommandOutput`
+        block does not change it. Whether output is logged right now, in this task,
+        is :func:`otto.host.host.get_logging_command_output_enabled`.
         """
         return self.policy.log_command_output
 

@@ -12,6 +12,7 @@ from otto.host.host import (
 )
 from otto.host.inventory_ref import InventoryRef
 from otto.host.local_host import LocalHost
+from otto.invocation import current_policy
 from otto.logger.mode import LogMode
 from otto.utils import Status
 from tests.conftest import active_context
@@ -406,8 +407,9 @@ def test_per_host_suppression_restores_prior_state():
     host = LocalHost()
     host.log = LogMode.NORMAL
     with SuppressCommandOutput(host=host):
-        assert host.log is LogMode.QUIET
-    assert host.log is LogMode.NORMAL
+        assert host._effective_log(LogMode.NORMAL) is LogMode.QUIET
+        assert host.log is LogMode.NORMAL  # the shared host's own mode is never written
+    assert host._effective_log(LogMode.NORMAL) is LogMode.NORMAL
 
 
 def test_global_suppression_restores_prior_state():
@@ -452,12 +454,14 @@ def test_nested_global_then_host():
         with SuppressCommandOutput():
             assert get_logging_command_output_enabled() is False
             with SuppressCommandOutput(host=host):
-                assert host.log is LogMode.QUIET
+                assert host._effective_log(LogMode.NORMAL) is LogMode.QUIET
                 assert get_logging_command_output_enabled() is False
-            # Inner exit must leave the outer's global suppression intact.
+            # Inner exit must leave the outer's global suppression intact,
+            # which still quiets this host as it quiets every host.
             assert get_logging_command_output_enabled() is False
-            assert host.log is LogMode.NORMAL
+            assert host._effective_log(LogMode.NORMAL) is LogMode.QUIET
         assert get_logging_command_output_enabled() is True
+        assert host._effective_log(LogMode.NORMAL) is LogMode.NORMAL
 
 
 def test_nested_host_then_global():
@@ -465,14 +469,14 @@ def test_nested_host_then_global():
     host.log = LogMode.NORMAL
     with active_context(log_command_output=True):
         with SuppressCommandOutput(host=host):
-            assert host.log is LogMode.QUIET
+            assert host._effective_log(LogMode.NORMAL) is LogMode.QUIET
             with SuppressCommandOutput():
                 assert get_logging_command_output_enabled() is False
-                assert host.log is LogMode.QUIET
+                assert host._effective_log(LogMode.NORMAL) is LogMode.QUIET
             # Inner exit must leave the outer's per-host suppression intact.
-            assert host.log is LogMode.QUIET
+            assert host._effective_log(LogMode.NORMAL) is LogMode.QUIET
             assert get_logging_command_output_enabled() is True
-        assert host.log is LogMode.NORMAL
+        assert host._effective_log(LogMode.NORMAL) is LogMode.NORMAL
 
 
 def test_nested_global_then_global():
@@ -524,7 +528,7 @@ async def test_concurrent_per_host_suppression_does_not_conflict_globally():
             # Wait until both tasks are inside their per-host contexts, so
             # we can assert the two contexts really do overlap.
             await asyncio.wait_for(both_inside.wait(), timeout=2.0)
-            assert host.log is LogMode.QUIET
+            assert host._effective_log(LogMode.NORMAL) is LogMode.QUIET
             assert get_logging_command_output_enabled() is True
             # Under overlap: each host's own records (emitted now, while QUIET)
             # are filtered out, and the global flag is unaffected for other hosts.
@@ -749,3 +753,85 @@ async def test_a_multi_line_command_prints_no_prompt_into_its_output():
         assert result.value.strip().splitlines() == ["one", "two"], result.value
     finally:
         await host.close()
+
+
+@pytest.mark.asyncio
+async def test_a_host_suppression_quiets_its_own_task_and_spawn_but_not_a_sibling():
+    """A transfer's quiet output is its own: a sibling task's commands on the same
+    host (a container's, run through its parent) still log."""
+    host = LocalHost()
+    host.log = LogMode.NORMAL
+    inside, sibling_done = asyncio.Event(), asyncio.Event()
+    seen: dict[str, LogMode] = {}
+
+    async def read() -> LogMode:
+        return host._effective_log(LogMode.NORMAL)
+
+    async def transfer() -> None:
+        with SuppressCommandOutput(host=host):
+            inside.set()
+            seen["own"] = await read()
+            seen["spawned"] = await asyncio.create_task(read())
+            await asyncio.wait_for(sibling_done.wait(), timeout=2.0)
+
+    async def sibling() -> None:
+        await asyncio.wait_for(inside.wait(), timeout=2.0)
+        seen["sibling"] = await read()
+        sibling_done.set()
+
+    await asyncio.gather(transfer(), sibling())
+
+    assert seen == {"own": LogMode.QUIET, "spawned": LogMode.QUIET, "sibling": LogMode.NORMAL}
+
+
+@pytest.mark.asyncio
+async def test_overlapping_host_suppressions_leave_the_hosts_own_mode():
+    """Two suppressions of one host that overlap without nesting (A enters, B
+    enters, A exits, B exits) must not strand the host quiet."""
+    host = LocalHost()
+    host.log = LogMode.NORMAL
+    a_in, b_in, a_out = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def first() -> None:
+        with SuppressCommandOutput(host=host):
+            a_in.set()
+            await asyncio.wait_for(b_in.wait(), timeout=2.0)
+        a_out.set()
+
+    async def second() -> None:
+        await asyncio.wait_for(a_in.wait(), timeout=2.0)
+        with SuppressCommandOutput(host=host):
+            b_in.set()
+            await asyncio.wait_for(a_out.wait(), timeout=2.0)
+
+    await asyncio.gather(first(), second())
+
+    assert host.log is LogMode.NORMAL
+    assert host._effective_log(LogMode.NORMAL) is LogMode.NORMAL
+
+
+@pytest.mark.asyncio
+async def test_overlapping_global_suppressions_leave_command_output_on():
+    """Two global suppressions that overlap without nesting (A enters, B enters,
+    A exits, B exits) must not strand command output off, and the run policy's
+    own setting is never written."""
+    with active_context(log_command_output=True):
+        a_in, b_in, a_out = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+        async def first() -> None:
+            with SuppressCommandOutput():
+                a_in.set()
+                await asyncio.wait_for(b_in.wait(), timeout=2.0)
+            a_out.set()
+
+        async def second() -> None:
+            await asyncio.wait_for(a_in.wait(), timeout=2.0)
+            with SuppressCommandOutput():
+                b_in.set()
+                assert get_logging_command_output_enabled() is False
+                await asyncio.wait_for(a_out.wait(), timeout=2.0)
+
+        await asyncio.gather(first(), second())
+
+        assert get_logging_command_output_enabled() is True
+        assert current_policy().log_command_output is True

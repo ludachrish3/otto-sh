@@ -2021,9 +2021,9 @@ class TestNcFileTransfer:
 
     @pytest.mark.asyncio
     async def test_nc_put_suppresses_host_logging_during_transfer(self, tmp_path: Path):
-        """During put, host.log must be QUIET so per-host records are
-        dropped by HostFilter; it must be restored to its prior value after
-        the transfer completes."""
+        """During put, the transfer's own commands must be quiet so their
+        records are dropped by HostFilter, and the host's own mode is left
+        as it was."""
         h = UnixHost(
             ip="10.0.0.1",
             element=Element("box"),
@@ -2039,7 +2039,7 @@ class TestNcFileTransfer:
         connected = asyncio.Event()
 
         async def exec_capturing_log(cmd: str, **_kw) -> CommandResult:
-            log_states.append(h.log)
+            log_states.append(h._effective_log(LogMode.NORMAL))
             # Compound strategy probe runs first (warm-up); return a valid
             # port+listener pair so the cascades don't fire.
             if cmd.startswith("port=proc; listener=proc"):
@@ -2085,7 +2085,7 @@ class TestNcFileTransfer:
     @pytest.mark.asyncio
     async def test_nc_get_suppresses_host_logging_during_transfer(self, tmp_path: Path):
         """Symmetric check for get — the file-size stat and the send exec
-        must both run with host.log == LogMode.QUIET."""
+        must both run with the host's commands quiet (``_effective_log``)."""
         h = UnixHost(
             ip="10.0.0.1",
             element=Element("box"),
@@ -2115,7 +2115,7 @@ class TestNcFileTransfer:
             return mock_server
 
         async def exec_capturing_log(cmd: str, *_a, **_kw) -> CommandResult:
-            log_states.append(h.log)
+            log_states.append(h._effective_log(LogMode.NORMAL))
             if cmd.startswith("stat"):
                 return _cs(command=cmd, output="11 regular file", status=Status.Success, retcode=0)
             return send_cs
