@@ -192,8 +192,15 @@ def _build_archive_image(host: str, sut: Path, xdir):
 
 def _archive_left_on_host(host: str, xdir) -> bool:
     """Whether the build directory on *host* still holds an uploaded archive of the image."""
+    # The parent's private staging root is named for the login its commands run
+    # as, which is what `id -un` answers there.
     listing = _run_otto(
-        "host", host, "exec", f"ls /tmp/otto-docker/{_ARCHIVE_REPO}/build", xdir=xdir, env=_WIDE
+        "host",
+        host,
+        "exec",
+        f'ls "/tmp/otto-docker-$(id -un)/{_ARCHIVE_REPO}/build"',
+        xdir=xdir,
+        env=_WIDE,
     )
     return re.search(rf"{_ARCHIVE_IMAGE}\..*\.tar\.gz", listing.stdout + listing.stderr) is not None
 

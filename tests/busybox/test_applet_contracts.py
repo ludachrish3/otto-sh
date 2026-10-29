@@ -427,6 +427,46 @@ def test_the_get_prefetch_spelling_reports_the_targets_size_and_type(release, ap
     )
 
 
+@pytest.mark.busybox
+@pytest.mark.parametrize("release", _ROWS)
+@pytest.mark.parametrize("with_stat", [True, False], ids=["stat", "ls-fallback"])
+def test_the_staging_root_probe_reads_type_owner_and_mode(release, applet_dir, tmp_path, with_stat):
+    """otto's private-root probe, run by this row's applets, reads back right.
+
+    `src/otto/host/docker_host.py` runs ONE command before any docker staging
+    on a parent: `mkdir -m 0700` the root, `id -u`, then `stat -c '%F %u %a'`
+    of each path, falling back to `ls -ldn` where `stat` (an optional applet)
+    is missing or refuses `-c`. The command is built by the product's own
+    builder here, not re-spelled, and read by the product's own parser; the
+    `ls-fallback` row hides `stat` so the fallback is what answers. A symbolic
+    link must read as a link, never as what it points at.
+    """
+    from otto.host.docker_host import _ownership_command, _read_ownership
+
+    applets = ["ls", "id", "mkdir", *(["stat"] if with_stat else [])]
+    d = applet_dir(release, applets)
+    root = tmp_path / "otto-docker-me"
+    link = tmp_path / "link"
+    link.symlink_to(tmp_path)
+    paths = [root, link, tmp_path / "absent"]
+
+    done = _run_via_dash(d, _ownership_command(paths, root))
+    probe = _read_ownership(done.stdout, paths)
+
+    assert probe is not None, (
+        f"BusyBox {release.version} ({applets}) answered the probe with "
+        f"{done.stdout!r} (rc={done.returncode}, {done.stderr.strip()!r})"
+    )
+    assert probe.problem(root, kind="directory", private=True) is None, (
+        f"BusyBox {release.version}: the root reads as {probe.paths[root]} for uid {probe.uid}"
+    )
+    assert probe.paths[link] is not None
+    assert probe.paths[link].kind == "symbolic link", (
+        f"BusyBox {release.version} followed the link: {probe.paths[link]}"
+    )
+    assert probe.missing(tmp_path / "absent")
+
+
 # `nc -N` is an OpenBSD netcat option BusyBox has never had, and it was otto's
 # sender spelling until 2026-08-25. The rejection is worded two ways across the
 # matrix (`invalid option -- N` up to 1.21.1, `unrecognized option: N` from

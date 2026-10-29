@@ -76,6 +76,18 @@ class PasswordRefusedError(HostCommandError):
     """
 
 
+class StagingRefusedError(HostCommandError):
+    """otto will not stage docker files on, or run them from, a directory it cannot trust.
+
+    Raised before anything is written or run there: the private staging root
+    is not a directory owned by the session's account with mode 0700, ``/tmp``
+    is not root-owned and sticky, older staging could have been written by
+    another account, or the parent's commands and uploads would run as two
+    different accounts. The message names the path or the accounts, and the
+    fix.
+    """
+
+
 class RawLandingError(OttoError, RuntimeError):
     """A framed operation was attempted in a ``raw`` landing.
 

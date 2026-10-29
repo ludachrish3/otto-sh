@@ -71,6 +71,7 @@ if TYPE_CHECKING:
 # tolerance of 4 and eager gc policy with it. The generator body is the shared
 # part, and that is what gets imported.
 from tests._fixtures.fd_watermark import fd_watermark_bracket
+from tests._fixtures.private_root import trusted_container_staging  # noqa: F401 — fixture
 from tests.unit.host._session_feed import identity_handshake_reply
 from tests.unit.host.test_session import MockSession
 

@@ -17,9 +17,9 @@ The outcome is one line, `test3: integration torn down` or
 `test3: FAILED — <command>: <output>`, and the exit code is 1 when the
 teardown failed. Container hosts are unregistered whether the `down`
 succeeded or failed. When otto cannot read back the files the deployment
-staged, `down` stops nothing, exits with an error naming the staging
-directory, and leaves the hosts registered (see "What `down` removes" in
-{doc}`../use-cases`). Library:
+staged, or cannot trust where they are ({ref}`docker-staging`), `down` stops
+nothing, exits with an error naming the staging directory, and leaves the
+hosts registered (see "What `down` removes" in {doc}`../use-cases`). Library:
 {func}`~otto.docker.teardown`, which returns a
 {class}`~otto.docker.reports.TeardownReport`.
 

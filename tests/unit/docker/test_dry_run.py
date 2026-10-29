@@ -218,7 +218,7 @@ class TestTheDeviceDrivingVerbsAskTheParentNothing:
     (the build-context tarball) and the lab mutations (`lab.hosts`).
 
     The story is asserted too, not just the silence. A decline that names
-    ``rm -rf /tmp/otto-docker/...`` when the caller asked to bring a stack up
+    ``rm -rf /tmp/otto-docker-<login>/...`` when the caller asked to bring a stack up
     is the wrong-story defect this workstream keeps finding, and it is what
     every one of these verbs produced before the arms existed.
     """

@@ -34,12 +34,15 @@ import pytest
 import pytest_asyncio
 
 from otto.config.project import Project
+from otto.config.scope import DockerImage
 from otto.docker import deployment as deploy_mod
 from otto.docker import resolve as resolve_mod
 from otto.docker.compose import compose_command, compose_down_project, use_case_project
 from otto.docker.deployment import deploy, teardown
-from otto.docker.staging import cleanup_project
+from otto.docker.staging import cleanup_project, stage_image_context, use_case_launcher
+from otto.host.docker_host import parent_staging_root
 from otto.host.login_proxy import Cred
+from otto.host.shell_quote import shell_operand
 from otto.host.unix_host import UnixHost
 from otto.labs.loader import Lab
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result
@@ -60,7 +63,7 @@ USE_CASE = "integration"
 LAB = "unix"
 
 # Same xdist group and same reap request as the other three docker modules:
-# they share /tmp/otto-docker/<project>/ on test3 and one daemon's address
+# they share /tmp/otto-docker-<login>/<project>/ on test3 and one daemon's address
 # pool. The reap is requested, never ambient
 # (tests/unit/test_docker_reaper_scope.py).
 pytestmark = [
@@ -491,3 +494,63 @@ async def test_the_launcher_hands_compose_every_value_as_written_over_the_parent
         assert environment == mapping
     finally:
         await parent.exec(f"rm -rf {shlex.quote(work)}")
+
+
+async def _mode_and_owner(parent, path) -> str:
+    """``<octal mode> <owner name>`` of *path* on the parent, as ``stat`` prints them."""
+    result = await parent.exec(f"stat -c '%a %U' {shell_operand(str(path))}")
+    assert result.is_ok, f"stat {path} failed on {parent.id}: {result.value}"
+    return result.value.strip()
+
+
+@pytest.mark.asyncio
+async def test_a_deployments_staging_is_private_to_the_login(parent, project):
+    """After a real deploy, no other account on the parent can read or replace what it staged.
+
+    The root is 0700 and owned by the login, the env launcher is 0600, and an
+    unrelated account (``nobody``, through the vagrant account's passwordless
+    sudo) can neither list the root, write into it, nor read the launcher.
+    The positive control proves ``nobody`` can run a command at all, so each
+    refusal is the permissions' and not sudo's.
+    """
+    root = parent_staging_root(parent)
+    login = root.name.removeprefix("otto-docker-")
+    launcher = use_case_launcher(root, project)
+    try:
+        await deploy(USE_CASE, parent=parent.id, build=True)
+
+        assert await _mode_and_owner(parent, root) == f"700 {login}"
+        assert await _mode_and_owner(parent, launcher) == f"600 {login}"
+
+        control = await parent.exec("sudo -n -u nobody true")
+        assert control.is_ok, f"`nobody` cannot run a command on {parent.id}: {control.value}"
+        for attempt in (
+            f"ls {shell_operand(str(root))}",
+            f"touch {shell_operand(str(root / 'intruder'))}",
+            f"cat {shell_operand(str(launcher))}",
+        ):
+            other = await parent.exec(f"sudo -n -u nobody sh -c {shlex.quote(attempt)}")
+            assert not other.is_ok, f"another account could `{attempt}`: {other.value!r}"
+    finally:
+        await _reap(parent, project)
+
+
+@pytest.mark.asyncio
+async def test_a_staged_build_context_keeps_its_file_modes(parent, suffix, tmp_path):
+    """Inside the private root, an executable script in a build context stays executable."""
+    context = tmp_path / "context"
+    context.mkdir()
+    (context / "Dockerfile").write_text("FROM scratch\nCOPY run.sh /run.sh\n")
+    script = context / "run.sh"
+    script.write_text("#!/bin/sh\necho ran\n")
+    script.chmod(0o755)
+    key = f"otto-e2e-modes-{suffix}"
+    image = DockerImage(name="modes", dockerfile=context / "Dockerfile", context=context)
+    try:
+        staged = await stage_image_context(parent, key, image)
+
+        assert staged.is_relative_to(parent_staging_root(parent)), staged
+        mode, _owner = (await _mode_and_owner(parent, staged / "run.sh")).split()
+        assert mode == "755", f"run.sh was staged as {mode}"
+    finally:
+        await cleanup_project(parent, key)

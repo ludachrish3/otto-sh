@@ -276,8 +276,8 @@ M_QUICK := not stability and not busybox and not conformance and not kmodcov and
 # the wrap cancels the job before `timeout` can report exit 124, which is the
 # attribution the wrap exists for.
 # Two things dominate wall time: Docker integration tests are pinned to one
-# xdist worker (xdist_group) because they share /tmp/otto-docker/project1/ on the
-# parent and can't safely parallelize compose_up's `rm -rf` of the staging
+# xdist worker (xdist_group) because they share /tmp/otto-docker-<login>/project1/
+# on the parent and can't safely parallelize compose_up's `rm -rf` of the staging
 # dir; and the embedded Zephyr tests are serialized per-device (one telnet
 # client per console — see tests/integration/host/conftest.py). The heavy
 # stability/soak tests are excluded from `coverage` (the `stability` marker)

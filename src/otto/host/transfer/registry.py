@@ -267,6 +267,20 @@ def build_transfer_backend(name: str, ctx: TransferContext) -> BaseFileTransfer:
     return TRANSFER_BACKENDS.build(TRANSFER_BACKENDS.prepare(name, {}, ctx))
 
 
+_CONNECTION_PROTOCOL = {"scp": "ssh", "sftp": "ssh", "ftp": "ftp"}
+
+
+def connection_protocol(transfer: str) -> "str | None":
+    """Return the protocol of the connection the built-in *transfer* backend moves files over.
+
+    ``scp`` and ``sftp`` ride the host's ssh connection, so they authenticate
+    as its ssh cred and dial its ssh port; ``ftp`` opens its own ftp
+    connection. Any other backend (``nc``, ``shell``, a console) has no
+    connection of its own and works through the command session: ``None``.
+    """
+    return _CONNECTION_PROTOCOL.get(transfer)
+
+
 def _register_builtin_backends() -> None:
     """Register otto's built-in backends by reference, each with its declarations.
 

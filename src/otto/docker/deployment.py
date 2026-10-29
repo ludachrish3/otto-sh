@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ..host.docker_host import DockerContainerHost
+from ..host.docker_host import DockerContainerHost, parent_staging_root
 from ..host.errors import HostCommandError
 from ..host.host import is_dry_run
 from ..host.unix_host import UnixHost
@@ -306,6 +306,10 @@ def _env_file_pairs(path: Path) -> "dict[str, str]":
     return out
 
 
+_REDACTED = "<redacted>"
+"""What a dry-run preview shows in place of each env launcher value."""
+
+
 @dataclass
 class _Preview:
     """What a dry run shows for one host: the ``up`` it would run and its env launcher."""
@@ -313,6 +317,7 @@ class _Preview:
     host_id: str
     command: str
     launcher_text: str
+    """The launcher with every value replaced by :data:`_REDACTED`; only the keys show."""
 
 
 @dataclass
@@ -735,20 +740,24 @@ async def deploy(
                 # THE DECLINE'S POSITION: below the adapter + render (plain
                 # data, spec §7), above build/stage/up (the first device
                 # touches). The paths come from staging's own pure layout
-                # functions, so the previewed `-f` set is the one staging
-                # would produce, not a second guess at it.
+                # functions, under the root the parent's login names, so the
+                # previewed `-f` set is the one staging would produce, not a
+                # second guess at it. The launcher is shown with its values
+                # redacted: a preview is printed and logged, and the mapping
+                # can carry secrets.
+                root = parent_staging_root(parent_host)
                 previews.append(
                     _Preview(
                         parent_host.id,
                         _up_command(
                             proj,
-                            use_case_compose_paths(proj, plan.files),
-                            use_case_launcher(proj),
+                            use_case_compose_paths(root, proj, plan.files),
+                            use_case_launcher(root, proj),
                             named,
                             force_recreate=force_recreate,
                             pull=pull,
                         ),
-                        plan.launcher_text,
+                        _launcher_text(dict.fromkeys(plan.env, _REDACTED)),
                     )
                 )
                 continue
@@ -829,11 +838,15 @@ def _command_preview(previews: "list[_Preview]") -> str:
     the sentence says so: a reader who knows an adapter can write into its own
     ``scratch_dir`` is owed the fact that one may have, and a reader who does
     not is owed the reason this command is exact rather than illustrative.
+    The env launcher beside it shows its keys only: every value reads
+    ``<redacted>``, since the mapping can carry secrets and the preview is
+    printed and logged.
     """
     if not previews:
         return "No host was left with a service to start, so there is no compose command to show."
     commands = " ".join(
-        f"On {p.host_id}, with the env launcher `{p.launcher_text.strip()}`, would run: {p.command}"
+        f"On {p.host_id}, with the env launcher `{p.launcher_text.strip()}` (values "
+        f"redacted), would run: {p.command}"
         for p in previews
     )
     return (
@@ -933,7 +946,11 @@ async def teardown(
         ~otto.host.errors.HostCommandError: the staged files could not be read
             back (see :func:`~otto.docker.staging.staged_use_case`); nothing
             was stopped, so the container hosts stay registered: the
-            containers they name are still up.
+            containers they name are still up. A
+            :class:`~otto.host.errors.StagingRefusedError` among them means
+            the staging is where another account could have written it
+            (:func:`~otto.docker.staging.staged_use_case`); otto runs nothing
+            from it and does not fall back to the project label.
         ~otto.result.CommandNotRunError: this is a dry run. Armed here rather
             than inherited, for ``compose_down``'s reason: the second half of
             this verb mutates ``lab.hosts``, which a dry run must leave alone.

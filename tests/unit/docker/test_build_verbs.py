@@ -21,7 +21,7 @@ from tests._fixtures.bootstrap_seam import fake_bootstrap_result
 from tests._fixtures.fake_project import fake_project
 from tests.conftest import active_context
 
-from .test_deploy import _frag, _host, _lab
+from .test_deploy import ROOT, _frag, _host, _lab
 
 
 def _ok(value="") -> CommandResult:
@@ -208,7 +208,7 @@ async def test_a_dry_run_names_the_exact_docker_build_per_image(install, builds,
         await build_on("test3", no_cache=True)
 
     text = str(excinfo.value)
-    assert build_command("a", image, BuildOptions(no_cache=True)) in text
+    assert build_command(ROOT, "a", image, BuildOptions(no_cache=True)) in text
     assert "No context was staged and no image was built." in text
     assert builds == []
 

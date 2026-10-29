@@ -92,7 +92,9 @@ refused when the lab is read: a value has one source, the field, so what the
 survey declares and what the connect dials cannot differ. The same holds for
 every ``*_options`` table that carries an ``extra``. ``extra`` also refuses
 ``password`` and ``passphrase``, and the host-key controls ``host_key_alias``
-and ``client_factory`` (see {ref}`host-key-settings`).
+and ``client_factory`` (see {ref}`host-key-settings`). A ``username`` in
+``extra`` does not name the account a docker parent stages its files for
+({ref}`docker-staging`).
 
 ```json
 {

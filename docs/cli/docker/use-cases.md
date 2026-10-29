@@ -330,6 +330,67 @@ must run on different hosts belong in different use-cases, each brought up with
 its own `--parent`; addressing between them flows through env values
 (`env`, `pass_env`, `--env`) on the second use-case, not through otto.
 
+(docker-staging)=
+## Where otto stages files on the parent
+
+Every file a deployment needs on the parent is staged under one private
+directory per account: `/tmp/otto-docker-<login>/`, where `<login>` is the
+account the parent's creds log in as. The compose files, their sidecars and
+the env launcher go to `<project>/compose/`, build contexts to
+`<project>/build/`, and each `put`/`get` to a container passes through its own
+directory under `.transfer/`.
+
+The account is read from the parent's `creds`; a `username` given in
+`ssh_options.extra` is not consulted, so a parent that names its login only
+there is refused.
+
+otto creates the directory with mode 0700, so only that account (and root) can
+list, read or change what is in it. Before it writes there, and before a `down`
+runs the launcher it finds there, otto checks that `/tmp` is owned by root with
+the sticky bit set and that the directory is a real directory (not a symbolic
+link) owned by your account with mode exactly 0700. Anything else is refused
+with an error naming the path, and nothing is written or run: otto never
+repairs or takes over a directory it did not make. Remove it on the parent (as
+its owner, or as root) and run again.
+
+The directory is per account, not per person. Two people who share one login
+on a parent and deploy the same project still share one staging directory, as
+they did before; that setup is not supported.
+
+Commands and uploads must run as that one account. A parent whose creds reach
+the docker account through a login proxy (`proxy = "su"` with `via`), or whose
+uploads authenticate as a different account than its commands, is refused,
+and the error names both accounts. Declare the account that runs docker as a
+direct cred on the parent instead (see
+[Credentials and login proxies](../../configuration/host-sources.md#credentials-and-login-proxies)).
+
+A `down` leaves the staged files in place: the next `down` reads the same
+files back, so it removes nothing the first one kept. otto never removes
+`/tmp/otto-docker-<login>/<project>/`; they stay readable only by your
+account. Once the deployment is down and you no longer need its files, delete
+that directory on the parent by hand.
+
+### Staging left by otto 0.17
+
+otto 0.17 staged every account's files in one shared, world-readable
+directory, `/tmp/otto-docker/<project>/`. A `down` of a deployment that 0.17
+started, with nothing staged in the new location, reads its files back from
+there, but only when `/tmp/otto-docker`, the project's directory, its
+`compose/` directory, the numbered directories under it, the compose files
+in them and the launcher are all owned by your account, none is a symbolic
+link, none is writable by group or others, and your account can search each
+directory. Those checks apply only when the deployment's directory is there:
+a `/tmp/otto-docker` that holds nothing of this deployment is not used, whoever
+owns it. A directory otto cannot look into is never taken for empty: a
+deployment directory hidden behind one is refused, not skipped.
+Otherwise `down` refuses with an error naming the path and stops nothing,
+rather than run a launcher another account could have written or tear the
+stack down by its label: run `docker compose -p <project> down` on the parent
+yourself. otto
+writes nothing new there. Once your 0.17 deployments are down, delete
+`/tmp/otto-docker` on the parent: anyone can read it, and it holds your old
+env launcher.
+
 (container-users)=
 ## Container users
 
@@ -512,7 +573,9 @@ older than the env launcher.
 the first device touch — see {doc}`../dry-run` for the contract. Because
 selection, env assembly and the adapters are all pure, the preview
 includes the **exact** compose command on the parent and the env launcher it
-would run under, not a description of them:
+would run under, not a description of them. The launcher shows each key with
+its value replaced by `<redacted>`: the preview is printed and logged, and the
+mapping can carry secrets.
 
 ```console
 $ otto --lab unix --dry-run docker compose up integration
@@ -523,9 +586,10 @@ Fragment env keys: ['EDGE_ADDR']. No image was built, no file was staged and
 no container was started. The adapters ran (plain data; the only thing one may
 write is its own scratch dir), so this is the command itself, not a
 description of it. On test3, with the env launcher `exec env
-EDGE_ADDR=10.10.200.13 "$@"`, would run: sh …/otto-env.sh docker compose -p
-unix-integration-vagrant -f …/core.yml -f …/edge.yml -f …/core.yml up -d
---remove-orphans
+'EDGE_ADDR=<redacted>' "$@"` (values redacted), would run: sh
+/tmp/otto-docker-vagrant/unix-integration-vagrant/compose/otto-env.sh docker
+compose -p unix-integration-vagrant -f …/core.yml -f …/edge.yml -f …/core.yml
+up -d --remove-orphans
 ```
 
 `otto docker use-cases` answers a different question — what is *declared* —

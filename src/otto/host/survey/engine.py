@@ -19,7 +19,7 @@ from ...models.base import cred_identity
 from ..connections import TERM_BACKENDS, TermMetadata
 from ..login_proxy import cred_for
 from ..options import SnmpOptions
-from ..transfer.registry import TRANSFER_BACKENDS
+from ..transfer.registry import TRANSFER_BACKENDS, connection_protocol
 from ..transfer.sftp import open_sftp_or_attribute
 from ..userland import APPLET_PRESENT, applet_capability
 from .dial import DialOutcome, dial_direct, dial_via_hop
@@ -220,7 +220,7 @@ def _declared_port_unix(host: "UnixHost", name: str, _kind: Kind) -> int:
         return host.ftp_options.port
     if name == "snmp":
         return host.snmp.port if host.snmp is not None else DEFAULT_PORTS["snmp"]
-    if name in ("scp", "sftp"):
+    if connection_protocol(name) == "ssh":
         return host.ssh_options.port
     if name in ("shell", "nc"):
         return host.ssh_options.port if host.term == "ssh" else host.telnet_options.port

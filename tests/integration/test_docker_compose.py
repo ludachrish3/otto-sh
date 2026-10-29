@@ -30,9 +30,9 @@ from tests._fixtures.paths import TESTS_ROOT
 
 PROJECT1_DIR = TESTS_ROOT / "project1"
 
-# All docker integration tests share /tmp/otto-docker/project1/ on test3
-# (compose staging dir). Pin them to one xdist worker so concurrent
-# `rm -rf` calls during compose_up don't race.
+# All docker integration tests share project1's staging dir under the login's
+# private root on test3 (/tmp/otto-docker-<login>/). Pin them to one xdist
+# worker so concurrent `rm -rf` calls during compose_up don't race.
 pytestmark = [
     pytest.mark.xdist_group("docker_e2e"),
     # This module drives docker on test3: it asks for the orphan-stack reap.

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -17,8 +17,12 @@ from otto.docker.staging import (
     use_case_compose_paths,
     use_case_launcher,
 )
+from otto.host.docker_host import staging_root
+from otto.host.element import Element
 from otto.host.errors import HostCommandError
+from otto.host.login_proxy import Cred
 from otto.host.recursive_transfer import ListingError, RemoteListing
+from otto.host.unix_host import UnixHost
 from otto.result import CommandResult, Result
 from otto.utils import Status
 
@@ -31,10 +35,18 @@ def _fail(out: str = "denied") -> CommandResult:
     return CommandResult(Status.Failed, value=out, command="", retcode=1)
 
 
+ROOT = staging_root("vagrant")
+"""The private staging root of :func:`_parent`'s login."""
+
+
 def _parent(tmp_path):
-    parent = MagicMock()
-    parent.id = "test3"
-    parent.exec = AsyncMock(return_value=_ok())
+    parent = UnixHost(
+        ip="10.10.200.13",
+        element=Element("test3"),
+        creds=[Cred(login="vagrant", password="vagrant")],
+        docker_capable=True,
+    )
+    parent.exec = AsyncMock(return_value=_ok())  # type: ignore[method-assign]
     staged: list[tuple[str, str, str]] = []  # (local basename, remote dir, staged content)
 
     modes: dict[str, int] = {}  # remote path -> the mode `put` was asked to set
@@ -45,9 +57,9 @@ def _parent(tmp_path):
             modes.update({f"{dest}/{Path(p).name}": mode for p in paths})
         return Result(Status.Success)
 
-    parent.put = AsyncMock(side_effect=_put)
-    parent._staged = staged
-    parent._modes = modes
+    parent.put = AsyncMock(side_effect=_put)  # type: ignore[method-assign]
+    parent._staged = staged  # type: ignore[attr-defined]
+    parent._modes = modes  # type: ignore[attr-defined]
     return parent
 
 
@@ -285,7 +297,7 @@ async def test_bare_top_level_mapping_refusal_does_not_advertise_itself(tmp_path
 
 @pytest.mark.asyncio
 async def test_absolute_env_file_ref_is_refused(tmp_path):
-    """I2: an absolute env_file ref must not stage outside /tmp/otto-docker."""
+    """I2: an absolute env_file ref must not stage outside the staging root."""
     text = "services:\n  api:\n    image: x\n    env_file: /etc/secrets.env\n"
     with pytest.raises(UseCaseResolutionError, match="escapes its staging root"):
         await stage_use_case(
@@ -511,16 +523,16 @@ def _walked(base: Path, files: "list[str]", dirs: "list[str] | None" = None) -> 
 
 def test_read_back_orders_the_files_by_their_index_not_by_the_walk():
     """Index 10 sorts after index 2, and the walk's own order is never trusted."""
-    base = compose_dir("p")
+    base = compose_dir(ROOT, "p")
     files = [f"{i}/h{i}.yml" for i in range(11)]
     walk = _walked(
         base, [*reversed(files), "otto-env.sh", "extra.yml", "0/app.env", "3/conf/x.yml"]
     )
 
-    staged = _read_back(walk, base, "p")
+    staged = _read_back(walk, ROOT, "p")
 
     assert staged.compose_paths == [base / str(i) / f"h{i}.yml" for i in range(11)]
-    assert staged.launcher == use_case_launcher("p")
+    assert staged.launcher == use_case_launcher(ROOT, "p")
 
 
 @pytest.mark.parametrize(
@@ -539,9 +551,9 @@ def test_read_back_orders_the_files_by_their_index_not_by_the_walk():
     ids=["two-in-one-index", "no-launcher", "gap", "empty", "nested-handle"],
 )
 def test_read_back_refuses_what_is_not_a_staging(files, dirs, why):
-    base = compose_dir("p")
+    base = compose_dir(ROOT, "p")
     with pytest.raises(ValueError, match=why):
-        _read_back(_walked(base, files, dirs), base, "p")
+        _read_back(_walked(base, files, dirs), ROOT, "p")
 
 
 @pytest.mark.asyncio
@@ -554,7 +566,7 @@ async def test_what_stage_use_case_puts_is_what_the_read_back_reads(tmp_path):
         for i in range(11)
     ]
     await stage_use_case(parent, "p", files, "A=1\n", extra_files={"conf/extra.yml": "x: 1\n"})
-    base = compose_dir("p")
+    base = compose_dir(ROOT, "p")
     put = [Path(d) / name for name, d, _ in parent._staged]
     walk = RemoteListing(
         kind="d",
@@ -562,10 +574,10 @@ async def test_what_stage_use_case_puts_is_what_the_read_back_reads(tmp_path):
         files=list(reversed(put)),
     )
 
-    staged = _read_back(walk, base, "p")
+    staged = _read_back(walk, ROOT, "p")
 
-    assert staged.compose_paths == use_case_compose_paths("p", files)
-    assert staged.launcher == use_case_launcher("p")
+    assert staged.compose_paths == use_case_compose_paths(ROOT, "p", files)
+    assert staged.launcher == use_case_launcher(ROOT, "p")
 
 
 @pytest.mark.asyncio
@@ -579,7 +591,7 @@ async def test_staged_use_case_is_none_only_when_the_directory_is_absent(tmp_pat
 @pytest.mark.parametrize(
     "walk",
     [
-        AsyncMock(side_effect=ListingError("/tmp/otto-docker/p/compose: tree listing failed")),
+        AsyncMock(side_effect=ListingError(f"{compose_dir(ROOT, 'p')}: tree listing failed")),
         AsyncMock(return_value=RemoteListing(kind="f", dirs=[], files=[])),
         AsyncMock(return_value=RemoteListing(kind="d", dirs=[], files=[])),
     ],
@@ -604,21 +616,21 @@ def _a_staging(base):
 @pytest.mark.asyncio
 async def test_staged_use_case_reads_a_staging_whose_launcher_holds_something(tmp_path):
     parent = _parent(tmp_path)
-    base = compose_dir("p")
+    base = compose_dir(ROOT, "p")
     parent._walk_remote = AsyncMock(return_value=_a_staging(base))
 
     staged = await staged_use_case(parent, "p")
 
     assert staged is not None
-    assert staged.launcher == use_case_launcher("p")
-    parent.exec.assert_awaited_once_with(f"test -s {use_case_launcher('p')}")
+    assert staged.launcher == use_case_launcher(ROOT, "p")
+    parent.exec.assert_awaited_once_with(f"test -s {use_case_launcher(ROOT, 'p')}")
 
 
 @pytest.mark.asyncio
 async def test_an_empty_launcher_is_refused_not_run_as_a_successful_no_op(tmp_path):
     """`sh <empty file> docker compose down` exits 0 and runs nothing."""
     parent = _parent(tmp_path)
-    parent._walk_remote = AsyncMock(return_value=_a_staging(compose_dir("p")))
+    parent._walk_remote = AsyncMock(return_value=_a_staging(compose_dir(ROOT, "p")))
     parent.exec = AsyncMock(return_value=_fail(""))
 
     with pytest.raises(HostCommandError, match=r"otto-env\.sh is empty"):

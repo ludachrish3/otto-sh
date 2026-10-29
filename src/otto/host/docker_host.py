@@ -5,7 +5,9 @@ A :class:`~otto.host.docker_host.DockerContainerHost` satisfies the otto
 :class:`~otto.host.host.Host` protocol by
 delegating most operations through a *parent* host that runs the docker
 daemon. ``exec`` becomes ``parent.exec("docker exec ...")``;
-``get`` / ``put`` are two-step ``docker cp`` via the parent's filesystem;
+``get`` / ``put`` are two-step ``docker cp`` via the parent's filesystem,
+staged under the parent's private staging root, which needs a
+:class:`~otto.host.unix_host.UnixHost` parent (its login names the root);
 ``login`` opens a PTY-backed ``docker exec -it`` over the parent's
 existing SSH connection.
 
@@ -21,6 +23,7 @@ the per-call ``exec`` path still works against any parent.
 """
 
 import asyncio
+import re
 import shlex
 import uuid
 from collections.abc import Iterator
@@ -40,7 +43,12 @@ from ..result import CommandResult, Result
 from ..utils import Arg, Exclude, Opt, Status, cli_exposed
 from .capability_grid import HostCapabilities, SessionIdentity, UserSupport
 from .connections import teardown_step
-from .errors import ContainerNotRunningError, HostUnreachableError, MountNotFoundError
+from .errors import (
+    ContainerNotRunningError,
+    HostUnreachableError,
+    MountNotFoundError,
+    StagingRefusedError,
+)
 from .file_ops import PosixFileOps
 from .host import (
     CONCURRENT_HELP,
@@ -56,6 +64,8 @@ from .host import (
 from .mount import Mount, mount_for, mount_for_parent, translate
 from .privilege import PosixPrivilege
 from .session import Expect, SessionManager, ShellSession, _DockerSshSession
+from .shell_quote import path_operand, shell_operand
+from .transfer.registry import connection_protocol
 
 
 def compose_container_probe(
@@ -101,6 +111,334 @@ def _caller_pairs(
             )
         pairs.append(item)
     return pairs
+
+
+# ---------------------------------------------------------------------------
+# The private docker staging root on a parent
+# ---------------------------------------------------------------------------
+
+_STAGING_ROOT_PREFIX = "/tmp/otto-docker-"  # noqa: S108 — deliberate staging path
+
+_TRANSFER_STAGING = ".transfer"
+"""The directory under the staging root that holds each container transfer's files.
+
+A leading dot, which no compose project name can start with
+(``[a-z0-9][a-z0-9_-]*``), so a project's cleanup never removes a transfer in
+flight."""
+
+_PRIVATE_MODE = 0o700
+"""The staging root's exact mode: its owner alone may list, read or write it."""
+
+_OWNER_SEARCH = 0o100
+"""The mode bit that lets a directory's owner reach what is under it."""
+
+
+def staging_root(login: str) -> Path:
+    """Return *login*'s private docker staging root on a parent: ``/tmp/otto-docker-<login>``.
+
+    Pure, so a dry run can name it without contacting the parent. The one
+    place the root's path is spelled: every docker file otto stages on a
+    parent lives under it (build contexts and archives, compose files and
+    their sidecars, the env launcher, each container transfer), and
+    :func:`ensure_private_root` creates or verifies it before anything is
+    written there. The root is per account, so two people who share one
+    login on a parent share one root.
+
+    Raises:
+        ~otto.host.errors.StagingRefusedError: *login* is empty, or holds a
+            ``/``, whitespace or a control character, so it cannot be one
+            path segment.
+    """
+    if not login or "/" in login or any(c.isspace() or not c.isprintable() for c in login):
+        raise StagingRefusedError(
+            f"the login {login!r} cannot name a docker staging directory: it must be "
+            "non-empty, with no '/', whitespace or control character"
+        )
+    return Path(f"{_STAGING_ROOT_PREFIX}{login}")
+
+
+def parent_staging_root(parent: "Host") -> Path:
+    """Return the private docker staging root of *parent*'s login, without contacting it.
+
+    The login is the account the parent's commands run as, read from its
+    creds. Commands and uploads must run as that one account: the root is
+    mode 0700, so a file uploaded as one account into a root another account
+    created could be neither written nor read back. A parent reached through
+    a login proxy (or with a per-protocol cred for its uploads) is therefore
+    refused, naming both accounts.
+
+    Raises:
+        ~otto.host.errors.StagingRefusedError: *parent* is not a unix host,
+            no cred names its command account, its commands and its
+            connection or uploads would run as different accounts, or the
+            login cannot name a directory (:func:`staging_root`).
+    """
+    # Function-scope: unix_host is the heavier module, and only a staging caller needs it.
+    from .unix_host import UnixHost
+
+    if not isinstance(parent, UnixHost):
+        raise StagingRefusedError(
+            f"{parent.id}: docker files are staged only on a unix host parent, whose "
+            f"login names its private staging root; this parent is a {type(parent).__name__}"
+        )
+    connections = parent._connections  # noqa: SLF001 — intra-package: the parent's own creds
+    session = connections.login_target
+    if not session:
+        raise StagingRefusedError(
+            f"{parent.id}: no cred names the account its commands run as, so its "
+            f"private docker staging root has no name; declare one in its creds"
+        )
+    # A backend with no connection of its own uploads through the session,
+    # whose connection authenticates as the term's cred.
+    upload_protocol = connection_protocol(parent.transfer) or parent.term
+    for protocol, role in [(parent.term, "it logs in"), (upload_protocol, "it uploads")]:
+        cred = connections.transport_cred_for(protocol)
+        login = cred.login if cred is not None else ""
+        if login != session:
+            raise StagingRefusedError(
+                f"{parent.id}: docker staging needs commands and uploads to run as one "
+                f"account, but its commands run as {session!r} while {role} as "
+                f"{login!r}. Declare {session!r}, the account that runs docker, as a "
+                f"direct cred on {parent.id}, with no login proxy."
+            )
+    return staging_root(session)
+
+
+@dataclass(frozen=True)
+class PathOwnership:
+    """One path's type, owner and permission bits, as the parent reported them."""
+
+    kind: str
+    """``directory``, ``regular file``, ``symbolic link``, or another file type's name."""
+
+    uid: int
+    """The owner's numeric UID."""
+
+    mode: int
+    """The permission bits, the setuid, setgid and sticky bits included."""
+
+
+@dataclass(frozen=True)
+class OwnershipProbe:
+    """What one :func:`probe_ownership` read: the session's UID and each path's ownership."""
+
+    uid: int
+    """The numeric UID the parent's command session runs as."""
+
+    paths: "dict[Path, PathOwnership | None]"
+    """Each readable path's ownership; ``None`` for a path that is not there."""
+
+    unreadable: "list[Path]"
+    """Paths that are there, or may be, but whose type, owner and mode could not be read.
+
+    Unknown is never read as absent: an unsearchable parent directory hides a
+    path exactly as a missing one would, so only a searchable parent that
+    lacks the path makes it missing."""
+
+    def missing(self, path: Path) -> bool:
+        """Return whether *path* reads as absent (not merely unreadable).
+
+        A path whose parent directory is itself invisible (behind a
+        directory the session cannot search) reads absent too, so a caller
+        takes a path for absent only after trusting every directory above it
+        (:func:`~otto.docker.staging.trusted_legacy_staging`).
+        """
+        return path not in self.unreadable and self.paths.get(path) is None
+
+    def problem(self, path: Path, *, kind: str, private: bool) -> "str | None":
+        """Return why *path* cannot be trusted, or ``None`` when it can.
+
+        Trusted means its type, owner and mode could be read, it is there, it
+        is a *kind* (a symbolic link never is), the session's UID owns it, and
+        its mode is exactly 0700 when *private*, otherwise writable by neither
+        group nor others and, for a directory, searchable by its owner (an
+        unsearchable directory hides what is under it, so nothing below it
+        could be read).
+        """
+        if path in self.unreadable:
+            return "its type, owner and mode cannot be read"
+        found = self.paths.get(path)
+        if found is None:
+            return "it does not exist"
+        if found.kind != kind:
+            return f"it is a {found.kind}, not a {kind}"
+        if found.uid != self.uid:
+            return f"it is owned by UID {found.uid}, not by this session's UID {self.uid}"
+        if private and found.mode != _PRIVATE_MODE:
+            return f"its mode is {found.mode:04o}, not {_PRIVATE_MODE:04o}"
+        if not private and found.mode & 0o022:
+            return f"its mode {found.mode:04o} lets group or others write to it"
+        if kind == "directory" and not found.mode & _OWNER_SEARCH:
+            return f"its mode {found.mode:04o} does not let its owner search it"
+        return None
+
+
+# One line per path. A path that is there (a dangling link included) is read
+# by `stat -c`, or by `ls -ldn` where `stat` is missing or refuses `-c` (it is
+# optional in a BusyBox build); neither follows a symbolic link, so a link
+# reports itself. `missing` only when the parent directory can be searched and
+# lacks the path, or is itself absent; an unsearchable parent, or a path
+# neither tool can read, is `unreadable`, never `missing`.
+_OWNERSHIP_OF_P = (
+    'd="${p%/*}/"; '
+    'if [ -e "$p" ] || [ -L "$p" ]; then '
+    'stat -c \'%F %u %a\' "$p" 2>/dev/null || ls -ldn "$p" 2>/dev/null || echo unreadable; '
+    'elif [ -d "$d" ] && [ -x "$d" ]; then echo missing; '
+    'elif [ -e "$d" ]; then echo unreadable; '
+    "else echo missing; fi"
+)
+_STAT_ANSWER = re.compile(r"(?P<kind>[a-z][a-z ]*?) (?P<uid>\d+) (?P<mode>[0-7]{1,4})")
+_LS_ANSWER = re.compile(r"(?P<type>[-bcdlps])(?P<perms>[-rwxsStT]{9})\S*\s+\d+\s+(?P<uid>\d+)\s")
+_LS_KIND = {
+    "-": "regular file",
+    "d": "directory",
+    "l": "symbolic link",
+    "b": "block special file",
+    "c": "character special file",
+    "p": "fifo",
+    "s": "socket",
+}
+_LS_SPECIAL_BITS = [(2, "sS", 0o4000), (5, "sS", 0o2000), (8, "tT", 0o1000)]
+
+
+def _ownership_command(paths: "list[Path]", create: "Path | None") -> str:
+    """Build :func:`probe_ownership`'s command: an optional create, the UID, a line per path."""
+    made = f"mkdir -m {_PRIVATE_MODE:04o} {path_operand(create)} 2>/dev/null; " if create else ""
+    operands = " ".join(path_operand(p) for p in paths)
+    return f"{made}id -u; for p in {operands}; do {_OWNERSHIP_OF_P}; done"
+
+
+def _read_ownership_line(line: str) -> "PathOwnership | None":
+    """Read one ``stat -c '%F %u %a'`` or ``ls -ldn`` line, or ``None`` if it is neither."""
+    stat_form = _STAT_ANSWER.fullmatch(line)
+    if stat_form is not None:
+        kind = stat_form["kind"]
+        return PathOwnership(
+            kind="regular file" if kind == "regular empty file" else kind,
+            uid=int(stat_form["uid"]),
+            mode=int(stat_form["mode"], 8),
+        )
+    ls_form = _LS_ANSWER.match(line)
+    if ls_form is None:
+        return None
+    perms = ls_form["perms"]
+    # r, w, x and the lowercase s/t (special bit AND execute) grant the bit at
+    # their position; '-' and the uppercase S/T (special bit only) do not.
+    mode = sum(1 << (8 - i) for i, mark in enumerate(perms) if mark not in "-ST")
+    mode |= sum(bit for i, marks, bit in _LS_SPECIAL_BITS if perms[i] in marks)
+    return PathOwnership(kind=_LS_KIND[ls_form["type"]], uid=int(ls_form["uid"]), mode=mode)
+
+
+def _read_ownership(output: str, paths: "list[Path]") -> "OwnershipProbe | None":
+    """Read :func:`_ownership_command`'s answer, or ``None`` when it is not one."""
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    if len(lines) != len(paths) + 1 or not lines[0].isdigit():
+        return None
+    found: "dict[Path, PathOwnership | None]" = {}
+    unreadable: "list[Path]" = []
+    for path, line in zip(paths, lines[1:], strict=True):
+        if line == "missing":
+            found[path] = None
+            continue
+        if line == "unreadable":
+            unreadable.append(path)
+            continue
+        ownership = _read_ownership_line(line)
+        if ownership is None:
+            return None
+        found[path] = ownership
+    return OwnershipProbe(uid=int(lines[0]), paths=found, unreadable=unreadable)
+
+
+async def probe_ownership(
+    parent: "Host", paths: "list[Path]", *, create: "Path | None" = None
+) -> OwnershipProbe:
+    """Read the session's UID and each of *paths*' type, owner and mode, in one command.
+
+    The one stat-and-trust read behind both :func:`ensure_private_root` and
+    the read-back of older staging
+    (:func:`~otto.docker.staging.trusted_legacy_staging`). *create*, when
+    given, is first made with ``mkdir -m 0700``: atomic, its mode exact
+    whatever the umask, and a no-op when the path exists, so what is read
+    afterwards is the same whether this call made it or found it.
+
+    Raises:
+        ~otto.result.CommandNotRunError: this is a dry run.
+        ~otto.host.errors.HostUnreachableError: the command never completed.
+        ~otto.host.errors.StagingRefusedError: the answer is not one otto can
+            read, so nothing about the paths is known.
+    """
+    where = ", ".join(str(p) for p in paths)
+    result = await parent.exec(_ownership_command(paths, create))
+    refuse_declined_fact(result, asked=f"probe_ownership({where})")
+    if result.timed_out:
+        raise HostUnreachableError(
+            f"{parent.id}: reading the type, owner and mode of {where} never completed"
+        )
+    probe = _read_ownership(str(result.value), paths)
+    if probe is None:
+        raise StagingRefusedError(
+            f"{parent.id}: could not read the type, owner and mode of {where}; "
+            f"the parent answered {str(result.value).strip()!r}"
+        )
+    return probe
+
+
+def _shared_tmp_problem(probe: OwnershipProbe, tmp: Path) -> "str | None":
+    """Return why *tmp* cannot hold a private root, or ``None`` when it is root-owned and sticky."""
+    if tmp in probe.unreadable:
+        return "cannot be read (its type, owner and mode)"
+    found = probe.paths.get(tmp)
+    if found is None:
+        return "does not exist"
+    if found.kind != "directory":
+        return f"is a {found.kind}, not a directory"
+    if found.uid != 0:
+        return f"is owned by UID {found.uid}, not by root"
+    if not found.mode & 0o1000:
+        return f"does not have the sticky bit set (its mode is {found.mode:04o})"
+    return None
+
+
+async def ensure_private_root(parent: "Host") -> Path:
+    """Create *parent*'s private docker staging root, or verify the one there, and return it.
+
+    Runs before anything is written under the root, and before staging there
+    is read back. The root (:func:`parent_staging_root`) is made with
+    ``mkdir -m 0700``. Whether this call made it or found it, otto goes on
+    only if ``/tmp`` is a root-owned directory with the sticky bit set (so no
+    other account can rename or replace the root) and the root is a directory,
+    not a symbolic link, owned by the session's UID with mode exactly 0700.
+    Anything else is refused, naming the path; otto never repairs or adopts
+    it. Interference by the same account or by root is out of scope.
+
+    Raises:
+        ~otto.host.errors.StagingRefusedError: the parent or its root cannot
+            be trusted (see above and :func:`parent_staging_root`).
+        ~otto.host.errors.HostUnreachableError: the check never completed.
+        ~otto.result.CommandNotRunError: this is a dry run.
+    """
+    root = parent_staging_root(parent)
+    tmp = root.parent
+    probe = await probe_ownership(parent, [tmp, root], create=root)
+    shared = _shared_tmp_problem(probe, tmp)
+    if shared is not None:
+        raise StagingRefusedError(
+            f"{parent.id}: {tmp} {shared}, so another account could rename or replace "
+            f"{root}; otto stages no docker files there"
+        )
+    if probe.missing(root):
+        raise StagingRefusedError(
+            f"{parent.id}: the docker staging root {root} could not be created"
+        )
+    problem = probe.problem(root, kind="directory", private=True)
+    if problem is not None:
+        raise StagingRefusedError(
+            f"{parent.id}: the docker staging root {root} cannot be trusted: {problem}. "
+            f"otto never repairs or adopts it; remove it on {parent.id} (as its owner or "
+            f"as root) and run again"
+        )
+    return root
 
 
 @dataclass(slots=True, kw_only=True)
@@ -881,18 +1219,19 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     ####################
 
     @staticmethod
-    def _stage_dir(container_id: str) -> Path:
+    def _stage_dir(root: Path, container_id: str) -> Path:
         """Per-CALL staging directory on the parent filesystem, named for its container.
 
-        Two overlapping transfers to one container must not remove each
-        other's files in ``finally``. Each is a direct child of the shared
-        root, so removing it removes everything the call staged: a
-        per-container parent left one empty directory behind per container
-        ever transferred to (#698), and removing that parent once empty raced
-        a second transfer between its two ``mkdir`` steps.
+        Under the parent's private staging root (:func:`staging_root`), which
+        :func:`ensure_private_root` verifies first. Two overlapping transfers
+        to one container must not remove each other's files in ``finally``.
+        Each is a direct child of one shared directory, so removing it removes
+        everything the call staged: a per-container parent left one empty
+        directory behind per container ever transferred to (#698), and
+        removing that parent once empty raced a second transfer between its
+        two ``mkdir`` steps.
         """
-        stage_root = "/tmp/otto-docker-stage"  # noqa: S108 — deliberate staging path
-        return Path(f"{stage_root}/{container_id}-{uuid.uuid4().hex}")
+        return root / _TRANSFER_STAGING / f"{container_id}-{uuid.uuid4().hex}"
 
     @override
     @cli_exposed(success="Transfer complete.", dry_run_preview=True)
@@ -927,8 +1266,12 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         suppressing bars for a bulk transfer through the protocol (the
         coverage fetcher does) raised ``TypeError`` on this family alone.
 
-        Two-step: ``parent.put`` to a per-call staging dir, then ``docker cp``
-        from there into the container. The staging dir is cleaned up
+        Two-step: ``parent.put`` to a per-call staging dir under the parent's
+        private staging root, then ``docker cp`` from there into the
+        container. The root is verified first (:func:`ensure_private_root`),
+        and one otto cannot trust raises
+        :class:`~otto.host.errors.StagingRefusedError` before anything is
+        sent. The staging dir is cleaned up
         unconditionally so a failed transfer doesn't leak. Every file whose
         staging leg succeeded is copied into the container; a file that failed
         staging keeps that verdict and its siblings still land.
@@ -980,12 +1323,12 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         effective = self._effective_user(user)
         await self._ensure_running()
 
-        stage = self._stage_dir(self.container_id)
+        stage = self._stage_dir(await ensure_private_root(self.parent), self.container_id)
         # Bound before the try: nothing evaluated inside the finally may
         # raise ahead of the teardown guard and mask the body's exception.
         host_name = self.name
         try:
-            mkdir = await self.parent.exec(f"mkdir -p {shlex.quote(str(stage))}")
+            mkdir = await self.parent.exec(f"mkdir -p {path_operand(stage)}")
             if not mkdir.status.is_ok:
                 msg = f"failed to create staging dir on parent: {mkdir.value}"
                 return aggregate_transfer({f: Result(Status.Error, msg=msg) for f in files})
@@ -1015,8 +1358,8 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                 # transfer into the container, which scales with the file's
                 # size — a wall-clock bound here is meaningless (see nc.py).
                 cp = await self.parent.exec(
-                    f"docker cp {shlex.quote(str(staged))} "
-                    f"{shlex.quote(self.container_id)}:{shlex.quote(str(dest_dir))}",
+                    f"docker cp {path_operand(staged)} "
+                    f"{shell_operand(f'{self.container_id}:{dest_dir}')}",
                     timeout=float("inf"),
                 )
                 if not cp.status.is_ok:
@@ -1076,8 +1419,8 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         landed = [r.value for r in per_file.values() if r.status is Status.Success and r.value]
         if not landed:
             return
-        paths = " ".join(shlex.quote(str(p)) for p in landed)
-        wrapped = await self._docker_exec(f"chown {shlex.quote(effective)} {paths}", user="root")
+        paths = " ".join(path_operand(p) for p in landed)
+        wrapped = await self._docker_exec(f"chown {shell_operand(effective)} {paths}", user="root")
         chown = await self.parent.exec(wrapped, timeout=float("inf"))
         if chown.status.is_ok:
             return
@@ -1118,7 +1461,8 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         the parent host to the local machine) — see :meth:`put`.
 
         Two-step: ``docker cp`` from the container into a per-call staging dir
-        on the parent, then ``parent.get`` to the local dir. Every file
+        under the parent's private staging root (verified first, as
+        :meth:`put` does), then ``parent.get`` to the local dir. Every file
         ``docker cp`` staged is fetched; one file's ``docker cp`` failure is
         its own entry.
 
@@ -1147,12 +1491,12 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             return self._dry_run_transfer("GET", files, dest_dir)
         await self._ensure_running()
 
-        stage = self._stage_dir(self.container_id)
+        stage = self._stage_dir(await ensure_private_root(self.parent), self.container_id)
         # Bound before the try: nothing evaluated inside the finally may
         # raise ahead of the teardown guard and mask the body's exception.
         host_name = self.name
         try:
-            mkdir = await self.parent.exec(f"mkdir -p {shlex.quote(str(stage))}")
+            mkdir = await self.parent.exec(f"mkdir -p {path_operand(stage)}")
             if not mkdir.status.is_ok:
                 msg = f"failed to create staging dir on parent: {mkdir.value}"
                 return aggregate_transfer({f: Result(Status.Error, msg=msg) for f in files})
@@ -1165,8 +1509,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                 # transfer out of the container, which scales with the file's
                 # size — a wall-clock bound here is meaningless (see nc.py).
                 cp = await self.parent.exec(
-                    f"docker cp {shlex.quote(self.container_id)}:{shlex.quote(str(f))} "
-                    f"{shlex.quote(str(staged))}",
+                    f"docker cp {shell_operand(f'{self.container_id}:{f}')} {path_operand(staged)}",
                     timeout=float("inf"),
                 )
                 if not cp.status.is_ok:
@@ -1196,7 +1539,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     @staticmethod
     def _unstage_command(stage: Path) -> str:
         """Remove one call's staging dir, and with it everything the call staged."""
-        return f"rm -rf {shlex.quote(str(stage))}"
+        return f"rm -rf {path_operand(stage)}"
 
     @override
     async def _mkdir_all(self, paths: "list[Path]", *, user: str | None = None) -> Result:

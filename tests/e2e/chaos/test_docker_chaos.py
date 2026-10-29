@@ -36,8 +36,8 @@ import pytest
 
 from otto.config.project import Project
 from otto.docker import build_images, compose_down, compose_up, composed
-from otto.docker.staging import cleanup_project
-from otto.host.docker_host import DockerContainerHost
+from otto.docker.staging import cleanup_project, compose_staging_root
+from otto.host.docker_host import DockerContainerHost, parent_staging_root
 from otto.host.host import Host
 from otto.host.unix_host import UnixHost
 from otto.labs.loader import Lab
@@ -513,9 +513,8 @@ def test_composed_pileup_leaves_zero_accumulation(
         assert set(end_net.value.split("\n")) <= set(baseline_net.value.split("\n")) | {""}, (
             f"network accumulation after {rounds} interrupted flows:\n{end_net.value}"
         )
-        staging = await docker_parent.exec(
-            f"ls -d /tmp/otto-docker/{proj} 2>/dev/null || true", timeout=30
-        )
+        tree = compose_staging_root(parent_staging_root(docker_parent), proj)
+        staging = await docker_parent.exec(f"ls -d {tree} 2>/dev/null || true", timeout=30)
         assert not staging.value.strip(), f"staging survived cleanup: {staging.value}"
 
     _run(scenario())

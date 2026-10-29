@@ -24,7 +24,13 @@ from otto.host.login_proxy import Cred
 from otto.host.mount import Mount
 from otto.result import CommandNotRunError, CommandResult, Result
 from otto.utils import Status
+from tests._fixtures.private_root import CONTAINER_STAGING_ROOT
 from tests.conftest import active_context
+
+# The container's parent here is a mock, not a unix host with a login, so its
+# private staging root is answered for it; the root itself is pinned in
+# test_private_staging_root.py.
+pytestmark = pytest.mark.usefixtures("trusted_container_staging")
 
 
 def _ok(cmd: str = "", out: str = "") -> CommandResult:
@@ -1884,7 +1890,7 @@ async def test_two_overlapping_puts_use_distinct_staging_dirs(tmp_path):
         # A direct child of the shared root, never under a per-container
         # parent: a parent shared by two transfers is one that the first to
         # finish could remove between the other's two mkdirs.
-        assert Path(d).parent == Path("/tmp/otto-docker-stage"), d
+        assert Path(d).parent == CONTAINER_STAGING_ROOT / ".transfer", d
         assert Path(d).name.startswith("abc123def456-"), d
 
 
@@ -2333,13 +2339,13 @@ async def test_a_put_and_a_get_leave_no_staging_directory_for_the_container(tmp_
     """
     import subprocess
 
-    stage_root = tmp_path / "otto-docker-stage"
+    stage_root = tmp_path / "otto-docker-vagrant" / ".transfer"
     parent = _mock_parent()
 
     def run_staging(cmd, *_, **__):
         if "docker cp" in cmd:
             return _ok()
-        local = cmd.replace("/tmp/otto-docker-stage", str(stage_root))
+        local = cmd.replace(str(CONTAINER_STAGING_ROOT), str(stage_root.parent))
         done = subprocess.run(["sh", "-c", local], capture_output=True, text=True, check=False)
         return _ok() if done.returncode == 0 else _fail(cmd, out=done.stderr)
 

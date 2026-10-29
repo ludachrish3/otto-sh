@@ -378,6 +378,7 @@ def test_put_exposes_mode_as_a_string_cli_option(host_cls_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("trusted_container_staging")
 async def test_docker_put_chmods_inside_the_container(monkeypatch):
     from otto.host.docker_host import DockerContainerHost
     from otto.host.transfer.base import aggregate_transfer

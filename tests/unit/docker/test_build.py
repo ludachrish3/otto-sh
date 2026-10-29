@@ -6,12 +6,16 @@ These mock the parent's `exec` so we never invoke real `docker build`.
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from otto.config.scope import DockerImage
 from otto.docker.build import BuildOptions, _build_one, build_command, image_references
+from otto.host.docker_host import staging_root
+from otto.host.element import Element
+from otto.host.login_proxy import Cred
+from otto.host.unix_host import UnixHost
 from otto.result import CommandResult, Result
 from otto.utils import Status
 
@@ -27,8 +31,17 @@ def _fail(out: str = "boom", command: str = "") -> CommandResult:
     return CommandResult(Status.Failed, value=out, command=command, retcode=1)
 
 
+ROOT = staging_root("vagrant")
+"""The private staging root of :func:`_mock_parent`'s login."""
+
+
 def _mock_parent():
-    parent = MagicMock()
+    parent = UnixHost(
+        ip="10.10.200.13",
+        element=Element("test3"),
+        creds=[Cred(login="vagrant", password="vagrant")],
+        docker_capable=True,
+    )
     parent.exec = AsyncMock(return_value=_ok())
     parent.put = AsyncMock(return_value=Result(Status.Success, value={}))
     return parent
@@ -74,14 +87,14 @@ def test_the_command_carries_dockers_flags_in_dockers_spelling(tmp_path):
     img = _img(tmp_path)
     options = BuildOptions(tags=["api:1.4"], no_cache=True, pull=True, target="prod")
 
-    cmd = build_command("project1", img, options)
+    cmd = build_command(ROOT, "project1", img, options)
 
     assert cmd.startswith("docker build ")
     assert " -t api:1.4 " in cmd
     assert " --no-cache" in cmd
     assert " --pull" in cmd
     assert " --target prod" in cmd
-    assert cmd.endswith(" /tmp/otto-docker/project1/build/api")
+    assert cmd.endswith(f" {ROOT}/project1/build/api")
 
 
 def test_a_flag_build_arg_wins_over_the_declared_one_and_is_passed_verbatim(tmp_path):
@@ -92,7 +105,7 @@ def test_a_flag_build_arg_wins_over_the_declared_one_and_is_passed_verbatim(tmp_
     )
     options = BuildOptions(build_args={"PORT": "8080", "URL": "http://x/?a=b c;rm -rf /"})
 
-    cmd = build_command("project1", img, options)
+    cmd = build_command(ROOT, "project1", img, options)
 
     assert "--build-arg PORT=8080" in cmd
     assert "PORT=80 " not in cmd
@@ -105,8 +118,8 @@ def test_the_flag_target_replaces_the_declared_one(tmp_path):
     df = tmp_path / "Dockerfile"
     df.write_text("FROM alpine\n")
     img = DockerImage(name="api", dockerfile=df, context=tmp_path, target="dev")
-    assert " --target prod" in build_command("project1", img, BuildOptions(target="prod"))
-    assert " --target dev" in build_command("project1", img, BuildOptions())
+    assert " --target prod" in build_command(ROOT, "project1", img, BuildOptions(target="prod"))
+    assert " --target dev" in build_command(ROOT, "project1", img, BuildOptions())
 
 
 def test_a_registry_qualified_name_stages_into_one_flat_directory(tmp_path):
@@ -114,11 +127,11 @@ def test_a_registry_qualified_name_stages_into_one_flat_directory(tmp_path):
     df.write_text("FROM alpine\n")
     img = DockerImage(name="registry.example:5000/team/api", dockerfile=df, context=tmp_path)
 
-    cmd = build_command("project1", img, BuildOptions())
+    cmd = build_command(ROOT, "project1", img, BuildOptions())
 
     assert " -t registry.example:5000/team/api:latest " in cmd
     context_dir = cmd.rsplit(" ", 1)[1]
-    assert context_dir == "/tmp/otto-docker/project1/build/registry.example_5000_team_api"
+    assert context_dir == f"{ROOT}/project1/build/registry.example_5000_team_api"
 
 
 @pytest.mark.asyncio
@@ -131,7 +144,7 @@ async def test_the_build_runs_exactly_the_rendered_command(tmp_path):
     await _build_one(parent, "project1", img, options)
 
     cmds = [c.args[0] for c in parent.exec.call_args_list]
-    assert build_command("project1", img, options) in cmds
+    assert build_command(ROOT, "project1", img, options) in cmds
 
 
 # ---------------------------------------------------------------------------
@@ -254,9 +267,9 @@ def _archive_img(tmp: Path) -> DockerImage:
 
 
 def test_an_archive_is_given_to_docker_on_stdin_with_the_inner_dockerfile(tmp_path):
-    cmd = build_command("project1", _archive_img(tmp_path), BuildOptions())
+    cmd = build_command(ROOT, "project1", _archive_img(tmp_path), BuildOptions())
     assert " -f docker/Dockerfile " in cmd
-    assert cmd.endswith(" - < /tmp/otto-docker/project1/build/api.ctx.tar.gz")
+    assert cmd.endswith(f" - < {ROOT}/project1/build/api.ctx.tar.gz")
 
 
 @pytest.mark.asyncio
@@ -277,7 +290,7 @@ async def test_an_archive_is_uploaded_unopened_and_removed_after_a_failed_build(
     assert put_sources == [img.context], "the user's file itself, not a re-tarred copy"
     cmds = [c.args[0] for c in parent.exec.call_args_list]
     assert not any(c.startswith("tar ") for c in cmds), "otto never opens the archive"
-    assert cmds[-1] == "rm -f /tmp/otto-docker/project1/build/api.ctx.tar.gz"
+    assert cmds[-1] == f"rm -f {ROOT}/project1/build/api.ctx.tar.gz"
 
 
 @pytest.mark.asyncio
@@ -290,7 +303,7 @@ async def test_an_archive_is_removed_before_the_daemon_is_read_after_a_good_buil
 
     assert built.references == ["api:latest"]
     cmds = [c.args[0] for c in parent.exec.call_args_list]
-    removed = cmds.index("rm -f /tmp/otto-docker/project1/build/api.ctx.tar.gz")
+    removed = cmds.index(f"rm -f {ROOT}/project1/build/api.ctx.tar.gz")
     assert cmds[removed - 1].startswith("docker build ")
     assert cmds[removed + 1].startswith("docker image inspect")
 
@@ -334,5 +347,5 @@ async def test_an_archive_removal_that_exits_non_zero_warns_and_keeps_the_builds
     warned = [c.args[0] for c in log.warning.call_args_list]
     assert len(warned) == 1
     assert "test3" in warned[0]
-    assert "/tmp/otto-docker/project1/build/api.ctx.tar.gz" in warned[0]
+    assert f"{ROOT}/project1/build/api.ctx.tar.gz" in warned[0]
     assert "Permission denied" in warned[0]

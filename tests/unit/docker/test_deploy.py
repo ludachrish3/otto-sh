@@ -24,8 +24,9 @@ from otto.docker.observe import DockerVerbError
 from otto.docker.reports import ImageBuild, TeardownReport
 from otto.docker.resolve import UseCaseResolutionError
 from otto.docker.staging import compose_dir, use_case_launcher
+from otto.host.docker_host import staging_root
 from otto.host.element import Element
-from otto.host.errors import HostCommandError
+from otto.host.errors import HostCommandError, StagingRefusedError
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from otto.labs.loader import Lab
@@ -34,6 +35,7 @@ from otto.utils import Status
 from tests._fixtures.bootstrap_seam import fake_bootstrap_result
 from tests._fixtures.docker_outputs import NETWORK_RACE
 from tests._fixtures.fake_project import fake_project
+from tests._fixtures.private_root import ParentPaths
 from tests.conftest import active_context
 
 from .test_resolve_select import _frag  # reuse the fragment table builder
@@ -105,6 +107,10 @@ def _project(name, *fragments, composes=(), images=()):
             images=tuple(_image(n) for n in images),
         ),
     )
+
+
+ROOT = staging_root("vagrant")
+"""The private staging root of :func:`_host`'s login."""
 
 
 def _host(host_id: str, ip: str) -> UnixHost:
@@ -260,9 +266,7 @@ async def test_deploy_single_project_merged_command(single, monkeypatch):
     cmd = _up_command(single.host)
     assert "docker compose -p unix-integration-u " in cmd
     assert not cmd.split("docker compose -p ")[1].startswith("otto-")
-    assert cmd.startswith(
-        "sh /tmp/otto-docker/unix-integration-u/compose/otto-env.sh docker compose "
-    )
+    assert cmd.startswith(f"sh {ROOT}/unix-integration-u/compose/otto-env.sh docker compose ")
     assert cmd.endswith("up -d --remove-orphans")
     assert "EDGE_ADDR=10.10.200.13" in _staged_launcher_text(single.host)
     assert list(stack.hosts) == ["api"]
@@ -696,7 +700,7 @@ async def test_rollback_on_registration_failure(single):
     downs = [c for c in single.host.commands if " down " in c]  # type: ignore[attr-defined]
     assert len(downs) == 1
     # Through the stack's own files, never by the label with orphan removal.
-    assert downs[0].startswith("sh /tmp/otto-docker/")
+    assert downs[0].startswith(f"sh {ROOT}/")
     assert " -f " in downs[0]
     assert "--remove-orphans" not in downs[0]
 
@@ -1072,8 +1076,8 @@ async def test_full_teardown_downs_through_the_staged_files_and_unregisters(sing
     (down,) = [c for c in single.host.commands if " down " in c]
     proj = "unix-integration-u"
     assert down == (
-        f"sh {use_case_launcher(proj)} docker compose -p {proj} "
-        f"-f {compose_dir(proj) / '0' / 'core.yml'} down --timeout 1"
+        f"sh {use_case_launcher(ROOT, proj)} docker compose -p {proj} "
+        f"-f {compose_dir(ROOT, proj) / '0' / 'core.yml'} down --timeout 1"
     )
     assert "test3.integration.api" not in single.lab.hosts
 
@@ -1327,7 +1331,7 @@ async def test_full_teardown_never_reads_a_compose_file(tmp_path, monkeypatch):
     # Through the files the deploy staged on the parent, never re-staged:
     # only what they declare goes.
     (down,) = [c for c in host.commands if " down " in c]
-    assert down.startswith("sh /tmp/otto-docker/")
+    assert down.startswith(f"sh {ROOT}/")
     assert "/compose/otto-env.sh docker compose -p " in down
     assert "--remove-orphans" not in down
     assert len(host.staged) == staged_before, "the teardown re-staged"  # type: ignore[attr-defined]
@@ -1381,6 +1385,206 @@ async def test_teardown_refuses_when_it_cannot_tell_what_was_staged(tmp_path, mo
     assert not [c for c in host.commands if " down " in c]  # type: ignore[attr-defined]
     # Nothing was stopped, so the hosts still name running containers.
     assert "test3.integration.api" in lab.hosts
+
+
+@pytest.mark.asyncio
+async def test_a_second_teardown_after_a_successful_one_removes_nothing_the_first_kept(
+    single, monkeypatch
+):
+    """A teardown leaves the staging in place, so the next one still goes by its files.
+
+    Deleting the staged files on ``down`` would make the next ``down`` fall back
+    to the label with ``--remove-orphans`` and take what the first one kept.
+    """
+    monkeypatch.setenv("OTTO_COMPOSE_SUFFIX", "u")
+    with _install(single.lab, [single.project]):
+        await deploy("integration", parent="test3")
+        single.host.commands.clear()
+        first = await teardown("integration", parent="test3")
+        second = await teardown("integration", parent="test3")
+
+    assert first.ok
+    assert second.ok
+    downs = [c for c in single.host.commands if " down " in c]
+    assert len(downs) == 2, downs
+    assert all(d.startswith(f"sh {ROOT}/") and " -f " in d for d in downs), downs
+    assert not any("--remove-orphans" in d for d in downs), downs
+    assert not any(c.startswith("rm ") for c in single.host.commands), single.host.commands
+
+
+_LEGACY = Path("/tmp/otto-docker")  # where otto before 0.18 staged
+_LEGACY_COMPOSE = _LEGACY / "unix-integration-u" / "compose"
+
+
+def _with_legacy_staging(host: UnixHost, paths: "dict[Path, str]") -> ParentPaths:
+    """Leave a 0.17 deployment's files under the shared root, and answer the real probe.
+
+    The private root is created and trusted by the probe's own ``mkdir``; the
+    legacy tree reads back as *paths* says.
+    """
+    host.staged.extend(  # type: ignore[attr-defined]
+        [
+            ("core.yml", str(_LEGACY_COMPOSE / "0"), _COMPOSE_YAML),
+            ("otto-env.sh", str(_LEGACY_COMPOSE), 'exec env "$@"\n'),
+        ]
+    )
+    parent_paths = ParentPaths(paths)
+    wired = host.exec.side_effect  # type: ignore[attr-defined]
+
+    async def _exec(cmd, *a, **kw):
+        answer = parent_paths.answer(cmd)
+        if answer is None:
+            return await wired(cmd, *a, **kw)
+        host.commands.append(cmd)  # type: ignore[attr-defined]
+        return answer
+
+    host.exec.side_effect = _exec  # type: ignore[attr-defined]
+    return parent_paths
+
+
+_TRUSTED_LEGACY = {
+    _LEGACY: "directory 1000 755",
+    _LEGACY / "unix-integration-u": "directory 1000 755",
+    _LEGACY_COMPOSE: "directory 1000 755",
+    _LEGACY_COMPOSE / "otto-env.sh": "regular file 1000 600",
+    _LEGACY_COMPOSE / "0": "directory 1000 755",
+    _LEGACY_COMPOSE / "0" / "core.yml": "regular file 1000 644",
+}
+
+
+@pytest.mark.real_private_roots
+@pytest.mark.asyncio
+async def test_a_deployment_staged_by_0_17_tears_down_with_its_own_files(single, monkeypatch):
+    """Owned by this account and writable by no one else: read back from the old root."""
+    monkeypatch.setenv("OTTO_COMPOSE_SUFFIX", "u")
+    _with_legacy_staging(single.host, dict(_TRUSTED_LEGACY))
+    with _install(single.lab, [single.project]):
+        report = await teardown("integration", parent="test3")
+
+    assert report.ok
+    (down,) = [c for c in single.host.commands if " down " in c]
+    assert down.startswith(f"sh {_LEGACY_COMPOSE}/otto-env.sh docker compose ")
+    assert f" -f {_LEGACY_COMPOSE}/0/core.yml " in down
+    assert "--remove-orphans" not in down
+    written = [c for c in single.host.commands if c.startswith(("rm ", "mkdir -p "))]
+    assert not written, f"the teardown wrote to the parent: {written}"
+
+
+@pytest.mark.parametrize(
+    ("path", "planted", "why"),
+    [
+        (_LEGACY, "directory 1000 777", "lets group or others write"),
+        # A 0.17 root made under umask 002, holding this project's staging.
+        (_LEGACY, "directory 1000 775", "lets group or others write"),
+        (_LEGACY / "unix-integration-u", "symbolic link 1000 777", "symbolic link"),
+        (_LEGACY_COMPOSE, "directory 1001 755", "owned by UID 1001"),
+        (_LEGACY_COMPOSE / "otto-env.sh", "regular file 1001 600", "owned by UID 1001"),
+        (_LEGACY_COMPOSE / "otto-env.sh", "regular file 1000 620", "lets group or others write"),
+        # The numbered directory and the compose file a teardown passes as -f.
+        (_LEGACY_COMPOSE / "0", "directory 1001 755", "owned by UID 1001"),
+        (_LEGACY_COMPOSE / "0", "directory 1000 777", "lets group or others write"),
+        (_LEGACY_COMPOSE / "0" / "core.yml", "regular file 1001 644", "owned by UID 1001"),
+        (_LEGACY_COMPOSE / "0" / "core.yml", "regular file 1000 666", "lets group or others"),
+        (_LEGACY / "unix-integration-u", "directory 1000 600", "does not let its owner search"),
+        # Unknown is never absent: an unreadable directory or launcher refuses
+        # rather than send the teardown to the label.
+        (_LEGACY / "unix-integration-u", "unreadable", "cannot be read"),
+        (_LEGACY_COMPOSE / "otto-env.sh", "unreadable", "cannot be read"),
+    ],
+)
+@pytest.mark.real_private_roots
+@pytest.mark.asyncio
+async def test_a_0_17_staging_another_account_could_have_written_is_refused(
+    single, monkeypatch, path, planted, why
+):
+    """Teardown runs the launcher it reads back: refuse it, and never widen to the label."""
+    monkeypatch.setenv("OTTO_COMPOSE_SUFFIX", "u")
+    _with_legacy_staging(single.host, {**_TRUSTED_LEGACY, path: planted})
+    with _install(single.lab, [single.project]), pytest.raises(StagingRefusedError) as refused:
+        await teardown("integration", parent="test3")
+
+    assert str(path) in str(refused.value)
+    assert why in str(refused.value)
+    assert "by hand" in str(refused.value)
+    assert "docker compose -p unix-integration-u down" in str(refused.value)
+    assert not [c for c in single.host.commands if " down" in c and c.startswith(("sh ", "docker"))]
+
+
+@pytest.mark.parametrize(
+    "planted",
+    [
+        # What the parent's shell answers when /tmp/otto-docker is another
+        # account's 0700 directory: the project directory is there but cannot
+        # be read, and the compose directory under it cannot even be seen, so
+        # the probe answers `missing` for it.
+        {_LEGACY: "directory 1001 700", _LEGACY / "unix-integration-u": "unreadable"},
+        # The same through an unreadable project directory: compose reads missing.
+        {_LEGACY: "directory 1000 755", _LEGACY / "unix-integration-u": "unreadable"},
+    ],
+)
+@pytest.mark.real_private_roots
+@pytest.mark.asyncio
+async def test_a_0_17_staging_behind_a_directory_otto_cannot_search_is_refused_not_absent(
+    single, monkeypatch, planted
+):
+    """A path under an untrusted or unreadable directory is unknown, never absent.
+
+    Read as absent, the teardown would fall back to the project label and take
+    down whatever carries it.
+    """
+    monkeypatch.setenv("OTTO_COMPOSE_SUFFIX", "u")
+    _with_legacy_staging(single.host, planted)  # compose and launcher read `missing`
+    with _install(single.lab, [single.project]), pytest.raises(StagingRefusedError) as refused:
+        await teardown("integration", parent="test3")
+
+    assert "by hand" in str(refused.value)
+    assert not [c for c in single.host.commands if " down" in c]
+
+
+@pytest.mark.parametrize(
+    "root",
+    [
+        "directory 1000 775",  # 0.17 under umask 002: group-writable, but searchable
+        "directory 1001 755",  # another account's, searchable
+    ],
+)
+@pytest.mark.real_private_roots
+@pytest.mark.asyncio
+async def test_a_0_17_root_without_this_deployment_is_not_used_and_not_refused(
+    single, monkeypatch, caplog, root
+):
+    """No project directory under the old root means no 0.17 staging: trust is not judged.
+
+    Refusing here blocked every ``down`` (and an ``up``'s teardown) on a parent
+    whose ``/tmp/otto-docker`` some other run had left group-writable.
+    """
+    monkeypatch.setenv("OTTO_COMPOSE_SUFFIX", "u")
+    _with_legacy_staging(single.host, {_LEGACY: root})
+    with (
+        _install(single.lab, [single.project]),
+        caplog.at_level(logging.INFO, logger="otto.docker.deployment"),
+    ):
+        report = await teardown("integration", parent="test3")
+
+    assert report.ok
+    (down,) = [c for c in single.host.commands if " down " in c]
+    assert down.startswith("docker compose -p unix-integration-u down"), down
+    assert "by its project label" in caplog.text
+
+
+@pytest.mark.real_private_roots
+@pytest.mark.asyncio
+async def test_a_teardown_through_an_untrusted_private_root_runs_nothing(single, monkeypatch):
+    """The private root itself is checked before its launcher is run."""
+    monkeypatch.setenv("OTTO_COMPOSE_SUFFIX", "u")
+    _with_legacy_staging(single.host, {ROOT: "directory 1001 700"})
+    with (
+        _install(single.lab, [single.project]),
+        pytest.raises(StagingRefusedError, match=str(ROOT)),
+    ):
+        await teardown("integration", parent="test3")
+
+    assert not [c for c in single.host.commands if " down" in c]
 
 
 # --- Fix round 1: the arms the coverage report showed as dead ---------------
@@ -1659,16 +1863,25 @@ async def test_dry_run_plan_shows_displacements_as_they_are(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_dry_run_shows_the_env_launcher_exactly_as_it_would_be_staged(single):
+async def test_dry_run_shows_the_env_launcher_with_every_value_redacted(single):
+    """The preview is printed and logged, so it names each key and no value.
+
+    A caller's value planted in the mapping must not appear anywhere in the
+    decline; the launcher is the staged one's shape, each value replaced.
+    """
     with (
         _install(single.lab, [single.project]),
         patch.object(deploy_mod, "is_dry_run", return_value=True),
         pytest.raises(CommandNotRunError) as excinfo,
     ):
-        await deploy("integration", parent="test3", env={"K": "b c"})
+        await deploy("integration", parent="test3", env={"K": "PLANTED-SECRET-7f3a"})
 
-    launcher = deploy_mod._launcher_text({"EDGE_ADDR": "10.10.200.13", "K": "b c"}).strip()
-    assert f"with the env launcher `{launcher}`, would run: sh " in str(excinfo.value)
+    message = str(excinfo.value)
+    assert "PLANTED-SECRET-7f3a" not in message
+    assert "10.10.200.13" not in message, "the fragment's own value leaked too"
+    launcher = deploy_mod._launcher_text({"EDGE_ADDR": "<redacted>", "K": "<redacted>"}).strip()
+    assert f"with the env launcher `{launcher}` (values redacted), would run: sh " in message
+    assert "'K=<redacted>'" in message
 
 
 @pytest.mark.asyncio
@@ -1693,11 +1906,11 @@ async def test_dry_run_plan_shows_the_exact_compose_command(single, monkeypatch)
     assert "the exact compose command cannot be shown" not in message, (
         "the §12 gap clause survived the move: " + message
     )
-    assert "EDGE_ADDR=10.10.200.13" in message
+    assert "EDGE_ADDR=<redacted>" in message
     assert (
-        "would run: sh /tmp/otto-docker/unix-integration-u/compose/otto-env.sh "
+        f"would run: sh {ROOT}/unix-integration-u/compose/otto-env.sh "
         "docker compose -p unix-integration-u "
-        "-f /tmp/otto-docker/unix-integration-u/compose/0/core.yml up"
+        f"-f {ROOT}/unix-integration-u/compose/0/core.yml up"
     ) in message
     assert message.rstrip().endswith("up -d --remove-orphans")
     assert "test3" in message
@@ -1743,7 +1956,11 @@ async def test_dry_run_declines_below_the_adapter_so_its_content_is_in_the_comma
     ):
         await deploy("integration", parent="test3")
 
-    assert "FROM_ADAPTER=yes" in str(excinfo.value)
+    message = str(excinfo.value)
+    # The key reaches the previewed launcher (only the adapter sets it), and
+    # its value is redacted like every other.
+    assert "'FROM_ADAPTER=<redacted>'" in message
+    assert "FROM_ADAPTER=yes" not in message
 
 
 @pytest.mark.asyncio

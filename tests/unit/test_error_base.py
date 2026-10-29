@@ -87,6 +87,7 @@ from otto.host.errors import (
     PasswordRefusedError,
     RawLandingError,
     SessionSetupError,
+    StagingRefusedError,
     UnsupportedOnUserlandError,
 )
 from otto.host.login_proxy import LoginProxyError
@@ -208,6 +209,7 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (HostUnreachableError, RuntimeError),
     (HostCommandError, RuntimeError),
     (PasswordRefusedError, RuntimeError),
+    (StagingRefusedError, RuntimeError),
     (ContainerNotRunningError, RuntimeError),
     (CoverageToolMissingError, RuntimeError),
     (MountNotFoundError, ValueError),

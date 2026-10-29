@@ -10,11 +10,14 @@ import logging
 import shlex
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from ..config.project import Project
 from ..config.scope import DockerImage
 from ..errors import OttoError
+from ..host.docker_host import parent_staging_root
 from ..host.host import Host, is_dry_run
+from ..host.shell_quote import path_operand
 from ..result import CommandNotRunError, CommandResult
 from ..utils import Status
 from .reports import ImageBuild
@@ -106,18 +109,20 @@ def image_references(image: DockerImage, options: BuildOptions) -> list[str]:
     return list(options.tags) or [f"{image.name}:latest"]
 
 
-def build_command(project: str, image: DockerImage, options: BuildOptions) -> str:
+def build_command(root: Path, project: str, image: DockerImage, options: BuildOptions) -> str:
     """Render the one ``docker build`` command for *image*; pure, so a dry run can show it.
 
-    A directory context is built from its staged copy. An archive context is
-    given to docker on stdin, unopened, and its Dockerfile is named by the
-    path it has inside the archive.
+    *root* is the parent's staging root
+    (:func:`~otto.host.docker_host.parent_staging_root`). A directory context
+    is built from its staged copy. An archive context is given to docker on
+    stdin, unopened, and its Dockerfile is named by the path it has inside the
+    archive.
     """
     if image.is_archive:
         dockerfile_arg = image.dockerfile_in_archive
-        context_arg = f"- < {shlex.quote(str(image_archive_path(project, image)))}"
+        context_arg = f"- < {path_operand(image_archive_path(root, project, image))}"
     else:
-        remote_ctx = image_build_dir(project, image.name)
+        remote_ctx = image_build_dir(root, project, image.name)
         # Resolve the Dockerfile path relative to the staged context. If the
         # user-declared Dockerfile lives outside the original context, the tar
         # step put it at the root of remote_ctx under its basename.
@@ -126,7 +131,7 @@ def build_command(project: str, image: DockerImage, options: BuildOptions) -> st
         except ValueError:
             dockerfile_rel = image.dockerfile.name
         dockerfile_arg = str(remote_ctx / dockerfile_rel)
-        context_arg = shlex.quote(str(remote_ctx))
+        context_arg = path_operand(remote_ctx)
 
     flags: list[str] = []
     for reference in image_references(image, options):
@@ -214,11 +219,14 @@ async def _build_one(
 
         remote = await stage_image_archive(parent, project, image)
         try:
-            result = await parent.exec(build_command(project, image, options), timeout=float("inf"))
+            result = await parent.exec(
+                build_command(parent_staging_root(parent), project, image, options),
+                timeout=float("inf"),
+            )
         finally:
             # Best effort: a failed removal must not replace the build's own outcome.
             with teardown_step(parent.id, "build archive removal"):
-                removed = await parent.exec(f"rm -f {shlex.quote(str(remote))}")
+                removed = await parent.exec(f"rm -f {path_operand(remote)}")
                 if not removed.is_ok:
                     logger.warning(
                         f"{parent.id}: could not remove the uploaded archive {remote}: "
@@ -226,7 +234,10 @@ async def _build_one(
                     )
     else:
         await stage_image_context(parent, project, image)
-        result = await parent.exec(build_command(project, image, options), timeout=float("inf"))
+        result = await parent.exec(
+            build_command(parent_staging_root(parent), project, image, options),
+            timeout=float("inf"),
+        )
     if not result.is_ok:
         return ImageBuild(image.name, [], None, result)
     found, image_id, read = await _read_back(parent, references)

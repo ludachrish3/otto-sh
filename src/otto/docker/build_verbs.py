@@ -14,6 +14,7 @@ on exactly the hosts a deployment would use.
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
+from ..host.docker_host import parent_staging_root
 from ..host.host import is_dry_run
 from ..host.unix_host import UnixHost
 from ..result import CommandNotRunError
@@ -194,7 +195,7 @@ def _plan_text(
     displaced_text = ". ".join(d.describe() for d in displaced)
     displaced_note = f" Displaced: {displaced_text}." if displaced_text else ""
     commands = [
-        f"on {parent.id}: {build_command(project.name, img, options)}"
+        f"on {parent.id}: {build_command(parent_staging_root(parent), project.name, img, options)}"
         for parent, project, names in plan
         for img in project.docker_settings.images
         if names is None or img.name in names

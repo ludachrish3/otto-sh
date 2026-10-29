@@ -12,13 +12,22 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from otto.config.scope import DockerCompose
+from otto.config.scope import DockerCompose, DockerImage
+from otto.docker.build import BuildOptions, build_command
 from otto.docker.staging import (
+    ComposeFileToStage,
     _relative_bind_sources,
+    compose_dir,
+    compose_staging_root,
+    image_archive_path,
+    image_build_dir,
     stage_compose_files,
     stage_key,
+    use_case_compose_paths,
+    use_case_launcher,
     warn_relative_bind_sources,
 )
+from otto.host.docker_host import parent_staging_root
 from otto.host.element import Element
 from otto.host.errors import HostCommandError, HostUnreachableError
 from otto.host.login_proxy import Cred
@@ -34,6 +43,49 @@ def _parent() -> UnixHost:
         creds=[Cred(login="vagrant", password="vagrant")],
         docker_capable=True,
     )
+
+
+def test_every_staging_path_is_under_the_logins_private_root(tmp_path):
+    """One root, named for the parent's login, under every builder: nothing at /tmp/otto-docker."""
+    alice = UnixHost(
+        ip="10.10.200.13",
+        element=Element("test3"),
+        creds=[Cred(login="alice", password="pw")],
+        docker_capable=True,
+    )
+    root = parent_staging_root(alice)
+    archive = tmp_path / "ctx.tar"
+    archive.write_bytes(b"")
+    image = DockerImage(name="api", dockerfile=tmp_path / "Dockerfile", context=archive)
+    paths = [
+        compose_staging_root(root, "p"),
+        compose_dir(root, "p"),
+        image_build_dir(root, "p", "api"),
+        image_archive_path(root, "p", image),
+        use_case_launcher(root, "p"),
+        *use_case_compose_paths(root, "p", [ComposeFileToStage("core", "", tmp_path)]),
+    ]
+
+    assert root == Path("/tmp/otto-docker-alice")
+    for path in paths:
+        assert path.is_relative_to(Path("/tmp/otto-docker-alice/p")), path
+    assert " /tmp/otto-docker-alice/p/build/api" in build_command(
+        root,
+        "p",
+        DockerImage(name="api", dockerfile=tmp_path / "D", context=tmp_path),
+        BuildOptions(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_stage_compose_files_stages_under_the_private_root(tmp_path):
+    parent = _parent()
+    parent.exec = AsyncMock(return_value=CommandResult(Status.Success, value="", command=""))  # type: ignore[method-assign]
+    parent.put = AsyncMock(return_value=Result(Status.Success))  # type: ignore[method-assign]
+
+    (staged,) = await stage_compose_files(parent, "proj", _compose(tmp_path))
+
+    assert staged == Path("/tmp/otto-docker-vagrant/proj/compose/0/compose.yml")
 
 
 def _fail(out: str = "denied") -> CommandResult:

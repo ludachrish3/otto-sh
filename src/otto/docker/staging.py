@@ -4,16 +4,24 @@ File staging onto a parent host.
 Building an image and running ``docker compose`` both require getting the
 relevant files (Dockerfile, build context, compose YAML) onto the parent
 host that runs the docker daemon. This module wraps that with a small,
-predictable layout under ``/tmp/otto-docker/<project>/`` on the parent.
+predictable layout under the parent's private staging root,
+``/tmp/otto-docker-<login>/`` (:func:`~otto.host.docker_host.staging_root`),
+which :func:`~otto.host.docker_host.ensure_private_root` creates with mode
+0700, or verifies, before every write there.
 
-Layout::
+Layout, under the root::
 
-    /tmp/otto-docker/<project>/
+    <project>/
         build/<image>/<context-as-tar>     # extracted build context
         build/<image>.<archive>            # an archive context, uploaded unopened
         compose/<n>/<basename>.yml         # one numbered dir per compose file
         compose/<n>/<sidecar relative path> # env_file: sidecars, same numbering
         compose/otto-env.sh                # the use case's env launcher
+
+Every path builder takes the root as its first argument, so the layout is
+one decision whichever root it lands under: the private one, or the older
+shared one a teardown may still read back from
+(:func:`trusted_legacy_staging`).
 
 Cleanup is the caller's responsibility (and is best-effort: a previous
 crash is recovered from on the next stage). The directory layout is
@@ -23,7 +31,6 @@ stable across runs so nothing leaks into per-invocation subdirs.
 import logging
 import os
 import re
-import shlex
 import tarfile
 import tempfile
 from dataclasses import dataclass
@@ -31,8 +38,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..config.scope import DockerCompose, DockerImage
-from ..host.errors import HostCommandError, HostUnreachableError
+from ..host.docker_host import (
+    OwnershipProbe,
+    ensure_private_root,
+    parent_staging_root,
+    probe_ownership,
+)
+from ..host.errors import HostCommandError, HostUnreachableError, StagingRefusedError
 from ..host.host import Host, is_dry_run
+from ..host.shell_quote import path_operand
 from ..result import CommandNotRunError, CommandResult
 
 if TYPE_CHECKING:
@@ -41,7 +55,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-PARENT_ROOT = Path("/tmp/otto-docker")  # noqa: S108 — deliberate staging path
+_LEGACY_ROOT = Path("/tmp/otto-docker")  # noqa: S108 — the shared root otto used before 0.18
+"""Where otto before 0.18 staged for every account on a parent, world-readable.
+
+Nothing is written here any more; a teardown reads a deployment staged here
+back only through :func:`trusted_legacy_staging`."""
 
 
 def _staging_failure(
@@ -58,9 +76,9 @@ def _staging_failure(
     return HostUnreachableError(message) if result.timed_out else HostCommandError(message)
 
 
-def compose_staging_root(project: str) -> Path:
-    """Per-project staging root on the parent host."""
-    return PARENT_ROOT / project
+def compose_staging_root(root: Path, project: str) -> Path:
+    """Per-project staging directory under the parent's staging *root*."""
+    return root / project
 
 
 def stage_key(name: str) -> str:
@@ -68,19 +86,23 @@ def stage_key(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", name)
 
 
-def image_build_dir(project: str, image_name: str) -> Path:
+def image_build_dir(root: Path, project: str, image_name: str) -> Path:
     """Where this image's context will live on the parent."""
-    return compose_staging_root(project) / "build" / stage_key(image_name)
+    return compose_staging_root(root, project) / "build" / stage_key(image_name)
 
 
-def compose_dir(project: str) -> Path:
+def compose_dir(root: Path, project: str) -> Path:
     """Per-project compose staging directory on the parent host."""
-    return compose_staging_root(project) / "compose"
+    return compose_staging_root(root, project) / "compose"
 
 
-def image_archive_path(project: str, image: DockerImage) -> Path:
+def image_archive_path(root: Path, project: str, image: DockerImage) -> Path:
     """Where an archive context is uploaded on the parent."""
-    return compose_staging_root(project) / "build" / f"{stage_key(image.name)}.{image.context.name}"
+    return (
+        compose_staging_root(root, project)
+        / "build"
+        / f"{stage_key(image.name)}.{image.context.name}"
+    )
 
 
 async def stage_image_archive(parent: Host, project: str, image: DockerImage) -> Path:
@@ -95,8 +117,8 @@ async def stage_image_archive(parent: Host, project: str, image: DockerImage) ->
             getattr(parent, "id", ""),
             "Nothing was copied to the parent.",
         )
-    remote = image_archive_path(project, image)
-    prepared = await parent.exec(f"mkdir -p {shlex.quote(str(remote.parent))}")
+    remote = image_archive_path(await ensure_private_root(parent), project, image)
+    prepared = await parent.exec(f"mkdir -p {path_operand(remote.parent)}")
     if not prepared.status.is_ok:
         raise _staging_failure(
             prepared, f"failed to prepare {remote.parent} on the parent: {prepared.value}"
@@ -105,7 +127,7 @@ async def stage_image_archive(parent: Host, project: str, image: DockerImage) ->
     if not put_result.is_ok:
         raise HostCommandError(f"failed to copy the build archive to the parent: {put_result.msg}")
     uploaded = remote.parent / image.context.name
-    moved = await parent.exec(f"mv -f {shlex.quote(str(uploaded))} {shlex.quote(str(remote))}")
+    moved = await parent.exec(f"mv -f {path_operand(uploaded)} {path_operand(remote)}")
     if not moved.status.is_ok:
         raise _staging_failure(moved, f"failed to place the build archive: {moved.value}")
     return remote
@@ -136,7 +158,7 @@ async def stage_image_context(
             "Nothing was tarred locally and nothing was copied to the parent.",
         )
 
-    remote_dir = image_build_dir(project, image.name)
+    remote_dir = image_build_dir(await ensure_private_root(parent), project, image.name)
 
     # Wipe and recreate to avoid mixing leftover files from an earlier build.
     # Checked, because `&&` makes a failed rm skip the mkdir silently and the
@@ -144,9 +166,10 @@ async def stage_image_context(
     # see a context still holding a file the user deleted locally, and produce
     # an image that still holds the deleted file. Build staging
     # is keyed on the project name (unlike compose staging, keyed on the
-    # suffix-bearing project), so two users on one parent really do collide here.
+    # suffix-bearing project), so two runs by one account with different
+    # suffixes really do collide here; two accounts have two roots.
     prepared = await parent.exec(
-        f"rm -rf {shlex.quote(str(remote_dir))} && mkdir -p {shlex.quote(str(remote_dir))}"
+        f"rm -rf {path_operand(remote_dir)} && mkdir -p {path_operand(remote_dir)}"
     )
     if not prepared.status.is_ok:
         raise _staging_failure(
@@ -182,8 +205,8 @@ async def stage_image_context(
         # (see nc.py).
         remote_tar = remote_dir / tmp_path.name
         result = await parent.exec(
-            f"tar -xf {shlex.quote(str(remote_tar))} -C {shlex.quote(str(remote_dir))} "
-            f"&& rm -f {shlex.quote(str(remote_tar))}",
+            f"tar -xf {path_operand(remote_tar)} -C {path_operand(remote_dir)} "
+            f"&& rm -f {path_operand(remote_tar)}",
             timeout=float("inf"),
         )
         if not result.status.is_ok:
@@ -231,10 +254,8 @@ async def stage_compose_files(
             "No compose file was copied to the parent.",
         )
 
-    base = compose_dir(project)
-    prepared = await parent.exec(
-        f"rm -rf {shlex.quote(str(base))} && mkdir -p {shlex.quote(str(base))}"
-    )
+    base = compose_dir(await ensure_private_root(parent), project)
+    prepared = await parent.exec(f"rm -rf {path_operand(base)} && mkdir -p {path_operand(base)}")
     if not prepared.status.is_ok:
         raise _staging_failure(
             prepared,
@@ -244,7 +265,7 @@ async def stage_compose_files(
     out: list[Path] = []
     for idx, compose in enumerate(composes):
         sub = base / str(idx)
-        made = await parent.exec(f"mkdir -p {shlex.quote(str(sub))}")
+        made = await parent.exec(f"mkdir -p {path_operand(sub)}")
         if not made.status.is_ok:
             raise _staging_failure(made, f"failed to create {sub} on the parent: {made.value}")
         try:
@@ -273,10 +294,15 @@ async def stage_compose_files(
 async def cleanup_project(parent: Host, project: str) -> CommandResult:
     """Remove the per-project staging tree on the parent. Best-effort.
 
+    The tree is under the parent's private staging root, which is verified
+    first (:func:`~otto.host.docker_host.ensure_private_root`): a root otto
+    cannot trust raises rather than have ``rm -rf`` run through it.
+
     Returns the ``rm -rf``'s own :class:`~otto.result.CommandResult` — callers
     that care check ``.is_ok``; best-effort callers ignore it.
     """
-    return await parent.exec(f"rm -rf {shlex.quote(str(compose_staging_root(project)))}")
+    tree = compose_staging_root(await ensure_private_root(parent), project)
+    return await parent.exec(f"rm -rf {path_operand(tree)}")
 
 
 @dataclass
@@ -300,7 +326,9 @@ _COMPOSE_SUFFIX = ".yml"
 """The suffix every staged use-case compose file carries; the read-back keys on it."""
 
 
-def use_case_compose_paths(compose_project: str, files: "list[ComposeFileToStage]") -> list[Path]:
+def use_case_compose_paths(
+    root: Path, compose_project: str, files: "list[ComposeFileToStage]"
+) -> list[Path]:
     """Where :func:`stage_use_case` will put each rendered compose file. PURE.
 
     The parent-side layout, computed without touching the parent, so a caller
@@ -310,17 +338,17 @@ def use_case_compose_paths(compose_project: str, files: "list[ComposeFileToStage
     answer rather than accumulating its own, so the preview and the staging
     cannot drift: one of them changing the layout changes both.
     """
-    base = compose_dir(compose_project)
+    base = compose_dir(root, compose_project)
     return [base / str(idx) / f"{f.handle}{_COMPOSE_SUFFIX}" for idx, f in enumerate(files)]
 
 
-def use_case_launcher(compose_project: str) -> Path:
+def use_case_launcher(root: Path, compose_project: str) -> Path:
     """Where :func:`stage_use_case` will put the use case's env launcher. PURE.
 
     Every compose call of the deployment runs under it (``sh <launcher>
     docker compose …``). Same reasoning as :func:`use_case_compose_paths`.
     """
-    return compose_dir(compose_project) / "otto-env.sh"
+    return compose_dir(root, compose_project) / "otto-env.sh"
 
 
 def _resolution_error(message: str) -> Exception:
@@ -350,7 +378,7 @@ def _refuse_if_path_escapes(prefix: str, rel: str) -> None:
     filesystem, not the compose file) and a ``../`` reference (resolved
     against the compose file's own directory) — both legal Compose syntax.
     Staging cannot honor either without writing somewhere on the parent
-    outside ``/tmp/otto-docker`` (an absolute ref) or above the staging root
+    outside the parent's staging root (an absolute ref) or above the staging root
     the reference is supposed to land under (a ``../`` ref that normalizes
     outside it) — spec §8 constraint 5 says sidecars stay under ``<n>/``, so
     both are a loud, distinct refusal instead of a silent escape. Shared by
@@ -523,8 +551,8 @@ def _dest_for_relative_name(root: Path, rel: str) -> Path:
     return root / rel_parent if str(rel_parent) != "." else root
 
 
-def _read_back(listing: "RemoteListing", base: Path, compose_project: str) -> StagedUseCase:
-    """Read a walk of *base* as the staging :func:`stage_use_case` leaves there.
+def _read_back(listing: "RemoteListing", root: Path, compose_project: str) -> StagedUseCase:
+    """Read a walk of :func:`compose_dir` under *root* as :func:`stage_use_case` leaves it.
 
     Pure. Exactly one compose file (``<handle>`` plus the layout's suffix)
     directly in every numbered directory, the numbers contiguous from 0, and
@@ -536,7 +564,8 @@ def _read_back(listing: "RemoteListing", base: Path, compose_project: str) -> St
     """
     if listing.kind != "d":
         raise ValueError("it is not a directory")
-    launcher = use_case_launcher(compose_project)
+    base = compose_dir(root, compose_project)
+    launcher = use_case_launcher(root, compose_project)
     by_index: "dict[int, list[str]]" = {}
     launcher_found = False
     for path in listing.files:
@@ -580,39 +609,163 @@ async def staged_use_case(parent: "UnixHost", compose_project: str) -> "StagedUs
     re-running an adapter or re-staging a file. The listing is the host's own
     tree walk, the one every recursive transfer uses.
 
-    Returns ``None`` only when the directory is confirmed absent (the
-    parent's ``/tmp`` was cleared, or nothing was ever deployed from here).
+    The parent's private staging root is verified first
+    (:func:`~otto.host.docker_host.ensure_private_root`), since a teardown
+    runs the launcher it finds there. A deployment with nothing under it but
+    staging left by otto before 0.18 under the shared root is read back from
+    there, only once :func:`trusted_legacy_staging` has found that tree
+    trustworthy.
+
+    Returns ``None`` only when the directory is confirmed absent under both
+    roots (the parent's ``/tmp`` was cleared, or nothing was ever deployed
+    from here).
 
     Raises:
         HostCommandError: the walk failed, or what is there is not a staging
             this module wrote (see ``_read_back``). Unknown is never read
             as absent: a caller that falls back to the project label would
             remove more than the deploy started.
+        ~otto.host.errors.StagingRefusedError: the private root, or the older
+            staging, could have been written by another account. Nothing was
+            run, and the caller must not fall back to the label either.
         ~otto.result.CommandNotRunError: this is a dry run; the walk refuses
             to read a declined listing as an empty one.
     """
+    root = await ensure_private_root(parent)
+    listing = await _walk_compose_dir(parent, root, compose_project)
+    legacy = None
+    if listing.kind == "-":
+        legacy = await trusted_legacy_staging(parent, compose_project)
+        if legacy is None:
+            return None
+        root = legacy
+        listing = await _walk_compose_dir(parent, root, compose_project)
+        if listing.kind == "-":
+            return None
+    base = compose_dir(root, compose_project)
+    where = _staged_files_on(parent, compose_project, base)
+    try:
+        staged = _read_back(listing, root, compose_project)
+    except ValueError as e:
+        raise _not_a_staging(where, base, str(e)) from e
+    if legacy is not None:
+        await _verify_legacy_compose_files(parent, compose_project, staged)
+    # A transfer that dropped before its first write leaves the launcher empty,
+    # and `sh <empty file> docker compose down` exits 0 having run nothing.
+    held = await parent.exec(f"test -s {path_operand(staged.launcher)}")
+    if not held.status.is_ok:
+        raise _not_a_staging(where, base, f"{staged.launcher.name} is empty")
+    return staged
+
+
+def _staged_files_on(parent: "UnixHost", compose_project: str, base: Path) -> str:
+    return f"the staged compose files for {compose_project} in {base} on {parent.id}"
+
+
+async def _walk_compose_dir(
+    parent: "UnixHost", root: Path, compose_project: str
+) -> "RemoteListing":
+    """Walk :func:`compose_dir` under *root* with the host's own tree walk."""
     # Function-scope: only a teardown reaches this, and the walk is a host
     # module this one does not otherwise import.
     from ..host.recursive_transfer import ListingError
 
-    base = compose_dir(compose_project)
-    where = f"the staged compose files for {compose_project} in {base} on {parent.id}"
+    base = compose_dir(root, compose_project)
     try:
-        listing = await parent._walk_remote(base)  # noqa: SLF001 — the host's declared walk hook
+        return await parent._walk_remote(base)  # noqa: SLF001 — the host's declared walk hook
     except ListingError as e:
-        raise HostCommandError(f"cannot read {where}: {e}") from e
-    if listing.kind == "-":
-        return None
-    try:
-        staged = _read_back(listing, base, compose_project)
-    except ValueError as e:
-        raise _not_a_staging(where, base, str(e)) from e
-    # A transfer that dropped before its first write leaves the launcher empty,
-    # and `sh <empty file> docker compose down` exits 0 having run nothing.
-    held = await parent.exec(f"test -s {shlex.quote(str(staged.launcher))}")
-    if not held.status.is_ok:
-        raise _not_a_staging(where, base, f"{staged.launcher.name} is empty")
-    return staged
+        raise HostCommandError(
+            f"cannot read {_staged_files_on(parent, compose_project, base)}: {e}"
+        ) from e
+
+
+async def trusted_legacy_staging(parent: "Host", compose_project: str) -> "Path | None":
+    """Return the shared pre-0.18 root if *compose_project*'s staging there can be trusted.
+
+    otto before 0.18 staged every account's files under ``/tmp/otto-docker``.
+    A teardown runs the launcher it reads back, so a tree another account
+    could have written is never used: ``/tmp/otto-docker``, the project's
+    directory and its compose directory must each be a directory its owner
+    can search, and the launcher (when there) a regular file, none a symbolic
+    link, all owned by the session's account and writable by neither group
+    nor others. The check is the private root's own
+    (:func:`~otto.host.docker_host.probe_ownership`), with "not writable by
+    group or others" in place of "exactly 0700". The numbered compose
+    directories and files a teardown passes as ``-f`` are checked the same way
+    once read back (:func:`staged_use_case`). Nothing is written there.
+
+    Precondition: ``/tmp`` has already been found root-owned and sticky, by
+    :func:`~otto.host.docker_host.ensure_private_root` on the same parent;
+    this function does not check it again. :func:`staged_use_case` calls it
+    only after that check.
+
+    Returns ``None`` when there is no such staging: one of the directories
+    reads as absent, walking outermost first, with none above it unreadable.
+    The probe answers "absent" only where it could look (the parent is
+    searchable, or itself absent); a path behind a directory the session
+    cannot search reads as unreadable, and an unreadable path is refused,
+    never taken for absent. Trust is judged only once the staging is there,
+    so a 0.17 ``/tmp/otto-docker`` left group-writable by a umask of 002, or
+    owned by another account, refuses a teardown only of a project it holds.
+    A missing launcher is left to the read-back, which reports it.
+
+    Raises:
+        ~otto.host.errors.StagingRefusedError: the staging is there and could
+            have been written by another account. The message names the path
+            and the manual teardown; the caller must not fall back to the
+            project label.
+    """
+    project_dir = compose_staging_root(_LEGACY_ROOT, compose_project)
+    compose = compose_dir(_LEGACY_ROOT, compose_project)
+    launcher = use_case_launcher(_LEGACY_ROOT, compose_project)
+    directories = [_LEGACY_ROOT, project_dir, compose]
+    probe = await probe_ownership(parent, [*directories, launcher])
+    for directory in directories:
+        if probe.missing(directory):
+            return None
+        if directory in probe.unreadable:
+            _refuse_untrusted_legacy(parent, compose_project, probe, directory, "directory")
+    for directory in directories:
+        _refuse_untrusted_legacy(parent, compose_project, probe, directory, "directory")
+    if not probe.missing(launcher):
+        _refuse_untrusted_legacy(parent, compose_project, probe, launcher, "regular file")
+    return _LEGACY_ROOT
+
+
+async def _verify_legacy_compose_files(
+    parent: "Host", compose_project: str, staged: StagedUseCase
+) -> None:
+    """Refuse a pre-0.18 staging whose ``-f`` directories or files another account could write.
+
+    :func:`trusted_legacy_staging` has trusted every directory above them;
+    these are the numbered directories and compose files the read-back found,
+    judged by the same rule. Each must be there: the walk listed it.
+    """
+    directories = list(dict.fromkeys(path.parent for path in staged.compose_paths))
+    probe = await probe_ownership(parent, [*directories, *staged.compose_paths])
+    for directory in directories:
+        _refuse_untrusted_legacy(parent, compose_project, probe, directory, "directory")
+    for path in staged.compose_paths:
+        _refuse_untrusted_legacy(parent, compose_project, probe, path, "regular file")
+
+
+def _refuse_untrusted_legacy(
+    parent: "Host", compose_project: str, probe: OwnershipProbe, path: Path, kind: str
+) -> None:
+    """Raise :class:`StagingRefusedError` if *path* of the pre-0.18 staging cannot be trusted."""
+    problem = probe.problem(path, kind=kind, private=False)
+    if problem is None:
+        return
+    from .compose import compose_command  # compose imports this module
+
+    project_dir = compose_staging_root(_LEGACY_ROOT, compose_project)
+    down = compose_command(compose_project, "down")
+    raise StagingRefusedError(
+        f"{parent.id}: {compose_project} was staged by otto before 0.18 under "
+        f"{_LEGACY_ROOT}, and {path} could have been written by another account "
+        f"({problem}), so otto will not run what it holds. Tear that deployment "
+        f"down by hand on {parent.id} (`{down}`), then delete {project_dir}."
+    )
 
 
 def _not_a_staging(where: str, base: Path, why: str) -> HostCommandError:
@@ -663,11 +816,13 @@ async def stage_use_case(
     extra_files_map = dict(extra_files or {})
     claimed_extra_keys: set[str] = set()
 
-    # Named here (not where it was previously computed, further down) so the
-    # validation loop below can pass compose_paths[0] to the bind-source
-    # warning -- pure function of its arguments, so computing it earlier
-    # changes nothing about what it returns.
-    compose_paths = use_case_compose_paths(compose_project, files)
+    # The layout under the root the parent's login names, computed without
+    # touching the parent, so the validation below can name paths in its
+    # warnings and refusals. The root itself is created or verified after the
+    # validation, before the first write, and staging writes under the root
+    # that check returns.
+    planned = parent_staging_root(parent)
+    planned_paths = use_case_compose_paths(planned, compose_project, files)
 
     # Validate everything local BEFORE the first device touch.
     local_sidecars: list[tuple[int, Path, str]] = []  # (file index, local path, rel name)
@@ -676,13 +831,13 @@ async def stage_use_case(
     ] = []  # (file index, rel name); text in extra_files_map
     seen_refs: set[tuple[int, str]] = set()
     for idx, f in enumerate(files):
-        # compose_paths[0].parent, not compose_paths[idx].parent: this
+        # planned_paths[0].parent, not planned_paths[idx].parent: this
         # function's stack is brought up by `_up_command`, which -- like
         # compose_up's `up` on the per-project path -- passes only `-f` and no
         # `--project-directory`. So compose resolves every relative bind
         # source (whichever file declares it) against the directory of the
         # FIRST `-f` file, not each file's own.
-        warn_relative_bind_sources(f.handle, f.text, compose_paths[0].parent)
+        warn_relative_bind_sources(f.handle, f.text, planned_paths[0].parent)
         for rel in _collect_env_file_refs(f.handle, f.text):
             if (idx, rel) in seen_refs:
                 continue  # the same file referencing one env_file from two services stages it once
@@ -703,19 +858,20 @@ async def stage_use_case(
     unreferenced_extras = [
         (name, text) for name, text in extra_files_map.items() if name not in claimed_extra_keys
     ]
-    launcher_remote = use_case_launcher(compose_project)
+    launcher_name = use_case_launcher(planned, compose_project).name
     for name, _text in unreferenced_extras:
         _refuse_if_path_escapes("extra_files key", name)
-        if os.path.normpath(name) == launcher_remote.name:
+        if os.path.normpath(name) == launcher_name:
             raise _resolution_error(
                 f"extra_files key {name!r} is the name otto stages the use case's env "
                 f"launcher under; rename the extra file"
             )
 
-    base = compose_dir(compose_project)
-    prepared = await parent.exec(
-        f"rm -rf {shlex.quote(str(base))} && mkdir -p {shlex.quote(str(base))}"
-    )
+    root = await ensure_private_root(parent)
+    compose_paths = use_case_compose_paths(root, compose_project, files)
+    launcher_remote = use_case_launcher(root, compose_project)
+    base = compose_dir(root, compose_project)
+    prepared = await parent.exec(f"rm -rf {path_operand(base)} && mkdir -p {path_operand(base)}")
     if not prepared.status.is_ok:
         raise _staging_failure(
             prepared,
@@ -750,9 +906,8 @@ async def stage_use_case(
         launcher_local = tmpdir / launcher_remote.name
         launcher_local.write_text(launcher_text)
         # The mapping can carry secrets, so the launcher is left readable by the
-        # connecting account only. `put` applies the mode once the bytes land,
-        # which narrows the launcher's exposure; the staging directories and the
-        # compose files' sidecars keep the parent's default permissions.
+        # connecting account only, on top of the 0700 root every staged file
+        # sits under. `put` applies the mode once the bytes land.
         await _mkdir_and_put(parent, launcher_remote.parent, [launcher_local], mode=0o600)
 
         for name, text in unreferenced_extras:
@@ -767,7 +922,7 @@ async def stage_use_case(
 async def _mkdir_and_put(
     parent: Host, dest: Path, paths: list[Path], *, mode: "int | None" = None
 ) -> None:
-    made = await parent.exec(f"mkdir -p {shlex.quote(str(dest))}")
+    made = await parent.exec(f"mkdir -p {path_operand(dest)}")
     if not made.status.is_ok:
         raise _staging_failure(made, f"failed to create {dest} on the parent: {made.value}")
     put_result = await parent.put(paths, dest, mode=mode)

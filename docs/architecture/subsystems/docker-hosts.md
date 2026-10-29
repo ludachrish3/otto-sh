@@ -32,8 +32,9 @@ owns:
 `parent.exec(f"docker exec {ctr} sh -c {shlex.quote(cmd)}")`.
 `login()` opens a PTY-backed `docker exec -it ctr /bin/sh` over the
 parent's SSH conn (we extended `run_ssh_login()` with an optional
-`command=` kwarg). `get`/`put` are two-step: `parent.put` to a per-
-container staging dir, then `parent.run("docker cp ...")`.
+`command=` kwarg). `get`/`put` are two-step: `parent.put` to a per-call
+staging dir under the parent's private staging root
+({ref}`docker-staging`), then `parent.exec("docker cp ...")`.
 
 ## Why not docker -H ssh://
 
