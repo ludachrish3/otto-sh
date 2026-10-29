@@ -35,11 +35,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-try:
-    import tomllib  # Python 3.11+
-except ModuleNotFoundError:  # pragma: no cover - 3.10 only, otto's floor
-    import tomli as tomllib
-
+from scripts.gate_stamp_common import test_roots as pyproject_testpaths
 from tests._fixtures.paths import CHECKOUT_ROOT, TESTS_ROOT
 
 pytestmark = pytest.mark.interpreter_agnostic
@@ -616,8 +612,7 @@ def test_the_busybox_tier_is_visible_to_a_pathless_run():
     lane can reach. Derived from where the marked modules actually live, so a
     directory that starts carrying marked modules is covered the day it lands.
     """
-    ini = tomllib.loads((CHECKOUT_ROOT / "pyproject.toml").read_text())
-    roots = [CHECKOUT_ROOT / p for p in ini["tool"]["pytest"]["ini_options"]["testpaths"]]
+    roots = [CHECKOUT_ROOT / p for p in pyproject_testpaths(CHECKOUT_ROOT)]
     assert roots, "no testpaths in pyproject.toml (guard misparse?)"
 
     directories = _directories_carrying("busybox")
@@ -972,8 +967,7 @@ def test_a_lane_that_selects_by_path_cannot_reach_the_busybox_tier():
     Widening the surface to the workflows is the obvious next step if a
     marked tier ever needs to run there.
     """
-    ini = tomllib.loads((CHECKOUT_ROOT / "pyproject.toml").read_text())
-    testpaths = [CHECKOUT_ROOT / p for p in ini["tool"]["pytest"]["ini_options"]["testpaths"]]
+    testpaths = [CHECKOUT_ROOT / p for p in pyproject_testpaths(CHECKOUT_ROOT)]
     assert testpaths, "no testpaths in pyproject.toml (guard misparse?)"
 
     carrying = _modules_carrying("busybox")
@@ -1483,8 +1477,7 @@ def test_the_conformance_tier_is_visible_to_a_pathless_run():
     modules actually live, so a new directory carrying them is covered the day
     it lands.
     """
-    ini = tomllib.loads((CHECKOUT_ROOT / "pyproject.toml").read_text())
-    roots = [CHECKOUT_ROOT / p for p in ini["tool"]["pytest"]["ini_options"]["testpaths"]]
+    roots = [CHECKOUT_ROOT / p for p in pyproject_testpaths(CHECKOUT_ROOT)]
     assert roots, "no testpaths in pyproject.toml (guard misparse?)"
 
     directories = _directories_carrying("conformance")
@@ -1514,8 +1507,7 @@ def test_a_lane_that_selects_by_path_cannot_reach_the_conformance_tier():
     `pytest` written into a GitHub workflow step or one buried inside
     `bash -c "..."`.
     """
-    ini = tomllib.loads((CHECKOUT_ROOT / "pyproject.toml").read_text())
-    testpaths = [CHECKOUT_ROOT / p for p in ini["tool"]["pytest"]["ini_options"]["testpaths"]]
+    testpaths = [CHECKOUT_ROOT / p for p in pyproject_testpaths(CHECKOUT_ROOT)]
     assert testpaths, "no testpaths in pyproject.toml (guard misparse?)"
 
     carrying = _modules_carrying("conformance")
@@ -2334,8 +2326,7 @@ def test_no_lane_but_the_kmodcov_lane_can_select_the_kmodcov_tier():
 
 def test_the_kmodcov_tier_is_visible_to_a_pathless_run():
     """G12e: `make kmodcov` is a path-less `-m kmodcov`; the tier must sit under testpaths."""
-    ini = tomllib.loads((CHECKOUT_ROOT / "pyproject.toml").read_text())
-    roots = [CHECKOUT_ROOT / p for p in ini["tool"]["pytest"]["ini_options"]["testpaths"]]
+    roots = [CHECKOUT_ROOT / p for p in pyproject_testpaths(CHECKOUT_ROOT)]
     directories = _directories_carrying("kmodcov")
     assert directories, "no directory holds a kmodcov-marked module (guard misparse?)"
     invisible = sorted(
@@ -2348,8 +2339,7 @@ def test_the_kmodcov_tier_is_visible_to_a_pathless_run():
 
 def test_a_lane_that_selects_by_path_cannot_reach_the_kmodcov_tier():
     """G12f: a lane with no `-m` at all is judged by the paths it names."""
-    ini = tomllib.loads((CHECKOUT_ROOT / "pyproject.toml").read_text())
-    testpaths = [CHECKOUT_ROOT / p for p in ini["tool"]["pytest"]["ini_options"]["testpaths"]]
+    testpaths = [CHECKOUT_ROOT / p for p in pyproject_testpaths(CHECKOUT_ROOT)]
     carrying = _modules_carrying("kmodcov")
     assert carrying, "no module carries the kmodcov marker (tier deleted? guard misparse?)"
     surfaces = (

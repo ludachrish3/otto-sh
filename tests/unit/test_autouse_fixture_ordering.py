@@ -31,12 +31,8 @@ from pathlib import Path
 
 import pytest
 
+from scripts.gate_stamp_common import test_roots as pyproject_testpaths
 from tests._fixtures.paths import CHECKOUT_ROOT, TESTS_ROOT
-
-try:
-    import tomllib  # Python 3.11+
-except ModuleNotFoundError:  # pragma: no cover - 3.10 only, otto's floor
-    import tomli as tomllib
 
 pytestmark = pytest.mark.interpreter_agnostic
 
@@ -66,8 +62,7 @@ def autouse_fixtures_requesting_monkeypatch(source: str, label: str) -> "list[st
 
 
 def _scanned_files() -> "list[Path]":
-    ini = tomllib.loads((CHECKOUT_ROOT / "pyproject.toml").read_text())
-    roots = [CHECKOUT_ROOT / p for p in ini["tool"]["pytest"]["ini_options"]["testpaths"]]
+    roots = [CHECKOUT_ROOT / p for p in pyproject_testpaths(CHECKOUT_ROOT)]
     files = [TESTS_ROOT / "conftest.py"]
     for root in roots:
         files += sorted(root.rglob("conftest.py"))

@@ -35,6 +35,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - 3.10 only, otto's floor
     import tomli as tomllib
 
+from scripts.gate_stamp_common import test_roots as pyproject_testpaths
 from tests._fixtures.paths import CHECKOUT_ROOT, TESTS_ROOT
 from tests.unit.test_tier_marker_invariants import (
     _module_pytestmark_names,
@@ -719,8 +720,7 @@ def test_every_carrier_declares_the_marker_at_module_level_under_tests_unit() ->
     # Walk pytest's own roots, not all of tests/: the fixture projects beside
     # them (tests/project_broken) hold test_*.py files that do not parse, on
     # purpose, and no lane ever collects them.
-    ini = tomllib.loads((CHECKOUT_ROOT / "pyproject.toml").read_text())
-    roots = [CHECKOUT_ROOT / p for p in ini["tool"]["pytest"]["ini_options"]["testpaths"]]
+    roots = [CHECKOUT_ROOT / p for p in pyproject_testpaths(CHECKOUT_ROOT)]
     carriers = {
         path
         for root in roots

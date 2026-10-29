@@ -29,19 +29,14 @@ from pathlib import Path
 import pytest
 
 from otto.config.home import otto_home
+from scripts.gate_stamp_common import test_roots as pyproject_testpaths
 from tests._fixtures.paths import CHECKOUT_ROOT, TESTS_ROOT
-
-try:
-    import tomllib  # Python 3.11+
-except ModuleNotFoundError:  # pragma: no cover - 3.10 only, otto's floor
-    import tomli as tomllib
 
 pytestmark = pytest.mark.interpreter_agnostic
 
 
 def _test_roots() -> "list[Path]":
-    ini = tomllib.loads((CHECKOUT_ROOT / "pyproject.toml").read_text())
-    return [CHECKOUT_ROOT / p for p in ini["tool"]["pytest"]["ini_options"]["testpaths"]]
+    return [CHECKOUT_ROOT / p for p in pyproject_testpaths(CHECKOUT_ROOT)]
 
 
 def _env_calls(node: ast.AST, method: str, var: str) -> bool:
