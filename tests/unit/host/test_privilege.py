@@ -926,14 +926,21 @@ async def test_a_host_without_sudo_elevates_with_su():
 
 
 @pytest.mark.parametrize(
-    ("mechanism", "creds", "expected"),
+    ("mechanism", "creds", "user", "expected"),
     [
-        ("su", [Cred(login="root")], True),
-        ("sudo", [Cred(login="root")], True),
-        ("su", _ADMIN_AND_ROOT, True),
-        ("sudo", _ADMIN_AND_ROOT, True),
-        ("su", [Cred(login="admin", password="secret")], False),
-        ("sudo", [Cred(login="admin"), Cred(login="root", password="rootpw")], False),
+        ("su", [Cred(login="root")], None, True),
+        ("sudo", [Cred(login="root")], None, True),
+        ("su", _ADMIN_AND_ROOT, None, True),
+        ("sudo", _ADMIN_AND_ROOT, None, True),
+        ("su", [Cred(login="admin", password="secret")], None, False),
+        ("sudo", [Cred(login="admin"), Cred(login="root", password="rootpw")], None, False),
+        ("none", [Cred(login="root")], None, False),
+        ("none", _ADMIN_AND_ROOT, None, False),
+        # `user=` is who acts, not the session: a root session switching to
+        # admin needs su's password, and has none ...
+        ("su", [Cred(login="root"), Cred(login="admin")], "admin", False),
+        # ... and an admin session switching to root needs none at all.
+        ("sudo", [Cred(login="admin"), Cred(login="root")], "root", True),
     ],
     ids=[
         "root-su",
@@ -942,9 +949,15 @@ async def test_a_host_without_sudo_elevates_with_su():
         "user-sudo-pw",
         "user-su-no-root-cred",
         "user-sudo-no-pw",
+        "root-none",
+        "user-none",
+        "root-session-as-admin-su-no-pw",
+        "admin-session-as-root-sudo",
     ],
 )
-def test_a_session_can_elevate_as_root_or_with_the_prompts_password(mechanism, creds, expected):
+def test_a_session_can_elevate_as_root_or_with_the_prompts_password(
+    mechanism, creds, user, expected
+):
     """Root needs no password; anyone else needs the one *mechanism*'s prompt asks for.
 
     The root cases carry no password at all, so only the root check can pass
@@ -952,10 +965,18 @@ def test_a_session_can_elevate_as_root_or_with_the_prompts_password(mechanism, c
     root's cred holds nothing for sudo to type). Mutation: answer "can
     elevate" with ``_elevation_password(...) is not None`` and ``root-su`` and
     ``root-sudo`` go red; drop the password half and the ``user-*-pw`` cases
-    do.
+    do; drop the mechanism check and ``root-none`` does.
     """
     host = _host_wired_to(None, creds)
-    assert host._can_elevate(mechanism) is expected
+    assert host._can_elevate(mechanism, user) is expected
+
+
+@pytest.mark.parametrize("mechanism", ["none", "doas"])
+def test_the_elevation_password_refuses_a_mechanism_with_no_prompt(mechanism):
+    """No prompt means no answer to choose; reading it as su would type root's password."""
+    host = _host_wired_to(None, _ADMIN_AND_ROOT)
+    with pytest.raises(ValueError, match=mechanism):
+        host._elevation_password(mechanism)
 
 
 @pytest.mark.asyncio

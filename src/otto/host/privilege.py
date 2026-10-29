@@ -74,6 +74,9 @@ if TYPE_CHECKING:
 
     from .host import Expect
 
+_ELEVATING_MECHANISMS = frozenset({"sudo", "su"})
+"""The resolved ``Userland.elevation`` values that elevate; any other (``"none"``) cannot."""
+
 _SUDO_NONCE_LEN = 16
 """Random characters in each sudo prompt: unguessable, and nothing sudo expands."""
 
@@ -226,7 +229,13 @@ class PosixPrivilege(UserlandHost):
         with root's, and not at all when the acting user is root, whom su
         never asks (:func:`~otto.host.login_proxy._may_challenge`, the rule
         ``switch_user`` applies). *mechanism* is ``"sudo"`` or ``"su"``.
+
+        Raises:
+            ValueError: *mechanism* is neither: there is no prompt to answer,
+                and a guess (su's root password) would answer the wrong one.
         """
+        if mechanism not in _ELEVATING_MECHANISMS:
+            raise ValueError(f"no elevation prompt for mechanism {mechanism!r}")
         if mechanism == "sudo":
             return self._sudo_password(user)
         cred = self._su_cred()
@@ -243,8 +252,11 @@ class PosixPrivilege(UserlandHost):
         then), or when otto has the password *mechanism*'s prompt asks for.
         :meth:`_elevation_password` stays the answer to "which password to
         type"; asking it "can I elevate" reads a root session as unable.
-        *mechanism* is ``"sudo"`` or ``"su"``.
+        *mechanism* is a resolved ``Userland.elevation``; anything but
+        ``"sudo"`` or ``"su"`` (``"none"``) cannot elevate, root or not.
         """
+        if mechanism not in _ELEVATING_MECHANISMS:
+            return False
         return self._acts_as_root(user) or self._elevation_password(mechanism, user) is not None
 
     async def _prepare_elevation(self) -> None:
@@ -349,6 +361,13 @@ class PosixPrivilege(UserlandHost):
         elevation = "sudo" if userland is None else userland.elevation
         host = getattr(self, "name", "")
         acting = self._acting_user(user)
+        if elevation not in _ELEVATING_MECHANISMS:
+            raise UnsupportedOnUserlandError(
+                f"{getattr(self, 'name', '')}: this host's userland provides no elevation "
+                f"mechanism (resolved {elevation!r}: no sudo, no su), so {cmd!r} cannot be "
+                "run with sudo=True. Declare one in the host's userland_options if the "
+                "probe is wrong, or run the command unelevated."
+            )
         # The response is the cred's own SecretStr, never a formatted
         # `SecretStr(f"{pw}\n")` (that would wrap the mask): the session
         # writes it as its value and a newline, unwrapped inside the
@@ -364,17 +383,10 @@ class PosixPrivilege(UserlandHost):
                     )
                 )
             return ElevatedCommand(f"SUDO_PROMPT='{prompt}' sudo -S {cmd}", answers)
-        if elevation == "su":
-            pw = self._elevation_password("su", user)
-            if pw is not None:
-                answers.append(CredentialExpect(_SU_PROMPT, pw, user=_SU_TARGET, host=host))
-            return ElevatedCommand(f"su -c {shlex.quote(cmd)}", answers)
-        raise UnsupportedOnUserlandError(
-            f"{getattr(self, 'name', '')}: this host's userland provides no elevation "
-            f"mechanism (resolved {elevation!r}: no sudo, no su), so {cmd!r} cannot be "
-            "run with sudo=True. Declare one in the host's userland_options if the "
-            "probe is wrong, or run the command unelevated."
-        )
+        pw = self._elevation_password("su", user)
+        if pw is not None:
+            answers.append(CredentialExpect(_SU_PROMPT, pw, user=_SU_TARGET, host=host))
+        return ElevatedCommand(f"su -c {shlex.quote(cmd)}", answers)
 
     def _history_prefix(self) -> str:
         """Return this host's history-suppression payload ("" when history is kept).

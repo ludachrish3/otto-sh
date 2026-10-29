@@ -727,9 +727,9 @@ class _UnixSurvey:
                 )
         else:
             mech = self.userland.elevation if self.userland is not None else "none"
-            # Elevate only when the session can: already root, or otto will
-            # answer the prompt (the elevation seam's own decision).
-            elevate = mech in ("sudo", "su") and host._can_elevate(mech)  # noqa: SLF001 — the elevation seam's own decision, not a copy
+            # Elevate only when the session can: a mechanism exists, and the
+            # session is already root or otto will answer the prompt.
+            elevate = host._can_elevate(mech)  # noqa: SLF001 — the elevation seam's own decision, not a copy
             inv = await _bounded(
                 self.deadline, INVENTORY_TIMEOUT_S * 2 + 1.0, run_inventory(run, elevate=elevate)
             )
