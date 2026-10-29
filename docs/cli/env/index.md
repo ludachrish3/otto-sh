@@ -87,9 +87,9 @@ interpreter it is running on, and stops if an active project's are unsatisfied:
 
 ```console
 $ otto --lab unix run use-beetroot
-error: project 'project4' requires 'otto-fixture-beetroot >= 0.1' — not satisfied in this environment (found: none)
+error: project 'project4' requires 'otto-fixture-beetroot == 0.1.0+otto.fixture' — not satisfied in this environment (found: none)
   fix: otto env sync
-  or:  uv pip install 'otto-fixture-beetroot >= 0.1'
+  or:  uv pip install 'otto-fixture-beetroot == 0.1.0+otto.fixture'
 ```
 
 `found: none` distinguishes *absent* from *too old* (`found: 2.12`), which are
@@ -100,7 +100,7 @@ A project that is **not part of this run** warns instead, and the run continues:
 
 ```console
 $ otto -E project4 --lab unix run test-instruction
-warning: project 'project4' requires 'otto-fixture-beetroot >= 0.1' — not satisfied in this environment (found: none), but project4 is inactive for this run — continuing without it
+warning: project 'project4' requires 'otto-fixture-beetroot == 0.1.0+otto.fixture' — not satisfied in this environment (found: none), but project4 is inactive for this run — continuing without it
 ```
 
 The check is metadata only — `importlib.metadata` lookups and requirement
@@ -186,8 +186,8 @@ $ otto env create
 error: installing projects failed:
   × No solution found when resolving dependencies:
   ╰─▶ Because otto-fixture-beetroot was not found in the package registry and
-      otto-sample-project4==0.1.0 depends on otto-fixture-beetroot>=0.1, we can
-      conclude that otto-sample-project4==0.1.0 cannot be used.
+      you require otto-fixture-beetroot==0.1.0+otto.fixture, we can conclude
+      that your requirements are unsatisfiable.
 ```
 
 At most one line is added, naming the two projects whose requirements collided,

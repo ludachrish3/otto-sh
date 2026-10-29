@@ -94,6 +94,38 @@ def _fallback_otto_home() -> Path:
     return Path(path)
 
 
+_INSTALLER_INDEX_VARS = (
+    "PIP_INDEX_URL",
+    "PIP_EXTRA_INDEX_URL",
+    "UV_INDEX_URL",
+    "UV_EXTRA_INDEX_URL",
+    "UV_DEFAULT_INDEX",
+    "UV_INDEX",
+    "PIP_FIND_LINKS",
+    "UV_FIND_LINKS",
+    "UV_CONFIG_FILE",
+)
+
+
+def _isolate_installer_config(env: dict[str, str]) -> None:
+    """Cut *env* off from every installer index source but the command line.
+
+    The env fixture's version (``0.1.0+otto.fixture``) is one PyPI cannot
+    serve, but a private index in user, global or site installer config could.
+    So the config files are switched off (``PIP_CONFIG_FILE=/dev/null``,
+    ``UV_NO_CONFIG=1``) and the index overrides dropped, leaving
+    ``--find-links`` as the only way a resolver can find the fixture.
+
+    The drop list exists even though the env is built from scratch: it is
+    defence in depth for when ``extra_env`` or a future change copies the
+    ambient environment.
+    """
+    env["PIP_CONFIG_FILE"] = os.devnull
+    env["UV_NO_CONFIG"] = "1"
+    for var in _INSTALLER_INDEX_VARS:
+        env.pop(var, None)
+
+
 def otto_subprocess_env(
     *,
     xdir: Path | None = None,
@@ -125,6 +157,9 @@ def otto_subprocess_env(
 
     ``OTTO_INIT_TIMEOUT`` passes through when set, so a slow machine's raised
     readiness deadline reaches the otto under test, not only the test process.
+
+    Installer config is isolated (:func:`_isolate_installer_config`), so a
+    ``pip``/``uv`` the child spawns resolves from ``--find-links`` alone.
     """
     env = coverage_subprocess_env()
     env["PYTEST_ADDOPTS"] = "-p no:tach"
@@ -138,6 +173,7 @@ def otto_subprocess_env(
     init_timeout = ambient("OTTO_INIT_TIMEOUT")
     if init_timeout:
         env["OTTO_INIT_TIMEOUT"] = init_timeout
+    _isolate_installer_config(env)
     if extra_env:
         env.update(extra_env)
     return env

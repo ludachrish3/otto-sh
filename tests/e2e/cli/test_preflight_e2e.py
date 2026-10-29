@@ -13,10 +13,10 @@ project4 is COPIED into tmp_path rather than used in place -- see
 ``tests._fixtures.project_scaffold.copy_sample_project`` for why, and
 ``tests/unit/test_sample_projects_hygiene.py`` for the gate that catches a
 regression. The consequence HERE is that the requirement string is
-deterministic: read from the pyproject (spaced, ``otto-fixture-beetroot >=
-0.1``) rather than from a leftover ``.egg-info``'s ``Requires-Dist``
-(normalized, ``otto-fixture-beetroot>=0.1``), so the assertions below mean the
-same thing on a developer's machine and on a clean clone.
+deterministic: read from the pyproject (spaced, as ``REQUIREMENT`` spells it)
+rather than from a leftover ``.egg-info``'s ``Requires-Dist`` (normalized, no
+spaces), so the assertions below mean the same thing on a developer's machine
+and on a clean clone.
 
 ``OTTO_HOME`` is pinned at tmp_path throughout: without it these build into
 the developer's real ``~/.otto``.
@@ -39,7 +39,7 @@ BUILD_TIMEOUT = 300
 """A real installer run. Measured at ~1.5s warm; a cold wheel cache on CI is
 much slower, and a timeout that fires there reads as a otto bug."""
 
-REQUIREMENT = "otto-fixture-beetroot >= 0.1"
+REQUIREMENT = "otto-fixture-beetroot == 0.1.0+otto.fixture"
 """As project4's pyproject spells it -- which is what the copied project guarantees."""
 
 BODY_MARKER = "the fixture package says"

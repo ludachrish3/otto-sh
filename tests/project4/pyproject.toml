@@ -1,7 +1,7 @@
 [project]
 name = "otto-sample-project4"
 version = "0.1.0"
-dependencies = ["otto-fixture-beetroot >= 0.1"]
+dependencies = ["otto-fixture-beetroot == 0.1.0+otto.fixture"]
 
 [build-system]
 requires = ["setuptools>=61"]

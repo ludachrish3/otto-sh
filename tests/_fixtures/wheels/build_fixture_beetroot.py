@@ -13,7 +13,13 @@ index carries. The first cut used a bare ``beetroot``, which is a REAL PyPI
 project (1.1.7.4) -- `uv pip install -e tests/project4` cheerfully fetched it, and
 every test resting on "this cannot resolve" would have passed for the wrong
 reason. ``otto-fixture-beetroot`` was checked against the live index and is
-absent; keep any replacement equally unmistakable, and re-check it.
+absent -- but absence today is not a guarantee, so the VERSION is the second
+lock: ``0.1.0+otto.fixture`` is a PEP 440 local version, which PyPI refuses to
+accept as an upload, so no registration of the name can ever satisfy
+``== 0.1.0+otto.fixture``. The suite's installer env also switches off
+user/global/site installer config (``tests/e2e/_otto_subprocess.py``), so a
+private index cannot serve it either. Keep any replacement equally
+unmistakable.
 
 Regenerate with:  python tests/_fixtures/wheels/build_fixture_beetroot.py
 
@@ -30,7 +36,7 @@ import zipfile
 from pathlib import Path
 
 NAME = "otto_fixture_beetroot"
-VERSION = "0.1.0"
+VERSION = "0.1.0+otto.fixture"
 DIST = f"{NAME}-{VERSION}"
 
 
@@ -45,11 +51,11 @@ def build(outdir: Path) -> Path:
     wheel = outdir / f"{DIST}-py3-none-any.whl"
     files: "dict[str, bytes]" = {
         f"{NAME}/__init__.py": (
-            b'"""otto test fixture package. Never published to any index."""\n'
-            b'__version__ = "0.1.0"\n\n\n'
-            b"def beet() -> str:\n"
-            b'    return "otto-fixture-beetroot"\n'
-        ),
+            '"""otto test fixture package. Never published to any index."""\n'
+            f'__version__ = "{VERSION}"\n\n\n'
+            "def beet() -> str:\n"
+            '    return "otto-fixture-beetroot"\n'
+        ).encode(),
         f"{DIST}.dist-info/METADATA": (
             f"Metadata-Version: 2.1\nName: {NAME}\nVersion: {VERSION}\n"
             "Summary: otto test fixture package\n"

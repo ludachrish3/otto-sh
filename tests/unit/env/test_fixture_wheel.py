@@ -10,10 +10,13 @@ import hashlib
 import subprocess
 import zipfile
 
+import tomli
+
 from tests._fixtures.gitrepo import git_env
 from tests._fixtures.paths import CHECKOUT_ROOT, WHEELS_DIR
 
-WHEEL = WHEELS_DIR / "otto_fixture_beetroot-0.1.0-py3-none-any.whl"
+VERSION = "0.1.0+otto.fixture"
+WHEEL = WHEELS_DIR / f"otto_fixture_beetroot-{VERSION}-py3-none-any.whl"
 
 
 def test_the_committed_wheel_exists():
@@ -27,12 +30,12 @@ def test_it_carries_the_three_required_metadata_files():
     with zipfile.ZipFile(WHEEL) as zf:
         names = set(zf.namelist())
     for required in ("METADATA", "WHEEL", "RECORD"):
-        assert f"otto_fixture_beetroot-0.1.0.dist-info/{required}" in names, required
+        assert f"otto_fixture_beetroot-{VERSION}.dist-info/{required}" in names, required
 
 
 def test_every_record_hash_matches_the_archived_bytes():
     with zipfile.ZipFile(WHEEL) as zf:
-        record = zf.read("otto_fixture_beetroot-0.1.0.dist-info/RECORD").decode()
+        record = zf.read(f"otto_fixture_beetroot-{VERSION}.dist-info/RECORD").decode()
         for line in record.strip().splitlines():
             name, _, rest = line.partition(",")
             if not rest or rest.startswith(","):
@@ -87,3 +90,22 @@ def test_the_wheel_is_tracked_by_git_not_merely_present_on_disk(tmp_path):
         "disk but would not reach a clone. Check that .gitignore still carries "
         "the `!tests/_fixtures/wheels/` negation beside its `wheels/` rule."
     )
+
+
+def test_fixture_requirement_is_a_local_version():
+    """PyPI rejects uploads carrying a local version, so no index can serve it.
+
+    A plain ``>= 0.1`` pin is satisfied by whatever a registered name later
+    publishes; ``== 0.1.0+otto.fixture`` is satisfied only by this wheel.
+    """
+    pyproject = CHECKOUT_ROOT / "tests" / "project4" / "pyproject.toml"
+    deps = tomli.loads(pyproject.read_text())["project"]["dependencies"]
+    assert deps == [f"otto-fixture-beetroot == {VERSION}"]
+
+
+def test_the_wheel_metadata_and_embedded_version_agree_with_the_filename():
+    with zipfile.ZipFile(WHEEL) as zf:
+        metadata = zf.read(f"otto_fixture_beetroot-{VERSION}.dist-info/METADATA").decode()
+        init = zf.read("otto_fixture_beetroot/__init__.py").decode()
+    assert f"Version: {VERSION}\n" in metadata
+    assert f'__version__ = "{VERSION}"' in init

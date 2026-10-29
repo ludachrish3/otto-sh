@@ -193,8 +193,9 @@ class TestSync:
     def test_passthrough_after_a_double_dash_reaches_the_installer(self, tmp_path, project4):
         """The contrast IS the assertion: same command, only the passthrough differs.
 
-        project4 requires ``otto-fixture-beetroot``, which exists on no index (that
-        was checked against the live one). So the first create must FAIL, and
+        project4 requires ``otto-fixture-beetroot == 0.1.0+otto.fixture``, a local
+        version no index can serve (PyPI rejects uploads carrying one, and the
+        harness env switches installer config off). So the first create must FAIL, and
         the same create with ``-- --find-links`` must succeed -- which is proof
         the arguments after ``--`` travelled all the way to the resolver, not
         merely that otto parsed them.
@@ -222,8 +223,10 @@ class TestSync:
         )
         assert without.returncode != 0, (
             "project4's requirement is supposed to be unsatisfiable from an index — "
-            f"if this passed, the fixture name is resolvable again:\n{without.stdout}"
+            f"if this passed, the fixture version is resolvable again:\n{without.stdout}"
         )
+        # Unsatisfiable for the RIGHT reason: the resolver names the pinned version.
+        assert "0.1.0+otto.fixture" in without.stdout + without.stderr
 
         with_links = _run(
             [
@@ -247,14 +250,14 @@ class TestSync:
             [
                 str(env / "bin" / "python"),
                 "-c",
-                "import otto_fixture_beetroot as b; print(b.beet())",
+                "import otto_fixture_beetroot as b; print(b.__version__)",
             ],
             capture_output=True,
             text=True,
             check=False,
         )
         assert probe.returncode == 0, probe.stderr
-        assert "otto-fixture-beetroot" in probe.stdout
+        assert probe.stdout.strip() == "0.1.0+otto.fixture"
 
 
 class TestWorkspaceWithoutInstallableProjects:

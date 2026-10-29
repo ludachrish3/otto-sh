@@ -14,6 +14,15 @@ cannot resolve" would have passed for the wrong reason. `otto-fixture-beetroot`
 was checked against the live index and is absent. If you ever rename it, check
 the replacement the same way.
 
+**The version is the second lock.** The wheel is `0.1.0+otto.fixture`, a PEP 440
+*local* version, and `tests/project4` requires exactly
+`otto-fixture-beetroot == 0.1.0+otto.fixture`. PyPI rejects uploads carrying a
+local version, so no one registering the name can make the requirement
+resolvable. The e2e subprocess env (`otto_subprocess_env`) also sets
+`PIP_CONFIG_FILE=/dev/null` and `UV_NO_CONFIG=1` and drops the
+`PIP_`/`UV_` `INDEX_URL` and `EXTRA_INDEX_URL` variables, so user, global or
+site installer config cannot add a private index that serves it.
+
 `tests/project4` declares it in its `pyproject.toml`, which makes project4 the sample
 project whose environment is *incomplete until installed* — the shape the
 `otto env` and preflight suites need.
