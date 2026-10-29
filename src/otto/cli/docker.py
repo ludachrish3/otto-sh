@@ -415,10 +415,10 @@ def _default_use_case(use_case: str | None) -> str:
     from .. import bootstrap
 
     del bootstrap
+    from ..config.scope import declared_use_case_names
     from ..declared import get_projects
-    from ..docker.resolve import declared_use_cases
 
-    names = sorted(declared_use_cases(get_projects()))
+    names = sorted(declared_use_case_names(get_projects()))
     if not names:
         fail(
             "otto docker: no active project declares [[docker.use_cases]] — there is "

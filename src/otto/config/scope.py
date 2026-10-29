@@ -39,14 +39,16 @@ where a project keeps its settings file (``SETTINGS_FILENAME``,
 ``TOML_SETTINGS_PATH``), the context suffixes docker reads as an archive
 (:data:`ARCHIVE_SUFFIXES`), and the frozen dataclasses the settings specs build
 (:class:`DockerImage`, :class:`DockerCompose`, :class:`DockerUseCase`,
-:class:`DockerSettings`, :class:`MonitorSettings`). :mod:`otto.config.project`
-holds them in every project it loads, and :mod:`otto.models.settings` builds them;
-this module is below both and already loaded wherever the project loader is, so
-the loader reads them at module scope (its annotations resolve at runtime) and
-the specs read them inside the functions that build them, and neither loads
-more than it did. The four ``otto.config`` exports (:class:`DockerImage`,
-:class:`DockerCompose`, :class:`DockerSettings`, :class:`MonitorSettings`)
-keep that public path; otto imports the rest from this module directly.
+:class:`DockerSettings`, :class:`MonitorSettings`), with
+:func:`declared_use_case_names`, the one reading of which use-cases they
+declare. :mod:`otto.config.project` holds them in every project it loads, and
+:mod:`otto.models.settings` builds them; this module is below both and already
+loaded wherever the project loader is, so the loader reads them at module scope
+(its annotations resolve at runtime) and the specs read them inside the
+functions that build them, and neither loads more than it did. The four
+``otto.config`` exports (:class:`DockerImage`, :class:`DockerCompose`,
+:class:`DockerSettings`, :class:`MonitorSettings`) keep that public path; otto
+imports the rest from this module directly.
 """
 
 # Spec: docs/superpowers/specs/2026-08-18-project-lab-host-scoping-design.md §5.
@@ -59,6 +61,8 @@ from typing import TYPE_CHECKING, Any
 from ..errors import OttoError
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from ..host.host import Host
     from ..models.settings import ProjectScopeSpec
     from ..run_context import OttoContext
@@ -1211,6 +1215,22 @@ class DockerSettings:
 
     use_cases: tuple[DockerUseCase, ...] = ()
     """`[[docker.use_cases]]` fragments this project contributes."""
+
+
+def declared_use_case_names(projects: "Iterable[Project]") -> list[str]:
+    """Return every use-case name *projects* declare, each once, in declaration order.
+
+    The one answer to "which use-cases are declared": fragments sharing a name,
+    in one project or across several, are one use-case (spec §3.1), so a name
+    counts once. Pure and settings-only (no lab, no host, no bootstrap), so the
+    completion fast path may call it; a caller that wants another order sorts
+    the result.
+    """
+    return list(
+        dict.fromkeys(
+            fragment.name for project in projects for fragment in project.docker_settings.use_cases
+        )
+    )
 
 
 @dataclasses.dataclass(frozen=True)

@@ -1762,9 +1762,14 @@ def collect_docker_use_case_names(projects: list["Project"]) -> list[str]:
 
     Deduped across projects on purpose: one use-case name shared by three projects is
     ONE use-case (that sharing is the whole mechanism, spec §3.1), not three
-    completions of the same word.
+    completions of the same word. The names are
+    :func:`~otto.config.scope.declared_use_case_names`'s, sorted.
     """
-    return sorted({uc.name for project in projects for uc in project.docker_settings.use_cases})
+    # Function-scope like every other import here; free, since the projects
+    # passed in were built by otto.config.project, which loaded scope.
+    from .scope import declared_use_case_names
+
+    return sorted(declared_use_case_names(projects))
 
 
 def collect_docker_image_names(projects: list["Project"]) -> list[str]:
@@ -1784,14 +1789,18 @@ def collect_docker_services_by_use_case(projects: list["Project"]) -> dict[str, 
     so its services are the union across them. A fragment naming a compose
     handle its project does not declare never reaches here — settings parsing
     refuses it (``DockerSettingsSpec``) — so the ``None`` branch below is
-    purely defensive.
+    purely defensive. The keys are
+    :func:`~otto.config.scope.declared_use_case_names`, as the use-case
+    completion's are.
     """
-    services: dict[str, set[str]] = {}
+    from .scope import declared_use_case_names
+
+    services: dict[str, set[str]] = {name: set() for name in declared_use_case_names(projects)}
     for project in projects:
         docker = project.docker_settings
         by_handle = {c.name: c for c in docker.composes if c.name}
         for use_case in docker.use_cases:
-            bucket = services.setdefault(use_case.name, set())
+            bucket = services[use_case.name]
             for handle in use_case.composes:
                 compose = by_handle.get(handle)
                 if compose is not None:

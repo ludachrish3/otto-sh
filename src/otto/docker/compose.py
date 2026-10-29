@@ -21,7 +21,7 @@ from pathlib import PurePath
 from typing import TYPE_CHECKING, TypeGuard
 
 from ..config.project import Project
-from ..config.scope import DockerCompose
+from ..config.scope import DockerCompose, declared_use_case_names
 from ..host.docker_host import (
     DockerContainerHost,
     compose_container_probe,
@@ -1204,7 +1204,7 @@ def project_staging_keys(project: Project, lab_name: str) -> "list[StagingKey]":
         keys.append(StagingKey(get_user_compose_project(project.name), stack=True))
     keys += [
         StagingKey(use_case_project(lab_name, use_case), stack=True)
-        for use_case in dict.fromkeys(fragment.name for fragment in settings.use_cases)
+        for use_case in declared_use_case_names([project])
     ]
     if settings.images:
         build = build_staging_key(project.name)

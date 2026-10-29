@@ -12,7 +12,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, TypedDict, cast
 
-from ..config.scope import project_targets
+from ..config.scope import declared_use_case_names, project_targets
 from ..declared import scope_for_project
 from ..errors import OttoError
 
@@ -73,11 +73,16 @@ class Selection:
 
 
 def declared_use_cases(projects: "list[Project]") -> "dict[str, list[SelectedFragment]]":
-    """Group every declared fragment by use-case name, in projects order."""
-    out: dict[str, list[SelectedFragment]] = {}
+    """Group every declared fragment by use-case name, in projects order.
+
+    The keys are :func:`~otto.config.scope.declared_use_case_names`, in its order.
+    """
+    out: dict[str, list[SelectedFragment]] = {
+        name: [] for name in declared_use_case_names(projects)
+    }
     for project in projects:
         for frag in project.docker_settings.use_cases:
-            out.setdefault(frag.name, []).append(SelectedFragment(project, frag))
+            out[frag.name].append(SelectedFragment(project, frag))
     return out
 
 
