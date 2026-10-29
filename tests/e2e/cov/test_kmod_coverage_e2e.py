@@ -15,6 +15,7 @@ import subprocess
 
 import pytest
 
+from otto import layout
 from otto.coverage.capture.model import Capture
 from otto.coverage.store.model import CoverageStore
 from tests.e2e._otto_subprocess import PROJECT5, run_otto
@@ -89,8 +90,8 @@ def coverage_run(built_modules, tmp_path_factory):
     xdir.mkdir()
     report_dir = tmp / "report"
     _run_otto(["test", "--cov", "--cov-clean", "TestKmodDemo"], xdir=xdir, timeout=900)
-    (log_dir,) = sorted((xdir / "test").glob("*"))
-    cov_dir = log_dir / "cov"
+    (log_dir,) = sorted(layout.command_output_dir(xdir, "test").glob("*"))
+    cov_dir = layout.cov_dir(log_dir)
     _run_otto(["cov", "report", str(log_dir), "--dir", str(report_dir)], xdir=xdir, timeout=120)
     store = CoverageStore.load(report_dir / "store.json")
     return store, cov_dir, log_dir
@@ -104,9 +105,9 @@ def reload_run(built_modules, tmp_path_factory):
     xdir.mkdir()
     report_dir = tmp / "report"
     _run_otto(["test", "--cov", "--cov-clean", "TestKmodReload"], xdir=xdir, timeout=900)
-    (log_dir,) = sorted((xdir / "test").glob("*"))
+    (log_dir,) = sorted(layout.command_output_dir(xdir, "test").glob("*"))
     _run_otto(["cov", "report", str(log_dir), "--dir", str(report_dir)], xdir=xdir, timeout=120)
-    return CoverageStore.load(report_dir / "store.json"), log_dir / "cov"
+    return CoverageStore.load(report_dir / "store.json"), layout.cov_dir(log_dir)
 
 
 @pytest.mark.integration

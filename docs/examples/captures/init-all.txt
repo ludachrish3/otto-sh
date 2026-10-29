@@ -1,5 +1,7 @@
 $ otto init --all --name acme --path /tmp/otto-gs/acme
 created .otto/settings.toml
+created .gitignore
+created .dockerignore
 created .otto/schemas/unix-host.schema.json
 created .otto/schemas/embedded-host.schema.json
 created .otto/schemas/lab.schema.json

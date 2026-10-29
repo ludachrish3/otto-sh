@@ -18,6 +18,8 @@ TEMPLATES = [
     (layout.host_debug_dir, ("h1",), "logs/h1/debug"),
     (layout.product_logs_dir, ("h1", "app"), "logs/h1/app/product"),
     (layout.product_debug_dir, ("h1", "app"), "logs/h1/app/debug"),
+    (layout.cov_dir, (), "cov"),
+    (layout.cov_report_dir, (), "cov_report"),
     (layout.cov_host_dir, ("h1",), "cov/h1"),
     (layout.cov_product_dir, ("h1", "app"), "cov/h1/app"),
 ]
@@ -83,3 +85,28 @@ def test_product_path_builders_validate_the_name(fn):
     # even from a caller that skipped ingest.
     with pytest.raises(ValueError, match=r"product name"):
         fn(BASE, "h1", "debug")
+
+
+# The invocation level above the run tree: where each run directory sits under the xdir.
+
+
+def test_output_root_is_one_fixed_directory_under_the_xdir():
+    # Kills: run output landing straight in the xdir again, where a defaulted
+    # xdir (the CWD) puts `docker/` or `test/` beside a project's own files.
+    assert layout.output_root(Path("/x")) == Path("/x/otto-output")
+    assert layout.output_root(Path()) == Path("otto-output")
+
+
+@pytest.mark.parametrize(
+    ("command", "rel"),
+    [("test", "otto-output/test"), ("write-file", "otto-output/write_file")],
+)
+def test_command_output_dir_sits_under_the_output_root(command, rel):
+    # Hyphens become underscores here, in the one builder, so a reader and the
+    # writer can never spell a command's directory differently.
+    assert layout.command_output_dir(Path("/x"), command) == Path("/x") / rel
+
+
+def test_the_invocation_builders_create_nothing(tmp_path):
+    layout.command_output_dir(tmp_path, "test")
+    assert list(tmp_path.iterdir()) == []

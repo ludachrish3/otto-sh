@@ -125,7 +125,9 @@ layer = "entry"
 # (inspect_shim, inspect_tests).
 # otto.labs: the `--lab` grammar (split_lab_names, LAB_SEPARATOR) is the lab
 # model's, in otto.labs.loader. Function-local, so no verb's `--help` loads it.
-depends_on = ["otto._shim_complete", "otto.invocation", "otto.instruction_catalog", "otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.link.params", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.labs", "otto.kmodcov", "otto.coverage.embedded_gcov", "otto.params", "otto.version", "otto.result", "otto.lifecycle", "otto.run_context", "otto.errors", "otto.check", "otto.project", "otto.init", "otto.env", "otto.session.activation", "otto.session.dependencies", "otto.session.errors", "otto.session.lab", "otto.session.logs", "otto.session.projects", "otto.monitor.errors", "otto.config.scope", "otto.models.dependencies", "otto.config.home", "otto.config.user_settings", "otto.declared", "otto.fleet"]
+# otto.layout: `otto cov report`'s default --dir and each run dir's cov/ (cov_dir,
+# cov_report_dir). Function-local, like otto.labs.
+depends_on = ["otto._shim_complete", "otto.invocation", "otto.instruction_catalog", "otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.link.params", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.labs", "otto.kmodcov", "otto.coverage.embedded_gcov", "otto.params", "otto.version", "otto.result", "otto.lifecycle", "otto.run_context", "otto.errors", "otto.check", "otto.project", "otto.init", "otto.env", "otto.session.activation", "otto.session.dependencies", "otto.session.errors", "otto.session.lab", "otto.session.logs", "otto.session.projects", "otto.monitor.errors", "otto.config.scope", "otto.models.dependencies", "otto.config.home", "otto.config.user_settings", "otto.declared", "otto.fleet", "otto.layout"]
 
 [[modules]]
 path = "otto.config"
@@ -293,7 +295,7 @@ depends_on = [
     "otto.layout",
     # otto.logger: the lcov capture runs quiet (LogMode) and names the
     # verbose log its full output went to (verbose_log_path). A foundation
-    # leaf that depends only on otto.console, so no cycle.
+    # module that depends only on otto.console and otto.layout, so no cycle.
     "otto.logger",
     "otto.config.scope",
     # otto.declared: the run's projects when no projects are given (current_projects),
@@ -352,7 +354,7 @@ depends_on = [
     "otto.registry",
     # The observe verbs run docker's own command with LogMode.QUIET so the
     # console does not relay a listing the verb then prints itself. otto.logger
-    # depends only on otto.console, so this edge cannot make a cycle.
+    # depends only on otto.console and otto.layout, so this edge cannot make a cycle.
     "otto.logger",
     "otto.config.scope",
     # otto.declared: the run's projects (current_projects, current_ordered_projects).
@@ -422,6 +424,8 @@ depends_on = [
     # otto.coverage.embedded_gcov: the embedded-gcov area exports, detects and
     # compares the shipped patch through library.py.
     "otto.coverage.embedded_gcov",
+    # otto.layout: the run-output directory the scaffolded ignore files name.
+    "otto.layout",
     # otto.config.user_settings: the doctor reads the user settings file.
     "otto.config.user_settings",
 ]
@@ -702,7 +706,9 @@ depends_on = []
 [[modules]]
 path = "otto.logger"
 layer = "foundation"
-depends_on = ["otto.console"]
+# otto.layout: where each run's directory goes (command_output_dir) and the
+# one directory pruning walks (output_root). A pure leaf, so no cycle.
+depends_on = ["otto.console", "otto.layout"]
 
 [[modules]]
 path = "otto.models"
@@ -997,7 +1003,8 @@ layer = "root"
 # otto.bootstrap: prepare_run loads the composition root before it reads the
 # run's projects for cov_tickets_json, so that read composes them as it always did
 # (spec 2026-10-11 placement-and-phases §3.12). Same layer: root to root.
-depends_on = ["otto.run_context", "otto.config", "otto.invocation", "otto.lifecycle", "otto.registry", "otto.monitor", "otto.version", "otto.models", "otto.host", "otto.coverage", "otto.params", "otto.errors", "otto.project", "otto.utils", "otto.monitor.errors", "otto.config.scope", "otto.config.home", "otto.labs", "otto.bootstrap", "otto.declared", "otto.fleet"]
+# otto.layout: the run dir's default cov/ and cov_report/ (cov_dir, cov_report_dir).
+depends_on = ["otto.run_context", "otto.config", "otto.invocation", "otto.lifecycle", "otto.registry", "otto.monitor", "otto.version", "otto.models", "otto.host", "otto.coverage", "otto.params", "otto.errors", "otto.project", "otto.utils", "otto.monitor.errors", "otto.config.scope", "otto.config.home", "otto.labs", "otto.bootstrap", "otto.declared", "otto.fleet", "otto.layout"]
 
 [[modules]]
 path = "otto.testing"
@@ -1056,9 +1063,10 @@ depends_on = []
 [[modules]]
 path = "otto.layout"
 layer = "foundation"
-# The run-tree contract: where per-host and per-product artifacts land. Pure,
-# and imports no other otto module. otto.host, otto.coverage, otto.models and
-# otto.project read it.
+# The run-tree contract: where each run's directory sits under the xdir, and
+# where per-host and per-product artifacts land in it. Pure, and imports no
+# other otto module. otto.logger, otto.host, otto.coverage, otto.models,
+# otto.project and otto.init read it.
 depends_on = []
 
 [[modules]]

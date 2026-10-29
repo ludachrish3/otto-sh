@@ -34,6 +34,7 @@ from pathlib import Path
 
 import pytest
 
+from otto import layout
 from tests._fixtures._host_pool import lease_unix_host
 from tests._fixtures.paths import CHECKOUT_ROOT
 from tests.e2e.host._pty_driver import InteractiveOttoSession
@@ -58,7 +59,7 @@ _LOG_LINE_RE = re.compile(
 
 def _find_login_log_dir(xdir: Path) -> Path:
     """Return the single ``host/<timestamp>_login`` output dir under ``xdir``."""
-    host_dir = xdir / "host"
+    host_dir = layout.command_output_dir(xdir, "host")
     assert host_dir.is_dir(), f"Expected {host_dir} to exist after host login"
     candidates = sorted(d for d in host_dir.iterdir() if d.is_dir() and d.name.endswith("_login"))
     assert len(candidates) == 1, (

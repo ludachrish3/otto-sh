@@ -3,3 +3,5 @@
 # copied here and committed like any source you own.
 /third_party/
 __pycache__/
+# otto's run output, when OTTO_XDIR does not send it elsewhere.
+otto-output/

@@ -1,16 +1,20 @@
-"""The run-tree contract: where per-host and per-product artifacts land.
+"""The run-tree contract: where each run's directory sits, and what lands in it.
 
-Every path below a run's output directory that is keyed by host or product
-comes from here, so the logs tree and the coverage tree cannot drift apart.
-Pure: nothing here touches the filesystem.
+Every run's directory sits under one fixed directory of the xdir
+(:func:`command_output_dir`), and every path below it that is keyed by host or
+product comes from here too, so writers and readers of either level cannot
+drift apart. Pure: nothing here touches the filesystem.
 
 .. code-block:: text
+
+    <xdir>/otto-output/<command>/<timestamp>[_<subcommand>]/   = <run>, below
 
     <run>/
       logs/<host_id>/<product>/product/   Product.get_logs output
       logs/<host_id>/<product>/debug/     the product's debug_log_globs haul
       logs/<host_id>/debug/               the host's debug_log_globs haul
       cov/<host_id>/<product>/            .gcda, board.info, capture.json
+      cov_report/                         the HTML coverage report (no destination given)
 
 ``debug`` is reserved as a product name because it is a sibling of the
 product directories under ``logs/<host_id>/``.
@@ -18,8 +22,16 @@ product directories under ``logs/<host_id>/``.
 
 from pathlib import Path
 
+OUTPUT_DIR = "otto-output"
+"""The one directory under the xdir that holds every run, whatever the command.
+
+Run output never lands straight in the xdir: ``--xdir`` defaults to the current
+directory, and a project root already has directories named like commands
+(``docker/``, ``test/``)."""
+
 LOGS_DIR = "logs"
 COV_DIR = "cov"
+COV_REPORT_DIR = "cov_report"
 PRODUCT_LOGS_DIR = "product"
 DEBUG_DIR = "debug"
 
@@ -47,6 +59,26 @@ def validate_product_name(name: str) -> None:
         raise ValueError(
             f"product name {name!r} is reserved (it names a sibling directory in the logs tree)"
         )
+
+
+def output_root(xdir: Path) -> Path:
+    """``<xdir>/otto-output`` — the directory every run's directory sits under."""
+    return xdir / OUTPUT_DIR
+
+
+def command_dir_name(command: str) -> str:
+    """Return the directory name of *command* (or a subcommand): hyphens become underscores."""
+    return command.replace("-", "_")
+
+
+def command_output_dir(xdir: Path, command: str) -> Path:
+    """``<xdir>/otto-output/<command>`` — where each run of *command* gets its directory.
+
+    The one place a command's directory is spelled: the writer
+    (:func:`otto.logger.management.create_output_dir`), its pruning and any
+    reader that looks for a run all start here.
+    """
+    return output_root(xdir) / command_dir_name(command)
 
 
 def host_logs_dir(base: Path, host_id: str) -> Path:
@@ -87,9 +119,23 @@ def product_debug_dir(base: Path, host_id: str, product: str) -> Path:
     return host_logs_dir(base, host_id) / product / DEBUG_DIR
 
 
+def cov_dir(base: Path) -> Path:
+    """``<base>/cov`` — a run's staged coverage.
+
+    Where ``otto test --cov`` and ``otto cov get`` put counters and captures,
+    and what ``otto cov report`` reads from each run dir it is given.
+    """
+    return base / COV_DIR
+
+
+def cov_report_dir(base: Path) -> Path:
+    """``<base>/cov_report`` — a run's HTML coverage report when no destination is given."""
+    return base / COV_REPORT_DIR
+
+
 def cov_host_dir(base: Path, host_id: str) -> Path:
     """``<base>/cov/<host_id>``."""
-    return base / COV_DIR / host_id
+    return cov_dir(base) / host_id
 
 
 def cov_product_dir_in(cov_dir: Path, host_id: str, product: str) -> Path:
@@ -107,4 +153,4 @@ def cov_product_dir_in(cov_dir: Path, host_id: str, product: str) -> Path:
 
 def cov_product_dir(base: Path, host_id: str, product: str) -> Path:
     """``<base>/cov/<host_id>/<product>`` — one product's staged counters and capture."""
-    return cov_product_dir_in(base / COV_DIR, host_id, product)
+    return cov_product_dir_in(cov_dir(base), host_id, product)

@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from otto import layout
 from otto.coverage.config import DestinationError
 from otto.suite.run import (
     NoTestsMatchedError,
@@ -667,8 +668,8 @@ def test_run_tests_default_report_dir_under_output_dir(tmp_path, monkeypatch):
     )
     mock.assert_called_once()
     args = mock.call_args.args
-    assert args[0] == [log_dir / "cov"]
-    assert args[1] == log_dir / "cov_report"
+    assert args[0] == [layout.cov_dir(log_dir)]
+    assert args[1] == layout.cov_report_dir(log_dir)
     # Directory creation is run_coverage_report's own prepare_destination
     # call; it is mocked out here, so it is proven directly in
     # tests/unit/cov/test_report_inputs.py::test_run_coverage_report_creates_a_missing_output_dir
@@ -715,7 +716,7 @@ def test_run_tests_cov_report_into_reused_dir_warns_not_raises(tmp_path, monkeyp
     """
     log_dir = tmp_path / "log"
     log_dir.mkdir()
-    report_dir = log_dir / "cov_report"
+    report_dir = layout.cov_report_dir(log_dir)
     report_dir.mkdir()
     (report_dir / "stale.html").write_text("stale from a previous run")
 
@@ -949,7 +950,7 @@ def test_post_run_coverage_warns_on_an_unresolvable_unit_toolchain(tmp_path, mon
         and "coverage.tiers.unit.toolchain.coverage_tool = 'no-such-reader'" in r.getMessage()
         for r in caplog.records
     )
-    assert not (log_dir / "cov_report").exists()
+    assert not layout.cov_report_dir(log_dir).exists()
 
 
 # ── run_tests / _post_run_coverage: overrides wiring ─────────────────────────
@@ -1634,7 +1635,7 @@ def test_a_failed_clean_after_collection_fails_a_passing_run(tmp_path, monkeypat
     _stub_instrumented_lab(monkeypatch)
     bad = CleanReport(hosts={"t1": {"app": Result(Status.Error, msg="denied")}})
     collected_result = CollectResult(
-        cov_dir=log_dir / "cov", product_dirs={}, produce=ProduceResult([]), clean=bad
+        cov_dir=layout.cov_dir(log_dir), product_dirs={}, produce=ProduceResult([]), clean=bad
     )
     monkeypatch.setattr(
         "otto.coverage.collect.collect_coverage", AsyncMock(return_value=collected_result)
@@ -1665,7 +1666,7 @@ def test_a_failed_clean_after_collection_still_writes_the_inline_report(tmp_path
     _stub_instrumented_lab(monkeypatch)
     bad = CleanReport(hosts={"t1": {"app": Result(Status.Error, msg="denied")}})
     collected_result = CollectResult(
-        cov_dir=log_dir / "cov", product_dirs={}, produce=ProduceResult([]), clean=bad
+        cov_dir=layout.cov_dir(log_dir), product_dirs={}, produce=ProduceResult([]), clean=bad
     )
     monkeypatch.setattr(
         "otto.coverage.collect.collect_coverage", AsyncMock(return_value=collected_result)
@@ -1683,7 +1684,7 @@ def test_a_failed_clean_after_collection_still_writes_the_inline_report(tmp_path
             output_dir=log_dir,
         )
     mock_run_report.assert_awaited_once()
-    assert mock_run_report.call_args.args[0] == [log_dir / "cov"]
+    assert mock_run_report.call_args.args[0] == [layout.cov_dir(log_dir)]
 
 
 def test_a_successful_clean_after_collection_logs_one_summary_line(tmp_path, monkeypatch, caplog):
@@ -1702,7 +1703,7 @@ def test_a_successful_clean_after_collection_logs_one_summary_line(tmp_path, mon
     ok = Result(Status.Success)
     good = CleanReport(hosts={"t1": {"app": ok, "lib": ok}, "t2": {"app": ok}})
     collected_result = CollectResult(
-        cov_dir=log_dir / "cov", product_dirs={}, produce=ProduceResult([]), clean=good
+        cov_dir=layout.cov_dir(log_dir), product_dirs={}, produce=ProduceResult([]), clean=good
     )
     monkeypatch.setattr(
         "otto.coverage.collect.collect_coverage", AsyncMock(return_value=collected_result)

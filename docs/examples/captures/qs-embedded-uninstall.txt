@@ -8,4 +8,4 @@ INFO     @dut > | No such extension mathops
 INFO     @dut   | mathops: uninstalled
 INFO     Connection closed to <Peer 127.0.0.1 <port>>
 
-Output directory: /tmp/otto-gs/xdir/run/<run>_uninstall
+Output directory: /tmp/otto-gs/xdir/otto-output/run/<run>_uninstall

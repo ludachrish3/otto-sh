@@ -3,15 +3,16 @@
 Otto-owned files (the editor schemas, the VS Code snippets, the exported
 kmodcov library, the embedded-gcov patch) are generated from the installed
 otto and refreshed on every write. User-owned files (settings, lab data,
-example tests, the init module, the VS Code settings, the kmodcov and
-embedded-gcov consumer starters) are created only when absent and never
-edited afterwards: once written, they are the user's.
+example tests, the init module, the VS Code settings, ``.gitignore`` and
+``.dockerignore``, the kmodcov and embedded-gcov consumer starters) are created
+only when absent and never edited afterwards: once written, they are the user's.
 
-The one exception is :func:`append_block`: a block of TOML comments added at
-the END of an existing ``settings.toml`` (the kmodcov area's commented
-``[[dev_tools]]`` entry, the embedded-gcov area's commented
-``[coverage.embedded]`` block). Nothing already in the file is changed, and a
-block of comments changes nothing the file means.
+The one exception is :func:`append_block`: a block added at the END of an
+existing user file. In ``settings.toml`` it is a block of TOML comments (the
+kmodcov area's commented ``[[dev_tools]]`` entry, the embedded-gcov area's
+commented ``[coverage.embedded]`` block), which changes nothing the file
+means; in ``.gitignore`` and ``.dockerignore`` it is the one line that ignores
+otto's run output. Nothing already in the file is changed.
 """
 
 import dataclasses

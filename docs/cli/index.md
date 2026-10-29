@@ -308,22 +308,36 @@ reports are used for.
 Most commands create a per-invocation output directory under `--xdir`
 before the command body runs; the run's log files and artifacts are
 written there, and the path is printed at the end of the run
-(`Output directory: ...`). `--xdir` defaults to the current directory, so
-without it (or `OTTO_XDIR`) a run started from a project root writes into the
-project:
+(`Output directory: ...`). Every run's directory sits under one fixed
+directory of the xdir, `otto-output/`, whatever the command and whether
+`--xdir` was given or defaulted:
 
 ```text
-<xdir>/<command>/<timestamp>_<subcommand>/
+<xdir>/otto-output/<command>/<timestamp>_<subcommand>/
 ```
+
+`--xdir` defaults to the current directory, so without it (or `OTTO_XDIR`) a
+run started from a project root writes into the project's `otto-output/`.
+otto writes nothing else at the top of the xdir, so a project's own `docker/`
+or `test/` directory is never written into, and `otto init` adds
+`otto-output/` to the project's `.gitignore` and `.dockerignore`
+({doc}`init`).
+
+`otto init` adds that line only when it scaffolds a project's settings, so a
+project whose `.otto/settings.toml` already existed never gets it: add
+`otto-output/` to its `.gitignore`, and to its `.dockerignore` if it builds
+images with the project root as the context, yourself.
 
 - `<command>` is the top-level subcommand (`run`, `test`, `host`, ...)
   and `<subcommand>` is the leaf — the instruction name or host verb.
   Commands with no distinct leaf (`test`, `monitor`) omit the suffix:
-  `test/<timestamp>/`.
+  `otto-output/test/<timestamp>/`.
 - `<timestamp>` is UTC with millisecond precision
   (`YYYYMMDD_HHMMSS_mmm`), so directories sort chronologically.
 - Hyphens in command names become underscores (`write-file` →
   `write_file`).
+- Log retention (`--log-days`) deletes only the timestamped directories
+  inside `otto-output/` that are older than the limit; nothing outside it.
 
 Read-only commands create no directory: `otto reservation`, `otto inventory`,
 `otto schema`, and `otto init` opt out entirely, as do `otto cov clean` and
@@ -418,8 +432,8 @@ than a `.pytest_cache/` in pytest's rootdir. That covers the sessions, not
 all of `otto test`: your project's init modules, which otto imports when it
 starts, compile into a `__pycache__` beside themselves as any Python module
 does, unless you set `PYTHONPYCACHEPREFIX`; and a run's output directory is
-under `--xdir`, which is the current directory unless you choose another
-([Output directories](#output-directories)).
+under `otto-output/` in `--xdir`, which is the current directory unless you
+choose another ([Output directories](#output-directories)).
 
 Everything under a workspace home is derived, so the whole directory is
 disposable — delete it and otto rebuilds what it needs on the next run.

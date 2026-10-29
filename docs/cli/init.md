@@ -51,20 +51,32 @@ Every file goes through one write policy. Otto-owned files are regenerated
 from the installed otto, so they are refreshed; user-owned files are created
 once and never edited again — apart from the commented block `--kmodcov` or `--embedded-gcov`
 appends to an existing `settings.toml` (see the kmodcov and embedded-gcov
-sections below).
+sections below), and the `otto-output/` line below.
+
+Scaffolding `settings` also makes the project's `.gitignore` and
+`.dockerignore` ignore `otto-output/`, the directory every run's output goes
+into ({ref}`invocation-output-directory`), so runs started from the project
+root are neither committed nor sent to docker with a build context there. A
+missing file is created holding that one line; an existing one without it gets
+the line at its end (`appended`); one that already ignores `otto-output/`, or
+is a symlink, is `kept` as it is. Both files are written for every project: a
+`.dockerignore` in a project that never builds an image does nothing. A project
+whose settings already exist is not given the line, since `settings` is not
+scaffolded again; {ref}`invocation-output-directory` says what to add by hand.
 
 | Owner | Files | When the file exists |
 | ----- | ----- | -------------------- |
 | otto | `.otto/schemas/*.schema.json`, `.vscode/otto.code-snippets`, the vendored `otto_kmodcov` library, the embedded-gcov patch | refreshed |
-| you | `.otto/settings.toml`; `lab_data/{lab,inventory,creds}.json` and `lab_data/README.md`; `tests/test_example.py` and `tests/conftest.py`; the init module; `.vscode/settings.json` and `.vscode/extensions.json`; the kmodcov and embedded-gcov consumer starters | kept, byte for byte |
+| you | `.otto/settings.toml`; `lab_data/{lab,inventory,creds}.json` and `lab_data/README.md`; `tests/test_example.py` and `tests/conftest.py`; the init module; `.vscode/settings.json` and `.vscode/extensions.json`; `.gitignore` and `.dockerignore`; the kmodcov and embedded-gcov consumer starters | kept, byte for byte |
 
 Each file in the run is listed as `created`, `refreshed`, `kept` or (for the
-kmodcov entry or embedded-gcov block added to an existing `settings.toml`, the one edit `otto init`
+kmodcov entry or embedded-gcov block added to an existing `settings.toml`, or
+the `otto-output/` line added to an existing ignore file — the only edits `otto init`
 makes to a file of yours) `appended`; refreshing
 `.otto/schemas` also lists each orphaned `*.schema.json` it deleted as
 `pruned` — see {doc}`schema/export` for exactly what is pruned. So `--tests`
-never overwrites an example test you edited, and apart from that one appended
-block, nothing `otto init` does ever edits a file you own.
+never overwrites an example test you edited, and apart from those appended
+lines, nothing `otto init` does ever edits a file you own.
 
 ## Verdicts and exit codes
 

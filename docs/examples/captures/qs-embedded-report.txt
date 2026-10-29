@@ -9,4 +9,4 @@ INFO     Done. Report: /tmp/otto-gs/xdir/quickstart-embedded/report/index.html
 INFO     Coverage: 96.2% overall (3 files)
 INFO     Report: /tmp/otto-gs/xdir/quickstart-embedded/report/index.html
 
-Output directory: /tmp/otto-gs/xdir/cov/<run>_report
+Output directory: /tmp/otto-gs/xdir/otto-output/cov/<run>_report

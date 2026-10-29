@@ -17,6 +17,7 @@ from importlib.machinery import ModuleSpec
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from .. import layout
 from .area_dirs import DEFAULT_EMBEDDED_GCOV_DIR, DEFAULT_KMODCOV_DIR
 from .config import InitConfig
 from .settings_file import declared_init, settings_data, settings_path, settings_paths
@@ -268,6 +269,59 @@ class AreaWrite:
     notices: list[str] = dataclasses.field(default_factory=list)
 
 
+OUTPUT_IGNORE_ENTRY = f"{layout.OUTPUT_DIR}/"
+"""The line each scaffolded ignore file carries, naming the directory every run lands in."""
+
+_IGNORE_FILES = (".gitignore", ".dockerignore")
+"""Where otto's run output must stay out of: version control, and a docker
+build context at the project root. The scaffolder has no docker area to key the
+second on, and a ``.dockerignore`` in a project that never builds an image is
+inert, so both are written for every project."""
+
+
+def _ignores_output(path: Path) -> bool:
+    """Return True when the ignore file *path* already ignores the output directory, effectively.
+
+    A line naming the directory counts, root-anchored (``/otto-output/``) and
+    slashless spellings too, unless a later line negates it or anything under
+    it (``!otto-output/``, ``!otto-output/keep.txt``): the last matching rule
+    wins, so such a file gets the entry appended after the negation.
+    Decoded leniently, like :func:`_text_declares`.
+    """
+    text = path.read_bytes().decode(errors="replace")
+    ignored = False
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line.startswith("!"):
+            negated = line[1:].lstrip("/").rstrip("/")
+            if negated == layout.OUTPUT_DIR or negated.startswith(f"{layout.OUTPUT_DIR}/"):
+                ignored = False
+        elif line.strip("/") == layout.OUTPUT_DIR:
+            ignored = True
+    return ignored
+
+
+def _scaffold_ignore_files(root: Path) -> list[FileWrite]:
+    """Make each of :data:`_IGNORE_FILES` ignore otto's run output.
+
+    An absent file is created holding :data:`OUTPUT_IGNORE_ENTRY`. An existing
+    one that does not already ignore the output (:func:`_ignores_output`: no
+    entry, or one a later line negates) gains it at its end
+    (:func:`~otto.init.write_policy.append_block`); one that does, or a
+    symlink, is ``kept`` untouched.
+    """
+    writes = []
+    for name in _IGNORE_FILES:
+        path = root / name
+        if not (path.exists() or path.is_symlink()):
+            writes.append(write_file(path, OUTPUT_IGNORE_ENTRY + "\n", "user"))
+        elif path.is_symlink() or not path.is_file() or _ignores_output(path):
+            writes.append(FileWrite(path, "kept"))
+        else:
+            writes.append(append_block(path, OUTPUT_IGNORE_ENTRY + "\n"))
+    return writes
+
+
 _VSCODE_SETTINGS_KEPT = (
     "existing .vscode/settings.json left untouched — for the schema associations see "
     "https://otto-sh.readthedocs.io/en/stable/cli/schema/editors.html#vs-code"
@@ -275,7 +329,12 @@ _VSCODE_SETTINGS_KEPT = (
 
 
 def _scaffold_settings(config: InitConfig, areas: list[str]) -> AreaWrite:
-    """Write the settings template, plus the commented block of each coverage area in the run."""
+    """Write the settings template, plus the commented block of each coverage area in the run.
+
+    Settings is the project marker, written whenever a project is first
+    scaffolded, so it is also where the project's ignore files learn to ignore
+    otto's run output (:func:`_scaffold_ignore_files`).
+    """
     text = SETTINGS_TEMPLATE.format(
         name=config.name, version=config.version, init_module=config.init_module
     )
@@ -288,7 +347,7 @@ def _scaffold_settings(config: InitConfig, areas: list[str]) -> AreaWrite:
     # over a missing conventional directory.
     for directory in ("lab_data", "tests", "pylib"):
         (config.root / directory).mkdir(exist_ok=True)
-    return AreaWrite([write])
+    return AreaWrite([write, *_scaffold_ignore_files(config.root)])
 
 
 def _scaffold_schemas(config: InitConfig, areas: list[str]) -> AreaWrite:  # noqa: ARG001 — uniform signature

@@ -37,7 +37,7 @@ INFO     @dut   | llext call_fn mathops op_div_zero
 INFO     @dut > | op_div_zero=-1,0
 INFO     Connection closed to <Peer 127.0.0.1 <port>>
 
-------------- generated xml file: /tmp/otto-gs/xdir/test/<run>/junit.xml -------------
+------- generated xml file: /tmp/otto-gs/xdir/otto-output/test/<run>/junit.xml -------
 === 4 passed in <t>s ===
 INFO     Dumping embedded coverage for mathops from dut via 'llext call_fn mathops cov_dump'
 INFO     Connected to <Peer 127.0.0.1 <port>>
@@ -63,4 +63,4 @@ INFO     @dut > | gcov_clear
 INFO     coverage counters cleared after collection on 1 product(s) across 1 host(s)
 INFO     Connection closed to <Peer 127.0.0.1 <port>>
 
-Output directory: /tmp/otto-gs/xdir/test/<run>
+Output directory: /tmp/otto-gs/xdir/otto-output/test/<run>

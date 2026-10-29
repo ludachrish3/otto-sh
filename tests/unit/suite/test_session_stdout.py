@@ -11,8 +11,8 @@ import io
 
 from otto.suite.run import _SessionStdout
 
-_FINAL = "/tmp/otto-gs/xdir/test/20261025_101112_123/junit.xml"
-_PARTIAL = "/tmp/otto-gs/xdir/test/20261025_101112_123/.junit.xml.123456.partial"
+_FINAL = "/tmp/otto-gs/xdir/otto-output/test/20261025_101112_123/junit.xml"
+_PARTIAL = "/tmp/otto-gs/xdir/otto-output/test/20261025_101112_123/.junit.xml.123456.partial"
 
 
 def _through_stream(text: str, *, kept: bool = True) -> str:

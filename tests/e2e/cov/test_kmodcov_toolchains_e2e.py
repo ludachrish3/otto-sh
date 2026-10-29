@@ -33,6 +33,7 @@ import uuid
 
 import pytest
 
+from otto import layout
 from otto.coverage.store.model import CoverageStore
 from otto.host.factory import create_host_from_dict
 from tests._ambient_env import ambient
@@ -200,8 +201,8 @@ def coverage_run(built_with, tmp_path_factory):
         timeout=900,
         overlay=overlay,
     )
-    (log_dir,) = sorted((xdir / "test").glob("*"))
-    cov_dir = log_dir / "cov"
+    (log_dir,) = sorted(layout.command_output_dir(xdir, "test").glob("*"))
+    cov_dir = layout.cov_dir(log_dir)
     _run_otto(
         ["cov", "report", str(log_dir), "--dir", str(report_dir)],
         xdir=xdir,

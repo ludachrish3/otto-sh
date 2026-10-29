@@ -19,6 +19,7 @@ import sys
 
 import pytest
 
+from otto import layout
 from otto.config.env import is_otto_env_var
 from tests._fixtures.labdata import write_lab_json
 from tests._fixtures.project_scaffold import make_project
@@ -162,7 +163,7 @@ def _run(workspace, *argv: str) -> "tuple[subprocess.CompletedProcess[str], list
     )
     runs = [
         {name: (log.parent / name).read_text() for name in ("console.log", "verbose.log")}
-        for log in sorted((tmp_path / "xdir").glob("*/*/console.log"))
+        for log in sorted(layout.output_root(tmp_path / "xdir").glob("*/*/console.log"))
     ]
     return p, runs
 

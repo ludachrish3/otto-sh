@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from typer.testing import CliRunner
 
+from otto import layout
 from otto.cli import cov as cov_module
 from otto.cli.cov import cov_app
 from otto.config.coverage_settings import CoverageConfigError
@@ -499,7 +500,7 @@ class TestCovReportSuccess:
         from otto.labs.loader import Lab
 
         mock, _ = mock_run_report
-        run_dir = tmp_path / "xdir" / "cov" / "20260703_120000_000_report"
+        run_dir = layout.command_output_dir(tmp_path / "xdir", "cov") / "20260703_120000_000_report"
         run_dir.mkdir(parents=True)
         token = set_context(OttoContext(lab=Lab(name="t"), policy=RunPolicy(output_dir=run_dir)))
         try:
@@ -507,7 +508,7 @@ class TestCovReportSuccess:
         finally:
             reset_context(token)
         assert result.exit_code == 0, result.output
-        assert mock.call_args.args[1] == run_dir / "cov_report"
+        assert mock.call_args.args[1] == layout.cov_report_dir(run_dir)
         assert mock.call_args.kwargs["overwrite"] is False
 
     def test_overwrite_dir_flag_is_passed_through_to_run_coverage_report(
@@ -614,7 +615,7 @@ class TestCovReportSuccess:
         mock.assert_called_once()
         # Should have forwarded two cov dirs
         args = mock.call_args.args
-        assert args[0] == [dir1 / "cov", dir2 / "cov"]
+        assert args[0] == [layout.cov_dir(dir1), layout.cov_dir(dir2)]
 
     def test_report_default_has_no_tracefile_tiers(self, cov_tree, mock_run_report):
         """No --tier → no tracefile tiers; the settings tiers apply."""

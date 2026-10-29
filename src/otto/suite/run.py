@@ -646,6 +646,8 @@ async def _post_run_coverage(projects: "list[Project]", log_dir: Path, opts: Run
         # non-coverage library run_tests() call from pulling the CLI (typer).
         return
 
+    from .. import layout
+
     # A failed clean after collection fails the run, but only once the report
     # below has had its turn: the captures are already written, and the
     # report is best-effort by policy, so it is never skipped for the clean.
@@ -653,7 +655,7 @@ async def _post_run_coverage(projects: "list[Project]", log_dir: Path, opts: Run
     if opts.cov:
         from ..coverage.collect import collect_coverage
 
-        cov_dir = opts.cov_dir or log_dir / "cov"
+        cov_dir = opts.cov_dir or layout.cov_dir(log_dir)
         # collect_coverage fails loud; a bare `otto test --cov` run must never
         # let a coverage-collection failure (no [coverage] section, no .gcda
         # retrieved, an ambiguous/misconfigured tier, a non-git project root, or a
@@ -688,9 +690,11 @@ async def _post_run_coverage(projects: "list[Project]", log_dir: Path, opts: Run
         from ..coverage.report_inputs import resolve_report_inputs
         from ..coverage.reporter import run_coverage_report
 
-        cov_dir = opts.cov_dir or log_dir / "cov"
+        cov_dir = opts.cov_dir or layout.cov_dir(log_dir)
         report_dir = (
-            opts.cov_report_dir if opts.cov_report_dir is not None else log_dir / "cov_report"
+            opts.cov_report_dir
+            if opts.cov_report_dir is not None
+            else layout.cov_report_dir(log_dir)
         )
         # Like the capture tail, in-run report generation must never fail an
         # otherwise-successful test run: run_coverage_report's own

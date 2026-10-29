@@ -5,4 +5,4 @@ INFO     @dut   | llext call_fn mathops op_clamp_in
 INFO     @dut > | op_clamp_in=7
 INFO     Connection closed to <Peer 127.0.0.1 <port>>
 
-Output directory: /tmp/otto-gs/xdir/host/<run>_exec
+Output directory: /tmp/otto-gs/xdir/otto-output/host/<run>_exec

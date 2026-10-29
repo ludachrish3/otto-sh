@@ -286,7 +286,9 @@ def report(
     # project_root to walk).
     tier_specs: "list[TierSpec] | None" = _parse_tier_specs(tier) if tier else None
 
-    cov_dirs = [d / "cov" for d in output_dirs]
+    from .. import layout
+
+    cov_dirs = [layout.cov_dir(d) for d in output_dirs]
 
     if report_dir is None:
         from ..run_context import get_context
@@ -296,7 +298,7 @@ def report(
             raise typer.BadParameter(
                 "no output directory available: pass --dir/-d", param_hint="--dir"
             )
-        report_dir = base / "cov_report"
+        report_dir = layout.cov_report_dir(base)
     report_dir = report_dir.resolve()
 
     from ..coverage.capture.gitio import GitUnavailableError, NotAGitRepoError

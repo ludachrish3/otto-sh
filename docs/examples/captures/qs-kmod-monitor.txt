@@ -15,7 +15,7 @@ INFO     @dut   | SUDO_PROMPT='otto-sudo-<nonce>:' sudo -S sh -c 'printf %s '"'"
 INFO     @dut   | cat /sys/module/qs_wordcount/parameters/words
 INFO     @dut > | 3
 
-------------- generated xml file: /tmp/otto-gs/xdir/test/<run>/junit.xml -------------
+------- generated xml file: /tmp/otto-gs/xdir/otto-output/test/<run>/junit.xml -------
 === 1 passed, 3 deselected in <t>s ===
 
-Output directory: /tmp/otto-gs/xdir/test/<run>
+Output directory: /tmp/otto-gs/xdir/otto-output/test/<run>

@@ -88,7 +88,7 @@ DEBUG    TelnetSession@<session>: framed write cmd='kernel uptime'              
          uptime\rretval\r__OTTO_<session>_END__\r'
 DEBUG    TelnetSession@<session>: begin marker matched on                          session.py:<n>
          chunk='\x1b[1;31m__OTTO_<session>_BEGIN__: command not found\r\n'
-INFO     @zephyr37_fat > | Uptime: <n> ms                                            host.py:<n>
+INFO     @zephyr37_fat > | Uptime: <n> ms                                           host.py:<n>
 DEBUG    TelnetSession@<session>: run_cmd done cmd='kernel uptime' retcode=0       session.py:<n>
          output_len=<n> buffer=': command not found\r\n\x1b[m\x1b[1;32m~$
          \x1b[m\r\n\x1b[1;31m__OTTO_<session>_BEGIN__: command not
@@ -96,4 +96,4 @@ DEBUG    TelnetSession@<session>: run_cmd done cmd='kernel uptime' retcode=0    
          \x1b[m\r\n0\r\n\x1b[1;32m~$ \x1b[m\r\n\x1b[1;31m__OTTO_<session>_END__'
 INFO     Connection closed to <Peer 127.0.0.1 <port>>                              client_base.py:<n>
 
-Output directory: /tmp/otto-gs/xdir/host/<run>_exec
+Output directory: /tmp/otto-gs/xdir/otto-output/host/<run>_exec

@@ -709,7 +709,8 @@ SSH host key verification
   {ref}`host-key-settings`.
 
 Log retention
-: Otto stores logs and artifacts under the `--xdir` directory.  On isolated systems
+: Otto stores logs and artifacts under `otto-output/` in the `--xdir` directory
+  ([Output directories](cli/index.md#output-directories)).  On isolated systems
   with limited disk, use the `--log-days` setting (default: 30 days) to control
   automatic cleanup.
 

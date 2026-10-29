@@ -1,9 +1,13 @@
 import logging
 import logging.handlers
+import os
+import re
+import time
 from pathlib import Path
 
 import pytest
 
+from otto import layout
 from otto.host.host import HostFilter
 from otto.logger import management
 from otto.logger.mode import LogMode
@@ -37,7 +41,7 @@ def test_create_output_dir_returns_and_creates_dir(tmp_path):
     out = management.create_output_dir("test", "mysuite")
     assert out.exists()
     assert out.is_dir()
-    assert out.parent == tmp_path / "test"
+    assert out.parent == layout.command_output_dir(tmp_path, "test")
     assert (out / "console.log").exists()  # file handler created the console transcript
     # otto's import-time NullHandler stays a LIBRARY concern: it is never
     # marked, so it can never be adopted onto root or fanned into the listener.
@@ -79,7 +83,7 @@ def test_verbose_floor():
 
 def test_remove_old_logs_respects_time_budget(tmp_path, monkeypatch):
     management.init_cli_logging(xdir=tmp_path, log_level="INFO", keep_days=7)
-    cmd_dir = tmp_path / "test"
+    cmd_dir = layout.command_output_dir(tmp_path, "test")
     cmd_dir.mkdir(parents=True, exist_ok=True)
     import os
 
@@ -679,3 +683,71 @@ def test_stop_listener_unbounded_branch_still_stops():
     assert capture.messages == ["atexit-path"]
     assert management._state.listener is None
     assert listener._thread is None, "the unbounded branch uses QueueListener.stop()"
+
+
+# ── Where a run's directory goes ─────────────────────────────────────────────
+_TS = r"\d{8}_\d{6}_\d{3}"
+
+
+@pytest.mark.parametrize(
+    ("command", "sub", "rel", "leaf"),
+    [
+        ("docker", None, "otto-output/docker", rf"{_TS}"),
+        ("run", "write-file", "otto-output/run", rf"{_TS}_write_file"),
+    ],
+    ids=["command", "command-and-subcommand"],
+)
+def test_an_explicit_xdir_puts_the_run_under_otto_output(tmp_path, command, sub, rel, leaf):
+    management.init_cli_logging(xdir=tmp_path, log_level="INFO", keep_days=7)
+    out = management.create_output_dir(command, sub)
+    assert out.parent == tmp_path / rel
+    assert re.fullmatch(leaf, out.name), out.name
+    # Nothing else lands in the xdir: no bare `<xdir>/<command>/`.
+    assert [p.name for p in tmp_path.iterdir()] == ["otto-output"]
+
+
+@pytest.mark.parametrize(
+    ("command", "sub", "rel"),
+    [("test", None, "otto-output/test"), ("host", "exec", "otto-output/host")],
+    ids=["command", "command-and-subcommand"],
+)
+def test_the_defaulted_xdir_puts_the_run_under_otto_output_in_the_cwd(
+    tmp_path, monkeypatch, command, sub, rel
+):
+    # --xdir defaults to Path() (the CWD): the run lands in ./otto-output, so a
+    # project root's own ./test or ./docker is never written into.
+    monkeypatch.chdir(tmp_path)
+    management.init_cli_logging(xdir=Path(), log_level="INFO", keep_days=7)
+    out = management.create_output_dir(command, sub)
+    assert out.parent == Path(rel)
+    assert (tmp_path / rel / out.name).is_dir()
+    assert [p.name for p in tmp_path.iterdir()] == ["otto-output"]
+
+
+def _old_otto_named_dir(parent: Path, name: str = "20200101_000000_000") -> Path:
+    d = parent / name
+    d.mkdir(parents=True)
+    past = time.time() - 3600
+    os.utime(d, (past, past))
+    return d
+
+
+def test_prune_removes_old_runs_under_otto_output_only(tmp_path):
+    management.init_cli_logging(xdir=tmp_path, log_level="INFO", keep_days=7)
+    old_run = _old_otto_named_dir(tmp_path / "otto-output" / "test")
+    # A user's own ./docker and ./test beside otto-output/, each holding a
+    # child that happens to match otto's run-name pattern and is old enough:
+    # neither is otto's, so neither may be touched.
+    users_docker = _old_otto_named_dir(tmp_path / "docker")
+    users_test = _old_otto_named_dir(tmp_path / "test", "20200101_000000_000_suite")
+    management.remove_old_logs(seconds=60)
+    assert not old_run.exists()
+    assert users_docker.is_dir()
+    assert users_test.is_dir()
+
+
+def test_prune_without_an_otto_output_dir_touches_nothing(tmp_path):
+    management.init_cli_logging(xdir=tmp_path, log_level="INFO", keep_days=7)
+    users_docker = _old_otto_named_dir(tmp_path / "docker")
+    management.remove_old_logs(seconds=60)
+    assert users_docker.is_dir()

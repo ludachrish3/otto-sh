@@ -1121,3 +1121,88 @@ def test_an_unparseable_settings_file_declaring_a_kmodcov_entry_is_left_alone(
     before = settings.read_text()
     _scaffold(tmp_path, "kmodcov")
     assert settings.read_text() == before
+
+
+# ── otto's run output stays out of version control and docker build contexts ──
+
+
+@pytest.mark.parametrize("ignore_file", [".gitignore", ".dockerignore"])
+def test_a_new_project_ignores_ottos_output(tmp_path: Path, ignore_file: str) -> None:
+    # Runs land in <xdir>/otto-output, and the xdir defaults to the directory
+    # otto ran from: a project root. Kills: a scaffold that leaves the runs to
+    # be committed, or sent to the docker daemon with a build context at the root.
+    report = _scaffold(tmp_path, "settings")
+    path = tmp_path / ignore_file
+    assert path in _paths(report)
+    assert "otto-output/" in path.read_text().splitlines()
+
+
+@pytest.mark.parametrize("ignore_file", [".gitignore", ".dockerignore"])
+def test_an_existing_ignore_file_gains_the_entry_and_keeps_every_byte(
+    tmp_path: Path, ignore_file: str
+) -> None:
+    path = tmp_path / ignore_file
+    path.write_bytes(b"build/\n*.o")  # no trailing newline
+    report = _scaffold(tmp_path, "settings")
+    assert path in _paths(report, "appended")
+    assert path.read_bytes().startswith(b"build/\n*.o\n")
+    assert "otto-output/" in path.read_text().splitlines()
+
+
+@pytest.mark.parametrize("line", ["otto-output/", "/otto-output/", "otto-output", "/otto-output"])
+def test_an_ignore_file_that_already_ignores_the_output_is_kept_byte_identical(
+    tmp_path: Path, line: str
+) -> None:
+    path = tmp_path / ".gitignore"
+    path.write_bytes(f"build/\n{line}\n".encode())
+    before = path.read_bytes()
+    report = _scaffold(tmp_path, "settings")
+    assert path in _paths(report, "kept")
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("ignore_file", [".gitignore", ".dockerignore"])
+@pytest.mark.parametrize(
+    "negation", ["!otto-output/", "!otto-output", "!/otto-output/", "!otto-output/keep.txt"]
+)
+def test_an_entry_a_later_line_negates_gains_the_entry_after_it(
+    tmp_path: Path, ignore_file: str, negation: str
+) -> None:
+    # The last matching rule wins: an exclusion followed by its negation
+    # leaves the output (or part of it) included. Kills: a scaffold that keeps
+    # such a file because the positive line is somewhere in it.
+    path = tmp_path / ignore_file
+    path.write_bytes(f"otto-output/\n{negation}\n".encode())
+    report = _scaffold(tmp_path, "settings")
+    assert path in _paths(report, "appended")
+    lines = path.read_text().splitlines()
+    assert lines[:2] == ["otto-output/", negation]
+    assert lines[-1] == "otto-output/"
+
+
+def test_a_negation_an_entry_follows_is_kept_byte_identical(tmp_path: Path) -> None:
+    path = tmp_path / ".gitignore"
+    path.write_bytes(b"!otto-output/\notto-output/\n")
+    before = path.read_bytes()
+    report = _scaffold(tmp_path, "settings")
+    assert path in _paths(report, "kept")
+    assert path.read_bytes() == before
+
+
+def test_a_symlinked_ignore_file_is_never_written_through(tmp_path: Path) -> None:
+    real = tmp_path / "real-gitignore"
+    real.write_bytes(b"build/\n")
+    (tmp_path / ".gitignore").symlink_to(real)
+    report = _scaffold(tmp_path, "settings")
+    assert real.read_bytes() == b"build/\n"
+    assert tmp_path / ".gitignore" in _paths(report, "kept")
+
+
+def test_the_ignore_entry_names_the_layout_directory() -> None:
+    # One decision, one place: the entry is otto.layout's directory name, so a
+    # rename there cannot leave the scaffold ignoring a directory otto no
+    # longer writes.
+    from otto import layout
+    from otto.init.areas import OUTPUT_IGNORE_ENTRY
+
+    assert f"{layout.OUTPUT_DIR}/" == OUTPUT_IGNORE_ENTRY

@@ -9,4 +9,4 @@ INFO     Done. Report: /tmp/otto-gs/xdir/quickstart-kmod/report/index.html
 INFO     Coverage: 96.0% overall (2 files)
 INFO     Report: /tmp/otto-gs/xdir/quickstart-kmod/report/index.html
 
-Output directory: /tmp/otto-gs/xdir/cov/<run>_report
+Output directory: /tmp/otto-gs/xdir/otto-output/cov/<run>_report

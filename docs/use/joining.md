@@ -29,7 +29,7 @@ it now.
 
 otto finds projects through `OTTOPATH`, not through your current directory, so
 export it before anything else. Set `OTTO_XDIR` as well: without it, each run
-writes its output under the directory you ran it from.
+writes its output under `otto-output/` in the directory you ran it from.
 
 ```bash
 export OTTOPATH=~/src/acme

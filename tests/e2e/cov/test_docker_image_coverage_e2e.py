@@ -13,6 +13,7 @@ test` never touches a product verb). Pinned to one xdist worker:
 
 import pytest
 
+from otto import layout
 from otto.coverage.capture.model import Capture
 from otto.coverage.store.model import CoverageStore
 from tests.e2e._otto_subprocess import PROJECT5, run_otto
@@ -46,9 +47,9 @@ def coverage_run(tmp_path_factory):
     xdir.mkdir()
     report_dir = tmp / "report"
     _run_otto(["test", "--cov", "--cov-clean", "TestCovContainer"], xdir=xdir, timeout=900)
-    (log_dir,) = sorted((xdir / "test").glob("*"))
+    (log_dir,) = sorted(layout.command_output_dir(xdir, "test").glob("*"))
     _run_otto(["cov", "report", str(log_dir), "--dir", str(report_dir)], xdir=xdir, timeout=120)
-    return CoverageStore.load(report_dir / "store.json"), log_dir / "cov", log_dir
+    return CoverageStore.load(report_dir / "store.json"), layout.cov_dir(log_dir), log_dir
 
 
 @pytest.mark.integration

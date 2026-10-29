@@ -12,14 +12,14 @@ INFO     @dut   | ! test -d /tmp/shout && echo otto-no-cov-dir || (t=$(mktemp
          /tmp/shout && tar -cf "$t" .)
 INFO     @dut > | otto-archive:/tmp/otto-fetch-<id>.<tmp>
 INFO     @dut   | rm -f "${TMPDIR:-/tmp}"/otto-fetch-<id>.*
-INFO     Coverage data collected to /tmp/otto-gs/xdir/cov/<run>_get/cov (1 product
-         dir(s))
+INFO     Coverage data collected to /tmp/otto-gs/xdir/otto-output/cov/<run>_get/cov (1
+         product dir(s))
 INFO     === Capturing dut / shout ===
 INFO     lcov capture: 1 file(s) ->
-         /tmp/otto-gs/xdir/cov/<run>_get/cov/dut/shout/board.info
+         /tmp/otto-gs/xdir/otto-output/cov/<run>_get/cov/dut/shout/board.info
 INFO     dut/shout: skipped 10 source file(s) outside the project root
 INFO     Coverage captures produced: 1 board(s)
-/tmp/otto-gs/xdir/cov/<run>_get/cov/dut/shout/capture.json
-Coverage captured: 1 product(s) -> /tmp/otto-gs/xdir/cov/<run>_get/cov
+/tmp/otto-gs/xdir/otto-output/cov/<run>_get/cov/dut/shout/capture.json
+Coverage captured: 1 product(s) -> /tmp/otto-gs/xdir/otto-output/cov/<run>_get/cov
 
-Output directory: /tmp/otto-gs/xdir/cov/<run>_get
+Output directory: /tmp/otto-gs/xdir/otto-output/cov/<run>_get

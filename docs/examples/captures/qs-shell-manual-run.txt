@@ -5,4 +5,4 @@ INFO     @dut   | GCOV_PREFIX=/tmp/shout GCOV_PREFIX_STRIP=3 /tmp/quickstart/sho
 INFO     @dut > | BY HAND
 INFO     @dut > | AGAIN
 
-Output directory: /tmp/otto-gs/xdir/host/<run>_exec
+Output directory: /tmp/otto-gs/xdir/otto-output/host/<run>_exec

@@ -9,3 +9,5 @@ __pycache__/
 /module/*.gcno
 /module/modules.order
 /module/Module.symvers
+# otto's run output, when OTTO_XDIR does not send it elsewhere.
+otto-output/

@@ -39,7 +39,7 @@ from typing import ClassVar
 
 import pytest
 
-from otto import _webassets
+from otto import _webassets, layout
 from otto.coverage.capture.model import Capture
 from otto.coverage.store.model import CoverageStore, FileRecord
 from tests.e2e._otto_subprocess import PROJECT1, output_dirs, run_otto
@@ -109,7 +109,7 @@ def _find_test_log_dir(xdir: Path) -> Path:
     Only one run happens per fixture invocation, so the glob is
     unambiguous.
     """
-    candidates = sorted((xdir / "test").glob("*"))
+    candidates = sorted(layout.command_output_dir(xdir, "test").glob("*"))
     if len(candidates) != 1:
         raise AssertionError(
             f"Expected exactly one ``test`` output dir under {xdir}, found {candidates}"
@@ -179,7 +179,7 @@ def coverage_run(tmp_path_factory):
     )
 
     log_dir = _find_test_log_dir(xdir)
-    cov_dir = log_dir / "cov"
+    cov_dir = layout.cov_dir(log_dir)
     assert cov_dir.is_dir(), f"Expected {cov_dir} after coverage fetch"
 
     # Two levels, not one: cov/<host>/<product>/. Every host carries exactly
@@ -741,7 +741,7 @@ class TestCoverageSwitchesItselfOn:
     def test_auto_run_produces_the_per_product_tree(self, auto_cov_run):
         result, xdir = auto_cov_run
         assert result.returncode == 0, result.stdout[-3000:]
-        cov_dir = _find_test_log_dir(xdir) / "cov"
+        cov_dir = layout.cov_dir(_find_test_log_dir(xdir))
         assert cov_dir.is_dir(), (
             f"no cov/ dir after a plain `otto test` — retrieval did not switch "
             f"itself on\n{result.stdout[-3000:]}"

@@ -11,4 +11,4 @@ INFO     @dut   | SUDO_PROMPT='otto-sudo-<nonce>:' sudo -S insmod /tmp/qs_wordco
 INFO     @dut   | rm -f /tmp/qs_wordcount.ko
 INFO     @dut   | qs_wordcount: installed
 
-Output directory: /tmp/otto-gs/xdir/run/<run>_install
+Output directory: /tmp/otto-gs/xdir/otto-output/run/<run>_install

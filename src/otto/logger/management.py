@@ -51,6 +51,7 @@ from rich.highlighter import NullHighlighter
 from rich.logging import RichHandler
 from typing_extensions import override
 
+from .. import layout
 from ..console import CONSOLE
 from .formatters import (
     CONSOLE_TRACEBACK_MAX_FRAMES,
@@ -977,10 +978,6 @@ def init_cli_logging(
     install_console(log_level, show_time=show_time)
 
 
-def _command_to_dir_name(command: str) -> str:
-    return command.replace("-", "_")
-
-
 def create_output_dir(command: str, subcommand: str | None = None) -> Path:
     """Create this invocation's output dir, wire the file handler, prune old logs, and return it.
 
@@ -991,9 +988,8 @@ def create_output_dir(command: str, subcommand: str | None = None) -> Path:
 
     # Name the dir down to the millisecond (%f is microseconds; drop last 3).
     timestamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S_%f")[:-3]
-    command = _command_to_dir_name(command)
-    sub = f"_{_command_to_dir_name(subcommand)}" if subcommand is not None else ""
-    output_dir = _state.xdir / command / f"{timestamp}{sub}"
+    sub = f"_{layout.command_dir_name(subcommand)}" if subcommand is not None else ""
+    output_dir = layout.command_output_dir(_state.xdir, command) / f"{timestamp}{sub}"
     output_dir.mkdir(parents=True)
     _state.last_output_dir = output_dir
 
@@ -1248,11 +1244,15 @@ def install_sinks(output_dir: Path, *, proxy_streams: bool) -> None:
     earlier call installed, which the new listener then serves.
     """
     root = getLogger()
+    # Stored RESOLVED: this is an identity for "the sinks are already here",
+    # and a caller's spelling is not one. See install(). Resolved once: each
+    # resolve walks every directory of the path.
+    resolved = output_dir.resolve()
     # The current run's own files, when this call names the directory they
     # already write to: reused below rather than closed and rebuilt.
     reusable = (
         (_state.console_log_handler, _state.verbose_handler)
-        if _state.sinks_dir == output_dir.resolve()
+        if _state.sinks_dir == resolved
         and _state.console_log_handler is not None
         and _state.verbose_handler is not None
         and _state.console_log_handler.stream is not None
@@ -1305,9 +1305,7 @@ def install_sinks(output_dir: Path, *, proxy_streams: bool) -> None:
                 console_log.addFilter(filt)
     _state.console_log_handler = console_log
     _state.verbose_handler = verbose_log
-    # Stored RESOLVED: this is an identity for "the sinks are already here",
-    # and a caller's spelling is not one. See install().
-    _state.sinks_dir = output_dir.resolve()
+    _state.sinks_dir = resolved
     _state.sinks_log_level = log_level
 
     log_queue: Queue[Any] = Queue(-1)
@@ -1394,7 +1392,11 @@ def remove_old_logs(
     *,
     time_budget: float = LOG_ROTATE_BUDGET_SECONDS,
 ) -> None:
-    """Remove log dirs older than ``seconds``, time-boxed to ``time_budget``.
+    """Remove otto's run dirs older than ``seconds``, time-boxed to ``time_budget``.
+
+    Only children of :func:`otto.layout.output_root`'s command directories
+    whose names match otto's run-name pattern are removed; nothing outside
+    that directory is ever walked.
 
     When the budget is exceeded the scan stops early and resumes on the next
     call, bounding the per-run cost on large/slow (e.g. NFS) trees.
@@ -1405,8 +1407,12 @@ def remove_old_logs(
     # user-facing output that belongs on the same handlers/sinks as every
     # other otto.* log call, not a distinctly-named child logger.
     logger = getLogger("otto")
-    xdir = _state.xdir
-    if xdir is None or not xdir.is_dir():
+    if _state.xdir is None:
+        return
+    # Only otto's own directory is walked: a project's ./docker or ./test
+    # beside it is never otto's, whatever its children are named.
+    root = layout.output_root(_state.xdir)
+    if not root.is_dir():
         return
 
     oldest = (datetime.now(tz=timezone.utc) - timedelta(seconds=seconds)).timestamp()
@@ -1414,7 +1420,7 @@ def remove_old_logs(
     start = time.monotonic()
     budget_hit = False
 
-    for cmd_dir in xdir.iterdir():
+    for cmd_dir in root.iterdir():
         if budget_hit:
             break
         if not cmd_dir.is_dir():

@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 
+from otto import layout
 from otto.config.env import is_otto_env_var
 from tests._fixtures.labdata import write_lab_json
 from tests._fixtures.paths import CHECKOUT_ROOT
@@ -131,7 +132,7 @@ def run_dir(tmp_path: Path) -> tuple[subprocess.CompletedProcess[str], Path]:
         check=False,
         timeout=_RUN_TIMEOUT,
     )
-    logs = sorted((tmp_path / "xdir").glob("*/*/verbose.log"))
+    logs = sorted(layout.output_root(tmp_path / "xdir").glob("*/*/verbose.log"))
     assert len(logs) == 1, f"expected one run directory\n{proc.stdout}\n{proc.stderr}"
     return proc, logs[0].parent
 

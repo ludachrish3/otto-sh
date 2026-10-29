@@ -29,15 +29,9 @@ reports/
 !tests/unit/cov/data/*.gcda
 !tests/unit/cov/data/*.gcno
 
-# otto CLI per-subcommand output dirs — timestamped run artifacts written at
-# the repo root by `otto test|host|cov|run|monitor|docker`. Root-anchored so
-# they never shadow tests/ or src/otto/.
-/test/
-/host/
-/cov/
-/run/
-/monitor/
-/docker/
+# otto's run output — every invocation's timestamped directory, under one
+# directory of the xdir (the current directory unless OTTO_XDIR says otherwise).
+/otto-output/
 
 # Performance files
 profile.txt

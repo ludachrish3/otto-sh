@@ -38,8 +38,8 @@ export OTTO_XDIR=~/otto-runs
 
 otto finds projects through `OTTOPATH`, never through the current
 directory. `OTTO_XDIR` is where otto writes each run's logs and artifacts.
-Without it, runs land under the current directory — inside your project, if
-that is where you are. The {ref}`invocation-output-directory` section explains the run
+Without it, runs land in `otto-output/` under the current directory — inside
+your project, if that is where you are. The {ref}`invocation-output-directory` section explains the run
 layout under `OTTO_XDIR`, and {ref}`enabling-tab-completion` makes both
 exports permanent.
 

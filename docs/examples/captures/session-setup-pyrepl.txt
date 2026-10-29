@@ -11,4 +11,4 @@ INFO     @test1-py > |
 INFO     @test1-py   | 1 + 1
 INFO     @test1-py > | 2
 
-Output directory: /tmp/otto-gs/xdir/host/<run>_exec
+Output directory: /tmp/otto-gs/xdir/otto-output/host/<run>_exec

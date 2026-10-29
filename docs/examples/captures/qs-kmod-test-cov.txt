@@ -28,7 +28,7 @@ INFO     @dut > | 3
 INFO     @dut   | SUDO_PROMPT='otto-sudo-<nonce>:' sudo -S rmmod qs_wordcount
 INFO     @dut   | qs_wordcount: uninstalled
 
-------------- generated xml file: /tmp/otto-gs/xdir/test/<run>/junit.xml -------------
+------- generated xml file: /tmp/otto-gs/xdir/otto-output/test/<run>/junit.xml -------
 === 3 passed, 1 deselected in <t>s ===
 INFO     Archiving .gcda for qs_wordcount on dut:/tmp/qs_wordcount
 INFO     @dut   | ! test -d /tmp/qs_wordcount && echo otto-no-cov-dir || (t=$(mktemp
@@ -46,4 +46,4 @@ INFO     @dut   | SUDO_PROMPT='otto-sudo-<nonce>:' sudo -S sh -c '! test -d
          /tmp/qs_wordcount || find /tmp/qs_wordcount -name '"'"'*.gcda'"'"' -type f -delete'
 INFO     coverage counters cleared after collection on 1 product(s) across 1 host(s)
 
-Output directory: /tmp/otto-gs/xdir/test/<run>
+Output directory: /tmp/otto-gs/xdir/otto-output/test/<run>

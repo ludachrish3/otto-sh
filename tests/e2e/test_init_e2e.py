@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from otto import layout
 from tests.e2e._otto_subprocess import run_otto
 
 pytestmark = pytest.mark.hostless
@@ -74,9 +75,13 @@ def test_init_then_full_verification_flow(tmp_path: Path) -> None:
     )
     assert r.returncode == 0, r.stdout + r.stderr
     notes = sorted(
-        (xdir / "test").glob("*/test_example/TestExample/test_expect_and_artifacts/message.txt")
+        layout.command_output_dir(xdir, "test").glob(
+            "*/test_example/TestExample/test_expect_and_artifacts/message.txt"
+        )
     )
-    assert notes, sorted(p.relative_to(xdir) for p in (xdir / "test").rglob("*.txt"))
+    assert notes, sorted(
+        p.relative_to(xdir) for p in layout.command_output_dir(xdir, "test").rglob("*.txt")
+    )
     assert notes[-1].read_text() == "hi-from-e2e"
 
     r = run_otto(
@@ -128,7 +133,7 @@ def test_a_single_area_scaffold_runs(tmp_path: Path, area: str) -> None:
             lab="example_lab",
         )
         assert r.returncode == 0, r.stdout + r.stderr
-        [note] = (xdir / "test").glob(
+        [note] = layout.command_output_dir(xdir, "test").glob(
             "*/test_example/TestExample/test_expect_and_artifacts/message.txt"
         )
         assert note.read_text() == "tests-alone"

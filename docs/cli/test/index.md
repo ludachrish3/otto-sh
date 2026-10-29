@@ -226,14 +226,14 @@ error.
 ### Where a run's files go
 
 Each run writes into its own output directory,
-`<xdir>/test/<timestamp>/` ([Output directories](../index.md#output-directories)),
+`<xdir>/otto-output/test/<timestamp>/` ([Output directories](../index.md#output-directories)),
 called `<run dir>` on this page, and prints the path when it ends. The run's
 logs and `junit.xml` sit at the top. Below them, the directories the
 [`module_dir` and `test_dir` fixtures](../../setup/writing-tests.md#what-every-test-gets)
 hand out mirror each test's pytest ID:
 
 ```text
-<xdir>/test/20260906_143205_412/
+<xdir>/otto-output/test/20260906_143205_412/
 ├── console.log
 ├── verbose.log
 ├── junit.xml

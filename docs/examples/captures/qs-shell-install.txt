@@ -9,4 +9,4 @@ INFO     @dut   | shout: staged
 INFO     @dut   | wordcount: installed
 INFO     @dut   | shout: installed
 
-Output directory: /tmp/otto-gs/xdir/run/<run>_install
+Output directory: /tmp/otto-gs/xdir/otto-output/run/<run>_install

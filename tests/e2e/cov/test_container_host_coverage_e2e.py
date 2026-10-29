@@ -34,6 +34,7 @@ from pathlib import Path
 
 import pytest
 
+from otto import layout
 from otto.coverage.capture.model import Capture
 from otto.coverage.store.model import CoverageStore
 from otto.docker.compose import use_case_project
@@ -231,7 +232,7 @@ def ctr_run(tmp_path_factory):
             # The positive control for the label the teardown sweeps by.
             while_up = _leftovers(otto, project)
             otto("test", "--cov", "--cov-clean", "TestCovCtr", timeout=900)
-            (log_dir,) = sorted((xdir / "test").glob("*"))
+            (log_dir,) = sorted(layout.command_output_dir(xdir, "test").glob("*"))
             otto("cov", "report", str(log_dir), "--dir", str(report_dir), timeout=120)
             # Collection clears the counters it captured, so exercise the
             # product again — --no-cov, since collection is otherwise on by
@@ -260,7 +261,7 @@ def _gcda(tree: Path) -> list[str]:
 @pytest.mark.xdist_group("coverage_e2e")
 class TestContainerHostCoverage:
     def test_the_container_is_the_only_collected_host(self, ctr_run):
-        cov = ctr_run.log_dir / "cov"
+        cov = layout.cov_dir(ctr_run.log_dir)
         hosts = {d.name for d in cov.iterdir() if d.is_dir() and not d.name.startswith(".")}
         assert hosts == {CONTAINER}
         leaf = cov / CONTAINER / PRODUCT
@@ -276,7 +277,7 @@ class TestContainerHostCoverage:
         assert _hits(rec, _line_of(src, "return a - b;")) == 0
 
     def test_cov_get_collects_the_container(self, ctr_run):
-        leaf = ctr_run.get_dir / "cov" / CONTAINER / PRODUCT
+        leaf = layout.cov_dir(ctr_run.get_dir) / CONTAINER / PRODUCT
         assert Capture.load(leaf / "capture.json").product == PRODUCT
         assert _gcda(leaf) == ["build/build/main.gcda", "build/build/ops.gcda"]
 

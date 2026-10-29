@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 import otto.logger.management as management_mod
+from otto import layout
 from otto.logger import management
 
 logger = getLogger("otto")
@@ -36,7 +37,7 @@ def test_remove_old_logs_ignores_non_output_entries():
     ``rmtree('docs/conf.py')`` → NotADirectoryError. Only timestamped output
     directories may be pruned, even when the strays are older than the cutoff.
     """
-    cmd_dir = management._state.xdir / "pytest"
+    cmd_dir = layout.command_output_dir(management._state.xdir, "pytest")
     stray_file = cmd_dir / "conf.py"
     stray_file.write_text("not a log dir")
     stray_dir = cmd_dir / "guide"
@@ -71,7 +72,7 @@ def test_remove_old_logs_xdir_does_not_exist(tmpdir, caplog):
 
 def test_remove_old_logs_respects_time_budget(monkeypatch, caplog):
     """The scan stops once the time budget is exceeded and resumes next run."""
-    cmd_dir = management._state.xdir / "pytest"
+    cmd_dir = layout.command_output_dir(management._state.xdir, "pytest")
     olds = []
     for i in range(6):
         d = cmd_dir / f"20200101_0000{i:02d}_000"
@@ -98,7 +99,7 @@ def test_remove_old_logs_respects_time_budget(monkeypatch, caplog):
 
 def test_remove_old_logs_no_budget_message_on_normal_run(caplog):
     """A small tree finishes well under budget — no truncation message."""
-    cmd_dir = management._state.xdir / "pytest"
+    cmd_dir = layout.command_output_dir(management._state.xdir, "pytest")
     d = cmd_dir / "20200101_000000_000"
     d.mkdir()
     _backdate(d, seconds=3600)

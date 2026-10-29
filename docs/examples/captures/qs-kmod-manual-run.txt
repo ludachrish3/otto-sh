@@ -4,4 +4,4 @@ INFO     @dut   | SUDO_PROMPT='otto-sudo-<nonce>:' sudo -S sh -c "echo by hand >
          /sys/module/qs_wordcount/parameters/line; echo once more >
          /sys/module/qs_wordcount/parameters/line"
 
-Output directory: /tmp/otto-gs/xdir/host/<run>_exec
+Output directory: /tmp/otto-gs/xdir/otto-output/host/<run>_exec

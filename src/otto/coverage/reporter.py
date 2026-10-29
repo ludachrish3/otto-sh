@@ -26,7 +26,7 @@ Typical usage::
 
     reporter = CoverageReporter(
         source_root=Path("/home/me/myproduct"),
-        output_dir=Path("./cov_report"),
+        output_dir=Path("report"),
         tiers=[("unit", Path("u.info"))],
     )
     store = await reporter.run()

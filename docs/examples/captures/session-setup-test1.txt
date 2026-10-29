@@ -4,4 +4,4 @@ INFO     @test1   | export APP_ENV=lab
 INFO     @test1   | echo $APP_ENV
 INFO     @test1 > | lab
 
-Output directory: /tmp/otto-gs/xdir/host/<run>_exec
+Output directory: /tmp/otto-gs/xdir/otto-output/host/<run>_exec

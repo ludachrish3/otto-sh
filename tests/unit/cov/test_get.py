@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from otto import layout
 from otto.config.coverage_settings import CoverageConfigError
 from otto.config.scope import EmptySelectionError
 from otto.coverage.capture import produce as produce_module
@@ -453,7 +454,7 @@ async def test_get_defaults_to_the_per_invocation_output_dir(all_hosts_of, git_s
         )
     )
 
-    invocation_dir = tmp_path / "xdir" / "cov" / "20260703_120000_000_get"
+    invocation_dir = layout.command_output_dir(tmp_path / "xdir", "cov") / "20260703_120000_000_get"
     invocation_dir.mkdir(parents=True)
     token = set_context(OttoContext(lab=Lab(name="t"), policy=RunPolicy(output_dir=invocation_dir)))
     try:

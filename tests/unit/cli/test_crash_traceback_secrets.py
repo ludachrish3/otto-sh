@@ -21,6 +21,7 @@ from collections.abc import Awaitable, Callable
 
 import pytest
 
+from otto import layout
 from otto.config.env import is_otto_env_var
 from otto.logger import install, management
 from tests._fixtures.labdata import write_lab_json
@@ -120,7 +121,7 @@ def test_cli_crash_hides_library_locals_and_exits_1(workspace):
             check=False,
             timeout=_RUN_TIMEOUT,
         )
-    logs = sorted((tmp_path / "xdir").glob("*/*/verbose.log"))
+    logs = sorted(layout.output_root(tmp_path / "xdir").glob("*/*/verbose.log"))
     assert len(logs) == 1, f"expected one run directory\n{p.stdout}\n{p.stderr}"
     files = {name: (logs[0].parent / name).read_text() for name in ("console.log", "verbose.log")}
 

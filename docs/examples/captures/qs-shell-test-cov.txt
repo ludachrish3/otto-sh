@@ -18,7 +18,7 @@ INFO     === test_shout_capitalises ===
 INFO     @dut   | GCOV_PREFIX=/tmp/shout GCOV_PREFIX_STRIP=3 /tmp/quickstart/shout hello world
 INFO     @dut > | HELLO WORLD
 
-------------- generated xml file: /tmp/otto-gs/xdir/test/<run>/junit.xml -------------
+------- generated xml file: /tmp/otto-gs/xdir/otto-output/test/<run>/junit.xml -------
 === 4 passed, 1 deselected in <t>s ===
 INFO     Archiving .gcda for wordcount on dut:/tmp/wordcount
 INFO     @dut   | ! test -d /tmp/wordcount && echo otto-no-cov-dir || (t=$(mktemp
@@ -44,4 +44,4 @@ INFO     @dut   | ! test -d /tmp/wordcount || find /tmp/wordcount -name '*.gcda'
 INFO     @dut   | ! test -d /tmp/shout || find /tmp/shout -name '*.gcda' -type f -delete
 INFO     coverage counters cleared after collection on 2 product(s) across 1 host(s)
 
-Output directory: /tmp/otto-gs/xdir/test/<run>
+Output directory: /tmp/otto-gs/xdir/otto-output/test/<run>

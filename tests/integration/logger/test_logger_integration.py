@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from otto import layout
 from otto.logger import management
 
 
@@ -31,7 +32,7 @@ def test_remove_old_logs_old_logs_exist_same_command(caplog):
     management.create_output_dir(command="pytest", subcommand="thing1")
     management.create_output_dir(command="pytest", subcommand="thing2")
 
-    pytest_dir = management._state.xdir / "pytest"
+    pytest_dir = layout.command_output_dir(management._state.xdir, "pytest")
 
     # Make sure there are 3 output dirs to start (1 from the standard fixture, then the above 2)
     assert len(list(pytest_dir.iterdir())) == 3
@@ -55,8 +56,8 @@ def test_remove_old_logs_old_logs_exist_same_command(caplog):
 
 def test_remove_old_logs_old_logs_exist_different_command(caplog):
     """Old log directories are pruned across multiple command dirs."""
-    pytest_dir = management._state.xdir / "pytest"
-    not_pytest_dir = management._state.xdir / "not_pytest"
+    pytest_dir = layout.command_output_dir(management._state.xdir, "pytest")
+    not_pytest_dir = layout.command_output_dir(management._state.xdir, "not_pytest")
 
     # Create an old log_dir under each command, then a fresh one under each.
     management.create_output_dir(command="not_pytest", subcommand="thing1")

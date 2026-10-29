@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from otto import layout
 from tests.e2e._otto_subprocess import run_otto
 from tests.e2e._selection_fixtures import FAILING_SUITE_SRC, PLAIN_SUITE_SRC, make_selection_project
 
@@ -25,7 +26,7 @@ def _testcase_count(junit_path: Path) -> int:
 
 def _junit_files(xdir: Path) -> list[Path]:
     """All junit_*.xml / junit.xml files under the most recent otto test output dir."""
-    test_root = xdir / "test"
+    test_root = layout.command_output_dir(xdir, "test")
     run_dirs = sorted(p for p in test_root.iterdir() if p.is_dir())
     assert run_dirs, f"no otto test output dir under {test_root}"
     return sorted(run_dirs[-1].glob("junit*.xml"))
@@ -140,7 +141,7 @@ def test_bare_otto_test_is_a_usage_error(tmp_path: Path) -> None:
     )
     assert r.returncode == 2, r.stdout + r.stderr
     assert "at least one test name or -m" in " ".join((r.stdout + r.stderr).split())
-    test_root = xdir / "test"
+    test_root = layout.command_output_dir(xdir, "test")
     assert not test_root.is_dir() or not list(test_root.iterdir())
 
 

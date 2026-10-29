@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from otto import layout
 from otto.coverage.capture.gitio import head_commit
 from otto.coverage.capture.model import Capture, CaptureFileCov
 from otto.coverage.capture.produce import ProduceResult, ProductCapture, ProductKey
@@ -365,9 +366,9 @@ def test_post_run_coverage_shows_a_capture_failure_once(tmp_path, monkeypatch, c
 
     text = "\n".join(r.getMessage() for r in caplog.records)
     assert text.count(_DETAIL) == 1
-    failed = log_dir / "cov" / "h" / "app" / "capture.failed"
+    failed = layout.cov_dir(log_dir) / "h" / "app" / "capture.failed"
     assert f"h/app: failed to capture; see {failed}" in text
-    assert (log_dir / "cov_report" / "store.json").is_file()
+    assert (layout.cov_report_dir(log_dir) / "store.json").is_file()
 
 
 @pytest.mark.asyncio

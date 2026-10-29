@@ -22,4 +22,4 @@ dry run: no command body was run and no device was contacted
     InstallOptions: ensure=False, recover_partial=True
   lab: example_lab (2 hosts)
 
-Output directory: /tmp/otto-gs/xdir/run/<run>_install
+Output directory: /tmp/otto-gs/xdir/otto-output/run/<run>_install

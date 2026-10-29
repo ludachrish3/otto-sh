@@ -158,7 +158,9 @@ async def get_coverage(
                 "no output directory was given and none is set for this invocation",
                 field="output_dir",
             )
-    cov_dir = output_dir.resolve() / "cov"
+    from .. import layout
+
+    cov_dir = layout.cov_dir(output_dir.resolve())
 
     tester = (
         _resolve_tester(tester_name, tester_email, cov_project.root)
