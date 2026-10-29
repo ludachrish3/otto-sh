@@ -1,0 +1,21 @@
+$ otto --lab example_lab -n run install
+INFO     [DRY RUN] Commands and file transfers will be skipped. No device will be contacted.
+INFO     fleet of interest: 2 of 3 lab hosts (1 project(s), 0 excluded)
+quickstart-docker
+  docker-host
+    install  banner  docker run -d --name quickstart-banner -v /tmp/quickstart-docker/banner:/tmp/quickstart-docker/banner -e GCOV_PREFIX=/tmp/quickstart-docker/banner quickstart-banner:latest
+  docker-host.quickstart.tools
+    stage    wordcount  mkdir -p /opt/quickstart
+                        PUT /tmp/otto-gs/quickstart-docker/build/src/wordcount/wordcount -> /opt/quickstart
+    stage    shout      mkdir -p /opt/quickstart
+                        PUT /tmp/otto-gs/quickstart-docker/build/src/shout/shout -> /opt/quickstart
+  not checked:
+    docker-host: banner: that docker is on docker-host's PATH (command -v docker)
+    docker-host: banner: that quickstart-banner:latest is present on docker-host (docker image inspect); a missing image fails the install unless the entry sets `pull = true`
+dry run: no command body was run and no device was contacted
+  would run: otto run install
+  options:
+    InstallOptions: ensure=False, recover_partial=True
+  lab: example_lab (3 hosts)
+
+Output directory: /tmp/otto-gs/xdir/otto-output/run/<run>_install

@@ -1,0 +1,48 @@
+$ otto --lab example_lab cov report /tmp/otto-gs/xdir/quickstart-docker/e2e --dir /tmp/otto-gs/xdir/quickstart-docker/report
+INFO     @docker-host   | docker container inspect -f '{{.State.Running}} {{.Image}}'
+         quickstart-banner
+INFO     @docker-host > | true
+         sha256:<id>
+INFO     @docker-host   | docker exec -e OTTO_SCAN_ID=<uuid>
+         quickstart-banner sh -c 'unset OTTO_SCAN_END; if timeout 5 sh -c : 2>/dev/null &&
+         now=$(date +%s 2>/dev/null) && [ -n "$now" ]; then OTTO_SCAN_END=$(( now + 540 )); export
+         OTTO_SCAN_END; fi
+         bounded() { if [ -n "${OTTO_SCAN_END:-}" ]; then left=$(( $OTTO_SCAN_END - $(date +%s) ));
+         [ "$left" -gt 0 ] || return 124; timeout -s KILL "$left" "$@"; else "$@"; fi; }
+         hits='"'"'bounded() { if [ -n "${OTTO_SCAN_END:-}" ]; then left=$(( $OTTO_SCAN_END - $(date
+         +%s) )); [ "$left" -gt 0 ] || return 124; timeout -s KILL "$left" "$@"; else "$@"; fi; }
+         bounded grep -l "\.gcda" "$@"; [ $? -lt 2 ]
+         '"'"'
+         for d in /*; do case "$d" in /proc|/sys|/dev|/tmp|/run) ;; *) bounded find "$d" -path
+         /var/run -prune -o -type f -exec sh -c "$hits" sh {} + 2>/dev/null; rc=$?; printf
+         '"'"'otto-scan-rc:%s:%s\n'"'"' "$rc" "$d";; esac; done'
+INFO     @docker-host > | otto-scan-rc:0:/bin
+INFO     @docker-host > | otto-scan-rc:0:/etc
+INFO     @docker-host > | otto-scan-rc:0:/home
+INFO     @docker-host > | otto-scan-rc:0:/lib
+INFO     @docker-host > | otto-scan-rc:0:/media
+INFO     @docker-host > | otto-scan-rc:0:/mnt
+INFO     @docker-host > | /opt/quickstart/banner
+INFO     @docker-host > | otto-scan-rc:0:/opt
+INFO     @docker-host > | otto-scan-rc:0:/root
+INFO     @docker-host > | otto-scan-rc:0:/sbin
+INFO     @docker-host > | otto-scan-rc:0:/srv
+INFO     @docker-host > | otto-scan-rc:0:/usr
+INFO     @docker-host > | otto-scan-rc:0:/var
+INFO     @docker-host   | d="${TMPDIR:-/tmp}/otto-objlist.<uuid>" && mkdir
+         -m 700 "$d" && echo "$d"
+INFO     @docker-host > | /tmp/otto-objlist.<uuid>
+INFO     @docker-host   | docker cp quickstart-banner:/opt/quickstart/banner
+         /tmp/otto-objlist.<uuid>/0
+INFO     @docker-host   | rm -rf "${TMPDIR:-/tmp}/otto-objlist.<uuid>"
+INFO     unit unit: kept 4 product source files, dropped 19 not in any product
+INFO     lcov capture -> /tmp/otto-gs/xdir/quickstart-docker/report/_work/unit_unit_0.raw.info
+INFO     Loading unit_unit_0.info as unit coverage
+INFO     Loaded 1 files from unit_unit_0.info
+INFO     === Rendering coverage report ===
+INFO     Report written to /tmp/otto-gs/xdir/quickstart-docker/report/index.html
+INFO     Done. Report: /tmp/otto-gs/xdir/quickstart-docker/report/index.html
+INFO     Coverage: 100.0% overall (4 files)
+INFO     Report: /tmp/otto-gs/xdir/quickstart-docker/report/index.html
+
+Output directory: /tmp/otto-gs/xdir/otto-output/cov/<run>_report

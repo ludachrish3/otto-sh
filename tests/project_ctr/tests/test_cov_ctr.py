@@ -1,14 +1,16 @@
 """Tests driving project_ctr's shell product inside its compose container.
 
 The stack (``otto docker compose up covctr``) must already be up: its one
-container is ``test3.covctr.app``. Product install walks never cover
-container hosts, so the class fixture calls the product's own verbs on the
-container host itself — after creating the absolute stage directory and a
-writable ``cov_dir`` there — exercises the binary once with ``GCOV_PREFIX``
+container is ``test3.covctr.app``. ``otto run install`` would reach it too
+(a project walk admits the containers it owns a product on), but the suite
+is self-contained: ``otto test`` installs nothing, so the class fixture
+installs the product through its own verbs and uninstalls it around the
+tests. It pre-creates a writable ``cov_dir`` first, as a binary that is not
+root would need. It then exercises the binary once with ``GCOV_PREFIX``
 set and no ``GCOV_PREFIX_STRIP`` (the counters keep their ``/build/...``
-object paths under ``cov_dir``), and uninstalls in teardown. Uninstall
-removes the binary only: the counters stay in ``cov_dir`` for ``otto test
---cov``'s post-run collection and any later ``otto cov get``.
+object paths under ``cov_dir``). Uninstall removes the binary only: the
+counters stay in ``cov_dir`` for ``otto test --cov``'s post-run collection
+and any later ``otto cov get``.
 """
 
 import re
@@ -35,8 +37,7 @@ async def _sh(host: DockerContainerHost, cmd: str) -> str:
 async def _install(host: DockerContainerHost) -> None:
     product = next(p for p in host.products if p.name == _PRODUCT)
     cov_dir = shlex.quote(str(product.cov_dir))
-    stage_dir = shlex.quote(str(product.stage_dir))
-    await _sh(host, f"mkdir -p {stage_dir} {cov_dir} && chmod 777 {cov_dir}")
+    await _sh(host, f"mkdir -p {cov_dir} && chmod 777 {cov_dir}")
     result = await product.stage(host)
     if result.is_ok:
         result = await product.install(host)

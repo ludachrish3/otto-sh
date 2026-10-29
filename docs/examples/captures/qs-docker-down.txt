@@ -1,0 +1,44 @@
+$ otto --lab example_lab docker compose down quickstart
+INFO     @docker-host   | mkdir -m 0700 /tmp/otto-docker-vagrant 2>/dev/null; id -u; for p in /tmp
+         /tmp/otto-docker-vagrant; do d="${p%/*}/"; if [ -e "$p" ] || [ -L "$p" ]; then stat -c '%F
+         %u %a' "$p" 2>/dev/null || ls -ldn "$p" 2>/dev/null || echo unreadable; elif [ -d "$d" ] &&
+         [ -x "$d" ]; then echo missing; elif [ -e "$d" ]; then echo unreadable; else echo missing;
+         fi; done
+INFO     @docker-host > | 1000
+INFO     @docker-host > | directory 0 1777
+INFO     @docker-host > | directory 1000 700
+INFO     @docker-host   | w() { for p in "$1"/* "$1"/.[!.]* "$1"/..?*; do [ -e "$p" ] || [ -L "$p" ]
+         || continue; if [ -d "$p" ] && [ ! -L "$p" ]; then printf 'd %s\n' "$p"; c=$((c+1)); if [
+         -r "$p" ] && [ -x "$p" ]; then w "$p"; else printf 'e %s\n' "$p"; c=$((c+1)); fi; elif [ -f
+         "$p" ]; then printf 'f %s\n' "$p"; c=$((c+1)); fi; done; }; c=0; if [ -d
+         /tmp/otto-docker-vagrant/example_lab-quickstart-docs/compose ]; then printf 't d\n'; if [
+         -r /tmp/otto-docker-vagrant/example_lab-quickstart-docs/compose ] && [ -x
+         /tmp/otto-docker-vagrant/example_lab-quickstart-docs/compose ]; then w
+         /tmp/otto-docker-vagrant/example_lab-quickstart-docs/compose; else printf 'e %s\n'
+         /tmp/otto-docker-vagrant/example_lab-quickstart-docs/compose; c=$((c+1)); fi; elif [ -e
+         /tmp/otto-docker-vagrant/example_lab-quickstart-docs/compose ] || [ -L
+         /tmp/otto-docker-vagrant/example_lab-quickstart-docs/compose ]; then printf 't f\n'; else
+         a=/tmp/otto-docker-vagrant/example_lab-quickstart-docs/compose; while :; do case $a in */*)
+         a=${a%/*};; *) a=.;; esac; [ -n "$a" ] || a=/; if [ -e "$a" ] || [ "$a" = / ]; then break;
+         fi; done; if [ -x "$a" ]; then printf 't -\n'; else printf 't ?\n'; fi; fi; printf 'n %s\n'
+         "$c"
+INFO     @docker-host > | t d
+INFO     @docker-host > | d /tmp/otto-docker-vagrant/example_lab-quickstart-docs/compose/0
+INFO     @docker-host > | f /tmp/otto-docker-vagrant/example_lab-quickstart-docs/compose/0/tools.yml
+INFO     @docker-host > | f /tmp/otto-docker-vagrant/example_lab-quickstart-docs/compose/otto-env.sh
+INFO     @docker-host > | n 3
+INFO     @docker-host   | test -s
+         /tmp/otto-docker-vagrant/example_lab-quickstart-docs/compose/otto-env.sh
+INFO     @docker-host   | sh
+         /tmp/otto-docker-vagrant/example_lab-quickstart-docs/compose/otto-env.sh docker compose -p
+         example_lab-quickstart-docs -f
+         /tmp/otto-docker-vagrant/example_lab-quickstart-docs/compose/0/tools.yml down --timeout 1
+INFO     @docker-host > |  Container example_lab-quickstart-docs-tools-1  Stopping
+INFO     @docker-host > |  Container example_lab-quickstart-docs-tools-1  Stopped
+INFO     @docker-host > |  Container example_lab-quickstart-docs-tools-1  Removing
+INFO     @docker-host > |  Container example_lab-quickstart-docs-tools-1  Removed
+INFO     @docker-host > |  Network example_lab-quickstart-docs_default  Removing
+INFO     @docker-host > |  Network example_lab-quickstart-docs_default  Removed
+docker-host: quickstart torn down
+
+Output directory: /tmp/otto-gs/xdir/otto-output/docker/<run>_down

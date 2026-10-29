@@ -1,0 +1,14 @@
+$ otto --lab example_lab -n docker compose build quickstart
+INFO     [DRY RUN] Commands and file transfers will be skipped. No device will be contacted.
+'compose_build(quickstart)' was not run on host 'docker-host': this is a dry run, which contacts no
+device. Build previews from configuration; if you need the device's answer, drop --dry-run. Build
+plan: docker-host <- quickstart-docker[quickstart-runtime,quickstart-banner]. Would run: on
+docker-host: BUILDX_NO_DEFAULT_ATTESTATIONS=1 docker build -t quickstart-runtime:latest -f
+/tmp/otto-docker-vagrant/otto-quickstart-docker-docs/build/quickstart-runtime/Dockerfile
+/tmp/otto-docker-vagrant/otto-quickstart-docker-docs/build/quickstart-runtime; on docker-host:
+BUILDX_NO_DEFAULT_ATTESTATIONS=1 docker build -t quickstart-banner:latest -f
+/tmp/otto-docker-vagrant/otto-quickstart-docker-docs/build/quickstart-banner/Dockerfile
+/tmp/otto-docker-vagrant/otto-quickstart-docker-docs/build/quickstart-banner. No context was staged
+and no image was built.
+
+Output directory: /tmp/otto-gs/xdir/otto-output/docker/<run>_build

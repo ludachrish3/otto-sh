@@ -1,0 +1,13 @@
+$ otto --lab example_lab -n docker compose up quickstart
+INFO     [DRY RUN] Commands and file transfers will be skipped. No device will be contacted.
+'deploy(quickstart)' was not run on host 'docker-host': this is a dry run, which contacts no device.
+Build previews from configuration; if you need the device's answer, drop --dry-run. Resolved plan:
+docker-host <- quickstart-docker[tools]. No image was built, no file was staged and no container was
+started. The adapters ran (plain data; the only thing one may write is its own scratch dir), so this
+is the command itself, not a description of it. On docker-host, with the env launcher `exec env
+"$@"` (values redacted), would run: sh
+/tmp/otto-docker-vagrant/example_lab-quickstart-docs/compose/otto-env.sh docker compose -p
+example_lab-quickstart-docs -f
+/tmp/otto-docker-vagrant/example_lab-quickstart-docs/compose/0/tools.yml up -d --remove-orphans
+
+Output directory: /tmp/otto-gs/xdir/otto-output/docker/<run>_up

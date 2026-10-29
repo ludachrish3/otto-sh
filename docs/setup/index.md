@@ -12,6 +12,7 @@ shared-setup
 tracks/shell
 tracks/kmod
 tracks/embedded
+tracks/docker
 defining-products-and-tools
 running-tests
 running-instructions

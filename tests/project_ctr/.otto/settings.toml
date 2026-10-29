@@ -33,7 +33,7 @@ composes = ["covctr"]
 # so the binary's counters carry /build/build/... paths (no GCOV_PREFIX_STRIP
 # anywhere): the fetched tree keeps them, and pairing matches their tail to
 # build/*.gcno here. A container host has no default_dest_dir or login home,
-# so stage_dir is absolute; the suite creates it before staging.
+# so stage_dir is absolute; staging creates it.
 [[products]]
 name = "counter"
 kind = "shell"

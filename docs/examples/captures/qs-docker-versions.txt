@@ -1,0 +1,8 @@
+$ otto --lab example_lab host docker-host exec 'docker version --format '"'"'Docker {{.Server.Version}}'"'"' && docker compose version'
+INFO     fleet of interest: 2 of 3 lab hosts (1 project(s), 0 excluded)
+INFO     @docker-host   | docker version --format 'Docker {{.Server.Version}}' && docker compose
+         version
+INFO     @docker-host > | Docker 29.1.3
+INFO     @docker-host > | Docker Compose version 2.40.3+ds1-0ubuntu1~24.04.1
+
+Output directory: /tmp/otto-gs/xdir/otto-output/host/<run>_exec

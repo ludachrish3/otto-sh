@@ -28,10 +28,7 @@ FILES = [
 
 # Each exempted page's first ceiling. An exemption may only shrink: a page
 # added to EXEMPT, or a ceiling raised above this pin, fails the test below.
-FIRST_CEILINGS: dict[str, int] = {
-    "cli/cov/instrumenting/containers.md": 10,
-    "setup/coverage.md": 2,
-}
+FIRST_CEILINGS: dict[str, int] = {}
 
 BAD = "`make kmodcov`\n"
 BAD_WITH_ISSUE = "`make kmodcov` and (#1)\n"

@@ -77,6 +77,9 @@ Both run on one parent: `--parent HOST`, or the lab's default
 starts it for you: a later session or test run brings it up first
 ({ref}`docker-start-first`). Remove it with `otto docker compose down demo`.
 
+{doc}`../../setup/tracks/docker` deploys a complete project this way, from its
+declaration to a coverage report.
+
 (docker-verbs)=
 ## Verbs
 

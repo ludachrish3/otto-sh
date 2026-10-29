@@ -190,10 +190,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # test_exemptions_only_shrink pins every first ceiling. A ceiling is an exact
 # count, not a per-finding pin, so a fixed finding plus a new one on the same
 # page can swap unseen.
-EXEMPT: dict[str, Exemption] = {
-    "cli/cov/instrumenting/containers.md": Exemption("L4.5 docker track", 10),
-    "setup/coverage.md": Exemption("L4.5 docker track", 1),
-}
+EXEMPT: dict[str, Exemption] = {}
 
 GENERIC_TARGETS = frozenset({"all", "build", "check", "clean", "dev", "format", "help", "lint"})
 MAINTAINER_TARGETS = frozenset(

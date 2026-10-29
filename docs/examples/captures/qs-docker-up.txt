@@ -1,0 +1,40 @@
+$ otto --lab example_lab docker compose up quickstart
+INFO     @docker-host   | mkdir -m 0700 /tmp/otto-docker-vagrant 2>/dev/null; id -u; for p in /tmp
+         /tmp/otto-docker-vagrant; do d="${p%/*}/"; if [ -e "$p" ] || [ -L "$p" ]; then stat -c '%F
+         %u %a' "$p" 2>/dev/null || ls -ldn "$p" 2>/dev/null || echo unreadable; elif [ -d "$d" ] &&
+         [ -x "$d" ]; then echo missing; elif [ -e "$d" ]; then echo unreadable; else echo missing;
+         fi; done
+INFO     @docker-host > | 1000
+INFO     @docker-host > | directory 0 1777
+INFO     @docker-host > | directory 1000 700
+INFO     @docker-host   | rm -rf /tmp/otto-docker-vagrant/example_lab-quickstart-docs/compose &&
+         mkdir -p /tmp/otto-docker-vagrant/example_lab-quickstart-docs/compose
+INFO     @docker-host   | mkdir -p /tmp/otto-docker-vagrant/example_lab-quickstart-docs/compose/0
+docker-host tools.yml ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 234/234 bytes ? 0:00:00
+INFO     @docker-host   | mkdir -p /tmp/otto-docker-vagrant/example_lab-quickstart-docs/compose
+docker-host otto-env.sh ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 14/14 bytes ? 0:00:00
+INFO     @docker-host   | docker ps -q --filter
+         label=com.docker.compose.project=example_lab-quickstart-docs
+INFO     [docker] deploying quickstart as example_lab-quickstart-docs on docker-host
+INFO     @docker-host   | sh
+         /tmp/otto-docker-vagrant/example_lab-quickstart-docs/compose/otto-env.sh docker compose -p
+         example_lab-quickstart-docs -f
+         /tmp/otto-docker-vagrant/example_lab-quickstart-docs/compose/0/tools.yml up -d
+         --remove-orphans
+INFO     @docker-host > |  Network example_lab-quickstart-docs_default  Creating
+INFO     @docker-host > |  Network example_lab-quickstart-docs_default  Created
+INFO     @docker-host > |  Container example_lab-quickstart-docs-tools-1  Creating
+INFO     @docker-host > |  Container example_lab-quickstart-docs-tools-1  Created
+INFO     @docker-host > |  Container example_lab-quickstart-docs-tools-1  Starting
+INFO     @docker-host > |  Container example_lab-quickstart-docs-tools-1  Started
+INFO     @docker-host   | docker ps -q --filter
+         label=com.docker.compose.project=example_lab-quickstart-docs --filter
+         label=com.docker.compose.service=tools --filter label=com.docker.compose.oneoff=False
+INFO     @docker-host > | <id>
+INFO     @docker-host   | docker inspect --type container --format '{{.Id}}      {{json .Mounts}}'
+         <id>
+INFO     @docker-host > | <id>       []
+quickstart on docker-host (example_lab-quickstart-docs): 1 container(s) registered:
+  - docker-host.quickstart.tools  →  <id>
+
+Output directory: /tmp/otto-gs/xdir/otto-output/docker/<run>_up

@@ -1,0 +1,55 @@
+$ otto --lab example_lab run install
+INFO     fleet of interest: 2 of 3 lab hosts (1 project(s), 0 excluded)
+INFO     @docker-host   | banner: staged
+INFO     @docker-host   | command -v docker
+INFO     @docker-host   | docker ps -q --filter
+         label=com.docker.compose.project=example_lab-quickstart-docs --filter
+         label=com.docker.compose.service=tools --filter label=com.docker.compose.oneoff=False
+INFO     @docker-host > | /usr/bin/docker
+INFO     @docker-host   | docker image inspect quickstart-banner:latest >/dev/null
+INFO     @docker-host > | <id>
+INFO     @docker-host   | docker exec -i <id> sh -c 'mkdir -p /opt/quickstart'
+INFO     @docker-host   | docker run -d --name quickstart-banner -v
+         /tmp/quickstart-docker/banner:/tmp/quickstart-docker/banner -e
+         GCOV_PREFIX=/tmp/quickstart-docker/banner quickstart-banner:latest
+INFO     @docker-host   | mkdir -m 0700 /tmp/otto-docker-vagrant 2>/dev/null; id -u; for p in /tmp
+         /tmp/otto-docker-vagrant; do d="${p%/*}/"; if [ -e "$p" ] || [ -L "$p" ]; then stat -c '%F
+         %u %a' "$p" 2>/dev/null || ls -ldn "$p" 2>/dev/null || echo unreadable; elif [ -d "$d" ] &&
+         [ -x "$d" ]; then echo missing; elif [ -e "$d" ]; then echo unreadable; else echo missing;
+         fi; done
+INFO     @docker-host > | <id>
+INFO     @docker-host > | 1000
+INFO     @docker-host > | directory 0 1777
+INFO     @docker-host > | directory 1000 700
+INFO     @docker-host   | mkdir -p
+         /tmp/otto-docker-vagrant/.transfer/<id>-<uuid>
+INFO     @docker-host   | banner: installed
+docker-host wordcount ━━━━ 2.3/2.3 MB <rate>
+INFO     @docker-host   | docker cp
+         /tmp/otto-docker-vagrant/.transfer/<id>-<uuid>/wordcount
+         <id>:/opt/quickstart
+INFO     @docker-host   | rm -rf
+         /tmp/otto-docker-vagrant/.transfer/<id>-<uuid>
+INFO     @docker-host:tools   | wordcount: staged
+INFO     @docker-host   | docker exec -i <id> sh -c 'mkdir -p /opt/quickstart'
+INFO     @docker-host   | mkdir -m 0700 /tmp/otto-docker-vagrant 2>/dev/null; id -u; for p in /tmp
+         /tmp/otto-docker-vagrant; do d="${p%/*}/"; if [ -e "$p" ] || [ -L "$p" ]; then stat -c '%F
+         %u %a' "$p" 2>/dev/null || ls -ldn "$p" 2>/dev/null || echo unreadable; elif [ -d "$d" ] &&
+         [ -x "$d" ]; then echo missing; elif [ -e "$d" ]; then echo unreadable; else echo missing;
+         fi; done
+INFO     @docker-host > | 1000
+INFO     @docker-host > | directory 0 1777
+INFO     @docker-host > | directory 1000 700
+INFO     @docker-host   | mkdir -p
+         /tmp/otto-docker-vagrant/.transfer/<id>-<uuid>
+docker-host shout ━━━━ 2.4/2.4 MB <rate>
+INFO     @docker-host   | docker cp
+         /tmp/otto-docker-vagrant/.transfer/<id>-<uuid>/shout
+         <id>:/opt/quickstart
+INFO     @docker-host   | rm -rf
+         /tmp/otto-docker-vagrant/.transfer/<id>-<uuid>
+INFO     @docker-host:tools   | shout: staged
+INFO     @docker-host:tools   | wordcount: installed
+INFO     @docker-host:tools   | shout: installed
+
+Output directory: /tmp/otto-gs/xdir/otto-output/run/<run>_install

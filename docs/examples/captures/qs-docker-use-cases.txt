@@ -1,0 +1,7 @@
+$ otto --lab example_lab docker use-cases quickstart
+                           use-case quickstart
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━┓
+┃ fragment                 ┃ provides ┃ host        ┃ env keys ┃ status ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━┩
+│ quickstart-docker[tools] │ -        │ docker-host │ -        │        │
+└──────────────────────────┴──────────┴─────────────┴──────────┴────────┘

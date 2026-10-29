@@ -1,0 +1,13 @@
+$ otto --lab example_lab host docker-host.quickstart.tools exec 'GCOV_PREFIX=/tmp/wordcount GCOV_PREFIX_STRIP=3 /opt/quickstart/wordcount by hand; GCOV_PREFIX=/tmp/wordcount GCOV_PREFIX_STRIP=3 /opt/quickstart/wordcount once more'
+INFO     fleet of interest: 2 of 3 lab hosts (1 project(s), 0 excluded)
+INFO     @docker-host   | docker ps -q --filter
+         label=com.docker.compose.project=example_lab-quickstart-docs --filter
+         label=com.docker.compose.service=tools --filter label=com.docker.compose.oneoff=False
+INFO     @docker-host > | <id>
+INFO     @docker-host   | docker exec -i <id> sh -c 'GCOV_PREFIX=/tmp/wordcount
+         GCOV_PREFIX_STRIP=3 /opt/quickstart/wordcount by hand; GCOV_PREFIX=/tmp/wordcount
+         GCOV_PREFIX_STRIP=3 /opt/quickstart/wordcount once more'
+INFO     @docker-host > | 2
+INFO     @docker-host > | 2
+
+Output directory: /tmp/otto-gs/xdir/otto-output/host/<run>_exec

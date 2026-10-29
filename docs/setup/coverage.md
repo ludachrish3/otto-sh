@@ -113,9 +113,9 @@ hosts = ".*"
 `hosts` is a regular expression, full-matched against each host's otto id:
 `".*"` is every host in the lab, `"test[12]"` is those two. A pattern may
 also name compose container hosts ({ref}`their ids <host-identity>`), alone or
-with others: a container is collected exactly like any other host, apart from
-two differences (your suite installs its product, and its stack must be up),
-set out in the {ref}`worked example <coverage-container-host-example>`. A tier is optional
+with others: a container is collected exactly like any other host, except
+that its stack must be up when coverage is fetched (the {ref}`worked example
+<coverage-container-host-example>`). A tier is optional
 — with no `[coverage.tiers]` table otto assumes a single implicit tier named
 `system`, of the `e2e` kind, which is the one a lab run collects into.
 {doc}`../cli/cov/tiers` is the tier model, and the unit views at the
@@ -272,34 +272,32 @@ patch for current compilers, and what the build must do.
 ## A container image
 
 A container image run by a docker daemon is a product too, declared with
-`kind = "docker_image"` instead of `kind = "shell"`. `install` loads it
-(from a tarball, here) and runs it with `docker run -d`, the product's
-`cov_dir` bind-mounted at the same path inside the container:
+`kind = "docker_image"` instead of `kind = "shell"`. `install` checks that the
+image is present (a reference, here) and runs it with `docker run -d`, the
+product's `cov_dir` bind-mounted at the same path inside the container:
 
-```{literalinclude} ../../tests/project5/.otto/settings.toml
+```{literalinclude} ../examples/quickstart-docker/.otto/settings.toml
 :language: toml
-:start-after: "# needs no pull. An archive scans unknown, hence `instrumented = true`."
-:end-at: "match = { id = \"test3\" }"
+:start-after: "# doc: begin image-product"
+:end-before: "# doc: end image-product"
 ```
 
-`instrumented = true` because the scan cannot see inside a tarball, so it
-answers *unknown* on its own. The bind mount is the whole coverage story:
-an instrumented binary inside the container writing its counters under
-`GCOV_PREFIX=<cov_dir>` (set in `run_args` above) is, as far as the daemon
-host is concerned, just writing ordinary files under `<cov_dir>` — the
-same fetcher and the same default hooks pick them up, no different from a
-product that was never containerized.
+`instrumented = true` because a reference has no local artifact for the scan
+to look at, so it answers *unknown* on its own. `cov_dir` is bind-mounted at
+the same path, so the counters land on the daemon host and the ordinary fetcher
+collects them ({ref}`the bind mount <coverage-container-bind-mount>`).
 
 ```bash
-otto test --cov TestCovContainer
+otto test --cov TestTools
 ```
 
-`image` can also be a `registry/name:tag` reference instead of a tarball
-path, with `pull = true` to fetch it on every install rather than requiring
-it already present. {doc}`../cli/cov/instrumenting/containers` has
-the rest: the tarball/reference split, what `uninstall` removes, and how
-this differs from running a service *inside* a container as the thing
-under test.
+`image` can also be the path of a `docker save` tarball, which `install`
+stages and loads, and a reference can set `pull = true` to fetch it on every install
+rather than requiring it already present.
+{doc}`../cli/cov/instrumenting/containers` has the rest: the
+tarball/reference split, what `uninstall` removes, and how this differs from
+running a service *inside* a container as the thing under test.
+{doc}`tracks/docker` builds one from start to finish.
 
 ## Several products, one container
 

@@ -1,0 +1,32 @@
+$ otto --lab example_lab run cleanup --no-reset-impairments --no-remove-tunnels
+INFO     fleet of interest: 2 of 3 lab hosts (1 project(s), 0 excluded)
+INFO     @docker-host   | docker logs quickstart-banner 2>&1
+INFO     docker-host.quickstart.tools: the container is not running, so it has no products to
+         uninstall
+INFO     @docker-host   | docker rm -f quickstart-banner
+INFO     @docker-host > | quickstart-banner
+INFO     @docker-host   | banner: uninstalled
+INFO     docker-host.quickstart.tools: the container is not running, so it has no dev tools to
+         remove
+INFO     @docker-host   | for d in /tmp/otto-docker-vagrant/otto-quickstart-docker-docs
+         /tmp/otto-docker-vagrant/example_lab-quickstart-docs; do [ -e "$d" ] && echo "$d"; done;
+         true
+INFO     @docker-host > | /tmp/otto-docker-vagrant/example_lab-quickstart-docs
+INFO     @docker-host   | docker ps -aq --filter
+         label=com.docker.compose.project=example_lab-quickstart-docs
+INFO     @docker-host   | mkdir -m 0700 /tmp/otto-docker-vagrant 2>/dev/null; id -u; for p in /tmp
+         /tmp/otto-docker-vagrant; do d="${p%/*}/"; if [ -e "$p" ] || [ -L "$p" ]; then stat -c '%F
+         %u %a' "$p" 2>/dev/null || ls -ldn "$p" 2>/dev/null || echo unreadable; elif [ -d "$d" ] &&
+         [ -x "$d" ]; then echo missing; elif [ -e "$d" ]; then echo unreadable; else echo missing;
+         fi; done
+INFO     @docker-host > | 1000
+INFO     @docker-host > | directory 0 1777
+INFO     @docker-host > | directory 1000 700
+INFO     @docker-host   | if c=$(docker ps -aq --filter
+         label=com.docker.compose.project=example_lab-quickstart-docs); then if [ -z "$c" ]; then rm
+         -rf /tmp/otto-docker-vagrant/example_lab-quickstart-docs; else echo otto-staging-kept; fi;
+         else echo otto-staging-unreadable; fi
+skipped: cleanup declined in project 'quickstart-docker': host 'docker-host.quickstart.tools':
+container not running
+
+Output directory: /tmp/otto-gs/xdir/otto-output/run/<run>_cleanup

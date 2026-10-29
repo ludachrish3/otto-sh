@@ -20,7 +20,15 @@
 #   always captures run, unrecorded, and the first failure is the one reported.
 #   On a clean run it is an ordinary capture. An always capture may not be
 #   followed by an ordinary one of its project: teardown is the tail of a set.
+# arms_teardown = true -> the one capture of a set (its preflight) that proves
+#   the set owns what its teardown removes. The set's always captures then run
+#   only once it has succeeded in this run; if it failed, or never ran because
+#   an earlier capture failed, each is skipped, so a refused preflight removes
+#   nothing.
 #
+# unordered = true -> --check ignores the order of the redacted lines, never
+#   their count or text: for a command whose log interleaves work otto does on
+#   several hosts at once. A refresh still writes the artifact as printed.
 # kind = "gtest"  -> argv is a GoogleTest binary: colour off, timings redacted
 # [[capture.store]] -> after the run, a hit count the coverage store must hold:
 #   path and file (as the store records it) may use {project}/{tmp}/{xdir};
@@ -31,6 +39,10 @@
 #   the tier, whatever their hit count (a file no run in the tier executed
 #   counts for every product): path, tier, files (placeholders allowed), and
 #   optionally product
+#
+# [snippets] -> <name> = "<text>": an argv entry spells it {snippet:<name>},
+#   and the manifest is read with the text in its place. One decision several
+#   captures make is written once, here.
 #
 # [overlays] -> <project> = "<dir under docs/examples>": copied over that
 #   project's scratch copy. A downloadable example ships placeholder hosts; its
@@ -47,13 +59,31 @@
 #   runs. quickstart-shell and quickstart-kmod are two: in each, the build,
 #   test and coverage steps feed each other.
 
+[snippets]
+# The docker host's private build cache records, one id per line, sorted, in
+# $k: the classification the docker set's preflight, prune and verify share.
+# Each record is a block of buildx's verbose layout; one marked Shared is data
+# an image still holds, which no prune frees, so it is left out. The totals'
+# own Shared line is a size, never true or false, so it is ignored.
+# The docker host's private staging root, in $s: the directory otto stages
+# under for the login these commands run as (otto.host.docker_host.staging_root
+# spells it; tests/unit/docs/test_quickstart_docker_example.py pins this text
+# to that function). A failed or empty login read fails the chain, so no check
+# below it can pass on a path that names no one's root.
+docker_staging_root = '''w=$(id -un) && test -n "$w" && s=/tmp/otto-docker-$w'''
+private_cache_records = '''u=$(docker buildx du --verbose) && k=$(printf '%s\n' "$u" | awk '/^ID:/{if(id!=""&&s!="true")print id; id=$2; s=""} /^Shared:/&&($2=="true"||$2=="false"){s=$2} END{if(id!=""&&s!="true")print id}' | sort)'''
+
 [overlays]
 quickstart-shell = "bed/quickstart-shell"
 quickstart-kmod = "bed/quickstart-kmod"
 quickstart-embedded = "bed/quickstart-embedded"
+quickstart-docker = "bed/quickstart-docker"
 
 [ordered]
-sets = ["quickstart-shell", "quickstart-kmod", "quickstart-embedded"]
+sets = ["quickstart-shell", "quickstart-kmod", "quickstart-embedded", "quickstart-docker"]
+
+[leases]
+docker_host = ["quickstart-docker"]
 
 [[capture]]
 id = "init-all"
@@ -301,6 +331,7 @@ redact = [
     ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
     ["otto-fetch-[0-9a-f]{12}", "otto-fetch-<id>"],
     ["otto-fetch-<id>\\.(?!XXXXXX)[A-Za-z0-9]{6}", "otto-fetch-<id>.<tmp>"],
+    ["otto-fetch\\n( +)-<id>\\.(?!XXXXXX)[A-Za-z0-9]{6}", "otto-fetch\\n\\1-<id>.<tmp>"],
 ]
 
 [[capture]]
@@ -324,6 +355,7 @@ redact = [
     ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
     ["otto-fetch-[0-9a-f]{12}", "otto-fetch-<id>"],
     ["otto-fetch-<id>\\.(?!XXXXXX)[A-Za-z0-9]{6}", "otto-fetch-<id>.<tmp>"],
+    ["otto-fetch\\n( +)-<id>\\.(?!XXXXXX)[A-Za-z0-9]{6}", "otto-fetch\\n\\1-<id>.<tmp>"],
     ["=+ (\\d+ passed[^=\\n]*?) in [\\d.]+s =+", "=== \\1 in <t>s ==="],
 ]
 
@@ -570,6 +602,7 @@ redact = [
     ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
     ["otto-fetch-[0-9a-f]{12}", "otto-fetch-<id>"],
     ["otto-fetch-<id>\\.(?!XXXXXX)[A-Za-z0-9]{6}", "otto-fetch-<id>.<tmp>"],
+    ["otto-fetch\\n( +)-<id>\\.(?!XXXXXX)[A-Za-z0-9]{6}", "otto-fetch\\n\\1-<id>.<tmp>"],
 ]
 
 [[capture]]
@@ -604,6 +637,7 @@ redact = [
     ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
     ["otto-fetch-[0-9a-f]{12}", "otto-fetch-<id>"],
     ["otto-fetch-<id>\\.(?!XXXXXX)[A-Za-z0-9]{6}", "otto-fetch-<id>.<tmp>"],
+    ["otto-fetch\\n( +)-<id>\\.(?!XXXXXX)[A-Za-z0-9]{6}", "otto-fetch\\n\\1-<id>.<tmp>"],
     ["=+ (\\d+ passed[^=\\n]*?) in [\\d.]+s =+", "=== \\1 in <t>s ==="],
 ]
 
@@ -917,6 +951,7 @@ redact = [
     ["(?m)(?:^ +@dut > \\| [0-9a-f]{8}: [0-9a-f ]+\\n)+", "         @dut > | <gcda hexdump>\n"],
     ["otto-fetch-[0-9a-f]{12}", "otto-fetch-<id>"],
     ["otto-fetch-<id>\\.(?!XXXXXX)[A-Za-z0-9]{6}", "otto-fetch-<id>.<tmp>"],
+    ["otto-fetch\\n( +)-<id>\\.(?!XXXXXX)[A-Za-z0-9]{6}", "otto-fetch\\n\\1-<id>.<tmp>"],
 ]
 
 [[capture]]
@@ -953,6 +988,7 @@ redact = [
     ["(?m)(?:^ +@dut > \\| [0-9a-f]{8}: [0-9a-f ]+\\n)+", "         @dut > | <gcda hexdump>\n"],
     ["otto-fetch-[0-9a-f]{12}", "otto-fetch-<id>"],
     ["otto-fetch-<id>\\.(?!XXXXXX)[A-Za-z0-9]{6}", "otto-fetch-<id>.<tmp>"],
+    ["otto-fetch\\n( +)-<id>\\.(?!XXXXXX)[A-Za-z0-9]{6}", "otto-fetch\\n\\1-<id>.<tmp>"],
     ["=+ (\\d+ passed[^=\\n]*?) in [\\d.]+s =+", "=== \\1 in <t>s ==="],
 ]
 
@@ -1082,3 +1118,434 @@ project = "quickstart-embedded"
 record = false
 timeout = 600
 argv = ["{otto}", "--lab", "example_lab", "cov", "clean"]
+
+# ---- Docker track (docs/setup/tracks/docker.md) ------------------------------
+# One ordered set, listed under [ordered], run under the docker host lease
+# ([leases]), on test3: the docker e2e tests' host. In a fresh copy of the
+# example it builds the tools here, makes the copy a git repository, builds the
+# two images on the docker host and brings the use-case up, installs, takes the
+# manual tier, the e2e tier and the unit tier, and reports.
+#
+# Every otto command pins OTTO_COMPOSE_SUFFIX = "docs", so the names the set
+# creates on the docker host are fixed, and no other session's: the compose
+# project example_lab-quickstart-docs (its container and network), the
+# staging trees example_lab-quickstart-docs and otto-quickstart-docker-docs
+# under the login's private staging root ([snippets] docker_staging_root), the
+# images quickstart-runtime and quickstart-banner, the container
+# quickstart-banner, the banner's cov_dir under /tmp/quickstart-docker, and the
+# build cache records the two builds add.
+# tests/unit/docs/test_quickstart_docker_example.py resolves these names
+# through otto and checks the texts below hold them.
+#
+# The preflight refuses to start when any of them is present, so the set never
+# removes what it did not create. Only once all are proven absent does it write
+# /tmp/quickstart-docker-baseline: the base image's id and the cache record ids.
+# It arms the teardown (arms_teardown): the always tail runs only after this
+# run's preflight succeeded, so a refused preflight, or a failure in an earlier
+# set, leaves the docker host untouched. The tail takes the use-case down, runs
+# cleanup (which removes the staging once the stack has no containers, and the
+# banner's container), sweeps what otto leaves by design (the images, and the
+# root-owned cov_dir the bind mount made) and anything a failure left, prunes
+# only the cache records the run added, and checks that everything is gone and
+# the base image unchanged. Only that check removes the baseline, so when it
+# fails the baseline stays and the next preflight refuses: what is left is for
+# a maintainer to look at and remove, never for a later run to guess at.
+#
+# cleanup runs with its lab-wide steps off: a tunnel or an impairment on the
+# docker host may be another session's. The example declares no toolchain, so
+# cleanup's host-global toolchain step removes nothing.
+#
+# The cache inventory is [snippets] private_cache_records, one text for the
+# preflight, the prune and the verify. It leaves out records marked Shared:
+# data an image still holds, so no prune can free it. That is how the base
+# image's layers appear after buildx is installed: the first BuildKit build
+# indexes alpine as a shared record, which the run did not create in any sense
+# the host would notice, and which removing would mean removing alpine itself.
+#
+# Redactions: besides the run timestamp, the commands that reach a container
+# print its id (12 hex digits, 64 in full), the staging directory otto makes
+# for a transfer (a 32-digit uuid), and an otto-fetch id that wraps across a
+# line at a fixed column, since every path before it has a fixed length.
+#
+# install, cov get and test --cov work on the parent and the container at
+# once, so their log lines interleave differently on each run: they are
+# unordered = true.
+#
+# A docker query whose status the shell ignores would pass a check it never
+# made, so each one is an assignment chained with &&: an assignment takes its
+# substitution's exit status.
+
+[[capture]]
+id = "qs-docker-preflight"
+project = "quickstart-docker"
+record = false
+arms_teardown = true
+env = { OTTO_COMPOSE_SUFFIX = "docs" }
+argv = ["{otto}", "--lab", "example_lab", "host", "docker-host", "exec", '''test ! -e /tmp/quickstart-docker-baseline && test ! -e /tmp/quickstart-docker && {snippet:docker_staging_root} && test ! -e "$s/example_lab-quickstart-docs" && test ! -e "$s/otto-quickstart-docker-docs" && c=$(docker ps -aq --filter label=com.docker.compose.project=example_lab-quickstart-docs) && test -z "$c" && c=$(docker ps -aq --filter 'name=^/?quickstart-banner$') && test -z "$c" && n=$(docker network ls -q --filter label=com.docker.compose.project=example_lab-quickstart-docs) && test -z "$n" && i=$(docker image ls -q quickstart-runtime) && test -z "$i" && i=$(docker image ls -q quickstart-banner) && test -z "$i" && a=$(docker image inspect -f '{{.Id}}' alpine:3.20) && {snippet:private_cache_records} && mkdir /tmp/quickstart-docker-baseline && printf '%s\n' "$a" > /tmp/quickstart-docker-baseline/alpine && printf '%s\n' "$k" > /tmp/quickstart-docker-baseline/cache''']
+
+[[capture]]
+id = "qs-docker-git-init"
+project = "quickstart-docker"
+record = false
+argv = ["git", "-C", "{project}", "init", "-q", "-b", "main"]
+
+[[capture]]
+id = "qs-docker-cmake-configure"
+project = "quickstart-docker"
+record = false
+timeout = 300
+argv = ["cmake", "-S", "{project}", "-B", "{project}/build"]
+
+[[capture]]
+id = "qs-docker-cmake-build"
+project = "quickstart-docker"
+record = false
+timeout = 600
+argv = ["cmake", "--build", "{project}/build"]
+
+[[capture]]
+id = "qs-docker-git-add"
+project = "quickstart-docker"
+record = false
+argv = ["git", "-C", "{project}", "add", "-A"]
+
+[[capture]]
+id = "qs-docker-git-commit"
+project = "quickstart-docker"
+record = false
+argv = ["git", "-C", "{project}", "-c", "user.name=otto docs", "-c", "user.email=docs@example.invalid", "commit", "-qm", "quickstart-docker"]
+
+[[capture]]
+id = "qs-docker-versions"
+project = "quickstart-docker"
+env = { OTTO_COMPOSE_SUFFIX = "docs" }
+argv = ["{otto}", "--lab", "example_lab", "host", "docker-host", "exec", "docker version --format 'Docker {{.Server.Version}}' && docker compose version"]
+redact = [
+    ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
+]
+
+[[capture]]
+id = "qs-docker-use-cases"
+project = "quickstart-docker"
+env = { OTTO_COMPOSE_SUFFIX = "docs" }
+argv = ["{otto}", "--lab", "example_lab", "docker", "use-cases", "quickstart"]
+
+[[capture]]
+id = "qs-docker-build-dry"
+project = "quickstart-docker"
+env = { OTTO_COMPOSE_SUFFIX = "docs" }
+argv = ["{otto}", "--lab", "example_lab", "-n", "docker", "compose", "build", "quickstart"]
+redact = [
+    ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
+]
+
+[[capture]]
+id = "qs-docker-up-dry"
+project = "quickstart-docker"
+env = { OTTO_COMPOSE_SUFFIX = "docs" }
+argv = ["{otto}", "--lab", "example_lab", "-n", "docker", "compose", "up", "quickstart"]
+redact = [
+    ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
+]
+
+# Not recorded: docker's build log varies with its cache.
+[[capture]]
+id = "qs-docker-build"
+project = "quickstart-docker"
+record = false
+timeout = 900
+env = { OTTO_COMPOSE_SUFFIX = "docs" }
+argv = ["{otto}", "--lab", "example_lab", "docker", "compose", "build", "quickstart"]
+
+[[capture]]
+id = "qs-docker-up"
+project = "quickstart-docker"
+timeout = 600
+env = { OTTO_COMPOSE_SUFFIX = "docs" }
+argv = ["{otto}", "--lab", "example_lab", "docker", "compose", "up", "quickstart"]
+redact = [
+    ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
+    ["otto-fetch-[0-9a-f]{11}\\n( +)[0-9a-f]\\.[A-Za-z0-9]{6}", "otto-fetch-<id>\\n\\1.<tmp>"],
+    ["\\b[0-9a-f]{64}\\b", "<id>"],
+    ["\\b[0-9a-f]{32}\\b", "<uuid>"],
+    ["\\b[0-9a-f]{12}\\b", "<id>"],
+]
+
+[[capture]]
+id = "qs-docker-install-dry"
+project = "quickstart-docker"
+env = { OTTO_COMPOSE_SUFFIX = "docs" }
+argv = ["{otto}", "--lab", "example_lab", "-n", "run", "install"]
+redact = [
+    ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
+]
+
+[[capture]]
+id = "qs-docker-install"
+project = "quickstart-docker"
+unordered = true
+timeout = 300
+env = { OTTO_COMPOSE_SUFFIX = "docs" }
+argv = ["{otto}", "--lab", "example_lab", "run", "install"]
+# The transfer bar's rate and elapsed time vary, and so does its width.
+redact = [
+    ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
+    ["otto-fetch-[0-9a-f]{11}\\n( +)[0-9a-f]\\.[A-Za-z0-9]{6}", "otto-fetch-<id>\\n\\1.<tmp>"],
+    ["\\b[0-9a-f]{64}\\b", "<id>"],
+    ["\\b[0-9a-f]{32}\\b", "<uuid>"],
+    ["\\b[0-9a-f]{12}\\b", "<id>"],
+    ["━+ ([\\d.]+/[\\d.]+ [kMG]?B) [\\d.]+ [kMG]?B/s \\d+:\\d{2}:\\d{2}", "━━━━ \\1 <rate>"],
+]
+
+[[capture]]
+id = "qs-docker-cov-clean"
+project = "quickstart-docker"
+record = false
+timeout = 300
+env = { OTTO_COMPOSE_SUFFIX = "docs" }
+argv = ["{otto}", "--lab", "example_lab", "cov", "clean"]
+
+[[capture]]
+id = "qs-docker-manual-run"
+project = "quickstart-docker"
+env = { OTTO_COMPOSE_SUFFIX = "docs" }
+argv = ["{otto}", "--lab", "example_lab", "host", "docker-host.quickstart.tools", "exec", "GCOV_PREFIX=/tmp/wordcount GCOV_PREFIX_STRIP=3 /opt/quickstart/wordcount by hand; GCOV_PREFIX=/tmp/wordcount GCOV_PREFIX_STRIP=3 /opt/quickstart/wordcount once more"]
+redact = [
+    ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
+    ["otto-fetch-[0-9a-f]{11}\\n( +)[0-9a-f]\\.[A-Za-z0-9]{6}", "otto-fetch-<id>\\n\\1.<tmp>"],
+    ["\\b[0-9a-f]{64}\\b", "<id>"],
+    ["\\b[0-9a-f]{32}\\b", "<uuid>"],
+    ["\\b[0-9a-f]{12}\\b", "<id>"],
+]
+
+[[capture]]
+id = "qs-docker-cov-get-manual"
+project = "quickstart-docker"
+unordered = true
+timeout = 300
+env = { OTTO_COMPOSE_SUFFIX = "docs" }
+argv = ["{otto}", "--lab", "example_lab", "cov", "get", "--tier", "manual", "--ticket", "QS-1", "--tester-name", "docs", "--tester-email", "docs@example.invalid"]
+# The remote fetch id and its mktemp suffix are random per run.
+redact = [
+    ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
+    ["otto-fetch-[0-9a-f]{11}\\n( +)[0-9a-f]\\.[A-Za-z0-9]{6}", "otto-fetch-<id>\\n\\1.<tmp>"],
+    ["\\b[0-9a-f]{64}\\b", "<id>"],
+    ["\\b[0-9a-f]{32}\\b", "<uuid>"],
+    ["\\b[0-9a-f]{12}\\b", "<id>"],
+    ["otto-fetch-[0-9a-f]{12}", "otto-fetch-<id>"],
+    ["otto-fetch-<id>\\.(?!XXXXXX)[A-Za-z0-9]{6}", "otto-fetch-<id>.<tmp>"],
+    ["otto-fetch\\n( +)-<id>\\.(?!XXXXXX)[A-Za-z0-9]{6}", "otto-fetch\\n\\1-<id>.<tmp>"],
+]
+
+[[capture]]
+id = "qs-docker-git-add-manual"
+project = "quickstart-docker"
+record = false
+argv = ["git", "-C", "{project}", "add", ".otto/coverage/manual"]
+
+[[capture]]
+id = "qs-docker-git-commit-manual"
+project = "quickstart-docker"
+record = false
+argv = ["git", "-C", "{project}", "-c", "user.name=otto docs", "-c", "user.email=docs@example.invalid", "commit", "-qm", "manual coverage QS-1"]
+
+[[capture]]
+id = "qs-docker-test-cov"
+project = "quickstart-docker"
+unordered = true
+timeout = 900
+env = { OTTO_COMPOSE_SUFFIX = "docs" }
+argv = ["{otto}", "--lab", "example_lab", "test", "--cov", "--cov-dir", "{xdir}/quickstart-docker/e2e/cov", "--no-random", "TestTools"]
+redact = [
+    ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
+    ["otto-fetch-[0-9a-f]{11}\\n( +)[0-9a-f]\\.[A-Za-z0-9]{6}", "otto-fetch-<id>\\n\\1.<tmp>"],
+    ["\\b[0-9a-f]{64}\\b", "<id>"],
+    ["\\b[0-9a-f]{32}\\b", "<uuid>"],
+    ["\\b[0-9a-f]{12}\\b", "<id>"],
+    ["otto-fetch-[0-9a-f]{12}", "otto-fetch-<id>"],
+    ["otto-fetch-<id>\\.(?!XXXXXX)[A-Za-z0-9]{6}", "otto-fetch-<id>.<tmp>"],
+    ["otto-fetch\\n( +)-<id>\\.(?!XXXXXX)[A-Za-z0-9]{6}", "otto-fetch\\n\\1-<id>.<tmp>"],
+    ["=+ (\\d+ passed[^=\\n]*?) in [\\d.]+s =+", "=== \\1 in <t>s ==="],
+]
+
+[[capture]]
+id = "qs-docker-unit"
+project = "quickstart-docker"
+kind = "gtest"
+argv = ["{project}/build/tests/unit/unit_tests"]
+
+[[capture]]
+id = "qs-docker-report"
+project = "quickstart-docker"
+timeout = 300
+env = { OTTO_COMPOSE_SUFFIX = "docs" }
+argv = ["{otto}", "--lab", "example_lab", "cov", "report", "{xdir}/quickstart-docker/e2e", "--dir", "{xdir}/quickstart-docker/report"]
+redact = [
+    ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
+    ["otto-fetch-[0-9a-f]{11}\\n( +)[0-9a-f]\\.[A-Za-z0-9]{6}", "otto-fetch-<id>\\n\\1.<tmp>"],
+    ["\\b[0-9a-f]{64}\\b", "<id>"],
+    ["\\b[0-9a-f]{32}\\b", "<uuid>"],
+    ["\\b[0-9a-f]{12}\\b", "<id>"],
+]
+
+[[capture.store]]
+path = "{xdir}/quickstart-docker/report/store.json"
+file = "{project}/src/textlib/text.cpp"
+line = 8
+marker = "// qs: count-words"
+tier = "system"
+product = "wordcount"
+hits = 3
+
+[[capture.store]]
+path = "{xdir}/quickstart-docker/report/store.json"
+file = "{project}/src/wordcount/main.cpp"
+line = 8
+marker = "// qs: wordcount-main"
+tier = "system"
+product = "wordcount"
+hits = 3
+
+[[capture.store]]
+path = "{xdir}/quickstart-docker/report/store.json"
+file = "{project}/src/shout/main.cpp"
+line = 7
+marker = "// qs: shout-main"
+tier = "system"
+product = "shout"
+hits = 1
+
+[[capture.store]]
+path = "{xdir}/quickstart-docker/report/store.json"
+file = "{project}/src/banner/main.cpp"
+line = 13
+marker = "// qs: banner-main"
+tier = "system"
+product = "banner"
+hits = 1
+
+[[capture.store]]
+path = "{xdir}/quickstart-docker/report/store.json"
+file = "{project}/src/textlib/text.cpp"
+line = 8
+marker = "// qs: count-words"
+tier = "system"
+product = "banner"
+hits = 1
+
+[[capture.store]]
+path = "{xdir}/quickstart-docker/report/store.json"
+file = "{project}/src/textlib/text.cpp"
+line = 8
+marker = "// qs: count-words"
+tier = "manual"
+hits = 2
+
+[[capture.store]]
+path = "{xdir}/quickstart-docker/report/store.json"
+file = "{project}/src/wordcount/main.cpp"
+line = 8
+marker = "// qs: wordcount-main"
+tier = "manual"
+hits = 2
+
+[[capture.store]]
+path = "{xdir}/quickstart-docker/report/store.json"
+file = "{project}/src/textlib/text.cpp"
+line = 8
+marker = "// qs: count-words"
+tier = "unit"
+hits = 2
+
+# Exact source sets: nothing but the products' own sources in any tier.
+[[capture.store_sources]]
+path = "{xdir}/quickstart-docker/report/store.json"
+tier = "system"
+product = "wordcount"
+files = ["{project}/src/textlib/text.cpp", "{project}/src/wordcount/main.cpp"]
+
+[[capture.store_sources]]
+path = "{xdir}/quickstart-docker/report/store.json"
+tier = "system"
+product = "shout"
+files = ["{project}/src/shout/main.cpp"]
+
+[[capture.store_sources]]
+path = "{xdir}/quickstart-docker/report/store.json"
+tier = "system"
+product = "banner"
+files = ["{project}/src/textlib/text.cpp", "{project}/src/banner/main.cpp"]
+
+[[capture.store_sources]]
+path = "{xdir}/quickstart-docker/report/store.json"
+tier = "manual"
+files = ["{project}/src/textlib/text.cpp", "{project}/src/wordcount/main.cpp"]
+
+[[capture.store_sources]]
+path = "{xdir}/quickstart-docker/report/store.json"
+tier = "unit"
+files = ["{project}/src/textlib/text.cpp"]
+
+# The always tail. It runs after a failure too, unrecorded.
+[[capture]]
+id = "qs-docker-down"
+project = "quickstart-docker"
+always = true
+timeout = 300
+env = { OTTO_COMPOSE_SUFFIX = "docs" }
+argv = ["{otto}", "--lab", "example_lab", "docker", "compose", "down", "quickstart"]
+redact = [
+    ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
+]
+
+[[capture]]
+id = "qs-docker-cleanup"
+project = "quickstart-docker"
+always = true
+timeout = 300
+env = { OTTO_COMPOSE_SUFFIX = "docs" }
+argv = ["{otto}", "--lab", "example_lab", "run", "cleanup", "--no-reset-impairments", "--no-remove-tunnels"]
+redact = [
+    ["\\d{8}_\\d{6}_\\d{3}", "<run>"],
+]
+
+# Guarded by the baseline: without one, these names were never proven this set's.
+[[capture]]
+id = "qs-docker-sweep"
+project = "quickstart-docker"
+record = false
+always = true
+timeout = 300
+env = { OTTO_COMPOSE_SUFFIX = "docs" }
+argv = ["{otto}", "--lab", "example_lab", "host", "docker-host", "exec", '''test -f /tmp/quickstart-docker-baseline/alpine && { docker ps -aq --filter label=com.docker.compose.project=example_lab-quickstart-docs | xargs -r docker rm -f; docker ps -aq --filter 'name=^/?quickstart-banner$' | xargs -r docker rm -f; docker network ls -q --filter label=com.docker.compose.project=example_lab-quickstart-docs | xargs -r docker network rm; docker image rm quickstart-runtime:latest quickstart-banner:latest >/dev/null 2>&1; true; }''']
+
+# The bind mount made the banner's cov_dir as root, and its counters are root's.
+[[capture]]
+id = "qs-docker-sweep-root"
+project = "quickstart-docker"
+record = false
+always = true
+env = { OTTO_COMPOSE_SUFFIX = "docs" }
+argv = ["{otto}", "--lab", "example_lab", "host", "docker-host", "exec", "--sudo", "sh -c 'test -f /tmp/quickstart-docker-baseline/alpine && rm -rf /tmp/quickstart-docker'"]
+
+[[capture]]
+id = "qs-docker-cache-prune"
+project = "quickstart-docker"
+record = false
+always = true
+timeout = 300
+env = { OTTO_COMPOSE_SUFFIX = "docs" }
+argv = ["{otto}", "--lab", "example_lab", "host", "docker-host", "exec", '''test -f /tmp/quickstart-docker-baseline/cache && {snippet:private_cache_records} && { f=0; for id in $(printf '%s\n' "$k" | comm -13 /tmp/quickstart-docker-baseline/cache -); do docker builder prune -f --filter id=$id >/dev/null || f=1; done; test "$f" = 0; }''']
+
+# The cache check looks for additions only. The builder is shared: the
+# baseline holds other sessions' records too, and they may prune theirs while
+# this set runs, so a record gone from the baseline proves nothing about this
+# set. What this set could remove is bounded by its own prune, which removes
+# only the exact ids the run added.
+[[capture]]
+id = "qs-docker-verify-clean"
+project = "quickstart-docker"
+record = false
+always = true
+env = { OTTO_COMPOSE_SUFFIX = "docs" }
+argv = ["{otto}", "--lab", "example_lab", "host", "docker-host", "exec", '''c=$(docker ps -aq --filter label=com.docker.compose.project=example_lab-quickstart-docs) && test -z "$c" && c=$(docker ps -aq --filter 'name=^/?quickstart-banner$') && test -z "$c" && n=$(docker network ls -q --filter label=com.docker.compose.project=example_lab-quickstart-docs) && test -z "$n" && i=$(docker image ls -q quickstart-runtime) && test -z "$i" && i=$(docker image ls -q quickstart-banner) && test -z "$i" && test ! -e /tmp/quickstart-docker && {snippet:docker_staging_root} && test ! -e "$s/example_lab-quickstart-docs" && test ! -e "$s/otto-quickstart-docker-docs" && a=$(docker image inspect -f '{{.Id}}' alpine:3.20) && b=$(cat /tmp/quickstart-docker-baseline/alpine) && test "$a" = "$b" && {snippet:private_cache_records} && d=$(printf '%s\n' "$k" | comm -13 /tmp/quickstart-docker-baseline/cache -) && test -z "$d" && rm -rf /tmp/quickstart-docker-baseline''']

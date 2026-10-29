@@ -1,0 +1,54 @@
+$ otto --lab example_lab cov get --tier manual --ticket QS-1 --tester-name docs --tester-email docs@example.invalid
+INFO     fleet of interest: 2 of 3 lab hosts (1 project(s), 0 excluded)
+INFO     Archiving .gcda for banner on docker-host:/tmp/quickstart-docker/banner
+INFO     Archiving .gcda for wordcount on docker-host.quickstart.tools:/tmp/wordcount
+INFO     @docker-host   | ! test -d /tmp/quickstart-docker/banner && echo otto-no-cov-dir ||
+         (t=$(mktemp "${TMPDIR:-/tmp}/otto-fetch-<id>.XXXXXX") && echo "otto-archive:$t" &&
+         cd /tmp/quickstart-docker/banner && tar -cf "$t" .)
+INFO     @docker-host   | docker ps -q --filter
+         label=com.docker.compose.project=example_lab-quickstart-docs --filter
+         label=com.docker.compose.service=tools --filter label=com.docker.compose.oneoff=False
+INFO     @docker-host > | otto-archive:/tmp/otto-fetch-<id>.<tmp>
+INFO     @docker-host > | <id>
+INFO     @docker-host   | docker exec -i <id> sh -c '! test -d /tmp/wordcount && echo
+         otto-no-cov-dir || (t=$(mktemp "${TMPDIR:-/tmp}/otto-fetch-<id>.XXXXXX") && echo
+         "otto-archive:$t" && cd /tmp/wordcount && tar -cf "$t" .)'
+INFO     @docker-host   | rm -f "${TMPDIR:-/tmp}"/otto-fetch-<id>.*
+INFO     @docker-host > | otto-archive:/tmp/otto-fetch-<id>.<tmp>
+INFO     @docker-host   | mkdir -m 0700 /tmp/otto-docker-vagrant 2>/dev/null; id -u; for p in /tmp
+         /tmp/otto-docker-vagrant; do d="${p%/*}/"; if [ -e "$p" ] || [ -L "$p" ]; then stat -c '%F
+         %u %a' "$p" 2>/dev/null || ls -ldn "$p" 2>/dev/null || echo unreadable; elif [ -d "$d" ] &&
+         [ -x "$d" ]; then echo missing; elif [ -e "$d" ]; then echo unreadable; else echo missing;
+         fi; done
+INFO     @docker-host > | 1000
+INFO     @docker-host > | directory 0 1777
+INFO     @docker-host > | directory 1000 700
+INFO     @docker-host   | mkdir -p
+         /tmp/otto-docker-vagrant/.transfer/<id>-<uuid>
+INFO     @docker-host   | docker cp <id>:/tmp/otto-fetch-<id>.<tmp>
+         /tmp/otto-docker-vagrant/.transfer/<id>-<uuid>/otto-fetch
+         -<id>.<tmp>
+INFO     @docker-host   | rm -rf
+         /tmp/otto-docker-vagrant/.transfer/<id>-<uuid>
+INFO     @docker-host   | docker exec -i <id> sh -c 'rm -f
+         "${TMPDIR:-/tmp}"/otto-fetch-<id>.*'
+INFO     Archiving .gcda for shout on docker-host.quickstart.tools:/tmp/shout
+INFO     @docker-host   | docker exec -i <id> sh -c '! test -d /tmp/shout && echo
+         otto-no-cov-dir || (t=$(mktemp "${TMPDIR:-/tmp}/otto-fetch-<id>.XXXXXX") && echo
+         "otto-archive:$t" && cd /tmp/shout && tar -cf "$t" .)'
+INFO     @docker-host > | otto-no-cov-dir
+INFO     @docker-host   | docker exec -i <id> sh -c 'rm -f
+         "${TMPDIR:-/tmp}"/otto-fetch-<id>.*'
+INFO     Coverage data collected to /tmp/otto-gs/xdir/otto-output/cov/<run>_get/cov (1
+         product dir(s))
+INFO     === Capturing docker-host.quickstart.tools/wordcount ===
+INFO     lcov capture: 2 file(s) ->
+         /tmp/otto-gs/xdir/otto-output/cov/<run>_get/cov/docker-host.quickstart.tools/
+         wordcount/board.info
+INFO     docker-host.quickstart.tools/wordcount: skipped 5 source file(s) outside the project root
+INFO     Coverage captures produced: 1 board(s)
+/tmp/otto-gs/xdir/otto-output/cov/<run>_get/cov/docker-host.quickstart.tools/wordcount
+/capture.json
+Coverage captured: 1 product(s) -> /tmp/otto-gs/xdir/otto-output/cov/<run>_get/cov
+
+Output directory: /tmp/otto-gs/xdir/otto-output/cov/<run>_get
