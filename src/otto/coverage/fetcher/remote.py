@@ -27,6 +27,8 @@ from typing import TYPE_CHECKING, Any
 from ... import layout
 from ...host.shell_quote import path_operand
 from ...utils import Status
+from ..tree import ProductKey
+from .failures import FetchFailures, ProductFetchError, fetch_each, fetch_from_hosts, list_products
 
 if TYPE_CHECKING:
     from ...host.product import Product
@@ -79,8 +81,8 @@ async def _fetch_one_product(host: Any, product: "Product", staging_root: Path) 
     written there. The host-side archive is removed on every path, a raised
     one included (a cancellation during that removal propagates).
 
-    Returns that staging dir, or ``None`` when nothing was found or the
-    fetch failed. Every fetch stages into a fresh dir — one left by an
+    Returns that staging dir, or ``None`` when nothing was found (or under a
+    dry run). Every fetch stages into a fresh dir — one left by an
     earlier collection is removed first, so stale counters are never
     reported as fetched — and the dir is removed again when the transfer
     fails or yields no ``.gcda``, so the staging tree never holds empty or
@@ -91,13 +93,15 @@ async def _fetch_one_product(host: Any, product: "Product", staging_root: Path) 
     command that exits non-zero (no writable temp dir for ``mktemp``, an
     unreadable file or directory, no tar at all), a transfer that failed or
     delivered no archive, and an archive :func:`safe_extract` refuses are
-    WARNINGs and fail only this product — its counters stay on the host for
-    the next collection, never half-collected; an empty result is DEBUG,
+    WARNINGs that raise :class:`ProductFetchError` for this product only — its
+    counters stay on the host for the next collection, never half-collected —
+    and the host walk records it; an empty result is DEBUG,
     because an instrumented product that a run never exercised producing no
     counters (or no ``cov_dir`` at all) is ordinary and would otherwise cry
     wolf on every collection.
 
     Raises:
+        ProductFetchError: The fetch failed, as above (already logged).
         ValueError: *product* has a name that is not a single safe path
             segment. Checked before any host command is issued.
     """
@@ -115,7 +119,7 @@ async def _fetch_one_product(host: Any, product: "Product", staging_root: Path) 
             product.name,
             prepared.msg,
         )
-        return None
+        raise ProductFetchError(f"prepare_coverage failed: {prepared.msg}")
     q = path_operand(cov_dir)
     # The archive goes to a file mktemp makes in the host's temp dir ($TMPDIR,
     # else /tmp), never into cov_dir: reading cov_dir is all a fetch needs, so
@@ -159,6 +163,9 @@ async def _take_archive(
 ) -> Path | None:
     """Fetch and extract the archive the archive command answered, if it made one.
 
+    Raises :class:`ProductFetchError` (after its WARNING) when the archive
+    command failed, made no archive, or the transfer or extraction failed.
+
     Both markers are whole lines: the archive line starts with
     :data:`_ARCHIVE_MARK` and wins; the no-cov-dir sentinel is a line equal
     to :data:`_NO_COV_DIR`. Neither is ever found as a substring of other
@@ -171,26 +178,28 @@ async def _take_archive(
         "",
     )
     if archive.status != Status.Success:
+        output = "\n".join(line for line in lines if not line.startswith(_ARCHIVE_MARK)).strip()
         logger.warning(
             "Failed to archive .gcda for %s on %s at %s: %s",
             product.name,
             host.id,
             cov_dir,
-            "\n".join(line for line in lines if not line.startswith(_ARCHIVE_MARK)).strip(),
+            output,
         )
-        return None
+        raise ProductFetchError(f"archiving {cov_dir} failed: {output}")
     if not remote_tar:
         if any(line.strip() == _NO_COV_DIR for line in lines):
             logger.debug("No cov_dir for %s on %s at %s", product.name, host.id, cov_dir)
             return None
+        answer = repr("\n".join(lines).strip())
         logger.warning(
             "Failed to archive .gcda for %s on %s at %s: no archive path in %s",
             product.name,
             host.id,
             cov_dir,
-            repr("\n".join(lines).strip()),
+            answer,
         )
-        return None
+        raise ProductFetchError(f"archiving {cov_dir} failed: no archive path in {answer}")
     local_tar = dest / Path(remote_tar).name
     failure: str | None = None
     try:
@@ -225,7 +234,7 @@ async def _take_archive(
             "Failed to fetch .gcda for %s from %s (%s): %s", product.name, host.id, cov_dir, failure
         )
         _discard_leaf(dest)
-        return None
+        raise ProductFetchError(f"fetching {cov_dir} failed: {failure}")
     return _keep_if_counters(dest, host, product, cov_dir)
 
 
@@ -303,22 +312,27 @@ def safe_extract(archive: Path, dest: Path, *, suffix: str | None = None) -> Non
                 target.write_bytes(src.read())
 
 
-async def _fetch_one_host(host: Any, staging_root: Path) -> dict[str, Path] | None:
-    """Fetch every instrumented product on *host*; ``{product: dir}`` or ``None``."""
+async def _fetch_one_host(
+    host: Any, staging_root: Path, failures: FetchFailures
+) -> dict[str, Path] | None:
+    """Fetch every instrumented product on *host*; ``{product: dir}`` or ``None``.
+
+    Each product is fetched on its own (:func:`~otto.coverage.fetcher.failures.fetch_each`):
+    one that fails is recorded in *failures* and the next one is still fetched.
+    """
     if _skipped_family(host):
         return None
-    from ..instrumentation import instrumented_products
-
-    products = instrumented_products(host)
+    products = list_products(host, failures)
+    if products is None:
+        return None
     if not products:
         logger.info("No instrumented products on %s — no e2e coverage from it", host.id)
         return None
-    fetched: dict[str, Path] = {}
-    for product in products:
-        dest = await _fetch_one_product(host, product, staging_root)
-        if dest is not None:
-            fetched[product.name] = dest
-    return fetched or None
+
+    async def fetch_one(product: "Product") -> Path | None:
+        return await _fetch_one_product(host, product, staging_root)
+
+    return await fetch_each(host, products, failures, fetch_one) or None
 
 
 class GcdaFetcher:
@@ -345,28 +359,13 @@ class GcdaFetcher:
         self.staging_root = staging_root
         self.pattern = pattern
 
-    async def fetch_all(self) -> dict[tuple[str, str], Path]:
-        """Fetch from every matching host concurrently; ``{(host_id, product): dir}``.
+    async def fetch_all(self, *, failures: FetchFailures) -> dict[ProductKey, Path]:
+        """Fetch from every matching host concurrently; ``{ProductKey: dir}``.
 
-        Hosts and products with no counters, and failed transfers, are omitted.
+        Hosts and products with no counters are omitted. A product whose fetch
+        failed is recorded in *failures* instead, with the reason (under
+        ``"*"`` when its host failed before its products could be listed).
+        Required: a caller that ignored failures would report a lost product
+        as one that ran nothing.
         """
-        from ...fleet import do_for_all_hosts
-
-        self.staging_root.mkdir(parents=True, exist_ok=True)
-
-        fetch_results = await do_for_all_hosts(
-            _fetch_one_host,
-            self.staging_root,
-            pattern=self.pattern,
-            include_containers=True,
-        )
-
-        results: dict[tuple[str, str], Path] = {}
-        for host_id, value in fetch_results.items():
-            if isinstance(value, BaseException):
-                logger.error("Failed to fetch from %s: %s", host_id, value)
-                continue
-            if value:
-                for product, dest in value.items():
-                    results[(host_id, product)] = dest
-        return results
+        return await fetch_from_hosts(_fetch_one_host, self.staging_root, self.pattern, failures)

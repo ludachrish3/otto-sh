@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..utils import Status
+from .tree import ProductKey
 
 if TYPE_CHECKING:
     from ..result import Result
@@ -22,6 +23,11 @@ class FailedReset:
     host: str
     product: str
     result: "Result"
+
+    @property
+    def key(self) -> ProductKey:
+        """The product, as every per-product map and message names it."""
+        return ProductKey(self.host, self.product)
 
     @property
     def reason(self) -> str:

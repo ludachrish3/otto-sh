@@ -1305,8 +1305,9 @@ class TestCovGetLeaf:
 
     def test_capture_failure_and_clean_failure_both_surface(self):
         """One product fails capture and the clean of the other fails: both are printed."""
-        from otto.coverage.capture.produce import ProduceResult, ProductCapture, ProductKey
+        from otto.coverage.capture.produce import ProduceResult, ProductCapture
         from otto.coverage.errors import CoverageCaptureError
+        from otto.coverage.tree import ProductKey
 
         outcome = ProduceResult(
             [
@@ -1329,8 +1330,9 @@ class TestCovGetLeaf:
         assert "t1/app: denied" in out
 
     def test_a_capture_failure_still_prints_the_clean_of_what_captured(self):
-        from otto.coverage.capture.produce import ProduceResult, ProductCapture, ProductKey
+        from otto.coverage.capture.produce import ProduceResult, ProductCapture
         from otto.coverage.errors import CoverageCaptureError
+        from otto.coverage.tree import ProductKey
 
         outcome = ProduceResult([ProductCapture(ProductKey("t1", "lib"), None, "boom")])
         cleaned = CleanReport(hosts={"t1": {"app": Result(Status.Success)}})
@@ -1350,7 +1352,7 @@ class TestCovGetLeaf:
 class TestCovGetContainerOnlyPattern:
     """A container-only ``[coverage].hosts`` pattern runs the real fetch/collect path."""
 
-    def test_a_stopped_container_fails_as_no_data_and_names_no_membership_flag(
+    def test_a_stopped_container_is_a_failed_product_and_names_no_membership_flag(
         self, tmp_path, caplog
     ):
         from otto.context import OttoContext, reset_context, set_context
@@ -1401,10 +1403,9 @@ class TestCovGetContainerOnlyPattern:
         assert result.exit_code == 1, result.output
         logged = " ".join(str(call.args[0]) for call in mock_err.call_args_list)
         out = _flat(result.output) + caplog.text + logged
-        # The fetcher's own line names the stopped container.
-        assert "Failed to fetch from test1.r1.api" in out
-        assert "is not running" in out
-        assert "no .gcda counters retrieved" in out
+        # The stopped container's product is a failed fetch, named with the reason.
+        assert "test1.r1.api/app:" in out
+        assert "fetch failed: Container 'test1.r1.api' is not running" in out
         assert "include_containers" not in out
 
 

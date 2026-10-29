@@ -8,6 +8,7 @@ from otto.coverage import collect
 from otto.coverage.capture import produce
 from otto.coverage.errors import CaptureFailedError, CoverageCaptureError
 from otto.coverage.reports import CleanReport
+from otto.coverage.tree import ProductKey
 from otto.host import UnixHost
 from otto.host.toolchain import Toolchain
 from tests._fixtures.fake_project import fake_project
@@ -24,7 +25,7 @@ class _Lab:
             ("h", "good"): {"x/good.c.gcda": b"adcg*33B\x01\x00\x00\x00"},
             ("h", "bad"): {"x/bad.c.gcda": b"adcg*33B\x01\x00\x00\x00"},
         }
-        self.cleaned: list[list[produce.ProductKey]] = []
+        self.cleaned: list[list[ProductKey]] = []
 
 
 @pytest.fixture(autouse=True)
@@ -42,7 +43,7 @@ def lab(tmp_path, monkeypatch):
         n.write_bytes(b"oncg*33B\x01\x00\x00\x00")
     lab = _Lab(root)
 
-    async def fetch_all(self):
+    async def fetch_all(self, *, failures):
         out = {}
         for (host, prod), files in lab.counters.items():
             if files:
@@ -50,7 +51,7 @@ def lab(tmp_path, monkeypatch):
                 for rel, data in files.items():
                     (d / rel).parent.mkdir(parents=True, exist_ok=True)
                     (d / rel).write_bytes(data)
-                out[(host, prod)] = d
+                out[ProductKey(host, prod)] = d
         return out
 
     async def clean(projects=None, *, host_ids=None, pairs=None):
@@ -85,7 +86,7 @@ def collect_kwargs(monkeypatch):
     pairing goes by path alone and no artifact is read.
     """
 
-    async def no_embedded(staging_root, pattern=None):
+    async def no_embedded(staging_root, pattern=None, *, failures):
         return {}
 
     host = MagicMock(spec=UnixHost)
@@ -113,14 +114,14 @@ def collect_kwargs(monkeypatch):
 async def test_failed_product_recovers_on_second_get(tmp_path, lab, collect_kwargs):
     with pytest.raises(CoverageCaptureError):
         await collect.collect_coverage(tmp_path / "run1/cov", **collect_kwargs(lab.root))
-    assert lab.cleaned == [[produce.ProductKey("h", "good")]]
+    assert lab.cleaned == [[ProductKey("h", "good")]]
     assert lab.counters[("h", "bad")]  # still on the host
     assert not lab.counters[("h", "good")]
 
     lab.broken = False
     result = await collect.collect_coverage(tmp_path / "run2/cov", **collect_kwargs(lab.root))
     assert [k.product for k in result.produce.captured] == ["bad"]
-    assert lab.cleaned[-1] == [produce.ProductKey("h", "bad")]
+    assert lab.cleaned[-1] == [ProductKey("h", "bad")]
     assert not lab.counters[("h", "bad")]
 
 
@@ -150,10 +151,10 @@ async def test_a_stale_leaf_in_a_reused_cov_dir_is_neither_captured_nor_cleaned(
 
     result = await collect.collect_coverage(cov_dir, **kwargs)
 
-    assert result.produce.captured == [produce.ProductKey("h", "good")]
+    assert result.produce.captured == [ProductKey("h", "good")]
     assert result.captures_written == [cov_dir / "h" / "good" / "capture.json"]
     assert not (cov_dir / "other" / "app" / "capture.json").exists()
-    assert lab.cleaned == [[produce.ProductKey("h", "good")]]
+    assert lab.cleaned == [[ProductKey("h", "good")]]
 
 
 def _write_meta(cov_dir, **fields):
@@ -232,7 +233,7 @@ async def test_a_reused_dir_whose_pending_counters_match_this_collection_is_reus
 
     result = await collect.collect_coverage(cov_dir, **kwargs)
 
-    assert result.produce.captured == [produce.ProductKey("h", "good")]
+    assert result.produce.captured == [ProductKey("h", "good")]
 
 
 @pytest.mark.asyncio
@@ -247,4 +248,4 @@ async def test_a_reused_dir_holding_only_captured_products_is_reused(tmp_path, l
 
     result = await collect.collect_coverage(cov_dir, **kwargs)
 
-    assert result.produce.captured == [produce.ProductKey("h", "good")]
+    assert result.produce.captured == [ProductKey("h", "good")]

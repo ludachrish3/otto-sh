@@ -42,14 +42,13 @@ from .merge.lcov_loader import LCOVLoader
 from .merge.merger import LcovMerger
 from .report_inputs import ReportInputs
 from .store.model import CoverageStore, Thresholds, TicketRecord
-from .tree import iter_product_dirs
+from .tree import ProductKey, iter_product_dirs
 
 if TYPE_CHECKING:
     from ..host.local_host import LocalHost
     from ..host.product import Product
     from ..host.toolchain import Toolchain
     from .capture.model import Capture
-    from .capture.produce import ProductKey
     from .exclusions.rules import ExclusionRule
     from .objects import ObjectListCache
     from .overrides import OverrideConfig
@@ -861,8 +860,6 @@ def _classify_product_dirs(cov_dir: Path) -> _ProductStates:
     and is in no list. A host dir holding data directly (the pre-product
     one-level tree) is refused by name, not misread as a product.
     """
-    from .capture.produce import ProductKey
-
     states = _ProductStates(captured=[], failed=[], pending=[])
     for host_id, product, product_dir in iter_product_dirs(cov_dir):
         key = ProductKey(host_id, product)
@@ -1054,7 +1051,7 @@ async def _capture_states(
             states = _classify_product_dirs(cov_dir)
         captures.extend(cov_dir / k.host / k.product / "capture.json" for k in states.captured)
     if failed:
-        names = ", ".join(dict.fromkeys(f"{d.parent.name}/{d.name}" for d in failed))
+        names = ", ".join(dict.fromkeys(ProductKey(d.parent.name, d.name).label for d in failed))
         reasons = ", ".join(str(d / "capture.failed") for d in failed)
         message = "\n\n".join([f"{names}: failed to capture; see {reasons}", *details])
         logger.warning(message)

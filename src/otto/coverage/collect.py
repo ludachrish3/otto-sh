@@ -44,9 +44,11 @@ if TYPE_CHECKING:
     from ..host.product import Product
     from ..host.toolchain import Toolchain
     from ..result import Result
-    from .capture.produce import ProduceResult, ProductKey
+    from .capture.produce import ProduceResult
+    from .fetcher.failures import FetchFailures
     from .reports import CleanReport
     from .tiers import TierConfig
+    from .tree import ProductKey
 
 logger = logging.getLogger(__name__)
 
@@ -69,14 +71,15 @@ def _searched_where(host: "Any", product: "Any") -> str:
 class CollectResult:
     """Outcome of a :func:`collect_coverage` run.
 
-    ``product_dirs`` maps each contributing ``(host_id, product)`` pair to its
-    staging dir (Unix and container hosts fetched over the network, embedded
-    boards dumped over the console); ``produce`` is every pair's capture
+    ``product_dirs`` maps each contributing product
+    (:class:`~otto.coverage.tree.ProductKey`) to its staging dir (Unix and
+    container hosts fetched over the network, embedded boards dumped over the
+    console); ``produce`` is every pair's capture
     outcome, and ``captures_written`` the ``capture.json`` files among them.
     """
 
     cov_dir: Path
-    product_dirs: dict[tuple[str, str], Path]
+    product_dirs: "dict[ProductKey, Path]"
     produce: "ProduceResult"
     """Every product's capture outcome (empty when no ``[coverage]`` project resolved)."""
     clean: "CleanReport | None" = None
@@ -300,12 +303,16 @@ async def collect_coverage(
       :class:`~otto.coverage.errors.CoverageDataMismatchError`,
       :class:`~otto.coverage.errors.CoverageToolVersionError`, or
       :class:`RuntimeError`;
-    * one or more products failing to capture →
+    * one or more products failing to capture, or whose counters could not
+      be fetched or dumped at all →
       :class:`~otto.coverage.errors.CoverageCaptureError`, raised after every
       product was attempted and the ones that captured were cleaned (when
-      *clean_after_fetch*). Its ``result`` holds every outcome and its
-      ``clean`` that clean's report; a failed product's counters stay on
-      the host, so the next collection captures them.
+      *clean_after_fetch*). Its ``result`` holds every outcome — a failed
+      fetch is a failed product with ``fetched=False`` — and
+      its ``clean`` that clean's report; a failed product's counters stay on
+      the host, so the next collection captures them. When every fetch
+      failed and nothing came down, this is raised in place of
+      :class:`~otto.coverage.errors.NoCoverageDataError`.
 
     Args:
         cov_dir: Destination directory for the collected coverage.
@@ -350,11 +357,12 @@ async def collect_coverage(
     from ..host.embedded_host import EmbeddedHost
     from ..host.local_host import LocalHost
     from .capture import gitio
-    from .capture.produce import ProduceResult, ProductKey, produce_captures
+    from .capture.produce import ProduceResult, ProductCapture, produce_captures
     from .errors import CoverageCaptureError
     from .fetcher.embedded import collect_embedded_coverage
     from .fetcher.remote import GcdaFetcher
     from .instrumentation import instrumented_products
+    from .tree import ProductKey
 
     if projects is None:
         # The composition root: importing it installs the initiator that composes
@@ -394,27 +402,39 @@ async def collect_coverage(
             base_commit=gitio.head_commit(cov_project.root),
         )
 
-    # {(host_id, product): staging dir}. Keying the meta off *collected
+    # {ProductKey: staging dir}. Keying the meta off *collected
     # coverage* (rather than lab membership) is a safety net behind the
     # ``[coverage].hosts`` selector above: should an infrastructure host slip
     # through the pattern, producing no .gcda keeps it from being mistaken for
     # a fetched coverage target — which would otherwise flip the source-root
     # choice (breaking embedded .gcno discovery) and write a bogus toolchain
     # entry.
-    product_dirs: dict[tuple[str, str], Path] = {}
-    fetched: dict[tuple[str, str], Path] = {}
+    product_dirs: dict[ProductKey, Path] = {}
+    fetched: dict[ProductKey, Path] = {}
+    # Every product whose counters could not be fetched or dumped, and why:
+    # a failed product, reported with the capture failures below.
+    fetch_failures: "FetchFailures" = {}
     if fetch_hosts:
         # No reconnect step: a host whose connection belonged to one of
         # pytest's closed loops drops it on first use here and reconnects on
         # this loop (BaseHost._claim_loop).
         fetcher = GcdaFetcher(cov_dir, pattern=cov_pattern)
-        fetched = await fetcher.fetch_all()
+        fetched = await fetcher.fetch_all(failures=fetch_failures)
         product_dirs.update(fetched)
 
     # Embedded (RTOS) boards dump their products' .gcda over the console.
-    embedded_dirs = await collect_embedded_coverage(cov_dir, pattern=cov_pattern)
+    embedded_dirs = await collect_embedded_coverage(
+        cov_dir, pattern=cov_pattern, failures=fetch_failures
+    )
     product_dirs.update(embedded_dirs)
 
+    failed_fetches = [
+        ProductCapture(key, None, failed.reason, fetched=False, remedy=failed.remedy)
+        for key, failed in sorted(fetch_failures.items(), key=lambda item: item[0])
+    ]
+    if not product_dirs and failed_fetches:
+        # Nothing came down because something failed, not because nothing ran.
+        raise CoverageCaptureError(ProduceResult(failed_fetches))
     if not product_dirs:
         searched = [
             f"{h.id}:{p.name}:{_searched_where(h, p)}"
@@ -444,9 +464,9 @@ async def collect_coverage(
             cov_project=cov_project,
             cov_config=cov_config,
             fetch_hosts=fetch_hosts,
-            fetched_host_ids={host_id for host_id, _product in fetched},
+            fetched_host_ids={host for host, _ in fetched},
             cov_hosts=cov_hosts,
-            embedded_host_ids={host_id for host_id, _product in embedded_dirs},
+            embedded_host_ids={host for host, _ in embedded_dirs},
             cov_dir=cov_dir,
             tier=resolved_tier.name,
             base_commit=base_commit,
@@ -460,7 +480,7 @@ async def collect_coverage(
         products: "dict[ProductKey, Product]" = {}
         for h in searched_hosts:
             for p in h.products:
-                if (h.id, p.name) in product_dirs:
+                if ProductKey(h.id, p.name) in product_dirs:
                     products.setdefault(ProductKey(h.id, p.name), p)
         try:
             produced = await produce_captures(
@@ -473,7 +493,7 @@ async def collect_coverage(
                 # Only this call's fetched pairs: a reused cov_dir may hold
                 # leaves another collection left, which this one never fetched
                 # and so must neither capture nor clean.
-                only=[ProductKey(h, p) for h, p in sorted(product_dirs)],
+                only=sorted(product_dirs),
                 tester=tester,
                 ticket=ticket,
                 note=note,
@@ -482,6 +502,12 @@ async def collect_coverage(
         except CoverageCaptureError as e:
             produced, failure = e.result, e
         logger.info("Coverage captures produced: %d board(s)", len(produced.written))
+
+    if failed_fetches:
+        # A product that could not be fetched failed as surely as one that
+        # could not be captured: one error names both, after the rest is cleaned.
+        produced = ProduceResult([*produced.products, *failed_fetches])
+        failure = CoverageCaptureError(produced)
 
     clean_report = None
     if clean_after_fetch and produced.captured:
@@ -512,10 +538,10 @@ async def collect_coverage(
 
 def _pending_products(cov_dir: Path) -> list[str]:
     """List *cov_dir*'s ``host/product`` dirs holding ``.gcda`` but no capture marker."""
-    from .tree import iter_product_dirs
+    from .tree import ProductKey, iter_product_dirs
 
     return [
-        f"{host_id}/{product}"
+        ProductKey(host_id, product).label
         for host_id, product, leaf in iter_product_dirs(cov_dir)
         if not (leaf / "capture.json").is_file()
         and not (leaf / "capture.failed").is_file()

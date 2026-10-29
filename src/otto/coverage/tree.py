@@ -10,8 +10,25 @@ it fires.
 """
 
 from pathlib import Path
+from typing import NamedTuple
 
 from ..config.coverage_settings import CoverageConfigError
+
+
+class ProductKey(NamedTuple):
+    """One (host, product) pair of a cov dir: ``<cov_dir>/<host>/<product>/``.
+
+    A named pair: it sorts host first, unpacks as ``host, product``, and is
+    the key of every per-product map a collection builds.
+    """
+
+    host: str
+    product: str
+
+    @property
+    def label(self) -> str:
+        """``<host>/<product>``: how every message names the product."""
+        return f"{self.host}/{self.product}"
 
 
 def _holds_data_directly(host_dir: Path) -> bool:

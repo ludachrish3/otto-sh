@@ -18,6 +18,7 @@ coverage internals
    unit_filter
    unit_toolchain
    fetcher
+   tree
    instrumentation
    renderer
    capture

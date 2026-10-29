@@ -609,6 +609,7 @@ def _render_clean_report(cleaned: "CleanReport") -> None:
     """
     from rich import print as rprint
 
+    from ..coverage.tree import ProductKey
     from ..utils import Status
     from .invoke import print_error
 
@@ -616,12 +617,13 @@ def _render_clean_report(cleaned: "CleanReport") -> None:
         if not products:
             rprint(f"[dim]{escape_markup(f'{host}: no instrumented products')}")
         for product, result in products.items():
+            label = ProductKey(host, product).label
             if result.status is Status.NotRun:
-                rprint(f"[dim]{escape_markup(f'{host}/{product}: not run (dry run)')}")
+                rprint(f"[dim]{escape_markup(f'{label}: not run (dry run)')}")
             elif result.is_ok:
-                rprint(f"[green]{escape_markup(f'{host}/{product}: counters cleared')}")
+                rprint(f"[green]{escape_markup(f'{label}: counters cleared')}")
     for failed in cleaned.failed:
-        print_error(f"{failed.host}/{failed.product}: {failed.reason}")
+        print_error(f"{failed.key.label}: {failed.reason}")
     if not cleaned.ok:
         raise typer.Exit(1)
 

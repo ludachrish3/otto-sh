@@ -10,6 +10,7 @@ import pytest
 
 from otto.context import OttoContext, reset_context, set_context
 from otto.coverage.fetcher.remote import GcdaFetcher, _fetch_one_product
+from otto.coverage.tree import ProductKey
 from otto.host.product import Product
 from otto.labs.loader import Lab
 from otto.result import CommandResult, NotRunResult, Result
@@ -127,7 +128,7 @@ class TestGcdaFetcher:
         fake_config_module(host)
 
         fetcher = GcdaFetcher(tmp_path / "staging")
-        result = await fetcher.fetch_all()
+        result = await fetcher.fetch_all(failures={})
 
         dest = result[("host1", "app")]
         assert (dest / "foo.gcda").read_bytes() == b"1"
@@ -152,7 +153,7 @@ class TestGcdaFetcher:
         host = _make_mock_host("host1", [_product("app", "/var/cov/app"), _product("agent")])
         fake_config_module(host)
 
-        result = await GcdaFetcher(tmp_path / "staging").fetch_all()
+        result = await GcdaFetcher(tmp_path / "staging").fetch_all(failures={})
 
         assert set(result) == {("host1", "app"), ("host1", "agent")}
         assert result[("host1", "app")] == tmp_path / "staging" / "host1" / "app"
@@ -171,7 +172,7 @@ class TestGcdaFetcher:
     ):
         host = _make_mock_host("host1", [_product("a", verdict=False), _product("b", verdict=None)])
         fake_config_module(host)
-        assert await GcdaFetcher(tmp_path / "staging").fetch_all() == {}
+        assert await GcdaFetcher(tmp_path / "staging").fetch_all(failures={}) == {}
         host.exec.assert_not_called()
 
     @pytest.mark.asyncio
@@ -187,7 +188,7 @@ class TestGcdaFetcher:
         host.get = AsyncMock(side_effect=_tar_get())
         fake_config_module(host)
 
-        result = await GcdaFetcher(tmp_path / "staging").fetch_all()
+        result = await GcdaFetcher(tmp_path / "staging").fetch_all(failures={})
 
         assert ("p.proj.api", "app") in result
 
@@ -207,7 +208,7 @@ class TestGcdaFetcher:
         host.get.side_effect = _bad_then_good
         fake_config_module(host)
 
-        result = await GcdaFetcher(tmp_path / "staging").fetch_all()
+        result = await GcdaFetcher(tmp_path / "staging").fetch_all(failures={})
 
         assert set(result) == {("host1", "good")}
 
@@ -235,7 +236,7 @@ class TestGcdaFetcher:
         fake_config_module(host)
 
         with caplog.at_level(logging.WARNING, logger="otto.coverage.fetcher.remote"):
-            result = await GcdaFetcher(tmp_path / "staging").fetch_all()
+            result = await GcdaFetcher(tmp_path / "staging").fetch_all(failures={})
 
         assert set(result) == {("host1", "good")}
         assert not (tmp_path / "staging" / "host1" / "bad").exists()
@@ -292,7 +293,7 @@ class TestGcdaFetcher:
         host.get = AsyncMock(side_effect=_get_like_the_family)
         fake_config_module(host)
 
-        result = await GcdaFetcher(tmp_path / "staging").fetch_all()
+        result = await GcdaFetcher(tmp_path / "staging").fetch_all(failures={})
 
         if expected_fetched:
             assert ("host1", "app") in result, f"{family}.get did not bind the fetcher's call"
@@ -307,7 +308,7 @@ class TestGcdaFetcher:
         fake_config_module(host)
 
         fetcher = GcdaFetcher(tmp_path / "staging")
-        result = await fetcher.fetch_all()
+        result = await fetcher.fetch_all(failures={})
         assert len(result) == 0
         assert not (tmp_path / "staging" / "host1").exists()
 
@@ -328,7 +329,7 @@ class TestGcdaFetcher:
         fake_config_module(host)
 
         with caplog.at_level(logging.WARNING, logger="otto.coverage.fetcher.remote"):
-            assert await GcdaFetcher(tmp_path / "staging").fetch_all() == {}
+            assert await GcdaFetcher(tmp_path / "staging").fetch_all(failures={}) == {}
         assert "Failed to archive .gcda for app on host1 at /var/cov" in caplog.text
         assert "Permission denied" in caplog.text
         host.get.assert_not_called()
@@ -337,7 +338,7 @@ class TestGcdaFetcher:
         host.exec.return_value = _OK
         host.get.side_effect = _tar_get({})
         with caplog.at_level(logging.WARNING, logger="otto.coverage.fetcher.remote"):
-            assert await GcdaFetcher(tmp_path / "staging").fetch_all() == {}
+            assert await GcdaFetcher(tmp_path / "staging").fetch_all(failures={}) == {}
         assert caplog.text == ""
 
     @pytest.mark.asyncio
@@ -359,7 +360,7 @@ class TestGcdaFetcher:
         fake_config_module(host)
 
         with caplog.at_level(logging.WARNING, logger="otto.coverage.fetcher.remote"):
-            assert await GcdaFetcher(tmp_path / "staging").fetch_all() == {}
+            assert await GcdaFetcher(tmp_path / "staging").fetch_all(failures={}) == {}
         rendered = [shown(r) for r in caplog.records]
         assert any(line.endswith(f": {output}") for line in rendered), rendered
 
@@ -380,7 +381,7 @@ class TestGcdaFetcher:
         fake_config_module(host)
 
         with caplog.at_level(logging.WARNING, logger="otto.coverage.fetcher.remote"):
-            assert await GcdaFetcher(tmp_path / "staging").fetch_all() == {}
+            assert await GcdaFetcher(tmp_path / "staging").fetch_all(failures={}) == {}
         assert caplog.text == ""
         host.get.assert_not_called()
         assert not (tmp_path / "staging" / "host1").exists()
@@ -396,7 +397,7 @@ class TestGcdaFetcher:
         fake_config_module(local, unix)
 
         fetcher = GcdaFetcher(tmp_path / "staging")
-        result = await fetcher.fetch_all()
+        result = await fetcher.fetch_all(failures={})
 
         assert ("host1", "app") in result
         assert not any(host_id == "local" for host_id, _ in result)
@@ -413,7 +414,7 @@ class TestGcdaFetcher:
         fake_config_module(host)
 
         fetcher = GcdaFetcher(tmp_path / "staging")
-        result = await fetcher.fetch_all()
+        result = await fetcher.fetch_all(failures={})
         assert len(result) == 0
         assert not (tmp_path / "staging" / "host1" / "app").exists()
 
@@ -432,7 +433,7 @@ class TestGcdaFetcher:
         host.get = AsyncMock(side_effect=_get_half_way)
         fake_config_module(host)
 
-        result = await GcdaFetcher(tmp_path / "staging").fetch_all()
+        result = await GcdaFetcher(tmp_path / "staging").fetch_all(failures={})
 
         assert result == {}
         assert not (tmp_path / "staging" / "host1" / "app").exists()
@@ -444,9 +445,9 @@ class TestGcdaFetcher:
         A transport that raises — or a cancellation at a bed teardown — drops
         the same half-populated leaf as a failure result does, and a later merge
         cannot tell a partial product from a complete one. Driven at
-        ``_fetch_one_product``, the frame that owns the leaf: the host-level
-        gather above it turns any exception into a logged per-host miss, which
-        would hide both halves of this. The exception is re-raised untouched —
+        ``_fetch_one_product``, the frame that owns the leaf: the host walk
+        above it turns any exception into that product's recorded failure,
+        which would hide both halves of this. The exception is re-raised untouched —
         the cleanup must not swallow a transport failure into a quiet "no data".
         """
         host = _make_mock_host("host1")
@@ -472,7 +473,7 @@ class TestGcdaFetcher:
         host = _make_mock_host("host1", [_product("app", "/opt/My App/cov")])
         fake_config_module(host)
 
-        await GcdaFetcher(tmp_path / "staging").fetch_all()
+        await GcdaFetcher(tmp_path / "staging").fetch_all(failures={})
         archive = host.exec.call_args_list[0].args[0]
         assert archive.startswith("! test -d '/opt/My App/cov' ")
         assert "&& cd '/opt/My App/cov' && tar -cf \"$t\" .)" in archive
@@ -499,7 +500,7 @@ class TestGcdaFetcher:
         # And through the fleet walk, where `do_for_all_hosts` captures each
         # host's exception as a value: the walk yields nothing and, crucially,
         # still never ran a command.
-        assert await GcdaFetcher(tmp_path / "staging").fetch_all() == {}
+        assert await GcdaFetcher(tmp_path / "staging").fetch_all(failures={}) == {}
         host.exec.assert_not_called()
         # The clean path's own name check (before `reset_coverage` is called)
         # lives in ``otto.coverage.collect._reset_products`` now — pinned in
@@ -517,7 +518,7 @@ class TestGcdaFetcher:
             _OK,
         )[1]
         fake_config_module(host)
-        await GcdaFetcher(tmp_path / "staging").fetch_all()
+        await GcdaFetcher(tmp_path / "staging").fetch_all(failures={})
         assert order == ["prepare", "archive", "rm"]
 
     @pytest.mark.asyncio
@@ -529,7 +530,7 @@ class TestGcdaFetcher:
             return_value=Result(Status.Error, msg="no /sys/module/app/kmodcov/dump")
         )
         fake_config_module(host)
-        result = await GcdaFetcher(tmp_path / "staging").fetch_all()
+        result = await GcdaFetcher(tmp_path / "staging").fetch_all(failures={})
         assert result == {}
         host.exec.assert_not_called()
         host.get.assert_not_called()
@@ -552,7 +553,7 @@ class TestGcdaFetcher:
         )
         fake_config_module(host)
         with caplog.at_level(logging.WARNING, logger="otto.coverage.fetcher.remote"):
-            result = await GcdaFetcher(tmp_path / "staging").fetch_all()
+            result = await GcdaFetcher(tmp_path / "staging").fetch_all(failures={})
         assert result == {}
         host.exec.assert_not_called()
         assert not (tmp_path / "staging" / "host1").exists()
@@ -575,7 +576,7 @@ class TestGcdaFetcher:
         fake_config_module(host)
 
         with caplog.at_level(logging.WARNING, logger="otto.coverage.fetcher.remote"):
-            result = await GcdaFetcher(tmp_path / "staging").fetch_all()
+            result = await GcdaFetcher(tmp_path / "staging").fetch_all(failures={})
 
         assert result == {}
         assert not (tmp_path / "staging" / "host1").exists()
@@ -588,7 +589,7 @@ class TestGcdaFetcher:
         fake_config_module(host1, host2)
 
         fetcher = GcdaFetcher(tmp_path / "staging")
-        result = await fetcher.fetch_all()
+        result = await fetcher.fetch_all(failures={})
         assert set(result) == {("host1", "app"), ("host2", "app")}
 
     @pytest.mark.asyncio
@@ -600,7 +601,85 @@ class TestGcdaFetcher:
 
         # `test1` alone selects nothing now — host ids are FULLMATCHED (D6).
         fetcher = GcdaFetcher(tmp_path / "staging", pattern=re.compile(r"test1.*"))
-        result = await fetcher.fetch_all()
+        result = await fetcher.fetch_all(failures={})
 
         assert set(result) == {("test1", "app")}
         host2.exec.assert_not_called()
+
+
+class TestFetchFailuresAreRecorded:
+    """A product whose counters could not be fetched is a failure the caller is told about.
+
+    Not a log line only: a failed fetch leaves that product with no coverage,
+    so the collection must be able to say so. An empty result (no cov_dir,
+    no counters) stays a quiet non-event.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_failed_transfer_is_that_products_failure(self, tmp_path, fake_config_module):
+        host = _make_mock_host(
+            "host1", [_product("bad", "/var/bad"), _product("good", "/var/good")]
+        )
+        good_get = _tar_get()
+
+        async def _bad_then_good(paths, dest, **kwargs):
+            if host.get.await_count == 1:
+                return Result(Status.Error, value={}, msg="connection refused")
+            return await good_get(paths, dest, **kwargs)
+
+        host.get.side_effect = _bad_then_good
+        fake_config_module(host)
+        failures: dict = {}
+
+        result = await GcdaFetcher(tmp_path / "staging").fetch_all(failures=failures)
+
+        assert set(result) == {("host1", "good")}
+        assert set(failures) == {ProductKey("host1", "bad")}
+        assert "connection refused" in failures[ProductKey("host1", "bad")].reason
+
+    @pytest.mark.asyncio
+    async def test_a_host_that_raises_fails_each_of_its_products_and_spares_the_rest(
+        self, tmp_path, fake_config_module
+    ):
+        """The shape of a container whose exec through its parent raised: every
+        product on it is a failure, named, and another host's products still land."""
+        broken = _make_mock_host("ctr", [_product("wordcount"), _product("shout")])
+        broken.exec = AsyncMock(side_effect=RuntimeError("bound to a different event loop"))
+        fine = _make_mock_host("parent")
+        fake_config_module(broken, fine)
+        failures: dict = {}
+
+        result = await GcdaFetcher(tmp_path / "staging").fetch_all(failures=failures)
+
+        assert set(result) == {("parent", "app")}
+        assert set(failures) == {ProductKey("ctr", "wordcount"), ProductKey("ctr", "shout")}
+        assert all("bound to a different event loop" in f.reason for f in failures.values())
+
+    @pytest.mark.asyncio
+    async def test_a_product_with_no_cov_dir_is_not_a_failure(self, tmp_path, fake_config_module):
+        host = _make_mock_host("host1")
+        host.exec.return_value = CommandResult(
+            Status.Success, value="otto-no-cov-dir\n", command="sh", retcode=0
+        )
+        fake_config_module(host)
+        failures: dict = {}
+
+        assert await GcdaFetcher(tmp_path / "staging").fetch_all(failures=failures) == {}
+        assert failures == {}
+
+    @pytest.mark.asyncio
+    async def test_a_host_whose_products_cannot_be_listed_fails_as_a_whole(
+        self, tmp_path, fake_config_module
+    ):
+        """The one case with no product to name: the host is recorded under ``*``."""
+        broken = _make_mock_host("ctr")
+        broken.products[0].instrumented.side_effect = RuntimeError("artifact unreadable")
+        fine = _make_mock_host("parent")
+        fake_config_module(broken, fine)
+        failures: dict = {}
+
+        result = await GcdaFetcher(tmp_path / "staging").fetch_all(failures=failures)
+
+        assert set(result) == {("parent", "app")}
+        assert set(failures) == {ProductKey("ctr", "*")}
+        assert failures[ProductKey("ctr", "*")].reason == "artifact unreadable"

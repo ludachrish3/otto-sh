@@ -58,6 +58,7 @@ from otto.coverage.errors import (
     NoCoverageHostsError,
     PairingError,
 )
+from otto.coverage.fetcher.failures import ProductFetchError
 from otto.coverage.overrides import OverrideConfigError
 from otto.coverage.stamp_guard import StampError
 from otto.coverage.tickets import TicketConfigError
@@ -194,6 +195,7 @@ CASES: list[tuple[type[BaseException], type[BaseException]]] = [
     (NoCoverageHostsError, ValueError),
     (CoverageCleanError, RuntimeError),
     (CoverageCaptureError, RuntimeError),
+    (ProductFetchError, RuntimeError),
     (PairingError, ValueError),
     (OverrideConfigError, ValueError),
     (TicketConfigError, ValueError),

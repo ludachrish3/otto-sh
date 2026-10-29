@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from otto.coverage.fetcher.remote import _fetch_one_product, safe_extract
+from otto.coverage.fetcher.remote import ProductFetchError, _fetch_one_product, safe_extract
 from otto.result import CommandResult, Result
 from otto.utils import Status
 
@@ -124,8 +124,11 @@ async def test_failed_transfer_with_preexisting_dest_is_not_a_fetch(tmp_path, ca
     stale.write_bytes(b"stale")
     host = _Host(_tar({"./a/main.cpp.gcda": b"1"}), get_status=Status.Error)
 
-    with caplog.at_level(logging.WARNING, logger="otto.coverage.fetcher.remote"):
-        assert await _fetch_one_product(host, _Product(), tmp_path) is None
+    with (
+        caplog.at_level(logging.WARNING, logger="otto.coverage.fetcher.remote"),
+        pytest.raises(ProductFetchError, match="boom"),
+    ):
+        await _fetch_one_product(host, _Product(), tmp_path)
 
     assert not (tmp_path / "h" / "app").exists()
     assert "boom" in caplog.text
@@ -218,8 +221,11 @@ def test_safe_extract_with_a_suffix_keeps_only_matching_files(tmp_path, monkeypa
 @pytest.mark.asyncio
 async def test_a_success_that_delivered_no_archive_is_a_failed_fetch(tmp_path, caplog):
     host = _Host(None)
-    with caplog.at_level(logging.WARNING, logger="otto.coverage.fetcher.remote"):
-        assert await _fetch_one_product(host, _Product(), tmp_path) is None
+    with (
+        caplog.at_level(logging.WARNING, logger="otto.coverage.fetcher.remote"),
+        pytest.raises(ProductFetchError, match="delivered no archive"),
+    ):
+        await _fetch_one_product(host, _Product(), tmp_path)
     assert "delivered no archive" in caplog.text
     assert not (tmp_path / "h").exists()
 
@@ -376,12 +382,14 @@ async def test_an_unreadable_subdir_is_a_failed_fetch_not_a_partial_one(tmp_path
 
     host = _ShellHost({"TMPDIR": str(tmpdir)})
     try:
-        with caplog.at_level(logging.WARNING, logger="otto.coverage.fetcher.remote"):
-            dest = await _fetch_one_product(host, _here(cov_dir), tmp_path / "staging")
+        with (
+            caplog.at_level(logging.WARNING, logger="otto.coverage.fetcher.remote"),
+            pytest.raises(ProductFetchError),
+        ):
+            await _fetch_one_product(host, _here(cov_dir), tmp_path / "staging")
     finally:
         locked.chmod(0o755)
 
-    assert dest is None
     assert not (tmp_path / "staging" / "h").exists()
     assert "Permission denied" in caplog.text
     assert host.gets == []
@@ -395,10 +403,12 @@ async def test_a_temp_dir_mktemp_cannot_use_is_a_failed_fetch(tmp_path, caplog):
     cov_dir, _tmpdir = _counters(tmp_path)
     host = _ShellHost({"TMPDIR": str(tmp_path / "no such dir")})
 
-    with caplog.at_level(logging.WARNING, logger="otto.coverage.fetcher.remote"):
-        dest = await _fetch_one_product(host, _here(cov_dir), tmp_path / "staging")
+    with (
+        caplog.at_level(logging.WARNING, logger="otto.coverage.fetcher.remote"),
+        pytest.raises(ProductFetchError),
+    ):
+        await _fetch_one_product(host, _here(cov_dir), tmp_path / "staging")
 
-    assert dest is None
     assert host.gets == []
     assert "Failed to archive .gcda" in caplog.text
     assert "mktemp" in caplog.text
@@ -505,7 +515,10 @@ async def test_a_no_archive_path_warning_keeps_the_devices_brackets(tmp_path, ca
     from tests._fixtures.log_text import shown
 
     host = _NoArchivePath(None)
-    with caplog.at_level(logging.WARNING, logger="otto.coverage.fetcher.remote"):
-        assert await _fetch_one_product(host, _Product(), tmp_path) is None
+    with (
+        caplog.at_level(logging.WARNING, logger="otto.coverage.fetcher.remote"),
+        pytest.raises(ProductFetchError, match="no archive path"),
+    ):
+        await _fetch_one_product(host, _Product(), tmp_path)
     (record,) = [r for r in caplog.records if "no archive path" in r.getMessage()]
     assert shown(record).endswith("'[/x] [red]oops'")

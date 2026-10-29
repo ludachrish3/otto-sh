@@ -11,6 +11,7 @@ from otto.coverage.fetcher.embedded import (
     collect_embedded_coverage,
     decode_cov_dump,
 )
+from otto.coverage.tree import ProductKey
 from otto.host.embedded_host import EmbeddedHost
 from otto.labs.loader import Lab
 from otto.result import CommandResult
@@ -91,7 +92,7 @@ async def test_collect_one_host_lays_out_decoded_gcda_under_per_host_dir(tmp_pat
     expected = (FIXTURES / "cov_ext.c.gcda").read_bytes()
     host = _mock_embedded_host("zephyr37-llext", console)
 
-    dest = await _collect_one_embedded_host(host, tmp_path)
+    dest = await _collect_one_embedded_host(host, tmp_path, {})
 
     assert dest == {"cov_ext": tmp_path / "zephyr37-llext" / "cov_ext"}
     assert (dest["cov_ext"] / DUMPED).read_bytes() == expected
@@ -119,7 +120,7 @@ async def test_a_dumped_path_that_escapes_the_product_dir_is_not_staged(tmp_path
     host = _mock_embedded_host("b", console)
 
     with caplog.at_level(logging.WARNING, logger="otto.coverage.fetcher.embedded"):
-        assert await _collect_one_embedded_host(host, tmp_path / "s") is None
+        assert await _collect_one_embedded_host(host, tmp_path / "s", {}) is None
 
     assert not (tmp_path / "evil.gcda").exists()
     assert not (tmp_path / "s" / "b" / "cov_ext").exists()
@@ -135,7 +136,7 @@ async def test_a_collection_never_reports_stale_counters_as_fetched(tmp_path):
     stale.write_bytes(b"stale")
     host = _mock_embedded_host("zephyr37-llext", (FIXTURES / "cov_dump_console.txt").read_text())
 
-    dest = await _collect_one_embedded_host(host, tmp_path)
+    dest = await _collect_one_embedded_host(host, tmp_path, {})
 
     leaf = dest["cov_ext"]
     assert [p.relative_to(leaf).as_posix() for p in leaf.rglob("*.gcda")] == [DUMPED]
@@ -148,7 +149,7 @@ async def test_collect_one_host_skips_non_embedded_hosts(tmp_path):
     unix_host.id = "test1"
     unix_host.exec = AsyncMock()
 
-    dest = await _collect_one_embedded_host(unix_host, tmp_path)
+    dest = await _collect_one_embedded_host(unix_host, tmp_path, {})
 
     assert dest is None
     unix_host.exec.assert_not_awaited()
@@ -159,15 +160,16 @@ async def test_a_board_with_no_instrumented_product_is_skipped(tmp_path):
     """An uninstrumented product is never dumped — the console is not touched."""
     host = _mock_embedded_host("b", "", products=[_llext_product("x", verdict=False)])
 
-    assert await _collect_one_embedded_host(host, tmp_path) is None
+    assert await _collect_one_embedded_host(host, tmp_path, {}) is None
 
     host.exec.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_a_product_without_a_dump_fn_is_skipped_with_a_warning(tmp_path, caplog):
+async def test_a_product_without_a_dump_fn_cannot_be_dumped_and_fails(tmp_path, caplog):
     """Only an llext product exports a dump function. One that does not is named
-    in a WARNING and skipped — never dumped through a guessed function name."""
+    in a WARNING and fails, naming the missing declaration — never dumped
+    through a guessed function name."""
     import logging
 
     # spec'd to exactly what it has: `getattr(p, "dump_fn", None)` must miss.
@@ -176,11 +178,17 @@ async def test_a_product_without_a_dump_fn_is_skipped_with_a_warning(tmp_path, c
     bare.instrumented = MagicMock(return_value=True)
     host = _mock_embedded_host("zephyr37-llext", "", products=[bare])
 
+    failures: dict = {}
     with caplog.at_level(logging.WARNING, logger="otto.coverage.fetcher.embedded"):
-        assert await _collect_one_embedded_host(host, tmp_path) is None
+        assert await _collect_one_embedded_host(host, tmp_path, failures) is None
 
     host.exec.assert_not_called()
-    assert "daemon on zephyr37-llext has no dump_fn" in caplog.text
+    assert "daemon on zephyr37-llext cannot be dumped (no dump_fn)" in caplog.text
+    # A failed product whose remedy is the missing declaration, not a re-run.
+    failed = failures[ProductKey("zephyr37-llext", "daemon")]
+    assert "declares no dump function" in failed.reason
+    assert failed.remedy is not None
+    assert "dump_fn" in failed.remedy
 
 
 @pytest.mark.asyncio
@@ -194,7 +202,7 @@ async def test_each_instrumented_product_is_dumped_by_its_own_dump_fn(tmp_path):
         products=[_llext_product("cov_ext"), _llext_product("other", dump_fn="gcov_dump")],
     )
 
-    dest = await _collect_one_embedded_host(host, tmp_path)
+    dest = await _collect_one_embedded_host(host, tmp_path, {})
 
     assert set(dest) == {"cov_ext", "other"}
     assert [c.args[0] for c in host.exec.call_args_list] == [
@@ -222,7 +230,7 @@ async def test_collect_all_stages_embedded_hosts_and_skips_others(
     fake_config_module(embedded, unix)
 
     collector = EmbeddedGcdaCollector(tmp_path / "staging")
-    result = await collector.collect_all()
+    result = await collector.collect_all(failures={})
 
     assert set(result) == {("zephyr37-llext", "cov_ext")}
     expected = (FIXTURES / "cov_ext.c.gcda").read_bytes()
@@ -235,7 +243,7 @@ async def test_collect_embedded_coverage_keys_by_host_and_product(tmp_path, fake
     console = (FIXTURES / "cov_dump_console.txt").read_text()
     fake_config_module(_mock_embedded_host("zephyr37-llext", console))
 
-    result = await collect_embedded_coverage(tmp_path)
+    result = await collect_embedded_coverage(tmp_path, failures={})
 
     assert set(result) == {("zephyr37-llext", "cov_ext")}
 
@@ -251,7 +259,7 @@ async def test_collect_embedded_coverage_noop_without_embedded_hosts(
     unix.exec = AsyncMock()
     fake_config_module(unix)
 
-    assert await collect_embedded_coverage(tmp_path / "cov") == {}
+    assert await collect_embedded_coverage(tmp_path / "cov", failures={}) == {}
     unix.exec.assert_not_awaited()
 
 
@@ -280,6 +288,7 @@ async def test_collect_embedded_coverage_scopes_hosts_by_pattern(
     result = await collect_embedded_coverage(
         tmp_path / "cov",
         pattern=re.compile("zephyr37-llext"),
+        failures={},
     )
 
     assert set(result) == {("zephyr37-llext", "cov_ext")}
@@ -306,7 +315,90 @@ async def test_a_container_only_pattern_collects_nothing_without_refusing(
     container.exec = AsyncMock()
     fake_config_module(container)
 
-    got = await collect_embedded_coverage(tmp_path / "stage", pattern=re.compile(r".*\.r1\.api"))
+    got = await collect_embedded_coverage(
+        tmp_path / "stage", pattern=re.compile(r".*\.r1\.api"), failures={}
+    )
 
     assert got == {}
     container.exec.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_dump_is_that_products_failure(tmp_path, fake_config_module):
+    """A dump command that fails is recorded against its product, not only logged."""
+    host = _mock_embedded_host("board", "")
+    host.exec = AsyncMock(
+        return_value=CommandResult(Status.Failed, value="no such fn", command="dump", retcode=1)
+    )
+    fake_config_module(host)
+    failures: dict = {}
+
+    assert await collect_embedded_coverage(tmp_path, failures=failures) == {}
+
+    assert set(failures) == {ProductKey("board", "cov_ext")}
+    assert "no such fn" in failures[ProductKey("board", "cov_ext")].reason
+
+
+@pytest.mark.asyncio
+async def test_a_raising_dump_fails_its_product_and_the_next_is_still_dumped(
+    tmp_path, fake_config_module
+):
+    console = (FIXTURES / "cov_dump_console.txt").read_text()
+    ok = CommandResult(Status.Success, value=console, command="dump", retcode=0)
+    host = _mock_embedded_host(
+        "board", "", products=[_llext_product("first"), _llext_product("second")]
+    )
+    host.exec = AsyncMock(side_effect=[ConnectionResetError("console went away"), ok])
+    fake_config_module(host)
+    failures: dict = {}
+
+    result = await collect_embedded_coverage(tmp_path, failures=failures)
+
+    assert set(result) == {("board", "second")}
+    assert set(failures) == {ProductKey("board", "first")}
+    assert "console went away" in failures[ProductKey("board", "first")].reason
+
+
+@pytest.mark.asyncio
+async def test_a_staging_failure_fails_only_its_own_product(
+    tmp_path, fake_config_module, monkeypatch
+):
+    """Not only the dump command: anything that raises while one product is
+    staged fails that product alone, and its siblings still land."""
+    from otto.coverage.fetcher import embedded
+
+    console = (FIXTURES / "cov_dump_console.txt").read_text()
+    host = _mock_embedded_host(
+        "board", console, products=[_llext_product("first"), _llext_product("second")]
+    )
+    fake_config_module(host)
+    real_stage = embedded._stage_blocks
+
+    def stage(blocks, dest, host_id, product):
+        if product == "first":
+            raise OSError("disk full")
+        return real_stage(blocks, dest, host_id, product)
+
+    monkeypatch.setattr(embedded, "_stage_blocks", stage)
+    failures: dict = {}
+
+    result = await collect_embedded_coverage(tmp_path, failures=failures)
+
+    assert set(result) == {("board", "second")}
+    assert failures[ProductKey("board", "first")].reason == "disk full"
+
+
+@pytest.mark.asyncio
+async def test_a_board_with_no_loader_fails_each_product_naming_the_declaration(
+    tmp_path, fake_config_module
+):
+    host = _mock_embedded_host("board", "", products=[_llext_product("a"), _llext_product("b")])
+    host.loader = None
+    fake_config_module(host)
+    failures: dict = {}
+
+    assert await collect_embedded_coverage(tmp_path, failures=failures) == {}
+
+    assert set(failures) == {ProductKey("board", "a"), ProductKey("board", "b")}
+    assert all(f.remedy == "declare the board's binary loader" for f in failures.values())
+    host.exec.assert_not_called()

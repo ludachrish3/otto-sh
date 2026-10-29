@@ -13,6 +13,7 @@ in :func:`otto.suite.run._post_run_coverage` (see ``TestPostRunSwallowPolicy``).
 
 import asyncio
 import json
+import logging
 import shutil
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -21,9 +22,11 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
-from otto.coverage.capture.produce import ProduceResult, ProductCapture, ProductKey
+from otto.coverage.capture.produce import ProduceResult, ProductCapture
 from otto.coverage.collect import CollectResult, collect_coverage
+from otto.coverage.fetcher.failures import FetchFailure
 from otto.coverage.reports import CleanReport
+from otto.coverage.tree import ProductKey
 from otto.host.element import Element
 from otto.result import Result
 from otto.utils import Status
@@ -440,8 +443,8 @@ class TestCleanAfterFetch:
         fetcher_instance = MagicMock()
         fetcher_instance.fetch_all = AsyncMock(
             return_value={
-                ("test1", "app"): cov_dir / "test1" / "app",
-                ("test1", "lib"): cov_dir / "test1" / "lib",
+                ProductKey("test1", "app"): cov_dir / "test1" / "app",
+                ProductKey("test1", "lib"): cov_dir / "test1" / "lib",
             }
         )
         with (
@@ -545,7 +548,7 @@ class TestCollectEmbedded:
         cov_dir.mkdir()
 
         staged = cov_dir / "zephyr37-fat" / "cov_ext"
-        embedded_collect = AsyncMock(return_value={("zephyr37-fat", "cov_ext"): staged})
+        embedded_collect = AsyncMock(return_value={ProductKey("zephyr37-fat", "cov_ext"): staged})
         with (
             patch("otto.config.coverage_settings.get_cov_config", return_value={"embedded": {}}),
             patch("otto.fleet.all_hosts", return_value=[]),
@@ -600,7 +603,9 @@ class TestCollectEmbedded:
         )
 
         embedded_collect = AsyncMock(
-            return_value={("zephyr37-llext", "cov_ext"): cov_dir / "zephyr37-llext" / "cov_ext"}
+            return_value={
+                ProductKey("zephyr37-llext", "cov_ext"): cov_dir / "zephyr37-llext" / "cov_ext"
+            }
         )
         cov_config = {"embedded": {"build_dir": str(build_dir)}}
         with (
@@ -647,7 +652,9 @@ class TestCollectEmbedded:
         project.root = tmp_path / "project3"
 
         embedded_collect = AsyncMock(
-            return_value={("zephyr37-llext", "cov_ext"): cov_dir / "zephyr37-llext" / "cov_ext"}
+            return_value={
+                ProductKey("zephyr37-llext", "cov_ext"): cov_dir / "zephyr37-llext" / "cov_ext"
+            }
         )
         cov_config = {"embedded": {"build_dir": str(build_dir)}}
         with (
@@ -686,7 +693,9 @@ class TestCollectEmbedded:
         project.root = tmp_path / "project3"
 
         embedded_collect = AsyncMock(
-            return_value={("zephyr37-llext", "cov_ext"): cov_dir / "zephyr37-llext" / "cov_ext"}
+            return_value={
+                ProductKey("zephyr37-llext", "cov_ext"): cov_dir / "zephyr37-llext" / "cov_ext"
+            }
         )
         cov_config = {"embedded": {"build_dir": str(build_dir)}}
 
@@ -870,7 +879,7 @@ class TestFetchedToolchainMetadata:
             host.products = [_product("app", "/var/cov/app")]
             host.toolchain = toolchain
             doubles.append(host)
-            fetched[(host_id, "app")] = cov_dir / host_id / "app"
+            fetched[ProductKey(host_id, "app")] = cov_dir / host_id / "app"
 
         fetcher = MagicMock()
         fetcher.fetch_all = AsyncMock(return_value=fetched)
@@ -992,7 +1001,7 @@ class TestBuildDirPathAnchoring:
         cov_dir = tmp_path / "cov"
         cov_dir.mkdir()
         embedded_collect = AsyncMock(
-            return_value={(host.id, "cov_ext"): cov_dir / host.id / "cov_ext"}
+            return_value={ProductKey(host.id, "cov_ext"): cov_dir / host.id / "cov_ext"}
         )
         with (
             patch("otto.config.coverage_settings.get_cov_config", return_value=cov_config),
@@ -1120,10 +1129,10 @@ class TestCaptureTail:
         if (cov_dir / "board1").exists():
             (cov_dir / "board1").rename(held)
 
-        async def deliver(staging_root, pattern=None):
+        async def deliver(staging_root, pattern=None, *, failures):
             if held.exists():
                 held.rename(cov_dir / "board1")
-            return {("board1", "app"): cov_dir / "board1"}
+            return {ProductKey("board1", "app"): cov_dir / "board1"}
 
         embedded_collect = AsyncMock(side_effect=deliver)
         with (
@@ -1268,7 +1277,9 @@ class TestCaptureTail:
         host.id = "test1"
         host.products = [app, idle]
         fetcher = _empty_fetcher()
-        fetcher.fetch_all = AsyncMock(return_value={("test1", "app"): cov_dir / "test1" / "app"})
+        fetcher.fetch_all = AsyncMock(
+            return_value={ProductKey("test1", "app"): cov_dir / "test1" / "app"}
+        )
         produce_mock = AsyncMock(return_value=ProduceResult([]))
         with (
             patch("otto.config.coverage_settings.get_cov_config", return_value={"tiers": {}}),
@@ -1307,7 +1318,7 @@ class TestCaptureTail:
             apps.append(app)
         fetcher = _empty_fetcher()
         fetcher.fetch_all = AsyncMock(
-            return_value={(h.id, "app"): cov_dir / h.id / "app" for h in hosts}
+            return_value={ProductKey(h.id, "app"): cov_dir / h.id / "app" for h in hosts}
         )
         produce_mock = AsyncMock(return_value=ProduceResult([]))
         with (
@@ -1347,7 +1358,7 @@ class TestCaptureTail:
                 ]
             )
         )
-        embedded_collect = AsyncMock(return_value={("board1", "app"): cov_dir / "board1"})
+        embedded_collect = AsyncMock(return_value={ProductKey("board1", "app"): cov_dir / "board1"})
         cov_config = {
             "tiers": {
                 "manual": {"kind": "manual", "precedence": 1},
@@ -1412,7 +1423,7 @@ class TestTierPassthrough:
                 ]
             )
         )
-        embedded_collect = AsyncMock(return_value={("board1", "app"): cov_dir / "board1"})
+        embedded_collect = AsyncMock(return_value={ProductKey("board1", "app"): cov_dir / "board1"})
         with (
             patch("otto.config.coverage_settings.get_cov_config", return_value={"tiers": {}}),
             patch("otto.fleet.all_hosts", return_value=[]),
@@ -1440,7 +1451,7 @@ class TestPostRunSwallowPolicy:
     def _drive_post_run(self, project, cov_dir, cov_config):
         from otto.suite.run import RunOptions, _post_run_coverage
 
-        embedded_collect = AsyncMock(return_value={("board1", "app"): cov_dir / "board1"})
+        embedded_collect = AsyncMock(return_value={ProductKey("board1", "app"): cov_dir / "board1"})
         opts = RunOptions(cov=True, cov_report=False, cov_dir=cov_dir)
         with (
             patch("otto.config.coverage_settings.get_cov_config", return_value=cov_config),
@@ -1525,10 +1536,10 @@ class TestContainerOnlyPattern:
         cov_dir.mkdir()
         staged = cov_dir / container.id / "app"
 
-        async def fetch_all(*args, **kwargs):
+        async def fetch_all(*, failures):
             # The fetch delivers the container's one .gcda, as a real one would.
             _counters(staged, project_root)
-            return {(container.id, "app"): staged}
+            return {ProductKey(container.id, "app"): staged}
 
         async def fake_capture(self, pairs, staging, output, toolchain=None):
             output.write_text(f"TN:\nSF:{project_root / 'f.c'}\nDA:1,3\nend_of_record\n")
@@ -1602,23 +1613,23 @@ def _two_targets(
     host.products = [app, lib] if broken == "gcda" else [app]
     host.toolchain = Toolchain()
 
-    async def fetch_all():
+    async def fetch_all(*, failures):
         _counters(cov_dir / "test1" / "app", project_root)
-        got = {("test1", "app"): cov_dir / "test1" / "app"}
+        got = {ProductKey("test1", "app"): cov_dir / "test1" / "app"}
         if broken == "gcda":
             lib_dir = cov_dir / "test1" / "lib"
             lib_dir.mkdir(parents=True)
             (lib_dir / "fw.gcda").write_bytes(b"adcg" + _B11)
-            got[("test1", "lib")] = lib_dir
+            got[ProductKey("test1", "lib")] = lib_dir
         return got
 
-    async def embedded(staging_root, pattern=None):
+    async def embedded(staging_root, pattern=None, *, failures):
         if broken != "gcno":
             return {}
         board = cov_dir / "board2" / "fw"
         board.mkdir(parents=True)
         (board / "fw.gcda").write_bytes(b"adcg" + _B11)
-        return {("board2", "fw"): board}
+        return {ProductKey("board2", "fw"): board}
 
     async def fake_capture(self, pairs, staging, output, toolchain=None):
         output.write_text(f"TN:\nSF:{project_root / 'f.c'}\nDA:1,3\nend_of_record\n")
@@ -1712,3 +1723,179 @@ class TestAMissingReaderFailsOnlyItsTarget:
         exit_code, message = seen["gcda"]
         assert exit_code == 1
         assert message.endswith(f"<target>:\nCoverage data for <subject> {_NO_LLVM_COV}")
+
+
+class TestAFailedFetchIsAFailedProduct:
+    """A product whose counters could not be fetched fails like one that could not
+    be captured: named in one ``CoverageCaptureError``, raised after the products
+    that did capture were cleaned, its own counters left on the host."""
+
+    APP = ProductKey("test1", "app")
+    LOST = ProductKey("ctr", "wordcount")
+
+    @contextmanager
+    def _lab(self, cov_dir, produce_mock, clean_mock, *, app_fetched=True) -> Iterator[MagicMock]:
+        """Patch a lab whose fetcher stages ``test1/app`` (unless *app_fetched* is
+        false) and fails ``ctr/wordcount``; yields the project to collect."""
+        from otto.host import UnixHost
+
+        project = MagicMock()
+        project.root = cov_dir.parent
+        project.name = "proj"
+        host = MagicMock(spec=UnixHost)
+        host.id = "test1"
+        host.products = [_product("app", "/var/cov/app")]
+
+        async def fetch_all(*, failures):
+            failures[self.LOST] = FetchFailure("bound to a different event loop")
+            return {ProductKey("test1", "app"): cov_dir / "test1" / "app"} if app_fetched else {}
+
+        fetcher = MagicMock()
+        fetcher.fetch_all = AsyncMock(side_effect=fetch_all)
+        with (
+            patch("otto.config.coverage_settings.get_cov_config", return_value={"hosts": ".*"}),
+            patch("otto.fleet.all_hosts", return_value=[host]),
+            patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher),
+            patch(
+                "otto.coverage.fetcher.embedded.collect_embedded_coverage",
+                new=AsyncMock(return_value={}),
+            ),
+            patch("otto.coverage.collect.clean_coverage", clean_mock),
+            patch("otto.config.coverage_settings.get_cov_project", return_value=project),
+            patch("otto.coverage.collect._write_metadata", new=AsyncMock()),
+            patch("otto.coverage.capture.gitio.head_commit", return_value=HEAD),
+            patch("otto.coverage.capture.produce.produce_captures", new=produce_mock),
+        ):
+            yield project
+
+    def _app_captured(self, cov_dir) -> AsyncMock:
+        captured = ProductCapture(self.APP, cov_dir / "test1" / "app" / "capture.json", None)
+        return AsyncMock(return_value=ProduceResult([captured]))
+
+    @staticmethod
+    def _app_cleaned() -> CleanReport:
+        return CleanReport(hosts={"test1": {"app": Result(Status.Success)}})
+
+    def test_it_is_raised_after_the_captured_products_are_cleaned(self, tmp_path):
+        from otto.coverage.errors import CoverageCaptureError
+
+        cov_dir = tmp_path / "cov"
+        report = self._app_cleaned()
+        clean_mock = AsyncMock(return_value=report)
+
+        with (
+            self._lab(cov_dir, self._app_captured(cov_dir), clean_mock) as project,
+            pytest.raises(CoverageCaptureError) as info,
+        ):
+            asyncio.run(collect_coverage(cov_dir, projects=[project]))
+
+        clean_mock.assert_awaited_once_with(ANY, pairs=[self.APP])
+        assert info.value.clean is report
+        assert info.value.result.captured == [self.APP]
+        [failed] = info.value.result.failed
+        assert failed.key == self.LOST
+        assert failed.failure == "bound to a different event loop"
+        assert not failed.fetched
+        assert "ctr/wordcount: fetch failed: bound to a different event loop" in str(info.value)
+        assert "failed to fetch or capture" not in str(info.value)
+
+    def test_it_joins_the_capture_failures_in_one_error(self, tmp_path):
+        from otto.coverage.errors import CoverageCaptureError
+
+        cov_dir = tmp_path / "cov"
+        lib = ProductCapture(ProductKey("test1", "lib"), None, "lcov --capture failed")
+        app = ProductCapture(self.APP, cov_dir / "test1" / "app" / "capture.json", None)
+        produce_mock = AsyncMock(side_effect=CoverageCaptureError(ProduceResult([app, lib])))
+        clean_mock = AsyncMock(return_value=self._app_cleaned())
+
+        with (
+            self._lab(cov_dir, produce_mock, clean_mock) as project,
+            pytest.raises(CoverageCaptureError) as info,
+        ):
+            asyncio.run(collect_coverage(cov_dir, projects=[project]))
+
+        failed = {p.key for p in info.value.result.failed}
+        assert failed == {ProductKey("test1", "lib"), self.LOST}
+        assert "2 product(s) failed to fetch or capture;" in str(info.value)
+        clean_mock.assert_awaited_once_with(ANY, pairs=[self.APP])
+
+    def test_a_product_whose_remedy_is_a_declaration_is_not_told_to_rerun(self):
+        from otto.coverage.errors import CoverageCaptureError
+
+        undeclared = ProductCapture(
+            ProductKey("board", "fw"),
+            None,
+            "it declares no dump function, so its counters cannot be dumped",
+            fetched=False,
+            remedy="declare the product's `dump_fn`",
+        )
+        lost = ProductCapture(self.LOST, None, "bound to a different event loop", fetched=False)
+
+        message = str(CoverageCaptureError(ProduceResult([undeclared, lost])))
+
+        assert message.startswith("2 product(s) could not be fetched; their counters stay on")
+        assert (
+            "board/fw: fetch failed: it declares no dump function, so its counters cannot be "
+            "dumped; declare the product's `dump_fn`"
+        ) in message
+        assert message.endswith("Fix the cause and run `otto cov get` again for: ctr/wordcount.")
+
+    def test_nothing_fetched_because_everything_failed_names_the_failure(self, tmp_path):
+        """Not "no counters anywhere": the reason nothing came down is the failure."""
+        from otto.coverage.errors import CoverageCaptureError
+
+        cov_dir = tmp_path / "cov"
+        produce_mock, clean_mock = AsyncMock(), AsyncMock()
+
+        with (
+            self._lab(cov_dir, produce_mock, clean_mock, app_fetched=False) as project,
+            pytest.raises(CoverageCaptureError) as info,
+        ):
+            asyncio.run(collect_coverage(cov_dir, projects=[project]))
+
+        assert [p.key for p in info.value.result.failed] == [self.LOST]
+        produce_mock.assert_not_awaited()
+        clean_mock.assert_not_awaited()
+
+    def test_otto_cov_get_exits_1_naming_the_product(self, tmp_path):
+        from typer.testing import CliRunner
+
+        from otto.cli import cov as cov_module
+        from otto.cli.cov import cov_app
+
+        cov_dir = tmp_path / "cov"
+        with self._lab(cov_dir, self._app_captured(cov_dir), AsyncMock()) as project:
+
+            async def get_coverage(output_dir, **_kw):
+                await collect_coverage(cov_dir, projects=[project], clean_after_fetch=False)
+
+            with (
+                patch("otto.coverage.get.get_coverage", new=get_coverage),
+                patch.object(cov_module.logger, "error") as logged,
+            ):
+                result = CliRunner().invoke(cov_app, ["get"])
+
+        assert result.exit_code == 1
+        message = logged.call_args.args[0]
+        assert "ctr/wordcount: fetch failed: bound to a different event loop" in message
+
+    def test_otto_test_cov_warns_once_per_product_and_does_not_fail(self, tmp_path, caplog):
+        """The run tail's rule for every collection failure: loud, never a failed run."""
+        from otto.suite.run import RunOptions, _post_run_coverage
+
+        cov_dir = tmp_path / "cov"
+        opts = RunOptions(cov=True, cov_report=False, cov_dir=cov_dir)
+        clean_mock = AsyncMock(return_value=self._app_cleaned())
+
+        with (
+            self._lab(cov_dir, self._app_captured(cov_dir), clean_mock) as project,
+            caplog.at_level("WARNING"),
+        ):
+            asyncio.run(_post_run_coverage([project], tmp_path / "log", opts))
+
+        warned = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        # One line per product not collected; nothing that says "failed to capture".
+        assert warned == [
+            "Coverage not collected: ctr/wordcount: fetch failed: bound to a different event loop"
+        ]
+        clean_mock.assert_awaited_once_with(ANY, pairs=[self.APP])

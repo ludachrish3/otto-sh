@@ -98,7 +98,9 @@ On **remote hosts** (the machines running the instrumented product):
   step exits non-zero, that product's fetch fails with the command's
   message, and its counters stay on the host rather than being
   half-collected. That covers a read-only or missing temp dir, an unreadable
-  file or directory, and no `tar` at all.
+  file or directory, and no `tar` at all. A failed fetch is a failed
+  product: `otto cov get` names it and exits `1`, and `otto test --cov`
+  names it in its coverage warning.
 
 For clang-built products the otto host additionally needs `llvm-cov`
 (the `llvm` package) — see {doc}`instrumenting/clang`.

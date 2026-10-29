@@ -14,6 +14,7 @@ from pydantic import ConfigDict, Field
 
 from ...models.base import OttoModel
 from ..formats import CAPTURE_READ_VERSIONS, CAPTURE_WRITE_VERSIONS, found_version_label
+from ..tree import ProductKey
 from . import gitio
 from .remap import LineRemapper, parse_u0_hunks
 
@@ -204,7 +205,9 @@ def build_capture(  # noqa: PLR0913 — wide capture-construction API, one keywo
 
     if outside:
         logger.info(
-            "%s/%s: skipped %d source file(s) outside the project root", board, product, outside
+            "%s: skipped %d source file(s) outside the project root",
+            ProductKey(board, product).label,
+            outside,
         )
 
     captured_at = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")

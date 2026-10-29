@@ -6,7 +6,7 @@ from ..config.coverage_settings import CoverageConfigError
 from ..errors import FieldError, OttoError
 
 if TYPE_CHECKING:  # pragma: no cover — typing only; see CoverageNotInstrumentedError
-    from .capture.produce import ProduceResult
+    from .capture.produce import ProduceResult, ProductCapture
     from .instrumentation import InstrumentationReport
     from .reports import CleanReport
 
@@ -114,7 +114,7 @@ class CoverageCleanError(OttoError, RuntimeError):
 
     def __init__(self, report: "CleanReport") -> None:
         """Frame *report*'s per-host/product failures as one summary message."""
-        reasons = "; ".join(f"{f.host}/{f.product}: {f.reason}" for f in report.failed)
+        reasons = "; ".join(f"{f.key.label}: {f.reason}" for f in report.failed)
         super().__init__(f"could not clear coverage counters: {reasons}")
         self.report = report
 
@@ -163,8 +163,35 @@ class CaptureCommitError(OttoError, RuntimeError):
         self.head = head
 
 
+def _failure_of(failed: "ProductCapture") -> tuple[str, bool]:
+    """*failed*'s failure, and whether it already leads with its ``<host>/<product>:`` label.
+
+    Pairing and mismatch failures name their product themselves; the one
+    place that is checked.
+    """
+    failure = failed.failure or ""
+    return failure, failure.startswith(f"{failed.key.label}:")
+
+
+def product_failure_line(failed: "ProductCapture") -> str:
+    """One failed product's entry: ``host/product: fetch failed: …`` (or ``failed to capture``).
+
+    What a run's coverage tail logs once per failed product (one warning per
+    product; a capture failure's reason may span lines), and how a failed
+    fetch reads wherever it is named. A remedy the product carries (a missing
+    declaration, say) follows the reason.
+    """
+    label = f"{failed.key.label}:"
+    failure, labelled = _failure_of(failed)
+    if labelled:
+        failure = failure[len(label) :].lstrip()
+    verb = "fetch failed" if not failed.fetched else "failed to capture"
+    line = f"{label} {verb}: {failure}"
+    return f"{line}; {failed.remedy}" if failed.remedy else line
+
+
 class CoverageCaptureError(OttoError, RuntimeError):
-    """One or more products failed to capture; the others captured normally.
+    """One or more products failed to be fetched or captured; the others captured normally.
 
     ``result`` carries every product's outcome, so a caller can still use
     (and clean) the products that captured before re-raising. ``details``
@@ -173,20 +200,45 @@ class CoverageCaptureError(OttoError, RuntimeError):
     the clean of those captured products, when the raiser ran one before
     re-raising: a failed reset there is a failure of its own, and a caller
     that fails on a failed clean checks it here as it would on a success.
+
+    The usual remedy, fixing the cause and running ``otto cov get`` again, is
+    said once; a product that needs something else (a missing declaration)
+    says so in its own entry, and is left out of that sentence.
     """
 
     def __init__(self, result: "ProduceResult", clean: "CleanReport | None" = None) -> None:
         """Frame each failed product's short failure as one message."""
         blocks = []
         for p in result.failed:
-            label = f"{p.key.host}/{p.key.product}:"
-            failure = p.failure or ""
-            # Pairing and mismatch failures already lead with the label.
-            blocks.append(failure if failure.startswith(label) else f"{label}\n{failure}")
-        super().__init__(
-            f"{len(blocks)} product(s) failed to capture; their counters stay on the host — "
-            "fix the cause and run `otto cov get` again:\n\n" + "\n\n".join(blocks)
+            failure, labelled = _failure_of(p)
+            if not p.fetched or p.remedy:
+                blocks.append(product_failure_line(p))
+            else:
+                blocks.append(failure if labelled else f"{p.key.label}:\n{failure}")
+        fetches = sum(not p.fetched for p in result.failed)
+        what = (
+            "failed to capture"
+            if not fetches
+            else "could not be fetched"
+            if fetches == len(blocks)
+            else "failed to fetch or capture"
         )
+        rerun = [p.key.label for p in result.failed if not p.remedy]
+        if len(rerun) == len(blocks):
+            message = (
+                f"{len(blocks)} product(s) {what}; their counters stay on the host — "
+                "fix the cause and run `otto cov get` again:\n\n" + "\n\n".join(blocks)
+            )
+        else:
+            message = (
+                f"{len(blocks)} product(s) {what}; their counters stay on the host:\n\n"
+                + "\n\n".join(blocks)
+            )
+            if rerun:
+                message += (
+                    "\n\nFix the cause and run `otto cov get` again for: " + ", ".join(rerun) + "."
+                )
+        super().__init__(message)
         self.details = blocks
         self.result = result
         self.clean = clean

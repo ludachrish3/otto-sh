@@ -164,7 +164,7 @@ class TestCoverageFetch:
             cov_dir = tmp_path / "cov"
             with configured_hosts(*hosts):
                 fetcher = GcdaFetcher(cov_dir)
-                product_dirs = await fetcher.fetch_all()
+                product_dirs = await fetcher.fetch_all(failures={})
 
             # Verify we got .gcda files from both hosts
             assert len(product_dirs) == 2, f"Expected 2 (host, product) keys, got {product_dirs}"

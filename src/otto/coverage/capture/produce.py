@@ -53,7 +53,7 @@ from ..pairing import GcnoIndex, pair_product
 from ..reporter import read_cov_source_root, read_cov_source_roots, read_cov_toolchains
 from ..sources import SourceResolver, write_resolved_info
 from ..toolchains import resolve_toolchains
-from ..tree import iter_product_dirs
+from ..tree import ProductKey, iter_product_dirs
 from . import gitio
 from .model import build_capture
 
@@ -67,22 +67,22 @@ STAGE_DIR = ".otto-stage"
 
 
 @dataclass(frozen=True)
-class ProductKey:
-    """One (host, product) pair of a cov dir: ``<cov_dir>/<host>/<product>/``."""
-
-    host: str
-    product: str
-
-
-@dataclass(frozen=True)
 class ProductCapture:
-    """One product's capture outcome: exactly one of *capture* and *failure* is set."""
+    """One product's collection outcome: exactly one of *capture* and *failure* is set."""
 
     key: ProductKey
     capture: Path | None
     """The ``capture.json`` written, when the product captured."""
     failure: str | None
-    """The short failure written to ``capture.failed``, when it did not."""
+    """The short failure written to ``capture.failed``, when it did not; for a
+    product whose counters were never fetched, why the fetch failed."""
+    fetched: bool = True
+    """``False`` when the product's counters could not be fetched at all, so
+    it never reached capture (and has no ``capture.failed``)."""
+    remedy: str | None = None
+    """What the user must change, when re-running ``otto cov get`` after
+    fixing the cause is not it (a missing declaration, say); ``None`` for the
+    usual remedy."""
 
 
 @dataclass(frozen=True)
@@ -213,10 +213,10 @@ async def produce_captures(  # noqa: PLR0913 — one keyword per capture annotat
             key = ProductKey(board, product)
             if only is not None and key not in only:
                 continue
-            label = f"{board}/{product}"
+            label = key.label
             for stale in ("capture.json", "capture.failed"):
                 (board_dir / stale).unlink(missing_ok=True)
-            logger.info("=== Capturing %s / %s ===", board, product)
+            logger.info("=== Capturing %s ===", label)
             # geninfo writes absolute SF: paths under the --directory it is
             # given; the resolver strips exactly that prefix, so both get
             # the one resolved path.

@@ -6,6 +6,7 @@ import pytest
 
 from otto.coverage.capture import produce
 from otto.coverage.errors import CaptureCommitError, CaptureFailedError, CoverageCaptureError
+from otto.coverage.tree import ProductKey
 from otto.host.errors import CoverageToolMissingError
 
 _DATA = b"adcg*33B\x01\x00\x00\x00"  # gcc 13, the stubbed system major
@@ -109,7 +110,7 @@ async def test_only_limits_production(tmp_path, fake_capture):
         project_root=root,
         labs=["l"],
         products={},
-        only=[produce.ProductKey("h", "good")],
+        only=[ProductKey("h", "good")],
     )
     assert [k.product for k in result.captured] == ["good"]
     assert not (cov / "h/other/capture.json").exists()
@@ -208,7 +209,7 @@ async def test_a_products_object_list_is_read_from_its_definition(tmp_path, fake
         tier="system",
         project_root=root,
         labs=["l"],
-        products={produce.ProductKey("h", "good"): sentinel},  # ty: ignore[invalid-argument-type]
+        products={ProductKey("h", "good"): sentinel},  # ty: ignore[invalid-argument-type]
         objects=_Cache(),  # ty: ignore[invalid-argument-type]
     )
     assert reads == [sentinel]
@@ -238,8 +239,8 @@ async def test_same_named_products_on_two_hosts_read_their_own_definitions(tmp_p
         project_root=root,
         labs=["l"],
         products={  # ty: ignore[invalid-argument-type]
-            produce.ProductKey("h", "good"): on_h,
-            produce.ProductKey("h2", "good"): on_h2,
+            ProductKey("h", "good"): on_h,
+            ProductKey("h2", "good"): on_h2,
         },
         objects=_Cache(),  # ty: ignore[invalid-argument-type]
     )
@@ -263,6 +264,21 @@ async def test_a_product_with_no_definition_says_why_it_pairs_by_path(
     lines = [r.getMessage() for r in caplog.records if "object list unavailable" in r.getMessage()]
     want = "h/good: object list unavailable: no definition of this product in the active lab"
     assert lines == [f"{want} — pairing by path"]
+
+
+@pytest.mark.asyncio
+async def test_the_capture_banner_names_the_product_by_its_label(tmp_path, fake_capture, caplog):
+    """The per-product banner spells the product ``<host>/<product>``, as every message does."""
+    import logging
+
+    cov, root = _setup(tmp_path, names=("good",))
+    with caplog.at_level(logging.INFO):
+        await produce.produce_captures(
+            cov, tier="system", project_root=root, labs=["l"], products={}
+        )
+
+    banners = [r.getMessage() for r in caplog.records if "=== Capturing" in r.getMessage()]
+    assert banners == ["=== Capturing h/good ==="]
 
 
 def test_pending_capture_at_other_commit_is_refused(tmp_path, monkeypatch):
@@ -330,7 +346,7 @@ async def test_staging_removal_spares_another_products_leaf(tmp_path, staging_ca
         project_root=root,
         labs=["l"],
         products={},
-        only=[produce.ProductKey("h", "good")],
+        only=[ProductKey("h", "good")],
     )
     assert not (cov / produce.STAGE_DIR / "h" / "good").exists()
     assert sibling.is_dir()

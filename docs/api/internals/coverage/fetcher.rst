@@ -6,3 +6,6 @@ coverage.fetcher
 
 .. automodule:: otto.coverage.fetcher.remote
    :ignore-module-all:
+
+.. automodule:: otto.coverage.fetcher.failures
+   :ignore-module-all:

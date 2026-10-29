@@ -13,7 +13,6 @@ import pytest
 from otto.config.coverage_settings import CoverageConfigError
 from otto.coverage.capture.gitio import head_commit
 from otto.coverage.capture.model import Capture, CaptureFileCov
-from otto.coverage.capture.produce import ProductKey
 from otto.coverage.errors import CaptureCommitError, CoverageNotInstrumentedError
 from otto.coverage.report_inputs import ReportInputs
 from otto.coverage.reporter import (
@@ -27,6 +26,7 @@ from otto.coverage.reporter import (
 )
 from otto.coverage.tiers import load_tiers
 from otto.coverage.toolchains import resolve_toolchains
+from otto.coverage.tree import ProductKey
 from otto.host.errors import CoverageToolMissingError
 from otto.host.toolchain import Toolchain
 from tests._fixtures.gitrepo import git_env

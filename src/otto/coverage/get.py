@@ -187,7 +187,7 @@ async def get_coverage(
             e.clean = await collect.clean_coverage(projects, pairs=e.result.captured)
         raise
     if not result.captures_written:
-        searched = ", ".join(f"{h}:{p}" for h, p in sorted(result.product_dirs))
+        searched = ", ".join(key.label for key in sorted(result.product_dirs))
         where = f"searched: {searched}" if searched else "no products produced captures"
         raise NoCoverageDataError(f"no .gcda counters retrieved from any product ({where})")
 

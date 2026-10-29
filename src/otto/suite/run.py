@@ -667,6 +667,20 @@ async def _post_run_coverage(projects: "list[Project]", log_dir: Path, opts: Run
         clean = None
         try:
             clean = (await collect_coverage(cov_dir, projects=projects)).clean
+        except CoverageCaptureError as e:
+            # One loud line per product that was not collected, a failed fetch
+            # worded apart from a failed capture; the products that captured
+            # were collected and cleaned.
+            from ..coverage.errors import product_failure_line
+
+            for failed in e.result.failed:
+                logger.warning("Coverage not collected: %s", product_failure_line(failed))
+            logger.info(
+                "Raw coverage artifacts remain in %s; once each cause is fixed, "
+                "`otto cov get` collects the counters left on the hosts",
+                cov_dir,
+            )
+            clean = e.clean
         except (ValueError, RuntimeError, FileNotFoundError) as e:
             from ..config.scope import selection_message
 
@@ -675,9 +689,6 @@ async def _post_run_coverage(projects: "list[Project]", log_dir: Path, opts: Run
                 selection_message(e, walker="coverage") or str(e),
                 cov_dir,
             )
-            # A capture failure still cleaned the products that captured.
-            if isinstance(e, CoverageCaptureError):
-                clean = e.clean
         if clean is not None and not clean.ok:
             # Clearing is never best-effort: stale counters would mix into the
             # next run's coverage. Raised after the report block below.

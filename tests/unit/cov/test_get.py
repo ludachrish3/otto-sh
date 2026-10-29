@@ -22,7 +22,7 @@ from otto.config.coverage_settings import CoverageConfigError
 from otto.config.scope import EmptySelectionError
 from otto.coverage.capture import produce as produce_module
 from otto.coverage.capture.gitio import GitUnavailableError
-from otto.coverage.capture.produce import ProduceResult, ProductCapture, ProductKey
+from otto.coverage.capture.produce import ProduceResult, ProductCapture
 from otto.coverage.collect import CollectResult
 from otto.coverage.errors import (
     CoverageCaptureError,
@@ -34,6 +34,7 @@ from otto.coverage.errors import (
 from otto.coverage.get import _resolve_tester, get_coverage
 from otto.coverage.reports import CleanReport
 from otto.coverage.tiers import TierConfig
+from otto.coverage.tree import ProductKey
 from otto.result import Result
 from otto.utils import Status
 from tests._fixtures.gitrepo import TmpGitRepo
@@ -65,12 +66,12 @@ def _fake_collect_one_board(notes_root):
     real pairing step finds it.
     """
 
-    async def fake_collect(staging_root, pattern=None):
+    async def fake_collect(staging_root, pattern=None, *, failures):
         product_dir = staging_root / "board1" / "app"
         product_dir.mkdir(parents=True)
         (product_dir / "x.gcda").write_bytes(b"adcg*33B\x01\x00\x00\x00")
         (notes_root / "x.gcno").write_bytes(b"oncg*33B\x01\x00\x00\x00")
-        return {("board1", "app"): product_dir}
+        return {ProductKey("board1", "app"): product_dir}
 
     return fake_collect
 
@@ -382,13 +383,13 @@ async def test_no_captures_produced_raises_no_coverage_data(all_hosts_of, git_su
     collect_mock = AsyncMock(
         return_value=CollectResult(
             cov_dir=tmp_path / "cov",
-            product_dirs={("board1", "app"): product_dir},
+            product_dirs={ProductKey("board1", "app"): product_dir},
             produce=ProduceResult([]),
         )
     )
     with (
         patch("otto.coverage.collect.collect_coverage", collect_mock),
-        pytest.raises(NoCoverageDataError, match="board1:app"),
+        pytest.raises(NoCoverageDataError, match="board1/app"),
     ):
         await get_coverage(tmp_path, projects=[project])
 
@@ -396,7 +397,7 @@ async def test_no_captures_produced_raises_no_coverage_data(all_hosts_of, git_su
 @pytest.mark.asyncio
 async def test_get_own_no_captures_refusal_names_every_product(all_hosts_of, git_sut, tmp_path):
     """``get_coverage``'s own no-captures refusal — distinct from the engine's
-    ``NoCoverageDataError`` above — names *every* searched ``host:product``
+    ``NoCoverageDataError`` above — names *every* searched ``host/product``
     pair when more than one contributed a staging dir but none produced a
     capture, not just the first."""
     project = _project({"hosts": ".*"}, root=git_sut)
@@ -408,7 +409,10 @@ async def test_get_own_no_captures_refusal_names_every_product(all_hosts_of, git
     collect_mock = AsyncMock(
         return_value=CollectResult(
             cov_dir=tmp_path / "cov",
-            product_dirs={("t1", "app"): product_dir1, ("zephyr", "ext"): product_dir2},
+            product_dirs={
+                ProductKey("t1", "app"): product_dir1,
+                ProductKey("zephyr", "ext"): product_dir2,
+            },
             produce=ProduceResult([]),
         )
     )
@@ -418,8 +422,7 @@ async def test_get_own_no_captures_refusal_names_every_product(all_hosts_of, git
     ):
         await get_coverage(tmp_path, projects=[project])
 
-    assert "t1:app" in str(exc.value)
-    assert "zephyr:ext" in str(exc.value)
+    assert "t1/app, zephyr/ext" in str(exc.value)
 
 
 @pytest.mark.asyncio
@@ -449,7 +452,7 @@ async def test_get_defaults_to_the_per_invocation_output_dir(all_hosts_of, git_s
     collect_mock = AsyncMock(
         return_value=CollectResult(
             cov_dir=tmp_path / "cov",
-            product_dirs={("board1", "app"): cap.parent},
+            product_dirs={ProductKey("board1", "app"): cap.parent},
             produce=_produced(cap),
         )
     )
@@ -511,7 +514,7 @@ async def test_get_manual_tier_writes_capture_and_manual_store(all_hosts_of, git
     collect_mock = AsyncMock(
         return_value=CollectResult(
             cov_dir=tmp_path / "cov",
-            product_dirs={("board1", "app"): cap_path.parent},
+            product_dirs={ProductKey("board1", "app"): cap_path.parent},
             produce=_produced(cap_path),
         )
     )
@@ -552,7 +555,7 @@ async def test_get_default_tier_no_manual_store(all_hosts_of, git_sut, tmp_path)
     collect_mock = AsyncMock(
         return_value=CollectResult(
             cov_dir=tmp_path / "cov",
-            product_dirs={("board1", "app"): cap_path.parent},
+            product_dirs={ProductKey("board1", "app"): cap_path.parent},
             produce=_produced(cap_path),
         )
     )
@@ -621,7 +624,7 @@ async def test_get_clean_resets_only_the_pairs_that_captured(all_hosts_of, git_s
     d1, d2 = cap_path.parent, tmp_path / "cov" / "zephyr" / "ext"
     collected = CollectResult(
         cov_dir=tmp_path / "cov",
-        product_dirs={("t1", "app"): d1, ("zephyr", "ext"): d2},
+        product_dirs={ProductKey("t1", "app"): d1, ProductKey("zephyr", "ext"): d2},
         produce=_produced(cap_path),
     )
     clean_mock = AsyncMock(
@@ -651,7 +654,7 @@ async def test_a_failed_get_clean_keeps_the_captures_and_reports_not_ok(
     cap_path = tmp_path / "cov" / "board1" / "app" / "capture.json"
     collected = CollectResult(
         cov_dir=tmp_path / "cov",
-        product_dirs={("board1", "app"): cap_path.parent},
+        product_dirs={ProductKey("board1", "app"): cap_path.parent},
         produce=_produced(cap_path),
     )
     clean_mock = AsyncMock(
@@ -755,7 +758,7 @@ async def test_e2e_kind_keeps_ticket_and_note_but_no_tester(all_hosts_of, git_su
     collect_mock = AsyncMock(
         return_value=CollectResult(
             cov_dir=tmp_path / "cov",
-            product_dirs={("board1", "app"): cap_path.parent},
+            product_dirs={ProductKey("board1", "app"): cap_path.parent},
             produce=_produced(cap_path),
         )
     )
@@ -796,7 +799,7 @@ async def test_manual_kind_resolves_tester(all_hosts_of, git_sut, tmp_path):
     collect_mock = AsyncMock(
         return_value=CollectResult(
             cov_dir=tmp_path / "cov",
-            product_dirs={("board1", "app"): cap_path.parent},
+            product_dirs={ProductKey("board1", "app"): cap_path.parent},
             produce=_produced(cap_path),
         )
     )

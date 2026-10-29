@@ -92,11 +92,18 @@ touched:
 After that, hosts are touched: collection can still fail if it produced no
 capture at all, naming every host and product searched.
 
-A product that fails to capture does not stop the others. The command names
-each failed product and exits `1`, but every product that did capture is
-kept: its `capture.json` is written (and, for a `manual`-kind tier, copied into
-the manual store), and `--clean` resets it. The failed product's counters stay
+A product that fails to capture does not stop the others, and neither does
+one whose counters could not be fetched at all: a host that could not be
+reached, an archive or dump command that failed, a transfer that broke off.
+A failed fetch is a failed product, named as
+`<host>/<product>: fetch failed: <reason>`. The command names each failed
+product and exits `1`, but every product that did capture is kept: its
+`capture.json` is written (and, for a `manual`-kind tier, copied into the
+manual store), and `--clean` resets it. The failed product's counters stay
 on the host — fix the cause and run `otto cov get` again to capture them.
+A product that cannot be fetched until a declaration changes says which
+instead: an embedded product with no `dump_fn`, or a board with no binary
+loader.
 
 A bad `--tier`, `--ticket`, or `--output` exits `2`; every other refusal —
 including the no-capture case above and a failed `--clean` — exits `1`.

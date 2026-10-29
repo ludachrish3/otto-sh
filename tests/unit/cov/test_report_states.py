@@ -17,11 +17,12 @@ import pytest
 from otto import layout
 from otto.coverage.capture.gitio import head_commit
 from otto.coverage.capture.model import Capture, CaptureFileCov
-from otto.coverage.capture.produce import ProduceResult, ProductCapture, ProductKey
+from otto.coverage.capture.produce import ProduceResult, ProductCapture
 from otto.coverage.errors import CoverageCaptureError, CoverageInputError
 from otto.coverage.report_inputs import ReportInputs
 from otto.coverage.reporter import run_coverage_report
 from otto.coverage.tiers import load_tiers
+from otto.coverage.tree import ProductKey
 from tests._fixtures.gitrepo import git_env
 
 _TIERS = {"tiers": {"system": {"kind": "e2e", "precedence": 1}}}

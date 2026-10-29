@@ -33,10 +33,10 @@ INFO     @dut   | ! test -d /tmp/shout && echo otto-no-cov-dir || (t=$(mktemp
 INFO     @dut > | otto-archive:/tmp/otto-fetch-<id>.<tmp>
 INFO     @dut   | rm -f "${TMPDIR:-/tmp}"/otto-fetch-<id>.*
 INFO     Coverage data collected to /tmp/otto-gs/xdir/e2e/cov (2 product dir(s))
-INFO     === Capturing dut / shout ===
+INFO     === Capturing dut/shout ===
 INFO     lcov capture: 1 file(s) -> /tmp/otto-gs/xdir/e2e/cov/dut/shout/board.info
 INFO     dut/shout: skipped 10 source file(s) outside the project root
-INFO     === Capturing dut / wordcount ===
+INFO     === Capturing dut/wordcount ===
 INFO     lcov capture: 2 file(s) -> /tmp/otto-gs/xdir/e2e/cov/dut/wordcount/board.info
 INFO     dut/wordcount: skipped 5 source file(s) outside the project root
 INFO     Coverage captures produced: 2 board(s)

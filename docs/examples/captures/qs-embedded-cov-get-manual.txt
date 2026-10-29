@@ -15,7 +15,7 @@ INFO     Decoded 1 .gcda file(s) for mathops from dut into
          /tmp/otto-gs/xdir/otto-output/cov/<run>_get/cov/dut/mathops
 INFO     Coverage data collected to /tmp/otto-gs/xdir/otto-output/cov/<run>_get/cov (1
          product dir(s))
-INFO     === Capturing dut / mathops ===
+INFO     === Capturing dut/mathops ===
 INFO     lcov capture: 1 file(s) ->
          /tmp/otto-gs/xdir/otto-output/cov/<run>_get/cov/dut/mathops/board.info
 INFO     dut/mathops: skipped 3 source file(s) outside the project root

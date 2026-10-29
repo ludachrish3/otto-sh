@@ -270,7 +270,7 @@ async def test_a_host_with_no_returned_outcome_is_reported_failed(lab, monkeypat
 
 @pytest.mark.asyncio
 async def test_pairs_reset_only_the_named_products_on_the_named_hosts(lab):
-    from otto.coverage.capture.produce import ProductKey
+    from otto.coverage.tree import ProductKey
 
     app, tool = _product("app", Result(Status.Success)), _product("tool", Result(Status.Success))
     other = _product("lib", Result(Status.Success))
@@ -284,7 +284,7 @@ async def test_pairs_reset_only_the_named_products_on_the_named_hosts(lab):
 
 @pytest.mark.asyncio
 async def test_a_named_product_the_host_does_not_carry_is_reported_failed(lab):
-    from otto.coverage.capture.produce import ProductKey
+    from otto.coverage.tree import ProductKey
 
     lab(_host("t1", _product("app", Result(Status.Success))))
     report = await clean_coverage([_project()], pairs=[ProductKey("t1", "gone")])
@@ -295,7 +295,7 @@ async def test_a_named_product_the_host_does_not_carry_is_reported_failed(lab):
 
 @pytest.mark.asyncio
 async def test_a_host_whose_reset_raises_reports_only_the_named_products_failed(lab):
-    from otto.coverage.capture.produce import ProductKey
+    from otto.coverage.tree import ProductKey
 
     boom = _product("app", Result(Status.Success))
     boom.reset_coverage = AsyncMock(side_effect=ConnectionResetError("peer reset"))

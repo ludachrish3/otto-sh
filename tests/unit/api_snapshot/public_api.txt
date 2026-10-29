@@ -337,6 +337,7 @@ call	otto.coverage:FailedReset	sync	PK:host:- PK:product:- PK:result:-
 member	otto.coverage:FailedReset.__eq__	method	sync	PK:other:-
 member	otto.coverage:FailedReset.__hash__	method	sync	-
 member	otto.coverage:FailedReset.host	field
+member	otto.coverage:FailedReset.key	property:g--
 member	otto.coverage:FailedReset.product	field
 member	otto.coverage:FailedReset.reason	property:g--
 member	otto.coverage:FailedReset.result	field
@@ -344,7 +345,7 @@ abstract	otto.coverage:FailedReset	-
 name	otto.coverage:GcdaFetcher	class
 mro	otto.coverage:GcdaFetcher	-
 call	otto.coverage:GcdaFetcher	sync	PK:staging_root:- PK:pattern:N
-member	otto.coverage:GcdaFetcher.fetch_all	method	coroutine	-
+member	otto.coverage:GcdaFetcher.fetch_all	method	coroutine	KO:failures:-
 abstract	otto.coverage:GcdaFetcher	-
 name	otto.coverage:GetReport	class
 mro	otto.coverage:GetReport	-

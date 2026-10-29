@@ -1723,13 +1723,14 @@ def test_a_successful_clean_after_collection_logs_one_summary_line(tmp_path, mon
 def test_capture_failure_and_clean_failure_both_surface(tmp_path, monkeypatch, caplog):
     """One product fails capture and the clean of the other fails: both surface.
 
-    The capture failure is warned about like any collection failure (the run
+    The capture failure is warned about, one line for the product (the run
     stays green over it), and the clean the collection ran before re-raising
     it is enforced exactly as on success: the run fails with its error.
     """
-    from otto.coverage.capture.produce import ProduceResult, ProductCapture, ProductKey
+    from otto.coverage.capture.produce import ProduceResult, ProductCapture
     from otto.coverage.errors import CoverageCaptureError, CoverageCleanError
     from otto.coverage.reports import CleanReport
+    from otto.coverage.tree import ProductKey
     from otto.result import Result
     from otto.utils import Status
 
@@ -1752,12 +1753,10 @@ def test_capture_failure_and_clean_failure_both_surface(tmp_path, monkeypatch, c
 
     with caplog.at_level("WARNING"), pytest.raises(CoverageCleanError, match="t1/app: denied"):
         run_tests([_ALPHA], run_options=RunOptions(cov=True, cov_clean=False), output_dir=log_dir)
-    warned = [
-        r.getMessage() for r in caplog.records if "Coverage collection failed" in r.getMessage()
+    warned = [r.getMessage() for r in caplog.records if "Coverage not collected" in r.getMessage()]
+    assert warned == [
+        "Coverage not collected: t1/lib: failed to capture: lcov --capture failed: boom"
     ]
-    assert len(warned) == 1
-    assert "t1/lib" in warned[0]
-    assert "lcov --capture failed: boom" in warned[0]
 
 
 def test_a_collection_failure_after_a_passing_run_still_only_warns(tmp_path, monkeypatch, caplog):

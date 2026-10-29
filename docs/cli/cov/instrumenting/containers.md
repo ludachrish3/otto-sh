@@ -189,7 +189,7 @@ Two things differ from a bare host:
   ```
 
 - The stack must be up when coverage is fetched. otto does not start
-  containers on use: a stopped container fails the fetch from that
-  container, every product on it, logged at ERROR as
-  `Failed to fetch from <id>: Container '<id>' is not running: ...`, which
-  names the remedy (`otto docker compose up <use-case>`).
+  containers on use: a stopped container fails the fetch of every product
+  on it, each a failed product named as
+  `<id>/<product>: fetch failed: Container '<id>' is not running: ...`,
+  which names the remedy (`otto docker compose up <use-case>`).

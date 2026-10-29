@@ -31,12 +31,17 @@ product in a fixture's teardown is enough.
 
 This tail never fails an otherwise-successful test run **over collection**.
 A project that is not a git checkout (no commit to anchor a capture to),
-a misconfigured tier, or a product that fails to capture are logged and
-swallowed. A product can fail to capture because its `.gcda` came from a
+a misconfigured tier, a product whose counters could not be fetched, or a
+product that fails to capture are logged and swallowed. Each product that
+was not collected gets one warning of its own:
+`Coverage not collected: <host>/<product>: fetch failed: <reason>` when its
+counters never came down, `… failed to capture: <reason>` when they did (a
+capture failure's reason can run over several lines).
+A product can fail to capture because its `.gcda` came from a
 different build than the local `.gcno` notes files, or because otto cannot
 pair them ({ref}`coverage-pairing-errors`). Each failure's reason is printed once.
 
-A failed capture keeps that product's counters **on the host**: only the
+A failed fetch or capture keeps that product's counters **on the host**: only the
 products that captured are cleaned. A non-git project and a misconfigured tier
 fail before anything is cleaned, so every product keeps its counters. Fix
 the cause and run `otto cov get` ({doc}`get`) to fetch and capture them

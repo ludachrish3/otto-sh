@@ -29,9 +29,20 @@ from typing import TYPE_CHECKING
 
 from ... import layout
 from ...utils import Status
+from ..tree import ProductKey
+from .failures import (
+    FetchFailures,
+    ProductFetchError,
+    fetch_each,
+    fetch_from_hosts,
+    list_products,
+    record_failure,
+)
 
 if TYPE_CHECKING:
+    from ...host.binary_loader import BinaryLoader
     from ...host.embedded_host import EmbeddedHost
+    from ...host.product import Product
 
 logger = logging.getLogger(__name__)
 
@@ -112,9 +123,81 @@ def _stage_blocks(blocks: dict[str, bytes], dest: Path, host_id: str, product: s
     return written
 
 
+async def _dump_one_product(
+    host: "EmbeddedHost", loader: "BinaryLoader", product: "Product", staging_root: Path
+) -> Path | None:
+    """Dump, decode and stage one product's counters; its staging dir, or ``None`` if empty.
+
+    A dump that decoded nothing, or whose every path was refused, is empty,
+    not failed.
+
+    Raises:
+        ProductFetchError: The product declares no dump function, or its dump
+            command failed (already logged).
+    """
+    # Only an embedded product exports a dump function; the default lives on
+    # EmbeddedProduct, so anything without one is a product this collector
+    # cannot dump rather than one to guess a function name for.
+    dump_fn = getattr(product, "dump_fn", None)
+    if dump_fn is None:
+        logger.warning(
+            "%s on %s cannot be dumped (no dump_fn): not an embedded product",
+            product.name,
+            host.id,
+        )
+        raise ProductFetchError(
+            "it declares no dump function, so its counters cannot be dumped",
+            remedy="declare the product's `dump_fn` (an embedded product's dump function)",
+        )
+
+    dump_command = loader.call_command(product.name, dump_fn)
+    logger.info(
+        "Dumping embedded coverage for %s from %s via %s",
+        product.name,
+        host.id,
+        repr(dump_command),
+    )
+    result = await host.exec(dump_command, timeout=_DUMP_TIMEOUT)
+    if result.status != Status.Success:
+        logger.error(
+            "%s failed on %s: %s",
+            dump_command,
+            host.id,
+            str(result.value),
+        )
+        raise ProductFetchError(f"{dump_command} failed: {result.value}")
+
+    blocks = decode_cov_dump(result.value)
+    if not blocks:
+        logger.warning("No coverage data decoded for %s from %s", product.name, host.id)
+        return None
+
+    # Only create the per-product dir once we have files, matching
+    # GcdaFetcher and keeping the staging tree free of empty subdirs that
+    # lcov chokes on.
+    dest = layout.cov_product_dir_in(staging_root, host.id, product.name)
+    # Reset the leaf first: a .gcda left by an earlier collection into the
+    # same output must never be reported as this dump's.
+    if dest.exists():
+        shutil.rmtree(dest)
+    written = _stage_blocks(blocks, dest, host.id, product.name)
+    if not written:
+        return None
+
+    logger.info(
+        "Decoded %d .gcda file(s) for %s from %s into %s",
+        written,
+        product.name,
+        host.id,
+        dest,
+    )
+    return dest
+
+
 async def _collect_one_embedded_host(
     host: "EmbeddedHost",
     staging_root: Path,
+    failures: FetchFailures,
 ) -> dict[str, Path] | None:
     """Dump, decode and stage each instrumented ``embedded`` product of one board.
 
@@ -129,14 +212,21 @@ async def _collect_one_embedded_host(
 
     Returns ``{product: staging_dir}``, or ``None`` when the host is not
     embedded, carries no instrumented product, or every dump produced nothing.
+
+    Each product is dumped on its own, by the walk every fetcher shares
+    (:func:`~otto.coverage.fetcher.failures.fetch_each`): one whose counters
+    could not be dumped is recorded in *failures* with the reason, and the
+    next product is still dumped. A board with no loader fails every product
+    on it.
     """
     from ...host.embedded_host import EmbeddedHost
-    from ..instrumentation import instrumented_products
 
     if not isinstance(host, EmbeddedHost):
         return None
 
-    products = instrumented_products(host)
+    products = list_products(host, failures)
+    if products is None:
+        return None
     if not products:
         logger.info("No instrumented products on %s — no embedded coverage from it", host.id)
         return None
@@ -144,66 +234,18 @@ async def _collect_one_embedded_host(
     loader = host.loader
     if loader is None:
         logger.error("%s has no binary loader; cannot dump coverage", host.id)
+        no_loader = ProductFetchError(
+            "the board declares no binary loader, so nothing can be dumped from it",
+            remedy="declare the board's binary loader",
+        )
+        for product in products:
+            record_failure(failures, host.id, product.name, no_loader)
         return None
 
-    staged: dict[str, Path] = {}
-    for product in products:
-        # Only an embedded product exports a dump function; the default lives on
-        # EmbeddedProduct, so anything without one is a product this collector
-        # cannot dump rather than one to guess a function name for.
-        dump_fn = getattr(product, "dump_fn", None)
-        if dump_fn is None:
-            logger.warning(
-                "%s on %s has no dump_fn; not an embedded product — skipped",
-                product.name,
-                host.id,
-            )
-            continue
+    async def dump_one(product: "Product") -> Path | None:
+        return await _dump_one_product(host, loader, product, staging_root)
 
-        dump_command = loader.call_command(product.name, dump_fn)
-        logger.info(
-            "Dumping embedded coverage for %s from %s via %s",
-            product.name,
-            host.id,
-            repr(dump_command),
-        )
-        result = await host.exec(dump_command, timeout=_DUMP_TIMEOUT)
-        if result.status != Status.Success:
-            logger.error(
-                "%s failed on %s: %s",
-                dump_command,
-                host.id,
-                str(result.value),
-            )
-            continue
-
-        blocks = decode_cov_dump(result.value)
-        if not blocks:
-            logger.warning("No coverage data decoded for %s from %s", product.name, host.id)
-            continue
-
-        # Only create the per-product dir once we have files, matching
-        # GcdaFetcher and keeping the staging tree free of empty subdirs that
-        # lcov chokes on.
-        dest = layout.cov_product_dir_in(staging_root, host.id, product.name)
-        # Reset the leaf first: a .gcda left by an earlier collection into the
-        # same output must never be reported as this dump's.
-        if dest.exists():
-            shutil.rmtree(dest)
-        written = _stage_blocks(blocks, dest, host.id, product.name)
-        if not written:
-            continue
-
-        logger.info(
-            "Decoded %d .gcda file(s) for %s from %s into %s",
-            written,
-            product.name,
-            host.id,
-            dest,
-        )
-        staged[product.name] = dest
-
-    return staged or None
+    return await fetch_each(host, products, failures, dump_one) or None
 
 
 class EmbeddedGcdaCollector:
@@ -224,39 +266,27 @@ class EmbeddedGcdaCollector:
         self.staging_root = staging_root
         self.pattern = pattern
 
-    async def collect_all(self) -> dict[tuple[str, str], Path]:
+    async def collect_all(self, *, failures: FetchFailures) -> dict[ProductKey, Path]:
         """Dump, decode and stage coverage from every matching embedded host.
 
-        Returns ``{(host_id, product): staging_dir}``. Non-embedded hosts,
-        uninstrumented products, and failed dumps are omitted. Container hosts
-        are walked like every other coverage walk and skipped as non-embedded.
+        Returns ``{ProductKey: staging_dir}``. Non-embedded hosts and
+        uninstrumented products are omitted. A product whose dump failed is
+        recorded in *failures* instead, exactly as
+        :meth:`~otto.coverage.fetcher.remote.GcdaFetcher.fetch_all` records a
+        failed fetch. Container hosts are walked like every other coverage
+        walk and skipped as non-embedded.
         """
-        from ...fleet import do_for_all_hosts
-
-        self.staging_root.mkdir(parents=True, exist_ok=True)
-
-        collect_results = await do_for_all_hosts(
-            _collect_one_embedded_host,
-            self.staging_root,
-            pattern=self.pattern,
-            include_containers=True,
+        return await fetch_from_hosts(
+            _collect_one_embedded_host, self.staging_root, self.pattern, failures
         )
-
-        results: dict[tuple[str, str], Path] = {}
-        for host_id, value in collect_results.items():
-            if isinstance(value, BaseException):
-                logger.error("Failed to collect coverage from %s: %s", host_id, value)
-                continue
-            if value:
-                for product, dest in value.items():
-                    results[(host_id, product)] = dest
-        return results
 
 
 async def collect_embedded_coverage(
     staging_root: Path,
     pattern: re.Pattern[str] | None = None,
-) -> dict[tuple[str, str], Path]:
+    *,
+    failures: FetchFailures,
+) -> dict[ProductKey, Path]:
     """Collect embedded coverage from every matching board's instrumented products.
 
     Args:
@@ -265,8 +295,10 @@ async def collect_embedded_coverage(
         pattern: Optional compiled regex (the project-declared ``[coverage].hosts``
             selector) matched against each host's id; ``None`` collects from
             every embedded host in the lab.
+        failures: Filled with each product whose counters could not be
+            dumped, and why (see :meth:`EmbeddedGcdaCollector.collect_all`).
 
-    Returns ``{(host_id, product): staging_dir}``, empty when no board carries
+    Returns ``{ProductKey: staging_dir}``, empty when no board carries
     an instrumented product (so the Unix-only path is unaffected).
     """
-    return await EmbeddedGcdaCollector(staging_root, pattern=pattern).collect_all()
+    return await EmbeddedGcdaCollector(staging_root, pattern=pattern).collect_all(failures=failures)
