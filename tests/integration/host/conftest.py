@@ -52,6 +52,10 @@ from tests.conftest import (
     host_data,
 )
 
+# The integration tree's root, which bounds both its path stamp and the grouping
+# hook below to the items under it.
+from tests.integration.conftest import _INTEGRATION_ROOT
+
 ensure_custom_hosts_on_path()
 from custom_hosts.zephyr_inline import ZephyrInlineRetcodeFrame
 
@@ -405,8 +409,16 @@ def pytest_collection_modifyitems(config, items) -> None:
     ``tests/integration/busybox_bed/conftest.py`` applies to the bed's own
     suite, so a whole-tree run keeps the bed suite and these rows on one
     worker too — one group for everything that touches the guests.
+
+    Only items under ``tests/integration`` are grouped. The hook sees every
+    item of a run that loads this conftest, and before this bound a full-tree
+    run also put hostless ``tests/unit`` rows that merely name a guest (a
+    ``bb1161`` param) in the bed's group, which a ``tests/unit`` run never
+    did: the same item scheduled differently by invocation shape (#753).
     """
     for item in items:
+        if _INTEGRATION_ROOT not in item.path.parents:
+            continue
         if "embedded" in item.keywords:
             # Don't override an explicit group (e.g. the fan-out tests).
             if item.get_closest_marker("xdist_group") is not None:
