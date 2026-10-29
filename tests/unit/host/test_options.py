@@ -42,12 +42,74 @@ def test_local_port_forward_validates_and_is_frozen():
 
 
 class TestSshOptions:
-    def test_defaults_reproduce_historical_kwargs(self):
-        # Historical behavior: port 22, host-key verification off.
-        assert SshOptions()._kwargs() == {"port": 22, "known_hosts": None}
+    def test_default_kwargs_send_the_port_and_the_check_by_host_id(self):
+        """asyncssh's own file check (by name AND address) is never handed the
+        path: it gets otto's check for the host ID, its client object, the
+        host ID as the alias it judges certificates under, and otto's choice
+        of host-key algorithms."""
+        from otto.host import known_hosts
+        from otto.host.host_key_client import HostKeyCheck
+
+        kw = SshOptions()._kwargs(alias="router1")
+        assert sorted(kw) == [
+            "client_factory",
+            "host_key_alias",
+            "known_hosts",
+            "port",
+            "server_host_key_algs",
+        ]
+        assert kw["port"] == 22
+        assert kw["host_key_alias"] == "router1"
+        check = kw["known_hosts"]
+        assert isinstance(check, HostKeyCheck)
+        assert check.alias == "router1"
+        assert check.port == 22
+        assert check.path == known_hosts.known_hosts_path(SshOptions())
+        assert kw == HostKeyCheck.for_options(SshOptions(), "router1").connect_kwargs() | {
+            "port": 22
+        }
+
+    def test_a_configured_host_key_algorithm_list_wins_over_otto_s_choice(self):
+        kw = SshOptions(server_host_key_algs=["ssh-rsa"])._kwargs(alias="router1")
+        assert kw["server_host_key_algs"] == ["ssh-rsa"]
+        assert kw["known_hosts"].chooses_algs is False
+
+    def test_kwargs_with_checking_off_send_no_check_at_all(self):
+        """``verify_host_key = false``: asyncssh gets ``known_hosts=None`` and
+        nothing that would read or write the file."""
+        assert SshOptions(verify_host_key=False)._kwargs(alias="router1") == {
+            "port": 22,
+            "known_hosts": None,
+        }
+
+    def test_host_key_checking_is_on_by_default_against_the_users_file(self):
+        opts = SshOptions()
+        assert opts.known_hosts == "~/.ssh/known_hosts"
+        assert opts.verify_host_key is True
+
+    def test_none_known_hosts_is_refused(self):
+        """``None`` used to turn checking off; it is now refused, naming the switch."""
+        with pytest.raises(ValueError, match="verify_host_key = false"):
+            SshOptions(known_hosts=None)  # type: ignore[arg-type]
+
+    def test_the_lab_spec_refuses_a_null_known_hosts_with_the_same_message(self):
+        from otto.host.option_specs import SshOptionsSpec
+
+        with pytest.raises(ValidationError, match="verify_host_key = false"):
+            SshOptionsSpec.model_validate({"known_hosts": None})
+
+    def test_the_lab_spec_carries_both_host_key_settings(self):
+        from otto.host.option_specs import SshOptionsSpec
+
+        spec = SshOptionsSpec.model_validate(
+            {"known_hosts": "/srv/ci/known_hosts", "verify_host_key": False}
+        )
+        runtime = spec.to_runtime()
+        assert runtime.known_hosts == "/srv/ci/known_hosts"
+        assert runtime.verify_host_key is False
 
     def test_curated_fields_included_only_when_set(self):
-        kw = SshOptions(port=2222, connect_timeout=5.0, agent_forwarding=True)._kwargs()
+        kw = SshOptions(port=2222, connect_timeout=5.0, agent_forwarding=True)._kwargs(alias="h1")
         assert kw["port"] == 2222
         assert kw["connect_timeout"] == 5.0
         assert kw["agent_forwarding"] is True
@@ -57,7 +119,7 @@ class TestSshOptions:
 
     def test_extra_forwards_arbitrary_kwargs(self):
         opts = SshOptions(extra={"config": ["/tmp/ssh_config"], "proxy_command": "pc"})
-        kw = opts._kwargs()
+        kw = opts._kwargs(alias="h1")
         assert kw["config"] == ["/tmp/ssh_config"]
         assert kw["proxy_command"] == "pc"
 
@@ -79,7 +141,7 @@ class TestSshOptions:
 
         opts = SshOptions(extra={key: "s3cret-value"})
         with caplog.at_level(logging.WARNING, logger="otto.host.options"):
-            opts._kwargs()
+            opts._kwargs(alias="h1")
         assert key in caplog.text
         assert "s3cret-value" not in caplog.text
 
@@ -88,7 +150,7 @@ class TestSshOptions:
 
         opts = SshOptions(extra={"config": ["/tmp/ssh_config"]})
         with caplog.at_level(logging.WARNING, logger="otto.host.options"):
-            opts._kwargs()
+            opts._kwargs(alias="h1")
         assert caplog.text == ""
 
     def test_kex_and_mac_lists_reach_asyncssh_only_when_set(self):
@@ -97,12 +159,12 @@ class TestSshOptions:
         Both are asyncssh kwargs; both were reachable only through ``extra``
         before they were curated. Unset means asyncssh's own default list.
         """
-        assert "kex_algs" not in SshOptions()._kwargs()
-        assert "mac_algs" not in SshOptions()._kwargs()
+        assert "kex_algs" not in SshOptions()._kwargs(alias="h1")
+        assert "mac_algs" not in SshOptions()._kwargs(alias="h1")
         kw = SshOptions(
             kex_algs=["diffie-hellman-group14-sha1", "diffie-hellman-group1-sha1"],
             mac_algs=["hmac-sha1", "hmac-md5"],
-        )._kwargs()
+        )._kwargs(alias="h1")
         assert kw["kex_algs"] == ["diffie-hellman-group14-sha1", "diffie-hellman-group1-sha1"]
         assert kw["mac_algs"] == ["hmac-sha1", "hmac-md5"]
 

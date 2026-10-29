@@ -83,7 +83,7 @@ def _walk(cmd: Any, path: str) -> Iterator[tuple[str, str, str]]:
 
 _KNOWN_VERBS = {
     "BaseHost": {"exec", "shutdown", "power"},
-    "UnixHost": {"exec", "shutdown", "mkdir", "glob", "read-file", "load", "unload"},
+    "UnixHost": {"exec", "shutdown", "mkdir", "glob", "read-file", "load", "unload", "forget-key"},
     "EmbeddedHost": {"exec", "shutdown", "load", "unload"},
     "ZephyrHost": {"exec", "load", "unload"},
     "LocalHost": {"exec", "mkdir", "glob"},

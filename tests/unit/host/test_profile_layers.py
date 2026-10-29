@@ -184,6 +184,8 @@ _DIGEST_CONTEXT = (
     "    ),\n"
     "    owners=FrozenMap({'x': 'proj-a', 'a': 'proj-b'}),\n"
     ")\n"
+    "def no_key():\n"
+    "    raise AssertionError('a digest without a secret never asks for the key')\n"
 )
 
 
@@ -194,12 +196,14 @@ def test_profile_context_is_hashable_and_its_digest_is_stable_across_processes()
     assert isinstance(context, ProfileContext)
     assert {context: 1}[context] == 1
     child = subprocess.run(
-        [sys.executable, "-c", _DIGEST_CONTEXT + "print(context.digest())"],
+        [sys.executable, "-c", _DIGEST_CONTEXT + "print(context.digest(secret_key=no_key))"],
         capture_output=True,
         text=True,
         check=True,
     )
-    assert child.stdout.strip() == context.digest() == _PINNED_DIGEST
+    no_key = namespace["no_key"]
+    assert callable(no_key)
+    assert child.stdout.strip() == context.digest(secret_key=no_key) == _PINNED_DIGEST
 
 
 _PINNED_DIGEST = "f1df610d12730d108bcf950163aa95e91051a4cdfbc373ebf38d426385d215c5"

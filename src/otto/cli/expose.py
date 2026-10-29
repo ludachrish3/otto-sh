@@ -46,7 +46,12 @@ def _is_unreachable_host_error(exc: Exception) -> bool:
     yet an ``OSError``, so it is named on its own. otto's own errors are left
     to ``entry()``'s boundary, which already renders them as one line: several
     are ``ConnectionError`` subclasses, and their messages name the host
-    themselves.
+    themselves. The exception is a host-key refusal
+    (:class:`~otto.host.errors.HostKeyRefusedError`): the host was reached and
+    refused, so the verb reports it as it reports a refused login, with the
+    refusal's own message (the one ``otto run``, ``otto test`` and the survey
+    show) after the host the verb was run on, which matters when the refusal
+    names that host's hop.
 
     THE ONE PLACE OTTO ASKS ``sys.modules`` WHAT IS LOADED, and it may not
     become a pattern. Importing ``asyncssh.Error`` to test against runs
@@ -60,7 +65,10 @@ def _is_unreachable_host_error(exc: Exception) -> bool:
     import asyncio
 
     from ..errors import OttoError
+    from ..host.errors import HostKeyRefusedError
 
+    if isinstance(exc, HostKeyRefusedError):
+        return True
     if isinstance(exc, OttoError):
         return False
     if isinstance(exc, (OSError, asyncio.TimeoutError)):

@@ -25,6 +25,9 @@ otto builds a recursive tunnel chain
 (`otto -> hop1 -> hop2 -> ... -> target`).  Circular references are
 detected and rejected at connection time.
 
+How a hop's SSH host key is checked, and how to clear one that changed,
+is in {ref}`host-key-settings` and {ref}`forget-key`.
+
 The `--hop` option works with all subcommands:
 
 ```bash

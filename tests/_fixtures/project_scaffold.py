@@ -28,6 +28,7 @@ def make_project(
     tests: list[str] | None = None,
     extra: str = "",
     files: dict[str, str] | None = None,
+    known_hosts: Path | None = None,
 ) -> Path:
     """Create *root* as an otto project and return it.
 
@@ -35,6 +36,12 @@ def make_project(
     ``tests = [...]`` line when *tests* is given, then *extra* verbatim
     (separated by a blank line).  *files* are written under *root* (parents
     created) — test suites, conftests, source files.
+
+    *known_hosts* is for a project whose otto subprocess dials a host over
+    SSH: it adds ``[host_preferences.".*".ssh_options] known_hosts = ...``,
+    so the keys that run records land in that file rather than the real
+    ``~/.ssh/known_hosts`` (which the root conftest's ``_hermetic_known_hosts``
+    keeps out of in-process tests, but cannot reach in a subprocess).
     """
     for field_name, value in (("name", name), ("version", version)):
         if '"' in value or "\\" in value:
@@ -48,6 +55,10 @@ def make_project(
     if tests is not None:
         rendered = ", ".join(f'"{t}"' for t in tests)
         header += f"tests = [{rendered}]\n"
+    if known_hosts is not None:
+        extra = (extra.rstrip("\n") + "\n\n" if extra else "") + (
+            f'[host_preferences.".*".ssh_options]\nknown_hosts = "{known_hosts}"\n'
+        )
     body = header + ("\n" + extra.rstrip("\n") + "\n" if extra else "")
     (otto_dir / "settings.toml").write_text(body)
     root_resolved = root.resolve()

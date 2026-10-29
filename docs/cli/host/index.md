@@ -115,6 +115,7 @@ when called from Python with no explicit `user=` of its own.
 | `read-file` | Print a file's text contents |
 | `write-file` | Write text to a file on the host |
 | `probe` | Report the host's userland capabilities and its protocol survey; print the pins to paste |
+| `forget-key` | Remove the host's SSH host-key entries so the next connection records its new key ({ref}`forget-key`) |
 
 ## Listing hosts
 

@@ -7,7 +7,9 @@ nothing. Each helper here makes the real asyncssh, telnetlib3 or aioftp code
 receive a password and then fail, against a server on ``127.0.0.1`` only.
 
 The servers refuse every password, so a planted value is never accepted and
-the failure is always the authentication one.
+the failure is always the authentication one. :func:`ssh_server` alone can be
+told the one password to accept, for the host-key tests, which need a
+connection that would succeed but for its host key.
 """
 
 import asyncio
@@ -76,14 +78,25 @@ async def refusing_ftp_server(login: str, offered: Offered | None = None) -> Asy
 
 
 @contextlib.asynccontextmanager
-async def refusing_ssh_server(offered: Offered) -> AsyncIterator[int]:
-    """An asyncssh server on loopback that offers password auth and refuses every password.
+async def ssh_server(
+    offered: Offered,
+    *,
+    host_keys: "list[Any] | None" = None,
+    accepted_password: str | None = None,
+    forwarding: bool = False,
+) -> AsyncIterator[int]:
+    """An asyncssh server on loopback that offers password auth; yields its port.
 
-    Yields its port; each password offered is added to *offered*.
+    Each password offered is added to *offered*, so a test can prove a
+    password never reached the server. *accepted_password* is the one it
+    accepts (``None``: it refuses every one). *host_keys* are asyncssh's
+    ``server_host_keys`` (private keys, or ``(key, certificate)`` pairs); one
+    fresh ed25519 key by default. *forwarding* lets a client open
+    ``direct-tcpip`` channels through it, so it can serve as a hop.
     """
     import asyncssh
 
-    class _Refuse(asyncssh.SSHServer):
+    class _Server(asyncssh.SSHServer):
         def begin_auth(self, username: str) -> bool:
             return True
 
@@ -92,15 +105,30 @@ async def refusing_ssh_server(offered: Offered) -> AsyncIterator[int]:
 
         def validate_password(self, username: str, password: str) -> bool:
             offered.passwords.append(password)
-            return False
+            return accepted_password is not None and password == accepted_password
 
-    key = asyncssh.generate_private_key("ssh-ed25519")
-    server = await asyncssh.create_server(_Refuse, "127.0.0.1", 0, server_host_keys=[key])
+        def connection_requested(
+            self, dest_host: str, dest_port: int, orig_host: str, orig_port: int
+        ) -> bool:
+            return forwarding
+
+    keys = host_keys if host_keys is not None else [asyncssh.generate_private_key("ssh-ed25519")]
+    server = await asyncssh.create_server(_Server, "127.0.0.1", 0, server_host_keys=keys)
     try:
         yield server.sockets[0].getsockname()[1]
     finally:
         server.close()
         await server.wait_closed()
+
+
+@contextlib.asynccontextmanager
+async def refusing_ssh_server(offered: Offered) -> AsyncIterator[int]:
+    """An asyncssh server on loopback that offers password auth and refuses every password.
+
+    Yields its port; each password offered is added to *offered*.
+    """
+    async with ssh_server(offered) as port:
+        yield port
 
 
 class _StreamServer:

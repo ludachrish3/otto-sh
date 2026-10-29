@@ -42,7 +42,7 @@ class _Spy:
 
 def _term_ctx() -> TermContext:
     return TermContext(
-        ip="10.0.0.5", creds=[Cred(login="root", password="x")], term="ssh", name="h1"
+        ip="10.0.0.5", creds=[Cred(login="root", password="x")], term="ssh", name="h1", host_id="h1"
     )
 
 

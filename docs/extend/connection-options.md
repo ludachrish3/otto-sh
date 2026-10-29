@@ -127,25 +127,19 @@ element's `name`, and the rest is its one host entry:
 }
 ```
 
-## Disabling strict host-key checking for a lab host
+## Turning host-key checking off for a lab host
 
-Otto's default already disables host-key checking.  For a host where you
-*do* want to check:
+otto checks host keys by default, against `~/.ssh/known_hosts` keyed by
+host ID (see {ref}`host-key-settings`, which also shows the `lab.json` and
+`settings.toml` forms). For a host where you do not want the check, from
+Python:
 
 ```python
-ssh_options = SshOptions(
-    known_hosts="/home/engineer/.ssh/known_hosts",
-)
+ssh_options = SshOptions(verify_host_key=False)
 ```
 
-…and for a host where you explicitly want the default *off* behavior
-surfaced in config (for readers of the JSON file):
-
-```json
-{
-    "ssh_options": { "known_hosts": null }
-}
-```
+To keep checking a host whose key changed on purpose, remove its old entry
+instead ({ref}`forget-key`).
 
 ## Persistent local port forward through a host
 

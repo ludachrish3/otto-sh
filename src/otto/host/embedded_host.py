@@ -281,6 +281,7 @@ class EmbeddedHost(UserlandHost, RemoteHost):
                 # The bound method, not its result: the server is looked up in
                 # the lab on the first console dial, never at construction.
                 console_endpoint=self.console_endpoint if self.term == "console" else None,
+                host_id=self.id,
             ),
         )
         self._session_mgr = SessionManager(

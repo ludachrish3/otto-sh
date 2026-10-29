@@ -669,19 +669,18 @@ class RemoteHost(BaseHost):
             # hop host's own session; applying them per tunnel would try to
             # rebind a fixed local_forwards port once per hopped target.
             hop_options = getattr(hop_host, "ssh_options", None) or SshOptions()
-            kwargs: dict[str, Any] = {
-                "username": cred.login,
-                "tunnel": parent_tunnel,
-                **hop_options._kwargs(),  # noqa: SLF001 — intra-package access to SshOptions._kwargs
-            }
+            kwargs: dict[str, Any] = {"username": cred.login, "tunnel": parent_tunnel}
             tag = f"{host_name} via {hop_id}"
             logger.debug(f"Opening SSH tunnel through {hop_id} for {host_name}")
+            # The hop's own ID is the alias: its key is checked and recorded
+            # under it, and a refusal on this leg names the hop, not the target.
             return await connect_and_describe(
                 tag,
                 hop_host.ip,
                 kwargs,
                 hop_options,
                 password=cred.password,
+                alias=hop_host.id,
                 apply_post_connect=False,
             )
 

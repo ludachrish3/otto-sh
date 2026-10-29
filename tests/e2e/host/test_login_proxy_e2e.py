@@ -374,6 +374,7 @@ def _scaffold_project(root: Path, ip: str, element: str) -> str:
     make_project(
         root,
         name="lp_e2e",
+        known_hosts=root / "known_hosts",
         extra=(
             'libs = ["initlib"]\ninit = ["lp_e2e_init"]\n'
             '\n[[lab.sources]]\nbackend = "json"\npaths = ["lab_data"]\n'

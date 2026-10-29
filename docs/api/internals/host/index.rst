@@ -19,6 +19,8 @@ host internals
    transport
    telnet
    secret_wire
+   known_hosts
+   host_key_client
    nvt
    console
    terminal_mapping

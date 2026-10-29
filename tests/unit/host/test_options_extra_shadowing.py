@@ -44,7 +44,7 @@ def test_the_port_cannot_be_set_twice():
 
 def test_a_key_that_names_no_field_still_passes_through():
     opts = SshOptions(extra={"config": ["/tmp/ssh_config"], "proxy_command": "pc"})
-    kw = opts._kwargs()
+    kw = opts._kwargs(alias="h1")
     assert kw["config"] == ["/tmp/ssh_config"]
     assert kw["proxy_command"] == "pc"
 
@@ -78,7 +78,7 @@ def test_the_identity_keys_still_warn_rather_than_refuse(caplog):
 
     opts = SshOptions(extra={"username": "x"})
     with caplog.at_level(logging.WARNING, logger="otto.host.options"):
-        opts._kwargs()
+        opts._kwargs(alias="h1")
     assert "username" in caplog.text
 
 
@@ -116,7 +116,8 @@ def test_reserved_extra_names_are_part_of_the_one_rule():
 @pytest.mark.parametrize("cls", RUNTIME, ids=lambda c: c.__name__)
 def test_every_options_class_declares_its_reserved_extra_names(cls):
     """One declaration per class, read by ``shadowed_fields``: empty unless reserved."""
-    expected = {"password", "passphrase"} if cls is SshOptions else set()
+    ssh_reserved = {"password", "passphrase", "host_key_alias", "client_factory"}
+    expected = ssh_reserved if cls is SshOptions else set()
     assert set(cls._reserved_extra) == expected
 
 
@@ -140,3 +141,15 @@ def test_the_passphrase_field_is_the_route_extra_cannot_bypass():
     assert "PLANTED-SECRET-7f3a" not in repr(runtime)
     with pytest.raises(ValueError, match="passphrase"):
         SshOptions(passphrase="x", extra={"passphrase": "y"})
+
+
+@pytest.mark.parametrize("k", ["known_hosts", "host_key_alias", "client_factory"])
+def test_extra_cannot_name_host_key_controls(k):
+    """otto checks host keys by host ID; ``extra`` must not replace the file,
+    the alias asyncssh matches under, or the client object that records keys.
+    Refused at both boundaries, through the one rule."""
+    assert shadowed_fields({k: "x", "config": []}, SshOptions) == [k]
+    with pytest.raises(ValueError, match=rf"SshOptions.*extra.*\b{k}\b"):
+        SshOptions(extra={k: "10.0.0.5"})
+    with pytest.raises(ValidationError, match=k):
+        option_specs.SshOptionsSpec.model_validate({"extra": {k: "10.0.0.5"}})

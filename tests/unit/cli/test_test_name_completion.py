@@ -295,20 +295,30 @@ def test_a_timed_out_child_that_held_the_lock_has_it_freed(project, monkeypatch)
 
 
 def test_an_expiry_during_a_cache_write_leaves_no_temporary_file(project, monkeypatch):
-    _exit_raises(monkeypatch)
     home = cc._cache_path().parent
     home.mkdir(parents=True, exist_ok=True)
-    real_dump = cc.json.dump
+    # The expiry lands after the bytes are written, while the temporary exists
+    # and before it is renamed into place. A real ``os._exit`` unwinds nothing,
+    # so what counts is the directory AT the exit, before the test's stand-in
+    # SystemExit lets the writer's own cleanup run.
+    before: list[list[str]] = []
+    at_exit: list[list[str]] = []
 
-    def dump_then_expire(obj, fp, *args, **kwargs):
-        real_dump(obj, fp, *args, **kwargs)
+    def exit_(code):
+        at_exit.append([p.name for p in home.glob(".*.tmp")])
+        raise SystemExit(code)
+
+    def expire_mid_write(fd):
+        before.append([p.name for p in home.glob(".*.tmp")])
         tr._expire_collect_child(_lock())
 
-    monkeypatch.setattr(cc.json, "dump", dump_then_expire)
+    monkeypatch.setattr(tr.os, "_exit", exit_)
+    monkeypatch.setattr(os, "fsync", expire_mid_write)
     with pytest.raises(SystemExit):
         cc._atomic_write_json(home / "completion_cache.json", {"x": 1})
 
-    assert list(home.glob(".completion_cache_*.tmp")) == []
+    assert [len(names) for names in before] == [1], "the expiry must land mid-write"
+    assert at_exit == [[]]
 
 
 def test_a_table_another_env_wrote_offers_nothing_when_the_seed_fails(

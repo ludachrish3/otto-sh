@@ -2079,8 +2079,9 @@ def render_leaf_value(value: Any, policy: "RenderPolicy | None" = None) -> None:
     Implements the documented "Return values" contract
     (:doc:`/extend/extending-cli`) for every registered command and
     instruction: an ``otto.result`` family value derives the process exit code
-    from its own ``exit_code`` (the ssh-like rules); any other non-``None``
-    value is printed as-is, exit 0. ``None`` renders nothing by default —
+    from its own ``exit_code`` (the ssh-like rules); a
+    :class:`~otto.result.CliReport` prints its report text as plain text; any
+    other non-``None`` value is printed as-is, exit 0. ``None`` renders nothing by default —
     every side-effect-only first-party leaf returns it, so a leaf that wants a
     completion message must say so via :class:`RenderPolicy` (installed on
     ``ctx.meta[RENDER_POLICY_KEY]``, e.g. by the ``otto host`` verb bodies).
@@ -2091,7 +2092,7 @@ def render_leaf_value(value: Any, policy: "RenderPolicy | None" = None) -> None:
     """
     from rich import print as rprint
 
-    from ..result import Result
+    from ..result import CliReport, Result
     from ..utils import Status
 
     if isinstance(value, Result):
@@ -2116,6 +2117,9 @@ def render_leaf_value(value: Any, policy: "RenderPolicy | None" = None) -> None:
     literal = policy.literal if policy else False
     if isinstance(value, list) and _has_rich_renderable(value):
         _rprint_each(value, literal=literal)
+        return
+    if isinstance(value, CliReport):
+        _print_value(value.__otto_cli_report__(), literal=True)
         return
 
     _print_value(value, literal=literal)  # documented third-party plain-value fallback, exit 0

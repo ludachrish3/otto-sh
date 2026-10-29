@@ -168,6 +168,7 @@ def _archive_project(root: Path, dockerfile: str) -> Path:
     return make_project(
         root / "sut",
         name=_ARCHIVE_REPO,
+        known_hosts=root / "known_hosts",
         extra=f"""\
 [[lab.sources]]
 backend = "json"

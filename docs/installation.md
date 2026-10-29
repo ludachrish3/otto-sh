@@ -701,14 +701,12 @@ Monitor dashboard assets
   wheel.  **No CDN or external network access is needed** to serve the dashboard.
 
 SSH host key verification
-: Otto disables SSH host-key verification by default: a default-constructed
-  `SshOptions()` passes `known_hosts=None` to asyncssh, so nothing has to be seeded
-  before a first connection to a new host. If your security requirements call for
-  verification, set `known_hosts` on the host's SSH options to a known-hosts file
-  (asyncssh expands `~` itself, so `~/.ssh/known_hosts` works) — only then does that
-  file need to be populated on the air-gapped host in advance. Tunnel legs to SSH
-  *hop* hosts are always unverified; a hopped host's own connection still honors its
-  `known_hosts`. See [Connection options](extend/connection-options.md).
+: otto checks SSH host keys by default, keyed by host ID in `~/.ssh/known_hosts`:
+  a host with no entry is accepted and its key recorded at the first connection,
+  so nothing has to be seeded in advance, and a host whose key differs from its
+  entry is refused before any password is sent. On an air-gapped host where
+  that file cannot be written, point `known_hosts` at a writable file or pre-seed one; see
+  {ref}`host-key-settings`.
 
 Log retention
 : Otto stores logs and artifacts under the `--xdir` directory.  On isolated systems

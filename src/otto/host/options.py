@@ -134,6 +134,26 @@ def shadowed_fields(extra: dict[str, Any], cls: "type[DataclassInstance]") -> li
     return sorted(k for k in extra if k in names)
 
 
+def refuse_null_known_hosts(value: object) -> object:
+    """Return *value*, refusing ``None``, which once turned host-key checking off.
+
+    ``SshOptions.known_hosts`` is a file path; the switch is
+    ``verify_host_key``. The runtime options and the lab spec
+    (:class:`~otto.models.SshOptionsSpec`) both refuse a ``None`` through
+    this, so the message that names the replacement setting is written once.
+
+    Raises:
+        ValueError: *value* is ``None``.
+    """
+    if value is None:
+        msg = (
+            "SshOptions.known_hosts is a file path and cannot be None; to turn "
+            "host-key checking off, set verify_host_key = false"
+        )
+        raise ValueError(msg)
+    return value
+
+
 def _refuse_shadowing(opts: "DataclassInstance") -> None:
     """Raise if *opts*'s ``extra`` names one of its own fields."""
     cls = type(opts)
@@ -155,18 +175,24 @@ class SshOptions:
     hatches (``extra`` and ``post_connect``) that together give access to
     every asyncssh feature.
 
-    Default-constructed ``SshOptions()`` reproduces otto's historical
-    behavior: port 22 with host-key verification disabled.
+    Default-constructed ``SshOptions()`` connects on port 22 and checks host
+    keys against ``~/.ssh/known_hosts``, keyed by otto host ID (see
+    :attr:`known_hosts` and :attr:`verify_host_key`).
     """
 
     port: int = 22
     """TCP port for the SSH connection."""
 
-    known_hosts: Any = None
-    """asyncssh known_hosts. ``None`` disables host-key verification
-    (otto's historical default). Passed to asyncssh as-is; asyncssh expands
-    ``~`` itself when it reads the file, so ``"~/.ssh/known_hosts"`` resolves
-    against the caller's home directory (a list of keys is also accepted)."""
+    known_hosts: str = "~/.ssh/known_hosts"
+    """Path of the OpenSSH-format file otto checks and records host keys in.
+
+    Entries are keyed by otto host ID (``router1 ssh-ed25519 AAAA...``, or
+    ``[router1]:2222 ...`` for a non-22 port), never by address. ``~`` is
+    expanded against the caller's home directory, by
+    :func:`~otto.host.known_hosts.known_hosts_path`, the one place that
+    resolves it. ``UserKnownHostsFile``, ``GlobalKnownHostsFile`` and
+    ``HostKeyAlias`` in ``~/.ssh/config`` are not read. ``None`` is refused:
+    turn checking off with :attr:`verify_host_key` instead."""
 
     connect_timeout: float | None = None
     """Seconds to wait for the TCP + SSH handshake. ``None`` = asyncssh default."""
@@ -225,10 +251,16 @@ class SshOptions:
     Applied on the host's own sessions only, never on a tunnel connection
     opened through this host acting as a hop."""
 
-    _reserved_extra: ClassVar[frozenset[str]] = frozenset({"password", "passphrase"})
+    _reserved_extra: ClassVar[frozenset[str]] = frozenset(
+        {"password", "passphrase", "host_key_alias", "client_factory"}
+    )
     """``extra`` keys refused by name (see :func:`shadowed_fields`): a password
     comes from the host's creds and a key passphrase from :attr:`passphrase`,
-    never from ``extra``, where it would sit raw in a kwargs dict."""
+    never from ``extra``, where it would sit raw in a kwargs dict. The
+    host-key controls ``host_key_alias`` and ``client_factory`` are otto's
+    own: the alias is always the host ID and the check is configured through
+    :attr:`known_hosts` (a field, so already refused in ``extra``) and
+    :attr:`verify_host_key`, so ``extra`` cannot replace or bypass it."""
 
     extra: dict[str, Any] = field(default_factory=dict)
     """Arbitrary extra kwargs forwarded directly to ``asyncssh.connect()``.
@@ -238,12 +270,15 @@ class SshOptions:
     names a curated field (``port``, ``known_hosts``, ...) is refused when the
     options are built: the field is that value's one source. So is
     ``password`` or ``passphrase``: a secret reaches asyncssh only from the
-    host's creds or :attr:`passphrase`, wrapped until the library call. The call sites spread these
+    host's creds or :attr:`passphrase`, wrapped until the library call. So
+    are ``host_key_alias`` and ``client_factory``, which otto sets to check
+    host keys by host ID. The call sites spread these
     after their own ``username`` and ``tunnel``, so an ``extra`` key with one
     of those names replaces the login or the hop tunnel (with a warning)."""
 
     def __post_init__(self) -> None:
         _refuse_shadowing(self)
+        refuse_null_known_hosts(self.known_hosts)
         self.passphrase = as_secret(self.passphrase)
 
     post_connect: Callable[["SSHClientConnection"], Awaitable[None]] | None = None
@@ -259,15 +294,30 @@ class SshOptions:
     by ``repr()``, and unwrapped only inside the ``asyncssh.connect`` call
     (:func:`~otto.host.connections.ssh_connect`)."""
 
-    def _kwargs(self) -> dict[str, Any]:
-        """Build the kwargs dict passed to ``asyncssh.connect()``, warning on identity overrides.
+    verify_host_key: bool = True
+    """Check the host's SSH key against :attr:`known_hosts`. ``True`` (the
+    default) accepts a host with no entry and records its key, and refuses a
+    host whose entry holds a different key. ``False`` turns checking off
+    silently: otto neither reads nor writes the file, and logs no warning.
+    Set it for the whole project or for one host through the
+    ``[host_preferences."<regex>".ssh_options]`` cascade."""
 
-        Includes only fields the caller explicitly set, so asyncssh's own
-        defaults apply for everything we did not override. ``known_hosts``
-        is always included (default ``None``) since that is the historical
-        otto behavior callers rely on. A caller that needs one value reads
-        the field: ``extra`` cannot shadow it, so the field is what reaches
-        asyncssh.
+    def _kwargs(self, *, alias: str) -> dict[str, Any]:
+        """Build the kwargs dict passed to ``asyncssh.connect()`` for host *alias*.
+
+        *alias* is the otto host ID the host key is checked and recorded
+        under. Includes only fields the caller explicitly set, so asyncssh's
+        own defaults apply for everything we did not override, and warns when
+        ``extra`` overrides the caller's identity kwargs.
+
+        With :attr:`verify_host_key` on, the host-key check goes in as
+        asyncssh's ``known_hosts`` callable, ``client_factory`` and
+        ``host_key_alias``
+        (:meth:`~otto.host.host_key_client.HostKeyCheck.connect_kwargs`):
+        asyncssh's own file check would also match the peer address, and a
+        tunnelled host's peer address is the hop's, so the :attr:`known_hosts`
+        path is never handed to it as-is. With it off, ``known_hosts`` is
+        ``None`` and nothing reads or writes the file.
         """
         overridden = sorted(self.extra.keys() & _EXTRA_IDENTITY_OVERRIDE_KEYS)
         if overridden:
@@ -275,10 +325,14 @@ class SshOptions:
                 f"SshOptions.extra sets {overridden}, silently overriding the caller's own "
                 "connect kwarg(s) of the same name (the credential or the hop tunnel)"
             )
-        kw: dict[str, Any] = {
-            "port": self.port,
-            "known_hosts": self.known_hosts,
-        }
+        kw: dict[str, Any] = {"port": self.port}
+        if self.verify_host_key:
+            # Lazy: the check imports asyncssh, which host classes must not load.
+            from .host_key_client import HostKeyCheck
+
+            kw.update(HostKeyCheck.for_options(self, alias).connect_kwargs())
+        else:
+            kw["known_hosts"] = None
         if self.connect_timeout is not None:
             kw["connect_timeout"] = self.connect_timeout
         if self.keepalive_interval is not None:

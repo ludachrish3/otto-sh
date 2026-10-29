@@ -15,6 +15,7 @@ from pydantic import SecretStr
 
 from otto.host.connections import ConnectionManager
 from otto.host.element import Element
+from otto.host.host_key_client import HostKeyCheck
 from otto.host.login_proxy import Cred
 from otto.host.options import LocalPortForward, NcOptions, SshOptions
 from otto.host.session import SessionManager
@@ -23,6 +24,16 @@ from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
 from otto.result import CommandResult
 from otto.utils import Status
+
+
+def _check(alias: str, port: int) -> dict[str, Any]:
+    """The host-key kwargs a default ``SshOptions`` on *port* sends for host *alias*.
+
+    Built by the product's own builder, so the expectation is the same value
+    object (host, port, the resolved file, the algorithm choice) the
+    connection sends, not a restatement of it.
+    """
+    return HostKeyCheck.for_options(SshOptions(port=port), alias).connect_kwargs()
 
 
 def _cs(
@@ -96,6 +107,7 @@ class TestConnectionManagerTunnel:
             creds=[Cred(login="user", password="pass")],
             term="ssh",
             name="test",
+            host_id="test",
         )
         assert not cm.has_tunnel
 
@@ -106,6 +118,7 @@ class TestConnectionManagerTunnel:
             creds=[Cred(login="user", password="pass")],
             term="ssh",
             name="test",
+            host_id="test",
             hop=SshHopTransport(factory),
         )
         assert cm.has_tunnel
@@ -119,6 +132,7 @@ class TestConnectionManagerTunnel:
             creds=[Cred(login="user", password="pass")],
             term="ssh",
             name="test",
+            host_id="test",
             hop=SshHopTransport(factory),
         )
         tunnel1 = await cm._ensure_tunnel()
@@ -135,6 +149,7 @@ class TestConnectionManagerTunnel:
             creds=[Cred(login="user", password="pass")],
             term="ssh",
             name="test",
+            host_id="test",
             hop=SshHopTransport(factory),
         )
         with patch("otto.host.connections.ssh_connect", new_callable=AsyncMock) as mock_connect:
@@ -147,7 +162,7 @@ class TestConnectionManagerTunnel:
                 password=SecretStr("pass"),
                 tunnel=mock_tunnel,
                 port=22,
-                known_hosts=None,
+                **_check("test", 22),
             )
             assert result is mock_ssh
 
@@ -160,6 +175,7 @@ class TestConnectionManagerTunnel:
             creds=[Cred(login="user", password="s3cret")],
             term="ssh",
             name="legacy",
+            host_id="legacy",
             ssh_options=SshOptions(kex_algs=["diffie-hellman-group1-sha1"]),
         )
         info = {
@@ -200,6 +216,7 @@ class TestConnectionManagerTunnel:
             creds=[Cred(login="user", password="pass")],
             term="ssh",
             name="test",
+            host_id="test",
         )
         with patch("otto.host.connections.ssh_connect", new_callable=AsyncMock) as mock_connect:
             mock_ssh = MagicMock(spec=SSHClientConnection)
@@ -211,7 +228,7 @@ class TestConnectionManagerTunnel:
                 password=SecretStr("pass"),
                 tunnel=None,
                 port=22,
-                known_hosts=None,
+                **_check("test", 22),
             )
 
     @pytest.mark.asyncio
@@ -227,6 +244,7 @@ class TestConnectionManagerTunnel:
             creds=[Cred(login="user", password="pass")],
             term="telnet",
             name="test",
+            host_id="test",
             hop=SshHopTransport(factory),
         )
         with patch("otto.host.connections.TelnetClient") as MockTelnet:  # noqa: N806 — CapWords for a class mock
@@ -288,7 +306,7 @@ class TestConnectionManagerTunnel:
     @pytest.mark.asyncio
     async def test_the_tunnel_connect_carries_the_hop_host_s_own_ssh_options(self, caplog):
         """A hop host's port, algorithm lists and keys used to be dropped on the
-        floor: the tunnel connect passed ip, creds, known_hosts=None and tunnel,
+        floor: the tunnel connect passed ip, creds, the host-key check and tunnel,
         nothing else. A legacy jumpbox on port 2222 with SHA-1 kex is exactly
         the host that needs them. Also proves the hop path logs the same two
         DEBUG lines as every other connect, tagged with the hop chain — but
@@ -351,7 +369,7 @@ class TestConnectionManagerTunnel:
             passphrase=None,
             tunnel=None,
             port=2222,
-            known_hosts=None,
+            **_check("jumpbox", 2222),
             kex_algs=["diffie-hellman-group14-sha1"],
         )
         mock_post_connect.assert_not_awaited()
@@ -463,6 +481,7 @@ class TestConnectionManagerTunnel:
             creds=[Cred(login="root", password="otto")],
             term="telnet",
             name="bb1350",
+            host_id="bb1350",
             hop=SshHopTransport(AsyncMock(return_value=mock_tunnel)),
         )
         cm.telnet_options.port = 2335
@@ -515,6 +534,7 @@ class TestConnectionManagerTunnel:
             creds=[Cred(login="user", password="pass")],
             term="telnet",
             name="test",
+            host_id="test",
             hop=SshHopTransport(AsyncMock(return_value=mock_tunnel)),
         )
         with patch("otto.host.connections.TelnetClient") as MockTelnet:  # noqa: N806 — CapWords for a class mock
@@ -547,6 +567,7 @@ class TestConnectionManagerTunnel:
             creds=[Cred(login="user", password="pass")],
             term="ssh",
             name="test",
+            host_id="test",
             hop=hop,
         )
         with (
@@ -571,6 +592,7 @@ class TestConnectionManagerTunnel:
             creds=[Cred(login="user", password="pass")],
             term="ssh",
             name="test",
+            host_id="test",
             hop=SshHopTransport(factory),
         )
         port = await cm.forward_port(8080)
@@ -584,6 +606,7 @@ class TestConnectionManagerTunnel:
             creds=[Cred(login="user", password="pass")],
             term="ssh",
             name="test",
+            host_id="test",
         )
         with pytest.raises(RuntimeError, match="requires a tunnel"):
             await cm.forward_port(8080)
@@ -671,6 +694,7 @@ class TestTunnelCleanup:
             creds=[Cred(login="user", password="pass")],
             term="ssh",
             name="test",
+            host_id="test",
             hop=SshHopTransport(factory),
         )
         # Establish the tunnel
@@ -695,6 +719,7 @@ class TestTunnelCleanup:
             creds=[Cred(login="user", password="pass")],
             term="ssh",
             name="test",
+            host_id="test",
             hop=SshHopTransport(factory),
         )
         await cm.forward_port(8080)

@@ -50,7 +50,7 @@ class SshOptionsSpec(OttoModel):
     """
 
     port: int = rt.field_default(rt.SshOptions, "port")
-    known_hosts: Any = rt.field_default(rt.SshOptions, "known_hosts")
+    known_hosts: str = rt.field_default(rt.SshOptions, "known_hosts")
     connect_timeout: float | None = rt.field_default(rt.SshOptions, "connect_timeout")
     keepalive_interval: float | None = rt.field_default(rt.SshOptions, "keepalive_interval")
     keepalive_count_max: int | None = rt.field_default(rt.SshOptions, "keepalive_count_max")
@@ -68,6 +68,12 @@ class SshOptionsSpec(OttoModel):
     remote_forwards: list[rt.RemotePortForward] = Field(default_factory=list)
     socks_forwards: list[rt.SocksForward] = Field(default_factory=list)
     extra: dict[str, Any] = Field(default_factory=dict)
+    verify_host_key: bool = rt.field_default(rt.SshOptions, "verify_host_key")
+
+    @field_validator("known_hosts", mode="before")
+    @classmethod
+    def _known_hosts_not_null(cls, value: object) -> object:
+        return rt.refuse_null_known_hosts(value)
 
     @field_validator("extra")
     @classmethod
@@ -96,6 +102,7 @@ class SshOptionsSpec(OttoModel):
             remote_forwards=list(self.remote_forwards),
             socks_forwards=list(self.socks_forwards),
             extra=dict(self.extra),
+            verify_host_key=self.verify_host_key,
         )
 
 

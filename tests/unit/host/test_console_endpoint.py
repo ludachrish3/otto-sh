@@ -41,11 +41,15 @@ def _console_host(lab, *, element="test2", ip="10.10.200.12", **opts):
 
 @pytest.fixture
 def ssh_connects(monkeypatch):
-    """Record every hop-tunnel SSH connect as ``(tag, host, username)``; no network."""
+    """Record every hop-tunnel SSH connect as ``(tag, host, username, alias)``; no network.
+
+    *alias* is the host ID the tunnel's host key is checked under: the
+    server's (or its hop's), never the console host's.
+    """
     seen = []
 
-    async def fake(tag, host, kwargs, options, *, password, alias=None, apply_post_connect=True):
-        seen.append((tag, host, kwargs["username"]))
+    async def fake(tag, host, kwargs, options, *, password, alias, apply_post_connect=True):
+        seen.append((tag, host, kwargs["username"], alias))
         return object()
 
     monkeypatch.setattr("otto.host.remote_host.connect_and_describe", fake)
@@ -61,7 +65,7 @@ async def test_ssh_dial_tunnels_into_the_server(ssh_connects):
     assert ep.hop is not None
     await ep.hop.get_tunnel()
     # INTO the server, as the server's own ssh cred.
-    assert ssh_connects == [("test2 via test1", "10.10.200.11", "vagrant")]
+    assert ssh_connects == [("test2 via test1", "10.10.200.11", "vagrant", "test1")]
 
 
 def test_direct_dial_with_a_hopless_server_has_no_hop():
@@ -90,7 +94,7 @@ async def test_direct_dial_through_a_hopped_server_tunnels_into_the_servers_hop(
     await ep.hop.get_tunnel()
     # Through the server's HOP (the forward then dials the server's ip), never
     # into the server itself.
-    assert ssh_connects == [("test1 via jump", "10.10.200.1", "jumper")]
+    assert ssh_connects == [("test1 via jump", "10.10.200.1", "jumper", "jump")]
 
 
 def test_the_hosts_own_hop_is_never_consulted():

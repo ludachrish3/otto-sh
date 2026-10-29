@@ -28,7 +28,7 @@ MYSQL = Cred(login="mysql", password="sqlpw", proxy="su", via="admin")
 
 
 def _mgr(creds):
-    return ConnectionManager(ip="10.0.0.1", creds=creds, term="ssh", name="h1")
+    return ConnectionManager(ip="10.0.0.1", creds=creds, term="ssh", name="h1", host_id="h1")
 
 
 def test_credentials_resolves_direct_cred_for_proxied_target():
@@ -289,7 +289,9 @@ async def test_ssh_under_a_telnet_term_authenticates_as_the_ssh_pick(monkeypatch
 
     monkeypatch.setattr("otto.host.connections.ssh_connect", fake_ssh_connect)
     ssh_ops = Cred(login="ops", password="ops-pw", protocols=["ssh"])
-    mgr = ConnectionManager(ip="10.0.0.1", creds=[TELNET_ROOT, ssh_ops], term="telnet", name="h1")
+    mgr = ConnectionManager(
+        ip="10.0.0.1", creds=[TELNET_ROOT, ssh_ops], term="telnet", name="h1", host_id="h1"
+    )
     await mgr.ssh()
     assert seen["auth"] == ("ops", SecretStr("ops-pw"))
     assert mgr.login_target == "root"
@@ -366,6 +368,7 @@ def _console_mgr(dial, hop, **opts):
         creds=[],
         term="console",
         name="dev1",
+        host_id="dev1",
         console_options=ConsoleOptions(server="test1", port=4001, dial=dial, **opts),
         console_endpoint=lambda: ConsoleEndpoint(server_ip="10.10.200.11", hop=hop),
     )
@@ -421,6 +424,7 @@ async def test_console_endpoint_is_resolved_once_and_only_when_dialled():
         creds=[],
         term="console",
         name="dev1",
+        host_id="dev1",
         console_options=ConsoleOptions(server="test1", port=4001),
         console_endpoint=factory,
     )
@@ -439,6 +443,7 @@ async def test_console_target_without_an_endpoint_names_the_host():
         creds=[],
         term="console",
         name="dev1",
+        host_id="dev1",
         console_options=ConsoleOptions(server="test1", port=4001),
     )
     with pytest.raises(RuntimeError, match="dev1: term 'console' needs a console endpoint"):
@@ -582,7 +587,12 @@ class TestConnectAllowance:
 
     def _cm(self, term, **options):
         return ConnectionManager(
-            ip="10.0.0.1", creds=[Cred(login="u", password="p")], term=term, name="h1", **options
+            ip="10.0.0.1",
+            creds=[Cred(login="u", password="p")],
+            term=term,
+            name="h1",
+            host_id="h1",
+            **options,
         )
 
     def test_ssh_counts_only_a_set_connect_timeout(self):

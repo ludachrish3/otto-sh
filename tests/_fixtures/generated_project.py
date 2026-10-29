@@ -166,6 +166,8 @@ def generate_project(
         tests=["tests"],
         extra=extra,
         files=project_files,
+        # Only a project with a host to dial pins its known-hosts file.
+        known_hosts=root / "known_hosts" if ssh_lab_port is not None else None,
     )
 
     tests_root = project / "tests"

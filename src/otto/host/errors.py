@@ -29,7 +29,12 @@ impair can mean "link work failed" rather than "some host call failed", and it
 gets the same three checks by passing them in.
 """
 
+import enum
+from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from typing_extensions import override
 
 from ..errors import OttoError
 from ..logger.mode import LogMode
@@ -90,6 +95,184 @@ class SessionSetupError(OttoError, ConnectionError):
     name ahead of its transport-race retry, because a hook failure is not a
     race and must not consume the retry.
     """
+
+
+class HostKeyChangedError(OttoError, ConnectionError):
+    """The known-hosts file holds a different key for this host ID than the one offered.
+
+    Raised by :meth:`~otto.host.known_hosts.KnownHosts.record` when, under the
+    file lock, another process has recorded a different key for the alias
+    since this connection checked. Its message states the fact only; the
+    advice is :class:`HostKeyRefusedError`'s, which every connection turns it
+    into. A ``ConnectionError`` so callers that treat "the session never came
+    up" as unreachable keep doing so.
+    """
+
+
+class HostKeyNotCertifiedError(OttoError, ConnectionError):
+    """The host is known by its certificate authority, and the key about to be recorded is plain.
+
+    Raised by :meth:`~otto.host.known_hosts.KnownHosts.record` when, under the
+    file lock, an ``@cert-authority`` line for the host ID has appeared since
+    this connection checked: a host known by its CA is never recorded by a
+    plain key. Its message states the fact only; the advice is
+    :class:`HostKeyRefusedError`'s. A ``ConnectionError`` so callers that
+    treat "the session never came up" as unreachable keep doing so.
+    """
+
+
+class HostKeyRevokedError(OttoError, ConnectionError):
+    """The known-hosts file revokes the key this connection is about to record.
+
+    Raised by :meth:`~otto.host.known_hosts.KnownHosts.record`, which judges
+    the file through the same lookup as the handshake: a key revoked after the
+    handshake read the file (by another process, or by hand) is refused before
+    any credential is sent, never recorded. A ``ConnectionError`` so callers
+    that treat "the session never came up" as unreachable keep doing so.
+    """
+
+
+class KnownHostsUnwritableError(OttoError, ConnectionError):
+    """A key had to be recorded, or an entry removed, and the known-hosts file cannot be written.
+
+    The message names the file and both fixes: point ``known_hosts`` at a
+    writable path, or turn checking off with ``verify_host_key = false``. A
+    read-only file whose entries already match is never written, so it never
+    raises this.
+    """
+
+
+class KnownHostsError(OttoError, ConnectionError):
+    """The known-hosts file cannot be read or holds a line otto does not support.
+
+    An X.509 subject line is refused with its line number, as is a line
+    asyncssh cannot parse; the message names the file.
+    """
+
+
+def forget_key_command(host_id: str) -> str:
+    """Return ``otto host <id> forget-key``, the command that removes *host_id*'s entries.
+
+    The one place the command is spelled, for every message that advises it.
+    """
+    return f"otto host {host_id} forget-key"
+
+
+@dataclass(frozen=True)
+class ForgetResult:
+    """What :meth:`~otto.host.known_hosts.KnownHosts.forget` did, and the message that reports it.
+
+    ``str()`` of this is what both ``otto host <id> forget-key`` and a
+    library caller show, so the wording is decided here once. It is a
+    :class:`~otto.result.CliReport`: the CLI prints that same text.
+
+    It lives beside :func:`forget_key_command` rather than in
+    :mod:`otto.host.known_hosts` because ``UnixHost.forget_key`` names it in
+    its signature, which the CLI resolves at runtime, and that module imports
+    asyncssh. Import it from :mod:`otto.host.known_hosts`.
+    """
+
+    alias: str
+    """The host ID whose entries were removed."""
+
+    removed: int
+    """How many lines were removed."""
+
+    kept_shared: list[str]
+    """Lines that name the host but were left in place, because they also name
+    other hosts (or a wildcard), or are ``@cert-authority`` / ``@revoked`` lines."""
+
+    path: Path
+    """The known-hosts file that was edited."""
+
+    @override
+    def __str__(self) -> str:
+        if self.removed:
+            noun = "entry" if self.removed == 1 else "entries"
+            lines = [f"removed {self.removed} {noun} for {self.alias} from {self.path}"]
+        else:
+            lines = [f"no entry for {self.alias} in {self.path}"]
+        lines.extend(f"kept: {line}" for line in self.kept_shared)
+        return "\n".join(lines)
+
+    def __otto_cli_report__(self) -> str:
+        """Return :func:`str` of this result, the text ``forget-key`` prints."""
+        return str(self)
+
+
+class HostKeyRefusal(enum.Enum):
+    """Why a host key was refused, which decides the advice the refusal gives."""
+
+    CHANGED = "changed"
+    """The file holds a different key for the host ID; forget-key is the fix
+    when the host's key really changed."""
+
+    REVOKED = "revoked"
+    """The key is revoked in the file. forget-key keeps ``@revoked`` lines, so
+    it is no fix and is not advised."""
+
+    NOT_CERTIFIED = "not certified"
+    """An ``@cert-authority`` line covers the host ID, so only certificates that
+    CA signed are trusted for it, and the host presented a plain key. forget-key
+    keeps ``@cert-authority`` lines, so it is no fix and is not advised."""
+
+    UNTRUSTED = "untrusted"
+    """The key is not trusted for another reason (a certificate no
+    ``@cert-authority`` line trusts); the reason says which."""
+
+    FILE = "file"
+    """The file cannot be read or written; the reason names the fix."""
+
+
+class HostKeyRefusedError(OttoError, ConnectionError):
+    """otto refused an SSH connection over its host key, before any credential was sent.
+
+    The one error every host-key refusal becomes, whatever caused it: a key
+    that differs from the file's entry for the host ID (including a key of
+    another type), a revoked key, a certificate no ``@cert-authority`` line
+    trusts, a key that had to be recorded in a file that cannot be written,
+    or a file that cannot be read. Its message is built here and nowhere
+    else, so ``otto run``, ``otto test``, the host verbs and the survey all
+    show the same words.
+
+    *host_id* is the host whose key was refused: on a hopped connection whose
+    hop leg failed, the hop's ID, not the target's. A ``ConnectionError`` so
+    callers that treat "the session never came up" as unreachable keep
+    doing so.
+    """
+
+    def __init__(
+        self, *, host_id: str, address: str, path: str, reason: str, kind: HostKeyRefusal
+    ) -> None:
+        self.host_id = host_id
+        """The otto host ID whose key was refused."""
+        self.address = address
+        """The address otto dialled for that host."""
+        self.path = path
+        """The known-hosts file the check read."""
+        self.reason = reason
+        """What was wrong, in asyncssh's or the known-hosts store's words."""
+        self.kind = kind
+        """Why the key was refused, which decides the advice in the message."""
+        self.hint = forget_key_command(host_id)
+        """The command that removes the host's entries so the next connection
+        records its new key; the message advises it only for a changed key."""
+        message = f"SSH host key for {host_id} ({address}) refused: {reason}"
+        if kind is HostKeyRefusal.CHANGED:
+            message += (
+                f". {path} holds a different key for {host_id}; if the host's key "
+                f"really changed, run `{self.hint}`"
+            )
+        elif kind is HostKeyRefusal.REVOKED:
+            message += f". The key is revoked in {path}"
+        elif kind is HostKeyRefusal.NOT_CERTIFIED:
+            message += (
+                f". An @cert-authority line in {path} covers {host_id}, but the host "
+                "presented a plain key, not a certificate signed by that CA; have the "
+                "host present a certificate signed by that CA, or remove the "
+                "@cert-authority line to accept a new key on first use again"
+            )
+        super().__init__(message)
 
 
 class ConsoleError(OttoError, ConnectionError):

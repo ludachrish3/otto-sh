@@ -30,6 +30,7 @@ def _run(tmp_path: Path, body: str, *names: str, timeout: int = 90):
     project = make_project(
         tmp_path / "probe",
         name="probe",
+        known_hosts=tmp_path / "known_hosts",
         tests=["tests"],
         extra=_LAB_SOURCE,
         files={"tests/test_probe.py": body},

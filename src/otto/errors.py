@@ -10,7 +10,7 @@ the same ``try`` — the first lexical match wins.
 DEFINES, not raises, and the difference is not small: otto also raises plain
 stdlib exceptions at hundreds of sites — an argument otto validates and rejects is
 usually a bare ``ValueError``, not a named class. ``except OttoError``
-therefore means "one of otto's 106 NAMED failures", not "anything otto
+therefore means "one of otto's 110 NAMED failures", not "anything otto
 raised".
 
 There is no one clause that catches everything, and it is worth being exact
@@ -24,18 +24,19 @@ rather than offering a comforting near-miss:
   :class:`~otto.lifecycle.SyncPhaseInterrupt`, a ``KeyboardInterrupt`` on
   purpose (see below).
 * ``except (ValueError, RuntimeError)`` covers most of those raise sites,
-  and 69 of the 106 named classes. Of the other 37, twenty-nine are rooted at
+  and 69 of the 110 named classes. Of the other 41, twenty-nine are rooted at
   plain ``Exception`` (the bootstrap, project-activation,
   project-instruction, lab-repository, term-backend, transfer-backend,
   inventory, creds, reservation, power-controller, field, monitor, init and
   gcov stamp-guard errors, and the session errors
   other than ``ProjectSelectionError`` and ``LoggingLevelsConflictError``,
-  which are ``ValueError`` subclasses), seven sit under
-  ``OSError`` (``AppShellTimeoutError``, ``ConsoleError``, ``LoginProxyError``,
-  ``NcPortSharedError``, ``RetryAttemptTimeoutError``, ``SessionSetupError``,
-  ``WaitTimeoutError``), and one sits under ``LookupError``
+  which are ``ValueError`` subclasses), eleven sit under
+  ``OSError`` (``AppShellTimeoutError``, ``ConsoleError``, ``HostKeyChangedError``,
+  ``HostKeyRefusedError``, ``KnownHostsError``, ``KnownHostsUnwritableError``,
+  ``LoginProxyError``, ``NcPortSharedError``, ``RetryAttemptTimeoutError``,
+  ``SessionSetupError``, ``WaitTimeoutError``), and one sits under ``LookupError``
   (``OptionsNotAvailableError``, for ``ctx.options(Cls)`` asked of a class
-  with no bound value) — 69 + 29 + 7 + 1 = 106, so the split accounts for
+  with no bound value) — 69 + 29 + 11 + 1 = 110, so the split accounts for
   every named class.
 
 The class counts are measured, not maintained by arithmetic, and gated

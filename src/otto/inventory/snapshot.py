@@ -11,17 +11,15 @@ No credentials, ever: they live in the ``[creds]`` store or the record
 leaking one.
 """
 
-import contextlib
 import hashlib
 import json
-import os
-import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from ..models.inventory import InventoryRecord
+from ..utils import atomic_write_bytes
 from .json_backend import parse_inventory_document
 
 
@@ -87,33 +85,22 @@ def write_document_atomically(path: Path, doc: "Mapping[str, Any]") -> bytes:
     re-read another process's rename can land, and the digest would then
     describe a file this call never produced.
 
-    A UNIQUE temp name in the destination directory rather than a fixed
-    ``<name>.tmp``: two otto processes can refresh the same inventory in the
-    same second, and a shared temp name would have them interleaving bytes into
-    one file before either renamed it. Same directory because ``os.replace`` is
-    atomic only within a filesystem.
+    The write itself is :func:`otto.utils.atomic_write_bytes` (unique temp
+    name in the destination directory, so two otto processes refreshing the
+    same inventory in the same second never interleave bytes).
 
-    The file lands MODE 0600, because that is what ``mkstemp`` creates and
-    ``replace`` preserves. Worth stating rather than leaving to be rediscovered:
-    a snapshot carries no credentials by construction, but it does describe a
-    deployment's whole estate, and a refactor to ``path.write_text`` would
-    silently widen it to 0644 on a default umask.
+    The file lands MODE 0600, because that is what the shared writer's
+    ``mkstemp`` creates and ``replace`` preserves. Worth stating rather than
+    leaving to be rediscovered: a snapshot carries no credentials by
+    construction, but it does describe a deployment's whole estate, and a
+    refactor to ``path.write_text`` would silently widen it to 0644 on a
+    default umask.
     """
+    # Serialized before any temporary exists, so a document that will not
+    # serialize leaves nothing behind.
+    payload = (json.dumps(doc, indent=2, sort_keys=True) + "\n").encode()
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
-    try:
-        # Serialized INSIDE the `with`, so a document that will not serialize
-        # still closes the descriptor `mkstemp` handed us on its way out.
-        with os.fdopen(fd, "wb") as handle:
-            payload = (json.dumps(doc, indent=2, sort_keys=True) + "\n").encode()
-            handle.write(payload)
-        Path(tmp_name).replace(path)
-    except BaseException:
-        # Including KeyboardInterrupt: a temp file left in the cache directory
-        # is litter the next reader has to ignore forever.
-        with contextlib.suppress(OSError):
-            Path(tmp_name).unlink()
-        raise
+    atomic_write_bytes(path, payload)
     return payload
 
 

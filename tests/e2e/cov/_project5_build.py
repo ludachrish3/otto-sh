@@ -384,6 +384,7 @@ def overlay_project(tc: Toolchain, root: Path) -> "Path | None":
     return make_project(
         root / "kmodcov_overlay",
         name="kmodcov_overlay",
+        known_hosts=root / "known_hosts",
         version="1.0.0",
         extra=f'[[lab.sources]]\nbackend = "json"\npaths = ["{lab}"]\n',
     )

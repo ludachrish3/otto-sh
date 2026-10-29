@@ -39,9 +39,7 @@ ordinary aware caller wrote, where every comparison mixes the two and
 raises ``TypeError`` in the middle of a TAB press.
 """
 
-import contextlib
 import json
-import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -111,23 +109,11 @@ def _save(data: dict[str, Any], now: datetime) -> None:
     if path is None:
         return
     _prune(data, now)
+    from ..utils import atomic_write_bytes
+
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            dir=path.parent,
-            delete=False,
-            prefix=".remote_completion_cache_",
-            suffix=".tmp",
-        ) as tmp:
-            tmp_name = tmp.name
-            json.dump(data, tmp)
-        try:
-            Path(tmp_name).replace(path)
-        except OSError:
-            with contextlib.suppress(OSError):
-                Path(tmp_name).unlink()
-            raise
+        atomic_write_bytes(path, json.dumps(data).encode())
     except OSError:
         pass  # cache is best-effort; completion still works without it
 

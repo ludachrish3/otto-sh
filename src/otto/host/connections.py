@@ -31,7 +31,7 @@ import logging
 import os
 import warnings
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 from pydantic import SecretStr
@@ -115,6 +115,9 @@ class TermContext:
     console_endpoint: "Callable[[], ConsoleEndpoint] | None" = None
     """Resolves where the ``console`` term dials; called lazily, on the first
     console dial, so no lab lookup happens at host construction."""
+    host_id: str = field(kw_only=True)
+    """The host's otto ID, the name its SSH host key is checked and recorded
+    under (:attr:`name` is a display label and is never used for that)."""
 
 
 logger = logging.getLogger(__name__)
@@ -438,7 +441,7 @@ async def connect_and_describe(
     options: SshOptions,
     *,
     password: SecretStr | None,
-    alias: str | None = None,  # noqa: ARG001 — accepted now; the host-key check reads it
+    alias: str,
     apply_post_connect: bool = True,
 ) -> "SSHClientConnection":
     """Open one SSH connection through the seam and say what happened.
@@ -452,16 +455,40 @@ async def connect_and_describe(
     (``SshOptions.extra`` cannot name it), and stays a ``SecretStr`` down to
     :func:`ssh_connect`, which unwraps it inside the library call.
 
-    *alias* is the host's lab id, the name its host key is recorded under; it
-    is accepted here and not yet read.
+    *kwargs* are the call site's own (the login and the hop tunnel);
+    *options*' kwargs for host *alias* are added after them here
+    (``SshOptions._kwargs``), so the host ID the key
+    is checked under and the one a refusal names come from this one argument.
+    *alias* is the host's otto ID (the hop's, for a hop tunnel), never its
+    display name.
+
+    A connection refused over its host key raises
+    :class:`~otto.host.errors.HostKeyRefusedError`, whatever layer refused it
+    (:func:`~otto.host.host_key_client.host_key_refusal` judges); asyncssh has
+    already aborted it by then, before any credential was sent, so there is
+    no connection here to tear down.
 
     *apply_post_connect* is ``False`` for a hop tunnel connection: a tunnel is
     a transport to the hop, not a session on it, so the hop host's structured
     forwards and ``post_connect`` hook belong to the hop's own session and
     must not run once per hopped target — see ``RemoteHost._build_hop_transport``.
     """
+    kwargs = {**kwargs, **options._kwargs(alias=alias)}  # noqa: SLF001 — intra-package access to SshOptions._kwargs
     logger.debug(describe_connect_kwargs(name, host, {**kwargs, "password": password}))
-    conn = await ssh_connect(host, password=password, **kwargs)
+    # The check _kwargs built (None with checking off): the refusal is judged
+    # against the same host, port and file the connection checked.
+    check = kwargs["known_hosts"]
+    try:
+        conn = await ssh_connect(host, password=password, **kwargs)
+    except Exception as exc:
+        if check is not None:
+            # Lazy: the judge imports asyncssh, loaded by now on this path.
+            from .host_key_client import host_key_refusal
+
+            refused = host_key_refusal(exc, check, address=host)
+            if refused is not None:
+                raise refused from exc
+        raise
     if apply_post_connect:
         await options._apply_post_connect(conn)  # noqa: SLF001 — intra-package access to SshOptions._apply_post_connect
     logger.debug(describe_negotiated(name, conn))
@@ -555,8 +582,10 @@ class ConnectionManager:
         *,
         console_options: ConsoleOptions | None = None,
         console_endpoint: "Callable[[], ConsoleEndpoint] | None" = None,
+        host_id: str,
     ) -> None:
         self._ip = ip
+        self._host_id = host_id
         self._creds = creds
         self._term = term
         self._name = name
@@ -615,6 +644,7 @@ class ConnectionManager:
             ftp_options=ctx.ftp_options,
             console_options=ctx.console_options,
             console_endpoint=ctx.console_endpoint,
+            host_id=ctx.host_id,
         )
 
     @property
@@ -800,13 +830,14 @@ class ConnectionManager:
             tunnel = None
             if self._hop is not None:
                 tunnel = await self._ensure_tunnel()
-            kwargs: dict[str, Any] = {
-                "username": cred.login,
-                "tunnel": tunnel,
-                **self._ssh_options._kwargs(),  # noqa: SLF001 — intra-package access to SshOptions._kwargs
-            }
+            kwargs: dict[str, Any] = {"username": cred.login, "tunnel": tunnel}
             conn = await connect_and_describe(
-                self._name, self._ip, kwargs, self._ssh_options, password=cred.password
+                self._name,
+                self._ip,
+                kwargs,
+                self._ssh_options,
+                password=cred.password,
+                alias=self._host_id,
             )
             self._ssh_conn = conn
             logger.debug(f"Connected to {self._name} via SSH")
@@ -875,14 +906,15 @@ class ConnectionManager:
             tunnel = None
             if self._hop is not None:
                 tunnel = await self._ensure_tunnel()
-            kwargs: dict[str, Any] = {
-                "username": direct.login,
-                "tunnel": tunnel,
-                **self._ssh_options._kwargs(),  # noqa: SLF001 — intra-package access to SshOptions._kwargs
-            }
+            kwargs: dict[str, Any] = {"username": direct.login, "tunnel": tunnel}
             tag = f"{self._name} as {user!r}"
             conn = await connect_and_describe(
-                tag, self._ip, kwargs, self._ssh_options, password=direct.password
+                tag,
+                self._ip,
+                kwargs,
+                self._ssh_options,
+                password=direct.password,
+                alias=self._host_id,
             )
             self._user_ssh_conns[user] = conn
             return conn

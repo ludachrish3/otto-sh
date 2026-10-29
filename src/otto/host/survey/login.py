@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 from ...logger.mode import LogMode
 from ...models.base import Cred, cred_identity
 from ..connections import teardown_step
+from ..errors import HostKeyRefusedError
 from ..login_proxy import LoginProxyError, cred_for, default_login
 from ..os_profile import copy_host
 from .verdict import State
@@ -109,7 +110,7 @@ def _raised_by_asyncssh(exc: BaseException) -> bool:
 
 
 def _named_ssh_failure(exc: BaseException, *, who: str) -> "LoginOutcome | None":
-    """Return the verdict for one of the three asyncssh-specific shapes, else None.
+    """Return the verdict for one of the two asyncssh-specific shapes, else None.
 
     Only called once :func:`_raised_by_asyncssh` has already confirmed *exc*
     came from asyncssh, so the module is certainly loaded and this import
@@ -119,8 +120,6 @@ def _named_ssh_failure(exc: BaseException, *, who: str) -> "LoginOutcome | None"
 
     if isinstance(exc, asyncssh.PermissionDenied):
         return LoginOutcome("login-failed", f"{who}: permission denied")
-    if isinstance(exc, (asyncssh.HostKeyNotVerifiable, asyncssh.KeyExchangeFailed)):
-        return LoginOutcome("login-failed", f"{who}: host key: {exc}")
     if isinstance(exc, asyncssh.ChannelOpenError):
         # A hopped candidate never reaches a socket of otto's: the connect is a
         # direct-tcpip forward the HOP performs, and a dead port comes back as
@@ -148,6 +147,10 @@ def _named_failure(exc: BaseException, *, who: str) -> "LoginOutcome | None":
         named = _named_ssh_failure(exc, who=who)
         if named is not None:
             return named
+    if isinstance(exc, HostKeyRefusedError):
+        # The refusal's own message, the one run, test and the host verbs
+        # show: it names the host, the file and the forget-key fix.
+        return LoginOutcome("login-failed", f"{who}: {exc}")
     if isinstance(exc, LoginProxyError):
         return LoginOutcome("login-failed", f"{who}: {exc}")
     if isinstance(exc, ConnectionRefusedError):

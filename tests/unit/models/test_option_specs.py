@@ -83,7 +83,8 @@ def test_ssh_spec_defaults_match_runtime_defaults():
     rt_obj = SshOptionsSpec().to_runtime()
     assert isinstance(rt_obj, SshOptions)
     assert rt_obj.port == 22
-    assert rt_obj.known_hosts is None
+    assert rt_obj.known_hosts == "~/.ssh/known_hosts"
+    assert rt_obj.verify_host_key is True
     assert rt_obj.agent_forwarding is False
 
 
@@ -125,12 +126,12 @@ def test_ssh_spec_carries_kex_and_mac_lists_to_runtime():
     rt_obj = spec.to_runtime()
     assert rt_obj.kex_algs == ["diffie-hellman-group1-sha1"]
     assert rt_obj.mac_algs == ["hmac-md5"]
-    kw = rt_obj._kwargs()
+    kw = rt_obj._kwargs(alias="router1")
     assert kw["kex_algs"] == ["diffie-hellman-group1-sha1"]
     assert kw["mac_algs"] == ["hmac-md5"]
     # Unset on the spec stays unset at runtime, so asyncssh's defaults apply.
-    assert "kex_algs" not in SshOptionsSpec().to_runtime()._kwargs()
-    assert "mac_algs" not in SshOptionsSpec().to_runtime()._kwargs()
+    assert "kex_algs" not in SshOptionsSpec().to_runtime()._kwargs(alias="router1")
+    assert "mac_algs" not in SshOptionsSpec().to_runtime()._kwargs(alias="router1")
 
 
 def test_telnet_spec_defaults_match_runtime():

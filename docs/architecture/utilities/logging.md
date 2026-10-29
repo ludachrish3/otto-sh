@@ -233,9 +233,14 @@ fails to load does not show its passwords either. Settings files are parsed the
 same way ({func}`~otto.models.base.load_toml_settings`): a `passphrase` at any
 depth, such as `[host_preferences.".*".ssh_options] passphrase`, is a
 `SecretStr` from the parse on. Where otto serializes parsed settings to JSON (an
-inventory snapshot's identity, the OS-profile digest), each secret becomes a
-digest of its value ({func}`~otto.models.base.secret_safe_json_default`), never
-the value, and the result still changes when the secret does.
+inventory snapshot's identity, the OS-profile digest), each secret becomes an
+HMAC-SHA256 of its value ({func}`~otto.models.base.secret_safe_json_default`)
+under a random key otto makes once per install, `secret_salt` in its home
+({func}`~otto.config.home.secret_digest_key`, mode 0600). The value is never
+written, a stored digest cannot be checked against a guessed secret without
+that key, and the result still changes when the secret does. A home that cannot
+hold the key gets one for the process only, with a warning: digests then differ
+between processes, and nothing fails.
 
 Hiding a frame does not hide the exception's message, which Rich prints
 whatever the frame; otto never puts a password in one.

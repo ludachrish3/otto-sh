@@ -61,8 +61,8 @@ different port), pass an `*_options=` keyword to `get_host()` /
 
 ### SSH
 
-Set non-standard port, enable strict host-key checking, and tune the
-connect timeout:
+Set a non-standard port, keep this host's keys in a file of its own, and
+tune the connect timeout:
 
 ```json
 {
@@ -70,7 +70,7 @@ connect timeout:
     "creds": [{ "login": "admin", "password": "secret" }],
     "ssh_options": {
         "port": 2222,
-        "known_hosts": "/home/user/.ssh/known_hosts",
+        "known_hosts": "/srv/lab/known_hosts",
         "connect_timeout": 5.0,
         "keepalive_interval": 30
     }
@@ -90,7 +90,9 @@ curated field is reachable via ``extra``, which is forwarded verbatim. A key
 in ``extra`` that names a curated field (``port``, ``known_hosts``, ...) is
 refused when the lab is read: a value has one source, the field, so what the
 survey declares and what the connect dials cannot differ. The same holds for
-every ``*_options`` table that carries an ``extra``.
+every ``*_options`` table that carries an ``extra``. ``extra`` also refuses
+``password`` and ``passphrase``, and the host-key controls ``host_key_alias``
+and ``client_factory`` (see {ref}`host-key-settings`).
 
 ```json
 {
@@ -107,6 +109,181 @@ The algorithm lists (`kex_algs`, `server_host_key_algs`, `encryption_algs`,
 `mac_algs`, `compression_algs`) accept the names on the
 {doc}`SSH algorithm matrix <../architecture/ssh-algorithms>`; a name not on
 it is refused by asyncssh at connect time.
+
+(host-key-settings)=
+
+#### Host-key settings
+
+Two `ssh_options` fields control how otto checks a host's SSH key:
+
+`known_hosts`
+: Path of the OpenSSH-format file otto checks and records keys in. Default
+  `"~/.ssh/known_hosts"`; `~` is expanded against your home directory.
+  Entries are keyed by the otto host ID, never by address:
+  `router1 ssh-ed25519 AAAA…`, or `[router1]:2222 …` for a non-22 port.
+  Entries your own `ssh` wrote under an address are ignored. otto reads
+  only this file: `UserKnownHostsFile`, `GlobalKnownHostsFile` and
+  `HostKeyAlias` in `~/.ssh/config` are not consulted, so if your SSH
+  config points elsewhere, set this field to match. `null` is refused; use
+  `verify_host_key` to turn checking off. Writes are serialized across otto
+  processes by a lock file, `known_hosts.lock`, beside the file.
+
+`verify_host_key`
+: Default `true`: a host with no entry is accepted and its key recorded,
+  and a host whose entry holds a different key is refused. `false` turns
+  checking off without a warning; connections then neither read nor write
+  the file (`forget-key`, an explicit action, still edits it). Set it for
+  the whole project with the `".*"` selector, or for one host with its
+  ID, in {ref}`host-preferences`:
+
+  ```toml
+  [host_preferences."router1".ssh_options]
+  verify_host_key = false
+  ```
+
+  or for one host in its own `lab.json` entry:
+
+  ```json
+  {
+      "ssh_options": { "verify_host_key": false }
+  }
+  ```
+
+A first-use key is recorded after the key exchange has proven the host
+holds it and before any credential is sent. Connections that reach a
+never-seen host at the same moment (a fan-out, two otto processes, the
+first connect after `forget-key`) all succeed and record one line: each
+judges the presented key against the file as it is at the key exchange, so a
+key another connection has just recorded is trusted, not a changed key. A
+hop is checked under its own ID with its own `ssh_options`, so a target
+reached through a hop records two entries, the hop's and its own. A refused connection fails
+before authentication, and the error names the host whose key was refused
+(the hop's ID when the hop leg failed), its address, the file and the fix:
+
+```text
+SSH host key for router1 (10.10.200.12) refused: Host key is not trusted for host 10.10.200.12 with alias router1. /home/me/.ssh/known_hosts holds a different key for router1; if the host's key really changed, run `otto host router1 forget-key`
+```
+
+`otto run`, `otto test`, the host verbs and the survey all show this
+message. Unless `server_host_key_algs` is set, otto chooses the host-key
+algorithms it offers, as OpenSSH does: the recorded key's type first, then
+every default plain-key type. A host that changed its key type therefore
+still completes the handshake with its new key and is refused as a changed
+key. A revoked key (an `@revoked` line under the host ID or under
+`[<id>]:<port>`, `[<id>]:22` included) is refused with a message saying so
+and no forget-key advice, since forget-key leaves `@revoked` lines in place;
+a key revoked while the connection is being made is refused the same way,
+before any credential is sent, and is not recorded. Host certificates are covered in
+{ref}`host-certificates`. If a key must be
+recorded and the file cannot be written, the connection is refused with
+both fixes named: a writable `known_hosts` path, or
+`verify_host_key = false`. A read-only file whose entries all match keeps
+working.
+
+(forget-key)=
+
+#### When a host's key changes
+
+A rebuilt or reinstalled host comes back with a new key, and otto refuses
+it until you remove the old entry. `otto host <id> forget-key` removes that
+host's entries from its `known_hosts` file and does nothing else; the next
+connection records the new key:
+
+```console
+$ otto host router1 forget-key
+removed 2 entries for router1 from /home/me/.ssh/known_hosts
+```
+
+It handles one host per call, reads the same `known_hosts` setting the
+connection does, and contacts nothing. It exits 0 whether or not there
+was an entry, so a script can run it unconditionally; with nothing to
+remove it says `no entry for router1 in /home/me/.ssh/known_hosts` and
+writes nothing, not even its lock file, so it works on a read-only file in
+a read-only directory. It fails when the file cannot be read, or when there
+is an entry to remove and the file (or its directory, or the
+`known_hosts.lock` beside it) cannot be written. From Python, the same
+method is `await host.forget_key()`, and `str()` of what it returns is the
+same text.
+
+An entry is the host ID on port 22 and `[<id>]:<port>` on any other port,
+as OpenSSH writes them, so a host whose `ssh_options.port` is `2222` has
+the entry `[router1]:2222`. forget-key removes the bare form and the
+bracketed form for any port, and a hashed entry for the host's configured
+port or port 22. A line that also names another host or a wildcard, an
+`@cert-authority` line and an `@revoked` line are left in place and listed
+after the count as `kept: <line>`. With plain OpenSSH, the same removal is:
+
+```bash
+ssh-keygen -R router1                # the port-22 entry
+ssh-keygen -R '[router1]:2222'       # the entry for a non-22 port
+```
+
+**A floating IP or a host rebuilt every run.** When the machine behind a
+host ID changes on purpose (a floating IP moved to a new VM, a lab host
+reimaged by each pipeline), run `otto host <id> forget-key` before
+connecting, or set `verify_host_key = false` for that host alone, with its
+ID as the selector (see `verify_host_key` above).
+
+(host-certificates)=
+
+#### Host certificates
+
+A host that presents an OpenSSH host certificate is trusted only through
+an `@cert-authority` line naming its host ID, in the bare form for port 22
+or the `[<id>]:<port>` form for any other port, with the certificate
+authority's public key, in the same `known_hosts` file:
+
+```text
+@cert-authority router1,[router1]:2222,switch* ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA… lab CA
+```
+
+The certificate's principals must include the host ID. With such a line,
+otto accepts only that CA's certificates for the host: a host that offers a
+plain key alone is refused before any credential is sent, nothing is
+recorded, and the error says so and gives the fix:
+
+```text
+SSH host key for router1 (10.10.200.12) refused: Host key is not certified by the host's CA for host 10.10.200.12 with alias router1. An @cert-authority line in /home/me/.ssh/known_hosts covers router1, but the host presented a plain key, not a certificate signed by that CA; have the host present a certificate signed by that CA, or remove the @cert-authority line to accept a new key on first use again
+```
+
+`forget-key` is no fix here: it keeps `@cert-authority` lines.
+Without such a line, otto offers no certificate algorithms, so a host that
+also holds a certificate is checked, and recorded at first use, by its plain
+key; otto never records a certificate.
+
+#### Host keys in CI
+
+Where the runner keeps its home directory decides the problem. A runner
+whose home persists between jobs keeps `~/.ssh/known_hosts` too, so after
+a lab is rebuilt its old entries are still there and every rebuilt host is
+refused as a changed key. A runner whose home is fresh each job has the
+opposite gap: every key is accepted at first use, so nothing is ever
+checked against a known key. Choose one:
+
+- **A workspace file**, for the persistent home. Point `known_hosts` at a
+  path inside the job's workspace, for every host. The file starts empty
+  with each fresh workspace, so a rebuilt lab is simply recorded again. A
+  relative path is resolved against the current working directory, not
+  `--xdir`:
+
+  ```toml
+  [host_preferences.".*".ssh_options]
+  known_hosts = "ci/known_hosts"
+  ```
+
+- **A pre-seeded file**, to check every key against a known one. Commit a
+  `known_hosts` file holding each host's key under its host ID and point
+  `known_hosts` at it. The simplest way to produce it is to run otto once
+  against a writable copy (any command that connects to each host, such as
+  `otto host <id> exec true`) and commit what it recorded. From
+  `ssh-keyscan`, rewrite the address at the start of each line to the
+  host ID: `router1` for port 22, `[router1]:2222` for another port. The
+  file may be read-only: otto writes only to record a host that has no
+  entry, so a key that differs from the file fails the job instead of
+  being accepted.
+- **No checking**, for a throwaway lab rebuilt for each job:
+  `verify_host_key = false` under `".*"` turns checking off for the whole
+  project.
 
 #### Port forwarding
 

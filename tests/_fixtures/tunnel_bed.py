@@ -459,6 +459,7 @@ def cli_project_root(tmp_path: Path, *, links: Iterable[dict[str, Any]] = ()) ->
     return make_project(
         sut,
         name="project1",
+        known_hosts=tmp_path / "known_hosts",
         extra=(
             f"[[lab.sources]]\n"
             f'backend = "json"\n'

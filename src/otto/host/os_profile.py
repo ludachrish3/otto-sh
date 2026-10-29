@@ -57,7 +57,7 @@ import hashlib
 import json
 import logging
 import re
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeVar
@@ -707,8 +707,15 @@ class ProfileContext:
                 owners[name] = project.name
         return cls(profiles=FrozenMap(profiles), owners=FrozenMap(owners))
 
-    def digest(self) -> str:
-        """Return the sha256 of the profiles' canonical JSON, stable across processes."""
+    def digest(self, *, secret_key: "Callable[[], bytes]") -> str:
+        """Return the sha256 of the profiles' canonical JSON, stable across processes.
+
+        A secret in a profile's defaults (a cred's ``password``) is dumped by
+        :func:`~otto.models.base.secret_safe_json_default` under *secret_key*,
+        the install's key (:func:`otto.config.home.secret_digest_key`), which
+        this host-layer module cannot import itself; it is asked only when a
+        profile holds a secret.
+        """
         from ..models.base import secret_safe_json_default
 
         canonical = {
@@ -720,7 +727,8 @@ class ProfileContext:
             ]
             for name, p in sorted(self.profiles.items())
         }
-        text = json.dumps(canonical, sort_keys=True, default=secret_safe_json_default)
+        hook = secret_safe_json_default(secret_key)
+        text = json.dumps(canonical, sort_keys=True, default=hook)
         return hashlib.sha256(text.encode()).hexdigest()
 
 

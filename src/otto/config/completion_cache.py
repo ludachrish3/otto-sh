@@ -132,7 +132,6 @@ import json
 import logging
 import os
 import stat as stat_module
-import tempfile
 import time
 import types
 from dataclasses import dataclass, field
@@ -1370,34 +1369,21 @@ def write_sections(
 
 
 def _atomic_write_json(cache_path: Path, obj: dict[str, Any]) -> None:
-    """Write *obj* as JSON to *cache_path* atomically (tempfile + ``os.replace``).
+    """Write *obj* as JSON to *cache_path* through :func:`otto.utils.atomic_write_bytes`.
 
     A concurrent reader always sees either the old file or the complete new
-    one, never a half-written mix.
+    one, never a half-written mix. The temporary's name sits in
+    ``_own_temporary_files`` while it exists, so a collect child that leaves
+    by ``os._exit`` mid-write can remove it first.
 
     The parent is created by the CALLERS (four sites in this module already do
     it, and did before the cache moved to the workspace home), so this function
-    does not repeat it -- the tempfile below is opened with ``dir=`` set to
-    that parent and would fail loudly if it were missing.
+    does not repeat it -- the temporary is created in that parent and would
+    fail loudly if it were missing.
     """
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        dir=cache_path.parent,
-        delete=False,
-        prefix=".completion_cache_",
-        suffix=".tmp",
-    ) as tmp:
-        tmp_name = tmp.name
-        _own_temporary_files.add(tmp_name)
-        json.dump(obj, tmp)
-    try:
-        Path(tmp_name).replace(cache_path)
-    except Exception:
-        with contextlib.suppress(OSError):
-            Path(tmp_name).unlink()
-        raise
-    finally:
-        _own_temporary_files.discard(tmp_name)
+    from ..utils import atomic_write_bytes  # function-local, like this module's other utils use
+
+    atomic_write_bytes(cache_path, json.dumps(obj).encode(), pending=_own_temporary_files)
 
 
 _own_temporary_files: set[str] = set()
@@ -1668,7 +1654,10 @@ def project_host_drops(
 def _project_enumeration(
     project: "Project", resolution: InventoryResolution, profiles: "ProfileContext"
 ) -> ProjectEnumeration:
-    key = f"{getattr(project, 'root', project)}|{resolution.label}|{profiles.digest()}"
+    # Keyed on the (hashable) profiles themselves, not their digest: the memo
+    # is in-process only, and a digest of a profile holding a secret would
+    # read, or create, the install's key on a TAB.
+    key = (str(getattr(project, "root", project)), resolution.label, profiles)
     cached = _SUMMARY_MEMO.get(key)
     if cached is None:
         cached = _bounded(
@@ -1682,13 +1671,13 @@ def _project_enumeration(
 
 
 #: Per-process memo, keyed by project root, the inventory's label and the data
-#: profiles' digest (another project selection may resolve a host differently). Three
+#: profiles (another project selection may resolve a host differently). Three
 #: collectors enumerate the same project on one cache-write pass; without this a
 #: stalled backend cost three deadlines and — worse — could time out for one
 #: collector and not another, writing a cache where `otto host <TAB>` is full
 #: and `otto docker --parent <TAB>` is empty. Process-lifetime only, like the cache
 #: itself; nothing invalidates it because nothing lives long enough to need to.
-_SUMMARY_MEMO: dict[str, ProjectEnumeration] = {}
+_SUMMARY_MEMO: "dict[tuple[str, str, ProfileContext], ProjectEnumeration]" = {}
 
 
 def _enumerate_host_summaries(

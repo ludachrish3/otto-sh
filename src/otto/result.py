@@ -19,7 +19,7 @@ its exit code from :attr:`Result.exit_code`.
 
 from collections.abc import Iterator, Sequence
 from dataclasses import FrozenInstanceError, dataclass
-from typing import Any, overload
+from typing import Any, Protocol, overload, runtime_checkable
 
 from typing_extensions import Never, override
 
@@ -27,6 +27,7 @@ from otto.errors import OttoError
 from otto.utils import Status, ellipsize
 
 __all__ = [
+    "CliReport",
     "CommandNotRunError",
     "CommandResult",
     "NotRunResult",
@@ -34,6 +35,22 @@ __all__ = [
     "Results",
     "ShellResult",
 ]
+
+
+@runtime_checkable
+class CliReport(Protocol):
+    """A verb's return value whose text is its complete command-line report.
+
+    A leaf command or host verb that returns one of these has the CLI print
+    exactly the text ``__otto_cli_report__()`` returns, as plain text (no Rich markup,
+    no pretty-printing), exit 0. Implement it as ``return str(self)`` so a
+    library caller who prints the value sees the same words. Any other plain
+    value keeps the default rendering.
+    """
+
+    def __otto_cli_report__(self) -> str:
+        """Return the text the CLI prints for this value."""
+        ...
 
 
 class CommandNotRunError(OttoError, RuntimeError):

@@ -205,7 +205,7 @@ class _TelnetWriter:
 
 
 def _mgr(creds: list[Cred], term: str, **kw: Any) -> ConnectionManager:
-    return ConnectionManager(ip="10.0.0.1", creds=creds, term=term, name="h1", **kw)
+    return ConnectionManager(ip="10.0.0.1", creds=creds, term=term, name="h1", host_id="h1", **kw)
 
 
 async def _ssh(monkeypatch: pytest.MonkeyPatch, received: _Received) -> None:

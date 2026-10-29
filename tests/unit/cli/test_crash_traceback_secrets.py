@@ -151,6 +151,7 @@ def _manager(term: str, **options: object):
         creds=[Cred(login="admin", password=PLANTED)],
         term=term,
         name="h1",
+        host_id="h1",
         **options,
     )
 
@@ -160,6 +161,8 @@ async def _ssh_auth(offered: Offered) -> None:
     from tests._fixtures.loopback_servers import refusing_ssh_server
 
     async with refusing_ssh_server(offered) as port:
+        # Default host-key checking: the first-use key lands in the per-worker
+        # file the root conftest's _hermetic_known_hosts resolves.
         options = SshOptions(port=port, client_keys=[], preferred_auth="password")
         await _manager("ssh", ssh_options=options).ssh()
 

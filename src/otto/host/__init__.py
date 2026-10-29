@@ -63,6 +63,8 @@ if TYPE_CHECKING:
     from .element import Element as Element
     from .embedded_host import EmbeddedHost as EmbeddedHost
     from .embedded_host import ZephyrHost as ZephyrHost
+    from .errors import HostKeyRefusal as HostKeyRefusal
+    from .errors import HostKeyRefusedError as HostKeyRefusedError
     from .errors import MountNotFoundError as MountNotFoundError
     from .errors import RawLandingError as RawLandingError
     from .errors import SessionSetupError as SessionSetupError
@@ -180,6 +182,8 @@ _LAZY_ATTRS: dict[str, str] = {
     "Element": "otto.host.element",
     "EmbeddedHost": "otto.host.embedded_host",
     "ZephyrHost": "otto.host.embedded_host",
+    "HostKeyRefusal": "otto.host.errors",
+    "HostKeyRefusedError": "otto.host.errors",
     "MountNotFoundError": "otto.host.errors",
     "RawLandingError": "otto.host.errors",
     "SessionSetupError": "otto.host.errors",
@@ -302,6 +306,8 @@ __all__ = [
     "HostClassEntry",
     "HostContext",
     "HostFilter",
+    "HostKeyRefusal",
+    "HostKeyRefusedError",
     "HostLoopError",
     "HostReadiness",
     "HostSession",

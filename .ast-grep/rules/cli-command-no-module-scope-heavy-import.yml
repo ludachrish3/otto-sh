@@ -30,7 +30,8 @@ note: >
       NoCoverageDataError, NoCoverageHostsError);
     - otto.host.errors/unix_host/remote_host: cli.cov, cli.docker, cli.host
       (also spelled as otto.host's lazy UnixHost/RemoteHost/OsType and its
-      error names MountNotFoundError/RawLandingError/SessionSetupError);
+      error names MountNotFoundError/RawLandingError/SessionSetupError/
+      HostKeyRefusal/HostKeyRefusedError);
     - otto.fleet, otto.config.project and otto.labs.loader (the lab model and its
       loader): cli.docker, cli.host, cli.monitor, cli.callbacks, cli.link,
       cli.tunnel (also spelled as otto.config's lazy Project, otto.labs' loader
@@ -146,7 +147,7 @@ rule:
           any:
           - kind: dotted_name
           - kind: aliased_import
-          regex: '^(errors|unix_host|remote_host|UnixHost|RemoteHost|OsType|MountNotFoundError|RawLandingError|SessionSetupError)(\s+as\s+\w+)?$'
+          regex: '^(errors|unix_host|remote_host|UnixHost|RemoteHost|OsType|MountNotFoundError|RawLandingError|SessionSetupError|HostKeyRefusal|HostKeyRefusedError)(\s+as\s+\w+)?$'
     - kind: import_from_statement
       all:
       - has:

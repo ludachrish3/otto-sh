@@ -202,6 +202,7 @@ def _make_hop_target(tmp_path) -> ChaosTarget:
     sut = make_project(
         tmp_path / "hop_sut",
         name="chaosdrop_harness",
+        known_hosts=tmp_path / "known_hosts",
         version="0.1.0",
         extra=f"""\
 [[lab.sources]]

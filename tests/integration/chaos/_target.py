@@ -61,6 +61,7 @@ def make_loopback_target(root: Path, *, port: int, client_key: Path) -> ChaosTar
     sut = make_project(
         root / "sut",
         name="chaos_harness",
+        known_hosts=root / "known_hosts",
         version="0.1.0",
         extra=f"""\
 [[lab.sources]]

@@ -24,7 +24,7 @@ def _unix(**fields) -> UnixHost:
 
 def test_the_declared_ssh_port_is_the_port_the_connect_dials() -> None:
     host = _unix(ssh_options=SshOptions(port=2222, extra={"proxy_command": "pc"}))
-    dialled = host.ssh_options._kwargs()["port"]
+    dialled = host.ssh_options._kwargs(alias=host.id)["port"]
     assert engine._declared_port_unix(host, "ssh", "term") == dialled
     assert engine._declared_port_unix(host, "scp", "transfer") == dialled
     assert engine._declared_port_unix(host, "sftp", "transfer") == dialled

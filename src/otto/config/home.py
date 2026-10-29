@@ -67,6 +67,87 @@ def otto_home() -> Path:
     return home.expanduser() if home is not None else Path.home() / ".otto"
 
 
+DIGEST_SALT_FILENAME = "secret_salt"
+"""File under the home holding this install's key for digests of secrets.
+
+32 random bytes, mode 0600, made once by :func:`secret_digest_key`. Derived
+state like everything here: deleted, a new one is made, and every digest it
+keyed (an inventory snapshot's identity among them) changes once."""
+
+_DIGEST_KEY_BYTES = 32
+
+_PROCESS_DIGEST_KEY: "list[bytes]" = []
+"""The key :func:`secret_digest_key` falls back to when the home cannot hold one (one entry)."""
+
+
+def _read_digest_key(path: Path) -> "bytes | None":
+    """Return the key at *path*, or ``None`` when it is absent or not a valid key."""
+    try:
+        key = path.read_bytes()
+    except OSError:
+        return None
+    return key if len(key) == _DIGEST_KEY_BYTES else None
+
+
+def secret_digest_key() -> bytes:
+    """Return this install's key for digests of secrets, creating it the first time.
+
+    The key :func:`otto.models.base.secret_safe_json_default` HMACs a secret
+    under, so a digest stored on disk (an inventory snapshot's identity) is
+    stable across processes but cannot be checked against a guessed secret
+    without this file. Created if absent through
+    :func:`otto.utils.atomic_write_bytes` (``exclusive``): of two processes
+    racing to make it, one wins and both return the winner's key. A file that
+    is not exactly 32 bytes was not written by otto: it is replaced (a plain
+    atomic write, never an unlink, so a valid key another process has just
+    written is never deleted) and read back.
+
+    Never raises. A filesystem without hard links (which the exclusive create
+    uses) gets a plain atomic write; a home that cannot hold the key at all
+    (read-only, a directory or a dangling link in the key's place, no home to
+    resolve) gets a random key held for this process only, with one warning,
+    so digests then differ from process to process (an inventory snapshot is
+    fetched again) but nothing fails.
+    """
+    import os
+
+    from ..utils import atomic_write_bytes
+
+    if _PROCESS_DIGEST_KEY:
+        return _PROCESS_DIGEST_KEY[0]
+    where = "otto's home"
+    try:
+        path = otto_home() / DIGEST_SALT_FILENAME  # RuntimeError: no home to resolve
+        where = str(path)
+        key = _read_digest_key(path)
+        if key is not None:
+            return key
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists():  # present but not a key otto wrote
+            atomic_write_bytes(path, os.urandom(_DIGEST_KEY_BYTES))
+        else:
+            try:
+                atomic_write_bytes(path, os.urandom(_DIGEST_KEY_BYTES), exclusive=True)
+            except FileExistsError:
+                pass  # another process made it first: its key is the one
+            except OSError:
+                atomic_write_bytes(path, os.urandom(_DIGEST_KEY_BYTES))  # no hard links here
+        key = _read_digest_key(path)
+        if key is not None:
+            return key
+    except (OSError, RuntimeError):
+        pass
+    import logging
+
+    _PROCESS_DIGEST_KEY.append(os.urandom(_DIGEST_KEY_BYTES))
+    logging.getLogger(__name__).warning(
+        "cannot keep a key for digests of secrets at %s; using one for this process "
+        "only, so those digests (an inventory snapshot's identity) vary per process",
+        where,
+    )
+    return _PROCESS_DIGEST_KEY[0]
+
+
 def snapshot_cache_dir() -> Path:
     """Return ``<otto home>/inventory-cache`` — where inventory snapshots live (§9.5).
 

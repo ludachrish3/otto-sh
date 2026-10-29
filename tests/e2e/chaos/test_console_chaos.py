@@ -166,6 +166,7 @@ def _make_console_target(root: Path) -> ChaosTarget:
     sut = make_project(
         root / "sut",
         name="console_chaos_harness",
+        known_hosts=root / "known_hosts",
         version="0.1.0",
         extra=f"""\
 [[lab.sources]]

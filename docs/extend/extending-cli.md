@@ -276,10 +276,14 @@ Inside the command body, return whatever your logic produces. If it's a
 from it using the same polymorphic, ssh-like rules `otto host <name> <verb>`
 uses — see [Exit codes](../cli/host/index.md#exit-codes) in the host guide for the
 full table; a failing result exits the process non-zero. A plain
-(non-`Result`) return value is printed as-is and the process exits `0`; a
-`list` that carries a Rich `Table` or `Text` is the one exception — it
-prints one item per line instead, so a renderable interleaved with plain
-strings renders in order rather than as one pretty-printed Python object.
+(non-`Result`) return value is printed as-is and the process exits `0`;
+a `list` that carries a Rich `Table` or `Text` is printed one item per
+line, so a renderable interleaved with plain strings renders in order
+rather than as one pretty-printed Python object. A value whose text is its
+whole report opts in with {class}`~otto.result.CliReport`: give its class
+an `__otto_cli_report__()` method returning `str(self)`, and the CLI prints
+exactly that text, as plain text, never Rich's dump of its fields or its
+markup. Defining `__str__` alone does not opt in.
 Returning `None` renders nothing — a side-effect-only command stays silent
 unless it prints its own output. The same rules apply to registered
 commands and instructions.

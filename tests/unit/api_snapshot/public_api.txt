@@ -1002,7 +1002,7 @@ member	otto.host.options:SnmpOptions.version	field
 abstract	otto.host.options:SnmpOptions	-
 name	otto.host.options:SshOptions	class
 mro	otto.host.options:SshOptions	-
-call	otto.host.options:SshOptions	sync	PK:port:I:22 PK:known_hosts:N PK:connect_timeout:N PK:keepalive_interval:N PK:keepalive_count_max:N PK:client_keys:N PK:client_host_keys:N PK:agent_forwarding:B:false PK:preferred_auth:N PK:encryption_algs:N PK:server_host_key_algs:N PK:compression_algs:N PK:kex_algs:N PK:mac_algs:N PK:local_forwards:O PK:remote_forwards:O PK:socks_forwards:O PK:extra:O PK:post_connect:N PK:passphrase:N
+call	otto.host.options:SshOptions	sync	PK:port:I:22 PK:known_hosts:S:"~/.ssh/known_hosts" PK:connect_timeout:N PK:keepalive_interval:N PK:keepalive_count_max:N PK:client_keys:N PK:client_host_keys:N PK:agent_forwarding:B:false PK:preferred_auth:N PK:encryption_algs:N PK:server_host_key_algs:N PK:compression_algs:N PK:kex_algs:N PK:mac_algs:N PK:local_forwards:O PK:remote_forwards:O PK:socks_forwards:O PK:extra:O PK:post_connect:N PK:passphrase:N PK:verify_host_key:B:true
 member	otto.host.options:SshOptions.__eq__	method	sync	PK:other:-
 member	otto.host.options:SshOptions.agent_forwarding	field
 member	otto.host.options:SshOptions.client_host_keys	field
@@ -1024,6 +1024,7 @@ member	otto.host.options:SshOptions.preferred_auth	field
 member	otto.host.options:SshOptions.remote_forwards	field
 member	otto.host.options:SshOptions.server_host_key_algs	field
 member	otto.host.options:SshOptions.socks_forwards	field
+member	otto.host.options:SshOptions.verify_host_key	field
 abstract	otto.host.options:SshOptions	-
 name	otto.host.options:TelnetOptions	class
 mro	otto.host.options:TelnetOptions	-
@@ -1543,7 +1544,7 @@ member	otto.host:CommandResult.value	field
 abstract	otto.host:CommandResult	-
 name	otto.host:ConnectionManager	class
 mro	otto.host:ConnectionManager	-
-call	otto.host:ConnectionManager	sync	PK:ip:- PK:creds:- PK:term:- PK:name:- PK:hop:N PK:ssh_options:N PK:telnet_options:N PK:sftp_options:N PK:ftp_options:N KO:console_options:N KO:console_endpoint:N
+call	otto.host:ConnectionManager	sync	PK:ip:- PK:creds:- PK:term:- PK:name:- PK:hop:N PK:ssh_options:N PK:telnet_options:N PK:sftp_options:N PK:ftp_options:N KO:console_options:N KO:console_endpoint:N KO:host_id:-
 member	otto.host:ConnectionManager.abandon_console	method	sync	-
 member	otto.host:ConnectionManager.close	method	coroutine	-
 member	otto.host:ConnectionManager.connect_allowance	method	sync	PK:term:N
@@ -2061,6 +2062,17 @@ mro	otto.host:HostFilter	-
 call	otto.host:HostFilter	sync	PK:name:S:""
 member	otto.host:HostFilter.filter	method	sync	PK:record:-
 abstract	otto.host:HostFilter	-
+name	otto.host:HostKeyRefusal	enum
+mro	otto.host:HostKeyRefusal	-
+enum	otto.host:HostKeyRefusal	CHANGED	S:"changed"
+enum	otto.host:HostKeyRefusal	REVOKED	S:"revoked"
+enum	otto.host:HostKeyRefusal	NOT_CERTIFIED	S:"not\u0020certified"
+enum	otto.host:HostKeyRefusal	UNTRUSTED	S:"untrusted"
+enum	otto.host:HostKeyRefusal	FILE	S:"file"
+name	otto.host:HostKeyRefusedError	class
+mro	otto.host:HostKeyRefusedError	{otto.errors:OttoError} @builtin:builtins.ConnectionError @builtin:builtins.OSError @builtin:builtins.Exception @builtin:builtins.BaseException
+call	otto.host:HostKeyRefusedError	sync	KO:host_id:- KO:address:- KO:path:- KO:reason:- KO:kind:-
+abstract	otto.host:HostKeyRefusedError	-
 name	otto.host:HostLoopError	class
 mro	otto.host:HostLoopError	{otto.errors:OttoError} @builtin:builtins.RuntimeError @builtin:builtins.Exception @builtin:builtins.BaseException
 call	otto.host:HostLoopError	sync	PK:host_id:- PK:owner:- PK:caller:-
@@ -2387,7 +2399,7 @@ mro	otto.host:ProfileContext	-
 call	otto.host:ProfileContext	sync	PK:profiles:- PK:owners:-
 member	otto.host:ProfileContext.__eq__	method	sync	PK:other:-
 member	otto.host:ProfileContext.__hash__	method	sync	-
-member	otto.host:ProfileContext.digest	method	sync	-
+member	otto.host:ProfileContext.digest	method	sync	KO:secret_key:-
 member	otto.host:ProfileContext.empty	classmethod	sync	-
 member	otto.host:ProfileContext.from_projects	classmethod	sync	PK:projects:-
 member	otto.host:ProfileContext.owners	field
@@ -2683,7 +2695,7 @@ call	otto.host:TermConstructionError	sync	@builtin:builtins.ValueError
 abstract	otto.host:TermConstructionError	-
 name	otto.host:TermContext	class
 mro	otto.host:TermContext	-
-call	otto.host:TermContext	sync	PK:ip:- PK:creds:- PK:term:- PK:name:- PK:hop:N PK:ssh_options:N PK:telnet_options:N PK:sftp_options:N PK:ftp_options:N PK:console_options:N PK:console_endpoint:N
+call	otto.host:TermContext	sync	PK:ip:- PK:creds:- PK:term:- PK:name:- PK:hop:N PK:ssh_options:N PK:telnet_options:N PK:sftp_options:N PK:ftp_options:N PK:console_options:N PK:console_endpoint:N KO:host_id:-
 member	otto.host:TermContext.__eq__	method	sync	PK:other:-
 member	otto.host:TermContext.__hash__	method	sync	-
 member	otto.host:TermContext.console_endpoint	field
@@ -2691,6 +2703,7 @@ member	otto.host:TermContext.console_options	field
 member	otto.host:TermContext.creds	field
 member	otto.host:TermContext.ftp_options	field
 member	otto.host:TermContext.hop	field
+member	otto.host:TermContext.host_id	field
 member	otto.host:TermContext.ip	field
 member	otto.host:TermContext.name	field
 member	otto.host:TermContext.sftp_options	field
@@ -2781,6 +2794,7 @@ member	otto.host:UnixHost.element	field
 member	otto.host:UnixHost.exec	method	coroutine	PK:cmd:- PK:expects:N PK:timeout:F:0x1.e000000000000p+4 PK:log:E:{otto.logger:LogMode}:NORMAL=S:"normal" PK:sudo:B:false PK:user:N
 member	otto.host:UnixHost.exists	method	coroutine	PK:path:-
 member	otto.host:UnixHost.expect	method	coroutine	PK:pattern:- PK:timeout:F:0x1.e000000000000p+4
+member	otto.host:UnixHost.forget_key	method	coroutine	-
 member	otto.host:UnixHost.ftp_options	field
 member	otto.host:UnixHost.get	method	coroutine	PK:src_files:- PK:dest_dir:- PK:user:N PK:show_progress:B:true PK:recursive:B:false PK:concurrent:B:true
 member	otto.host:UnixHost.get_debug_logs	method	coroutine	PK:dest:N
@@ -4366,7 +4380,7 @@ input	otto.models:SshOptionsSpec	S:"extra"	optional	O	S:"extra"
 input	otto.models:SshOptionsSpec	S:"keepalive_count_max"	optional	N	S:"keepalive_count_max"
 input	otto.models:SshOptionsSpec	S:"keepalive_interval"	optional	N	S:"keepalive_interval"
 input	otto.models:SshOptionsSpec	S:"kex_algs"	optional	N	S:"kex_algs"
-input	otto.models:SshOptionsSpec	S:"known_hosts"	optional	N	S:"known_hosts"
+input	otto.models:SshOptionsSpec	S:"known_hosts"	optional	S:"~/.ssh/known_hosts"	S:"known_hosts"
 input	otto.models:SshOptionsSpec	S:"local_forwards"	optional	O	S:"local_forwards"
 input	otto.models:SshOptionsSpec	S:"mac_algs"	optional	N	S:"mac_algs"
 input	otto.models:SshOptionsSpec	S:"passphrase"	optional	N	S:"passphrase"
@@ -4375,6 +4389,7 @@ input	otto.models:SshOptionsSpec	S:"preferred_auth"	optional	N	S:"preferred_auth
 input	otto.models:SshOptionsSpec	S:"remote_forwards"	optional	O	S:"remote_forwards"
 input	otto.models:SshOptionsSpec	S:"server_host_key_algs"	optional	N	S:"server_host_key_algs"
 input	otto.models:SshOptionsSpec	S:"socks_forwards"	optional	O	S:"socks_forwards"
+input	otto.models:SshOptionsSpec	S:"verify_host_key"	optional	B:true	S:"verify_host_key"
 member	otto.models:SshOptionsSpec.agent_forwarding	field
 member	otto.models:SshOptionsSpec.client_host_keys	field
 member	otto.models:SshOptionsSpec.client_keys	field
@@ -4396,6 +4411,7 @@ member	otto.models:SshOptionsSpec.remote_forwards	field
 member	otto.models:SshOptionsSpec.server_host_key_algs	field
 member	otto.models:SshOptionsSpec.socks_forwards	field
 member	otto.models:SshOptionsSpec.to_runtime	method	sync	-
+member	otto.models:SshOptionsSpec.verify_host_key	field
 abstract	otto.models:SshOptionsSpec	-
 name	otto.models:TabSpec	model
 mro	otto.models:TabSpec	{otto.models:OttoModel}
@@ -5266,6 +5282,9 @@ name	otto.reservations:reset_expiry_warnings	function
 call	otto.reservations:reset_expiry_warnings	sync	-
 name	otto.reservations:resolve_username	function
 call	otto.reservations:resolve_username	sync	PK:holder:-
+name	otto.result:CliReport	protocol
+mro	otto.result:CliReport	-
+requires	otto.result:CliReport	__otto_cli_report__
 name	otto.result:CommandNotRunError	class
 mro	otto.result:CommandNotRunError	{otto.errors:OttoError} @builtin:builtins.RuntimeError @builtin:builtins.Exception @builtin:builtins.BaseException
 call	otto.result:CommandNotRunError	sync	PK:command:- PK:host:- PK:detail:S:""

@@ -18,7 +18,7 @@ from otto.registry import Ref
 
 def _term_ctx() -> TermContext:
     return TermContext(
-        ip="10.0.0.5", creds=[Cred(login="root", password="x")], term="ssh", name="h1"
+        ip="10.0.0.5", creds=[Cred(login="root", password="x")], term="ssh", name="h1", host_id="h1"
     )
 
 
@@ -114,6 +114,7 @@ class TestCreate:
             creds=[Cred(login="root", password="x")],
             term="ssh",
             name="h1",
+            host_id="h1",
         )
         cm = ConnectionManager.create(ctx)
         assert isinstance(cm, ConnectionManager)

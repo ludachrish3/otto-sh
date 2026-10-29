@@ -147,7 +147,10 @@ def snapshot_slug_material(
     }
     residue = {key: value for key, value in config.items() if key not in adopted}
     ttl = int(cache_ttl.total_seconds())
-    dumped = json.dumps(residue, sort_keys=True, default=secret_safe_json_default)
+    from ..config.home import secret_digest_key  # function-local, as config.py's use is
+
+    hook = secret_safe_json_default(secret_digest_key)
+    dumped = json.dumps(residue, sort_keys=True, default=hook)
     return f"{backend}|{label}|{dumped}|ttl={ttl}"
 
 

@@ -13,7 +13,7 @@ import asyncssh
 import pytest
 
 from otto.host.element import Element
-from otto.host.errors import SessionSetupError
+from otto.host.errors import HostKeyRefusal, HostKeyRefusedError, SessionSetupError
 from otto.host.login_proxy import Cred, LoginProxyError
 from otto.host.options import FtpOptions, SshOptions, TelnetOptions
 from otto.host.survey.login import (
@@ -94,11 +94,24 @@ def test_an_unknown_login_is_refused_by_name():
     ("exc", "state", "needle"),
     [
         (asyncssh.PermissionDenied("Permission denied"), "login-failed", "permission denied"),
-        (asyncssh.HostKeyNotVerifiable("Host key is not trusted"), "login-failed", "host key"),
+        # Host-key failures are judged once, at the connect seam, which raises
+        # HostKeyRefusedError (its message is the row); a failed key exchange
+        # is not a key matter and is not labelled one.
+        (
+            HostKeyRefusedError(
+                host_id="u1",
+                address="10.0.0.1",
+                path="/kh",
+                reason="Host key is not trusted",
+                kind=HostKeyRefusal.CHANGED,
+            ),
+            "login-failed",
+            "otto host u1 forget-key",
+        ),
         (
             asyncssh.KeyExchangeFailed("No matching key exchange algorithm"),
             "login-failed",
-            "host key",
+            "KeyExchangeFailed: No matching key exchange algorithm",
         ),
         (LoginProxyError("u1: ftp login refused for 'admin' (530)"), "login-failed", "530"),
         (ConnectionRefusedError(111, "Connection refused"), "closed", "refused"),

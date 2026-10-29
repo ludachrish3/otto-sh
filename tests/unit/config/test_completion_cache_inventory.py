@@ -368,3 +368,28 @@ def test_a_broken_declaration_empties_every_project_and_warns_once(tmp_path, mon
     said = [r.message for r in caplog.records if "could not be resolved" in r.message]
     assert len(said) == 1, caplog.text
     assert "parse failed: path: Field required" in said[0]
+
+
+def test_a_tab_over_a_profile_holding_a_secret_never_makes_the_key(tmp_path, monkeypatch):
+    """The enumeration memo keys on the profiles, never their digest: a digest of a
+    profile with a password would read (or create) ``secret_salt`` on every TAB."""
+    from pydantic import SecretStr
+
+    from otto.config.home import DIGEST_SALT_FILENAME, otto_home
+    from otto.host.os_profile import OsProfile, ProfileFields
+    from otto.registry import FrozenMap
+
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    fields = ProfileFields(
+        FrozenMap.freeze_json({"creds": [{"login": "u", "password": SecretStr("pw")}]})
+    )
+    profiles = ProfileContext(
+        profiles=FrozenMap({"x": OsProfile("x", "unix", fields)}), owners=FrozenMap({"x": "sut"})
+    )
+    project = _project(tmp_path, {}, hosts=[_REFERENCED])
+    monkeypatch.setattr(cc, "_SUMMARY_MEMO", {})
+    resolved = cc.resolve_process_inventory([project])
+    cc.project_host_summaries(project, resolved, profiles=profiles)
+    cc.project_host_summaries(project, resolved, profiles=profiles)  # the memo's hit
+    assert len(cc._SUMMARY_MEMO) == 1
+    assert not (otto_home() / DIGEST_SALT_FILENAME).exists()

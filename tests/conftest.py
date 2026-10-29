@@ -1064,6 +1064,48 @@ def _hermetic_otto_home(_hermetic_otto_home_dir: Path) -> Iterator[None]:
         yield
 
 
+@pytest.fixture(scope="session")
+def _hermetic_known_hosts_file(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """One private known-hosts file per pytest process (per xdist worker), under basetemp."""
+    return tmp_path_factory.mktemp("known-hosts") / "known_hosts"
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_known_hosts(_hermetic_known_hosts_file: Path) -> Iterator[None]:
+    """Resolve the DEFAULT known-hosts file to a private one, never the real ``~/.ssh/known_hosts``.
+
+    otto checks SSH host keys and records a first-use key in
+    ``SshOptions.known_hosts``, ``~/.ssh/known_hosts`` by default, so an
+    in-process test that connects anywhere with default options would add
+    entries to the developer's (or CI runner's) own file, and a later run
+    against a rebuilt lab VM would be refused over them. The one resolver,
+    :func:`otto.host.known_hosts.known_hosts_path`, is patched in its own
+    module: every caller reads it through that module for exactly this
+    reason. Only the default is redirected; a test that names a file of its
+    own (``SshOptions(known_hosts=...)``) gets that file. One file per
+    worker, like ``_hermetic_otto_home``. Subprocesses are not covered: a
+    generated project that dials a host names its file through
+    ``make_project(known_hosts=...)``.
+
+    A PRIVATE ``MonkeyPatch``, for the ordering reason ``_hermetic_otto_home``
+    documents. Pinned by tests/unit/host/test_host_key_client.py.
+    """
+    from otto.host import known_hosts
+    from otto.host.options import SshOptions
+
+    resolve = known_hosts.known_hosts_path
+    default = SshOptions().known_hosts
+
+    def hermetic(options: SshOptions) -> Path:
+        if options.known_hosts == default:
+            return _hermetic_known_hosts_file
+        return resolve(options)
+
+    with pytest.MonkeyPatch.context() as private:
+        private.setattr(known_hosts, "known_hosts_path", hermetic)
+        yield
+
+
 @pytest.fixture(autouse=True)
 def _reset_otto_context():
     """Restore the OttoContext, run-policy and resolver ContextVars to their pre-test values.

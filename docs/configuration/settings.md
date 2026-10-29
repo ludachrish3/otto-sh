@@ -57,6 +57,10 @@ mac_algs = ["hmac-sha1", "hmac-md5"]
 
 The same table sits on a host's own record as `ssh_options` in lab data.
 Names are asyncssh's; an unknown one is refused by asyncssh at connect time.
+A `server_host_key_algs` list replaces otto's own choice of host-key
+algorithms ({ref}`host-key-settings`), so keep the type of the key otto
+recorded for these hosts in it: a host that can no longer present that
+type is refused as a changed key.
 To see what left otto and what the server agreed to, run with
 `--log-level DEBUG`: otto logs the connect keyword arguments before each
 handshake (secrets redacted) and the negotiated cipher, MAC, compression

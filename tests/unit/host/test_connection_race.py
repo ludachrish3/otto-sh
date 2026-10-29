@@ -72,6 +72,7 @@ async def test_concurrent_ssh_opens_one_connection(monkeypatch):
         creds=[Cred(login="u", password="p")],
         term="ssh",
         name="t",
+        host_id="t",
         ssh_options=SshOptions(),
     )
     entered, tracked_ssh = _tracked(cm.ssh)
@@ -122,6 +123,7 @@ async def test_concurrent_sftp_opens_one_client(monkeypatch):
         creds=[Cred(login="u", password="p")],
         term="ssh",
         name="t",
+        host_id="t",
         sftp_options=SftpOptions(),
     )
     entered, tracked_sftp = _tracked(cm.sftp)
@@ -157,6 +159,7 @@ async def test_concurrent_ftp_opens_one_client(monkeypatch):
         creds=[Cred(login="u", password="p")],
         term="ssh",
         name="t",
+        host_id="t",
         ftp_options=FtpOptions(),
     )
     entered, tracked_ftp = _tracked(cm.ftp)
@@ -193,6 +196,7 @@ async def test_concurrent_telnet_opens_one_client(monkeypatch):
         creds=[Cred(login="u", password="p")],
         term="telnet",
         name="t",
+        host_id="t",
         telnet_options=TelnetOptions(),
     )
     entered, tracked_telnet = _tracked(cm.telnet)

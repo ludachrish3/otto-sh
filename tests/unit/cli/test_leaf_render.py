@@ -18,13 +18,15 @@ converts the render's ``typer.Exit`` into the process exit code. The direct
 retired ``expose._render_result`` unit tests).
 """
 
+import dataclasses
 from pathlib import Path
 
 import pytest
 import typer
+from typing_extensions import override
 
 from otto.cli.invoke import RENDER_POLICY_KEY, RenderPolicy, render_leaf_value
-from otto.result import CommandResult, Result, Results
+from otto.result import CliReport, CommandResult, Result, Results
 from otto.utils import Status
 from tests._fixtures.dispatch import DispatchRunner
 
@@ -288,6 +290,62 @@ def test_command_results_print_per_entry_diagnostics_on_failure(capsys):
 def test_plain_value_fallback(capsys):
     assert _exit_code(["third", "party"]) == 0
     assert "third" in capsys.readouterr().out
+
+
+@dataclasses.dataclass
+class _Plain:
+    """A dataclass with its own ``__str__`` that does not opt in to ``CliReport``."""
+
+    name: str
+
+    @override
+    def __str__(self) -> str:
+        return f"kept: {self.name} ssh-ed25519 AAAA"
+
+
+@dataclasses.dataclass
+class _Report(_Plain):
+    """The same value, opted in: its ``str()`` is its CLI report."""
+
+    def __otto_cli_report__(self) -> str:
+        return str(self)
+
+
+@pytest.mark.parametrize("policy", [None, RenderPolicy(literal=True)])
+def test_a_cli_report_prints_exactly_its_text(capsys, policy):
+    """No Rich field dump and no markup: ``[router1]`` survives, whatever the policy."""
+    assert isinstance(_Report("x"), CliReport)
+    render_leaf_value(_Report("[router1]:2222"), policy)
+    assert capsys.readouterr().out == "kept: [router1]:2222 ssh-ed25519 AAAA\n"
+
+
+def test_a_custom_str_without_the_opt_in_keeps_richs_rendering(capsys):
+    """Defining ``__str__`` alone is not the opt-in: Rich still pretty-prints the fields."""
+    assert not isinstance(_Plain("x"), CliReport)
+    render_leaf_value(_Plain("router1"))
+    out = capsys.readouterr().out
+    assert "_Plain(" in out
+    assert "name='router1'" in out
+    assert "kept:" not in out
+
+
+def test_a_bare_rich_text_still_renders_through_rich():
+    """A ``Text`` is a renderable, not a report: its style still reaches the console.
+
+    ``str()`` of a ``Text`` is its plain characters, so only the style tells
+    the two renderings apart; the console is a colour terminal for that.
+    """
+    import rich
+    from rich.console import Console
+    from rich.text import Text
+
+    console = Console(force_terminal=True, color_system="standard", width=80)
+    with console.capture() as cap, pytest.MonkeyPatch.context() as mp:
+        mp.setattr(rich, "_console", console)
+        render_leaf_value(Text("styled", style="bold red"))
+    out = cap.get()
+    assert "styled" in out
+    assert "\x1b[" in out  # the style survived: escape codes, not a bare str()
 
 
 def test_none_is_silent_without_a_policy(capsys):

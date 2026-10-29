@@ -80,7 +80,7 @@ from .connections import (
     build_term_backend,
     teardown_step,
 )
-from .errors import ConsoleError, HostCommandError, UnsupportedOnUserlandError
+from .errors import ConsoleError, ForgetResult, HostCommandError, UnsupportedOnUserlandError
 from .file_ops import PosixFileOps
 from .host import (
     CONCURRENT_HELP,
@@ -581,6 +581,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             # The bound method, not its result: the server is looked up in
             # the lab on the first console dial, never at construction.
             console_endpoint=self.console_endpoint if self.term == "console" else None,
+            host_id=self.id,
         )
         return build_term_backend(self.term, term_ctx)
 
@@ -1287,6 +1288,38 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             return await self._transfer_for(user).put_files(
                 src_files, dest_dir, show_progress, mode, concurrent=concurrent
             )
+
+    ####################
+    #  SSH host keys
+    ####################
+
+    @cli_exposed(
+        output_dir=False,
+        help_="Remove this host's SSH host-key entries; the next connection records its new key.",
+    )
+    async def forget_key(self) -> ForgetResult:
+        """Remove this host's entries from its known-hosts file.
+
+        The file is the one :attr:`ssh_options` names, resolved as the
+        connection's own check resolves it. The entries removed are the ones
+        keyed by this host's ID: the bare ID and ``[id]:<port>`` for any
+        port, plus hashed entries for the configured SSH port and 22. Lines
+        that also name another host, and ``@cert-authority`` / ``@revoked``
+        lines, are left in place and listed. Nothing on the host is
+        contacted, and a missing entry is not an error: ``str()`` of the
+        result says what was removed, or that there was no entry, and from
+        which file.
+
+        Raises:
+            ~otto.host.errors.KnownHostsUnwritableError: there is an entry
+                to remove and the file cannot be rewritten.
+        """
+        # Through the module, not a bound name: the resolver is the one place
+        # the file is decided, and a test redirects it there.
+        from . import known_hosts
+
+        store = known_hosts.KnownHosts(known_hosts.known_hosts_path(self.ssh_options))
+        return store.forget(self.id, [self.ssh_options.port])
 
     ####################
     #  Kernel modules

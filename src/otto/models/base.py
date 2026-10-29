@@ -12,6 +12,7 @@ placement-and-phases §3.3). ``Cred`` keeps its public path,
 """
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -196,22 +197,35 @@ def load_toml_settings(text: str) -> dict[str, Any]:
     return data
 
 
-def secret_safe_json_default(value: object) -> object:
-    """Serialize *value* for ``json.dumps``: the ``default=`` hook over parsed settings data.
+def secret_safe_json_default(secret_key: "Callable[[], bytes]") -> "Callable[[object], object]":
+    """Return the ``default=`` hook of every ``json.dumps`` over parsed settings data.
 
-    A ``SecretStr`` (see :func:`wrap_secret_values`) becomes
-    ``"secret:sha256:<hex>"``, the digest of its value: stable across
-    processes and changed by any change to the secret, so a fingerprint built
-    from the dump still tells two configurations apart, while the plain value
-    is never part of what is dumped or stored. Anything else becomes its
-    ``str()``.
+    The hook turns a ``SecretStr`` (see :func:`wrap_secret_values`) into
+    ``"secret:hmac-sha256:<hex>"``, the HMAC-SHA256 of its value under
+    ``secret_key()`` (the install's key,
+    :func:`otto.config.home.secret_digest_key`): stable across processes and
+    changed by any change to the secret, so a fingerprint built from the dump
+    still tells two configurations apart, while neither the value nor an
+    unkeyed hash a guess could be checked against is ever dumped or stored.
+    ``secret_key`` is asked only when a secret is met, and at most once per
+    hook, so a dump without one never reads (or creates) the key. Anything
+    else becomes its ``str()``.
     """
-    if isinstance(value, SecretStr):
-        import hashlib
+    import functools
 
-        digest = hashlib.sha256(value.get_secret_value().encode()).hexdigest()
-        return f"secret:sha256:{digest}"
-    return str(value)
+    key = functools.cache(secret_key)
+
+    def default(value: object) -> object:
+        if isinstance(value, SecretStr):
+            import hashlib
+            import hmac
+
+            secret = value.get_secret_value().encode()
+            mac = hmac.new(key(), secret, hashlib.sha256).hexdigest()
+            return f"secret:hmac-sha256:{mac}"
+        return str(value)
+
+    return default
 
 
 def cred_identity(login: str, protocols: list[str]) -> str:

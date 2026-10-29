@@ -28,6 +28,11 @@ def test_read_only_verbs_declare_no_dir() -> None:
         assert flags[verb] is False, verb
 
 
+def test_forget_key_declares_no_dir() -> None:
+    """``forget-key`` edits a local file and runs nothing on the host: no run tree."""
+    assert _declared_flags()["forget-key"] is False
+
+
 def test_work_verbs_declare_dir() -> None:
     flags = _declared_flags()
     for verb in ("exec", "get", "put", "login"):

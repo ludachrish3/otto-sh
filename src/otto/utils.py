@@ -6,10 +6,12 @@ Among others: the :class:`Status` enum, the CLI overlays (:class:`Arg`,
 ``OTTOPATH``'s kept spelling (:func:`ottopath_entries`), the
 ``cache_ttl`` grammar (:func:`parse_cache_ttl`), the monitor
 collection-interval floor (:data:`MIN_INTERVAL_SECONDS`), list-option
-splitting and completion helpers, the dry-run headlines, and deadline polling
-(:func:`wait_for`, :func:`wait_for_async`).
+splitting and completion helpers, the dry-run headlines, deadline polling
+(:func:`wait_for`, :func:`wait_for_async`), and write-then-rename
+(:func:`atomic_write_bytes`).
 """
 
+import contextlib
 import functools
 import inspect
 import math
@@ -120,6 +122,77 @@ def collapse_path_list(entries: list[str]) -> list[str]:
 def ottopath_entries(value: str) -> list[str]:
     """Return the roots an ``OTTOPATH`` value names: split, kept spelling, repeats collapsed."""
     return collapse_path_list([kept_path_spelling(e) for e in _PATH_LIST_SEP.split(value) if e])
+
+
+def atomic_write_bytes(
+    path: Path,
+    payload: bytes,
+    *,
+    preserve: "os.stat_result | None" = None,
+    pending: "set[str] | None" = None,
+    exclusive: bool = False,
+) -> None:
+    """Replace *path*'s content with *payload*: a reader sees the old file or the new, never a mix.
+
+    The one write-then-rename sequence otto uses for a file other processes
+    read: a UNIQUE temporary in the destination's directory (two writers
+    never share a temp name, and ``os.replace`` is atomic only within one
+    filesystem), every byte written (a short write is resumed), ``fsync``
+    before the rename so a crash cannot leave an empty file in place, then
+    ``os.replace``. A symlinked *path* is replaced at its target, so the link
+    survives. On any failure, ``KeyboardInterrupt`` included, the temporary
+    is removed and the original file is untouched. The parent directory must
+    exist.
+
+    The new file is mode 0600 (what ``mkstemp`` creates) unless *preserve*,
+    the original file's ``stat``, is given: then its mode is kept, and its
+    owner too when this process is root.
+
+    *pending*: a set the temporary's name sits in while it exists, for a
+    caller that may leave by ``os._exit`` mid-write and must remove the
+    temporary first (``otto.config.completion_cache``).
+
+    *exclusive*: create *path* only if it does not exist. The complete
+    temporary is hard-linked into place, which fails rather than replaces
+    when *path* exists, so of two racing writers exactly one wins and the
+    other gets ``FileExistsError`` (and can read the winner's content).
+
+    Raises:
+        FileExistsError: *exclusive* and *path* already exists.
+        OSError: the temporary cannot be created, written or renamed.
+    """
+    import tempfile  # off the import path of the many modules that never write a file
+
+    target = Path(os.path.realpath(path))
+    fd, tmp_name = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.", suffix=".tmp")
+    if pending is not None:
+        pending.add(tmp_name)
+    try:
+        try:
+            view = memoryview(payload)
+            while view:
+                view = view[os.write(fd, view) :]
+            os.fsync(fd)
+            if preserve is not None:
+                os.fchmod(fd, preserve.st_mode & 0o7777)
+                if os.geteuid() == 0:
+                    os.fchown(fd, preserve.st_uid, preserve.st_gid)
+        finally:
+            os.close(fd)
+        if exclusive:
+            os.link(tmp_name, target)
+            Path(tmp_name).unlink()
+        else:
+            Path(tmp_name).replace(target)
+    except BaseException:
+        # Including KeyboardInterrupt: a temporary left beside the file is
+        # litter every later reader of the directory has to ignore.
+        with contextlib.suppress(OSError):  # the original error is the one to report
+            Path(tmp_name).unlink()
+        raise
+    finally:
+        if pending is not None:
+            pending.discard(tmp_name)
 
 
 _TTL = re.compile(r"\A(?:0|([1-9]\d*)([mhd]))\Z")

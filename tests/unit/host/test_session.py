@@ -2843,6 +2843,7 @@ def test_the_budgets_retry_rule_agrees_with_the_console_session(login):
         creds=[Cred(login="u", password="p")],
         term="console",
         name="h",
+        host_id="h",
         console_options=ConsoleOptions(server="s", port=1, login=login),
     )
     client = SimpleNamespace(logged_in=login)
