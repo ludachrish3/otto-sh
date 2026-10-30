@@ -335,6 +335,13 @@ it is an error naming the key — this file is not a second `settings.toml`.
 backend's. What turning it off covers and how to flip it is on
 [Turning the cache off](../cli/cache/index.md#turning-the-cache-off).
 
+A user settings file that does not parse or validate, or cannot be read (a
+directory where the file should be, a permission error), turns the cache off
+until it is fixed: `otto cache info` prints the error on its first line, and
+both `otto cache enable` and `otto cache disable` refuse it with a one-line
+error that names the file's path (see
+[enable and disable](../cli/cache/index.md#enable-and-disable)).
+
 Each table's keys other than `backend` (and `cache_ttl` for `[inventory]`)
 belong to the selected backend, which parses them when the table is read.  A
 key the backend does not know, or a value of the wrong type, fails at that

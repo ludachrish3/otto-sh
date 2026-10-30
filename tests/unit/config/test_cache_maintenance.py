@@ -485,3 +485,57 @@ def test_completion_file_names_match_the_source_constants():
         COLLECT_LOCK_FILENAME,
         COLLECT_COOLDOWN_FILENAME,
     ] == COMPLETION_FILE_NAMES
+
+
+@pytest.mark.parametrize("engine", ["remove_completion_files", "clear_workspace"])
+def test_a_symlinked_workspace_is_refused_and_its_target_untouched(tmp_path, engine):
+    from otto.config import cache_maintenance
+    from otto.config.cache_maintenance import COMPLETION_FILE_NAMES, SESSION_DIR_NAMES
+
+    target = tmp_path / "target"
+    _fill_completion_dir(target)
+    link = tmp_path / "aaaaaaaa-link"
+    link.symlink_to(target)
+    report = getattr(cache_maintenance, engine)(link)
+    assert report.files_removed == []
+    assert report.failures == []
+    assert all((target / n).is_file() for n in COMPLETION_FILE_NAMES)
+    assert all((target / n).is_dir() for n in SESSION_DIR_NAMES)
+
+
+def _read_only(ws):
+    if os.geteuid() == 0:
+        pytest.skip("root ignores directory modes")
+    ws.chmod(0o500)
+
+
+@pytest.mark.parametrize("engine", ["remove_completion_files", "clear_workspace"])
+def test_a_file_that_cannot_be_removed_is_reported_as_a_failure(tmp_path, engine):
+    from otto.config import cache_maintenance
+
+    ws = tmp_path / "aaaaaaaa-ro"
+    _fill_completion_dir(ws)
+    _read_only(ws)
+    try:
+        report = getattr(cache_maintenance, engine)(ws)
+    finally:
+        ws.chmod(0o700)
+    assert report.files_removed == []
+    assert ws / "completion_cache.json" in report.failures
+    assert (ws / "completion_cache.json").is_file()
+
+
+def test_remove_completion_files_everywhere_collects_every_failure(tmp_path):
+    from otto.config.cache_maintenance import remove_completion_files_everywhere
+
+    ok = tmp_path / "aaaaaaaa-ok"
+    _fill_completion_dir(ok)
+    ro = tmp_path / "bbbbbbbb-ro"
+    _fill_completion_dir(ro)
+    _read_only(ro)
+    try:
+        report = remove_completion_files_everywhere(tmp_path)
+    finally:
+        ro.chmod(0o700)
+    assert ok / "completion_cache.json" in report.files_removed
+    assert ro / "completion_cache.json" in report.failures

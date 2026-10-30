@@ -412,6 +412,28 @@ def test_the_full_path_writes_no_cache_when_off(project_env):
     assert not list(Path(env["OTTO_HOME"]).rglob("completion_cache.json"))
 
 
+def test_root_help_without_a_project_never_resolves_the_cache_setting(tmp_path):
+    """No project, no workspace to clean: the off-removal must not even read settings.toml."""
+    env = {k: v for k, v in os.environ.items() if not is_otto_env_var(k)}
+    env["OTTO_HOME"] = str(tmp_path / "home")
+    probe = (
+        "import otto.config.user_settings as u\n"
+        "def _asked():\n"
+        "    raise SystemExit(7)\n"
+        "u.cache_enabled = _asked\n"
+        "from otto.cli.main import entry; entry()\n"
+    )
+    p = subprocess.run(
+        [sys.executable, "-c", probe, *_ROOT_HELP],
+        env=env,
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert p.returncode == 0, p.stderr
+
+
 _NOT_WRITABLE_ENTRY = [
     sys.executable,
     "-c",

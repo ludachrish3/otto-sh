@@ -1209,10 +1209,11 @@ def entry(cache_stale: bool = False) -> None:
             # The resolver's answer used for a side effect, not a second
             # decision: with the cache switched off, a workspace's leftover
             # completion files are removed. (Other reasons for "not writable"
-            # leave the files alone.)
+            # leave the files alone.) No projects, no workspace: bare
+            # `otto -h` does not read settings.toml for nothing.
             from ..config.user_settings import cache_enabled
 
-            if not cache_enabled().on:
+            if result.projects and not cache_enabled().on:
                 from ..config.cache_maintenance import remove_completion_files
                 from ..config.home import workspace_home
 

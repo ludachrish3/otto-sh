@@ -16,7 +16,7 @@ from pathlib import Path
 import tomli
 from pydantic import ValidationError
 
-from ..models.base import load_toml_settings
+from ..models.base import compact_validation_error, load_toml_settings
 from ..models.settings import CacheSettingsSpec, UserSettingsModel
 from .home import otto_home
 
@@ -36,7 +36,9 @@ _memo: dict[Path, "UserSettingsModel | None"] = {}
 # The one stat of the default path, taken by the load that reads it and kept
 # even when the parse then fails (a broken file has a real identity too). The
 # names digest and the shim's stored triple both read THIS observation, so they
-# cannot disagree about the file and no second syscall is spent on it.
+# cannot disagree about the file and no second syscall is spent on it. A path
+# that cannot be a settings file at all (see _stat_file) is recorded as None:
+# the cache is then off, so nothing is stored for the shim to compare.
 _stat_memo: dict[Path, "os.stat_result | None"] = {}
 
 
@@ -47,11 +49,23 @@ def clear_user_settings_memo() -> None:
 
 
 def _stat_file(p: Path) -> "os.stat_result | None":
-    """Stat *p*, or ``None`` when it does not stat (absent, ELOOP, ...), as the shim does."""
+    """Stat settings file *p*: ``None`` when it is absent, a :class:`ValueError` when it is broken.
+
+    Absent is ``ENOENT`` or ``ENOTDIR`` only. Any other stat error (``ELOOP``,
+    ``EACCES``, ...) or a path that is not a regular file (a directory, a
+    FIFO, which reading would block on) is a file the user must fix, named in
+    one line, never silently "no settings". Not ``corpus_snapshot.stat``: that
+    maps every ``OSError`` to ``None``, and this split needs the errno.
+    """
     try:
-        return p.stat()
-    except OSError:
+        st = p.stat()
+    except (FileNotFoundError, NotADirectoryError):
         return None
+    except OSError as e:
+        raise ValueError(f"{p}: {e.strerror or e}") from e
+    if not _stat.S_ISREG(st.st_mode):
+        raise ValueError(f"{p}: not a regular file")
+    return st
 
 
 def user_settings_path() -> Path:
@@ -74,19 +88,21 @@ def load_user_settings(path: "Path | None" = None) -> "UserSettingsModel | None"
     Raises
     ------
     ValueError
-        On a parse or validation error, naming the file. A broken user file is
-        a configuration error, not "no inventory" — silently degrading to the
-        latter is how a typo'd ``[inventory]`` becomes an unexplained
-        "no inventory is configured" much later in the run.
+        On a parse or validation error, or a path that cannot be read as a
+        settings file (a directory, a FIFO, an ``EACCES`` stat), naming the
+        file. A broken user file is a configuration error, not "no
+        inventory" — silently degrading to the latter is how a typo'd
+        ``[inventory]`` becomes an unexplained "no inventory is configured"
+        much later in the run.
     """
     if path is not None:
-        return _read_user_settings(path, _stat_file(path))
+        return _read_user_settings(path, _stat_file(path))[0]
     key = user_settings_path()
     if key not in _memo:
-        _memo.clear()
-        _stat_memo.clear()
+        clear_user_settings_memo()
+        _stat_memo[key] = None  # what stays recorded when _stat_file raises
         st = _stat_memo[key] = _stat_file(key)
-        _memo[key] = _read_user_settings(key, st)
+        _memo[key] = _read_user_settings(key, st)[0]
     return _memo[key]
 
 
@@ -95,7 +111,9 @@ def user_settings_stat() -> "os.stat_result | None":
 
     The same observation :func:`load_user_settings` made (loading through the
     memo if nothing has yet), so a memo hit adds no syscall. A file that
-    fails to parse still has its stat here.
+    fails to parse still has its stat here; a path that cannot be a settings
+    file at all (see :func:`load_user_settings`) is ``None``, and the cache is
+    then off.
     """
     key = user_settings_path()
     if key not in _stat_memo:
@@ -104,25 +122,27 @@ def user_settings_stat() -> "os.stat_result | None":
     return _stat_memo.get(key)
 
 
-def _read_user_settings(p: Path, st: "os.stat_result | None") -> "UserSettingsModel | None":
-    """Read and validate one settings file given its *st*, without the memo."""
-    if st is None or not _stat.S_ISREG(st.st_mode):
-        return None
+def _read_user_settings(
+    p: Path, st: "os.stat_result | None"
+) -> "tuple[UserSettingsModel | None, str]":
+    """Read and validate one settings file given its *st*, without the memo.
+
+    Returns the model and the exact text it was validated from (``None`` and
+    ``""`` when the file is absent): the one parse and validation behind both
+    every load and :func:`set_cache_enabled`'s edit. The bytes are decoded
+    without newline translation, so a CRLF file reaches the editor as CRLF.
+    """
+    if st is None:
+        return None, ""
     try:
-        data = load_toml_settings(p.read_text())
+        text = p.read_bytes().decode()
+        data = load_toml_settings(text)
     except (OSError, UnicodeDecodeError, tomli.TOMLDecodeError) as e:
         raise ValueError(f"{p}: {e}") from e
     try:
-        return UserSettingsModel.model_validate(data)
+        return UserSettingsModel.model_validate(data), text
     except ValidationError as e:
-        # One line, no input_value (str(e) echoes the offending input) and no docs URL.
-        found = "; ".join(
-            f"{where}: {err['msg']}"
-            if (where := ".".join(str(x) for x in err["loc"]))
-            else err["msg"]
-            for err in e.errors()
-        )
-        raise ValueError(f"{p}: {found}") from e
+        raise ValueError(f"{p}: {compact_validation_error(e)}") from e
 
 
 @dataclass(frozen=True)
@@ -165,36 +185,38 @@ def set_cache_enabled(enabled: bool) -> CacheSetting:
     so a verb never rewrites a file it could not read. Turning the cache off
     creates the home, the file and the ``[cache]`` table as needed; turning it
     on only edits an existing ``[cache]`` table, since no table already means
-    on. Nothing is written when the setting already is what is asked and is
-    spelled as a boolean (``enabled = "false"`` is rewritten). The
-    edit keeps every other byte of the file (comments, order, spelling) and the
-    file's permission bits, validates the edited document as a
+    on (a bare ``[cache]`` table gets ``enabled = true`` written). Nothing is
+    written when the setting already is what is asked and is spelled as a
+    boolean (``enabled = "false"`` is rewritten). The edit keeps every other
+    byte of the file (comments, order, spelling, line endings) and the file's
+    permission bits, validates the edited document as a
     :class:`~otto.models.settings.UserSettingsModel`, and replaces the file
-    atomically. The memo is dropped, so the returned
-    :func:`cache_enabled` is what the next caller sees.
+    atomically. The memo is dropped whether or not anything was written, so
+    the returned :func:`cache_enabled` is what the next caller sees, even
+    after an edit made behind the memo's back.
     """
     import tomlkit  # only the verb edits TOML; every read goes through tomli
 
     from ..utils import atomic_write_bytes
 
     path = user_settings_path()
-    current = load_user_settings(path=path)  # ValueError propagates: nothing is written
-    st = _stat_file(path)
-    text = path.read_text() if current is not None else ""
+    st = _stat_file(path)  # ValueError propagates: nothing is written
+    current, text = _read_user_settings(path, st)
     doc = tomlkit.parse(text)
     table = doc.get(CACHE_TABLE)
     # The state is the validated model's (pydantic coerces "false" to off). A coerced
-    # string is rewritten as a real boolean even when the state already matches.
+    # string is rewritten as a real boolean even when the state already matches, and
+    # a bare [cache] table gets the key written.
     raw = table.unwrap().get(CACHE_ENABLED_KEY) if table is not None else None
-    if _cache_on(current) == enabled and (table is None or raw is None or isinstance(raw, bool)):
-        return cache_enabled()
-    if table is None:
-        table = tomlkit.table()
-        doc[CACHE_TABLE] = table
-    table[CACHE_ENABLED_KEY] = enabled
-    new_text = tomlkit.dumps(doc)
-    UserSettingsModel.model_validate(load_toml_settings(new_text))
-    path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_bytes(path, new_text.encode(), preserve=st)
+    if not (_cache_on(current) == enabled and (table is None or isinstance(raw, bool))):
+        if table is None:
+            table = tomlkit.table()
+            doc[CACHE_TABLE] = table
+        table[CACHE_ENABLED_KEY] = enabled
+        new_text = tomlkit.dumps(doc)
+        UserSettingsModel.model_validate(load_toml_settings(new_text))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_bytes(path, new_text.encode(), preserve=st)
+    # Written or not, the memo may predate an edit made behind its back.
     clear_user_settings_memo()
     return cache_enabled()

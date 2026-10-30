@@ -63,8 +63,8 @@ def compact_validation_error(error: "ValidationError") -> str:
     error code, e.g. ``extra_forbidden``) still names *why* precisely enough
     to search a fix by. Shared by every boundary reader that re-raises a
     pydantic failure as its own error: the inventory's stage-1 parser, the
-    NetBox backend, the creds store, ``otto init``'s item validator, and the
-    lab repository's host-entry wrap.
+    NetBox backend, the creds store, ``otto init``'s item validator, the
+    lab repository's host-entry wrap, and the user settings file's loader.
     """
     return "; ".join(
         f"{'.'.join(str(part) for part in item['loc']) or '<entry>'}: "

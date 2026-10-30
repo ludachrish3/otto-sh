@@ -193,6 +193,13 @@ class MaintenanceReport:
     file this process failed to unlink (permissions, or a directory sitting
     where a cache file's name was expected)."""
 
+    failures: "list[Path]" = field(default_factory=list)
+    """Files that were there but could not be removed (permissions, or a
+    directory sitting where a file's name was expected), left as they were.
+    Filled by the named-file removal behind `clear_workspace` and
+    `remove_completion_files`; `prune` reports the same case through
+    `retained_nonempty` instead."""
+
 
 def _dedupe(paths: "list[Path]") -> "list[Path]":
     """Return *paths* with duplicates removed, keeping first-seen order."""
@@ -203,6 +210,16 @@ def _dedupe(paths: "list[Path]") -> "list[Path]":
             seen.add(p)
             out.append(p)
     return out
+
+
+def _is_real_dir(path: Path) -> bool:
+    """Whether *path* is a directory itself, not a symlink to one.
+
+    The one rule for what a pass may enter or empty: a workspace, a session
+    directory, or a directory inside one. Following a symlinked one would
+    let a pass reach files outside the home entirely.
+    """
+    return path.is_dir() and not path.is_symlink()
 
 
 def _candidates(home: Path) -> "list[Path]":
@@ -217,11 +234,7 @@ def _candidates(home: Path) -> "list[Path]":
         entries = list(home.iterdir())
     except OSError:
         return []
-    return [
-        entry
-        for entry in entries
-        if entry.is_dir() and not entry.is_symlink() and _KEY_RE.fullmatch(entry.name)
-    ]
+    return [entry for entry in entries if _is_real_dir(entry) and _KEY_RE.fullmatch(entry.name)]
 
 
 def _tree_bytes(path: Path) -> "int | None":
@@ -230,7 +243,7 @@ def _tree_bytes(path: Path) -> "int | None":
     A symlink named like a session directory is not one: it is never
     followed, measured or removed.
     """
-    if path.is_symlink() or not path.is_dir():
+    if not _is_real_dir(path):
         return None
     return sum(
         _size(Path(dirpath) / name)
@@ -256,7 +269,7 @@ def _remove_tree(path: Path) -> "int | None":
     could not be removed, when *path* is not a real directory or is still
     there at the end.
     """
-    if path.is_symlink() or not path.is_dir():
+    if not _is_real_dir(path):
         return None
     freed = 0
     for dirpath, dirnames, filenames in os.walk(path, topdown=False):
@@ -274,7 +287,7 @@ def _remove_entry(entry: Path) -> "int | None":
     and ``None`` when the removal failed.
     """
     try:
-        if entry.is_dir() and not entry.is_symlink():
+        if _is_real_dir(entry):
             entry.rmdir()
             return 0
         size = entry.lstat().st_size
@@ -288,11 +301,15 @@ def _remove_files(workspace: Path, names: "list[str]") -> MaintenanceReport:
     """Unlink each of *names* directly under *workspace*, never following a symlink.
 
     The one removal loop behind :func:`clear_workspace` and
-    :func:`remove_completion_files`. A name that is absent, or that cannot be
-    unlinked (permissions, a directory sitting where a file's name is
-    expected), is left as it was and never reported.
+    :func:`remove_completion_files`. A *workspace* that is not a real
+    directory (a symlink to one, most dangerously) is refused outright, with
+    an empty report. A name that is absent is skipped; one that is there but
+    cannot be unlinked (permissions, a directory sitting where a file's name
+    is expected) is left as it was and recorded in ``failures``.
     """
     report = MaintenanceReport()
+    if not _is_real_dir(workspace):
+        return report
     for name in names:
         f = workspace / name
         try:
@@ -302,6 +319,7 @@ def _remove_files(workspace: Path, names: "list[str]") -> MaintenanceReport:
         try:
             f.unlink(missing_ok=True)
         except OSError:
+            report.failures.append(f)
             continue
         report.files_removed.append(f)
         report.bytes_freed += st.st_size
@@ -313,7 +331,9 @@ def remove_completion_files(workspace: Path) -> MaintenanceReport:
 
     :data:`COMPLETION_FILE_NAMES` only: never the session directories, never
     the workspace itself. Run once the cache is off, so a workspace does not
-    keep a cache nothing will read.
+    keep a cache nothing will read. A symlinked *workspace* is refused, and a
+    file that cannot be removed is reported in ``failures`` (see
+    :func:`_remove_files`).
     """
     return _remove_files(workspace, COMPLETION_FILE_NAMES)
 
@@ -324,6 +344,7 @@ def remove_completion_files_everywhere(home: Path) -> MaintenanceReport:
     for workspace in _candidates(home):
         sub = remove_completion_files(workspace)
         report.files_removed.extend(sub.files_removed)
+        report.failures.extend(sub.failures)
         report.bytes_freed += sub.bytes_freed
     return report
 
@@ -335,12 +356,15 @@ def clear_workspace(workspace: Path) -> MaintenanceReport:
     the engine behind clearing the CURRENT workspace's cache (`otto cache
     clear`), which must keep existing regardless of what else lives in it.
     A file this process can't actually remove (permissions, or a directory
-    sitting where a cache file's name is expected) is left exactly as it was
-    and never appears in `files_removed`, and neither does a session
-    directory that is still there afterwards -- the report only ever claims
-    what really happened.
+    sitting where a cache file's name is expected) is left exactly as it was,
+    never appears in `files_removed` and is listed in `failures`; a session
+    directory that is still there afterwards is not claimed either -- the
+    report only ever claims what really happened. A symlinked *workspace* is
+    refused outright, session directories included.
     """
     report = _remove_files(workspace, CACHE_FILE_NAMES)
+    if not _is_real_dir(workspace):
+        return report
     for name in SESSION_DIR_NAMES:
         freed = _remove_tree(workspace / name)
         if freed is not None:

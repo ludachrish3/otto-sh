@@ -52,6 +52,7 @@ if TYPE_CHECKING:
     from ..config.cache_maintenance import MaintenanceReport
     from ..config.completion_cache import CollectChildState, InventoryDescription, SectionStatus
     from ..config.project import Project
+    from ..config.user_settings import CacheSetting
 
 cache_app = typer.Typer(
     name="cache",
@@ -92,11 +93,32 @@ def _print_removed(paths: "list[Path]", *, verb: str = "removed") -> None:
         typer.echo(f"{verb} {f}")
 
 
+def _report_removal(report: "MaintenanceReport") -> None:
+    """Print a named-file removal, then name each file it could not remove and exit 1.
+
+    `disable` and bare `clear` both owe the user the truth: a file left in
+    place is not "nothing to remove".
+    """
+    if report.files_removed or not report.failures:
+        _print_removed(report.files_removed)
+    for f in report.failures:
+        typer.echo(f"could not remove {f}", err=True)
+    if report.failures:
+        raise typer.Exit(1)
+
+
+def _cache_state_line(setting: "CacheSetting") -> str:
+    """Return the ``cache: on|off (<source>)`` line `info` opens with and the verbs announce."""
+    return f"cache: {'on' if setting.on else 'off'} ({setting.source})"
+
+
 def _toggle(enabled: bool) -> None:
     """Run `enable` / `disable`: set the switch, announce it, and for off clear every workspace.
 
     A broken settings file or an unwritable home is the user's to fix, so it is
-    one error line and exit 1, never a traceback.
+    one error line and exit 1, never a traceback. So is a completion file
+    `disable` could not remove: the new state is printed first, then each
+    file left in place.
     """
     from ..config.cache_maintenance import remove_completion_files_everywhere
     from ..config.home import otto_home
@@ -109,7 +131,7 @@ def _toggle(enabled: bool) -> None:
         # An OSError names a temporary file; the settings file is what the user must fix.
         typer.echo(str(e) if isinstance(e, ValueError) else f"{path}: {e}", err=True)
         raise typer.Exit(1) from e
-    typer.echo(f"cache: {'on' if setting.on else 'off'} ({setting.source})")
+    typer.echo(_cache_state_line(setting))
     typer.echo(str(path))
     if enabled:
         return
@@ -118,7 +140,7 @@ def _toggle(enabled: bool) -> None:
     except OSError as e:
         typer.echo(f"could not remove completion files: {e}", err=True)
         raise typer.Exit(1) from e
-    _print_removed(removed.files_removed)
+    _report_removal(removed)
 
 
 @cache_app.command("enable")
@@ -188,8 +210,7 @@ def info() -> None:
     from ..config.user_settings import cache_enabled
     from ..models.settings import OttoEnvSettings
 
-    setting = cache_enabled()
-    typer.echo(f"cache: {'on' if setting.on else 'off'} ({setting.source})")
+    typer.echo(_cache_state_line(cache_enabled()))
     home = otto_home()
     # Mirrors otto_home()'s OWN condition for "did $OTTO_HOME determine this"
     # exactly -- OttoEnvSettings().home is not None (env_ignore_empty=True
@@ -360,14 +381,10 @@ def _print_this_workspace() -> None:
     inventory = describe_inventory(projects)
     typer.echo(f"this workspace: {workspace_key([r.root for r in projects])}")
     typer.echo(f"  completion names: {_section_state_text(status, inventory)}")
-    cache_path = _cache_path()
-    shim_text = (
-        inspect_shim(cache_path) if cache_path is not None else "handing over — no cache path"
-    )
+    cache_path = _cache_path()  # None only when the cache is off
+    shim_text = inspect_shim(cache_path) if cache_path is not None else "handing over — cache off"
     typer.echo(f"  shim: {shim_text}")
-    tests_text = (
-        inspect_tests(cache_path) if cache_path is not None else "handing over — no cache path"
-    )
+    tests_text = inspect_tests(cache_path) if cache_path is not None else "handing over — cache off"
     typer.echo(f"  test names: {tests_text}")
     typer.echo(f"  collect child: {_collect_child_text(collect_child_state())}")
     typer.echo(f"  docker observed: {_docker_observed_text(projects)}")
@@ -428,8 +445,7 @@ def clear(
         from ..config.cache_maintenance import clear_workspace
         from ..config.home import workspace_home
 
-        report = clear_workspace(workspace_home())
-        _print_removed(report.files_removed)
+        _report_removal(clear_workspace(workspace_home()))
 
 
 @cache_app.command("prune")

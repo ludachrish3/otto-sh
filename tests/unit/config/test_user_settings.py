@@ -156,13 +156,13 @@ def test_unknown_cache_key_resolves_off():
 def test_the_settings_file_is_read_once_per_process(monkeypatch):
     p = _own_file("[cache]\nenabled = false\n")
     reads = []
-    real = type(p).read_text
+    real = type(p).read_bytes
 
     def spy(self, *a, **k):
         reads.append(self)
         return real(self, *a, **k)
 
-    monkeypatch.setattr(type(p), "read_text", spy)
+    monkeypatch.setattr(type(p), "read_bytes", spy)
     cache_enabled()
     load_user_settings()
     cache_enabled()
@@ -280,16 +280,70 @@ def test_the_settings_stat_is_taken_once_and_survives_a_broken_file():
     assert user_settings_stat() is st
 
 
-def test_a_self_referencing_settings_symlink_is_absent_not_a_crash():
-    from otto.config.user_settings import cache_enabled, user_settings_path, user_settings_stat
+def _assert_off_with_one_line_error(path):
+    """The file is broken: the loader names it, and the cache resolves off with that error."""
+    from otto.config.user_settings import cache_enabled, user_settings_stat
 
+    with pytest.raises(ValueError, match=r"settings\.toml") as ei:
+        load_user_settings()
+    assert "\n" not in str(ei.value)
+    assert str(ei.value).startswith(f"{path}: ")
+    setting = cache_enabled()
+    assert setting.on is False
+    assert setting.source == str(ei.value)
+    assert user_settings_stat() is None
+
+
+def test_a_self_referencing_settings_symlink_is_broken_not_a_crash():
     path = user_settings_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.symlink_to(path)  # ELOOP on stat
-    assert user_settings_stat() is None
-    setting = cache_enabled()
-    assert setting.on is True
-    assert setting.source == "default"
+    _assert_off_with_one_line_error(path)
+
+
+def _private_home(tmp_path, monkeypatch):
+    """A home of this test's own: the shared one's teardown unlinks settings.toml, not a dir."""
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    return user_settings_path()
+
+
+def test_a_settings_path_that_is_a_directory_is_broken(tmp_path, monkeypatch):
+    path = _private_home(tmp_path, monkeypatch)
+    path.mkdir(parents=True)
+    _assert_off_with_one_line_error(path)
+
+
+def test_a_settings_path_that_is_a_fifo_is_broken_and_never_opened(tmp_path, monkeypatch):
+    import os
+
+    path = _private_home(tmp_path, monkeypatch)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    os.mkfifo(path)  # opening it for read would block forever
+    _assert_off_with_one_line_error(path)
+
+
+def test_a_settings_file_that_cannot_be_stat_is_broken(tmp_path, monkeypatch):
+    import os
+
+    if os.geteuid() == 0:
+        pytest.skip("root ignores directory modes")
+    locked = tmp_path / "locked"
+    monkeypatch.setenv("OTTO_HOME", str(locked / "home"))
+    path = user_settings_path()
+    path.parent.mkdir(parents=True)
+    path.write_text("[cache]\nenabled = true\n")  # scaffold-exempt: user-level ~/.otto file
+    locked.chmod(0)  # EACCES on stat
+    try:
+        _assert_off_with_one_line_error(path)
+    finally:
+        locked.chmod(0o700)
+
+
+def test_an_absent_parent_component_that_is_a_file_is_absent(tmp_path, monkeypatch):
+    blocker = tmp_path / "blocker"
+    blocker.write_text("")
+    monkeypatch.setenv("OTTO_HOME", str(blocker))  # ENOTDIR on stat
+    assert cache_enabled() == CacheSetting(on=True, source="default")
 
 
 _ORIGINAL = (
@@ -335,6 +389,44 @@ def test_enable_keeps_a_file_without_a_cache_table_byte_identical():
     path = _own_file(_ORIGINAL)
     set_cache_enabled(True)
     assert path.read_text() == _ORIGINAL
+
+
+def test_set_refuses_a_settings_path_that_is_a_directory(tmp_path, monkeypatch):
+    from otto.config.user_settings import set_cache_enabled
+
+    path = _private_home(tmp_path, monkeypatch)
+    path.mkdir(parents=True)
+    for wanted in (False, True):
+        with pytest.raises(ValueError, match=r"settings\.toml"):
+            set_cache_enabled(wanted)
+        assert path.is_dir()
+
+
+def test_an_idempotent_set_still_reports_an_external_edit():
+    from otto.config.user_settings import set_cache_enabled
+
+    assert cache_enabled().on  # memoizes the absent file
+    _own_file("[cache]\nenabled = false\n")  # edited behind the memo's back
+    assert not set_cache_enabled(False).on
+
+
+def test_enable_on_a_bare_cache_table_writes_the_key():
+    from otto.config.user_settings import set_cache_enabled
+
+    path = _own_file("[cache]\n")
+    assert set_cache_enabled(True).on
+    assert path.read_text() == "[cache]\nenabled = true\n"
+
+
+def test_a_crlf_file_keeps_its_line_endings():
+    from otto.config.user_settings import set_cache_enabled
+
+    path = user_settings_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = b'# mine\r\n[cache]\r\nenabled = false  # why\r\n\r\n[creds]\r\nbackend = "json"\r\n'
+    path.write_bytes(body)
+    assert set_cache_enabled(True).on
+    assert path.read_bytes() == body.replace(b"enabled = false", b"enabled = true")
 
 
 def test_set_is_idempotent():
@@ -427,7 +519,7 @@ def test_a_validation_error_is_one_line_without_the_input():
     assert "cache.enabled" in text
 
 
-def test_an_error_without_a_location_reads_as_the_message_alone(monkeypatch):
+def test_an_error_without_a_location_reads_as_the_shared_compact_form(monkeypatch):
     path = _own_file("")
     # A model-level validator reports loc == (); drive that through the formatter.
     from pydantic import BaseModel, ValidationError, model_validator
@@ -444,4 +536,6 @@ def test_an_error_without_a_location_reads_as_the_message_alone(monkeypatch):
     with pytest.raises(ValueError, match=r"settings\.toml") as ei:
         load_user_settings(path)
     assert isinstance(ei.value.__cause__, ValidationError)
-    assert str(ei.value).endswith("settings.toml: Value error, cache and inventory disagree")
+    assert str(ei.value).endswith(
+        "settings.toml: <entry>: Value error, cache and inventory disagree [type=value_error]"
+    )
