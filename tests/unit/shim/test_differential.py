@@ -1122,7 +1122,77 @@ def _json_creds_store(path: Path):
     return JsonCredsStore(path)
 
 
-@pytest.mark.parametrize("source", [_json_inventory, _json_creds_store])
+def _creds_overlay(path: Path):
+    """The inventory's file in each state, beside a creds store that never exists."""
+    from otto.creds.json_store import JsonCredsStore
+    from otto.inventory.creds import CredsOverlay
+    from otto.inventory.json_backend import JsonInventory
+
+    return CredsOverlay(
+        JsonInventory(path), store=JsonCredsStore(path.parent.parent / "creds.json")
+    )
+
+
+# Every class in otto that names its freshness files, by class name. A new
+# one joins here, or the coverage guard below fails.
+_STAT_SOURCES = {
+    "JsonInventory": _json_inventory,
+    "JsonCredsStore": _json_creds_store,
+    "CredsOverlay": _creds_overlay,
+}
+
+# Classes that define stat_paths without being a source themselves.
+_NOT_SOURCES = {
+    "SupportsStatPaths": "the protocol",
+    "JsonFileSource": "a base: JsonInventory and JsonCredsStore are its sources",
+}
+
+
+def _classes_with_stat_paths() -> set[str]:
+    """Every class under src/otto that defines or inherits ``stat_paths``, by name."""
+    import ast
+
+    from tests._fixtures.paths import CHECKOUT_ROOT
+
+    bases: dict[str, set[str]] = {}
+    defining: set[str] = set()
+    for path in (CHECKOUT_ROOT / "src" / "otto").rglob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            bases.setdefault(node.name, set()).update(
+                b.id if isinstance(b, ast.Name) else b.attr
+                for b in node.bases
+                if isinstance(b, (ast.Name, ast.Attribute))
+            )
+            if any(
+                isinstance(item, ast.FunctionDef) and item.name == "stat_paths"
+                for item in node.body
+            ):
+                defining.add(node.name)
+    found = set(defining)
+    while True:
+        grown = {name for name, parents in bases.items() if parents & found} - found
+        if not grown:
+            return found
+        found |= grown
+
+
+def test_every_stat_paths_class_is_held_to_the_shim():
+    """A class that names its freshness files is in the shim/fingerprint differential below.
+
+    The shim stats those files and the digest mixes in the fingerprint; a
+    source whose fingerprint sorts a stat error differently hands every TAB
+    over while the digest never moves. Listing the sources by hand let one
+    go unchecked; this finds them all.
+    """
+    found = _classes_with_stat_paths()
+    assert found - set(_NOT_SOURCES) == set(_STAT_SOURCES), (
+        "add each new stat_paths class to _STAT_SOURCES (or _NOT_SOURCES, with why)"
+    )
+
+
+@pytest.mark.parametrize("source", list(_STAT_SOURCES.values()), ids=list(_STAT_SOURCES))
 @pytest.mark.parametrize("after", _KEY_STATES)
 @pytest.mark.parametrize("before", _KEY_STATES)
 def test_the_shim_and_the_inventory_fingerprint_see_the_same_file_changes(
@@ -1157,7 +1227,7 @@ def test_the_shim_and_the_inventory_fingerprint_see_the_same_file_changes(
     assert shim_same == writer_same
 
 
-@pytest.mark.parametrize("source", [_json_inventory, _json_creds_store])
+@pytest.mark.parametrize("source", list(_STAT_SOURCES.values()), ids=list(_STAT_SOURCES))
 def test_the_inventory_fingerprint_and_its_stored_triple_share_one_stat(
     tmp_path, monkeypatch, source
 ):
