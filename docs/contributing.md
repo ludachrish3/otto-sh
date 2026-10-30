@@ -1360,7 +1360,10 @@ scripts/refresh_docs_captures.py --only <id>`; a capture in an ordered set
 (the manifest's `[ordered]` table) refreshes only with its whole set, so
 name every id in it. Never edit an artifact by hand
 — if a capture drifts, the page's claim drifted with it, and the fix is in
-otto, the manifest's redaction rules, or the prose. A failed refresh leaves
+otto, the manifest's redaction rules, or the prose. A rule may change a
+line's width: once every rule has run, each log line's `file.py:<n>` column is
+re-padded to end at the capture's display width, where Rich put it, so a
+replaced value of any width leaves the line the same. A failed refresh leaves
 the captures it had already written updated and the rest stale (exit 2); fix
 the cause and re-run. Every capture runs in the fixed scratch directory
 `/tmp/otto-gs` (not `$TMPDIR`), so an artifact's layout is reproducible

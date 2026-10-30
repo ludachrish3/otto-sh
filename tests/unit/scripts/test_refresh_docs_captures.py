@@ -21,6 +21,7 @@ import pytest
 
 from otto.config.env import without_otto_env
 from scripts import refresh_docs_captures as rdc
+from scripts.docs_display_env import DISPLAY_ENV
 from tests._fixtures._host_pool import DOCKER_HOST
 from tests._fixtures.bed_locks import bed_lock_root
 from tests._fixtures.paths import CHECKOUT_ROOT
@@ -695,10 +696,16 @@ def test_a_log_line_s_source_line_number_is_redacted(tmp_path):
         "see host.py:12 for details\n"
     )
     assert rdc.redact(text, ctx.default_rules()) == (
-        "INFO     @zephyr37_fat   | kernel uptime           host.py:<n>\n"
+        "INFO     @zephyr37_fat   | kernel uptime          host.py:<n>\n"
         "DEBUG    framed write cmd='x'                    session.py:<n>\n"
         "see host.py:12 for details\n"
     )
+
+
+def _log_line(message: str, source: str) -> str:
+    """One log record as Rich renders it: the source column ends at the display width."""
+    width = int(DISPLAY_ENV["COLUMNS"])
+    return message + " " * (width - len(message) - len(source)) + source + "\n"
 
 
 def test_a_redacted_source_column_does_not_depend_on_the_line_number_s_width(tmp_path):
@@ -707,16 +714,38 @@ def test_a_redacted_source_column_does_not_depend_on_the_line_number_s_width(tmp
     A line number that gains or loses a digit moves that padding by one, so a
     redaction that replaced only the digits still drifted whenever an edit
     carried a log call across 999/1000. The two lines below are one log record
-    from before and after such an edit; they must redact to the same text.
+    from before and after such an edit; they must normalize to the same text.
     """
     ctx = _ctx(tmp_path)
-    before = "DEBUG    begin marker matched on                         session.py:1001\n"
-    after = "DEBUG    begin marker matched on                          session.py:999\n"
-    assert len(before) == len(after)
-    redacted = rdc.redact(before, ctx.default_rules())
-    assert redacted == rdc.redact(after, ctx.default_rules())
-    assert redacted.endswith(" session.py:<n>\n")
-    assert len(redacted) == len(before) - len("999") + len("<n>")
+    before = _log_line("DEBUG    begin marker matched on", "session.py:1001")
+    after = _log_line("DEBUG    begin marker matched on", "session.py:999")
+    normalized = rdc.normalize(before, ctx.default_rules())
+    assert normalized == rdc.normalize(after, ctx.default_rules())
+    assert normalized == _log_line("DEBUG    begin marker matched on", "session.py:<n>")
+
+
+def test_a_redacted_value_in_the_message_does_not_move_the_source_column(tmp_path):
+    """A manifest rule that replaces a number in the message narrows the message too.
+
+    The padding Rich put in front of the source column took up that number's
+    width, so a guest whose uptime gained or lost a digit drifted by a space
+    after ``Uptime: <n> ms``. The column is aligned after every rule has run.
+    """
+    ctx = _ctx(tmp_path)
+    rules = [*ctx.default_rules(), (r"Uptime: \d+ ms", "Uptime: <n> ms")]
+    short = _log_line("INFO     @zephyr37_fat > | Uptime: 3900123 ms", "host.py:3103")
+    long = _log_line("INFO     @zephyr37_fat > | Uptime: 13900123 ms", "host.py:3103")
+    normalized = rdc.normalize(short, rules)
+    assert normalized == rdc.normalize(long, rules)
+    assert normalized == _log_line("INFO     @zephyr37_fat > | Uptime: <n> ms", "host.py:<n>")
+
+
+def test_a_line_wider_than_the_display_keeps_one_space_before_its_source(tmp_path):
+    ctx = _ctx(tmp_path)
+    message = "DEBUG    " + "x" * int(DISPLAY_ENV["COLUMNS"])
+    assert rdc.normalize(f"{message}  session.py:12\n", ctx.default_rules()) == (
+        f"{message} session.py:<n>\n"
+    )
 
 
 def test_an_unrecorded_step_runs_but_writes_no_artifact(tmp_path):

@@ -150,17 +150,13 @@ SCRATCH_LOCK = Path("/tmp/otto-gs.lock")  # noqa: S108 -- pairs with SCRATCH_DIR
 _TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?")
 # The log path column ends a log line with ``file.py:<line>``; the number moves
 # with every edit to that file, so a capture would drift on almost any src change.
-# Rich pads the message so that column ends at the right edge, so the padding in
-# front of it moves too when the number gains or loses a digit: the digits' width
-# goes into the padding, which leaves the redacted line the same either way.
-_LOG_SOURCE_LINE = re.compile(r"(?m)( *)(\S+\.py):(\d+)(?=[ \t]*$)")
+_LOG_SOURCE_LINE = re.compile(r"(?m)(\S+\.py):\d+(?=[ \t]*$)")
 _LINE_PLACEHOLDER = "<n>"
-
-
-def _redact_log_source(match: re.Match[str]) -> str:
-    pad, path, digits = match.groups()
-    width = len(pad) + len(digits) - len(_LINE_PLACEHOLDER)
-    return " " * max(width, 1 if pad else 0) + f"{path}:{_LINE_PLACEHOLDER}"
+# Rich pads the message so that column ends at the display width, so the padding
+# in front of it takes up the width of every value a rule later replaces: the line
+# number, an uptime in the message. align_log_source_column re-pads it once every
+# rule has run (normalize).
+_LOG_SOURCE_COLUMN = re.compile(rf"(?m)^(.*\S) +(\S+\.py:{_LINE_PLACEHOLDER})[ \t]*$")
 
 
 Replacement = str | Callable[[re.Match[str]], str]
@@ -344,7 +340,7 @@ class RunContext:
             (re.escape(str(self.examples_root)), "<examples>"),
             (re.escape(str(ROOT)), "<repo>"),
             (_TIMESTAMP.pattern, "<timestamp>"),
-            (_LOG_SOURCE_LINE.pattern, _redact_log_source),
+            (_LOG_SOURCE_LINE.pattern, rf"\1:{_LINE_PLACEHOLDER}"),
             # Each elevated command's sudo prompt is fresh, so a logged
             # command line would differ on every refresh.
             (SUDO_PROMPT_SHAPE.pattern, "otto-sudo-<nonce>:"),
@@ -893,6 +889,26 @@ def redact(text: str, rules: list[tuple[str, Replacement]]) -> str:
     return text
 
 
+def align_log_source_column(text: str) -> str:
+    """Re-pad each log line's ``file.py:<n>`` column to end at the display width.
+
+    Where Rich put it: the redacted line is then the same whatever the width of
+    the values the rules replaced. A line wider than the display keeps one space.
+    """
+    width = int(DISPLAY_ENV["COLUMNS"])
+
+    def pad(match: re.Match[str]) -> str:
+        message, source = match.groups()
+        return message + " " * max(1, width - len(message) - len(source)) + source
+
+    return _LOG_SOURCE_COLUMN.sub(pad, text)
+
+
+def normalize(text: str, rules: list[tuple[str, Replacement]]) -> str:
+    """Redact ``text`` with ``rules``, then align the log source column: its committed form."""
+    return align_log_source_column(redact(text, rules))
+
+
 def render_command(argv: list[str]) -> str:
     """Render the first line of every artifact: the command as a reader would type it."""
     shown = {
@@ -1002,7 +1018,7 @@ def run_capture(cap: Capture, ctx: RunContext) -> str:
     for sources in cap.store_sources:
         _check_sources(cap, sources, subs)
     gtest_rules = _GTEST_RULES if cap.kind == "gtest" else []
-    body = redact(proc.stdout, ctx.default_rules() + gtest_rules + cap.redact)
+    body = normalize(proc.stdout, ctx.default_rules() + gtest_rules + cap.redact)
     # Rich pads a table row to the terminal width; the padding is not output a
     # reader sees, and keeping it made a refresh at another width rewrite lines
     # that had not changed.
