@@ -252,3 +252,25 @@ def test_only_the_one_switch_calls_cache_enabled():
     }
     assert "config/completion_cache.py" in callers  # the guard sees the one switch
     assert callers <= _CACHE_ENABLED_CALLERS
+
+
+def test_the_settings_stat_is_taken_once_and_survives_a_broken_file():
+    from otto.config.user_settings import (
+        clear_user_settings_memo,
+        load_user_settings,
+        user_settings_path,
+        user_settings_stat,
+    )
+
+    assert user_settings_stat() is None  # absent
+    path = user_settings_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("[cache\n")  # scaffold-exempt: user-level ~/.otto file
+    assert user_settings_stat() is None  # memoized: the later write is not seen
+    clear_user_settings_memo()
+    with pytest.raises(ValueError, match=r"settings\.toml"):
+        load_user_settings()
+    st = user_settings_stat()
+    assert st is not None  # recorded though parsing failed
+    assert st.st_size == path.stat().st_size
+    assert user_settings_stat() is st

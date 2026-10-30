@@ -434,3 +434,51 @@ def test_a_cache_that_is_on_but_not_writable_keeps_its_completion_files(project_
     assert (workspace / "completion_cache.json").is_file()
     assert (workspace / ".completion_collect.failed").is_file()
     assert [n for n in COMPLETION_FILE_NAMES if (workspace / n).exists()]
+
+
+def _shim_tab(env):
+    """A bash TAB (`otto ho<TAB>`) through the shim's validator, with the names marker backdated.
+
+    Backdating forces the stat pass: a fresh marker would be trusted without looking at
+    the key set, which is exactly what this test must not rely on.
+    """
+    import time
+
+    from otto import _shim_complete as sc
+
+    tab_env = {**env, "_OTTO_COMPLETE": "complete_bash", "COMP_WORDS": "otto ho", "COMP_CWORD": "1"}
+    marker = Path(sc.locate_cache(tab_env)).parent / sc.MARKER_FILENAMES["names"]
+    if marker.exists():
+        old = time.time() - 10 * sc.WINDOW_SECONDS
+        os.utime(marker, (old, old))
+    return sc.answer_or_reason(tab_env)
+
+
+@pytest.mark.parametrize("edit", ["create", "change"])
+def test_a_settings_edit_is_repaired_by_the_full_path_and_the_next_tab_is_served(project_env, edit):
+    """The shim hands over on a settings.toml edit; the full path must make that the LAST time.
+
+    Whatever the shim's stat pass can fail on, the Python stale check must fail on too:
+    otherwise `entry` sees a fresh digest, never rewrites the stored triple, and every
+    later TAB hands over to the full path.
+    """
+    _project, env = project_env
+    home = Path(env["OTTO_HOME"])
+    settings = home / "settings.toml"
+    if edit == "change":
+        home.mkdir(parents=True, exist_ok=True)
+        settings.write_text("[cache]\nenabled = true\n")  # scaffold-exempt: user-level
+    _run(env, argv=_ROOT_HELP)
+    cache = _cache_file(env)
+    assert _shim_tab(env).items is not None  # warm: served
+
+    home.mkdir(parents=True, exist_ok=True)
+    settings.write_text("[cache]\nenabled = true\n\n# edited\n")  # scaffold-exempt: user-level
+    out = _shim_tab(env)
+    assert out.items is None
+    assert out.stale is True
+
+    before = cache.stat().st_mtime_ns
+    _run(env, argv=_ROOT_HELP)
+    assert cache.stat().st_mtime_ns != before, "the full path did not rebuild for a settings edit"
+    assert _shim_tab(env).items is not None, "the next TAB was handed over again"

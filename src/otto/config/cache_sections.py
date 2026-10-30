@@ -302,7 +302,20 @@ def _shared_tail(projects: list[Project]) -> list[str]:
     for project in sorted(projects, key=lambda r: str(r.root)):
         lines.extend(f"unresolved:{name}" for name in _cc.unresolved_init_modules(project))
     lines.append(f"inventory:{_cc.inventory_digest_text(projects)}")
+    # The shim stats this file (it cannot read TOML), so the digest must move
+    # with it too: whatever the shim's stat pass can fail on, the stale check
+    # must fail on. Read from the settings load's own memoized stat: no syscall.
+    lines.append(f"user_settings:{_user_settings_identity()}")
     return lines
+
+
+def _user_settings_identity() -> str:
+    """``<path>:<mtime_ns>:<size>`` of the user settings file, or ``<path>:missing``."""
+    from .user_settings import user_settings_path, user_settings_stat
+
+    st = user_settings_stat()
+    path = user_settings_path()
+    return f"{path}:missing" if st is None else f"{path}:{st.st_mtime_ns}:{st.st_size}"
 
 
 def section_digest(section: Section, projects: list[Project]) -> str:

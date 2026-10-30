@@ -29,6 +29,7 @@ from .cache_sections import SHIM_SECTION as SHIM_SECTION  # noqa: PLC0414 — ex
 from .corpus_snapshot import stat as _snapshot_stat
 
 if TYPE_CHECKING:
+    import os
     from pathlib import Path
 
     from typer._click.core import Command, Context, Parameter
@@ -259,7 +260,11 @@ def stat_triple(path: "Path") -> list[Any]:
     The same facts :func:`otto.config.completion_cache.hash_file` folds into a
     digest, stored plainly so a reader can compare them without hashing.
     """
-    st = _snapshot_stat(path)
+    return _triple_of(path, _snapshot_stat(path))
+
+
+def _triple_of(path: "Path", st: "os.stat_result | None") -> list[Any]:
+    """Return the :func:`stat_triple` shape for an observation already in hand."""
     if st is None:
         return [str(path), None, None]
     return [str(path), st.st_mtime_ns, st.st_size]
@@ -305,18 +310,20 @@ def build_shim_payload(projects: "list[Project]", *, app: Any, pending_key: str)
 
     from .cache_sections import section_by_name, writer_key_paths
     from .completion_cache import _cache_ttl_seconds
-    from .user_settings import user_settings_path
+    from .user_settings import user_settings_path, user_settings_stat
 
     tree = serialize_tree(typer.main.get_command(app), pending_key=pending_key).tree
     names = section_by_name("names")
-    # The user settings file is a SHIM-only key: it decides whether the cache is
-    # on, and the shim cannot read TOML. The Python side asks ``cache_enabled()``
-    # directly, so keying the names digest with it would add a stat to every
-    # warm ``otto -h``.
-    key_paths = {*writer_key_paths(names, projects), user_settings_path()}
+    # The user settings file is a SHIM-only key path (the names digest folds it
+    # in through the shared tail instead): the shim cannot read TOML, so it
+    # compares the file's stat. Both sides take that stat from the settings
+    # load's one memoized observation, so they cannot disagree about the file.
+    settings_triple = _triple_of(user_settings_path(), user_settings_stat())
+    triples = [stat_triple(p) for p in sorted(set(writer_key_paths(names, projects)))]
+    triples = sorted([*triples, settings_triple], key=lambda t: t[0])
     return {
         "ttl_seconds": _cache_ttl_seconds(projects),
-        "keys": [stat_triple(p) for p in sorted(key_paths)],
+        "keys": triples,
         "tables": [str(project.root) for project in projects],
         "inventory": inventory_block(projects),
         "tree": tree,

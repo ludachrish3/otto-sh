@@ -7,6 +7,9 @@ bootstrap by
 :func:`otto.inventory.config.build_inventory`.
 """
 
+import contextlib
+import os
+import stat as _stat
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -30,10 +33,25 @@ CACHE_ENABLED_KEY = "enabled"
 # is reported on every ask; the None of an absent file is.
 _memo: dict[Path, "UserSettingsModel | None"] = {}
 
+# The one stat of the default path, taken by the load that reads it and kept
+# even when the parse then fails (a broken file has a real identity too). The
+# names digest and the shim's stored triple both read THIS observation, so they
+# cannot disagree about the file and no second syscall is spent on it.
+_stat_memo: dict[Path, "os.stat_result | None"] = {}
+
 
 def clear_user_settings_memo() -> None:
     """Forget the memoized default-path read, so the next load reads the file again."""
     _memo.clear()
+    _stat_memo.clear()
+
+
+def _stat_file(p: Path) -> "os.stat_result | None":
+    """Stat *p*, or ``None`` when nothing is there (absent, or a parent is no directory)."""
+    try:
+        return p.stat()
+    except (FileNotFoundError, NotADirectoryError):
+        return None
 
 
 def user_settings_path() -> Path:
@@ -62,18 +80,33 @@ def load_user_settings(path: "Path | None" = None) -> "UserSettingsModel | None"
         "no inventory is configured" much later in the run.
     """
     if path is not None:
-        return _read_user_settings(path)
+        return _read_user_settings(path, _stat_file(path))
     key = user_settings_path()
     if key not in _memo:
-        model = _read_user_settings(key)
         _memo.clear()
-        _memo[key] = model
+        _stat_memo.clear()
+        st = _stat_memo[key] = _stat_file(key)
+        _memo[key] = _read_user_settings(key, st)
     return _memo[key]
 
 
-def _read_user_settings(p: Path) -> "UserSettingsModel | None":
-    """Read and validate one settings file; the uncached half of :func:`load_user_settings`."""
-    if not p.is_file():
+def user_settings_stat() -> "os.stat_result | None":
+    """Return the memoized stat of the default settings file; ``None`` when absent.
+
+    The same observation :func:`load_user_settings` made (loading through the
+    memo if nothing has yet), so a memo hit adds no syscall. A file that
+    fails to parse still has its stat here.
+    """
+    key = user_settings_path()
+    if key not in _stat_memo:
+        with contextlib.suppress(ValueError):
+            load_user_settings()
+    return _stat_memo.get(key)
+
+
+def _read_user_settings(p: Path, st: "os.stat_result | None") -> "UserSettingsModel | None":
+    """Read and validate one settings file given its *st*, without the memo."""
+    if st is None or not _stat.S_ISREG(st.st_mode):
         return None
     try:
         data = load_toml_settings(p.read_text())
