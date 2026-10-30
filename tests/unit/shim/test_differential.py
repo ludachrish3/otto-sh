@@ -1148,8 +1148,29 @@ _NOT_SOURCES = {
 }
 
 
+def _binds_stat_paths(item) -> bool:
+    """A class-body statement that defines ``stat_paths``: ``def``, ``async def`` or assignment."""
+    import ast
+
+    if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return item.name == "stat_paths"
+    targets = (
+        item.targets
+        if isinstance(item, ast.Assign)
+        else [item.target]
+        if isinstance(item, ast.AnnAssign)
+        else []
+    )
+    return any(isinstance(t, ast.Name) and t.id == "stat_paths" for t in targets)
+
+
 def _classes_with_stat_paths() -> set[str]:
-    """Every class under src/otto that defines or inherits ``stat_paths``, by name."""
+    """Every class under src/otto that defines or inherits ``stat_paths``, by name.
+
+    By bare class name, across modules: two classes of one name are one entry,
+    and a base reached through an alias or a call is not followed. None of
+    those exists today; a source added through one would need its own entry.
+    """
     import ast
 
     from tests._fixtures.paths import CHECKOUT_ROOT
@@ -1165,10 +1186,7 @@ def _classes_with_stat_paths() -> set[str]:
                 for b in node.bases
                 if isinstance(b, (ast.Name, ast.Attribute))
             )
-            if any(
-                isinstance(item, ast.FunctionDef) and item.name == "stat_paths"
-                for item in node.body
-            ):
+            if any(_binds_stat_paths(item) for item in node.body):
                 defining.add(node.name)
     found = set(defining)
     while True:
