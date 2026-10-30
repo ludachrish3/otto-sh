@@ -311,6 +311,32 @@ def test_servable_shim_hands_over(workspace, mutate, reason):
         sc.validate_keys(cache, data, time.time())
 
 
+PRE_SETTINGS_KEY_SCHEMA = 28
+"""The last schema whose writer did not store the user settings file as a shim key."""
+
+
+def test_an_entry_from_before_the_settings_key_is_not_served(workspace):
+    """An entry written before the shim stored settings.toml cannot see ``cache.enabled``.
+
+    Served, it would keep answering after ``otto cache disable`` (which deletes
+    nothing) until some other key moved or the TTL ran out. Its schema stamp is
+    the only thing that tells it apart, so the shim must refuse that stamp and
+    hand over once, and the rebuild stores the key.
+    """
+    from otto.config.user_settings import user_settings_path
+
+    _, cache = workspace
+    data = _data(cache)
+    settings = str(user_settings_path())
+    payload = data["sections"]["shim"]["payload"]
+    payload["keys"] = [t for t in payload["keys"] if t[0] != settings]
+    data["schema"] = PRE_SETTINGS_KEY_SCHEMA
+    with pytest.raises(sc.Handover, match="schema") as raised:
+        sc.servable_shim(data, time.time())
+    assert raised.value.stale
+    assert sc.SCHEMA == cc.SCHEMA_VERSION > PRE_SETTINGS_KEY_SCHEMA
+
+
 def test_answer_or_reason_end_to_end(workspace, monkeypatch):
     monkeypatch.setenv("_OTTO_COMPLETE", "complete_bash")
     monkeypatch.setenv("COMP_WORDS", "otto ho")

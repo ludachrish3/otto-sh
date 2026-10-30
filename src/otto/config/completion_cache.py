@@ -247,7 +247,12 @@ CACHE_FILENAME = "completion_cache.json"
 #      and each ``host_drops`` entry names its ``project``; both keys were
 #      spelled with the old word for a project before. A v27 entry carries
 #      the old keys.
-SCHEMA_VERSION = 28
+# v29: layout unchanged — the shim payload's ``keys`` gain the user settings
+#      file, so the shim stops serving within its marker window once
+#      ``cache.enabled`` turns off. A v28 entry lacks that key and would keep
+#      answering after ``otto cache disable``, which deletes nothing, until
+#      another key moved or the TTL ran out. Every workspace rebuilds once.
+SCHEMA_VERSION = 29
 
 # A conftest holds no test of its own, but pytest loads it before collecting
 # anything under its directory, so the per-file tables watch every one.

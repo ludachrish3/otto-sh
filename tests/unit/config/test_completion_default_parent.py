@@ -156,4 +156,4 @@ def test_read_cache_rejects_a_malformed_default_parent_map(tmp_path, monkeypatch
 def test_schema_is_28():
     from otto import _shim_complete as sc
 
-    assert cc.SCHEMA_VERSION == 28 == sc.SCHEMA
+    assert cc.SCHEMA_VERSION == 29 == sc.SCHEMA

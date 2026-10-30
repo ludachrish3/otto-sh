@@ -20,8 +20,17 @@ What a path's stat says comes in three classes (:func:`classify`): a
 ``stat_result``; ``None``, absent (``ENOENT`` or ``ENOTDIR``); or
 :class:`Unreadable`, any other ``OSError`` (``ELOOP``, ``EACCES``, ...). The
 one rule for "absent", shared by the settings loader, the cache writer's
-digest and stored stat triples, and mirrored by the console-script shim's
-stat pass: a key that is still unreadable is unchanged, not missing.
+digest and stored stat triples, the json inventory and creds fingerprints
+(``otto.models.base.JsonFileSource``), and mirrored by the console-script
+shim's stat pass: a key that is still unreadable is unchanged, not missing.
+
+:func:`stat` is the two-class view, for callers that only ask "is it there":
+it folds unreadable into absent. That is deliberate, and the same on both
+sides of each comparison that uses it: a test table's ``env`` pairs
+(``otto.config.collected_tests._stat_pair``, mirrored by the shim's
+``_stat_pair``, whose bare ``except OSError`` folds the same way) and the
+init-module probe (``completion_cache._is_dir`` / ``_is_file``). A pair that
+folds on both sides cannot disagree, so it cannot hand over forever.
 
 The name is historical: the scope once also memoized the walk of the test
 corpus a rebuild made. A rebuild no longer reads the corpus, and what is
@@ -104,6 +113,9 @@ def observe(path: Path) -> "os.stat_result | Unreadable | None":
 
 
 def stat(path: Path) -> os.stat_result | None:
-    """``os.stat(path)``, or ``None`` when it does not stat (absent or unreadable); memoized."""
+    """``os.stat(path)``, or ``None`` when it does not stat (absent or unreadable); memoized.
+
+    Folds unreadable into absent; see the module docstring for who may.
+    """
     result = observe(path)
     return None if isinstance(result, Unreadable) else result

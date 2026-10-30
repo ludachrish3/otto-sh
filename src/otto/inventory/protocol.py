@@ -68,6 +68,14 @@ class SupportsStatPaths(Protocol):
     derived from files it can name implements this and returns them; one
     whose fingerprint is a content hash (the snapshot cache) returns ``None``
     and the shim hands over.
+
+    The shim sorts each file's stat into three classes: a ``stat_result``,
+    absent (``ENOENT``, ``ENOTDIR``) or unreadable (any other ``OSError``), as
+    ``otto.config.corpus_snapshot.classify`` does. The fingerprint must
+    change exactly when one of those files changes class, mtime or size. A
+    fingerprint that folds unreadable into absent, say, never moves when a
+    file's parent turns unsearchable, while the shim calls that a change and
+    hands every TAB over.
     """
 
     def stat_paths(self) -> "list[Path] | None":

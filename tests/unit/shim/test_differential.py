@@ -1108,3 +1108,50 @@ def test_the_shim_mirrors_the_writers_stat_constants():
 
     assert sc.UNREADABLE_SIZE == UNREADABLE_SIZE
     assert sc.DUMP_TESTS_STORED == cc.DUMP_TESTS_STORED
+
+
+def _json_inventory(path: Path):
+    from otto.inventory.json_backend import JsonInventory
+
+    return JsonInventory(path)
+
+
+def _json_creds_store(path: Path):
+    from otto.creds.json_store import JsonCredsStore
+
+    return JsonCredsStore(path)
+
+
+@pytest.mark.parametrize("source", [_json_inventory, _json_creds_store])
+@pytest.mark.parametrize("after", _KEY_STATES)
+@pytest.mark.parametrize("before", _KEY_STATES)
+def test_the_shim_and_the_inventory_fingerprint_see_the_same_file_changes(
+    tmp_path, before, after, source
+):
+    """The same pairs, for a file-backed inventory or creds store.
+
+    The shim stats the source's ``stat_paths()`` (the payload's inventory block)
+    while the digest mixes in its ``fingerprint()``. Both must sort a stat error
+    into the same three classes, or a file whose parent turns unsearchable is a
+    TAB that hands over forever while the digest never moves.
+    """
+    from otto.config.completion_tree import stat_triple
+
+    if os.geteuid() == 0 and "unsearchable" in (before, after):
+        pytest.skip("root ignores directory modes")
+    try:
+        key = _put_key_in(tmp_path, before)
+        src = source(key)
+        block = {"kind": "stat", "files": [stat_triple(p) for p in src.stat_paths()]}
+        fingerprint = src.fingerprint()
+        _put_key_in(tmp_path, after)
+        writer_same = source(key).fingerprint() == fingerprint
+        try:
+            sc._inventory_pass(block)
+            shim_same = True
+        except sc.Handover:
+            shim_same = False
+    finally:
+        if (tmp_path / "x").is_dir():
+            (tmp_path / "x").chmod(0o700)
+    assert shim_same == writer_same

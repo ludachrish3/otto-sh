@@ -521,3 +521,41 @@ def test_an_unreadable_lab_root_is_served_after_one_rebuild(project_env, tmp_pat
     _run(env, argv=_ROOT_HELP)
     assert cache.stat().st_mtime_ns == before, "the full path rewrote a valid cache"
     assert _shim_tab(env).items is not None
+
+
+def test_an_inventory_file_whose_parent_turns_unsearchable_is_served_after_one_rebuild(
+    project_env, tmp_path
+):
+    """A json inventory file, absent, then under a parent it cannot search: one rebuild.
+
+    The shim stats the inventory file and sees absent turn unreadable, a change; the
+    full path's digest must see the same change, or it never rewrites and every TAB
+    hands over for good.
+    """
+    if os.geteuid() == 0:
+        pytest.skip("root ignores directory modes")
+    project, env = project_env
+    parent = tmp_path / "inv"
+    parent.mkdir()
+    settings = project / ".otto" / "settings.toml"
+    settings.write_text(  # scaffold-exempt: a json inventory whose file is absent
+        settings.read_text()
+        + f'\n[inventory]\nbackend = "json"\npath = "{parent / "inventory.json"}"\n'
+    )
+    _run(env, argv=_ROOT_HELP)
+    assert _shim_tab(env).items is not None  # warm, with the file absent
+    parent.chmod(0)
+    try:
+        out = _shim_tab(env)
+        assert out.items is None, "absent -> unreadable is a change"
+        assert out.stale is True
+        cache = _cache_file(env)
+        before = cache.stat().st_mtime_ns
+        _run(env, argv=_ROOT_HELP)
+        assert cache.stat().st_mtime_ns != before, "the full path did not see the change"
+        assert _shim_tab(env).items is not None, "the next TAB was handed over again"
+        before = cache.stat().st_mtime_ns
+        _run(env, argv=_ROOT_HELP)
+        assert cache.stat().st_mtime_ns == before, "the full path rewrote a valid cache"
+    finally:
+        parent.chmod(0o700)

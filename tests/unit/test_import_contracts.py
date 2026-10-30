@@ -308,8 +308,10 @@ IMPORT_ONLY_DECLARED: dict[str, list[str]] = {
     "otto.link.impairer": [],
     "otto.link.netem": [],
     "otto.link.params": [],
-    # The leaf otto.host and otto.models share: OttoModel, CredSpec, Cred.
-    "otto.models.base": [],
+    # The leaf otto.host and otto.models share: OttoModel, CredSpec, Cred. The
+    # json sources' fingerprint classifies a stat through corpus_snapshot when
+    # called.
+    "otto.models.base": ["otto.config.corpus_snapshot"],
     # The scope predicate, the composition root's error types and the runtime
     # settings types, below every layer; it normalizes project names inside its
     # functions.
@@ -328,7 +330,7 @@ IMPORT_ONLY_DECLARED: dict[str, list[str]] = {
     # reads the env settings model, normalizes the workspace slug and keys the
     # roots (otto.utils.root_key) inside its functions.
     "otto.config.home": ["otto.models", "otto.models.dependencies", "otto.utils"],
-    "otto.config.user_settings": [],
+    "otto.config.user_settings": ["otto.config.corpus_snapshot"],
 }
 
 # Runs in the child. It records, for each watched module, the frames that

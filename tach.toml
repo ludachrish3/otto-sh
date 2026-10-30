@@ -127,7 +127,7 @@ layer = "entry"
 # model's, in otto.labs.loader. Function-local, so no verb's `--help` loads it.
 # otto.layout: `otto cov report`'s default --dir and each run dir's cov/ (cov_dir,
 # cov_report_dir). Function-local, like otto.labs.
-depends_on = ["otto._shim_complete", "otto.invocation", "otto.instruction_catalog", "otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.link.params", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.labs", "otto.kmodcov", "otto.coverage.embedded_gcov", "otto.params", "otto.version", "otto.result", "otto.lifecycle", "otto.run_context", "otto.errors", "otto.check", "otto.project", "otto.init", "otto.env", "otto.session.activation", "otto.session.dependencies", "otto.session.errors", "otto.session.lab", "otto.session.logs", "otto.session.projects", "otto.monitor.errors", "otto.config.scope", "otto.models.dependencies", "otto.config.home", "otto.config.user_settings", "otto.declared", "otto.fleet", "otto.layout"]
+depends_on = ["otto._shim_complete", "otto.invocation", "otto.instruction_catalog", "otto.instructions", "otto.registry", "otto.logger", "otto.link", "otto.link.params", "otto.reservations", "otto.coverage", "otto.tunnel", "otto.utils", "otto.models", "otto.bootstrap", "otto.suite", "otto.monitor", "otto.host", "otto.docker", "otto.config", "otto.inventory", "otto.labs", "otto.kmodcov", "otto.coverage.embedded_gcov", "otto.params", "otto.version", "otto.result", "otto.lifecycle", "otto.run_context", "otto.errors", "otto.check", "otto.project", "otto.init", "otto.env", "otto.session.activation", "otto.session.dependencies", "otto.session.errors", "otto.session.lab", "otto.session.logs", "otto.session.projects", "otto.monitor.errors", "otto.config.scope", "otto.models.dependencies", "otto.config.home", "otto.config.user_settings", "otto.config.corpus_snapshot", "otto.declared", "otto.fleet", "otto.layout"]
 
 [[modules]]
 path = "otto.config"
@@ -172,7 +172,24 @@ depends_on = [
     "otto.utils",
     # otto.config.home: the completion cache lives in the workspace home.
     "otto.config.home",
+    # otto.config.user_settings: the cache reads cache.enabled, and the shim
+    # payload and the names digest the settings file's one memoized stat.
+    "otto.config.user_settings",
+    # otto.config.corpus_snapshot: the one stat classification every digest
+    # and stored stat triple uses.
+    "otto.config.corpus_snapshot",
 ]
+
+[[modules]]
+path = "otto.config.corpus_snapshot"
+layer = "foundation"
+# The one stat classification (absent, unreadable or a stat) and its per-rebuild
+# memo. The standard library only, so the settings load and the json sources'
+# fingerprints classify a stat exactly as the completion cache does. Its
+# ancestor otto/config/__init__.py stays lazy (§4.3) bar one eager import,
+# otto.config.env, so importing this module loads that too: every importer
+# below otto.config does so inside a function.
+depends_on = []
 
 [[modules]]
 path = "otto.config.home"
@@ -215,7 +232,9 @@ layer = "specs"
 # importing otto.config. Its ancestor's one eager import, otto.config.env,
 # loads with it (§4.3). otto.models.base parses the file
 # (load_toml_settings), so a secret in it is wrapped from the parse on.
-depends_on = ["otto.config.home", "otto.models", "otto.models.base"]
+# otto.config.corpus_snapshot classifies the file's stat, function-locally;
+# otto.utils writes `otto cache enable/disable`'s edit atomically.
+depends_on = ["otto.config.home", "otto.models", "otto.models.base", "otto.config.corpus_snapshot", "otto.utils"]
 
 [[modules]]
 path = "otto.console"
@@ -755,9 +774,10 @@ layer = "foundation"
 # The leaf otto.host and otto.models both build on: OttoModel and
 # compact_validation_error, the credential pair (CredSpec and the runtime Cred
 # dataclass, with cred_identity) and resources_nonempty. pydantic and the
-# standard library only; it imports no other otto module (spec 2026-10-11
-# placement-and-phases §3.3).
-depends_on = []
+# standard library only; it imports no other otto module at import time (spec
+# 2026-10-11 placement-and-phases §3.3). JsonFileSource.fingerprint classifies
+# its file's stat through otto.config.corpus_snapshot, inside the function.
+depends_on = ["otto.config.corpus_snapshot"]
 
 [[modules]]
 path = "otto.models.dependencies"

@@ -6,8 +6,10 @@ spec, with :func:`compact_validation_error`; the credential pair,
 :class:`CredSpec` (one ``creds`` entry as lab data spells it) and the runtime
 :class:`Cred` dataclass it builds, with :func:`cred_identity`, the key every
 duplicate check uses; and :func:`resources_nonempty`, the one rule for a usable
-reservation identifier. It imports no other otto module (spec 2026-10-11
-placement-and-phases §3.3). ``Cred`` keeps its public path,
+reservation identifier. It imports no other otto module at import time (spec
+2026-10-11 placement-and-phases §3.3); :meth:`JsonFileSource.fingerprint`
+classifies a stat through ``otto.config.corpus_snapshot`` when called.
+``Cred`` keeps its public path,
 ``otto.host.login_proxy.Cred``, and ``CredSpec`` its, ``otto.models.CredSpec``.
 """
 
@@ -283,8 +285,9 @@ class JsonFileSource:
     """One JSON file a source reads once, on first use.
 
     What the json creds store and the json inventory share: the label, the
-    change fingerprint (path, mtime and size, or ``|missing``), the one path
-    that fingerprint stats, and the read that refuses an unreadable or
+    change fingerprint (path, mtime and size, or ``|missing`` or
+    ``|unreadable``), the one path that fingerprint stats, and the read that
+    refuses an unreadable or
     malformed file as ``<path>: <reason>`` in the source's own error class.
     The parse of the document, and its cache, are the subclass's.
     """
@@ -310,11 +313,22 @@ class JsonFileSource:
         return data
 
     def fingerprint(self) -> "str | None":
-        """Return the file's path, mtime and size, or ``|missing`` if it does not exist."""
-        try:
-            st = self.path.stat()
-        except OSError:
+        """Return the file's path, mtime and size; ``|missing`` when absent, ``|unreadable``.
+
+        The three classes are ``otto.config.corpus_snapshot.classify``'s,
+        the one rule the console-script shim mirrors when it stats
+        :meth:`stat_paths`: whatever the shim sees change, this must change
+        with, or a TAB hands over while the cache digest never moves.
+        """
+        # Function scope: the leaf imports no otto module at import time, and
+        # only the completion cache, which has loaded it already, asks.
+        from ..config.corpus_snapshot import Unreadable, classify
+
+        st = classify(self.path)
+        if st is None:
             return f"{self.path}|missing"
+        if isinstance(st, Unreadable):
+            return f"{self.path}|unreadable"
         return f"{self.path}|{st.st_mtime_ns}|{st.st_size}"
 
     def stat_paths(self) -> "list[Path] | None":

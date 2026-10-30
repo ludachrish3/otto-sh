@@ -961,7 +961,9 @@ CURRENT_LANDING = "P9b"
 # otto.__main__, the run context's home otto.run_context, and session's six files
 # (spec §3.9, §3.12 and §5.2 as amended by P9b), and its row was 74. Two modules joined the
 # foundation layer after it, otto.vendoring and otto.coverage.embedded_gcov (the shared
-# copy/compare core and the package that ships the embedded-gcov patch), so the row is 76.
+# copy/compare core and the package that ships the embedded-gcov patch), so the row was 76.
+# A third, otto.config.corpus_snapshot (the one stat classification, which the json
+# sources' fingerprints share with the completion cache), makes it 77.
 LAYERED_AT = {
     "P1a": 19,
     "P1b": 35,
@@ -973,7 +975,7 @@ LAYERED_AT = {
     "P7": 55,
     "P8": 56,
     "P9a": 62,
-    "P9b": 76,
+    "P9b": 77,
 }
 CYCLE_AT = {
     "P1a": 22,
@@ -1047,6 +1049,13 @@ STRING_EDGES: list[tuple[str, str, str]] = [
     ("otto/config/__init__.py", "otto.config.scope:DockerSettings", FACADE_BINDING),
     ("otto/config/__init__.py", "otto.config.scope:MonitorSettings", FACADE_BINDING),
     # ... and the user settings file's names, from their module of its own.
+    ("otto/config/__init__.py", "otto.config.user_settings:CacheSetting", FACADE_BINDING),
+    ("otto/config/__init__.py", "otto.config.user_settings:cache_enabled", FACADE_BINDING),
+    (
+        "otto/config/__init__.py",
+        "otto.config.user_settings:clear_user_settings_memo",
+        FACADE_BINDING,
+    ),
     ("otto/config/__init__.py", "otto.config.user_settings:load_user_settings", FACADE_BINDING),
     ("otto/config/__init__.py", "otto.config.user_settings:user_settings_path", FACADE_BINDING),
     (
@@ -1452,10 +1461,10 @@ def test_the_landing_anchor_allows_a_landing_in_progress_only() -> None:
     assert landing_problems(43, 13, "P4") == []
     assert "bump CURRENT_LANDING to P5" in landing_problems(48, 11, "P3")[0]
     assert landing_problems(70, 0, "P9a") == []
-    assert "bump CURRENT_LANDING to P9b" in landing_problems(76, 0, "P9a")[0]
-    assert landing_problems(76, 0, "P9b") == []
-    for counts in [[75, 0], [77, 0], [76, 1]]:
-        assert "the last landing, has exactly [76, 0]" in landing_problems(*counts, "P9b")[0]
+    assert "bump CURRENT_LANDING to P9b" in landing_problems(77, 0, "P9a")[0]
+    assert landing_problems(77, 0, "P9b") == []
+    for counts in [[76, 0], [78, 0], [77, 1]]:
+        assert "the last landing, has exactly [77, 0]" in landing_problems(*counts, "P9b")[0]
     assert "'P0' is not one of LANDINGS" in landing_problems(19, 22, "P0")[0]
 
 
