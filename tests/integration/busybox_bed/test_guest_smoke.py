@@ -66,8 +66,8 @@ async def test_no_gnu_userland_hides_behind_the_guest(guest):
     )
     link = (await host.run("readlink /bin/sh")).only
     assert link.retcode == 0, f"/bin/sh is not a symlink on {host.element.name}"
-    assert link.value.strip().endswith("busybox"), (
-        f"/bin/sh on {host.element.name} points at {link.value.strip()!r}, not busybox"
+    assert link.value.endswith("busybox"), (
+        f"/bin/sh on {host.element.name} points at {link.value!r}, not busybox"
     )
 
 
@@ -78,12 +78,12 @@ async def test_ssh_is_dead_by_construction_except_where_the_image_carries_a_drop
     result = (await host.run("command -v dropbear || command -v sshd || echo no-sshd")).only
     assert result.retcode == 0
     if host.element.name in SSHD_GUESTS:
-        assert result.value.strip() == "/bin/dropbear", (
+        assert result.value == "/bin/dropbear", (
             f"{host.element.name} declares an sshd but the guest has none at /bin/dropbear "
             f"(probe said {result.value!r}); the image was built without its dropbear inputs"
         )
     else:
         assert "no-sshd" in result.value, (
-            f"{host.element.name} has an sshd at {result.value.strip()!r}; the bed's "
+            f"{host.element.name} has an sshd at {result.value!r}; the bed's "
             "ssh-absent guests just stopped being ssh-absent"
         )

@@ -136,7 +136,7 @@ async def _run_product(host: UnixHost, op: str, *args: int) -> str:
         f"{REMOTE_INSTALL_DIR}/product {op} {str_args}"
     )
     result = await host.exec(cmd, timeout=10)
-    return result.value.strip()
+    return result.value
 
 
 @pytest.mark.xdist_group("coverage_e2e")

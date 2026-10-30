@@ -257,6 +257,6 @@ async def test_mysql_appshell_cycle(leased_host: tuple[str, str]) -> None:
         # The app shell's dedicated session is gone once the block exits;
         # `host.run` uses the host's SEPARATE default session, so its success
         # proves `_recover_session`-on-exit left the host uncorrupted.
-        assert (await host.run("echo back")).only.value.strip() == "back"
+        assert (await host.run("echo back")).only.value == "back"
     finally:
         await host.close()

@@ -91,7 +91,7 @@ async def test_exec_user_lands_on_a_proxy_login(term: str) -> None:
     try:
         result = await host.exec("whoami", user="root")
         assert result.status == Status.Success, f"exec failed: {result.value!r}"
-        assert result.value.strip().splitlines()[-1] == "root", result.value
+        assert result.value == "root", f"{result.value!r}"
     finally:
         await host.close()
 

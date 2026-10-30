@@ -209,12 +209,12 @@ async def _reap_orphan_docker_stacks() -> None:
         for frag in _ORPHAN_PROJECT_FRAGMENTS:
             containers = (
                 await host.exec(f"docker ps -aq --filter 'name={frag}'", timeout=30)
-            ).value.split()
+            ).value.splitlines()
             if containers:
                 await host.exec(f"docker rm -f {' '.join(containers)}", timeout=60)
             networks = (
                 await host.exec(f"docker network ls -q --filter 'name={frag}'", timeout=30)
-            ).value.split()
+            ).value.splitlines()
             if networks:
                 await host.exec(f"docker network rm {' '.join(networks)}", timeout=60)
     finally:

@@ -45,7 +45,7 @@ async def test_exec_ash_from_the_landing_shell(hook):
     try:
         r = (await host.run("echo ${FROM_HOOK:-unset} ${MARK:-unset} $0")).only
         assert r.status == Status.Success
-        fields = r.value.split()
+        fields = r.value.split(" ")
         assert len(fields) == 3, f"expected three fields, got {r.value!r}"
         from_hook, mark, shell = fields
         assert from_hook == "1", f"the hook's exported variable did not survive: {r.value!r}"

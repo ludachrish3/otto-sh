@@ -59,6 +59,6 @@ async def test_bb1350_console_login_and_run():
     try:
         res = (await host.run("id -un")).only
         assert res.retcode == 0, res
-        assert res.value.strip() == host_data(_NE)["creds"][0]["login"]
+        assert res.value == host_data(_NE)["creds"][0]["login"]
     finally:
         await host.close()

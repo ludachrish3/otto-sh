@@ -20,6 +20,7 @@ from tests._fixtures.bed_hygiene import (
     HygieneSnapshot,
     diff_snapshots,
     format_hygiene_report,
+    probe_lines,
     snapshot_host,
 )
 
@@ -147,6 +148,15 @@ async def test_snapshot_host_captures_docker_containers_and_networks():
         {"abc123 otto-project1-e2e-x-api-1", "def456 otto-project1-e2e-x-db-1"}
     )
     assert snap.docker_networks == frozenset({"bridge", "otto-project1-e2e-x_default"})
+
+
+@pytest.mark.parametrize(
+    ("value", "lines"),
+    [("", []), ("a", ["a"]), ("a\nb", ["a", "b"]), ("a\n", ["a", ""])],
+)
+def test_probe_lines_surfaces_a_stray_empty_line(value, lines):
+    """A trailing newline in an exact value is a stray line, so it shows as ``""``."""
+    assert probe_lines(value) == lines
 
 
 @pytest.mark.asyncio

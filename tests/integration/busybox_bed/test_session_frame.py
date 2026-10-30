@@ -25,6 +25,7 @@ import pytest
 
 from otto.host.command_frame import BashFrame, SessionMarkers
 from otto.utils import Status
+from tests._fixtures.bed_hygiene import probe_lines
 
 pytestmark = [pytest.mark.asyncio]
 
@@ -138,7 +139,7 @@ async def test_command_output_is_bracketed_in_order_with_no_marker_bleed(guest):
     """
     host, version = guest
     res = await host.exec("echo alpha; echo beta")
-    assert res.value.splitlines() == ["alpha", "beta"], (
+    assert res.value == "alpha\nbeta", (
         f"{host.element.name} (BusyBox {version}) answered {res.value!r} -- either the "
         f"lines are out of order or a sentinel/prompt leaked into the parsed output"
     )
@@ -153,16 +154,14 @@ async def test_a_command_may_end_with_an_ampersand_or_a_comment(guest):
     assert not bg.timed_out, f"{host.element.name} (BusyBox {version}): {bg.value!r}"
     assert bg.retcode == 0, f"{host.element.name} (BusyBox {version}): {bg.status} {bg.value!r}"
     noted = await host.exec("echo noted # a trailing comment", timeout=10)
-    assert noted.value.strip() == "noted", (
-        f"{host.element.name} (BusyBox {version}): {noted.value!r}"
-    )
+    assert noted.value == "noted", f"{host.element.name} (BusyBox {version}): {noted.value!r}"
 
 
 async def test_a_two_line_command_comes_back_without_a_continuation_prompt(guest):
     """The brace group spans two typed lines; ash prints PS2 before BEGIN, never after."""
     host, version = guest
     res = await host.exec("echo one\necho two", timeout=10)
-    assert res.value.splitlines() == ["one", "two"], (
+    assert res.value == "one\ntwo", (
         f"{host.element.name} (BusyBox {version}) answered {res.value!r}"
     )
 
@@ -238,7 +237,7 @@ async def test_ash_rejects_set_plus_o_history_but_the_shell_survives(guest):
         f"the rejection must be a real non-zero status -- {host.element.name} said {res.value!r}"
     )
     alive = await host.exec("echo alive")
-    assert alive.value.strip() == "alive", (
+    assert alive.value == "alive", (
         f"the rejected `set +o history` took {host.element.name}'s shell down with it: "
         f"{alive.value!r}"
     )
@@ -320,7 +319,7 @@ async def test_a_timed_out_command_leaves_no_orphan_process(guest):
     cleared = await host.exec(
         f"rm -f {_ORPHAN_MARKER}; [ -f {_ORPHAN_MARKER} ] && echo STALE || echo GONE"
     )
-    assert cleared.value.strip() == "GONE", (
+    assert cleared.value == "GONE", (
         f"could not clear {_ORPHAN_MARKER} on {host.element.name} ({cleared.value!r}), so "
         f"the arrival control below would read a stale marker as this run's proof"
     )
@@ -329,7 +328,7 @@ async def test_a_timed_out_command_leaves_no_orphan_process(guest):
         f"{_ORPHAN_COMMAND} & c=$!; sleep 1; ps | grep -c '{_ORPHAN_PATTERN}'; "
         f"kill $c 2>/dev/null; wait $c 2>/dev/null; ps | grep -c '{_ORPHAN_PATTERN}'"
     )
-    counts = control.value.split()
+    counts = probe_lines(control.value)
     assert len(counts) == 2, (
         f"the instrument control on {host.element.name} answered {control.value!r}, not "
         f"two counts -- `ps` or `grep -c` is not behaving as this row assumes"
@@ -359,7 +358,7 @@ async def test_a_timed_out_command_leaves_no_orphan_process(guest):
         f"[ -f {_ORPHAN_MARKER} ] && echo RAN || echo NEVER; "
         f"ps | grep -c '{_ORPHAN_PATTERN}'; rm -f {_ORPHAN_MARKER}"
     )
-    lines = after.value.splitlines()
+    lines = probe_lines(after.value)
     assert len(lines) == 2, f"the survivor probe answered {after.value!r}, not two lines"
     assert lines[0] == "RAN", (
         f"the abandoned command never reached {host.element.name} -- the timeout fired "

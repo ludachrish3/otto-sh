@@ -83,6 +83,16 @@ _DOCKER_NET_PROBE = (
 _PROBE_TIMEOUT = 30
 
 
+def probe_lines(text: str) -> list[str]:
+    """The lines of a line-per-item probe's exact ``value``; ``[]`` when it printed nothing.
+
+    ``split("\\n")``, not ``splitlines()``: ``splitlines()`` drops one trailing
+    newline, so a stray empty line (#711) would vanish instead of surfacing as
+    an ``""`` item that a before/after comparison reports.
+    """
+    return text.split("\n") if text else []
+
+
 def local_nc_listeners() -> list[str]:
     """``nc`` listeners on THIS box, as ``pgrep -af`` lines.
 

@@ -27,6 +27,7 @@ import pytest
 
 from otto.host.factory import create_host_from_dict
 from otto.host.userland import APPLET_PRESENT, applet_capability
+from tests._fixtures.bed_hygiene import probe_lines
 from tests._fixtures.labdata import element_for, host_data
 
 pytestmark = [pytest.mark.asyncio]
@@ -151,7 +152,7 @@ async def test_base64_presence_matches_what_the_matrix_records(guest):
     host, version = guest
     res = await host.exec("command -v base64 >/dev/null 2>&1 && echo yes || echo no")
     assert res.retcode == 0, f"the probe did not run on {host.element.name}: {res.value!r}"
-    seen = res.value.strip() == "yes"
+    seen = res.value == "yes"
     assert seen is _EXPECTED_BASE64[version], (
         f"{host.element.name} (BusyBox {version}): base64 "
         f"{'appeared' if seen else 'vanished'} relative to the recorded matrix "
@@ -263,7 +264,7 @@ async def test_applet_enumeration_is_unavailable_on_the_oldest_row(guest):
         f"grep -c 'applet not found' {_APPLET_LIST_PATH}; "
         f"rm -f {_APPLET_LIST_PATH}"
     )
-    lines = res.value.splitlines()
+    lines = probe_lines(res.value)
     assert len(lines) == 3, (
         f"the probe on {host.element.name} answered {res.value!r}, not three lines"
     )

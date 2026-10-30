@@ -178,7 +178,7 @@ async def _container_of(
         f"--filter label=com.docker.compose.service={shlex.quote(service)}"
     )
     assert result.is_ok, f"docker ps failed on {parent.id}: {result.value}"
-    return result.value.strip()
+    return result.value
 
 
 async def _image_of(parent, container_id: str) -> str:
@@ -187,7 +187,7 @@ async def _image_of(parent, container_id: str) -> str:
         f"docker inspect -f '{{{{.Config.Image}}}}' {shlex.quote(container_id)}"
     )
     assert result.is_ok, f"docker inspect failed on {parent.id}: {result.value}"
-    return result.value.strip()
+    return result.value
 
 
 async def _env_of(parent, container_id: str) -> dict[str, str]:
@@ -327,7 +327,7 @@ async def test_teardown_removes_stack_and_hosts(parent, lab, project):
             f"docker ps -aq --filter label=com.docker.compose.project={shlex.quote(project)}"
         )
         assert remaining.is_ok, remaining.value
-        assert not remaining.value.strip(), (
+        assert remaining.value == "", (
             f"containers survived the teardown of {project}: {remaining.value!r}"
         )
         stranded = [h for h in lab.hosts if h.startswith(f"{parent.id}.{USE_CASE}.")]
@@ -440,7 +440,7 @@ async def test_teardown_with_the_staged_files_gone_goes_by_the_label_and_says_so
             f"docker ps -aq --filter label=com.docker.compose.project={shlex.quote(project)}"
         )
         assert remaining.is_ok, remaining.value
-        assert not remaining.value.strip(), f"containers survived: {remaining.value!r}"
+        assert remaining.value == "", f"containers survived: {remaining.value!r}"
         assert "by its project label" in caplog.text
     finally:
         await _reap(parent, project)
@@ -540,7 +540,7 @@ async def _mode_and_owner(parent, path) -> str:
     """``<octal mode> <owner name>`` of *path* on the parent, as ``stat`` prints them."""
     result = await parent.exec(f"stat -c '%a %U' {shell_operand(str(path))}")
     assert result.is_ok, f"stat {path} failed on {parent.id}: {result.value}"
-    return result.value.strip()
+    return result.value
 
 
 @pytest.mark.asyncio

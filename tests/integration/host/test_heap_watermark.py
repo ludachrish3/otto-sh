@@ -66,7 +66,7 @@ async def _workload(ne_name: str, tmp_path: Path, tag: int) -> None:
     host = create_host_from_dict(host_data(ne_name), element=element_for(ne_name))
     try:
         res = (await host.run("kernel version", timeout=15)).only
-        assert "Zephyr" in (res.value or ""), f"console not healthy on {ne_name}"
+        assert "Zephyr" in res.value, f"console not healthy on {ne_name}"
 
         src = tmp_path / f"canary_{tag}.bin"
         src.write_bytes(b"heap-canary")

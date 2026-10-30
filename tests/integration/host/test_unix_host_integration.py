@@ -107,8 +107,7 @@ class TestBasicCommands:
     async def test_multiline_output(self, host1: Host):
         result = (await host1.run("echo -e 'line1\\nline2\\nline3'")).only
         assert result.status == Status.Success
-        lines = result.value.strip().splitlines()
-        assert len(lines) == 3
+        assert result.value == "line1\nline2\nline3"
 
     @pytest.mark.asyncio
     async def test_failing_command_returns_failed_status(self, host1: Host):
@@ -144,7 +143,7 @@ class TestStatePersistence:
         await host1.run("cd tmp")
         result = (await host1.run("pwd")).only
         assert result.status == Status.Success
-        assert result.value.strip() == "/tmp"
+        assert result.value == "/tmp"
 
     @pytest.mark.asyncio
     async def test_env_var_persists(self, host1: Host):
@@ -226,8 +225,8 @@ class TestNamedSessionIntegration:
         await s2.run("cd /home")
         r1 = (await s1.run("pwd")).only
         r2 = (await s2.run("pwd")).only
-        assert r1.value.strip() == "/tmp"
-        assert "/home" in r2.value.strip()
+        assert r1.value == "/tmp"
+        assert r2.value == "/home"
         await s1.close()
         await s2.close()
 
@@ -560,14 +559,12 @@ class TestUserAuthenticates:
             assert as_second.status == Status.Success, (
                 f"exec as {second} failed: {as_second.value!r}"
             )
-            assert as_second.value.strip() == second, (
-                f"exec(user={second!r}) ran as {as_second.value.strip()!r}"
-            )
+            assert as_second.value == second, f"exec(user={second!r}) ran as {as_second.value!r}"
 
             as_default = await host.exec("id -un")
             assert as_default.status == Status.Success, f"exec failed: {as_default.value!r}"
-            assert as_default.value.strip() == default_login, (
-                f"plain exec ran as {as_default.value.strip()!r}, not the login user"
+            assert as_default.value == default_login, (
+                f"plain exec ran as {as_default.value!r}, not the login user"
             )
         finally:
             await host.close()
@@ -600,8 +597,8 @@ class TestUserAuthenticates:
             assert res.status == Status.Success, f"put(user={second!r}) failed: {res.msg}"
             landed = await host.exec(f"stat -c %U:%s {remote_dir}/{by_second.name}")
             assert landed.status == Status.Success, f"stat failed: {landed.value!r}"
-            assert landed.value.strip() == f"{second}:{len(by_second.read_bytes())}", (
-                f"put(user={second!r}) landed {landed.value.strip()!r}, expected "
+            assert landed.value == f"{second}:{len(by_second.read_bytes())}", (
+                f"put(user={second!r}) landed {landed.value!r}, expected "
                 f"{second}:{len(by_second.read_bytes())} (owner:size)"
             )
 
@@ -609,8 +606,8 @@ class TestUserAuthenticates:
             assert res.status == Status.Success, f"control put failed: {res.msg}"
             landed = await host.exec(f"stat -c %U:%s {remote_dir}/{by_default.name}")
             assert landed.status == Status.Success, f"stat failed: {landed.value!r}"
-            assert landed.value.strip() == f"{default_login}:{len(by_default.read_bytes())}", (
-                f"control put landed {landed.value.strip()!r}, expected "
+            assert landed.value == f"{default_login}:{len(by_default.read_bytes())}", (
+                f"control put landed {landed.value!r}, expected "
                 f"{default_login}:{len(by_default.read_bytes())} (owner:size)"
             )
         finally:
@@ -633,7 +630,7 @@ class TestUserAuthenticates:
         try:
             uid = await host.exec("id -u")
             assert uid.status == Status.Success, f"id -u failed: {uid.value!r}"
-            assert uid.value.strip() != "0", (
+            assert uid.value != "0", (
                 f"the bed's default login for test2 ({default_login!r}) is root; "
                 f"file permissions cannot discriminate an authenticated read, so "
                 f"this test needs an unprivileged default user"
@@ -643,8 +640,8 @@ class TestUserAuthenticates:
             assert made.status == Status.Success, f"could not write {remote_path}: {made.value!r}"
             perms = await host.exec(f"stat -c %U:%a {remote_path}")
             assert perms.status == Status.Success, f"stat failed: {perms.value!r}"
-            assert perms.value.strip() == f"{second}:600", (
-                f"{remote_path} is {perms.value.strip()!r}; the test needs it owned "
+            assert perms.value == f"{second}:600", (
+                f"{remote_path} is {perms.value!r}; the test needs it owned "
                 f"by {second!r} and unreadable by anyone else"
             )
 

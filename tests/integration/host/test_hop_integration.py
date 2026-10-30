@@ -295,7 +295,7 @@ class TestFileTransferThroughHop:
     async def test_scp_get_through_hop(self, single_hop_ssh: UnixHost, tmp_path: Path):
         """Download a file from the target through an SSH hop via SCP."""
         result = (await single_hop_ssh.run("hostname")).only
-        expected = result.value.strip()
+        expected = result.value
 
         res = await transfer_with_retry(
             lambda: single_hop_ssh.get([Path("/etc/hostname")], tmp_path)
@@ -337,7 +337,7 @@ class TestFileTransferThroughHop:
         )
         try:
             result = (await h.run("hostname")).only
-            expected = result.value.strip()
+            expected = result.value
 
             res = await transfer_with_retry(lambda: h.get([Path("/etc/hostname")], tmp_path))
             assert res.status == Status.Success, f"SFTP get failed: {res.msg}"
@@ -394,7 +394,7 @@ class TestFileTransferThroughHop:
         )
         try:
             result = (await h.run("hostname")).only
-            expected = result.value.strip()
+            expected = result.value
 
             res = await transfer_with_retry(lambda: h.get([Path("/etc/hostname")], tmp_path))
             assert res.status == Status.Success, f"FTP get failed: {res.msg}"
@@ -456,7 +456,7 @@ class TestFileTransferThroughHop:
         )
         try:
             result = (await h.run("hostname")).only
-            expected = result.value.strip()
+            expected = result.value
 
             res = await transfer_with_retry(lambda: h.get([Path("/etc/hostname")], tmp_path))
             assert res.status == Status.Success, f"NC get failed: {res.msg}"
@@ -495,7 +495,7 @@ class TestTwoHopChain:
     async def test_scp_get_through_two_hops(self, two_hop_ssh: UnixHost, tmp_path: Path):
         """Download a file through a 2-hop SSH chain."""
         result = (await two_hop_ssh.run("hostname")).only
-        expected = result.value.strip()
+        expected = result.value
 
         res = await transfer_with_retry(lambda: two_hop_ssh.get([Path("/etc/hostname")], tmp_path))
         assert res.status == Status.Success, f"SCP get through 2 hops failed: {res.msg}"

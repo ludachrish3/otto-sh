@@ -139,7 +139,7 @@ async def test_run_preserves_cwd_across_calls(stack):
     into the next, no `&&` required."""
     result = await stack.run(["cd /tmp", "pwd"])
     assert result.status is Status.Success
-    assert result[-1].value.strip() == "/tmp"
+    assert result[-1].value == "/tmp"
 
 
 @pytest.mark.asyncio(loop_scope="module")
@@ -157,7 +157,7 @@ async def test_run_state_persists_across_separate_run_invocations(stack):
     assert r1.status is Status.Success
     r2 = await stack.run("pwd")
     assert r2.status is Status.Success
-    assert r2.only.value.strip() == "/var"
+    assert r2.only.value == "/var"
 
 
 @pytest.mark.asyncio(loop_scope="module")

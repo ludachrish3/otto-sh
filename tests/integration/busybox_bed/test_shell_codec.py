@@ -249,7 +249,7 @@ async def test_the_decode_spelling_matches_what_the_matrix_records(guest):
 
     if flag is None:
         res = await host.exec("command -v base64 >/dev/null 2>&1 && echo PRESENT || echo ABSENT")
-        assert res.value.strip() == "ABSENT", (
+        assert res.value == "ABSENT", (
             f"{host.element.name} (BusyBox {version}) was recorded as having no base64 "
             f"applet at all, but command -v found one ({res.value!r}) -- the "
             f"backend's declared codec gap for this row is stale"

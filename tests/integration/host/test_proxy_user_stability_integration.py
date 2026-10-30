@@ -199,12 +199,12 @@ async def test_proxied_command_roundtrip(leased_host: tuple[str, str]) -> None:
     try:
         whoami = (await host.run("whoami")).only
         assert whoami.status == Status.Success, f"whoami failed: {whoami.value!r}"
-        assert whoami.value.strip() == "mysql"
+        assert whoami.value == "mysql"
 
         marker = f"proxied_{uuid.uuid4().hex}"
         echo = (await host.run(f"echo {marker}")).only
         assert echo.status == Status.Success, f"echo failed: {echo.value!r}"
-        assert echo.value.strip() == marker
+        assert echo.value == marker
     finally:
         await host.close()
 
@@ -227,14 +227,14 @@ async def test_proxied_as_user_roundtrip(leased_host: tuple[str, str]) -> None:
         _mysql_host_dict(ip, element), element=Element(element)
     )  # default user: vagrant
     try:
-        before = (await host.run("whoami")).only.value.strip()
+        before = (await host.run("whoami")).only.value
         assert before == "vagrant"
 
         async with host.as_user("mysql"):
-            during = (await host.run("whoami")).only.value.strip()
+            during = (await host.run("whoami")).only.value
             assert during == "mysql"
 
-        after = (await host.run("whoami")).only.value.strip()
+        after = (await host.run("whoami")).only.value
         assert after == "vagrant"
     finally:
         await host.close()
@@ -296,9 +296,7 @@ async def test_proxied_transfer_content_and_ownership(
 
         stat = (await proxied_host.run(f"stat -c %U {remote_file}")).only
         assert stat.status == Status.Success, f"stat failed: {stat.value!r}"
-        assert stat.value.strip() == expected_owner, (
-            f"file not owned by {expected_owner!r}: {stat.value!r}"
-        )
+        assert stat.value == expected_owner, f"file not owned by {expected_owner!r}: {stat.value!r}"
 
         dest_dir = tmp_path / "dest"
         dest_dir.mkdir()
@@ -403,9 +401,9 @@ async def test_su_prompt_is_answered_when_it_appears(leased_host: tuple[str, str
         async with host.as_user("test"):
             elapsed = time.monotonic() - started
             assert elapsed < _SWITCH_BUDGET_S, f"prompted switch took {elapsed:.1f}s"
-            assert (await host.run("whoami")).only.value.strip() == "test"
-            assert (await host.run("echo alive")).only.value.strip() == "alive"
-        assert (await host.run("whoami")).only.value.strip() == "vagrant"
+            assert (await host.run("whoami")).only.value == "test"
+            assert (await host.run("echo alive")).only.value == "alive"
+        assert (await host.run("whoami")).only.value == "vagrant"
     finally:
         await host.close()
 
@@ -436,8 +434,8 @@ async def test_su_password_does_not_stall_when_no_prompt_appears(
                 f"unprompted switch took {elapsed:.1f}s — a configured password stalled "
                 f"waiting for a challenge that root never receives"
             )
-            assert (await host.run("whoami")).only.value.strip() == "test"
-            assert (await host.run("echo alive")).only.value.strip() == "alive"
-        assert (await host.run("whoami")).only.value.strip() == "vagrant"
+            assert (await host.run("whoami")).only.value == "test"
+            assert (await host.run("echo alive")).only.value == "alive"
+        assert (await host.run("whoami")).only.value == "vagrant"
     finally:
         await host.close()

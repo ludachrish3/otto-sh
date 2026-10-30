@@ -23,7 +23,7 @@ import pytest
 
 from otto.host.unix_host import UnixHost
 from otto.result import CommandResult, Result
-from tests._fixtures.bed_hygiene import _NC_LISTENER_PROBE, local_nc_listeners
+from tests._fixtures.bed_hygiene import _NC_LISTENER_PROBE, local_nc_listeners, probe_lines
 from tests.integration.host._transfer_retry import transfer_with_retry
 
 # Real I/O is meaningfully slower than mocked; bump the per-test ceiling.
@@ -276,8 +276,7 @@ async def test_real_concurrent_transfers(
     # a substring (Wave 14; see _NC_LISTENER_PROBE's comment).
     if transfer_host.transfer == "nc":
         result = (await transfer_host.run(_NC_LISTENER_PROBE)).only
-        leftover = result.value.strip()
-        assert not leftover, f"leftover nc listeners after concurrent put: {leftover}"
+        assert result.value == "", f"leftover nc listeners after concurrent put: {result.value!r}"
 
 
 # ── 6. Cancellation recovery ──────────────────────────────────────────────────
@@ -433,8 +432,9 @@ async def test_real_nc_high_fanout_put(
         await transfer_host.run(f"rm -f {remote_path}")
 
     result = (await transfer_host.run(_NC_LISTENER_PROBE)).only
-    leftover = result.value.strip()
-    assert not leftover, f"leftover nc listeners after N={N} concurrent puts: {leftover}"
+    assert result.value == "", (
+        f"leftover nc listeners after N={N} concurrent puts: {result.value!r}"
+    )
 
 
 # ── 9. nc — cancellation cleans up listener ───────────────────────────────────
@@ -462,7 +462,7 @@ async def test_real_nc_cancel_cleans_up_listener(
 
     # Snapshot listener count before — if the remote already has stray
     # listeners from a prior test, attribute that separately.
-    before = (await transfer_host.run(_NC_LISTENER_PROBE)).only.value.strip().splitlines()
+    before = probe_lines((await transfer_host.run(_NC_LISTENER_PROBE)).only.value)
 
     with contextlib.suppress(
         asyncio.TimeoutError, asyncio.CancelledError
@@ -475,7 +475,7 @@ async def test_real_nc_cancel_cleans_up_listener(
     # Allow a brief grace period for cleanup to settle before checking.
     await asyncio.sleep(2.0)
 
-    after = (await transfer_host.run(_NC_LISTENER_PROBE)).only.value.strip().splitlines()
+    after = probe_lines((await transfer_host.run(_NC_LISTENER_PROBE)).only.value)
     new_listeners = [line for line in after if line not in before]
     assert not new_listeners, f"cancellation orphaned remote nc listener(s): {new_listeners}"
 

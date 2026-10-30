@@ -65,7 +65,7 @@ async def test_instruction_uses_composed_context_manager(parent_lab):
             api = containers["api"]
             res = await api.exec("hostname")
             assert res.status is Status.Success
-            return res.value.strip()
+            return res.value
 
     hostname = await my_workflow()
     assert hostname  # any non-empty hostname is success
