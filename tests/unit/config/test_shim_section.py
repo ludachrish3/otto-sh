@@ -28,12 +28,16 @@ def test_stat_triple_records_a_file_and_a_missing_path(tmp_path: Path):
     assert stat_triple(tmp_path / "nope") == [str(tmp_path / "nope"), None, None]
 
 
-def test_payload_keys_mirror_the_names_key_set(tmp_path, monkeypatch):
+def test_payload_keys_are_the_names_key_set_plus_the_user_settings_file(tmp_path, monkeypatch):
     _, projects = _projects(tmp_path, monkeypatch)
     payload = build_shim_payload(projects, app=app, pending_key=PENDING_SUBCMD_ARGS_KEY)
     names = section_by_name("names")
     keys = writer_key_paths(names, projects)
-    assert payload["keys"] == [stat_triple(p) for p in sorted(set(keys))]
+    from otto.config.user_settings import user_settings_path
+
+    # The settings file is shim-only (the shim cannot read TOML); see build_shim_payload.
+    expected = sorted({*keys, user_settings_path()})
+    assert payload["keys"] == [stat_triple(p) for p in expected]
     assert payload["tables"] == [str(project.root) for project in projects]
     assert payload["ttl_seconds"] == cc._cache_ttl_seconds(projects)
     assert "tests_digest" not in payload

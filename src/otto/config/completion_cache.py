@@ -1110,8 +1110,8 @@ def cache_is_writable(projects: list["Project"]) -> bool:
 
     The cheap half of :func:`cache_rebuild_is_worthwhile`: no key-set stats,
     so a caller can ask it before paying for anything a rebuild needs. False
-    with no projects, no cache path (the cache is off), or an inventory whose fingerprint is
-    ephemeral; ``not projects`` first, for the reason
+    with no projects, no cache path (the cache is off), or an inventory whose
+    fingerprint is ephemeral; ``not projects`` first, for the reason
     :func:`cache_rebuild_is_worthwhile` gives.
     """
     return bool(projects) and _cache_path() is not None and not _fingerprint_is_ephemeral(projects)

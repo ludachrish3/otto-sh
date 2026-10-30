@@ -418,11 +418,17 @@ def test_a_tainted_write_still_replaces_an_untainted_entry(projects):
     assert after["names"]["tainted"] is True, "a clean entry survived a tainted write"
 
 
-def test_the_user_settings_file_keys_the_names_section(projects):
-    """It decides whether the cache is on, so its edit must stale what the shim serves."""
+def test_the_user_settings_file_is_a_shim_key_only(projects):
+    """Warm ``otto -h`` must not stat it; the shim's stored triples carry it once."""
+    from otto.cli.main import PENDING_SUBCMD_ARGS_KEY, app
     from otto.config.cache_sections import _names_static_key_paths
+    from otto.config.completion_tree import build_shim_payload
     from otto.config.user_settings import user_settings_path
 
     _project, discovered = projects
-    paths = _names_static_key_paths(discovered)
-    assert paths.count(user_settings_path()) == 1  # once, not per project
+    path = user_settings_path()
+    assert path not in _names_static_key_paths(discovered)
+    payload = build_shim_payload(discovered, app=app, pending_key=PENDING_SUBCMD_ARGS_KEY)
+    keys = [triple[0] for triple in payload["keys"]]
+    assert keys.count(str(path)) == 1
+    assert keys == sorted(keys)

@@ -83,18 +83,11 @@ def _names_static_key_paths(projects: list[Project]) -> list[Path]:
     payload reads a test file. The lab files the hosts/labs payloads read are
     the section's lab key paths (:func:`lab_key_paths`), stored with the
     entry by the writer.
-
-    The user settings file keys it too, once rather than per project: it
-    decides whether the cache is on and declares a user-level inventory, so
-    its edit can change what the shim may serve.
     """
-    from .user_settings import user_settings_path
-
     paths: list[Path] = []
     for project in projects:
         paths.append(project.root / ".otto" / "settings.toml")
         paths.extend(_cc.resolved_init_paths(project))
-    paths.append(user_settings_path())
     return paths
 
 

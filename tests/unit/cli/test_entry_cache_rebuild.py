@@ -403,6 +403,34 @@ def test_the_full_path_removes_a_workspace_cache_once_the_cache_is_off(project_e
 
 def test_the_full_path_writes_no_cache_when_off(project_env):
     _project, env = project_env
+    _run(env, argv=_ROOT_HELP)  # control: the same run with the cache ON writes one
+    _cache_file(env)
+    for cache in Path(env["OTTO_HOME"]).rglob("completion_cache.json"):
+        cache.unlink()
     _settings_off(env)
     _run(env, argv=_ROOT_HELP)
     assert not list(Path(env["OTTO_HOME"]).rglob("completion_cache.json"))
+
+
+_NOT_WRITABLE_ENTRY = [
+    sys.executable,
+    "-c",
+    "import otto.cli.main as m; m._cache_is_writable = lambda projects: False; m.entry()",
+]
+
+
+def test_a_cache_that_is_on_but_not_writable_keeps_its_completion_files(project_env):
+    """The off-removal is for the OFF cache only: "not writable" for another reason leaves files."""
+    from otto.config.cache_maintenance import COMPLETION_FILE_NAMES
+
+    _project, env = project_env
+    _run(env, argv=_ROOT_HELP)
+    workspace = _cache_file(env).parent
+    (workspace / ".completion_collect.failed").write_text("x")
+    p = subprocess.run(
+        [*_NOT_WRITABLE_ENTRY, *_ROOT_HELP], env=env, capture_output=True, text=True, check=False
+    )
+    assert p.returncode == 0, p.stderr
+    assert (workspace / "completion_cache.json").is_file()
+    assert (workspace / ".completion_collect.failed").is_file()
+    assert [n for n in COMPLETION_FILE_NAMES if (workspace / n).exists()]

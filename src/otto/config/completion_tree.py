@@ -305,12 +305,18 @@ def build_shim_payload(projects: "list[Project]", *, app: Any, pending_key: str)
 
     from .cache_sections import section_by_name, writer_key_paths
     from .completion_cache import _cache_ttl_seconds
+    from .user_settings import user_settings_path
 
     tree = serialize_tree(typer.main.get_command(app), pending_key=pending_key).tree
     names = section_by_name("names")
+    # The user settings file is a SHIM-only key: it decides whether the cache is
+    # on, and the shim cannot read TOML. The Python side asks ``cache_enabled()``
+    # directly, so keying the names digest with it would add a stat to every
+    # warm ``otto -h``.
+    key_paths = {*writer_key_paths(names, projects), user_settings_path()}
     return {
         "ttl_seconds": _cache_ttl_seconds(projects),
-        "keys": [stat_triple(p) for p in sorted(set(writer_key_paths(names, projects)))],
+        "keys": [stat_triple(p) for p in sorted(key_paths)],
         "tables": [str(project.root) for project in projects],
         "inventory": inventory_block(projects),
         "tree": tree,
