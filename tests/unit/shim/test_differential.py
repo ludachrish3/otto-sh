@@ -977,3 +977,46 @@ def test_the_docker_sites_are_answered_with_the_seeded_values(
     assert got is not None, reason
     assert got.split("\n") == expected if expected else got == ""
     assert got == _typer(cli, line, cword, {}, monkeypatch)
+
+
+def _settings_path_in(tmp_path: Path, case: str) -> Path:
+    """A settings path in one of the states ``user_settings._stat_file`` tells apart."""
+    if case == "absent":
+        return tmp_path / "settings.toml"
+    if case == "under a file":  # ENOTDIR
+        (tmp_path / "blocker").write_text("")
+        return tmp_path / "blocker" / "settings.toml"
+    if case == "self loop":  # ELOOP
+        path = tmp_path / "settings.toml"
+        path.symlink_to(path)
+        return path
+    if case == "unsearchable parent":  # EACCES
+        if os.geteuid() == 0:
+            pytest.skip("root ignores directory modes")
+        (tmp_path / "locked").mkdir()
+        (tmp_path / "locked").chmod(0)
+        return tmp_path / "locked" / "settings.toml"
+    raise AssertionError(case)
+
+
+@pytest.mark.parametrize("case", ["absent", "under a file", "self loop", "unsearchable parent"])
+def test_the_shim_and_the_settings_load_agree_on_what_is_absent(tmp_path, case):
+    """``_stat_pass`` mirrors ``user_settings._stat_file``: a key stored as missing stays
+    valid exactly when the settings load would call the file absent."""
+    from otto.config.user_settings import _stat_file
+
+    path = _settings_path_in(tmp_path, case)
+    try:
+        try:
+            absent = _stat_file(path) is None
+        except ValueError:
+            absent = False
+        try:
+            sc._stat_pass([[str(path), None, None]])
+            shim_absent = True
+        except sc.Handover:
+            shim_absent = False
+    finally:
+        if (tmp_path / "locked").exists():
+            (tmp_path / "locked").chmod(0o700)
+    assert shim_absent == absent

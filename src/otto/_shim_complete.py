@@ -842,13 +842,22 @@ def servable_shim(data: Any, now: float) -> dict[str, Any]:
 
 
 def _stat_pass(triples: list[Any]) -> None:
+    """Hand over unless every key path stats as it was stored.
+
+    Absent is ``ENOENT`` or ``ENOTDIR`` only, the rule of
+    ``otto.config.user_settings._stat_file``. Any other stat error (``ELOOP``,
+    ``EACCES``, ...) hands over even for a path stored as missing: a settings
+    file in that state turns the cache off, which only the full path can see.
+    """
     for path, mtime_ns, size in triples:
         try:
             st = os.stat(path)
-        except OSError:
+        except (FileNotFoundError, NotADirectoryError):
             if mtime_ns is None:
                 continue
             raise Handover(f"stale: {path} is gone", stale=True) from None
+        except OSError:
+            raise Handover(f"stale: {path} cannot be read", stale=True) from None
         if mtime_ns is None:
             raise Handover(f"stale: {path} appeared", stale=True)
         if st.st_mtime_ns != mtime_ns or st.st_size != size:

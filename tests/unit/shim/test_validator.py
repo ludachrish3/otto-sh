@@ -162,6 +162,61 @@ def test_a_stored_missing_path_that_appears_fails(workspace, tmp_path):
         sc.validate_keys(cache, data, time.time())
 
 
+def _settings_triple(data: dict) -> list:
+    from otto.config.user_settings import user_settings_path
+
+    [triple] = [
+        t for t in data["sections"]["shim"]["payload"]["keys"] if t[0] == str(user_settings_path())
+    ]
+    return triple
+
+
+def test_a_settings_file_that_turns_into_a_self_loop_hands_over(workspace):
+    """Only a MISSING file is absent: an ELOOP settings path is broken (cache off), not absent.
+
+    The cache was written while settings.toml was absent, so its triple is stored as
+    missing. Reading the loop as "still absent" would serve the old cache for as long
+    as the entry lives, though the full path would find the cache off.
+    """
+    from otto.config.user_settings import user_settings_path
+
+    _project, cache = workspace
+    data = _data(cache)
+    assert _settings_triple(data)[1:] == [None, None]
+    path = user_settings_path()
+    path.symlink_to(path)  # ELOOP on stat
+    with pytest.raises(sc.Handover, match="stale") as ei:
+        sc.validate_keys(cache, data, time.time())
+    assert ei.value.stale
+
+
+def test_a_stored_missing_path_that_cannot_be_stat_hands_over(workspace, tmp_path):
+    """EACCES on a key stored as missing is not "still missing": the shim hands over."""
+    if os.geteuid() == 0:
+        pytest.skip("root ignores directory modes")
+    _project, cache = workspace
+    data = _data(cache)
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    data["sections"]["shim"]["payload"]["keys"].append([str(locked / "settings.toml"), None, None])
+    locked.chmod(0)
+    try:
+        with pytest.raises(sc.Handover, match="stale"):
+            sc.validate_keys(cache, data, time.time())
+    finally:
+        locked.chmod(0o700)
+
+
+def test_a_stored_missing_path_under_a_file_is_still_absent(workspace, tmp_path):
+    """ENOTDIR, like ENOENT, is absent (``user_settings._stat_file``'s rule)."""
+    _project, cache = workspace
+    data = _data(cache)
+    blocker = tmp_path / "blocker"
+    blocker.write_text("")
+    data["sections"]["shim"]["payload"]["keys"].append([str(blocker / "settings.toml"), None, None])
+    assert sc.validate_keys(cache, data, time.time()) == "stat"
+
+
 def test_a_marker_older_than_the_cache_file_is_not_trusted(workspace):
     _, cache = workspace
     now = time.time()
