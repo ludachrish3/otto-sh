@@ -15,9 +15,12 @@ import time
 from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
+from typing import NamedTuple
 
 import pytest
 
+from otto.utils import WaitTimeoutError, wait_for
+from scripts.process_group import group_alive, signal_group
 from tests._fixtures import _host_pool
 from tests._fixtures._host_pool import (
     DOCKER_HOST,
@@ -28,6 +31,7 @@ from tests._fixtures._host_pool import (
 )
 from tests._fixtures.bed_locks import BED_LOCK_ROOT_ENV, bed_lock_root
 from tests._fixtures.paths import CHECKOUT_ROOT
+from tests._fixtures.process_group import abort_group_in_turn
 
 
 def test_lease_yields_a_pool_member(tmp_path: Path) -> None:
@@ -100,6 +104,137 @@ _HOLD = textwrap.dedent("""
 """)
 
 
+class _Session(NamedTuple):
+    cmd: list[str]
+    proc: subprocess.Popen[bytes]
+    log: Path
+
+
+def _start_session(
+    cmd: list[str], *, env: dict[str, str], cwd: Path, log: Path, stack: ExitStack
+) -> _Session:
+    """Start a child pytest session in a process group of its own, its output in *log*.
+
+    PYTHONFAULTHANDLER keeps faulthandler armed in every process of the group,
+    the xdist worker included, for the whole life of the interpreter: pytest's
+    own faulthandler plugin disarms at unconfigure, before the teardown a
+    session can hang in. PYTHONUNBUFFERED keeps what was printed before an
+    abort. *stack* kills whatever is left of the group on the way out.
+    """
+    sink = stack.enter_context(log.open("wb"))
+    proc = subprocess.Popen(
+        cmd,
+        env={**env, "PYTHONFAULTHANDLER": "1", "PYTHONUNBUFFERED": "1"},
+        cwd=cwd,
+        stdout=sink,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+    stack.callback(_kill_session, proc)
+    return _Session(cmd, proc, log)
+
+
+def _kill_session(proc: subprocess.Popen[bytes]) -> None:
+    signal_group(proc.pid)
+    proc.wait()
+
+
+def _outputs(runs: list[_Session]) -> str:
+    return "\n".join(f"--- {' '.join(r.cmd)}\n{r.log.read_text()}" for r in runs)
+
+
+def _wait_for_sessions(runs: list[_Session], timeout: float) -> list[int]:
+    """Return the sessions' exit codes, or fail with the stacks of the ones still running.
+
+    Every process of a session still running at *timeout* is aborted in turn
+    (:func:`~tests._fixtures.process_group.abort_group_in_turn`), so the
+    failure shows where each was stuck instead of only that one was.
+    """
+    try:
+        wait_for(
+            lambda: all(r.proc.poll() is not None for r in runs),
+            timeout,
+            on_timeout=f"a child session was still running after {timeout}s",
+        )
+    except WaitTimeoutError as e:
+        hung = [r.proc for r in runs if r.proc.poll() is None]
+        survivors = [pid for proc in hung for pid in abort_group_in_turn(proc.pid)]
+        for proc in hung:
+            if proc.pid not in survivors:
+                proc.wait()  # dead already: reap it
+        cut = f"; {survivors} outlived SIGABRT, so a dump may be cut short" if survivors else ""
+        pytest.fail(
+            f"{e}; SIGABRT made each of its processes dump its threads{cut}:\n{_outputs(runs)}"
+        )
+    return [r.proc.returncode for r in runs]
+
+
+_WEDGES = {
+    # The worker never finishes its test.
+    "in_the_test": (
+        "test_wedge.py",
+        """
+        import time
+        from pathlib import Path
+
+        def test_wedged_in_the_worker():
+            Path({started!r}).touch()
+            time.sleep(600)
+        """,
+        "test_wedged_in_the_worker",
+    ),
+    # The test passes; both processes hang at exit, after pytest disarmed its faulthandler.
+    "after_unconfigure": (
+        "conftest.py",
+        """
+        import atexit, time
+        from pathlib import Path
+
+        def _wedged_at_exit():
+            Path({started!r}).touch()
+            time.sleep(600)
+
+        atexit.register(_wedged_at_exit)
+        """,
+        "_wedged_at_exit",
+    ),
+}
+
+
+@pytest.mark.parametrize("wedge", sorted(_WEDGES))
+def test_a_hung_session_fails_with_its_stacks(tmp_path: Path, wedge: str) -> None:
+    """A child xdist session that never ends is aborted, and where it hangs is the failure."""
+    filename, source, frame = _WEDGES[wedge]
+    started = tmp_path / "started"
+    (tmp_path / filename).write_text(textwrap.dedent(source.format(started=str(started))))
+    if not (tmp_path / "test_wedge.py").exists():
+        (tmp_path / "test_wedge.py").write_text("def test_passes():\n    pass\n")
+    cmd = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-o", "addopts="]
+    with ExitStack() as stack:
+        runs = [
+            _start_session(
+                [*cmd, "--rootdir", str(tmp_path), "-n", "1", str(tmp_path / "test_wedge.py")],
+                env=dict(os.environ),
+                cwd=tmp_path,
+                log=tmp_path / "wedge.out",
+                stack=stack,
+            )
+        ]
+
+        def wedged() -> bool:
+            if runs[0].proc.poll() is not None:
+                raise AssertionError(f"the session ended before it wedged:\n{_outputs(runs)}")
+            return started.exists()
+
+        wait_for(wedged, 60, on_timeout="the session never reached its wedge")
+        with pytest.raises(pytest.fail.Exception, match=rf"line \d+ in {frame}"):
+            _wait_for_sessions(runs, 0.1)
+        pgid = runs[0].proc.pid
+    # The orphaned worker is reaped by init, not by this process: this assumes
+    # a reaping init, as the dev VM (systemd) and CI's runners have.
+    wait_for(lambda: not group_alive(pgid), 10, on_timeout="the aborted session left a process")
+
+
 @pytest.mark.serial_timing
 def test_two_sessions_with_different_basetemps_contend_for_one_host(tmp_path: Path) -> None:
     """An xdist session and a -n0 session with its own --basetemp hold one lock file."""
@@ -124,23 +259,30 @@ def test_two_sessions_with_different_basetemps_contend_for_one_host(tmp_path: Pa
         "--rootdir",
         str(tmp_path),
     ]
-    runs = [
-        subprocess.Popen(
-            [*base, "-n", "1", str(tmp_path / "test_hold_a.py")], env=env, cwd=tmp_path
-        ),
-        subprocess.Popen(
-            [
-                *base,
-                "-n0",
-                "--basetemp",
-                str(tmp_path / "custom"),
-                str(tmp_path / "test_hold_b.py"),
-            ],
-            env=env,
-            cwd=tmp_path,
-        ),
-    ]
-    assert [p.wait(timeout=60) for p in runs] == [0, 0]
+    with ExitStack() as stack:
+        runs = [
+            _start_session(
+                [*base, "-n", "1", str(tmp_path / "test_hold_a.py")],
+                env=env,
+                cwd=tmp_path,
+                log=tmp_path / "a.out",
+                stack=stack,
+            ),
+            _start_session(
+                [
+                    *base,
+                    "-n0",
+                    "--basetemp",
+                    str(tmp_path / "custom"),
+                    str(tmp_path / "test_hold_b.py"),
+                ],
+                env=env,
+                cwd=tmp_path,
+                log=tmp_path / "b.out",
+                stack=stack,
+            ),
+        ]
+        assert _wait_for_sessions(runs, 60) == [0, 0], _outputs(runs)
     events = [line.split() for line in (tmp_path / "log").read_text().splitlines()]
     assert [kind for kind, _ in events] == ["start", "end", "start", "end"], events
 
