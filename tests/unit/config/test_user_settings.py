@@ -204,22 +204,50 @@ def test_the_memo_holds_one_entry_across_homes(tmp_path, monkeypatch):
     assert list(_memo) == [tmp_path / "b" / "settings.toml"]
 
 
-# The resolver and the model definition; the verb module joins with `otto cache` off/on.
-_CACHE_TABLE_READERS = {"config/user_settings.py", "models/settings.py"}
+# The resolver; the verb module joins with `otto cache` off/on.
+_CACHE_TABLE_READERS = {"config/user_settings.py"}
+# The only files that may call cache_enabled(): the resolver and the one switch.
+_CACHE_ENABLED_CALLERS = {"config/user_settings.py", "config/completion_cache.py"}
 
 
-def test_only_the_resolver_reads_the_cache_table():
-    import re
+def _src_files():
     from pathlib import Path
 
     import otto
 
     src = Path(otto.__file__).parent
-    pattern = re.compile(r"\.cache\.enabled|\bCACHE_TABLE\b")
-    offenders = sorted(
-        rel
-        for f in src.rglob("*.py")
-        if (rel := f.relative_to(src).as_posix()) not in _CACHE_TABLE_READERS
-        and pattern.search(f.read_text())
+    for f in sorted(src.rglob("*.py")):
+        yield f.relative_to(src).as_posix(), f
+
+
+def test_only_the_resolver_reads_the_cache_table():
+    import re
+
+    pattern = re.compile(
+        r"\.cache\.enabled|\bCACHE_TABLE\b|\bCACHE_ENABLED_KEY\b"
+        r"""|\[\s*["']cache["']\s*\]|\.get\(\s*["']cache["']"""
     )
+    offenders = [
+        rel
+        for rel, f in _src_files()
+        if rel not in _CACHE_TABLE_READERS and pattern.search(f.read_text())
+    ]
+    assert offenders == []
+
+
+def test_only_the_one_switch_calls_cache_enabled():
+    import ast
+
+    def called(node):
+        fn = node.func
+        return (isinstance(fn, ast.Name) and fn.id == "cache_enabled") or (
+            isinstance(fn, ast.Attribute) and fn.attr == "cache_enabled"
+        )
+
+    offenders = [
+        rel
+        for rel, f in _src_files()
+        if rel not in _CACHE_ENABLED_CALLERS
+        and any(isinstance(n, ast.Call) and called(n) for n in ast.walk(ast.parse(f.read_text())))
+    ]
     assert offenders == []

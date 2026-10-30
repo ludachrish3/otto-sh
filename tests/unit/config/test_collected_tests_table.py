@@ -949,17 +949,14 @@ def test_write_tables_with_a_home_stores_nothing_when_the_cache_is_off(
 ):
     home = tmp_path / "home"
     tr.write_tables([_table(project)], home=home)
-    assert not (home / cc.CACHE_FILENAME).exists()
+    assert not home.exists()
 
 
 def test_read_tables_with_a_home_sees_nothing_when_the_cache_is_off(project, tmp_path):
-    from otto.config.user_settings import clear_user_settings_memo, user_settings_path
+    from tests.unit.config.conftest import turn_cache_off
 
     home = tmp_path / "home"
     tr.write_tables([_table(project)], home=home)
     assert tr.read_tables([project], home=home)  # on: the stored table is read back
-    path = user_settings_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("[cache]\nenabled = false\n")  # scaffold-exempt: user-level ~/.otto file
-    clear_user_settings_memo()
+    turn_cache_off()
     assert tr.read_tables([project], home=home) == {}

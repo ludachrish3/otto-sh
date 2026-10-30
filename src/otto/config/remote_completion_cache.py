@@ -64,11 +64,11 @@ class ListingEntry:
 
 
 def _path() -> "Path | None":
-    """Sidecar path beside the main completion cache, or None when caching is off.
+    """Sidecar path beside the main completion cache, or None when the cache is off.
 
     Derived from :func:`otto.config.completion_cache._cache_path` rather than
-    re-deriving ``$OTTO_XDIR/.otto`` here, so the "no xdir means no caching"
-    rule stays in one place.
+    re-deriving the location here, so the cache-off decision stays in one
+    place: ``None`` from there means the cache is off.
     """
     from .completion_cache import _cache_path
 
