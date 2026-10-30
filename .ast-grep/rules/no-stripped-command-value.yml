@@ -1,0 +1,58 @@
+id: no-stripped-command-value
+language: python
+severity: error
+message: assert a command's exact value (r.value == "..."), not a stripped one — a strip hides stray bytes, padding and CR/LF framing that are part of the contract.
+note: >
+  Why: #711 hid behind strips. A test that strips a command's value before
+  comparing it cannot see a stray prompt byte, a doubled newline or a
+  leaked CR, so the framing contract was never actually pinned. Assert the
+  exact value. The contract is docs/architecture/utilities/results.md
+  (`command-output-contract`); what the rule matches and leaves alone is
+  pinned in .ast-grep/rule-tests/no-stripped-command-value-test.yml.
+  `.stdout.strip()` on subprocess output is a different contract and is
+  out of scope.
+
+  A strip that must stay (the output really is padded by something the
+  test does not own) takes an inline
+  `# ast-grep-ignore: no-stripped-command-value -- <padding source>`
+  naming where the padding comes from. The one in-tree use is a false
+  positive: `ast.Constant.value` in tests/unit/test_slot_installers.py,
+  not a command result.
+
+  Baseline 142 sites across 40 files at ff6ccef94, rule-measured with every
+  arm on the pre-fix tree and fixed in the same wave; 0 when the rule landed.
+  Arms: `$X.value.strip/rstrip/lstrip(...)`, `str($X.value).strip...`,
+  `str($X.value or $Y).strip...` and `($X.value or $Y).strip...`; they
+  also match inside f-string interpolations (`f"{r.value.strip()!r}"`) --
+  see the rule test.
+
+  Accepted residuals, not matched: an alias (`v = r.value; v.strip()`),
+  `str.strip(x.value)`, `.value.split()`, a helper whose parameter is a
+  command value under another name (for example
+  `_framing.assert_single_line_answer(output)`), and a non-command `.value`
+  (the false positive above, handled by the inline ignore).
+files:
+- tests/**
+ignores:
+# Fixture projects + firmware: user-example input data, not otto's tests
+# (sgconfig.yml discipline for tests-scoped rules).
+- tests/project1/**
+- tests/project2/**
+- tests/project3/**
+- tests/project_broken/**
+- tests/project_e2e/**
+- tests/firmware/**
+rule:
+  any:
+  - pattern: $X.value.strip($$$)
+  - pattern: $X.value.rstrip($$$)
+  - pattern: $X.value.lstrip($$$)
+  - pattern: str($X.value).strip($$$)
+  - pattern: str($X.value).rstrip($$$)
+  - pattern: str($X.value).lstrip($$$)
+  - pattern: ($X.value or $Y).strip($$$)
+  - pattern: ($X.value or $Y).rstrip($$$)
+  - pattern: ($X.value or $Y).lstrip($$$)
+  - pattern: str($X.value or $Y).strip($$$)
+  - pattern: str($X.value or $Y).rstrip($$$)
+  - pattern: str($X.value or $Y).lstrip($$$)

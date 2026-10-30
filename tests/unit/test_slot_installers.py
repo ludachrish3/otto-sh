@@ -513,6 +513,7 @@ def references(tree: _TreeResolver, rel: str, slot: Slot) -> "list[Reference]":
                     for hit in stored(node.args[0], str(_literal(node.args[1])))
                 )
         elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            # ast-grep-ignore: no-stripped-command-value -- ast.Constant.value, not a command result
             text = node.value.strip()
             for target, name in privileged.items():
                 if text in {target, f"{home}:{name}"}:

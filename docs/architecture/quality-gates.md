@@ -25,7 +25,7 @@ on that side.
 | Type checking | `ty` (pinned exactly; the version is the `ty` entry in `pyproject.toml`'s dev group and `uv.lock`) | `tsc --noEmit` via `scripts/typecheck_web.sh` (vendored Untitled UI diagnostics filtered) |
 | Unused code / deps | ruff (`F401`, `ARG`, …) | `knip` — unused files, exports, dependencies |
 | Module layering | `tach` against `tach.toml` (role layers, every dependency declared) + the import-string audit | — none today |
-| Scoped pattern rules | `ast-grep` against `.ast-grep/rules/` — thirty-one Python rules | `ast-grep` — four rules (`no-plan-coordinates-ts`/`-tsx` over `web/src/**`, `no-bare-digit-textcontent-ts`/`-tsx` over web test files) |
+| Scoped pattern rules | `ast-grep` against `.ast-grep/rules/` — thirty-four Python rules | `ast-grep` — four rules (`no-plan-coordinates-ts`/`-tsx` over `web/src/**`, `no-bare-digit-textcontent-ts`/`-tsx` over web test files) |
 | Import cost | `scripts/import_budget.py` — per-surface, per-interpreter file-operation ceilings (whole process tree, strace-counted) and target ratios to `otto --version`; `scripts/import_budget_delta.py` — the release's delta against the previous tag (`make budget-delta`); import bans in `ast-grep` and `tests/unit/test_import_contracts.py` name the edge | — (knip covers dependencies only) |
 | Tests | `pytest` (+ `xdist`, `repeat`, `hypothesis`) | `vitest`, run under `build_web_no_warnings.sh`: any stderr output fails (see *Built-bundle gates*) |
 | Coverage floor | `coverage.py` / `pytest-cov` — combined line+branch totals (`.coveragerc` sets `branch = true`): 95.5 for the full local run, 94.75 for the hostless CI slice (both pinned as codified minimums by `tests/unit/test_coverage_floors.py`, which also pins the branch setting) | `@vitest/coverage-v8` for the unit floor; the browser leg is folded in by `monocart-coverage-reports` and the merged report gated by `nyc` |
@@ -112,8 +112,8 @@ with its class, and a new site fails until someone reads it.
 
 ### The ast-grep rules
 
-`.ast-grep/rules/` holds thirty-five rules (thirty-one Python, four
-TypeScript) — thirty-four at `severity: error`,
+`.ast-grep/rules/` holds thirty-eight rules (thirty-four Python, four
+TypeScript) — thirty-seven at `severity: error`,
 plus one deliberate `severity: warning` review prompt
 (`no-awaited-close-in-finally`, below). The scan roots
 are `src/otto web/src tests` — tests/ joined in the test-infra remediation
@@ -130,6 +130,7 @@ fixture projects (`tests/project1..project3`, `project_broken`, `project_e2e`) a
 | `backend-no-name-dispatch` | the modules that dispatched on a configured backend's name, and the five configured seams' registry modules — no `==`, `!=` or `in` against `"json"` or `"none"`: a replacement registered under the name is not the built-in; see [the rule's `note:`](https://github.com/ludachrish3/otto-sh/blob/main/.ast-grep/rules/backend-no-name-dispatch.yml) |
 | `builtin-registers-by-reference` | `src/otto/**/*.py` — a registration that runs at import must hand the registry a `Ref`, unless the file defines the registry; see {doc}`subsystems/registries` and [the rule's `note:`](https://github.com/ludachrish3/otto-sh/blob/main/.ast-grep/rules/builtin-registers-by-reference.yml) |
 | `cli-command-no-module-scope-heavy-import` | `src/otto/cli/**` minus `remote_completion.py` — an import ban; see [Import bans](../contributing.md#import-bans) |
+| `compose-command-through-builder` | `src/otto/**/*.py` — a `docker compose` command is never spelled by hand (`["docker", "compose", ...]`); `otto.docker.compose.compose_command` is the one builder, where quoting, the `-f` order and the `sh <launcher>` prefix live; see [the rule's `note:`](https://github.com/ludachrish3/otto-sh/blob/main/.ast-grep/rules/compose-command-through-builder.yml) |
 | `coverage-git-through-gitio` | `src/otto/coverage/**`, `src/otto/cli/cov.py` |
 | `error-render-through-helper` | `src/otto/**` — explicit since tests/ joined the scan roots (it always meant shipped renderers) |
 | `lazy-getattr-no-write-back` | `src/otto/**/__init__.py` that assign a `_LAZY_*` table — the resolver writes nothing back into the module, so the drift guard `tests/unit/test_lazy_packages.py` (which also requires `__getattr__`, `__dir__` and a literal-list `__all__`) sees every name through the table; see [the rule's `note:`](https://github.com/ludachrish3/otto-sh/blob/main/.ast-grep/rules/lazy-getattr-no-write-back.yml) |
@@ -152,6 +153,7 @@ fixture projects (`tests/project1..project3`, `project_broken`, `project_e2e`) a
 | `no-registry-subclass` | `src/otto/**` minus `otto/registry.py` — no class subclasses `Registry`, `BackendRegistry`, `Subscription` or `RegistryView`, bare, subscripted or module-qualified; an aliased import is the AST binding scan's (`tests/unit/registry/test_registry_binding_scan.py`) |
 | `no-retry-marker-in-otto-tests` | `tests/**` minus fixture projects — the first tests-scoped rule; fully armed (its one ratchet ignore died with the hop-transfer flake fix) |
 | `no-short-deadline-in-tests` | `tests/**` minus fixture projects — a `deadline=` or `teardown_deadline=` float literal between 0 and 1 bets the machine reaches the state under test before it expires; pass `LONG_DEADLINE` and expire it on cue with `stepped_loop_clock()`, see {ref}`testing-stepped-clock` |
+| `no-stripped-command-value` | `tests/**` minus fixture projects — no `.strip()`, `.rstrip()` or `.lstrip()` on a command's `.value` (also `str(...)` and `(... or ...)` forms, f-strings included): a strip hides the stray bytes the exact-value contract exists to catch (#711 hid behind one); assert the exact value, see {ref}`command-output-contract`. A strip that must stay carries `# ast-grep-ignore: no-stripped-command-value -- <padding source>`; see [the rule's `note:`](https://github.com/ludachrish3/otto-sh/blob/main/.ast-grep/rules/no-stripped-command-value.yml) |
 | `no-tick-count-in-a-wall-clock-window` | `tests/**` minus fixture projects — the rule's `message:` says why |
 | `no-tuple-return` | `src/otto/**` |
 | `otto-subprocess-env-through-helper` | `tests/**` minus fixture projects — a local `COVERAGE_PROCESS_START` dict is a fork of the subprocess env dance, and every fork that ever existed dropped the `-p no:tach` #193 scar key first; `tests/e2e/_otto_subprocess.py` is the one home |

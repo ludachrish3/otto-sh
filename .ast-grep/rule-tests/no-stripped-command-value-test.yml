@@ -1,0 +1,43 @@
+# Rule test for .ast-grep/rules/no-stripped-command-value.yml.
+# `valid` snippets must NOT match, `invalid` snippets must. Run by
+# `make lint-arch` (`ast-grep test`).
+id: no-stripped-command-value
+valid:
+- |
+  assert r.value == "x"
+# Subprocess output is a different contract: out of scope.
+- |
+  assert r.stdout.strip() == "x"
+- |
+  assert r.value.splitlines() == ["a", "b"]
+- |
+  assert "x" in r.value
+invalid:
+- |
+  assert r.value.strip() == "x"
+- |
+  assert r.value.rstrip("\r\n") == "x"
+- |
+  assert r.value.lstrip() == "x"
+- |
+  assert str(r.value).strip() == "x"
+- |
+  assert r.only.value.strip() == "x"
+- |
+  assert (r.value or "").strip() == "x"
+- |
+  assert (r.value or "").rstrip("\r\n") == "x"
+- |
+  assert r.value == "x", f"got {r.value.strip()!r}"
+- |
+  assert str(r.value).rstrip() == "x"
+- |
+  assert str(r.value).lstrip() == "x"
+- |
+  assert (r.value or "").lstrip() == "x"
+- |
+  assert str(r.value or "").strip() == "x"
+- |
+  assert str(r.value or "").rstrip() == "x"
+- |
+  assert str(r.value or "").lstrip() == "x"
