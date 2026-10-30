@@ -3,6 +3,7 @@
 import pytest
 
 from otto.config.user_settings import (
+    CACHE_ENABLED_KEY,
     CACHE_TABLE,
     CacheSetting,
     cache_enabled,
@@ -10,7 +11,7 @@ from otto.config.user_settings import (
     load_user_settings,
     user_settings_path,
 )
-from otto.models.settings import UserSettingsModel
+from otto.models.settings import CacheSettingsSpec, UserSettingsModel
 
 
 def _user_file(dir_, body=""):
@@ -95,14 +96,6 @@ def test_parses_creds_table(tmp_path):
     assert model.inventory is None
 
 
-@pytest.fixture(autouse=True)
-def _no_leftover_user_file():
-    """The hermetic OTTO_HOME is one directory per worker: leave no settings file behind."""
-    user_settings_path().unlink(missing_ok=True)
-    yield
-    user_settings_path().unlink(missing_ok=True)
-
-
 def _own_file(body):
     """Write the default-path user settings file of this test's private OTTO_HOME."""
     p = user_settings_path()
@@ -113,6 +106,7 @@ def _own_file(body):
 
 def test_cache_table_names_the_model_field():
     assert CACHE_TABLE in UserSettingsModel.model_fields
+    assert CACHE_ENABLED_KEY in CacheSettingsSpec.model_fields
 
 
 def test_cache_on_by_default_without_a_settings_file():
@@ -152,7 +146,9 @@ def test_invalid_cache_value_resolves_off_with_the_error():
 
 def test_unknown_cache_key_resolves_off():
     _own_file("[cache]\nenable = false\n")
-    assert not cache_enabled().on
+    s = cache_enabled()
+    assert not s.on
+    assert "enable" in s.source
 
 
 def test_the_settings_file_is_read_once_per_process(monkeypatch):
@@ -188,7 +184,12 @@ def test_an_absent_file_is_memoized_and_an_error_is_not(monkeypatch):
 def test_an_explicit_path_bypasses_the_memo(tmp_path):
     assert load_user_settings() is None
     other = _user_file(tmp_path, "[cache]\nenabled = false\n")
-    model = load_user_settings(other)
-    assert model is not None
-    assert model.cache is not None
-    assert not model.cache.enabled
+    first = load_user_settings(other)
+    assert first is not None
+    assert first.cache is not None
+    assert not first.cache.enabled
+    other.write_text("[cache]\nenabled = true\n")  # scaffold-exempt: user-level file
+    second = load_user_settings(other)
+    assert second is not None
+    assert second.cache is not None
+    assert second.cache.enabled

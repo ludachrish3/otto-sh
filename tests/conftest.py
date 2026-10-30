@@ -1108,17 +1108,24 @@ def _hermetic_known_hosts(_hermetic_known_hosts_file: Path) -> Iterator[None]:
 
 @pytest.fixture(autouse=True)
 def _reset_user_settings_memo():
-    """Drop the memoized user-settings read around every test.
+    """Drop the memoized user-settings read, and any settings file, around every test.
 
-    ``load_user_settings()`` reads the default file once per process; each
-    test's ``OTTO_HOME`` is private, so a read cached by an earlier test on
-    the same worker would answer for a file this test never wrote.
+    ``_hermetic_otto_home`` is ONE directory per xdist worker, so every test
+    on a worker shares the same memo key and the same ``settings.toml`` path:
+    a read cached by, or a file left behind by, an earlier test (say
+    ``[cache] enabled = false``) would answer for this one. The file is
+    removed after each test as well as before the first, so no test anywhere
+    can leave it for the next.
     """
-    from otto.config.user_settings import clear_user_settings_memo
+    from otto.config.user_settings import clear_user_settings_memo, user_settings_path
 
-    clear_user_settings_memo()
+    def reset() -> None:
+        clear_user_settings_memo()
+        user_settings_path().unlink(missing_ok=True)
+
+    reset()
     yield
-    clear_user_settings_memo()
+    reset()
 
 
 @pytest.fixture(autouse=True)

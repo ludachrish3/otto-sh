@@ -23,9 +23,10 @@ CACHE_TABLE = "cache"
 CACHE_ENABLED_KEY = "enabled"
 """The key inside ``[cache]`` that turns otto's caches on or off."""
 
-# One entry, keyed on the resolved default path: the file is read once per
-# process however many callers ask. A ValueError is never stored, so a broken
-# file is reported on every ask; the None of an absent file is.
+# At most one entry, keyed on the resolved default path: the file is read once
+# per process however many callers ask, and a changed OTTO_HOME replaces the
+# entry rather than adding one. A ValueError is never stored, so a broken file
+# is reported on every ask; the None of an absent file is.
 _memo: dict[Path, "UserSettingsModel | None"] = {}
 
 
@@ -61,9 +62,11 @@ def load_user_settings(path: "Path | None" = None) -> "UserSettingsModel | None"
     """
     if path is not None:
         return _read_user_settings(path)
-    key = user_settings_path()
+    key = user_settings_path().resolve()
     if key not in _memo:
-        _memo[key] = _read_user_settings(key)
+        model = _read_user_settings(key)
+        _memo.clear()
+        _memo[key] = model
     return _memo[key]
 
 
