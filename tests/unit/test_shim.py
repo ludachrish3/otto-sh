@@ -590,3 +590,57 @@ def test_an_unrelated_first_entry_is_kept(tmp_path, monkeypatch):
     sys.path.insert(0, str(tmp_path / "elsewhere"))
     _shim._drop_script_dir()
     assert sys.path[0] == str(tmp_path / "elsewhere")
+
+
+def test_a_settings_edit_makes_the_shim_hand_over(tmp_path, monkeypatch):
+    """The user settings file keys the names section: editing it stales the shim's entry.
+
+    The names marker is backdated past the window so the shim re-stats the key
+    set rather than trusting the marker.
+    """
+    import json
+    import time
+    from pathlib import Path
+
+    import otto.config.project as config_project
+    from otto import _shim_complete as sc
+    from otto import bootstrap
+    from otto.cli.main import PENDING_SUBCMD_ARGS_KEY, app
+    from otto.config import completion_cache as cc
+    from otto.config.completion_tree import build_shim_payload
+    from otto.config.user_settings import clear_user_settings_memo, user_settings_path
+    from tests._fixtures.generated_project import generate_project
+
+    project = generate_project(tmp_path, files=3, dirs=1, top_level=1)
+    monkeypatch.setenv("OTTOPATH", str(project))
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("_OTTO_COMPLETE", "complete_bash")
+    monkeypatch.setenv("COMP_WORDS", "otto ho")
+    monkeypatch.setenv("COMP_CWORD", "1")
+    bootstrap.invalidate()
+    try:
+        projects = config_project.discover().projects
+        cc.write_cache(
+            projects,
+            [],
+            ["local"],
+            shim=build_shim_payload(projects, app=app, pending_key=PENDING_SUBCMD_ARGS_KEY),
+        )
+        cache = Path(sc.locate_cache(dict(os.environ)))
+        marker = cache.parent / sc.MARKER_FILENAMES["names"]
+        # Warm: a first TAB stamps the marker; the entry is served.
+        assert sc.answer_or_reason(dict(os.environ)).items is not None
+        old = time.time() - 10 * sc.WINDOW_SECONDS
+        os.utime(marker, (old, old))
+        assert json.loads(cache.read_text())  # the entry is intact
+
+        path = user_settings_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("[cache]\nenabled = true\n")  # scaffold-exempt: user-level ~/.otto file
+        clear_user_settings_memo()
+
+        outcome = sc.answer_or_reason(dict(os.environ))
+        assert outcome.items is None
+        assert outcome.stale is True
+    finally:
+        bootstrap.invalidate()

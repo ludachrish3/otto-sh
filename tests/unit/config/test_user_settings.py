@@ -207,7 +207,11 @@ def test_the_memo_holds_one_entry_across_homes(tmp_path, monkeypatch):
 # The resolver; the verb module joins with `otto cache` off/on.
 _CACHE_TABLE_READERS = {"config/user_settings.py"}
 # The only file that may call cache_enabled(): the one switch (the resolver only defines it).
-_CACHE_ENABLED_CALLERS = {"config/completion_cache.py"}
+_CACHE_ENABLED_CALLERS = {
+    "config/completion_cache.py",
+    # cli/main.py uses the answer for the off-removal side effect, not as a second decision.
+    "cli/main.py",
+}
 
 
 def _src_files():

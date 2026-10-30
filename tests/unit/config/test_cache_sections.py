@@ -416,3 +416,13 @@ def test_a_tainted_write_still_replaces_an_untainted_entry(projects):
         "the digests must MATCH, or this proves nothing about the taint arm"
     )
     assert after["names"]["tainted"] is True, "a clean entry survived a tainted write"
+
+
+def test_the_user_settings_file_keys_the_names_section(projects):
+    """It decides whether the cache is on, so its edit must stale what the shim serves."""
+    from otto.config.cache_sections import _names_static_key_paths
+    from otto.config.user_settings import user_settings_path
+
+    _project, discovered = projects
+    paths = _names_static_key_paths(discovered)
+    assert paths.count(user_settings_path()) == 1  # once, not per project

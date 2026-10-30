@@ -79,6 +79,19 @@ check that would catch this list drifting from its four source constants.
 suite is the pin instead -- it runs every time, `-O` or not.
 """
 
+COMPLETION_FILE_NAMES = [
+    *CACHE_FILE_NAMES,
+    ".completion_collect.lock",
+    ".completion_collect.failed",
+]
+"""Every completion file a workspace holds: the cache files, plus the collect lock and cooldown.
+
+What :func:`remove_completion_files` removes once the cache is off. Literals,
+pinned to ``completion_cache.COLLECT_LOCK_FILENAME`` and
+``COLLECT_COOLDOWN_FILENAME`` by
+`test_completion_file_names_match_the_source_constants`.
+"""
+
 SESSION_DIR_NAMES = ["pycache", "pytest-cache"]
 """The directories otto's pytest sessions write in a workspace: bytecode, and pytest's cache.
 
@@ -271,6 +284,50 @@ def _remove_entry(entry: Path) -> "int | None":
     return size
 
 
+def _remove_files(workspace: Path, names: "list[str]") -> MaintenanceReport:
+    """Unlink each of *names* directly under *workspace*, never following a symlink.
+
+    The one removal loop behind :func:`clear_workspace` and
+    :func:`remove_completion_files`. A name that is absent, or that cannot be
+    unlinked (permissions, a directory sitting where a file's name is
+    expected), is left as it was and never reported.
+    """
+    report = MaintenanceReport()
+    for name in names:
+        f = workspace / name
+        try:
+            st = f.lstat()
+        except OSError:
+            continue
+        try:
+            f.unlink(missing_ok=True)
+        except OSError:
+            continue
+        report.files_removed.append(f)
+        report.bytes_freed += st.st_size
+    return report
+
+
+def remove_completion_files(workspace: Path) -> MaintenanceReport:
+    """Remove the completion files in *workspace*, and nothing else.
+
+    :data:`COMPLETION_FILE_NAMES` only: never the session directories, never
+    the workspace itself. Run once the cache is off, so a workspace does not
+    keep a cache nothing will read.
+    """
+    return _remove_files(workspace, COMPLETION_FILE_NAMES)
+
+
+def remove_completion_files_everywhere(home: Path) -> MaintenanceReport:
+    """:func:`remove_completion_files` on every workspace directory under *home*."""
+    report = MaintenanceReport()
+    for workspace in _candidates(home):
+        sub = remove_completion_files(workspace)
+        report.files_removed.extend(sub.files_removed)
+        report.bytes_freed += sub.bytes_freed
+    return report
+
+
 def clear_workspace(workspace: Path) -> MaintenanceReport:
     """Unconditionally remove the cache files and session directories in *workspace*.
 
@@ -283,19 +340,7 @@ def clear_workspace(workspace: Path) -> MaintenanceReport:
     directory that is still there afterwards -- the report only ever claims
     what really happened.
     """
-    report = MaintenanceReport()
-    for name in CACHE_FILE_NAMES:
-        f = workspace / name
-        try:
-            st = f.lstat()
-        except OSError:
-            continue
-        try:
-            f.unlink(missing_ok=True)
-        except OSError:
-            continue
-        report.files_removed.append(f)
-        report.bytes_freed += st.st_size
+    report = _remove_files(workspace, CACHE_FILE_NAMES)
     for name in SESSION_DIR_NAMES:
         freed = _remove_tree(workspace / name)
         if freed is not None:

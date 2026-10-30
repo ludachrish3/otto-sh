@@ -1202,9 +1202,22 @@ def entry(cache_stale: bool = False) -> None:
         # stale bash TAB reaches here with cache_stale set.
         #
         # Writability first: it costs no key-set stats, and when no entry could
-        # be stored (no home, an inventory with no stable fingerprint) every
+        # be stored (the cache is off, an inventory with no stable fingerprint) every
         # root help and TAB lands here, so the validity check is skipped too.
-        if reads_cache and _cache_is_writable(result.projects):
+        if reads_cache and not _cache_is_writable(result.projects):
+            # The resolver's answer used for a side effect, not a second
+            # decision: with the cache switched off, a workspace's leftover
+            # completion files are removed. (Other reasons for "not writable"
+            # leave the files alone.)
+            from ..config.user_settings import cache_enabled
+
+            if not cache_enabled().on:
+                from ..config.cache_maintenance import remove_completion_files
+                from ..config.home import workspace_home
+
+                with contextlib.suppress(OSError):
+                    remove_completion_files(workspace_home())
+        elif reads_cache:
             from ..config.completion_cache import cache_is_stale
             from ..config.corpus_snapshot import corpus_snapshot
 

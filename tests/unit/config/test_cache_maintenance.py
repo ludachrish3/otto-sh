@@ -426,3 +426,62 @@ def test_iter_workspaces_counts_the_session_dirs_as_cache(tmp_path):
     assert info.path == ws
     assert info.extra_entries == 0
     assert info.cache_bytes == len("{}") + SESSION_DIR_BYTES
+
+
+def _fill_completion_dir(ws):
+    from otto.config.cache_maintenance import COMPLETION_FILE_NAMES, SESSION_DIR_NAMES
+
+    ws.mkdir(parents=True, exist_ok=True)
+    for name in COMPLETION_FILE_NAMES:
+        (ws / name).write_text("x")
+    for name in SESSION_DIR_NAMES:
+        (ws / name).mkdir(exist_ok=True)
+
+
+def test_remove_completion_files_keeps_the_session_dirs(tmp_path):
+    from otto.config.cache_maintenance import COMPLETION_FILE_NAMES, remove_completion_files
+
+    _fill_completion_dir(tmp_path)
+    report = remove_completion_files(tmp_path)
+    assert sorted(p.name for p in report.files_removed) == sorted(COMPLETION_FILE_NAMES)
+    assert (tmp_path / "pycache").is_dir()
+    assert (tmp_path / "pytest-cache").is_dir()
+    assert tmp_path.is_dir()
+
+
+def test_remove_completion_files_never_follows_a_symlink_out(tmp_path):
+    from otto.config.cache_maintenance import remove_completion_files
+
+    outside = tmp_path / "outside.json"
+    outside.write_text("keep")
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "completion_cache.json").symlink_to(outside)
+    remove_completion_files(ws)
+    assert outside.read_text() == "keep"
+    assert not (ws / "completion_cache.json").is_symlink()
+
+
+def test_remove_completion_files_everywhere_ignores_non_workspace_dirs(tmp_path):
+    from otto.config.cache_maintenance import remove_completion_files_everywhere
+
+    real = tmp_path / "aaaaaaaa-real"
+    _fill_completion_dir(real)
+    trap = tmp_path / "inventory-cache"
+    _fill_completion_dir(trap)
+    report = remove_completion_files_everywhere(tmp_path)
+    assert not (real / "completion_cache.json").exists()
+    assert (real / "pycache").is_dir()
+    assert (trap / "completion_cache.json").is_file()
+    assert all(p.parent == real for p in report.files_removed)
+
+
+def test_completion_file_names_match_the_source_constants():
+    from otto.config.cache_maintenance import CACHE_FILE_NAMES, COMPLETION_FILE_NAMES
+    from otto.config.completion_cache import COLLECT_COOLDOWN_FILENAME, COLLECT_LOCK_FILENAME
+
+    assert [
+        *CACHE_FILE_NAMES,
+        COLLECT_LOCK_FILENAME,
+        COLLECT_COOLDOWN_FILENAME,
+    ] == COMPLETION_FILE_NAMES

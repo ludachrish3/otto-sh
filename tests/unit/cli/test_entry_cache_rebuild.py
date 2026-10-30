@@ -376,3 +376,33 @@ def test_a_cold_rebuild_opens_and_lists_nothing_under_the_tests_dirs(project_env
     tests_dir = str(project / "tests")
     under = [line for line in seen_file.read_text().splitlines() if tests_dir in line]
     assert under == [], under[:10]
+
+
+def _settings_off(env):
+    home = Path(env["OTTO_HOME"])
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "settings.toml").write_text("[cache]\nenabled = false\n")  # scaffold-exempt: user-level
+
+
+def test_the_full_path_removes_a_workspace_cache_once_the_cache_is_off(project_env):
+    from otto.config.cache_maintenance import COMPLETION_FILE_NAMES, SESSION_DIR_NAMES
+
+    _project, env = project_env
+    _run(env, argv=_ROOT_HELP)
+    workspace = _cache_file(env).parent
+    for name in SESSION_DIR_NAMES:
+        (workspace / name).mkdir(exist_ok=True)
+    (workspace / ".completion_collect.failed").write_text("x")
+
+    _settings_off(env)
+    _run(env, argv=_ROOT_HELP)
+
+    assert not [n for n in COMPLETION_FILE_NAMES if (workspace / n).exists()]
+    assert all((workspace / n).is_dir() for n in SESSION_DIR_NAMES)
+
+
+def test_the_full_path_writes_no_cache_when_off(project_env):
+    _project, env = project_env
+    _settings_off(env)
+    _run(env, argv=_ROOT_HELP)
+    assert not list(Path(env["OTTO_HOME"]).rglob("completion_cache.json"))
