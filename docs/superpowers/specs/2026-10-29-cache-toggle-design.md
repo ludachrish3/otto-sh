@@ -37,7 +37,9 @@ Success: a user can turn the cache off and back on with one command, see which i
 
 ## What "the cache" covers (my call)
 
-Off means: the **completion cache** — `<workspace>/completion_cache.json` (its `names`, `shim`, `__collected_tests__`, `__dynamic_tunnels__` and `__docker_observed__` sections), its marker files `completion_cache.names.ok` / `completion_cache.tests.ok`, the collect-child state beside it (`.completion_collect.lock` / `.failed` — with no cache, no collect child is spawned), and the remote sidecar `remote_completion_cache.json`. These are everything `otto cache info` reports as cache data.
+Off means: the **completion cache** — `<workspace>/completion_cache.json` (its `names`, `shim`, `__collected_tests__`, `__dynamic_tunnels__` and `__docker_observed__` sections), its marker files `completion_cache.names.ok` / `completion_cache.tests.ok`, the collect-child state beside it (`.completion_collect.lock` / `.failed` — with no cache, no stored-tables collect child is spawned; the live mode below writes neither), and the remote sidecar `remote_completion_cache.json`. These are everything `otto cache info` reports as cache data.
+
+Off **bypasses** these files: nothing reads, writes or deletes any of them (Chris, 2026-10-29: "bypass the cache as much as possible"; off "should not delete caches"). Files written while the cache was on stay, unread, until `otto cache clear` or `prune` removes them.
 
 Not covered, deliberately:
 
@@ -48,7 +50,7 @@ Not covered, deliberately:
 Consequences of off, all correct but slower, to state in the docs:
 
 - `otto -h` and every TAB take the full path: import every project's init code and walk the command tree each time.
-- Test-name and docker completion offer only what can be computed live (test names by collection; docker names: none — a TAB never asks a host).
+- Test-name and docker completion offer only what can be computed live. Test names and markers: collected live on every test-name or `-m` TAB (see "Live test names" below). Docker names: none — a TAB never asks a host.
 - `otto test` collects the whole test tree on every run instead of only changed files (Chris: off covers `otto test` too).
 
 ## How it is decided
@@ -74,16 +76,29 @@ The value is resolved once per process (memoized, with a clear hook for tests). 
 
 ### The bash TAB shim
 
-The shim may import only its pinned stdlib set (`test_shim.py`), so it cannot read TOML. One rule makes it obey anyway: the cache's validity depends on the user's `settings.toml`, so any change to it — by the verbs or by hand — makes the shim's stored answers stale and hands over to the full path. The full path, finding the cache off **by the settings file**, removes this workspace's completion files: the cache, its two marker files, the collect-child lock and cooldown files, and the remote sidecar — and nothing else (my call). This is a new narrow removal, not `clear_workspace()`, which also deletes `pycache/` and `pytest-cache/`; `otto cache clear` keeps using `clear_workspace()`, and both share the one list of completion file names. After the first removal there is nothing left to remove, so later off runs delete nothing. From then on the shim finds no cache file and always hands over. The builder chooses the mechanism (e.g. the user settings file as one of the stored key paths the shim already stats on its full stat pass), within the TAB budget: no extra per-TAB file operation on the marker-fresh path.
+The shim may import only its pinned stdlib set (`test_shim.py`), so it cannot read TOML. One rule makes it obey anyway: the user's `settings.toml` is one of the stored key paths of the `names` section, as a stat triple taken from the settings load's one memoized stat (`user_settings_stat()`), so any change to it — by the verbs or by hand — makes the shim's stored answers stale and hands over to the full path. No extra per-TAB file operation on the marker-fresh path.
 
-`otto cache disable` also removes the completion files of **every** workspace under the home immediately (the setting is user-wide), so the switch takes effect on the very next TAB anywhere. After a hand edit of the file instead, a workspace's shim may keep answering from its cache until its 60-second freshness window lapses (my call: acceptable — those answers were validated against the current files, so they are correct, only not yet "uncached"); the docs say `otto cache disable` applies at once.
+Nothing is deleted when the cache is off (amended 2026-10-29, Chris; this replaces the earlier "the full path removes the workspace's completion files" and "`disable` clears every workspace"). No deletion is needed: off writes nothing, so the stored triple for `settings.toml` never matches again, and once the shim's 60-second marker window lapses every TAB hands over. A TAB may therefore answer from the old cache for up to about 60 seconds after the change, whether made by `otto cache disable` or by hand; those answers were validated against the current files, so they are correct, only not yet "uncached".
+
+**The shim's stat rule.** For a key path stored as missing (`[path, None, None]`), only `ENOENT` and `ENOTDIR` mean "still missing". Any other stat error (`ELOOP`, `EACCES`, …) hands over, matching `user_settings._stat_file`, for which such a path is a broken file and the cache off. Otherwise a `settings.toml` that became a self-loop after the cache was written would be served from the old cache indefinitely. A differential test drives `_stat_pass` and `_stat_file` through the same path states. The digest side needs no change: it takes the settings stat from the same memoized load, and a broken file means off, so nothing is written.
+
+### Live test names
+
+With the cache off a test-name or `-m` TAB still offers names (Chris: "offer live collection when the cache is off"). `collected_tests.completion_view`, finding no cache file, starts the collect child in a **live mode** (`_OTTO_DUMP_TEST_NAMES=live`, `completion_cache.DUMP_TESTS_LIVE`, defined once beside `DUMP_TESTS_ENV_VAR`) and waits for it. Collection never runs in the completer process, whose stdout is the shell's. The live child:
+
+- is started by the same command builder as the stored-tables mode (`_collect_child_command`: the venv `otto`, the completion variables stripped, the path variables normalised), with the mode as its one parameter, and waited for by the same start (`_wait_for_child`: `COLLECT_TIMEOUT_SECONDS` plus the kill grace), with stdout piped and stderr discarded;
+- runs the same child core as the stored-tables mode (`_collect_within_cap`: the deadline armed before the bootstrap, then the run's own `_refresh_tables`, which with no cache file collects each whole tree and stores nothing);
+- takes no lock, stamps no cooldown, touches no marker and writes no table; its cwd is a fresh temporary directory removed afterwards;
+- sends whatever the collection writes to stdout to `/dev/null` and prints one JSON object, `{"names": [...], "markers": [...]}`, built by the same view the tables answer with (`_view_of`).
+
+Any failure (spawn, non-zero exit, timeout, output that is not that object) is an empty view, never an exception. With nowhere to record one, there is no cooldown: a project that cannot collect costs up to the cap on every test-name TAB.
 
 ## The verbs
 
 `otto cache disable` and `otto cache enable`, on `cache_app` beside `info`, `clear` and `prune`.
 
 - They edit `user_settings_path()` (so `OTTO_HOME` is honoured) with a round-tripping TOML library — `tomlkit` added as a runtime dependency (my call: rely on the library rather than hand-edit TOML text) and imported only inside the verbs, so no fast path pays for it.
-- `disable` sets `[cache] enabled = false`, creating the file and the table if needed, then removes every workspace's completion files.
+- `disable` sets `[cache] enabled = false`, creating the file and the table if needed. It deletes nothing (amended 2026-10-29, Chris).
 - `enable` sets `enabled = true` where a `[cache]` table exists; when there is no file or no table it changes nothing (on is the default) — my call, so enabling never creates a file.
 - Both are idempotent and print the resulting state, its source and the file path.
 - A settings file that does not parse, or does not validate as user settings, is refused with the error and left untouched (my call: the verbs never write a file otto itself cannot read).
@@ -92,14 +107,16 @@ The shim may import only its pinned stdlib set (`test_shim.py`), so it cannot re
 
 ## Comparing
 
-Docs only (Chris). The docs' new section ("Turning the cache off") shows the A/B with the verbs: `otto cache disable`, measure `otto -h`; `otto cache enable`, run `otto -h` once to rebuild the cache (disable removed it, so the first run after enable is cold), then measure it again. Measured in file operations (`strace -c -f -e trace=%file`), not wall-clock time, matching how otto's own budgets measure startup cost. It also states the expected size of the gap (warm `-h` ≈ 2.8k file ops vs uncached full path ≈ 3.3k+ on the budget's reference project).
+Docs only (Chris). The docs' new section ("Turning the cache off") shows the A/B with the verbs: `otto cache disable`, measure `otto -h`; `otto cache enable`, run `otto -h` once to rebuild the cache (the settings change made it stale, so the first run after enable rebuilds it), then measure it again. Measured in file operations (`strace -c -f -e trace=%file`), not wall-clock time, matching how otto's own budgets measure startup cost. It also states the expected size of the gap (warm `-h` ≈ 2.8k file ops vs uncached full path ≈ 3.3k+ on the budget's reference project).
 
 ## Tests
 
 - Default on with no settings file, with a file without `[cache]`, and with `[cache]` lacking `enabled`.
 - File over default; an unparsable or invalid file resolves off with the error as its source.
 - Off → no cache file is read or written: a file-op assertion (the import-budget strace harness or an equivalent syscall spy), never wall clock.
-- The shim honours a settings change (hands over, then the full path removes the leftovers), with no extra file operation on the marker-fresh TAB path.
+- The shim honours a settings change (hands over), with no extra file operation on the marker-fresh TAB path; a stored-missing settings path that turns into a self-loop or sits under an unsearchable directory hands over.
+- Off deletes nothing: neither the full path nor `disable` removes a workspace file.
+- Off: a test-name TAB offers live names and markers from a real child, writes no cache file, lock or marker, and a failing or timed-out child is an empty view.
 - `otto test` with the cache off collects the whole tree and writes no cache file; on, it keeps tracking changed files.
 - The verbs round-trip a settings file with other tables, comments and blank lines untouched apart from the `[cache]` key; `OTTO_HOME` honoured; idempotence; an unparsable file refused unchanged.
 - `otto cache info` shows each source.
