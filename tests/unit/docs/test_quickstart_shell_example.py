@@ -122,7 +122,7 @@ def _dut_answering(result: CommandResult) -> SimpleNamespace:
 async def test_the_e2e_helper_refuses_a_tool_that_failed(monkeypatch):
     tools = _tools_module()
     failed = CommandResult(
-        Status.Failed, value="boom\n", command="/tmp/quickstart/shout x", retcode=2
+        Status.Failed, value="boom", command="/tmp/quickstart/shout x", retcode=2
     )
     monkeypatch.setattr(tools, "get_host", lambda _name: _dut_answering(failed))
     with pytest.raises(tools.ToolFailedError, match=r"/tmp/quickstart/shout x.*exit code 2"):
@@ -174,6 +174,6 @@ async def test_the_e2e_helper_names_a_product_dut_does_not_have(monkeypatch):
 @pytest.mark.asyncio
 async def test_the_e2e_helper_returns_what_a_tool_printed(monkeypatch):
     tools = _tools_module()
-    ok = CommandResult(Status.Success, value="X\n", command="/tmp/quickstart/shout x", retcode=0)
+    ok = CommandResult(Status.Success, value="X", command="/tmp/quickstart/shout x", retcode=0)
     monkeypatch.setattr(tools, "get_host", lambda _name: _dut_answering(ok))
     assert await tools.run_tool("shout", "x") == "X"

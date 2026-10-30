@@ -263,7 +263,7 @@ def _ok(value: str) -> CommandResult:
 @pytest.mark.asyncio
 async def test_the_helper_writes_the_line_as_one_argument_under_sudo(monkeypatch):
     helper = _helper()
-    dut, calls = _dut(_ok(""), _ok("2\n"))
+    dut, calls = _dut(_ok(""), _ok("2"))
     monkeypatch.setattr(helper, "get_host", lambda _name: dut)
     assert await helper.count_words("a; reboot") == 2
     (write, sudo), (read, read_sudo) = calls
@@ -284,7 +284,7 @@ async def test_the_helper_writes_the_line_as_one_argument_under_sudo(monkeypatch
 @pytest.mark.asyncio
 async def test_the_helper_refuses_a_failed_write_and_never_reads(monkeypatch):
     helper = _helper()
-    failed = CommandResult(Status.Failed, value="Permission denied\n", command="", retcode=1)
+    failed = CommandResult(Status.Failed, value="Permission denied", command="", retcode=1)
     dut, calls = _dut(failed)
     monkeypatch.setattr(helper, "get_host", lambda _name: dut)
     with pytest.raises(helper.ModuleCallError, match=r"'one'.*Permission denied"):
@@ -295,9 +295,9 @@ async def test_the_helper_refuses_a_failed_write_and_never_reads(monkeypatch):
 @pytest.mark.asyncio
 async def test_the_helper_refuses_a_count_that_is_not_a_number(monkeypatch):
     helper = _helper()
-    dut, calls = _dut(_ok(""), _ok("garbled\n"))
+    dut, calls = _dut(_ok(""), _ok("garbled"))
     monkeypatch.setattr(helper, "get_host", lambda _name: dut)
-    with pytest.raises(helper.ModuleCallError, match=r"words held 'garbled\\n', not a count"):
+    with pytest.raises(helper.ModuleCallError, match=r"words held 'garbled', not a count"):
         await helper.count_words("one")
     assert len(calls) == 2
 

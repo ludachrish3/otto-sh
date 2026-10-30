@@ -38,7 +38,7 @@ async def hello(
     """Run a simple echo command on the local host."""
     host = get_host("local")
     result = (await host.run(f"echo {message}")).only
-    logger.info(f"{host.name}: {result.value.strip()}")
+    logger.info(f"{host.name}: {result.value}")
 ```
 
 `get_host("local")` is the built-in `local` host, so the instruction runs

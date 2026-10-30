@@ -22,12 +22,12 @@ async def count_words(line: str) -> int:
     written = await host.exec(f"sh -c {shlex.quote(write)}", sudo=True)
     if not written.is_ok:
         raise ModuleCallError(
-            f"writing {line!r} to {PARAMETERS}/line failed on dut: {written.value.strip()}"
+            f"writing {line!r} to {PARAMETERS}/line failed on dut: {written.value}"
         )
     read = await host.exec(f"cat {PARAMETERS}/words")
     if not read.is_ok:
-        raise ModuleCallError(f"reading {PARAMETERS}/words failed on dut: {read.value.strip()}")
+        raise ModuleCallError(f"reading {PARAMETERS}/words failed on dut: {read.value}")
     try:
-        return int(read.value.strip())
+        return int(read.value)
     except ValueError:
         raise ModuleCallError(f"{PARAMETERS}/words held {read.value!r}, not a count") from None

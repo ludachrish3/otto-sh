@@ -19,7 +19,7 @@ preserving shell state in each stream, use
 ...     r2 = (await s2.run("pwd")).only
 ...     await s1.close()
 ...     await s2.close()
-...     return r1.value.strip(), r2.value.strip()
+...     return r1.value, r2.value
 >>> run(parallel_sessions())
 ('/tmp', '/var')
 ```
@@ -74,7 +74,9 @@ once — mysql, a vendor CLI, `python3` — wrapping the same loop in an
 {class}`~otto.host.app_shell.AppShell` subclass is more ergonomic: declare
 the launch command and the prompt once, then call
 {meth}`~otto.host.app_shell.AppShell.cmd` for each line and get back a
-{class}`~otto.result.ShellResult` instead of a raw string:
+{class}`~otto.result.ShellResult` instead of a raw string. Its `value` is
+everything the app printed between your line and its next prompt, so a REPL's
+own trailing newline stays in it:
 
 ```{doctest}
 >>> import re
@@ -90,11 +92,11 @@ the launch command and the prompt once, then call
 ...     try:
 ...         async with appshell_host.app_shell(PyRepl) as py:
 ...             result = await py.cmd("print('otto_test')")
-...             return result.value.strip()
+...             return result.value
 ...     finally:
 ...         await appshell_host.close()
 >>> run(repl_demo())
-'otto_test'
+'otto_test\n'
 ```
 
 `cmd()` also takes a `parse=` argument — a {class}`~otto.host.app_shell.Parsed`
@@ -148,7 +150,7 @@ async def poll_status(host):
         return_exceptions=True,
     )
     run_result = results[0]
-    return run_result.only.value.strip()
+    return run_result.only.value
 ```
 
 The key insight is that `asyncio.gather` runs the command and the sleep

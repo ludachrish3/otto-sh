@@ -290,7 +290,7 @@ something from it:
 ```python
 # Before — correct on a real run, raises under --dry-run at the `.value` line.
 result = (await host.run("rpm -q otto-agent")).only
-installed = result.value.strip()
+installed = result.value
 if installed.startswith("otto-agent-2."):
     await host.run("systemctl restart otto-agent")
 ```
@@ -303,7 +303,7 @@ from otto import Status
 result = (await host.run("rpm -q otto-agent")).only
 if result.status is Status.NotRun:
     return  # a preview: there is nothing to decide yet
-installed = result.value.strip()
+installed = result.value
 if installed.startswith("otto-agent-2."):
     await host.run("systemctl restart otto-agent")
 ```

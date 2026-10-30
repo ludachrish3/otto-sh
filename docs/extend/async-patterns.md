@@ -14,7 +14,7 @@ The simplest pattern: run one command and inspect the result.
 >>> result = asyncio.run(host.run("echo hello")).only
 >>> result.status
 <Status.Success: 0>
->>> result.value.strip()
+>>> result.value
 'hello'
 ```
 
@@ -27,7 +27,7 @@ state like the working directory persists between calls:
 >>> run(host.run("cd /tmp"))
 Results(status=<Status.Success: 0>, value=[CommandResult(status=<Status.Success: 0>, value='', msg='', command='cd /tmp', retcode=0, timed_out=False)], msg='')
 >>> result = run(host.run("pwd")).only
->>> result.value.strip()
+>>> result.value
 '/tmp'
 ```
 
@@ -44,7 +44,7 @@ aggregate status plus individual per-command results:
 >>> result = asyncio.run(host.run(["echo first", "echo second"]))
 >>> result.status
 <Status.Success: 0>
->>> [cr.value.strip() for cr in result]
+>>> [cr.value for cr in result]
 ['first', 'second']
 ```
 
@@ -64,7 +64,7 @@ not share state:
 ...         host.exec("echo two"),
 ...         host.exec("echo three"),
 ...     )
-...     return [r.value.strip() for r in results]
+...     return [r.value for r in results]
 >>> run(concurrent_exec())
 ['one', 'two', 'three']
 ```
@@ -115,7 +115,7 @@ async def check_all_hosts():
         if isinstance(result, BaseException):
             print(f"{host_id}: ERROR - {result}")
         else:
-            print(f"{host_id}: {result.only.value.strip()}")
+            print(f"{host_id}: {result.only.value}")
 
 
 async def check_routers_only():

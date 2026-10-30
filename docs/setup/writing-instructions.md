@@ -524,7 +524,7 @@ can also be done inside instructions and tests:
 >>> result = run(host.run(["echo hello", "echo world"]))
 >>> result.status
 <Status.Success: 0>
->>> [cr.value.strip() for cr in result]
+>>> [cr.value for cr in result]
 ['hello', 'world']
 ```
 

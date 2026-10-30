@@ -268,7 +268,7 @@ def _hosts(result: CommandResult, seen: "list[tuple[str, str]]"):
 async def test_the_helper_runs_a_container_product_in_its_container(monkeypatch, name):
     tools = _tools()
     seen: "list[tuple[str, str]]" = []
-    ok = CommandResult(Status.Success, value="out\n", command="", retcode=0)
+    ok = CommandResult(Status.Success, value="out", command="", retcode=0)
     monkeypatch.setattr(tools, "get_host", _hosts(ok, seen))
     assert await tools.run_tool(name, "a b") == "out"
     assert seen == [
@@ -283,7 +283,7 @@ async def test_the_helper_runs_a_container_product_in_its_container(monkeypatch,
 async def test_the_helper_runs_the_image_product_through_docker_exec_on_the_parent(monkeypatch):
     tools = _tools()
     seen: "list[tuple[str, str]]" = []
-    ok = CommandResult(Status.Success, value="[2] a b\n", command="", retcode=0)
+    ok = CommandResult(Status.Success, value="[2] a b", command="", retcode=0)
     monkeypatch.setattr(tools, "get_host", _hosts(ok, seen))
     assert await tools.run_tool("banner", "a b") == "[2] a b"
     assert seen == [
@@ -301,7 +301,7 @@ async def test_the_helper_runs_the_image_product_through_docker_exec_on_the_pare
 async def test_the_helper_refuses_a_tool_that_failed(monkeypatch):
     tools = _tools()
     failed = CommandResult(
-        Status.Failed, value="boom\n", command="/opt/quickstart/shout x", retcode=2
+        Status.Failed, value="boom", command="/opt/quickstart/shout x", retcode=2
     )
     monkeypatch.setattr(tools, "get_host", _hosts(failed, []))
     with pytest.raises(

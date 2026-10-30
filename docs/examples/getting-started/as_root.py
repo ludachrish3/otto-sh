@@ -12,10 +12,10 @@ async def main() -> None:
     # registered the proxy before the lab loads and the cred is validated.
     async with otto.open_context(lab="unix"):
         host = otto.get_host("test1")
-        before = (await host.run("id -un")).only.value.strip()
+        before = (await host.run("id -un")).only.value
         async with host.as_user("root"):
-            during = (await host.run("id -un")).only.value.strip()
-        after = (await host.run("id -un")).only.value.strip()
+            during = (await host.run("id -un")).only.value
+        after = (await host.run("id -un")).only.value
     print(f"{before} -> {during} -> {after}")
 
 

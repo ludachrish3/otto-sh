@@ -57,8 +57,8 @@ async def run_tool(name: str, args: str) -> str:
             why = "timed out"
         elif result.retcode == -1:
             # The tool never exited on its own: a signal killed it, or the session was lost.
-            why = f"did not finish: {result.value.strip() or result.status.name}"
+            why = f"did not finish: {result.value or result.status.name}"
         else:
             why = f"exit code {result.retcode}"
         raise ToolFailedError(f"{result.command!r} failed on {host_id}: {why}")
-    return result.value.strip()
+    return result.value
