@@ -16,7 +16,6 @@ re-arms the worker's chained SIGINT faulthandler in teardown.
 import contextlib
 import dataclasses
 import os
-import pathlib
 import select
 import signal
 import subprocess
@@ -28,6 +27,7 @@ import pytest
 
 from otto.lifecycle import sync_phase
 from otto.utils import wait_for
+from scripts.process_group import process_state
 
 _CHILD = """
 import asyncio, os, signal, sys, time
@@ -261,9 +261,10 @@ def _wait_until_blocked(pid, timeout=30.0):
     """
 
     def _sleeping():
-        stat = pathlib.Path(f"/proc/{pid}/stat").read_text()
-        # rindex: comm sits in parens and may itself contain spaces.
-        return stat[stat.rindex(")") + 2] == "S"
+        state = process_state(pid)
+        if state is None:
+            raise AssertionError(f"child {pid} exited before it reached a blocking call")
+        return state == "S"
 
     wait_for(
         _sleeping,

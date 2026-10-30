@@ -22,7 +22,6 @@ import os
 import pty
 import re
 import select
-import signal
 import struct
 import subprocess
 import sys
@@ -32,6 +31,7 @@ from pathlib import Path
 
 from typing_extensions import Self
 
+from scripts.process_group import signal_group
 from tests.e2e._otto_subprocess import CHECKOUT_ROOT, OTTO_BIN, otto_subprocess_env
 
 
@@ -132,8 +132,7 @@ class InteractiveOttoSession:
     def __exit__(self, exc_type, exc, tb) -> None:
         proc = self._proc
         if proc is not None and proc.poll() is None:
-            with contextlib.suppress(ProcessLookupError, PermissionError):
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            signal_group(proc.pid)
             with contextlib.suppress(subprocess.TimeoutExpired):
                 proc.wait(timeout=2)
         if self._master_fd is not None:

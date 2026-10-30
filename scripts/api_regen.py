@@ -15,7 +15,6 @@ import hashlib
 import json
 import os
 import shutil
-import signal
 import subprocess
 import sys
 import sysconfig
@@ -38,6 +37,7 @@ from scripts.api_manifest import (  # noqa: E402
     parse_formats,
     parse_manifest,
 )
+from scripts.process_group import signal_group  # noqa: E402
 
 CHILD = REPO_ROOT / "scripts" / "api_dump_child.py"
 GATE_HASH_SEED = "0"
@@ -124,7 +124,7 @@ def run_child(
         try:
             out, err = proc.communicate(timeout=timeout)
         except subprocess.TimeoutExpired as exc:
-            os.killpg(proc.pid, signal.SIGKILL)
+            signal_group(proc.pid)
             proc.communicate()
             raise EnvError(f"the dump child timed out after {timeout:g}s") from exc
     if proc.returncode != 0:

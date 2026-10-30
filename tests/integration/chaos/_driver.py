@@ -20,6 +20,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from otto.utils import wait_for
+from scripts.process_group import group_alive
 from tests.e2e._otto_subprocess import CHECKOUT_ROOT, OTTO_BIN, otto_subprocess_env
 
 from ._target import ChaosTarget
@@ -117,11 +118,7 @@ class OttoProc:
     def assert_no_process_group(self) -> None:
         """After exit, nothing may remain in otto's group (start_new_session ⇒ pgid == pid)."""
         assert self.proc.poll() is not None, "call wait() before assert_no_process_group()"
-        try:
-            os.killpg(self.pid, 0)
-        except ProcessLookupError:
-            return
-        raise AssertionError(
+        assert not group_alive(self.pid), (
             f"orphaned local children remain in otto's process group (pgid {self.pid})"
         )
 

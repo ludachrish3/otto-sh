@@ -507,12 +507,6 @@ class TestLanesFinishBeforeCleanup:
         with pytest.raises(ProcessLookupError):
             os.kill(pid, 0)
 
-    def test_pids_in_group_reads_the_proc_field(self):
-        """The /proc field arithmetic finds this very process in its own group."""
-        import os
-
-        assert os.getpid() in gate_fresh._pids_in_group(os.getpgid(0))
-
     def test_the_direct_childs_exit_code_is_reported(self, tmp_path: Path):
         rc = gate_fresh._run_awaiting_descendants(["sh", "-c", "exit 3"], tmp_path)
         assert rc == 3

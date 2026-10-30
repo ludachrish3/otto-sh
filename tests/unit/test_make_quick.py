@@ -7,12 +7,12 @@ failure aborting) are pinned by running make for real on tiny selections.
 
 import os
 import re
-import signal
 import subprocess
 from pathlib import Path
 
 import pytest
 
+from scripts.process_group import signal_group
 from tests._fixtures.paths import CHECKOUT_ROOT
 from tests.unit.test_lane_invariants import (
     LANE_LEG_TIMEOUT_S,
@@ -156,7 +156,7 @@ def _make(tmp_path: Path, *args: str, env_extra: "dict[str, str] | None" = None)
         try:
             out, err = proc.communicate(timeout=_MAKE_TIMEOUT)
         except subprocess.TimeoutExpired:
-            os.killpg(proc.pid, signal.SIGKILL)
+            signal_group(proc.pid)
             out, err = proc.communicate()
             raise AssertionError(
                 f"make {' '.join(args)} exceeded {_MAKE_TIMEOUT}s:\n{out[-3000:]}\n{err[-3000:]}"

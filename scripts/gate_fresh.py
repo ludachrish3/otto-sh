@@ -19,7 +19,6 @@ Usage::
 import argparse
 import contextlib
 import json
-import os
 import shutil
 import signal
 import subprocess
@@ -43,6 +42,7 @@ from scripts.gate_stamp_common import (  # noqa: E402 -- path set up above
     tree_state,
     write_atomically,
 )
+from scripts.process_group import group_alive, group_members, signal_group  # noqa: E402
 
 __all__ = [
     "HISTORY_TARGETS",
@@ -228,39 +228,12 @@ class GateResult:
 
 
 _LINGER_REPORT_INTERVAL_S = 10.0
-# Index of `pgrp` in /proc/<pid>/stat once the `pid (comm)` prefix is stripped.
-_STAT_PGRP_FIELD = 2
-
-
-def _pids_in_group(pgid: int) -> list[int]:
-    """PIDs currently in process group *pgid* — diagnostic only, Linux ``/proc``.
-
-    Empty where ``/proc`` is absent; the wait itself never depends on this.
-    """
-    found: list[int] = []
-    proc = Path("/proc")
-    if not proc.is_dir():
-        return found
-    for entry in proc.iterdir():
-        if not entry.name.isdigit():
-            continue
-        try:
-            stat = (entry / "stat").read_text()
-        except OSError:
-            continue
-        # `pid (comm) state ppid pgrp ...` — comm may contain spaces/parens,
-        # so split after the LAST ')'; `state` is then field 0, `pgrp` field 2.
-        fields = stat[stat.rfind(")") + 2 :].split()
-        if len(fields) > _STAT_PGRP_FIELD and fields[_STAT_PGRP_FIELD] == str(pgid):
-            found.append(int(entry.name))
-    return found
 
 
 def _wait_for_process_group(pgid: int) -> None:
     """Block until NO process is left in process group *pgid*.
 
-    ``os.killpg(pgid, 0)`` delivers nothing and raises ``ProcessLookupError``
-    exactly when the group is empty; polling it is the whole mechanism. No
+    Polling :func:`scripts.process_group.group_alive` is the whole mechanism. No
     deadline and no kill on purpose: the gate's job here is to never start
     disposing of the worktree while anything the lanes spawned is still
     alive in it, and a wait that gives up after N seconds would just move the
@@ -273,19 +246,11 @@ def _wait_for_process_group(pgid: int) -> None:
     (``ubuntu-latest`` VMs) both reap.
     """
     reported_at = time.monotonic()
-    while True:
-        try:
-            os.killpg(pgid, 0)
-        except ProcessLookupError:
-            return
-        except PermissionError:
-            # A member exists but is not ours to signal (a lane that escalated
-            # via sudo): that is "alive", not "gone".
-            pass
+    while group_alive(pgid):
         now = time.monotonic()
         if now - reported_at >= _LINGER_REPORT_INTERVAL_S:
             reported_at = now
-            pids = _pids_in_group(pgid)
+            pids = group_members(pgid)
             print(
                 "gate-fresh: the lanes returned but processes they spawned are still "
                 f"running; waiting for them before touching the worktree "
@@ -328,8 +293,7 @@ def _run_awaiting_descendants(cmd: list[str], cwd: Path) -> int:
             # as during the lanes themselves. A second Ctrl+C during the
             # drain propagates without draining — the deliberate escape from
             # an otherwise unbounded wait.
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(proc.pid, signal.SIGINT)
+            signal_group(proc.pid, signal.SIGINT)
             proc.wait()
             _wait_for_process_group(proc.pid)
             raise
