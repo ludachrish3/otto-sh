@@ -161,7 +161,7 @@ class HygieneSnapshot:
     tunnel_procs: frozenset  # str lines: "pid tunnel-id" from sentinel parse
     impair_timers: frozenset  # str lines: "pid link-id netdev [selector]"
     nc_listeners: frozenset  # raw pgrep lines
-    qdiscs: dict  # netdev -> raw `tc qdisc show dev X` text (stripped)
+    qdiscs: dict  # netdev -> raw `tc qdisc show dev X` text (exact value)
     staging: frozenset  # /tmp/otto* entries
     history_digest: str  # sha256 line of ~/.bash_history
     docker_containers: frozenset  # docker ps lines: "id names"
@@ -180,7 +180,7 @@ async def snapshot_host(host) -> HygieneSnapshot:
     async def _out(cmd: str) -> str:
         result = await host.exec(cmd, timeout=_PROBE_TIMEOUT, log=LogMode.QUIET)
         check_probe_result(getattr(host, "id", "<unknown host>"), result)
-        return (result.value or "").strip()
+        return result.value
 
     tunnel_raw = await _out(DISCOVERY_PS_COMMAND)
     impair_raw = await _out(IMPAIR_PS_COMMAND)
@@ -195,18 +195,12 @@ async def snapshot_host(host) -> HygieneSnapshot:
             f"{t.pid} {t.link_id} {t.netdev} {t.selector.describe() if t.selector else ''}".strip()
             for t in parse_impair_ps(impair_raw)
         ),
-        nc_listeners=frozenset(
-            line for line in (await _out(_NC_LISTENER_PROBE)).splitlines() if line
-        ),
+        nc_listeners=frozenset(probe_lines(await _out(_NC_LISTENER_PROBE))),
         qdiscs=qdiscs,
-        staging=frozenset(line for line in (await _out(_STAGING_PROBE)).splitlines() if line),
+        staging=frozenset(probe_lines(await _out(_STAGING_PROBE))),
         history_digest=await _out(_HISTORY_PROBE),
-        docker_containers=frozenset(
-            line for line in (await _out(_DOCKER_PS_PROBE)).splitlines() if line
-        ),
-        docker_networks=frozenset(
-            line for line in (await _out(_DOCKER_NET_PROBE)).splitlines() if line
-        ),
+        docker_containers=frozenset(probe_lines(await _out(_DOCKER_PS_PROBE))),
+        docker_networks=frozenset(probe_lines(await _out(_DOCKER_NET_PROBE))),
     )
 
 

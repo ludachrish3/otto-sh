@@ -104,7 +104,7 @@ async def _check_echoes() -> list[tuple[str, int, str]]:
             assert result.is_ok, f"sweep scan failed on {host.id}: {result.value!r}"
             found.extend(
                 (host.id, p.pid, p.token)
-                for p in parse_ps_output(result.value or "", CHECK_PREFIX)
+                for p in parse_ps_output(result.value, CHECK_PREFIX)
                 if _TAGGED.match(p.token)
             )
     finally:
@@ -171,7 +171,7 @@ async def _assert_nothing_tagged_left(lab: Lab) -> None:
     for host in lab.hosts.values():
         result = await host.exec(DISCOVERY_PS_COMMAND, timeout=15, log=LogMode.QUIET)
         assert result.is_ok, f"tunnel scan failed on {host.id}: {result.value!r}"
-        left = parse_process_discovery(result.value or "")
+        left = parse_process_discovery(result.value)
         assert not left, f"tunnel processes survived on {host.id}: " + ", ".join(
             f"pid {o.pid} {o.parsed.tunnel.id}" for o in left
         )

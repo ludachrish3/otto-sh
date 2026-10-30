@@ -221,7 +221,7 @@ async def _avg_rtt_ms(host: UnixHost, target_ip: str) -> float:
     )
     assert result.is_ok, f"ping {target_ip} from {host.id!r} failed: {result.value!r}"
     marker = "rtt min/avg/max/mdev"
-    for line in (result.value or "").splitlines():
+    for line in result.value.splitlines():
         if marker in line:
             return float(line.split("=")[1].split("/")[1])
     raise AssertionError(
@@ -269,7 +269,7 @@ async def impair_lab():
             await test3.exec(
                 "sysctl -n net.ipv4.ip_forward", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
             )
-        ).value.strip()
+        ).value
         await _root(test3, "sysctl -w net.ipv4.ip_forward=1")
 
         await _root(test1, f"ip route add {_VLAN200_NET} via {_TEST3_VLAN100_IP}")
@@ -332,14 +332,14 @@ async def _assert_bed_hygiene() -> None:
             ps_result = await host.exec(
                 IMPAIR_PS_COMMAND, timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
             )
-            timers = parse_impair_ps(ps_result.value or "")
+            timers = parse_impair_ps(ps_result.value)
             if timers:
                 leaks.append(f"{host.id}: leftover otto-impair timers {timers!r}")
 
             qdisc_result = await host.exec(
                 "tc qdisc show dev eth1", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
             )
-            if parse_qdisc_show(qdisc_result.value or "") is not None:
+            if parse_qdisc_show(qdisc_result.value) is not None:
                 leaks.append(
                     f"{host.id}: mgmt interface eth1 still carries a netem qdisc: "
                     f"{qdisc_result.value!r}"
@@ -349,14 +349,14 @@ async def _assert_bed_hygiene() -> None:
             # anywhere in its own command line, or it matches its own shell.
             for probe in ("ip netns list 2>/dev/null || true", "pgrep -af '[o]tto-check-' || true"):
                 check_result = await host.exec(probe, timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET)
-                left = [ln for ln in (check_result.value or "").splitlines() if "otto-check-" in ln]
+                left = [ln for ln in check_result.value.splitlines() if "otto-check-" in ln]
                 if left:
                     leaks.append(f"{host.id}: otto link check left behind: {left!r}")
 
             link_result = await host.exec(
                 "ip -o link show", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
             )
-            link_text = link_result.value or ""
+            link_text = link_result.value
             leaks.extend(
                 f"{host.id}: {dev!r} still present"
                 for dev in (_VLAN100_DEV, _VLAN200_DEV)
@@ -365,7 +365,7 @@ async def _assert_bed_hygiene() -> None:
 
             if host.id == _TEST3:
                 forward_result = await host.run("iptables -S FORWARD", sudo=True, log=LogMode.QUIET)
-                forward_text = forward_result.only.value or ""
+                forward_text = forward_result.only.value
                 if _VLAN100_DEV in forward_text or _VLAN200_DEV in forward_text:
                     leaks.append(
                         f"{host.id}: FORWARD chain still references a VLAN sub-interface: "
@@ -473,7 +473,7 @@ async def test_inpath_placements_and_endpoint_purity(impair_lab: Lab) -> None:
         purity = await test1.exec(
             f"tc qdisc show dev {_VLAN100_DEV}", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
         )
-        assert parse_qdisc_show(purity.value or "") is None, (
+        assert parse_qdisc_show(purity.value) is None, (
             f"test1's {_VLAN100_DEV} must stay pure in in-path mode, got: {purity.value!r}"
         )
     finally:
@@ -527,7 +527,7 @@ async def test_expire_self_heals(impair_lab: Lab) -> None:
         ps_result = await test1.exec(
             IMPAIR_PS_COMMAND, timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
         )
-        timers = [t for t in parse_impair_ps(ps_result.value or "") if t.link_id == "edge"]
+        timers = [t for t in parse_impair_ps(ps_result.value) if t.link_id == "edge"]
         assert not timers, f"expire timer for 'edge' still running on test1: {timers!r}"
     finally:
         await repair_link(impair_lab, "edge")
@@ -661,7 +661,7 @@ async def test_scoped_impair_readback_and_pristine_repair(impair_lab: Lab) -> No
     qdisc = await test1.exec(
         f"tc qdisc show dev {_VLAN100_DEV}", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
     )
-    line = (qdisc.value or "").splitlines()[0] if (qdisc.value or "").strip() else ""
+    line = qdisc.value.splitlines()[0] if qdisc.value else ""
     assert "prio 1:" not in line, f"expected pristine root after bare repair, got: {qdisc.value!r}"
     assert "netem" not in line, f"expected pristine root after bare repair, got: {qdisc.value!r}"
 
@@ -687,7 +687,7 @@ async def _tcp_rtt_ms(host: UnixHost, target_ip: str, port: int) -> float:
     )
     result = await host.exec(cmd, timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET)
     assert result.is_ok, f"tcp echo to {target_ip}:{port} failed: {result.value!r}"
-    return float((result.value or "").strip().splitlines()[-1])
+    return float(result.value)
 
 
 @pytest.mark.asyncio(loop_scope="module")
@@ -812,7 +812,7 @@ async def test_range_dst_selector_live(impair_lab: Lab) -> None:
         qdisc = await test1.exec(
             f"tc qdisc show dev {_VLAN100_DEV}", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
         )
-        first = (qdisc.value or "").splitlines()[0] if (qdisc.value or "").strip() else ""
+        first = qdisc.value.splitlines()[0] if qdisc.value else ""
         assert "prio 1:" not in first, qdisc.value
         assert "netem" not in first, qdisc.value
     finally:
@@ -872,7 +872,7 @@ async def test_scoped_expire_clears_only_its_selector(impair_lab: Lab) -> None:
         )
         stale = [
             t
-            for t in parse_impair_ps(ps_result.value or "")
+            for t in parse_impair_ps(ps_result.value)
             if t.link_id == "edge" and t.selector == expire_sel
         ]
         assert not stale, f"expired selector's timer still running: {stale!r}"
@@ -962,7 +962,7 @@ async def test_narrower_nested_selector_outranks_its_wide_parent(impair_lab: Lab
         qdisc = await test1.exec(
             f"tc qdisc show dev {_VLAN100_DEV}", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
         )
-        first = (qdisc.value or "").splitlines()[0] if (qdisc.value or "").strip() else ""
+        first = qdisc.value.splitlines()[0] if qdisc.value else ""
         assert "prio 1:" not in first, qdisc.value
         assert "netem" not in first, qdisc.value
     finally:
@@ -989,7 +989,7 @@ async def _check_netns_left(host: UnixHost) -> str:
     result = await host.exec(
         "ip netns list | grep otto-check- || true", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
     )
-    return (result.value or "").strip()
+    return result.value
 
 
 @pytest.mark.asyncio(loop_scope="module")

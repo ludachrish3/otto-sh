@@ -139,8 +139,8 @@ class _ScriptedHost:
 async def test_snapshot_host_captures_docker_containers_and_networks():
     host = _ScriptedHost(
         canned_outputs={
-            _DOCKER_PS_PROBE: "abc123 otto-project1-e2e-x-api-1\ndef456 otto-project1-e2e-x-db-1\n",
-            _DOCKER_NET_PROBE: "bridge\notto-project1-e2e-x_default\n",
+            _DOCKER_PS_PROBE: "abc123 otto-project1-e2e-x-api-1\ndef456 otto-project1-e2e-x-db-1",
+            _DOCKER_NET_PROBE: "bridge\notto-project1-e2e-x_default",
         }
     )
     snap = await snapshot_host(host)
@@ -157,6 +157,14 @@ async def test_snapshot_host_captures_docker_containers_and_networks():
 def test_probe_lines_surfaces_a_stray_empty_line(value, lines):
     """A trailing newline in an exact value is a stray line, so it shows as ``""``."""
     assert probe_lines(value) == lines
+
+
+@pytest.mark.asyncio
+async def test_snapshot_host_keeps_a_stray_empty_line_visible():
+    """A value ending in a newline has a stray empty line, and the snapshot must show it."""
+    host = _ScriptedHost(canned_outputs={_DOCKER_NET_PROBE: "bridge\n"})
+    snap = await snapshot_host(host)
+    assert snap.docker_networks == frozenset({"bridge", ""})
 
 
 @pytest.mark.asyncio

@@ -117,7 +117,7 @@ def probe_text(element: str, cmd: str, *, timeout: float = _PROBE_TIMEOUT) -> st
     oracle answers.
     """
     out = run_probe(element, lambda h: h.exec(cmd, timeout=timeout, log=LogMode.QUIET))
-    return (out.value or "").strip()
+    return out.value
 
 
 def declared_link_id(host_a: str, host_b: str) -> str:
@@ -423,7 +423,7 @@ def busybox_probe_text(cmd: str, *, timeout: float = _PROBE_TIMEOUT) -> str:
     the guest's console still serves a shell.
     """
     out = busybox_probe(lambda h: h.exec(cmd, timeout=timeout, log=LogMode.QUIET))
-    return (out.value or "").strip()
+    return out.value
 
 
 @contextlib.contextmanager

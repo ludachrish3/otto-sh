@@ -242,7 +242,7 @@ async def test_proxied_default_session(leased_host: tuple[str, str]) -> None:
     try:
         result = (await host.run("whoami")).only
         assert result.status == Status.Success, f"whoami failed: {result.value!r}"
-        assert result.value.strip() == "mysql"
+        assert result.value == "mysql"
     finally:
         await host.close()
 
@@ -260,14 +260,14 @@ async def test_switch_user_roundtrip(leased_host: tuple[str, str]) -> None:
         _mysql_host_dict(ip, element), element=Element(element)
     )  # default user: vagrant
     try:
-        before = (await host.run("whoami")).only.value.strip()
+        before = (await host.run("whoami")).only.value
         assert before == "vagrant"
 
         async with host.as_user("mysql"):
-            during = (await host.run("whoami")).only.value.strip()
+            during = (await host.run("whoami")).only.value
             assert during == "mysql"
 
-        after = (await host.run("whoami")).only.value.strip()
+        after = (await host.run("whoami")).only.value
         assert after == "vagrant"
     finally:
         await host.close()
@@ -288,7 +288,7 @@ async def test_exec_runs_as_proxied_user(leased_host: tuple[str, str]) -> None:
     try:
         result = await host.exec("whoami")
         assert result.status == Status.Success, f"exec whoami failed: {result.value!r}"
-        assert result.value.strip() == "mysql"
+        assert result.value == "mysql"
     finally:
         await host.close()
 
@@ -320,7 +320,7 @@ async def test_nc_put_owned_by_proxied_user(leased_host: tuple[str, str], tmp_pa
 
         stat = (await host.run(f"stat -c %U {remote_dir}/{filename}")).only
         assert stat.status == Status.Success, f"stat failed: {stat.value!r}"
-        assert stat.value.strip() == "mysql"
+        assert stat.value == "mysql"
     finally:
         await host.run(f"rm -rf {remote_dir}")
         await host.close()
@@ -466,18 +466,18 @@ async def test_builtin_su_proxy_switch_user_does_not_hang(leased_host: tuple[str
         _builtin_su_host_dict(ip, element), element=Element(element)
     )  # default user: vagrant
     try:
-        before = (await host.run("whoami")).only.value.strip()
+        before = (await host.run("whoami")).only.value
         assert before == "vagrant"
 
         async with host.as_user("test"):
-            during = (await host.run("whoami")).only.value.strip()
+            during = (await host.run("whoami")).only.value
             assert during == "test"
             # Nothing was dropped by the switch: a second command right after it.
-            still_alive = (await host.run("echo still-alive")).only.value.strip()
+            still_alive = (await host.run("echo still-alive")).only.value
             assert still_alive == "still-alive"
 
         # The default "exit" undo's own resync must not drop the next command.
-        after = (await host.run("whoami")).only.value.strip()
+        after = (await host.run("whoami")).only.value
         assert after == "vagrant"
     finally:
         await host.close()
@@ -523,7 +523,7 @@ async def test_builtin_su_proxy_does_not_stall_when_root_is_not_challenged(
         element=Element(element),
     )
     try:
-        assert (await host.run("whoami")).only.value.strip() == "vagrant"
+        assert (await host.run("whoami")).only.value == "vagrant"
 
         started = time.monotonic()
         async with host.as_user("test"):
@@ -533,10 +533,10 @@ async def test_builtin_su_proxy_does_not_stall_when_root_is_not_challenged(
                 f"`su` that never challenged (the pre-fix behavior waited the full "
                 f"30s command timeout before failing)"
             )
-            assert (await host.run("whoami")).only.value.strip() == "test"
+            assert (await host.run("whoami")).only.value == "test"
             # Nothing was dropped by a hop that sent no password.
-            assert (await host.run("echo alive")).only.value.strip() == "alive"
+            assert (await host.run("echo alive")).only.value == "alive"
 
-        assert (await host.run("whoami")).only.value.strip() == "vagrant"
+        assert (await host.run("whoami")).only.value == "vagrant"
     finally:
         await host.close()

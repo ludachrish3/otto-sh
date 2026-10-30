@@ -49,13 +49,13 @@ _OTHER = next(c for c in _CREDS if c.login != _CONSOLE_LOGIN.login)
 async def test_login_and_run(host1):
     res = (await host1.run("id -un")).only
     assert res.retcode == 0, res
-    assert res.value.strip() == _CONSOLE_LOGIN.login
+    assert res.value == _CONSOLE_LOGIN.login
 
 
 async def test_direct_dial():
     h = make_console_host("test2", console_options=replace(_OPTS, dial="direct"))
     try:
-        assert (await h.run("hostname")).only.value.strip() == "test2"
+        assert (await h.run("hostname")).only.value == "test2"
     finally:
         await h.close()
 
@@ -123,9 +123,9 @@ async def test_busy_console_fails_loud():
 async def test_console_exec_runs_on_the_single_session(host1):
     """exec is a special case of run on a console: output and exit code, call after call."""
     first = await host1.exec("id -un")
-    assert (first.retcode, first.value.strip()) == (0, _CONSOLE_LOGIN.login), first
+    assert (first.retcode, first.value) == (0, _CONSOLE_LOGIN.login), first
     second = await host1.exec("sh -c 'exit 3'")
     assert second.retcode == 3, second
-    assert (await host1.run("echo still-here")).only.value.strip() == "still-here"
+    assert (await host1.run("echo still-here")).only.value == "still-here"
     with pytest.raises(ConsoleError, match=r"single-client.*named sessions"):
         await host1.open_session("aux")

@@ -150,7 +150,7 @@ async def test_survivor_traffic_during_neighbor_churn(tunnel_lab, reap_tunnels) 
             result = await test2.exec(
                 f"cat {shlex.quote(outfile)} 2>/dev/null || true", timeout=15, log=LogMode.QUIET
             )
-            received_text = result.value or ""
+            received_text = result.value
             if final_probe in received_text:
                 return True
             send_udp(resolved_ip("test1"), PORT_SURVIVOR, final_probe.encode())

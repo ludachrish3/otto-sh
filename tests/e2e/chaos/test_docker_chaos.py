@@ -48,6 +48,7 @@ from tests._fixtures.bed_hygiene import (
     _DOCKER_PS_PROBE,
     diff_snapshots,
     format_hygiene_report,
+    probe_lines,
     snapshot_host,
 )
 from tests._fixtures.paths import TESTS_ROOT
@@ -477,8 +478,8 @@ def test_composed_pileup_leaves_zero_accumulation(
         # explicitly so a probe failure surfaces as a named assertion instead
         # of silently deflating the baseline to empty and making every later
         # `⊆ baseline` check pass vacuously.
-        assert baseline_ps.is_ok, f"baseline docker ps probe failed: {baseline_ps.value}"
-        assert baseline_net.is_ok, f"baseline docker network probe failed: {baseline_net.value}"
+        assert baseline_ps.is_ok, f"baseline docker ps probe failed: {baseline_ps.value!r}"
+        assert baseline_net.is_ok, f"baseline docker network probe failed: {baseline_net.value!r}"
         landings = []
         for round_no in range(rounds):
             entered = {"body": False}
@@ -505,16 +506,16 @@ def test_composed_pileup_leaves_zero_accumulation(
         await cleanup_project(docker_parent, proj, stack=True)
         end_ps = await docker_parent.exec(_DOCKER_PS_PROBE, timeout=30)
         end_net = await docker_parent.exec(_DOCKER_NET_PROBE, timeout=30)
-        assert end_ps.is_ok, f"end docker ps probe failed: {end_ps.value}"
-        assert end_net.is_ok, f"end docker network probe failed: {end_net.value}"
-        assert set(end_ps.value.split("\n")) <= set(baseline_ps.value.split("\n")) | {""}, (
-            f"container accumulation after {rounds} interrupted flows:\n{end_ps.value}"
+        assert end_ps.is_ok, f"end docker ps probe failed: {end_ps.value!r}"
+        assert end_net.is_ok, f"end docker network probe failed: {end_net.value!r}"
+        assert set(probe_lines(end_ps.value)) <= set(probe_lines(baseline_ps.value)), (
+            f"container accumulation after {rounds} interrupted flows: {end_ps.value!r}"
         )
-        assert set(end_net.value.split("\n")) <= set(baseline_net.value.split("\n")) | {""}, (
-            f"network accumulation after {rounds} interrupted flows:\n{end_net.value}"
+        assert set(probe_lines(end_net.value)) <= set(probe_lines(baseline_net.value)), (
+            f"network accumulation after {rounds} interrupted flows: {end_net.value!r}"
         )
         tree = compose_staging_root(parent_staging_root(docker_parent), proj)
         staging = await docker_parent.exec(f"ls -d {tree} 2>/dev/null || true", timeout=30)
-        assert not staging.value.strip(), f"staging survived cleanup: {staging.value}"
+        assert staging.value == "", f"staging survived cleanup: {staging.value!r}"
 
     _run(scenario())

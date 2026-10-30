@@ -112,10 +112,12 @@ async def sshd_listener_pid(control) -> int:
     is NOT the pid serving this very session (spec §8): stopping that one
     would freeze the control channel we recover through."""
     result = await control.exec(_SSHD_PID_CMD, timeout=15, log=LogMode.QUIET)
-    pid = int((result.value or "0").strip().splitlines()[-1])
+    # `[-1]`: if `systemctl show ssh` prints and then fails, its line precedes sshd's.
+    lines = result.value.splitlines()
+    pid = int(lines[-1]) if lines else 0
     assert pid > 0, f"could not resolve sshd MainPID: {result.value!r}"
     session_parent = await control.exec("sh -c 'echo $PPID'", timeout=15, log=LogMode.QUIET)
-    assert str(pid) != (session_parent.value or "").strip(), (
+    assert str(pid) != session_parent.value, (
         f"MainPID {pid} IS our session's server process — refusing to stop it"
     )
     return pid

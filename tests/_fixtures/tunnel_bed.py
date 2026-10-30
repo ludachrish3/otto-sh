@@ -175,7 +175,7 @@ async def observe_tunnel_processes() -> list:
     try:
         for host in hosts:
             result = await host.exec(DISCOVERY_PS_COMMAND, timeout=15, log=LogMode.QUIET)
-            found.extend((host.id, o) for o in parse_process_discovery(result.value or ""))
+            found.extend((host.id, o) for o in parse_process_discovery(result.value))
     finally:
         await asyncio.gather(*(h.close() for h in hosts), return_exceptions=True)
     return found
@@ -239,7 +239,7 @@ async def wait_for_udp_bound(
         result = await host.exec(
             "ss -H -u -a -n 2>/dev/null || true", timeout=15, log=LogMode.QUIET
         )
-        return needle in (result.value or "")
+        return needle in result.value
 
     await wait_for_async(
         _bound,
@@ -300,7 +300,7 @@ async def wait_for_tcp_bound(
 
     async def _bound() -> bool:
         result = await host.exec("ss -Htln 2>/dev/null || true", timeout=15, log=LogMode.QUIET)
-        return needle in (result.value or "")
+        return needle in result.value
 
     await wait_for_async(
         _bound,
@@ -370,7 +370,7 @@ async def wait_for_listener_output(
         result = await host.exec(
             f"cat {shlex.quote(outfile)} 2>/dev/null || true", timeout=15, log=LogMode.QUIET
         )
-        last = (result.value or "").strip()
+        last = result.value
         return bool(last)
 
     await wait_for_async(

@@ -28,7 +28,7 @@ import pytest
 
 from otto.logger.mode import LogMode
 from otto.utils import wait_for
-from tests._fixtures.bed_hygiene import argv_pattern
+from tests._fixtures.bed_hygiene import argv_pattern, probe_lines
 from tests.e2e.chaos._bed import busybox_probe_text, probe_text, run_probe
 from tests.integration.chaos._driver import BANNER, spawn_otto
 
@@ -55,7 +55,7 @@ _GUEST_SLEEP = "sleep 315"  # busybox guest twin of _SLEEP; 315 is clear of 311-
 def _remote_pids(element: str, needle: str) -> list:
     # bracket-trick so the probe's own shell never self-matches
     out = probe_text(element, f"pgrep -af '{argv_pattern(needle)}' || true")
-    return [ln for ln in out.splitlines() if ln.strip()]
+    return probe_lines(out)
 
 
 def _wait_remote_running(element: str, needle: str, timeout: float = 20.0) -> None:
@@ -86,7 +86,7 @@ def _guest_pids(needle: str) -> list:
     a self-matching probe would be a large fraction of what the oracle sees.
     """
     out = busybox_probe_text(f"pgrep -af '{argv_pattern(needle)}' || true")
-    return [ln for ln in out.splitlines() if ln.strip()]
+    return probe_lines(out)
 
 
 def test_seeded_sigint_mid_command_cleans_up(chaos_bed, chaos_rng, tmp_path):

@@ -136,7 +136,7 @@ async def _history_digest(host, element: str) -> str:
     result = await host.exec("cat ~/.bash_history 2>/dev/null | sha256sum || true")
     if result.status is not Status.Success:
         raise AssertionError(f"{element}: could not sample history file: {result!r}")
-    return str(result.value).strip()
+    return result.value
 
 
 _WRITER_EXIT_TIMEOUT = 30.0
@@ -193,7 +193,7 @@ async def _session_pid(host) -> str:
     """
     result = (await host.run("echo $$")).only
     assert result.status is Status.Success, f"could not read the session pid: {result!r}"
-    return str(result.value).strip()
+    return result.value
 
 
 async def _await_writer_exit(host, pid: str, element: str) -> None:
@@ -217,7 +217,7 @@ async def _await_writer_exit(host, pid: str, element: str) -> None:
 
     async def _shell_is_gone() -> bool:
         alive = await host.exec(f"test -d /proc/{pid} && echo ALIVE || echo GONE")
-        return str(alive.value).strip() == "GONE"
+        return alive.value == "GONE"
 
     await wait_for_async(
         _shell_is_gone,
@@ -300,7 +300,7 @@ async def _history_restored(host, element: str) -> AsyncIterator[str]:
     # digest wouldn't notice (both hash as empty) but the bed would be altered.
     # An answer that is neither word would pick the `rm` restore and delete a
     # real history file, so it stops the test here instead.
-    existed = str((await host.exec("test -f ~/.bash_history && echo yes || echo no")).value).strip()
+    existed = (await host.exec("test -f ~/.bash_history && echo yes || echo no")).value
     assert existed in ("yes", "no"), (
         f"{element}: could not tell whether ~/.bash_history exists: {existed!r}"
     )
@@ -312,7 +312,7 @@ async def _history_restored(host, element: str) -> AsyncIterator[str]:
         assert copied.status is Status.Success, (
             f"{element}: could not back up ~/.bash_history: {copied!r}"
         )
-        assert str(copied.value).strip() == before, (
+        assert copied.value == before, (
             f"{element}: the backup of ~/.bash_history does not match it: {copied!r}"
         )
     failure: BaseException | None = None
@@ -378,7 +378,7 @@ async def _marker_recorded(host, marker: str) -> bool:
     found = await host.exec(
         f"if grep -q -F {marker} ~/.bash_history 2>/dev/null; then echo FOUND; else echo ABSENT; fi"
     )
-    verdict = str(found.value).strip()
+    verdict = found.value
     assert verdict in ("FOUND", "ABSENT"), f"could not grep ~/.bash_history: {found!r}"
     return verdict == "FOUND"
 
@@ -387,7 +387,7 @@ async def _shells_histfile(host) -> str:
     """What ``$HISTFILE`` is inside the interactive session otto actually drives."""
     result = (await host.run('echo "HISTFILE=[$HISTFILE]"')).only
     assert result.status is Status.Success, f"probe failed: {result!r}"
-    return str(result.value).strip()
+    return result.value
 
 
 @pytest.mark.asyncio
@@ -593,7 +593,7 @@ async def test_root_history_untouched_across_elevation(leased_host, make_host):
         # history", blaming the feature for a broken measurement.
         if result.status is not Status.Success:
             raise AssertionError(f"{element}: could not sample root's history: {result!r}")
-        return str(result.value).strip()
+        return result.value
 
     before = await _root_digest()
     marker = f"otto-root-probe-{uuid.uuid4().hex[:8]}"

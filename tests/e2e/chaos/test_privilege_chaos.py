@@ -91,7 +91,7 @@ def test_cancel_inside_as_user_restores_login_user(chaos_bed, chaos_rng):
     async def scenario() -> None:
         host = build_bed_host(chaos_bed.element)
         try:
-            login_user = (await host.run("whoami", timeout=30)).only.value.strip()
+            login_user = (await host.run("whoami", timeout=30)).only.value
 
             # Identity nonce for THIS shell process only -- reproducibility
             # isn't needed (unlike chaos_rng's seeded offsets), just
@@ -106,7 +106,7 @@ def test_cancel_inside_as_user_restores_login_user(chaos_bed, chaos_rng):
             async def body() -> None:
                 async with host.as_user("test"):
                     who = (await host.run("whoami", timeout=30)).only
-                    assert who.value.strip() == "test", who.value
+                    assert who.value == "test", f"{who.value!r}"
                     switched.set()
                     await asyncio.sleep(60)  # the cancel window
 
@@ -119,14 +119,14 @@ def test_cancel_inside_as_user_restores_login_user(chaos_bed, chaos_rng):
 
             who_now = (await host.run("whoami", timeout=30)).only
             assert who_now.status == Status.Success
-            assert who_now.value.strip() == login_user, (
-                f"{chaos_bed.element}: session stranded as {who_now.value.strip()!r} "
+            assert who_now.value == login_user, (
+                f"{chaos_bed.element}: session stranded as {who_now.value!r} "
                 "after interrupted as_user"
             )
             cont = (await host.run("echo $OTTO_CHAOS_CONT", timeout=30)).only
-            assert cont.value.strip() == token, (
+            assert cont.value == token, (
                 f"{chaos_bed.element}: continuity marker missing/mismatched "
-                f"(want {token!r}, got {cont.value.strip()!r}) -- session was "
+                f"(want {token!r}, got {cont.value!r}) -- session was "
                 "rebuilt, the undo never ran on the original shell"
             )
             ok = (await host.run("echo usable", timeout=30)).only
@@ -149,7 +149,7 @@ def test_cancel_inside_named_session_as_user_restores_login_user(chaos_bed, chao
         try:
             session = await host.open_session("privilege_chaos")
             try:
-                login_user = (await session.run("whoami", timeout=30)).only.value.strip()
+                login_user = (await session.run("whoami", timeout=30)).only.value
 
                 # Identity nonce for THIS named session's shell process only --
                 # reproducibility isn't needed, just per-test uniqueness. See
@@ -162,7 +162,7 @@ def test_cancel_inside_named_session_as_user_restores_login_user(chaos_bed, chao
                 async def body() -> None:
                     async with session.as_user("test"):
                         who = (await session.run("whoami", timeout=30)).only
-                        assert who.value.strip() == "test", who.value
+                        assert who.value == "test", f"{who.value!r}"
                         switched.set()
                         await asyncio.sleep(60)  # the cancel window
 
@@ -175,15 +175,15 @@ def test_cancel_inside_named_session_as_user_restores_login_user(chaos_bed, chao
 
                 who_now = (await session.run("whoami", timeout=30)).only
                 assert who_now.status == Status.Success
-                assert who_now.value.strip() == login_user, (
+                assert who_now.value == login_user, (
                     f"{chaos_bed.element}: named session stranded as "
-                    f"{who_now.value.strip()!r} after interrupted as_user"
+                    f"{who_now.value!r} after interrupted as_user"
                 )
                 cont = (await session.run("echo $OTTO_CHAOS_CONT", timeout=30)).only
-                assert cont.value.strip() == token, (
+                assert cont.value == token, (
                     f"{chaos_bed.element}: named session continuity marker "
                     f"missing/mismatched (want {token!r}, got "
-                    f"{cont.value.strip()!r}) -- session was rebuilt, the undo "
+                    f"{cont.value!r}) -- session was rebuilt, the undo "
                     "never ran on the original shell"
                 )
                 ok = (await session.run("echo usable", timeout=30)).only

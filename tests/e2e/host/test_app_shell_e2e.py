@@ -119,7 +119,7 @@ async def test_python_repl_roundtrip(local_host: LocalHost) -> None:
     # the dedicated session app_shell opened (and closed) for the REPL. Its
     # success proves the app-shell lifecycle left the host uncorrupted, NOT that
     # the REPL's own session recovered (see test_run_blocked_while_attached).
-    assert (await local_host.run("echo back")).only.value.strip() == "back"
+    assert (await local_host.run("echo back")).only.value == "back"
 
 
 @pytest.mark.hostless
@@ -160,7 +160,7 @@ async def test_run_blocked_while_attached(local_host: LocalHost) -> None:
                 await session.run("echo nope")
         # (2) Recovery proof: the SAME session's run works after detach. A broken
         # _recover_session would leave the shell wedged, timing this run out.
-        assert (await session.run("echo ok")).only.value.strip() == "ok"
+        assert (await session.run("echo ok")).only.value == "ok"
     finally:
         await session.close()
 

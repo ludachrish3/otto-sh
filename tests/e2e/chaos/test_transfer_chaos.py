@@ -46,7 +46,7 @@ import pytest
 
 from otto.logger.mode import LogMode
 from otto.utils import wait_for
-from tests._fixtures.bed_hygiene import _NC_LISTENER_PROBE
+from tests._fixtures.bed_hygiene import _NC_LISTENER_PROBE, probe_lines
 from tests.e2e.chaos._bed import busybox_probe_text, probe_text, run_probe
 from tests.e2e.chaos._seed import offset_in
 from tests.integration.chaos._driver import BANNER, spawn_otto
@@ -88,8 +88,7 @@ _GUEST_PAYLOAD_SIZE = 512 * 1024
 
 
 def _nc_listeners(element: str) -> list:
-    out = probe_text(element, _NC_LISTENER_PROBE)
-    return [ln for ln in out.splitlines() if ln.strip()]
+    return probe_lines(probe_text(element, _NC_LISTENER_PROBE))
 
 
 def _assert_no_new_listener(element: str, before: list, what: str) -> None:
@@ -290,7 +289,7 @@ def _guest_names(directory: str) -> list:
     here rather than a directory-empty special case.
     """
     out = busybox_probe_text(f"printf '%s\\n' {directory}/*")
-    return [ln.strip() for ln in out.splitlines() if ln.strip() and "*" not in ln]
+    return [ln for ln in probe_lines(out) if "*" not in ln]
 
 
 @pytest.mark.no_hygiene_bracket  # the guest is not the unix pool the autouse bracket leases

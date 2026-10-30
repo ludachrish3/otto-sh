@@ -125,9 +125,10 @@ def test_probe_text_raises_on_failed_probe(stub_bed_host):
         probe_text("stub-elem", "pgrep -af 'sleep 311' || true")
 
 
-def test_probe_text_returns_checked_stripped_output(stub_bed_host):
-    stub_bed_host.canned["tc qdisc show dev eth2"] = "qdisc noqueue 0: root refcnt 2\n"
-    assert probe_text("stub-elem", "tc qdisc show dev eth2") == "qdisc noqueue 0: root refcnt 2"
+def test_probe_text_returns_the_value_verbatim(stub_bed_host):
+    # `tc` really ends this line with a space: a strip would drop it.
+    stub_bed_host.canned["tc qdisc show dev eth2"] = "qdisc noqueue 0: root refcnt 2 "
+    assert probe_text("stub-elem", "tc qdisc show dev eth2") == "qdisc noqueue 0: root refcnt 2 "
 
 
 # ---------------------------------------------------------------------------
@@ -177,9 +178,10 @@ def test_busybox_probe_text_raises_on_failed_probe(stub_guest_host):
         busybox_probe_text("pgrep -af '[s]leep 315' || true")
 
 
-def test_busybox_probe_text_returns_checked_stripped_output(stub_guest_host):
+def test_busybox_probe_text_returns_the_value_verbatim(stub_guest_host):
+    # A stray trailing newline must reach the caller, not be stripped away.
     stub_guest_host.canned["stat -c %s /tmp/x.otto-1"] = "54549\n"
-    assert busybox_probe_text("stat -c %s /tmp/x.otto-1") == "54549"
+    assert busybox_probe_text("stat -c %s /tmp/x.otto-1") == "54549\n"
 
 
 @pytest.mark.parametrize("failing", [False, True])

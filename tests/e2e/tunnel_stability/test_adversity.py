@@ -68,7 +68,7 @@ async def _assert_dataplane_provisioned(host, ip: str) -> None:
         timeout=_HOST_CMD_TIMEOUT,
         log=LogMode.QUIET,
     )
-    assert ip in (result.value or ""), (
+    assert ip in result.value, (
         f"{host.id}: {_DP_DEV} does not carry {ip} — the bed predates the dedicated "
         f"data-plane NIC; run 'vagrant reload test1 test2 test3' (halt+up, not a bare "
         f"provision) with the current Vagrantfile"
@@ -113,7 +113,7 @@ async def dataplane_lab():
                 qdisc = await host.exec(
                     f"tc qdisc show dev {_DP_DEV}", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
                 )
-                if "netem" in (qdisc.value or ""):
+                if "netem" in qdisc.value:
                     leftovers.append(f"{host.id}: {qdisc.value!r}")
         finally:
             await asyncio.gather(*(h.close() for h in (test1, test2)), return_exceptions=True)
