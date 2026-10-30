@@ -61,8 +61,9 @@ of it, the one build requirement and the errors, is in the GCC page's
 4. **One capture.** One `lcov --capture --directory <staging>` per product,
    with the product's gcov tool ({ref}`coverage-gcov-resolution`),
    `--rc branch_coverage=1`, `--ignore-errors source` and the host's
-   `lcov_args`. The capture does not depend on source files, so a build done
-   on another machine still captures. When the sources are present,
+   `lcov_args`. By default the capture does not depend on source files, so a
+   build done on another machine still captures; the one exception is a
+   clang setting ({ref}`coverage-clang-branch-counts`). When the sources are present,
    `geninfo` still reads them, and `LCOV_EXCL` markers keep working. lcov's
    output goes to the run's log file only. A failure is summarised as its
    first `ERROR:` line, the last 20 lines and the log path, typed when the

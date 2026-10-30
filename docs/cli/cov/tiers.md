@@ -255,7 +255,7 @@ lcov_args = ["--rc", "geninfo_unexecuted_blocks=1"]
 |-------|---------|
 | `coverage_tool` | The executable that reads the build's counters: a gcc `gcov` of any version or cross prefix, an `llvm-cov` (name the binary — `llvm-cov` or `llvm-cov-<N>` — and otto adds its `gcov` subcommand), or a wrapper script of your own. |
 | `lcov` | The `lcov` this tier's captures run. |
-| `lcov_args` | Extra arguments appended to this tier's capture command, one argument per entry. |
+| `lcov_args` | Extra arguments appended to this tier's capture command, one argument per entry. A clang build's settings for real branch counts and for C++ end-line errors are in {ref}`coverage-clang-branch-counts`. |
 
 Every field is optional, and an empty table is the same as none. A value
 without a `/` is a command looked up on `PATH`; one with a `/` is a path, `~`

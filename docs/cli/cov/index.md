@@ -77,10 +77,16 @@ has its own setup page — see {doc}`instrumenting/index`.
 The following system packages must be installed on the **otto host**
 (the machine running `otto test` and `otto cov`):
 
-| Package | Purpose                            | Required |
-|---------|------------------------------------|----------|
-| `lcov`  | Capture `.gcda` into `.info` files | Yes      |
-| `gcov`  | Process `.gcda` files into `.info` | Yes      |
+| Package | Purpose                            | Required          |
+|---------|------------------------------------|-------------------|
+| `lcov`  | Capture `.gcda` into `.info` files | Yes, 2.0 or newer |
+| `gcov`  | Process `.gcda` files into `.info` | Yes               |
+
+otto names lcov's options as lcov 2.0 does (`--rc branch_coverage=1`, where
+lcov 1.x spells it `lcov_branch_coverage`), and it does not check the
+version, so an older lcov is not refused but its captures are not
+supported. Check with `lcov --version`: some older distributions package
+lcov 1.x; install a release from lcov's own project when yours does.
 
 On **remote hosts** (the machines running the instrumented product):
 

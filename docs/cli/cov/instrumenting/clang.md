@@ -44,10 +44,6 @@ which reads it incompletely, emits empty data, or crashes. Leave the stamp
 as clang writes it.
 ```
 
-Branch coverage (`BRDA` records) flows through the llvm path as well;
-note that ``llvm-cov``'s branch *counts* are coarser than GNU gcov's
-(hit/not-hit is reliable, exact execution counts may differ).
-
 The otto host needs `llvm-cov` installed (the `llvm` package) in addition
 to the `lcov` prerequisite from the main {doc}`../index` page.
 
@@ -56,6 +52,74 @@ applies to clang builds too, and so does its advice to clean the counters
 after a rebuild. For clang the clean matters more: clang's runtime adds new
 counts into an old `.gcda` without checking that it belongs to the same
 build, so skipping the clean gives wrong counts and no error.
+
+(coverage-clang-branch-counts)=
+## Branch counts
+
+A clang product's branch records (`BRDA`) say whether each branch was
+taken, not how often: `1` for taken, `0` for not taken and `-` for a branch
+the program never reached. Line and function counts are exact, and so is the
+branch coverage percentage; only the number of times each branch went its
+way is missing. This is how lcov reads `llvm-cov`: `llvm-cov gcov` can write
+either annotated `.gcov` text files or a shorter *intermediate* listing, and
+lcov asks for the listing, which says whether a branch was taken but not how
+often. Every lcov from 2.0 on does this.
+
+The two settings below go in `lcov_args`: on a host, the record's
+`toolchain.lcov_args` in `lab.json`
+({doc}`../../../configuration/lab/coverage-toolchain`); for a unit tier,
+its `toolchain` table in `.otto/settings.toml` ({ref}`coverage-unit-toolchain`).
+otto passes no setting of its own for either, so the entry is all it takes.
+
+### Real branch counts
+
+This setting makes lcov read the `.gcov` text files, which have the counts:
+
+```json
+{
+  "toolchain": {
+    "lcov_args": ["--rc", "geninfo_intermediate=0"]
+  }
+}
+```
+
+```toml
+[coverage.tiers.unit.toolchain]
+lcov_args = ["--rc", "geninfo_intermediate=0"]
+```
+
+Use it only when both of these hold:
+
+- **The build recorded absolute source paths.** clang records a source by
+  the name it was compiled as, shortened to a relative name when the source
+  lies under the directory the compiler ran in: `clang -c foo.c` records
+  `foo.c`, and so does `clang -c "$PWD/foo.c"`. A source named by absolute
+  path from outside that directory, such as from a separate build
+  directory, is recorded whole. `strings -n 3 foo.gcno` lists the names a
+  notes file recorded.
+- **The sources are readable at those paths** on the machine running
+  `otto cov`.
+
+When either fails, that file leaves the report without failing it: `llvm-cov` writes
+an empty report for it, and lcov skips it with one warning in the run's log.
+This is why otto leaves lcov's default alone: under it, the capture does not
+need the sources at all. Before relying on the setting, report once with it
+and once without, and compare the file count `otto cov report` logs on
+success. A lower count with the setting means a dropped file.
+
+### C++ end-line errors
+
+A clang C++ capture can fail with a `geninfo: ERROR` such as `function …
+end line N less than start line` or `Cannot derive function end line`,
+usually naming a destructor or a standard-library header. lcov works out
+where each function ends from the line data, and for clang's C++ output it
+sometimes gets that wrong. `["--rc", "derive_function_end_line=0"]` in the
+same `lcov_args` turns that step off, so functions are recorded without an
+end line. It works with or without the text files above, and both go in one
+list: `["--rc", "geninfo_intermediate=0", "--rc",
+"derive_function_end_line=0"]`. Prefer it to `["--ignore-errors",
+"inconsistent"]`, which also gets the capture through but hides every other
+consistency error lcov reports.
 
 (coverage-clang-stale-deploys)=
 ## Stale deploys
