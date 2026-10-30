@@ -63,7 +63,7 @@ def test_a_project_only_table_errors_naming_the_key_and_file(tmp_path):
     p = _user_file(tmp_path, '[reservations]\nbackend = "none"\n')
     with pytest.raises(
         ValueError,
-        match=r"settings\.toml: [\s\S]*reservations\n\s+Extra inputs are not permitted",
+        match=r"settings\.toml: [\s\S]*reservations: Extra inputs are not permitted",
     ):
         load_user_settings(p)
 
@@ -306,13 +306,11 @@ def test_disable_then_enable_round_trips_the_rest_of_the_file(original):
     off = path.read_text()
     assert "enabled = false" in off
     assert set_cache_enabled(True).on
-    lines = path.read_text().splitlines()
-    for line in original.splitlines():
-        assert line in lines
-    # same lines, same order (tomlkit may add a blank line before the new table)
-    kept = [ln for ln in lines if ln in original.splitlines() and ln]
-    assert kept == [ln for ln in original.splitlines() if ln]
-    assert "enabled = true" in lines
+    if original.endswith("\n"):
+        assert path.read_text() == original + "\n[cache]\nenabled = true\n"
+    else:
+        assert path.read_text().startswith(original)
+        assert path.read_text().endswith("[cache]\nenabled = true\n")
 
 
 def test_disable_creates_the_home_and_the_file(tmp_path, monkeypatch):
@@ -390,3 +388,40 @@ def test_tomlkit_is_not_imported_by_cache_enabled():
         "sys.exit(1 if 'tomlkit' in sys.modules else 0)"
     )
     assert subprocess.run([sys.executable, "-c", code], check=False).returncode == 0
+
+
+def test_a_commented_cache_table_changes_only_the_value_token():
+    from otto.config.user_settings import set_cache_enabled
+
+    path = _own_file("[cache]  # hdr\nenabled = false  # why\n")
+    assert set_cache_enabled(True).on
+    assert path.read_text() == "[cache]  # hdr\nenabled = true  # why\n"
+
+
+@pytest.mark.parametrize("raw", ["false", "no", "off", "0"])
+def test_enable_rewrites_a_coerced_string_as_a_boolean(raw):
+    from otto.config.user_settings import set_cache_enabled
+
+    path = _own_file(f'[cache]\nenabled = "{raw}"\n')
+    assert not cache_enabled().on  # pydantic coerces it off
+    assert set_cache_enabled(True).on
+    assert path.read_text() == "[cache]\nenabled = true\n"
+
+
+def test_disable_rewrites_a_coerced_string_as_a_boolean():
+    from otto.config.user_settings import set_cache_enabled
+
+    path = _own_file('[cache]\nenabled = "false"\n')
+    assert not set_cache_enabled(False).on
+    assert path.read_text() == "[cache]\nenabled = false\n"
+
+
+def test_a_validation_error_is_one_line_without_the_input():
+    path = _own_file('[cache]\nenabled = "maybe-secret"\n')
+    with pytest.raises(ValueError, match=r"settings\.toml") as ei:
+        load_user_settings(path)
+    text = str(ei.value)
+    assert "\n" not in text
+    assert "maybe-secret" not in text
+    assert "pydantic.dev" not in text
+    assert "cache.enabled" in text

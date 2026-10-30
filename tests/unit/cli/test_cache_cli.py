@@ -369,7 +369,7 @@ def test_disable_refuses_a_broken_file_with_exit_1(tmp_path, monkeypatch):
     path.write_text("[cache\n")  # scaffold-exempt: user-level ~/.otto file
     result = CliRunner().invoke(cache_app, ["disable"])
     assert result.exit_code == 1
-    assert "settings.toml" in result.output
+    assert "settings.toml" in result.stderr
     assert "Traceback" not in result.output
     assert result.exception is None or isinstance(result.exception, SystemExit)
     assert path.read_text() == "[cache\n"
@@ -381,6 +381,7 @@ def test_disable_reports_an_unwritable_home_cleanly(tmp_path, monkeypatch):
     import pytest
 
     from otto.cli.cache import cache_app
+    from otto.config.user_settings import user_settings_path
 
     if os.geteuid() == 0:
         pytest.skip("root ignores directory modes")
@@ -393,6 +394,7 @@ def test_disable_reports_an_unwritable_home_cleanly(tmp_path, monkeypatch):
     assert result.exit_code == 1
     assert "Traceback" not in result.output
     assert len(result.output.strip().splitlines()) == 1
+    assert str(user_settings_path()) in result.output
 
 
 def test_info_first_line_reports_the_default(tmp_path, monkeypatch):
@@ -433,3 +435,30 @@ def test_clear_and_prune_work_when_off(tmp_path, monkeypatch):
     assert runner.invoke(cache_app, ["disable"]).exit_code == 0
     assert runner.invoke(cache_app, ["clear", "--all"]).exit_code == 0
     assert runner.invoke(cache_app, ["prune", "--dry-run"]).exit_code == 0
+
+
+def test_enable_on_a_coerced_string_writes_a_boolean_and_reports_on(tmp_path, monkeypatch):
+    from otto.cli.cache import cache_app
+    from otto.config.user_settings import user_settings_path
+
+    _home(monkeypatch, tmp_path)
+    user_settings_path().write_text('[cache]\nenabled = "false"\n')  # scaffold-exempt
+    result = runner.invoke(cache_app, ["enable"])
+    assert result.exit_code == 0, result.output
+    assert result.output.splitlines()[0].startswith("cache: on (")
+    assert _settings_text() == "[cache]\nenabled = true\n"
+
+
+def test_a_removal_failure_still_reports_the_new_state_and_exits_nonzero(tmp_path, monkeypatch):
+    from otto.cli.cache import cache_app
+
+    _home(monkeypatch, tmp_path)
+
+    def boom(_home):
+        raise OSError("disk on fire")
+
+    monkeypatch.setattr("otto.config.cache_maintenance.remove_completion_files_everywhere", boom)
+    result = runner.invoke(cache_app, ["disable"])
+    assert result.exit_code == 1
+    assert result.output.startswith("cache: off (")
+    assert "disk on fire" in result.output

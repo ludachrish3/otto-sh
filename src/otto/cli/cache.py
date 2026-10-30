@@ -98,23 +98,27 @@ def _toggle(enabled: bool) -> None:
     A broken settings file or an unwritable home is the user's to fix, so it is
     one error line and exit 1, never a traceback.
     """
+    from ..config.cache_maintenance import remove_completion_files_everywhere
+    from ..config.home import otto_home
     from ..config.user_settings import set_cache_enabled, user_settings_path
 
+    path = user_settings_path()
     try:
         setting = set_cache_enabled(enabled)
-        removed = None
-        if not enabled:
-            from ..config.cache_maintenance import remove_completion_files_everywhere
-            from ..config.home import otto_home
-
-            removed = remove_completion_files_everywhere(otto_home())
     except (ValueError, OSError) as e:
-        typer.echo(str(e), err=True)
+        # An OSError names a temporary file; the settings file is what the user must fix.
+        typer.echo(str(e) if isinstance(e, ValueError) else f"{path}: {e}", err=True)
         raise typer.Exit(1) from e
     typer.echo(f"cache: {'on' if setting.on else 'off'} ({setting.source})")
-    typer.echo(str(user_settings_path()))
-    if removed is not None:
-        _print_removed(removed.files_removed)
+    typer.echo(str(path))
+    if enabled:
+        return
+    try:
+        removed = remove_completion_files_everywhere(otto_home())
+    except OSError as e:
+        typer.echo(f"could not remove completion files: {e}", err=True)
+        raise typer.Exit(1) from e
+    _print_removed(removed.files_removed)
 
 
 @cache_app.command("enable")
@@ -181,9 +185,8 @@ def info() -> None:
 
     from ..config.cache_maintenance import iter_workspaces
     from ..config.home import otto_home
-    from ..models.settings import OttoEnvSettings
-
     from ..config.user_settings import cache_enabled
+    from ..models.settings import OttoEnvSettings
 
     setting = cache_enabled()
     typer.echo(f"cache: {'on' if setting.on else 'off'} ({setting.source})")

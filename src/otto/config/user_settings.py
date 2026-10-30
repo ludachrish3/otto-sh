@@ -17,7 +17,7 @@ import tomli
 from pydantic import ValidationError
 
 from ..models.base import load_toml_settings
-from ..models.settings import UserSettingsModel
+from ..models.settings import CacheSettingsSpec, UserSettingsModel
 from .home import otto_home
 
 CACHE_TABLE = "cache"
@@ -115,7 +115,11 @@ def _read_user_settings(p: Path, st: "os.stat_result | None") -> "UserSettingsMo
     try:
         return UserSettingsModel.model_validate(data)
     except ValidationError as e:
-        raise ValueError(f"{p}: {e}") from e
+        # One line, no input_value (str(e) echoes the offending input) and no docs URL.
+        found = "; ".join(
+            f"{'.'.join(str(part) for part in err['loc'])}: {err['msg']}" for err in e.errors()
+        )
+        raise ValueError(f"{p}: {found}") from e
 
 
 @dataclass(frozen=True)
@@ -125,6 +129,12 @@ class CacheSetting:
     on: bool
     source: str
     """``"default"``, ``"settings.toml: <path>"``, or the error text of an unreadable file."""
+
+
+def _cache_on(settings: "UserSettingsModel | None") -> bool:
+    """Whether a validated settings model leaves the caches on; the default is the model field's."""
+    cache = settings.cache if settings is not None and settings.cache is not None else None
+    return (cache or CacheSettingsSpec()).enabled
 
 
 def cache_enabled() -> CacheSetting:
@@ -140,19 +150,20 @@ def cache_enabled() -> CacheSetting:
     except ValueError as e:
         return CacheSetting(on=False, source=str(e))
     if settings is None or settings.cache is None:
-        return CacheSetting(on=True, source="default")
-    return CacheSetting(on=settings.cache.enabled, source=f"settings.toml: {user_settings_path()}")
+        return CacheSetting(on=_cache_on(settings), source="default")
+    return CacheSetting(on=_cache_on(settings), source=f"settings.toml: {user_settings_path()}")
 
 
 def set_cache_enabled(enabled: bool) -> CacheSetting:
-    """Set ``[cache] enabled`` in the user settings file, editing it in place; return the new setting.
+    """Set ``[cache] enabled`` in the user settings file in place; return the new setting.
 
     The current file is validated first: a broken one raises its
     :class:`ValueError` (see :func:`load_user_settings`) and stays untouched,
     so a verb never rewrites a file it could not read. Turning the cache off
     creates the home, the file and the ``[cache]`` table as needed; turning it
     on only edits an existing ``[cache]`` table, since no table already means
-    on. Nothing is written when the setting already is what is asked. The
+    on. Nothing is written when the setting already is what is asked and is
+    spelled as a boolean (``enabled = "false"`` is rewritten). The
     edit keeps every other byte of the file (comments, order, spelling) and the
     file's permission bits, validates the edited document as a
     :class:`~otto.models.settings.UserSettingsModel`, and replaces the file
@@ -169,9 +180,12 @@ def set_cache_enabled(enabled: bool) -> CacheSetting:
     text = path.read_text() if current is not None else ""
     doc = tomlkit.parse(text)
     table = doc.get(CACHE_TABLE)
-    if table is None and enabled:
+    # The state is the validated model's (pydantic coerces "false" to off). A coerced
+    # string is rewritten as a real boolean even when the state already matches.
+    raw = table.unwrap().get(CACHE_ENABLED_KEY) if table is not None else None
+    if _cache_on(current) == enabled and (table is None or raw is None or isinstance(raw, bool)):
         return cache_enabled()
-    if table is not None and bool(table.get(CACHE_ENABLED_KEY, True)) == enabled:
+    if table is None and enabled:
         return cache_enabled()
     if table is None:
         table = tomlkit.table()
