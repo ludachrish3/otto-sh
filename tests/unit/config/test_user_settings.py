@@ -206,8 +206,8 @@ def test_the_memo_holds_one_entry_across_homes(tmp_path, monkeypatch):
 
 # The resolver; the verb module joins with `otto cache` off/on.
 _CACHE_TABLE_READERS = {"config/user_settings.py"}
-# The only files that may call cache_enabled(): the resolver and the one switch.
-_CACHE_ENABLED_CALLERS = {"config/user_settings.py", "config/completion_cache.py"}
+# The only file that may call cache_enabled(): the one switch (the resolver only defines it).
+_CACHE_ENABLED_CALLERS = {"config/completion_cache.py"}
 
 
 def _src_files():
@@ -227,12 +227,9 @@ def test_only_the_resolver_reads_the_cache_table():
         r"\.cache\.enabled|\bCACHE_TABLE\b|\bCACHE_ENABLED_KEY\b"
         r"""|\[\s*["']cache["']\s*\]|\.get\(\s*["']cache["']"""
     )
-    offenders = [
-        rel
-        for rel, f in _src_files()
-        if rel not in _CACHE_TABLE_READERS and pattern.search(f.read_text())
-    ]
-    assert offenders == []
+    matched = {rel for rel, f in _src_files() if pattern.search(f.read_text())}
+    assert "config/user_settings.py" in matched  # the guard sees the resolver
+    assert matched <= _CACHE_TABLE_READERS
 
 
 def test_only_the_one_switch_calls_cache_enabled():
@@ -244,10 +241,10 @@ def test_only_the_one_switch_calls_cache_enabled():
             isinstance(fn, ast.Attribute) and fn.attr == "cache_enabled"
         )
 
-    offenders = [
+    callers = {
         rel
         for rel, f in _src_files()
-        if rel not in _CACHE_ENABLED_CALLERS
-        and any(isinstance(n, ast.Call) and called(n) for n in ast.walk(ast.parse(f.read_text())))
-    ]
-    assert offenders == []
+        if any(isinstance(n, ast.Call) and called(n) for n in ast.walk(ast.parse(f.read_text())))
+    }
+    assert "config/completion_cache.py" in callers  # the guard sees the one switch
+    assert callers <= _CACHE_ENABLED_CALLERS
