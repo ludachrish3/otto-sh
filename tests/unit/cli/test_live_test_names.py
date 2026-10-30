@@ -101,19 +101,61 @@ def test_the_live_child_prints_only_its_view(off_project):
     assert "live_only_mark" in printed["markers"]
 
 
-def test_a_live_child_that_cannot_collect_exits_1_and_prints_nothing(off_project):
-    project, home = off_project
-    (project / "tests" / "conftest.py").write_text("raise RuntimeError('broken conftest')\n")
-    done = subprocess.run(
-        [str(_OTTO)],
-        env={**os.environ, cc.DUMP_TESTS_ENV_VAR: cc.DUMP_TESTS_LIVE},
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=120,
-    )
-    assert done.returncode == 1
-    assert done.stdout == ""
+@pytest.fixture
+def two_projects(tmp_path, monkeypatch):
+    """A healthy project and one whose conftest fails to load, on one ``OTTOPATH``."""
+    healthy = generate_project(tmp_path / "a", files=2, dirs=1, name="healthy")
+    (healthy / "tests" / "test_live.py").write_text(_LIVE_TESTS)
+    broken = generate_project(tmp_path / "b", files=2, dirs=1, name="broken")
+    (broken / "tests" / "conftest.py").write_text("raise RuntimeError('broken conftest')\n")
+    (broken / "tests" / "test_only_broken.py").write_text("def test_only_in_broken():\n    pass\n")
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("OTTOPATH", os.pathsep.join([str(healthy), str(broken)]))
+    monkeypatch.setenv("OTTO_HOME", str(home))
+    bootstrap.invalidate()
+    yield home
+    bootstrap.invalidate()
+
+
+def _settle(home: Path, *, on: bool) -> ct.CompletionView:
+    """The answer a test-name TAB settles on: off is live every time; on, the TAB after the seed."""
+    settings = home / "settings.toml"
+    settings.write_text(
+        f"[cache]\nenabled = {'true' if on else 'false'}\n"
+    )  # scaffold-exempt: user-level
+    clear_user_settings_memo()
+    assert (cc._cache_path() is not None) is on
+    view = ct.completion_view(_projects())
+    return ct.completion_view(_projects()) if on else view
+
+
+def test_a_project_that_cannot_collect_costs_only_its_own_names_on_and_off(two_projects):
+    """Off offers what on settles on: the healthy project's names, without the broken one's."""
+    off = _settle(two_projects, on=False)
+    assert {"test_live_one", "TestLive::test_live_two"} <= set(off.names)
+    assert "test_only_in_broken" not in off.names
+    assert "live_only_mark" in off.markers
+    assert _completion_files(two_projects) == [], "off wrote nothing"
+    on = _settle(two_projects, on=True)
+    assert (on.names, on.markers) == (off.names, off.markers)
+
+
+def test_a_live_child_that_raises_exits_1_and_prints_nothing(off_project, monkeypatch, capfd):
+    """``entry()``'s child branch in live mode: an exception is the one failure with no output."""
+    from otto.cli.main import entry
+
+    _project, home = off_project
+
+    def broken_bootstrap():
+        raise RuntimeError("an init module is broken")
+
+    monkeypatch.setattr(bootstrap, "bootstrap", broken_bootstrap)
+    monkeypatch.setenv(cc.DUMP_TESTS_ENV_VAR, cc.DUMP_TESTS_LIVE)
+    with pytest.raises(SystemExit) as exited:
+        entry()
+    assert exited.value.code == 1
+    assert capfd.readouterr().out == ""
     assert _completion_files(home) == []
 
 

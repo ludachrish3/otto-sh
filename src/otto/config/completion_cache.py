@@ -2499,9 +2499,10 @@ def run_live_collect_child() -> "dict[str, list[str]] | None":
     cache (no lock, no cooldown, no marker, no table). The child starts in a
     scratch directory removed afterwards, is bounded by the same cap as the
     stored-tables mode, and prints ``{"names": [...], "markers": [...]}``,
-    each a list of strings. With no cooldown, a project that cannot collect
-    costs up to the cap on every such TAB. A spawn failure, a timeout, a
-    non-zero exit or anything else on stdout is ``None``. Never raises:
+    each a list of strings, a project it could not collect contributing
+    none. With no cooldown, a collection that runs past the cap costs it on
+    every such TAB. A spawn failure, a timeout, a non-zero exit or anything
+    else on stdout is ``None``. Never raises:
     completion must never traceback into the shell.
     """
     import subprocess

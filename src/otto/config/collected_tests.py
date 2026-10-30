@@ -1106,10 +1106,14 @@ def live_collect_main(
     (:func:`otto.config.completion_cache.run_live_collect_child`). *refresh*
     is the run's own, which with no cache file collects each whole tree and
     stores nothing; nothing else is written for the cache either (no lock,
-    no cooldown, no marker). Past the cap it exits 1 at once. Whatever the
-    collection writes to stdout is sent to ``/dev/null``: the parent reads
-    stdout, and only ``{"names": [...], "markers": [...]}`` may reach it. A
-    project that could not be collected exits 1 with nothing printed.
+    no cooldown, no marker). Whatever the collection writes to stdout is
+    sent to ``/dev/null``: the parent reads stdout, and only
+    ``{"names": [...], "markers": [...]}`` may reach it.
+
+    A project that could not be collected offers nothing and the others
+    offer theirs (:func:`_view_of` skips it), as the stored tables answer
+    with the cache on. Only the deadline (``os._exit(1)``) and an exception
+    (raised to ``entry``, which exits 1) print nothing.
     """
     out = os.dup(1)
     devnull = os.open(os.devnull, os.O_WRONLY)
@@ -1119,12 +1123,12 @@ def live_collect_main(
     try:
         collected = _collect_within_cap(load_projects, refresh, lambda: os._exit(1))
         sys.stdout.flush()
-        if collected.failed:
-            return 1
         view = _view_of(collected.tables)
         with os.fdopen(out, "w", encoding="utf-8", closefd=False) as channel:
             json.dump({"names": view.names, "markers": view.markers}, channel)
     finally:
+        sys.stdout.flush()
+        os.dup2(out, 1)
         os.close(out)
     return 0
 

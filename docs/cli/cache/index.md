@@ -211,8 +211,9 @@ inventory snapshot has its own switch, `cache_ttl = "0"`
   the collect child runs, waited for, stores nothing and hands back what it
   found. It is bounded by the same 15-second cap as a cold TAB with the cache
   on, but with no cooldown, since there is nowhere to record one: a project
-  that cannot collect costs up to the cap on each such TAB, and offers
-  nothing.
+  that cannot collect offers no names while the others offer theirs, and
+  a collection that runs past the cap costs the whole 15 seconds on every
+  such TAB and offers nothing.
 - Docker container and image names come only from the cache's observed state
   and a TAB never asks a host, so none are offered.
 - `otto test` collects everything on every run.

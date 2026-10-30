@@ -413,8 +413,11 @@ It is used in three ways:
   the same deadline and kill. That child (`live_collect_main`) collects each
   whole tree, stores nothing and takes no lock, and prints one JSON object,
   `{"names": [...], "markers": [...]}`, which is the answer. It starts in a
-  scratch directory removed afterwards. A failure of any kind offers
-  nothing, and since nothing is written there is no cooldown either. The
+  scratch directory removed afterwards. A project it could not collect
+  offers nothing and the others offer theirs, as the stored tables answer
+  with the cache on. A child that dies (its deadline, an exception, a spawn
+  failure, output that is not that object) offers nothing at all, and since
+  nothing is written there is no cooldown either. The
   shim never answers such a TAB: with no cache it hands over.
 
 Every test-name or `-m` TAB answers the same way, whichever path answers
