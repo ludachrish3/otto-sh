@@ -9,7 +9,7 @@ def turn_cache_off():
     """Write ``[cache] enabled = false`` to the user settings file and drop the memo."""
     path = user_settings_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("[cache]\nenabled = false\n")  # scaffold-exempt: user-level ~/.otto file
+    path.write_text("[cache]\nenabled = false\n")
     clear_user_settings_memo()
 
 

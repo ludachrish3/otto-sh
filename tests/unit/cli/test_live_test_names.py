@@ -21,7 +21,7 @@ from otto.config import collected_tests as ct
 from otto.config import completion_cache as cc
 from otto.config.cache_maintenance import CACHE_FILE_NAMES, MARKER_FILENAMES
 from otto.config.env import is_otto_env_var
-from otto.config.user_settings import clear_user_settings_memo
+from otto.config.user_settings import clear_user_settings_memo, user_settings_path
 from tests._fixtures.generated_project import generate_project
 
 _OTTO = Path(sys.executable).with_name("otto")
@@ -48,9 +48,9 @@ def off_project(tmp_path, monkeypatch):
     (project / "tests" / "test_live.py").write_text(_LIVE_TESTS)
     home = tmp_path / "home"
     home.mkdir()
-    (home / "settings.toml").write_text("[cache]\nenabled = false\n")  # scaffold-exempt: user-level
     monkeypatch.setenv("OTTOPATH", str(project))
     monkeypatch.setenv("OTTO_HOME", str(home))
+    user_settings_path().write_text("[cache]\nenabled = false\n")
     clear_user_settings_memo()
     bootstrap.invalidate()
     assert cc._cache_path() is None
@@ -118,12 +118,9 @@ def two_projects(tmp_path, monkeypatch):
     bootstrap.invalidate()
 
 
-def _settle(home: Path, *, on: bool) -> ct.CompletionView:
+def _settle(*, on: bool) -> ct.CompletionView:
     """The answer a test-name TAB settles on: off is live every time; on, the TAB after the seed."""
-    settings = home / "settings.toml"
-    settings.write_text(
-        f"[cache]\nenabled = {'true' if on else 'false'}\n"
-    )  # scaffold-exempt: user-level
+    user_settings_path().write_text(f"[cache]\nenabled = {'true' if on else 'false'}\n")
     clear_user_settings_memo()
     assert (cc._cache_path() is not None) is on
     view = ct.completion_view(_projects())
@@ -156,12 +153,12 @@ def test_output_at_exit_never_reaches_the_live_childs_answer(off_project):
 
 def test_a_project_that_cannot_collect_costs_only_its_own_names_on_and_off(two_projects):
     """Off offers what on settles on: the healthy project's names, without the broken one's."""
-    off = _settle(two_projects, on=False)
+    off = _settle(on=False)
     assert {"test_live_one", "TestLive::test_live_two"} <= set(off.names)
     assert "test_only_in_broken" not in off.names
     assert "live_only_mark" in off.markers
     assert _completion_files(two_projects) == [], "off wrote nothing"
-    on = _settle(two_projects, on=True)
+    on = _settle(on=True)
     assert (on.names, on.markers) == (off.names, off.markers)
 
 

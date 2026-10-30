@@ -365,7 +365,7 @@ def test_disable_refuses_a_broken_file_with_exit_1(tmp_path, monkeypatch):
 
     _home(monkeypatch, tmp_path)
     path = user_settings_path()
-    path.write_text("[cache\n")  # scaffold-exempt: user-level ~/.otto file
+    path.write_text("[cache\n")
     result = CliRunner().invoke(cache_app, ["disable"])
     assert result.exit_code == 1
     assert "settings.toml" in result.stderr

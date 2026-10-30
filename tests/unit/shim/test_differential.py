@@ -987,9 +987,9 @@ def _settings_path_in(tmp_path: Path, case: str) -> Path:
         (tmp_path / "blocker").write_text("")
         return tmp_path / "blocker" / "settings.toml"
     if case == "self loop":  # ELOOP
-        path = tmp_path / "settings.toml"
-        path.symlink_to(path)
-        return path
+        loop = tmp_path / "settings.toml"
+        loop.symlink_to(loop)
+        return loop
     if case == "unsearchable parent":  # EACCES
         if os.geteuid() == 0:
             pytest.skip("root ignores directory modes")

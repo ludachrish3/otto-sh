@@ -101,7 +101,7 @@ def _own_file(body):
     """Write the default-path user settings file of this worker's shared hermetic OTTO_HOME."""
     p = user_settings_path()
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(body)  # scaffold-exempt: user-level ~/.otto file, not a project
+    p.write_text(body)
     return p
 
 
@@ -190,7 +190,7 @@ def test_an_explicit_path_bypasses_the_memo(tmp_path):
     assert first is not None
     assert first.cache is not None
     assert not first.cache.enabled
-    other.write_text("[cache]\nenabled = true\n")  # scaffold-exempt: user-level file
+    other.write_text("[cache]\nenabled = true\n")
     second = load_user_settings(other)
     assert second is not None
     assert second.cache is not None
@@ -267,7 +267,7 @@ def test_the_settings_stat_is_taken_once_and_survives_a_broken_file():
     assert user_settings_stat() is None  # absent
     path = user_settings_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("[cache\n")  # scaffold-exempt: user-level ~/.otto file
+    path.write_text("[cache\n")
     assert user_settings_stat() is None  # memoized: the later write is not seen
     clear_user_settings_memo()
     with pytest.raises(ValueError, match=r"settings\.toml"):
@@ -329,7 +329,7 @@ def test_a_settings_file_that_cannot_be_stat_is_broken(tmp_path, monkeypatch):
     monkeypatch.setenv("OTTO_HOME", str(locked / "home"))
     path = user_settings_path()
     path.parent.mkdir(parents=True)
-    path.write_text("[cache]\nenabled = true\n")  # scaffold-exempt: user-level ~/.otto file
+    path.write_text("[cache]\nenabled = true\n")
     locked.chmod(0)  # EACCES on stat
     try:
         _assert_off_with_one_line_error(path)

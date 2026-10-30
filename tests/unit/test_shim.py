@@ -636,7 +636,7 @@ def test_a_settings_edit_makes_the_shim_hand_over(tmp_path, monkeypatch):
 
         path = user_settings_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("[cache]\nenabled = true\n")  # scaffold-exempt: user-level ~/.otto file
+        path.write_text("[cache]\nenabled = true\n")
         clear_user_settings_memo()
 
         outcome = sc.answer_or_reason(dict(os.environ))
