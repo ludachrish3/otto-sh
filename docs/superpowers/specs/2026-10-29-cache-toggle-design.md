@@ -80,18 +80,27 @@ The shim may import only its pinned stdlib set (`test_shim.py`), so it cannot re
 
 Nothing is deleted when the cache is off (amended 2026-10-29, Chris; this replaces the earlier "the full path removes the workspace's completion files" and "`disable` clears every workspace"). No deletion is needed: off writes nothing, so the stored triple for `settings.toml` never matches again, and once the shim's 60-second marker window lapses every TAB hands over. A TAB may therefore answer from the old cache for up to about 60 seconds after the change, whether made by `otto cache disable` or by hand; those answers were validated against the current files, so they are correct, only not yet "uncached".
 
-**The shim's stat rule.** For a key path stored as missing (`[path, None, None]`), only `ENOENT` and `ENOTDIR` mean "still missing". Any other stat error (`ELOOP`, `EACCES`, …) hands over, matching `user_settings._stat_file`, for which such a path is a broken file and the cache off. Otherwise a `settings.toml` that became a self-loop after the cache was written would be served from the old cache indefinitely. A differential test drives `_stat_pass` and `_stat_file` through the same path states. The digest side needs no change: it takes the settings stat from the same memoized load, and a broken file means off, so nothing is written.
+**One stat classification** (amended 2026-10-29 after review; replaces "only `ENOENT`/`ENOTDIR` are absent, anything else hands over"). A path's stat falls in one of three classes, defined once in `otto.config.corpus_snapshot.classify`: a real stat; **absent** (`ENOENT` or `ENOTDIR`); or **unreadable** (any other `OSError`: `ELOOP`, `EACCES`, …). Everyone uses it:
+
+- the settings loader (`user_settings._stat_file`): absent is "no settings", and unreadable is a broken file, so the cache is off;
+- the writer's digest (`hash_file`): `missing:<path>` versus `unreadable:<path>`;
+- the writer's stored triples (`completion_tree.stat_triple`): `[path, None, None]` versus `[path, None, "unreadable"]` (`UNREADABLE_SIZE`);
+- the shim's stat pass, which mirrors it with the standard library: it hands over only when a key's current class, or a real stat's mtime or size, differs from the stored one. A key that is still unreadable is unchanged and served.
+
+Why the encoding needs no schema bump: the size slot holds an int in every real triple, so a string can never equal a size, and the mtime stays `None`, so a shim from before the split still reads it as "not there". An old cache that stored an unreadable key as absent hands over once. Its digest then differs (`missing:` versus `unreadable:`), so the full path rewrites it, and the next TAB is served.
+
+The earlier rule applied the stricter shim check to every key while the writer still folded unreadable as missing. With the cache on, a key that stayed unreadable (a lab glob root that is a self-loop) handed over on every TAB while the full path saw a fresh digest and never rewrote. The digest side did need the change. A differential drives an arbitrary key through absent, `ENOTDIR`, `ELOOP`, `EACCES`, regular and changed on both sides, and an end-to-end test shows the self-looping lab root is served after one rebuild.
 
 ### Live test names
 
-With the cache off a test-name or `-m` TAB still offers names (Chris: "offer live collection when the cache is off"). `collected_tests.completion_view`, finding no cache file, starts the collect child in a **live mode** (`_OTTO_DUMP_TEST_NAMES=live`, `completion_cache.DUMP_TESTS_LIVE`, defined once beside `DUMP_TESTS_ENV_VAR`) and waits for it. Collection never runs in the completer process, whose stdout is the shell's. The live child:
+With the cache off a test-name or `-m` TAB still offers names (Chris: "offer live collection when the cache is off"). `collected_tests.completion_view`, finding no cache file, starts the collect child in a **live mode** (`_OTTO_DUMP_TEST_NAMES=live`, `completion_cache.DUMP_TESTS_LIVE`, defined once beside `DUMP_TESTS_ENV_VAR` and `DUMP_TESTS_STORED`, the stored-tables value the shim mirrors) and waits for it. Collection never runs in the completer process, whose stdout is the shell's. The live child:
 
 - is started by the same command builder as the stored-tables mode (`_collect_child_command`: the venv `otto`, the completion variables stripped, the path variables normalised), with the mode as its one parameter, and waited for by the same start (`_wait_for_child`: `COLLECT_TIMEOUT_SECONDS` plus the kill grace), with stdout piped and stderr discarded;
 - runs the same child core as the stored-tables mode (`_collect_within_cap`: the deadline armed before the bootstrap, then the run's own `_refresh_tables`, which with no cache file collects each whole tree and stores nothing);
 - takes no lock, stamps no cooldown, touches no marker and writes no table; its cwd is a fresh temporary directory removed afterwards;
 - sends whatever the collection writes to stdout to `/dev/null` and prints one JSON object, `{"names": [...], "markers": [...]}`, built by the same view the tables answer with (`_view_of`).
 
-Any failure (spawn, non-zero exit, timeout, output that is not that object) is an empty view, never an exception. With nowhere to record one, there is no cooldown: a project that cannot collect costs up to the cap on every test-name TAB.
+A project the child could not collect contributes no names and the others contribute theirs, exactly as the stored tables answer with the cache on (`_view_of` skips it). The child still exits 0 and prints the view. Only its deadline and an exception exit 1 with no output. Any failure the parent sees (spawn, non-zero exit, timeout, output that is not that object) is an empty view, never an exception. With nowhere to record one, there is no cooldown: a collection that runs past the cap costs it on every test-name TAB.
 
 ## The verbs
 
@@ -114,7 +123,7 @@ Docs only (Chris). The docs' new section ("Turning the cache off") shows the A/B
 - Default on with no settings file, with a file without `[cache]`, and with `[cache]` lacking `enabled`.
 - File over default; an unparsable or invalid file resolves off with the error as its source.
 - Off → no cache file is read or written: a file-op assertion (the import-budget strace harness or an equivalent syscall spy), never wall clock.
-- The shim honours a settings change (hands over), with no extra file operation on the marker-fresh TAB path; a stored-missing settings path that turns into a self-loop or sits under an unsearchable directory hands over.
+- The shim honours a settings change (hands over), with no extra file operation on the marker-fresh TAB path; a key that changes class (absent ↔ unreadable) hands over, a key that stays unreadable is served after one rebuild with the cache on, and the shim and the writer's digest agree on every class transition (differential).
 - Off deletes nothing: neither the full path nor `disable` removes a workspace file.
 - Off: a test-name TAB offers live names and markers from a real child, writes no cache file, lock or marker, and a failing or timed-out child is an empty view.
 - `otto test` with the cache off collects the whole tree and writes no cache file; on, it keeps tracking changed files.
