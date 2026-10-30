@@ -29,7 +29,11 @@ from tests._fixtures.bed_locks import lock_dir_or_root
 UNIX_POOL: tuple[str, ...] = ("test1", "test2", "test3")
 
 DOCKER_HOST = "test3"
-"""The lab host whose docker daemon the suite's ``-e2e-`` compose stacks run on."""
+"""The lab host whose docker daemon most of the suite's ``-e2e-`` compose stacks run on.
+
+The docker e2e fixtures lease from test1 and test3, and the tunnel e2e brings
+its stack up on test1; each holds the daemon's lease (``lease_unix_host``).
+"""
 
 _POLL_SECONDS = 0.05
 
@@ -100,7 +104,9 @@ def docker_host_lease() -> Iterator[str]:
 
     Every ``-e2e-`` stack on the docker host lives under this lock for its
     whole life, and ``tests/integration/conftest.py``'s orphan reaper takes it
-    too, so the reap waits for a live stack instead of removing it.
+    too, so the reap waits for a live stack instead of removing it. A stack on
+    test1 holds test1's lease instead (``lease_unix_host``), which the reaper,
+    test3's alone, never takes.
     """
     with lease_unix_host([DOCKER_HOST]) as element:
         yield element

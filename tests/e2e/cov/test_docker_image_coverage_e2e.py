@@ -16,6 +16,7 @@ import pytest
 from otto import layout
 from otto.coverage.capture.model import Capture
 from otto.coverage.store.model import CoverageStore
+from tests._fixtures._host_pool import docker_host_lease
 from tests.e2e._otto_subprocess import PROJECT5, run_otto
 from tests.e2e.cov._project5_build import TARBALL, _hits, _line_of, _record, ensure_image_artifacts
 
@@ -46,7 +47,10 @@ def coverage_run(tmp_path_factory):
     xdir = tmp / "xdir"
     xdir.mkdir()
     report_dir = tmp / "report"
-    _run_otto(["test", "--cov", "--cov-clean", "TestCovContainer"], xdir=xdir, timeout=900)
+    # TestCovContainer loads, runs and removes images on test3's daemon, which
+    # the docker e2e tests list whole: they hold its lease, so this run does too.
+    with docker_host_lease():
+        _run_otto(["test", "--cov", "--cov-clean", "TestCovContainer"], xdir=xdir, timeout=900)
     (log_dir,) = sorted(layout.command_output_dir(xdir, "test").glob("*"))
     _run_otto(["cov", "report", str(log_dir), "--dir", str(report_dir)], xdir=xdir, timeout=120)
     return CoverageStore.load(report_dir / "store.json"), layout.cov_dir(log_dir), log_dir

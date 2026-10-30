@@ -82,6 +82,7 @@ from otto.tunnel import add_tunnel, discover_tunnels, remove_tunnel
 from otto.tunnel.discovery import discover_observations
 from otto.tunnel.model import TunnelHop, make_tunnel_id
 from otto.utils import wait_for_async
+from tests._fixtures._host_pool import lease_unix_host
 from tests._fixtures.bed_hygiene import argv_pattern
 from tests._fixtures.labdata import host_data
 from tests._fixtures.paths import TESTS_ROOT
@@ -444,9 +445,24 @@ async def _wait_for_container_file(
     return last
 
 
+@pytest.fixture
+def ingress_docker_daemon():
+    """Lease the ingress host's docker daemon for the test, its stack's teardown included.
+
+    The docker e2e tests list a whole daemon and compare it with what otto
+    recorded. They lease a daemon from the test1/test3 pool with the same flock
+    (``lease_unix_host``), so neither sees the other's containers or images.
+    The wait is unbounded (pytest-timeout times the test body only): a docker
+    test then takes test3, and a test that needs test1 waits for this test's
+    whole run, its 900 s body timeout plus fixture setup and teardown.
+    """
+    with lease_unix_host([_INGRESS]):
+        yield
+
+
 @pytest.mark.asyncio
 @pytest.mark.timeout(900)
-async def test_container_endpoint_oldos(tunnel_lab, reap_tunnels) -> None:
+async def test_container_endpoint_oldos(ingress_docker_daemon, tunnel_lab, reap_tunnels) -> None:
     """``add_tunnel`` test2,test1,<oldos container> (parent test1): datagram
     from test2 reaches an in-container socat-only listener; discovery sees
     container-origin processes; remove reaps cleanly.
