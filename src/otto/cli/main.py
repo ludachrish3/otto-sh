@@ -1150,7 +1150,15 @@ def entry(cache_stale: bool = False) -> None:
         raise SystemExit(code)
 
     completion = is_completion_mode()
+    # A TAB's stdout is the shell's: from here to exit, what user code prints
+    # (an init module on import or at exit) goes to /dev/null, and only the
+    # words click writes while `app()` runs reach the shell.
+    answer = contextlib.ExitStack()
+    shell = None
     if completion:
+        from ..utils import answer_channel
+
+        shell = answer.enter_context(answer_channel())
         discard_collect_refresh_request()
     reads_cache = completion or sys.argv[1:] in ROOT_HELP_ARGV
     if completion and not cache_stale:
@@ -1308,7 +1316,8 @@ def entry(cache_stale: bool = False) -> None:
     from .invoke import print_error, render_instrumentation_refusal
 
     try:
-        app()
+        with contextlib.redirect_stdout(shell) if shell else contextlib.nullcontext():
+            app()
     except OttoError as e:
         # THE BOUNDARY FRAME. Every exception otto defines is a sentence
         # written for the person who typed the command — it names the host,
@@ -1370,3 +1379,4 @@ def entry(cache_stale: bool = False) -> None:
             # After the answer is printed: a completer that answered from a
             # table with moved files asked for the refresh behind it.
             spawn_requested_refresh()
+        answer.close()

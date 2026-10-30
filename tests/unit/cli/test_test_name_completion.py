@@ -616,7 +616,7 @@ def test_a_held_lock_starts_no_child(project, tmp_path, sessions, child, popen):
 
 
 def test_a_request_left_from_before_a_completion_starts_no_child(
-    project, popen, monkeypatch, capsys
+    project, popen, monkeypatch, capfd
 ):
     """Only this completion's own completers ask for the child: an older request is dropped.
 
@@ -635,7 +635,7 @@ def test_a_request_left_from_before_a_completion_starts_no_child(
     with pytest.raises(SystemExit):
         entry()
 
-    assert "--version" in capsys.readouterr().out
+    assert "--version" in capfd.readouterr().out
     assert popen == []
 
 

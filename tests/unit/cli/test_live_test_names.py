@@ -151,6 +151,29 @@ def test_output_at_exit_never_reaches_the_live_childs_answer(off_project):
     assert "test_live_one" in _real_tab(_env(project, home), "otto test ", 2)
 
 
+@pytest.mark.parametrize("on", [False, True], ids=["off", "on-cold"])
+def test_output_from_an_init_module_never_reaches_a_full_path_tab(off_project, on):
+    """An init module that prints on import and at exit: the shell reads only the words.
+
+    Off, every TAB loads the init modules; on, a cold cache does. The words go
+    out through the descriptor saved before the load; the process's own
+    stdout is ``/dev/null`` from then until it exits.
+    """
+    project, home = off_project
+    init = project / "pylib" / "genproject_instructions.py"
+    init.write_text(
+        init.read_text()
+        + "\nimport atexit\nprint('hello at import')\n"
+        + "atexit.register(lambda: print('bye from atexit'))\n"
+    )
+    user_settings_path().write_text(f"[cache]\nenabled = {'true' if on else 'false'}\n")
+    env = _env(project, home)
+    for words, cword, expected in (("otto ", 1, "test"), ("otto test ", 2, "test_live_one")):
+        offered = _real_tab(env, words, cword)
+        assert expected in offered
+        assert not {"hello", "bye", "atexit", "import"} & set(offered), offered
+
+
 def test_a_project_that_cannot_collect_costs_only_its_own_names_on_and_off(two_projects):
     """Off offers what on settles on: the healthy project's names, without the broken one's."""
     off = _settle(on=False)

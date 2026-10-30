@@ -13,6 +13,7 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -297,11 +298,10 @@ try:
     _shim.main()
 except SystemExit:
     pass
-sys.stdout.write(
-    "__MODULES__"
-    + json.dumps({"baseline": baseline, "final": sorted(sys.modules)})
-    + "\\n"
-)
+# Beside the child, not on stdout: a full-path TAB sends stdout to /dev/null
+# for the rest of the process once the answer is out.
+with open(__file__ + ".modules.json", "w") as report:
+    json.dump({"baseline": baseline, "final": sorted(sys.modules)}, report)
 """
 
 
@@ -315,10 +315,10 @@ def _tab(tmp_path, env, name):
         check=True,
         env={**os.environ, **env, "_OTTO_COMPLETE": "complete_bash"},
     )
-    answer, _, modules = out.stdout.partition("__MODULES__")
     # ``{"baseline": [...], "final": [...]}`` — the module lists either side of
     # ``from otto import _shim``.
-    return answer, json.loads(modules), out.stderr
+    modules = json.loads(Path(f"{child}.modules.json").read_text())
+    return out.stdout, modules, out.stderr
 
 
 def test_warm_tab_is_answered_without_the_cli_or_config_packages(tmp_path):
@@ -515,14 +515,14 @@ def test_a_non_bash_shell_takes_the_full_path(tmp_path):
     _tab(tmp_path, env, "seed.py")
     child = tmp_path / "zsh.py"
     child.write_text(_TAB_CHILD)
-    out = subprocess.run(
+    subprocess.run(
         [sys.executable, str(child)],
         capture_output=True,
         text=True,
         check=True,
         env={**os.environ, **env, "_OTTO_COMPLETE": "complete_zsh"},
     )
-    assert "otto.cli.main" in out.stdout
+    assert "otto.cli.main" in json.loads(Path(f"{child}.modules.json").read_text())["final"]
 
 
 # ---------------------------------------------------------------------------

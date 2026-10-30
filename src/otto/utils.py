@@ -7,8 +7,9 @@ Among others: the :class:`Status` enum, the CLI overlays (:class:`Arg`,
 ``cache_ttl`` grammar (:func:`parse_cache_ttl`), the monitor
 collection-interval floor (:data:`MIN_INTERVAL_SECONDS`), list-option
 splitting and completion helpers, the dry-run headlines, deadline polling
-(:func:`wait_for`, :func:`wait_for_async`), and write-then-rename
-(:func:`atomic_write_bytes`).
+(:func:`wait_for`, :func:`wait_for_async`), write-then-rename
+(:func:`atomic_write_bytes`), and a stdout only the answer reaches
+(:func:`answer_channel`).
 """
 
 import contextlib
@@ -17,8 +18,9 @@ import inspect
 import math
 import os
 import re
+import sys
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass
 from datetime import timedelta
 from enum import Enum
@@ -28,6 +30,7 @@ from typing import (
     Any,
     Generic,
     Literal,
+    TextIO,
     TypeVar,
     Union,
     get_args,
@@ -205,6 +208,26 @@ _TTL = re.compile(r"\A(?:0|([1-9]\d*)([mhd]))\Z")
 would parse — and a settings value with a stray newline must be refused, not guessed at."""
 
 _TTL_UNIT = {"m": timedelta(minutes=1), "h": timedelta(hours=1), "d": timedelta(days=1)}
+
+
+@contextlib.contextmanager
+def answer_channel() -> Iterator[TextIO]:
+    """Send this process's stdout to ``/dev/null`` for good; yield a stream to the original.
+
+    For a process whose stdout another one reads: a shell's TAB, or a parent
+    waiting on a child's answer. What user code prints — on import, during
+    the run, or at exit (an ``atexit`` handler, interpreter shutdown) — goes
+    to ``/dev/null``; only what is written to the yielded stream reaches the
+    reader. fd 1 is never given back: a print after the answer would land
+    behind it in the reader's pipe. The stream is closed on exit.
+    """
+    sys.stdout.flush()
+    out = os.dup(1)
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(devnull, 1)
+    os.close(devnull)
+    with os.fdopen(out, "w", encoding="utf-8") as channel:
+        yield channel
 
 
 def parse_cache_ttl(text: str) -> timedelta:

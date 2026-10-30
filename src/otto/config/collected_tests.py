@@ -78,7 +78,6 @@ import contextlib
 import functools
 import json
 import os
-import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
@@ -1117,15 +1116,9 @@ def live_collect_main(
     stays on ``/dev/null`` until it exits; the answer goes out through the
     descriptor saved before, closed once it is written.
     """
-    # fd 1 goes to /dev/null for the rest of the process and is never given
-    # back: anything printed later (an atexit handler, interpreter shutdown)
-    # would otherwise land after the answer in the parent's pipe.
-    out = os.dup(1)
-    devnull = os.open(os.devnull, os.O_WRONLY)
-    sys.stdout.flush()
-    os.dup2(devnull, 1)
-    os.close(devnull)
-    with os.fdopen(out, "w", encoding="utf-8") as channel:
+    from ..utils import answer_channel
+
+    with answer_channel() as channel:
         collected = _collect_within_cap(load_projects, refresh, lambda: os._exit(1))
         view = _view_of(collected.tables)
         json.dump({"names": view.names, "markers": view.markers}, channel)

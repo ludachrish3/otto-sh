@@ -24,6 +24,13 @@ of that is acceptable while the user waits for a
 candidate list, and anything printed into a completing shell corrupts the
 list the shell is parsing.
 
+When a TAB does run user code (a cold cache, or the cache off), what that
+code prints never reaches the shell. A completing `otto` sends its stdout to
+`/dev/null` before it loads anything and writes its answer through a
+descriptor saved beforehand ({func}`~otto.utils.answer_channel`). A print on
+import, during the TAB or at exit (an `atexit` handler) goes nowhere. The
+live collect child below answers its parent the same way.
+
 The other constraint is the filesystem. On a network filesystem every path
 syscall costs a round trip to the server, so wall time is roughly the round
 trip times the number of `open`, `stat` and directory-listing calls
@@ -412,7 +419,8 @@ It is used in three ways:
   `_OTTO_DUMP_TEST_NAMES=live` (`DUMP_TESTS_LIVE`) and waits for it, under
   the same deadline and kill. That child (`live_collect_main`) collects each
   whole tree, stores nothing and takes no lock, and prints one JSON object,
-  `{"names": [...], "markers": [...]}`, which is the answer. It starts in a
+  `{"names": [...], "markers": [...]}`, which is the answer, through
+  {func}`~otto.utils.answer_channel`. It starts in a
   scratch directory removed afterwards. A project it could not collect
   offers nothing and the others offer theirs, as the stored tables answer
   with the cache on. A child that dies (its deadline, an exception, a spawn
