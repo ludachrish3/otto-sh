@@ -22,6 +22,7 @@ report for the six-mutation sweep these assertions were built to catch.
 from typer.testing import CliRunner
 
 from tests._fixtures.cache_workspace import OLD, YOUNG, _mk_workspace
+from tests._fixtures.user_settings import set_cache_enabled
 
 runner = CliRunner()
 
@@ -409,7 +410,7 @@ def test_info_first_line_reports_the_settings_file(tmp_path, monkeypatch):
     from otto.config.user_settings import user_settings_path
 
     _home(monkeypatch, tmp_path)
-    user_settings_path().write_text("[cache]\nenabled = false\n")  # scaffold-exempt
+    set_cache_enabled(False)
     result = runner.invoke(cache_app, ["info"])
     assert result.output.splitlines()[0] == f"cache: off (settings.toml: {user_settings_path()})"
 

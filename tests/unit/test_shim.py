@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 
 from tests._fixtures.paths import CHECKOUT_ROOT
+from tests._fixtures.user_settings import set_cache_enabled
 
 
 @pytest.fixture(autouse=True)
@@ -608,7 +609,6 @@ def test_a_settings_edit_makes_the_shim_hand_over(tmp_path, monkeypatch):
     from otto.cli.main import PENDING_SUBCMD_ARGS_KEY, app
     from otto.config import completion_cache as cc
     from otto.config.completion_tree import build_shim_payload
-    from otto.config.user_settings import clear_user_settings_memo, user_settings_path
     from tests._fixtures.generated_project import generate_project
 
     project = generate_project(tmp_path, files=3, dirs=1, top_level=1)
@@ -634,10 +634,7 @@ def test_a_settings_edit_makes_the_shim_hand_over(tmp_path, monkeypatch):
         os.utime(marker, (old, old))
         assert json.loads(cache.read_text())  # the entry is intact
 
-        path = user_settings_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("[cache]\nenabled = true\n")
-        clear_user_settings_memo()
+        set_cache_enabled(True)
 
         outcome = sc.answer_or_reason(dict(os.environ))
         assert outcome.items is None

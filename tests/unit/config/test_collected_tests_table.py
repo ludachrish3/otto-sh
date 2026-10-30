@@ -953,10 +953,10 @@ def test_write_tables_with_a_home_stores_nothing_when_the_cache_is_off(
 
 
 def test_read_tables_with_a_home_sees_nothing_when_the_cache_is_off(project, tmp_path):
-    from tests.unit.config.conftest import turn_cache_off
+    from tests._fixtures.user_settings import set_cache_enabled
 
     home = tmp_path / "home"
     tr.write_tables([_table(project)], home=home)
     assert tr.read_tables([project], home=home)  # on: the stored table is read back
-    turn_cache_off()
+    set_cache_enabled(False)
     assert tr.read_tables([project], home=home) == {}
