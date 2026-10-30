@@ -203,7 +203,9 @@ def _names_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa:
     last collected, and a child started behind the answer, once the check
     window has lapsed, brings the tables up to date. ``NAMES`` is variadic,
     so each word completes one name, by plain prefix. Parametrizations
-    collapse to their base (``test_x`` runs every ``test_x[...]``).
+    collapse to their base (``test_x`` runs every ``test_x[...]``). With the
+    cache off there are no tables: every TAB waits for a live collection in
+    the same bounded child, and stores nothing.
 
     Reads the table itself rather than the ``names`` section every other
     completer reads: test names are not in it, so ``otto ho<TAB>`` never

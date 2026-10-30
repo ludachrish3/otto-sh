@@ -1110,6 +1110,7 @@ def entry(cache_stale: bool = False) -> None:
     from .. import bootstrap as bs
     from ..config.completion_cache import (
         DUMP_TESTS_ENV_VAR,
+        DUMP_TESTS_LIVE,
         discard_collect_refresh_request,
         is_completion_mode,
         spawn_requested_refresh,
@@ -1126,12 +1127,21 @@ def entry(cache_stale: bool = False) -> None:
         # non-zero with the cooldown stamped, so the next TABs neither wait
         # nor spawn again for a while; the waiting parent answers what the
         # tables hold.
+        #
+        # With DUMP_TESTS_LIVE (the cache is off), the child is the live mode
+        # instead: it stores nothing and prints the names and markers for its
+        # waiting parent.
         code = 1
         try:
-            from ..config.collected_tests import collect_child_main
+            from ..config.collected_tests import collect_child_main, live_collect_main
             from ..suite.run import _refresh_tables
 
-            code = collect_child_main(lambda: bs.bootstrap().projects, _refresh_tables)
+            child_main = (
+                live_collect_main
+                if os.environ[DUMP_TESTS_ENV_VAR] == DUMP_TESTS_LIVE
+                else collect_child_main
+            )
+            code = child_main(lambda: bs.bootstrap().projects, _refresh_tables)
         except Exception as exc:  # noqa: BLE001 — the child reports by exit code and cooldown only
             with contextlib.suppress(Exception):
                 from ..config.completion_cache import stamp_collect_cooldown

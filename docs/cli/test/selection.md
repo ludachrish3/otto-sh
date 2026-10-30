@@ -158,6 +158,11 @@ marker names from the same cache.
 - **A run is never held back by completion.** Whatever completion shows, a
   run collects every test file ([above](#what-a-run-collects)).
 
+With the cache off (see
+[Turning the cache off](../cache/index.md#turning-the-cache-off)), every
+test-name or `-m` TAB waits for that same capped collection, offers what it
+found and stores nothing, so none of the above applies.
+
 ### What the cache can't follow
 
 The cache notices a change by a file's modification time and size, and

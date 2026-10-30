@@ -78,6 +78,7 @@ import contextlib
 import functools
 import json
 import os
+import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
@@ -974,8 +975,18 @@ def completion_view(projects: "list[Project]") -> CompletionView:
     collect child's: when one is due (:func:`tables_check_due`), the child
     is asked for, detached, once the answer is written
     (:func:`otto.config.completion_cache.request_collect_refresh`).
+
+    With the cache off (no cache file) there are no tables to read: the
+    names and markers come from a live collection instead
+    (:func:`otto.config.completion_cache.run_live_collect_child`), and a
+    collection that fails offers nothing.
     """
-    from .completion_cache import request_collect_refresh, run_collect_child
+    from .completion_cache import request_collect_refresh, run_collect_child, run_live_collect_child
+
+    cache_path = _cache_path()
+    if cache_path is None:
+        live = run_live_collect_child()
+        return CompletionView(names=[], markers=[]) if live is None else CompletionView(**live)
 
     def warm() -> list[ProjectTable | None]:
         """Each project's table, or ``None`` for a cold one."""
@@ -990,15 +1001,19 @@ def completion_view(projects: "list[Project]") -> CompletionView:
     tables = warm()
     if any(table is None for table in tables) and run_collect_child():
         tables = warm()
+    if tables_check_due(cache_path.parent):
+        request_collect_refresh()
+    return _view_of(tables)
+
+
+def _view_of(tables: "Iterable[ProjectTable | None]") -> CompletionView:
+    """Return what *tables* offer together: every name and marker, sorted, each once."""
     names: set[str] = set()
     markers: set[str] = set()
     for table in tables:
         if table is not None:
             names.update(table.names)
             markers.update(table.markers)
-    cache_path = _cache_path()
-    if cache_path is not None and tables_check_due(cache_path.parent):
-        request_collect_refresh()
     return CompletionView(names=sorted(names), markers=sorted(markers))
 
 
@@ -1050,6 +1065,70 @@ def _expire_collect_child(lock: Path) -> None:
     os._exit(1)
 
 
+@dataclass
+class _Collected:
+    """What one collection inside the cap brought back."""
+
+    tables: "list[ProjectTable | None]"
+    """Each project's table, in project order; ``None`` for one that could not be collected."""
+    failed: list[str]
+    """The names of the projects whose table is ``None``."""
+
+
+def _collect_within_cap(
+    load_projects: "Callable[[], list[Project]]",
+    refresh: "Callable[[list[Project]], list[ProjectTable | None]]",
+    on_expiry: Callable[[], None],
+) -> _Collected:
+    """Load the projects and refresh their tables, *on_expiry* called past the collect cap.
+
+    The core of both collect-child modes: the deadline
+    (:data:`~otto.config.completion_cache.COLLECT_TIMEOUT_SECONDS`) is armed
+    before *load_projects*, the bootstrap that imports the projects' init
+    modules, so a hung init module is stopped like a hung collection.
+    """
+    from .completion_cache import COLLECT_TIMEOUT_SECONDS
+
+    with _deadline(COLLECT_TIMEOUT_SECONDS, on_expiry):
+        projects = load_projects()
+        tables = refresh(projects)
+    failed = [r.name for r, t in zip(projects, tables, strict=True) if t is None]
+    return _Collected(tables=tables, failed=failed)
+
+
+def live_collect_main(
+    load_projects: "Callable[[], list[Project]]",
+    refresh: "Callable[[list[Project]], list[ProjectTable | None]]",
+) -> int:
+    """Collect every project and print its names and markers as one JSON object; the exit code.
+
+    The collect child's live mode, for a completer with the cache off
+    (:func:`otto.config.completion_cache.run_live_collect_child`). *refresh*
+    is the run's own, which with no cache file collects each whole tree and
+    stores nothing; nothing else is written for the cache either (no lock,
+    no cooldown, no marker). Past the cap it exits 1 at once. Whatever the
+    collection writes to stdout is sent to ``/dev/null``: the parent reads
+    stdout, and only ``{"names": [...], "markers": [...]}`` may reach it. A
+    project that could not be collected exits 1 with nothing printed.
+    """
+    out = os.dup(1)
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    sys.stdout.flush()
+    os.dup2(devnull, 1)
+    os.close(devnull)
+    try:
+        collected = _collect_within_cap(load_projects, refresh, lambda: os._exit(1))
+        sys.stdout.flush()
+        if collected.failed:
+            return 1
+        view = _view_of(collected.tables)
+        with os.fdopen(out, "w", encoding="utf-8", closefd=False) as channel:
+            json.dump({"names": view.names, "markers": view.markers}, channel)
+    finally:
+        os.close(out)
+    return 0
+
+
 def collect_child_main(
     load_projects: "Callable[[], list[Project]]",
     refresh: "Callable[[list[Project]], list[ProjectTable | None]]",
@@ -1074,7 +1153,6 @@ def collect_child_main(
     from .completion_cache import (
         COLLECT_LOCK_FILENAME,
         COLLECT_OWNER_ENV_VAR,
-        COLLECT_TIMEOUT_SECONDS,
         _acquire_collect_lock,
         collect_cooldown_active,
         stamp_collect_cooldown,
@@ -1088,12 +1166,10 @@ def collect_child_main(
     if not _acquire_collect_lock(lock, owner=os.environ.get(COLLECT_OWNER_ENV_VAR, "")):
         return 0
     try:
-        with _deadline(COLLECT_TIMEOUT_SECONDS, lambda: _expire_collect_child(lock)):
-            projects = load_projects()
-            failed = [r.name for r, t in zip(projects, refresh(projects), strict=True) if t is None]
-            if failed:
-                stamp_collect_cooldown(f"could not collect project {failed[0]!r}")
-                return 1
+        collected = _collect_within_cap(load_projects, refresh, lambda: _expire_collect_child(lock))
+        if collected.failed:
+            stamp_collect_cooldown(f"could not collect project {collected.failed[0]!r}")
+            return 1
     except Exception as exc:  # noqa: BLE001 — a child that failed says so with its exit code
         stamp_collect_cooldown(f"{type(exc).__name__}: {exc}")
         return 1

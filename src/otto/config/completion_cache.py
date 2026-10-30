@@ -141,8 +141,10 @@ from typing import TYPE_CHECKING, Annotated, Any, Union, get_args, get_origin
 from . import corpus_snapshot
 
 if TYPE_CHECKING:
+    import subprocess
     import threading
     from collections.abc import Callable, Collection, Sequence
+    from typing import TypeGuard
 
     from ..host.os_profile import ProfileContext
     from ..inventory.protocol import Inventory
@@ -289,6 +291,13 @@ COLLECTED_TESTS_KEY = "__collected_tests__"
 # exit in :func:`otto.cli.main.entry`, before the normal CLI runs. The child
 # prints nothing: its parent, if it waits at all, reads the tables it wrote.
 DUMP_TESTS_ENV_VAR = "_OTTO_DUMP_TEST_NAMES"
+
+# The value of DUMP_TESTS_ENV_VAR that starts the child in its live mode, for a
+# completer with the cache off: it collects, stores nothing and prints one JSON
+# object, ``{"names": [...], "markers": [...]}``, which the waiting parent reads
+# (:func:`otto.config.collected_tests.live_collect_main`). Any other value is
+# the stored-tables mode.
+DUMP_TESTS_LIVE = "live"
 
 # Hard cap on the collect child: a cold ``otto test`` TAB blocks at most this
 # long (the child stops itself; the waiting parent allows a little more before
@@ -2375,15 +2384,18 @@ class _ChildCommand:
     """The token the child writes into the lock it takes."""
 
 
-def _collect_child_command(home: Path) -> _ChildCommand | None:
+def _collect_child_command(home: Path, *, mode: str = "1") -> _ChildCommand | None:
     """Return how to start the collect child, or ``None`` with no venv ``otto``.
 
     The *venv* ``otto`` binary (so ``entry`` runs, unlike ``python -m otto``)
     with the completion variables stripped, so the child collects instead of
-    answering another completion. It starts in *home*, the workspace home
-    (created here), never in the shell's cwd, whatever a project holds: its path
-    variables are given the kept spelling (``~`` expanded, a relative entry
-    joined to this process's cwd) and ``OTTOPATH``'s repeats collapsed first.
+    answering another completion. It starts in *home* (created here): the
+    workspace home, or a scratch directory for the live mode, never the
+    shell's cwd, whatever a project holds. Its path variables are given the
+    kept spelling (``~`` expanded, a relative entry joined to this process's
+    cwd) and ``OTTOPATH``'s repeats collapsed first. *mode* is the value of
+    :data:`DUMP_TESTS_ENV_VAR`: ``"1"`` (the stored-tables mode, the value the
+    console-script shim also sets) or :data:`DUMP_TESTS_LIVE`.
     """
     import sys
 
@@ -2404,7 +2416,7 @@ def _collect_child_command(home: Path) -> _ChildCommand | None:
             if var == OTTOPATH_ENV_VAR:
                 paths = collapse_path_list(paths)
             env[var] = os.pathsep.join(paths)
-    env[DUMP_TESTS_ENV_VAR] = "1"
+    env[DUMP_TESTS_ENV_VAR] = mode
     owner = f"{os.getpid()}-{time.monotonic_ns()}"
     env[COLLECT_OWNER_ENV_VAR] = owner
     with contextlib.suppress(OSError):  # a cwd that is not there fails the start
@@ -2433,16 +2445,7 @@ def run_collect_child() -> bool:
     if command is None:
         return False
     try:
-        proc = subprocess.run(  # noqa: S603 — venv otto binary, fixed argv, no shell
-            command.argv,
-            env=command.env,
-            cwd=command.cwd,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=COLLECT_TIMEOUT_SECONDS + _COLLECT_KILL_GRACE_SECONDS,
-            check=False,
-        )
+        proc = _wait_for_child(command, stdout=subprocess.DEVNULL)
     except subprocess.TimeoutExpired:
         # The child was killed before it could stamp or unlock for itself.
         stamp_collect_cooldown("timed out")
@@ -2455,6 +2458,65 @@ def run_collect_child() -> bool:
         stamp_collect_cooldown(f"exit {proc.returncode}")
         return False
     return True
+
+
+def _wait_for_child(command: _ChildCommand, *, stdout: int) -> "subprocess.CompletedProcess[str]":
+    """Run the collect child *command* and wait for it, killed past the cap plus a grace.
+
+    The one waited-for start of both modes; *stdout* is ``DEVNULL`` for the
+    stored-tables mode, ``PIPE`` for the live one. Raises what
+    ``subprocess.run`` raises; each caller decides what a failure means.
+    """
+    import subprocess
+
+    return subprocess.run(  # noqa: S603 — venv otto binary, fixed argv, no shell
+        command.argv,
+        env=command.env,
+        cwd=command.cwd,
+        stdin=subprocess.DEVNULL,
+        stdout=stdout,
+        stderr=subprocess.DEVNULL,
+        timeout=COLLECT_TIMEOUT_SECONDS + _COLLECT_KILL_GRACE_SECONDS,
+        check=False,
+        text=True,
+    )
+
+
+def run_live_collect_child() -> "dict[str, list[str]] | None":
+    """Collect test names and markers in a live-mode child; ``None`` when that failed.
+
+    For a completer with the cache off: nothing is read or written for the
+    cache (no lock, no cooldown, no marker, no table). The child starts in a
+    scratch directory removed afterwards, is bounded by the same cap as the
+    stored-tables mode, and prints ``{"names": [...], "markers": [...]}``,
+    each a list of strings. With no cooldown, a project that cannot collect
+    costs up to the cap on every such TAB. A spawn failure, a timeout, a
+    non-zero exit or anything else on stdout is ``None``. Never raises:
+    completion must never traceback into the shell.
+    """
+    import subprocess
+    import tempfile
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="otto-collect-") as scratch:
+            command = _collect_child_command(Path(scratch), mode=DUMP_TESTS_LIVE)
+            if command is None:
+                return None
+            proc = _wait_for_child(command, stdout=subprocess.PIPE)
+        printed = json.loads(proc.stdout) if proc.returncode == 0 else None
+    except (subprocess.SubprocessError, OSError, ValueError):
+        return None
+    if not isinstance(printed, dict):
+        return None
+    names, markers = printed.get("names"), printed.get("markers")
+    if not (_is_str_list(names) and _is_str_list(markers)):
+        return None
+    return {"names": names, "markers": markers}
+
+
+def _is_str_list(value: Any) -> "TypeGuard[list[str]]":
+    """Whether *value* is a list of strings (the shape the live child prints)."""
+    return isinstance(value, list) and all(isinstance(item, str) for item in value)
 
 
 def spawn_collect_child() -> bool:

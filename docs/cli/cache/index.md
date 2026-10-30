@@ -207,15 +207,22 @@ inventory snapshot has its own switch, `cache_ttl = "0"`
 **Consequences.**
 
 - `otto -h` and every TAB take the full path.
-- No collect child runs, so a test-name TAB offers no test names and no
-  markers. Docker container and image names come only from the cache's
-  observed state and a TAB never asks a host, so none are offered.
+- Test names and markers are collected live on every test-name or `-m` TAB:
+  the collect child runs, waited for, stores nothing and hands back what it
+  found. It is bounded by the same 15-second cap as a cold TAB with the cache
+  on, but with no cooldown, since there is nowhere to record one: a project
+  that cannot collect costs up to the cap on each such TAB, and offers
+  nothing.
+- Docker container and image names come only from the cache's observed state
+  and a TAB never asks a host, so none are offered.
 - `otto test` collects everything on every run.
 
-**When it takes effect.** `otto cache disable` applies at once everywhere. A
-hand edit of `settings.toml` reaches `otto -h` and any other full command on
-its next run; only TAB may lag, by up to about 60 seconds (its next stat
-pass). A settings file that does not parse or validate, or cannot be read,
+**When it takes effect.** `otto -h` and every other full command see the
+change on their next run. A bash TAB may go on answering from the old cache
+for up to about 60 seconds after the change (until its next check of the
+files the cache depends on, `settings.toml` among them); from then on every
+TAB takes the full path, because off writes nothing the check could match
+again. A settings file that does not parse or validate, or cannot be read,
 means the cache is off, and `otto cache info` shows why.
 
 **Comparing with and without the cache.** Count file operations, never wall

@@ -396,7 +396,7 @@ refresh could not finish) writes `.completion_collect.failed`, and for a
 minute after that no TAB starts another child or waits for one. The child
 runs in the workspace home, never in the shell's directory.
 
-It is used in two ways:
+It is used in three ways:
 
 - **The seed blocks once.** A TAB that finds a project's table cold waits for
   the child, then answers from what the child wrote. It waits at most two
@@ -407,6 +407,15 @@ It is used in two ways:
   start the child in a session of its own, with `/dev/null` for every
   stream, and never wait for it. The child re-reads only what moved, and
   the TABs after it offer what it found.
+- **The live view, with the cache off.** There are no tables to read, so
+  every test-name or `-m` TAB on the full path starts the child with
+  `_OTTO_DUMP_TEST_NAMES=live` (`DUMP_TESTS_LIVE`) and waits for it, under
+  the same deadline and kill. That child (`live_collect_main`) collects each
+  whole tree, stores nothing and takes no lock, and prints one JSON object,
+  `{"names": [...], "markers": [...]}`, which is the answer. It starts in a
+  scratch directory removed afterwards. A failure of any kind offers
+  nothing, and since nothing is written there is no cooldown either. The
+  shim never answers such a TAB: with no cache it hands over.
 
 Every test-name or `-m` TAB answers the same way, whichever path answers
 it: the shim in bash, or the completers' `completion_view` on the full path
