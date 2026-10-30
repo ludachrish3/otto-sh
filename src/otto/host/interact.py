@@ -51,6 +51,7 @@ from ..models.base import Cred
 from .command_frame import CommandFrame
 from .host import DEFAULT_COMMAND_TIMEOUT
 from .login_proxy import run_proxy
+from .output_codec import OUTPUT_ENCODING, OUTPUT_ERRORS, held_bytes, output_decoder
 from .secret_wire import reveal, reveal_bytes
 from .session import BridgeSetup, HostSession, ShellSession, _SessionProxyIO
 from .telnet import TELNET_EOL, telnet_line_ends
@@ -142,7 +143,7 @@ class _LineBuffer:
             self._buf.clear()
 
     def _emit(self, line: bytes) -> None:
-        cleaned = _strip_ansi(line).decode("utf-8", errors="replace").rstrip("\r")
+        cleaned = _strip_ansi(line).decode(OUTPUT_ENCODING, OUTPUT_ERRORS).rstrip("\r")
         if cleaned:
             self._on_line(cleaned)
 
@@ -399,6 +400,53 @@ def _print_stderr(msg: str) -> None:
         pass
 
 
+class _BridgeReader:
+    """What an automation reader on the bridge has read and not yet matched.
+
+    Both bridge adapters read through one, so they agree on what a match
+    consumes and on what the human is handed when automation ends: everything
+    read past the final match, as text plus the first bytes of a character the
+    last read split (:meth:`take_residual`).
+    """
+
+    def __init__(self, read_remote: Callable[[], Awaitable[bytes]]) -> None:
+        self._read_remote = read_remote
+        self.unmatched = ""
+        # Chunks can split a multi-byte character; the held decoder joins it.
+        self._decoder = output_decoder()
+
+    async def read_until(self, pattern: "re.Pattern[str]") -> str | None:
+        """Return the text through *pattern*'s first match, consuming it.
+
+        Consuming it (like ``StreamReader.readuntil``) means a later read only
+        sees what came after this match. ``None`` at end of stream, with the
+        decoder flushed into :attr:`unmatched`, as every output reader does.
+        """
+        while True:
+            match = pattern.search(self.unmatched)
+            if match is not None:
+                matched = self.unmatched[: match.end()]
+                self.unmatched = self.unmatched[match.end() :]
+                return matched
+            chunk = await self._read_remote()
+            if not chunk:
+                self.unmatched += self._decoder.decode(b"", final=True)
+                return None
+            self.unmatched += self._decoder.decode(chunk)
+
+    def take_residual(self) -> bytes:
+        """Return and clear whatever was read past the last match, as bytes.
+
+        The bytes of a character the last read left split are still in the
+        decoder, not the text: they follow it, so the raw pump's next bytes
+        complete the character instead of arriving without their start.
+        """
+        residual = self.unmatched.encode(OUTPUT_ENCODING) + held_bytes(self._decoder)
+        self.unmatched = ""
+        self._decoder = output_decoder()
+        return residual
+
+
 class _BridgeProxyIO:
     r"""Adapts a login driver's ``write_remote``/``read_remote`` closures.
 
@@ -421,9 +469,8 @@ class _BridgeProxyIO:
         newline: bytes,
     ) -> None:
         self._write_remote = write_remote
-        self._read_remote = read_remote
         self._newline = newline
-        self._buffer = ""
+        self.reader = _BridgeReader(read_remote)
 
     async def send(self, text: str | SecretStr, *, log: LogMode = LogMode.NORMAL) -> None:  # noqa: ARG002 — `log` is part of the ProxyIO protocol; this adapter has no sink to leak a password to either way
         r"""Send *text*, translating a trailing ``"\n"`` to the transport newline.
@@ -457,20 +504,12 @@ class _BridgeProxyIO:
         regex = re.compile(pattern) if isinstance(pattern, str) else pattern
 
         async def _until_match() -> str:
-            while True:
-                match = regex.search(self._buffer)
-                if match is not None:
-                    # Consume the matched prefix (like StreamReader.readuntil)
-                    # so a later expect() on this reused instance only sees data
-                    # received AFTER this match — otherwise hop N+1 re-matches
-                    # hop N's leftover prompt and sends its password blind.
-                    matched = self._buffer[: match.end()]
-                    self._buffer = self._buffer[match.end() :]
-                    return matched
-                chunk = await self._read_remote()
-                if not chunk:
-                    raise ConnectionError("remote closed before the expected pattern arrived")
-                self._buffer += chunk.decode("utf-8", errors="replace")
+            # The reader consumes the match, so hop N+1 cannot re-match hop
+            # N's leftover prompt and send its password blind.
+            matched = await self.reader.read_until(regex)
+            if matched is None:
+                raise ConnectionError("remote closed before the expected pattern arrived")
+            return matched
 
         return await asyncio.wait_for(_until_match(), timeout)
 
@@ -513,9 +552,8 @@ class _BridgeShellSession(ShellSession):
     ) -> None:
         super().__init__(command_frame=command_frame, init_timeout=init_timeout, shell_history=True)
         self._write_remote = write_remote
-        self._read_remote = read_remote
         self._newline = newline
-        self._buffer = ""
+        self._reader = _BridgeReader(read_remote)
         self.console_client = console_client
 
     @override
@@ -533,16 +571,10 @@ class _BridgeShellSession(ShellSession):
 
     @override
     async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
-        while True:
-            match = pattern.search(self._buffer)
-            if match is not None:
-                matched = self._buffer[: match.end()]
-                self._buffer = self._buffer[match.end() :]
-                return matched
-            chunk = await self._read_remote()
-            if not chunk:
-                raise asyncio.IncompleteReadError(self._buffer.encode(), None)
-            self._buffer += chunk.decode("utf-8", errors="replace")
+        matched = await self._reader.read_until(pattern)
+        if matched is None:
+            raise asyncio.IncompleteReadError(self._reader.unmatched.encode(OUTPUT_ENCODING), None)
+        return matched
 
     @override
     async def console_login(self) -> None:
@@ -563,10 +595,9 @@ class _BridgeShellSession(ShellSession):
         self._alive = False
         self._initialized = False
 
-    def take_residual(self) -> str:
-        """Return and clear whatever was read past the last match."""
-        residual, self._buffer = self._buffer, ""
-        return residual
+    def take_residual(self) -> bytes:
+        """Return and clear whatever was read past the last match (:class:`_BridgeReader`)."""
+        return self._reader.take_residual()
 
 
 async def _run_session_setup_on_bridge(  # noqa: PLR0913 — wide bridge entry point: the byte closures plus every field the hook's session needs
@@ -670,7 +701,7 @@ async def _run_session_setup_on_bridge(  # noqa: PLR0913 — wide bridge entry p
     restore = target_frame.restore_interactive()
     if restore is not None:
         await session.run_cmd(restore)
-    return session.take_residual().encode("utf-8")
+    return session.take_residual()
 
 
 async def _replay_proxy_hops(
@@ -681,16 +712,21 @@ async def _replay_proxy_hops(
     proxy_hops: Sequence[Cred],
     via_login: str,
     host_id: str,
-) -> None:
-    """Replay *proxy_hops* over a fresh :class:`_BridgeProxyIO`, outermost hop first.
+) -> bytes:
+    """Replay *proxy_hops* over a fresh :class:`_BridgeProxyIO`; return the residual.
 
-    Each hop's ``via`` is the previous hop's login — or, for the first hop,
-    *via_login* (the direct cred the transport actually authenticated as).
+    The hops run outermost first. Each hop's ``via`` is the previous hop's
+    login — or, for the first hop, *via_login* (the direct cred the transport
+    actually authenticated as).
     Mirrors :meth:`~otto.host.session.SessionManager._apply_login_proxy`'s
     via-sourcing. No-ops when *proxy_hops* is empty.
+
+    The residual is what the last hop's read left past its match (typically
+    the prompt the human lands at), for the bridge to show as its *prelude*,
+    as :func:`_run_session_setup_on_bridge` returns its own.
     """
     if not proxy_hops:
-        return
+        return b""
     _print_stderr(f"[otto] proxying to {proxy_hops[-1].login}...")
     bridge_io = _BridgeProxyIO(write_remote, read_remote, newline)
     via = via_login
@@ -698,6 +734,7 @@ async def _replay_proxy_hops(
     for hop in proxy_hops:
         await run_proxy(bridge_io, hop, via=Cred(login=via), host_id=host_id)
         via = hop.login
+    return bridge_io.reader.take_residual()
 
 
 async def _run_bridge(
@@ -730,8 +767,9 @@ async def _run_bridge(
     session log before ``Ctrl+]`` races ahead.
 
     *prelude* is bytes already read off the remote before the pumps existed —
-    the residual a session-setup hook's last framed read left behind, which is
-    typically the prompt the human is about to type at. It is written to fd 1
+    the residual the last automation read (a session-setup hook's, or the last
+    proxy hop's) left past its match, which is typically the prompt the human
+    is about to type at. It is written to fd 1
     and to the session log after the banner, because the pumps never saw it
     and nothing else will ever re-send it.
     """
@@ -940,7 +978,7 @@ async def run_ssh_login(
     try:
         prelude: bytes | None = None
         if bridge_setup is None:
-            await _replay_proxy_hops(
+            prelude = await _replay_proxy_hops(
                 write_remote=write_remote,
                 read_remote=read_remote,
                 newline=b"\n",
@@ -1078,7 +1116,7 @@ async def run_telnet_login(
             log_file.write_line(f"[otto] {notice}")
         prelude: bytes | None = None
         if bridge_setup is None:
-            await _replay_proxy_hops(
+            prelude = await _replay_proxy_hops(
                 write_remote=write_remote,
                 read_remote=read_remote,
                 newline=_TELNET_NEWLINE,

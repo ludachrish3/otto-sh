@@ -18,7 +18,7 @@ import os
 import re
 import uuid
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from enum import Enum
@@ -40,6 +40,7 @@ from .command_frame import (
 from .errors import ConsoleError, PasswordRefusedError, RawLandingError, SessionSetupError
 from .identity import ROOT_LOGIN
 from .login_proxy import LoginProxyError, cred_for, perform_switch, run_proxy, run_undo
+from .output_codec import OUTPUT_ENCODING, OUTPUT_ERRORS, finish_character, output_decoder
 from .secret_wire import reveal, shown
 from .shell_liveness import confirm_live
 from .telnet import TELNET_EOL, TelnetClient, telnet_line_ends
@@ -1462,11 +1463,15 @@ class SshSession(ShellSession):
                 self._open_cmd,
                 term_type="dumb",
                 stderr=asyncssh.STDOUT,
+                encoding=OUTPUT_ENCODING,
+                errors=OUTPUT_ERRORS,
             )
         else:
             self._process = await self._conn.create_process(
                 term_type="dumb",
                 stderr=asyncssh.STDOUT,
+                encoding=OUTPUT_ENCODING,
+                errors=OUTPUT_ERRORS,
             )
 
     @override
@@ -1513,6 +1518,10 @@ class TelnetSession(ShellSession):
         self._reader = reader
         self._writer = writer
         self._owned_client = _owned_client
+        # ``readuntil_pattern`` stops where a byte pattern matched, which can
+        # be inside a multi-byte character; the held decoder keeps that
+        # character's bytes until read_transport_until reads the rest.
+        self._decoder = output_decoder()
         # The console term's client, when this session is a shell on a serial
         # console: *reader*/*writer* are its streams, it owns the line, and
         # closing this session closes it (logout, then release). ``None`` for
@@ -1563,8 +1572,17 @@ class TelnetSession(ShellSession):
     async def read_transport_until(self, pattern: re.Pattern[str]) -> str:
         # telnetlib3 operates in bytes mode — compile a bytes version of the pattern
         bytes_pattern = re.compile(pattern.pattern.encode())
-        raw: bytes = await self._reader.readuntil_pattern(bytes_pattern)  # type: ignore[attr-defined]  # ty: ignore[unsound-assignment] — asyncssh attaches readuntil_pattern dynamically; returns Any
-        return raw.decode("utf-8", errors="replace")
+        try:
+            raw: bytes = await self._reader.readuntil_pattern(bytes_pattern)  # type: ignore[attr-defined]  # ty: ignore[unsound-assignment] — asyncssh attaches readuntil_pattern dynamically; returns Any
+        except asyncio.IncompleteReadError as exc:
+            # End of stream: flush the decoder, as every output reader does, so
+            # an incomplete character still held shows in ``partial`` as U+FFFD.
+            tail = self._decoder.decode(exc.partial, final=True)
+            raise asyncio.IncompleteReadError(tail.encode(), exc.expected) from exc
+        text = self._decoder.decode(raw)
+        # The byte match can end inside a character: read the rest of it, so
+        # the text holds the whole match.
+        return text + await finish_character(self._decoder, self._reader.readuntil_pattern)
 
     @override
     async def _quiesce(self) -> None:
@@ -1668,9 +1686,14 @@ class LocalSession(ShellSession):
         self._process: asyncio.subprocess.Process | None = None
         self._transport: asyncio.SubprocessTransport | None = None
         self._pid: int | None = None
+        # Reads are one byte each, so every multi-byte character is split
+        # across reads; the held decoder puts it back together. One per
+        # stream: open_transport replaces it with each new process.
+        self._decoder = output_decoder()
 
     @override
     async def open_transport(self) -> None:
+        self._decoder = output_decoder()  # a fresh stream gets a fresh decoder
         # Drive loop.subprocess_exec() directly (rather than the higher-level
         # asyncio.create_subprocess_exec) so that we hold an explicit reference
         # to the transport. close() uses it to release the pipe fds without
@@ -1711,8 +1734,10 @@ class LocalSession(ShellSession):
         while True:
             chunk = await self._process.stdout.read(1)
             if not chunk:
+                # End of stream: flush the decoder, as every output reader does.
+                buf += self._decoder.decode(b"", final=True)
                 raise asyncio.IncompleteReadError(buf.encode(), None)
-            buf += chunk.decode("utf-8", errors="replace")
+            buf += self._decoder.decode(chunk)
             if pattern.search(buf):
                 return buf
 
@@ -2641,6 +2666,58 @@ class BridgeSetup:
     """The readiness deadline for the landing handshake; ``None`` keeps the session default."""
 
 
+def output_line(raw: str) -> str | None:
+    r"""Turn one raw line an exec drain read into its contribution to ``value``.
+
+    :func:`drain_exec_output`, the drain both line-reading exec routes run (the
+    ssh channel's and local exec's), appends what this returns to its lines,
+    which ``value`` joins with ``\n``, so the same output gives the same
+    ``value`` on both: the contract in :ref:`command-output-contract`.
+
+    *raw* is one line as read, ending in its ``\n`` unless it is the last
+    line of output that had no final newline. The result is *raw* with at most
+    one trailing ``\n`` removed: trailing spaces, tabs and the program's own
+    ``\r`` are kept. ``None`` means *raw* is not output at all: the empty
+    partial ``''`` that asyncssh yields when end-of-file lands after the last
+    line (timing-dependent, #711). A real blank line is ``'\n'``, never ``''``,
+    so a ``None`` is never a line the command printed.
+
+    >>> from otto.host.session import output_line
+    >>> output_line("a \r\n"), output_line("\n"), output_line("abc"), output_line("")
+    ('a \r', '', 'abc', None)
+    """
+    if raw == "":
+        return None
+    return raw.removesuffix("\n")
+
+
+async def drain_exec_output(
+    raw_lines: AsyncIterable[str],
+    lines: list[str],
+    log_output: Callable[[str, LogMode], None],
+    mode: LogMode,
+) -> None:
+    """Read an exec's output into *lines*, logging each line under *mode*.
+
+    The one drain both line-reading exec routes run (the ssh channel's and
+    local exec's; a shell-routed ``exec`` reads through its session instead):
+    each raw line goes through :func:`output_line`, so the two routes cannot
+    disagree about what a line contributes to ``value``, and what is kept is
+    logged the same way. Both routes decode the bytes they read with
+    :data:`~otto.host.output_codec.OUTPUT_ENCODING` and
+    :data:`~otto.host.output_codec.OUTPUT_ERRORS` before they get here.
+    *lines* is filled in place, so a caller that times the drain out still
+    holds the lines read before the deadline.
+    """
+    on_output = _sink_for(log_output, mode)
+    async for raw in raw_lines:
+        line = output_line(raw)
+        if line is None:
+            continue
+        lines.append(line)
+        on_output(line)
+
+
 class SessionManager:
     """Manages persistent shell sessions for any host type.
 
@@ -3431,23 +3508,16 @@ class SessionManager:
             cmd,
             stderr=asyncssh.STDOUT,
             stdin=asyncssh.DEVNULL,
+            encoding=OUTPUT_ENCODING,
+            errors=OUTPUT_ERRORS,
         )
         lines: list[str] = []
 
-        async def _drain() -> None:
-            async for raw_line in process.stdout:
-                # asyncssh yields an empty partial when EOF lands after the last
-                # line (timing-dependent, #711). Real output is never '': a blank
-                # line is '\n', so test the raw line, never the stripped one.
-                if raw_line == "":
-                    continue
-                line = raw_line.rstrip("\n")
-                lines.append(line)
-                if mode is not LogMode.NEVER:
-                    self._log_output(line, mode)
-
         try:
-            await asyncio.wait_for(_drain(), timeout=timeout)
+            await asyncio.wait_for(
+                drain_exec_output(process.stdout, lines, self._log_output, mode),
+                timeout=timeout,
+            )
         except asyncio.TimeoutError:
             await self._reap_exec_process(process)
             return CommandResult(

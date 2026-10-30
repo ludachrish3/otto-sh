@@ -32,11 +32,13 @@ from ..utils import Arg, Exclude, Opt, Status, cli_exposed
 from .capability_grid import HostCapabilities, SessionIdentity, UserSupport
 from .file_ops import PosixFileOps
 from .host import _EXEC_REAP_TIMEOUT, CONCURRENT_HELP, BaseHost, CredentialExpect, is_dry_run
+from .output_codec import OUTPUT_ENCODING, OUTPUT_ERRORS
 from .privilege import PosixPrivilege
 from .session import (
     Expect,
     LocalSession,
     SessionManager,
+    drain_exec_output,
 )
 from .transfer import BaseFileTransfer, ProgressGranularity, TransferProgressFactory
 
@@ -317,20 +319,9 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
                     status=status, value="Failed to set up stdout", command=cmd, retcode=EIO
                 )
 
-            # Narrow once, outside the closure: proc.stdout is confirmed non-None
-            # above, and this local is never reassigned, so the drain loop below
-            # doesn't need its own None-check.
-            stdout = proc.stdout
-
-            async def _drain() -> None:
-                while True:
-                    data = await stdout.readline()
-                    if not len(data):
-                        break
-                    line = data.decode().rstrip()
-                    lines.append(line)
-                    if mode is not LogMode.NEVER:
-                        self._log_output(line, mode)
+            # A pipe carries bytes and the shared drain reads text: a byte that
+            # is not UTF-8 is replaced, never raised (the command-output contract).
+            raw_lines = (data.decode(OUTPUT_ENCODING, OUTPUT_ERRORS) async for data in proc.stdout)
 
             try:
                 # The whole drain is wrapped in a single wait_for so *timeout*
@@ -338,7 +329,10 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
                 # that emits output more often than the timeout period (e.g.
                 # `ping`) would otherwise never trip the per-line wait and run
                 # forever.
-                await asyncio.wait_for(_drain(), timeout=timeout)
+                await asyncio.wait_for(
+                    drain_exec_output(raw_lines, lines, self._log_output, mode),
+                    timeout=timeout,
+                )
             except asyncio.TimeoutError:
                 proc.terminate()
                 # A process can trap SIGTERM, so bound the reap -- an unbounded wait

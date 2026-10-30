@@ -30,8 +30,10 @@ from otto.host.session import (
     LocalSession,
     SessionManager,
     ShellSession,
+    SshSession,
     resolve_init_timeout,
 )
+from otto.host.shell_quote import shell_operand
 from otto.utils import Status, wait_for_async
 from tests._ambient_env import AMBIENT_OPT_INS
 from tests._fixtures.clock import stepped_loop_clock
@@ -929,7 +931,7 @@ class TestLocalSession:
         await local_session.run_cmd("cd /tmp")
         result = await local_session.run_cmd("pwd")
         assert result.status == Status.Success
-        assert result.value.strip() == "/tmp"
+        assert result.value == "/tmp"
 
     @pytest.mark.asyncio
     async def test_env_var_persists(self, local_session: LocalSession):
@@ -941,8 +943,7 @@ class TestLocalSession:
     async def test_multiline_output(self, local_session: LocalSession):
         result = await local_session.run_cmd("echo line1; echo line2; echo line3")
         assert result.status == Status.Success
-        lines = result.value.strip().splitlines()
-        assert lines == ["line1", "line2", "line3"]
+        assert result.value == "line1\nline2\nline3"
 
     @pytest.mark.asyncio
     async def test_timeout_recovery(self, local_session: LocalSession):
@@ -2319,6 +2320,132 @@ class TestExecOnDropsTheEofPartial:
         assert logged == output_lines
 
 
+# One table for both exec routes: (id, the raw lines a drain reads, value).
+# The raw lines are what a command prints, split after each ``\n``; ``''`` is
+# asyncssh's EOF partial, which only the ssh channel ever yields.
+_EXEC_LINE_ROWS: list[tuple[str, list[str], str]] = [
+    ("trailing-space", ["a \n"], "a "),
+    ("trailing-tab", ["a\t\n"], "a\t"),
+    ("crlf", ["a\r\n", "b\n"], "a\r\nb"),
+    ("blank-tail", ["a\n", "\n"], "a\n"),
+    ("no-final-newline", ["abc"], "abc"),
+    ("empty", [], ""),
+]
+_SSH_ONLY_ROWS: list[tuple[str, list[str], str]] = [
+    ("eof-partial-only", [""], ""),
+    ("eof-partial-after-line", ["a\n", ""], "a"),
+]
+
+
+class TestOneLineDecisionOnBothLineReadingExecRoutes:
+    """The ssh exec channel and local exec turn a raw line into ``value`` through
+    one function, :func:`otto.host.session.output_line`, so the same output gives
+    the same ``value`` on both routes: the command-output contract
+    (docs/architecture/utilities/results.md, ``command-output-contract``). Local
+    exec used to ``rstrip()`` every line, dropping trailing spaces, tabs and the
+    program's own ``\\r``.
+    """
+
+    @pytest.mark.parametrize(
+        ("raw_lines", "value"),
+        [pytest.param(raw, value, id=id_) for id_, raw, value in _EXEC_LINE_ROWS + _SSH_ONLY_ROWS],
+    )
+    @pytest.mark.asyncio
+    async def test_ssh_exec_channel(self, raw_lines: list[str], value: str) -> None:
+        mgr = SessionManager(
+            connections=SimpleNamespace(),
+            session_factory=_StubExecSession,
+            log_command=lambda *_: None,
+            log_output=lambda *_: None,
+            host_id="h",
+        )
+        conn = SimpleNamespace(create_process=AsyncMock(return_value=_FakeSshProcess(raw_lines)))
+
+        result = await mgr.exec_on(conn, "cmd")
+
+        assert result.value == value
+
+    @pytest.mark.parametrize(
+        ("command", "value"),
+        [
+            pytest.param(f"printf %s {shell_operand(''.join(raw))}", value, id=id_)
+            for id_, raw, value in _EXEC_LINE_ROWS
+        ]
+        # shlex quoting cannot carry a byte that is not UTF-8, so printf's octal
+        # escape writes it: 0xff alone is invalid UTF-8 and decodes replaced.
+        + [pytest.param(r"printf '\377\n'", "\N{REPLACEMENT CHARACTER}", id="invalid-utf8")],
+    )
+    @pytest.mark.asyncio
+    async def test_local_exec(self, command: str, value: str) -> None:
+        host = LocalHost(log=LogMode.QUIET)
+        try:
+            result = await host.exec(command)
+        finally:
+            await host.close()
+
+        assert result.status == Status.Success, result.value
+        assert result.value == value
+
+    @pytest.mark.asyncio
+    async def test_ssh_exec_channel_replaces_invalid_utf8(self) -> None:
+        """The local invalid-utf8 row, on the ssh channel: the same bytes give the same ``value``.
+
+        The fake channel decodes its bytes the way asyncssh's does, with the
+        ``encoding`` and ``errors`` that ``create_process`` was given and
+        asyncssh's own defaults (``utf-8``, ``strict``) when it was given
+        neither; a decode error surfaces as ``ProtocolError``, as asyncssh's
+        ``_deliver_data`` raises it. So a channel opened without
+        ``errors="replace"`` fails this test with that error.
+        """
+        mgr = SessionManager(
+            connections=SimpleNamespace(),
+            session_factory=_StubExecSession,
+            log_command=lambda *_: None,
+            log_output=lambda *_: None,
+            host_id="h",
+        )
+        conn = SimpleNamespace(create_process=_decoding_create_process(b"\xff\n"))
+
+        result = await mgr.exec_on(conn, "printf '\\377\\n'")
+
+        assert result.value == "\N{REPLACEMENT CHARACTER}"
+
+    @pytest.mark.asyncio
+    async def test_ssh_shell_session_decodes_like_the_exec_channel(self) -> None:
+        """The ssh shell session's channel is decoded the same way: an invalid byte is replaced."""
+        conn = SimpleNamespace(create_process=AsyncMock(return_value=_FakeSshProcess([])))
+
+        await SshSession(conn).open_transport()
+
+        kwargs = conn.create_process.await_args.kwargs
+        assert (kwargs.get("encoding"), kwargs.get("errors")) == ("utf-8", "replace")
+
+
+class _HangupableSshProcess(_FakeSshProcess):
+    """A fake exec process whose interrupted-teardown reap (``send_signal``) is a no-op."""
+
+    def send_signal(self, _signal: str) -> None: ...
+
+
+def _decoding_create_process(raw: bytes):
+    """A ``create_process`` that hands back *raw* decoded as an asyncssh channel decodes it."""
+
+    async def create_process(_cmd: str, *, encoding: str = "utf-8", errors: str = "strict", **_kw):
+        async def lines():
+            try:
+                text = codecs.getincrementaldecoder(encoding)(errors).decode(raw, final=True)
+            except UnicodeDecodeError as exc:
+                raise asyncssh.ProtocolError(str(exc)) from None
+            for line in re.findall(r"[^\n]*\n|[^\n]+", text):
+                yield line
+
+        process = _HangupableSshProcess([])
+        process.stdout = lines()
+        return process
+
+    return create_process
+
+
 # ---------------------------------------------------------------------------
 # Console term: session dispatch, single-client refusal, failure context
 # ---------------------------------------------------------------------------
@@ -2445,6 +2572,94 @@ async def test_failed_handshake_names_the_console(monkeypatch):
     monkeypatch.setattr(session, "close", _noop)
     with pytest.raises(ConnectionError, match=r"console test1:4001 \(dial=ssh\)"):
         await session._fail_init()
+
+
+class _ByteStreamTelnetReader:
+    """A telnetlib3 reader over a byte stream that arrives in the given feeds.
+
+    ``readuntil_pattern`` matches *bytes*, as telnetlib3's does, and consumes
+    exactly through the match (nothing, for an empty match); ``read`` hands
+    out up to *n* buffered bytes, ``b""`` at EOF. A feed arrives only when a
+    read needs more, the way a later TCP segment does. Past the last feed the
+    stream is at EOF.
+    """
+
+    def __init__(self, feeds: list[bytes]) -> None:
+        self._feeds = feeds
+        self._buffer = b""
+
+    def _arrive(self) -> bool:
+        if not self._feeds:
+            return False
+        self._buffer += self._feeds.pop(0)
+        return True
+
+    async def readuntil_pattern(self, pattern: "re.Pattern[bytes]") -> bytes:
+        while (match := pattern.search(self._buffer)) is None:
+            if not self._arrive():
+                partial, self._buffer = self._buffer, b""
+                raise asyncio.IncompleteReadError(partial, None)
+        data, self._buffer = self._buffer[: match.end()], self._buffer[match.end() :]
+        return data
+
+    async def read(self, n: int) -> bytes:
+        if not self._buffer:
+            self._arrive()
+        data, self._buffer = self._buffer[:n], self._buffer[n:]
+        return data
+
+
+_E_ACUTE = "\N{LATIN SMALL LETTER E WITH ACUTE}"
+
+
+@pytest.mark.asyncio
+async def test_telnet_read_returns_the_whole_match_when_it_ends_inside_a_character():
+    """A byte pattern can match on a character's first byte (``.`` matches one
+    byte), ending the read mid-``é``; the read waits for the rest of it, so the
+    text holds the whole match — the next read does not start on its tail."""
+    session = TelnetSession(
+        reader=_ByteStreamTelnetReader([b"Code: \xc3", b"\xa9", b"\n$ "]), writer=object()
+    )
+
+    assert await session.read_transport_until(re.compile("Code: .")) == f"Code: {_E_ACUTE}"
+    assert await session.read_transport_until(re.compile("\n")) == "\n"
+
+
+def _ready_telnet_session(feeds: list[bytes]) -> TelnetSession:
+    """A TelnetSession past its handshake, so ``expect()`` reads straight away."""
+    session = TelnetSession(reader=_ByteStreamTelnetReader(feeds), writer=object())
+    session._initialized = True
+    session._alive = True
+    return session
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("stream", "rest"),
+    [
+        # A lead byte, then a byte that is no continuation at all.
+        (b"Code: \xc3\n$ ", "\n"),
+        # A lead byte, then a continuation byte this lead cannot take
+        # (``\xe0`` needs ``\xa0``-``\xbf``): it is the next read's U+FFFD.
+        (b"Code: \xe0\x80\n$ ", "\ufffd\n"),
+    ],
+)
+async def test_telnet_expect_ending_on_an_invalid_sequence_leaves_the_next_byte_unread(
+    stream, rest
+):
+    """When the byte after the matched lead byte cannot continue its character,
+    the match ends in U+FFFD and that byte stays unread: the next expect sees it."""
+    session = _ready_telnet_session([stream])
+
+    assert await session.expect("Code: .", timeout=1) == "Code: \ufffd"
+    assert await session.expect("\n", timeout=1) == rest
+
+
+@pytest.mark.asyncio
+async def test_telnet_read_ending_inside_a_character_at_end_of_stream_shows_a_replacement():
+    session = TelnetSession(reader=_ByteStreamTelnetReader([b"Code: \xe2\x82"]), writer=object())
+
+    assert await session.read_transport_until(re.compile("Code: .")) == "Code: \ufffd"
 
 
 class _UnreadConsole:

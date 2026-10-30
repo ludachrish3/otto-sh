@@ -20,7 +20,7 @@ from otto.host.session_setup import SESSION_SETUPS, SessionSetup, register_sessi
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
 from tests._fixtures.dialect_shell import DialectShell
-from tests.unit.host.test_interact import _make_fake_asyncssh
+from tests.unit.host.test_interact import _is_resync_probe, _make_fake_asyncssh, _resync_reply
 
 
 class _Console:
@@ -266,10 +266,14 @@ async def test_run_ssh_login_without_a_hook_takes_todays_path(hook):
     proc.returncode = None
     conn = MagicMock()
     conn.create_process = AsyncMock(return_value=proc)
+    residual = b"\nroot@lab:~# "
+    bridge_cm, bridge_kw = _bridge_kwargs()
     with (
         patch.dict(sys.modules, {"asyncssh": _make_fake_asyncssh()}),
-        patch.object(interact, "_run_bridge", new=AsyncMock()),
-        patch.object(interact, "_replay_proxy_hops", new=AsyncMock()) as replay,
+        bridge_cm,
+        patch.object(
+            interact, "_replay_proxy_hops", new=AsyncMock(return_value=residual)
+        ) as replay,
         patch.object(interact, "_run_session_setup_on_bridge", new=AsyncMock()) as setup,
         patch.object(interact, "_setup_raw_mode", return_value=None),
         patch.object(interact, "_restore_terminal"),
@@ -280,6 +284,8 @@ async def test_run_ssh_login_without_a_hook_takes_todays_path(hook):
         await interact.run_ssh_login(conn=conn, host_name="h")
     replay.assert_awaited_once()
     setup.assert_not_awaited()
+    # What the hops read past their last match reaches the human, as a hook's does.
+    assert bridge_kw["prelude"] == residual
 
 
 @pytest.mark.asyncio
@@ -538,6 +544,74 @@ async def test_the_residual_is_what_the_console_said_after_the_last_framed_match
     # The newline is the one that terminated the END sentinel's line — the human
     # is on a fresh line at the prompt, which is exactly what they should see.
     assert residual == b"\nadmin@lab:~$ "
+
+
+# What the remote printed after the last automation match, in the same read:
+# the prompt the human lands at, whose ``\xc3\xa9`` is split -- only its first
+# byte has arrived, so the reader's decoder holds it, not its text.
+_SPLIT_PROMPT = b"root@caf\xc3"
+
+
+async def _residual_after_the_hook(tail: bytes) -> bytes:
+    """The hook path's handoff, with *tail* following its last framed match."""
+    console = _Console(DialectShell())
+
+    async def read_remote() -> bytes:
+        # Every terminal restore is answered with *tail*, as the trailer test
+        # does; only the last one's is past the final match.
+        chunk = await console.read_remote()
+        return chunk + tail if "stty echo" in console.shell.writes[-1] else chunk
+
+    return await interact._run_session_setup_on_bridge(
+        write_remote=console.write_remote,
+        read_remote=read_remote,
+        newline=b"\n",
+        host_name="h",
+        host_id="h",
+        bridge=BridgeSetup(
+            setup=SessionSetup(name="t7-export"),
+            landing_frame=None,
+            target_frame=BashFrame(),
+            creds=[],
+            init_timeout=None,
+        ),
+        proxy_hops=[],
+        via_login="admin",
+        log_line=lambda _l: None,
+    )
+
+
+async def _residual_after_the_hops(tail: bytes) -> bytes:
+    """The no-hook path's handoff, with *tail* following its last hop's resync match."""
+    sent: list[bytes] = []
+    pending = [tail]
+
+    async def write_remote(data: bytes) -> None:
+        sent.append(reveal_bytes(data))
+
+    async def read_remote() -> bytes:
+        if sent and _is_resync_probe(sent[-1]):
+            return _resync_reply(sent) + (pending.pop() if pending else b"")
+        return b"Password:"
+
+    return await interact._replay_proxy_hops(
+        write_remote=write_remote,
+        read_remote=read_remote,
+        newline=b"\n",
+        proxy_hops=[Cred(login="mysql", password="pw", proxy="su", via="admin")],
+        via_login="admin",
+        host_id="h",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("handoff", [_residual_after_the_hook, _residual_after_the_hops])
+async def test_the_residual_keeps_what_the_last_read_had_past_the_match(hook, handoff):
+    """Both bridge handoffs return everything read past the final automation
+    match, a split character's held first byte included, so the raw pump's next
+    bytes complete it on the human's terminal. The leading newline is the one
+    that ended the matched line."""
+    assert await handoff(_SPLIT_PROMPT) == b"\n" + _SPLIT_PROMPT
 
 
 @pytest.mark.asyncio

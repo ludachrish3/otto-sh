@@ -657,8 +657,8 @@ class TestWhyTheseTwoPathsAreStillOpen:
         """
         host = LocalHost(log=LogMode.QUIET)
         try:
-            probe_shell = (await host.exec('echo "$0"')).value.strip()
-            command_shell = (await host.run('echo "$0"')).only.value.strip()
+            probe_shell = (await host.exec('echo "$0"')).value
+            command_shell = (await host.run('echo "$0"')).only.value
         finally:
             # `run` opens the persistent session; the fd watermark fixture fails
             # the test if it is left open.

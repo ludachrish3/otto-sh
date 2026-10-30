@@ -81,7 +81,7 @@ async def test_pyrepl_cycle(local_host: LocalHost) -> None:
         assert result, f"parse failed: {result.msg} (output={result.output!r})"
         assert result.value.major == 3
 
-    assert (await local_host.run("echo back")).only.value.strip() == "back"
+    assert (await local_host.run("echo back")).only.value == "back"
 
 
 @pytest.mark.asyncio
@@ -103,7 +103,7 @@ async def test_run_blocked_while_attached(local_host: LocalHost) -> None:
         async with PyRepl.attach(session):
             with pytest.raises(AppShellActiveError):
                 await session.run("echo nope")
-        assert (await session.run("echo ok")).only.value.strip() == "ok"
+        assert (await session.run("echo ok")).only.value == "ok"
     finally:
         await session.close()
 

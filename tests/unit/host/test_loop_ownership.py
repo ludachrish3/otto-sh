@@ -175,7 +175,7 @@ def test_close_frees_the_host_for_another_loop(ctx):
         owner.run_until_complete(host.run("true"))
         owner.run_until_complete(host.close())
         out = other.run_until_complete(host.run("echo moved"))
-        assert out.only.value.strip() == "moved"
+        assert out.only.value == "moved"
         other.run_until_complete(host.close())
     finally:
         owner.close()
@@ -189,7 +189,7 @@ def test_a_loop_closed_without_a_sweep_leaves_nothing_to_trip_on(ctx):
 
     async def later():
         try:
-            return (await host.run("echo again")).only.value.strip()
+            return (await host.run("echo again")).only.value
         finally:
             await host.close()
 

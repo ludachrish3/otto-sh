@@ -27,6 +27,7 @@ from pydantic import SecretBytes, SecretStr
 from ..models.base import as_secret
 from .errors import ConsoleError
 from .options import ConsoleOptions
+from .output_codec import OUTPUT_ENCODING, OUTPUT_ERRORS
 from .secret_wire import reveal, reveal_bytes
 from .telnet import (
     TELNET_EOL,
@@ -235,17 +236,21 @@ class ConsoleClient:
         while True:
             remaining = deadline - loop.time()
             if remaining <= 0:
-                return buf.decode("utf-8", "replace"), False, bool(buf)
+                return buf.decode(OUTPUT_ENCODING, OUTPUT_ERRORS), False, bool(buf)
             chunk = await self._read_chunk(remaining)
             if chunk is None:
-                return buf.decode("utf-8", "replace"), False, bool(buf)
+                return buf.decode(OUTPUT_ENCODING, OUTPUT_ERRORS), False, bool(buf)
             if chunk == b"":
-                return buf.decode("utf-8", "replace"), True, bool(buf)
+                return buf.decode(OUTPUT_ENCODING, OUTPUT_ERRORS), True, bool(buf)
             buf += chunk
             self._shell_unheard = False
-            tail = buf[-_CLASSIFY_WINDOW:].decode("utf-8", "replace")
+            # Decoded whole, not through the session's decoder on this same
+            # stream: if a session read ever ended mid-character and these
+            # bytes completed it, that session would show one U+FFFD. Harmless
+            # while every session pattern ends on an ASCII marker or prompt.
+            tail = buf[-_CLASSIFY_WINDOW:].decode(OUTPUT_ENCODING, OUTPUT_ERRORS)
             if stop(tail):
-                return buf.decode("utf-8", "replace"), False, bool(buf)
+                return buf.decode(OUTPUT_ENCODING, OUTPUT_ERRORS), False, bool(buf)
 
     async def _settle(self) -> None:
         """Drain whatever is already on the line; nothing here is classified."""

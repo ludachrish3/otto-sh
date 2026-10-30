@@ -92,8 +92,24 @@ async def test_run_multiline_output():
     try:
         result = (await host.run("echo line1; echo line2; echo line3")).only
         assert result.status == Status.Success
-        lines = result.value.strip().splitlines()
-        assert lines == ["line1", "line2", "line3"]
+        assert result.value == "line1\nline2\nline3"
+    finally:
+        await host.close()
+
+
+@pytest.mark.asyncio
+async def test_run_keeps_a_multi_byte_character_whole():
+    """``é`` (2 bytes) and ``€`` (3 bytes) come back as themselves, never U+FFFD.
+
+    The local shell session reads one byte at a time, so every multi-byte
+    character arrives split across reads; each read decoded alone gave one
+    U+FFFD per byte.
+    """
+    host = LocalHost()
+    try:
+        result = (await host.run(r"printf '\303\251\342\202\254\n'")).only
+        e_acute_euro = "\N{LATIN SMALL LETTER E WITH ACUTE}\N{EURO SIGN}"
+        assert result.value == e_acute_euro, repr(result.value)
     finally:
         await host.close()
 
@@ -110,7 +126,7 @@ async def test_cd_persists_between_commands():
         await host.run("cd /tmp")
         result = (await host.run("pwd")).only
         assert result.status == Status.Success
-        assert result.value.strip() == "/tmp"
+        assert result.value == "/tmp"
     finally:
         await host.close()
 
@@ -740,7 +756,7 @@ async def test_a_trailing_comment_does_not_swallow_the_end_marker():
     try:
         result = (await host.run("echo hi # a note", timeout=5)).only
         assert not result.timed_out
-        assert result.value.strip() == "hi"
+        assert result.value == "hi"
     finally:
         await host.close()
 
@@ -750,7 +766,7 @@ async def test_a_multi_line_command_prints_no_prompt_into_its_output():
     host = LocalHost()
     try:
         result = (await host.run("echo one\necho two", timeout=5)).only
-        assert result.value.strip().splitlines() == ["one", "two"], result.value
+        assert result.value == "one\ntwo", result.value
     finally:
         await host.close()
 

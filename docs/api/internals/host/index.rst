@@ -24,6 +24,7 @@ host internals
    nvt
    console
    terminal_mapping
+   output_codec
    capability_grid
    os_profile
    construction

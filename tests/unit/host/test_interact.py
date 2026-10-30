@@ -830,6 +830,39 @@ class TestRunSshLoginCommandBranch:
 # ---------------------------------------------------------------------------
 
 
+def _chunk_reader(chunks: list[bytes]):
+    async def read() -> bytes:
+        return chunks.pop(0)
+
+    return read
+
+
+async def _discard(_data: bytes) -> None:
+    return None
+
+
+class TestBridgeReadsKeepASplitCharacterWhole:
+    """Remote chunks can split a multi-byte character; both bridge readers
+    decode the stream, not each chunk, so ``é`` never becomes two U+FFFD."""
+
+    @pytest.mark.asyncio
+    async def test_proxy_io_expect(self):
+        io = _BridgeProxyIO(_discard, _chunk_reader([b"\xc3", b"\xa9$ "]), newline=b"\n")
+
+        assert await io.expect(r"\$ ", timeout=5) == "\N{LATIN SMALL LETTER E WITH ACUTE}$ "
+
+    @pytest.mark.asyncio
+    async def test_bridge_shell_session_read(self):
+        session = interact._BridgeShellSession(
+            _discard, _chunk_reader([b"\xc3", b"\xa9$ "]), newline=b"\n", command_frame=None
+        )
+
+        assert (
+            await session.read_transport_until(re.compile(r"\$ "))
+            == "\N{LATIN SMALL LETTER E WITH ACUTE}$ "
+        )
+
+
 class TestBridgeProxyIOSend:
     @pytest.mark.asyncio
     async def test_ssh_newline_keeps_lf(self):

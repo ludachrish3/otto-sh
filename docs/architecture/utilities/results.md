@@ -47,9 +47,12 @@ branch must take its failure arm rather than proceed on a fiction.
 
 A {class}`~otto.result.CommandResult`'s `value` is the command's output with
 **exactly one trailing newline removed**: nothing stripped, nothing added.
-That holds on the ssh `exec` channel, and on a shell session whose frame
-calibrates its terminal (the `bash` and `ash` frames) on every term (`ssh`,
-`telnet`, `console`) and both routes (`run` and `exec`):
+That holds on the ssh `exec` channel; on a local host, for both `exec` and
+`run` (a bash session on pipes, with no terminal); and on a shell session
+whose frame calibrates its terminal (the `bash` and `ash` frames) on every
+term (`ssh`, `telnet`, `console`) and both routes (`run` and `exec`). A
+docker container's `exec` runs `docker exec` through its parent host, so its
+`value` follows whichever of these routes the parent takes:
 
 | The command prints | `value` |
 | --- | --- |
@@ -62,7 +65,8 @@ calibrates its terminal (the `bash` and `ash` frames) on every term (`ssh`,
 
 Trailing spaces and tabs are kept, and so are the program's own carriage
 returns. stderr arrives in the same stream as stdout. The bytes are decoded as
-UTF-8, with any invalid byte replaced.
+UTF-8, with any invalid byte replaced. (The ssh channel and local `exec` share
+one line rule, {func}`otto.host.session.output_line`.)
 
 The Zephyr frames (`zephyr` and `zephyr-serial`) keep their existing parsing:
 they trim whitespace from both ends of the output and delete every `\r`.

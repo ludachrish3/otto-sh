@@ -145,7 +145,7 @@ async def test_failed_setup_yields_the_failure_and_still_tears_down() -> None:
     async with open_sandbox(host, sb) as problem:
         assert problem is not None
         assert problem.clash is None
-        assert "Operation not permitted" in (problem.result.value or "")
+        assert "Operation not permitted" in problem.result.value
     assert host.commands == [setup_commands(sb)[0], *teardown_commands(sb)]
 
 
