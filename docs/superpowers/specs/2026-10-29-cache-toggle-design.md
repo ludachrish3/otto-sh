@@ -55,7 +55,7 @@ Consequences of off, all correct but slower, to state in the docs:
 
 ### The resolver
 
-`cache_enabled() -> CacheSetting` next to the user-settings loader in `otto.config.user_settings`. It returns whether the cache is on **and** its source (default, the settings file with its path, or the environment variable), because `otto cache info` and the verbs report the source. Precedence:
+`cache_enabled() -> CacheSetting` next to the user-settings loader in `otto.config.user_settings`. It returns whether the cache is on **and** its source (default, or the settings file with its path), because `otto cache info` and the verbs report the source. Precedence:
 
 1. `[cache] enabled` in `user_settings_path()`'s file.
 2. Default: on.
