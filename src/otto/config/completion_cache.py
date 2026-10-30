@@ -334,14 +334,19 @@ def is_completion_mode() -> bool:
     return bool(os.environ.get(COMPLETION_ENV_VAR))
 
 
-def _cache_path() -> Path | None:
-    """Return the cache file path.
+def _cache_path(home: Path | None = None) -> Path | None:
+    """Return the cache file path, or ``None`` when the cache is off.
+
+    This is the one switch for every cache file: ``None`` means
+    :func:`otto.config.user_settings.cache_enabled` says off, and every caller
+    already branches on it (the remote sidecar derives from this path, and
+    ``otto test``'s tables go through it too). It is the only place that
+    decision is made at a cache site.
 
     The workspace home (:mod:`otto.config.home`) is a stable per-user location
-    derived from the project-root set alone, so this no longer depends on
-    ``OTTO_XDIR`` and no longer has a "caching disabled" case. That is a
-    behaviour change, not just a move: an operator who never set an xdir used
-    to get the slow path on every invocation, silently.
+    derived from the project-root set alone, so this does not depend on
+    ``OTTO_XDIR``. *home* is that workspace home when the caller already has
+    it: looking it up resolves every project root.
 
     It also DEDUPLICATES. The cache's content was always a pure function of the
     workspace -- the section digests hash each project's settings, init modules
@@ -349,18 +354,18 @@ def _cache_path() -> Path | None:
     a semantic key, and invoking otto from N directories against the same projects
     used to maintain N byte-identical caches.
 
-    The return type stays ``Path | None`` because callers and the remote cache
-    already branch on None; nothing produces None today.
-
     The directory is NOT created here -- writers create it, so a read that
     misses leaves nothing behind.
     """
-    # Function-local import: this module is loaded early during config
-    # bootstrap, so defer the home import to call time (it reads a fresh
+    # Function-local imports: this module is loaded early during config
+    # bootstrap, so defer them to call time (home reads a fresh
     # OttoEnvSettings, which tests monkeypatch).
     from .home import workspace_home
+    from .user_settings import cache_enabled
 
-    return workspace_home() / CACHE_FILENAME
+    if not cache_enabled().on:
+        return None
+    return (home if home is not None else workspace_home()) / CACHE_FILENAME
 
 
 def clear_cache() -> bool:

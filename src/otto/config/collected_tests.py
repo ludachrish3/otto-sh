@@ -86,7 +86,6 @@ from typing import TYPE_CHECKING, Any, TypeGuard
 
 from . import corpus_snapshot
 from .completion_cache import (
-    CACHE_FILENAME,
     CACHE_TTL_SECONDS,
     COLLECTED_TESTS_KEY,
     CONFTEST_FILENAME,
@@ -323,11 +322,6 @@ def table_from_json(root: Path, raw: object) -> ProjectTable | None:
 # --- the cache file ------------------------------------------------------------
 
 
-def _cache_file(home: Path | None) -> Path | None:
-    """Return the cache file: in *home* when the caller has the workspace home, else looked up."""
-    return home / CACHE_FILENAME if home is not None else _cache_path()
-
-
 def _load_cache_file(cache_path: Path | None) -> dict[str, Any]:
     """Read the whole cache file as a dict; ``{}`` when it is missing or unreadable."""
     if cache_path is None:
@@ -354,7 +348,7 @@ def read_tables(
     (:func:`otto.config.home.workspace_home`) when the caller has it: looking
     it up resolves every project root.
     """
-    namespace = _namespace(_load_cache_file(_cache_file(home)))
+    namespace = _namespace(_load_cache_file(_cache_path(home)))
     tables: dict[str, ProjectTable] = {}
     for project in projects:
         key = str(project.root)
@@ -386,7 +380,7 @@ def write_tables(tables: list[ProjectTable], *, home: Path | None = None) -> Non
     unlike the sections: a table depends on no inventory, so it is never an
     entry that could not be read back. *home* as for :func:`read_tables`.
     """
-    cache_path = _cache_file(home)
+    cache_path = _cache_path(home)
     if cache_path is None or not tables:
         return
     cache_path.parent.mkdir(parents=True, exist_ok=True)

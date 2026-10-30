@@ -1467,3 +1467,15 @@ def test_a_non_list_docker_use_cases_entry_is_rejected(tmp_path: Path, monkeypat
     cache_file.write_text(json.dumps(data))  # type: ignore[union-attr]
 
     assert cc.read_cache([project]) is None
+
+
+def test_cache_path_is_none_when_the_cache_is_off(cache_off):
+    assert cc._cache_path() is None
+
+
+def test_cache_path_with_a_home_is_none_when_the_cache_is_off(cache_off, tmp_path):
+    assert cc._cache_path(tmp_path) is None
+
+
+def test_cache_path_with_a_home_uses_it_when_on(tmp_path):
+    assert cc._cache_path(tmp_path) == tmp_path / cc.CACHE_FILENAME

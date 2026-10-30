@@ -202,3 +202,24 @@ def test_the_memo_holds_one_entry_across_homes(tmp_path, monkeypatch):
         monkeypatch.setenv("OTTO_HOME", str(tmp_path / name))
         assert load_user_settings() is None
     assert list(_memo) == [tmp_path / "b" / "settings.toml"]
+
+
+# The resolver and the model definition; the verb module joins with `otto cache` off/on.
+_CACHE_TABLE_READERS = {"config/user_settings.py", "models/settings.py"}
+
+
+def test_only_the_resolver_reads_the_cache_table():
+    import re
+    from pathlib import Path
+
+    import otto
+
+    src = Path(otto.__file__).parent
+    pattern = re.compile(r"\.cache\.enabled|\bCACHE_TABLE\b")
+    offenders = sorted(
+        rel
+        for f in src.rglob("*.py")
+        if (rel := f.relative_to(src).as_posix()) not in _CACHE_TABLE_READERS
+        and pattern.search(f.read_text())
+    )
+    assert offenders == []
