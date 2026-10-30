@@ -64,6 +64,14 @@ name	otto.cli.registry:cli_command	function
 call	otto.cli.registry:cli_command	sync	KO:options:N KO:name:N KO:help:N KO:lab_free:B:false KO:output_dir:B:true KO:gate:B:true KO:dry_run_preview:B:false
 name	otto.cli.registry:register_cli_command	function
 call	otto.cli.registry:register_cli_command	sync	PK:name:- PK:loader:- KO:help:N KO:lab_free:B:false KO:output_dir:B:true KO:gate:B:true KO:async_leaves:B:false KO:dry_run_preview:B:false KO:overwrite:B:false
+name	otto.config:CacheSetting	class
+mro	otto.config:CacheSetting	-
+call	otto.config:CacheSetting	sync	PK:on:- PK:source:-
+member	otto.config:CacheSetting.__eq__	method	sync	PK:other:-
+member	otto.config:CacheSetting.__hash__	method	sync	-
+member	otto.config:CacheSetting.on	field
+member	otto.config:CacheSetting.source	field
+abstract	otto.config:CacheSetting	-
 name	otto.config:DockerCompose	class
 mro	otto.config:DockerCompose	-
 call	otto.config:DockerCompose	sync	PK:path:- PK:services:T:[] PK:name:S:"" PK:users:T:[]
@@ -162,6 +170,10 @@ member	otto.config:Version.major	field
 member	otto.config:Version.minor	field
 member	otto.config:Version.patch	field
 abstract	otto.config:Version	-
+name	otto.config:cache_enabled	function
+call	otto.config:cache_enabled	sync	-
+name	otto.config:clear_user_settings_memo	function
+call	otto.config:clear_user_settings_memo	sync	-
 name	otto.config:load_otto_env	function
 call	otto.config:load_otto_env	sync	-
 name	otto.config:load_user_settings	function

@@ -1107,6 +1107,21 @@ def _hermetic_known_hosts(_hermetic_known_hosts_file: Path) -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _reset_user_settings_memo():
+    """Drop the memoized user-settings read around every test.
+
+    ``load_user_settings()`` reads the default file once per process; each
+    test's ``OTTO_HOME`` is private, so a read cached by an earlier test on
+    the same worker would answer for a file this test never wrote.
+    """
+    from otto.config.user_settings import clear_user_settings_memo
+
+    clear_user_settings_memo()
+    yield
+    clear_user_settings_memo()
+
+
+@pytest.fixture(autouse=True)
 def _reset_otto_context():
     """Restore the OttoContext, run-policy and resolver ContextVars to their pre-test values.
 

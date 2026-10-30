@@ -7,6 +7,7 @@ bootstrap by
 :func:`otto.inventory.config.build_inventory`.
 """
 
+from dataclasses import dataclass
 from pathlib import Path
 
 import tomli
@@ -15,6 +16,22 @@ from pydantic import ValidationError
 from ..models.base import load_toml_settings
 from ..models.settings import UserSettingsModel
 from .home import otto_home
+
+CACHE_TABLE = "cache"
+"""The settings-file table (and :class:`UserSettingsModel` field) holding the cache setting."""
+
+CACHE_ENABLED_KEY = "enabled"
+"""The key inside ``[cache]`` that turns otto's caches on or off."""
+
+# One entry, keyed on the resolved default path: the file is read once per
+# process however many callers ask. A ValueError is never stored, so a broken
+# file is reported on every ask; the None of an absent file is.
+_memo: dict[Path, "UserSettingsModel | None"] = {}
+
+
+def clear_user_settings_memo() -> None:
+    """Forget the memoized default-path read, so the next load reads the file again."""
+    _memo.clear()
 
 
 def user_settings_path() -> Path:
@@ -30,7 +47,9 @@ def load_user_settings(path: "Path | None" = None) -> "UserSettingsModel | None"
     """Parse the user settings file; ``None`` when it is absent.
 
     *path* defaults to :func:`user_settings_path`, so ordinary callers ask for
-    "this user's settings" with no arguments and tests can pin a file.
+    "this user's settings" with no arguments and tests can pin a file. The
+    default path is read once per process (see
+    :func:`clear_user_settings_memo`); an explicit *path* always reads.
 
     Raises
     ------
@@ -40,7 +59,16 @@ def load_user_settings(path: "Path | None" = None) -> "UserSettingsModel | None"
         latter is how a typo'd ``[inventory]`` becomes an unexplained
         "no inventory is configured" much later in the run.
     """
-    p = path if path is not None else user_settings_path()
+    if path is not None:
+        return _read_user_settings(path)
+    key = user_settings_path()
+    if key not in _memo:
+        _memo[key] = _read_user_settings(key)
+    return _memo[key]
+
+
+def _read_user_settings(p: Path) -> "UserSettingsModel | None":
+    """Read and validate one settings file; the uncached half of :func:`load_user_settings`."""
     if not p.is_file():
         return None
     try:
@@ -51,3 +79,29 @@ def load_user_settings(path: "Path | None" = None) -> "UserSettingsModel | None"
         return UserSettingsModel.model_validate(data)
     except ValidationError as e:
         raise ValueError(f"{p}: {e}") from e
+
+
+@dataclass(frozen=True)
+class CacheSetting:
+    """Whether otto's caches are on, and where that was decided."""
+
+    on: bool
+    source: str
+    """``"default"``, ``"settings.toml: <path>"``, or the error text of an unreadable file."""
+
+
+def cache_enabled() -> CacheSetting:
+    """Resolve the ``[cache] enabled`` setting; on unless the user file says otherwise.
+
+    An unreadable or invalid settings file resolves *off*, with the error as
+    the source: a broken file must not leave caches the user meant to disable
+    running. Not memoized itself — :func:`load_user_settings` is the
+    per-process memo.
+    """
+    try:
+        settings = load_user_settings()
+    except ValueError as e:
+        return CacheSetting(on=False, source=str(e))
+    if settings is None or settings.cache is None:
+        return CacheSetting(on=True, source="default")
+    return CacheSetting(on=settings.cache.enabled, source=f"settings.toml: {user_settings_path()}")

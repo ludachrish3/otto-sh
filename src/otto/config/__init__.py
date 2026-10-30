@@ -17,6 +17,9 @@ if TYPE_CHECKING:
     from .scope import DockerImage as DockerImage
     from .scope import DockerSettings as DockerSettings
     from .scope import MonitorSettings as MonitorSettings
+    from .user_settings import CacheSetting as CacheSetting
+    from .user_settings import cache_enabled as cache_enabled
+    from .user_settings import clear_user_settings_memo as clear_user_settings_memo
     from .user_settings import load_user_settings as load_user_settings
     from .user_settings import user_settings_path as user_settings_path
     from .version import Version as Version
@@ -32,6 +35,7 @@ from .env import (
 # not at all, so the names would stay invisible to introspection,
 # tab-completion and help() even after a successful access.
 __all__ = [
+    "CacheSetting",
     "DockerCompose",
     "DockerImage",
     "DockerSettings",
@@ -39,6 +43,8 @@ __all__ = [
     "Project",
     "ResolvedDependency",
     "Version",
+    "cache_enabled",
+    "clear_user_settings_memo",
     "load_otto_env",
     "load_user_settings",
     "user_settings_path",
@@ -68,6 +74,9 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "Project": ("otto.config.project", "Project"),
     "Version": ("otto.config.version", "Version"),
     "ResolvedDependency": ("otto.config.dependencies", "ResolvedDependency"),
+    "CacheSetting": ("otto.config.user_settings", "CacheSetting"),
+    "cache_enabled": ("otto.config.user_settings", "cache_enabled"),
+    "clear_user_settings_memo": ("otto.config.user_settings", "clear_user_settings_memo"),
     "load_user_settings": ("otto.config.user_settings", "load_user_settings"),
     "user_settings_path": ("otto.config.user_settings", "user_settings_path"),
 }

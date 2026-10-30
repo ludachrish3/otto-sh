@@ -1198,6 +1198,16 @@ class SettingsModel(OttoModel):
         return self
 
 
+class CacheSettingsSpec(OttoModel):
+    """The ``[cache]`` table of the user settings file: whether otto may use its caches.
+
+    ``enabled = false`` turns every otto cache off (spec 2026-10-29 cache
+    toggle). A table with no ``enabled`` key leaves them on.
+    """
+
+    enabled: bool = True
+
+
 class UserSettingsModel(OttoModel):
     """Boundary model for the user-level ``~/.otto/settings.toml``.
 
@@ -1210,6 +1220,7 @@ class UserSettingsModel(OttoModel):
 
     inventory: InventoryConfigSpec | None = None
     creds: CredsConfigSpec | None = None
+    cache: CacheSettingsSpec | None = None
 
 
 # ---------------------------------------------------------------------------

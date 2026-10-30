@@ -237,6 +237,9 @@ _PUBLIC_CALLABLES = {
     "DockerSettings": ("otto.config.scope", "DockerSettings"),
     "MonitorSettings": ("otto.config.scope", "MonitorSettings"),
     "Version": ("otto.config.version", "Version"),
+    "CacheSetting": ("otto.config.user_settings", "CacheSetting"),
+    "cache_enabled": ("otto.config.user_settings", "cache_enabled"),
+    "clear_user_settings_memo": ("otto.config.user_settings", "clear_user_settings_memo"),
     "load_user_settings": ("otto.config.user_settings", "load_user_settings"),
     "user_settings_path": ("otto.config.user_settings", "user_settings_path"),
 }
