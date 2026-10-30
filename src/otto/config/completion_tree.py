@@ -318,9 +318,11 @@ def build_shim_payload(projects: "list[Project]", *, app: Any, pending_key: str)
     # in through the shared tail instead): the shim cannot read TOML, so it
     # compares the file's stat. Both sides take that stat from the settings
     # load's one memoized observation, so they cannot disagree about the file.
-    settings_triple = _triple_of(user_settings_path(), user_settings_stat())
-    triples = [stat_triple(p) for p in sorted(set(writer_key_paths(names, projects)))]
-    triples = sorted([*triples, settings_triple], key=lambda t: t[0])
+    settings_path = user_settings_path()
+    triples = [
+        _triple_of(p, user_settings_stat()) if p == settings_path else stat_triple(p)
+        for p in sorted({*writer_key_paths(names, projects), settings_path})
+    ]
     return {
         "ttl_seconds": _cache_ttl_seconds(projects),
         "keys": triples,

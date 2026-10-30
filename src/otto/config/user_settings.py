@@ -47,10 +47,10 @@ def clear_user_settings_memo() -> None:
 
 
 def _stat_file(p: Path) -> "os.stat_result | None":
-    """Stat *p*, or ``None`` when nothing is there (absent, or a parent is no directory)."""
+    """Stat *p*, or ``None`` when it does not stat (absent, ELOOP, ...), as the shim does."""
     try:
         return p.stat()
-    except (FileNotFoundError, NotADirectoryError):
+    except OSError:
         return None
 
 

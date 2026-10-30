@@ -274,3 +274,15 @@ def test_the_settings_stat_is_taken_once_and_survives_a_broken_file():
     assert st is not None  # recorded though parsing failed
     assert st.st_size == path.stat().st_size
     assert user_settings_stat() is st
+
+
+def test_a_self_referencing_settings_symlink_is_absent_not_a_crash():
+    from otto.config.user_settings import cache_enabled, user_settings_path, user_settings_stat
+
+    path = user_settings_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.symlink_to(path)  # ELOOP on stat
+    assert user_settings_stat() is None
+    setting = cache_enabled()
+    assert setting.on is True
+    assert setting.source == "default"
