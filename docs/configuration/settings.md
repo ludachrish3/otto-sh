@@ -324,9 +324,9 @@ path = "~/.otto/creds.json"
 enabled = false   # default true; false turns otto's cache off
 ```
 
-Otto scaffolds nothing here: write the file by hand when you adopt an
-inventory. (The one verb that creates it is `otto cache disable`, which
-writes the `[cache]` table.)  It lives under otto's home, so `OTTO_HOME` relocates it along
+Otto creates this file only for `otto cache disable` (which writes the
+`[cache]` table); otherwise you write it by hand, e.g. when you adopt an
+inventory.  It lives under otto's home, so `OTTO_HOME` relocates it along
 with everything else there, and a relative path inside it anchors to that
 directory (`~/.otto`) rather than to any project.  A project-only table pasted into
 it is an error naming the key — this file is not a second `settings.toml`.

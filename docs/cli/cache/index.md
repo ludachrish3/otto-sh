@@ -60,7 +60,7 @@ was.
 ```console
 $ otto cache info
 cache: on (default)
-home: ~/.otto (default)
+home: /home/me/.otto (default)
 ╭────────────────────────────┬────────────┬───────────┬──────┬───────────────╮
 │ key                        │ cache size │ cache age │ env? │ extra entries │
 ├────────────────────────────┼────────────┼───────────┼──────┼───────────────┤
@@ -84,7 +84,7 @@ this workspace: e5f6a7b8-project3
 
 The first line is the cache switch: `cache: on` or `cache: off`, then in
 parentheses where that was decided: `default` (nothing set it),
-`settings.toml: <path>` (the user settings file says so), or, when that file
+`settings.toml: <path>` (the user settings file has a `[cache]` table, even one without `enabled`), or, when that file
 does not parse or validate, the one-line error itself, since a broken file
 means the cache is off.
 
@@ -156,13 +156,13 @@ Without a workspace (no `OTTOPATH`) the listing above is all there is.
 
 ```console
 $ otto cache disable
-cache: off (settings.toml: ~/.otto/settings.toml)
-~/.otto/settings.toml
-removed ~/.otto/13739bf0-project1/completion_cache.json
-removed ~/.otto/13739bf0-project1/completion_cache.names.ok
+cache: off (settings.toml: /home/me/.otto/settings.toml)
+/home/me/.otto/settings.toml
+removed /home/me/.otto/13739bf0-project1/completion_cache.json
+removed /home/me/.otto/13739bf0-project1/completion_cache.names.ok
 $ otto cache enable
-cache: on (settings.toml: ~/.otto/settings.toml)
-~/.otto/settings.toml
+cache: on (settings.toml: /home/me/.otto/settings.toml)
+/home/me/.otto/settings.toml
 ```
 
 `disable` writes `[cache] enabled = false` into the user settings file
@@ -201,14 +201,18 @@ inventory snapshot has its own switch, `cache_ttl = "0"`
 **Consequences.**
 
 - `otto -h` and every TAB take the full path.
-- Test-name and docker completion offer only what is computed live.
+- No collect child runs, so a test-name TAB offers no test names and no
+  markers. Docker container and image names come only from the cache's
+  observed state and a TAB never asks a host, so none are offered.
 - `otto test` collects everything on every run.
-- Each root help or full-path TAB also pays to resolve the workspace plus up
-  to 8 file checks to remove leftovers.
+- Each root help or full-path TAB also pays to resolve the workspace, plus
+  six `lstat` calls (one per completion file name, and an `unlink` for any
+  that are still there).
 
 **When it takes effect.** `otto cache disable` applies at once everywhere. A
-hand edit of `settings.toml` reaches TAB at its next stat pass, within about
-60 seconds. A settings file that does not parse or validate means the cache is
+hand edit of `settings.toml` reaches `otto -h` and any other full command on
+its next run; only TAB may lag, by up to about 60 seconds (its next stat
+pass). A settings file that does not parse or validate means the cache is
 off, and `otto cache info` shows why.
 
 **Comparing with and without the cache.** Count file operations, never wall
@@ -216,17 +220,20 @@ clock:
 
 ```console
 $ otto cache disable
-$ strace -c -f -e trace=%file otto -h > /dev/null
+$ strace -c -f -e trace=%file,getdents64 otto -h > /dev/null
 $ otto cache enable
 $ otto -h > /dev/null          # rebuilds the cache: disable removed it
-$ strace -c -f -e trace=%file otto -h > /dev/null
+$ strace -c -f -e trace=%file,getdents64 otto -h > /dev/null
 ```
 
-The gap is about 500 file operations on the import budget's reference
-project: its ceilings in
-[`3.12.json`](https://github.com/ludachrish3/otto-sh/blob/main/tests/unit/import_budget/ceilings/3.12.json) allow
-about 3.3k for `help_project` (cache off, the full path) against about 2.8k
-for `help_project_warm` (cache warm), at the time of writing.
+Compare the `calls` figure on the `total` row (`strace -c` prints to stderr,
+so `> /dev/null` keeps the table visible). The import budget's reference
+project gives the scale: the harness's measured baselines in
+[`3.12.json`](https://github.com/ludachrish3/otto-sh/blob/main/tests/unit/import_budget/ceilings/3.12.json)
+are about 3.3k file operations for `help_project`, a cold first run (no cache
+yet, a full bootstrap that also writes one), against about 2.8k for
+`help_project_warm`, a warm run. A cache-off run never writes the cache, so its
+cost is at or below the cold figure.
 
 ## clear
 
