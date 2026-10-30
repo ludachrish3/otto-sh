@@ -117,7 +117,10 @@ def _read_user_settings(p: Path, st: "os.stat_result | None") -> "UserSettingsMo
     except ValidationError as e:
         # One line, no input_value (str(e) echoes the offending input) and no docs URL.
         found = "; ".join(
-            f"{'.'.join(str(part) for part in err['loc'])}: {err['msg']}" for err in e.errors()
+            f"{where}: {err['msg']}"
+            if (where := ".".join(str(x) for x in err["loc"]))
+            else err["msg"]
+            for err in e.errors()
         )
         raise ValueError(f"{p}: {found}") from e
 
@@ -184,8 +187,6 @@ def set_cache_enabled(enabled: bool) -> CacheSetting:
     # string is rewritten as a real boolean even when the state already matches.
     raw = table.unwrap().get(CACHE_ENABLED_KEY) if table is not None else None
     if _cache_on(current) == enabled and (table is None or raw is None or isinstance(raw, bool)):
-        return cache_enabled()
-    if table is None and enabled:
         return cache_enabled()
     if table is None:
         table = tomlkit.table()

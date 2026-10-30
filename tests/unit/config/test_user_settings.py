@@ -425,3 +425,23 @@ def test_a_validation_error_is_one_line_without_the_input():
     assert "maybe-secret" not in text
     assert "pydantic.dev" not in text
     assert "cache.enabled" in text
+
+
+def test_an_error_without_a_location_reads_as_the_message_alone(monkeypatch):
+    path = _own_file("")
+    # A model-level validator reports loc == (); drive that through the formatter.
+    from pydantic import BaseModel, ValidationError, model_validator
+
+    class Probe(BaseModel):
+        @model_validator(mode="after")
+        def _always(self):
+            raise ValueError("cache and inventory disagree")
+
+    def validate(cls, data):
+        return Probe.model_validate(data)
+
+    monkeypatch.setattr(UserSettingsModel, "model_validate", classmethod(validate))
+    with pytest.raises(ValueError, match=r"settings\.toml") as ei:
+        load_user_settings(path)
+    assert isinstance(ei.value.__cause__, ValidationError)
+    assert str(ei.value).endswith("settings.toml: Value error, cache and inventory disagree")
