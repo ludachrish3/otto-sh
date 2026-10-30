@@ -130,6 +130,30 @@ def _settle(home: Path, *, on: bool) -> ct.CompletionView:
     return ct.completion_view(_projects()) if on else view
 
 
+def test_output_at_exit_never_reaches_the_live_childs_answer(off_project):
+    """An init module that prints at interpreter exit: the TAB still offers the names.
+
+    The child's stdout stays on ``/dev/null`` until it exits; only its answer is
+    written to the parent's pipe, through the descriptor it saved.
+    """
+    project, home = off_project
+    init = project / "pylib" / "genproject_instructions.py"
+    init.write_text(
+        init.read_text() + "\nimport atexit\natexit.register(lambda: print('bye from atexit'))\n"
+    )
+    done = subprocess.run(
+        [str(_OTTO)],
+        env={**os.environ, cc.DUMP_TESTS_ENV_VAR: cc.DUMP_TESTS_LIVE},
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    assert done.returncode == 0, done.stderr
+    assert "test_live_one" in json.loads(done.stdout)["names"]
+    assert "test_live_one" in _real_tab(_env(project, home), "otto test ", 2)
+
+
 def test_a_project_that_cannot_collect_costs_only_its_own_names_on_and_off(two_projects):
     """Off offers what on settles on: the healthy project's names, without the broken one's."""
     off = _settle(two_projects, on=False)
@@ -152,8 +176,13 @@ def test_a_live_child_that_raises_exits_1_and_prints_nothing(off_project, monkey
 
     monkeypatch.setattr(bootstrap, "bootstrap", broken_bootstrap)
     monkeypatch.setenv(cc.DUMP_TESTS_ENV_VAR, cc.DUMP_TESTS_LIVE)
-    with pytest.raises(SystemExit) as exited:
-        entry()
+    saved = os.dup(1)  # the child never gives fd 1 back: it is a process of its own
+    try:
+        with pytest.raises(SystemExit) as exited:
+            entry()
+    finally:
+        os.dup2(saved, 1)
+        os.close(saved)
     assert exited.value.code == 1
     assert capfd.readouterr().out == ""
     assert _completion_files(home) == []
