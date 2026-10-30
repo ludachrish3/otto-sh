@@ -68,6 +68,11 @@ COLLECT_LOCK_STALE_SECONDS = 15 + 30
 COLLECT_COOLDOWN_FILENAME = ".completion_collect.failed"
 COLLECT_COOLDOWN_SECONDS = 60
 DUMP_TESTS_ENV_VAR = "_OTTO_DUMP_TEST_NAMES"
+DUMP_TESTS_STORED = "1"
+"""``otto.config.completion_cache.DUMP_TESTS_STORED``: the child's stored-tables mode."""
+UNREADABLE_SIZE = "unreadable"
+"""``otto.config.completion_tree.UNREADABLE_SIZE``: a stored triple's size slot for a path
+that could not be stat'ed (``[path, None, "unreadable"]``; absent is ``[path, None, None]``)."""
 COLLECT_OWNER_ENV_VAR = "_OTTO_COLLECT_OWNER"
 OTTOPATH_VAR = "OTTOPATH"
 _CHILD_PATH_VARS = (OTTOPATH_VAR, "OTTO_XDIR", "OTTO_HOME")
@@ -842,21 +847,25 @@ def servable_shim(data: Any, now: float) -> dict[str, Any]:
 
 
 def _stat_pass(triples: list[Any]) -> None:
-    """Hand over unless every key path stats as it was stored.
+    """Hand over unless every key path is in the class, and stat, it was stored with.
 
-    Absent is ``ENOENT`` or ``ENOTDIR`` only, the rule of
-    ``otto.config.user_settings._stat_file``. Any other stat error (``ELOOP``,
-    ``EACCES``, ...) hands over even for a path stored as missing: a settings
-    file in that state turns the cache off, which only the full path can see.
+    Mirrors ``otto.config.corpus_snapshot.classify``: a stat is absent on
+    ``ENOENT`` or ``ENOTDIR`` only, and unreadable on any other ``OSError``
+    (``ELOOP``, ``EACCES``, ...). A key stored as absent (``[path, None,
+    None]``) or unreadable (``[path, None, UNREADABLE_SIZE]``) that is still
+    in that class is unchanged; a change of class, or of a real stat's mtime
+    or size, hands over.
     """
     for path, mtime_ns, size in triples:
         try:
             st = os.stat(path)
         except (FileNotFoundError, NotADirectoryError):
-            if mtime_ns is None:
+            if mtime_ns is None and size is None:
                 continue
             raise Handover(f"stale: {path} is gone", stale=True) from None
         except OSError:
+            if mtime_ns is None and size == UNREADABLE_SIZE:
+                continue
             raise Handover(f"stale: {path} cannot be read", stale=True) from None
         if mtime_ns is None:
             raise Handover(f"stale: {path} appeared", stale=True)
@@ -1053,7 +1062,7 @@ def _child_environ(environ: dict[str, str]) -> dict[str, str]:
             if var == OTTOPATH_VAR:
                 paths = collapse_path_list(paths)
             env[var] = os.pathsep.join(paths)
-    env[DUMP_TESTS_ENV_VAR] = "1"
+    env[DUMP_TESTS_ENV_VAR] = DUMP_TESTS_STORED
     env[COLLECT_OWNER_ENV_VAR] = f"{os.getpid()}-{time.monotonic_ns()}"
     return env
 

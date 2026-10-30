@@ -1020,3 +1020,91 @@ def test_the_shim_and_the_settings_load_agree_on_what_is_absent(tmp_path, case):
         if (tmp_path / "locked").exists():
             (tmp_path / "locked").chmod(0o700)
     assert shim_absent == absent
+
+
+# ── one stat classification: the writer's triple and digest vs the shim's stat pass ──
+
+_KEY_STATES = ["absent", "under a file", "loop", "unsearchable", "regular", "changed"]
+
+
+def _put_key_in(base: Path, state: str) -> Path:
+    """Make ``base/x/key`` absent, ENOTDIR, ELOOP, EACCES, or a regular file of two sizes."""
+    import shutil
+
+    parent = base / "x"
+    if parent.is_dir():
+        parent.chmod(0o700)
+        shutil.rmtree(parent)
+    elif parent.exists():
+        parent.unlink()
+    key = parent / "key"
+    if state == "absent":
+        return key
+    if state == "under a file":
+        parent.write_text("")
+        return key
+    parent.mkdir()
+    if state == "loop":
+        key.symlink_to(key)
+    elif state == "unsearchable":
+        key.write_text("a")
+        parent.chmod(0)
+    else:
+        key.write_text("a" if state == "regular" else "ab")
+    return key
+
+
+def _digest(key: Path) -> str:
+    import hashlib
+
+    h = hashlib.sha256()
+    cc.hash_file(h, key)
+    return h.hexdigest()
+
+
+@pytest.mark.parametrize("after", _KEY_STATES)
+@pytest.mark.parametrize("before", _KEY_STATES)
+def test_the_shim_and_the_digest_see_the_same_key_changes(tmp_path, before, after):
+    """For an arbitrary key, the shim's stat pass passes exactly when the writer's digest holds.
+
+    Whatever the shim hands over on, the full path's stale check must see too, and the
+    other way round: a key the shim calls changed while the digest calls it the same is
+    a TAB that hands over forever, and the converse a TAB served from a stale cache.
+    """
+    from otto.config.completion_tree import stat_triple
+
+    if os.geteuid() == 0 and "unsearchable" in (before, after):
+        pytest.skip("root ignores directory modes")
+    try:
+        key = _put_key_in(tmp_path, before)
+        triple, digest = stat_triple(key), _digest(key)
+        key = _put_key_in(tmp_path, after)
+        writer_same = _digest(key) == digest
+        try:
+            sc._stat_pass([triple])
+            shim_same = True
+        except sc.Handover:
+            shim_same = False
+    finally:
+        if (tmp_path / "x").is_dir():
+            (tmp_path / "x").chmod(0o700)
+    assert shim_same == writer_same
+    if (before, after) in {
+        ("loop", "loop"),
+        ("unsearchable", "unsearchable"),
+        ("absent", "under a file"),
+    }:
+        assert shim_same, "a key still in its class is unchanged"
+    if (
+        before != after
+        and {before, after} & {"loop", "unsearchable"}
+        and {before, after} != {"loop", "unsearchable"}
+    ):
+        assert not shim_same, "a change of class is a change"
+
+
+def test_the_shim_mirrors_the_writers_stat_constants():
+    from otto.config.completion_tree import UNREADABLE_SIZE
+
+    assert sc.UNREADABLE_SIZE == UNREADABLE_SIZE
+    assert sc.DUMP_TESTS_STORED == cc.DUMP_TESTS_STORED

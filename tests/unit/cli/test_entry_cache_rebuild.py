@@ -487,3 +487,37 @@ def test_a_settings_edit_is_repaired_by_the_full_path_and_the_next_tab_is_served
     _run(env, argv=_ROOT_HELP)
     assert cache.stat().st_mtime_ns != before, "the full path did not rebuild for a settings edit"
     assert _shim_tab(env).items is not None, "the next TAB was handed over again"
+
+
+@pytest.mark.parametrize("when", ["before the first write", "after the first write"])
+def test_an_unreadable_lab_root_is_served_after_one_rebuild(project_env, tmp_path, when):
+    """Cache on, a key path that cannot be stat'ed (ELOOP): one rebuild, then the shim serves.
+
+    The writer stores the key as unreadable, distinct from missing, and the shim
+    compares the class it sees now with the stored one. A loop that is still a loop
+    is unchanged; reading it as "changed" would hand over every TAB while the full
+    path, seeing a fresh digest, never rewrote.
+    """
+    project, env = project_env
+    labs = tmp_path / "loop" / "labs"
+    labs.parent.mkdir()
+    settings = project / ".otto" / "settings.toml"
+    settings.write_text(  # scaffold-exempt: a lab source whose glob root loops
+        settings.read_text() + f'\n[[lab.sources]]\nbackend = "json"\npaths = ["{labs}/*.json"]\n'
+    )
+    if when == "before the first write":
+        labs.symlink_to(labs)
+    _run(env, argv=_ROOT_HELP)
+    if when == "after the first write":
+        assert _shim_tab(env).items is not None  # warm, with the root absent
+        labs.symlink_to(labs)
+        out = _shim_tab(env)
+        assert out.items is None, "absent -> unreadable is a change"
+        assert out.stale is True
+        _run(env, argv=_ROOT_HELP)
+    cache = _cache_file(env)
+    assert _shim_tab(env).items is not None, "a still-unreadable key must be served"
+    before = cache.stat().st_mtime_ns
+    _run(env, argv=_ROOT_HELP)
+    assert cache.stat().st_mtime_ns == before, "the full path rewrote a valid cache"
+    assert _shim_tab(env).items is not None

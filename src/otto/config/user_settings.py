@@ -51,21 +51,23 @@ def clear_user_settings_memo() -> None:
 def _stat_file(p: Path) -> "os.stat_result | None":
     """Stat settings file *p*: ``None`` when it is absent, a :class:`ValueError` when it is broken.
 
-    Absent is ``ENOENT`` or ``ENOTDIR`` only. Any other stat error (``ELOOP``,
-    ``EACCES``, ...) or a path that is not a regular file (a directory, a
-    FIFO, which reading would block on) is a file the user must fix, named in
-    one line, never silently "no settings". Not ``corpus_snapshot.stat``: that
-    maps every ``OSError`` to ``None``, and this split needs the errno.
+    Absent and unreadable are :func:`otto.config.corpus_snapshot.classify`'s
+    classes, the one rule the cache writer and the console-script shim share.
+    An unreadable path (``ELOOP``, ``EACCES``, ...) or one that is not a
+    regular file (a directory, a FIFO, which reading would block on) is a
+    file the user must fix, named in one line, never silently "no settings".
     """
-    try:
-        st = p.stat()
-    except (FileNotFoundError, NotADirectoryError):
-        return None
-    except OSError as e:
-        raise ValueError(f"{p}: {e.strerror or e}") from e
-    if not _stat.S_ISREG(st.st_mode):
-        raise ValueError(f"{p}: not a regular file")
-    return st
+    from .corpus_snapshot import Unreadable, classify
+
+    match classify(p):
+        case None:
+            return None
+        case Unreadable(error=error):
+            raise ValueError(f"{p}: {error.strerror or error}") from error
+        case st if not _stat.S_ISREG(st.st_mode):
+            raise ValueError(f"{p}: not a regular file")
+        case st:
+            return st
 
 
 def user_settings_path() -> Path:

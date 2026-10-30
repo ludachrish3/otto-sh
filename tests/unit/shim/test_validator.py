@@ -190,21 +190,37 @@ def test_a_settings_file_that_turns_into_a_self_loop_hands_over(workspace):
     assert ei.value.stale
 
 
-def test_a_stored_missing_path_that_cannot_be_stat_hands_over(workspace, tmp_path):
-    """EACCES on a key stored as missing is not "still missing": the shim hands over."""
+@pytest.mark.parametrize(
+    ("stored", "served"),
+    [("absent", False), ("unreadable", True)],
+)
+def test_a_key_that_cannot_be_stat_is_judged_by_its_stored_class(
+    workspace, tmp_path, stored, served
+):
+    """EACCES now: unchanged for a key stored as unreadable, a change for one stored as absent."""
+    from otto.config.completion_tree import UNREADABLE_SIZE
+
     if os.geteuid() == 0:
         pytest.skip("root ignores directory modes")
     _project, cache = workspace
     data = _data(cache)
     locked = tmp_path / "locked"
     locked.mkdir()
-    data["sections"]["shim"]["payload"]["keys"].append([str(locked / "settings.toml"), None, None])
+    size = UNREADABLE_SIZE if stored == "unreadable" else None
+    data["sections"]["shim"]["payload"]["keys"].append([str(locked / "settings.toml"), None, size])
     locked.chmod(0)
     try:
-        with pytest.raises(sc.Handover, match="stale"):
-            sc.validate_keys(cache, data, time.time())
+        if served:
+            assert sc.validate_keys(cache, data, time.time()) == "stat"
+        else:
+            with pytest.raises(sc.Handover, match="stale"):
+                sc.validate_keys(cache, data, time.time())
     finally:
         locked.chmod(0o700)
+    (cache.parent / sc.MARKER_FILENAMES["names"]).unlink(missing_ok=True)
+    if stored == "unreadable":
+        with pytest.raises(sc.Handover, match="gone"):  # unreadable -> absent is a change
+            sc.validate_keys(cache, data, time.time())
 
 
 def test_a_stored_missing_path_under_a_file_is_still_absent(workspace, tmp_path):

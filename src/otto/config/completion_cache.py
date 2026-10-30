@@ -299,6 +299,10 @@ DUMP_TESTS_ENV_VAR = "_OTTO_DUMP_TEST_NAMES"
 # the stored-tables mode.
 DUMP_TESTS_LIVE = "live"
 
+# The value of DUMP_TESTS_ENV_VAR for the stored-tables mode, which seeds or
+# refreshes the tables. Mirrored by otto._shim_complete.DUMP_TESTS_STORED.
+DUMP_TESTS_STORED = "1"
+
 # Hard cap on the collect child: a cold ``otto test`` TAB blocks at most this
 # long (the child stops itself; the waiting parent allows a little more before
 # it kills it). "Slow on the first attempt is better than no completion" — but
@@ -581,14 +585,20 @@ def ancestor_conftests(test_dir: Path, root: Path) -> list[Path]:
 def hash_file(h: "hashlib._Hash", path: Path) -> None:
     """Fold *path*'s ``(path, mtime_ns, size)`` stat triple into digest *h*.
 
-    A path that fails to stat folds in as ``missing:<path>`` — deliberately,
-    so the digest moves when the file APPEARS. Contents are never read. The
-    shared primitive under :func:`otto.config.cache_sections.section_digest`
-    and the tunnel ids' lab digest (:func:`_lab_paths_digest`).
+    An absent path folds in as ``missing:<path>`` — deliberately, so the
+    digest moves when the file APPEARS — and one that cannot be stat'ed for
+    another reason as ``unreadable:<path>``, so the digest also moves when a
+    path changes class (:func:`otto.config.corpus_snapshot.classify`, the
+    rule the shim's stat pass mirrors). Contents are never read. The shared
+    primitive under :func:`otto.config.cache_sections.section_digest` and the
+    tunnel ids' lab digest (:func:`_lab_paths_digest`).
     """
-    st = corpus_snapshot.stat(path)
+    st = corpus_snapshot.observe(path)
     if st is None:
         h.update(f"missing:{path}\n".encode())
+        return
+    if isinstance(st, corpus_snapshot.Unreadable):
+        h.update(f"unreadable:{path}\n".encode())
         return
     h.update(f"{path}|{st.st_mtime_ns}|{st.st_size}\n".encode())
 
@@ -2384,7 +2394,7 @@ class _ChildCommand:
     """The token the child writes into the lock it takes."""
 
 
-def _collect_child_command(home: Path, *, mode: str = "1") -> _ChildCommand | None:
+def _collect_child_command(home: Path, *, mode: str = DUMP_TESTS_STORED) -> _ChildCommand | None:
     """Return how to start the collect child, or ``None`` with no venv ``otto``.
 
     The *venv* ``otto`` binary (so ``entry`` runs, unlike ``python -m otto``)
@@ -2394,7 +2404,7 @@ def _collect_child_command(home: Path, *, mode: str = "1") -> _ChildCommand | No
     shell's cwd, whatever a project holds. Its path variables are given the
     kept spelling (``~`` expanded, a relative entry joined to this process's
     cwd) and ``OTTOPATH``'s repeats collapsed first. *mode* is the value of
-    :data:`DUMP_TESTS_ENV_VAR`: ``"1"`` (the stored-tables mode, the value the
+    :data:`DUMP_TESTS_ENV_VAR`: :data:`DUMP_TESTS_STORED` (the value the
     console-script shim also sets) or :data:`DUMP_TESTS_LIVE`.
     """
     import sys

@@ -26,7 +26,8 @@ from typer.core import TyperGroup, TyperOption
 
 from ..errors import OttoError
 from .cache_sections import SHIM_SECTION as SHIM_SECTION  # noqa: PLC0414 — explicit re-export
-from .corpus_snapshot import stat as _snapshot_stat
+from .corpus_snapshot import Unreadable
+from .corpus_snapshot import observe as _snapshot_observe
 
 if TYPE_CHECKING:
     import os
@@ -254,19 +255,33 @@ def serialize_tree(cli: "Command", *, pending_key: str) -> TreeSerialisation:
     return TreeSerialisation(tree=tree, unregistered=unregistered)
 
 
+UNREADABLE_SIZE = "unreadable"
+"""The size slot of a stored triple whose path could not be stat'ed (not absent).
+
+``[path, None, "unreadable"]``, beside ``[path, None, None]`` for an absent
+path. A string where every real triple has an int, so it can never equal a
+size, and a ``None`` mtime, so a shim from before the split still reads it as
+"not there". Mirrored as ``otto._shim_complete.UNREADABLE_SIZE`` (pinned by
+tests/unit/shim/test_differential.py)."""
+
+
 def stat_triple(path: "Path") -> list[Any]:
-    """``[path, mtime_ns, size]``, or ``[path, None, None]`` for a path that does not stat.
+    """``[path, mtime_ns, size]``; ``[path, None, None]`` absent; ``[path, None, "unreadable"]``.
 
-    The same facts :func:`otto.config.completion_cache.hash_file` folds into a
-    digest, stored plainly so a reader can compare them without hashing.
+    The same facts and the same three classes
+    (:func:`otto.config.corpus_snapshot.classify`) that
+    :func:`otto.config.completion_cache.hash_file` folds into a digest, stored
+    plainly so a reader can compare them without hashing.
     """
-    return _triple_of(path, _snapshot_stat(path))
+    return _triple_of(path, _snapshot_observe(path))
 
 
-def _triple_of(path: "Path", st: "os.stat_result | None") -> list[Any]:
+def _triple_of(path: "Path", st: "os.stat_result | Unreadable | None") -> list[Any]:
     """Return the :func:`stat_triple` shape for an observation already in hand."""
     if st is None:
         return [str(path), None, None]
+    if isinstance(st, Unreadable):
+        return [str(path), None, UNREADABLE_SIZE]
     return [str(path), st.st_mtime_ns, st.st_size]
 
 
