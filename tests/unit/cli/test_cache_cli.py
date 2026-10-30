@@ -341,21 +341,20 @@ def test_enable_with_no_settings_says_default(tmp_path, monkeypatch):
     assert result.output.splitlines()[0] == "cache: on (default)"
 
 
-def test_disable_clears_every_workspace_under_otto_home(tmp_path, monkeypatch):
+def test_disable_leaves_every_workspace_in_place(tmp_path, monkeypatch):
+    """Off bypasses the cache; it deletes nothing. Old files stay until `clear` / `prune`."""
     from otto.cli.cache import cache_app
 
     home = _home(monkeypatch, tmp_path)
-    one = _mk_workspace(home, "aaaaaaaa-one", cache_age=OLD)
-    two = _mk_workspace(home, "bbbbbbbb-two", cache_age=YOUNG)
-    outside = tmp_path / "elsewhere"
-    other = _mk_workspace(outside, "cccccccc-out", cache_age=OLD)
-    kept = other / "completion_cache.json"
+    one = _mk_workspace(home, "aaaaaaaa-one", cache_age=OLD, session_dirs=True)
+    (one / ".completion_collect.failed").write_text("x")
+    before = sorted(p.relative_to(home) for p in home.rglob("*"))
     result = runner.invoke(cache_app, ["disable"])
     assert result.exit_code == 0, result.output
-    for ws in (one, two):
-        assert not (ws / "completion_cache.json").exists()
-    assert kept.exists()
-    assert "removed" in result.output
+    assert result.output.splitlines()[0].startswith("cache: off (")
+    after = sorted(p.relative_to(home) for p in home.rglob("*") if p.name != "settings.toml")
+    assert after == before
+    assert "removed" not in result.output
 
 
 def test_disable_refuses_a_broken_file_with_exit_1(tmp_path, monkeypatch):
@@ -454,21 +453,6 @@ def test_enable_on_a_coerced_string_writes_a_boolean_and_reports_on(tmp_path, mo
     assert _settings_text() == "[cache]\nenabled = true\n"
 
 
-def test_a_removal_failure_still_reports_the_new_state_and_exits_nonzero(tmp_path, monkeypatch):
-    from otto.cli.cache import cache_app
-
-    _home(monkeypatch, tmp_path)
-
-    def boom(_home):
-        raise OSError("disk on fire")
-
-    monkeypatch.setattr("otto.config.cache_maintenance.remove_completion_files_everywhere", boom)
-    result = runner.invoke(cache_app, ["disable"])
-    assert result.exit_code == 1
-    assert result.output.startswith("cache: off (")
-    assert "disk on fire" in result.output
-
-
 def _read_only_workspace(home):
     import os
 
@@ -479,23 +463,6 @@ def _read_only_workspace(home):
     ws = _mk_workspace(home, "ffffffff-ro", cache_age=OLD)
     ws.chmod(0o500)
     return ws
-
-
-def test_disable_names_each_file_it_could_not_remove_and_exits_1(tmp_path, monkeypatch):
-    from otto.cli.cache import cache_app
-
-    home = _home(monkeypatch, tmp_path)
-    ws = _read_only_workspace(home)
-    try:
-        result = runner.invoke(cache_app, ["disable"])
-    finally:
-        ws.chmod(0o700)
-    assert result.exit_code == 1, result.output
-    assert result.output.startswith("cache: off (")
-    assert f"could not remove {ws / 'completion_cache.json'}" in result.stderr
-    assert "nothing to remove" not in result.output
-    assert "Traceback" not in result.output
-    assert (ws / "completion_cache.json").is_file()
 
 
 def test_bare_clear_names_each_file_it_could_not_remove_and_exits_1(tmp_path, monkeypatch):

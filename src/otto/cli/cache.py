@@ -96,8 +96,8 @@ def _print_removed(paths: "list[Path]", *, verb: str = "removed") -> None:
 def _report_removal(report: "MaintenanceReport") -> None:
     """Print a named-file removal, then name each file it could not remove and exit 1.
 
-    `disable` and bare `clear` both owe the user the truth: a file left in
-    place is not "nothing to remove".
+    Bare `clear` owes the user the truth: a file left in place is not
+    "nothing to remove".
     """
     if report.files_removed or not report.failures:
         _print_removed(report.files_removed)
@@ -113,15 +113,13 @@ def _cache_state_line(setting: "CacheSetting") -> str:
 
 
 def _toggle(enabled: bool) -> None:
-    """Run `enable` / `disable`: set the switch, announce it, and for off clear every workspace.
+    """Run `enable` / `disable`: set the switch and announce it.
 
-    A broken settings file or an unwritable home is the user's to fix, so it is
-    one error line and exit 1, never a traceback. So is a completion file
-    `disable` could not remove: the new state is printed first, then each
-    file left in place.
+    Neither verb touches a workspace: off bypasses the cache, it deletes
+    nothing (old files stay until `clear` / `prune`). A broken settings file
+    or an unwritable home is the user's to fix, so it is one error line and
+    exit 1, never a traceback.
     """
-    from ..config.cache_maintenance import remove_completion_files_everywhere
-    from ..config.home import otto_home
     from ..config.user_settings import set_cache_enabled, user_settings_path
 
     path = user_settings_path()
@@ -133,14 +131,6 @@ def _toggle(enabled: bool) -> None:
         raise typer.Exit(1) from e
     typer.echo(_cache_state_line(setting))
     typer.echo(str(path))
-    if enabled:
-        return
-    try:
-        removed = remove_completion_files_everywhere(otto_home())
-    except OSError as e:
-        typer.echo(f"could not remove completion files: {e}", err=True)
-        raise typer.Exit(1) from e
-    _report_removal(removed)
 
 
 @cache_app.command("enable")
@@ -151,7 +141,7 @@ def enable() -> None:
 
 @cache_app.command("disable")
 def disable() -> None:
-    """Turn otto's cache off and remove every workspace's completion files."""
+    """Turn otto's cache off; old cache files stay until clear or prune."""
     _toggle(False)
 
 

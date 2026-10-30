@@ -30,7 +30,7 @@ otto cache prune [--age DAYS] [--dry-run]
 | ---------- | ----------- |
 | `info` | List every workspace under the home, oldest cache first: key, cache size (the two session directories included), cache age, whether an `env/` virtualenv lives there, and any other entries |
 | `enable` | Turn the cache on: set `[cache] enabled = true` in the user settings file where a `[cache]` table exists, even an empty one; never creates the file |
-| `disable` | Turn the cache off: write `[cache] enabled = false` and remove every workspace's completion files. See [Turning the cache off](#turning-the-cache-off) |
+| `disable` | Turn the cache off: write `[cache] enabled = false`. Deletes nothing; old cache files stay until `clear` or `prune`. See [Turning the cache off](#turning-the-cache-off) |
 | `clear` | Remove **this** workspace's cache files and session directories (the workspace `OTTOPATH` resolves to); never removes the workspace directory itself. `--all` clears every workspace regardless of age |
 | `prune` | Remove cache files older than `--age` days (default 60) across every workspace, and the session directories of each workspace left with no younger cache file; `--dry-run` reports what would be removed without touching anything |
 
@@ -163,8 +163,6 @@ Without a workspace (no `OTTOPATH`) the listing above is all there is.
 $ otto cache disable
 cache: off (settings.toml: /home/me/.otto/settings.toml)
 /home/me/.otto/settings.toml
-removed /home/me/.otto/13739bf0-project1/completion_cache.json
-removed /home/me/.otto/13739bf0-project1/completion_cache.names.ok
 $ otto cache enable
 cache: on (settings.toml: /home/me/.otto/settings.toml)
 /home/me/.otto/settings.toml
@@ -173,15 +171,9 @@ cache: on (settings.toml: /home/me/.otto/settings.toml)
 `disable` writes `[cache] enabled = false` into the user settings file
 ({doc}`../../configuration/settings`), creating the file and the table when
 they are missing, and edits in place, so comments and other tables are kept.
-It then removes the completion files of **every** workspace under the home:
-`completion_cache.json`, `remote_completion_cache.json`, the two marker files
-`completion_cache.names.ok` and `completion_cache.tests.ok`, and the collect
-child's `.completion_collect.lock` and `.completion_collect.failed`. It
-prints the new state, the settings file path and one line per file removed
-(`nothing to remove` when none were left). A file it cannot remove (a
-workspace you cannot write to, say) is named on stderr as
-`could not remove <path>`, and `disable` exits 1; the setting itself is
-already written by then.
+It prints the new state and the settings file path. It deletes nothing: the
+cache files already in each workspace stay where they are, unread, until
+`otto cache clear` or `otto cache prune` removes them.
 
 `enable` sets `enabled = true` only where a `[cache]` table already exists
 (an empty `[cache]` table gets the key written) and never creates a file,
@@ -197,13 +189,15 @@ else `~/.otto/settings.toml`) turns otto's cache off; the default is on.
 `otto cache disable` and `otto cache enable` are the verbs for it, and
 `otto cache info` shows the state on its first line.
 
-**What off covers.** Every completion file in a workspace:
-`completion_cache.json` (the names TAB offers), `remote_completion_cache.json`
-(remote paths TAB has seen), the two `.ok` marker files, and the
-`.completion_collect.lock` and `.completion_collect.failed` files of the
-background process that collects test names. It also covers `otto test`'s
-record of which test files changed: every `otto test` run collects the whole
-test tree.
+**What off covers.** Off bypasses the cache: nothing reads, writes or deletes
+a completion file in any workspace. That is `completion_cache.json` (the names
+TAB offers), `remote_completion_cache.json` (remote paths TAB has seen), the
+two `.ok` marker files, and the `.completion_collect.lock` and
+`.completion_collect.failed` files of the background process that collects
+test names. It also covers `otto test`'s record of which test files changed:
+every `otto test` run collects the whole test tree. Files written while the
+cache was on stay where they are, unread, until `otto cache clear` or
+`otto cache prune` removes them.
 
 **What it does not.** `pycache/` and `pytest-cache/` stay: they keep bytecode
 out of test directories, which is not a cache you can do without. The
@@ -217,9 +211,6 @@ inventory snapshot has its own switch, `cache_ttl = "0"`
   markers. Docker container and image names come only from the cache's
   observed state and a TAB never asks a host, so none are offered.
 - `otto test` collects everything on every run.
-- Each root help or full-path TAB also pays to resolve the workspace, plus
-  six `lstat` calls (one per completion file name, and an `unlink` for any
-  that are still there).
 
 **When it takes effect.** `otto cache disable` applies at once everywhere. A
 hand edit of `settings.toml` reaches `otto -h` and any other full command on
@@ -234,7 +225,7 @@ clock:
 $ otto cache disable
 $ strace -c -f -e trace=%file,getdents64 otto -h > /dev/null
 $ otto cache enable
-$ otto -h > /dev/null          # rebuilds the cache: disable removed it
+$ otto -h > /dev/null          # rebuilds the cache: the settings change made it stale
 $ strace -c -f -e trace=%file,getdents64 otto -h > /dev/null
 ```
 
@@ -262,9 +253,9 @@ Bare, `clear` acts on exactly one workspace — the one the current
 `OTTOPATH` resolves to — and unlinks both `completion_cache.json` and its
 remote-path sidecar `remote_completion_cache.json` if present, then removes
 the `pycache/` and `pytest-cache/` directories. It never removes the workspace
-directory itself. The next `otto test` compiles its test files again. Like
-`disable`, it names each file it could not remove on stderr
-(`could not remove <path>`) and exits 1.
+directory itself. The next `otto test` compiles its test files again. It
+names each file it could not remove on stderr (`could not remove <path>`)
+and exits 1.
 
 ```console
 $ otto cache clear --all

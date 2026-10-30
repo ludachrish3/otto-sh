@@ -209,8 +209,6 @@ _CACHE_TABLE_READERS = {"config/user_settings.py"}
 # The only file that may call cache_enabled(): the one switch (the resolver only defines it).
 _CACHE_ENABLED_CALLERS = {
     "config/completion_cache.py",
-    # cli/main.py uses the answer for the off-removal side effect, not as a second decision.
-    "cli/main.py",
     # set_cache_enabled returns the setting the next caller will see; it decides nothing.
     "config/user_settings.py",
     # `otto cache info` reports the resolved setting on its first line; it decides nothing.

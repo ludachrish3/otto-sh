@@ -384,21 +384,28 @@ def _settings_off(env):
     (home / "settings.toml").write_text("[cache]\nenabled = false\n")  # scaffold-exempt: user-level
 
 
-def test_the_full_path_removes_a_workspace_cache_once_the_cache_is_off(project_env):
-    from otto.config.cache_maintenance import COMPLETION_FILE_NAMES, SESSION_DIR_NAMES
+def _file_digests(root):
+    import hashlib
 
+    return {
+        str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest()
+        for p in root.rglob("*")
+        if p.is_file()
+    }
+
+
+def test_the_full_path_keeps_a_workspace_cache_once_the_cache_is_off(project_env):
+    """Off bypasses the cache and deletes nothing: the workspace is left byte-for-byte."""
     _project, env = project_env
     _run(env, argv=_ROOT_HELP)
     workspace = _cache_file(env).parent
-    for name in SESSION_DIR_NAMES:
-        (workspace / name).mkdir(exist_ok=True)
     (workspace / ".completion_collect.failed").write_text("x")
+    before = _file_digests(workspace)
 
     _settings_off(env)
     _run(env, argv=_ROOT_HELP)
 
-    assert not [n for n in COMPLETION_FILE_NAMES if (workspace / n).exists()]
-    assert all((workspace / n).is_dir() for n in SESSION_DIR_NAMES)
+    assert _file_digests(workspace) == before
 
 
 def test_the_full_path_writes_no_cache_when_off(project_env):
@@ -413,7 +420,7 @@ def test_the_full_path_writes_no_cache_when_off(project_env):
 
 
 def test_root_help_without_a_project_never_resolves_the_cache_setting(tmp_path):
-    """No project, no workspace to clean: the off-removal must not even read settings.toml."""
+    """No project, no cache: bare `otto -h` must not even read settings.toml."""
     env = {k: v for k, v in os.environ.items() if not is_otto_env_var(k)}
     env["OTTO_HOME"] = str(tmp_path / "home")
     probe = (
@@ -432,30 +439,6 @@ def test_root_help_without_a_project_never_resolves_the_cache_setting(tmp_path):
         check=False,
     )
     assert p.returncode == 0, p.stderr
-
-
-_NOT_WRITABLE_ENTRY = [
-    sys.executable,
-    "-c",
-    "import otto.cli.main as m; m._cache_is_writable = lambda projects: False; m.entry()",
-]
-
-
-def test_a_cache_that_is_on_but_not_writable_keeps_its_completion_files(project_env):
-    """The off-removal is for the OFF cache only: "not writable" for another reason leaves files."""
-    from otto.config.cache_maintenance import COMPLETION_FILE_NAMES
-
-    _project, env = project_env
-    _run(env, argv=_ROOT_HELP)
-    workspace = _cache_file(env).parent
-    (workspace / ".completion_collect.failed").write_text("x")
-    p = subprocess.run(
-        [*_NOT_WRITABLE_ENTRY, *_ROOT_HELP], env=env, capture_output=True, text=True, check=False
-    )
-    assert p.returncode == 0, p.stderr
-    assert (workspace / "completion_cache.json").is_file()
-    assert (workspace / ".completion_collect.failed").is_file()
-    assert [n for n in COMPLETION_FILE_NAMES if (workspace / n).exists()]
 
 
 def _shim_tab(env):

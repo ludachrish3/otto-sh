@@ -429,77 +429,39 @@ def test_iter_workspaces_counts_the_session_dirs_as_cache(tmp_path):
 
 
 def _fill_completion_dir(ws):
-    from otto.config.cache_maintenance import COMPLETION_FILE_NAMES, SESSION_DIR_NAMES
+    from otto.config.cache_maintenance import CACHE_FILE_NAMES, SESSION_DIR_NAMES
 
     ws.mkdir(parents=True, exist_ok=True)
-    for name in COMPLETION_FILE_NAMES:
+    for name in CACHE_FILE_NAMES:
         (ws / name).write_text("x")
     for name in SESSION_DIR_NAMES:
         (ws / name).mkdir(exist_ok=True)
 
 
-def test_remove_completion_files_keeps_the_session_dirs(tmp_path):
-    from otto.config.cache_maintenance import COMPLETION_FILE_NAMES, remove_completion_files
-
-    _fill_completion_dir(tmp_path)
-    report = remove_completion_files(tmp_path)
-    assert sorted(p.name for p in report.files_removed) == sorted(COMPLETION_FILE_NAMES)
-    assert (tmp_path / "pycache").is_dir()
-    assert (tmp_path / "pytest-cache").is_dir()
-    assert tmp_path.is_dir()
-
-
-def test_remove_completion_files_never_follows_a_symlink_out(tmp_path):
-    from otto.config.cache_maintenance import remove_completion_files
+def test_clear_workspace_never_follows_a_cache_file_symlink_out(tmp_path):
+    from otto.config.cache_maintenance import clear_workspace
 
     outside = tmp_path / "outside.json"
     outside.write_text("keep")
     ws = tmp_path / "ws"
     ws.mkdir()
     (ws / "completion_cache.json").symlink_to(outside)
-    remove_completion_files(ws)
+    clear_workspace(ws)
     assert outside.read_text() == "keep"
     assert not (ws / "completion_cache.json").is_symlink()
 
 
-def test_remove_completion_files_everywhere_ignores_non_workspace_dirs(tmp_path):
-    from otto.config.cache_maintenance import remove_completion_files_everywhere
-
-    real = tmp_path / "aaaaaaaa-real"
-    _fill_completion_dir(real)
-    trap = tmp_path / "inventory-cache"
-    _fill_completion_dir(trap)
-    report = remove_completion_files_everywhere(tmp_path)
-    assert not (real / "completion_cache.json").exists()
-    assert (real / "pycache").is_dir()
-    assert (trap / "completion_cache.json").is_file()
-    assert all(p.parent == real for p in report.files_removed)
-
-
-def test_completion_file_names_match_the_source_constants():
-    from otto.config.cache_maintenance import CACHE_FILE_NAMES, COMPLETION_FILE_NAMES
-    from otto.config.completion_cache import COLLECT_COOLDOWN_FILENAME, COLLECT_LOCK_FILENAME
-
-    assert [
-        *CACHE_FILE_NAMES,
-        COLLECT_LOCK_FILENAME,
-        COLLECT_COOLDOWN_FILENAME,
-    ] == COMPLETION_FILE_NAMES
-
-
-@pytest.mark.parametrize("engine", ["remove_completion_files", "clear_workspace"])
-def test_a_symlinked_workspace_is_refused_and_its_target_untouched(tmp_path, engine):
-    from otto.config import cache_maintenance
-    from otto.config.cache_maintenance import COMPLETION_FILE_NAMES, SESSION_DIR_NAMES
+def test_a_symlinked_workspace_is_refused_and_its_target_untouched(tmp_path):
+    from otto.config.cache_maintenance import CACHE_FILE_NAMES, SESSION_DIR_NAMES, clear_workspace
 
     target = tmp_path / "target"
     _fill_completion_dir(target)
     link = tmp_path / "aaaaaaaa-link"
     link.symlink_to(target)
-    report = getattr(cache_maintenance, engine)(link)
+    report = clear_workspace(link)
     assert report.files_removed == []
     assert report.failures == []
-    assert all((target / n).is_file() for n in COMPLETION_FILE_NAMES)
+    assert all((target / n).is_file() for n in CACHE_FILE_NAMES)
     assert all((target / n).is_dir() for n in SESSION_DIR_NAMES)
 
 
@@ -509,33 +471,16 @@ def _read_only(ws):
     ws.chmod(0o500)
 
 
-@pytest.mark.parametrize("engine", ["remove_completion_files", "clear_workspace"])
-def test_a_file_that_cannot_be_removed_is_reported_as_a_failure(tmp_path, engine):
-    from otto.config import cache_maintenance
+def test_a_file_that_cannot_be_removed_is_reported_as_a_failure(tmp_path):
+    from otto.config.cache_maintenance import clear_workspace
 
     ws = tmp_path / "aaaaaaaa-ro"
     _fill_completion_dir(ws)
     _read_only(ws)
     try:
-        report = getattr(cache_maintenance, engine)(ws)
+        report = clear_workspace(ws)
     finally:
         ws.chmod(0o700)
     assert report.files_removed == []
     assert ws / "completion_cache.json" in report.failures
     assert (ws / "completion_cache.json").is_file()
-
-
-def test_remove_completion_files_everywhere_collects_every_failure(tmp_path):
-    from otto.config.cache_maintenance import remove_completion_files_everywhere
-
-    ok = tmp_path / "aaaaaaaa-ok"
-    _fill_completion_dir(ok)
-    ro = tmp_path / "bbbbbbbb-ro"
-    _fill_completion_dir(ro)
-    _read_only(ro)
-    try:
-        report = remove_completion_files_everywhere(tmp_path)
-    finally:
-        ro.chmod(0o700)
-    assert ok / "completion_cache.json" in report.files_removed
-    assert ro / "completion_cache.json" in report.failures

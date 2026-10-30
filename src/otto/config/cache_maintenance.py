@@ -79,19 +79,6 @@ check that would catch this list drifting from its four source constants.
 suite is the pin instead -- it runs every time, `-O` or not.
 """
 
-COMPLETION_FILE_NAMES = [
-    *CACHE_FILE_NAMES,
-    ".completion_collect.lock",
-    ".completion_collect.failed",
-]
-"""Every completion file a workspace holds: the cache files, plus the collect lock and cooldown.
-
-What :func:`remove_completion_files` removes once the cache is off. Literals,
-pinned to ``completion_cache.COLLECT_LOCK_FILENAME`` and
-``COLLECT_COOLDOWN_FILENAME`` by
-`test_completion_file_names_match_the_source_constants`.
-"""
-
 SESSION_DIR_NAMES = ["pycache", "pytest-cache"]
 """The directories otto's pytest sessions write in a workspace: bytecode, and pytest's cache.
 
@@ -196,9 +183,8 @@ class MaintenanceReport:
     failures: "list[Path]" = field(default_factory=list)
     """Files that were there but could not be removed (permissions, or a
     directory sitting where a file's name was expected), left as they were.
-    Filled by the named-file removal behind `clear_workspace` and
-    `remove_completion_files`; `prune` reports the same case through
-    `retained_nonempty` instead."""
+    Filled by the named-file removal behind `clear_workspace`; `prune`
+    reports the same case through `retained_nonempty` instead."""
 
 
 def _dedupe(paths: "list[Path]") -> "list[Path]":
@@ -300,8 +286,7 @@ def _remove_entry(entry: Path) -> "int | None":
 def _remove_files(workspace: Path, names: "list[str]") -> MaintenanceReport:
     """Unlink each of *names* directly under *workspace*, never following a symlink.
 
-    The one removal loop behind :func:`clear_workspace` and
-    :func:`remove_completion_files`. A *workspace* that is not a real
+    The named-file half of :func:`clear_workspace`. A *workspace* that is not a real
     directory (a symlink to one, most dangerously) is refused outright, with
     an empty report. A name that is absent is skipped; one that is there but
     cannot be unlinked (permissions, a directory sitting where a file's name
@@ -323,29 +308,6 @@ def _remove_files(workspace: Path, names: "list[str]") -> MaintenanceReport:
             continue
         report.files_removed.append(f)
         report.bytes_freed += st.st_size
-    return report
-
-
-def remove_completion_files(workspace: Path) -> MaintenanceReport:
-    """Remove the completion files in *workspace*, and nothing else.
-
-    :data:`COMPLETION_FILE_NAMES` only: never the session directories, never
-    the workspace itself. Run once the cache is off, so a workspace does not
-    keep a cache nothing will read. A symlinked *workspace* is refused, and a
-    file that cannot be removed is reported in ``failures`` (see
-    :func:`_remove_files`).
-    """
-    return _remove_files(workspace, COMPLETION_FILE_NAMES)
-
-
-def remove_completion_files_everywhere(home: Path) -> MaintenanceReport:
-    """:func:`remove_completion_files` on every workspace directory under *home*."""
-    report = MaintenanceReport()
-    for workspace in _candidates(home):
-        sub = remove_completion_files(workspace)
-        report.files_removed.extend(sub.files_removed)
-        report.failures.extend(sub.failures)
-        report.bytes_freed += sub.bytes_freed
     return report
 
 

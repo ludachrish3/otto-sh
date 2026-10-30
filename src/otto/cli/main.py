@@ -1203,23 +1203,9 @@ def entry(cache_stale: bool = False) -> None:
         #
         # Writability first: it costs no key-set stats, and when no entry could
         # be stored (the cache is off, an inventory with no stable fingerprint)
-        # every root help and TAB lands here, so the validity check is skipped
-        # too.
-        if reads_cache and not _cache_is_writable(result.projects):
-            # The resolver's answer used for a side effect, not a second
-            # decision: with the cache switched off, a workspace's leftover
-            # completion files are removed. (Other reasons for "not writable"
-            # leave the files alone.) No projects, no workspace: bare
-            # `otto -h` does not read settings.toml for nothing.
-            from ..config.user_settings import cache_enabled
-
-            if result.projects and not cache_enabled().on:
-                from ..config.cache_maintenance import remove_completion_files
-                from ..config.home import workspace_home
-
-                with contextlib.suppress(OSError):
-                    remove_completion_files(workspace_home())
-        elif reads_cache:
+        # the validity check is skipped too. Off bypasses the cache and deletes
+        # nothing: old files stay until `otto cache clear` / `prune`.
+        if reads_cache and _cache_is_writable(result.projects):
             from ..config.completion_cache import cache_is_stale
             from ..config.corpus_snapshot import corpus_snapshot
 
