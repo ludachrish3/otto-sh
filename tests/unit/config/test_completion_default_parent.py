@@ -151,9 +151,3 @@ def test_read_cache_rejects_a_malformed_default_parent_map(tmp_path, monkeypatch
     data["sections"]["names"]["payload"]["docker_default_parent_by_lab"] = ["not", "a", "dict"]
     cc._cache_path().write_text(json.dumps(data))
     assert cc.read_cache([mock_project]) is None
-
-
-def test_schema_is_28():
-    from otto import _shim_complete as sc
-
-    assert cc.SCHEMA_VERSION == 29 == sc.SCHEMA

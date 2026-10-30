@@ -318,13 +318,16 @@ class JsonFileSource:
         The three classes are ``otto.config.corpus_snapshot.classify``'s,
         the one rule the console-script shim mirrors when it stats
         :meth:`stat_paths`: whatever the shim sees change, this must change
-        with, or a TAB hands over while the cache digest never moves.
+        with, or a TAB hands over while the cache digest never moves. Inside
+        a rebuild's ``corpus_snapshot()`` scope the stat is the memoized one
+        the shim's stored triple for the same path is taken from, so the two
+        are one observation; outside a scope it is a plain stat.
         """
         # Function scope: the leaf imports no otto module at import time, and
         # only the completion cache, which has loaded it already, asks.
-        from ..config.corpus_snapshot import Unreadable, classify
+        from ..config.corpus_snapshot import Unreadable, observe
 
-        st = classify(self.path)
+        st = observe(self.path)
         if st is None:
             return f"{self.path}|missing"
         if isinstance(st, Unreadable):

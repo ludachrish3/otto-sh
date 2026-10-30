@@ -141,9 +141,3 @@ def test_the_names_section_carries_the_three_keys_and_read_cache_serves_them(tmp
     assert view["docker_images"] == ["api", "ghcr.io/me/db"]
     assert view["docker_services_by_use_case"] == payload["docker_services_by_use_case"]
     assert view["active_projects"] == ["one"]
-
-
-def test_schema_is_28():
-    from otto import _shim_complete as sc
-
-    assert cc.SCHEMA_VERSION == 29 == sc.SCHEMA

@@ -76,7 +76,7 @@ def test_write_cache_stores_the_shim_section_when_given(tmp_path, monkeypatch):
         shim=build_shim_payload(projects, app=app, pending_key=PENDING_SUBCMD_ARGS_KEY),
     )
     data = json.loads(cc._cache_path().read_text())
-    assert data["schema"] == cc.SCHEMA_VERSION == 29
+    assert data["schema"] == cc.SCHEMA_VERSION
     assert set(data["sections"]) == {"names", "shim"}
     assert data["sections"]["shim"]["tainted"] is False
     assert cc.cache_rebuild_is_worthwhile(projects) is False

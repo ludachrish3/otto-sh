@@ -1155,3 +1155,33 @@ def test_the_shim_and_the_inventory_fingerprint_see_the_same_file_changes(
         if (tmp_path / "x").is_dir():
             (tmp_path / "x").chmod(0o700)
     assert shim_same == writer_same
+
+
+@pytest.mark.parametrize("source", [_json_inventory, _json_creds_store])
+def test_the_inventory_fingerprint_and_its_stored_triple_share_one_stat(
+    tmp_path, monkeypatch, source
+):
+    """Within a rebuild, the digest's fingerprint and the shim's triple are one observation.
+
+    Two stats of the same file could straddle an edit and store a triple the digest
+    never saw; one stat makes them agree whatever the order of the calls.
+    """
+    from otto.config.completion_tree import stat_triple
+    from otto.config.corpus_snapshot import corpus_snapshot
+
+    key = tmp_path / "inventory.json"
+    key.write_text("{}")
+    real_stat = os.stat
+    seen: list[str] = []
+
+    def counting_stat(path, *args, **kwargs):
+        if str(path) == str(key):
+            seen.append(str(path))
+        return real_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "stat", counting_stat)
+    src = source(key)
+    with corpus_snapshot():
+        src.fingerprint()
+        [stat_triple(p) for p in src.stat_paths()]
+    assert len(seen) == 1, seen
