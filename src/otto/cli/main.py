@@ -13,6 +13,7 @@ from typing import (
 )
 
 import typer
+from typer._click.shell_completion import ShellComplete
 from typer.core import TyperGroup
 from typing_extensions import override
 
@@ -324,6 +325,18 @@ PENDING_SUBCMD_ARGS_KEY = "_pending_subcmd_args"
 completion tree serialiser sets it to resolve each child real."""
 
 
+class _QuietCompletion(ShellComplete):
+    """Mixed in before a shell's completion class: its completers print to nowhere."""
+
+    @override
+    def complete(self) -> str:
+        import contextlib
+        import io
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            return super().complete()
+
+
 class _OttoGroup(TyperGroup):
     """Root group: registry-backed lazy dispatch + pending-token snapshot.
 
@@ -372,6 +385,27 @@ class _OttoGroup(TyperGroup):
 
         ensure_help_banner(ctx)
         return super().get_help(ctx)
+
+    @override
+    def _main_shell_completion(
+        self, ctx_args: Any, prog_name: str, complete_var: str | None = None
+    ) -> None:
+        # The completers run user code (a plugin's `autocompletion=`, the
+        # import of a lazily loaded command module), and Typer echoes
+        # `comp.complete()` into the stdout entry() points at the shell. The
+        # shell's completion class runs them with a discarded stdout and
+        # returns the words, so only the words reach the shell.
+        from typer._click.shell_completion import add_completion_class, get_completion_class
+
+        from ..config.completion_cache import COMPLETION_ENV_VAR
+
+        _, _, shell = os.environ.get(complete_var or COMPLETION_ENV_VAR, "").partition("_")
+        completer = get_completion_class(shell)
+        if completer is not None and not issubclass(completer, _QuietCompletion):
+            # The shell's class is only known here; ty cannot order a base held in a variable.
+            quiet = type(completer.__name__, (_QuietCompletion, completer), {})  # ty: ignore[unsupported-dynamic-base]
+            add_completion_class(quiet, shell)
+        super()._main_shell_completion(ctx_args, prog_name, complete_var)
 
     def _wants_real(self, ctx: Any, cmd_name: str) -> bool:
         """Return whether *cmd_name* is the invocation's actual dispatch/completion target.
@@ -1151,232 +1185,232 @@ def entry(cache_stale: bool = False) -> None:
 
     completion = is_completion_mode()
     # A TAB's stdout is the shell's: from here to exit, what user code prints
-    # (an init module on import or at exit) goes to /dev/null, and only the
-    # words click writes while `app()` runs reach the shell.
-    answer = contextlib.ExitStack()
-    shell = None
-    if completion:
-        from ..utils import answer_channel
-
-        shell = answer.enter_context(answer_channel())
-        discard_collect_refresh_request()
-    reads_cache = completion or sys.argv[1:] in ROOT_HELP_ARGV
-    if completion and not cache_stale:
-        # Completion must never traceback into the shell: any discovery
-        # failure just leaves the cache unset and falls through to the
-        # slow path below.
-        #
-        # The `names` section: every completion source except `otto test`'s
-        # NAMES and `-m` is served from it. Those two read each project's test
-        # table (`otto.config.collected_tests.completion_view`), when they
-        # need it, so `otto ho<TAB>` never looks at the test tree.
-        #
-        # Through `_cached_names_payload`, exactly as root help does: the
-        # `suppress` above covers the READ, and nothing else — the payload it
-        # installs is consumed later, inside click, where a malformed
-        # `commands` list would traceback into the shell rather than fall
-        # through to the slow path.
-        with contextlib.suppress(Exception):
-            from ..config.project import discover
-
-            set_completion_names(_cached_names_payload(discover().projects))
-    elif not completion and sys.argv[1:] in ROOT_HELP_ARGV:
-        # Root help: the same names, the same reader, contained the same way —
-        # a broken cache must cost a full load, not a traceback in front of
-        # the help screen. Completion never reaches this branch: its argv
-        # tail (`sys.argv[1:] == []`) coincides with a root-help tail, but a
-        # bash TAB is never the root help screen.
-        with contextlib.suppress(Exception):
-            from ..config.project import discover
-
-            set_completion_names(_cached_names_payload(discover().projects))
-
-    if get_completion_names() is None:
-        try:
-            result = bs.bootstrap()
-        except (FileNotFoundError, ValueError, bs.BootstrapError) as e:
-            # Env-level discovery failure (bad OTTOPATH / OTTO_* values;
-            # pydantic validation errors are ValueErrors): nothing user-specific
-            # can load, so there is no degraded help worth rendering — fail
-            # loud but CLEAN (one line, no traceback). Per-project config-data
-            # errors never reach here: discover() contains a settings file
-            # that will not parse, and bootstrap() records a bad [os_profiles]
-            # table as that project's load error, as it does a failed init module.
-            #
-            # BootstrapError joins them for the ONE variety bootstrap raises
-            # instead of containing: ``ProjectScopeError``, a project that
-            # registered providers without declaring the labs it applies to.
-            # That refusal is a message the user is meant to act on — it names
-            # the project and prints the TOML block to paste — and a traceback in
-            # front of it is noise, not information.
-            typer.echo(f"error: {e}", err=True)
-            raise SystemExit(1) from e
-        _emit_bootstrap_findings(result)
-
-        # Only the paths that READ the cache refresh it. Validating it stats
-        # every key path, and an ordinary command would pay that on every
-        # invocation for a cache it never consults: a round trip per file on
-        # a network filesystem. Completion and root help are the readers; a
-        # stale bash TAB reaches here with cache_stale set.
-        #
-        # Writability first: it costs no key-set stats, and when no entry could
-        # be stored (the cache is off, an inventory with no stable fingerprint)
-        # the validity check is skipped too. Off bypasses the cache and deletes
-        # nothing: old files stay until `otto cache clear` / `prune`.
-        if reads_cache and _cache_is_writable(result.projects):
-            from ..config.completion_cache import cache_is_stale
-            from ..config.corpus_snapshot import corpus_snapshot
-
-            # The validity check and the shim's stat triples ask about the same
-            # key paths; the scope makes that one stat per path.
-            with corpus_snapshot():
-                # Filled by the validity check, consumed by write_cache: each
-                # section's key set is hashed at most once per invocation, and
-                # the scope makes each path's stat one syscall.
-                section_digests: dict[str, str] = {}
-                if cache_is_stale(result.projects, digests=section_digests):
-                    from ..config.completion_cache import (
-                        collect_active_project_names,
-                        collect_backend_names,
-                        collect_docker_capable_host_ids,
-                        collect_docker_default_parent_by_lab,
-                        collect_docker_image_names,
-                        collect_docker_services_by_use_case,
-                        collect_docker_use_case_names,
-                        collect_host_classes_by_id,
-                        collect_host_drops,
-                        collect_host_ids,
-                        collect_host_ids_by_lab,
-                        collect_lab_names,
-                        collect_links,
-                        collect_logins_by_host,
-                        collect_project_names,
-                        collect_reservation_usernames,
-                        write_cache,
-                    )
-                    from ..config.completion_tree import build_shim_payload
-
-                    cli = _completion_collectors()
-                    instructions = cli.instructions()
-                    backends = collect_backend_names()
-                    with contextlib.suppress(OSError):
-                        write_cache(
-                            result.projects,
-                            instructions,
-                            collect_host_ids(result.projects),
-                            test_options=cli.test_options(),
-                            docker_hosts=collect_docker_capable_host_ids(result.projects),
-                            docker_use_cases=collect_docker_use_case_names(result.projects),
-                            docker_images=collect_docker_image_names(result.projects),
-                            docker_services_by_use_case=collect_docker_services_by_use_case(
-                                result.projects
-                            ),
-                            active_projects=collect_active_project_names(result.projects),
-                            term_backends=backends["term_backends"],
-                            transfer_backends=backends["transfer_backends"],
-                            usernames=collect_reservation_usernames(result.projects),
-                            commands=cli.commands(),
-                            labs=collect_lab_names(result.projects),
-                            hosts_by_lab=collect_host_ids_by_lab(result.projects),
-                            host_drops=collect_host_drops(result.projects),
-                            host_classes_by_id=collect_host_classes_by_id(result.projects),
-                            projects=collect_project_names(result.projects),
-                            links=collect_links(result.projects),
-                            logins_by_host=collect_logins_by_host(result.projects),
-                            docker_default_parent_by_lab=collect_docker_default_parent_by_lab(
-                                result.projects
-                            ),
-                            # The shim section's collector, this write's parity
-                            # reference, reads the same _completion_collectors(), so
-                            # the tree has one source and the two cannot drift.
-                            shim=build_shim_payload(
-                                result.projects, app=cli.app, pending_key=cli.pending_key
-                            ),
-                            digests=section_digests,
-                            # A contained bootstrap error means registration did not
-                            # finish, so what was just collected is a PARTIAL picture
-                            # of this workspace. Storing it untainted would serve that
-                            # partial answer from every later `--help` and TAB until
-                            # the TTL — and not even then in practice, because the
-                            # broken file's stats are stable until someone edits it,
-                            # so the digest never moves. Written-but-never-served is
-                            # what keeps the next run on the full path, where the
-                            # framed warning is printed again.
-                            #
-                            # Both sections, not just `names`. The taint is about the
-                            # WORKSPACE the collect ran against, and `errors` carries
-                            # discovery failures too: a project whose `settings.toml`
-                            # will not parse is absent from `result.projects` entirely,
-                            # so its instructions are missing from `names` and its
-                            # test table from the shim's `tables`.
-                            tainted=bool(result.errors),
-                        )
-
-    from ..errors import OttoError
-    from .invoke import print_error, render_instrumentation_refusal
-
-    try:
-        with contextlib.redirect_stdout(shell) if shell else contextlib.nullcontext():
-            app()
-    except OttoError as e:
-        # THE BOUNDARY FRAME. Every exception otto defines is a sentence
-        # written for the person who typed the command — it names the host,
-        # the project, the file to edit. A leaf that forgets to catch its own
-        # therefore does not merely look untidy: the message the taxonomy
-        # exists to deliver arrives buried under a stack trace of otto's
-        # internals, and the reader's takeaway is "otto crashed".
-        #
-        # Leaves still catch what they can say something BETTER about (a usage
-        # hint, a different exit code); this is the floor under the ones that
-        # do not, so a new pattern-walking command cannot ship with a traceback
-        # for its empty-selection case the way `otto monitor` and `otto cov`
-        # both did.
-        #
-        # Deliberately NOT a bare `except Exception`: anything that is not an
-        # OttoError is either click's own control flow (SystemExit, Exit,
-        # ClickException — none of them subclasses) or a genuine bug, and a
-        # bug's traceback is the most useful thing otto can print about it.
-        #
-        # The stack is not DESTROYED, only demoted: an OttoError raised from
-        # somewhere it has no business being is a bug, and the maintainer
-        # chasing it needs the frames. Debug logging prints them, and both log
-        # files always keep them. The files take the FULL message: a coverage
-        # refusal's plain verdict listing lives in `str(e)`, and a log file
-        # cannot hold the table the console gets instead.
-        print_traceback_if_debug()
-        from ..logger.management import record_command_failure
-
-        record_command_failure(e, f"error: {e}")
-        # A coverage refusal carries its per-product verdicts as structure as
-        # well as text; on a console those render as the rounded table and the
-        # error line keeps only the headline. Here rather than in a leaf
-        # because `otto test --cov` raises it from inside `run_tests`, which
-        # the leaf deliberately does not catch — this frame is the one place
-        # every coverage-running verb passes through. Anything else comes back
-        # as its own full message, unchanged.
-        print_error(f"error: {render_instrumentation_refusal(e)}")
-        raise SystemExit(1) from e
-    except BaseException as e:
-        # A crash, an Exception or a leaked `asyncio.CancelledError` alike: the
-        # same failure goes to both log files, written as soon as the logging
-        # listener reaches it, and `render_crash` prints it once on stderr
-        # (Typer's own pretty traceback is off) before the exit status 1.
-        #
-        # The three exits that are not failures pass untouched. Click's own
-        # control flow never lands here as anything else: in standalone mode a
-        # usage error, `typer.Exit`, `--help` and Ctrl-C all leave `app()` as
-        # SystemExit, and an interrupt otto raises itself is a
-        # KeyboardInterrupt.
-        if isinstance(e, (SystemExit, KeyboardInterrupt, GeneratorExit)):
-            raise
-        from ..logger.management import record_command_failure
-
-        record_command_failure(e, f"uncaught {type(e).__name__} ended the command")
-        render_crash(e)
-        raise SystemExit(1) from e
-    finally:
+    # (an init module on import or at exit, a completer during the TAB) goes
+    # to /dev/null, and only the words click writes reach the shell. The
+    # completers run under _QuietCompletion's discarded stdout.
+    with contextlib.ExitStack() as answer:
+        shell = None
         if completion:
-            # After the answer is printed: a completer that answered from a
-            # table with moved files asked for the refresh behind it.
-            spawn_requested_refresh()
-        answer.close()
+            from ..utils import answer_channel
+
+            shell = answer.enter_context(answer_channel())
+            discard_collect_refresh_request()
+        reads_cache = completion or sys.argv[1:] in ROOT_HELP_ARGV
+        if completion and not cache_stale:
+            # Completion must never traceback into the shell: any discovery
+            # failure just leaves the cache unset and falls through to the
+            # slow path below.
+            #
+            # The `names` section: every completion source except `otto test`'s
+            # NAMES and `-m` is served from it. Those two read each project's test
+            # table (`otto.config.collected_tests.completion_view`), when they
+            # need it, so `otto ho<TAB>` never looks at the test tree.
+            #
+            # Through `_cached_names_payload`, exactly as root help does: the
+            # `suppress` above covers the READ, and nothing else — the payload it
+            # installs is consumed later, inside click, where a malformed
+            # `commands` list would traceback into the shell rather than fall
+            # through to the slow path.
+            with contextlib.suppress(Exception):
+                from ..config.project import discover
+
+                set_completion_names(_cached_names_payload(discover().projects))
+        elif not completion and sys.argv[1:] in ROOT_HELP_ARGV:
+            # Root help: the same names, the same reader, contained the same way —
+            # a broken cache must cost a full load, not a traceback in front of
+            # the help screen. Completion never reaches this branch: its argv
+            # tail (`sys.argv[1:] == []`) coincides with a root-help tail, but a
+            # bash TAB is never the root help screen.
+            with contextlib.suppress(Exception):
+                from ..config.project import discover
+
+                set_completion_names(_cached_names_payload(discover().projects))
+
+        if get_completion_names() is None:
+            try:
+                result = bs.bootstrap()
+            except (FileNotFoundError, ValueError, bs.BootstrapError) as e:
+                # Env-level discovery failure (bad OTTOPATH / OTTO_* values;
+                # pydantic validation errors are ValueErrors): nothing user-specific
+                # can load, so there is no degraded help worth rendering — fail
+                # loud but CLEAN (one line, no traceback). Per-project config-data
+                # errors never reach here: discover() contains a settings file
+                # that will not parse, and bootstrap() records a bad [os_profiles]
+                # table as that project's load error, as it does a failed init module.
+                #
+                # BootstrapError joins them for the ONE variety bootstrap raises
+                # instead of containing: ``ProjectScopeError``, a project that
+                # registered providers without declaring the labs it applies to.
+                # That refusal is a message the user is meant to act on — it names
+                # the project and prints the TOML block to paste — and a traceback in
+                # front of it is noise, not information.
+                typer.echo(f"error: {e}", err=True)
+                raise SystemExit(1) from e
+            _emit_bootstrap_findings(result)
+
+            # Only the paths that READ the cache refresh it. Validating it stats
+            # every key path, and an ordinary command would pay that on every
+            # invocation for a cache it never consults: a round trip per file on
+            # a network filesystem. Completion and root help are the readers; a
+            # stale bash TAB reaches here with cache_stale set.
+            #
+            # Writability first: it costs no key-set stats, and when no entry could
+            # be stored (the cache is off, an inventory with no stable fingerprint)
+            # the validity check is skipped too. Off bypasses the cache and deletes
+            # nothing: old files stay until `otto cache clear` / `prune`.
+            if reads_cache and _cache_is_writable(result.projects):
+                from ..config.completion_cache import cache_is_stale
+                from ..config.corpus_snapshot import corpus_snapshot
+
+                # The validity check and the shim's stat triples ask about the same
+                # key paths; the scope makes that one stat per path.
+                with corpus_snapshot():
+                    # Filled by the validity check, consumed by write_cache: each
+                    # section's key set is hashed at most once per invocation, and
+                    # the scope makes each path's stat one syscall.
+                    section_digests: dict[str, str] = {}
+                    if cache_is_stale(result.projects, digests=section_digests):
+                        from ..config.completion_cache import (
+                            collect_active_project_names,
+                            collect_backend_names,
+                            collect_docker_capable_host_ids,
+                            collect_docker_default_parent_by_lab,
+                            collect_docker_image_names,
+                            collect_docker_services_by_use_case,
+                            collect_docker_use_case_names,
+                            collect_host_classes_by_id,
+                            collect_host_drops,
+                            collect_host_ids,
+                            collect_host_ids_by_lab,
+                            collect_lab_names,
+                            collect_links,
+                            collect_logins_by_host,
+                            collect_project_names,
+                            collect_reservation_usernames,
+                            write_cache,
+                        )
+                        from ..config.completion_tree import build_shim_payload
+
+                        cli = _completion_collectors()
+                        instructions = cli.instructions()
+                        backends = collect_backend_names()
+                        with contextlib.suppress(OSError):
+                            write_cache(
+                                result.projects,
+                                instructions,
+                                collect_host_ids(result.projects),
+                                test_options=cli.test_options(),
+                                docker_hosts=collect_docker_capable_host_ids(result.projects),
+                                docker_use_cases=collect_docker_use_case_names(result.projects),
+                                docker_images=collect_docker_image_names(result.projects),
+                                docker_services_by_use_case=collect_docker_services_by_use_case(
+                                    result.projects
+                                ),
+                                active_projects=collect_active_project_names(result.projects),
+                                term_backends=backends["term_backends"],
+                                transfer_backends=backends["transfer_backends"],
+                                usernames=collect_reservation_usernames(result.projects),
+                                commands=cli.commands(),
+                                labs=collect_lab_names(result.projects),
+                                hosts_by_lab=collect_host_ids_by_lab(result.projects),
+                                host_drops=collect_host_drops(result.projects),
+                                host_classes_by_id=collect_host_classes_by_id(result.projects),
+                                projects=collect_project_names(result.projects),
+                                links=collect_links(result.projects),
+                                logins_by_host=collect_logins_by_host(result.projects),
+                                docker_default_parent_by_lab=collect_docker_default_parent_by_lab(
+                                    result.projects
+                                ),
+                                # The shim section's collector, this write's parity
+                                # reference, reads the same _completion_collectors(), so
+                                # the tree has one source and the two cannot drift.
+                                shim=build_shim_payload(
+                                    result.projects, app=cli.app, pending_key=cli.pending_key
+                                ),
+                                digests=section_digests,
+                                # A contained bootstrap error means registration did not
+                                # finish, so what was just collected is a PARTIAL picture
+                                # of this workspace. Storing it untainted would serve that
+                                # partial answer from every later `--help` and TAB until
+                                # the TTL — and not even then in practice, because the
+                                # broken file's stats are stable until someone edits it,
+                                # so the digest never moves. Written-but-never-served is
+                                # what keeps the next run on the full path, where the
+                                # framed warning is printed again.
+                                #
+                                # Both sections, not just `names`. The taint is about the
+                                # WORKSPACE the collect ran against, and `errors` carries
+                                # discovery failures too: a project whose `settings.toml`
+                                # will not parse is absent from `result.projects` entirely,
+                                # so its instructions are missing from `names` and its
+                                # test table from the shim's `tables`.
+                                tainted=bool(result.errors),
+                            )
+
+        from ..errors import OttoError
+        from .invoke import print_error, render_instrumentation_refusal
+
+        try:
+            with contextlib.redirect_stdout(shell) if shell else contextlib.nullcontext():
+                app()
+        except OttoError as e:
+            # THE BOUNDARY FRAME. Every exception otto defines is a sentence
+            # written for the person who typed the command — it names the host,
+            # the project, the file to edit. A leaf that forgets to catch its own
+            # therefore does not merely look untidy: the message the taxonomy
+            # exists to deliver arrives buried under a stack trace of otto's
+            # internals, and the reader's takeaway is "otto crashed".
+            #
+            # Leaves still catch what they can say something BETTER about (a usage
+            # hint, a different exit code); this is the floor under the ones that
+            # do not, so a new pattern-walking command cannot ship with a traceback
+            # for its empty-selection case the way `otto monitor` and `otto cov`
+            # both did.
+            #
+            # Deliberately NOT a bare `except Exception`: anything that is not an
+            # OttoError is either click's own control flow (SystemExit, Exit,
+            # ClickException — none of them subclasses) or a genuine bug, and a
+            # bug's traceback is the most useful thing otto can print about it.
+            #
+            # The stack is not DESTROYED, only demoted: an OttoError raised from
+            # somewhere it has no business being is a bug, and the maintainer
+            # chasing it needs the frames. Debug logging prints them, and both log
+            # files always keep them. The files take the FULL message: a coverage
+            # refusal's plain verdict listing lives in `str(e)`, and a log file
+            # cannot hold the table the console gets instead.
+            print_traceback_if_debug()
+            from ..logger.management import record_command_failure
+
+            record_command_failure(e, f"error: {e}")
+            # A coverage refusal carries its per-product verdicts as structure as
+            # well as text; on a console those render as the rounded table and the
+            # error line keeps only the headline. Here rather than in a leaf
+            # because `otto test --cov` raises it from inside `run_tests`, which
+            # the leaf deliberately does not catch — this frame is the one place
+            # every coverage-running verb passes through. Anything else comes back
+            # as its own full message, unchanged.
+            print_error(f"error: {render_instrumentation_refusal(e)}")
+            raise SystemExit(1) from e
+        except BaseException as e:
+            # A crash, an Exception or a leaked `asyncio.CancelledError` alike: the
+            # same failure goes to both log files, written as soon as the logging
+            # listener reaches it, and `render_crash` prints it once on stderr
+            # (Typer's own pretty traceback is off) before the exit status 1.
+            #
+            # The three exits that are not failures pass untouched. Click's own
+            # control flow never lands here as anything else: in standalone mode a
+            # usage error, `typer.Exit`, `--help` and Ctrl-C all leave `app()` as
+            # SystemExit, and an interrupt otto raises itself is a
+            # KeyboardInterrupt.
+            if isinstance(e, (SystemExit, KeyboardInterrupt, GeneratorExit)):
+                raise
+            from ..logger.management import record_command_failure
+
+            record_command_failure(e, f"uncaught {type(e).__name__} ended the command")
+            render_crash(e)
+            raise SystemExit(1) from e
+        finally:
+            if completion:
+                # After the answer is printed: a completer that answered from a
+                # table with moved files asked for the refresh behind it.
+                spawn_requested_refresh()

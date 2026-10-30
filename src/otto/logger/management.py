@@ -32,7 +32,6 @@ import atexit
 import contextlib
 import copy
 import logging
-import os
 import re
 import sys
 import threading
@@ -857,13 +856,11 @@ def _silence_broken_process_streams() -> None:
         if real is None or route.target is not real:
             continue
         route.silenced = True
+        # Function scope: this runs only after a broken pipe.
+        from ..utils import point_at_devnull
+
         try:
-            fd = real.fileno()
-            devnull = os.open(os.devnull, os.O_WRONLY)
-            try:
-                os.dup2(devnull, fd)
-            finally:
-                os.close(devnull)
+            point_at_devnull(real.fileno())
         except (OSError, ValueError):
             continue
 

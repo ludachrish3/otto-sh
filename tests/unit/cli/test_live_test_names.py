@@ -21,8 +21,8 @@ from otto.config import collected_tests as ct
 from otto.config import completion_cache as cc
 from otto.config.cache_maintenance import CACHE_FILE_NAMES, MARKER_FILENAMES
 from otto.config.env import is_otto_env_var
-from otto.config.user_settings import clear_user_settings_memo, user_settings_path
 from tests._fixtures.generated_project import generate_project
+from tests._fixtures.user_settings import set_cache_enabled
 
 _OTTO = Path(sys.executable).with_name("otto")
 
@@ -50,8 +50,7 @@ def off_project(tmp_path, monkeypatch):
     home.mkdir()
     monkeypatch.setenv("OTTOPATH", str(project))
     monkeypatch.setenv("OTTO_HOME", str(home))
-    user_settings_path().write_text("[cache]\nenabled = false\n")
-    clear_user_settings_memo()
+    set_cache_enabled(False)
     bootstrap.invalidate()
     assert cc._cache_path() is None
     yield project, home
@@ -120,8 +119,7 @@ def two_projects(tmp_path, monkeypatch):
 
 def _settle(*, on: bool) -> ct.CompletionView:
     """The answer a test-name TAB settles on: off is live every time; on, the TAB after the seed."""
-    user_settings_path().write_text(f"[cache]\nenabled = {'true' if on else 'false'}\n")
-    clear_user_settings_memo()
+    set_cache_enabled(on)
     assert (cc._cache_path() is not None) is on
     view = ct.completion_view(_projects())
     return ct.completion_view(_projects()) if on else view
@@ -166,12 +164,39 @@ def test_output_from_an_init_module_never_reaches_a_full_path_tab(off_project, o
         + "\nimport atexit\nprint('hello at import')\n"
         + "atexit.register(lambda: print('bye from atexit'))\n"
     )
-    user_settings_path().write_text(f"[cache]\nenabled = {'true' if on else 'false'}\n")
+    set_cache_enabled(on)
     env = _env(project, home)
     for words, cword, expected in (("otto ", 1, "test"), ("otto test ", 2, "test_live_one")):
         offered = _real_tab(env, words, cword)
         assert expected in offered
         assert not {"hello", "bye", "atexit", "import"} & set(offered), offered
+
+
+_NOISY_COMMAND = """
+from typing import Annotated
+
+import typer
+
+from otto.cli.registry import cli_command
+
+
+def _noisy_words(incomplete: str) -> list[str]:
+    print("noisy completer")
+    return ["alpha", "beta"]
+
+
+@cli_command(name="noisy")
+async def noisy(word: Annotated[str, typer.Argument(autocompletion=_noisy_words)] = "") -> None:
+    pass
+"""
+
+
+def test_a_completer_that_prints_offers_only_its_words(off_project):
+    """User code that runs during the TAB itself, a completer here, prints to ``/dev/null`` too."""
+    project, home = off_project
+    init = project / "pylib" / "genproject_instructions.py"
+    init.write_text(init.read_text() + _NOISY_COMMAND)
+    assert _real_tab(_env(project, home), "otto noisy ", 2) == ["alpha", "beta"]
 
 
 def test_a_project_that_cannot_collect_costs_only_its_own_names_on_and_off(two_projects):

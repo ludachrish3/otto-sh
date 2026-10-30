@@ -727,7 +727,9 @@ path = "otto.logger"
 layer = "foundation"
 # otto.layout: where each run's directory goes (command_output_dir) and the
 # one directory pruning walks (output_root). A pure leaf, so no cycle.
-depends_on = ["otto.console", "otto.layout"]
+# otto.utils: a broken process pipe is pointed at /dev/null
+# (point_at_devnull), the one sequence a completing TAB uses too.
+depends_on = ["otto.console", "otto.layout", "otto.utils"]
 
 [[modules]]
 path = "otto.models"

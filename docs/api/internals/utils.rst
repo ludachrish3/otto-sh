@@ -13,6 +13,8 @@ and the reference can link them. The public names are on :doc:`/api/utils`.
 
 .. autofunction:: otto.utils.answer_channel
 
+.. autofunction:: otto.utils.point_at_devnull
+
 .. autofunction:: otto.utils.ottopath_entries
 
 .. autofunction:: otto.utils.root_key

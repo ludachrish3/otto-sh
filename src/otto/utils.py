@@ -220,14 +220,25 @@ def answer_channel() -> Iterator[TextIO]:
     to ``/dev/null``; only what is written to the yielded stream reaches the
     reader. fd 1 is never given back: a print after the answer would land
     behind it in the reader's pipe. The stream is closed on exit.
+
+    An in-process caller under pytest reads the answer with ``capfd``, whose
+    teardown also gives the test process its fd 1 back; without fd-level
+    capture the rest of the session's stdout would go to ``/dev/null``.
     """
     sys.stdout.flush()
     out = os.dup(1)
-    devnull = os.open(os.devnull, os.O_WRONLY)
-    os.dup2(devnull, 1)
-    os.close(devnull)
+    point_at_devnull(1)
     with os.fdopen(out, "w", encoding="utf-8") as channel:
         yield channel
+
+
+def point_at_devnull(fd: int) -> None:
+    """Make descriptor *fd* write to ``/dev/null`` from now on."""
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(devnull, fd)
+    finally:
+        os.close(devnull)
 
 
 def parse_cache_ttl(text: str) -> timedelta:
