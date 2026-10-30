@@ -11,6 +11,9 @@ that answers from it is on {doc}`completion`, the user-facing commands that
 inspect and delete it are on {doc}`../../cli/cache/index`, and what a user
 sees of the test names is on {doc}`../../cli/test/selection`.
 
+The cache can be switched off, per user, with `[cache] enabled = false`; see
+[Turning the cache off](../../cli/cache/index.md#turning-the-cache-off).
+
 ## Why there is a cache
 
 A TAB keystroke and `otto --help` both need the names your projects register.

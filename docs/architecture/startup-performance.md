@@ -378,6 +378,9 @@ How to run the budget and regenerate its ceilings is in
 
 ## The cache's economics on a network filesystem
 
+To measure what the cache saves on your own project, or to run without it,
+see [Turning the cache off](../cli/cache/index.md#turning-the-cache-off).
+
 A cache only pays for itself on a network filesystem if *validating* it
 touches asymptotically fewer files than *rebuilding* it — otherwise you've
 traded one round-trip cost for another with bookkeeping on top. otto's

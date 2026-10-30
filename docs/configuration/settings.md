@@ -308,8 +308,8 @@ fails validation, naming the file and pointing here.
 
 One file sits outside every project root: `~/.otto/settings.toml`, otto's
 **user-level** settings.  It holds what is true of the person and the machine
-rather than of a project — today that is two tables, `[inventory]` and
-`[creds]`:
+rather than of a project — today that is three tables, `[inventory]`,
+`[creds]` and `[cache]`:
 
 ```toml
 [inventory]
@@ -319,13 +319,21 @@ path = "~/lab/inventory.json"
 [creds]
 backend = "json"
 path = "~/.otto/creds.json"
+
+[cache]
+enabled = false   # default true; false turns otto's cache off
 ```
 
-Otto neither creates nor scaffolds this file; write it by hand when you adopt
-an inventory.  It lives under otto's home, so `OTTO_HOME` relocates it along
+Otto scaffolds nothing here: write the file by hand when you adopt an
+inventory. (The one verb that creates it is `otto cache disable`, which
+writes the `[cache]` table.)  It lives under otto's home, so `OTTO_HOME` relocates it along
 with everything else there, and a relative path inside it anchors to that
 directory (`~/.otto`) rather than to any project.  A project-only table pasted into
 it is an error naming the key — this file is not a second `settings.toml`.
+
+`[cache]` takes one key, `enabled`, and is otto's own rather than a
+backend's. What turning it off covers and how to flip it is on
+[Turning the cache off](../cli/cache/index.md#turning-the-cache-off).
 
 Each table's keys other than `backend` (and `cache_ttl` for `[inventory]`)
 belong to the selected backend, which parses them when the table is read.  A

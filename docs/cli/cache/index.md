@@ -18,6 +18,8 @@ when otto trusts it, and which invocations rebuild it is explained on
 
 ```text
 otto cache info
+otto cache enable
+otto cache disable
 otto cache clear [--all]
 otto cache prune [--age DAYS] [--dry-run]
 ```
@@ -25,6 +27,8 @@ otto cache prune [--age DAYS] [--dry-run]
 | Subcommand | Description |
 | ---------- | ----------- |
 | `info` | List every workspace under the home, oldest cache first: key, cache size (the two session directories included), cache age, whether an `env/` virtualenv lives there, and any other entries |
+| `enable` | Turn the cache on: set `[cache] enabled = true` in the user settings file where a `[cache]` table exists; never creates the file |
+| `disable` | Turn the cache off: write `[cache] enabled = false` and remove every workspace's completion files. See [Turning the cache off](#turning-the-cache-off) |
 | `clear` | Remove **this** workspace's cache files and session directories (the workspace `OTTOPATH` resolves to); never removes the workspace directory itself. `--all` clears every workspace regardless of age |
 | `prune` | Remove cache files older than `--age` days (default 60) across every workspace, and the session directories of each workspace left with no younger cache file; `--dry-run` reports what would be removed without touching anything |
 
@@ -55,6 +59,7 @@ was.
 
 ```console
 $ otto cache info
+cache: on (default)
 home: ~/.otto (default)
 ╭────────────────────────────┬────────────┬───────────┬──────┬───────────────╮
 │ key                        │ cache size │ cache age │ env? │ extra entries │
@@ -76,6 +81,12 @@ this workspace: e5f6a7b8-project3
   dropped: 1 — not offered, and why:
     [project3] /home/me/project3/hosts.json: element 'dut3' hosts[0]: inventory key 'dut-3' ...
 ```
+
+The first line is the cache switch: `cache: on` or `cache: off`, then in
+parentheses where that was decided: `default` (nothing set it),
+`settings.toml: <path>` (the user settings file says so), or, when that file
+does not parse or validate, the one-line error itself, since a broken file
+means the cache is off.
 
 The home line names the resolved path and says whether `$OTTO_HOME` decided it
 — `(default)` above, or `(from $OTTO_HOME)` when that variable is set (and
@@ -140,6 +151,82 @@ did not answer in time. The block reads the entry whatever its standing — a
 stale entry still records the last enumeration, which is what the question is
 about — and says `hosts offered: unknown` when no entry has been written yet.
 Without a workspace (no `OTTOPATH`) the listing above is all there is.
+
+## enable and disable
+
+```console
+$ otto cache disable
+cache: off (settings.toml: ~/.otto/settings.toml)
+~/.otto/settings.toml
+removed ~/.otto/13739bf0-project1/completion_cache.json
+removed ~/.otto/13739bf0-project1/completion_cache.names.ok
+$ otto cache enable
+cache: on (settings.toml: ~/.otto/settings.toml)
+~/.otto/settings.toml
+```
+
+`disable` writes `[cache] enabled = false` into the user settings file
+({doc}`../../configuration/settings`), creating the file and the table when
+they are missing, and edits in place, so comments and other tables are kept.
+It then removes the completion files of **every** workspace under the home:
+`completion_cache.json`, `remote_completion_cache.json`, the two marker files
+`completion_cache.names.ok` and `completion_cache.tests.ok`, and the collect
+child's `.completion_collect.lock` and `.completion_collect.failed`. It
+prints the new state, the settings file path and one line per file removed
+(`nothing to remove` when none were left).
+
+`enable` sets `enabled = true` only where a `[cache]` table already exists
+and never creates a file, since no table already means on. Both verbs are
+idempotent, and both refuse a settings file that does not parse or validate:
+they print its one-line error, exit 1 and leave the file as it was.
+`clear` and `prune` work whether the cache is on or off.
+
+## Turning the cache off
+
+`[cache] enabled = false` in the user settings file (`$OTTO_HOME/settings.toml`,
+else `~/.otto/settings.toml`) turns otto's cache off; the default is on.
+`otto cache disable` and `otto cache enable` are the verbs for it, and
+`otto cache info` shows the state on its first line.
+
+**What off covers.** The completion cache file, its two marker files, the
+collect child's lock and cooldown files, the remote-path sidecar, and
+`otto test`'s change tracking: every `otto test` run collects the whole test
+tree.
+
+**What it does not.** `pycache/` and `pytest-cache/` stay: they keep bytecode
+out of test directories, which is not a cache you can do without. The
+inventory snapshot has its own switch, `cache_ttl = "0"`
+(see {doc}`../../configuration/inventory`).
+
+**Consequences.**
+
+- `otto -h` and every TAB take the full path.
+- Test-name and docker completion offer only what is computed live.
+- `otto test` collects everything on every run.
+- Each root help or full-path TAB also pays to resolve the workspace plus up
+  to 8 file checks to remove leftovers.
+
+**When it takes effect.** `otto cache disable` applies at once everywhere. A
+hand edit of `settings.toml` reaches TAB at its next stat pass, within about
+60 seconds. A settings file that does not parse or validate means the cache is
+off, and `otto cache info` shows why.
+
+**Comparing with and without the cache.** Count file operations, never wall
+clock:
+
+```console
+$ otto cache disable
+$ strace -c -f -e trace=%file otto -h > /dev/null
+$ otto cache enable
+$ otto -h > /dev/null          # rebuilds the cache: disable removed it
+$ strace -c -f -e trace=%file otto -h > /dev/null
+```
+
+The gap is about 500 file operations on the import budget's reference
+project: its ceilings in
+[`3.12.json`](https://github.com/ludachrish3/otto-sh/blob/main/tests/unit/import_budget/ceilings/3.12.json) allow
+about 3.3k for `help_project` (cache off, the full path) against about 2.8k
+for `help_project_warm` (cache warm), at the time of writing.
 
 ## clear
 
