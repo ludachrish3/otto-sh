@@ -1107,15 +1107,17 @@ def _hermetic_known_hosts(_hermetic_known_hosts_file: Path) -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
-def _reset_user_settings_memo():
+def _reset_user_settings_memo(_hermetic_otto_home: None):
     """Drop the memoized user-settings read, and any settings file, around every test.
 
     ``_hermetic_otto_home`` is ONE directory per xdist worker, so every test
     on a worker shares the same memo key and the same ``settings.toml`` path:
     a read cached by, or a file left behind by, an earlier test (say
     ``[cache] enabled = false``) would answer for this one. The file is
-    removed after each test as well as before the first, so no test anywhere
-    can leave it for the next.
+    removed before and after every test, so no test anywhere
+    can leave it for the next. It requests ``_hermetic_otto_home`` so the
+    unlink can never reach the real ``~/.otto/settings.toml``, whatever order
+    the autouse fixtures happen to run in.
     """
     from otto.config.user_settings import clear_user_settings_memo, user_settings_path
 

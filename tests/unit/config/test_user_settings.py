@@ -6,6 +6,7 @@ from otto.config.user_settings import (
     CACHE_ENABLED_KEY,
     CACHE_TABLE,
     CacheSetting,
+    _memo,
     cache_enabled,
     clear_user_settings_memo,
     load_user_settings,
@@ -97,7 +98,7 @@ def test_parses_creds_table(tmp_path):
 
 
 def _own_file(body):
-    """Write the default-path user settings file of this test's private OTTO_HOME."""
+    """Write the default-path user settings file of this worker's shared hermetic OTTO_HOME."""
     p = user_settings_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(body)  # scaffold-exempt: user-level ~/.otto file, not a project
@@ -149,6 +150,7 @@ def test_unknown_cache_key_resolves_off():
     s = cache_enabled()
     assert not s.on
     assert "enable" in s.source
+    assert "Extra inputs are not permitted" in s.source
 
 
 def test_the_settings_file_is_read_once_per_process(monkeypatch):
@@ -193,3 +195,10 @@ def test_an_explicit_path_bypasses_the_memo(tmp_path):
     assert second is not None
     assert second.cache is not None
     assert second.cache.enabled
+
+
+def test_the_memo_holds_one_entry_across_homes(tmp_path, monkeypatch):
+    for name in ("a", "b"):
+        monkeypatch.setenv("OTTO_HOME", str(tmp_path / name))
+        assert load_user_settings() is None
+    assert list(_memo) == [tmp_path / "b" / "settings.toml"]
