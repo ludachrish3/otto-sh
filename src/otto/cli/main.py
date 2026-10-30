@@ -393,18 +393,18 @@ class _OttoGroup(TyperGroup):
         # The completers run user code (a plugin's `autocompletion=`, the
         # import of a lazily loaded command module), and Typer echoes
         # `comp.complete()` into the stdout entry() points at the shell. The
-        # shell's completion class runs them with a discarded stdout and
-        # returns the words, so only the words reach the shell.
+        # completion class of every shell Typer serves runs them with a
+        # discarded stdout and returns the words, so only the words reach the
+        # shell. Every shell, so this never re-derives which one was asked.
         from typer._click.shell_completion import add_completion_class, get_completion_class
+        from typer._completion_shared import Shells
 
-        from ..config.completion_cache import COMPLETION_ENV_VAR
-
-        _, _, shell = os.environ.get(complete_var or COMPLETION_ENV_VAR, "").partition("_")
-        completer = get_completion_class(shell)
-        if completer is not None and not issubclass(completer, _QuietCompletion):
-            # The shell's class is only known here; ty cannot order a base held in a variable.
-            quiet = type(completer.__name__, (_QuietCompletion, completer), {})  # ty: ignore[unsupported-dynamic-base]
-            add_completion_class(quiet, shell)
+        for shell in Shells:
+            completer = get_completion_class(shell.value)
+            if completer is not None and not issubclass(completer, _QuietCompletion):
+                # The class is only known here; ty cannot order a base held in a variable.
+                quiet = type(completer.__name__, (_QuietCompletion, completer), {})  # ty: ignore[unsupported-dynamic-base]
+                add_completion_class(quiet, shell.value)
         super()._main_shell_completion(ctx_args, prog_name, complete_var)
 
     def _wants_real(self, ctx: Any, cmd_name: str) -> bool:

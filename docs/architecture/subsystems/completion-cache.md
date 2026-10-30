@@ -27,9 +27,12 @@ list the shell is parsing.
 When a TAB does run user code (a cold cache, or the cache off), what that
 code prints never reaches the shell. A completing `otto` sends its stdout to
 `/dev/null` before it loads anything and writes its answer through a
-descriptor saved beforehand ({func}`~otto.utils.answer_channel`). A print on
-import, during the TAB or at exit (an `atexit` handler) goes nowhere. The
-live collect child below answers its parent the same way.
+descriptor saved beforehand ({func}`~otto.utils.answer_channel`), so a print
+on import or at exit (an `atexit` handler) goes nowhere. The completers that
+run during the TAB (a plugin's `autocompletion=` callback, the import of a
+lazily loaded command module) run with their stdout discarded, and only the
+words they return are written to that descriptor. The live collect child
+below answers its parent the same way.
 
 The other constraint is the filesystem. On a network filesystem every path
 syscall costs a round trip to the server, so wall time is roughly the round

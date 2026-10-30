@@ -191,12 +191,41 @@ async def noisy(word: Annotated[str, typer.Argument(autocompletion=_noisy_words)
 """
 
 
+_NOISY_LAZY_MODULE = """
+from typing import Annotated
+
+import typer
+
+print("noisy at import")
+
+
+def _words(incomplete: str) -> list[str]:
+    print("noisy completer")
+    return ["gamma"]
+
+
+async def lazy(word: Annotated[str, typer.Argument(autocompletion=_words)] = "") -> None:
+    pass
+"""
+
+
 def test_a_completer_that_prints_offers_only_its_words(off_project):
-    """User code that runs during the TAB itself, a completer here, prints to ``/dev/null`` too."""
+    """User code that runs during the TAB itself prints to ``/dev/null`` too.
+
+    A completer, and a command module imported only when its name is completed.
+    """
     project, home = off_project
     init = project / "pylib" / "genproject_instructions.py"
-    init.write_text(init.read_text() + _NOISY_COMMAND)
-    assert _real_tab(_env(project, home), "otto noisy ", 2) == ["alpha", "beta"]
+    (project / "pylib" / "noisy_lazy.py").write_text(_NOISY_LAZY_MODULE)
+    init.write_text(
+        init.read_text()
+        + _NOISY_COMMAND
+        + "\nfrom otto.cli.registry import register_cli_command\n"
+        + 'register_cli_command("lazy", "noisy_lazy:lazy", help="Lazily loaded.")\n'
+    )
+    env = _env(project, home)
+    assert _real_tab(env, "otto noisy ", 2) == ["alpha", "beta"]
+    assert _real_tab(env, "otto lazy ", 2) == ["gamma"]
 
 
 def test_a_project_that_cannot_collect_costs_only_its_own_names_on_and_off(two_projects):
