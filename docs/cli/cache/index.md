@@ -30,7 +30,7 @@ otto cache prune [--age DAYS] [--dry-run]
 | ---------- | ----------- |
 | `info` | List every workspace under the home, oldest cache first: key, cache size (the two session directories included), cache age, whether an `env/` virtualenv lives there, and any other entries |
 | `enable` | Turn the cache on: set `[cache] enabled = true` in the user settings file where a `[cache]` table exists, even an empty one; never creates the file |
-| `disable` | Turn the cache off: write `[cache] enabled = false`. Deletes nothing; old cache files stay until `clear` or `prune`. See [Turning the cache off](#turning-the-cache-off) |
+| `disable` | Turn the cache off: write `[cache] enabled = false`. See [Turning the cache off](#turning-the-cache-off) |
 | `clear` | Remove **this** workspace's cache files and session directories (the workspace `OTTOPATH` resolves to); never removes the workspace directory itself. `--all` clears every workspace regardless of age |
 | `prune` | Remove cache files older than `--age` days (default 60) across every workspace, and the session directories of each workspace left with no younger cache file; `--dry-run` reports what would be removed without touching anything |
 
@@ -200,7 +200,9 @@ cache was on stay where they are, unread, until `otto cache clear` or
 `otto cache prune` removes them.
 
 **What it does not.** `pycache/` and `pytest-cache/` stay: they keep bytecode
-out of test directories, which is not a cache you can do without. The
+out of test directories, which is not a cache you can do without. So a
+workspace's directory still appears under the home once its tests are run or
+collected, holding only those two. The
 inventory snapshot has its own switch, `cache_ttl = "0"`
 (see {doc}`../../configuration/inventory`).
 

@@ -401,12 +401,6 @@ def test_serialize_options_returns_none_on_unsupported() -> None:
     assert cc.serialize_options(source, command_name="source") is None
 
 
-def test_clear_cache_returns_false_when_missing(tmp_path: Path, monkeypatch) -> None:
-    """clear_cache reports False when there's nothing to remove."""
-    monkeypatch.setenv("OTTO_HOME", str(tmp_path))
-    assert cc.clear_cache() is False
-
-
 # ---------------------------------------------------------------------------
 # collect_current_commands — reads otto.instruction_catalog.INSTRUCTIONS
 # ---------------------------------------------------------------------------
@@ -483,17 +477,6 @@ class TestCollectCurrentCommands:
 
         entry = next(e for e in instructions if e["name"] == "_cc_probe_bad")
         assert entry["options"] == []
-
-
-def test_clear_cache_removes_existing(tmp_path: Path, monkeypatch) -> None:
-    """clear_cache unlinks a present cache file and reports True."""
-    monkeypatch.setenv("OTTO_HOME", str(tmp_path))
-    path = cc._cache_path()
-    assert path is not None
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("{}")
-    assert cc.clear_cache() is True
-    assert not path.exists()
 
 
 def test_collect_backend_names_includes_builtins():

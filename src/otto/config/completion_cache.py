@@ -386,23 +386,6 @@ def _cache_path(home: Path | None = None) -> Path | None:
     return (home if home is not None else workspace_home()) / CACHE_FILENAME
 
 
-def clear_cache() -> bool:
-    """Delete the completion cache file if it exists.
-
-    Returns True if a file was removed, False otherwise. Surface for
-    ``otto cache clear``.
-    """
-    cache_path = _cache_path()
-    if cache_path is None or not cache_path.is_file():
-        return False
-    try:
-        cache_path.unlink()
-    except OSError:
-        return False
-    else:
-        return True
-
-
 def resolved_init_paths(project: "Project") -> list[Path]:
     """Every ``.py`` file one of *project*'s ``init`` names resolves to under ``libs``.
 
@@ -2502,7 +2485,8 @@ def run_live_collect_child() -> "dict[str, list[str]] | None":
 
     For a completer with the cache off: nothing is read or written for the
     cache (no lock, no cooldown, no marker, no table). The child starts in a
-    scratch directory removed afterwards, is bounded by the same cap as the
+    scratch directory removed afterwards (one that will not go is left, the
+    answer kept), is bounded by the same cap as the
     stored-tables mode, and prints ``{"names": [...], "markers": [...]}``,
     each a list of strings, a project it could not collect contributing
     none. With no cooldown, a collection that runs past the cap costs it on
@@ -2514,7 +2498,11 @@ def run_live_collect_child() -> "dict[str, list[str]] | None":
     import tempfile
 
     try:
-        with tempfile.TemporaryDirectory(prefix="otto-collect-") as scratch:
+        # A scratch dir that will not go (EBUSY, an NFS silly-rename) is litter
+        # in the temp dir, not a failed collection: keep the child's answer.
+        with tempfile.TemporaryDirectory(
+            prefix="otto-collect-", ignore_cleanup_errors=True
+        ) as scratch:
             command = _collect_child_command(Path(scratch), mode=DUMP_TESTS_LIVE)
             if command is None:
                 return None

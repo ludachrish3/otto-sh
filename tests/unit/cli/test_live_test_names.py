@@ -283,3 +283,41 @@ def test_the_live_child_is_bounded_captured_and_started_in_a_scratch_dir(off_pro
     assert call["cwd_existed"]
     assert not Path(call["cwd"]).exists(), "the scratch cwd is removed afterwards"
     assert home not in Path(call["cwd"]).parents
+
+
+def test_a_scratch_dir_that_cannot_be_removed_keeps_the_childs_answer(off_project, monkeypatch):
+    """The child answered; removing its scratch cwd then fails (``EBUSY``, an NFS silly-rename).
+
+    The answer is good and the leftover directory harmless, so the names are offered.
+    """
+    import errno
+    import shutil
+
+    real_rmtree = shutil.rmtree
+
+    def busy(path) -> None:
+        raise OSError(errno.EBUSY, "Device or resource busy", str(path))
+
+    def busy_rmtree(path, *args, onerror=None, onexc=None, **kwargs):
+        if not Path(path).name.startswith("otto-collect-"):
+            return real_rmtree(path, *args, onerror=onerror, onexc=onexc, **kwargs)
+        real_rmtree(path)
+        try:  # as rmtree does: the handler runs while the error is being handled
+            busy(path)
+        except OSError as err:
+            if onexc is not None:
+                return onexc(os.rmdir, path, err)
+            if onerror is not None:
+                return onerror(os.rmdir, path, (OSError, err, None))
+            raise
+
+    monkeypatch.setattr(shutil, "rmtree", busy_rmtree)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda argv, **_k: subprocess.CompletedProcess(
+            argv, 0, stdout='{"names": ["n"], "markers": ["m"]}'
+        ),
+    )
+    view = ct.completion_view(_projects())
+    assert (view.names, view.markers) == (["n"], ["m"])
