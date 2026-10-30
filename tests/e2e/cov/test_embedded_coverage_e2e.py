@@ -35,7 +35,12 @@ import tomli
 from otto.coverage.capture.model import Capture
 from otto.logger.mode import LogMode
 from tests._fixtures.labdata import element_for
-from tests.e2e._otto_subprocess import CHECKOUT_ROOT, assert_output_dir, run_otto
+from tests.e2e._otto_subprocess import (
+    CHECKOUT_ROOT,
+    assert_output_dir,
+    failure_report,
+    run_otto,
+)
 
 PROJECT3 = CHECKOUT_ROOT / "tests" / "project3"
 
@@ -269,9 +274,7 @@ def test_embedded_coverage_cli_e2e(clean_zephyr37_llext, tmp_path):
             "`make qemu-restart` and retry."
         )
     assert result.returncode == 0, (
-        f"otto test --cov failed (rc={result.returncode}):\n"
-        f"STDOUT:\n{result.stdout[-3000:]}\nSTDERR:\n{result.stderr[-2000:]}"
-        f"{hint}"
+        f"otto test --cov failed: {failure_report(result, tmp_path)}{hint}"
     )
 
     # The collector decoded a .gcda for the embedded host (cross-loop fix +
@@ -373,8 +376,8 @@ def test_embedded_cov_clean_zeroes_the_board_e2e(clean_zephyr37_llext, tmp_path)
     )
 
     assert result.returncode == 0, (
-        f"otto test --cov TestEmbeddedCounterReset failed (rc={result.returncode}):\n"
-        f"STDOUT:\n{result.stdout[-4000:]}\nSTDERR:\n{result.stderr[-2000:]}"
+        f"otto test --cov TestEmbeddedCounterReset failed: "
+        f"{failure_report(result, tmp_path, tail=4000)}"
     )
     for host_id in ("zephyr37-llext", "zephyr44-llext"):
         hits = _product_function_hits(_board_info(cov_dir, host_id))

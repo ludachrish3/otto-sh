@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from otto import layout
-from tests.e2e._otto_subprocess import run_otto
+from tests.e2e._otto_subprocess import junit_files, run_otto
 from tests.e2e._selection_fixtures import FAILING_SUITE_SRC, PLAIN_SUITE_SRC, make_selection_project
 
 pytestmark = pytest.mark.hostless
@@ -22,14 +22,6 @@ pytestmark = pytest.mark.hostless
 def _testcase_count(junit_path: Path) -> int:
     tree = ET.parse(junit_path)  # noqa: S314 — trusted output written by our own subprocess run
     return len(tree.getroot().findall(".//testcase"))
-
-
-def _junit_files(xdir: Path) -> list[Path]:
-    """All junit_*.xml / junit.xml files under the most recent otto test output dir."""
-    test_root = layout.command_output_dir(xdir, "test")
-    run_dirs = sorted(p for p in test_root.iterdir() if p.is_dir())
-    assert run_dirs, f"no otto test output dir under {test_root}"
-    return sorted(run_dirs[-1].glob("junit*.xml"))
 
 
 def test_names_run_named_tests_across_classes(tmp_path: Path) -> None:
@@ -43,7 +35,7 @@ def test_names_run_named_tests_across_classes(tmp_path: Path) -> None:
         lab="unix",
     )
     assert r.returncode == 0, r.stdout + r.stderr
-    [junit] = _junit_files(xdir)
+    [junit] = junit_files(xdir)
     assert _testcase_count(junit) == 2
 
 
@@ -58,7 +50,7 @@ def test_plain_function_runs_by_name(tmp_path: Path) -> None:
         lab="unix",
     )
     assert r.returncode == 0, r.stdout + r.stderr
-    [junit] = _junit_files(xdir)
+    [junit] = junit_files(xdir)
     assert _testcase_count(junit) == 1
 
 
@@ -73,7 +65,7 @@ def test_qualified_name_selects_one_class(tmp_path: Path) -> None:
         lab="unix",
     )
     assert r.returncode == 0, r.stdout + r.stderr
-    [junit] = _junit_files(xdir)
+    [junit] = junit_files(xdir)
     assert _testcase_count(junit) == 1
 
 
@@ -88,7 +80,7 @@ def test_marker_alone_runs_both_classes(tmp_path: Path) -> None:
         lab="unix",
     )
     assert r.returncode == 0, r.stdout + r.stderr
-    [junit] = _junit_files(xdir)
+    [junit] = junit_files(xdir)
     assert _testcase_count(junit) == 2
 
 
@@ -125,7 +117,7 @@ def test_a_class_name_selects_every_test_in_it(tmp_path: Path) -> None:
         lab="unix",
     )
     assert r.returncode == 0, r.stdout + r.stderr
-    [junit] = _junit_files(xdir)
+    [junit] = junit_files(xdir)
     assert _testcase_count(junit) == 2
 
 
@@ -174,10 +166,10 @@ def test_multi_project_selection_runs_one_session_per_project(tmp_path: Path) ->
         extra_env={"OTTOPATH": roots},
     )
     assert r.returncode == 0, r.stdout + r.stderr
-    junit_files = _junit_files(xdir)
-    names = {p.name for p in junit_files}
+    junits = junit_files(xdir)
+    names = {p.name for p in junits}
     assert names == {"junit_projA.xml", "junit_projB.xml"}
-    for junit in junit_files:
+    for junit in junits:
         assert _testcase_count(junit) == 1
 
 
@@ -227,7 +219,7 @@ def test_marker_alone_leaves_nothing_for_a_project_without_matches(tmp_path: Pat
     )
     assert r.returncode == 0, r.stdout + r.stderr
     # Two projects searched -> the per-project JUnit name, whichever of them matched.
-    [junit] = _junit_files(xdir)
+    [junit] = junit_files(xdir)
     assert junit.name == "junit_projA.xml"
     assert _testcase_count(junit) == 2
 
@@ -241,7 +233,7 @@ def test_a_warm_run_still_finds_the_names(tmp_path: Path) -> None:
     for _ in range(2):
         r = run_otto(["test", "TestAlpha"], xdir=xdir, roots=project, lab="unix")
         assert r.returncode == 0, r.stdout + r.stderr
-        [junit] = _junit_files(xdir)
+        [junit] = junit_files(xdir)
         assert _testcase_count(junit) == 2
 
 
@@ -260,8 +252,8 @@ def test_multi_project_worst_exit_code_wins(tmp_path: Path) -> None:
         extra_env={"OTTOPATH": roots},
     )
     assert r.returncode != 0
-    junit_files = _junit_files(xdir)
-    names = {p.name for p in junit_files}
+    junits = junit_files(xdir)
+    names = {p.name for p in junits}
     assert names == {"junit_projA.xml", "junit_projB.xml"}
-    junit_a = next(p for p in junit_files if p.name == "junit_projA.xml")
+    junit_a = next(p for p in junits if p.name == "junit_projA.xml")
     assert _testcase_count(junit_a) == 1

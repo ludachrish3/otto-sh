@@ -20,6 +20,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from otto import layout
@@ -300,3 +301,39 @@ def assert_output_dir(xdir: Path, command: str) -> Path:
     found = output_dirs(xdir, command)
     assert found, f"expected a {command!r} output dir under {xdir}, found none"
     return max(found)
+
+
+def junit_files(xdir: Path) -> list[Path]:
+    """The ``junit*.xml`` files of the latest ``otto test`` run under *xdir*; empty if none ran."""
+    runs = output_dirs(xdir, "test")
+    return sorted(max(runs).glob("junit*.xml")) if runs else []
+
+
+def failure_report(
+    result: subprocess.CompletedProcess[str], xdir: Path, *, tail: int = 3000
+) -> str:
+    """Explain a failed ``otto`` run: its own failed and errored tests first, then its output.
+
+    The output tail of a ``--cov`` run is coverage collection, so the reason a
+    suite failed (a setup error naming the fix, say) sits earlier and is cut
+    off; the run's junit keeps it whatever followed.
+    """
+    junits = junit_files(xdir)
+    problems = [
+        f"{case.get('classname')}::{case.get('name')} {outcome.tag}: {outcome.get('message')}"
+        for junit in junits
+        # Trusted: written by the otto run under test.
+        for case in ET.parse(junit).getroot().iter("testcase")  # noqa: S314
+        for outcome in case
+        if outcome.tag in ("failure", "error")
+    ]
+    if problems:
+        listed = "\n".join(problems)
+    elif junits:
+        listed = "(its junit lists none)"
+    else:
+        listed = "(it wrote no junit: it stopped before any test ran)"
+    return (
+        f"otto exited {result.returncode}; its failed and errored tests:\n{listed}\n"
+        f"STDOUT (tail):\n{result.stdout[-tail:]}\nSTDERR (tail):\n{result.stderr[-2000:]}"
+    )

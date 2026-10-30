@@ -20,9 +20,8 @@ from pathlib import Path
 
 import pytest
 
-from otto import layout
 from tests._fixtures.project_scaffold import make_project
-from tests.e2e._otto_subprocess import run_otto
+from tests.e2e._otto_subprocess import junit_files, run_otto
 from tests.e2e._selection_fixtures import LAB_DATA_DIR, SETTINGS_EXTRA
 
 pytestmark = pytest.mark.hostless
@@ -80,8 +79,7 @@ def _otto_run(
 ) -> tuple[int, set[tuple[str, str]]]:
     env = {"OTTOPATH": os.pathsep.join(str(r) for r in projects), **(extra_env or {})}
     r = run_otto(["test", name, "--no-cov", "--no-random"], xdir=xdir, lab="unix", extra_env=env)
-    runs = sorted(p for p in layout.command_output_dir(xdir, "test").iterdir() if p.is_dir())
-    return r.returncode, _executed(sorted(runs[-1].rglob("junit*.xml")))
+    return r.returncode, _executed(junit_files(xdir))
 
 
 def _prime(xdir: Path, projects: list[Path], extra_env: dict[str, str] | None = None) -> None:
