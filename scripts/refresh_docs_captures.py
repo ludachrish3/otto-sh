@@ -127,6 +127,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import tomli
+from rich.cells import cell_len
 
 from otto.config.env import without_otto_env
 from otto.host.privilege import SUDO_PROMPT_SHAPE
@@ -157,7 +158,8 @@ _LINE_PLACEHOLDER = "<n>"
 # number, an uptime in the message. align_log_source_column re-pads it once every
 # rule has run (normalize). Any line ending in ``<space>x.py:<digits>`` is taken for
 # a log line; no committed capture has another kind. A record Rich wraps can still
-# drift: where it wraps the message depends on the source column's width.
+# drift: where it wraps the message depends on the source column's width and on
+# the raw width of any value a rule replaces inside the message (#770).
 _LOG_SOURCE_COLUMN = re.compile(rf"(?m)^(.*\S) +(\S+\.py:{_LINE_PLACEHOLDER})[ \t]*$")
 
 
@@ -898,8 +900,6 @@ def align_log_source_column(text: str) -> str:
     the values the rules replaced. Widths are terminal cells, as Rich counts
     them. A line wider than the display keeps one space.
     """
-    from rich.cells import cell_len  # Rich pads by terminal cells, not characters
-
     width = int(DISPLAY_ENV["COLUMNS"])
 
     def pad(match: re.Match[str]) -> str:

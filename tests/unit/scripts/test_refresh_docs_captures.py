@@ -731,7 +731,7 @@ def test_a_redacted_value_in_the_message_does_not_move_the_source_column(tmp_pat
     width, so a guest whose uptime gained or lost a digit drifted by a space
     after ``Uptime: <n> ms``. The column on a record's first row is aligned
     after every rule has run. (A record Rich wraps is not covered: the wrap
-    point itself moves with the width of the source column.)
+    point itself moves with the source column's width and the raw value's.)
     """
     ctx = _ctx(tmp_path)
     rules = [*ctx.default_rules(), (r"Uptime: \d+ ms", "Uptime: <n> ms")]
