@@ -72,7 +72,7 @@ async def _ctl(host: UnixHost, command: str) -> str:
     if not result.is_ok:
         raise RuntimeError(f"{host.id}: `{command}` failed: {result.only.value}")
     read = await host.run(f"cat {CTL}", sudo=True)
-    return read.only.value.strip()
+    return read.only.value
 
 
 async def _install(host: UnixHost) -> None:

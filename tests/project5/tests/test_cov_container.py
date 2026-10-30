@@ -42,7 +42,7 @@ async def _exec_in(host: UnixHost, container: str, *args: str) -> str:
     result = await host.exec(cmd, timeout=30)
     if not result.status.is_ok:
         raise RuntimeError(f"{host.id}: {cmd} failed: {result.value}")
-    return result.value.strip()
+    return result.value
 
 
 async def _install(host: UnixHost) -> None:

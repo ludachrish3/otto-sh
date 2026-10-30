@@ -468,7 +468,7 @@ class TestEmbeddedCounterReset:
             call = _loader_of(host).call_command(product.name, "no_such_fn")
             raw = await host.exec(call, timeout=60)
             assert raw.status is Status.Success, f"{host.id}: {call} -> {raw.status}"
-            assert not raw.value.strip(), f"{host.id}: {call} printed {raw.value!r}"
+            assert raw.value == "", f"{host.id}: {call} printed {raw.value!r}"
 
             result = await missing.reset_coverage(host)
 

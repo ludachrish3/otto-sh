@@ -125,7 +125,7 @@ async def _run_product(host: UnixHost, op: str, *args: int) -> str:
     result = await host.exec(cmd, timeout=10)
     if result.status != Status.Success:
         raise RuntimeError(f"Product run failed on {host.id}: {result.value}")
-    return result.value.strip()
+    return result.value
 
 
 class TestCoverageProduct:
