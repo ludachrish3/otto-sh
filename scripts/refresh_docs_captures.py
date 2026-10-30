@@ -155,7 +155,9 @@ _LINE_PLACEHOLDER = "<n>"
 # Rich pads the message so that column ends at the display width, so the padding
 # in front of it takes up the width of every value a rule later replaces: the line
 # number, an uptime in the message. align_log_source_column re-pads it once every
-# rule has run (normalize).
+# rule has run (normalize). Any line ending in ``<space>x.py:<digits>`` is taken for
+# a log line; no committed capture has another kind. A record Rich wraps can still
+# drift: where it wraps the message depends on the source column's width.
 _LOG_SOURCE_COLUMN = re.compile(rf"(?m)^(.*\S) +(\S+\.py:{_LINE_PLACEHOLDER})[ \t]*$")
 
 
@@ -893,13 +895,16 @@ def align_log_source_column(text: str) -> str:
     """Re-pad each log line's ``file.py:<n>`` column to end at the display width.
 
     Where Rich put it: the redacted line is then the same whatever the width of
-    the values the rules replaced. A line wider than the display keeps one space.
+    the values the rules replaced. Widths are terminal cells, as Rich counts
+    them. A line wider than the display keeps one space.
     """
+    from rich.cells import cell_len  # Rich pads by terminal cells, not characters
+
     width = int(DISPLAY_ENV["COLUMNS"])
 
     def pad(match: re.Match[str]) -> str:
         message, source = match.groups()
-        return message + " " * max(1, width - len(message) - len(source)) + source
+        return message + " " * max(1, width - cell_len(message) - cell_len(source)) + source
 
     return _LOG_SOURCE_COLUMN.sub(pad, text)
 

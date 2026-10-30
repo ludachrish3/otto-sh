@@ -1363,7 +1363,9 @@ name every id in it. Never edit an artifact by hand
 otto, the manifest's redaction rules, or the prose. A rule may change a
 line's width: once every rule has run, each log line's `file.py:<n>` column is
 re-padded to end at the capture's display width, where Rich put it, so a
-replaced value of any width leaves the line the same. A failed refresh leaves
+replaced value of any width leaves that line the same. A log record that Rich
+wraps onto a second row can still drift: the wrap point moves with the width
+of the source column. A failed refresh leaves
 the captures it had already written updated and the rest stale (exit 2); fix
 the cause and re-run. Every capture runs in the fixed scratch directory
 `/tmp/otto-gs` (not `$TMPDIR`), so an artifact's layout is reproducible

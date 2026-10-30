@@ -729,7 +729,9 @@ def test_a_redacted_value_in_the_message_does_not_move_the_source_column(tmp_pat
 
     The padding Rich put in front of the source column took up that number's
     width, so a guest whose uptime gained or lost a digit drifted by a space
-    after ``Uptime: <n> ms``. The column is aligned after every rule has run.
+    after ``Uptime: <n> ms``. The column on a record's first row is aligned
+    after every rule has run. (A record Rich wraps is not covered: the wrap
+    point itself moves with the width of the source column.)
     """
     ctx = _ctx(tmp_path)
     rules = [*ctx.default_rules(), (r"Uptime: \d+ ms", "Uptime: <n> ms")]
@@ -740,7 +742,26 @@ def test_a_redacted_value_in_the_message_does_not_move_the_source_column(tmp_pat
     assert normalized == _log_line("INFO     @zephyr37_fat > | Uptime: <n> ms", "host.py:<n>")
 
 
+def test_a_captured_artifact_is_aligned_after_the_manifest_rules(tmp_path):
+    """The capture run itself normalizes: a manifest rule's narrowing is re-padded too."""
+    ctx = _ctx(tmp_path)
+    line = _log_line("INFO     @zephyr37_fat > | Uptime: 13900123 ms", "host.py:3103")
+    program = tmp_path / "log.py"
+    program.write_text(f"print({line.rstrip()!r})\n")
+    m = _manifest(
+        tmp_path,
+        f'[[capture]]\nid = "log"\nargv = ["{{python}}", "{program}"]\n'
+        'redact = [["Uptime: \\\\d+ ms", "Uptime: <n> ms"]]\n',
+    )
+    rdc.refresh(rdc.load_manifest(m), ctx)
+    artifact = (ctx.captures_dir / "log.txt").read_text()
+    assert artifact.splitlines()[1:] == [
+        _log_line("INFO     @zephyr37_fat > | Uptime: <n> ms", "host.py:<n>").rstrip("\n")
+    ]
+
+
 def test_a_line_wider_than_the_display_keeps_one_space_before_its_source(tmp_path):
+    """A message that already fills the display keeps one space before its source column."""
     ctx = _ctx(tmp_path)
     message = "DEBUG    " + "x" * int(DISPLAY_ENV["COLUMNS"])
     assert rdc.normalize(f"{message}  session.py:12\n", ctx.default_rules()) == (
