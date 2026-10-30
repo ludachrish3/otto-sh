@@ -1668,6 +1668,8 @@ replaces with their final ones.
 
 **Amended 2026-10-28.** Two modules joined the foundation layer after P9b: `otto.vendoring` (the copy/compare core under `otto cov kmodcov` and `otto cov embedded-gcov`) and `otto.coverage.embedded_gcov` (the shipped embedded-gcov patch and starter). `LAYERED_AT["P9b"]`, the last landing's exact row, is 76.
 
+**Amended 2026-10-29.** A third joined the foundation layer: `otto.config.corpus_snapshot`, the one stat classification, carved out of `otto.config` so the leaf `otto.models.base` (the json sources' fingerprint) may call it (#764). `LAYERED_AT["P9b"]` is 77.
+
 The model finds no layer violation at any landing.
 
 ### 5.3 String audit (lands in P1a)
