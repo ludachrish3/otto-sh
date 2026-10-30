@@ -84,21 +84,24 @@ def assert_single_line_answer(output: str, words: Vocabulary, cell: Cell, what: 
     *what* names the moment being measured ("the command after the failure",
     "the command after the timeout") so one failure line says which contract
     was asking.
+
+    *output* is compared as it is, with no strip: a command's ``value`` is exact
+    (``docs/architecture/utilities/results.md``) and a Zephyr frame already
+    trims its output, so a padded answer is a contract failure to report.
     """
-    body = output.strip()
-    assert body, (
+    assert output, (
         f"{cell}: {what} produced no output at all; `{words.single_line_command}` "
         f"answers on every host this contract runs against"
     )
-    leak = framing_leak(body, words.single_line_command)
+    leak = framing_leak(output, words.single_line_command)
     assert leak is None, f"{cell}: {what} -- {leak} -- {output!r}"
 
     if words.single_line_expected is not None:
-        assert body == words.single_line_expected, (
+        assert output == words.single_line_expected, (
             f"{cell}: {what} returned {output!r}, not {words.single_line_expected!r}"
         )
     if words.single_line_pattern is not None:
-        assert re.search(words.single_line_pattern, body), (
+        assert re.search(words.single_line_pattern, output), (
             f"{cell}: {what} returned {output!r}, which does not match the shape "
             f"`{words.single_line_pattern}` that `{words.single_line_command}` answers in"
         )

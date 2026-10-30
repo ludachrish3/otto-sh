@@ -268,7 +268,7 @@ async def _require_an_answer(cell: "Cell", host: "RemoteHost") -> None:
     except (TimeoutError, asyncio.TimeoutError) as exc:
         raise RuntimeError(_did_not_answer(cell, f"no answer within {_ANSWER_TIMEOUT_S}s")) from exc
     if not probe.status.is_ok:
-        raise RuntimeError(_did_not_answer(cell, str(probe.value)))
+        raise RuntimeError(_did_not_answer(cell, probe.value))
 
 
 def _did_not_answer(cell: "Cell", detail: str) -> str:

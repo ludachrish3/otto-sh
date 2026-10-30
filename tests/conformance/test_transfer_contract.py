@@ -561,8 +561,8 @@ async def test_put_lands_the_documented_mode_on_the_host(
         f"{cell}: could not read the landed file's mode back -- "
         f"`stat -c %a` gave {observed.status!r} {observed.value!r}"
     )
-    assert observed.value.strip() == f"{_MODE:o}", (
-        f"{cell}: put(mode=0o{_MODE:o}) left the file at 0o{observed.value.strip()}"
+    assert observed.value == f"{_MODE:o}", (
+        f"{cell}: put(mode=0o{_MODE:o}) left the file at mode {observed.value!r}"
     )
 
 
@@ -984,10 +984,10 @@ async def test_control_the_landed_mode_follows_the_mode_that_was_asked_for(
         f"{cell}: could not read the landed file's mode back -- "
         f"`stat -c %a` gave {observed.status!r} {observed.value!r}"
     )
-    assert observed.value.strip() == f"{_CONTROL_MODE:o}", (
-        f"{cell}: put(mode=0o{_CONTROL_MODE:o}) left the file at 0o{observed.value.strip()}"
+    assert observed.value == f"{_CONTROL_MODE:o}", (
+        f"{cell}: put(mode=0o{_CONTROL_MODE:o}) left the file at mode {observed.value!r}"
     )
-    assert observed.value.strip() != f"{_MODE:o}", (
+    assert observed.value != f"{_MODE:o}", (
         f"{cell}: the read-back answered 0o{_MODE:o} for a put that asked for "
         f"0o{_CONTROL_MODE:o}, so the contract's mode assertion is true of this cell "
         f"whatever mode was requested"

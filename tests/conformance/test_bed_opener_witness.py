@@ -149,7 +149,7 @@ async def test_the_bed_opener_opens_a_real_unix_host_over_ssh(transfer: str) -> 
         )
         answered = (await host.run(f"echo {_ECHO_TOKEN}")).only
         assert answered.is_ok, answered
-        assert str(answered.value).strip() == _ECHO_TOKEN
+        assert answered.value == _ECHO_TOKEN
 
 
 async def test_the_bed_opener_opens_a_real_hopped_busybox_guest_over_telnet() -> None:
@@ -193,4 +193,4 @@ async def test_the_bed_opener_opens_a_real_hopped_busybox_guest_over_telnet() ->
         )
         answered = (await host.run(f"echo {_ECHO_TOKEN}")).only
         assert answered.is_ok, answered
-        assert str(answered.value).strip() == _ECHO_TOKEN
+        assert answered.value == _ECHO_TOKEN

@@ -353,7 +353,7 @@ def _busybox_opener(
                 # passes a naive `in` check while failing `startswith`. This
                 # guard caught exactly that bug in its own first run.
                 probe = (await host.run("command -v md5sum")).only
-                where = str(probe.value).strip()
+                where = probe.value
                 if not probe.is_ok or not where.startswith(f"{applets}/"):
                     raise RuntimeError(
                         f"BusyBox {release.version}: PATH prepend did not take -- "

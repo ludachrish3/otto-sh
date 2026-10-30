@@ -119,13 +119,11 @@ async def test_exec_frames_output_without_prompt_noise(
     against. Stated here, at the assertion, rather than left for a reader to
     infer from a ``None``.
 
-    ``.strip()`` and no more. Whether the framing keeps the payload's trailing
-    newline is not something otto documents -- ``docs/extend/sessions.md``
-    reads every example's ``value`` through ``.strip()`` -- so pinning it here
-    would be locking in observed behaviour, which this suite is not for. What
-    IS the contract is that nothing the shell added survives, and stripping
-    whitespace cannot hide a prompt, an echo or a sentinel: none of them are
-    whitespace.
+    No ``.strip()``: ``value`` is the command's output with exactly one
+    trailing newline removed (``docs/architecture/utilities/results.md``,
+    "What a command's ``value`` holds"), so the exact comparison and the leak
+    scan both read the raw value. A Zephyr frame trims its output, so the
+    unchosen ``help`` text arrives unpadded too.
 
     THE THIRD ASSERTION'S PRESENCE IS ALSO WHAT THIS CELL'S SUPPORT-MATRIX
     OBSERVABLE IS, which is why :func:`~tests.conformance._observable.note_observable`
@@ -154,7 +152,7 @@ async def test_exec_frames_output_without_prompt_noise(
     assert framed.is_ok, (
         f"{cell}: `{words.multiline_command}` failed outright -- {framed.status!r} {framed.value!r}"
     )
-    body = framed.value.strip()
+    body = framed.value
     assert len(body.splitlines()) > 1, (
         f"{cell}: `{words.multiline_command}` is a multi-line command, so a single "
         f"line back means the framing collapsed or truncated it -- {framed.value!r}"
@@ -349,7 +347,7 @@ async def test_control_the_framing_check_sees_planted_pollution(
         single = (await host.run(words.single_line_command)).only
 
     cell = resolved_cell.cell
-    body = planted.value.strip()
+    body = planted.value
     assert OTTO_SENTINEL_PREFIX in body, (
         f"{cell}: `{words.sentinel_plant_command}` was supposed to put "
         f"{OTTO_SENTINEL_PREFIX!r} into its own output and the reply was {planted.value!r} "
@@ -371,9 +369,9 @@ async def test_control_the_framing_check_sees_planted_pollution(
         f"{cell}: `{words.single_line_command}` failed outright -- "
         f"{single.status!r} {single.value!r}"
     )
-    assert len(single.value.strip().splitlines()) == 1, (
+    assert len(single.value.splitlines()) == 1, (
         f"{cell}: `{words.single_line_command}` came back as "
-        f"{len(single.value.strip().splitlines())} lines, so the contract's "
+        f"{len(single.value.splitlines())} lines, so the contract's "
         f"`more than one line` assertion has nothing on this cell that it refuses"
     )
 
