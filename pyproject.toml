@@ -85,6 +85,9 @@ dependencies = [
     "starlette>=0.52.1",
     "telnetlib3>=4.0.1",
     "tomli>=2.4.0",
+    # `otto cache enable` / `disable` edit settings.toml in place, keeping its comments;
+    # imported only inside `set_cache_enabled`, never on a read path.
+    "tomlkit>=0.14",
     # `otto.tls` builds a `truststore.SSLContext` so every HTTP-speaking
     # backend (NetBox's pynetbox client among them) verifies against the
     # OPERATING SYSTEM's certificate store — the same trust a browser on the

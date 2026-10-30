@@ -142,3 +142,44 @@ def cache_enabled() -> CacheSetting:
     if settings is None or settings.cache is None:
         return CacheSetting(on=True, source="default")
     return CacheSetting(on=settings.cache.enabled, source=f"settings.toml: {user_settings_path()}")
+
+
+def set_cache_enabled(enabled: bool) -> CacheSetting:
+    """Set ``[cache] enabled`` in the user settings file, editing it in place; return the new setting.
+
+    The current file is validated first: a broken one raises its
+    :class:`ValueError` (see :func:`load_user_settings`) and stays untouched,
+    so a verb never rewrites a file it could not read. Turning the cache off
+    creates the home, the file and the ``[cache]`` table as needed; turning it
+    on only edits an existing ``[cache]`` table, since no table already means
+    on. Nothing is written when the setting already is what is asked. The
+    edit keeps every other byte of the file (comments, order, spelling) and the
+    file's permission bits, validates the edited document as a
+    :class:`~otto.models.settings.UserSettingsModel`, and replaces the file
+    atomically. The memo is dropped, so the returned
+    :func:`cache_enabled` is what the next caller sees.
+    """
+    import tomlkit  # only the verb edits TOML; every read goes through tomli
+
+    from ..utils import atomic_write_bytes
+
+    path = user_settings_path()
+    current = load_user_settings(path=path)  # ValueError propagates: nothing is written
+    st = _stat_file(path)
+    text = path.read_text() if current is not None else ""
+    doc = tomlkit.parse(text)
+    table = doc.get(CACHE_TABLE)
+    if table is None and enabled:
+        return cache_enabled()
+    if table is not None and bool(table.get(CACHE_ENABLED_KEY, True)) == enabled:
+        return cache_enabled()
+    if table is None:
+        table = tomlkit.table()
+        doc[CACHE_TABLE] = table
+    table[CACHE_ENABLED_KEY] = enabled
+    new_text = tomlkit.dumps(doc)
+    UserSettingsModel.model_validate(load_toml_settings(new_text))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_bytes(path, new_text.encode(), preserve=st)
+    clear_user_settings_memo()
+    return cache_enabled()

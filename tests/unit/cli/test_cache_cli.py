@@ -117,7 +117,8 @@ def test_info_home_line_annotates_from_otto_home_when_env_pins_it(tmp_path, monk
 
     assert result.exit_code == 0
     assert f"home: {home} (from $OTTO_HOME)" in result.output
-    assert "(default)" not in result.output
+    (home_line,) = [ln for ln in result.output.splitlines() if ln.startswith("home:")]
+    assert "(default)" not in home_line
 
 
 def test_info_home_line_annotates_default_when_env_is_unset(monkeypatch, tmp_path):
@@ -135,7 +136,8 @@ def test_info_home_line_annotates_default_when_env_is_unset(monkeypatch, tmp_pat
     result = runner.invoke(cache_app, ["info"])
 
     assert result.exit_code == 0
-    assert "(default)" in result.output
+    (home_line,) = [ln for ln in result.output.splitlines() if ln.startswith("home:")]
+    assert home_line.endswith("(default)")
     assert "(from $OTTO_HOME)" not in result.output
 
 
@@ -154,7 +156,8 @@ def test_info_home_line_treats_empty_otto_home_as_unset(monkeypatch, tmp_path):
     result = runner.invoke(cache_app, ["info"])
 
     assert result.exit_code == 0
-    assert "(default)" in result.output
+    (home_line,) = [ln for ln in result.output.splitlines() if ln.startswith("home:")]
+    assert home_line.endswith("(default)")
     assert "(from $OTTO_HOME)" not in result.output
 
 
@@ -297,3 +300,136 @@ def test_prune_kept_summary_shows_why_split_in_dry_run_and_real_mode(tmp_path, m
     result = runner.invoke(cache_app, ["prune"])
     assert result.exit_code == 0
     assert "3 workspace(s) kept: 2 young, 1 non-empty" in result.output
+
+
+def _settings_text():
+    from otto.config.user_settings import user_settings_path
+
+    return user_settings_path().read_text()
+
+
+def test_disable_prints_state_source_and_path(tmp_path, monkeypatch):
+    from otto.cli.cache import cache_app
+    from otto.config.user_settings import user_settings_path
+
+    _home(monkeypatch, tmp_path)
+    result = runner.invoke(cache_app, ["disable"])
+    assert result.exit_code == 0, result.output
+    lines = result.output.splitlines()
+    assert lines[0] == f"cache: off (settings.toml: {user_settings_path()})"
+    assert lines[1] == str(user_settings_path())
+    assert "enabled = false" in _settings_text()
+
+
+def test_enable_prints_state_and_source(tmp_path, monkeypatch):
+    from otto.cli.cache import cache_app
+
+    _home(monkeypatch, tmp_path)
+    assert runner.invoke(cache_app, ["disable"]).exit_code == 0
+    result = runner.invoke(cache_app, ["enable"])
+    assert result.exit_code == 0, result.output
+    assert result.output.splitlines()[0].startswith("cache: on (settings.toml: ")
+    assert "enabled = true" in _settings_text()
+
+
+def test_enable_with_no_settings_says_default(tmp_path, monkeypatch):
+    from otto.cli.cache import cache_app
+
+    _home(monkeypatch, tmp_path)
+    result = runner.invoke(cache_app, ["enable"])
+    assert result.exit_code == 0, result.output
+    assert result.output.splitlines()[0] == "cache: on (default)"
+
+
+def test_disable_clears_every_workspace_under_otto_home(tmp_path, monkeypatch):
+    from otto.cli.cache import cache_app
+
+    home = _home(monkeypatch, tmp_path)
+    one = _mk_workspace(home, "aaaaaaaa-one", cache_age=OLD)
+    two = _mk_workspace(home, "bbbbbbbb-two", cache_age=YOUNG)
+    outside = tmp_path / "elsewhere"
+    other = _mk_workspace(outside, "cccccccc-out", cache_age=OLD)
+    kept = other / "completion_cache.json"
+    result = runner.invoke(cache_app, ["disable"])
+    assert result.exit_code == 0, result.output
+    for ws in (one, two):
+        assert not (ws / "completion_cache.json").exists()
+    assert kept.exists()
+    assert "removed" in result.output
+
+
+def test_disable_refuses_a_broken_file_with_exit_1(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+
+    from otto.cli.cache import cache_app
+    from otto.config.user_settings import user_settings_path
+
+    _home(monkeypatch, tmp_path)
+    path = user_settings_path()
+    path.write_text("[cache\n")  # scaffold-exempt: user-level ~/.otto file
+    result = CliRunner().invoke(cache_app, ["disable"])
+    assert result.exit_code == 1
+    assert "settings.toml" in result.output
+    assert "Traceback" not in result.output
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert path.read_text() == "[cache\n"
+
+
+def test_disable_reports_an_unwritable_home_cleanly(tmp_path, monkeypatch):
+    import os
+
+    import pytest
+
+    from otto.cli.cache import cache_app
+
+    if os.geteuid() == 0:
+        pytest.skip("root ignores directory modes")
+    home = _home(monkeypatch, tmp_path)
+    home.chmod(0o500)
+    try:
+        result = runner.invoke(cache_app, ["disable"])
+    finally:
+        home.chmod(0o700)
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert len(result.output.strip().splitlines()) == 1
+
+
+def test_info_first_line_reports_the_default(tmp_path, monkeypatch):
+    from otto.cli.cache import cache_app
+
+    _home(monkeypatch, tmp_path)
+    result = runner.invoke(cache_app, ["info"])
+    assert result.output.splitlines()[0] == "cache: on (default)"
+
+
+def test_info_first_line_reports_the_settings_file(tmp_path, monkeypatch):
+    from otto.cli.cache import cache_app
+    from otto.config.user_settings import user_settings_path
+
+    _home(monkeypatch, tmp_path)
+    user_settings_path().write_text("[cache]\nenabled = false\n")  # scaffold-exempt
+    result = runner.invoke(cache_app, ["info"])
+    assert result.output.splitlines()[0] == f"cache: off (settings.toml: {user_settings_path()})"
+
+
+def test_info_first_line_reports_an_unreadable_file(tmp_path, monkeypatch):
+    from otto.cli.cache import cache_app
+    from otto.config.user_settings import user_settings_path
+
+    _home(monkeypatch, tmp_path)
+    user_settings_path().write_text("[cache\n")  # scaffold-exempt
+    result = runner.invoke(cache_app, ["info"])
+    first = result.output.splitlines()[0]
+    assert first.startswith("cache: off (")
+    assert "settings.toml" in first
+
+
+def test_clear_and_prune_work_when_off(tmp_path, monkeypatch):
+    from otto.cli.cache import cache_app
+
+    home = _home(monkeypatch, tmp_path)
+    _mk_workspace(home, "dddddddd-off", cache_age=OLD)
+    assert runner.invoke(cache_app, ["disable"]).exit_code == 0
+    assert runner.invoke(cache_app, ["clear", "--all"]).exit_code == 0
+    assert runner.invoke(cache_app, ["prune", "--dry-run"]).exit_code == 0

@@ -92,6 +92,43 @@ def _print_removed(paths: "list[Path]", *, verb: str = "removed") -> None:
         typer.echo(f"{verb} {f}")
 
 
+def _toggle(enabled: bool) -> None:
+    """Run `enable` / `disable`: set the switch, announce it, and for off clear every workspace.
+
+    A broken settings file or an unwritable home is the user's to fix, so it is
+    one error line and exit 1, never a traceback.
+    """
+    from ..config.user_settings import set_cache_enabled, user_settings_path
+
+    try:
+        setting = set_cache_enabled(enabled)
+        removed = None
+        if not enabled:
+            from ..config.cache_maintenance import remove_completion_files_everywhere
+            from ..config.home import otto_home
+
+            removed = remove_completion_files_everywhere(otto_home())
+    except (ValueError, OSError) as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from e
+    typer.echo(f"cache: {'on' if setting.on else 'off'} ({setting.source})")
+    typer.echo(str(user_settings_path()))
+    if removed is not None:
+        _print_removed(removed.files_removed)
+
+
+@cache_app.command("enable")
+def enable() -> None:
+    """Turn otto's cache on."""
+    _toggle(True)
+
+
+@cache_app.command("disable")
+def disable() -> None:
+    """Turn otto's cache off and remove every workspace's completion files."""
+    _toggle(False)
+
+
 def _print_prune_report(report: "MaintenanceReport", *, dry_run: bool) -> None:
     """Print the full maintenance-report summary: a line per file, then totals.
 
@@ -146,6 +183,10 @@ def info() -> None:
     from ..config.home import otto_home
     from ..models.settings import OttoEnvSettings
 
+    from ..config.user_settings import cache_enabled
+
+    setting = cache_enabled()
+    typer.echo(f"cache: {'on' if setting.on else 'off'} ({setting.source})")
     home = otto_home()
     # Mirrors otto_home()'s OWN condition for "did $OTTO_HOME determine this"
     # exactly -- OttoEnvSettings().home is not None (env_ignore_empty=True

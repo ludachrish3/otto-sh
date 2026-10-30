@@ -204,13 +204,17 @@ def test_the_memo_holds_one_entry_across_homes(tmp_path, monkeypatch):
     assert list(_memo) == [tmp_path / "b" / "settings.toml"]
 
 
-# The resolver; the verb module joins with `otto cache` off/on.
+# The resolver, which also owns the tomlkit edit (`set_cache_enabled`).
 _CACHE_TABLE_READERS = {"config/user_settings.py"}
 # The only file that may call cache_enabled(): the one switch (the resolver only defines it).
 _CACHE_ENABLED_CALLERS = {
     "config/completion_cache.py",
     # cli/main.py uses the answer for the off-removal side effect, not as a second decision.
     "cli/main.py",
+    # set_cache_enabled returns the setting the next caller will see; it decides nothing.
+    "config/user_settings.py",
+    # `otto cache info` reports the resolved setting on its first line; it decides nothing.
+    "cli/cache.py",
 }
 
 
@@ -286,3 +290,103 @@ def test_a_self_referencing_settings_symlink_is_absent_not_a_crash():
     setting = cache_enabled()
     assert setting.on is True
     assert setting.source == "default"
+
+
+_ORIGINAL = (
+    '# my settings\n[inventory]\nbackend = "file"  # keep\n\n[creds]\nbackend = "json"  # note\n'
+)
+
+
+@pytest.mark.parametrize("original", [_ORIGINAL, _ORIGINAL.rstrip("\n")])
+def test_disable_then_enable_round_trips_the_rest_of_the_file(original):
+    from otto.config.user_settings import set_cache_enabled
+
+    path = _own_file(original)
+    assert not set_cache_enabled(False).on
+    off = path.read_text()
+    assert "enabled = false" in off
+    assert set_cache_enabled(True).on
+    lines = path.read_text().splitlines()
+    for line in original.splitlines():
+        assert line in lines
+    # same lines, same order (tomlkit may add a blank line before the new table)
+    kept = [ln for ln in lines if ln in original.splitlines() and ln]
+    assert kept == [ln for ln in original.splitlines() if ln]
+    assert "enabled = true" in lines
+
+
+def test_disable_creates_the_home_and_the_file(tmp_path, monkeypatch):
+    from otto.config.user_settings import set_cache_enabled
+
+    monkeypatch.setenv("OTTO_HOME", str(tmp_path / "missing" / "home"))
+    s = set_cache_enabled(False)
+    assert user_settings_path().read_text() == "[cache]\nenabled = false\n"
+    assert not s.on
+
+
+def test_enable_without_a_cache_table_writes_nothing():
+    from otto.config.user_settings import set_cache_enabled
+
+    assert set_cache_enabled(True).on
+    assert not user_settings_path().exists()
+
+
+def test_enable_keeps_a_file_without_a_cache_table_byte_identical():
+    from otto.config.user_settings import set_cache_enabled
+
+    path = _own_file(_ORIGINAL)
+    set_cache_enabled(True)
+    assert path.read_text() == _ORIGINAL
+
+
+def test_set_is_idempotent():
+    import os
+
+    from otto.config.user_settings import set_cache_enabled
+
+    path = user_settings_path()
+    set_cache_enabled(False)
+    os.utime(path, (1_000_000, 1_000_000))
+    before = path.stat().st_mtime_ns
+    assert not set_cache_enabled(False).on
+    assert path.stat().st_mtime_ns == before
+
+
+@pytest.mark.parametrize("body", ["[cache\n", '[cache]\nenabled = "maybe"\n'])
+def test_a_broken_file_is_refused_unchanged(body):
+    from otto.config.user_settings import set_cache_enabled
+
+    path = _own_file(body)
+    before = path.read_bytes()
+    for wanted in (False, True):
+        with pytest.raises(ValueError, match=r"settings\.toml"):
+            set_cache_enabled(wanted)
+        assert path.read_bytes() == before
+
+
+def test_the_rewrite_keeps_the_file_mode():
+    from otto.config.user_settings import set_cache_enabled
+
+    path = _own_file(_ORIGINAL)
+    path.chmod(0o640)
+    set_cache_enabled(False)
+    assert path.stat().st_mode & 0o777 == 0o640
+
+
+def test_set_drops_the_memo_so_the_next_read_sees_it():
+    from otto.config.user_settings import cache_enabled, set_cache_enabled
+
+    assert cache_enabled().on  # memoizes the absent file
+    set_cache_enabled(False)
+    assert not cache_enabled().on
+
+
+def test_tomlkit_is_not_imported_by_cache_enabled():
+    import subprocess
+    import sys
+
+    code = (
+        "import sys; from otto.config.user_settings import cache_enabled; cache_enabled(); "
+        "sys.exit(1 if 'tomlkit' in sys.modules else 0)"
+    )
+    assert subprocess.run([sys.executable, "-c", code], check=False).returncode == 0
