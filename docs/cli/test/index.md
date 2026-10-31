@@ -19,6 +19,9 @@ arguments, and `--list-tests` lists what they select.
 :file: ../../_static/generated/termynal/help-test.html
 ```
 
+The capture comes from the docs' example project, `acme`, so its `--message`
+default reads `hello from acme`; in a scaffolded project it names that project.
+
 ## Synopsis
 
 ```text
@@ -84,6 +87,8 @@ otto test --list-tests --markers slow TestDevice      # what that selection woul
 otto test --list-markers                              # the markers pytest knows, per project
 otto --lab my_lab -n test TestDevice                  # dry run: what would run, nothing runs
 ```
+
+(run-every-test)=
 
 ### Running every test
 

@@ -871,7 +871,9 @@ name: what ``stat`` reports for those is not what reading them delivers.
 procfs and sysfs pseudo-files report a size that is not their content either
 (``/proc/version`` reports 0), and nothing in the remote ``stat`` tells them
 apart from a genuinely empty file — so they are not refused, they simply
-arrive empty.  Use the ``shell`` backend for those.
+arrive empty.  Use the ``shell`` backend for those.  The default ``scp``
+transfer has the same limit, because the scp protocol also sends the size the
+remote reports: read a pseudo-file with ``exec 'cat …'`` instead.
 
 `nc_options` participates in the same layered merge as the other transport
 option objects, described at the top of this page.

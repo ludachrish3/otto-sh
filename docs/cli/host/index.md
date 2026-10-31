@@ -93,10 +93,10 @@ when called from Python with no explicit `user=` of its own.
 | `stage` | Stage products onto the host without installing |
 | `install` | Stage then install products |
 | `uninstall` | Uninstall products |
-| `is-installed` | Exit 0 if all products are installed |
-| `is-uninstalled` | Exit 0 if no products are installed |
+| `is-installed` | Print `True` if all products are installed, else `False`; `False` on a host with no products ({ref}`exit 0 either way <host-exit-codes>`) |
+| `is-uninstalled` | Print the opposite of `is-installed`: `True` unless every product is installed, so also on a partly installed host (exit 0 either way) |
 | `cleanup` | Uninstall products, then remove dev tools and toolchain tools |
-| `is-clean` | Exit 0 if no product, dev tool, or toolchain tool is present |
+| `is-clean` | Print `True` if no product, dev tool, or toolchain tool is present, else `False` (exit 0 either way) |
 | `get-logs` | Retrieve product and debug logs into `logs/<host_id>/` ({ref}`the run tree <run-tree>`) |
 | `get-product-logs` | Retrieve each product's logs, and its own `debug_log_globs`, into `logs/<host_id>/<product>/` |
 | `get-debug-logs` | Fetch the host's `debug_log_globs` into `logs/<host_id>/debug/` |
@@ -105,7 +105,7 @@ when called from Python with no explicit `user=` of its own.
 | `uninstall-dev-tools` | Remove every dev tool attached to the host (best-effort) |
 | `install-toolchain-tools` | Put each declared toolchain tool, renamed and chowned |
 | `remove-toolchain-tools` | Remove every declared toolchain tool from the host |
-| `exists` | Exit 0 if a path exists on the host |
+| `exists` | Print `True` if a path exists on the host, else `False` (exit 0 either way) |
 | `ls` | List directory contents on the host |
 | `glob` | Expand a pattern on the host and print the matching paths |
 | `mkdir` | Create a directory on the host |
@@ -193,8 +193,10 @@ Command results are ssh-like: the shell's retcode when the command ran,
 | Any other verb: `Status.Error` | 2 (note: Click also uses 2 for CLI usage errors) |
 | Any other verb: `Status.Unstable` | 3 |
 
-Custom verbs on third-party host classes may return plain values instead of a
-`Result`; the CLI prints them as-is and exits 0.
+The predicate verbs (`exists`, `is-installed`, `is-uninstalled`, `is-clean`)
+return a plain `True` or `False`, not a `Result`: the CLI prints the value and
+exits 0 either way. A script tests the printed value, not the exit code. Custom
+verbs on third-party host classes that return plain values behave the same way.
 
 ## Beyond the CLI
 

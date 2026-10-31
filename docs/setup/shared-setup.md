@@ -101,7 +101,9 @@ lab_patterns = ["example_lab"]
 ```
 
 `lab_patterns` is required; `host_patterns` narrows the hosts and defaults to
-every host in those labs. {ref}`project-scope` explains both, and
+every host in those labs. The hosts they admit also bound what
+`otto monitor --live` watches and where coverage is collected
+({ref}`project-scope-effects`). {ref}`project-scope` explains both fields, and
 {ref}`project-scope-required` explains when the table is required.
 
 ## Next

@@ -33,7 +33,8 @@ Install otto first: {doc}`installation`.
 Otto serves two audiences:
 
 CLI users
-: Interact with otto through the `otto run`, `otto test`, and `otto monitor`
+: Interact with otto through the {doc}`otto run <cli/run/index>`,
+  {doc}`otto test <cli/test/index>`, and {doc}`otto monitor <cli/monitor/index>`
   commands.  See the {doc}`cli/index` for command-level documentation.
 
 API builders
@@ -49,9 +50,9 @@ A **Host** represents a machine otto can talk to.
 {class}`~otto.host.unix_host.UnixHost` connects over SSH or Telnet;
 {class}`~otto.host.local_host.LocalHost` runs commands on the local machine
 without any network connection.
-{class}`~otto.host.embedded_host.EmbeddedHost` (and its concrete {class}`~otto.host.embedded_host.ZephyrHost`) drives a firmware/RTOS target over a serial console; a `DockerContainerHost` targets a container.
+{class}`~otto.host.embedded_host.EmbeddedHost` (and its concrete {class}`~otto.host.embedded_host.ZephyrHost`) drives a firmware/RTOS target over a serial console; a {class}`~otto.host.docker_host.DockerContainerHost` targets a container.
 
-They all share a common `BaseHost` interface — {meth}`~otto.host.host.Host.run`,
+They all share a common {class}`~otto.host.host.BaseHost` interface — {meth}`~otto.host.host.Host.run`,
 {meth}`~otto.host.host.Host.exec`, {meth}`~otto.host.host.Host.send` /
 {meth}`~otto.host.host.Host.expect` — plus file-transfer methods
 ({meth}`~otto.host.host.Host.put`, {meth}`~otto.host.host.Host.get`) on the
@@ -225,7 +226,8 @@ take. See {doc}`setup/options-classes`.
 ### Monitor (`otto monitor`)
 
 The monitor collects live performance metrics (CPU, memory, disk, network)
-from one or more hosts and serves an interactive web dashboard:
+from one or more hosts and serves an interactive web dashboard
+({doc}`cli/monitor/index`):
 
 ```bash
 otto -l my_lab monitor --live                     # all hosts, default 5 s interval
@@ -260,7 +262,7 @@ collects without a dashboard; see
    otto -l my_lab test TestDevice --firmware 2.1
    ```
 
-4. **Monitor hosts:**
+4. **Monitor hosts** ({doc}`cli/monitor/index`):
 
    ```bash
    otto -l my_lab monitor --live

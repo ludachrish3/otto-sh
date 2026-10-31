@@ -115,7 +115,8 @@ host behind it.
 `--list-products` and `--list-tools` print a table of the products or dev tools
 your projects declare in {doc}`../configuration/declared-products-tools`. Neither
 contacts a host, and neither is lab-gated: they work with or without `--lab`.
-A narrow terminal truncates the table's columns; widen it with `COLUMNS=200`.
+A narrow terminal truncates the table's columns; widen it with `COLUMNS=200`
+([Environment variables](#environment-variables)).
 
 Without `--lab` the table is what the projects **declare** — one row per
 `[[products]]` (or `[[dev_tools]]`) entry, in project then declaration order, with
@@ -181,8 +182,8 @@ installed *right now* is `otto run status`'s question
 
 Most environment variables below back a global option; where one does, the
 flag always wins when both are present.  `OTTOPATH`, `OTTO_HOME`,
-`OTTO_TEARDOWN_DEADLINE`, `OTTO_INIT_TIMEOUT`, `OTTO_SSH_DEBUG` and
-`PYDANTIC_DISABLE_PLUGINS` have no flag.
+`OTTO_TEARDOWN_DEADLINE`, `OTTO_INIT_TIMEOUT`, `OTTO_SSH_DEBUG`,
+`PYDANTIC_DISABLE_PLUGINS` and `COLUMNS` have no flag.
 
 | Variable | Backs | Notes |
 | --- | --- | --- |
@@ -197,6 +198,7 @@ flag always wins when both are present.  `OTTOPATH`, `OTTO_HOME`,
 | `OTTO_TEARDOWN_DEADLINE` | *(no flag)* | Seconds an interrupted command's graceful cleanup may run before it is abandoned; defaults to `10`; read when a run is prepared (the CLI, `open_context`, library `run_tests`). Outside them, the readers of this deadline (`run_command`, `sync_phase`, `compensate`) use 10 s, while a hand-built context's `ctx.sweep_loop(...)` without `deadline=` waits for every close — see {doc}`../architecture/lifecycle` |
 | `OTTO_INIT_TIMEOUT` | *(no flag)* | Seconds a newly opened shell has to answer otto's readiness probe, for every host without its own `init_timeout`; replaces the default of `10` (`15` on an embedded host). What it accepts and what beats it: [Shell readiness timeout](../configuration/host-options.md#shell-readiness-timeout) |
 | `OTTO_SSH_DEBUG` | *(no flag)* | asyncssh's own debug level, `1`..`3`; `2` prints the offered and chosen key-exchange, host-key, cipher and MAC lists under `--log-level DEBUG` (a valid value also lifts otto's own `asyncssh` logger floor to `DEBUG`); `3` logs raw packets, passwords included — see [Legacy SSH servers](../configuration/settings.md#legacy-ssh-servers) |
+| `COLUMNS` | *(no flag)* | The width otto's help, tables and log lines render at. When output is not a terminal (piped, captured, CI) and `COLUMNS` is unset, it is 80 columns, so wide tables truncate their cells and long paths wrap. Set `COLUMNS=200` when you capture or script otto's output |
 | `PYDANTIC_DISABLE_PLUGINS` | *(no flag)* | pydantic's own switch, which the `otto` command sets to `__all__` when you have not set it. Looking for pydantic plugins opens a file in every installed package on the first model build, a network round trip each when the venv is on NFS, and otto uses no pydantic plugins. It covers everything in the process, including the tests `otto test` runs in-process, and every process otto starts inherits it (a host command on `local`, a subprocess of a test). To use pydantic plugins, set it to the empty string (`PYDANTIC_DISABLE_PLUGINS=`); any value you set is kept. Importing otto as a library leaves it alone |
 
 ## Shell completion
@@ -329,7 +331,7 @@ project whose `.otto/settings.toml` already existed never gets it: add
 images with the project root as the context, yourself.
 
 - `<command>` is the top-level subcommand (`run`, `test`, `host`, ...)
-  and `<subcommand>` is the leaf — the instruction name or host verb.
+  and `<subcommand>` is the leaf — the instruction name or {doc}`host verb <host/index>`.
   Commands with no distinct leaf (`test`, `monitor`) omit the suffix:
   `otto-output/test/<timestamp>/`.
 - `<timestamp>` is UTC with millisecond precision
@@ -341,8 +343,8 @@ images with the project root as the context, yourself.
 
 Read-only commands create no directory: `otto reservation`, `otto inventory`,
 `otto schema`, and `otto init` opt out entirely, as do `otto cov clean` and
-read-only host verbs such as `ls`, `exists`, `read-file`, `is-installed`, and
-`is-uninstalled`.  `otto cov get` and `otto cov report` both write into it —
+read-only {doc}`host verbs <host/index>` such as `ls`, `exists`, `read-file`,
+`is-installed`, and `is-uninstalled`.  `otto cov get` and `otto cov report` both write into it —
 `get` retrieves counters and stages them there, and `report` (absent an
 explicit `--dir`) renders its HTML report to `cov_report/` underneath it, the
 same as `otto test --cov-report`.  Third-party commands control this with the
