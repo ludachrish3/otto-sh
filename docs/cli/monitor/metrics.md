@@ -2,8 +2,14 @@
 
 What otto samples, and where the numbers come from: the built-in metrics
 every Unix host reports, values otto reads out of files the host already
-writes, and SNMP. Your project's own metrics appear here too — see
-[Custom parsers](../../extend/custom-parsers.md#custom-parsers).
+writes, and SNMP. To add a metric of your own, write a parser
+([Custom parsers](../../extend/custom-parsers.md#custom-parsers)).
+
+A project's own parsers name their series themselves: each series is named by
+a key of the dict the parser's `parse()` returns, and otto lists them nowhere
+else. To see the names a project produces, run `--live` and read the
+dashboard's charts, or query a `--db` archive's `metrics` table
+({ref}`monitor-headless`).
 
 ## Built-in metrics
 
@@ -210,8 +216,8 @@ bucket, so a slow file never blocks faster ones.
 
 Some targets expose performance metrics over SNMP rather than via a shell
 interface.  Otto supports SNMP v2c polling for any standards-compliant agent —
-a Zephyr device running otto's test-bed agent, a Linux box running net-snmp, or
-network gear — on a separate channel from command execution.
+a Linux box running net-snmp, network gear, or an embedded board with an SNMP
+agent in its firmware — on a separate channel from command execution.
 
 ### When to use it
 
@@ -242,9 +248,16 @@ that converts the raw integer varbind to a real value.
 | `1.3.6.1.4.1.63245.1.3.0` | Heap Free | Memory Usage | B | Otto enterprise OID |
 | `1.3.6.1.4.1.63245.1.4.0` | Threads | Threads | — | Otto enterprise OID |
 
-The enterprise OIDs are served by otto's Zephyr test-bed agent.  The enterprise
-base is `1.3.6.1.4.1.63245` (PEN 63245, a placeholder — a real IANA PEN has not
-yet been assigned).
+The enterprise base is `1.3.6.1.4.1.63245` (PEN 63245, a placeholder — a real
+IANA PEN has not yet been assigned). The four `.1` scalars above are served
+only by the SNMP agent built into the Zephyr firmware of otto's own test bed,
+which is not part of the otto package, and the indexed OIDs below only by a
+firmware written to their layout. A stock board needs an SNMP v2c agent of
+its own. `sysUpTime` works against any compliant agent; for any other value, list the OID the
+board's agent serves in the host's `snmp.oids`. It charts under its OID string
+(see the end of this page), or under the name a descriptor gives it
+([registering custom
+descriptors](../../extend/custom-parsers.md#extending-registering-custom-descriptors)).
 
 `kind` governs how a raw varbind becomes a chart point: `gauge` (the
 default, e.g. Heap Used above) charts `raw * scale` directly; `counter`

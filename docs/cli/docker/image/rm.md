@@ -14,6 +14,10 @@ otto docker image rm IMAGE... [-f|--force] [--no-prune] [--parent HOST]
 | `--no-prune` | Keep the untagged parent images (docker's `--no-prune`) |
 | `--parent HOST` | Run on one docker-capable host (default: every one; see {ref}`Which host <docker-which-host>`) |
 
+Like docker's, the default also deletes the removed image's untagged parent
+images. On a docker host others share, pass `--no-prune` to leave those in
+place, and `--parent` so the command reaches only the host you mean.
+
 Each `IMAGE` goes to docker as typed, quoted for the host's shell, after
 docker's `--`, so a name that starts with `-` is never read as a flag. To name
 one on otto's line, end otto's flags with `--` too:

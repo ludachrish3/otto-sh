@@ -10,14 +10,16 @@ session by hand.
 
 ## You need
 
-- A Linux host you can reach over SSH that runs Docker with Compose and the
-  buildx plugin, where your login may run `docker` ([Where docker
+- A Linux host you can reach over SSH that runs Docker with Compose, where
+  your login may run `docker` ([Where docker
   runs](../../cli/docker/index.md#where-docker-runs)). This is the docker
-  parent. On Debian and Ubuntu, buildx is a package of its own,
-  `docker-buildx`; `docker buildx version` answers when it is there. Your
-  login also needs `sudo` there: `banner`'s container writes its counters as
-  root, and otto clears them with `sudo` ({ref}`root-owned files
-  <coverage-container-root-owned-files>`). otto answers `sudo`'s prompt with
+  parent. The buildx plugin is recommended, not required: otto runs plain
+  `docker build`, and without buildx docker falls back to its legacy builder,
+  which builds these images too but prints a deprecation warning. On Debian
+  and Ubuntu, buildx is a package of its own, `docker-buildx`; `docker buildx
+  version` answers when it is there. Your login also needs `sudo` there:
+  `banner`'s container writes its counters as root, and otto clears them with
+  `sudo` ({ref}`root-owned files <coverage-container-root-owned-files>`). otto answers `sudo`'s prompt with
   the login's password from `lab.json`, so a password or `NOPASSWD` both work
   ({doc}`../../cli/host/capabilities/privilege`).
 - The same CPU architecture on that host as on the build machine. The tools
@@ -202,6 +204,17 @@ staging directory and no login home. `banner` is the image itself, a
 :end-before: "# doc: end image-product"
 ```
 
+`image` names the image by the exact reference the build tagged it with: an
+entry's `name` plus `:latest` ({ref}`docker-build-naming`), here
+`quickstart-banner:latest`. That is the only link between the product and its
+`[[docker.images]]` entry, and the install looks the reference up on the host
+the product's [`match`](../../configuration/declared-products-tools.md#matching)
+selects, so the image must be built there (unless the entry sets `pull = true`,
+{ref}`docker-image-kind`). `compose build` above built it with
+the use-case's images. A project with a `docker_image` product and no use-case
+builds it with `otto docker build --parent <host>`, naming that host
+({doc}`../../cli/docker/build`).
+
 `otto run install` reaches the container because the project owns products
 on it ({ref}`a project's own containers <fleet-owned-containers>`). It never
 starts the stack, which is why the stack went up first
@@ -307,8 +320,8 @@ The project declares three tiers:
 :end-before: "# doc: end coverage"
 ```
 
-`hosts` names both hosts. `wordcount` and `shout` write their counters in
-the container. `banner` writes them under its `cov_dir`, which the bind mount
+`hosts` names both hosts ({ref}`coverage-configuration`). `wordcount` and
+`shout` write their counters in the container. `banner` writes them under its `cov_dir`, which the bind mount
 puts on the parent, so the parent is where they are fetched from.
 
 Collect the tiers in this order. {doc}`../../cli/cov/tiers` explains the
@@ -316,7 +329,7 @@ order, and {doc}`../../cli/cov/report` the rules the report applies. The
 stack must be up whenever coverage is fetched
 ({ref}`coverage-container-host-example`).
 
-First, zero the counters:
+First, zero the counters ({doc}`../../cli/cov/clean`):
 
 ```bash
 otto --lab example_lab cov clean
@@ -365,6 +378,8 @@ git add .otto/coverage/manual && git commit -m "manual coverage QS-1"
 
 This commit comes before the e2e run because a report only takes an e2e
 capture taken at `HEAD` ({ref}`the report's commit rule <coverage-capture-commit>`).
+Commit any other change, a settings edit included, before the run too: a commit
+made after it leaves the capture at an older commit, and the report refuses it.
 
 Run the end-to-end tests with coverage, into a directory of your choosing.
 `--no-random` keeps the test order stable:
@@ -386,6 +401,11 @@ instead (below).
 
 `--cov-dir` refuses a directory that is not empty, so a second run adds
 `--overwrite-cov-dir` or names a new directory ({ref}`coverage-cov-dir`).
+
+The report reads `banner`'s binary from its running container (below), so
+the container must be up when you report. The track's tests leave it running.
+If you stopped it, as a long-running process's counters need, start it again
+first ({ref}`coverage-container-stop-to-flush`).
 
 Your unit run's counters are already in `build/`, from the unit test
 section. Report all three tiers, naming the directory that holds `cov/`,
@@ -418,7 +438,11 @@ for a metric of your own; {doc}`shell` shows one.
 
 ## Clean up
 
-Take the stack down:
+{ref}`teardown-recipe` is the order for taking any lab down. This track
+skips its two uninstall steps: `wordcount` and `shout` live only in the
+stack's container and go with it, and `cleanup` uninstalls `banner` itself.
+So the stack goes down first, then `cleanup` runs, and the images are
+removed by hand last. Take the stack down:
 
 ```bash
 otto --lab example_lab docker compose down quickstart
@@ -444,13 +468,11 @@ of theirs to remove:
 :language: text
 ```
 
-The two flags skip `cleanup`'s lab-wide steps, which reach every otto tunnel
-and impairment in the lab, including those of others who share it. On the
-parent, `cleanup` saves `banner`'s `docker logs` with the run's output, removes
-its container, and removes the stack's staging; the removal checks again, in
+The two flags are the recipe's opt-outs for a shared lab. On the parent,
+`cleanup` saves `banner`'s `docker logs` with the run's output, removes its
+container, and removes the stack's staging; the removal checks again, in
 the same command, that the stack has no containers. The closing `skipped` line
-reports the container host it passed over because it is not running. A
-`skipped` step is not a failure, and the command exits 0.
+is the container host it passed over, which the recipe explains.
 
 `cleanup` leaves the two images: otto removes no image it built, and
 `banner`'s uninstall keeps an image it names by reference

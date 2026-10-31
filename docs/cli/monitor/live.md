@@ -8,6 +8,8 @@ otto --lab my_lab monitor --live
 ```
 
 The dashboard's keyed URL and its bind address are covered in {doc}`serving`.
+What each host reports is listed in {doc}`metrics`; to chart a value otto has
+no built-in metric for, add a parser ({doc}`../../extend/custom-parsers`).
 
 Docker container hosts are excluded — they aren't operated on as part of
 the host fleet. Embedded targets without an `snmp` block are also
@@ -115,6 +117,61 @@ otto --lab my_lab monitor --live --db metrics.db \
 
 Review a captured archive later with `otto monitor metrics.db` — see
 [Reviewing a capture](review.md#reviewing-a-capture).
+
+(monitor-headless)=
+### From a script
+
+`--live` runs until it is interrupted; it has no duration option. To capture
+for a fixed time, send it one SIGINT (Ctrl-C) or SIGTERM when the time is up,
+for example with `timeout`:
+
+```bash
+timeout --signal=INT 10m otto --lab my_lab monitor --live --db metrics.db --label nightly
+```
+
+Without `--db` no metric is written to disk. A relative `--db` path is relative
+to the current directory. Each point is committed as it is collected, and
+after the signal otto stamps the session's end, closes the archive and exits
+(130 for SIGINT, 143 for SIGTERM; `timeout` itself reports 124). Send the
+signal once: a second one, or a cleanup that outlives `OTTO_TEARDOWN_DEADLINE`
+(10 seconds by default, [Environment
+variables](../index.md#environment-variables)), abandons the stop and leaves
+the session's `end` empty. The points collected up to then are still in the
+archive.
+
+Open the archive with `otto monitor metrics.db` ({doc}`review`), or read it
+with any SQLite client. The tables otto writes today:
+
+| Table | Columns to read |
+| --- | --- |
+| `sessions` | `id`, `label`, `note`, `start`, `end` (empty while running, or after an abandoned stop) |
+| `metrics` | `session_id`, `ts`, `host` (host id), `label` (the series name the dashboard shows), `value` |
+| `events` | `session_id`, `ts`, `end_ts`, `label`, `source`: the event markers on the charts |
+| `log_events` | `session_id`, `ts`, `host`, `tab`, `fields` (a JSON object): rows of a log-event table |
+
+Timestamps are ISO-8601 text. To check that the last session stopped cleanly
+and see which series it holds:
+
+```bash
+sqlite3 metrics.db "SELECT id, start, end FROM sessions ORDER BY start DESC LIMIT 1"
+sqlite3 metrics.db "SELECT DISTINCT host, label FROM metrics"
+```
+
+## Parser warnings
+
+```text
+Monitor: parser <parser class> ('<command>') has produced no data on <host> after 3 ticks
+```
+
+This warning means the command exited 0 on three ticks and its parser has not
+produced a single point since the run started. otto logs it once per host and
+command. On an SNMP host it reads `parser SNMP OID ('<oid>')`: the agent
+returned no value for that OID. Usually what it measures is not there yet: a
+module not loaded, a product not installed or not running, a file nothing has
+written. Run the command on that shell host (`otto host <id> exec '<command>'`) and compare its
+output with what the parser expects. That warning and the two others, for a
+failing command and a parser that raises, are explained under [Parser
+health](../../extend/custom-parsers.md#parser-health).
 
 ## Running otto on shared/NFS storage
 

@@ -27,6 +27,9 @@ clear CLI error — there is no silent partial load:
   argument is validated before the command body runs, so it fails the same
   way any other bad invocation does.
 
+To read a `.db` archive without the dashboard, from a script or a SQLite
+client, see {ref}`monitor-headless`: it lists the tables and columns.
+
 **Older captures.** A `.db`/`.json` written by an otto build before sessions
 existed used a different, unversioned shape and is not readable —
 `otto monitor` on one of those fails loud naming the expected format. There

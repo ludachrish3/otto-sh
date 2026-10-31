@@ -126,6 +126,12 @@ brought up with its own `--parent`.
 `image prune`) are the exception: without `--parent` they run on every
 docker-capable host in the lab.
 
+A `docker_image` product ({ref}`docker-image-kind`) runs its image on the
+host its [`match`](../../configuration/declared-products-tools.md#matching)
+selects, so build that image there: `otto docker build --parent <that host>`. Without
+`--parent` the build goes to the default parent, which in a lab with
+several docker hosts may be another one.
+
 `--parent` is otto's flag, not docker's `-H/--host`: it names the lab host,
 never a daemon socket.
 
@@ -190,16 +196,17 @@ otto host test3.integration.api put ./local /remote/path
 otto host test3.integration.api get /etc/os-release ./
 ```
 
-Container ids are also synthesized at lab-load time **before** any
-`otto docker compose up`, under the default parent of
-{ref}`Which host <docker-which-host>` — so tab completion works immediately
-wherever that rule resolves; a lab whose rule refuses has none until a stack
-is up. otto never starts a container because you used it: accessing a
-declared container whose stack is not running fails fast (see
-{ref}`Starting containers before you use them <docker-start-first>`).
+A declared container's id exists before any `otto docker compose up`: otto
+derives it when the lab loads, under the default parent
+({ref}`Which host <docker-which-host>`), so `--list-hosts` and tab completion
+show it at once. A lab whose default-parent rule refuses has no such ids until
+a stack is up. Using a container whose stack is not running fails at once,
+because otto never starts a container for you
+({ref}`docker-start-first`).
 
-See {doc}`../../architecture/subsystems/docker-hosts` for why a container
-delegates to its parent host instead of being a parallel transport stack.
+A container host has no connection of its own: each command and file transfer
+runs on its parent as `docker exec` or `docker cp`.
+{doc}`../../architecture/subsystems/docker-hosts` explains why.
 
 Configuration lives with the rest of the project's settings: the per-project
 `[docker]` block in {doc}`../../configuration/settings`, and the per-lab

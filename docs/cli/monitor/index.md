@@ -15,7 +15,9 @@ Two commands live under one binary:
 see {ref}`project-scope`). Collects from lab hosts and serves the
   dashboard against that live collector. Add `--db PATH` to persist the run
   as a **session**; reusing the same `--db` path on a later run appends
-  another session to the same archive rather than overwriting it.
+  another session to the same archive rather than overwriting it. It runs
+  until interrupted; to run it from a script for a fixed time and read the
+  archive afterwards, see {ref}`monitor-headless`.
 - `otto monitor <SOURCE>` — review mode. `SOURCE` is a `.json` export or a
   `.db` session archive; no hosts are touched, no reservation gate runs, and
   no `--lab` is needed — `SOURCE` is a self-contained document, so this

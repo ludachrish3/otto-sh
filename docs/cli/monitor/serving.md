@@ -18,6 +18,16 @@ no cookie, renders a small 403 hint page pointing back at the full URL
 There are no flags to disable or pin the key — no `--key`, no `--no-key`.
 The key is always freshly generated and always required.
 
+## Which URL to open
+
+`otto monitor` prints one URL per non-loopback IPv4 address of the machine it
+runs on, in the order `ip -4 addr` lists them. That order says nothing about
+which one your browser can reach: on a VM the first is often a NAT address
+that only the VM itself uses. Open the URL whose address is on the network
+your browser is on. In a browser on the same machine, any of them works. When
+`ip` is not available or lists no such address, otto prints a single URL with
+`0.0.0.0` as the address: put the machine's own address in its place.
+
 ## Connection log
 
 otto logs the dashboard's requests itself (uvicorn's access log is off, because
