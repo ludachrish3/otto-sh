@@ -20,7 +20,14 @@ from pathlib import Path
 import pytest
 
 from ._cli import _WIDE, _flat, _run_otto
-from ._honesty import DAEMON_IMAGE_PAIRS_COMMAND, MARK, parse_daemon_rows, parse_images_rows
+from ._honesty import (
+    DAEMON_IMAGE_PAIRS_COMMAND,
+    MARK,
+    parse_daemon_rows,
+    parse_images_rows,
+    probe_echo,
+    probe_values,
+)
 
 pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("docker_e2e")]
 
@@ -52,48 +59,68 @@ class Throwaway:
         assert out.returncode == 0, out.stdout + out.stderr
         return out.stdout + out.stderr
 
-    def build(self, tag: str, rev: int) -> str:
-        """Build a scratch image tagged ``<repository>:<tag>``; return its full id.
+    def build(self, tag: "str | None", rev: int) -> str:
+        """Build a scratch image tagged ``<repository>:<tag>``, or untagged; return its full id.
 
-        One ``LABEL`` instruction, so no intermediate image is left behind. A
-        second build of the same tag with another *rev* leaves the first dangling.
+        One ``LABEL`` instruction, so no intermediate image is left behind, and
+        *rev* tells this test's images apart. An untagged build is dangling the
+        moment it returns. A tag moved by a later build is not a way to make one:
+        on the containerd image store the image it leaves behind is listed as
+        dangling only some time after that build returns.
         """
-        ref = f"{self.repository}:{tag}"
+        tagged = f" -t {self.repository}:{tag}" if tag is not None else ""
         self.exec(
             f"printf 'FROM scratch\\nLABEL {_LABEL}={self.token} rev={rev}\\n' "
-            f"| docker build -q -t {ref} -"
+            f"| docker build -q{tagged} -"
         )
-        return self.full_id(ref)
+        # By label: an untagged image has no reference to inspect, and what
+        # `docker build -q` prints on the containerd store is not the id
+        # `image ls` and `image inspect` report.
+        found = self.held_ids(rev=rev)
+        assert len(found) == 1, f"no single image with rev={rev}: {found}"
+        return found.pop()
 
-    def full_id(self, ref: str) -> str:
-        """The daemon's own full id for *ref*."""
-        found = _FULL_ID.findall(
-            self.exec(f"docker image inspect --format '{MARK} {{{{.Id}}}}' {ref}")
-        )
-        assert len(found) == 1, f"no single id for {ref}: {found}"
-        return found[0]
+    def held_ids(self, *, dangling: bool = False, rev: "int | None" = None) -> "set[str]":
+        """Every full id the daemon holds with this test's label (only the dangling ones,
+        only the one built with *rev*).
 
-    def held_ids(self, *, dangling: bool = False) -> "set[str]":
-        """Every full id the daemon holds with this test's label (only the dangling ones)."""
+        The listing ends with a probe of its own exit status, so a listing that
+        failed or was cut short fails here instead of reading as an empty set.
+        """
         extra = " --filter dangling=true" if dangling else ""
+        if rev is not None:
+            extra += f" --filter label=rev={rev}"
         text = self.exec(
             f"docker image ls -a --no-trunc --filter {self.label}{extra} "
-            f"--format '{MARK} {{{{.ID}}}}'"
+            f"--format '{MARK} {{{{.ID}}}}'; {probe_echo('listed', '$?')}"
         )
+        assert probe_values(text, "listed") == ["0"], f"the image listing did not complete:\n{text}"
         return set(_FULL_ID.findall(text))
+
+    def sibling(self) -> "Throwaway":
+        """A second namespace on the same host: images this test's label filter must not name."""
+        return Throwaway(self.host, self.xdir, f"{self.token}-sibling")
 
 
 @pytest.fixture
 def throwaway(docker_host, tmp_path) -> Iterator[Throwaway]:
-    """Yield the test's image namespace; remove every image carrying its label on exit."""
+    """Yield the test's image namespace; on exit, remove every image carrying its label
+    or its sibling's."""
     images = Throwaway(docker_host, tmp_path, uuid.uuid4().hex[:12])
     yield images
-    # By id, with the label as the only selector: nothing another test owns can match.
+    owned = (images, images.sibling())
+    # By id, with the labels as the only selectors: nothing another test owns can
+    # match. Both are removed before either is checked, so one failure leaks neither.
     images.exec(
-        f"for i in $(docker image ls -aq --no-trunc --filter {images.label}); "
-        f"do docker image rm -f -- $i; done; true"
+        "; ".join(
+            f"for i in $(docker image ls -aq --no-trunc --filter {o.label}); "
+            f"do docker image rm -f -- $i; done"
+            for o in owned
+        )
+        + "; true"
     )
-    assert images.held_ids() == set(), "the finalizer left a throwaway image behind"
+    for o in owned:
+        assert o.held_ids() == set(), "the finalizer left a throwaway image behind"
 
 
 def test_image_ls_and_its_alias_print_the_daemons_references_and_ids(throwaway):
@@ -163,9 +190,11 @@ def test_image_rm_of_an_image_the_daemon_lacks_is_dockers_own_error(throwaway):
 
 
 def test_image_prune_removes_exactly_the_dangling_images_its_filter_names(throwaway):
-    first = throwaway.build("a", 1)
-    second = throwaway.build("a", 2)  # takes the tag: `first` is now dangling
-    assert first != second
+    first = throwaway.build(None, 1)  # untagged: dangling from the start
+    second = throwaway.build("a", 2)  # tagged: not dangling, so prune keeps it
+    other = throwaway.sibling()
+    outside = other.build(None, 1)  # dangling, but not under this test's label
+    assert len({first, second, outside}) == 3
     assert throwaway.held_ids(dangling=True) == {first}
 
     # Without -f: refused, nothing runs.
@@ -201,3 +230,7 @@ def test_image_prune_removes_exactly_the_dangling_images_its_filter_names(throwa
     assert f"deleted: {first}" in out.stdout, out.stdout
     assert second not in out.stdout, out.stdout
     assert throwaway.held_ids() == {second}
+    assert outside not in out.stdout, out.stdout
+    assert other.held_ids(dangling=True) == {outside}, (
+        "prune removed an image its filter does not name"
+    )

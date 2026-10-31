@@ -26,6 +26,27 @@ DAEMON_IMAGE_PAIRS_COMMAND = (
 )
 """Every image's reference and id, in the daemon's own order."""
 
+
+def probe_echo(name: str, expression: str) -> str:
+    """A shell ``echo`` that prints ``<mark>-<name> <value of expression>`` on its own line.
+
+    Read it back with :func:`probe_values`. *expression* must expand (``$?``,
+    ``$(...)``), so the passthrough's echo of the command, which shows it
+    unexpanded, is never taken for the value.
+    """
+    return f"echo {MARK}-{name} {expression}"
+
+
+def probe_values(text: str, name: str) -> "list[str]":
+    """Every value a :func:`probe_echo` named *name* printed into *text*, in order.
+
+    The command's own echo carries the same mark followed by the unexpanded
+    ``$...``; that is skipped.
+    """
+    found = re.findall(rf"{MARK}-{re.escape(name)} (\S+)", text)
+    return [value for value in found if not value.startswith("$")]
+
+
 _BUILT = re.compile(
     r"(?P<image>\S+): built (?P<refs>\S+(?:, \S+)*)\s+(?P<id>[0-9a-f]{12})\s+\((?P<host>[^)]+)\)"
 )

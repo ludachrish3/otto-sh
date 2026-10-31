@@ -39,6 +39,8 @@ from tests.e2e.docker._honesty import (
     parse_images_rows,
     parse_project_image_ids,
     parse_ps_ids,
+    probe_echo,
+    probe_values,
     project_image_ids_command,
 )
 
@@ -461,3 +463,17 @@ def test_parse_compose_ps_names_reads_what_the_renderer_prints(capsys):
         ObserveReport([HostOutput("test3", "docker compose ps", done)]), header=True
     )
     assert parse_compose_ps_names(capsys.readouterr().out) == {"test3": ["unix-project1-x-api-1"]}
+
+
+def test_probe_values_reads_the_probe_and_never_the_echo_of_the_command(console, capsys):
+    """The echo shows `$?` unexpanded; only the relayed value counts."""
+    host = SimpleNamespace(name="test3")
+    command = f"docker image ls -q; {probe_echo('listed', '$?')}"
+    BaseHost._log_command(host, command)  # ty: ignore[invalid-argument-type] — a name-only stand-in is all the logger reads
+    echoed = capsys.readouterr().out
+    assert f"{MARK}-listed" in echoed, "the echo carries the probe's mark"
+    assert probe_values(echoed, "listed") == []
+
+    BaseHost._log_command(host, command)  # ty: ignore[invalid-argument-type] — as above
+    BaseHost._log_output(host, f"{MARK}-listed 0")  # ty: ignore[invalid-argument-type] — as above
+    assert probe_values(capsys.readouterr().out, "listed") == ["0"]

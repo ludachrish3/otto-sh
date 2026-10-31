@@ -22,7 +22,6 @@ preference.
 from __future__ import annotations
 
 import os
-import re
 import uuid
 
 import pytest
@@ -41,6 +40,7 @@ from ._cli import (
     _run_otto,
     staging_root_of,
 )
+from ._honesty import probe_echo, probe_values
 
 # Each test leases one docker-capable host from UNIX_POOL via the
 # ``docker_host`` fixture (tests/e2e/docker/conftest.py), and runs ``otto`` as subprocesses under
@@ -397,11 +397,6 @@ def test_e2e_list_hosts_includes_declared_container(tmp_path):
     assert not missing, f"expected {missing} in output:\n{output}"
 
 
-_STACK_MARK = "OTTO-STACK-COUNT"
-"""Starts the one line the container-count probe prints, so it is findable in
-console output that also carries otto's own command echo."""
-
-
 def test_e2e_run_against_unstarted_container_fails_fast(
     teardown_default_parent_after, default_parent_host, tmp_path
 ):
@@ -443,14 +438,13 @@ def test_e2e_run_against_unstarted_container_fails_fast(
         "host",
         docker_host,
         "exec",
-        f"{ids} && echo {_STACK_MARK} $({count})",
+        f"{ids} && {probe_echo('stack-count', f'$({count})')}",
         xdir=tmp_path,
         env=_WIDE,
     )
     text = probe.stdout + probe.stderr
     assert probe.returncode == 0, text
-    # The echo of the command itself reads `<mark> $(...`, never `<mark> <digits>`.
-    counts = set(re.findall(rf"{_STACK_MARK} (\d+)", text))
+    counts = set(probe_values(text, "stack-count"))
     assert counts == {"0"}, f"expected no container in {project}, got:\n{text}"
 
 
