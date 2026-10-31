@@ -106,7 +106,13 @@ module in place with absolute paths, which is all {ref}`the one build
 requirement <coverage-build-requirement>` asks.
 
 The build writes only files the example's `.gitignore` lists, so the git
-repository stays clean.
+repository stays clean. A project you scaffold with `otto init` ignores only
+`otto-output/`, so add the build's lines to its `.gitignore` yourself:
+
+```{literalinclude} ../../examples/quickstart-kmod/.gitignore
+:language: text
+:caption: .gitignore
+```
 
 ## Declare the library and the module
 
@@ -118,6 +124,9 @@ The library is a dev tool and the module is a product:
 :start-after: "# doc: begin declare"
 :end-before: "# doc: end declare"
 ```
+
+`match` puts both on the host whose id is `dut`
+([Matching](../../configuration/declared-products-tools.md#matching)).
 
 Preview the install. The dry run contacts no host:
 
@@ -161,10 +170,17 @@ The tests write to the module on `dut` through one helper:
 :caption: tests/test_wordcount.py
 ```
 
-`ensure("installed")` loads the module before the first test when it is not
-loaded. The class's teardown unloads it, so the counters of its exit routine
-reach the run; that leaves the module uninstalled, and the coverage section
-below puts it back ({ref}`kmod-teardown-ensure`).
+[`ensure("installed")`](../writing-tests.md#declaring-lab-state-the-ensure-marker)
+loads the module before the first test when it is not loaded. The class's
+teardown unloads it, so the counters of its exit routine reach the run; that
+leaves the module uninstalled, and the coverage section below puts it back
+({ref}`kmod-teardown-ensure`).
+
+Both act on more than this module. `get_host("dut").uninstall()` takes every
+product on `dut` off, and `ensure("installed")` on a partially installed lab
+uninstalls every product in the lab before it installs ({ref}`--recover-partial <recover-partial>`).
+Here the module is the only product, so the two are the same. In a project
+with other products, see {ref}`several-products`.
 
 ## A unit test
 
@@ -213,10 +229,13 @@ The project declares three tiers:
 :end-before: "# doc: end coverage"
 ```
 
+`hosts` selects the lab hosts coverage walks ({ref}`[coverage] hosts
+<coverage-configuration>`), here `dut`.
+
 Collect them in this order. {doc}`../../cli/cov/tiers` explains the order,
 and {doc}`../../cli/cov/report` the rules the report applies.
 
-First, zero the module's counters on the host:
+First, zero the module's counters on the host ({doc}`../../cli/cov/clean`):
 
 ```bash
 otto --lab example_lab cov clean
@@ -261,11 +280,14 @@ git add .otto/coverage/manual && git commit -m "manual coverage QS-1"
 
 This commit comes before the e2e run because a report only takes an e2e
 capture taken at `HEAD` ({ref}`the report's commit rule <coverage-capture-commit>`).
+Commit any other change you want, settings included, before the e2e run too: a
+commit after it makes `cov report` refuse that run's capture.
 
 The e2e run zeroes every counter before its first test, the same way, so a
 module still loaded from the install would lose its init routine there too.
-Unload it first; the test's `ensure("installed")` then loads it after the
-zeroing:
+Unload it first with [`otto run uninstall`](../../cli/run/defaults.md), which
+takes off every product in the lab, here only the module. The test's
+`ensure("installed")` then loads it after the zeroing:
 
 ```bash
 otto --lab example_lab run uninstall
@@ -289,7 +311,8 @@ otto --lab example_lab test --cov --cov-dir ~/otto-runs/e2e/cov --no-random Test
 `--cov-dir` refuses a directory that is not empty, so a second run adds
 `--overwrite-cov-dir` or names a new directory ({ref}`coverage-cov-dir`).
 
-The teardown unloaded the module, so the lab is no longer installed:
+The teardown unloaded the module, so the lab is no longer installed
+([Reading `status`](../../cli/run/defaults.md#reading-status)):
 
 ```bash
 otto --lab example_lab run status
@@ -299,7 +322,9 @@ otto --lab example_lab run status
 :language: text
 ```
 
-Put it back. `--ensure` installs only what is missing:
+Put it back. The lab is uninstalled, so `--ensure` installs it. On a
+partially installed lab it would first uninstall every product in the lab
+({ref}`--recover-partial <recover-partial>`):
 
 ```bash
 otto --lab example_lab run install --ensure
@@ -372,7 +397,9 @@ otto --lab example_lab test --no-cov --no-random TestMonitoring
 otto --lab example_lab run cleanup
 ```
 
-What it unloads, and in which order, is in [Declaring the module and its
+This project has no docker stack, so this one command is the whole
+{ref}`teardown-recipe`: it unloads the module, then `otto_kmodcov`. What comes
+off, and in which order, is in [Declaring the module and its
 library](../../cli/cov/instrumenting/kernel-modules.md#declaring-the-module-and-its-library).
 
 ## Next

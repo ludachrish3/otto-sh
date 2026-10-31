@@ -59,7 +59,9 @@ A command-line tool the tests run once each needs nothing about coverage in
 ({ref}`a tool run once per test <coverage-run-per-test-case>`).
 
 `{cov_dir}` and `{name}` are the two placeholders `install`, `uninstall`, and
-`check` accept; anything else is refused when settings load. A literal brace —
+`check` accept; anything else is refused when settings load. An `uninstall`
+must leave `cov_dir` in place: otto clears it at the start of a run and
+collects it at the end ({ref}`when otto clears and collects cov_dir <cov-dir-lifecycle>`). A literal brace —
 `awk '{{print $1}}'`, a shell `${{VAR}}` — is written doubled. See
 {doc}`../configuration/declared-products-tools` for the whole `shell`
 kind.
@@ -328,7 +330,9 @@ cover the same line, lower winning. The paths are project-relative — resolved
 against the project that declares `[coverage]`, never the directory you happen to
 run from. Without the `products` sub-table the tier still sweeps whatever
 `harvest_dirs` it declares, but as one unnamed view: the lines count, and no
-product owns them.
+product owns them. Name each build directory in one place, `harvest_dirs` or
+one view: a directory both reach is counted twice
+({ref}`one place per directory <coverage-unit-one-place>`).
 
 Each view needs its **own** build directory — `.gcno` files sit beside the
 objects they describe, so two views built from one tree cannot be told apart.

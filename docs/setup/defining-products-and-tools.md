@@ -129,13 +129,61 @@ when every counted project is uninstalled, and `2` for anything in
 between — a *partial* lab, which is what a half-finished install leaves behind.
 
 `otto run install --ensure` converges rather than installs blindly: it reads
-the lab's current state and does only the work that is missing, recovering a
-partial lab instead of installing on top of remnants. That is exactly what a
-test marked `@pytest.mark.ensure("installed")` runs before its body.
+the lab's current state first. An installed lab is left alone, and a partial
+lab is uninstalled whole, every product of every project, then installed again
+({ref}`--recover-partial <recover-partial>`). That is exactly what a test marked
+`@pytest.mark.ensure("installed")` runs before its body.
 
 {doc}`../cli/run/defaults` is the full treatment: every flag, the walk
 order across projects, what `cleanup` does and does not take off the lab, and how
 to read `status`.
+
+(several-products)=
+
+## Several products, several hosts
+
+A project declares one `[[products]]` entry per product. Two products on one
+host are two entries whose `match` admits that host; a product for other hosts
+names those in its own `match`:
+
+```toml
+[[products]]
+name = "server"
+kind = "shell"
+artifact = "build/server"
+stage_dir = "/opt/demo"
+check = "test -x /opt/demo/server"
+match = { id = "dut" }
+
+[[products]]
+name = "client"
+kind = "shell"
+artifact = "build/client"
+stage_dir = "/opt/demo"
+check = "test -x /opt/demo/client"
+match = { id = "dut" }
+
+[[products]]
+name = "probe"
+kind = "shell"
+artifact = "build/probe"
+stage_dir = "/opt/demo"
+check = "test -x /opt/demo/probe"
+match = { id = "peer[12]" }
+```
+
+[Matching](../configuration/declared-products-tools.md#matching) lists every
+key a `match` table takes. Two entries that would stage the same file name into
+one directory on one host are refused at lab load. Each product has its own
+`cov_dir`, `/tmp/<name>` by default, so their counters never mix.
+
+The verbs that act on the whole lab act on all of these at once:
+`otto run uninstall`, `otto run install --ensure` on a partial lab and an
+`ensure("installed")` marker ({ref}`--recover-partial <recover-partial>`). In a test,
+`Host.uninstall()` takes every product off that host, not only the one the test
+is about. So no product's `uninstall` may delete its `cov_dir`
+({ref}`when otto clears and collects cov_dir <cov-dir-lifecycle>`).
+{ref}`teardown-recipe` is the order to take it all down in.
 
 ## Variants
 

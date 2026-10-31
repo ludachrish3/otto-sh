@@ -119,6 +119,18 @@ them is refused by name, because a dev tool is never under test and so has no
 coverage. What otto does with them is {doc}`../cli/cov/index`'s subject, and
 {doc}`../setup/coverage` is the walkthrough.
 
+(cov-dir-lifecycle)=
+
+**Leave `cov_dir` out of `uninstall`.** `otto test --cov` deletes the `.gcda`
+files under the `cov_dir` of every instrumented product on the `[coverage]
+hosts` before the first test
+(`--cov-clean`, on by default). It fetches them after the last test, then clears
+each captured product's counters ({doc}`../cli/cov/during-tests`). Counters add up in
+between, across every install and uninstall the tests do. A `cov_dir` that an
+`uninstall` deleted has nothing to fetch: that product drops out of the run's
+captures with no warning. otto's own uninstalls (`kmod`, `docker_image`) never
+delete it.
+
 Without `install`/`uninstall` those steps are no-op successes (staging
 placed the artifact). Without `check`, `is_installed` answers False — otto
 assumes not installed and re-stages, which is safe for what this kind

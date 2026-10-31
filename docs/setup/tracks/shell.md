@@ -79,6 +79,9 @@ Each tool is a product: otto copies it to `dut` and checks that it is there.
 :end-before: "# doc: end products"
 ```
 
+`match` puts each tool on the host whose id is `dut`
+([Matching](../../configuration/declared-products-tools.md#matching)).
+
 Preview the install. The dry run contacts no host:
 
 ```bash
@@ -171,10 +174,13 @@ The project declares three tiers:
 :end-before: "# doc: end coverage"
 ```
 
+`hosts` selects the lab hosts coverage walks ({ref}`[coverage] hosts
+<coverage-configuration>`), here `dut`.
+
 Collect them in this order. {doc}`../../cli/cov/tiers` explains the order,
 and {doc}`../../cli/cov/report` the rules the report applies.
 
-First, zero the counters on the host:
+First, zero the counters on the host ({doc}`../../cli/cov/clean`):
 
 ```bash
 otto --lab example_lab cov clean
@@ -210,8 +216,10 @@ otto --lab example_lab cov get --tier manual --ticket QS-1 --tester-name docs --
 :language: text
 ```
 
-`otto-no-cov-dir` means `wordcount` has no counters on the host: nobody ran it
-by hand. The `skipped` line counts the system headers the tool compiled in,
+`otto-no-cov-dir` means `wordcount` has no `cov_dir` on the host: it has not
+run there yet. A second pass through this track finds the first pass's
+`/tmp/wordcount` (cleanup leaves it), so it archives that empty directory
+instead. The `skipped` line counts the system headers the tool compiled in,
 which are not the project's sources.
 
 `--tester-name` and `--tester-email` record who did the testing. Leave them
@@ -226,7 +234,9 @@ git add .otto/coverage/manual && git commit -m "manual coverage QS-1"
 The commit you made with the example gave every capture a commit to name.
 This one adds the manual store, which is part of the project's history, and it
 comes before the e2e run because a report only takes an e2e capture taken at
-`HEAD` ({ref}`the report's commit rule <coverage-capture-commit>`).
+`HEAD` ({ref}`the report's commit rule <coverage-capture-commit>`). For the
+same reason, commit any other change, settings included, before the e2e run,
+never after it.
 
 Run the end-to-end tests with coverage, into a directory of your choosing.
 `--no-random` keeps the test order stable, so your log reads like this one:
@@ -310,7 +320,10 @@ otto --lab example_lab test --no-cov --no-random TestMonitoring
 otto --lab example_lab run cleanup
 ```
 
-This removes the tools and their counters from the host.
+This removes the tools from the host and leaves their counters under each
+tool's `cov_dir` ({ref}`what cleanup leaves <cleanup-leaves>`). A lab with a
+docker stack is taken down in a set order: see
+{ref}`the teardown recipe <teardown-recipe>`.
 
 ## Next
 

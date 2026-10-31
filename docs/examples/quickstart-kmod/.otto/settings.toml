@@ -19,7 +19,8 @@ lab_patterns = ["example_lab"]
 
 # doc: begin declare
 # The coverage library: built from the vendored copy for dut's kernel, loaded
-# on dut when the module installs, and unloaded by `otto run cleanup`.
+# on dut when the module installs, and unloaded by `otto run uninstall-tools`
+# or `otto run cleanup`.
 [[dev_tools]]
 name = "otto_kmodcov"
 kind = "kmodcov"

@@ -67,7 +67,7 @@ The other six follow the same shape:
 
 | Instruction | First-party flags (default) | Walk |
 | ----------- | ----------------- | ---- |
-| `install` | `--ensure` (off), `--recover-partial` (on, meaningful with `--ensure`) | dependencies first, fail-fast |
+| `install` | `--ensure` (off), `--recover-partial` (on, meaningful with `--ensure`; {ref}`what it does <recover-partial>`) | dependencies first, fail-fast |
 | `uninstall` | `--product-logs` (on), `--debug-logs` (on) | dependents first, best-effort |
 | `cleanup` | `--product-logs` (on), `--debug-logs` (on), `--reset-impairments` (on), `--remove-tunnels` (on) | dependents first, best-effort |
 | `get-logs` | `--product-logs` (on), `--debug-logs` (on), `--require-product-logs` (off) | order immaterial, best-effort |
@@ -85,15 +85,32 @@ every configured project.
 each project's dev tools come off, products stay, and `--toolchain` also removes
 the host-global toolchain tools, even after a dev tool refused to go.
 
+`uninstall` acts on every project in the run and every product each one has
+on its hosts. It has no option for one project or one product. To keep a
+project's products on, switch that project off for the run with `-E`
+({doc}`../projects`). `otto host <id> uninstall` narrows to one host, and
+takes every product on it off ({doc}`../host/index`).
+
 `cleanup` is strictly more than `uninstall`: each project also gives up its own dev
 tools, the host-global toolchain tools come off, and the lab's own leftovers go
 with them — netem impairments are reset and every otto tunnel is reaped. See
 [What `cleanup` takes off the lab](#what-cleanup-takes-off-the-lab) for what
-those last two do and do not touch, and `otto -n run cleanup` to see every
-removal it would make, host by host ({ref}`dry-run-lab-verbs`). `--ensure`
-turns `install` into a converge — the lab's current state is read and only the
-missing work is done — which is what an `ensure` marker's steps do before a
-test.
+those last two do and do not touch, and `otto --lab my_lab -n run cleanup` to
+see every removal it would make, host by host ({ref}`dry-run-lab-verbs`). The
+order to take a lab down in is {ref}`teardown-recipe`.
+
+(recover-partial)=
+
+**`--ensure` and `--recover-partial`.** `--ensure` turns `install` into a
+converge, which is also what an `ensure("installed")` marker does before a
+test. It reads the lab's state first ([Reading `status`](#reading-status)). An
+installed lab is a skip, and an uninstalled one is installed. A partially
+installed lab is not topped up: with `--recover-partial` (on by default) otto
+runs `uninstall` over the whole lab, every project and every product, then
+installs everything again. If that uninstall fails, nothing is installed.
+`--no-recover-partial` goes straight to the install instead. Each product's own
+`uninstall` runs in that recovery, so keep `cov_dir` out of it
+({ref}`when otto clears and collects cov_dir <cov-dir-lifecycle>`).
 
 ## What a run prints
 
@@ -102,6 +119,11 @@ Each host says what became of every product as it goes: `staged`, then
 message. A run over several hosts and products therefore shows which one passed
 and which one stopped it. `stage`, `uninstall`, the dev-tool install and the
 dev-tool uninstall report the same way.
+
+The `fleet of interest: N of M lab hosts` line counts every host a project's
+`[project]` table admits, whether or not it has products. `otto -n run install`
+lists every one of them too, so a host with nothing to install shows its name
+and no steps.
 
 ```text
 @router1   | app: staged
@@ -456,6 +478,57 @@ staged its files and not yet started a container can still lose them: its
 `up` then fails, or a later `down` without them falls back to removing by
 label. A distinct suffix per session keeps sessions apart.
 
+(cleanup-leaves)=
+
+### What `cleanup` leaves behind
+
+`cleanup`, and the `lab is clean` line of `--full`, cover only the steps
+above. These stay on the hosts:
+
+- whatever a product's own `uninstall` does not remove. A `shell` product
+  with no `uninstall` command keeps its staged file, and the directories
+  staging created stay;
+- every product's `cov_dir` ({ref}`when otto clears and collects cov_dir <cov-dir-lifecycle>`);
+- docker images. otto removes no image it built, and a `docker_image` product
+  removes only an image it loaded from a tarball ({ref}`docker-image-kind`).
+  Remove the rest with {doc}`../docker/image/rm`;
+- any file a test or you made on a host.
+
+(teardown-recipe)=
+
+## Taking a lab down
+
+Take a lab down in this order:
+
+1. `otto --lab my_lab run uninstall` takes every project's products off
+   ({ref}`when otto clears and collects cov_dir <cov-dir-lifecycle>` says what it must leave).
+2. `otto --lab my_lab run uninstall-tools` takes their dev tools off.
+3. `otto --lab my_lab docker compose down <use-case>`, for each use-case you
+   brought up ({doc}`../docker/compose/down`). `cleanup` never takes a stack
+   down, so this comes before it. Steps 1 and 2 come before this one, while
+   the products and tools on the stack's containers can still be reached.
+4. `otto --lab my_lab run cleanup` removes the rest: the toolchain tools, the
+   docker staging, impairments and tunnels.
+
+Without a compose stack, step 4 alone does all of this, since `cleanup` also
+takes the products and dev tools off. Steps 1 and 2 matter only because step 3
+makes a container's products unreachable.
+
+On a lab you share, run step 4 as:
+
+```bash
+otto --lab my_lab run cleanup --no-reset-impairments --no-remove-tunnels
+```
+
+The impairment reset and the tunnel removal reach every impairment and tunnel
+in the lab, other people's
+included. The toolchain tools come off either way.
+
+After step 3, `cleanup` prints `skipped: cleanup declined in project '…':
+host '…': container not running` for each container host it passes over. The
+container is gone, so there is nothing of it to remove, and `cleanup` exits 0.
+What is still on the hosts after step 4 is in {ref}`cleanup-leaves`.
+
 ## Many projects: composition and order
 
 Composition is by *iteration over resolved projects in dependency order*, never by
@@ -600,6 +673,7 @@ impairments                    core     dirty — a->b
                                edge     clean
 tunnels                        lab      unknown — the scan could not reach test2
 lab is dirty — otto run cleanup takes it off
+lab is partially installed; otto run install --ensure recovers it
 ```
 
 Three things about that are contracts rather than styling:
@@ -607,7 +681,8 @@ Three things about that are contracts rather than styling:
 - **The exit code does not move.** It still means install state and nothing
   else — the run above exits `2` because the *install* aggregate is PARTIAL,
   and a fully installed lab with dev tools left on it and a tunnel up still
-  exits `0`. The cleanliness aggregate is the last line instead.
+  exits `0`. The cleanliness aggregate is its own line, just above the
+  install answer.
 - **`unknown` is a cell, not a crash.** `is_clean()` *raises* on a state nobody
   could read; `--full` shows it as `unknown`, so an unreachable host does not
   hide the hosts that answered. Both read the same probes, so the rows and the
@@ -618,7 +693,17 @@ Three things about that are contracts rather than styling:
   Links otto refuses to impair get no row at all — every implicit hop edge,
   and also the management or hop-transit interfaces a scan turns down.
   A refused link is never read, so there is no state to show; `cleanup` names
-  the scan-found refusals in its own `Skipped` message.
+  the scan-found refusals in its own `Skipped` message. A lab with no link
+  otto can impair has no `impairments` section at all.
+
+The install answer still prints after the cleanliness line: `lab is installed`
+(exit `0`), `lab is uninstalled` (exit `1`) or `lab is partially installed`
+(exit `2`). The two lines answer different questions. `lab is dirty` above
+`lab is installed` means the products are on and `cleanup` would still find
+something to take off, which is the normal state of a lab in use. The
+cleanliness line sets no exit code; a script asks `await
+otto.project.is_clean()` instead. What `lab is clean` does not cover is in
+{ref}`cleanup-leaves`.
 
 The same report is a library call: `await otto.project.cleanliness()` returns
 one `CleanlinessItem` per row, grouped in `cleanup`'s own step order, plus the

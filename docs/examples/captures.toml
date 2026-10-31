@@ -458,6 +458,14 @@ record = false
 timeout = 300
 argv = ["{otto}", "--lab", "example_lab", "run", "cleanup"]
 
+# cleanup leaves each tool's cov_dir. Remove them, so the next run's
+# qs-shell-cov-get-manual still prints otto-no-cov-dir for wordcount.
+[[capture]]
+id = "qs-shell-sweep-cov-dirs"
+project = "quickstart-shell"
+record = false
+argv = ["{otto}", "--lab", "example_lab", "host", "dut", "exec", "rm -rf /tmp/wordcount /tmp/shout"]
+
 # ---- Kernel-module track (docs/setup/tracks/kmod.md) -------------------------
 # One ordered set, listed under [ordered]. In a fresh copy of the example it
 # runs init, then copies the sentinels, commits, builds the library, the

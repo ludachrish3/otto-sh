@@ -45,14 +45,15 @@ composes = ["tools"]
 
 # doc: begin compose-products
 # wordcount and shout are installed into the compose container. A container
-# host has no default staging directory, so stage_dir is absolute.
+# host has no default staging directory, so stage_dir is absolute. uninstall
+# removes only the tool: otto clears and collects cov_dir itself.
 [[products]]
 name = "wordcount"
 kind = "shell"
 artifact = "build/src/wordcount/wordcount"
 stage_dir = "/opt/quickstart"
 check = "test -x /opt/quickstart/wordcount"
-uninstall = "rm -rf /opt/quickstart/wordcount {cov_dir}"
+uninstall = "rm -f /opt/quickstart/wordcount"
 match = { id = "docker-host\\.quickstart\\.tools" }
 
 [[products]]
@@ -61,7 +62,7 @@ kind = "shell"
 artifact = "build/src/shout/shout"
 stage_dir = "/opt/quickstart"
 check = "test -x /opt/quickstart/shout"
-uninstall = "rm -rf /opt/quickstart/shout {cov_dir}"
+uninstall = "rm -f /opt/quickstart/shout"
 match = { id = "docker-host\\.quickstart\\.tools" }
 # doc: end compose-products
 

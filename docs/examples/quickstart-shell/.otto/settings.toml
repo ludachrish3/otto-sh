@@ -19,14 +19,15 @@ lab_patterns = ["example_lab"]
 
 # doc: begin products
 # Both tools are staged into /tmp/quickstart on dut. Each writes its coverage
-# counters under its own cov_dir, /tmp/<name> by default.
+# counters under its own cov_dir, /tmp/<name> by default. uninstall removes
+# only the tool: otto clears and collects cov_dir itself.
 [[products]]
 name = "wordcount"
 kind = "shell"
 artifact = "build/src/wordcount/wordcount"
 stage_dir = "/tmp/quickstart"
 check = "test -x /tmp/quickstart/wordcount"
-uninstall = "rm -rf /tmp/quickstart/wordcount {cov_dir}"
+uninstall = "rm -f /tmp/quickstart/wordcount"
 match = { id = "dut" }
 
 [[products]]
@@ -35,7 +36,7 @@ kind = "shell"
 artifact = "build/src/shout/shout"
 stage_dir = "/tmp/quickstart"
 check = "test -x /tmp/quickstart/shout"
-uninstall = "rm -rf /tmp/quickstart/shout {cov_dir}"
+uninstall = "rm -f /tmp/quickstart/shout"
 match = { id = "dut" }
 # doc: end products
 

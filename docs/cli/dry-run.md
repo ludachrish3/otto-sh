@@ -338,7 +338,7 @@ instructions and every user-defined instruction keep the seam default.
 `otto.project`'s verbs — what `otto run install` and the `ensure` marker's
 steps call — compose the host verbs above, and inherit their answers. Two of
 them have an answer of their own, and both are reached from a *library* caller:
-`otto -n run cleanup` prints its plan and the block and runs no body at all,
+`otto --lab my_lab -n run cleanup` prints its plan and the block and runs no body at all,
 while a test marked `ensure("clean")` calls the converge directly.
 
 - `cleanup()` finishes with two lab-wide steps, and neither pretends to have
