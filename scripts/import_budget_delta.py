@@ -73,6 +73,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import ModuleType
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -393,13 +394,18 @@ class Verdict:
     """Index of the pair the verdict (and its tables) describes; None when inconclusive."""
 
 
-def expected_exits() -> "dict[str, int | None]":
-    """Surface -> the exit a real-entry surface must end with (None for a harness child)."""
+def _harness() -> "ModuleType":
+    """Return the tip's harness module, `scripts/import_budget.py`, imported under this otto."""
     if str(REPO_ROOT) not in sys.path:
         sys.path.insert(0, str(REPO_ROOT))
     from scripts import import_budget
 
-    return {s.key: (s.expect_exit if s.real_entry else None) for s in import_budget.SURFACES}
+    return import_budget
+
+
+def expected_exits() -> "dict[str, int | None]":
+    """Surface -> the exit a real-entry surface must end with (None for a harness child)."""
+    return {s.key: (s.expect_exit if s.real_entry else None) for s in _harness().SURFACES}
 
 
 def _moved(before: "dict[str, int]", after: "dict[str, int]") -> "dict[str, int]":
@@ -946,7 +952,13 @@ def _steps(
         return status
     report = job.dest / f"{job.minor}.json"
     status["report"] = _logged(runner, job.log, elapsed, "report")(
-        [py, "scripts/import_budget.py", "--report-json", str(report)], harness, inner, None
+        [py, "scripts/import_budget.py", "--report-json", str(report)],
+        harness,
+        # The harness runs under this side's otto, which may predate the
+        # command-list helper; this process runs under the tip's, so it reads
+        # the list once and hands it over.
+        {**inner, _harness().VERBS_ENV: ",".join(_harness().first_party_commands())},
+        None,
     )
     return status
 
@@ -1169,7 +1181,12 @@ def main(argv: "list[str] | None" = None) -> int:
     m.add_argument(
         "--base", default=None, help="the base ref (default: git describe --tags --abbrev=0)"
     )
-    m.add_argument("--tip", default="HEAD", help="the tip ref")
+    m.add_argument(
+        "--tip",
+        default="HEAD",
+        help="the tip ref; the tracked verbs and expected surfaces are read from the "
+        "checked-out tree, so a tip other than HEAD must carry the same surfaces",
+    )
     _add_minors(m)
     _add_approve(m)
     args = ap.parse_args(argv)

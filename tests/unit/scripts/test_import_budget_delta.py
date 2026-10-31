@@ -10,6 +10,8 @@ import json
 import os
 import re
 import shutil
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -1454,3 +1456,59 @@ def test_the_cli_measure_verb_wires_the_default_runner(tmp_path: Path, monkeypat
     )
     assert rc == 0
     assert fake.calls
+
+
+def test_the_report_step_hands_the_harness_the_tip_s_command_list(tmp_path: Path):
+    """The harness runs under the BASE's otto, which may predate the command-list helper.
+
+    So the delta, which runs under the tip's otto, reads the list once and hands it
+    to the harness: the base side measures the same tracked verbs as the tip, and
+    the harness never imports a helper an older release does not have.
+    """
+    from otto.cli.builtin_commands import builtin_command_names
+
+    repo, base_sha, tip_sha = _repo(tmp_path)
+    reports = []
+
+    class Spy(FakeRunner):
+        def __call__(self, argv, cwd, env, out):
+            if "scripts/import_budget.py" in argv:
+                reports.append(dict(env))
+            return super().__call__(argv, cwd, env, out)
+
+    measure_side(_job(repo, tmp_path, base_sha, tip_sha), Spy())
+    assert [env[import_budget.VERBS_ENV] for env in reports] == [",".join(builtin_command_names())]
+
+
+def test_the_harness_measures_an_otto_that_has_no_command_list_helper(tmp_path: Path):
+    """An older base (v0.17.0) has no `otto.cli.builtin_commands`; the harness must still load."""
+    harness = str(Path(import_budget.__file__))
+    script = (
+        "import importlib.util, sys\n"
+        "sys.modules['otto.cli.builtin_commands'] = None\n"
+        f"spec = importlib.util.spec_from_file_location('h', {harness!r})\n"
+        "h = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(h)\n"
+        "print(' '.join(s.key for s in h.SURFACES if s.tracked))\n"
+    )
+    env = {**os.environ, import_budget.VERBS_ENV: "init,run,docker"}
+    done = subprocess.run(
+        [sys.executable, "-c", script], env=env, capture_output=True, text=True, check=False
+    )
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.split() == [
+        "tracked_init", "tracked_docker", "tracked_host_probe", "tracked_host_power",
+    ]  # fmt: skip
+
+
+def test_a_handed_command_list_is_trimmed_and_an_empty_one_refused(monkeypatch):
+    monkeypatch.setenv(import_budget.VERBS_ENV, " init , ,docker ")
+    assert import_budget.first_party_commands() == ["init", "docker"]
+    monkeypatch.setenv(import_budget.VERBS_ENV, " , ")
+    with pytest.raises(ValueError, match="names no command"):
+        import_budget.first_party_commands()
+
+
+def test_the_handed_command_list_never_reaches_the_measured_otto(monkeypatch):
+    monkeypatch.setenv(import_budget.VERBS_ENV, "init")
+    assert import_budget.VERBS_ENV not in import_budget._sanitized_env()

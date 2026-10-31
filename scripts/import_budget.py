@@ -67,8 +67,6 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from otto.cli.builtin_commands import builtin_command_names
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CEILINGS_DIR = REPO_ROOT / "tests" / "unit" / "import_budget" / "ceilings"
 
@@ -306,13 +304,41 @@ def _verb_surface(
 _GATED_VERBS = {"run", "test", "host"}
 """The verbs with a gated surface of their own above; every other registered verb is tracked."""
 
-_TRACKED_VERBS = [verb for verb in builtin_command_names() if verb not in _GATED_VERBS]
+VERBS_ENV = "IMPORT_BUDGET_VERBS"
+"""Names the first-party commands, comma-separated, when the measured otto cannot.
+
+``scripts/import_budget_delta.py`` runs this harness under each side's own
+otto, and an older release has no :func:`~otto.cli.builtin_commands.builtin_command_names`.
+So the delta, which runs under the tip's otto, reads the list once and sets
+this; both sides then measure the same tracked verbs."""
+
+
+def first_party_commands() -> list[str]:
+    """Return the first-party command names: :data:`VERBS_ENV` when set, else the registry's.
+
+    The registry is imported here, not at module scope, so a harness handed the
+    list never imports a helper the measured otto may not have. A variable that
+    is set but names nothing is refused rather than read as "ask the registry".
+    """
+    named = os.environ.get(VERBS_ENV)
+    if named is None:
+        from otto.cli.builtin_commands import builtin_command_names
+
+        return builtin_command_names()
+    verbs = [verb.strip() for verb in named.split(",") if verb.strip()]
+    if not verbs:
+        raise ValueError(f"{VERBS_ENV} is set but names no command")
+    return verbs
+
+
+_TRACKED_VERBS = [verb for verb in first_party_commands() if verb not in _GATED_VERBS]
 """The top-level verbs with no gated surface of their own; each is measured at ``--help``.
 
 Read off the CLI's own registry (by origin, so a command a test planted in
 the same process is not one), so a new command is tracked the day it
 is registered; ``scripts/import_budget_delta.py``'s ``KNOWN_SURFACES``
-pins the resulting set literally."""
+pins the resulting set literally. Under the delta the list arrives in
+:data:`VERBS_ENV` instead, read from the tip's registry."""
 
 
 SURFACES: list[Surface] = [
@@ -740,7 +766,10 @@ print(json.dumps([m for m in sorted(sys.modules)
 
 def _sanitized_env() -> dict[str, str]:
     """Env with every OTTO_* var and OTTOPATH stripped, so measurement is lab/host independent."""
+    # Spelled inline, not through otto's own env-var predicate: the delta runs
+    # this harness under an older release's otto, which may not have it.
     env = {k: v for k, v in os.environ.items() if not (k.startswith("OTTO_") or k == "OTTOPATH")}
+    env.pop(VERBS_ENV, None)  # the harness's own input, never the measured otto's
     # The measured command must set this itself, as the `otto` command does.
     env.pop("PYDANTIC_DISABLE_PLUGINS", None)
     return env
