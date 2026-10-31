@@ -1,9 +1,9 @@
 """scripts/process_group.py: what a child's process group holds, and whether it is gone."""
 
 import os
-import shutil
 import signal
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -20,12 +20,17 @@ def test_group_members_reads_the_proc_field() -> None:
 
 def test_a_comm_with_parens_and_spaces_still_parses(tmp_path: Path) -> None:
     """comm is cut at the LAST ')', so one holding ') ' does not shift the fields."""
+    # This interpreter under the name, not `sleep`: a multi-call coreutils (uutils
+    # on Ubuntu 26.04) dispatches on argv[0] and refuses a name it does not know.
     sleeper = tmp_path / "a) b"
-    sleeper.symlink_to(shutil.which("sleep") or "/bin/sleep")
-    proc = subprocess.Popen([str(sleeper), "30"], start_new_session=True)
+    sleeper.symlink_to(sys.executable)
+    proc = subprocess.Popen(
+        [str(sleeper), "-c", "import time; time.sleep(30)"], start_new_session=True
+    )
     try:
+        wait_for(lambda: process_state(proc.pid) == "S", 10, on_timeout="it never slept")
+        assert Path(f"/proc/{proc.pid}/comm").read_text() == "a) b\n"
         assert proc.pid in group_members(proc.pid)
-        wait_for(lambda: process_state(proc.pid) == "S", 10, on_timeout="sleep never slept")
     finally:
         signal_group(proc.pid)
         proc.wait()
