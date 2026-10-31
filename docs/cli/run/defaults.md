@@ -2,9 +2,10 @@
 
 Every project with products gets a working `otto run install` — and `uninstall`,
 `cleanup`, `get-logs`, `install-tools`, `uninstall-tools` and `status` — for
-free. Otto declares those seven itself, before any project's init module is imported, so a lab that has
-only declared its products can already be installed, torn down, and asked what
-state it is in.
+free. Otto declares those seven itself, before it imports any project's init
+modules (the Python modules a project's `init` setting names,
+{doc}`../../configuration/settings`), so a lab that has only declared its
+products can already be installed, torn down, and asked what state it is in.
 
 They are **project instructions**: an `@instruction(...)` declared on a
 `ProjectActions` method rather than on a free function, which gives one name a

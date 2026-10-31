@@ -12,7 +12,8 @@ runs.
 
 - A Linux host you can reach over SSH, where your login can use `sudo`:
   otto loads and unloads modules with `sudo insmod` and `sudo rmmod` unless
-  the login is root.
+  the login is root, and answers `sudo`'s prompt with the login's password
+  from `lab.json` ({doc}`../../cli/host/capabilities/privilege`).
 - On the build machine, the kernel headers for the release the host runs
   (`uname -r` on the host): `linux-headers-<release>` on Debian and Ubuntu.
   A module loads only into the release it was built for. This track builds
@@ -45,7 +46,9 @@ inline](../shared-setup.md#one-host-written-inline).
 The module links otto's coverage library, `otto_kmodcov`, which the example
 does not carry. Scaffold it into the project with
 `otto init --kmodcov --path .`, then copy the starter's two sentinel files
-beside the module; the module's `Kbuild` links them first and last:
+beside the module; the module's `Kbuild` links them first and last, so the
+library can find the module's coverage constructors between them
+({doc}`../../cli/cov/instrumenting/kernel-modules`):
 
 ```bash
 otto init --kmodcov --path .
@@ -287,7 +290,10 @@ The e2e run zeroes every counter before its first test, the same way, so a
 module still loaded from the install would lose its init routine there too.
 Unload it first with [`otto run uninstall`](../../cli/run/defaults.md), which
 takes off every product in the lab, here only the module. The test's
-`ensure("installed")` then loads it after the zeroing:
+`ensure("installed")` then loads it after the zeroing. So the module comes
+off twice, for its two routines: before the run, here, so its init routine
+counts, and after the last test, in the test class's teardown, so its exit
+routine counts ({ref}`kmod-init-coverage`):
 
 ```bash
 otto --lab example_lab run uninstall
@@ -322,8 +328,10 @@ otto --lab example_lab run status
 :language: text
 ```
 
-Put it back. The lab is uninstalled, so `--ensure` installs it. On a
-partially installed lab it would first uninstall every product in the lab
+Put it back, so the lab reads installed for whatever you do next; the report
+below reads the module's local build and does not need it loaded. The lab is
+uninstalled, so `--ensure` installs it. On a partially installed lab it would
+first uninstall every product in the lab
 ({ref}`--recover-partial <recover-partial>`):
 
 ```bash
@@ -401,6 +409,9 @@ This project has no docker stack, so this one command is the whole
 {ref}`teardown-recipe`: it unloads the module, then `otto_kmodcov`. What comes
 off, and in which order, is in [Declaring the module and its
 library](../../cli/cov/instrumenting/kernel-modules.md#declaring-the-module-and-its-library).
+`cleanup` acts on the whole lab, not only this project: it also resets every
+impairment and removes every otto tunnel in it. On a lab you share, add the
+flags the recipe gives.
 
 ## Next
 

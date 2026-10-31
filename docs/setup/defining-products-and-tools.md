@@ -37,9 +37,10 @@ match = { os_type = "unix" }
 ```
 
 `match` picks the hosts; `install`/`uninstall`/`check` run on each. Leave a
-string out and otto takes the honest default: no `install` means staging was
-the install, no `check` means otto assumes the product is not installed and
-stages again. Every key is in {doc}`../configuration/declared-products-tools`.
+string out and otto assumes the least: no `install` means staging was the
+install, and no `check` means otto assumes the product is not installed, so
+every `run install` copies the artifact again. Every key is in
+{doc}`../configuration/declared-products-tools`.
 
 Declaring a product makes the `[project]` table required — the project has to say
 which labs and hosts it is speaking for. The worked example declares it as
@@ -71,7 +72,7 @@ the class overrides the one method:
 ```
 
 `DeclaredProduct` is the class every `kind = "shell"` entry builds; a subclass
-inherits staging, the declared strings and the honest defaults, and replaces
+inherits staging, the declared strings and those defaults, and replaces
 only what it overrides (`stage`, `install`, `uninstall`, `is_installed`,
 `get_logs`). The entry's other keys are the class's fields — `cov_dir` is the
 one coverage-shaped thing a product declares: the host-side directory its
@@ -170,18 +171,34 @@ artifact = "build/probe"
 stage_dir = "/opt/demo"
 check = "test -x /opt/demo/probe"
 match = { id = "peer[12]" }
+
+[project]
+lab_patterns = ["my_lab"]
+host_patterns = ["dut", "peer[12]"]
 ```
 
+`match` picks hosts from inside `[project] host_patterns` only: a host that
+`match` names but `host_patterns` does not admit gets nothing. Left out,
+`host_patterns` admits every host of the labs `lab_patterns` names
+({ref}`project-scope`).
+
 [Matching](../configuration/declared-products-tools.md#matching) lists every
-key a `match` table takes. Two entries that would stage the same file name into
-one directory on one host are refused at lab load. Each product has its own
-`cov_dir`, `/tmp/<name>` by default, so their counters never mix.
+key a `match` table takes. On one host, products install and uninstall in
+declaration order, so put first a product that another's `install` needs.
+Two entries that would stage files with the same basename into one directory
+on one host are refused at lab load: two artifacts both called `app` need
+different `stage_dir`s. Each product has its own `cov_dir`, `/tmp/<name>` by
+default, so their counters never mix. The same product built differently for
+two hosts keeps one `name` in two entries, each with its own `match`; on
+each host the first entry that matches wins. A different `name` is a
+different product in every report.
 
 The verbs that act on the whole lab act on all of these at once:
 `otto run uninstall`, `otto run install --ensure` on a partial lab and an
 `ensure("installed")` marker ({ref}`--recover-partial <recover-partial>`). In a test,
 `Host.uninstall()` takes every product off that host, not only the one the test
-is about. So no product's `uninstall` may delete its `cov_dir`
+is about. Any of these can run every product's `uninstall` in the middle of a
+coverage run, so no product's `uninstall` may delete its `cov_dir`
 ({ref}`when otto clears and collects cov_dir <cov-dir-lifecycle>`).
 {ref}`teardown-recipe` is the order to take it all down in.
 

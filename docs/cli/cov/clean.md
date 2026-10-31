@@ -22,12 +22,24 @@ host with no instrumented product at all is printed, not silently skipped —
 
 (coverage-clean-running-process)=
 Deleting `.gcda` files does not zero a process that is still running. It
-holds its counts in memory and writes all of them when it exits, so a daemon
-or a container's `CMD` that ran before the clean still reports that work.
-Restart a long-running Unix or container product after `otto cov clean`. The
-same holds for the clean `otto test --cov` runs before its first test
-({doc}`during-tests`). A kernel module's or a board's reset zeroes the
-counters in memory and needs no restart.
+holds its counts in memory and writes all of them when it exits
+({ref}`how it must exit <coverage-process-exit>`), so a daemon or a
+container's `CMD` that ran before the clean still reports that work. Zero a
+long-running Unix or container product in this order:
+
+1. Stop its process, so it writes what it holds.
+2. Clean: `otto cov clean`, or the clean `otto test` runs before its first
+   test ({doc}`during-tests`).
+3. Start the process again.
+
+Restarting it after the clean instead (`docker restart`, say) does not work:
+the stop writes the old counts into the directory the clean just emptied.
+Around `otto test`, stop the process before the run and start it in a
+fixture's setup, which runs after the run's clean. On a compose container
+host the clean runs inside the container, so stop the product's process
+there, not the container: a stopped container fails the clean. A kernel
+module's or a board's reset zeroes the counters in memory and needs no
+restart.
 
 The command prints one line per host and product it reset — `test1/myapp:
 counters cleared` — and exits `1` when any reset failed, naming the host,

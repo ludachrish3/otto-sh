@@ -125,7 +125,10 @@ Two properties of the fleet helpers to keep in mind:
 is deployed and `[coverage]` is configured. otto detects this on its own
 ({ref}`coverage-awareness`). Take the context as a parameter and branch on it
 wherever the body would destroy counters that a later fetch (`otto cov get`,
-or the next `otto test --cov`) still needs:
+or this run's own post-test fetch) still needs. A product's own `uninstall` is not
+such a place when it leaves `cov_dir` alone ({ref}`when otto clears and
+collects <cov-dir-lifecycle>`); an `rm -rf` of a directory that holds a
+`cov_dir` is:
 
 ```python
 from otto import OttoContext

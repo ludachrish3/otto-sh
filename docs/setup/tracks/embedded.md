@@ -474,6 +474,10 @@ the lab](../../cli/run/defaults.md#what-cleanup-takes-off-the-lab)):
 otto --lab example_lab run cleanup
 ```
 
+`cleanup` acts on the whole lab, not only this project: it also resets every
+impairment and removes every otto tunnel in it. On a lab you share, add the
+flags {ref}`the teardown recipe <teardown-recipe>` gives.
+
 ## Next
 
 - {doc}`../../cli/cov/instrumenting/embedded` — instrumenting an extension of

@@ -53,24 +53,27 @@ re-stages and re-installs the product.
 `install` runs under the host's default command timeout, 30 seconds, and must
 return inside it. Anything that stays running — a daemon, an agent like this
 one — is backgrounded with a trailing `&`, or the install fails on the timeout
-rather than on anything being wrong.
+rather than on anything being wrong. Its `uninstall` and your tests' teardown
+must make that process exit, not kill it: `kill -9` loses every count it
+holds ({ref}`how it must stop <coverage-process-exit>`).
 A command-line tool the tests run once each needs nothing about coverage in
 `install`: each test sets the variables itself
 ({ref}`a tool run once per test <coverage-run-per-test-case>`).
 
 `{cov_dir}` and `{name}` are the two placeholders `install`, `uninstall`, and
 `check` accept; anything else is refused when settings load. An `uninstall`
-must leave `cov_dir` in place: otto clears it at the start of a run and
-collects it at the end ({ref}`when otto clears and collects cov_dir <cov-dir-lifecycle>`). A literal brace —
-`awk '{{print $1}}'`, a shell `${{VAR}}` — is written doubled. See
-{doc}`../configuration/declared-products-tools` for the whole `shell`
-kind.
+must leave `cov_dir` in place, because otto clears and collects it on its own
+schedule ({ref}`when otto clears and collects cov_dir <cov-dir-lifecycle>`).
+A literal brace — `awk '{{print $1}}'`, a shell `${{VAR}}` — is written
+doubled. See {doc}`../configuration/declared-products-tools` for the whole
+`shell` kind.
 
-The shell kind sets `GCOV_PREFIX` from data, as above. The previous page's
-`AgentBinary` ({doc}`defining-products-and-tools`) is a `class =` entry for a
-different reason — it passes each element's `role` from lab metadata, a
-per-host value a command string cannot carry — and its overridden `install`
-sets the same variable, from `self.cov_dir`, when it composes the command:
+The entry above sets `GCOV_PREFIX` in its `install` string, with no code. A
+product whose install needs code, such as the worked example's `AgentBinary`
+from {doc}`defining-products-and-tools` (it passes each element's `role` from
+lab metadata, a per-host value a command string cannot carry), names a Python
+class with `class =` instead. Its overridden `install` sets the same
+variable, from `self.cov_dir`, when it composes the command:
 
 ```{literalinclude} ../examples/getting-started/libs/gs_example/products.py
 :language: python
@@ -96,7 +99,9 @@ path *on the machine that compiled the product* — `/home/dev/agent/build` is
 four. Nothing in otto reads the value. The fetch keeps each `.gcda` at its path
 under `cov_dir`, and otto pairs it with its `.gcno` by that path, so the
 count only has to leave every object's path unique: the
-{ref}`one build requirement <coverage-build-requirement>`.
+{ref}`one build requirement <coverage-build-requirement>`. Any count that does
+is right: the tracks count the project root's components instead of the build
+directory's, a smaller number that works too.
 
 ## Switch coverage on
 
@@ -329,10 +334,11 @@ instead of a lab collection; `precedence` orders the tiers when two of them
 cover the same line, lower winning. The paths are project-relative — resolved
 against the project that declares `[coverage]`, never the directory you happen to
 run from. Without the `products` sub-table the tier still sweeps whatever
-`harvest_dirs` it declares, but as one unnamed view: the lines count, and no
-product owns them. Name each build directory in one place, `harvest_dirs` or
-one view: a directory both reach is counted twice
-({ref}`one place per directory <coverage-unit-one-place>`).
+`harvest_dirs` it declares, but as one unnamed view: its lines count toward
+the unit tier, and no product pin shows them. Name each build directory in
+one place, `harvest_dirs` or one view: a directory both reach is counted twice
+({ref}`one place per directory <coverage-unit-one-place>`, which also covers a
+library two products link).
 
 Each view needs its **own** build directory — `.gcno` files sit beside the
 objects they describe, so two views built from one tree cannot be told apart.

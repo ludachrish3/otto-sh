@@ -69,7 +69,8 @@ otto --lab my_lab run install --ensure   # converge: installed is a no-op, else 
 `-n` previews a run without contacting a device. `--ensure` turns `install`
 into a converge: an installed lab does no work, and an uninstalled one is
 installed. A partial lab is not topped up: by default otto uninstalls every
-product in the lab, then installs them all fresh ({ref}`--recover-partial <recover-partial>`).
+product in the lab, another project's included, then installs them all fresh
+({ref}`--recover-partial <recover-partial>`).
 A coverage run of a kernel-module project can unload its
 modules at teardown and leave the lab partial, or uninstalled when they are
 its only products; `run install --ensure` restores it.
@@ -98,24 +99,45 @@ Unit tests (GoogleTest and the like) are the project's own build binaries:
 otto neither lists nor runs them, and only harvests their coverage counters
 ({ref}`coverage-tier-kinds`).
 
-A project's coverage tests may stop a `docker_image` product's container to
-flush its counters, which leaves the lab partial or uninstalled afterwards.
-`run status` shows it. If its image is named by reference, start the
-container again before `otto cov report`
-({ref}`why <coverage-container-stop-to-flush>`). A container left stopped
-blocks the next install, because its name is taken: remove it first with
-`otto --lab my_lab run uninstall`. On a partial lab,
-`otto --lab my_lab run install --ensure` does that itself
-({ref}`what --ensure does <recover-partial>`).
+If `run status` reads partial after a coverage run, a test may have stopped a
+container to collect its counters; {ref}`coverage-container-stop-to-flush`
+says what to do next.
 
 ## Where results go
 
 Every invocation ends with an `Output directory:` line. That directory holds
 the run's log, its per-test results and any coverage it captured; its layout is
-in {ref}`invocation-output-directory`. `otto cov report` writes its HTML report
-under its own invocation's output directory unless you give `--dir` — see
-{doc}`../cli/cov/report`. To watch the lab's hosts while tests run, see
-{doc}`../cli/monitor/index`.
+in {ref}`invocation-output-directory`.
+
+Coverage needs no flag: when the project is set up for it, a plain `otto test`
+collects it, and its log says `coverage retrieval on` ({ref}`coverage-tristate`).
+`otto --lab my_lab cov report <that directory>` logs the overall percentage,
+`Coverage: 82.4% overall (12 files)` for example, and writes an HTML report
+under its own output directory unless you give `--dir`
+({doc}`../cli/cov/report`).
+
+To watch the lab's hosts while tests run, see {doc}`../cli/monitor/index`.
+
+## Leave it as you found it
+
+```bash
+otto --lab my_lab run uninstall          # take the project's products off
+```
+
+`uninstall` takes off the products of every project in the run; their dev
+tools stay ({doc}`../cli/run/defaults`). Products are kept apart by project,
+not by user: if a colleague has this project installed on the same hosts,
+your `uninstall` removes their copy too. Reservations
+({doc}`../cli/reservation/index`) are how a team keeps that from happening.
+
+`otto --lab my_lab run cleanup` also takes the dev tools and the hosts'
+toolchain tools off, and by default it resets every impairment and removes
+every otto tunnel in the lab, other people's included. On a lab you share,
+run it as
+`otto --lab my_lab run cleanup --no-reset-impairments --no-remove-tunnels`.
+If the project brought up a docker stack, follow {ref}`the teardown recipe
+<teardown-recipe>` for the order; {ref}`cleanup-leaves` lists what stays on
+the hosts.
 
 ## When a reservation refuses you
 

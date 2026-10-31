@@ -24,13 +24,26 @@ coverage on one host, stamped with the `base_commit` (the project's commit at
 capture time) it is valid against.  It is the same capture-production
 machinery `otto cov get` runs.
 
-Stop the product's processes before collection, which runs after the last
-test. A process writes its `.gcda` files only when it exits, and counts
-written after the fetch are lost when the counters are cleaned. Stopping the
-product in a fixture's teardown is enough. A stopped `docker_image` container
-answers not installed, and a `docker_image` named by reference needs it
-running again for `otto cov report`
-({ref}`stop it to flush <coverage-container-stop-to-flush>`).
+(coverage-process-exit)=
+Stop every long-running product process before collection, which runs after
+the last test; a fixture's teardown is the place. A process writes its
+`.gcda` files only from its own exit path, a return from `main` or a call to
+`exit()`, and counts written after the fetch are lost when the counters are
+cleaned. How the process stops decides whether it writes anything:
+
+- SIGKILL (`kill -9`, `docker rm -f`) ends it before it writes a single
+  counter.
+- SIGTERM (`kill`, `docker stop`) ends it without writing them, unless the
+  program handles SIGTERM by calling `exit()`.
+- The product's own stop command writes them when it makes the process exit
+  that way.
+
+So stop a daemon with its own stop command or a signal it handles, and write
+its `uninstall` the same way, since otto runs `uninstall` in the middle of a
+run (an `ensure` marker, `--recover-partial`) as well as in `run uninstall`
+and `run cleanup` ({ref}`when otto clears and collects <cov-dir-lifecycle>`). A
+`docker_image` product's container needs more steps:
+{ref}`coverage-container-stop-to-flush`.
 
 This tail never fails an otherwise-successful test run **over collection**.
 A project that is not a git checkout (no commit to anchor a capture to),
@@ -106,8 +119,12 @@ Code running under otto can ask whether the lab is in coverage mode by reading
 `ctx.cov` on the active {class}`~otto.context.OttoContext`. This works in a
 test, a fixture, an instruction or a library script. It is information only,
 and reading it never cleans or fetches anything. The usual reason to read it is
-to avoid destroying counters that a coverage run still needs, for example by
-leaving a product's `.gcda` files in place instead of uninstalling the product.
+a teardown that destroys more than the product's own `uninstall` does: an
+`rm -rf` of a directory that holds a `cov_dir`, a reboot (which empties
+`/tmp`), or the unload of an embedded product, whose counters live in its
+memory ({ref}`coverage-embedded-reset`). A product whose `uninstall` leaves
+`cov_dir` alone needs no branch: uninstalling it under coverage loses nothing
+({ref}`when otto clears and collects <cov-dir-lifecycle>`).
 
 - **Under `otto test`** it is the run's own decision after resolving
   `--cov`, `--no-cov` or auto. It is also `True` when an auto run turned
@@ -128,7 +145,8 @@ selector is one example.
 In a test, read it from the
 [`ctx` fixture](../../setup/writing-tests.md#what-every-test-gets).
 The usual case is a teardown that would otherwise erase the counters before
-the post-run fetch:
+the post-run fetch. Here the product keeps its `cov_dir` under its install
+tree, so wiping the tree waits for a run without coverage:
 
 ```python
 import pytest_asyncio
@@ -141,9 +159,9 @@ class TestProduct:
         await install_product()
         yield
         if ctx.cov:
-            await remove_binary_only()  # leave the .gcda files for the fetch
+            await stop_product()  # exits cleanly; its .gcda files stay for the fetch
         else:
-            await uninstall_product()
+            await wipe_install_tree()  # rm -rf /opt/app, its cov_dir included
 ```
 
 {ref}`instruction-coverage` shows the same for an instruction.
@@ -210,7 +228,7 @@ a custom pipeline), see the *Collecting coverage from Python* section of
 | `--cov-dir PATH` | Write coverage artifacts to an explicit directory instead of `<run>/cov/` (implies `--cov`). PATH replaces that `cov/` directory and nothing else: each product's counters still land in `PATH/<host_id>/<product>/` |
 | `--overwrite-cov-dir` | Allow `--cov-dir` to clear an existing non-empty directory |
 | `--cov-clean / --no-cov-clean` | Reset every instrumented product's counters before the run — the same reset {doc}`clean` performs — on by default; `.gcda` counters are additive. See {ref}`coverage-cov-clean-failures` |
-| `--cov-report, -r` | Also render the HTML report inline after the run (implies `--cov`) |
+| `--cov-report, -r` | Also render the HTML report inline after the run (implies `--cov`). A run whose tests stop a `docker_image` container named by reference gets a warning instead: that report needs the container running ({ref}`coverage-container-stop-to-flush`) |
 | `--cov-report-dir PATH` | Explicit destination for the inline HTML report (implies `--cov-report`) |
 | `--cov-tickets-json PATH` | Also write the per-ticket coverage summary to PATH after the run (implies `--cov-report`). Needs `[coverage.tickets]` configured, checked before any test runs — see {ref}`coverage-tickets-json` |
 
@@ -265,7 +283,9 @@ counters **before** the test run — the same per-kind reset {doc}`clean`
 performs (Unix/container `.gcda`, a kernel module's sysfs reset, an embedded
 board's `reset_fn`). This is important because `.gcda` counters are
 **additive** — without cleanup, coverage data from previous runs
-contaminates the current results.
+contaminates the current results. A long-running process keeps its counts
+through this clean; {ref}`zeroing a running process
+<coverage-clean-running-process>` gives the order that zeroes it.
 
 This pre-run clean refuses **before any test runs** when it cannot clear a
 counter, naming the host, the product, and the fix — the same failure

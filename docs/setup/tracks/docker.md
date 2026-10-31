@@ -19,7 +19,9 @@ session by hand.
   and Ubuntu, buildx is a package of its own, `docker-buildx`; `docker buildx
   version` answers when it is there. Your login also needs `sudo` there:
   `banner`'s container writes its counters as root, and otto clears them with
-  `sudo` ({ref}`root-owned files <coverage-container-root-owned-files>`). otto answers `sudo`'s prompt with
+  `sudo` ({ref}`root-owned files <coverage-container-root-owned-files>`):
+  without it, `otto cov clean` and the clean before an e2e run's first test
+  fail on `banner`. otto answers `sudo`'s prompt with
   the login's password from `lab.json`, so a password or `NOPASSWD` both work
   ({doc}`../../cli/host/capabilities/privilege`).
 - The same CPU architecture on that host as on the build machine. The tools
@@ -422,9 +424,10 @@ otto --lab example_lab cov report ~/otto-runs/quickstart-docker/e2e --dir ~/otto
 The `unit unit:` line is the unit tier, keeping only the products' own
 sources ({ref}`what the unit report counts <coverage-unit-filter>`).
 `banner` is declared by an image reference, so it has no local artifact to
-list its sources from: the report finds its binary in the running
-container and copies it out. That is why the report comes before the clean
-up. The log says nothing of the other two tiers, but the report loads both.
+read its object list from. The report needs that list to know which sources
+are `banner`'s, so it finds the binary in the running container and copies it
+out to read the list. That is why the report comes before the clean up. The
+log says nothing of the other two tiers, but the report loads both.
 Open `~/otto-runs/quickstart-docker/report/index.html` to see all three, and
 which tier covered each line.
 
@@ -464,11 +467,17 @@ them once the stack has no containers. It also removes `banner`'s container
 `wordcount` and `shout` went with their container, so `cleanup` finds nothing
 of theirs to remove:
 
+```bash
+otto --lab example_lab run cleanup --no-reset-impairments --no-remove-tunnels
+```
+
 ```{literalinclude} ../../examples/captures/qs-docker-cleanup.txt
 :language: text
 ```
 
-The two flags are the recipe's opt-outs for a shared lab. On the parent,
+`cleanup` acts on the whole lab, not only this project. The two flags are the
+recipe's opt-outs for a shared lab: they keep it off every impairment and
+otto tunnel in the lab, other people's included. On the parent,
 `cleanup` saves `banner`'s `docker logs` with the run's output, removes its
 container, and removes the stack's staging; the removal checks again, in
 the same command, that the stack has no containers. The closing `skipped` line

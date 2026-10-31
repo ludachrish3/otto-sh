@@ -117,7 +117,8 @@ runs.
 
 (coverage-daemon-case)=
 **A daemon** — a process `install` starts and leaves running — gets them in
-its `install` command, and writes its counters when it exits:
+its `install` command, and writes its counters when it exits, which only a
+clean exit does ({ref}`how a process must stop <coverage-process-exit>`):
 
 ```toml
 [[products]]

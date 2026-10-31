@@ -48,44 +48,57 @@ value with `otto docker compose build --build-arg GCOV_PREFIX_STRIP=<n>`.
 (coverage-container-stop-to-flush)=
 ### A long-running process: stop it to flush
 
-Stop the product's processes before collection ({doc}`../during-tests`). For
-a `docker_image` product that process is the image's `CMD`, so stop the
-container (`docker stop <container_name>` on the parent), then fetch: its
-counters are on the parent, through the bind mount. Do not rely on
-`uninstall` instead: its `docker rm -f` is a SIGKILL, and a process killed by
-SIGKILL never writes its counters. `docker stop` sends SIGTERM, which ends a
-process without writing them unless it handles SIGTERM by calling `exit()`.
-An exec-form `CMD` (`CMD ["prog", ...]`) runs as the container's PID 1, which
-ignores a SIGTERM it does not handle, so `docker stop` then kills it with
-SIGKILL after its timeout. A stopped container answers not installed, so
-remove it (`otto run uninstall`) before the next install.
+A process the image's `CMD` starts runs for as long as the container does,
+and writes its counters only when it exits
+({ref}`how it must exit <coverage-process-exit>`). An exec-form `CMD`
+(`CMD ["prog", ...]`) runs as the container's PID 1, which ignores a SIGTERM
+it does not handle, so `docker stop` kills it with SIGKILL after its timeout
+and nothing is written. `uninstall` is no way out: its `docker rm -f` writes
+nothing either. One coverage run of such a product goes in this order:
 
-Start it again before `otto cov report`. For an image named by reference, the
-unit tier reads the product's objects from its running container, and a
-stopped one refuses the whole report ({ref}`the unit refusals
-<coverage-unit-filter>`), even when the e2e captures are already in the run
-directory. Once the counters are fetched, start that one container on its
-parent, then report:
+1. Make the `CMD` handle SIGTERM by calling `exit()`.
+2. Stop the container in a fixture's teardown. Its process exits and writes
+   its counters under `cov_dir`, which the bind mount puts on the parent:
 
-```bash
-otto --lab <lab> host <parent> exec 'docker start <container_name>'
-```
+   ```python
+   from collections.abc import AsyncIterator
 
-`otto test --cov --cov-report` refuses its inline report the same way: it runs
-before you can restart the container. A lab-wide `otto run uninstall` and
-`otto run install` also work, but they take every other product down and up
-with it.
+   import pytest_asyncio
 
-`otto cov clean` cannot zero a container that is still running
-({ref}`a running process keeps its counts <coverage-clean-running-process>`):
-restart it after the clean.
+   from otto.lab import get_host
 
-A compose container host's counters stay inside the container, and otto
-fetches only from a running one. After stopping it, bring the stack back up
-with a plain `otto docker compose up <use-case>` and an unchanged compose
-config, which starts the stopped container again with its files, then fetch.
-A changed config recreates the container instead, and its counters are lost.
-The track's tools exit after each run, so they need none of this.
+
+   class TestMyImage:
+       @pytest_asyncio.fixture(scope="class", autouse=True)
+       @classmethod
+       async def _stop_after(cls) -> AsyncIterator[None]:
+           """Stop the container after the class: its process writes its counters."""
+           yield
+           result = await get_host("<parent>").exec("docker stop <container_name>")
+           if not result.is_ok:
+               raise RuntimeError(f"docker stop failed: {result.value}")
+   ```
+
+3. Let the run end. Its tail fetches the counters from the parent, then
+   clears them.
+4. Start the container again on its parent:
+
+   ```bash
+   otto --lab <lab> host <parent> exec 'docker start <container_name>'
+   ```
+
+   A stopped container answers not installed, and its name blocks the next
+   install. Started, it answers installed again.
+5. Report: `otto --lab <lab> cov report <run dir>`. For an image named by
+   reference, the unit tier reads the product's objects from its running
+   container, and a stopped one refuses the whole report
+   ({ref}`the unit refusals <coverage-unit-filter>`).
+
+`otto test --cov --cov-report` reports inline before step 4, so for an image
+named by reference it loses its report to that refusal; run step 5 instead.
+The process step 4 starts holds its own counts from then on, and a clean
+cannot zero them while it runs: before the next coverage run, stop it as
+{ref}`zeroing a running process <coverage-clean-running-process>` says.
 
 ## Tarball or reference
 
@@ -228,3 +241,11 @@ the fetch of every product on it, each a failed product named as
 which names the remedy (`otto docker compose up <use-case>`). `otto cov get`
 then exits `1` naming it ({doc}`../get`); `otto test --cov` warns and still
 passes ({doc}`../during-tests`).
+
+A compose container host's counters stay inside the container, so stop a
+long-running product's process there, not the container. If the container
+was stopped, bring the stack back up with a plain `otto docker compose up
+<use-case>` and an unchanged compose config, which starts the stopped
+container again with its files, then fetch. A changed config recreates the
+container instead, and its counters are lost. The track's tools exit after
+each run, so they need none of this.

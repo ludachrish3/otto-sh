@@ -121,15 +121,33 @@ coverage. What otto does with them is {doc}`../cli/cov/index`'s subject, and
 
 (cov-dir-lifecycle)=
 
-**Leave `cov_dir` out of `uninstall`.** `otto test --cov` deletes the `.gcda`
-files under the `cov_dir` of every instrumented product on the `[coverage]
-hosts` before the first test
-(`--cov-clean`, on by default). It fetches them after the last test, then clears
-each captured product's counters ({doc}`../cli/cov/during-tests`). Counters add up in
-between, across every install and uninstall the tests do. A `cov_dir` that an
-`uninstall` deleted has nothing to fetch: that product drops out of the run's
-captures with no warning. otto's own uninstalls (`kmod`, `docker_image`) never
+**Leave `cov_dir` out of `uninstall`.** otto clears and collects the counters
+of the instrumented products on the `[coverage] hosts` at these points, and at
+no other:
+
+| When | What otto does |
+|---|---|
+| `otto test` with coverage on, auto or `--cov`, before the first test | clears every product's counters (`--cov-clean`, on by default) |
+| `otto test`, after the last test | fetches every product's counters, then clears those of each product that captured ({doc}`../cli/cov/during-tests`) |
+| `otto cov get` | fetches; clears only with `--clean` ({doc}`../cli/cov/get`) |
+| `otto cov clean` | clears ({doc}`../cli/cov/clean`) |
+| `otto run uninstall`, `otto run cleanup`, `--recover-partial`, `ensure` markers, `Host.uninstall()` | neither: they run each product's own `uninstall` |
+
+Counters add up between the two `otto test` rows, across every install and
+uninstall the tests do, as long as `uninstall` leaves `cov_dir` alone. A
+`cov_dir` that an `uninstall` deleted has nothing to fetch, and that product
+drops out of the run's captures with no warning: otto cannot tell it from a
+product that never ran. otto's own uninstalls (`kmod`, `docker_image`) never
 delete it.
+
+Clearing deletes the `.gcda` files under `cov_dir`, the only place a
+file-backed product's counters persist. A kernel module's counters are also in
+its memory while it is loaded, and an embedded product's live only there:
+clearing zeroes them in place through each product's reset hook, and an
+embedded product loses its counts when it is unloaded
+({ref}`coverage-embedded-reset`).
+A process that is still running keeps its counts through a clear
+({ref}`zeroing a running process <coverage-clean-running-process>`).
 
 Without `install`/`uninstall` those steps are no-op successes (staging
 placed the artifact). Without `check`, `is_installed` answers False — otto

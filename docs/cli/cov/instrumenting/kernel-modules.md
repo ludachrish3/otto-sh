@@ -426,10 +426,14 @@ is not already resident — so an `install-tools` before the run costs
 nothing, and nothing depends on declaration order. Both halves of the
 binding are checked at lab load: a host carrying a `coverage = "module"`
 product with no matching `kmodcov` entry is refused, naming the products, the
-host and the kind, and so is a host matching two of them. `uninstall` leaves
-the library loaded; `cleanup` unloads it after the products, which is the
-order dev tools always come down in, and `uninstall-tools` unloads it on its
-own.
+host and the kind, and so is a host matching two of them. What each
+teardown verb does to the library:
+
+| Verb | The library |
+|---|---|
+| `otto run uninstall` | stays loaded; only the products come off |
+| `otto run cleanup` | unloaded after the products, the order dev tools always come down in |
+| `otto run uninstall-tools` | unloaded on its own, products left in place; the kernel refuses while a loaded module still uses it |
 
 `qs_wordcount` sets `coverage = "module"` and keeps the default `cov_dir`,
 `/tmp/qs_wordcount`, for `otto_kmodcov` to write under. A module built with

@@ -311,7 +311,8 @@ is written to `<run dir>/monitor.json`, loadable with `otto monitor <path>`.
 
 `--monitor-output` overrides that destination and infers the format from the
 suffix: `.json` writes the self-contained snapshot, `.db` a SQLite session
-archive. Both load the same way.
+archive. Both load the same way. To read the data from a script, write `.db`
+and query it with any SQLite client: {ref}`monitor-headless` lists its tables.
 
 `--monitor-hosts` is fully matched against host ids (`re.fullmatch`), so
 `sensor` does not select `sensor-1` — write `sensor.*`. A pattern that matches

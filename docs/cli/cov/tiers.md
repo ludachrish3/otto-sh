@@ -112,11 +112,17 @@ otto --lab my_lab test --cov TestMyDevice
 products, so it needs those products declared ({doc}`../../setup/defining-products-and-tools`)
 in the lab you report with, and built with coverage instrumentation **on this
 machine, under the project root** — otto reads which files each one is built
-from out of its notes (`.gcno`). Build your unit tests with coverage
-instrumentation too and run them as you always have; `.gcda` files land next
-to the `.gcno` files under the tier's configured `harvest_dirs` (e.g.
-`build/`). The build is step 1 of the order above; running the unit tests is
-step 6, or any time after the build:
+from out of its notes (`.gcno`). The lab matters even though the unit tier runs
+nothing on its hosts (a `docker_image` named by reference is the exception: its
+object list is read from its running container): the products counted are the
+ones the lab's hosts carry. Build your
+unit tests with coverage instrumentation too and run them as you always have.
+A unit test binary writes each object's `.gcda` beside that object's `.gcno`,
+wherever the object was built, so a library's counters land in the library's
+own object directory, not the test binary's. The tier's `harvest_dirs` (e.g.
+`build/`), or one of its views below, must reach that directory. The build is
+step 1 of the order above; running the unit tests is step 6, or any time
+after the build:
 
 ```bash
 cmake -DCMAKE_C_FLAGS="--coverage" -DCMAKE_CXX_FLAGS="--coverage" \
@@ -166,8 +172,20 @@ view. Every view is swept on its own and nothing removes the overlap, so a
 directory reached by `harvest_dirs` and a view is counted twice. A sweep
 includes the directories under it: with `harvest_dirs = ["build"]` beside `app =
 ["build/app"]`, every hit on `app`'s sources in `build/app` is counted
-twice in the unit tier. The example above declares no `harvest_dirs` for
+twice in the unit tier. A line counted twice keeps its covered or not covered
+state, so the line percentage does not change, but its hit count is doubled
+and both runs claim it. The example above declares no `harvest_dirs` for
 that reason.
+
+(coverage-unit-shared-library)=
+**A library two products link** is built once, in one object directory, so
+it can be named in only one view. Name it in the view of one product that
+links it; the other product's view then shows its unit evidence without the
+library's lines. To give each product the library's unit evidence, build the
+library once per product, each copy in its own object directory with unit
+tests linked against it, and name each copy in its product's view. Or keep
+one `harvest_dirs` sweep and no views: it counts every product's sources,
+the library's included, once, but no product pin shows them.
 
 Each view needs its **own build or object directory**, and that is a
 requirement, not a tidiness preference: `.gcno` notes files sit beside the
@@ -175,9 +193,12 @@ objects they describe, so two views compiled from one tree with different
 defines overwrite each other's notes and cannot be told apart afterwards.
 `GCOV_PREFIX` does not help here — it relocates `.gcda` counters at run time
 and has nothing to say about where the notes were written. The same holds for
-the notes otto reads a product's sources from: a view's unit build and the
-product it is named after may share a build tree, but must not overwrite each
-other's notes.
+the notes otto reads a product's sources from. A view's unit build and the
+product it is named after may be one build: one configure of one tree, which
+compiles each object once. Configuring that tree again with other flags or
+defines rewrites the product's notes at the same paths, and otto then reads
+the product's sources from notes that describe the second build, not the
+product.
 
 (coverage-unit-filter)=
 ### What the unit report counts
@@ -249,7 +270,7 @@ refusal stops the whole report — there is no unfiltered fallback:
 |---|---|---|---|
 | *no products of project P found in the active lab (L)*, *no product named 'app' …*, or *every product … is declared instrumented = false* | The view has no product to count the sources of | Run with the lab that declares the products (`--lab`), and build them with `--coverage` | `1` |
 | *product 'app' (build/app) is not instrumented: … Build it with coverage instrumentation (--coverage) …* | The product's `artifact` ({doc}`../../configuration/declared-products-tools`) is missing, or holds no coverage paths | Build it with `--coverage`, or declare it `instrumented = false` | `1` |
-| *… reads its object list from container 'c', which is not running — install the product first (otto run install)* | A `docker_image` product named by reference has no local artifact; its objects are read from its running container | Start it again (`docker start`, {ref}`coverage-container-stop-to-flush`), or `otto run uninstall` then `otto run install` | `2` |
+| *… reads its object list from container 'c', which is not running — install the product first (otto run install)* | A `docker_image` product named by reference has no local artifact; its objects are read from its running container | Start a stopped container with `docker start` on its parent ({ref}`coverage-container-stop-to-flush`, step 4); install one that is gone (`otto run install`) | `2` |
 | *could not read product 'app''s object list: …* | The artifact or the container scan could not be read; a scan where `find` or `grep` failed under any directory, or that outran its 540-second limit (set only when the image has `timeout` and `date`; without them the scan runs to the host-side timeout), is refused whole | Fix what the reason names; the image needs `find` and `grep` (GNU or BusyBox) | `1` |
 
 Under `otto test --cov --cov-report` a refusal costs that run its inline

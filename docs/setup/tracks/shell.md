@@ -249,6 +249,11 @@ otto --lab example_lab test --cov --cov-dir ~/otto-runs/e2e/cov --no-random Test
 :language: text
 ```
 
+Each tool exits at the end of its test, which is when it writes its counters.
+A product that keeps running writes them only when it exits, so a test of one
+stops it first, in a way that lets it write them ({ref}`how it must stop
+<coverage-process-exit>`).
+
 `--cov-dir` refuses a directory that is not empty, so a second run adds
 `--overwrite-cov-dir` or names a new directory ({ref}`coverage-cov-dir`).
 
@@ -321,9 +326,11 @@ otto --lab example_lab run cleanup
 ```
 
 This removes the tools from the host and leaves their counters under each
-tool's `cov_dir` ({ref}`what cleanup leaves <cleanup-leaves>`). A lab with a
-docker stack is taken down in a set order: see
-{ref}`the teardown recipe <teardown-recipe>`.
+tool's `cov_dir` ({ref}`what cleanup leaves <cleanup-leaves>`). `cleanup` acts
+on the whole lab, not only this project: it also resets every impairment and
+removes every otto tunnel in it. On a lab you share, take it down with the
+flags {ref}`the teardown recipe <teardown-recipe>` gives, which also sets the
+order for a lab with a docker stack.
 
 ## Next
 

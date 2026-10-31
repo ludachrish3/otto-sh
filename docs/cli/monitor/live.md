@@ -135,26 +135,28 @@ after the signal otto stamps the session's end, closes the archive and exits
 (130 for SIGINT, 143 for SIGTERM; `timeout` itself reports 124). Send the
 signal once: a second one, or a cleanup that outlives `OTTO_TEARDOWN_DEADLINE`
 (10 seconds by default, [Environment
-variables](../index.md#environment-variables)), abandons the stop and leaves
-the session's `end` empty. The points collected up to then are still in the
-archive.
+variables](../index.md#environment-variables)), abandons the stop, which may
+leave the session's `end` empty. The points collected up to then are still in
+the archive.
 
 Open the archive with `otto monitor metrics.db` ({doc}`review`), or read it
 with any SQLite client. The tables otto writes today:
 
 | Table | Columns to read |
 | --- | --- |
-| `sessions` | `id`, `label`, `note`, `start`, `end` (empty while running, or after an abandoned stop) |
+| `sessions` | `id`, `label`, `note`, `start`, `end` (empty while running, and may be empty after an abandoned stop) |
 | `metrics` | `session_id`, `ts`, `host` (host id), `label` (the series name the dashboard shows), `value` |
 | `events` | `session_id`, `ts`, `end_ts`, `label`, `source`: the event markers on the charts |
 | `log_events` | `session_id`, `ts`, `host`, `tab`, `fields` (a JSON object): rows of a log-event table |
 
-Timestamps are ISO-8601 text. To check that the last session stopped cleanly
-and see which series it holds:
+Timestamps are ISO-8601 text. otto stamps `end` before it closes the
+collectors and the archive, so a value there shows the stop reached that
+point, not that everything after it finished. To see the last session's
+`end` and which series it holds:
 
 ```bash
 sqlite3 metrics.db "SELECT id, start, end FROM sessions ORDER BY start DESC LIMIT 1"
-sqlite3 metrics.db "SELECT DISTINCT host, label FROM metrics"
+sqlite3 metrics.db "SELECT DISTINCT host, label FROM metrics WHERE session_id = (SELECT id FROM sessions ORDER BY start DESC LIMIT 1)"
 ```
 
 ## Parser warnings
