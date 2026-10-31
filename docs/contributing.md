@@ -1545,19 +1545,24 @@ make import-snapshot                      # regenerate THIS interpreter's ceilin
   `make release BUDGET_APPROVE="help@3.14=stdlib+4,otto:*+1 run=otto:*+1"`
   names each grown surface with the exact buckets it moved by (`@minor`
   scopes an entry; without it the entry applies wherever the surface grew;
-  one entry per surface and minor). A surface named without buckets,
-  buckets that differ from the measurement, or an entry nothing grew for
-  over the whole run each stop again. It is a command-line variable (an
+  one entry per surface and minor). A surface named without buckets, an
+  entry whose total differs from the growth measured or whose buckets
+  differ by more than two operations, or an entry nothing grew for over
+  the whole run each stop again. It is a command-line variable (an
   environment value approves nothing) and the release's own knob, like
   `BUMP=`: the coverage stamp accepts it. Growth or a bucket shuffle is
   measured a second time before it counts, a third when the second
-  disagrees, and a minor that never reproduces itself stops as inconclusive,
-  naming the surfaces; the tables shown are the deciding pair's, or every
-  pair's, labelled, for a minor that stayed inconclusive. The
-  base's records are cached under `reports/budget/<tag>/` of the checkout
-  that measured them (per checkout, like every `reports/`) and reused while
-  their sha, tree, interpreter version and instrument (the harness and
-  `tests/_fixtures/` at the tip) still match; the tip is measured every
+  disagrees, and a minor that never reproduces itself stops as
+  inconclusive, naming the surfaces; the tables shown are the deciding
+  pair's, or every pair's, labelled, for a minor that stayed
+  inconclusive. One operation can land in a different bucket from run to
+  run, so two measurements agree when their totals match and no bucket
+  moved by more than two, and a move that small is no shuffle; growth
+  itself is exact. The base's records are cached under
+  `reports/budget/<tag>/` of the checkout that measured them (per
+  checkout, like every `reports/`) and reused while their sha, tree,
+  interpreter version and instrument (the harness and `tests/_fixtures/`
+  at the tip) still match; the tip is measured every
   time. Exit 0 is accepted (nothing grew, or every growth is approved and
   attributed); exit 1 is a policy stop; exit 2 is invalid evidence or an
   operational failure (a failed sync or measurement, a malformed approval

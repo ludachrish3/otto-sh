@@ -20,6 +20,7 @@ import pytest
 from scripts import import_budget
 from scripts import import_budget_delta as delta
 from scripts.import_budget_delta import (
+    BUCKET_NOISE,
     FIXTURE_CANARIES,
     KNOWN_SURFACES,
     REPO_SURFACES,
@@ -39,6 +40,7 @@ from scripts.import_budget_delta import (
     reproduced,
     stale_approvals,
     validate_side,
+    within_noise,
 )
 from tests._fixtures.gitrepo import TmpGitRepo
 
@@ -52,7 +54,9 @@ PLAIN = next(s.key for s in import_budget.SURFACES if not s.real_entry and not s
 TRACKED = next(s.key for s in import_budget.SURFACES if s.tracked)
 NONE: "list[Approval]" = []
 GROWN = {"ops": {PLAIN: 504}, "buckets": {PLAIN: {"otto:*": 500, "stdlib": 4}}}
-SHUFFLED = {"buckets": {PLAIN: {"otto:*": 498, "otto:x": 2}}}
+SHUFFLED = {"buckets": {PLAIN: {"otto:*": 497, "otto:x": 3}}}
+WOBBLE = {"fd": 111, "other": 173, "otto:*": 216}
+"""v0.17.0's 3.10 host_local_exec: one operation lands in `fd` or `other` from run to run."""
 QUIET: dict = {}
 
 
@@ -378,11 +382,27 @@ def test_an_approval_with_the_measured_buckets_is_named_and_used(tmp_path: Path)
     assert v.used == [Approval(PLAIN, None, {"stdlib": 4})]
 
 
-def test_an_approval_whose_buckets_differ_stops(tmp_path: Path):
+def test_an_approval_within_the_noise_of_the_measurement_is_named_and_used(tmp_path: Path):
+    """The word was printed by a run whose `fd`/`other` wobble went the other way."""
+    v = _judge(tmp_path, GROWN, [f"{PLAIN}=fd+1,other-1,stdlib+4"])
+    assert v.stop == []
+    assert v.named == [
+        f"3.10 {PLAIN} 500 -> 504 {{'stdlib': 4}}: approved as {PLAIN}=fd+1,other-1,stdlib+4"
+    ]
+
+
+def test_an_approval_whose_total_differs_from_the_growth_stops(tmp_path: Path):
+    """Buckets within the noise do not stretch the total: +3 does not approve +4."""
     v = _judge(tmp_path, GROWN, [f"{PLAIN}=stdlib+3"])
+    assert len(v.stop) == 1
+    assert f"approved as {PLAIN}=stdlib+3 but moved {{'stdlib': 4}}" in v.stop[0]
+
+
+def test_an_approval_whose_buckets_differ_beyond_the_noise_stops(tmp_path: Path):
+    v = _judge(tmp_path, GROWN, [f"{PLAIN}=stdlib+1"])
     assert v.stop == [
         (
-            f"3.10 {PLAIN} 500 -> 504 {{'stdlib': 4}}: approved as {PLAIN}=stdlib+3 but moved "
+            f"3.10 {PLAIN} 500 -> 504 {{'stdlib': 4}}: approved as {PLAIN}=stdlib+1 but moved "
             f"{{'stdlib': 4}} (the tip is not the tree that was approved); "
             f'to attribute: BUDGET_APPROVE="{PLAIN}@3.10=stdlib+4"'
         )
@@ -420,8 +440,13 @@ def test_a_decline_is_reported_and_never_stops(tmp_path: Path):
 def test_a_shuffle_at_an_unchanged_total_needs_confirmation(tmp_path: Path):
     v = _judge(tmp_path, SHUFFLED)
     assert v.stop == []
-    assert v.shuffles == [f"3.10 {PLAIN} 500 moved {{'otto:*': -2, 'otto:x': 2}}"]
+    assert v.shuffles == [f"3.10 {PLAIN} 500 moved {{'otto:*': -3, 'otto:x': 3}}"]
     assert v.reason == "a shuffle"
+
+
+def test_a_move_within_the_noise_at_an_unchanged_total_is_no_shuffle(tmp_path: Path):
+    v = _judge(tmp_path, {"buckets": {PLAIN: {"otto:*": 498, "otto:x": 2}}})
+    assert (v.stop, v.shuffles, v.reason) == ([], [], None)
 
 
 def test_a_surface_the_base_cannot_run_is_listed_not_judged(tmp_path: Path):
@@ -530,12 +555,62 @@ def test_a_surface_neither_measurement_could_run_confirms_despite_a_temp_path(tm
 def test_reproduced_names_every_record_that_differs(tmp_path: Path):
     first, same = _side(tmp_path, "first"), _side(tmp_path, "same")
     assert reproduced(first, same, "3.10") == []
-    moved = _side(tmp_path, "moved", buckets={PLAIN: {"otto:*": 499, "otto:y": 1}})
+    moved = _side(tmp_path, "moved", buckets={PLAIN: {"otto:*": 497, "otto:y": 3}})
     assert reproduced(first, moved, "3.10") == [
-        f"{PLAIN}: {{'otto:*': 500}} vs {{'otto:*': 499, 'otto:y': 1}}"
+        f"{PLAIN}: {{'otto:*': 500}} vs {{'otto:*': 497, 'otto:y': 3}}"
     ]
+    more = _side(tmp_path, "more", ops={REAL: 503}, buckets={REAL: {"otto:*": 503}})
+    assert reproduced(first, more, "3.10") == [f"{REAL}: 500 vs 503 file ops"]
+
+
+def test_reproduced_agrees_within_the_noise(tmp_path: Path):
+    """Two runs of one tree may move BUCKET_NOISE between buckets; the total stays exact."""
+    one = _side(tmp_path, "one", buckets={PLAIN: WOBBLE})
+    flipped = {**WOBBLE, "fd": 112, "other": 172}
+    assert reproduced(one, _side(tmp_path, "flip", buckets={PLAIN: flipped}), "3.10") == []
     more = _side(tmp_path, "more", ops={REAL: 501}, buckets={REAL: {"otto:*": 501}})
-    assert reproduced(first, more, "3.10") == [f"{REAL}: 500 vs 501 file ops"]
+    assert reproduced(_side(tmp_path, "first"), more, "3.10") == [f"{REAL}: 500 vs 501 file ops"]
+    far = {**WOBBLE, "fd": 114, "other": 170}
+    assert reproduced(one, _side(tmp_path, "far", buckets={PLAIN: far}), "3.10") == [
+        f"{PLAIN}: {WOBBLE} vs {far}"
+    ]
+
+
+def test_within_noise_bounds_every_bucket_and_the_total():
+    assert within_noise({"a": 5}, {"a": 3, "b": 2})
+    assert not within_noise({"a": 5}, {"a": 2, "b": 3}), "a bucket moved by three"
+    assert not within_noise({"a": 5}, {"a": 6}), "the total moved"
+    assert within_noise({}, {})
+    assert BUCKET_NOISE == 2
+
+
+def test_pairs_whose_totals_differ_never_confirm_growth(tmp_path: Path):
+    """Growth is exact, so its confirmation is: a quiet pair 2 is not pair 1's +2 again."""
+    two = {"ops": {PLAIN: 502}, "buckets": {PLAIN: {"otto:*": 500, "stdlib": 2}}}
+    v = decide(_pairs(tmp_path, two, QUIET), "3.10", NONE)
+    assert v.stop[0].startswith(f"3.10 did not reproduce (pair 1 vs 2):\n  tip {PLAIN}: 502 vs 500")
+    assert (v.more, v.grown) == (True, [])
+
+
+def test_pairs_that_disagree_on_a_shuffle_do_not_reproduce_it(tmp_path: Path):
+    """Pair 1 moved three (a shuffle), pair 2 one (none): within the noise, not one verdict."""
+    small = {"buckets": {PLAIN: {"otto:*": 499, "otto:x": 1}}}
+    v = decide(_pairs(tmp_path, SHUFFLED, small), "3.10", NONE)
+    assert v.stop == [
+        (
+            f"3.10 did not reproduce (pair 1 vs 2):\n"
+            f"  {PLAIN}: a shuffle in one pair, not the other\n"
+            "  needs a third measurement (judge --pair three times)"
+        )
+    ]
+
+
+def test_decide_confirms_growth_whose_pairs_differ_within_the_noise(tmp_path: Path):
+    """The 0.18.0 release stopped inconclusive on this wobble at an unchanged total."""
+    wobbled = {"ops": GROWN["ops"], "buckets": {PLAIN: {"otto:*": 499, "stdlib": 4, "fd": 1}}}
+    v = decide(_pairs(tmp_path, GROWN, wobbled), "3.10", parse_approvals([f"{PLAIN}=stdlib+4"]))
+    assert v.stop == []
+    assert (v.confirmed, v.evidence, v.grown) == (2, 0, [(PLAIN, "3.10")])
 
 
 def test_decide_passes_a_quiet_pair_on_one_measurement(tmp_path: Path):
@@ -560,7 +635,7 @@ def test_two_agreeing_pairs_confirm_the_first_verdict(tmp_path: Path):
     assert (v.confirmed, v.evidence, v.more) == (2, 0, False)
     assert v.grown == [(PLAIN, "3.10")]
     s = decide(_pairs(tmp_path, SHUFFLED, SHUFFLED), "3.10", NONE)
-    assert s.stop == [f"3.10 {PLAIN} 500 moved {{'otto:*': -2, 'otto:x': 2}}: reproduced"]
+    assert s.stop == [f"3.10 {PLAIN} 500 moved {{'otto:*': -3, 'otto:x': 3}}: reproduced"]
 
 
 def test_a_quiet_first_pair_is_no_veto_over_two_agreeing_grown_pairs(tmp_path: Path):
@@ -607,12 +682,12 @@ def test_a_base_that_does_not_reproduce_is_named_as_the_base(tmp_path: Path):
     def bump(d):
         for r in d:
             if r["surface"] == REAL:
-                r.update(file_ops=501, by_bucket={"otto:*": 501})
+                r.update(file_ops=503, by_bucket={"otto:*": 503})
 
     _edit(pairs[1][0] / "3.10.json", bump)
     v = decide(pairs, "3.10", NONE)
     assert v.stop[0].startswith(
-        f"3.10 did not reproduce (pair 1 vs 2):\n  base {REAL}: 500 vs 501 file ops"
+        f"3.10 did not reproduce (pair 1 vs 2):\n  base {REAL}: 500 vs 503 file ops"
     )
 
 
@@ -1184,7 +1259,7 @@ def test_a_shuffle_that_reproduces_stops(tmp_path: Path, capsys):
                 table = json.loads(path.read_text())
                 for r in table:
                     if r["surface"] == PLAIN:
-                        r["by_bucket"] = {"otto:*": 498, "otto:x": 2}
+                        r["by_bucket"] = {"otto:*": 497, "otto:x": 3}
                 path.write_text(json.dumps(table))
             return rc
 
@@ -1192,7 +1267,7 @@ def test_a_shuffle_that_reproduces_stops(tmp_path: Path, capsys):
     assert measure(_settings(repo, tmp_path / "out"), Shuffling()) == 1
     text = capsys.readouterr().out
     assert "confirming 3.10: a shuffle appeared" in text
-    assert f"STOP:\n  3.10 {PLAIN} 500 moved {{'otto:*': -2, 'otto:x': 2}}: reproduced" in text
+    assert f"STOP:\n  3.10 {PLAIN} 500 moved {{'otto:*': -3, 'otto:x': 3}}: reproduced" in text
 
 
 def test_the_primary_stops_before_the_other_minors_are_measured(tmp_path: Path):

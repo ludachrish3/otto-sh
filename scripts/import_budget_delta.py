@@ -12,8 +12,8 @@ minor, unless the owner named the surface AND the buckets it grew by:
 `make release BUDGET_APPROVE="help@3.14=stdlib+4,otto:*+1 run=otto:*+1"`.
 A surface named without its buckets is approved but not attributed, and the
 stop prints the entry the measurement warrants; an entry whose buckets differ
-from the measurement is a tip the owner has not seen; an entry nothing grew
-for, over the whole span, is stale.
+from the measurement (any total, or a bucket by more than `BUCKET_NOISE`) is a
+tip the owner has not seen; an entry nothing grew for, over the whole span, is stale.
 
 File operations only, never wall clock. Serial, one interpreter at a time, the
 primary first, so a release that must stop stops at the first failing minor,
@@ -21,7 +21,8 @@ once its growth or shuffle is confirmed.
 
 Growth or a bucket shuffle (buckets moved, total unchanged) is never a verdict
 on one measurement: the pair is measured again, and a verdict stands only when
-two consecutive pairs agree record for record, both sides — pairs 1 and 2
+two consecutive pairs agree record for record, both sides (each bucket within
+`BUCKET_NOISE`, totals exact) and on which surfaces shuffled — pairs 1 and 2
 confirm pair 1's, else a third pair is measured once and pairs 2 and 3 confirm
 pair 2's. Three pairs that never agree are inconclusive: a stop that names the
 surfaces whose records differed, not a regression. The tables printed are the
@@ -130,6 +131,17 @@ MAX_PAIRS = 3
 
 CONFIRMING_PAIR = 2
 """The pair that confirms the first pair's verdict when the two agree."""
+
+BUCKET_NOISE = 2
+"""The most file operations a bucket may differ by between two maps that agree.
+
+Two measurements of one tree are not identical: an operation can land in one
+bucket on one run and another on the next (0.17.0's 3.10 `host_local_exec`
+flips one between `fd` and `other` at an unchanged total). Pairs whose buckets
+agree within it reproduce, an approval within it of the measurement holds, and
+a move within it is no shuffle. Totals stay exact: one operation more than the
+base is growth, so two pairs agree only on the same totals, and an approval
+covers exactly the growth measured."""
 
 INSTRUMENT_PATHS = ["scripts/import_budget.py", "tests/_fixtures"]
 """What a measurement depends on besides the measured tree: the harness and fixtures, at the tip."""
@@ -379,6 +391,8 @@ class Verdict:
     named: "list[str]" = field(default_factory=list)
     declined: "list[str]" = field(default_factory=list)
     shuffles: "list[str]" = field(default_factory=list)
+    shuffled: "list[str]" = field(default_factory=list)
+    """Each surface whose buckets moved beyond the noise at an unchanged total."""
     unmeasurable: "dict[str, str]" = field(default_factory=dict)
     """Each base surface not judged, by name, with why (sorted by surface)."""
     grown: "list[tuple[str, str]]" = field(default_factory=list)
@@ -413,6 +427,12 @@ def _moved(before: "dict[str, int]", after: "dict[str, int]") -> "dict[str, int]
     return {
         k: after.get(k, 0) - before.get(k, 0) for k in keys if after.get(k, 0) != before.get(k, 0)
     }
+
+
+def within_noise(a: "dict[str, int]", b: "dict[str, int]") -> bool:
+    """Return whether *a* and *b* agree: the same total, no bucket over BUCKET_NOISE apart."""
+    moved = _moved(a, b).values()
+    return sum(moved) == 0 and all(abs(d) <= BUCKET_NOISE for d in moved)
 
 
 def _applicable(approvals: "list[Approval]", surface: str, minor: str) -> "Approval | None":
@@ -475,7 +495,7 @@ def _growth_line(
         v.stop.append(
             f'{line}: approved but not attributed; to attribute: BUDGET_APPROVE="{warranted}"'
         )
-    elif entry.buckets != moved:
+    elif not within_noise(entry.buckets, moved):
         v.stop.append(
             f"{line}: approved as {entry.word()} but moved {moved} "
             "(the tip is not the tree that was approved); "
@@ -500,8 +520,9 @@ def judge_minor(base: Path, tip: Path, minor: str, approvals: "list[Approval]") 
             _growth_line(v, line, key, moved, approvals)
         elif delta < 0:
             v.declined.append(f"{minor} {key} {b.file_ops} -> {a.file_ops}")
-        elif moved:
+        elif not within_noise(b.by_bucket, a.by_bucket):
             v.shuffles.append(f"{minor} {key} {b.file_ops} moved {moved}")
+            v.shuffled.append(key)
     if v.grown:
         v.reason = "growth"
     elif v.shuffles:
@@ -513,11 +534,11 @@ def reproduced(first: Path, second: Path, minor: str) -> "list[str]":
     """Return the surfaces whose record differs between two measurements of one tree.
 
     Every field the judge reads is compared: the exit, the file operations,
-    the buckets and the workspace count. A surface neither run could measure
-    (a non-empty ending) agrees whatever else it holds, since it is listed and
-    never judged and its ending text can quote a per-run temp path; one
-    measurable in only one of the runs differs. The result is empty when
-    nothing differs.
+    the buckets (each within BUCKET_NOISE) and the workspace count. A
+    surface neither run could measure (a non-empty ending) agrees whatever
+    else it holds, since it is listed and never judged and its ending text can
+    quote a per-run temp path; one measurable in only one of the runs differs.
+    The result is empty when nothing differs.
     """
     a, b = rows(first, minor), rows(second, minor)
     out = []
@@ -532,7 +553,7 @@ def reproduced(first: Path, second: Path, minor: str) -> "list[str]":
             out.append(f"{key}: ended differently ({a[key].exit} vs {b[key].exit})")
         elif a[key].file_ops != b[key].file_ops:
             out.append(f"{key}: {a[key].file_ops} vs {b[key].file_ops} file ops")
-        elif a[key].by_bucket != b[key].by_bucket:
+        elif not within_noise(a[key].by_bucket, b[key].by_bucket):
             out.append(f"{key}: {a[key].by_bucket} vs {b[key].by_bucket}")
         elif a[key].workspace != b[key].workspace:
             out.append(f"{key}: workspace {a[key].workspace} vs {b[key].workspace}")
@@ -540,11 +561,19 @@ def reproduced(first: Path, second: Path, minor: str) -> "list[str]":
 
 
 def _disagreement(pairs: "list[tuple[Path, Path]]", i: int, minor: str) -> "list[str]":
-    """How pair i and pair i+1 differ, both sides, as '<side> <surface>: …' lines."""
+    """How pair i and pair i+1 differ, as '<side> <surface>: …' lines, then '<surface>: …' ones.
+
+    Records that agree within the noise can still straddle it, a shuffle in one
+    pair and none in the other: that is a disagreement of the pairs, not of a
+    side, and is named by surface alone.
+    """
     (b1, t1), (b2, t2) = pairs[i], pairs[i + 1]
-    return [f"base {d}" for d in reproduced(b1, b2, minor)] + [
-        f"tip {d}" for d in reproduced(t1, t2, minor)
-    ]
+    one, two = (set(judge_minor(*pair, minor, []).shuffled) for pair in (pairs[i], pairs[i + 1]))
+    return (
+        [f"base {d}" for d in reproduced(b1, b2, minor)]
+        + [f"tip {d}" for d in reproduced(t1, t2, minor)]
+        + [f"{key}: a shuffle in one pair, not the other" for key in sorted(one ^ two)]
+    )
 
 
 def _confirmed(verdict: Verdict, by: int, evidence: int) -> Verdict:
