@@ -508,3 +508,14 @@ sentinel objects are compiled without those flags, so they are not
 coverage-instrumented and contribute no coverage records. The
 {doc}`kernel-module track <../../../setup/tracks/kmod>` reports one module
 across all three tiers.
+
+### Reading kernel-module line counts
+
+Kbuild compiles a module with the kernel's own optimization flags, usually
+`-O2`, and `$(KMODCOV_CFLAGS)` adds only the coverage flags. At that level the
+compiler merges code, and gcov can tie a line to a block the optimized code
+never runs. Two such lines are common: a `return` that the compiler folded
+into a shared exit path, and the closing `}` of the exit routine. They read as
+never hit even after the code ran, so a fully exercised module usually stays
+below 100% line coverage. Check the remaining lines in the annotated source
+before you write tests for them.

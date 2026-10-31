@@ -172,4 +172,6 @@ overlap rule the [labs table](lab/files-and-membership.md#the-labs-table) descri
 `test1-chassis` is a second, independent lock: a run that touches this host
 needs it whichever lab it came in through.  The Zephyr host's `hop` names
 `test4`, an element not shown here: a management path to reach the device, not
-a declared link.
+a declared link.  otto reaches this board over the network, through its
+hop, so the host declares no `console_options`; a board reached through a
+console server's serial port declares them instead ({ref}`console-term`).

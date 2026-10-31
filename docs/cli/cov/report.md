@@ -4,6 +4,10 @@
 otto --lab my_lab cov report <output_dir> --dir ./my_report
 ```
 
+The report is a directory of static files: open `./my_report/index.html` in a
+browser. Without `--dir` it lands under this invocation's output directory
+({ref}`where it lands and what it shows <coverage-report-output>`).
+
 `otto cov report` assembles a store from every source available:
 
 1. **E2E captures** — each given output directory's
@@ -18,8 +22,8 @@ otto --lab my_lab cov report <output_dir> --dir ./my_report
      retried here: fix the cause and run `otto cov get` again ({doc}`get`);
    - **not yet captured** — it holds `.gcda` but neither marker, because
      collection stopped before its capture. The report captures it now, by the same
-     code as collection, with the tier and commit that collection recorded
-     in the run's `.otto_cov_meta.json`. A run directory that records no tier
+     code as collection, with the {ref}`tier <coverage-tier-kinds>` and commit
+     that collection recorded in the run's `.otto_cov_meta.json`. A run directory that records no tier
      or commit is refused by name (exit `2`); it is never guessed or anchored
      to the current `HEAD`. A capture that fails here is written as
      `capture.failed` and named in the same warning.
@@ -32,10 +36,14 @@ otto --lab my_lab cov report <output_dir> --dir ./my_report
    misread as a product; there is no migration shim, so re-collect with this
    version of otto.
 2. **Unit harvest** — every `unit`-kind tier's `harvest_dirs`, plus each of
-   its named `products` views, swept fresh from the current build tree.
+   its named `products` views, swept fresh from the current build tree. For a
+   `docker_image` product named by reference, this scans the product's
+   running container for its binaries, which can take up to the scan's
+   540-second limit ({ref}`coverage-unit-filter`).
 3. **Manual store** — every capture committed under the project's
-   `.otto/coverage/manual/`, loaded automatically with the validity
-   pass applied.
+   `.otto/coverage/manual/` ({ref}`the committed manual store
+   <coverage-tier-kinds>`), loaded automatically with the validity pass
+   applied.
 
 `OUTPUT_DIRS` is optional: with none given, the report is built
 from the committed manual-capture store (and any configured unit
@@ -158,6 +166,9 @@ rule: its recorded commit must be the tree's `HEAD`. Both checks run before
 the report writes anything, so with `--overwrite-dir` a refused report leaves
 the previous one in `--dir` untouched.
 
+(coverage-report-dirty)=
+### A dirty tree at report time
+
 A working tree that is merely **dirty** at report time (same
 `HEAD`, uncommitted edits) does not fail: the e2e capture's hits are
 remapped from committed-code coordinates onto the current tree — the
@@ -240,6 +251,7 @@ the only evidence was manual and the code changed since) →
 A **legend** mapping every tier name and state to its color is always one
 click away, in the app bar's **⋮** overflow menu present on every page.
 
+(coverage-report-output)=
 ## Output
 
 `otto cov report` writes a self-contained **single-page app** to the

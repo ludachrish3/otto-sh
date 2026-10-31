@@ -36,9 +36,6 @@ precedence = 2
 harvest_dirs = ["build"]     # swept for .gcda at report time; relative to the project root
 color = "yellow"
 
-[coverage.tiers.unit.products]  # optional: one run per named product view
-app = ["build/app-tests"]
-
 [coverage.tiers.manual]
 kind = "manual"
 precedence = 3
@@ -58,7 +55,7 @@ Each `[coverage.tiers.<name>]` block:
 | `precedence` | Integer; lower wins the winner-take-all row coloring when multiple tiers cover the same line. |
 | `color` | Optional CSS named color or `#RRGGBB` hex, validated at settings load. Defaults to a per-`kind` color when omitted (`e2e` = green, `unit` = yellow, `manual` = orange). |
 | `harvest_dirs` | `unit`-kind only: build directories swept for `.gcda` at report time. Relative paths resolve against the project root (see {doc}`../../configuration/settings`). The sweep counts the sources of every product of the project ({ref}`coverage-unit-filter`). |
-| `products` | `unit`-kind only: a `[coverage.tiers.<name>.products]` sub-table of `<product> = [<dirs>]`. Each named view is swept separately, counts only the sources of the product it is named after, and becomes its own run, tagged with that product; `harvest_dirs` stays the unnamed view. Keys follow {ref}`the product-name rule <run-tree>`. |
+| `products` | `unit`-kind only: a `[coverage.tiers.<name>.products]` sub-table of `<product> = [<dirs>]`. Each named view is swept separately, counts only the sources of the product it is named after, and becomes its own run, tagged with that product; `harvest_dirs` stays the unnamed view. Name each build directory in one place only, here or in `harvest_dirs` ({ref}`one place per directory <coverage-unit-one-place>`). Keys follow {ref}`the product-name rule <run-tree>`. |
 | `toolchain` | `unit`-kind only: the `[coverage.tiers.<name>.toolchain]` sub-table naming the tools the tier's captures run (`coverage_tool`, `lcov`, `lcov_args`); unset, the build's own stamps and `PATH` choose them ({ref}`coverage-unit-toolchain`). |
 | `max_age` | `manual`-kind only: `"<days>d"` (e.g. `"180d"`); enables the *aging* flag (see {ref}`coverage-validity`). Optional, off by default. |
 
@@ -128,6 +125,15 @@ cmake --build build          # the products and the unit tests
 ./build/my_unit_tests
 ```
 
+The unit tests' `.gcda` files add up across runs, like any counters
+([clean the counters](instrumenting/gcc.md#clean-the-counters-after-a-rebuild)),
+and `otto cov clean` zeroes only the lab's hosts. To report one unit run
+alone, delete the old counters before it:
+
+```bash
+find build -name '*.gcda' -delete
+```
+
 No lcov invocation and no `--tier unit=...` flag are needed — as long
 as `[coverage.tiers.unit].harvest_dirs` points at `build`, `otto cov
 report` finds and merges the counters itself, keeping only product sources
@@ -136,11 +142,32 @@ none of the project's products, the report is refused.
 
 ### Distinct unit views
 
-`[coverage.tiers.unit.products]` splits that one sweep into named views, each
-its own run in the report. Each view is named after a `[[products]]` entry of
-the project and counts only that product's sources; a name that is no product
-is refused ({ref}`coverage-unit-filter`). It is that naming that lets one
+`[coverage.tiers.unit.products]` declares named views, each its own run in
+the report:
+
+```toml
+[coverage.tiers.unit]
+kind = "unit"
+precedence = 2
+
+[coverage.tiers.unit.products]
+app = ["build/app"]
+agent = ["build/agent"]
+```
+
+Each view is named after a `[[products]]` entry of the project and counts
+only that product's sources; a name that is no product is refused
+({ref}`coverage-unit-filter`). It is that naming that lets one
 product pin show the product's end-to-end and unit evidence together.
+
+(coverage-unit-one-place)=
+Name each build directory **in one place only**: in `harvest_dirs` or in one
+view. Every view is swept on its own and nothing removes the overlap, so a
+directory reached by `harvest_dirs` and a view is counted twice. A sweep
+includes the directories under it: with `harvest_dirs = ["build"]` beside `app =
+["build/app"]`, every hit on `app`'s sources in `build/app` is counted
+twice in the unit tier. The example above declares no `harvest_dirs` for
+that reason.
 
 Each view needs its **own build or object directory**, and that is a
 requirement, not a tidiness preference: `.gcno` notes files sit beside the
@@ -222,8 +249,8 @@ refusal stops the whole report — there is no unfiltered fallback:
 |---|---|---|---|
 | *no products of project P found in the active lab (L)*, *no product named 'app' …*, or *every product … is declared instrumented = false* | The view has no product to count the sources of | Run with the lab that declares the products (`--lab`), and build them with `--coverage` | `1` |
 | *product 'app' (build/app) is not instrumented: … Build it with coverage instrumentation (--coverage) …* | The product's `artifact` ({doc}`../../configuration/declared-products-tools`) is missing, or holds no coverage paths | Build it with `--coverage`, or declare it `instrumented = false` | `1` |
-| *… reads its object list from container 'c', which is not running — install the product first (otto run install)* | A `docker_image` product named by reference has no local artifact; its objects are read from its running container | `otto run install` | `2` |
-| *could not read product 'app''s object list: …* | The artifact or the container scan could not be read; a scan where `find` or `grep` failed under any directory, or that outran its 540-second limit, is refused whole | Fix what the reason names; the image needs `find` and `grep` (GNU or BusyBox) | `1` |
+| *… reads its object list from container 'c', which is not running — install the product first (otto run install)* | A `docker_image` product named by reference has no local artifact; its objects are read from its running container | Start it again (`docker start`, {ref}`coverage-container-stop-to-flush`), or `otto run uninstall` then `otto run install` | `2` |
+| *could not read product 'app''s object list: …* | The artifact or the container scan could not be read; a scan where `find` or `grep` failed under any directory, or that outran its 540-second limit (set only when the image has `timeout` and `date`; without them the scan runs to the host-side timeout), is refused whole | Fix what the reason names; the image needs `find` and `grep` (GNU or BusyBox) | `1` |
 
 Under `otto test --cov --cov-report` a refusal costs that run its inline
 report, never the test result: a warning names the cause, the e2e captures

@@ -27,7 +27,10 @@ machinery `otto cov get` runs.
 Stop the product's processes before collection, which runs after the last
 test. A process writes its `.gcda` files only when it exits, and counts
 written after the fetch are lost when the counters are cleaned. Stopping the
-product in a fixture's teardown is enough.
+product in a fixture's teardown is enough. A stopped `docker_image` container
+answers not installed, and a `docker_image` named by reference needs it
+running again for `otto cov report`
+({ref}`stop it to flush <coverage-container-stop-to-flush>`).
 
 This tail never fails an otherwise-successful test run **over collection**.
 A project that is not a git checkout (no commit to anchor a capture to),

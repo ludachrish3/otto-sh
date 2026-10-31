@@ -145,17 +145,18 @@ path = "lab_data/creds.json"
 #kind = "e2e"
 #precedence = 10
 #color = "#22c55e"
-## A unit tier harvests .gcda from the build tree at report time. `products`
-## splits that sweep into named views, one run each -- each view is named
-## after a [[products]] entry (any other name is refused), so one product
-## filter shows its e2e and unit evidence together. Each view needs its OWN
-## build dir: .gcno sit beside the objects.
+## A unit tier harvests .gcda from the build tree at report time. Name each
+## build dir in ONE place: `harvest_dirs` (one unnamed view) or `products`
+## (named views, one run each) -- a dir reached from both counts twice. Each
+## view is named after a [[products]] entry (any other name is refused), so
+## one product filter shows its e2e and unit evidence together. Each view
+## needs its OWN build dir: .gcno sit beside the objects.
 ## Only the products' own sources count: build the products on this machine,
 ## under the project root, before `otto cov report` (it reads their notes).
 #[coverage.tiers.unit]
 #kind = "unit"
 #precedence = 20
-#harvest_dirs = ["build"]
+#harvest_dirs = ["build/lib-tests"]
 #[coverage.tiers.unit.products]
 #app = ["build/app-tests"]
 ## The tools the unit captures run, all optional: unset, the build's own gcov

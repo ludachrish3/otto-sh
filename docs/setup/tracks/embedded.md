@@ -63,8 +63,19 @@ measured.
 ## Point the example at your board
 
 `lab_data/lab.json` holds two placeholder hosts: the board, `dut`, and the
-console server in front of its UART, `console`. Replace these fields with your
-own:
+console server in front of its UART, `console`:
+
+```{literalinclude} ../../examples/quickstart-embedded/lab_data/lab.json
+:language: json
+:caption: lab_data/lab.json
+```
+
+`filesystem` and `loader` are the {doc}`embedded-only fields
+<../../configuration/lab/hops-and-embedded>`. `console_options` belongs to the
+{ref}`console term <console-term>`, and `toolchain` to the
+{doc}`coverage toolchain <../../configuration/lab/coverage-toolchain>`. The
+others are {doc}`host fields <../../configuration/lab/host-fields>`. Replace
+these fields with your own:
 
 - on `console`, `ip` and `creds`: the server's address, and a login otto can
   open SSH with. otto reaches the console port from inside the server, so a
@@ -145,7 +156,16 @@ changes, is in {ref}`Vendoring embedded-gcov, and the modern-GCC
 patch <coverage-embedded-vendoring>`.
 
 The example's `.gitignore` lists `third_party/`, because `init` writes it
-there. The starter that `init` wrote under `third_party/` is a pristine copy to
+there, and the build's `build/`. In a project of your own, the `.gitignore`
+that `otto init` writes lists only `otto-output/`, so add the example's other
+lines:
+
+```{literalinclude} ../../examples/quickstart-embedded/.gitignore
+:language: text
+:caption: .gitignore
+```
+
+The starter that `init` wrote under `third_party/` is a pristine copy to
 restore from; the one you edit is the committed `ext/src/cov_entry.c`, which
 holds the three entry points otto calls.
 
@@ -205,8 +225,8 @@ named after the extension's CMake target). Why, and what to point
 
 The build is incremental. West records the project's absolute path in
 `build/ext`, so if you move the project directory, delete `build/ext` and
-build again. The build writes only files the example's `.gitignore` lists,
-so the git repository stays clean.
+build again. The build writes only under `build/`, which the `.gitignore`
+above lists, so the git repository stays clean.
 
 ## Declare the extension
 
@@ -218,6 +238,9 @@ The extension is a product, of kind `embedded`:
 :start-after: "# doc: begin declare"
 :end-before: "# doc: end declare"
 ```
+
+`match` puts the product on the host whose id is `dut`
+([Matching](../../configuration/declared-products-tools.md#matching)).
 
 Preview the install. The dry run contacts no board:
 
@@ -263,8 +286,10 @@ The tests call the extension's exported functions through one helper:
 ```
 
 `ensure("installed")` loads the extension before the first test when it is
-not loaded. Each exported `op_*` function in `ext/src/ext.c` runs one path of
-the logic and prints its result for the test to read.
+not loaded ([the `ensure`
+marker](../writing-tests.md#declaring-lab-state-the-ensure-marker)). Each
+exported `op_*` function in `ext/src/ext.c` runs one path of the logic and
+prints its result for the test to read.
 
 ## A unit test
 
@@ -316,10 +341,13 @@ The project declares three tiers:
 :end-before: "# doc: end coverage"
 ```
 
+`hosts` selects the lab hosts coverage walks ({ref}`[coverage] hosts
+<coverage-configuration>`), here the board.
+
 Collect them in this order. {doc}`../../cli/cov/tiers` explains the order,
 and {doc}`../../cli/cov/report` the rules the report applies.
 
-First, zero the extension's counters on the board:
+First, zero the extension's counters on the board ({doc}`../../cli/cov/clean`):
 
 ```bash
 otto --lab example_lab cov clean
@@ -376,9 +404,14 @@ otto --lab example_lab run uninstall
 :language: text
 ```
 
-`uninstall` unloads until the board answers "No such extension": it is safe to
-run when nothing is loaded, which is why the second `llext unload` line is
-there.
+`uninstall` ({doc}`../../cli/run/defaults`) unloads until the board answers
+"No such extension": it is safe to run when nothing is loaded, which is why
+the second `llext unload` line is there.
+
+Commit any other change first, your edits to `lab_data/lab.json` and
+`.otto/settings.toml` included: a commit after the e2e run moves `HEAD`, and
+the report then refuses its capture ({ref}`the report's commit rule
+<coverage-capture-commit>`).
 
 Run the end-to-end tests with coverage, into a directory of your choosing.
 `--no-random` keeps the test order stable, so your log reads like this one:

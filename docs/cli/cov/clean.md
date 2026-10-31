@@ -20,6 +20,15 @@ that export looks like and the two rules the real boards forced on it). A
 host with no instrumented product at all is printed, not silently skipped —
 `test1: no instrumented products`.
 
+(coverage-clean-running-process)=
+Deleting `.gcda` files does not zero a process that is still running. It
+holds its counts in memory and writes all of them when it exits, so a daemon
+or a container's `CMD` that ran before the clean still reports that work.
+Restart a long-running Unix or container product after `otto cov clean`. The
+same holds for the clean `otto test --cov` runs before its first test
+({doc}`during-tests`). A kernel module's or a board's reset zeroes the
+counters in memory and needs no restart.
+
 The command prints one line per host and product it reset — `test1/myapp:
 counters cleared` — and exits `1` when any reset failed, naming the host,
 the product, and the fix. A coverage directory that does not exist yet (gcov

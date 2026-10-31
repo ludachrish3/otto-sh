@@ -45,6 +45,7 @@ the image sets from a build argument (`ARG GCOV_PREFIX_STRIP`, then `ENV
 GCOV_PREFIX_STRIP=$GCOV_PREFIX_STRIP`), and the build passes the computed
 value with `otto docker compose build --build-arg GCOV_PREFIX_STRIP=<n>`.
 
+(coverage-container-stop-to-flush)=
 ### A long-running process: stop it to flush
 
 Stop the product's processes before collection ({doc}`../during-tests`). For
@@ -58,6 +59,26 @@ An exec-form `CMD` (`CMD ["prog", ...]`) runs as the container's PID 1, which
 ignores a SIGTERM it does not handle, so `docker stop` then kills it with
 SIGKILL after its timeout. A stopped container answers not installed, so
 remove it (`otto run uninstall`) before the next install.
+
+Start it again before `otto cov report`. For an image named by reference, the
+unit tier reads the product's objects from its running container, and a
+stopped one refuses the whole report ({ref}`the unit refusals
+<coverage-unit-filter>`), even when the e2e captures are already in the run
+directory. Once the counters are fetched, start that one container on its
+parent, then report:
+
+```bash
+otto --lab <lab> host <parent> exec 'docker start <container_name>'
+```
+
+`otto test --cov --cov-report` refuses its inline report the same way: it runs
+before you can restart the container. A lab-wide `otto run uninstall` and
+`otto run install` also work, but they take every other product down and up
+with it.
+
+`otto cov clean` cannot zero a container that is still running
+({ref}`a running process keeps its counts <coverage-clean-running-process>`):
+restart it after the clean.
 
 A compose container host's counters stay inside the container, and otto
 fetches only from a running one. After stopping it, bring the stack back up
@@ -74,6 +95,12 @@ the exact tarball suffixes. `install` tells the two apart by suffix alone:
 a tarball is staged and loaded with `docker load -i`; a reference with
 `pull = false` is verified with `docker image inspect`; with `pull = true`
 it is `docker pull`ed on every install instead.
+
+A reference has no local file to read the image's objects from, so capturing
+its counters logs one INFO line, `<product>: object list unavailable: image
+<ref> is a reference, not a local tarball`. It needs no action: each `.gcda` is
+then paired with its notes by its own path, under the project root
+({ref}`coverage-pairing-errors` lists what can go wrong there).
 
 `pull` defaults to `false`, which suits a lab that can't reach a registry; set
 `pull = true` only where one is reachable. With `pull = false`, an image that
@@ -134,8 +161,13 @@ the lab brought up with `docker compose`. That case is
 `[docker.use_cases]`: the container becomes an ordinary lab host, and a
 `shell` product is declared for it exactly as for any Unix host (given an
 absolute `stage_dir`), because the image itself carries no product of
-otto's own. `otto run install` installs into a project's own container once
-its stack is up ({ref}`a project's own containers <fleet-owned-containers>`), as the track does.
+otto's own. No kind declares a tool already built into the image: a `shell`
+product copies its `artifact` in on every install. To skip that copy, give the
+entry a `class` whose `stage` does nothing ({ref}`class-entries`), and keep
+`artifact` naming the local build the image's binary came from, which coverage
+reads the product's objects from. `otto run install` installs into a project's
+own container once its stack is up, as the track does
+({ref}`a project's own containers <fleet-owned-containers>`).
 `docker_image` is the opposite shape — the image *is* the deliverable, run
 as a product on a host that already exists.
 {doc}`../../docker/use-cases` is the compose workflow.
