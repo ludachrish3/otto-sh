@@ -15,7 +15,7 @@ import contextlib
 import fcntl
 import os
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Generator
 from datetime import datetime
 
 from ..errors import OttoError
@@ -27,7 +27,7 @@ class ArchiveLockedError(OttoError, RuntimeError):
 
 
 @contextlib.contextmanager
-def _locked_connection(path: str) -> Iterator[sqlite3.Connection]:
+def _locked_connection(path: str) -> Generator[sqlite3.Connection, None, None]:
     fd = os.open(path + ".lock", os.O_CREAT | os.O_RDWR)
     try:
         try:

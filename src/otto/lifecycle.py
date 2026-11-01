@@ -26,7 +26,7 @@ import signal
 import sys
 import threading
 import time
-from collections.abc import Callable, Coroutine, Iterator
+from collections.abc import Callable, Coroutine, Generator
 from typing import Any, TypeVar, overload
 
 R = TypeVar("R")
@@ -411,7 +411,7 @@ def sync_phase(
     deadline: "float | None" = None,
     what: str = "synchronous phase",
     install_handlers: bool = True,
-) -> "Iterator[SyncPhaseGuard]":
+) -> "Generator[SyncPhaseGuard, None, None]":
     """Two-stage SIGINT/SIGTERM policy for a synchronous phase.
 
     The sibling of :func:`run_command` for phases that own their own event

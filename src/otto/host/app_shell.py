@@ -27,7 +27,7 @@ the ``parse=`` spec:
 import asyncio
 import re
 import types
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, ClassVar, Union, get_args, get_origin
 
@@ -320,7 +320,7 @@ class AppShell:
     @asynccontextmanager
     async def attach(
         cls, session: "HostSession", *, timeout: float | None = None
-    ) -> "AsyncIterator[Self]":
+    ) -> "AsyncGenerator[Self, None]":
         r"""Attach the shell to an already-open session (async context manager).
 
         Takes the session's app-shell lock, sends :attr:`launch`, waits for

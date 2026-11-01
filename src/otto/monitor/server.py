@@ -24,7 +24,7 @@ import functools
 import json
 import logging
 import secrets
-from collections.abc import AsyncGenerator, Iterator
+from collections.abc import AsyncGenerator, Generator
 from datetime import datetime, timezone
 from logging import Filter, LogRecord, getLogger
 from pathlib import Path
@@ -702,7 +702,7 @@ class _LifecycleOwnedServer(uvicorn.Server):
 
     @override
     @contextlib.contextmanager
-    def capture_signals(self) -> "Iterator[None]":
+    def capture_signals(self) -> "Generator[None, None, None]":
         yield
 
 

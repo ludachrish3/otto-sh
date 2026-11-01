@@ -57,7 +57,7 @@ import hashlib
 import json
 import logging
 import re
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeVar
@@ -881,7 +881,7 @@ _CONSTRUCTION_PROFILE: "ContextVar[tuple[str, ProfileFields] | None]" = ContextV
 
 
 @contextlib.contextmanager
-def constructing_with(os_type: str, fields: ProfileFields | None) -> Iterator[None]:
+def constructing_with(os_type: str, fields: ProfileFields | None) -> Generator[None, None, None]:
     """Construct a host of *os_type* inside this block with *fields* as its resolved profile.
 
     :func:`otto.host.factory.create_host_from_dict` sets the selector and the

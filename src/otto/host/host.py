@@ -6,7 +6,7 @@ import re
 import shlex
 import uuid
 from abc import ABC
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import (
     AbstractAsyncContextManager,
     AbstractContextManager,
@@ -1694,7 +1694,7 @@ class BaseHost(ABC):
         self,
         user: str = ROOT_LOGIN,  # noqa: ARG002 — named by the Host protocol; this refusing default never reads it
         password: str | SecretStr | None = None,  # noqa: ARG002 — named by the Host protocol; this refusing default never reads it
-    ) -> "AsyncIterator[BaseHost]":
+    ) -> "AsyncGenerator[BaseHost, None]":
         """Async context manager to run a block as *user*.
 
         Default refuses — only posix-shell hosts (via ``PosixPrivilege``)
@@ -2344,7 +2344,7 @@ class BaseHost(ABC):
         *,
         user: str | None = None,
         timeout: float | None = None,
-    ) -> "AsyncIterator[AppShellT]":
+    ) -> "AsyncGenerator[AppShellT, None]":
         """Run *shell_cls* on a dedicated session; see the sessions recipe.
 
         ``timeout``, if given, becomes this session's default prompt-wait

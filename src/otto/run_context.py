@@ -16,7 +16,7 @@ facade (spec 2026-10-11 placement-and-phases §3.9, §3.12).
 import asyncio
 import logging
 import re
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, fields
 from typing import TYPE_CHECKING, Any, TypedDict, TypeVar, cast
@@ -539,7 +539,7 @@ class OttoContext:
         self.verb, self._verb_options, self._verb_option_kwargs = verb, built, dict(kwargs)
 
     @contextmanager
-    def verb_binding_preserved(self) -> "Iterator[None]":
+    def verb_binding_preserved(self) -> "Generator[None, None, None]":
         """Restore this context's verb binding, exactly as it was, when the block exits.
 
         For a caller that binds a verb's options on a context it does not own
@@ -1365,7 +1365,7 @@ async def open_context(
     log_command_output: bool = True,
     holder: "str | None" = None,
     skip_reservation_check: bool = False,
-) -> "AsyncIterator[OttoContext]":
+) -> "AsyncGenerator[OttoContext, None]":
     """Prepare a run exactly as ``otto --lab ...`` does, install its context, and tear it down.
 
     The same decisions in the same order as the CLI preamble, from

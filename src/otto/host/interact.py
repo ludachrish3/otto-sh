@@ -38,7 +38,7 @@ import re
 import signal
 import sys
 import threading
-from collections.abc import Awaitable, Callable, Iterator, Sequence
+from collections.abc import Awaitable, Callable, Generator, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -353,7 +353,7 @@ def _restore_terminal(fd: int, saved: Any) -> None:
 
 
 @contextlib.contextmanager
-def _force_restore_guard(stdin_fd: int, saved_attrs: "Any") -> "Iterator[None]":
+def _force_restore_guard(stdin_fd: int, saved_attrs: "Any") -> "Generator[None, None, None]":
     """Keep the terminal recoverable across a forced exit while raw mode is live.
 
     ``_run_bridge``'s ``finally`` restores termios on every graceful path; a

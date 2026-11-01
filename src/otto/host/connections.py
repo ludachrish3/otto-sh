@@ -30,7 +30,7 @@ import functools
 import logging
 import os
 import warnings
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 
@@ -127,7 +127,7 @@ LOGINLESS = Cred(login="", password=SecretStr(""))
 
 
 @contextlib.contextmanager
-def teardown_step(name: str, step: str) -> "Iterator[None]":
+def teardown_step(name: str, step: str) -> "Generator[None, None, None]":
     """Guard one teardown step: log-and-continue, so cleanup can't mask real failures.
 
     Wraps a best-effort cleanup action — a close, a remote ``rm -rf`` — so its

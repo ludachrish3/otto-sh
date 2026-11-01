@@ -78,7 +78,10 @@ class ReportVerdicts:
     rest, so ``otto link check`` and ``otto tunnel check`` judge a run alike.
     """
 
-    refusal: str | None
+    @property
+    def refusal(self) -> str | None:
+        """Why the run was refused before any feature ran, or ``None``."""
+        raise NotImplementedError
 
     def results(self) -> list[FeatureResult]:
         """Every result the report holds."""

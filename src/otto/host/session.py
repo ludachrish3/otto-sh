@@ -18,7 +18,7 @@ import os
 import re
 import uuid
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from enum import Enum
@@ -2041,7 +2041,7 @@ class HostSession:
     @asynccontextmanager
     async def as_user(
         self, user: str = ROOT_LOGIN, password: str | SecretStr | None = None
-    ) -> "AsyncIterator[HostSession]":
+    ) -> "AsyncGenerator[HostSession, None]":
         """Run a block as *user* on this session, restoring the prior user on exit.
 
         Undoes each applied hop in reverse (innermost first) so a multi-hop
@@ -2547,7 +2547,7 @@ class DeclinedSession(HostSession):
     @override
     async def as_user(
         self, user: str = ROOT_LOGIN, password: str | SecretStr | None = None
-    ) -> "AsyncIterator[HostSession]":
+    ) -> "AsyncGenerator[HostSession, None]":
         """Announce the elevation and refuse to claim it happened.
 
         The dry-run stand-in for :meth:`HostSession.as_user`, the scoped form

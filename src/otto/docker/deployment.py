@@ -18,7 +18,7 @@ import logging
 import os
 import shlex
 import tempfile
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -1014,7 +1014,7 @@ async def teardown(
 @asynccontextmanager
 async def deployed(
     use_case: str, *, own: bool = False, **kw: "Any"
-) -> "AsyncIterator[UseCaseStack]":
+) -> "AsyncGenerator[UseCaseStack, None]":
     """Context manager wrapping :func:`deploy` / :func:`teardown`.
 
     Keeps ``composed()``'s sharing contract, generalized to a deployment:

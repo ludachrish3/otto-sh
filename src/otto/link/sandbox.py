@@ -21,7 +21,7 @@ error.
 import contextlib
 import functools
 import secrets
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass
 from ipaddress import ip_network
 from typing import Any
@@ -279,7 +279,7 @@ class SandboxProblem:
 
 
 @contextlib.asynccontextmanager
-async def open_sandbox(host: Any, sb: Sandbox) -> AsyncIterator[SandboxProblem | None]:
+async def open_sandbox(host: Any, sb: Sandbox) -> AsyncGenerator[SandboxProblem | None, None]:
     """Bring *sb* up on *host*, check its route, yield the outcome, ALWAYS tear it down.
 
     Runs :func:`setup_commands` in order, stopping at the first failure, then

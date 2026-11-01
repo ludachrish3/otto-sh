@@ -744,7 +744,7 @@ class ZephyrHost(EmbeddedHost):
 
     os_name: str | None = "Zephyr"
 
-    command_frame: CommandFrame = field(default_factory=ZephyrFrame)
+    command_frame: "CommandFrame | None" = field(default_factory=ZephyrFrame)
 
     ####################
     #  Power / reboot

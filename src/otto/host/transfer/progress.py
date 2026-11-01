@@ -9,7 +9,7 @@ wire the handlers consumed by :class:`~otto.host.transfer.BaseFileTransfer`
 subclasses.
 """
 
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -128,7 +128,7 @@ _shared_progress_refs: int = 0
 
 
 @asynccontextmanager
-async def _acquire_shared_progress() -> AsyncIterator[Progress]:
+async def _acquire_shared_progress() -> AsyncGenerator[Progress, None]:
     """Yield a process-wide Progress, creating/destroying the Live on demand."""
     global _shared_progress, _shared_progress_refs  # noqa: PLW0603 — module-level singleton/cache
     if _shared_progress is None:

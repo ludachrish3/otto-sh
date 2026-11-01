@@ -40,7 +40,7 @@ left is a ``stat`` memo.
 import contextlib
 import contextvars
 import os
-from collections.abc import Iterator
+from collections.abc import Generator
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -86,7 +86,7 @@ _ACTIVE: "contextvars.ContextVar[CorpusSnapshot | None]" = contextvars.ContextVa
 
 
 @contextlib.contextmanager
-def corpus_snapshot() -> Iterator[CorpusSnapshot]:
+def corpus_snapshot() -> Generator[CorpusSnapshot, None, None]:
     """Share stats until the block ends; a nested scope reuses the outer one."""
     current = _ACTIVE.get()
     if current is not None:

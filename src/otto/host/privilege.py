@@ -41,7 +41,7 @@ same cred list ``_sudo_password`` does.
 import re
 import secrets
 import shlex
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
@@ -460,7 +460,7 @@ class PosixPrivilege(UserlandHost):
     @asynccontextmanager
     async def as_user(
         self, user: str = ROOT_LOGIN, password: str | SecretStr | None = None
-    ) -> AsyncIterator["PosixPrivilege"]:
+    ) -> AsyncGenerator["PosixPrivilege", None]:
         """Run a block as *user*, returning to the original user on exit.
 
             async with host.as_user("root"):

@@ -25,7 +25,7 @@ either way.
 """
 
 import contextvars
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 
@@ -55,7 +55,7 @@ def record_drop(where: str, reason: str) -> None:
 
 
 @contextmanager
-def collecting_drops() -> Iterator[list[HostDrop]]:
+def collecting_drops() -> Generator[list[HostDrop], None, None]:
     """Collect every :func:`record_drop` made on this thread while the block runs."""
     drops: list[HostDrop] = []
     token = _SINK.set(drops)

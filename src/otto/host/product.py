@@ -711,7 +711,7 @@ class ShellProduct(Product):
     """See :attr:`Product.cov_dir <otto.host.product.Product.cov_dir>`; a dataclass
     field so kinds can pass it."""
 
-    debug_log_globs: list[str] = field(default_factory=list)
+    debug_log_globs: Sequence[str] = field(default_factory=list)
     """See :attr:`Product.debug_log_globs <otto.host.product.Product.debug_log_globs>`."""
 
     instrumented_override: bool | None = None

@@ -15,7 +15,7 @@ import getpass
 import logging
 import re
 import shlex
-from collections.abc import AsyncIterator, Iterable, Sequence
+from collections.abc import AsyncGenerator, Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import PurePath
 from typing import TYPE_CHECKING, TypeGuard
@@ -930,7 +930,7 @@ async def composed(
     project_name: str | None = None,
     own: bool = False,
     build: bool = False,
-) -> AsyncIterator[dict[str, DockerContainerHost]]:
+) -> AsyncGenerator[dict[str, DockerContainerHost], None]:
     """Context manager wrapping ``compose_up`` / ``compose_down``.
 
     By default the stack is **not** torn down on exit if it was already

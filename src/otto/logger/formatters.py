@@ -445,7 +445,9 @@ class MultilineFormatter(Formatter):
         # Store the original full message to restore later
         original_msg = record.msg
         original_args = record.args
-        exc_info = record.exc_info
+        original_exc_info = record.exc_info
+        # LogRecord.exc_info is typed to admit `False` as well as None.
+        exc_info: "ExcInfo | None" = original_exc_info or None
         exc_text = record.exc_text
         stack_info = record.stack_info
         formatted_lines: list[str] = []
@@ -478,7 +480,7 @@ class MultilineFormatter(Formatter):
             # Restore the original message, including all newlines
             record.msg = original_msg
             record.args = original_args
-            record.exc_info = exc_info
+            record.exc_info = original_exc_info
             record.exc_text = exc_text
             record.stack_info = stack_info
 

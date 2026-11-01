@@ -82,7 +82,7 @@ import inspect
 import itertools
 import sys
 import weakref
-from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Generator, Iterable, Iterator, Mapping, Sequence
 from types import CodeType
 from typing import Any, Generic, TypeVar, cast, final
 
@@ -230,7 +230,7 @@ _LOADING_TEST_FILES: "contextvars.ContextVar[bool]" = contextvars.ContextVar(
 
 
 @contextlib.contextmanager
-def loading_test_files() -> "Iterator[None]":
+def loading_test_files() -> "Generator[None, None, None]":
     """Mark the block as importing project test files: only otto's modules may register in it."""
     token = _LOADING_TEST_FILES.set(True)
     try:
@@ -281,7 +281,7 @@ def get_registering_project() -> str | None:
 
 
 @contextlib.contextmanager
-def registering_project(name: str) -> "Iterator[None]":
+def registering_project(name: str) -> "Generator[None, None, None]":
     """Attribute registrations inside this block to project *name* (bootstrap-only)."""
     token = _REGISTERING_PROJECT.set(name)
     try:
@@ -291,7 +291,7 @@ def registering_project(name: str) -> "Iterator[None]":
 
 
 @contextlib.contextmanager
-def _registering_for_otto() -> "Iterator[None]":
+def _registering_for_otto() -> "Generator[None, None, None]":
     """Attribute registrations inside this block to otto itself, whatever block encloses it.
 
     Private, for otto's own slots: the first-party actions are otto's even when
@@ -479,7 +479,7 @@ class _Change:
 
 
 @contextlib.contextmanager
-def _checking() -> "Iterator[None]":
+def _checking() -> "Generator[None, None, None]":
     token = _CHECKING.set(True)
     try:
         yield

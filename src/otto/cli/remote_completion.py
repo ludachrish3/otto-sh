@@ -13,6 +13,7 @@ import asyncio
 import contextlib
 import posixpath
 import shlex
+from collections.abc import Generator
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,8 +22,6 @@ from typing import TYPE_CHECKING, Any
 from ..config.remote_completion_cache import ListingEntry
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-
     import typer
 
 LIST_DEADLINE_SECONDS = 2.0
@@ -210,7 +209,7 @@ def remote_path_completer(ctx: "typer.Context", incomplete: str, kind: str = "an
 
 
 @contextlib.contextmanager
-def _silenced() -> "Iterator[None]":
+def _silenced() -> "Generator[None, None, None]":
     """Guarantee the "never prints" half of the contract for the block's duration.
 
     The root callback returns early under ``ctx.resilient_parsing``

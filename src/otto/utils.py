@@ -20,7 +20,7 @@ import os
 import re
 import sys
 import time
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable, Generator
 from dataclasses import dataclass
 from datetime import timedelta
 from enum import Enum
@@ -211,7 +211,7 @@ _TTL_UNIT = {"m": timedelta(minutes=1), "h": timedelta(hours=1), "d": timedelta(
 
 
 @contextlib.contextmanager
-def answer_channel() -> Iterator[TextIO]:
+def answer_channel() -> Generator[TextIO, None, None]:
     """Send this process's stdout to ``/dev/null`` for good; yield a stream to the original.
 
     For a process whose stdout another one reads: a shell's TAB, or a parent

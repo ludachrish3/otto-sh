@@ -24,7 +24,7 @@ import enum
 import errno
 import fcntl
 import os
-from collections.abc import Iterator, Sequence
+from collections.abc import Generator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple
@@ -321,7 +321,7 @@ class KnownHosts:
         return Path(os.path.realpath(self.path))
 
     @contextlib.contextmanager
-    def _locked(self) -> Iterator[None]:
+    def _locked(self) -> Generator[None, None, None]:
         """Hold the exclusive cross-process lock beside the file, creating the directory."""
         target = self._target()
         try:

@@ -36,7 +36,7 @@ import re
 import sys
 import threading
 import time
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Generator, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from logging import FileHandler, Filter, LogRecord, NullHandler, getLogger
@@ -542,7 +542,7 @@ _HOLDS_LOCK = threading.Lock()
 
 
 @contextlib.contextmanager
-def direct_terminal() -> Iterator[None]:
+def direct_terminal() -> Generator[None, None, None]:
     """Hand the terminal to the caller for a prompt: drain the queue, then write directly.
 
     A prompt (``typer.prompt``, ``typer.confirm``) writes its question through

@@ -12,7 +12,7 @@ import contextlib
 import dataclasses
 import functools
 import inspect
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Generator, Sequence
 from logging import getLogger
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, NoReturn, Protocol, cast, get_type_hints
@@ -592,7 +592,7 @@ def report_project_selection_error(err: "ProjectSelectionError") -> "NoReturn":
 
 
 @contextlib.contextmanager
-def lab_context_refusals() -> "Iterator[None]":
+def lab_context_refusals() -> "Generator[None, None, None]":
     """Render a lab-context refusal the loud way: today's words, today's exit code.
 
     Wraps the loud callers' :func:`ensure_lab_context` (the preamble, the

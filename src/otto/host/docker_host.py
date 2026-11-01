@@ -26,7 +26,7 @@ import asyncio
 import re
 import shlex
 import uuid
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import (
     dataclass,
@@ -1126,7 +1126,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
 
     @override
     @contextmanager
-    def _run_user_binding(self, user: "str | None") -> "Iterator[None]":
+    def _run_user_binding(self, user: "str | None") -> "Generator[None, None, None]":
         """Declare the user this ``run`` intends; the channel open binds it.
 
         The channel's user is BOUND, not per-call: ``docker exec -u`` is

@@ -22,7 +22,7 @@ import os
 import secrets
 import sys
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -335,7 +335,7 @@ def _final_exit_code(rc: int, unstable: bool) -> int:
 
 
 @contextlib.contextmanager
-def _session_context(log_dir: Path) -> "Iterator[OttoContext]":
+def _session_context(log_dir: Path) -> "Generator[OttoContext, None, None]":
     """Guarantee an active ``OttoContext`` with an ``output_dir`` for the session(s).
 
     Yields that context, so the caller can stamp the run's resolved coverage
@@ -910,7 +910,7 @@ class _SessionStdout:
 @contextlib.contextmanager
 def _outside_the_project_root(
     *, collect_only: bool, home: Path | None = None
-) -> Iterator[list[str]]:
+) -> Generator[list[str], None, None]:
     """Keep a session's bytecode and pytest's cache out of the project root; yield its pytest args.
 
     While the session runs, ``sys.pycache_prefix`` points at the workspace's

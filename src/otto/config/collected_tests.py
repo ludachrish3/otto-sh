@@ -79,7 +79,7 @@ import functools
 import json
 import os
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeGuard
@@ -97,7 +97,7 @@ from .project import pytest_config_paths, selectable_names
 from .scope import TOML_SETTINGS_PATH
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator
+    from collections.abc import Iterable
 
     from .project import Project
 
@@ -1020,7 +1020,7 @@ def _view_of(tables: "Iterable[ProjectTable | None]") -> CompletionView:
 
 
 @contextlib.contextmanager
-def _deadline(seconds: float, on_expiry: Callable[[], None]) -> "Iterator[None]":
+def _deadline(seconds: float, on_expiry: Callable[[], None]) -> "Generator[None, None, None]":
     """Call *on_expiry* from ``SIGALRM`` if the body is still running after *seconds*.
 
     A timer already armed (an outer caller's) is put back afterwards with

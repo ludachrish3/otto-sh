@@ -19,7 +19,7 @@ All three collect every violation on one
 import asyncio
 import dataclasses
 import inspect
-from collections.abc import Callable, Coroutine, Iterator
+from collections.abc import Callable, Coroutine, Generator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -72,7 +72,7 @@ an async context manager rather than be a coroutine function itself."""
 
 
 @contextmanager
-def _dry_run() -> "Iterator[None]":
+def _dry_run() -> "Generator[None, None, None]":
     """Install a dry-run :class:`~otto.context.OttoContext` for the block.
 
     A fresh context rather than a copy of whatever is active: the probe wants
