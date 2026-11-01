@@ -39,8 +39,8 @@ design moves them from every `src-leaf` tip to the release, deliberately.
    `not integration and not embedded and` the body of `M_COVERAGE`, so bed
    plus hostless is the whole and the two are disjoint, textually.
 2. **The `src-leaf` tip stops running the full gate.** It becomes the
-   commit column with a wider `make quick` (the row's unit roots, the
-   package's direct consumers, the tree-wide guards), plus
+   commit column with a wider `make quick` (the row's unit and e2e roots,
+   the package's direct consumers, the tree-wide guards), plus
    `make coverage-bed`, the package's `BED_LANES` entry, and
    `make gate-fresh`. `escalate`, `full` and `scripts` keep the full gate.
 3. **Consumers are derived, not listed.** A hostless unit test module
@@ -59,9 +59,12 @@ design moves them from every `src-leaf` tip to the release, deliberately.
 - A per-package bed slice. The bed half runs whole: at 2,180 test-seconds it
   is 6–9 minutes under `COVERAGE_WORKERS`, and the largest serialised group
   (`docker_e2e`, ~230 s) is the floor a narrower selection could not lower.
-- Transitive consumers. A test of `otto.cli` that reaches `otto.host` through
-  the CLI without importing it is not a direct importer and does not ride;
-  the PR's CI runs it. The local tip is the fast signal, CI is the hostless
+- Transitive consumers, and direct importers outside `tests/unit`. A test
+  of `otto.cli` that reaches `otto.host` through the CLI without importing
+  it is not a direct importer and does not ride; nor does a hostless e2e
+  module outside the row that imports the package (`tests/e2e/cli/
+  test_monitor_cli.py` imports `otto.monitor.db`), because consumers are
+  read in `tests/unit` only. The PR's CI runs both. The local tip is the fast signal, CI is the hostless
   certificate (#795).
 - The nightly combined floor the issue mentions "once a lab venue exists".
   That venue is #801; until then the floor is the release's.
@@ -71,13 +74,13 @@ design moves them from every `src-leaf` tip to the release, deliberately.
 ## The lane
 
 ```make
-coverage-bed: ## Run the bed half of `make coverage`'s selection (tests/integration and the e2e tests marked integration or embedded), uninstrumented, pass/fail: no floor, no stamp. Requires lab VMs. JUnit XML in reports/junit/coverage-bed/ and reports/junit/coverage-bed-serial/.
+coverage-bed: $(COVAPP_DIST) ## Run the bed half of `make coverage`'s selection (tests/integration and the e2e tests marked integration or embedded), uninstrumented, pass/fail: no floor, no stamp. Requires lab VMs. JUnit XML in reports/junit/coverage-bed/ and reports/junit/coverage-bed-serial/.
 	$(call bed_acquire,coverage-bed)
 	$(call bed_reap)
 	@$(SAY) "pytest: the bed half of the coverage selection (-n $(COVERAGE_WORKERS), no coverage)"
-	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "(integration or embedded) and $(M_COVERAGE) and not serial_timing" -n $(COVERAGE_WORKERS) --no-cov $(call junitxml,coverage-bed)
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "$(M_COVERAGE_BED) and not serial_timing" -n $(COVERAGE_WORKERS) --no-cov $(call junitxml,coverage-bed)
 	@$(SAY) "pytest: serial_timing twin, -n0"
-	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "serial_timing and (integration or embedded) and $(M_COVERAGE)" -n0 --no-cov $(call junitxml,coverage-bed-serial)
+	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "serial_timing and $(M_COVERAGE_BED)" -n0 --no-cov $(call junitxml,coverage-bed-serial)
 	$(call bed_reap)
 	$(call bed_release)
 ```
@@ -87,6 +90,10 @@ Decisions inside it:
 - **`--no-cov`, not `--cov-fail-under=0`.** `quick` is the precedent: with
   `--no-cov` pytest-cov returns before starting the tracer, so pyproject's
   `--cov` addopts are inert and nothing invites reading a partial floor.
+  (Uninstrumented in the pytest processes: the otto subprocesses the e2e
+  tests launch still start coverage through the shared bootstrap in
+  tests/e2e/_otto_subprocess.py, exactly as under `quick`, and nothing reads
+  the fragments they write; the Makefile comment and the docs say so.)
   `--cov-append` is absent (after `--no-cov` it only warns). The lane does
   not `export override PYTEST_ADDOPTS :=` as `coverage` does: it is not a
   stamped selection, and `gate_tip` clears the variable for every lane.
@@ -102,9 +109,15 @@ Decisions inside it:
   of `M_HOSTLESS` within `M_COVERAGE`.
 - **Workers**: `COVERAGE_WORKERS`, like `coverage-python`; the slice is
   xdist-grouped by the tests' own marks.
-- **No `$(DASHBOARD_DIST)` prerequisite.** No integration- or
-  embedded-marked module imports the web assets today (measured); a future
-  monitor integration test that does must add the prerequisite here.
+- **`$(COVAPP_DIST)` is a prerequisite** (the first draft said none: the
+  measurement missed that tests/e2e/cov's integration-marked SPA test imports
+  `otto._webassets` and asserts on the copied covapp bundle only when it is
+  built, so without the bundle it passes vacuously where `make coverage`,
+  which builds it through `coverage-stamp-start`, does not). Make skips the
+  build when the bundle is current. The selection is one variable,
+  `M_COVERAGE_BED := (integration or embedded) and $(M_COVERAGE)`, built on
+  `M_COVERAGE` so the two cannot drift; the legs name it as the sibling lanes
+  name theirs.
 - **Lease and reap** like every bed lane (#794, #759).
 - **No `COVERAGE_STAMP` marks.** The stamp records `make coverage`'s legs
   only. `gate_tip`'s stamp special case is `goals == ["coverage"]`, so this
@@ -128,7 +141,7 @@ column with these differences, in the commit column's order:
 
 ```
 make check-breaking                                   (live at push)
-make quick PATHS="<unit roots of UNIT_TREES[pkg]> <consumers> <GUARD_RIDERS>"
+make quick PATHS="<unit and e2e roots of UNIT_TREES[pkg]> <consumers> <GUARD_RIDERS>"
 uv run ty check <changed src files>
 uv run ruff check <changed files>
 make lint-arch                                        (live at push)
@@ -139,11 +152,19 @@ make docs-captures-check                              (the captures rider every 
 make gate-fresh                                       (live at push)
 ```
 
-- **Unit roots only in `quick`.** The row's `tests/integration` and
-  `tests/e2e` entries are `coverage-bed`'s at the tip: `M_QUICK` excludes
+- **Unit and e2e roots in `quick`; the integration trees leave.** The row's
+  `tests/integration` entries are `coverage-bed`'s at the tip: the
+  integration conftest marks every item there, and `M_QUICK` excludes
   neither `integration` nor `embedded`, so leaving them in would run the
-  bed trees twice. They stay in the commit column, where there is no
-  `coverage-bed`. A row whose unit root is `tests/unit` whole (`utils`,
+  trees twice. They stay in the commit column, where there is no
+  `coverage-bed`. The row's `tests/e2e` entries stay in `quick` at the tip:
+  the tip census (Goal 3) found hostless items in them (`tests/e2e/host`'s
+  local-host and app-shell tests, `tests/e2e/monitor/dashboard/test_harness.py`)
+  that `make coverage` selects and no bed lane does, so dropping the trees
+  would have been the one hole in the parity claim; the bed-marked e2e items
+  run twice, as they do in the commit column. (The first draft of this
+  section dropped both; the census corrected it.) A row whose unit root is
+  `tests/unit` whole (`utils`,
   `result`, `params`, `errors`, `layout`, `console` and the other top-level
   modules) gains nothing from scoping: its `quick` would be the whole unit
   tree, 3,542 test-seconds, about as long as `make coverage` uninstrumented.
@@ -166,13 +187,15 @@ make gate-fresh                                       (live at push)
   paths, the rest by class. `src-leaf` + `web` or `docs`: their lines are
   added. `src-leaf` + `scripts`, `escalate` or `full`, or a `full_at_tip`
   row (`busybox_bed`): the full gate, as now. Two packages: the union of
-  their rows' unit roots and consumers minus every path inside either row's
-  trees. Three or more packages is `escalate`.
+  their rows' unit and e2e roots and consumers minus every path inside
+  either row's trees. Three or more packages is `escalate`.
 - **One place for the lane.** `SRC_LEAF_TIP_LANES = ["make coverage-bed"]`
   in `scripts/gate_scope.py`; `commands()` appends it, the lease census
   (`test_the_oracle_names_no_bed_lane_the_makefile_does_not_lease`) reads it
   beside `FULL_GATE` and `BED_LANES`, and `gate_tip.STAMPED_GOALS` gains
-  `coverage-bed`, which the goal census then demands. `BED_TARGETS_DIRECT`
+  `coverage-bed` and `ty` (the src-leaf tip is the first tip to emit a `uv
+  run ty check <file>` line; the runner stamps it per line as it stamps
+  ruff), which the goal census then demands. `BED_TARGETS_DIRECT`
   and `.PHONY` gain the target.
 - **Stamps and keys.** `lane_key` is the whole line, so a consumer added in
   the range re-keys the `quick` lane, correctly: the tree changed. `make
@@ -194,13 +217,19 @@ on every src-leaf `quick`), and a module whose every test carries
 `interpreter_agnostic` (`carries_family_mark`: it is `quick-guards`'s, and
 its root would add a leg that selects nothing under `M_QUICK`).
 
-Mechanics: `classify` already holds the reader and the tip revision. One
-`git grep -l -E 'otto(\.|\s+import\s+)<pkg>' <rev> -- tests/unit` per
-changed package narrows the candidates (a subprocess per package, not per
-module), and each candidate is read through the reader and parsed with the
-oracle's `_parse` to confirm the import form. The result is a new `Scope`
-field, `consumers` (sorted module paths), that `commands()` adds to the
-`quick` line at the tip only. Paths go through `_outermost` with the rest.
+Mechanics (as landed; the first draft said a `git grep` per package, whose
+regex would have missed `from otto import config, host`): `classify` already
+holds the reader and the tip revision. `consumers()` walks every `tests/unit`
+test module at head outside the rows, reads each through the reader once,
+drops any whose text never names a changed package before parsing, and
+confirms the import form on the rest with the oracle's `_parse`, the family
+check last. The result is folded into one `Scope` field, `quick_tip`: the
+tip's `quick` roots (the commit's minus every root inside
+`tests/integration`, plus the consumers), computed only when `classify` is
+asked for a tip (`tip=True`, the default; `main` passes `tip=False` for the
+commit column) and only when the tip is scoped — the one predicate,
+`full_gate()`, that `commands()` uses to pick the full gate. Paths go
+through `_outermost` with the rest.
 
 Measured at 9d40f801c over 952 unit test modules, under exactly this rule:
 
@@ -247,8 +276,8 @@ hostless non-consumers are CI's.
 class's lines, the commit column of `src-leaf`, `UNIT_TREES`, `BED_LANES`,
 `GUARD_RIDERS`. One consequence to state: a `src-leaf` landing no longer
 leaves a coverage stamp, so `make release` runs `make coverage` itself
-unless someone ran it on the release tip beforehand; the release section of
-docs/contributing.md ("Version management") says to.
+unless someone ran it on the release tip beforehand; the coverage-stamp
+section of docs/contributing.md and the release runbook say to.
 
 ## Measurement (acceptance)
 
@@ -275,10 +304,11 @@ adds what CI cannot run: `make coverage`…" becomes the bed half for
 `src-leaf` and the full gate for `escalate`/`full`/`scripts`; the full-gate
 order paragraph's "`make gate-tip` stamps `make check-ts`, the suite and the
 bed lanes"; the sentence "`make gate-fresh` is the full gate's last static
-lane (`make coverage` follows it, …)"; the pre-push example's `make
-coverage: no stamp`; "The landing's gate is stamped" gains `coverage-bed`;
-"Where the test suite's time goes" gets the venue split above; "Version
-management" gets "run `make coverage` on the release tip first".
+lane (`make coverage` follows it, …)"; "The landing's gate is stamped"
+gains `coverage-bed`; "Where the test suite's time goes" gets the venue
+split above; "The coverage stamp" and docs/release_process.md get "run
+`make coverage` on the release tip first" (the pre-push example's `make
+coverage: no stamp` stays: it shows a full-gate tip).
 docs/architecture/quality-gates.md: "the tip of a landing runs the full
 gate" and the row after it; the binding table gains `coverage-bed`.
 scripts/gate_scope.py: the `commands()` and `FULL_GATE` docstrings.
