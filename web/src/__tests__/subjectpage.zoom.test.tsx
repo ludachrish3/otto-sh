@@ -19,6 +19,10 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { HostSnapshot, MetricRecord } from "../api/export.gen";
+import { deriveElements, type NormalizedSession } from "../data/exportDoc";
+import { useReviewStore } from "../data/reviewStore";
+import { buildIndex } from "../data/seriesIndex";
+import { SubjectPage } from "../pages/SubjectPage";
 
 globalThis.ResizeObserver ??= class {
   observe() {}
@@ -54,11 +58,6 @@ vi.mock("wouter", async (importOriginal) => {
   const mod = await importOriginal<typeof import("wouter")>();
   return { ...mod, useParams: () => ({ id: "h1" }) };
 });
-
-import { deriveElements, type NormalizedSession } from "../data/exportDoc";
-import { useReviewStore } from "../data/reviewStore";
-import { buildIndex } from "../data/seriesIndex";
-import { SubjectPage } from "../pages/SubjectPage";
 
 const T0 = Date.parse("2026-07-13T00:00:00Z");
 const SESSION_AGE_MS = 120_000; // this live run started 2 minutes ago

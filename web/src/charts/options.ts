@@ -86,7 +86,7 @@ function dashType(dash: string | undefined): "solid" | "dashed" | "dotted" | num
 }
 
 /** Exactly `#rrggbb` — the only shape `withAlpha` can append a byte to. */
-const SIX_DIGIT_HEX = /^#[0-9a-fA-F]{6}$/;
+const SIX_DIGIT_HEX = /^#[0-9a-fA-F]{6}$/u;
 
 /** A #rrggbb hex with an alpha byte appended (#rrggbbaa). Used for a span's
  * faint fill so its dashed border can stay full-strength — itemStyle.opacity

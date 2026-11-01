@@ -13,6 +13,9 @@ import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SetOptionOpts } from "../charts/ChartPanel";
+import { useReviewStore } from "../data/reviewStore";
+import { SubjectPage } from "../pages/SubjectPage";
+import { synthSession } from "./_synth";
 
 // Untitled UI's Checkbox puts data-testid on the <label>, not the
 // visually-hidden <input> nested inside — react-aria's Checkbox needs the
@@ -77,10 +80,6 @@ vi.mock("wouter", async (importOriginal) => {
   const mod = await importOriginal<typeof import("wouter")>();
   return { ...mod, useParams: () => ({ id: "h0" }) };
 });
-
-import { useReviewStore } from "../data/reviewStore";
-import { SubjectPage } from "../pages/SubjectPage";
-import { synthSession } from "./_synth";
 
 // Mirrors _synth.ts's private T0 so this file can predict the exact epoch-ms
 // window bounds liveRange derives, rather than asserting "some later value".

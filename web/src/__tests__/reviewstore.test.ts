@@ -42,7 +42,7 @@ describe("reviewStore", () => {
     const ok = useReviewStore.getState().actions.importMonitorSessions("{}", "bad.json");
     expect(ok).toBe(false);
     const s = useReviewStore.getState();
-    expect(s.importError).toMatch(/format|unversioned/i);
+    expect(s.importError).toMatch(/format|unversioned/iu);
     expect(s.sessions).toHaveLength(1); // minimal still loaded
     expect(s.sourceName).toBe("minimal.json");
   });
@@ -219,7 +219,7 @@ describe("reviewStore", () => {
     expect(session?.metrics.length).toBe(metricsBefore + 1);
     // ...and the bad one is a single warning, not silence.
     expect(s.warnings.length).toBe(warningsBefore + 1);
-    expect(s.warnings.at(-1)).toMatch(/dropped 1 metric.*invalid timestamp/);
+    expect(s.warnings.at(-1)).toMatch(/dropped 1 metric.*invalid timestamp/u);
   });
 
   it("appendFragments (batched) folds warnings from multiple fragments into ONE store write", () => {

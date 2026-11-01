@@ -28,7 +28,7 @@ const KITCHEN_SINK = readFileSync(join(__dir, "../../fixtures/kitchen-sink.json"
 // component behavior — not the test environment — is what's under test.
 if (typeof globalThis.CSS === "undefined") {
   Object.defineProperty(globalThis, "CSS", {
-    value: { escape: (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, (ch) => `\\${ch}`) },
+    value: { escape: (value: string) => value.replace(/[^a-zA-Z0-9_-]/gu, (ch) => `\\${ch}`) },
     writable: true,
   });
 }

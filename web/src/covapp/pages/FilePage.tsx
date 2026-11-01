@@ -468,7 +468,7 @@ export interface LineRange {
 }
 
 /** The whole accepted grammar of `?lines=`: `A` or `A-B`, digits only. */
-const LINES_PARAM = /^(\d+)(?:-(\d+))?$/;
+const LINES_PARAM = /^(?<from>\d+)(?:-(?<to>\d+))?$/u;
 
 /** Parses the `?lines=A-B` (or bare `?lines=A`) deep link (design §6.2) via
  * `parseHashQuery()` (`focus.tsx`) — never wouter's own
@@ -486,10 +486,10 @@ export function parseLinesRange(
 ): LineRange | null {
   const raw = params.get("lines");
   if (raw === null) return null;
-  const match = LINES_PARAM.exec(raw);
+  const match = LINES_PARAM.exec(raw)?.groups;
   if (!match) return null;
-  const start = Number(match[1]);
-  const end = match[2] === undefined ? start : Number(match[2]);
+  const start = Number(match["from"]);
+  const end = match["to"] === undefined ? start : Number(match["to"]);
   if (start > end) return null;
   if (start < 1 || end > totalLines) return null;
   return { start, end };

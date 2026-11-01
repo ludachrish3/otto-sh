@@ -19,7 +19,7 @@ import { RangePicker } from "./RangePicker";
 // as reviewbar.test.tsx / shell.test.tsx.
 if (typeof globalThis.CSS === "undefined") {
   Object.defineProperty(globalThis, "CSS", {
-    value: { escape: (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, (ch) => `\\${ch}`) },
+    value: { escape: (value: string) => value.replace(/[^a-zA-Z0-9_-]/gu, (ch) => `\\${ch}`) },
     writable: true,
   });
 }
@@ -246,8 +246,8 @@ describe("RangePicker", () => {
     await openPicker(user);
     // BOUNDS spans 10:00-11:00 on July 15 -- the 14th and 16th are entirely
     // outside [minValue, maxValue] and must be disabled for selection.
-    const dayBefore = screen.getByRole("button", { name: /July 14, 2026/ });
-    const dayAfter = screen.getByRole("button", { name: /July 16, 2026/ });
+    const dayBefore = screen.getByRole("button", { name: /July 14, 2026/u });
+    const dayAfter = screen.getByRole("button", { name: /July 16, 2026/u });
     expect(dayBefore.getAttribute("aria-disabled")).toBe("true");
     expect(dayAfter.getAttribute("aria-disabled")).toBe("true");
   });

@@ -4,7 +4,7 @@ import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./app.css";
 
-const container = document.getElementById("root");
+const container = document.querySelector("#root");
 if (!container) {
   throw new Error("#root element not found");
 }

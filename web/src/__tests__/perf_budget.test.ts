@@ -52,7 +52,7 @@ const T0 = Date.parse("2026-07-12T00:00:00Z");
 // A numeric-index property key ("0", "17") — i.e. a read of a SAMPLE, as
 // opposed to "length"/"push"/Symbol.iterator. Module level because the Proxy
 // trap consults it on every property access (biome performance/useTopLevelRegex).
-const INDEX_KEY = /^\d+$/;
+const INDEX_KEY = /^\d+$/u;
 
 /** `arr`, with every numeric-index read reported to `onRead`. */
 function counting<T>(arr: T[], onRead: () => void): T[] {

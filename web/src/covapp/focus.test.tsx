@@ -267,7 +267,7 @@ function Bare() {
 describe("useFocus / FocusProvider", () => {
   it("throws when used without a FocusProvider ancestor", () => {
     allowConsoleOutput(); // React logs the render-time throw to console.error
-    expect(() => render(<Bare />)).toThrow(/FocusProvider/);
+    expect(() => render(<Bare />)).toThrow(/FocusProvider/u);
   });
 
   it("setFocus writes the hash query and the stamp-namespaced storage key", () => {
@@ -575,10 +575,10 @@ describe("useFocus / FocusProvider: ticket (Task 12)", () => {
     renderConsumer();
 
     fireEvent.click(screen.getByTestId("pin-proj-1"));
-    expect(screen.getByTestId("toast").textContent).toMatch(/PROJ-1/);
+    expect(screen.getByTestId("toast").textContent).toMatch(/PROJ-1/u);
 
     fireEvent.click(screen.getByTestId("unpin"));
-    expect(screen.getByTestId("toast").textContent).toMatch(/ticket/i);
+    expect(screen.getByTestId("toast").textContent).toMatch(/ticket/iu);
   });
 
   describe("composes with ctx — neither ever clears the other", () => {
@@ -737,10 +737,10 @@ describe("useFocus / FocusProvider: hideAsserted (Task 11)", () => {
     renderConsumer();
 
     fireEvent.click(screen.getByTestId("hide-asserted-on"));
-    expect(screen.getByTestId("toast").textContent).toMatch(/hidden/i);
+    expect(screen.getByTestId("toast").textContent).toMatch(/hidden/iu);
 
     fireEvent.click(screen.getByTestId("hide-asserted-off"));
-    expect(screen.getByTestId("toast").textContent).toMatch(/shown/i);
+    expect(screen.getByTestId("toast").textContent).toMatch(/shown/iu);
   });
 
   describe("composes with focus and ticket — neither ever touches the other's param/storage", () => {

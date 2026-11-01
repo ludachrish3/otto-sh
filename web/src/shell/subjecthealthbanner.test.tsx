@@ -13,6 +13,13 @@
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { HostSnapshot, MetricRecord } from "../api/export.gen";
+import { useClockStore } from "../data/clock";
+import { deriveElements, type NormalizedSession } from "../data/exportDoc";
+import { useReviewStore } from "../data/reviewStore";
+import { buildIndex } from "../data/seriesIndex";
+import { SubjectPage } from "../pages/SubjectPage";
+import { SubjectHealthBanner } from "./SubjectHealthBanner";
 
 globalThis.ResizeObserver ??= class {
   observe() {}
@@ -72,14 +79,6 @@ vi.mock("wouter", async (importOriginal) => {
   const mod = await importOriginal<typeof import("wouter")>();
   return { ...mod, useParams: () => ({ id: "h0" }) };
 });
-
-import type { HostSnapshot, MetricRecord } from "../api/export.gen";
-import { useClockStore } from "../data/clock";
-import { deriveElements, type NormalizedSession } from "../data/exportDoc";
-import { useReviewStore } from "../data/reviewStore";
-import { buildIndex } from "../data/seriesIndex";
-import { SubjectPage } from "../pages/SubjectPage";
-import { SubjectHealthBanner } from "./SubjectHealthBanner";
 
 const T0 = Date.parse("2026-07-13T00:00:00Z");
 const INTERVAL_S = 5; // HEALTH_K (3) x 5s = 15s down threshold

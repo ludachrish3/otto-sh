@@ -19,7 +19,7 @@ import { EXPECTED_DATA_FORMAT } from "./types";
 // Side effect runs at import time, so importing this module is enough.
 if (typeof globalThis.CSS === "undefined") {
   Object.defineProperty(globalThis, "CSS", {
-    value: { escape: (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, (ch) => `\\${ch}`) },
+    value: { escape: (value: string) => value.replace(/[^a-zA-Z0-9_-]/gu, (ch) => `\\${ch}`) },
     writable: true,
   });
 }

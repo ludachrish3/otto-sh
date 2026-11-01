@@ -44,7 +44,7 @@ describe("highlightLines", () => {
     const source = "int main(void) { return 0; }\n";
     const html = await highlightLines(source, "c");
     // "return" is a C keyword — Shiki wraps it in its own <span style="...">.
-    expect(html[0]).toMatch(/<span[^>]*>return<\/span>/);
+    expect(html[0]).toMatch(/<span[^>]*>return<\/span>/u);
     // No leftover Shiki line/pre wrapper — only the inner token spans.
     expect(html[0]).not.toContain('class="line"');
     expect(html[0]).not.toContain("<pre");
@@ -54,7 +54,7 @@ describe("highlightLines", () => {
   it("tokenizes cpp the same way (cpp grammar loaded)", async () => {
     const source = "class Foo {};\n";
     const html = await highlightLines(source, "cpp");
-    expect(html[0]).toMatch(/<span[^>]*>class<\/span>/);
+    expect(html[0]).toMatch(/<span[^>]*>class<\/span>/u);
   });
 
   it("keeps a multi-line comment's tokenization consistent (single whole-source highlight call)", async () => {
@@ -64,7 +64,7 @@ describe("highlightLines", () => {
     // proof the highlighter tokenized the source as one unit (preserving
     // grammar state across the line boundary), not line-by-line in
     // isolation (which would lose the open-comment state on line 2).
-    const colorOf = (frag: string) => frag.match(/color:([^;"]+)/)?.[1];
+    const colorOf = (frag: string) => frag.match(/color:(?<value>[^;"]+)/u)?.groups?.["value"];
     expect(colorOf(html[0])).toBeTruthy();
     expect(colorOf(html[0])).toBe(colorOf(html[1]));
   });

@@ -103,7 +103,7 @@ describe("deriveReachability", () => {
     expect(effective.get("a")).toBe("unknown");
     expect(effective.get("b")).toBe("unknown");
     expect(warnings.length).toBeGreaterThanOrEqual(1);
-    expect(warnings[0]).toMatch(/hop cycle/);
+    expect(warnings[0]).toMatch(/hop cycle/u);
   });
 });
 

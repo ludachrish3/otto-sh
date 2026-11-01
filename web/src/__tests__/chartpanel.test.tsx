@@ -1,5 +1,12 @@
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  type BrushArmAction,
+  type BrushClearAction,
+  type ChartAction,
+  ChartPanel,
+  type SetOptionOpts,
+} from "../charts/ChartPanel";
 
 globalThis.ResizeObserver ??= class {
   observe() {}
@@ -51,14 +58,6 @@ vi.mock("../charts/echarts", () => ({
     connect: vi.fn(),
   },
 }));
-
-import {
-  type BrushArmAction,
-  type BrushClearAction,
-  type ChartAction,
-  ChartPanel,
-  type SetOptionOpts,
-} from "../charts/ChartPanel";
 
 const WINDOW = { from: 1_000_000, to: 2_000_000 };
 

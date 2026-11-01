@@ -38,7 +38,7 @@ const block = (selector: string): string => {
   return APP_CSS.slice(start, APP_CSS.indexOf("}", start));
 };
 const value = (css: string, name: string): string | undefined =>
-  new RegExp(`${name}:\\s*(#[0-9a-fA-F]{3,8})`).exec(css)?.[1]?.toLowerCase();
+  new RegExp(`${name}:\\s*(#[0-9a-fA-F]{3,8})`, "u").exec(css)?.[1]?.toLowerCase();
 
 describe("edgeClass", () => {
   it("collapses declared, implicit and local into one static class", () => {
@@ -233,9 +233,9 @@ describe("EDGE_STYLES", () => {
   it("defines every CSS variable EDGE_STYLES references in :root", () => {
     const root = block(":root {");
     const varName = (ref: string): string => {
-      const match = /^var\((--[\w-]+)\)$/.exec(ref);
+      const match = /^var\((?<name>--[\w-]+)\)$/u.exec(ref);
       expect(match, `"${ref}" is not a var(--name) reference`).not.toBeNull();
-      return (match as RegExpExecArray)[1];
+      return match?.groups?.["name"] ?? "";
     };
 
     const referenced = new Set<string>();

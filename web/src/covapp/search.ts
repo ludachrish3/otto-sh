@@ -18,7 +18,7 @@ export const STATE_CHARS = {
 
 export type CompiledQuery = { re: RegExp; error?: undefined } | { re?: undefined; error: string };
 
-const REGEX_META = /[.*+?^${}()|[\]\\]/g;
+const REGEX_META = /[.*+?^${}()|[\]\\]/gu;
 const UPPERCASE_LETTER = /\p{Lu}/u;
 
 /** Smart-case (the rg/fzf rule): any uppercase letter makes the query

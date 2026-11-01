@@ -357,7 +357,7 @@ describe("AppShell", () => {
       // regrowth as a react-aria SubmenuTrigger renders its own portal
       // outside this element and would evade the pin.)
       const menu = await screen.findByRole("menu");
-      expect(within(menu).queryByText(/PROJ-/)).toBeNull();
+      expect(within(menu).queryByText(/PROJ-/u)).toBeNull();
     });
 
     it("the search box sits before the ⋮ menu in the app bar", () => {
@@ -409,7 +409,7 @@ describe("AppShell", () => {
       renderShell();
       await user.click(ticketSearchInput());
 
-      const options = screen.getAllByTestId(/^ticket-search-option-/);
+      const options = screen.getAllByTestId(/^ticket-search-option-/u);
       expect(options.length).toBeLessThan(40);
       expect(screen.getByTestId("ticket-search-overflow").textContent).toContain("more");
     });
@@ -596,7 +596,7 @@ describe("AppShell: overrides badge + hide-asserted toggle (Task 11)", () => {
     await user.click(screen.getByTestId("appbar-menu"));
     await user.click(await screen.findByTestId("toggle-hide-asserted"));
 
-    expect(screen.getByTestId("toast").textContent).toMatch(/hidden/i);
+    expect(screen.getByTestId("toast").textContent).toMatch(/hidden/iu);
     expect(window.location.hash).toBe("#/coverage?asserted=1");
 
     await user.click(screen.getByTestId("appbar-menu"));

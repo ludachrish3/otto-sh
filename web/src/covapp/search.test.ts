@@ -16,7 +16,7 @@ import type { FileChunk, FunctionEntry, SearchFile } from "./types";
 
 function file(chunk: string, text: string, states?: string): SearchFile {
   const lineCount = text.split("\n").length;
-  return { chunk, path: chunk.replace(/_/g, "/"), text, states: states ?? "-".repeat(lineCount) };
+  return { chunk, path: chunk.replace(/_/gu, "/"), text, states: states ?? "-".repeat(lineCount) };
 }
 
 describe("compileQuery", () => {
@@ -41,7 +41,7 @@ describe("compileQuery", () => {
   it("an invalid regex reports the SyntaxError message instead of throwing", () => {
     const result = compileQuery("(", true);
     expect(result.re).toBeUndefined();
-    expect(result.error).toMatch(/Invalid regular expression|Unterminated/);
+    expect(result.error).toMatch(/Invalid regular expression|Unterminated/u);
   });
 });
 
@@ -77,7 +77,7 @@ describe("matchesInLines", () => {
   });
 
   it("refuses a non-global RegExp instead of looping", () => {
-    expect(() => matchesInLines(["a"], /a/, "-", false)).toThrow(/global/);
+    expect(() => matchesInLines(["a"], /a/u, "-", false)).toThrow(/global/u);
   });
 });
 

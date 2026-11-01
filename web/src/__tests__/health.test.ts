@@ -406,7 +406,7 @@ describe("headlineFor", () => {
   it("prefers CPU and formats percent unspaced", () => {
     const head = headlineFor(kitchen, "chassis-a-lc1-1", null);
     expect(head?.chartKey).toBe("cpu");
-    expect(head?.text).toMatch(/^\d+% cpu$/);
+    expect(head?.text).toMatch(/^\d+% cpu$/u);
   });
 
   it("falls back to the first chart with data when CPU is absent", () => {

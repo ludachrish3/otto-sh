@@ -155,7 +155,7 @@ describe("SearchPalette", () => {
     await user.type(await field(), "checked_add");
     await screen.findByTestId("search-result-0");
     const groups = screen
-      .getAllByTestId(/^search-group-/)
+      .getAllByTestId(/^search-group-/u)
       .map((el) => el.getAttribute("data-testid"));
     expect(groups).toEqual(["search-group-product_utils.c", "search-group-product_main.c"]);
   });
@@ -170,7 +170,9 @@ describe("SearchPalette", () => {
     expect(await screen.findByTestId("search-result-0")).toBeTruthy();
     await user.clear(input);
     await user.type(input, "(");
-    expect((await screen.findByTestId("search-error")).textContent).toMatch(/Invalid|Unterminated/);
+    expect((await screen.findByTestId("search-error")).textContent).toMatch(
+      /Invalid|Unterminated/u,
+    );
   });
 
   it("Enter while a chip is focused toggles it instead of navigating", async () => {

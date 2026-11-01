@@ -3,6 +3,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import App from "../App";
+import { presetRange, sessionBounds } from "../data/exportDoc";
+import { useReviewStore } from "../data/reviewStore";
+import { FIT_PADDING } from "../topo/TopologyPage";
 
 // jsdom has no ResizeObserver, and (without the optional "canvas" npm
 // package) HTMLCanvasElement#getContext returns null, which crashes real
@@ -29,11 +33,6 @@ vi.mock("../charts/echarts", () => ({
     connect: () => {},
   },
 }));
-
-import App from "../App";
-import { presetRange, sessionBounds } from "../data/exportDoc";
-import { useReviewStore } from "../data/reviewStore";
-import { FIT_PADDING } from "../topo/TopologyPage";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const KITCHEN = readFileSync(join(__dir, "../../fixtures/kitchen-sink.json"), "utf-8");

@@ -4,18 +4,17 @@ import { fileURLToPath } from "node:url";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { useReviewStore } from "../data/reviewStore";
+import { EventsPanel } from "../shell/EventsPanel";
+import { useUiStore } from "../ui/uiStore";
 
 if (typeof CSS === "undefined" || !CSS.escape) {
   // Same polyfill as reviewbar.test.tsx/shell.test.tsx — react-aria portals
   // call CSS.escape.
   (globalThis as { CSS?: unknown }).CSS = {
-    escape: (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, (ch) => `\\${ch}`),
+    escape: (value: string) => value.replace(/[^a-zA-Z0-9_-]/gu, (ch) => `\\${ch}`),
   };
 }
-
-import { useReviewStore } from "../data/reviewStore";
-import { EventsPanel } from "../shell/EventsPanel";
-import { useUiStore } from "../ui/uiStore";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const KITCHEN = readFileSync(join(HERE, "../../fixtures/kitchen-sink.json"), "utf-8");

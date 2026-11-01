@@ -29,7 +29,7 @@ const MINIMAL = readFileSync(join(__dir, "../../fixtures/minimal.json"), "utf-8"
 // is what's under test.
 if (typeof globalThis.CSS === "undefined") {
   Object.defineProperty(globalThis, "CSS", {
-    value: { escape: (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, (ch) => `\\${ch}`) },
+    value: { escape: (value: string) => value.replace(/[^a-zA-Z0-9_-]/gu, (ch) => `\\${ch}`) },
     writable: true,
   });
 }

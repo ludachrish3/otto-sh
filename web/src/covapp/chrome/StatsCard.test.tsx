@@ -124,7 +124,7 @@ describe("StatsCard", () => {
     const row = screen.getByTestId("stats-row-ctx");
     // Both nullable cells render the same muted text — exactly two, one per
     // column — never a "0.0%" placeholder.
-    expect(row.textContent?.match(/no data/g)?.length).toBe(2);
+    expect(row.textContent?.match(/no data/gu)?.length).toBe(2);
   });
 
   // Task 12 fix round 1: a composed ctx+ticket row on DirectoryPage's tree
@@ -146,7 +146,7 @@ describe("StatsCard", () => {
     const row = screen.getByTestId("stats-row-ticket");
     // All three nullable cells render the same muted text — never a
     // fraction, never a bogus/out-of-range percentage.
-    expect(row.textContent?.match(/no data/g)?.length).toBe(3);
+    expect(row.textContent?.match(/no data/gu)?.length).toBe(3);
   });
 
   it("defaults the first column header to 'Tier'", () => {

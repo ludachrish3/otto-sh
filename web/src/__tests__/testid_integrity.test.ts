@@ -53,7 +53,7 @@ function walk(dir: string): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name);
     if (entry.isDirectory()) out.push(...walk(path));
-    else if (/\.tsx?$/.test(entry.name)) out.push(path);
+    else if (/\.tsx?$/u.test(entry.name)) out.push(path);
   }
   return out;
 }
@@ -88,7 +88,7 @@ const ALL_FILES = walk(SRC_ROOT);
 // letting covapp/testUtils.tsx or __tests__/_synth.ts into the GLOBAL
 // acceptance set would be the cross-file harness leak through a side door).
 function isTestFile(f: string): boolean {
-  return /\.test\.tsx?$/.test(f);
+  return /\.test\.tsx?$/u.test(f);
 }
 function isTestHelper(f: string): boolean {
   return (
@@ -116,12 +116,12 @@ function extractReferencedIds(rawSource: string, label: string): Ref[] {
   const source = stripCommentLines(rawSource);
   const refs: Ref[] = [];
   const patterns = [
-    /(?:get|query|find)(?:All)?ByTestId\(\s*(["'`])((?:(?!\1)[^$])+)\1/g,
-    /\[data-testid=(["'])((?:(?!\1).)+)\1\]/g,
+    /(?:get|query|find)(?:All)?ByTestId\(\s*(?<q>["'`])(?<id>(?:(?!\k<q>)[^$])+)\k<q>/gu,
+    /\[data-testid=(?<q>["'])(?<id>(?:(?!\k<q>).)+)\k<q>\]/gu,
   ];
   for (const pattern of patterns) {
     for (const m of source.matchAll(pattern)) {
-      const id = m[2];
+      const id = m.groups?.["id"];
       if (id === undefined) continue;
       const line = source.slice(0, m.index).split("\n").length;
       refs.push({ id, at: `${label}:${line}` });
@@ -142,16 +142,16 @@ function extractRenderedIds(rawSource: string): { statics: string[]; prefixes: s
   const source = stripCommentLines(rawSource);
   const statics: string[] = [];
   const prefixes: string[] = [];
-  const attr = /(?<![A-Za-z[-])(?:data-testid|testId|[A-Za-z]+TestId)=/.source;
+  const attr = /(?<![A-Za-z[-])(?:data-testid|testId|[A-Za-z]+TestId)=/u.source;
   for (const m of source.matchAll(
-    new RegExp(`${attr}\\{?\\s*(["'])((?:(?!\\1).)+)\\1\\s*\\}?`, "g"),
+    new RegExp(`${attr}\\{?\\s*(["'])((?:(?!\\1).)+)\\1\\s*\\}?`, "gu"),
   )) {
     if (m[2] !== undefined) statics.push(m[2]);
   }
-  for (const m of source.matchAll(new RegExp(`${attr}\\{\\s*\`([^\`$]+)\`\\s*\\}`, "g"))) {
+  for (const m of source.matchAll(new RegExp(`${attr}\\{\\s*\`([^\`$]+)\`\\s*\\}`, "gu"))) {
     if (m[1] !== undefined) statics.push(m[1]);
   }
-  for (const m of source.matchAll(new RegExp(`${attr}\\{\\s*\`([^\`$]+)\\$\\{`, "g"))) {
+  for (const m of source.matchAll(new RegExp(`${attr}\\{\\s*\`([^\`$]+)\\$\\{`, "gu"))) {
     if (m[1] !== undefined) prefixes.push(m[1]);
   }
   return { statics, prefixes };

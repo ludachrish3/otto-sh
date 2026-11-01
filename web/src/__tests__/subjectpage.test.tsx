@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { useReviewStore } from "../data/reviewStore";
+import { SubjectPage } from "../pages/SubjectPage";
 
 globalThis.ResizeObserver ??= class {
   observe() {}
@@ -16,7 +18,7 @@ globalThis.ResizeObserver ??= class {
 // viewswitcher.test.tsx / shell.test.tsx.
 if (typeof globalThis.CSS === "undefined") {
   Object.defineProperty(globalThis, "CSS", {
-    value: { escape: (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, (ch) => `\\${ch}`) },
+    value: { escape: (value: string) => value.replace(/[^a-zA-Z0-9_-]/gu, (ch) => `\\${ch}`) },
     writable: true,
   });
 }
@@ -35,9 +37,6 @@ vi.mock("../charts/echarts", () => ({
     connect: () => {},
   },
 }));
-
-import { useReviewStore } from "../data/reviewStore";
-import { SubjectPage } from "../pages/SubjectPage";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const KITCHEN = readFileSync(join(HERE, "../../fixtures/kitchen-sink.json"), "utf-8");
@@ -79,7 +78,7 @@ describe("SubjectPage chart stack", () => {
   it("keeps the pinned series-summary format", () => {
     load("chassis-a-lc1-1");
     expect(screen.getByTestId("series-summary").textContent).toMatch(
-      /^\d+ series · \d+ samples in range$/,
+      /^\d+ series · \d+ samples in range$/u,
     );
   });
 

@@ -74,25 +74,25 @@ describe("fleet grid", () => {
     load();
     const tile = screen.getByTestId("host-tile-chassis-a-lc1-1");
     expect(tile).toBeTruthy();
-    expect(screen.getByTestId("headline-chassis-a-lc1-1").textContent).toMatch(/% cpu$/);
+    expect(screen.getByTestId("headline-chassis-a-lc1-1").textContent).toMatch(/% cpu$/u);
   });
 
   it("shows down · duration when the range ends inside the outage", () => {
     const start = importAndGetStart();
     load({ from: start, to: start + 70 * MIN });
-    expect(screen.getByTestId("host-tile-workers-w2").textContent).toMatch(/down · 10m/);
+    expect(screen.getByTestId("host-tile-workers-w2").textContent).toMatch(/down · 10m/u);
   });
 
   it("shows a sub-minute down duration as seconds, not '0m' (Minor 5, 5b follow-ups review)", () => {
     const session = subMinuteDownSession();
     useReviewStore.setState({ sessions: [session], activeSessionId: session.id, range: null });
     render(<OverviewPage />);
-    expect(screen.getByTestId("host-tile-h0").textContent).toMatch(/down · 45s/);
+    expect(screen.getByTestId("host-tile-h0").textContent).toMatch(/down · 45s/u);
   });
 
   it("healthy tiles show no down text at full range", () => {
     load();
-    expect(screen.getByTestId("host-tile-workers-w2").textContent).not.toMatch(/down ·/);
+    expect(screen.getByTestId("host-tile-workers-w2").textContent).not.toMatch(/down ·/u);
   });
 
   it("renders the element rollup with one segment per member", () => {
@@ -104,7 +104,7 @@ describe("fleet grid", () => {
   it("keeps the empty-chassis section with no tiles", () => {
     load();
     const section = screen.getByTestId("element-section-spare-chassis");
-    expect(section.textContent).toMatch(/empty/);
+    expect(section.textContent).toMatch(/empty/u);
     expect(section.querySelector("[data-testid^=host-tile-]")).toBeNull();
   });
 });

@@ -36,11 +36,11 @@ describe("parseExportDocument", () => {
   });
 
   it("rejects a legacy document without a format field", () => {
-    expect(() => parse({ metrics: [], events: [] })).toThrow(/unversioned|format/i);
+    expect(() => parse({ metrics: [], events: [] })).toThrow(/unversioned|format/iu);
   });
 
   it("rejects unknown format versions", () => {
-    expect(() => parse({ format: 2, sessions: [] })).toThrow(/format 2/);
+    expect(() => parse({ format: 2, sessions: [] })).toThrow(/format 2/u);
   });
 
   it("parses every committed fixture without warnings", () => {
@@ -172,7 +172,7 @@ describe("timestamp validation (follow-up #5)", () => {
       sessions: [{ id: "bad-start", start: "not-a-timestamp" }],
     };
     expect(() => parseExportDocument(JSON.stringify(doc))).toThrow(ExportParseError);
-    expect(() => parseExportDocument(JSON.stringify(doc))).toThrow(/start/i);
+    expect(() => parseExportDocument(JSON.stringify(doc))).toThrow(/start/iu);
   });
 
   it("a malformed session end (when present) throws ExportParseError", () => {
@@ -181,7 +181,7 @@ describe("timestamp validation (follow-up #5)", () => {
       sessions: [{ id: "bad-end", start: "2026-07-01T08:00:00Z", end: "also-not-a-timestamp" }],
     };
     expect(() => parseExportDocument(JSON.stringify(doc))).toThrow(ExportParseError);
-    expect(() => parseExportDocument(JSON.stringify(doc))).toThrow(/end/i);
+    expect(() => parseExportDocument(JSON.stringify(doc))).toThrow(/end/iu);
   });
 
   it("one malformed sample among many loads fine, drops that row, and warns with the count", () => {
@@ -201,7 +201,7 @@ describe("timestamp validation (follow-up #5)", () => {
     expect(sessions).toHaveLength(1);
     expect(sessions[0].metrics).toHaveLength(20); // the bad row dropped, all 20 good ones kept
     expect(sessions[0].metrics.some((m) => m.timestamp === "garbage-timestamp")).toBe(false);
-    expect(warnings.some((w) => /dropped 1 metric/i.test(w) && w.includes("s1"))).toBe(true);
+    expect(warnings.some((w) => /dropped 1 metric/iu.test(w) && w.includes("s1"))).toBe(true);
   });
 
   it("endMs is finite when the bad sample is the chronologically last one (no explicit end)", () => {
@@ -239,7 +239,7 @@ describe("timestamp validation (follow-up #5)", () => {
     expect(sessions[0].metrics).toHaveLength(0);
     expect(Number.isFinite(sessions[0].endMs)).toBe(true);
     expect(sessions[0].endMs).toBe(sessions[0].startMs);
-    expect(warnings.some((w) => /dropped 2 metrics/i.test(w))).toBe(true);
+    expect(warnings.some((w) => /dropped 2 metrics/iu.test(w))).toBe(true);
   });
 
   it("the series index contains no NaN after a bad sample is dropped", () => {
@@ -280,7 +280,7 @@ describe("timestamp validation (follow-up #5)", () => {
     const { sessions, warnings } = parseExportDocument(JSON.stringify(doc));
     expect(sessions[0].events).toHaveLength(1);
     expect(sessions[0].events[0].label).toBe("good");
-    expect(warnings.some((w) => /dropped 1 event/i.test(w))).toBe(true);
+    expect(warnings.some((w) => /dropped 1 event/iu.test(w))).toBe(true);
   });
 
   it("a malformed log_event timestamp is dropped with a warning, not fatal", () => {
@@ -299,7 +299,7 @@ describe("timestamp validation (follow-up #5)", () => {
     };
     const { sessions, warnings } = parseExportDocument(JSON.stringify(doc));
     expect(sessions[0].logEvents).toHaveLength(1);
-    expect(warnings.some((w) => /dropped 1 log event/i.test(w))).toBe(true);
+    expect(warnings.some((w) => /dropped 1 log event/iu.test(w))).toBe(true);
   });
 
   // Finding [3] (5b final follow-ups review): `dropInvalidTimestamps`
@@ -330,7 +330,7 @@ describe("timestamp validation (follow-up #5)", () => {
     const { sessions, warnings } = parseExportDocument(JSON.stringify(doc));
     expect(sessions[0].events).toHaveLength(1);
     expect(sessions[0].events[0].label).toBe("good instant");
-    expect(warnings.some((w) => /dropped 1 event/i.test(w))).toBe(true);
+    expect(warnings.some((w) => /dropped 1 event/iu.test(w))).toBe(true);
   });
 
   it("a span event with both a valid start and a valid end_timestamp is kept", () => {

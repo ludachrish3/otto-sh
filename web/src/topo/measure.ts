@@ -49,7 +49,7 @@ export interface PathEdge {
   path: string;
 }
 
-const NUMBER_RE = /-?\d*\.?\d+(?:e[-+]?\d+)?/gi;
+const NUMBER_RE = /-?\d*\.?\d+(?:e[-+]?\d+)?/giu;
 
 /** The two path grammars `routeEdge` emits, as fixed-arity tuples. Naming the
  * arity is what lets `samplePath` destructure the parsed coordinates at all:
@@ -135,7 +135,7 @@ function sampleAt(n: number, at: (t: number) => Point): Point[] {
  * command: a sampler that drops unknown commands returns FEWER points, and
  * the budget could pass by measuring nothing. */
 export function samplePath(d: string, n: number): Point[] {
-  const commands = d.match(/[A-Za-z]/g) ?? [];
+  const commands = d.match(/[A-Za-z]/gu) ?? [];
   for (const c of commands) {
     if (c !== "M" && c !== "L" && c !== "C") {
       throw new Error(

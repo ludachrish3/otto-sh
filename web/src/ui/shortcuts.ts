@@ -19,7 +19,7 @@ export interface Binding {
 }
 
 /** The Apple-platform families whose modifier key is ⌘ rather than Ctrl. */
-const APPLE_PLATFORM = /Mac|iPhone|iPad|iPod/;
+const APPLE_PLATFORM = /Mac|iPhone|iPad|iPod/u;
 
 export function detectMac(platform: string): boolean {
   return APPLE_PLATFORM.test(platform);

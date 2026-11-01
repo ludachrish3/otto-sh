@@ -145,7 +145,7 @@ describe("DirectoryPage", () => {
     // Labelled fragment, not a bare digit: this meta line also renders the
     // generated_at timestamp, whose "2026" satisfied the old `toContain("2")`
     // unconditionally — gate no-bare-digit-textcontent.
-    expect(meta).toMatch(/^2 covered files/); // main.c + util.c, recursive
+    expect(meta).toMatch(/^2 covered files/u); // main.c + util.c, recursive
     expect(meta).toContain(index.generated_at);
     expect(meta).toContain(index.otto_version);
 
@@ -321,7 +321,7 @@ describe("DirectoryPage", () => {
       expect(row.textContent).toContain("router-a (system bed)");
       expect(row.textContent).toContain("11/25");
       expect(row.textContent).toContain("44.0%");
-      expect(row.textContent?.match(/no data/g)?.length).toBe(2); // branch + decision
+      expect(row.textContent?.match(/no data/gu)?.length).toBe(2); // branch + decision
     });
 
     it("shows the app-bar focus chip while focused", () => {
@@ -623,7 +623,7 @@ describe("DirectoryPage", () => {
       const row = screen.getByTestId("stats-row-ticket");
       expect(row.textContent).toContain("PROJ-1");
       expect(row.textContent).toContain("2/3");
-      expect(row.textContent?.match(/no data/g)?.length).toBe(2); // branch + decision
+      expect(row.textContent?.match(/no data/gu)?.length).toBe(2); // branch + decision
     });
 
     it("shows the app-bar ticket chip while pinned", async () => {
@@ -680,7 +680,7 @@ describe("DirectoryPage", () => {
       expect(row.textContent).not.toContain("333.3");
       // Line + Branch + Decision all decline — none of the three has a
       // commensurable numerator/denominator pair at this granularity.
-      expect(row.textContent?.match(/no data/g)?.length).toBe(3);
+      expect(row.textContent?.match(/no data/gu)?.length).toBe(3);
     });
 
     it("returns null from scopeTreeToTicket cleanly: a ticket that touches nothing in view hides every file", async () => {

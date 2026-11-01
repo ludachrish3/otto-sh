@@ -16,7 +16,7 @@ import { defineConfig, type Plugin } from "vite";
  *  strips the attribute from the output but leaves the space before it, so
  *  that one tag is tidied here, and its absence fails the build. */
 const COV_DATA_TAG = '<script src="./cov_data/index.js" defer>';
-const COV_DATA_TAG_AS_EMITTED = /<script src="\.\/cov_data\/index\.js" defer\s+>/;
+const COV_DATA_TAG_AS_EMITTED = /<script src="\.\/cov_data\/index\.js" defer\s+>/u;
 function classicScript(): Plugin {
   return {
     name: "otto-classic-script",

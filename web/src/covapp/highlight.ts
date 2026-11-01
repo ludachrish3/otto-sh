@@ -46,7 +46,7 @@ function getHighlighter(): Promise<HighlighterCore> {
 }
 
 function escapeHtml(text: string): string {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return text.replace(/&/gu, "&amp;").replace(/</gu, "&lt;").replace(/>/gu, "&gt;");
 }
 
 /** Splits exactly like Shiki's own internal line-splitter (`splitLines` in
@@ -63,8 +63,8 @@ function plainLines(source: string): string[] {
 /** The two trailing artefacts a Shiki "line" span leaves behind once the
  * opening tags are split away — stripped once per SOURCE LINE, so both are
  * module-level rather than rebuilt inside the per-line `.map` below. */
-const TRAILING_NEWLINE = /\n$/;
-const CLOSING_SPAN = /<\/span>$/;
+const TRAILING_NEWLINE = /\n$/u;
+const CLOSING_SPAN = /<\/span>$/u;
 
 /** One highlighted HTML fragment per line of `source`, indexed the same as
  * `source.split("\n")` (see `plainLines`) — safe to drop straight into a

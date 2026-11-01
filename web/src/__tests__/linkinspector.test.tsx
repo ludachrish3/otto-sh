@@ -107,7 +107,7 @@ describe("LinkInspector", () => {
     });
     render(<LinkInspector edge={bundle} onClose={vi.fn()} />);
     await screen.findByTestId("link-inspector");
-    expect(screen.getByTestId("inspector-collapsed-note").textContent).toMatch(/3 hop links/);
+    expect(screen.getByTestId("inspector-collapsed-note").textContent).toMatch(/3 hop links/u);
   });
 
   it("registers no key listener while nothing is selected", () => {

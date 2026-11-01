@@ -155,7 +155,7 @@ function formatValue(value: number): string {
 /** What makes a "%" chart the CPU one, for `headlineFor`'s preference sort.
  * Module-level because it is consulted twice per comparison inside a sort
  * comparator, i.e. O(n log n) times per call. */
-const CPU_LABEL = /cpu/i;
+const CPU_LABEL = /cpu/iu;
 
 /** Labeled headline metric for a host tile (UX spec §8): CPU-preferred,
  * else the first meta-order chart with in-range samples. The LABEL matters

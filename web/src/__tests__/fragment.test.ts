@@ -178,7 +178,7 @@ describe("applyFragment", () => {
 
       // Surfaced once, not swallowed.
       expect(warnings).toHaveLength(1);
-      expect(warnings[0]).toMatch(/dropped 1 metric.*invalid timestamp/);
+      expect(warnings[0]).toMatch(/dropped 1 metric.*invalid timestamp/u);
     });
 
     it("a fragment whose ONLY content is an invalid-timestamp metric is still a session no-op — but still warns", () => {
@@ -211,7 +211,7 @@ describe("applyFragment", () => {
         warnings,
       );
       expect(warnings).toHaveLength(1);
-      expect(warnings[0]).toMatch(/dropped 2 metrics.*invalid timestamp/);
+      expect(warnings[0]).toMatch(/dropped 2 metrics.*invalid timestamp/u);
     });
   });
 
@@ -242,7 +242,7 @@ describe("applyFragment", () => {
       expect(next.events).toHaveLength(1);
       expect(next.events[0].label).toBe("good");
       expect(warnings).toHaveLength(1);
-      expect(warnings[0]).toMatch(/dropped 1 event.*invalid timestamp/);
+      expect(warnings[0]).toMatch(/dropped 1 event.*invalid timestamp/u);
     });
 
     it("drops a bad-timestamp log_event and surfaces a warning", () => {
@@ -260,7 +260,7 @@ describe("applyFragment", () => {
       );
       expect(next.logEvents).toHaveLength(1);
       expect(warnings).toHaveLength(1);
-      expect(warnings[0]).toMatch(/dropped 1 log event.*invalid timestamp/);
+      expect(warnings[0]).toMatch(/dropped 1 log event.*invalid timestamp/u);
     });
 
     it("a fragment whose ONLY content is an invalid-timestamp event is still a session no-op — but still warns", () => {
@@ -314,7 +314,7 @@ describe("applyFragment", () => {
       );
       expect(next.events).toHaveLength(0);
       expect(warnings).toHaveLength(1);
-      expect(warnings[0]).toMatch(/dropped 1 event.*invalid timestamp/);
+      expect(warnings[0]).toMatch(/dropped 1 event.*invalid timestamp/u);
     });
 
     it("keeps a span event whose start AND end_timestamp both parse", () => {

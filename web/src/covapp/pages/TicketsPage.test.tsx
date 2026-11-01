@@ -185,7 +185,7 @@ describe("TicketsPage", () => {
 
   it("filters rows by the search box", async () => {
     renderPage(INDEX);
-    await userEvent.type(screen.getByPlaceholderText(/search tickets/i), "PROJ-1");
+    await userEvent.type(screen.getByPlaceholderText(/search tickets/iu), "PROJ-1");
     expect(screen.getAllByTestId("ticket-id").map((n) => n.textContent)).toEqual(["PROJ-1"]);
   });
 
@@ -198,12 +198,12 @@ describe("TicketsPage", () => {
 
   it("states that rows overlap and do not sum to the card above", () => {
     renderPage(INDEX);
-    expect(screen.getByText(/overlap/i)).toBeTruthy();
+    expect(screen.getByText(/overlap/iu)).toBeTruthy();
   });
 
   it("renders an empty state when no tickets are attributed", () => {
     renderPage(makeIndex({ tickets: [] }));
-    expect(screen.getByText(/no ticket data/i)).toBeTruthy();
+    expect(screen.getByText(/no ticket data/iu)).toBeTruthy();
   });
 
   // Fix round 1, IMPORTANT 1: the card must read the DEDUPED
@@ -435,7 +435,7 @@ describe("line % column", () => {
     const user = userEvent.setup();
     renderPage(PCT_INDEX);
 
-    await user.click(screen.getByRole("button", { name: /Line %/ }));
+    await user.click(screen.getByRole("button", { name: /Line %/u }));
 
     // A numeric column leads descending (onSort's convention), so the 90%
     // ticket comes first. That ordering is unique to the ratio: descending
@@ -444,7 +444,7 @@ describe("line % column", () => {
     const ids = screen.getAllByTestId("ticket-id").map((n) => n.textContent);
     expect(ids).toEqual(["PROJ-SMALL", "PROJ-BIG"]);
 
-    await user.click(screen.getByRole("button", { name: /Line %/ }));
+    await user.click(screen.getByRole("button", { name: /Line %/u }));
     const flipped = screen.getAllByTestId("ticket-id").map((n) => n.textContent);
     expect(flipped).toEqual(["PROJ-BIG", "PROJ-SMALL"]);
   });
@@ -588,8 +588,8 @@ describe("TicketsPage: hideAsserted (Task 11)", () => {
     // Neither the raw 8/2 numbers nor a guessed subtraction (e.g. 5, from
     // naively reusing the per-tier `asserted` count) appear anywhere in the
     // row — declined entirely, not silently wrong.
-    expect(row.textContent).not.toMatch(/\b8\b/);
-    expect(row.textContent).not.toMatch(/\b2\b/);
+    expect(row.textContent).not.toMatch(/\b8\b/u);
+    expect(row.textContent).not.toMatch(/\b2\b/u);
     expect(screen.getByTestId("ticket-line-pct").textContent).toBe("—");
   });
 

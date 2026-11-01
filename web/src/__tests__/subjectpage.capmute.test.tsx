@@ -25,6 +25,11 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ChartSpecRecord, HostSnapshot, MetricRecord } from "../api/export.gen";
+import { MAX_SERIES_PER_CHART } from "../charts/palette";
+import type { DerivedElement, NormalizedSession } from "../data/exportDoc";
+import { useReviewStore } from "../data/reviewStore";
+import { buildIndex } from "../data/seriesIndex";
+import { SubjectPage } from "../pages/SubjectPage";
 
 globalThis.ResizeObserver ??= class {
   observe() {}
@@ -68,12 +73,6 @@ vi.mock("wouter", async (importOriginal) => {
   return { ...mod, useParams: () => ({ id: mockSubject }) };
 });
 let mockSubject = "h1";
-
-import { MAX_SERIES_PER_CHART } from "../charts/palette";
-import type { DerivedElement, NormalizedSession } from "../data/exportDoc";
-import { useReviewStore } from "../data/reviewStore";
-import { buildIndex } from "../data/seriesIndex";
-import { SubjectPage } from "../pages/SubjectPage";
 
 const T0 = Date.parse("2026-07-18T00:00:00Z");
 const TICK_MS = 5_000;

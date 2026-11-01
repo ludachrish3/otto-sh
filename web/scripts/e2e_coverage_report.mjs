@@ -58,8 +58,8 @@ const excluded = (absSourcePath) => {
   return (
     !p.startsWith("src/") ||
     p.includes(".test.") ||
-    /^src\/(components|styles)\//.test(p) ||
-    /^src\/api\/(types|export)\.gen\.ts$/.test(p) ||
+    /^src\/(?:components|styles)\//u.test(p) ||
+    /^src\/api\/(?:types|export)\.gen\.ts$/u.test(p) ||
     EXCLUDED.has(p)
   );
 };

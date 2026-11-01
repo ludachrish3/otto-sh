@@ -10,7 +10,7 @@ import "./covapp.css";
 // covapp's single boot entrypoint is legible without tracing imports.
 applyTheme(loadTheme());
 
-const container = document.getElementById("root");
+const container = document.querySelector("#root");
 if (!container) {
   throw new Error("#root element not found");
 }

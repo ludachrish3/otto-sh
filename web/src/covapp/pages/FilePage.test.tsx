@@ -512,7 +512,7 @@ describe("FilePage", () => {
 
     const row2 = screen.getByTestId("code-row-2");
     // both tier columns zero on row 2
-    expect((row2.textContent?.match(/·/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect((row2.textContent?.match(/·/gu) ?? []).length).toBeGreaterThanOrEqual(2);
   });
 
   it("gives an excluded line 's-excl' even though it has no chunk.lines record", async () => {
@@ -526,7 +526,7 @@ describe("FilePage", () => {
     mockChunkLoad({ resolve: makeChunk() });
     renderPage({ index: makeFileIndex(), segments: ["src", "net", "tcp.c"], node: NODE });
     const row4 = await screen.findByTestId("code-row-4");
-    expect(row4.className).not.toMatch(/\bt-|\bs-/);
+    expect(row4.className).not.toMatch(/\bt-|\bs-/u);
   });
 
   it("renders branch pills: not-taken and unreachable (struck) on row 2", async () => {
@@ -689,7 +689,7 @@ describe("FilePage", () => {
     const meta = screen.getByTestId("page-meta");
     // Labelled fragments — the same line renders the timestamp and version,
     // which contain every bare digit (gate no-bare-digit-textcontent).
-    expect(meta.textContent).toMatch(/^5 lines/);
+    expect(meta.textContent).toMatch(/^5 lines/u);
     expect(meta.textContent).toContain("· 2 covered");
     expect(meta.textContent).toContain("2026-07-25 14:02 UTC");
     expect(meta.textContent).toContain("0.7.5");
@@ -786,7 +786,7 @@ describe("FilePage", () => {
       renderFocused("nightly-full");
       const row6 = await screen.findByTestId("code-row-6"); // hit by run 3, not a member
       expect(row6.className).toContain("s-unc");
-      expect(row6.className).not.toMatch(/\bt-/);
+      expect(row6.className).not.toMatch(/\bt-/u);
     });
 
     it("excluded still wins over a member-run hit", async () => {
@@ -798,7 +798,7 @@ describe("FilePage", () => {
     it("an uncoverable line stays blank under focus", async () => {
       renderFocused("nightly-full");
       const row4 = await screen.findByTestId("code-row-4");
-      expect(row4.className).not.toMatch(/\bt-|\bs-/);
+      expect(row4.className).not.toMatch(/\bt-|\bs-/u);
     });
 
     it("hit-count cells: the focused context's tier column sums member-run hits", async () => {
@@ -810,7 +810,7 @@ describe("FilePage", () => {
     it("hit-count cells: a non-member-run hit line shows '·' in every tier column", async () => {
       renderFocused("nightly-full");
       const row6 = await screen.findByTestId("code-row-6");
-      expect((row6.textContent?.match(/·/g) ?? []).length).toBe(2); // system AND unit columns
+      expect((row6.textContent?.match(/·/gu) ?? []).length).toBe(2); // system AND unit columns
     });
 
     it("branch pills render unchanged under focus", async () => {
@@ -826,7 +826,7 @@ describe("FilePage", () => {
       expect(row.textContent).toContain("nightly-full");
       expect(row.textContent).toContain("1/5"); // only line 1 is a member-run hit, of 5 chunk.lines keys
       expect(row.textContent).toContain("20.0%");
-      expect(row.textContent?.match(/no data/g)?.length).toBe(2); // branch + decision
+      expect(row.textContent?.match(/no data/gu)?.length).toBe(2); // branch + decision
 
       const card = screen.getByTestId("stats-card");
       expect(card.textContent).toContain("focused: nightly-full");
@@ -923,7 +923,7 @@ describe("FilePage", () => {
       mockChunkLoad({ resolve: makeChunk() });
       renderPage({ index: makeFileIndex(), segments: ["src", "net", "tcp.c"], node: NODE });
       await screen.findByTestId("code-row-1");
-      expect(screen.queryByTestId(/^ticket-gutter-/)).toBeNull();
+      expect(screen.queryByTestId(/^ticket-gutter-/u)).toBeNull();
     });
 
     // Fixture built specifically so a gutter rendering the WRONG line's ids
@@ -1144,7 +1144,7 @@ describe("FilePage", () => {
       const row = screen.getByTestId("stats-row-ticket");
       expect(row.textContent).toContain("PROJ-1");
       expect(row.textContent).toContain("1/2");
-      expect(row.textContent?.match(/no data/g)?.length).toBe(2); // branch + decision
+      expect(row.textContent?.match(/no data/gu)?.length).toBe(2); // branch + decision
     });
 
     it("shows the app-bar ticket chip while pinned", async () => {
