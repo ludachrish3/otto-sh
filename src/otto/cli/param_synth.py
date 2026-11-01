@@ -155,7 +155,7 @@ def _split_annotation(hint: Any) -> tuple[Any, tuple[Any, ...]]:
             inner_annotated = none_stripped[0]
             inner_base, *meta = get_args(inner_annotated)
             # Reconstruct Optional[inner_base] as the base type
-            return typing.Optional[inner_base], tuple(meta)  # noqa: UP045 — runtime Optional[] construction (not an annotation); X | None raises TypeError on special forms
+            return typing.Optional[inner_base], tuple(meta)  # noqa: UP045 — runtime Optional[] construction (not an annotation); X | None raises TypeError on special forms  # ty: ignore[invalid-type-form] — runtime type construction from a value, not an annotation
     return hint, ()
 
 
@@ -178,7 +178,7 @@ def _normalize_scalar(base: Any, marker_type: type | None) -> Any:
     is_opt, inner = _is_optional(base)
     if is_opt:
         norm = _normalize_scalar(inner, None)
-        return typing.Optional[norm]  # noqa: UP045 — runtime Optional[] construction (not an annotation); X | None raises TypeError on special forms
+        return typing.Optional[norm]  # noqa: UP045 — runtime Optional[] construction (not an annotation); X | None raises TypeError on special forms  # ty: ignore[invalid-type-form] — runtime type construction from a value, not an annotation
     _native_union = getattr(types, "UnionType", None)
     origin = get_origin(base)
     is_union = origin is Union or (_native_union is not None and isinstance(base, _native_union))
@@ -232,7 +232,7 @@ def build_cli_binding(func: Callable[..., Any]) -> CliBinding:
                 )
             elem = arg.elem_type or str
             ann = Annotated[
-                list[elem],
+                list[elem],  # ty: ignore[invalid-type-form] — runtime type construction from a value, not an annotation
                 typer.Argument(
                     metavar=arg.name, help=arg.help, autocompletion=_remote_completer(arg)
                 ),
@@ -297,7 +297,7 @@ def build_cli_binding(func: Callable[..., Any]) -> CliBinding:
         norm = _normalize_scalar(base, (arg.elem_type if arg else (opt.elem_type if opt else None)))
         if arg is not None:  # explicit positional (e.g. defaulted scalar we keep positional)
             ann = Annotated[
-                norm,
+                norm,  # ty: ignore[invalid-type-form] — runtime type construction from a value, not an annotation
                 typer.Argument(
                     metavar=arg.name, help=arg.help, autocompletion=_remote_completer(arg)
                 ),
@@ -308,7 +308,7 @@ def build_cli_binding(func: Callable[..., Any]) -> CliBinding:
             # See the list/dict OPTION branch above for why `...` must precede
             # `*opt_decls` — `typer.Option`'s param_decls are varargs after `default`.
             ann = Annotated[
-                norm,
+                norm,  # ty: ignore[invalid-type-form] — runtime type construction from a value, not an annotation
                 typer.Option(
                     ...,
                     *opt_decls,
@@ -320,9 +320,9 @@ def build_cli_binding(func: Callable[..., Any]) -> CliBinding:
             kind = inspect.Parameter.KEYWORD_ONLY
         else:  # attach explicit Typer annotation so KEYWORD_ONLY wrappers still render correctly
             if default is inspect.Parameter.empty:
-                ann = Annotated[norm, typer.Argument()]
+                ann = Annotated[norm, typer.Argument()]  # ty: ignore[invalid-type-form] — runtime type construction from a value, not an annotation
             else:
-                ann = Annotated[norm, typer.Option()]
+                ann = Annotated[norm, typer.Option()]  # ty: ignore[invalid-type-form] — runtime type construction from a value, not an annotation
             kind = inspect.Parameter.POSITIONAL_OR_KEYWORD
         binding.params.append(
             inspect.Parameter(

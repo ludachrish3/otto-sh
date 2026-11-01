@@ -54,7 +54,7 @@ def stub_params(options: list[dict[str, Any]]) -> list[inspect.Parameter]:
         else:
             option_info = typer.Option(help=help_text)
 
-        annotation = Annotated[base, option_info]
+        annotation = Annotated[base, option_info]  # ty: ignore[invalid-type-form] — runtime type construction from a value, not an annotation
         default = _default_for(kind, opt.get("default"))
         params.append(
             inspect.Parameter(

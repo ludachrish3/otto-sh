@@ -185,7 +185,7 @@ dev = [
     "ruff>=0.15.20",
     "sphinx>=8.0",
     "doc8>=1.1",
-    "ty==0.0.84",
+    "ty==0.0.95",
     # Stub-only package for `requests`, which ships no py.typed and no
     # annotations at all: without it a checker reads `Session.verify`'s type
     # off the bare `self.verify = True` in requests/sessions.py and concludes
@@ -261,6 +261,23 @@ all = "error"
 # carries its type. That is a real improvement and a breaking API change across
 # ~30 files — its own workstream, not a dev-dependency bump.
 unsound-return-statement = "ignore"
+
+# ty 0.0.85 added truthiness-test-of-none-union, OPT-IN upstream (default
+# level ignore) and pulled in here only by `all = "error"`. Demoted on the
+# 0.0.84 -> 0.0.95 bump: 183 hits across src/, all `if value:` /
+# `value or default` shapes — about 118 over `str | None`, 24 over
+# `bool | None` (tool-presence flags, and probes that test `is None`
+# separately), 11 over `list[str] | None` (selectors), the rest over optional
+# containers, numbers and the `LogRecord.exc_info` union — where "unset or
+# empty" is deliberately one case. Every `bool | None` site was read; none is
+# a tri-state that conflates None with False. Rewriting them as `is not None`
+# would change behaviour at the empty value, which is exactly what those
+# sites do not want. The `redundant-condition` family stays enforced (at
+# error, via `all`), so the real-bug shapes are still caught.
+#
+# What would earn it back: narrower field types at the boundaries (an empty
+# string or list normalised to None where it is read in), done per module.
+truthiness-test-of-none-union = "ignore"
 
 # ty 0.0.74 added unsound-assignment, the rule above's assignment-side twin.
 # NOT demoted: 23 of its 29 hits were fixed at the source ahead of this bump,
