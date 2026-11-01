@@ -1106,6 +1106,38 @@ def _hermetic_known_hosts(_hermetic_known_hosts_file: Path) -> Iterator[None]:
         yield
 
 
+@pytest.fixture(scope="session")
+def _child_temproot_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """One temp root per pytest process (per xdist worker) for the sessions its tests start."""
+    return tmp_path_factory.mktemp("child-temproot")
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_child_temproot(_child_temproot_dir: Path) -> Iterator[None]:
+    """Give every pytest session a test starts from ``os.environ`` a temp root of its own.
+
+    pytest numbers a session's default basetemp under
+    ``<temproot>/pytest-of-<user>`` and, at session finish, deletes every
+    sibling with no lock that is not among the newest three numbers. A
+    session's lock goes when it exits, so once the hostless lane's main pass
+    exits, its whole temp tree is deletable by any later default-basetemp
+    session three or more numbers past it. A child session of the serial
+    pass deleted it inside its test's budget, and the nightly 3.10 leg timed
+    out on that three nights running (#814). ``PYTEST_DEBUG_TEMPROOT`` moves
+    the root, so a child's siblings are only the other children of this
+    process. This session's own basetemp is already fixed by the time a test
+    runs; a child given ``--basetemp`` (pytester's are) ignores the variable.
+    A child whose env is built from scratch gets it only if the builder
+    passes it through, as the e2e harness's ``coverage_subprocess_env`` does.
+
+    A PRIVATE ``MonkeyPatch``, for the ordering reason ``_hermetic_otto_home``
+    documents. Pinned by tests/unit/test_child_pytest_temproot.py.
+    """
+    with pytest.MonkeyPatch.context() as private:
+        private.setenv("PYTEST_DEBUG_TEMPROOT", str(_child_temproot_dir))
+        yield
+
+
 @pytest.fixture(autouse=True)
 def _reset_user_settings_memo(_hermetic_otto_home: None):
     """Drop the memoized user-settings read, and any settings file, around every test.

@@ -61,6 +61,13 @@ def coverage_subprocess_env(
     ``tests/unit/host`` against a cold tree created six of them. Absent when
     nothing set one (a bare ``python -m pytest`` outside this conftest, or a
     direct call), which leaves the child's default behaviour untouched.
+
+    ``PYTEST_DEBUG_TEMPROOT`` passes through for the same reason. The root
+    conftest points it at a per-process directory, so a pytest session the
+    child runs (``otto test`` runs one in-process) numbers its basetemp
+    there. Without it, the child's session-finish cleanup could delete a
+    finished session's whole temp tree under ``/tmp/pytest-of-<user>``
+    inside its test's budget (#814).
     """
     env: dict[str, str] = {
         "PATH": os.environ.get("PATH", ""),
@@ -70,9 +77,10 @@ def coverage_subprocess_env(
             [str(COVERAGE_BOOTSTRAP), os.environ.get("PYTHONPATH", "")]
         ).rstrip(os.pathsep),
     }
-    pycache_prefix = os.environ.get("PYTHONPYCACHEPREFIX")
-    if pycache_prefix:
-        env["PYTHONPYCACHEPREFIX"] = pycache_prefix
+    for var in ("PYTHONPYCACHEPREFIX", "PYTEST_DEBUG_TEMPROOT"):
+        value = os.environ.get(var)
+        if value:
+            env[var] = value
     if extra_env:
         env.update(extra_env)
     return env
