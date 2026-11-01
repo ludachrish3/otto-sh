@@ -5,6 +5,195 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.0] - 2026-11-01
+
+### Added
+
+- **completion**: live test names on TAB when the cache is off (#764)
+- **cli**: otto cache enable / disable (#764)
+- **cache**: off reaches the TAB shim and clears a workspace's completion files (#764)
+- **config**: the cache switch covers otto test's tables (#764)
+- **config**: [cache] enabled user setting and cache_enabled() (#764)
+- **scripts**: docs captures take an env, always-run teardown and the docker host lease
+- **BREAKING** **logger**: otto's output goes under one otto-output directory
+- **cov**: `otto cov check-stamp` and `otto cov embedded-gcov finish` share one gcov stamp guard
+- **init**: `otto init --embedded-gcov` writes the patch, a starter and a commented settings block
+- **cov**: ship the embedded-gcov patch and a starter; `otto cov embedded-gcov export/check`
+- **host**: OTTO_INIT_TIMEOUT sets the readiness deadline for every host without its own
+- **quality**: lint-arch ratchets duplicated code against a committed baseline (#738)
+- **docker**: otto docker image ls, rm and prune
+- **BREAKING** **cov**: the unit tier reports only product sources
+- **BREAKING** **cov**: pair coverage by path, capture every product, report failures once
+- **run**: otto run uninstall-tools removes dev tools
+
+
+### Changed
+
+- **scripts**: one module decides what a child's process group holds and whether it is gone
+- **cache**: off bypasses the cache and deletes nothing (#764)
+- one core runs a host command elevated unless root
+- one check decides whether a session acts as root
+- **host**: `_can_elevate` alone decides whether a session can elevate
+- **docker**: one source for the declared use-case names
+- **host**: the run policy, kmod residency and the command list each get one home (#740)
+- **docker**: every docker compose command comes from one builder
+- ten restated decisions get one home each, the small folds of #740 (#740)
+- **host**: one session policy and one tree-transfer arm on the base host (#740)
+- **BREAKING** **context**: the per-call host overrides are one table every fleet entry forwards (#740)
+
+
+### Dependencies
+
+- **deps**: bump certifi, anyio and GitPython past their critical advisories
+- **deps**: bump asyncssh from 2.24.0 to 2.24.1
+
+
+### Documentation
+
+- **cov**: one home each for the clean order, the flush rule and the cov_dir lifecycle
+- **docker,monitor**: build the image onto its host; headless monitoring; which dashboard URL
+- **cov**: one place per unit build dir; containers, reports and kernel-module counts
+- **use**: the joining page answers first; host get and the predicate verbs say what they do
+- **run**: uninstall leaves cov_dir alone; --ensure, teardown and cleanup say what they reach
+- examples read a command's exact value
+- **spec**: exact command output in tests (#712)
+- **cov**: what clang branch records mean and the lcov they need (#731)
+- name both causes of a wrapped capture record's drift, and record the follow-up
+- **spec**: fingerprints share the stat classes; schema 29; stat()'s fold (#764)
+- **spec**: one stat classification; live names skip only the failed project (#764)
+- **spec**: off bypasses without deleting; live test names (#764)
+- **spec**: drop the stale environment source (#764)
+- correct the cache-off costs and consequences (#764)
+- turning otto's cache off (#764)
+- **spec**: turning otto's cache off (#764)
+- the docker track (#594 L4.5)
+- **examples**: the docker track's example and its hostless checks
+- **docker**: the docker page opens with a first deploy
+- **contributing**: only a landing's tip is gated
+- **spec**: the security cluster before 0.18.0
+- **agents**: one decision, one place
+- the embedded track (#594 L4.3)
+- **todo**: the duplication sweep backlog (#738)
+- **setup**: the kernel-module track (#594 L4.2)
+- the citation lint (#594 L5)
+- the shell track (#594 L4.1)
+- **install**: set up an otto project's pyproject.toml with uv
+- lab configuration by area, coverage rules stated once, extension gaps closed (#594)
+- **spec**: the unit tier's toolchain setting and the container scan
+- **spec**: coverage pairing, accumulation and the unit-tier filter
+- **kmodcov**: name the reader tests' compilers as a dev prerequisite
+- entry paths — chooser, one Installation, first lab, Joining (#594)
+- **BREAKING** pages grouped by reader (#594)
+- **spec**: #594 — the docs reorganized by reader, with checked quickstart tracks
+
+
+### Fixed
+
+- **scripts**: budget-delta lets one operation change bucket between runs
+- **scripts**: budget-delta measures a base that predates the command-list helper
+- **test**: the parens-in-comm test sleeps in this interpreter, not in `sleep`
+- **test**: the image prune test builds its dangling image untagged
+- **test**: the embedded coverage e2e names the inner run's own failures
+- **test**: a hung child session fails with every process's stack and leaves nothing running
+- **BREAKING** **host**: local exec returns a command's exact output, one line rule shared with the ssh channel
+- **scripts**: capture alignment counts terminal cells, and its test drives a real capture
+- **scripts**: a docs capture's log source column does not move with a redacted value's width
+- **cli**: every shell's completers print to nowhere
+- **cli**: a completer that prints offers only its words
+- **cli**: what an init module prints never reaches a completing shell
+- **cache**: the inventory fingerprint shares the rebuild's stat; no schema literals (#764)
+- **completion**: the live child's answer survives its scratch cleanup; docs (#764)
+- **cache**: every fingerprint classifies stat errors as the shim does; schema bump (#764)
+- **completion**: the live child's stdout stays closed to everything but its answer (#764)
+- **completion**: live names skip only the project that failed (#764)
+- **cache**: one stat classification for the shim and the digest (#764)
+- **shim**: only a missing settings file is absent (#764)
+- **cache**: final-review fixes — unreadable settings mean off, safe removal, honest disable (#764)
+- **config**: drop a dead verb branch; empty-loc errors read cleanly (#764)
+- **cli**: enable/disable decide from the validated setting; one-line errors (#764)
+- **cache**: an unstat-able settings file is absent, as the shim sees it (#764)
+- **cache**: the shim and the digest read one settings stat (#764)
+- **cache**: the settings stat is the shim's alone; warm otto -h stays flat (#764)
+- **params**: secret fields are found on every Python when an annotation cannot be resolved
+- **host**: a run that turns command output off keeps it off the console
+- **BREAKING** **host**: a transfer's quiet output silences only its own commands
+- **BREAKING** **cov**: a product whose coverage could not be fetched is a failed product
+- **host**: a host closed on one event loop gets fresh locks on the next
+- **BREAKING** **docker**: cleanup removes what otto staged on the docker host
+- **BREAKING** **docker**: a cached rebuild keeps its image ID
+- **BREAKING** docker staging lives in a private per-account root (#550, #751)
+- **BREAKING** host addresses are validated and hop commands quote every value (#547)
+- **BREAKING** SSH host keys are checked by host ID: accept new, refuse changed (#552)
+- **BREAKING** the elevation password goes only to a random sudo prompt, once; expect responses are never logged (#549, #551)
+- **BREAKING** a failing expect() reports only the values its call reads (#548)
+- **BREAKING** credentials are SecretStr and tracebacks hide password-holding frames (#487)
+- **test**: the lane-leg gate collects testpaths once and carries its own budget
+- **test**: the bed grouping hook schedules only integration items
+- **BREAKING** **docker**: a use-case's up, down and rollback run under one staged env launcher (#748)
+- **BREAKING** **docker**: the container-id lookup waits through the shared deadline poll
+- **BREAKING** **docker**: `otto docker compose down` removes only what its deploy staged
+- **BREAKING** **host**: a path under an unsearchable directory is unknown to a tree walk, not missing
+- **BREAKING** **docker**: a failed start rolls back only what it started, on both paths
+- **BREAKING** **docker**: the use-case deploy re-runs up once on docker's network race
+- **BREAKING** **host,cov**: an options extra may not name a field, and one reader of lcov text (#740)
+- **test**: the docker reaper waits for every live stack in its session
+- **host**: a Unix shell gets 10 s to answer the readiness probe, and a host can set its own deadline
+- **host**: telnet_options.connect_timeout bounds the telnet connect
+- **check**: the sweep bound's docstring restates the shorter listener wait (#738)
+- **quality**: a count-spelled poll is a hand-rolled deadline poll (#738)
+- **BREAKING** **cov**: clang 21 coverage files are read by llvm-cov and resolve their sources
+- **test**: the deleted-file refresh test holds on tmpfs (#719)
+- **test**: the kernel-module init test runs otto with the session's bytecode prefix
+- **logger**: an empty write goes straight to the stream, never through the queue
+- **logger**: a logged line prints before the CLI output that follows it
+- **test**: the shell-history control lets bash save before the session ends
+- **test**: the JUnit banner is centred for the file it names
+- **gate**: a lane re-run keeps every stamp that can still be true
+- **cov**: a coverage refusal names the settings it checked and what is missing
+- **BREAKING** **host**: the shell route returns a command's exact output: blank lines and carriage returns kept, telnet NULs gone
+- **host**: exec over ssh no longer adds an empty last output line
+- container-host follow-ups — comment-only and continued commands frame, stopped containers named, staging race gone
+- **BREAKING** container hosts — owned containers join run verbs, backgrounded commands return, out-of-scope links are declined
+- **docs**: API docstrings link to pages, and every docs path otto names exists
+- otto's messages link to the published docs
+- **init**: generated project files link to the published docs
+- **cli**: --show-lab draws the lab as a tree instead of a Python repr
+- **cli**: with no project found, listings and lab commands say so and exit 1
+- **init**: --kmodcov appends the documented [[dev_tools]] stub
+- **docker**: a missing Dockerfile or context is a one-line config error
+- **products**: staging creates a missing stage_dir and failures say why
+- **cli**: help text names the settings section it refers to
+- **BREAKING** **log**: log records render Rich markup only when they ask for it
+- **host**: device output and command echoes keep their bracketed text
+- **cov**: a [coverage] hosts pattern naming only containers collects them
+- **kmodcov**: the CI install guard checks clang too
+- **kmodcov**: a failed dump also points at dmesg
+- **kmodcov**: counts accumulate across module loads
+- **run**: a dry-run cleanup previews every removal, host by host
+- **host**: a missing literal debug-log path no longer fails the next cleanup
+- **host**: a refused install still plans its uninstall
+- **host**: cleanup of a docker image product whose container is already gone succeeds
+- **link**: the side and port range rows read the median of three connects, so one slow round trip no longer fails a correct selector
+- **BREAKING** **kmodcov**: the shipped kmodcov sources stop citing otto's test fixtures
+- **scripts**: a docs capture keeps no trailing spaces
+
+
+### Maintenance
+
+- **matrix**: re-measure the kmodcov matrix
+- **matrix**: re-measure the bed support matrix
+- **matrix**: re-measure the bed support matrix
+- **matrix**: re-measure the bed support matrix
+- **matrix**: re-measure the bed support matrix
+- **gate**: stability lanes run once in the changed area, and nox-unit-repeat is left to CI
+- **matrix**: re-measure the bed support matrix
+- **gate**: a tree that passed gate-fresh is not gated again at the push
+- **matrix**: re-measure the bed support matrix
+- **matrix**: re-measure the bed support matrix
+- **matrix**: re-measure the bed support matrix
+- **matrix**: re-measure the bed support matrix
+
+
 ## [0.17.0] - 2026-10-19
 
 ### Added
@@ -2199,7 +2388,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/ludachrish3/otto-sh/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/ludachrish3/otto-sh/compare/v0.16.1...v0.17.0
 [0.16.1]: https://github.com/ludachrish3/otto-sh/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/ludachrish3/otto-sh/compare/v0.15.0...v0.16.0
