@@ -259,7 +259,7 @@ job that enforces it on the pull request and again on the push to `main`.
 | vendored-source hash | `check-ts` | — | `check-ts` |
 | vitest + unit coverage floor | `coverage-ts-unit` | — | `check-ts` |
 | pytest (hostless matrix) | `coverage-hostless` | `tests_hostless` | `tests` (3.10–3.14; the full selection on 3.10 with the coverage floor, the same paths minus the `interpreter_agnostic` family and without coverage on 3.14 (`HOSTLESS_CANARY_TEST_ARGS`), the trimmed `tests/unit` tier minus the family on 3.11–3.13 (`HOSTLESS_MIDDLE_TEST_ARGS`) — the family runs on the primary only, see [the cross-Python matrix](testing.md#other-axes-typescript-doctests-cross-python)) |
-| scoped per-commit run: `make quick PATHS="<paths>"` — the named paths, uninstrumented, parallel plus the `-n0` `serial_timing` twin; one empty leg is tolerated, two are red | `quick` | — | **not in CI** — the per-commit gate `make gate-scope` names; the tip of a landing runs the full gate |
+| scoped per-commit run: `make quick PATHS="<paths>"` — the named paths, uninstrumented, parallel plus the `-n0` `serial_timing` twin; one empty leg is tolerated, two are red | `quick` | — | **not in CI** — the per-commit gate `make gate-scope` names; a scoped `src-leaf` tip runs it over the package's trees and import consumers, and a docs, web or test-only tip keeps its own lines; the `escalate`, `scripts` and `full` tips run the full gate |
 | the repository guards (the `interpreter_agnostic` family over `tests/unit`, uninstrumented) | `quick-guards` | — | **not in CI** — `make gate-scope` names it for src/, scripts/ and build-file changes; `make coverage` runs the same modules instrumented |
 | scoped-gate oracle: the exact lanes a diff needs, this commit and the tip | `gate-scope` | — | **not in CI** — enforced by `tests/unit/scripts/test_gate_scope.py` (every tracked path has a row; the oracle census: every collected item of every test module is selected by a lane the oracle emits) |
 | public-API golden: `tests/unit/api_snapshot/public_api.txt` is, byte for byte, the API dump of the tree (`scripts/api_snapshot.py`) | `check-api-snapshot` | via `tests_hostless` | `tests` — enforced by `tests/unit/api_snapshot/test_public_api_snapshot.py` |
@@ -280,6 +280,7 @@ job that enforces it on the pull request and again on the push to `main`.
 | docs | `docs` | `docs` | `docs` |
 | vendored-UI upstream drift | — | — | `untitledui-drift.yml` (its own workflow) |
 | Python coverage floor (95.5, lines + branches) | `coverage`, `validate`, `all` | — | **not in CI** — local only; `release` trusts the coverage stamp (`make coverage` passed on the released tree under this venv, with these assets) or runs `make coverage` itself first |
+| the bed half of the coverage selection (`(integration or embedded) and` `make coverage`'s markers), uninstrumented, pass/fail | `coverage-bed` | — | **not in CI** — a `src-leaf` tip's stamped lane in place of `make coverage` ({ref}`the src-leaf tip <src-leaf-tip>`); the PR's CI runs the hostless half |
 | The landing's gate: the oracle's tip lanes, stamped per lane on the committed tree | `gate-tip` (`make gate-scope` names the lanes) | — | **not in CI** — enforced by the pre-push hook on every push to `main` |
 | chaos / stability lanes | `chaos`, `chaos-embedded`, `stability*`; `release-campaign` runs the stability tiers once inside `make release`, never the chaos lanes; `make gate-scope` names a single pass of a stability tier in the full gates a link, tunnel or console change earns, and for a stability test change ({ref}`the rule <gate-stability-lanes>`) | `chaos`, `chaos_embedded` | **not in `ci.yml`** — nightly runs the no-VM legs only |
 
@@ -295,8 +296,13 @@ the *hostless* slice at 94.75 (`coverage-hostless` / the `tests` job),
 because the full run needs lab VMs. A contributor reading only
 `.github/workflows/ci.yml` would conclude the 95.5 floor is enforced on push.
 
-`make release` reaches it through the **coverage stamp**, and the landing
-reaches it through `make gate-tip`, of which coverage is one **stamped lane**.
+`make release` reaches it through the **coverage stamp**, and an `escalate`,
+`scripts` or `full` landing reaches it through `make gate-tip`, of which
+coverage is one **stamped lane**; a scoped `src-leaf` landing (one or two
+`src/otto/` packages whose unit tree is not `tests/unit` whole) stamps `make
+coverage-bed`, the bed half of the same selection, and lets the PR's CI run
+the hostless half ({ref}`the src-leaf tip <src-leaf-tip>`); the 95.5 floor is
+then the release's, which runs `make coverage` when the tip has no stamp.
 `make gate-tip` runs the lanes the oracle names for the tip and records each
 as a stamp under the clone's common git dir, keyed by the committed tree
 (`HEAD^{tree}`); the pre-push hook refuses a push to `main` whose stamped

@@ -71,6 +71,7 @@ LIVE_GOALS = ["check-breaking", "lint-arch", "check-python", "docs", "gate-fresh
 """History-dependent (RANGE_TARGETS) or run by the push itself; never stamped."""
 STAMPED_GOALS = [
     "coverage",
+    "coverage-bed",
     "conformance-bed",
     "docs-captures-check",
     "stability-unit",
@@ -88,6 +89,7 @@ STAMPED_GOALS = [
     "check-ts",
     "coverage-ts",
     "ruff",
+    "ty",
 ]
 """Every goal the oracle can emit for a tip that the runner stamps (the census pins the set)."""
 MEASURED_OUTPUTS = ["schemas/support_matrix.json", "schemas/kmodcov_matrix.json"]
@@ -103,7 +105,11 @@ class UnknownGoalError(ValueError):
 
 
 def goals(line: str) -> "list[str]":
-    """Return the goals of one oracle line: make targets, or the uv tool (ruff, ty)."""
+    """Return the goals of one oracle line: make targets, or the uv tool (ruff, ty).
+
+    A tests-leaf tip emits ruff lines; a src-leaf tip emits ty lines too (#797). Both are
+    stamped per line, the file path included.
+    """
     words = shlex.split(line)
     if words[:1] == ["make"]:
         found = [w for w in words[1:] if "=" not in w]

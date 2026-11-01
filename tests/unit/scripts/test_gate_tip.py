@@ -108,14 +108,15 @@ class TestGoals:
             ("make check-breaking RANGE=abc..HEAD", ["check-breaking"]),
             (gs.STABILITY_UNIX, ["stability-unix"]),
             ("uv run ruff check tests/unit/x.py", ["ruff"]),
+            ("uv run ty check src/otto/host/x.py", ["ty"]),
         ],
     )
     def test_goals_of_each_shape(self, line, expected):
         assert gt.goals(line) == expected
 
     def test_a_commit_only_goal_line_is_an_unknown_goal(self):
-        with pytest.raises(gt.UnknownGoalError, match="ty check"):
-            gt.goals("uv run ty check --extra-search-path . scripts/x.py")
+        with pytest.raises(gt.UnknownGoalError, match="test-ts"):
+            gt.goals("make test-ts")
 
     def test_an_unknown_shape_or_goal_is_refused(self):
         with pytest.raises(gt.UnknownGoalError):
@@ -1487,12 +1488,22 @@ class TestCensus:
     def test_every_tip_line_the_oracle_can_emit_has_exactly_one_kind(self):
         seen = _census()
         assert {"coverage", "conformance-bed", "kmodcov", "dashboard", "quick-guards"} <= seen
+        assert {"coverage-bed", "ty"} <= seen, "the src-leaf tip's own lines (#797)"
         assert "check-breaking" in seen
         assert seen - set(gt.LIVE_GOALS) == set(gt.STAMPED_GOALS)
         assert not any("hostless" in g for g in gt.STAMPED_GOALS), "the PR's CI owns them (#795)"
 
     @pytest.mark.parametrize(
-        "goal", ["conformance-bed", "kmodcov", "dashboard", "quick-guards", "docs-captures-check"]
+        "goal",
+        [
+            "conformance-bed",
+            "kmodcov",
+            "dashboard",
+            "quick-guards",
+            "docs-captures-check",
+            "coverage-bed",
+            "ty",
+        ],
     )
     def test_a_stamped_goal_dropped_from_the_set_fails_the_census(self, monkeypatch, goal):
         monkeypatch.setattr(gt, "STAMPED_GOALS", [g for g in gt.STAMPED_GOALS if g != goal])

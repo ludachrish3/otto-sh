@@ -23,7 +23,11 @@ The distribution name is `otto-sh`; the installed CLI command is `otto`.
    its lanes stamped again on the released tree before the push.
    `release-preflight` refuses to start while any commit is unpushed.
    Commit messages should follow Conventional Commits so git-cliff can
-   classify them in the changelog.
+   classify them in the changelog. Landings leave no coverage stamp unless
+   their tip ran `make coverage` (a scoped `src-leaf` tip runs `make
+   coverage-bed` instead), so run `make coverage` on the release tip now if you would
+   rather it not run inside `make release`
+   ([the coverage stamp](contributing.md#the-coverage-stamp)).
 
 2. **Run `make release`.** This validates and prepares everything locally:
 

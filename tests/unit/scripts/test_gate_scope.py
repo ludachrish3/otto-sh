@@ -931,7 +931,7 @@ def _head_paths() -> "set[str]":
     return set(_tracked("."))
 
 
-def _at_head(changed: str, text: str):
+def _at_head(changed: str, text: "str | None"):
     """A reader for the real tree: `text` for the changed path, the file on disk otherwise."""
 
     def read(_rev: str, path: str) -> "str | None":
@@ -1201,7 +1201,7 @@ def _main(monkeypatch: pytest.MonkeyPatch, repo: Path, *args: str) -> int:
 
 _SCOPE_FIELDS = [
     "quick", "guards", "packages", "files", "paths", "special", "special_tip", "bed",
-    "unknown", "full_commit", "full_tip",
+    "unknown", "full_commit", "full_tip", "quick_tip",
 ]  # fmt: skip
 
 
@@ -1213,6 +1213,8 @@ def _s(classes, **fields):
     given = {name: list(fields.get(name, [])) for name in _SCOPE_FIELDS}
     if "paths" not in fields:
         given["paths"] = list(given["files"])
+    if "quick_tip" not in fields:
+        given["quick_tip"] = list(given["quick"])
     return gs.Scope(list(classes), *(given[name] for name in _SCOPE_FIELDS))
 
 
@@ -1286,7 +1288,40 @@ def test_commands_for_each_class():
         "make lint-arch",
         "make quick-guards",
     ]
-    assert gs.commands(src, tip=True, base=base) == [cb, *gs.FULL_GATE, "make conformance-bed"]
+    assert gs.commands(src, tip=True, base=base) == [
+        cb,
+        f'make quick PATHS="{" ".join(["tests/unit/host", *gs.GUARD_RIDERS])}"',
+        "uv run ty check src/otto/host/unix.py",
+        "uv run ruff check src/otto/host/unix.py",
+        "make lint-arch",
+        "make quick-guards",
+        *gs.SRC_LEAF_TIP_LANES,
+        "make conformance-bed",
+        "make gate-fresh",
+    ], "a src-leaf tip: the commit lines, the bed half of coverage, its bed lane, gate-fresh"
+    wide = _s(
+        [gs.SRC_LEAF],
+        quick=["tests/unit/host", "tests/e2e/host"],
+        quick_tip=["tests/unit/cli/test_host.py", "tests/unit/host"],
+        packages=["host"],
+        files=["src/otto/host/unix.py"],
+    )
+    assert 'make quick PATHS="tests/unit/cli/test_host.py tests/unit/host"' in gs.commands(
+        wide, tip=True, base=base
+    ), "the tip's quick is Scope.quick_tip: the bed trees out, the consumers in"
+    assert 'make quick PATHS="tests/unit/host tests/e2e/host"' in gs.commands(
+        wide, tip=False, base=base
+    )
+    whole = _s(
+        [gs.SRC_LEAF],
+        quick=["tests/unit"],
+        packages=["utils"],
+        files=["src/otto/utils.py"],
+        full_tip=["src/otto/utils.py: its row is the whole unit tree"],
+    )
+    assert gs.commands(whole, tip=True, base=base) == [cb, *gs.FULL_GATE], (
+        "a whole-unit-tree row keeps the full gate at the tip"
+    )
     scripts = _s([gs.SCRIPTS], files=["scripts/gate_fresh.py"])
     assert gs.commands(scripts, tip=False, base=base) == [
         cb,
@@ -1391,7 +1426,18 @@ def test_the_union_composes_every_class_before_deduplication():
         files=["src/otto/cli/x.py", "web/src/App.tsx", "docs/a.md"],
     )
     at_tip = gs.commands(mixed, tip=True, base=base)
-    assert at_tip == ["make check-breaking", *gs.FULL_GATE, "make coverage-ts"], at_tip
+    assert at_tip == [
+        "make check-breaking",
+        'make quick PATHS="tests/unit/cli"',
+        "uv run ty check src/otto/cli/x.py",
+        "uv run ruff check src/otto/cli/x.py",
+        "make lint-arch",
+        "make quick-guards",
+        *gs.SRC_LEAF_TIP_LANES,
+        "make check-ts",
+        "make coverage-ts",
+        "make gate-fresh",
+    ], at_tip
     at_commit = gs.commands(mixed, tip=False, base=base)
     assert at_commit == [
         "make check-breaking",
@@ -1636,6 +1682,186 @@ def test_the_full_gate_is_pinned_literally():
     ]
 
 
+class TestConsumers:
+    """The import consumers a src-leaf tip's quick adds to the package's trees (#797)."""
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            "import otto.host\n",
+            "import otto.host.unix as u\n",
+            "from otto.host import Host\n",
+            "from otto.host.unix import UnixHost\n",
+            "from otto import host\n",
+            "from otto import config, host as h\n",
+            "def test_a():\n    from otto.host import Host\n",
+        ],
+    )
+    def test_every_direct_import_form_is_read(self, source):
+        assert gs.imports_package(source, "host")
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            "import otto.labs\n",
+            "from otto.labs import Lab\n",
+            "from otto import labs\n",
+            "import otto\n\nx = otto.lab\n",
+            "from otto.hostile import x\n",
+        ],
+    )
+    def test_a_dotted_prefix_and_attribute_access_are_not_imports_of_the_package(self, source):
+        assert not gs.imports_package(source, "lab")
+        assert not gs.imports_package(source, "host")
+
+    def test_a_submodule_import_is_an_import_of_its_package_and_of_no_prefix(self):
+        assert gs.imports_package("import otto.lab.thing\n", "lab")
+        assert not gs.imports_package("import otto.lab.thing\n", "la")
+        assert not gs.imports_package("import otto.labs.thing\n", "lab")
+
+    def test_a_relative_import_names_no_package(self):
+        assert not gs.imports_package("from . import host\nfrom .host import Host\n", "host")
+
+    def test_the_gate_pin_reader_shares_the_import_walk(self):
+        """`_imports_a_gate_pin` and `imports_package` read the same three forms."""
+        assert gs._imports_a_gate_pin("from scripts import gate_scope as gs\n")
+        assert gs._imports_a_gate_pin("import scripts.gate_tip\n")
+        assert gs._imports_a_gate_pin("from scripts.gate_scope import classify\n")
+        assert not gs._imports_a_gate_pin("from scripts import gate_fresh\n")
+        assert not gs._imports_a_gate_pin("from . import gate_scope\n")
+
+    def test_unparseable_or_absent_source_is_no_consumer(self):
+        assert not gs.imports_package(None, "host")
+        assert not gs.imports_package("def (\n", "host")
+
+    def test_consumers_are_unit_modules_outside_the_rows_that_import_the_package(self):
+        texts = {
+            "tests/unit/cli/test_uses_host.py": "from otto.host import Host\ndef test_a(): pass\n",
+            "tests/unit/cli/test_other.py": "from otto.cli import main\ndef test_a(): pass\n",
+            "tests/unit/host/test_inside.py": "from otto.host import Host\ndef test_a(): pass\n",
+            "tests/unit/test_host_pool_lease.py": "import otto.host\ndef test_a(): pass\n",
+            "tests/unit/test_error_base.py": "import otto.host\ndef test_a(): pass\n",
+            "tests/unit/test_family.py": (
+                "import pytest\nimport otto.host\n"
+                "pytestmark = pytest.mark.interpreter_agnostic\ndef test_a(): pass\n"
+            ),
+            "tests/e2e/cli/test_e2e.py": "import otto.host\ndef test_a(): pass\n",
+            "tests/unit/cli/helper.py": "import otto.host\n",
+        }
+        head = set(texts)
+        found = gs.consumers(lambda rev, p: texts.get(p), "head", head, ["host"])
+        assert found == ["tests/unit/cli/test_uses_host.py"], (
+            "inside the row (tests/unit/host, test_host_pool_lease), a guard rider, a family "
+            "module, an e2e module and a non-test module are not consumers"
+        )
+        assert gs.consumers(lambda rev, p: texts.get(p), "head", head, ["cli"]) == []
+
+    def test_two_packages_take_the_union_minus_both_rows(self):
+        texts = {
+            "tests/unit/a/test_a.py": "import otto.host\ndef test_a(): pass\n",
+            "tests/unit/b/test_b.py": "import otto.docker\ndef test_a(): pass\n",
+            "tests/unit/docker/test_d.py": "import otto.host\ndef test_a(): pass\n",
+            "tests/unit/host/test_h.py": "import otto.docker\ndef test_a(): pass\n",
+        }
+        found = gs.consumers(lambda rev, p: texts.get(p), "head", set(texts), ["docker", "host"])
+        assert found == ["tests/unit/a/test_a.py", "tests/unit/b/test_b.py"]
+
+    def test_a_real_consumer_rides_a_host_tip(self):
+        """tests/unit/cli/test_host.py imports otto.host from outside host's row (the issue's
+        example); the tip's quick carries it and drops the row's integration trees, keeping
+        the e2e trees whose hostless items no bed lane selects."""
+        head = _head_paths()
+        path = "src/otto/host/unix.py"
+        scope = gs.classify([gs.Change(path, "M")], _at_head(path, None), "base", "head", head)
+        assert "tests/unit/cli/test_host.py" in scope.quick_tip
+        assert "tests/unit/host" in scope.quick_tip
+        assert "tests/e2e/host" in scope.quick_tip
+        assert not any(p.startswith("tests/integration/") for p in scope.quick_tip)
+        assert "tests/integration/host" in scope.quick_paths, "the commit column keeps them"
+        lines = gs.commands(scope, tip=True, base="origin/main")
+        assert "make coverage-bed" in lines
+        assert "make conformance-bed" in lines
+        assert not any(line == "make coverage" for line in lines)
+
+    def test_a_whole_unit_tree_row_keeps_the_full_gate_at_the_tip(self):
+        head = _head_paths()
+        path = "src/otto/utils.py"
+        scope = gs.classify([gs.Change(path, "M")], _at_head(path, None), "base", "head", head)
+        assert scope.full_at_tip == [f"{path}: its row is the whole unit tree"]
+        assert gs.commands(scope, tip=True, base="origin/main")[1:6] == gs.FULL_GATE
+
+    def test_three_packages_escalate_and_carry_no_tip_quick(self):
+        head = _head_paths()
+        changes = [gs.Change(f"src/otto/{p}/x.py", "M") for p in ("host", "monitor", "docker")]
+        scope = gs.classify(changes, _at_head("", ""), "base", "head", head)
+        assert gs.ESCALATE in scope.classes
+        assert scope.quick_paths == []
+        assert scope.quick_tip == []
+        assert gs.commands(scope, tip=True, base="origin/main")[1:6] == gs.FULL_GATE
+
+    def test_a_scripts_change_beside_the_package_keeps_the_full_gate_at_the_tip(self):
+        head = _head_paths()
+        changes = [gs.Change("src/otto/host/unix.py", "M"), gs.Change("scripts/gate_tip.py", "M")]
+        scope = gs.classify(changes, _at_head("", ""), "base", "head", head)
+        assert {gs.SRC_LEAF, gs.SCRIPTS} <= set(scope.classes)
+        assert scope.quick_tip == scope.quick_paths, "no consumer scan when the tip is full"
+        lines = gs.commands(scope, tip=True, base="origin/main")
+        assert lines[1:6] == gs.FULL_GATE
+        assert "make coverage-bed" not in lines
+
+    def test_the_commit_column_alone_skips_the_consumer_scan(self):
+        head = _head_paths()
+        path = "src/otto/host/unix.py"
+        scope = gs.classify(
+            [gs.Change(path, "M")], _at_head(path, None), "base", "head", head, tip=False
+        )
+        assert scope.quick_tip == scope.quick_paths
+        assert "tests/unit/cli/test_host.py" not in scope.quick_tip
+
+
+_SCOPED_SRC_ROWS = sorted(k for k, trees in gs.UNIT_TREES.items() if not gs.whole_tree_row(trees))
+"""Every src package whose tip is scoped: the rows that are not the whole unit tree."""
+
+
+@pytest.mark.timeout(LANE_LEG_TIMEOUT_S)
+@pytest.mark.xdist_group("lane_leg_membership")
+@pytest.mark.parametrize("package", _SCOPED_SRC_ROWS)
+def test_every_item_in_a_src_rows_universe_is_selected_by_its_tip_lanes(
+    collect_marker_sets, package
+):
+    """THE TIP CENSUS (#797). For a src-leaf change in any scoped row, every item under the
+    row's trees and its consumers that `make coverage` would select (M_COVERAGE) is selected
+    by a tip leg: quick, quick-guards or coverage-bed. The tip replaces `make coverage` for
+    the row, so parity with its selection is the claim; the tiers M_COVERAGE excludes
+    (stability, browser, busybox, conformance, kmodcov) keep their own lanes, special rows
+    or nightly. Over the whole tree it would be red by design — hostless non-consumers are
+    CI's."""
+    head = _head_paths()
+    makefile = (CHECKOUT_ROOT / "Makefile").read_text()
+    path = f"src/otto/{package}/x.py"
+    scope = gs.classify([gs.Change(path, "M")], _at_head(path, ""), "base", "head", head | {path})
+    lines = gs.commands(scope, tip=True, base="origin/main")
+    assert "make coverage" not in lines, lines
+    assert "make coverage-bed" in lines, lines
+    universe = [*gs.UNIT_TREES[package], *scope.quick_tip]
+    compiled = [(leg, Expression.compile(leg.expr)) for leg in _oracle_legs(lines, makefile)]
+    coverage = Expression.compile(
+        _lane_invariants._makefile_marker_variables(makefile)["M_COVERAGE"]
+    )
+    gaps = []
+    for item in collect_marker_sets(()):
+        if not gs._within(item.path, universe):
+            continue
+        matcher = _marker_matcher(item.markers)
+        if not coverage.evaluate(matcher):
+            continue
+        if not any(
+            _within(item.path, leg.roots) and expr.evaluate(matcher) for leg, expr in compiled
+        ):
+            gaps.append(item.nodeid)
+    assert gaps == [], f"{len(gaps)} item(s) no tip lane selects:\n  " + "\n  ".join(gaps[:40])
+
+
 def test_no_tip_list_runs_the_hostless_matrix_locally():
     """The hostless sessions are the pull request's CI (#795): no oracle line names one
     (`test_gate_tip`'s census then keeps the stamped goals equal to what the oracle emits)."""
@@ -1823,14 +2049,16 @@ def test_a_non_default_base_reaches_every_line_that_runs_check_breaking(
     tmp_path: Path, capsys, monkeypatch
 ):
     """Without origin/main, `--base main` must govern the nested check-breaking runs too:
-    lint-arch and check-python reach it as a prerequisite, gate-fresh through its nested
-    make. The default base adds nothing, so the common case's lines are unchanged."""
+    lint-arch reaches it as a prerequisite, gate-fresh through its nested make (check-python
+    is the full gate's line, which this src-leaf + tests-leaf diff no longer runs at its tip;
+    `_with_range` is one function over every RANGE_TARGETS line). The default base adds
+    nothing, so the common case's lines are unchanged."""
     repo = _repo(tmp_path)
     _git(repo, "update-ref", "-d", "refs/remotes/origin/main")
     assert _main(monkeypatch, repo, "--base", "main") == 0
     lines = [line.strip() for line in capsys.readouterr().out.splitlines()]
     ranged = [line for line in lines if line.split()[:2] in _RANGED_TARGET_LINES]
-    assert {line.split()[1] for line in ranged} == set(gs.RANGE_TARGETS), lines
+    assert {line.split()[1] for line in ranged} == {"check-breaking", "lint-arch", "gate-fresh"}
     assert all(line.endswith(" RANGE=main..HEAD") for line in ranged), ranged
     (tmp_path / "default").mkdir()
     default = _repo(tmp_path / "default")

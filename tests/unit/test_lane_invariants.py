@@ -2752,6 +2752,7 @@ def test_the_oracle_names_no_bed_lane_the_makefile_does_not_lease() -> None:
     """Every target gate_scope hands a full tip as a bed lane carries the lease."""
     named = {line.split()[1] for lanes in gs.BED_LANES.values() for line in lanes}
     named |= {line.split()[1] for line in gs.FULL_GATE if line.startswith("make ")}
+    named |= {line.split()[1] for line in gs.SRC_LEAF_TIP_LANES}
     leased = set(BED_TARGETS_DIRECT + BED_TARGETS_AGGREGATORS)
     unleased = sorted(t for t in named if t not in leased and t not in HOSTLESS_TARGETS)
     assert not unleased, f"oracle lanes neither leased nor pinned hostless: {unleased}"
