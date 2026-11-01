@@ -1276,7 +1276,7 @@ def commands(scope: Scope, *, tip: bool, base: str) -> "list[str]":
     replaces quick/ty/ruff/lint-arch but never a web or docs line (check-python is Python
     only; the full gate already runs docs). Every stability line is one pass
     (:func:`stability_once`), and the test-isolation guard (`nox-unit-repeat`) is never
-    emitted: CI's unit-repeat job runs it on every push.
+    emitted: nightly's unit-repeat job runs it.
     """
     classes = set(scope.classes)
     python = [p for p in scope.changed_files if p.endswith(".py")]

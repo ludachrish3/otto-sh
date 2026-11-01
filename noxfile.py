@@ -453,9 +453,14 @@ def tests_unit_repeat(session: nox.Session) -> None:
     Running the whole no-VM ``tests/unit`` tree twice in one process — less the
     ``busybox`` tier, which fetches from the network (see the ``-m`` below) —
     (``--count=2 --repeat-scope=session``, single-process via a cleared
-    ``addopts``) trips any such regression at PR time instead of waiting for the
-    nightly. The ``interpreter_agnostic`` guards are left out: they hold no
-    process-global state, and repeating them is most of the job's wall clock
+    ``addopts``) trips any such regression. It is nightly's ``unit-repeat`` job
+    (#795): at ~60 min it was CI's longest job by a factor of two and set every
+    pull request's wall clock, while the registry class above is now restored
+    per test by the root conftest's ``_isolate_registries`` and the tmp-import
+    class by ``purge_tmp_imports``; what the repeat still catches is the class
+    nobody has named yet. The ``interpreter_agnostic`` guards are left out:
+    they hold no process-global state, and repeating them is most of the job's
+    wall clock
     (see the ``-m`` comment below). Single-process is deliberate: under
     ``-n auto`` the repeated items scatter across workers, so within-module
     collisions become probabilistic and cross-module leaks (a later test
@@ -503,9 +508,9 @@ def tests_unit_repeat(session: nox.Session) -> None:
         # one test into the next, and the interpreter-agnostic guards hold no
         # registry state to leak — they read build files and spawn child
         # pytests. Repeating them doubles the subprocess collections, the most
-        # expensive shape left in the family, for a question they cannot answer. CI
-        # measured this job at 22 min, the longest in the workflow. Pinned by
-        # tests/unit/test_python_matrix_tiering.py.
+        # expensive shape left in the family, for a question they cannot answer.
+        # CI measured the job at 56-63 min (2026-11-01), the longest in the
+        # workflow by a factor of two. Pinned by tests/unit/test_python_matrix_tiering.py.
         "-m",
         "not stability and not busybox and not conformance and not kmodcov "
         "and not interpreter_agnostic",

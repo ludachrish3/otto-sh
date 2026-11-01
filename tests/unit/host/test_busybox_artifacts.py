@@ -1538,6 +1538,22 @@ def test_the_drift_job_runs_the_sweep_and_not_the_reachability_probe():
     )
 
 
+@pytest.mark.parametrize("workflow", ["ci.yml", "nightly.yml"])
+def test_every_job_in_a_workflow_is_one_its_failure_report_waits_on(workflow):
+    """A job missing from `report-failure.needs` fails silently: no issue is opened.
+
+    The test-isolation repeat moved from ci.yml to nightly.yml (#795) and left
+    ci.yml's `needs` in the same change, but did not join nightly's: between the
+    two files the guard went from reported to unreported, and the body check
+    below could not see it, since it reads `needs`. Every job but the reporter
+    itself is in `needs`, in both workflows.
+    """
+    spec = yaml.safe_load((_WORKFLOWS / workflow).read_text(encoding="utf-8"))
+    jobs = set(spec["jobs"]) - {"report-failure"}
+    needs = set(spec["jobs"]["report-failure"]["needs"])
+    assert jobs <= needs, f"{workflow}: {sorted(jobs - needs)} can fail without opening an issue"
+
+
 def test_the_nightly_issue_body_names_every_job_it_reports_on():
     """An auto-filed issue that omits the job that failed sends the reader to green logs.
 
@@ -1761,7 +1777,7 @@ def test_every_entrypoint_spelling_still_names_a_live_job():
         )
     consumers = _unit_tree_jobs()
     assert ("ci.yml", "tests") in consumers, consumers
-    assert ("ci.yml", "unit-repeat") in consumers, consumers
+    assert ("nightly.yml", "unit-repeat") in consumers, consumers
     assert ("nightly.yml", "unit-matrix") in consumers, consumers
 
 
@@ -1773,9 +1789,10 @@ def test_every_lane_that_runs_the_unit_tree_caches_the_artifacts_it_only_consume
     conformance run whose cells are built from these artifacts. Issue #261 is
     what it costs when the fetch fails: an SSL handshake timeout reddened a
     release-bump push that touched only the version. The first fix cached
-    the `tests` job alone; `unit-repeat` runs the same tree and failed for
-    the same reason on the next push (run 32897991866), and nightly's
-    `unit-matrix` repeats it `nox_count` times per Python. The lane that
+    the `tests` job alone; `unit-repeat` (then a CI job, nightly's since
+    #795) runs the same tree and failed for the same reason on the next push
+    (run 32897991866), and nightly's `unit-matrix` repeats it `nox_count`
+    times per Python. The lane that
     VERIFIES the bytes (`busybox`) is the deliberate exception, guarded
     below; nightly's `conformance-hermetic` primes cold as a named step by
     choice and runs none of these spellings.

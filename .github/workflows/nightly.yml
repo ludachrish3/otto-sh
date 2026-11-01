@@ -3,7 +3,8 @@ name: Nightly
 # Nightly flake-flush: re-runs otto's NON-DETERMINISTIC lanes at high
 # iteration count to catch timing/order races a single push run can miss —
 # the SessionManager concurrency + telnet-deadlock stability tests, the
-# hostless unit matrix under pytest-repeat, and the 3-engine browser e2e.
+# hostless unit matrix under pytest-repeat, the single-process test-isolation
+# repeat (`unit-repeat`), and the 3-engine browser e2e.
 # Also runs the tier-2 real-signal chaos suite (tests/integration/chaos) once
 # per night, against a throwaway loopback sshd the suite starts and tears
 # down itself — real SIGINT/SIGTERM against real otto subprocesses, still no
@@ -150,6 +151,53 @@ jobs:
         run: >-
           uv run nox -s tests_hostless-${{ matrix.python-version }} --
           --count=${{ inputs.nox_count || '5' }} --repeat-scope=session
+
+  # The test-isolation guard: tests/unit twice in ONE process (the
+  # tests_unit_repeat session, see noxfile.py), so a test that leaves
+  # process-global state behind — a tmp-path import, a loop-bound lock, a
+  # module identity — breaks on the second pass. It ran on every push and
+  # pull request until #795: at ~60 min it was the longest CI job by a factor
+  # of two and set every PR's wall clock, while the leak classes it was built
+  # for are now restored per test by the root conftest (`_isolate_registries`)
+  # or purged by their fixtures. What it still catches is the class nobody has
+  # named yet, which is nightly's job. Single-process is deliberate: under
+  # `-n auto` the repeats scatter across workers and mask cross-module leaks.
+  # Not under pytest-repeat's `nox_count`: the session fixes --count=2, the
+  # check is pass/fail, not a soak.
+  unit-repeat:
+    name: unit-repeat (test-isolation guard)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.10
+        run: uv python install 3.10
+
+      # Same tree as `unit-matrix`, same artifact dependency, same rule: exact
+      # key on the pins, no `restore-keys`, detection stays in ci.yml's `busybox`.
+      - name: Cache the BusyBox artifacts this lane consumes (detection stays in `busybox`)
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/otto/busybox
+          key: busybox-artifacts-${{ hashFiles('tests/_fixtures/busybox_pins.json') }}
+
+      - name: Install strace (the import budget counts stat syscalls through it)
+        run: command -v strace || { sudo apt-get update && sudo apt-get install -y strace; }
+
+      # tests/unit/cov/test_kmodcov_reader.py builds otto_kmodcov's C with a gcc
+      # before 12, the gcc and clang, and reads what each writes with its own
+      # gcov; the runner image may lack gcc-11, clang or llvm-cov.
+      - name: Install gcc-11, clang and llvm-cov (the kmodcov reader tests)
+        run: command -v gcc-11 && command -v clang && command -v llvm-cov || { sudo apt-get update && sudo apt-get install -y gcc-11 clang llvm; }
+
+      - name: Repeat tests/unit in one process (test-isolation leak guard)
+        run: uv run nox -s tests_unit_repeat
 
   # Browser e2e is the flakiest lane — real Playwright engines, timing-
   # sensitive DOM — so nightly re-runs the full 3-engine matrix under
@@ -675,6 +723,7 @@ jobs:
       [
         stability-matrix,
         unit-matrix,
+        unit-repeat,
         dashboard,
         chaos-tier2,
         chaos-docker,
@@ -690,13 +739,13 @@ jobs:
       - name: Write issue body
         run: |
           {
-            echo "The nightly run failed (stability, unit matrix, dashboard browser e2e, the tier-2/tier-3 chaos suites, host-contract conformance, BusyBox upstream drift, and/or the next-Python canary moving off its expected rung)."
+            echo "The nightly run failed (stability, unit matrix, the test-isolation repeat, dashboard browser e2e, the tier-2/tier-3 chaos suites, host-contract conformance, BusyBox upstream drift, and/or the next-Python canary moving off its expected rung)."
             echo
             echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             echo "- Commit: ${{ github.sha }}"
             echo
             echo "Check the matrix logs for the failing job (stability-matrix /"
-            echo "unit-matrix / dashboard / chaos-tier2 / chaos-docker /"
+            echo "unit-matrix / unit-repeat / dashboard / chaos-tier2 / chaos-docker /"
             echo "conformance-hermetic / busybox-upstream-drift / python-canary),"
             echo "the Python version or browser, and the pytest-repeat iteration that"
             echo "tripped the failure. A conformance-hermetic failure names the"

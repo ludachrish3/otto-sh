@@ -562,10 +562,12 @@ embedded tiers, and the tunnel tier at its full depth (`CYCLES` 5). A
 `stability-unix` soak (its default `COUNT=10`) or an embedded one runs only by
 hand. So a regression that only a soak shows is found at nightly for unit, at
 release for tunnel, and only by a hand-run soak for unix and embedded; never at
-the commit. The test-isolation guard is never a local lane either: CI's
-`unit-repeat` job runs the same session on the pull request before the landing
-(and again on `main`), so a test-isolation leak shows up there. The target
-stays for running it by hand.
+the commit. The test-isolation guard is never a local lane, and since #795 not a PR
+check either: nightly's `unit-repeat` job runs the same session once a night.
+At about an hour it was CI's longest job by a factor of two and set every
+PR's wall clock, while the leak classes it was built for are restored per
+test by the root conftest or purged by their fixtures; what it still catches
+is the class nobody has named yet. The target stays for running it by hand.
 
 Some test trees are a lane's own and are never handed to `quick`. Both `quick`
 legs deselect the items of `tests/conformance/` (`make conformance`; the
@@ -730,7 +732,7 @@ fetch-then-restamp: `git fetch <remote> main && make gate-tip BASE=FETCH_HEAD`.
 There are two ways out of a refusal: stamp the tip, or `git push --no-verify`.
 The second is honest only about what it skips: CI never runs `make coverage`
 or the beds, so a push that bypasses the hook lands without either having run.
-(The test-isolation guard is not on that list: CI's `unit-repeat` job runs it.)
+(The test-isolation guard is not on that list: nightly's `unit-repeat` job runs it.)
 
 `scripts/coverage_stamp.py check` stays exact-tree, and `make release` still
 uses it that way. A release after a matrix commit therefore re-runs coverage

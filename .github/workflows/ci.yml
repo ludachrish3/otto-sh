@@ -117,54 +117,6 @@ jobs:
       - name: Run tests under Python ${{ matrix.python }}
         run: uv run nox -s tests_hostless-${{ matrix.python }}
 
-  # Repeat the tests/unit tree twice in one process (minus the stateless
-  # `interpreter_agnostic` guards and the ~4 min shim differential, which it
-  # ignores by path — see noxfile.py) to catch tests that
-  # leak process-global state — registry singletons (INSTRUCTIONS, LOADER_CLASSES,
-  # CLI_COMMANDS, SUITES), tmp-path imports, or otto.cli.* module identity. Such a
-  # leak passes the single-pass `tests` job above but breaks on the second run, so
-  # it only ever surfaced in the nightly `--count` matrix — days after landing
-  # (issue #108). This fast, no-VM, single-Python job moves that guard onto the
-  # pre-merge fast path. It is kept separate from `tests` because it needs no
-  # Python matrix and the tests_unit_repeat session clears addopts to run
-  # single-process (under -n auto the repeats scatter across workers and mask
-  # cross-module leaks).
-  unit-repeat:
-    name: unit-repeat (test-isolation guard)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7.0.1
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v10.3.3
-        with:
-          enable-cache: true
-
-      - name: Set up Python 3.10
-        run: uv python install 3.10
-
-      # Same tree as `tests`, same artifact dependency, same rule: exact key on
-      # the pins, no `restore-keys`, detection stays in `busybox`. The first
-      # cache covered `tests` alone and this job failed for the same cause on
-      # the next push (run 32897991866). The rationale is on the `tests` step.
-      - name: Cache the BusyBox artifacts this lane consumes (detection stays in `busybox`)
-        uses: actions/cache@v6
-        with:
-          path: ~/.cache/otto/busybox
-          key: busybox-artifacts-${{ hashFiles('tests/_fixtures/busybox_pins.json') }}
-
-      - name: Install strace (the import budget counts stat syscalls through it)
-        run: command -v strace || { sudo apt-get update && sudo apt-get install -y strace; }
-
-      # tests/unit/cov/test_kmodcov_reader.py builds otto_kmodcov's C with a gcc
-      # before 12, the gcc and clang, and reads what each writes with its own
-      # gcov; the runner image may lack gcc-11, clang or llvm-cov.
-      - name: Install gcc-11, clang and llvm-cov (the kmodcov reader tests)
-        run: command -v gcc-11 && command -v clang && command -v llvm-cov || { sudo apt-get update && sudo apt-get install -y gcc-11 clang llvm; }
-
-      - name: Repeat tests/unit in one process (test-isolation leak guard)
-        run: uv run nox -s tests_unit_repeat
-
   # One parallel job per browser engine (Blink/Gecko/Safari) — the nox
   # `dashboard` session is parametrized by browser, and this matrix runs each
   # variant on its own runner so wall-clock is a single engine's runtime, not
@@ -268,10 +220,11 @@ jobs:
   # rebuild-in-place — moved to nightly's `busybox-upstream-drift`.
   #
   # THE CACHING SPLIT IS UNCHANGED. The lanes that merely CONSUME the
-  # artifacts — `tests` and `unit-repeat` here, `unit-matrix` in nightly.yml —
+  # artifacts — `tests` here, `unit-matrix` and `unit-repeat` in nightly.yml —
   # verify nothing about them, and they DO cache: `tests` is a default gate on
   # five Pythons, so an outage there reds a push for a reason unrelated to it
-  # (issue #261), and `unit-repeat` reddened the same way on the next push.
+  # (issue #261), and `unit-repeat` (a CI job then) reddened the same way on
+  # the next push.
   # The reasoning above is about the job that checks the bytes, not every job
   # that reads them, and `tests/unit/host/test_busybox_artifacts.py` pins the
   # split in both directions — every consuming lane caches, this one never
@@ -582,7 +535,7 @@ jobs:
   # to the PR author in the checks UI.
   report-failure:
     name: Open issue on failure
-    needs: [lint-python, tests, unit-repeat, dashboard, busybox, check-ts, typecheck-python, docs, wheel-smoke, api-dump-invariance]
+    needs: [lint-python, tests, dashboard, busybox, check-ts, typecheck-python, docs, wheel-smoke, api-dump-invariance]
     if: failure() && github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
@@ -596,7 +549,7 @@ jobs:
             echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             echo "- Commit: ${{ github.sha }}"
             echo
-            echo "Check the job logs to see which of lint-python / tests / unit-repeat / dashboard / busybox / check-ts / typecheck-python / docs / wheel-smoke / api-dump-invariance failed."
+            echo "Check the job logs to see which of lint-python / tests / dashboard / busybox / check-ts / typecheck-python / docs / wheel-smoke / api-dump-invariance failed."
           } > issue-body.md
 
       - name: Create issue from file

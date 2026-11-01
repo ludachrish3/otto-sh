@@ -696,7 +696,7 @@ def test_a_stability_area_runs_its_lane_once(path, at_commit, at_tip):
 )
 def test_a_path_outside_the_stability_areas_runs_no_stability_lane_and_no_repeat(path):
     """Neither column names a stability lane outside the areas, a full gate included, and
-    no path selects `nox-unit-repeat`: CI's unit-repeat job runs the isolation guard."""
+    no path selects `nox-unit-repeat`: nightly's unit-repeat job runs the isolation guard."""
     scope = _real_scope(path)
     for tip in (False, True):
         lines = gs.commands(scope, tip=tip, base="origin/main")
@@ -1306,7 +1306,7 @@ def test_commands_for_each_class():
         *gs.FULL_GATE,
         "make stability-unix COUNT=1",
     ]
-    # the isolation guard is CI's unit-repeat job, after the push: a conftest, a fixture or
+    # the isolation guard is nightly's unit-repeat job: a conftest, a fixture or
     # the registry, deleted or not, adds no line to the full gate in either column
     for paths in (
         ["tests/conftest.py"],
