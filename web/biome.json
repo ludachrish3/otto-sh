@@ -95,6 +95,8 @@
       },
       "style": {
         "useComponentExportOnlyModules": "off",
+        "useThisInClassMethods": "off",
+        "noInlineStyles": "off",
         "useBlockStatements": "off",
         "noMagicNumbers": "off",
         "useNamingConvention": "off",
