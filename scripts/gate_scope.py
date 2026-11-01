@@ -529,8 +529,11 @@ QUICK_EXCLUDED = frozenset(
     {"stability", "busybox", "conformance", "kmodcov", "browser", "interpreter_agnostic"}
 )
 """The marks both `make quick` legs deselect (M_QUICK; pinned against the Makefile)."""
-STATIC_LANES = ["make check-python", "make docs", "make gate-fresh"]
-"""The full gate's lanes that run no test suite: lint, types, docs, the fresh-tree checks."""
+STATIC_LANES = ["make check-python", "make check-ts", "make docs", "make gate-fresh"]
+"""The full gate's lanes that run no test suite: lint, types (Python, then TypeScript), docs,
+the fresh-tree checks. Together the first two are `make check`; they are spelled apart
+because `check-python` carries a history check and runs at the push (`gate_tip.LIVE_GOALS`)
+while `check-ts` is stamped by tree."""
 TEST_SUITE_LANES = ["make coverage"]
 """The full gate's lanes that run test suites; every static lane precedes them.
 
@@ -1263,13 +1266,15 @@ def _dedupe(lines: "list[str]") -> "list[str]":
 def commands(scope: Scope, *, tip: bool, base: str) -> "list[str]":
     """Return the exact lines to run, in order: every class's column composed, then deduplicated.
 
-    Per commit — none: check-breaking only; docs: `make docs`; web: `make check-ts test-ts`;
+    Per commit — none: check-breaking only; docs: `make docs`; web: check-ts + test-ts;
     tests-leaf: quick over the surviving roots + ruff + lint-arch (a family module runs
     quick-guards instead); tests-structural: the same + quick-guards; src-leaf: quick
     (trees + riders) + ty + ruff + lint-arch + quick-guards; scripts: quick-guards + ty +
     ruff; escalate / full: the full gate + bed lanes, + quick-guards when a build file
-    changed. At the tip — none: check-breaking; docs: gate-fresh; web: check-ts
-    coverage-ts + gate-fresh; tests-*: the commit lines + quick-guards + gate-fresh;
+    changed. At the tip — none: check-breaking; docs: gate-fresh; web: check-ts +
+    coverage-ts + gate-fresh (one goal per line: beside the full gate, which runs check-ts,
+    the dedupe leaves coverage-ts alone); tests-*: the commit lines + quick-guards +
+    gate-fresh;
     src-leaf / scripts / escalate / full: the full gate + bed lanes (quick-guards is
     commit-only: `make coverage` runs it). Special rows add their column's lanes in both
     forms, full column or not (`make coverage` excludes those tiers); a full column
@@ -1313,7 +1318,8 @@ def commands(scope: Scope, *, tip: bool, base: str) -> "list[str]":
     if DOCS in classes and not tip:
         out.append("make docs")
     if WEB in classes:
-        out.append("make check-ts coverage-ts" if tip else "make check-ts test-ts")
+        # One goal per line, so `_dedupe` drops `make check-ts` beside a full gate.
+        out += ["make check-ts", "make coverage-ts" if tip else "make test-ts"]
     out += scope.special_tip if tip else scope.special
     if tip and not full and classes & {DOCS, WEB, TESTS_LEAF, TESTS_STRUCTURAL}:
         out.append("make gate-fresh")

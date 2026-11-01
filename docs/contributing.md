@@ -478,8 +478,9 @@ them; the CI column of [the quality-gates
 table](architecture/quality-gates.md#what-binds-each-gate) names them, and only
 the issue-filing job waits for a failed push to `main`. **The local tip adds
 what CI cannot run**: `make coverage` and the diff's bed lanes, which need the
-lab. The static lanes the tip list also names (`make check-python`, `make
-docs`, `make gate-fresh`) run at the push itself, by the pre-push hook
+lab. It also stamps `make check-ts`, so a Biome, knip or tsc failure costs a
+minute, and names the other static lanes, `make check-python`, `make docs`
+and `make gate-fresh`, which run at the push itself, by the pre-push hook
 (`.githooks/pre-push`; [the landing's gate is
 stamped](#the-landings-gate-is-stamped) says what it checks). The hostless
 matrix is therefore not a local tip lane: `make nox-hostless` stays for
@@ -518,7 +519,7 @@ Each changed path has a class; a diff takes the union of its paths' classes:
 | --- | --- | --- | --- |
 | `none` | `docs/superpowers/specs/`, `todo/`, `AGENTS.md` | `make check-breaking` only | the same |
 | `docs` | `README.md`, `docs/` (not `conf.py`, `_ext/`, `examples/`) | `make docs` | `make gate-fresh` (it runs `docs`) |
-| `web` | `web/src/` (not generated `*.gen.ts`) | `make check-ts test-ts` | `make check-ts coverage-ts`, `make gate-fresh` |
+| `web` | `web/src/` (not generated `*.gen.ts`) | `make check-ts`, `make test-ts` | `make check-ts`, `make coverage-ts`, `make gate-fresh` |
 | `tests-leaf` | a test module whose tests and marks are unchanged (an added test is a leaf change unless it carries a mark), and the two measured matrices, over their reader modules | `make quick` over its package, ruff, `make lint-arch`; a module whose every test carries `interpreter_agnostic` runs `make quick-guards` instead of `make quick` | those, `make quick-guards`, `make gate-fresh` |
 | `tests-structural` | a test module that removes or renames a test, adds a marked one, or changes a mark (its arguments too) | the leaf lines plus `make quick-guards` | as `tests-leaf` |
 | `src-leaf` | one or two `src/otto/` packages | `make quick` over the package's unit and bed trees plus the tree-wide guards, ty, ruff, `make lint-arch`, `make quick-guards` | the full gate and the package's bed lane |
@@ -526,12 +527,15 @@ Each changed path has a class; a diff takes the union of its paths' classes:
 | `escalate` | a conftest, `tests/_fixtures/`, the registry, a package `__init__`, a build file (`Makefile`, `noxfile.py`, `pyproject.toml`, CI), three or more packages | the full gate, the bed lanes, plus `make quick-guards` (build file) | the full gate and the bed lanes |
 | `full` | any path with no row | the full gate | the full gate |
 
-The full gate is `make check-python`, `make docs`, `make gate-fresh` and
-`make coverage`, in that order: the static lanes first, so that run by hand a
-lint, type or docs failure costs minutes rather than the twenty `make coverage`
-takes to reach it. `make gate-tip` stamps only the suite and bed lanes and
-names the static ones "live at push": the pre-push hook runs them, through
-`gate-fresh`, on the tip it is pushing. Beyond the `escalate`
+The full gate is `make check-python`, `make check-ts` (together, `make
+check`), `make docs`, `make gate-fresh` and `make coverage`, in that order:
+the static lanes first, so that run by hand a lint, type or docs failure costs
+minutes rather than the twenty `make coverage` takes to reach it. `make
+gate-tip` stamps `make check-ts`, the suite and the bed lanes, and names the
+other static lanes "live at push": `check-python` carries a history check, so
+the pre-push hook runs them, through `gate-fresh`, on the tip it is pushing.
+Every line names one goal, so a `web` diff beside the full gate adds `make
+coverage-ts` alone: the full gate's `make check-ts` is not run twice. Beyond the `escalate`
 and `full` classes, the commit column is the full gate when a test module
 carries a `stability` or `chaos` mark outside every lane's files, carries a
 `pytestmark` (or a mark decorator) the oracle cannot read, or leaves no

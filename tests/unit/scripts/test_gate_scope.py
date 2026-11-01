@@ -1228,10 +1228,11 @@ def test_commands_for_each_class():
     assert gs.commands(docs, tip=False, base=base) == [cb, "make docs"]
     assert gs.commands(docs, tip=True, base=base) == [cb, "make gate-fresh"]
     web = _s([gs.WEB], files=["web/src/App.tsx"])
-    assert gs.commands(web, tip=False, base=base) == [cb, "make check-ts test-ts"]
+    assert gs.commands(web, tip=False, base=base) == [cb, "make check-ts", "make test-ts"]
     assert gs.commands(web, tip=True, base=base) == [
         cb,
-        "make check-ts coverage-ts",
+        "make check-ts",
+        "make coverage-ts",
         "make gate-fresh",
     ]
     leaf = _s([gs.TESTS_LEAF], quick=["tests/unit/cli"], files=["tests/unit/cli/test_a.py"])
@@ -1390,7 +1391,7 @@ def test_the_union_composes_every_class_before_deduplication():
         files=["src/otto/cli/x.py", "web/src/App.tsx", "docs/a.md"],
     )
     at_tip = gs.commands(mixed, tip=True, base=base)
-    assert at_tip == ["make check-breaking", *gs.FULL_GATE, "make check-ts coverage-ts"], at_tip
+    assert at_tip == ["make check-breaking", *gs.FULL_GATE, "make coverage-ts"], at_tip
     at_commit = gs.commands(mixed, tip=False, base=base)
     assert at_commit == [
         "make check-breaking",
@@ -1400,19 +1401,20 @@ def test_the_union_composes_every_class_before_deduplication():
         "make lint-arch",
         "make quick-guards",
         "make docs",
-        "make check-ts test-ts",
+        "make check-ts",
+        "make test-ts",
     ], at_commit
     escalated = _s([gs.ESCALATE, gs.WEB], files=["Makefile", "web/src/App.tsx"])
     assert gs.commands(escalated, tip=False, base=base) == [
         "make check-breaking",
         *gs.FULL_GATE,
         "make quick-guards",
-        "make check-ts test-ts",
-    ]
+        "make test-ts",
+    ], "the full gate's own `make check-ts` is not run a second time"
     assert gs.commands(escalated, tip=True, base=base) == [
         "make check-breaking",
         *gs.FULL_GATE,
-        "make check-ts coverage-ts",
+        "make coverage-ts",
     ]
 
 
@@ -1618,6 +1620,7 @@ def test_the_full_gate_is_pinned_literally():
     """Written out, not derived: dropping a line from the production constant reddens this."""
     assert gs.FULL_GATE == [
         "make check-python",
+        "make check-ts",
         "make docs",
         "make gate-fresh",
         "make coverage",
@@ -1626,6 +1629,7 @@ def test_the_full_gate_is_pinned_literally():
     assert gs.commands(full, tip=False, base="origin/main") == [
         "make check-breaking",
         "make check-python",
+        "make check-ts",
         "make docs",
         "make gate-fresh",
         "make coverage",
@@ -1646,6 +1650,7 @@ def test_the_full_gate_runs_every_static_lane_before_any_test_suite():
     assert gs.FULL_GATE == gs.STATIC_LANES + gs.TEST_SUITE_LANES
     assert not set(gs.STATIC_LANES) & set(gs.TEST_SUITE_LANES)
     assert gs.FULL_GATE[0] == "make check-python", "the cheapest check is the first lane"
+    assert gs.FULL_GATE[:2] == ["make check-python", "make check-ts"], "together: `make check`"
 
 
 def test_no_special_tree_is_ever_handed_to_quick():
@@ -2049,6 +2054,7 @@ def test_tip_commands_read_the_tree_at_the_given_revision(tmp_path):
     assert gs.tip_commands(repo, base, "HEAD", env) == [
         f"make check-breaking RANGE={base}..HEAD",
         f"make check-python RANGE={base}..HEAD",
+        "make check-ts",
         "make docs",
         f"make gate-fresh RANGE={base}..HEAD",
         "make coverage",
