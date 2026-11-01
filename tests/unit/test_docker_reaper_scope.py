@@ -39,6 +39,7 @@ import re
 from pathlib import Path
 
 from otto.docker.compose import use_case_project
+from tests._fixtures.docker_reap import ORPHAN_FRAGMENTS
 from tests._fixtures.paths import TESTS_ROOT
 
 _INTEGRATION = TESTS_ROOT / "integration"
@@ -190,22 +191,6 @@ def test_the_scanners_see_the_shapes_they_judge() -> None:
     assert not reaps_under_the_lease(other)  # any pool host, maybe not the docker host
 
 
-def orphan_project_fragments(conftest_source: str) -> tuple[str, ...]:
-    """The reaper's infix list, read off the conftest SOURCE (AST, not import).
-
-    Read rather than imported for the reason the rest of this module reads
-    source: importing ``tests.integration.conftest`` from the default lane
-    would execute a conftest for a tree this lane never collects.
-    """
-    tree = ast.parse(conftest_source)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Assign) and any(
-            isinstance(t, ast.Name) and t.id == "_ORPHAN_PROJECT_FRAGMENTS" for t in node.targets
-        ):
-            return tuple(ast.literal_eval(node.value))
-    raise AssertionError(f"{_CONFTEST} no longer defines `_ORPHAN_PROJECT_FRAGMENTS`")
-
-
 def minted_suffixes(source: str) -> list[str]:
     """The literal prefixes an e2e module's ``fresh_suffix`` fixture mints."""
     return _FRESH_SUFFIX.findall(source)
@@ -228,8 +213,9 @@ def test_the_e2e_suffix_idiom_still_yields_a_reapable_project_name() -> None:
     --filter name=``, which match CONTAINER and NETWORK names
     (``<project>-<service>-<n>``, ``<project>_default``), not the project.
     """
-    fragments = orphan_project_fragments(_CONFTEST.read_text())
+    fragments = ORPHAN_FRAGMENTS  # the reap's own list, one home (tests/_fixtures/docker_reap.py)
     assert fragments, "the reaper matches nothing at all"
+    assert "reap_docker(" in _CONFTEST.read_text(), "the conftest sweep no longer runs the module"
 
     minted = [
         (path, suffix)

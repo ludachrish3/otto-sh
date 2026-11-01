@@ -174,6 +174,7 @@ UNIT_TREES = {
         "tests/integration/test_docker_in_instruction.py",
         "tests/integration/test_docker_run_get_put.py",
         "tests/integration/test_docker_use_case.py",
+        "tests/unit/test_docker_reap.py",
         "tests/unit/test_docker_reaper_scope.py",
     ],
     "link": [

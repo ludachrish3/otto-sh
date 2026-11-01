@@ -198,6 +198,7 @@ MAINTAINER_TARGETS = frozenset(
         "api-snapshot",
         "api-surface-report",
         "bed-lease",
+        "bed-reap",
         "bed-release",
         "bed-status",
         "browsers",

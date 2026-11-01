@@ -71,6 +71,98 @@ def _gone_pid() -> int:
     return proc.pid
 
 
+def test_a_pipeline_sibling_of_the_holder_is_not_a_survivor(root):
+    """`make lane 2>&1 | tee log`: tee shares make's group, is not the run's, and never ends it."""
+    # The run is the inner shell (the lane's make); `cat` is its launcher's other
+    # pipeline member, so it shares the group without being the run's.
+    done = _run_shell(
+        root,
+        f"sh -c '{SCRIPT} acquire --pid $$ && {SCRIPT} release --pid $$' | cat; echo DONE",
+    )
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "released by pid" in done.stdout, done.stdout
+    assert "kept" not in done.stdout
+    assert not (root / "tech1.json").exists()
+
+
+def test_survivors_keeps_a_worker_a_subreaper_adopted(monkeypatch):
+    """A sibling is the parent's other child started beside the holder; an adopted worker is not.
+
+    `tee` was started by the shell within the window of the holder's own start;
+    `orphan` was adopted by a subreaper above the shell; `adopted` was adopted by
+    the shell itself (a launcher that is a subreaper) but long after the holder
+    started; `worker` is the holder's own descendant.
+    """
+    holder, shell, subreaper, tee, orphan, worker, adopted = 100, 90, 80, 101, 102, 103, 104
+    parents = {
+        holder: shell,
+        shell: subreaper,
+        subreaper: 1,
+        tee: shell,
+        orphan: subreaper,
+        worker: holder,
+        adopted: shell,
+    }
+    ticks = os.sysconf("SC_CLK_TCK")
+    starts = {
+        holder: 1000,
+        tee: 1000 + ticks,
+        orphan: 1000,
+        worker: 9000,
+        adopted: 1000 + 5 * ticks,
+    }
+
+    def ancestors(pid: int) -> list[int]:
+        chain: list[int] = []
+        while pid in parents:
+            pid = parents[pid]
+            chain.append(pid)
+        return chain
+
+    monkeypatch.setattr(bed_lease, "ancestors", ancestors)
+    monkeypatch.setattr(bed_lease, "process_start", starts.get)
+    monkeypatch.setattr(
+        bed_lease, "running_members", lambda pgid: [holder, tee, orphan, worker, adopted]
+    )
+    record = bed_lease.Record(
+        owner="u@h",
+        user="u",
+        pid=holder,
+        pid_started=1000,
+        groups=[bed_lease.Group(pgid=shell, pid=holder, owner="holder")],
+        checkout="/x",
+        since="2026-01-01T00:00:00+00:00",
+        expires="2026-01-01T04:00:00+00:00",
+        purpose="",
+        resources=[],
+    )
+    assert bed_lease.survivors(record) == [orphan, worker, adopted]
+
+
+def test_a_group_registered_during_the_drain_is_counted(root, monkeypatch):
+    """The drain waits on the record it read; a group a nested acquire adds meanwhile counts."""
+    _run(root, "acquire", "--pid", str(ME))
+    cell = bed_lease.load_cell(LAB, root, resources=False)
+    record = bed_lease.read_record(cell)
+    assert record is not None
+
+    def drain_while_a_group_joins(rec, budget):
+        grown = bed_lease.read_record(cell)
+        assert grown is not None
+        grown.groups.append(bed_lease.Group(pgid=424242, pid=424242, owner="holder"))
+        bed_lease.write_record(cell, grown)
+        return []
+
+    monkeypatch.setattr(bed_lease, "drain", drain_while_a_group_joins)
+    monkeypatch.setattr(bed_lease, "survivors", lambda rec: [4242] if len(rec.groups) >= 2 else [])
+    current, left = bed_lease.drained_run(cell, record, 1)
+    assert current is not None
+    assert len(current.groups) == 2
+    assert left == [4242]
+    assert bed_lease.release(cell, ME, force=False) == 0
+    assert (root / "tech1.json").exists(), "kept: the run grew while it was drained"
+
+
 def _orphan_sleeper(seconds: float) -> int:
     """Start a sleeper nobody here will reap: a grandchild, its parent gone, in its own session.
 

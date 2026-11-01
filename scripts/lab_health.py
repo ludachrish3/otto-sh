@@ -478,6 +478,15 @@ def _hop_index(hosts: list[dict]) -> dict[str, dict]:
     return {_host_id(h): h for h in hosts}
 
 
+def direct_ssh_host_ids(path: Path) -> list[str]:
+    """Return the ids of the lab file's hosts this script reaches directly over SSH.
+
+    The bed reap's host set (``scripts/bed_reap.py``): the one rule
+    :func:`_is_ssh_host` spells, over the same flattened entries.
+    """
+    return [_host_id(h) for h in _load_hosts(path) if _is_ssh_host(h)]
+
+
 def _is_ssh_host(host: dict) -> bool:
     """Return True if we log in directly over SSH (the ``UnixHost`` family).
 

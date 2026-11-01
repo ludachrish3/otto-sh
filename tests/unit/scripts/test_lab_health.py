@@ -1448,3 +1448,11 @@ def test_a_failed_reset_row_keeps_the_info_column_and_puts_the_tail_last(monkeyp
     info = row[16 + 16 + 10 + 13 :][:18]
     assert info.rstrip() == "reset failed", row
     assert row.endswith("'(stuck in a very long prompt)> '"), row
+
+
+def test_direct_ssh_host_ids_are_the_unix_vms_of_the_lab_file():
+    """The bed reap's host set: lab_health's own SSH rule over the lab file, as otto ids."""
+    from tests._fixtures.labdata import lab_data_path
+
+    ids = lab_health.direct_ssh_host_ids(lab_data_path("tech1"))
+    assert ids == ["test1", "test2", "test3", "test4"], ids

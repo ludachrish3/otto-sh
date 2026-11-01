@@ -20,6 +20,7 @@ prints or knows about exit codes/colors.
 """
 
 import contextlib
+from collections.abc import Callable
 from dataclasses import dataclass
 from dataclasses import field as dc_field
 from typing import TYPE_CHECKING, Any
@@ -56,6 +57,7 @@ from .placement import (
 )
 from .sentinel import (
     IMPAIR_PS_COMMAND,
+    ImpairTimer,
     encode_impair_sentinel,
     encode_impair_sentinel_v3,
     parse_impair_ps,
@@ -411,7 +413,7 @@ async def _exec(host: Any, cmd: str) -> Any:
 
     **THE DRY-RUN BACKSTOP LIVES HERE**, at the single funnel every read in
     this package goes through — :func:`_read_state`, :func:`_resolve_placements`
-    and :func:`_cancel_timers` all arrive by it. A dry run reaching this line
+    and ``_cancel_timers`` all arrive by it. A dry run reaching this line
     means some path above forgot to short-circuit, and the ONLY safe answer is
     to fail loudly: ``BaseHost.exec`` would otherwise hand back an ``is_ok``
     ``CommandResult`` whose value is a banner, and every caller here PARSES
@@ -734,15 +736,35 @@ async def _cancel_timers(
     same dead session and raises — so the only difference is that the failure
     now names the step that actually failed rather than the one after it.
     """
+    return await _cancel_timers_matching(
+        host,
+        lambda t: (
+            t.link_id == link_id and t.netdev == netdev and (everything or t.selector == selector)
+        ),
+    )
+
+
+async def cancel_all_timers(host: Any) -> int:
+    """Kill every live otto expire-timer on *host*, whatever its link or netdev.
+
+    The bed reap's sweep: a timer is otto's by its sentinel, including one on a
+    link a test created and never declared. Same scan-and-kill as
+    ``_cancel_timers``, with the one predicate that matches every timer.
+    """
+    return await _cancel_timers_matching(host, lambda _timer: True)
+
+
+async def _cancel_timers_matching(host: Any, keep: "Callable[[ImpairTimer], bool]") -> int:
+    """Kill every timer the sentinel scan lists that *keep* accepts: the one scan-and-kill.
+
+    Best-effort against an unreachable host (0, no error); a reachable host
+    whose scan fails propagates. See ``_cancel_timers`` for why.
+    """
     try:
         result = await _exec(host, IMPAIR_PS_COMMAND)
     except LinkHostUnreachableError:
         return 0
-    pids = [
-        t.pid
-        for t in parse_impair_ps(result.value)
-        if t.link_id == link_id and t.netdev == netdev and (everything or t.selector == selector)
-    ]
+    pids = [t.pid for t in parse_impair_ps(result.value) if keep(t)]
     if not pids:
         return 0
     await _root_run(host, kill_command(pids))

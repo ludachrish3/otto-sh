@@ -6,7 +6,10 @@ import uuid
 
 import pytest
 
+from scripts.bed_lease import load_labs
 from tests._fixtures._host_pool import lease_unix_host
+from tests._fixtures.docker_reap import docker_parents
+from tests._fixtures.labdata import lab_data_path
 from tests.e2e._otto_subprocess import PROJECT1
 
 from ._cli import (
@@ -19,10 +22,12 @@ from ._cli import (
 )
 
 # Docker container hosts require an SSH-based UnixHost parent (see
-# DockerContainerHost._make_session: term must be 'ssh').  test2 defaults
-# to telnet (it's first in its valid_terms list), so it cannot host containers.
-# Restrict the docker lease pool to the SSH-first unix peers only.
-_DOCKER_POOL = ("test1", "test3")
+# DockerContainerHost._make_session: term must be 'ssh'). test2 defaults to
+# telnet (it's first in its valid_terms list), so it cannot host containers.
+# The pool is the one rule `docker_parents` spells, over the loaded unix lab
+# (test1 and test3; `tests/unit/test_docker_reap.py` pins it), so the pool
+# and the bed reap's docker step cannot drift apart.
+_DOCKER_POOL = tuple(docker_parents(load_labs(lab_data_path("tech1"), ["unix"]).hosts.values()))
 
 
 @pytest.fixture
@@ -34,7 +39,7 @@ def docker_host() -> str:  # type: ignore[type-arg]
     runs against each docker daemon at a time, while xdist can distribute
     different tests to different workers/daemons concurrently.
 
-    The pool is restricted to ``_DOCKER_POOL`` (test1 + test3) because
+    The pool is ``_DOCKER_POOL`` (test1 + test3, by ``docker_parents``) because
     ``DockerContainerHost`` requires its parent to have ``term='ssh'``.
     test2 defaults to telnet (telnet is first in its valid_terms),
     so it cannot serve as a docker container parent.

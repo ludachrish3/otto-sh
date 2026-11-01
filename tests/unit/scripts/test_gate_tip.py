@@ -2119,3 +2119,152 @@ class TestTimings:
         assert NOX_JUNIT_DIR == gate_stamp_common.JUNIT_DIR == Path("reports/junit")
         watcher = (CHECKOUT_ROOT / "scripts" / "watch_release.sh").read_text()
         assert 'JUNIT_DIR="$REPO/reports/junit"' in watcher
+
+
+class TestInterrupt:
+    """An interrupted run reaps the bed and releases the lease; an undrained one keeps it.
+
+    The policy is :func:`gate_tip.main`'s docstring; the runner's part of it (the
+    interrupt relayed to the lane's group and waited out, the second one killing
+    it) is :mod:`scripts.process_group`'s, pinned in its own tests.
+    """
+
+    @staticmethod
+    def _stub_reap(monkeypatch):
+        seen = []
+        monkeypatch.setattr(gt, "reap_and_release", lambda lab, pid, out: seen.append((lab, pid)))
+        return seen
+
+    def test_an_interrupted_run_reaps_releases_and_exits_130(self, tmp_path, monkeypatch):
+        repo = _repo(tmp_path)
+        seen = self._stub_reap(monkeypatch)
+
+        def interrupted(_opts):
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(gt, "run", interrupted)
+        opts = _options(repo, FakeRunner(), lab=Path("lab.json"), pid=4242)
+        assert gt._run_interruptible(opts) == gt.EXIT_INTERRUPTED
+        assert seen == [(Path("lab.json"), 4242)], "the run the recipe named, never our parent"
+        assert "interrupted; the lanes are gone: reaping the bed" in opts.out.getvalue()
+
+    def test_an_undrained_run_keeps_the_lease_and_names_the_hand_reap(self, tmp_path, monkeypatch):
+        from scripts.process_group import UndrainedError
+
+        repo = _repo(tmp_path)
+        seen = self._stub_reap(monkeypatch)
+
+        def undrained(_opts):
+            raise UndrainedError(4242, [4243])
+
+        monkeypatch.setattr(gt, "run", undrained)
+        opts = _options(repo, FakeRunner(), lab=Path("lab.json"))
+        assert gt._run_interruptible(opts) == gt.EXIT_INTERRUPTED
+        assert seen == []
+        out = opts.out.getvalue()
+        assert "interrupted twice and" in out
+        assert "pids 4243" in out
+        assert "run `make bed-reap` once they are gone" in out
+
+    def test_sigterm_is_the_same_unwind_as_an_interrupt(self, tmp_path, monkeypatch):
+        import signal
+
+        repo = _repo(tmp_path)
+        seen = self._stub_reap(monkeypatch)
+
+        def terminated(_opts):
+            os.kill(os.getpid(), signal.SIGTERM)
+            time.sleep(5)
+            pytest.fail("SIGTERM did not unwind the run")
+
+        monkeypatch.setattr(gt, "run", terminated)
+        before = signal.getsignal(signal.SIGTERM)
+        opts = _options(repo, FakeRunner(), lab=Path("lab.json"))
+        assert gt._run_interruptible(opts) == gt.EXIT_INTERRUPTED
+        assert len(seen) == 1
+        assert signal.getsignal(signal.SIGTERM) is before, "the handler is restored"
+
+    @pytest.mark.timeout(60)
+    def test_a_real_lane_is_interrupted_through_the_shared_core(self, tmp_path, monkeypatch):
+        """Ctrl-C mid-lane: the lane's grandchild is gone before the reap runs, and 130."""
+        from otto.utils import wait_for
+        from tests.unit.scripts.test_process_group import _SPAWNER, _gone
+
+        repo = _repo(tmp_path)
+        pid_file = tmp_path / "grandchild.pid"
+        order = []
+        monkeypatch.setattr(
+            gt,
+            "reap_and_release",
+            lambda lab, pid, out: order.append(_gone(int(pid_file.read_text()))),
+        )
+        lane = f"{sys.executable} -c {json.dumps(_SPAWNER)} {pid_file}"
+        real_wait = subprocess.Popen.wait
+        raised = []
+
+        def wait_then_interrupt(self, timeout=None):
+            # Only the lane's own wait is the Ctrl-C: the run's other subprocesses wait too.
+            if not raised and self.args == lane:
+                raised.append(self.pid)
+                wait_for(pid_file.exists, 10.0, interval=0.02, on_timeout="no grandchild pid")
+                raise KeyboardInterrupt
+            return real_wait(self, timeout)
+
+        monkeypatch.setattr(subprocess.Popen, "wait", wait_then_interrupt)
+        _oracle(monkeypatch, repo, [NOX])
+
+        def runner(cmd, cwd, env):
+            # The oracle's known lane, run as the spawner through the real runner.
+            return gt._default_runner(lane if cmd == NOX else cmd, cwd, env)
+
+        opts = _options(repo, runner, lab=Path("lab.json"))
+        assert gt._run_interruptible(opts) == gt.EXIT_INTERRUPTED
+        assert order == [True], "the grandchild was gone when the reap ran"
+        assert gt.exact_stamp(gt.stamps_root(repo, gt.STORE), tree_hash(repo), NOX) is None
+
+    def test_reap_and_release_without_a_lab_only_points_at_the_hand_reap(self, monkeypatch):
+        out = io.StringIO()
+        from scripts import bed_reap
+
+        monkeypatch.setattr(bed_reap, "reap", lambda *a, **k: pytest.fail("reaped without a lab"))
+        gt.reap_and_release(None, None, out)
+        assert out.getvalue() == "gate-tip: no --lab and --pid, so no reap: run `make bed-reap`\n"
+
+    def test_reap_and_release_runs_the_scripts_own_functions_in_order(self, tmp_path, monkeypatch):
+        from scripts import bed_lease, bed_reap
+
+        calls = []
+        cell = object()
+        monkeypatch.setattr(bed_lease, "root_from", lambda arg: tmp_path / "root")
+        monkeypatch.setattr(
+            bed_lease, "load_cell", lambda lab, root: calls.append(("cell", lab, root)) or cell
+        )
+        monkeypatch.setattr(
+            bed_reap, "reap", lambda c, pid, **kw: calls.append(("reap", c, pid, kw)) or 1
+        )
+        monkeypatch.setattr(
+            bed_lease,
+            "release",
+            lambda c, pid, *, force: calls.append(("release", c, pid, force)) or 0,
+        )
+        gt.reap_and_release(Path("lab.json"), 4242, io.StringIO())
+        assert calls == [
+            ("cell", Path("lab.json"), tmp_path / "root"),
+            ("reap", cell, 4242, {}),
+            ("release", cell, 4242, False),
+        ]
+
+    def test_the_lab_option_reaches_the_run(self, tmp_path, monkeypatch):
+        repo = _repo(tmp_path)
+        seen = []
+        monkeypatch.setattr(gt, "_run_interruptible", lambda opts: seen.append(opts) or 0)
+        argv = ["--repo", str(repo), "--lab", "tests/lab.json", "--pid", "4242", "--dry-run"]
+        assert gt.main(argv) == 0
+        assert (seen[0].lab, seen[0].pid) == (Path("tests/lab.json"), 4242)
+        assert seen[0].dry_run
+        seen.clear()
+        assert gt.main(["--repo", str(repo)]) == 0
+        assert (seen[0].lab, seen[0].pid) == (None, None)
+        for half in (["--lab", "x"], ["--pid", "1"]):
+            with pytest.raises(SystemExit):
+                gt.main(["--repo", str(repo), *half])

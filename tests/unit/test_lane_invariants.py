@@ -2394,6 +2394,8 @@ def test_the_family_runs_on_the_primary_interpreter_only_in_the_release_rows(
 # spells, and the macro definitions are pinned beside them (a macro emptied to
 # nothing would otherwise satisfy the literal scan).
 
+LAB_TOOLS = ["vm-health", "qemu-restart", "console-logout"]
+"""The console and guest probes: leased (they touch the bed), never reaped (they are the reap's)."""
 BED_TARGETS_DIRECT = [
     "coverage-python",
     "coverage-integration",
@@ -2432,6 +2434,8 @@ BED_TARGETS_AGGREGATORS = [
 """Targets that run bed targets with `$(MAKE)`: they hold the lease across them."""
 LEASE_TOOLS = ["bed-status", "bed-lease", "bed-release"]
 """The lease's own verbs: they read or hold the lease, they do not take it around a lane."""
+REAPED_TARGETS = [t for t in BED_TARGETS_DIRECT if t not in LAB_TOOLS]
+"""The direct lanes that run a suite: reaped after the acquire and again before the release."""
 HOSTLESS_TARGETS = [
     # the pinned and hostless suites and gates
     "coverage",
@@ -2540,18 +2544,48 @@ def test_every_bed_target_takes_the_lease_first_and_releases_it_last(target: str
     assert len(lines) > 2, f"{target} leases nothing: only the lease lines are left"
 
 
+@pytest.mark.parametrize("target", REAPED_TARGETS)
+def test_every_suite_lane_reaps_after_its_acquire_and_before_its_release(target: str) -> None:
+    """scripts/bed_reap.py runs before the suite, and again after a green one."""
+    lines = _bed_lines(target)
+    assert lines[1] == "$(call bed_reap)", (target, lines[1])
+    assert lines[-2] == "$(call bed_reap)", (target, lines[-2])
+    assert lines.count("$(call bed_reap)") == 2, (target, lines)
+
+
+@pytest.mark.parametrize("target", LAB_TOOLS + BED_TARGETS_AGGREGATORS)
+def test_the_probes_and_the_holders_lease_without_reaping(target: str) -> None:
+    """A probe is the reap's own step; a holder's lanes reap for themselves."""
+    assert "$(call bed_reap)" not in _bed_lines(target), target
+
+
 @pytest.mark.parametrize("target", HOSTLESS_TARGETS + LEASE_TOOLS)
 def test_no_hostless_target_takes_the_lease(target: str) -> None:
     lines = _bed_lines(target)
     assert not [line for line in lines if "bed_" in line], (target, lines)
 
 
-def test_quick_leases_only_for_a_bed_path() -> None:
+def test_quick_leases_and_reaps_only_for_a_bed_path() -> None:
     """The guard line first (a missing PATHS is an error before any lease), then the lease."""
     lines = _bed_lines("quick")
     assert "$(error quick: PATHS is required" in lines[0], lines[0]
     assert lines[1] == f"$(call bed_acquire,quick){QUICK_CLASSIFIER}", lines[1]
+    assert lines[2] == f"$(call bed_reap){QUICK_CLASSIFIER}", lines[2]
+    assert lines[-2] == f"$(call bed_reap){QUICK_CLASSIFIER}", lines[-2]
     assert lines[-1] == f"$(call bed_release){QUICK_CLASSIFIER}", lines[-1]
+
+
+def test_the_hand_reap_is_the_full_reap_under_the_lease() -> None:
+    """`make bed-reap` after a killed or interrupted run: the one target that passes --full."""
+    lines = _bed_lines("bed-reap")
+    assert lines == [
+        "$(call bed_acquire,bed-reap)",
+        "$(call bed_reap) --full $(if $(RESTART_QEMU),--restart-qemu)",
+        "$(call bed_release)",
+    ]
+    assert "--full" not in "".join(
+        line for t in [*REAPED_TARGETS, "quick"] for line in _bed_lines(t) if "bed_reap" in line
+    ), "a lane's reap is the quick one: the console step is the hand reap's"
 
 
 def test_the_lease_macros_are_what_the_recipes_rely_on() -> None:
@@ -2561,6 +2595,8 @@ def test_the_lease_macros_are_what_the_recipes_rely_on() -> None:
     assert "\nBED_LEASE := uv run python scripts/bed_lease.py --lab $(LAB_FILE)\n" in text
     assert '\nbed_acquire = @$(BED_LEASE) acquire --pid $$PPID --purpose "$(1)"\n' in text
     assert "\nbed_release = @$(BED_LEASE) release --pid $$PPID\n" in text
+    assert "\nBED_REAP := uv run python scripts/bed_reap.py --lab $(LAB_FILE)\n" in text
+    assert "\nbed_reap = @$(BED_REAP) --pid $$PPID\n" in text
     assert "tests/_fixtures/lab_data/tech1/lab.json" not in text.replace(
         "LAB_FILE := tests/_fixtures/lab_data/tech1/lab.json", ""
     ), "the lab file is spelled once, as LAB_FILE"
@@ -2585,6 +2621,7 @@ def test_every_makefile_target_is_classified_exactly_once() -> None:
         *HOSTLESS_TARGETS,
         *LEASE_TOOLS,
         "quick",
+        "bed-reap",
     ]
     assert len(every) == len(set(every)), "a target in two lists"
     # a rule's name, not a variable's (`X := ...`) nor make's own dot-targets

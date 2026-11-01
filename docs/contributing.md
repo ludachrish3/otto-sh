@@ -542,7 +542,7 @@ inside the dashboard tree is a plain leaf and runs under `quick` like any other.
 a row, and an oracle census proves that every item pytest collects in every
 test module, changed alone, is selected by a lane the oracle emits.
 
-The bed lanes and `make gate-tip` take [the bed lease](#bed-lease), so a second landing's gate on the same cell waits (`BED_LEASE_WAIT`) or fails fast naming the first. `make gate-fresh` is the full gate's last static lane (the two test suites follow it, and a docs, web or test-only tip ends with it). Run it before handing a branch back or squashing it onto `main`.
+The bed lanes and `make gate-tip` take [the bed lease](#bed-lease), so a second landing's gate on the same cell waits (`BED_LEASE_WAIT`) or fails fast naming the first. A gate you interrupt (Ctrl-C, or a SIGTERM to `scripts/gate_tip.py` itself) waits for the lane it was running to stop, then reaps the bed and releases the lease itself; a second Ctrl-C kills the lane outright, and the gate reaps and releases the same way once the lane's processes are gone, or, when some outlive the kill, keeps the lease, names them and tells you to run `make bed-reap` once they are ([the bed reap](#bed-reap)). `make gate-fresh` is the full gate's last static lane (the two test suites follow it, and a docs, web or test-only tip ends with it). Run it before handing a branch back or squashing it onto `main`.
 
 It runs the lanes that catch what a clean checkout sees and your dev tree
 hides: `lint-python`, `lint-arch`, `check-api-snapshot` (the public-API
@@ -933,9 +933,14 @@ A lane that merely overran its budget
 (`BED_LEASE_TTL`, default four hours, in seconds; raise it in the environment
 of a longer soak) is reported as overdue but is never taken from under a live
 run: the eviction of a run you *know* is dead is `make bed-release`, which
-names what it evicted. Launch an unattended lane under `setsid` so its process
-group is the run's own rather than the launcher's; a lease whose group is a
-long-lived launcher's shell is held until that shell exits or you release it.
+names what it evicted. Launch an unattended lane under `setsid` (for
+example `setsid make coverage-unix > lane.log 2>&1 &`) so its process group is
+the run's own rather than the launcher's; a lease whose group is a long-lived
+launcher's shell is held until that shell exits or you release it. A
+`make lane 2>&1 | tee lane.log` is fine: `tee` shares make's group but is not
+the run's, and the lease knows a pipeline sibling from a worker a lane left
+behind (one started beside make, within two seconds of it, by make's own
+parent).
 
 `make bed-lease PURPOSE="..."` holds the bed from an interactive shell for as
 long as that shell lives (a hold to keep peers off the bed while you work by
@@ -950,7 +955,7 @@ from (`BED_LEASE_ROOT` moves it), as `<cell>.json` and, beside it,
 format](cli/reservation/json-backend.md): the holder is the owner of every
 resource the cell's labs declare, so otto can read the lease without knowing
 the script. From a project whose settings name the cell's lab directory and
-that file,
+that file (the paths below are the dev VM's; use your checkout's),
 
 ```toml
 libs = ["/home/vagrant/otto-sh/tests/custom_hosts"]
@@ -973,6 +978,47 @@ lab does not load.) `otto --lab unix+busybox+embedded reservation check` reports
 resource `held: yes` to the holder and refuses anyone else, naming the holder.
 otto only reads the file; the lease script (`scripts/bed_lease.py`) is the
 scheduler.
+
+(bed-reap)=
+
+### The bed reap
+
+A run that stops early leaves its state on the bed: the otto tunnel daemons,
+impair timers and `tc` qdiscs a test placed, the `nc` listeners and
+`/tmp/otto*` staging its hosts carry, orphan compose stacks and e2e images on
+the docker parents, a half-built coverage product on this machine, and a
+console a test left logged in. The bed reap (`scripts/bed_reap.py`) removes
+all of it through otto's own removers, judged by the hygiene oracle's probes
+(`tests/_fixtures/bed_hygiene.py`), under the lease. It never names a host:
+the cell's lab file says what the bed is.
+
+Every bed lane runs the quick reap right after it takes the lease and again
+before it releases it: whatever a predecessor left is gone before the suite
+starts, and a green lane leaves none of its own. A red lane stops at its
+failing step, and the next lane's first reap collects what it left.
+The hand run is for a run that was killed or interrupted:
+
+```text
+make bed-reap
+```
+
+It adds the console step (`make console-logout`'s; `RESTART_QEMU=1` restarts
+the guests first, as `make qemu-restart` does), prints one `bed-reap: removed
+...` line per thing removed, `bed-reap: clean` when the bed is, and exits 1
+with a per-host `still carries` report when something stayed: a host that did
+not answer, a removal that did not take, or a qdisc tree otto did not place
+(reported as foreign and left alone: clear it by hand on that host with
+`sudo tc qdisc del dev <netdev> root`, then run the reap again). It refuses
+a bed another live run holds, and a run of your own whose processes are still
+running: wait for them, or kill them, then run it again. `make gate-tip` runs
+the same reap by itself when you interrupt it (above).
+
+The reap is quick when the bed is clean (a probe per host). One step is not:
+the embedded coverage product (`tests/project3/product`) is rebuilt when a
+declared build's artifact is missing, which a `west build` cut mid-way
+leaves behind, and that build takes minutes. It runs at every lane's start,
+whether or not that lane loads the product, so a missing artifact costs the
+next lane the rebuild once.
 
 ### The scoped lanes
 
@@ -1033,7 +1079,9 @@ in `otto tunnel list` output, and misbehaving tunnels remove cleanly whenever
 their hosts are reachable — including completing a partial reap after a host
 returns.
 
-`uv run pytest -k <kw>` filters any run by keyword. Recover a wedged embedded bed
+`uv run pytest -k <kw>` filters any run by keyword. Clean a bed a killed or
+interrupted run left dirty with `make bed-reap` ([the bed reap](#bed-reap)).
+Recover a wedged embedded bed
 with `make qemu-restart`; probe the whole lab with `make vm-health` (which also
 adds a `console` row per bed serial console: a console that logs in is healthy at
 `AT-LOGIN`, a Zephyr console at `LOGGED-IN`, its idle shell prompt; each Zephyr

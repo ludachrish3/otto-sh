@@ -167,15 +167,24 @@ def store_lock(
     if shared and not root.is_dir():
         yield
         return
-    created_root = not root.exists()
-    root.mkdir(parents=True, exist_ok=True)
-    if created_root and dir_mode is not None:
-        root.chmod(dir_mode)
+    # Created exclusively, so two users racing to make the store each learn
+    # whether THEY made it: the loser must not chmod the winner's object (EPERM).
+    try:
+        root.mkdir(parents=True)
+    except FileExistsError:
+        pass
+    else:
+        if dir_mode is not None:
+            root.chmod(dir_mode)
     lock = root / LOCK_FILE
-    created_lock = not lock.exists()
-    with lock.open("a") as handle:
-        if created_lock and file_mode is not None:
-            os.fchmod(handle.fileno(), file_mode)
+    try:
+        fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_APPEND)
+    except FileExistsError:
+        fd = os.open(lock, os.O_WRONLY | os.O_APPEND)
+    else:
+        if file_mode is not None:
+            os.fchmod(fd, file_mode)
+    with os.fdopen(fd, "a") as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_SH if shared else fcntl.LOCK_EX)
         try:
             yield

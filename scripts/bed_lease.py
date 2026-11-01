@@ -66,6 +66,8 @@ TTL_ENV = "BED_LEASE_TTL"
 DRAIN_ENV = "BED_LEASE_DRAIN"
 DEFAULT_TTL_S = 4 * 3600
 DEFAULT_DRAIN_S = 30
+SIBLING_WINDOW_S = 2.0
+"""How long after the holder's start a process its parent started beside it counts as a sibling."""
 POLL_S = 5.0
 DIR_MODE = 0o777
 FILE_MODE = 0o666
@@ -301,12 +303,36 @@ def is_run_member(record: Record, pid: int) -> bool:
 
 
 def survivors(record: Record) -> list[int]:
-    """Return the recorded groups' running members, minus this process and its ancestors."""
+    """Return the run's processes still running: the recorded groups' members that are its own.
+
+    Not this process or its ancestors (the lane asking is part of the run), and
+    not a pipeline sibling: a process the holder's own parent started beside it
+    in the same group, within :data:`SIBLING_WINDOW_S` of the holder's start
+    (``make lane 2>&1 | tee log``: ``tee`` is in make's group, is not the run's,
+    and outlives the lane by design). The window is what tells a sibling from
+    a worker a lane left behind that a subreaper parent adopted: the worker
+    came seconds to hours later, and finding it is what this function is for.
+    """
     me = os.getpid()
     mine = {me, *ancestors(me)}
+    launcher = ancestors(record.pid)[:1]
+    sibling_until = record.pid_started + SIBLING_WINDOW_S * os.sysconf("SC_CLK_TCK")
     found: set[int] = set()
     for group in record.groups:
-        found.update(p for p in running_members(group.pgid) if p not in mine)
+        for pid in running_members(group.pgid):
+            if pid in mine:
+                continue
+            chain = ancestors(pid)
+            started = process_start(pid)
+            if (
+                chain[:1] == launcher
+                and launcher != [1]
+                and record.pid not in chain
+                and started is not None
+                and started <= sibling_until
+            ):
+                continue
+            found.add(pid)
     return sorted(found)
 
 
@@ -324,6 +350,23 @@ def drain(record: Record, budget_s: float) -> list[int]:
     except WaitTimeoutError:
         return survivors(record)
     return []
+
+
+def drained_run(cell: Cell, record: Record, budget_s: float) -> "tuple[Record | None, list[int]]":
+    """Drain *record*'s run outside the lock, then re-read it: the current record and what is left.
+
+    The drain is the long step and runs unlocked; the record is re-read under the
+    lock afterwards, and a group a nested acquire registered during the drain is
+    counted too, so a run that grew while it was being waited for is not called
+    empty. The current record is ``None`` when the cell went free meanwhile, and
+    another run's when it changed hands (:func:`same_run` tells).
+    """
+    left = drain(record, budget_s)
+    with _lock(cell):
+        current = read_record(cell)
+        if same_run(record, current) and current is not None and current.groups != record.groups:
+            left = sorted(set(left) | set(survivors(current)))
+        return current, left
 
 
 # --- paths (make quick's classifier) -------------------------------------------
@@ -350,7 +393,8 @@ def paths_need_bed(checkout: Path, under: str, paths: list[str]) -> bool:
 # --- environment ----------------------------------------------------------------
 
 
-def _seconds(env: str, default: int) -> int:
+def seconds_from_env(env: str, default: int) -> int:
+    """Return the non-negative seconds *env* holds, *default* when unset or empty."""
     raw = os.environ.get(env)
     if raw is None or raw == "":
         return default
@@ -467,8 +511,8 @@ def acquire(cell: Cell, pid: int, purpose: str) -> int:
     """Take the lease for *pid*'s run, polling for ``BED_LEASE_WAIT`` seconds while held."""
     from otto.utils import WaitTimeoutError, wait_for
 
-    ttl_s = _seconds(TTL_ENV, DEFAULT_TTL_S)
-    wait_s = _seconds(WAIT_ENV, 0)
+    ttl_s = seconds_from_env(TTL_ENV, DEFAULT_TTL_S)
+    wait_s = seconds_from_env(WAIT_ENV, 0)
     outcome: list[str] = []
     said: list[str] = []
 
@@ -489,7 +533,8 @@ def acquire(cell: Cell, pid: int, purpose: str) -> int:
     return 0
 
 
-def _same_run(a: "Record | None", b: "Record | None") -> bool:
+def same_run(a: "Record | None", b: "Record | None") -> bool:
+    """Whether two records (either possibly None) name the same run: pid and start time."""
     return a is not None and b is not None and (a.pid, a.pid_started) == (b.pid, b.pid_started)
 
 
@@ -525,10 +570,9 @@ def release(cell: Cell, pid: int, *, force: bool) -> int:
             render(cell, record)
             print(f"bed-lease: {cell.name} not held by pid {pid} (held by {record.owner}); kept")
             return 0
-    left = drain(record, _seconds(DRAIN_ENV, DEFAULT_DRAIN_S))
+    current, left = drained_run(cell, record, seconds_from_env(DRAIN_ENV, DEFAULT_DRAIN_S))
     with _lock(cell):
-        current = read_record(cell)
-        if not _same_run(record, current):
+        if not same_run(record, current) or read_record(cell) != current:
             render(cell, current)
             print(f"bed-lease: {cell.name} is no longer pid {pid}'s during its drain; kept as is")
             return 0
@@ -571,8 +615,8 @@ def status(cell: Cell) -> int:
 # --- CLI ------------------------------------------------------------------------
 
 
-def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="the bed lease: one run per bed cell")
+def add_cell_arguments(parser: argparse.ArgumentParser) -> None:
+    """``--lab`` and ``--root``: how a lease verb and the reap name the cell and its store."""
     parser.add_argument("--lab", required=True, type=Path, help="the cell's lab.json")
     parser.add_argument(
         "--root",
@@ -580,59 +624,70 @@ def _parser() -> argparse.ArgumentParser:
         default=None,
         help=f"lease root (default ${ROOT_ENV}, then {DEFAULT_ROOT})",
     )
+
+
+def add_run_arguments(parser: argparse.ArgumentParser, *, skip_help: str) -> None:
+    """Add ``--pid`` and ``make quick``'s classifier: the run a verb names, and when to skip."""
+    parser.add_argument("--pid", type=int, required=True, help="the run's pid (the lane's make)")
+    parser.add_argument("--unless-all-under", metavar="DIR", help=f"{skip_help} (make quick)")
+    parser.add_argument("paths", nargs="*")
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="the bed lease: one run per bed cell")
+    add_cell_arguments(parser)
     verbs = parser.add_subparsers(dest="verb", required=True)
     acq = verbs.add_parser("acquire", help="take the cell's lease for PID's run")
-    acq.add_argument("--pid", type=int, required=True)
+    add_run_arguments(acq, skip_help="take no lease when every PATH after `--` is under DIR")
     acq.add_argument("--purpose", default="")
-    acq.add_argument(
-        "--unless-all-under",
-        metavar="DIR",
-        help="take no lease when every PATH after `--` is under DIR (make quick)",
-    )
-    acq.add_argument("paths", nargs="*")
     rel = verbs.add_parser("release", help="release the lease PID's run holds")
-    rel.add_argument("--pid", type=int, required=True)
+    add_run_arguments(rel, skip_help="do nothing when every PATH after `--` is under DIR")
     rel.add_argument("--force", action="store_true", help="release whoever holds it")
-    rel.add_argument(
-        "--unless-all-under",
-        metavar="DIR",
-        help="do nothing when every PATH after `--` is under DIR (make quick's epilogue)",
-    )
-    rel.add_argument("paths", nargs="*")
     verbs.add_parser("status", help="print the cell's lease")
     return parser
 
 
-def _check_paths(args: argparse.Namespace) -> None:
+def classifier_says_skip(args: argparse.Namespace) -> bool:
+    """Whether ``--unless-all-under DIR -- PATHS`` says this verb has no bed to touch.
+
+    The lease's and the reap's one reading of ``make quick``'s classifier: stray
+    PATHS without the option are a usage error, and with it the verb is skipped
+    when :func:`paths_need_bed` says every path is under DIR.
+    """
     if args.paths and args.unless_all_under is None:
         raise UsageError("PATHS are only read after --unless-all-under DIR --")
+    return args.unless_all_under is not None and not paths_need_bed(
+        Path.cwd(), args.unless_all_under, args.paths
+    )
 
 
-def _require_pid(pid: int) -> None:
+def require_pid(pid: int) -> None:
+    """Refuse a *pid* no process has (usage: the caller named the wrong run)."""
     if process_start(pid) is None:
         raise UsageError(f"no process with pid {pid}")
+
+
+def root_from(arg: "Path | None") -> Path:
+    """Return the lease root: the ``--root`` argument, else ``BED_LEASE_ROOT``, else the default."""
+    return arg or Path(os.environ.get(ROOT_ENV) or DEFAULT_ROOT)
 
 
 def main(argv: "list[str] | None" = None) -> int:
     """Run one verb; 0 taken or done, 1 held by another run, 2 usage."""
     args = _parser().parse_args(argv)
-    root = args.root or Path(os.environ.get(ROOT_ENV) or DEFAULT_ROOT)
+    root = root_from(args.root)
     try:
-        if args.verb in ("acquire", "release"):
-            _check_paths(args)
-            if args.unless_all_under is not None and not paths_need_bed(
-                Path.cwd(), args.unless_all_under, args.paths
-            ):
-                print("bed-lease: no bed path in PATHS, no lease")
-                return 0
+        if args.verb in ("acquire", "release") and classifier_says_skip(args):
+            print("bed-lease: no bed path in PATHS, no lease")
+            return 0
         if args.verb == "acquire":
-            _seconds(WAIT_ENV, 0)
-            _seconds(TTL_ENV, DEFAULT_TTL_S)
-            _require_pid(args.pid)
+            seconds_from_env(WAIT_ENV, 0)
+            seconds_from_env(TTL_ENV, DEFAULT_TTL_S)
+            require_pid(args.pid)
             cell = load_cell(args.lab, root)
             return acquire(cell, args.pid, args.purpose)
         if args.verb == "release":
-            _require_pid(args.pid)
+            require_pid(args.pid)
             cell = load_cell(args.lab, root, resources=False)
             return release(cell, args.pid, force=args.force)
         cell = load_cell(args.lab, root, resources=False)

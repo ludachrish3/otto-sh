@@ -239,7 +239,8 @@ def test_make_coverage_is_stamped_at_its_start_and_its_end():
     _, legs = _rule(text, "coverage-python")
     assert legs[0] == "$(call bed_acquire,coverage-python)", legs[0]
     assert legs[-1] == "$(call bed_release)", legs[-1]
-    legs = legs[1:-1]  # inside the bed lease (test_lane_invariants pins the lease lines)
+    assert legs[1] == legs[-2] == "$(call bed_reap)", legs
+    legs = legs[2:-2]  # inside the lease and the reap (test_lane_invariants pins those lines)
     marks = [line for line in legs if "$(COVERAGE_STAMP) mark" in line]
     assert marks == [
         "@$(COVERAGE_STAMP) mark dashboard",
@@ -553,8 +554,9 @@ def _recipe(target: str) -> str:
 def test_the_gate_tip_recipe_and_its_overrides_are_the_declared_wiring():
     assert _recipe("gate-tip") == (
         "$(call bed_acquire,gate-tip)\n"
-        '\t@uv run python scripts/gate_tip.py --repo . --base "$(if $(filter command line,'
-        '$(origin BASE)),$(BASE),origin/main)" $(GATE_TIP_OVERRIDES)\n'
+        "\t@uv run python scripts/gate_tip.py --repo . --lab $(LAB_FILE) --pid $$PPID "
+        '--base "$(if $(filter command line,$(origin BASE)),$(BASE),origin/main)" '
+        "$(GATE_TIP_OVERRIDES)\n"
         "\t$(call bed_release)"
     )
     text = (CHECKOUT_ROOT / "Makefile").read_text()
@@ -592,6 +594,8 @@ def _make_with_uv_stub(tmp_path: Path, *args: str) -> "list[str]":
 def test_gate_tip_hands_every_command_line_variable_to_the_runner_as_overridden(tmp_path: Path):
     lines = _make_with_uv_stub(tmp_path, "X=1")
     assert lines[:3] == ["run", "python", "scripts/gate_tip.py"]
+    assert lines[lines.index("--lab") + 1] == "tests/_fixtures/lab_data/tech1/lab.json"
+    assert lines[lines.index("--pid") + 1].isdigit(), "make's own pid, the lease holder's"
     assert lines[lines.index("--overridden") + 1] == "X"
     assert lines[lines.index("--base") + 1] == "origin/main"
 

@@ -654,6 +654,29 @@ def _notes_toolchain(build_dir: Path) -> "Toolchain | None":
         return None
 
 
+def resolve_embedded_build_dir(
+    embedded_cfg: "dict[str, Any]", os_version: "str | None", project_root: Path
+) -> "str | None":
+    """Resolve the build dir of a Zephyr *os_version* under a ``[coverage.embedded]`` table.
+
+    The one reading of that table, for the collector (per host) and for the
+    product that builds into it (``tests/project3/product/product_builds.py``):
+    the per-version ``builds."<version>".build_dir`` first, else the single
+    ``build_dir`` (the legacy and fallback value), ``None`` when neither is set.
+    Every value gets the documented path convention (:doc:`/configuration/settings`,
+    "Path resolution"): ``~`` expansion, then anchoring to *project_root* while
+    still relative.
+    """
+    from ..utils import anchor_path
+
+    builds = embedded_cfg.get("builds") or {}
+    raw = None
+    if os_version and os_version in builds:
+        raw = builds[os_version].get("build_dir")
+    raw = raw or embedded_cfg.get("build_dir")
+    return str(anchor_path(Path(raw), project_root)) if raw else None
+
+
 async def _write_metadata(
     *,
     cov_project: "Project",
@@ -677,7 +700,6 @@ async def _write_metadata(
     import json
 
     from ..host.toolchain import Toolchain
-    from ..utils import anchor_path
 
     toolchains: dict[str, dict[str, Any]] = {}
     for host in fetch_hosts:
@@ -708,28 +730,13 @@ async def _write_metadata(
     # resolve the correct .gcno tree per host. The single ``build_dir`` remains
     # supported as a legacy/fallback for single-version labs.
     embedded_cfg = cov_config.get("embedded") or {}
-
-    def _anchor_build_dir(raw: str) -> str:
-        """Anchor a raw ``build_dir`` value read from the config passthrough dict.
-
-        Applies the documented path-resolution convention
-        (:doc:`/configuration/settings`, "Path resolution"): ``~`` expansion
-        and project-root anchoring for a still-relative value.
-        """
-        return str(anchor_path(Path(raw), cov_project.root))
-
-    embedded_build_dir = embedded_cfg.get("build_dir")  # single legacy/fallback
-    if embedded_build_dir:
-        embedded_build_dir = _anchor_build_dir(embedded_build_dir)
+    embedded_build_dir = resolve_embedded_build_dir(embedded_cfg, None, cov_project.root)
     embedded_builds = embedded_cfg.get("builds") or {}  # {"3.7": {"build_dir": ...}}
 
     def _resolve_build_dir(host: object) -> str | None:
-        ver = getattr(host, "os_version", None)
-        if ver and ver in embedded_builds:
-            bd = embedded_builds[ver].get("build_dir")
-            if bd:
-                return _anchor_build_dir(bd)
-        return embedded_build_dir
+        return resolve_embedded_build_dir(
+            embedded_cfg, getattr(host, "os_version", None), cov_project.root
+        )
 
     source_roots: dict[str, str] = {}
     if embedded_host_ids and (embedded_build_dir or embedded_builds):

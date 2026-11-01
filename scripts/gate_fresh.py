@@ -20,11 +20,8 @@ import argparse
 import contextlib
 import json
 import shutil
-import signal
-import subprocess
 import sys
 import tempfile
-import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -42,7 +39,7 @@ from scripts.gate_stamp_common import (  # noqa: E402 -- path set up above
     utc_now,
     write_atomically,
 )
-from scripts.process_group import group_alive, group_members, signal_group  # noqa: E402
+from scripts.process_group import UndrainedError, run_awaiting_descendants  # noqa: E402
 
 __all__ = [
     "HISTORY_TARGETS",
@@ -227,77 +224,20 @@ class GateResult:
     kept: bool
 
 
-_LINGER_REPORT_INTERVAL_S = 10.0
-
-
-def _wait_for_process_group(pgid: int) -> None:
-    """Block until NO process is left in process group *pgid*.
-
-    Polling :func:`scripts.process_group.group_alive` is the whole mechanism. No
-    deadline and no kill on purpose: the gate's job here is to never start
-    disposing of the worktree while anything the lanes spawned is still
-    alive in it, and a wait that gives up after N seconds would just move the
-    overlap to N seconds. A process that never exits holds the gate visibly,
-    naming itself below, instead of racing the cleanup silently.
-
-    Assumes a reaping init: a zombie is still a group member, so under a
-    PID 1 that never reaps (a bare ``tail -f`` container init) an orphaned
-    descendant would hold this forever. The dev VM (systemd) and CI
-    (``ubuntu-latest`` VMs) both reap.
-    """
-    reported_at = time.monotonic()
-    while group_alive(pgid):
-        now = time.monotonic()
-        if now - reported_at >= _LINGER_REPORT_INTERVAL_S:
-            reported_at = now
-            pids = group_members(pgid)
-            print(
-                "gate-fresh: the lanes returned but processes they spawned are still "
-                f"running; waiting for them before touching the worktree "
-                f"(pids: {pids or 'unknown'})",
-                flush=True,
-            )
-        time.sleep(0.1)
-
-
 def _run_awaiting_descendants(cmd: list[str], cwd: Path) -> int:
-    """Run *cmd* in ITS OWN process group and return only when the group is empty.
+    """Run *cmd* in its own process group and return its status once the group is empty.
 
-    Why a group and not ``subprocess.run`` alone: ``run`` returns when the
-    direct child exits, and ``make`` exits the moment its recipe does — but
-    the recipe's own children (xdist workers, a test's subprocesses, an
-    ``e2e`` daemon under teardown) can outlive it by a moment, still holding
-    the worktree as their cwd or still writing ``.coverage.*``/``reports/``
-    into it. That moment is exactly when ``git worktree remove`` used to run,
-    and a removal that races a writer fails — which blocked a push from
-    ``main`` on 2026-09-03 with a green lane. ``start_new_session`` puts the
-    child and every descendant that does not ``setsid`` itself into one
-    group; :func:`_wait_for_process_group` then holds until it is empty.
+    The mechanism is :func:`scripts.process_group.run_awaiting_descendants`
+    (the gate scripts share it; its docstring is the why). This wrapper keeps
+    the gate's argv-in, int-out contract: a lane's stdio is inherited, and an
+    interrupt propagates only after nothing of the lanes is alive, so
+    :func:`gate`'s exception-path ``worktree remove`` never runs over a lane
+    that is still winding down. A second interrupt SIGKILLs the lanes and a
+    group that does not empty raises :class:`~scripts.process_group.UndrainedError`,
+    on which the gate keeps the worktree instead of removing it over
+    survivors.
     """
-    # Popen rather than run(): the wait below needs the child's pid, which is
-    # the group's id, and CompletedProcess does not carry it.
-    with subprocess.Popen(cmd, cwd=cwd, start_new_session=True) as proc:  # noqa: S603
-        try:
-            proc.wait()
-            _wait_for_process_group(proc.pid)
-        except KeyboardInterrupt:
-            # The new session took the lanes out of the terminal's foreground
-            # group, so the Ctrl+C that reached us never reached them (the
-            # old subprocess.run child got it for free). Relay it to the whole
-            # group, then keep the promise the normal path makes — nothing
-            # of theirs is alive when this returns — before propagating, so
-            # gate()'s exception-path `worktree remove` never runs over a
-            # lane that is still winding down. ONE clause for BOTH phases:
-            # the interrupt is at least as likely during the lingering wait
-            # (make returned, descendants alive, the report line printing)
-            # as during the lanes themselves. A second Ctrl+C during the
-            # drain propagates without draining — the deliberate escape from
-            # an otherwise unbounded wait.
-            signal_group(proc.pid, signal.SIGINT)
-            proc.wait()
-            _wait_for_process_group(proc.pid)
-            raise
-    return proc.returncode
+    return run_awaiting_descendants(cmd, cwd=cwd, label="gate-fresh").status
 
 
 def _run_targets(worktree: Path, targets: list[str], make_args: list[str] | None = None) -> bool:
@@ -391,6 +331,12 @@ def gate(
         raise
     try:
         passed = run(worktree, targets, [] if make_args is None else list(make_args))
+    except UndrainedError as exc:
+        # Survivors the gate could not kill are still in the worktree: removing
+        # it over them is the race this runner exists to prevent. Keep it, say
+        # why, and let the interrupt propagate as the verdict it is.
+        print(f"gate-fresh: {exc}; keeping worktree {worktree}", file=sys.stderr)
+        raise
     except BaseException:
         # best-effort: a cleanup failure here must not mask the exception
         # being handled

@@ -30,9 +30,7 @@ hosts share the same Zephyr version.
 
 import logging
 import re
-import shlex
 import struct
-import sys
 from pathlib import Path
 
 import pytest
@@ -43,7 +41,6 @@ from otto.coverage import clean_coverage
 from otto.coverage.fetcher.embedded import decode_cov_dump
 from otto.declared import DeclaredEntry
 from otto.fleet import all_hosts
-from otto.host import LocalHost
 from otto.host.binary_loader import BinaryLoader
 from otto.host.embedded_host import EmbeddedHost
 from otto.host.embedded_kind import EmbeddedProduct
@@ -53,8 +50,13 @@ from otto.utils import Status
 
 logger = logging.getLogger(__name__)
 
-PRODUCT_DIR = Path(__file__).resolve().parent.parent / "product"
-BUILD_SCRIPT = PRODUCT_DIR / "build.sh"
+from product_builds import (  # product/ is on the project's libs path
+    PRODUCT_DIR,
+    build_dir_for,
+    build_extension,
+    extension_path,
+    zver_for,
+)
 
 
 def _embedded_cov_config() -> dict:
@@ -90,69 +92,28 @@ def _extension(host: EmbeddedHost) -> str:
 
 def _extension_path_from(build_dir: str, ext: str) -> Path:
     """Path of the pre-built, stripped LLEXT extension for *build_dir* (what gets loaded)."""
-    llext = Path(build_dir) / "zephyr" / f"{ext}.stripped.llext"
+    llext = extension_path(build_dir, ext)
     if not llext.exists():
         raise RuntimeError(f"extension not built: {llext} — build product/ first (see its README)")
     return llext
 
 
 def _build_dir_for(host: EmbeddedHost) -> str:
-    """Resolve the ``build_dir`` for *host*'s Zephyr version.
-
-    Looks up ``host.os_version`` in the optional
-    ``[coverage.embedded].builds."<version>"`` table first; falls back to the
-    single ``[coverage.embedded].build_dir``. Raises :exc:`RuntimeError` when
-    neither is configured (mirrors the existing "build_dir is not configured"
-    guard).
-    """
-    cfg = _embedded_cov_config()
-    if host.os_version:
-        per_version = cfg.get("builds", {}).get(host.os_version, {})
-        if per_version.get("build_dir"):
-            return per_version["build_dir"]
-    build_dir = cfg.get("build_dir")
-    if not build_dir:
-        raise RuntimeError("[coverage.embedded].build_dir is not configured")
-    return build_dir
-
-
-def _zver_for(host: EmbeddedHost) -> "str | None":
-    """Map *host*'s ``os_version`` to ``build.sh``'s ``zver`` positional argument.
-
-    Returns ``"v" + os_version.replace(".", "_")`` (e.g. ``"3.7"`` → ``"v3_7"``,
-    ``"4.4"`` → ``"v4_4"``). Returns ``None`` when ``os_version`` is falsy so the
-    caller can omit the argument and rely on ``build.sh``'s default ``v3_7``.
-    """
-    if not host.os_version:
-        return None
-    return "v" + host.os_version.replace(".", "_")
+    """Resolve the ``build_dir`` for *host*'s Zephyr version (``product_builds.build_dir_for``)."""
+    return build_dir_for({"coverage": {"embedded": _embedded_cov_config()}}, host.os_version)
 
 
 async def _build_extension_for(build_dir: str, zver: "str | None") -> None:
     """Rebuild the LLEXT coverage extension into *build_dir* for Zephyr *zver*.
 
     The embedded analogue of project1's ``_compile_product``: the suite keeps the
-    product up to date rather than trusting a stale pre-built artifact. Runs
-    ``product/build.sh {build_dir} [{zver}]`` on the machine executing the suite
-    (the dev VM, where ``build_dir`` lives) and hard-fails if the build can't run
-    or errors. The script is idempotent, so a pre-existing build dir is fine.
-    When *zver* is ``None`` the argument is omitted and ``build.sh``'s default
-    (``v3_7``) is used.
+    product up to date rather than trusting a stale pre-built artifact. The build
+    itself is ``product_builds.build_extension``; the otto running this suite
+    supplies the shipped patch (the console script beside the interpreter),
+    never whichever ``otto`` PATH happens to find.
     """
-    # The otto running this suite supplies the shipped patch (the console script
-    # beside the interpreter), never whichever `otto` PATH happens to find.
-    otto = Path(sys.executable).parent / "otto"
-    cmd = f"OTTO={shlex.quote(str(otto))} bash {BUILD_SCRIPT} {build_dir}"
-    if zver is not None:
-        cmd = f"{cmd} {zver}"
-    localhost = LocalHost()
-    try:
-        result = await localhost.exec(cmd, timeout=900)
-        if result.status != Status.Success:
-            raise RuntimeError(f"extension build failed (see {BUILD_SCRIPT}):\n{result.value}")
-        logger.info("Rebuilt the coverage extension into %s (zver=%s)", build_dir, zver)
-    finally:
-        await localhost.close()
+    await build_extension(build_dir, zver)
+    logger.info("Rebuilt the coverage extension into %s (zver=%s)", build_dir, zver)
 
 
 def _coverage_host_pattern() -> "re.Pattern[str] | None":
@@ -207,7 +168,7 @@ async def _install_everywhere() -> list[EmbeddedHost]:
     host_build_dir: dict[str, str] = {}
     for host in hosts:
         build_dir = _build_dir_for(host)
-        zver = _zver_for(host)
+        zver = zver_for(host.os_version)
         if (build_dir, zver) not in built:
             await _build_extension_for(build_dir, zver)
             built.add((build_dir, zver))

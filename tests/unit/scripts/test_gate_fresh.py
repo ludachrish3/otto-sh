@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts import check_breaking_marks, gate_fresh
+from scripts import check_breaking_marks, gate_fresh, process_group
 from scripts import gate_scope as gs
 from scripts import gate_tip as gt
 from scripts.gate_fresh import (
@@ -495,7 +495,7 @@ class TestLanesFinishBeforeCleanup:
                 raise KeyboardInterrupt
             real_sleep(seconds)
 
-        monkeypatch.setattr(gate_fresh.time, "sleep", sleep_then_interrupt)
+        monkeypatch.setattr(process_group.time, "sleep", sleep_then_interrupt)  # the core's poll
         spawner = (
             "import subprocess, pathlib, os; p = subprocess.Popen(['sleep', '30']); "
             f"pathlib.Path({str(pid_file)!r}).write_text(str(p.pid)); os._exit(0)"
@@ -510,6 +510,42 @@ class TestLanesFinishBeforeCleanup:
     def test_the_direct_childs_exit_code_is_reported(self, tmp_path: Path):
         rc = gate_fresh._run_awaiting_descendants(["sh", "-c", "exit 3"], tmp_path)
         assert rc == 3
+
+    def test_the_runner_is_the_shared_core(self, monkeypatch, tmp_path: Path):
+        """One lifecycle for both gates: the wrapper hands argv, cwd and its label to the core."""
+        seen = {}
+
+        def fake_core(args, **kw):
+            seen.update(args=args, **kw)
+            return process_group.RunResult(7, "")
+
+        monkeypatch.setattr(gate_fresh, "run_awaiting_descendants", fake_core)
+        assert gate_fresh._run_awaiting_descendants(["make", "x"], tmp_path) == 7
+        assert seen == {"args": ["make", "x"], "cwd": tmp_path, "label": "gate-fresh"}
+
+
+class TestUndrainedKeepsTheWorktree:
+    def test_an_undrained_group_keeps_the_worktree_and_says_so(
+        self, tmp_path: Path, capsys, track_holders: list[Path]
+    ):
+        """Survivors the gate could not kill are still in the tree: it is kept, named, and
+        the interrupt still propagates (it is not a verdict)."""
+        repo = _repo(tmp_path)
+        sha = resolve_ref(repo, "HEAD")
+        kept: list[Path] = []
+
+        def runner(worktree: Path, targets: list[str], make_args: list[str]) -> bool:
+            kept.append(worktree)
+            raise process_group.UndrainedError(4242, [4243])
+
+        with pytest.raises(process_group.UndrainedError):
+            gate(repo, sha, runner=runner)
+        (worktree,) = kept
+        track_holders.append(worktree.parent)
+        assert worktree.is_dir(), "the worktree was removed over live survivors"
+        err = capsys.readouterr().err
+        assert f"keeping worktree {worktree}" in err
+        assert "pids 4243" in err
 
     def test_run_targets_stops_at_a_failed_sync(self, tmp_path: Path, monkeypatch):
         """``_run_targets`` still short-circuits on a failed ``uv sync --locked`` —

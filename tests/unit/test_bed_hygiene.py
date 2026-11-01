@@ -11,18 +11,32 @@ from dataclasses import dataclass, field
 
 import pytest
 
+from otto.link.netem import NetEmImpairer
 from otto.result import CommandResult
 from otto.utils import Status
 from tests._fixtures.bed_hygiene import (
+    _DOCKER_IMAGES_PROBE,
     _DOCKER_NET_PROBE,
     _DOCKER_PS_PROBE,
     _NC_LISTENER_PROBE,
+    _NETDEV_PROBE,
     HygieneSnapshot,
+    QdiscReads,
     diff_snapshots,
     format_hygiene_report,
+    format_residual_report,
+    listener_pids,
+    netdevs_listed,
     probe_lines,
+    residual_dirt,
     snapshot_host,
+    tunnel_ids,
 )
+from tests.unit.link.test_manage_impair import FILTER_SCOPED_ONE, QDISC_SCOPED_ONE
+
+CLEAN_ROOT = "qdisc noqueue 0: root refcnt 2"
+NETEM_ROOT = "qdisc netem 8001: root refcnt 2 limit 1000 delay 50ms"
+FOREIGN_ROOT = "qdisc tbf 8002: root refcnt 2 rate 1Mbit burst 10Kb lat 50ms"
 
 
 def _snap(**over):
@@ -30,7 +44,7 @@ def _snap(**over):
         "tunnel_procs": frozenset(),
         "impair_timers": frozenset(),
         "nc_listeners": frozenset(),
-        "qdiscs": {"eth2": "qdisc noqueue 0: root refcnt 2"},
+        "qdiscs": {"eth2": QdiscReads(CLEAN_ROOT)},
         "staging": frozenset(),
         "history_digest": "abc  -",
         "docker_containers": frozenset(),
@@ -55,11 +69,42 @@ def test_new_listener_named_old_listener_ignored():
 
 def test_qdisc_change_reported_with_device_and_both_states():
     before = _snap()
-    after = _snap(qdiscs={"eth2": "qdisc prio 1: root refcnt 2 bands 11"})
+    after = _snap(qdiscs={"eth2": QdiscReads("qdisc prio 1: root refcnt 2 bands 11")})
     leftovers = diff_snapshots(before, after)
     assert len(leftovers) == 1
     assert "eth2" in leftovers[0]
     assert "prio" in leftovers[0]
+
+
+def test_a_filter_change_under_the_same_root_is_a_qdisc_change():
+    """The scoped reads are the pair: a selector added under an unchanged root shows."""
+    before = _snap(qdiscs={"eth2": QdiscReads(QDISC_SCOPED_ONE, "")})
+    after = _snap(qdiscs={"eth2": QdiscReads(QDISC_SCOPED_ONE, FILTER_SCOPED_ONE)})
+    leftovers = diff_snapshots(before, after)
+    assert len(leftovers) == 1
+    assert leftovers[0].startswith("eth2: qdisc changed")
+
+
+def test_a_netdev_that_came_or_went_is_a_change_only_with_a_tree_on_it():
+    """A veth or VLAN a scenario adds is the link layer's; a qdisc on it is ours to notice."""
+    clean = QdiscReads(CLEAN_ROOT)
+    assert diff_snapshots(_snap(), _snap(qdiscs={"eth2": clean, "veth9": clean})) == []
+    assert diff_snapshots(_snap(qdiscs={"eth2": clean, "veth9": clean}), _snap()) == []
+    assert diff_snapshots(_snap(), _snap(qdiscs={"eth2": clean, "veth9": QdiscReads("")})) == []
+    added = diff_snapshots(_snap(), _snap(qdiscs={"eth2": clean, "veth9": QdiscReads(NETEM_ROOT)}))
+    assert added == [f"veth9: qdisc changed: before=None after={QdiscReads(NETEM_ROOT)!r}"]
+    for tree in (FOREIGN_ROOT, NETEM_ROOT):
+        gone = diff_snapshots(_snap(qdiscs={"eth2": clean, "veth9": QdiscReads(tree)}), _snap())
+        assert gone == [f"veth9: qdisc changed: before={QdiscReads(tree)!r} after=None"]
+    scoped = QdiscReads(QDISC_SCOPED_ONE, FILTER_SCOPED_ONE)
+    gone = diff_snapshots(_snap(qdiscs={"eth2": clean, "veth9": scoped}), _snap())
+    assert gone == [f"veth9: qdisc changed: before={scoped!r} after=None"]
+
+
+def test_a_new_e2e_image_is_reported_an_old_one_ignored():
+    before = _snap(docker_images=frozenset({"sha256:old"}))
+    after = _snap(docker_images=frozenset({"sha256:old", "sha256:new"}))
+    assert diff_snapshots(before, after) == ["new docker image: sha256:new"]
 
 
 def test_history_digest_change_reported():
@@ -165,6 +210,113 @@ async def test_snapshot_host_keeps_a_stray_empty_line_visible():
     host = _ScriptedHost(canned_outputs={_DOCKER_NET_PROBE: "bridge\n"})
     snap = await snapshot_host(host)
     assert snap.docker_networks == frozenset({"bridge", ""})
+
+
+@pytest.mark.asyncio
+async def test_snapshot_host_reads_every_listed_netdev_as_a_qdisc_and_filter_pair():
+    """A bare `tc qdisc show` names the netdevs; each is then read with the impairer's pair."""
+    qdisc_cmd, filter_cmd = NetEmImpairer().scoped_read_commands("eth1.100")
+    host = _ScriptedHost(
+        canned_outputs={
+            _NETDEV_PROBE: (
+                "qdisc noqueue 0: dev lo root refcnt 2\n"
+                f"{QDISC_SCOPED_ONE.splitlines()[0]} dev eth1.100\n"
+                "qdisc netem 40: dev eth1.100 parent 1:4 limit 1000 delay 200ms\n"
+            ),
+            qdisc_cmd: QDISC_SCOPED_ONE,
+            filter_cmd: FILTER_SCOPED_ONE,
+            _DOCKER_IMAGES_PROBE: "sha256:a\n",
+        }
+    )
+    snap = await snapshot_host(host)
+    assert sorted(snap.qdiscs) == ["eth1.100", "lo"]
+    assert snap.qdiscs["eth1.100"] == QdiscReads(QDISC_SCOPED_ONE, FILTER_SCOPED_ONE)
+    assert snap.qdiscs["lo"] == QdiscReads("", "")
+    assert snap.docker_images == frozenset({"sha256:a", ""})
+
+
+def test_tunnel_ids_and_listener_pids_read_the_snapshots_own_lines():
+    """The reap reads the snapshot through these, the inverse of the lines snapshot_host writes."""
+    snap = _snap(
+        tunnel_procs=frozenset({"100 t-1", "101 t-1", "102 t-2", "garbage"}),
+        nc_listeners=frozenset({"300 nc -l 9000", "7 nc -lk 1", "x nc", ""}),
+    )
+    assert tunnel_ids(snap) == ["t-1", "t-2"]
+    assert listener_pids(snap) == [7, 300]
+    assert tunnel_ids(_snap()) == []
+    assert listener_pids(_snap()) == []
+
+
+def test_netdevs_listed_in_first_seen_order_once_each():
+    text = (
+        "qdisc noqueue 0: dev lo root refcnt 2\n"
+        "qdisc prio 1: dev eth2 root refcnt 2 bands 11\n"
+        "qdisc netem 40: dev eth2 parent 1:4 limit 1000\n"
+        "qdisc fq_codel 0: dev eth1 root refcnt 2\n"
+        "not a qdisc line dev\n"
+    )
+    assert netdevs_listed(text) == ["lo", "eth2", "eth1"]
+    assert netdevs_listed("") == []
+
+
+# ---------------------------------------------------------------------------
+# residual_dirt: the ABSOLUTE predicate the bed reap judges by (not new-only)
+# ---------------------------------------------------------------------------
+
+
+def test_a_clean_snapshot_has_no_residual_dirt():
+    assert residual_dirt(_snap()) == []
+    assert (
+        residual_dirt(_snap(docker_containers=frozenset({"abc otto-project1-live-x_api_1"}))) == []
+    )
+
+
+def test_every_suite_owned_namespace_is_residual_whatever_came_before():
+    dirt = residual_dirt(
+        _snap(
+            tunnel_procs=frozenset({"100 t-1"}),
+            impair_timers=frozenset({"200 edge eth1.100"}),
+            nc_listeners=frozenset({"300 nc -l 9000"}),
+            staging=frozenset({"/tmp/otto-x"}),
+            docker_images=frozenset({"sha256:a"}),
+            docker_containers=frozenset({"abc unix-project1-e2e-1a2b-api-1", "def keep-me"}),
+            docker_networks=frozenset({"unix-project1-noexist-x_default", "bridge"}),
+        )
+    )
+    assert dirt == [
+        "otto-tunnel daemon: 100 t-1",
+        "otto-impair timer: 200 edge eth1.100",
+        "nc listener: 300 nc -l 9000",
+        "staging entry: /tmp/otto-x",
+        "docker image: sha256:a",
+        "docker container: abc unix-project1-e2e-1a2b-api-1",
+        "docker network: unix-project1-noexist-x_default",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("reads", "expected"),
+    [
+        (QdiscReads(CLEAN_ROOT), []),
+        (QdiscReads(""), []),
+        (QdiscReads(NETEM_ROOT), [f"eth2: otto qdisc (whole): {NETEM_ROOT!r}"]),
+        (
+            QdiscReads(QDISC_SCOPED_ONE, FILTER_SCOPED_ONE),
+            [f"eth2: otto qdisc (scoped): {QDISC_SCOPED_ONE.strip()!r}"],
+        ),
+        (QdiscReads(FOREIGN_ROOT), [f"eth2: foreign qdisc (not otto's, kept): {FOREIGN_ROOT!r}"]),
+    ],
+)
+def test_residual_qdiscs_are_classified_by_the_impairers_own_parser(reads, expected):
+    assert residual_dirt(_snap(qdiscs={"eth2": reads})) == expected
+
+
+def test_the_residual_report_names_the_host_and_counts():
+    report = format_residual_report("test1", ["nc listener: 300 nc", "staging entry: /tmp/otto-x"])
+    assert report == (
+        "bed-reap: test1 still carries 2 leftover(s):\n  nc listener: 300 nc\n"
+        "  staging entry: /tmp/otto-x"
+    )
 
 
 @pytest.mark.asyncio

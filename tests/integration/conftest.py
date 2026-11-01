@@ -26,6 +26,7 @@ from otto.host.unix_host import UnixHost
 from otto.labs.loader import Lab
 from otto.logger.mode import LogMode
 from tests._fixtures._host_pool import DOCKER_HOST, docker_host_lease
+from tests._fixtures.docker_reap import reap_docker
 from tests._fixtures.labdata import element_for, flatten_lab_doc, host_data, lab_data_path
 from tests._fixtures.paths import default_project_root
 from tests._fixtures.run_state import preserved_run_state
@@ -170,31 +171,14 @@ def test3_lease() -> Iterator[str]:
         yield element
 
 
-# Compose-project name INFIXES that only ever appear in *disposable* test
-# stacks. Matched as infixes, never as a prefix, which is what let them
-# survive the use-case cutover (spec §9) unchanged: a compose project is
-# ``<lab>-<usecase>-<suffix>`` now — no ``otto-`` prefix — and the e2e
-# modules' ``fresh_suffix`` still yields ``e2e-<hex>`` / ``run-e2e-<hex>``, so
-# ``unix-project1-e2e-1a2b3c4d`` still carries ``-e2e-``.
-# ``tests/unit/test_docker_reaper_scope.py`` pins that agreement in the
-# default lane, where this tree never runs.
-#
-# ``-noexist-`` is retained for stacks left by older runs: nothing in the
-# suite mints that suffix today.
-#
-# Each test run mints a fresh suffix, so an interrupted or crashed run leaves
-# an orphan stack behind. Roughly 30 orphans exhaust docker's default
-# address-pool ("all predefined address pools have been fully subnetted") and
-# wedge every subsequent ``compose up``. Stacks matching these fragments are
-# always safe to reap — they belong to no live developer session.
-_ORPHAN_PROJECT_FRAGMENTS = ("-e2e-", "-noexist-")
-
-
 async def _reap_orphan_docker_stacks() -> None:
     """Remove leaked test containers and networks on the docker host.
 
-    Anything whose name carries one of :data:`_ORPHAN_PROJECT_FRAGMENTS` as an
-    infix, so address-pool exhaustion can't accumulate across runs.
+    Anything whose name carries one of
+    :data:`tests._fixtures.docker_reap.ORPHAN_FRAGMENTS` as an infix, so
+    address-pool exhaustion can't accumulate across runs: the one sweep
+    :func:`~tests._fixtures.docker_reap.reap_docker` spells, which the bed reap
+    runs on every container parent of the cell.
     """
     host = UnixHost(
         ip=_DOCKER_HOST_IP,
@@ -206,17 +190,7 @@ async def _reap_orphan_docker_stacks() -> None:
         docker_capable=True,
     )
     try:
-        for frag in _ORPHAN_PROJECT_FRAGMENTS:
-            containers = (
-                await host.exec(f"docker ps -aq --filter 'name={frag}'", timeout=30)
-            ).value.splitlines()
-            if containers:
-                await host.exec(f"docker rm -f {' '.join(containers)}", timeout=60)
-            networks = (
-                await host.exec(f"docker network ls -q --filter 'name={frag}'", timeout=30)
-            ).value.splitlines()
-            if networks:
-                await host.exec(f"docker network rm {' '.join(networks)}", timeout=60)
+        await reap_docker(host)
     finally:
         await host.close()
 

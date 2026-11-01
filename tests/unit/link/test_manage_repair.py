@@ -7,6 +7,7 @@ from otto.link.manage import (
     LinkCommandFailedError,
     LinkNotMeasuredError,
     _cancel_timers,
+    cancel_all_timers,
     read_link_states,
     repair_all,
     repair_link,
@@ -153,6 +154,32 @@ class TestCancelTimersHygiene:
         test1.fail_on = IMPAIR_PS_COMMAND
         with pytest.raises(LinkCommandFailedError, match="test1"):
             await _cancel_timers(test1, LINK.id, "eth1.100")
+        with pytest.raises(LinkCommandFailedError, match="test1"):
+            await cancel_all_timers(test1)
+
+    @pytest.mark.asyncio
+    async def test_cancel_all_is_the_scoped_cancel_with_every_timer_kept(self) -> None:
+        """One scan-and-kill: the scoped cancel takes its link's timers, the sweep takes all."""
+        _lab, test1, *_ = _bed()
+        ours = encode_impair_sentinel(LINK.id, "eth1.100")
+        other = encode_impair_sentinel("other-link", "eth2")
+        test1.ps_text = f"  4242 05:00 {ours} -c sleep 600\n  4243 05:00 {other} -c sleep 600\n"
+        assert await _cancel_timers(test1, LINK.id, "eth1.100") == 1
+        assert test1.sudo_commands[-1] == "kill 4242"
+        assert await cancel_all_timers(test1) == 2
+        assert test1.sudo_commands[-1] == "kill 4242 4243"
+        test1.ps_text = ""
+        assert await cancel_all_timers(test1) == 0
+
+    @pytest.mark.asyncio
+    async def test_cancel_all_on_an_unreachable_host_is_zero(self) -> None:
+        _lab, test1, *_ = _bed()
+
+        async def _boom(cmd: str, **_: object) -> CommandResult:
+            raise ConnectionError("down")
+
+        test1.exec = _boom  # type: ignore[method-assign]
+        assert await cancel_all_timers(test1) == 0
 
 
 class TestReadStates:

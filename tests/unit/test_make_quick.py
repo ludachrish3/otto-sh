@@ -213,7 +213,9 @@ def test_quick_tolerates_one_empty_leg_but_not_two(tmp_path: Path):
     match = re.search(r'tests="(\d+)"', report)
     assert match is not None, report[:300]
     assert int(match.group(1)) > 0, "the parallel leg ran tests"
-    both = _make(tmp_path, "quick", "PATHS=tests/_fixtures/paths.py")
+    # A unit-tree module with no test in it: the lane stays hostless (a path outside
+    # tests/unit would lease and reap the real cell from this unit test).
+    both = _make(tmp_path, "quick", "PATHS=tests/unit/conftest.py")
     assert both.returncode == 2, both.stdout[-3000:]
     assert "neither leg selected a test" in both.stderr, both.stderr
 

@@ -9,7 +9,7 @@
 # on -j.
 .NOTPARALLEL:
 
-.PHONY: help quick quick-guards gate-scope gate-tip coverage-gate-args all ci nox nox-release budget-delta nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-stamp-start coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release release-preflight release-campaign stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health lab-reachability qemu-restart console-logout bed-status bed-lease bed-release import-snapshot api-snapshot check-api-snapshot check-api-teaching api-surface-report check-breaking profile unit-outliers browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check wheel-smoke
+.PHONY: help quick quick-guards gate-scope gate-tip coverage-gate-args all ci nox nox-release budget-delta nox-full nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-stamp-start coverage-python coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts coverage-ts-unit docs docs-lint docs-html docs-inventories docs-media docs-captures docs-captures-check doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts lint-arch check check-python gate-fresh check-ts format format-python format-ts schema monitor-fixtures clean changelog release release-preflight release-campaign stability stability-unit stability-unix stability-tunnel stability-embedded chaos chaos-embedded repeat vm-health lab-reachability qemu-restart console-logout bed-status bed-lease bed-release bed-reap import-snapshot api-snapshot check-api-snapshot check-api-teaching api-surface-report check-breaking profile unit-outliers browsers dashboard dashboard-all dashboard-soak busybox busybox-preflight busybox-cache busybox-drift conformance conformance-bed kmodcov kmodcov-matrix release-kmodcov-matrix support-matrix web-install web web-dev test-ts web-clean wheel-check wheel-smoke
 
 # git-cliff's conventional-commit census decides the bump by default (see
 # scripts/release_bump.py); BUMP= only RAISES it, never lowers it. Override
@@ -307,6 +307,12 @@ LAB_FILE := tests/_fixtures/lab_data/tech1/lab.json
 BED_LEASE := uv run python scripts/bed_lease.py --lab $(LAB_FILE)
 bed_acquire = @$(BED_LEASE) acquire --pid $$PPID --purpose "$(1)"
 bed_release = @$(BED_LEASE) release --pid $$PPID
+# The bed reap (docs/contributing.md, "The bed reap"; scripts/bed_reap.py): every
+# lane reaps what an earlier run left right after its acquire, and again at a
+# green exit before its release; a red lane is reaped by the next start.
+# `make bed-reap` is the hand run after a killed or interrupted run.
+BED_REAP := uv run python scripts/bed_reap.py --lab $(LAB_FILE)
+bed_reap = @$(BED_REAP) --pid $$PPID
 
 # Arms the asyncio transport-leak detector (tests/conftest.py +
 # tests/_fixtures/_transport_leaks.py). One token so "which lanes are armed"
@@ -515,20 +521,26 @@ nox-unit: ## Run the unit suite across all supported Pythons (no VMs; the `inter
 
 nox-integration: ## Run the unit + integration level tiers across all supported Pythons (the `interpreter_agnostic` family runs on 3.10 only). Requires the full lab. Override COUNT=N (default 1); JUnit XML lands in reports/junit/nox-integration/.
 	$(call bed_acquire,nox-integration)
+	$(call bed_reap)
 	@$(SAY) "nox: unit + integration tiers, all Pythons (x$(NOX_COUNT))"
 	@uv run nox -s tests_integration -- --count=$(NOX_COUNT) --repeat-scope=session
+	$(call bed_reap)
 	$(call bed_release)
 
 nox-unix: ## Run the Unix-VM integration suite (incl. multi-hop) across all supported Pythons. Requires dev VM with Vagrant hosts up. Override COUNT=N (default 1); JUnit XML in reports/junit/nox-unix/.
 	$(call bed_acquire,nox-unix)
+	$(call bed_reap)
 	@$(SAY) "nox: Unix-VM suite, all Pythons (x$(NOX_COUNT))"
 	@uv run nox -s tests_unix -- --count=$(NOX_COUNT) --repeat-scope=session
+	$(call bed_reap)
 	$(call bed_release)
 
 nox-embedded: ## Run the embedded (Zephyr) suite across all supported Pythons. Requires Vagrant lab up. Override COUNT=N (default 1); JUnit XML in reports/junit/nox-embedded/.
 	$(call bed_acquire,nox-embedded)
+	$(call bed_reap)
 	@$(SAY) "nox: embedded/Zephyr suite, all Pythons (x$(NOX_COUNT))"
 	@uv run nox -s tests_embedded -- --count=$(NOX_COUNT) --repeat-scope=session
+	$(call bed_reap)
 	$(call bed_release)
 
 nox-hostless: ## Run the no-testbed CI gate across all supported Pythons: the full selection (tests/unit + no-VM e2e) on 3.10 with the 94.75 coverage floor; the same paths minus the `interpreter_agnostic` family, no coverage, on 3.14; the trimmed tests/unit tier (minus the family, no coverage) on 3.11-3.13. No VMs. Override COUNT=N (default 1); JUnit XML lands in reports/junit/nox-hostless/.
@@ -569,20 +581,26 @@ NOX_MIDDLE := 3.11 3.12 3.13
 
 nox: ## Run the full suite on the PRIMARY (3.10, the oldest supported interpreter, the `interpreter_agnostic` family included; uninstrumented — the coverage floor is `make coverage`'s) and the CANARY (3.14, newest — version-specific warnings; the family deselected, no coverage) Pythons, and the trimmed hostless slice on the middle versions. Requires dev VM with Vagrant hosts up. Not used by CI. Full cross-version matrix: `make nox-full`. Override COUNT=N (default 1); JUnit XML in reports/junit/nox/ + reports/junit/nox-hostless/.
 	$(call bed_acquire,nox)
+	$(call bed_reap)
 	@$(SAY) "nox: full suite on $(NOX_PRIMARY) + $(NOX_CANARY), trimmed hostless on $(NOX_MIDDLE) (x$(NOX_COUNT))"
 	@uv run nox -s tests_all-$(NOX_PRIMARY) tests_all-$(NOX_CANARY) $(foreach v,$(NOX_MIDDLE),tests_hostless-$(v)) -- --count=$(NOX_COUNT) --repeat-scope=session
+	$(call bed_reap)
 	$(call bed_release)
 
 nox-release: ## (Build & Release) The release's cross-version matrix, once `make coverage` has stamped the tree: every product test minus the `interpreter_agnostic` family, uninstrumented, on the CANARY ($(NOX_CANARY)); the trimmed hostless slice on $(NOX_MIDDLE). Never the primary — the stamp is its evidence (scripts/coverage_stamp.py). Dev VM only (Vagrant hosts up). Override COUNT=N (default 1); JUnit XML in reports/junit/nox/ + reports/junit/nox-hostless/.
 	$(call bed_acquire,nox-release)
+	$(call bed_reap)
 	@$(SAY) "nox (release): full suite on $(NOX_CANARY), trimmed hostless on $(NOX_MIDDLE) (x$(NOX_COUNT))"
 	@uv run nox -s tests_all-$(NOX_CANARY) $(foreach v,$(NOX_MIDDLE),tests_hostless-$(v)) -- --count=$(NOX_COUNT) --repeat-scope=session
+	$(call bed_reap)
 	$(call bed_release)
 
 nox-full: ## Run the FULL test suite (all environments) on 3.10 and every product test (minus the `interpreter_agnostic` family, no coverage) on 3.11–3.14 — the complete matrix. Requires dev VM with Vagrant hosts up. Override COUNT=N (default 1); JUnit XML in reports/junit/nox/.
 	$(call bed_acquire,nox-full)
+	$(call bed_reap)
 	@$(SAY) "nox: FULL matrix — every suite on 3.10, every product test on 3.11–3.14 (x$(NOX_COUNT))"
 	@uv run nox -s tests_all -- --count=$(NOX_COUNT) --repeat-scope=session
+	$(call bed_reap)
 	$(call bed_release)
 
 validate: validate-python validate-ts ## (Build & Release) Validate ALL code (Python + TS): sub-targets validate-python + validate-ts
@@ -911,6 +929,7 @@ build: ## (Build & Release) Build the project with uv
 # Pinned by tests/unit/test_coverage_html_placement.py.
 coverage-python: dashboard ## Run the full Python suite (all tiers, pinned Python) and enforce the 95.5 gate (lines + branches); the browser (Playwright) suite runs first as its own process via the `dashboard` prerequisite — its coverage data is folded in via --cov-append. Requires lab VMs (+ `make browsers` once). JUnit XML lands in reports/junit/coverage-python/.
 	$(call bed_acquire,coverage-python)
+	$(call bed_reap)
 	@$(COVERAGE_STAMP) mark dashboard
 	@$(SAY) "pytest: all tiers, pinned Python (browser lane folded in)"
 	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "$(M_COVERAGE) and not serial_timing" -n $(COVERAGE_WORKERS) --cov-append --cov-fail-under=0 $(call junitxml,coverage-python)
@@ -920,6 +939,7 @@ coverage-python: dashboard ## Run the full Python suite (all tiers, pinned Pytho
 	@$(SAY) "unit outliers, the ten slowest files (a report, never a gate; all of them: make unit-outliers)"
 	@-$(call unit_outliers,--top 10)
 	@$(COVERAGE_STAMP) mark coverage-python-serial
+	$(call bed_reap)
 	$(call bed_release)
 
 # The unit tree's slow tests (docs/contributing.md, "Where the test suite's time
@@ -1000,9 +1020,11 @@ coverage-unit: ## Run the unit level tier (tests/unit only; no testbed) with a c
 
 coverage-integration: ## Run the unit + integration level tiers (tests/unit + tests/integration) with a coverage report (no gate). Requires the full lab. JUnit XML in reports/junit/coverage-integration/.
 	$(call bed_acquire,coverage-integration)
+	$(call bed_reap)
 	@$(SAY) "pytest: tests/unit + tests/integration (no gate)"
 	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit tests/integration -m "not stability and not busybox and not conformance and not kmodcov and not serial_timing" $(call junitxml,coverage-integration)
 	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest tests/unit tests/integration -m "serial_timing and not stability and not busybox and not conformance and not kmodcov" -n0 --cov-append --cov-report=html $(call junitxml,coverage-integration-serial)
+	$(call bed_reap)
 	$(call bed_release)
 
 coverage-hostless: ## Run the no-testbed CI gate suite (tests/unit + no-VM e2e) and enforce the CI coverage gate. No VMs. JUnit XML lands in reports/junit/coverage-hostless/.
@@ -1022,12 +1044,14 @@ collect-check: ## (Quality) Import every test module without running anything �
 quick: ## (Dev) The scoped per-commit run: `make quick PATHS="<dirs or files>"` — those paths, uninstrumented, parallel plus the -n0 serial_timing twin. One leg selecting nothing is tolerated (and printed); both empty is red. `make gate-scope` prints the PATHS for your diff.
 	@$(if $(and $(filter command line,$(origin PATHS)),$(PATHS)),true,$(error quick: PATHS is required on the command line (e.g. make quick PATHS="tests/unit/cli"); `make gate-scope` prints them for your diff))
 	$(call bed_acquire,quick) --unless-all-under tests/unit -- $(PATHS)
+	$(call bed_reap) --unless-all-under tests/unit -- $(PATHS)
 	@mkdir -p $(JUNIT_DIR)/quick && rm -f $(QUICK_EMPTY)
 	@$(SAY) "pytest: $(PATHS) (-n $(QUICK_WORKERS), no coverage)"
 	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest $(PATHS) -m "$(M_QUICK) and not serial_timing" --no-cov -n $(QUICK_WORKERS) $(call junitxml,quick) || { [ $$? -eq 5 ] && echo parallel >> $(QUICK_EMPTY); }
 	@$(SAY) "pytest: $(PATHS) serial_timing twin, -n0"
 	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest $(PATHS) -m "serial_timing and $(M_QUICK)" --no-cov -n0 $(call junitxml,quick-serial) || { [ $$? -eq 5 ] && echo serial >> $(QUICK_EMPTY); }
 	@if [ -e $(QUICK_EMPTY) ]; then $(SAY) "quick: the $$(tr '\n' ' ' < $(QUICK_EMPTY))leg selected no test"; [ "$$(wc -l < $(QUICK_EMPTY))" -lt 2 ] || { echo "quick: neither leg selected a test under PATHS='$(PATHS)'" >&2; exit 1; }; fi
+	$(call bed_reap) --unless-all-under tests/unit -- $(PATHS)
 	$(call bed_release) --unless-all-under tests/unit -- $(PATHS)
 
 quick-guards: ## (Dev) The repository guards — the `interpreter_agnostic` family (build-file and lane census, API golden wiring, the script pins) over tests/unit, uninstrumented and parallel. The rider `make gate-scope` names for a src/, scripts/ or build-file change.
@@ -1036,15 +1060,19 @@ quick-guards: ## (Dev) The repository guards — the `interpreter_agnostic` fami
 
 coverage-unix: ## Run the Unix-VM resource slice (incl. multi-hop) with a coverage report (no gate). Requires lab VMs. JUnit XML in reports/junit/coverage-unix/.
 	$(call bed_acquire,coverage-unix)
+	$(call bed_reap)
 	@$(SAY) "pytest: Unix-VM slice, incl. multi-hop (no gate)"
 	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "$(M_UNIX) and not serial_timing" $(call junitxml,coverage-unix)
 	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "serial_timing and $(M_UNIX)" -n0 --cov-append --cov-report=html $(call junitxml,coverage-unix-serial)
+	$(call bed_reap)
 	$(call bed_release)
 
 coverage-embedded: ## Run the embedded (Zephyr) resource slice with a coverage report (no gate). Requires Vagrant lab up. JUnit XML in reports/junit/coverage-embedded/.
 	$(call bed_acquire,coverage-embedded)
+	$(call bed_reap)
 	@$(SAY) "pytest: embedded/Zephyr slice (no gate)"
 	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "$(M_EMBEDDED)" --cov-report=html $(call junitxml,coverage-embedded)
+	$(call bed_reap)
 	$(call bed_release)
 
 DASHBOARD_BROWSERS ?= chromium
@@ -1314,12 +1342,14 @@ CONFORMANCE_BED_TIMEOUT := 1200s
 # command runs for real. Never dry-run this target.
 conformance-bed: ## Run the host-contract conformance suite against the REAL BED (dev VM only; needs the lab VMs and the Zephyr guests): the same exec/transfer/timeout contracts as `make conformance`, crossed over every (term, transfer) each bed host's menus permit. Exhaustive by default; CONFORMANCE_CELLS=N samples N cells off the session seed instead. Ends by folding what it measured into schemas/support_matrix.json (`make support-matrix`) — review the diff and commit it, or let `make release-matrix` do both when the change is not a downgrade. JUnit XML lands in reports/junit/conformance-bed/.
 	$(call bed_acquire,conformance-bed)
+	$(call bed_reap)
 	@$(SAY) "pytest: host-contract conformance, BED venue (real lab hosts, cells=$(CONFORMANCE_CELLS))"
 	@OTTO_CONFORMANCE_BED=1 OTTO_CONFORMANCE_CELLS=$(CONFORMANCE_CELLS) \
 	    timeout --foreground --kill-after=10s $(CONFORMANCE_BED_TIMEOUT) \
 	    uv run pytest -m "conformance" --no-cov $(call junitxml,conformance-bed); \
 	  lane=$$?; $(MAKE) --no-print-directory support-matrix; collate=$$?; \
 	  if [ $$lane -ne 0 ]; then exit $$lane; fi; exit $$collate
+	$(call bed_reap)
 	$(call bed_release)
 
 # --- otto_kmodcov toolchain proofs ---------------------------------------------
@@ -1354,12 +1384,14 @@ KMODCOV_TIMEOUT := 3600s
 # runs for real. Never dry-run this target.
 kmodcov: ## Run the otto_kmodcov toolchain proofs (`kmodcov`-marked; excluded from every default lane): rebuild the kernel-module fixture with each compiler in KMODCOV_TOOLCHAINS and run the kmod coverage e2e on the bed per compiler, then build it for every kernel in KMODCOV_KERNELS: the x86_64 cross build from the source tree at KMODCOV_CROSS_KDIR on the host, and each provisioned kernel under KMODCOV_KERNELS_DIR inside a container image of its own era (scripts/provision_kmodcov_kernels.sh). Dev VM only; a missing compiler, tree or image FAILS. Invoked through `make release-kmodcov-matrix` by `make release`. JUnit XML lands in reports/junit/kmodcov/. Ends by folding what it measured into schemas/kmodcov_matrix.json (`make kmodcov-matrix`) — review the diff and commit it, or let `make release-kmodcov-matrix` do both when the change is not a downgrade.
 	$(call bed_acquire,kmodcov)
+	$(call bed_reap)
 	@$(SAY) "pytest: otto_kmodcov toolchain proofs ($(KMODCOV_TOOLCHAINS); kernels $(KMODCOV_KERNELS); cross tree $(KMODCOV_CROSS_KDIR))"
 	@OTTO_KMODCOV_TOOLCHAINS="$(KMODCOV_TOOLCHAINS)" OTTO_KMODCOV_CROSS_KDIR="$(KMODCOV_CROSS_KDIR)" OTTO_KMODCOV_KERNELS="$(KMODCOV_KERNELS)" OTTO_KMODCOV_KERNELS_DIR="$(KMODCOV_KERNELS_DIR)" \
 	    timeout --foreground --kill-after=10s $(KMODCOV_TIMEOUT) \
 	    uv run pytest -m "kmodcov" -n0 --no-cov $(call junitxml,kmodcov); \
 	  lane=$$?; $(MAKE) --no-print-directory kmodcov-matrix; collate=$$?; \
 	  if [ $$lane -ne 0 ]; then exit $$lane; fi; exit $$collate
+	$(call bed_reap)
 	$(call bed_release)
 
 KMODCOV_MATRIX_BASELINE := reports/.kmodcov-matrix-baseline.json
@@ -1503,6 +1535,7 @@ stability-unit: ## Run no-VM SessionManager concurrency/soak tests by marker. JU
 
 stability-unix: ## Real telnet/SSH soak against the Unix Vagrant VMs (incl. multi-hop). Requires lab VMs. JUnit XML in reports/junit/stability-unix/. Override iterations with COUNT=N (default 10).
 	$(call bed_acquire,stability-unix)
+	$(call bed_reap)
 	@$(SAY) "pytest soak: real telnet/SSH on the Unix VMs (x$(STABILITY_UNIX_COUNT), leak detector on)"
 	@$(LEAK_DETECT) uv run pytest \
 	    tests/integration/host/test_app_shell_stability_integration.py \
@@ -1514,6 +1547,7 @@ stability-unix: ## Real telnet/SSH soak against the Unix Vagrant VMs (incl. mult
 	    -p no:cacheprovider \
 	    --no-cov \
 	    $(call junitxml,stability-unix)
+	$(call bed_reap)
 	$(call bed_release)
 
 # -n0 for the whole lane rather than an exclusion + serial leg. Every module
@@ -1524,6 +1558,7 @@ stability-unix: ## Real telnet/SSH soak against the Unix Vagrant VMs (incl. mult
 # setup/teardown. Same reasoning as dashboard-soak below.
 stability-tunnel: ## Tunnel soak against the live bed (churn/concurrency/traffic/adversity/health/monitor-loop). Requires lab VMs. JUnit XML in reports/junit/stability-tunnel/. COUNT=N repeats the suite (default 1); CYCLES=N sets internal loop depth (default 5).
 	$(call bed_acquire,stability-tunnel)
+	$(call bed_reap)
 	@$(SAY) "pytest soak: tunnels on the live bed (x$(STABILITY_TUNNEL_COUNT), $(STABILITY_TUNNEL_CYCLES) cycles/test)"
 	@$(LEAK_DETECT) OTTO_TUNNEL_SOAK_CYCLES=$(STABILITY_TUNNEL_CYCLES) uv run pytest \
 	    tests/e2e/tunnel_stability \
@@ -1533,10 +1568,12 @@ stability-tunnel: ## Tunnel soak against the live bed (churn/concurrency/traffic
 	    -p no:cacheprovider \
 	    --no-cov \
 	    $(call junitxml,stability-tunnel)
+	$(call bed_reap)
 	$(call bed_release)
 
 stability-embedded: ## Cross-OS stability contract against real telnet/SSH targets (Zephyr). Requires Vagrant lab up. JUnit XML lands in reports/junit/stability-embedded/. Override iterations with COUNT=N (default 1).
 	$(call bed_acquire,stability-embedded)
+	$(call bed_reap)
 	@$(SAY) "pytest soak: cross-OS contract incl. Zephyr (x$(STABILITY_EMBEDDED_COUNT), leak detector on)"
 	@$(LEAK_DETECT) uv run pytest \
 	    tests/integration/host/test_host_stability_contract.py \
@@ -1545,18 +1582,23 @@ stability-embedded: ## Cross-OS stability contract against real telnet/SSH targe
 	    --no-cov \
 	    --count=$(STABILITY_EMBEDDED_COUNT) \
 	    $(call junitxml,stability-embedded)
+	$(call bed_reap)
 	$(call bed_release)
 
 chaos: ## Tier-3 chaos lane, unix legs: interrupt/SIGKILL/reboot scenarios on a leased bed host. Requires lab VMs and EXCLUSIVE bed use (never co-run with other bed lanes). JUnit XML in reports/junit/nox-chaos/.
 	$(call bed_acquire,chaos)
+	$(call bed_reap)
 	@$(SAY) "pytest chaos: tier-3 scenarios on the live bed (unix legs, leak detector on)"
 	@$(LEAK_DETECT) uv run nox -s chaos
+	$(call bed_reap)
 	$(call bed_release)
 
 chaos-embedded: ## Tier-3 chaos lane, zephyr console leg (console-client-death). Can wedge a board — run deliberately; a failure may need a zephyr bed restart. JUnit XML in reports/junit/nox-chaos-embedded/.
 	$(call bed_acquire,chaos-embedded)
+	$(call bed_reap)
 	@$(SAY) "pytest chaos: zephyr console scenarios (leak detector on)"
 	@$(LEAK_DETECT) uv run nox -s chaos_embedded
+	$(call bed_reap)
 	$(call bed_release)
 
 # Informational: which lab VMs answer a ping, so a tier that dies at fixture
@@ -1619,6 +1661,7 @@ stability: ## Run the full stability/soak suite: no-VM concurrency, then real te
 # roots (tests/unit/test_lane_invariants.py).
 repeat: ## Run the full local suite (unit + integration + e2e) under pytest-repeat (excludes `browser` — see note above M_HOSTLESS; run its soak separately). Local only; requires VMs. JUnit XML in reports/junit/repeat/. Override COUNT=N (default 10).
 	$(call bed_acquire,repeat)
+	$(call bed_reap)
 	@$(SAY) "pytest soak: full local suite, no browser (x$(COUNT), leak detector on)"
 	@$(LEAK_DETECT) uv run pytest \
 	    tests/unit tests/integration tests/e2e \
@@ -1636,6 +1679,7 @@ repeat: ## Run the full local suite (unit + integration + e2e) under pytest-repe
 	    -p no:cacheprovider \
 	    --no-cov \
 	    $(call junitxml,repeat-serial)
+	$(call bed_reap)
 	$(call bed_release)
 
 # ═══ Lab ════════════════════════════════════════════════════════════════════
@@ -1666,6 +1710,11 @@ bed-lease: ## (Lab) Hold the bed from this shell for as long as the shell lives 
 
 bed-release: ## (Lab) Free the bed cell whoever holds it, naming what was evicted — the eviction of a run you KNOW is dead (a lease whose workers still run is kept by the lanes themselves).
 	@$(BED_LEASE) release --pid $$PPID --force
+
+bed-reap: ## (Lab) Clean the bed after a killed or interrupted run, under the lease: otto tunnels, impair timers and qdiscs, nc listeners, staging, orphan docker stacks and e2e images, a half-built coverage product, then the consoles (`RESTART_QEMU=1` also restarts the guests). Refuses a bed another live run holds. Every bed lane runs the same reap (without the console step) at its start and its green exit.
+	$(call bed_acquire,bed-reap)
+	$(call bed_reap) --full $(if $(RESTART_QEMU),--restart-qemu)
+	$(call bed_release)
 
 # ═══ Quality: static analysis + autofix ═════════════════════════════════════
 
@@ -1922,7 +1971,7 @@ GATE_TIP_OVERRIDES = $(foreach n,$(filter-out BASE,$(COVERAGE_STAMP_OVERRIDE_NAM
 
 gate-tip: ## (Quality) The landing's gate: run the oracle's tip lanes (make gate-scope, BASE=origin/main) and stamp the committed tree per lane on green; the push to main refuses a tip whose lanes are not stamped. Lanes already stamped for this tree are skipped. Refuses any other command-line variable. `uv run python scripts/gate_tip.py --force` re-runs, `--dry-run` only lists, `--timings [REV]` prints the stored lane timings of a rev's tree (the run ends with a table of the same shape).
 	$(call bed_acquire,gate-tip)
-	@uv run python scripts/gate_tip.py --repo . --base "$(if $(filter command line,$(origin BASE)),$(BASE),origin/main)" $(GATE_TIP_OVERRIDES)
+	@uv run python scripts/gate_tip.py --repo . --lab $(LAB_FILE) --pid $$PPID --base "$(if $(filter command line,$(origin BASE)),$(BASE),origin/main)" $(GATE_TIP_OVERRIDES)
 	$(call bed_release)
 
 coverage-gate-args: ## (internal) Print the declared coverage gate, one argv element per line, for scripts/gate_tip.py's own call of the coverage stamp's check
@@ -2036,14 +2085,18 @@ doctest-src:
 
 docs-captures: ## (Docs) Refresh EVERY docs example capture, bed included (needs the lab VMs)
 	$(call bed_acquire,docs-captures)
+	$(call bed_reap)
 	@$(SAY) "docs example captures: full refresh (bed)"
 	@uv run python scripts/refresh_docs_captures.py
+	$(call bed_reap)
 	$(call bed_release)
 
 docs-captures-check: ## (Docs) Diff EVERY docs example capture against the bed -- a tip lane for src and example changes
 	$(call bed_acquire,docs-captures-check)
+	$(call bed_reap)
 	@$(SAY) "docs example captures: full drift check (bed)"
 	@uv run python scripts/refresh_docs_captures.py --check
+	$(call bed_reap)
 	$(call bed_release)
 
 # web-clean is a prerequisite because the built frontend IS a generated

@@ -35,7 +35,7 @@ import os
 import platform
 import re
 import shlex
-import subprocess
+import signal
 import sys
 import time
 from collections.abc import Callable
@@ -65,6 +65,7 @@ from scripts.gate_stamp_common import (  # noqa: E402
     utc_now,
     write_atomically,
 )
+from scripts.process_group import UndrainedError, run_awaiting_descendants  # noqa: E402
 
 LIVE_GOALS = ["check-breaking", "lint-arch", "check-python", "docs", "gate-fresh"]
 """History-dependent (RANGE_TARGETS) or run by the push itself; never stamped."""
@@ -587,22 +588,19 @@ def lane_env(environ: "dict[str, str]") -> "dict[str, str]":
 
 
 def _default_runner(cmd: "list[str] | str", cwd: Path, env: "dict[str, str]") -> RunOutcome:
-    """Run *cmd* for real: a shell line inherits stdio, an argv is captured with stderr merged."""
-    if isinstance(cmd, str):
-        completed = subprocess.run(  # noqa: S602 -- the oracle's own lines
-            cmd, shell=True, cwd=cwd, env=env, check=False
-        )
-        return RunOutcome(completed.returncode, "")
-    completed = subprocess.run(  # noqa: S603
-        cmd,
-        cwd=cwd,
-        env=env,
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
+    """Run *cmd* for real: a shell line inherits stdio, an argv is captured with stderr merged.
+
+    Through :func:`scripts.process_group.run_awaiting_descendants`, the lifecycle
+    both gates share: a lane runs in a session of its own, the runner returns
+    only when nothing the lane spawned is alive, and an interrupt is relayed to
+    the lane's group and waited out before it propagates (a second one kills
+    the group; see :func:`main` for what the gate then does).
+    """
+    shell = isinstance(cmd, str)
+    result = run_awaiting_descendants(
+        cmd, cwd=cwd, env=env, shell=shell, capture=not shell, label="gate-tip"
     )
-    return RunOutcome(completed.returncode, completed.stdout)
+    return RunOutcome(result.status, result.output)
 
 
 @dataclass
@@ -616,6 +614,10 @@ class Options:
     overridden: "list[str]" = field(default_factory=list)
     runner: Runner = _default_runner
     out: TextIO = field(default_factory=lambda: sys.stdout)
+    lab: "Path | None" = None
+    """The cell's lab file (the Makefile's LAB_FILE): what an interrupted run reaps."""
+    pid: "int | None" = None
+    """The run the lease belongs to (the recipe's ``$$PPID``, the ``make`` running this script)."""
 
 
 class FramingError(GateFreshError):
@@ -1092,8 +1094,44 @@ def timings(repo: Path, root: Path, rev: str) -> "list[str]":
     ]
 
 
+EXIT_INTERRUPTED = 130
+
+
+def _raise_interrupt(_signum: int, _frame: object) -> None:
+    """SIGTERM is handled as SIGINT: the same unwind, the same reap and release."""
+    raise KeyboardInterrupt
+
+
+def reap_and_release(lab: "Path | None", pid: "int | None", out: TextIO) -> None:
+    """After an interrupted run whose lanes are gone: the quick reap, then the lease's release.
+
+    *pid* is the run the lease belongs to: the ``make`` running this script,
+    which the recipe passes as ``--pid $$PPID`` (this process's own parent is
+    ``uv``, and the release is the holder's alone). Without *lab* and *pid*
+    there is nothing to reap or release by: the operator is told to run
+    ``make bed-reap``. The reap and the release are the scripts' own functions,
+    called in-process, so no command line is restated here.
+    """
+    if lab is None or pid is None:
+        print("gate-tip: no --lab and --pid, so no reap: run `make bed-reap`", file=out, flush=True)
+        return
+    from scripts import bed_lease, bed_reap
+
+    cell = bed_lease.load_cell(lab, bed_lease.root_from(None))
+    bed_reap.reap(cell, pid)
+    bed_lease.release(cell, pid, force=False)
+
+
 def main(argv: "list[str] | None" = None) -> int:
-    """Parse the CLI and run, list, check, or print a tree's timings; return the status."""
+    """Parse the CLI and run, list, check, or print a tree's timings; return the status.
+
+    An interrupt (Ctrl-C, or SIGTERM) during a run reaches the lane's group
+    first and is waited out (the runner's contract), then the bed is reaped
+    and the lease released, and the exit is 130. A second interrupt kills the
+    lane's group; a group that does not empty within the kill budget is
+    reported with its pids, no reap runs, the lease is kept, and the exit is
+    130 as well: the bed is reaped once it is confirmed idle (``make bed-reap``).
+    """
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -1102,6 +1140,8 @@ def main(argv: "list[str] | None" = None) -> int:
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--overridden", action="append", default=[], metavar="NAME")
     parser.add_argument("--remote", default="origin")
+    parser.add_argument("--lab", type=Path, default=None, metavar="LAB_JSON")
+    parser.add_argument("--pid", type=int, default=None, help="the run's pid (the lane's make)")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true")
     mode.add_argument("--check", nargs=2, metavar=("REMOTE_SHA", "TIP_SHA"))
@@ -1113,6 +1153,8 @@ def main(argv: "list[str] | None" = None) -> int:
         help="print the stored timing table for REV's tree (a rev, commit or tree id; HEAD)",
     )
     args = parser.parse_args(argv)
+    if (args.lab is None) != (args.pid is None):
+        parser.error("--lab and --pid go together: the cell to reap and the run holding its lease")
     repo = Path(args.repo).resolve()
     try:
         if args.timings is not None:
@@ -1125,18 +1167,40 @@ def main(argv: "list[str] | None" = None) -> int:
                 return 1
             print(f"gate-tip: every stamped lane for {args.check[1][:12]} is stamped")
             return 0
-        return run(
+        return _run_interruptible(
             Options(
                 repo=repo,
                 base=args.base,
                 force=args.force,
                 dry_run=args.dry_run,
                 overridden=args.overridden,
+                lab=args.lab,
+                pid=args.pid,
             )
         )
     except (GateFreshError, gate_scope.GateScopeError) as exc:
         print(f"gate-tip: {exc}", file=sys.stderr)
         return 2
+
+
+def _run_interruptible(opts: Options) -> int:
+    """Run under the interrupt policy :func:`main` describes."""
+    previous = signal.signal(signal.SIGTERM, _raise_interrupt)
+    try:
+        return run(opts)
+    except KeyboardInterrupt:
+        _say(opts, "interrupted; the lanes are gone: reaping the bed and releasing the lease")
+        reap_and_release(opts.lab, opts.pid, opts.out)
+        return EXIT_INTERRUPTED
+    except UndrainedError as exc:
+        _say(
+            opts,
+            f"interrupted twice and {exc}; no reap until the bed is idle and the lease is "
+            "kept: run `make bed-reap` once they are gone",
+        )
+        return EXIT_INTERRUPTED
+    finally:
+        signal.signal(signal.SIGTERM, previous)
 
 
 if __name__ == "__main__":

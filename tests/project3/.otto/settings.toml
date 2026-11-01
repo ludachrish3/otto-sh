@@ -2,6 +2,9 @@ name = "project3"
 version = "1.0.0"
 libs = [
     "pylib",
+    # The coverage product's per-version build mapping (product/product_builds.py):
+    # the suite builds and loads through it; scripts/bed_reap.py rebuilds through it.
+    "product",
     # Shared, third-party-style module. project3 only targets zephyr37_llext, but
     # `--lab embedded` constructs every host in the lab — including the Zephyr
     # 2.7 zephyr27_fat, whose `zephyr-inline` frame lives here. Pulling it in lets

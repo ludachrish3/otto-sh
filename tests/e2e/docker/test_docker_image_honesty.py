@@ -19,6 +19,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._fixtures.docker_reap import E2E_IMAGE_LABEL, remove_labelled_images_command
+
 from ._cli import _WIDE, _flat, _run_otto
 from ._honesty import (
     DAEMON_IMAGE_PAIRS_COMMAND,
@@ -31,7 +33,7 @@ from ._honesty import (
 
 pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("docker_e2e")]
 
-_LABEL = "otto-e2e-699"
+_LABEL = E2E_IMAGE_LABEL
 _FULL_ID = re.compile(rf"{MARK} (sha256:[0-9a-f]{{64}})")
 
 
@@ -93,7 +95,7 @@ class Throwaway:
         text = self.exec(
             f"docker image ls -a --no-trunc --filter {self.label}{extra} "
             f"--format '{MARK} {{{{.ID}}}}'; {probe_echo('listed', '$?')}"
-        )
+        )  # a marked listing of its own: `image_ids_command` prints bare ids
         assert probe_values(text, "listed") == ["0"], f"the image listing did not complete:\n{text}"
         return set(_FULL_ID.findall(text))
 
@@ -110,15 +112,8 @@ def throwaway(docker_host, tmp_path) -> Iterator[Throwaway]:
     yield images
     owned = (images, images.sibling())
     # By id, with the labels as the only selectors: nothing another test owns can
-    # match. Both are removed before either is checked, so one failure leaks neither.
-    images.exec(
-        "; ".join(
-            f"for i in $(docker image ls -aq --no-trunc --filter {o.label}); "
-            f"do docker image rm -f -- $i; done"
-            for o in owned
-        )
-        + "; true"
-    )
+    # match (the one removal line the bed reap runs too, over the bare label).
+    images.exec(remove_labelled_images_command([o.label for o in owned]))
     for o in owned:
         assert o.held_ids() == set(), "the finalizer left a throwaway image behind"
 

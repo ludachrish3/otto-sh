@@ -15,10 +15,12 @@ the existing suite-wide detectors; this module is remote-state only.
 
 import dataclasses
 
+from otto.link.netem import NetEmImpairer, parse_scoped_outputs
 from otto.link.sentinel import IMPAIR_PS_COMMAND, parse_impair_ps
 from otto.logger.mode import LogMode
 from otto.result import Result
 from otto.tunnel.discovery import DISCOVERY_PS_COMMAND, parse_process_discovery
+from tests._fixtures.docker_reap import E2E_IMAGE_LABEL, ORPHAN_FRAGMENTS, image_ids_command
 
 
 def argv_pattern(needle: str) -> str:
@@ -46,10 +48,14 @@ def argv_pattern(needle: str) -> str:
     return f"[{needle[0]}]{needle[1:]}"
 
 
-# Both bed netdevs matter: eth2 carries the declared data-plane link the
-# connection-drop scenario impairs; eth1 (mgmt) must stay impairment-free
-# ALWAYS — a qdisc appearing there means a placement guard failed.
-_QDISC_DEVS = ("eth1", "eth2")
+# Every netdev the host lists, not a fixed pair: eth2 carries the declared
+# data-plane link, eth1 (mgmt) must stay impairment-free ALWAYS (a qdisc there
+# means a placement guard failed), and the link e2e creates VLAN links whose
+# qdiscs a fixed list would never see. Per netdev the probe reads the qdisc
+# and filter pair `NetEmImpairer.scoped_read_commands` reads, because a scoped
+# otto tree classifies as foreign without its filters.
+_NETDEV_PROBE = "tc qdisc show 2>/dev/null || true"
+_IMPAIRER = NetEmImpairer()
 # Bracket-tricked so the probe's own wrapper shell can never appear in (or be
 # filtered from) the listener list: the old `| grep -v "$$"` self-filter also
 # dropped any REAL listener whose line contained the wrapper's pid as a
@@ -79,6 +85,9 @@ _DOCKER_PS_PROBE = (
 )
 _DOCKER_NET_PROBE = (
     "command -v docker >/dev/null 2>&1 && docker network ls --format '{{.Name}}' || true"
+)
+_DOCKER_IMAGES_PROBE = (
+    f"command -v docker >/dev/null 2>&1 && {image_ids_command(f'label={E2E_IMAGE_LABEL}')} || true"
 )
 _PROBE_TIMEOUT = 30
 
@@ -157,15 +166,36 @@ def check_probe_result(host_name: str, result: Result) -> None:
 
 
 @dataclasses.dataclass(frozen=True)
+class QdiscReads:
+    """One netdev's raw ``tc qdisc show`` and ``tc filter show ... parent 1:`` outputs."""
+
+    qdisc: str
+    filters: str = ""
+
+
+@dataclasses.dataclass(frozen=True)
 class HygieneSnapshot:
     tunnel_procs: frozenset  # str lines: "pid tunnel-id" from sentinel parse
     impair_timers: frozenset  # str lines: "pid link-id netdev [selector]"
     nc_listeners: frozenset  # raw pgrep lines
-    qdiscs: dict  # netdev -> raw `tc qdisc show dev X` text (exact value)
+    qdiscs: dict  # netdev -> QdiscReads (exact values)
     staging: frozenset  # /tmp/otto* entries
     history_digest: str  # sha256 line of ~/.bash_history
     docker_containers: frozenset  # docker ps lines: "id names"
     docker_networks: frozenset  # docker network names
+    docker_images: frozenset = frozenset()  # full ids of the e2e-labelled images
+
+
+def netdevs_listed(qdisc_show: str) -> list[str]:
+    """The netdevs a bare ``tc qdisc show`` names, in first-seen order."""
+    seen: list[str] = []
+    for line in qdisc_show.splitlines():
+        tokens = line.split()
+        if "dev" in tokens[:-1]:
+            dev = tokens[tokens.index("dev") + 1]
+            if dev not in seen:
+                seen.append(dev)
+    return seen
 
 
 async def snapshot_host(host) -> HygieneSnapshot:
@@ -185,8 +215,9 @@ async def snapshot_host(host) -> HygieneSnapshot:
     tunnel_raw = await _out(DISCOVERY_PS_COMMAND)
     impair_raw = await _out(IMPAIR_PS_COMMAND)
     qdiscs = {}
-    for dev in _QDISC_DEVS:
-        qdiscs[dev] = await _out(f"tc qdisc show dev {dev} 2>/dev/null || true")
+    for dev in netdevs_listed(await _out(_NETDEV_PROBE)):
+        qdisc_cmd, filter_cmd = _IMPAIRER.scoped_read_commands(dev)
+        qdiscs[dev] = QdiscReads(await _out(qdisc_cmd), await _out(filter_cmd))
     return HygieneSnapshot(
         tunnel_procs=frozenset(
             f"{o.pid} {o.parsed.tunnel.id}" for o in parse_process_discovery(tunnel_raw)
@@ -201,7 +232,23 @@ async def snapshot_host(host) -> HygieneSnapshot:
         history_digest=await _out(_HISTORY_PROBE),
         docker_containers=frozenset(probe_lines(await _out(_DOCKER_PS_PROBE))),
         docker_networks=frozenset(probe_lines(await _out(_DOCKER_NET_PROBE))),
+        docker_images=frozenset(probe_lines(await _out(_DOCKER_IMAGES_PROBE))),
     )
+
+
+def tunnel_ids(snapshot: HygieneSnapshot) -> list[str]:
+    """The tunnel ids a snapshot's ``tunnel_procs`` lines name (the formatter above's inverse)."""
+    return sorted({line.split(maxsplit=1)[1] for line in snapshot.tunnel_procs if " " in line})
+
+
+def listener_pids(snapshot: HygieneSnapshot) -> list[int]:
+    """The pids of a snapshot's nc listeners: pgrep's leading field on each line."""
+    pids = []
+    for line in snapshot.nc_listeners:
+        head = line.split(maxsplit=1)[0] if line.strip() else ""
+        if head.isdigit():
+            pids.append(int(head))
+    return sorted(pids)
 
 
 def _short_digest(digest: str) -> str:
@@ -229,14 +276,19 @@ def diff_snapshots(before: HygieneSnapshot, after: HygieneSnapshot) -> list:
         ("staging entry", before.staging, after.staging),
         ("docker container", before.docker_containers, after.docker_containers),
         ("docker network", before.docker_networks, after.docker_networks),
+        ("docker image", before.docker_images, after.docker_images),
     ):
         leftovers.extend(f"new {label}: {item}" for item in sorted(a - b))
-    leftovers.extend(
-        f"{dev}: qdisc changed: before={before.qdiscs.get(dev, '')!r} "
-        f"after={after.qdiscs.get(dev, '')!r}"
-        for dev in sorted(after.qdiscs)
-        if after.qdiscs.get(dev, "") != before.qdiscs.get(dev, "")
-    )
+    # Every netdev either side lists. One a scenario added or removed (a veth,
+    # a VLAN) is a change only when the tree on it is not the kernel's default:
+    # the netdev itself is the link layer's business, its qdisc is ours.
+    for dev in sorted(set(before.qdiscs) | set(after.qdiscs)):
+        b, a = before.qdiscs.get(dev), after.qdiscs.get(dev)
+        if a == b:
+            continue
+        if (a is None or b is None) and _kind(a if b is None else b) == "clean":
+            continue
+        leftovers.append(f"{dev}: qdisc changed: before={b!r} after={a!r}")
     before_empty = not before.history_digest
     after_empty = not after.history_digest
     if before_empty != after_empty:
@@ -259,6 +311,11 @@ def diff_snapshots(before: HygieneSnapshot, after: HygieneSnapshot) -> list:
     return leftovers
 
 
+def _kind(reads: "QdiscReads | None") -> str:
+    """The impairer's classification of one netdev's reads (``clean`` for none)."""
+    return "clean" if reads is None else parse_scoped_outputs(reads.qdisc, reads.filters).kind
+
+
 def format_hygiene_report(element: str, leftovers: list) -> str:
     lines = "\n  ".join(leftovers)
     return (
@@ -266,3 +323,52 @@ def format_hygiene_report(element: str, leftovers: list) -> str:
         f"  {lines}\n"
         f"Pre-existing state was snapshotted out — these appeared DURING the scenario."
     )
+
+
+def _orphan_named(name_line: str) -> bool:
+    return any(fragment in name_line for fragment in ORPHAN_FRAGMENTS)
+
+
+def residual_dirt(snapshot: HygieneSnapshot) -> list[str]:
+    """Everything on the host that is the test suite's to remove: the ABSOLUTE predicate.
+
+    :func:`diff_snapshots` is new-only (the chaos bracket must never blame a
+    scenario for dirt it inherited); the bed reap asks the other question,
+    "what is still here", and this answers it: every otto-tunnel daemon,
+    otto-impair timer, nc listener the probe lists and ``/tmp/otto*`` staging
+    entry (the bed hosts are the suite's fixtures, and those namespaces are
+    the suite's by the oracle's definition); every docker container and
+    network whose name carries an orphan fragment; every e2e-labelled image;
+    and, per netdev, a qdisc tree otto placed (``whole`` or ``scoped`` by the
+    classifier ``netem.py`` already has). A ``foreign`` tree is reported too,
+    marked as such: the reap never deletes what otto did not create, but a
+    bed is not clean while it is there. A ``clean`` netdev is silent.
+    """
+    found: list[str] = []
+    for label, items in (
+        ("otto-tunnel daemon", snapshot.tunnel_procs),
+        ("otto-impair timer", snapshot.impair_timers),
+        ("nc listener", snapshot.nc_listeners),
+        ("staging entry", snapshot.staging),
+        ("docker image", snapshot.docker_images),
+    ):
+        found.extend(f"{label}: {item}" for item in sorted(items))
+    for label, items in (
+        ("docker container", snapshot.docker_containers),
+        ("docker network", snapshot.docker_networks),
+    ):
+        found.extend(f"{label}: {item}" for item in sorted(items) if _orphan_named(item))
+    for dev in sorted(snapshot.qdiscs):
+        reads = snapshot.qdiscs[dev]
+        kind = _kind(reads)
+        if kind in ("whole", "scoped"):
+            found.append(f"{dev}: otto qdisc ({kind}): {reads.qdisc.strip()!r}")
+        elif kind == "foreign":
+            found.append(f"{dev}: foreign qdisc (not otto's, kept): {reads.qdisc.strip()!r}")
+    return found
+
+
+def format_residual_report(host: str, leftovers: list) -> str:
+    """The absolute report: what is STILL on *host*, pre-existing or not."""
+    lines = "\n  ".join(leftovers)
+    return f"bed-reap: {host} still carries {len(leftovers)} leftover(s):\n  {lines}"
