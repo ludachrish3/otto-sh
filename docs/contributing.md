@@ -490,7 +490,9 @@ hook (`.githooks/pre-push`; [the landing's gate is
 stamped](#the-landings-gate-is-stamped) says what it checks). A scoped
 `src-leaf` tip's live lines are `make check-breaking`, `make lint-arch` and
 `make gate-fresh`, which runs the same lint, type and docs checks. The hostless matrix is not a local tip lane in
-either case: `make nox-hostless` stays for running it by hand. The author lands the PR, in this order:
+either case: `make nox-hostless` stays for running it by hand. The author
+runs steps 1 to 4 and hands the maintainer the head sha; only the maintainer
+pushes to `main` (step 5):
 
 1. `git fetch origin main` and rebase the branch onto it: the head that lands
    must be a fast-forward of the current `main` (the hook refuses anything
@@ -505,8 +507,8 @@ either case: `make nox-hostless` stays for running it by hand. The author lands 
    change calls for. If `main` moved meanwhile, go back to step 1: a rebase
    that changes the tree needs new stamps, one that does not keeps them, and CI
    runs again either way.
-5. With that head checked out and nothing committed since the push, land it as
-   a fast-forward push of the same sha:
+5. The maintainer, with that head checked out and nothing committed since the
+   push, lands it as a fast-forward push of the same sha:
 
    ```bash
    git push origin HEAD:main
