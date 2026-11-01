@@ -14,7 +14,7 @@ name their buffer as the process stream through ``management._process_streams``
 (see ``tests/_fixtures/held_console.py``).
 """
 
-import datetime
+import datetime as dt
 import io
 import logging
 import os
@@ -239,11 +239,11 @@ def _cli_app(xdirs: Iterator[Path]) -> typer.Typer:
     return app
 
 
-class _FrozenClock(datetime.datetime):
+class _FrozenClock(dt.datetime):
     """``datetime`` whose ``now()`` never moves: two output directories in one millisecond."""
 
     @classmethod
-    def now(cls, tz: "datetime.tzinfo | None" = None) -> "_FrozenClock":
+    def now(cls, tz: "dt.tzinfo | None" = None) -> "_FrozenClock":
         return cls(2026, 10, 25, 12, 0, 0, 123000, tzinfo=tz)
 
 

@@ -13,7 +13,7 @@ this at ``builder-inited`` for every builder; the page is git-ignored.
 """
 
 import argparse
-import datetime as _datetime
+import datetime as dt
 import json
 import sys
 from pathlib import Path
@@ -138,9 +138,9 @@ def _provenance(matrix: dict) -> "list[str]":
     return out
 
 
-def render(matrix: dict, *, rendered_on: "_datetime.date | None" = None) -> str:
+def render(matrix: dict, *, rendered_on: "dt.date | None" = None) -> str:
     """Compose the whole page, as Markdown."""
-    rendered_on = rendered_on or _datetime.datetime.now(tz=_datetime.timezone.utc).date()
+    rendered_on = rendered_on or dt.datetime.now(tz=dt.timezone.utc).date()
     lines = [
         "(kmodcov-matrix)=",
         "# otto_kmodcov compatibility matrix",

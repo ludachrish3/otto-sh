@@ -25,7 +25,7 @@ import asyncio
 import contextlib
 import copy
 import dataclasses
-import datetime
+import datetime as dt
 import json
 import os
 import re
@@ -4473,7 +4473,7 @@ def test_the_contradiction_report_tells_the_two_causes_apart():
 # now inject the split from :func:`_with_the_nc_split` below, and the sweeps
 # that can still re-arm keep reading the artifact as well.
 
-_RENDERED_ON = datetime.date(2026, 9, 30)
+_RENDERED_ON = dt.date(2026, 9, 30)
 """A fixed render date, so a page compared against another page differs only
 where the ARTIFACT differs. The real renderer stamps today's UTC date."""
 

@@ -1,6 +1,6 @@
 """The kmodcov compatibility matrix: the artifact agrees with the tree and with its schema."""
 
-import datetime
+import datetime as dt
 import json
 import re
 
@@ -333,7 +333,7 @@ def test_render_check_refuses_a_stale_axis(tmp_path, capsys):
 
 
 def test_the_page_names_every_row_and_column_and_the_three_states(committed):
-    page = render(committed, rendered_on=datetime.date(2026, 9, 19))
+    page = render(committed, rendered_on=dt.date(2026, 9, 19))
     for s in committed["surfaces"]:
         assert s["title"] in page, s["id"]
     for p in committed["profiles"]:
@@ -366,7 +366,7 @@ def test_a_measured_cell_renders_its_symbol_and_provenance(committed):
     # A render date distinct from the sentinel `as_of`, so the two are told apart:
     # the provenance table reads the sentinel back, the trailing "Rendered ..."
     # line reads `rendered_on`.
-    page = render(doc, rendered_on=datetime.date(2026, 9, 20))
+    page = render(doc, rendered_on=dt.date(2026, 9, 20))
     assert "✅" in page
     assert "99.9.9-sentinel" in page
     assert "9.99.9-sentinel" in page
@@ -382,7 +382,7 @@ def test_a_broken_cell_renders_its_symbol_and_summary(committed):
         "outcome": "failed",
         "failure_summary": "call: E   assert 0 == 3",
     }
-    page = render(doc, rendered_on=datetime.date(2026, 9, 19))
+    page = render(doc, rendered_on=dt.date(2026, 9, 19))
     assert "❌" in page
     assert "assert 0 == 3" in page
 
@@ -485,7 +485,7 @@ def test_a_column_whose_control_did_not_pass_is_caveated_by_name(committed):
     }
     caveats = [
         line
-        for line in render(doc, rendered_on=datetime.date(2026, 9, 19)).splitlines()
+        for line in render(doc, rendered_on=dt.date(2026, 9, 19)).splitlines()
         if _CAVEAT in line
     ]
     assert len(caveats) == 1, caveats
@@ -495,5 +495,5 @@ def test_a_column_whose_control_did_not_pass_is_caveated_by_name(committed):
 
 
 def test_a_column_whose_control_passed_is_not_caveated(committed):
-    page = render(committed, rendered_on=datetime.date(2026, 9, 19))
+    page = render(committed, rendered_on=dt.date(2026, 9, 19))
     assert _CAVEAT not in page

@@ -45,7 +45,7 @@ claims about someone's hardware.
 
 import argparse
 import ast
-import datetime as _datetime
+import datetime as dt
 import json
 import sys
 from dataclasses import dataclass
@@ -1292,7 +1292,7 @@ def _states_section() -> "list[str]":
     ]
 
 
-def _currency_section(matrix: dict, rendered_on: "_datetime.date") -> "list[str]":
+def _currency_section(matrix: dict, rendered_on: "dt.date") -> "list[str]":
     """Render staleness FIRST and loud (ruling of 2026-08-24, Chris).
 
     Nothing refreshes this artifact. Every row's currency depends on a person running
@@ -1872,7 +1872,7 @@ def render_families() -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def render(matrix: dict, *, rendered_on: "_datetime.date | None" = None) -> str:
+def render(matrix: dict, *, rendered_on: "dt.date | None" = None) -> str:
     """Render the whole page, refusing a matrix whose axes the tree no longer backs."""
     problems = axes_mismatch(matrix)
     if problems:
@@ -1880,7 +1880,7 @@ def render(matrix: dict, *, rendered_on: "_datetime.date | None" = None) -> str:
             "refusing to render a support matrix the tree no longer backs:\n  "
             + "\n  ".join(problems)
         )
-    rendered_on = rendered_on or _datetime.datetime.now(_datetime.timezone.utc).date()
+    rendered_on = rendered_on or dt.datetime.now(dt.timezone.utc).date()
     lines = [
         "<!-- GENERATED FILE -- do not edit by hand.",
         "     scripts/render_support_matrix.py renders this from schemas/support_matrix.json",
