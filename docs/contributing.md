@@ -1103,11 +1103,24 @@ all of it through otto's own removers, judged by the hygiene oracle's probes
 (`tests/_fixtures/bed_hygiene.py`), under the lease. It never names a host:
 the cell's lab file says what the bed is.
 
-Every bed lane runs the quick reap right after it takes the lease and again
-before it releases it: whatever a predecessor left is gone before the suite
-starts, and a green lane leaves none of its own. A red lane stops at its
-failing step, and the next lane's first reap collects what it left.
-The hand run is for a run that was killed or interrupted:
+Every lane that runs a suite on the bed runs the quick reap right after it
+takes the lease and again before it releases it: whatever a predecessor left
+is gone before the suite starts, and a green lane leaves none of its own. A
+red lane stops at its failing step, and the next lane's first reap collects
+what it left.
+
+So you may stop a gate whenever its result no longer matters: a tree that a
+rebase has replaced, a lane already known to be red. Interrupt it, or kill it
+outright. The gates exist to defend against dirty lab state, not to be
+protected from it. A stopped run that cannot release its own lease leaves it
+for the next lane, which takes it over once nothing of that run still runs
+([the bed lease](#bed-lease)) and reaps before its suite starts. A kill
+that leaves workers running keeps the bed until you kill them too, and a
+console the stopped run left logged in waits for the hand run, which alone has
+the console step.
+
+The hand run, for when you want the bed clean now rather than at the next
+lane's start:
 
 ```text
 make bed-reap
