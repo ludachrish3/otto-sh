@@ -877,12 +877,15 @@ build: ## (Build & Release) Build the project with uv
 # every pytest invocation in the tree (each nox leg, each ad-hoc run).
 # Pinned by tests/unit/test_coverage_html_placement.py.
 coverage-python: dashboard ## Run the full Python suite (all tiers, pinned Python) and enforce the 95.5 gate (lines + branches); the browser (Playwright) suite runs first as its own process via the `dashboard` prerequisite — its coverage data is folded in via --cov-append. Requires lab VMs (+ `make browsers` once). JUnit XML lands in reports/junit/coverage-python/.
+	@$(COVERAGE_STAMP) mark dashboard
 	@$(SAY) "pytest: all tiers, pinned Python (browser lane folded in)"
 	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "$(M_COVERAGE) and not serial_timing" -n $(COVERAGE_WORKERS) --cov-append --cov-fail-under=0 $(call junitxml,coverage-python)
+	@$(COVERAGE_STAMP) mark coverage-python
 	@$(SAY) "pytest: serial_timing discriminators, -n0 (gate: $(COVERAGE_THRESHOLD)% lines+branches on the full fold)"
 	@$(LEAK_DETECT) $(TIMEOUT_CMD) uv run pytest -m "serial_timing and $(M_COVERAGE)" -n0 --cov-append --cov-fail-under=$(COVERAGE_THRESHOLD) --cov-report=html $(call junitxml,coverage-python-serial)
 	@$(SAY) "unit outliers, the ten slowest files (a report, never a gate; all of them: make unit-outliers)"
 	@-$(call unit_outliers,--top 10)
+	@$(COVERAGE_STAMP) mark coverage-python-serial
 
 # The unit tree's slow tests (docs/contributing.md, "Where the test suite's time
 # goes"), read from the last coverage-python leg's two JUnit XMLs (parallel and
@@ -921,8 +924,14 @@ unit-outliers: ## (Quality) Report the unit tree's slow tests (>= UNIT_OUTLIERS_
 # stamp names. A command-line PYTEST_ADDOPTS still rides MAKEFLAGS into the
 # recursive makes (`$(MAKE) dashboard`), where it wins; like every other
 # command-line variable it is among $(COVERAGE_STAMP_OVERRIDE_NAMES), so the
-# legs run and the stamp is withheld. Wiring pinned by
-# tests/unit/test_make_release_lanes.py; the script by
+# legs run and the stamp is withheld. The `mark <leg>` lines after the
+# legs (coverage-python's three, the serial one after its outliers report so
+# that report is in the serial leg's time, and coverage-ts before `finish`)
+# give the stamp its per-leg timing; with no record a stamped run's `start`
+# wrote (`make coverage-python` alone, `make all`) they are silent no-ops,
+# a failed run's leftover record takes marks until the next `start`, and a
+# mark is never a leg's verdict. Wiring
+# pinned by tests/unit/test_make_release_lanes.py; the script by
 # tests/unit/scripts/test_coverage_stamp.py.
 COVERAGE_STAMP := uv run python scripts/coverage_stamp.py
 COVERAGE_STAMP_GATE = --threshold "$(COVERAGE_THRESHOLD)" --selection "$(M_COVERAGE)" --browsers "$(DASHBOARD_BROWSERS)" --primary "$(NOX_PRIMARY)"
@@ -946,6 +955,7 @@ COVERAGE_STAMP_OVERRIDES = $(foreach n,$(filter-out $(COVERAGE_STAMP_HARMLESS),$
 
 coverage: export override PYTEST_ADDOPTS :=
 coverage: coverage-stamp-start coverage-python coverage-ts ## Run BOTH language coverage gates: coverage-python (full pytest, 95.5 floor over lines and branches) + coverage-ts (merged vitest+e2e floor), then STAMP the committed tree (scripts/coverage_stamp.py) so `make release` can trust this run instead of repeating its primary nox session. The dashboard browser lane runs exactly once — coverage-python triggers it, and coverage-ts's artifact stamp sees it fresh.
+	@$(COVERAGE_STAMP) mark coverage-ts
 	@$(COVERAGE_STAMP) finish
 
 coverage-unit: ## Run the unit level tier (tests/unit only; no testbed) with a coverage report (no gate — one tier can't meet the whole-repo floor). JUnit XML lands in reports/junit/coverage-unit/.
@@ -1830,7 +1840,7 @@ gate-scope: ## (Quality) Classify the diff and print the exact gates for THIS co
 # gate-scope's, and never a lane knob — the runner strips it from lane envs.
 GATE_TIP_OVERRIDES = $(foreach n,$(filter-out BASE,$(COVERAGE_STAMP_OVERRIDE_NAMES)),--overridden $(n))
 
-gate-tip: ## (Quality) The landing's gate: run the oracle's tip lanes (make gate-scope, BASE=origin/main) and stamp the committed tree per lane on green; the push to main refuses a tip whose lanes are not stamped. Lanes already stamped for this tree are skipped. Refuses any other command-line variable. `uv run python scripts/gate_tip.py --force` re-runs, `--dry-run` only lists.
+gate-tip: ## (Quality) The landing's gate: run the oracle's tip lanes (make gate-scope, BASE=origin/main) and stamp the committed tree per lane on green; the push to main refuses a tip whose lanes are not stamped. Lanes already stamped for this tree are skipped. Refuses any other command-line variable. `uv run python scripts/gate_tip.py --force` re-runs, `--dry-run` only lists, `--timings [REV]` prints the stored lane timings of a rev's tree (the run ends with a table of the same shape).
 	@uv run python scripts/gate_tip.py --repo . --base "$(if $(filter command line,$(origin BASE)),$(BASE),origin/main)" $(GATE_TIP_OVERRIDES)
 
 coverage-gate-args: ## (internal) Print the declared coverage gate, one argv element per line, for scripts/gate_tip.py's own call of the coverage stamp's check

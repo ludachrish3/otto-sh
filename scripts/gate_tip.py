@@ -34,6 +34,7 @@ import fcntl
 import hashlib
 import json
 import os
+import platform
 import re
 import shlex
 import subprocess
@@ -41,7 +42,6 @@ import sys
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import TextIO
 
@@ -56,10 +56,14 @@ from scripts.gate_stamp_common import (  # noqa: E402
     blob_sha,
     blocking_untracked,
     dirt_refusals,
+    junit_snapshot_or_none,
+    junit_written,
+    nproc,
     stamps_root,
     test_roots,
     tree_hash,
     tree_state,
+    utc_now,
     write_atomically,
 )
 
@@ -154,6 +158,8 @@ class Stamp:
     checkout: str
     promoted_from: "str | None"
     path: Path
+    timing: "dict | None" = None
+    """What the lane cost (``lane_timing``); None when it did not run here, or predates it."""
 
 
 def _read_record(path: Path) -> "dict | None":
@@ -194,6 +200,7 @@ def _stamp_from(data: "dict | None", path: Path) -> "Stamp | None":
     promoted = data.get("promoted_from")
     if promoted is not None and not isinstance(promoted, str):
         return None
+    timing = _timing_from(data)
     try:
         goals(data["command"])  # an unbalanced quote, or a goal no longer known, is not evidence
     except ValueError:  # UnknownGoalError and shlex's ValueError alike
@@ -207,7 +214,19 @@ def _stamp_from(data: "dict | None", path: Path) -> "Stamp | None":
         checkout=data["checkout"],
         promoted_from=promoted,
         path=path,
+        timing=timing,
     )
+
+
+def _timing_from(data: dict) -> "dict | None":
+    """Return the record's ``timing`` object, or None when it is not one with an int ``elapsed_s``.
+
+    A report, never evidence: a malformed one is dropped, and the stamp stays readable.
+    """
+    timing = data.get("timing")
+    if not isinstance(timing, dict) or not isinstance(timing.get("elapsed_s"), int):
+        return None
+    return dict(timing)
 
 
 def write_stamp(
@@ -219,6 +238,7 @@ def write_stamp(
     measured: "dict[str, str]",
     checkout: str,
     promoted_from: "str | None" = None,
+    timing: "dict | None" = None,
 ) -> Path:
     """Write the (tree, key) stamp atomically and return its path."""
     record = {
@@ -227,11 +247,13 @@ def write_stamp(
         "command": key,
         "base": base,
         "measured": measured,
-        "written_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "written_at": utc_now(),
         "checkout": checkout,
     }
     if promoted_from:
         record["promoted_from"] = promoted_from
+    if timing is not None:
+        record["timing"] = timing
     path = stamp_path(root, tree, key)
     write_atomically(path, json.dumps(record, indent=2, sort_keys=True) + "\n")
     return path
@@ -246,6 +268,8 @@ class Red:
     written_at: str
     checkout: str
     path: Path
+    timing: "dict | None" = None
+    """What the red lane cost (``lane_timing``); None when it never ran (a framing error)."""
 
 
 def _red_from(data: "dict | None", path: Path) -> "Red | None":
@@ -260,6 +284,7 @@ def _red_from(data: "dict | None", path: Path) -> "Red | None":
         written_at=data["written_at"],
         checkout=data["checkout"],
         path=path,
+        timing=_timing_from(data),
     )
 
 
@@ -291,16 +316,20 @@ def store_lock(root: Path, *, shared: bool = False) -> Iterator[None]:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
-def write_red(root: Path, *, tree: str, key: str, checkout: str) -> Path:
+def write_red(
+    root: Path, *, tree: str, key: str, checkout: str, timing: "dict | None" = None
+) -> Path:
     """Write the red marker for (tree, key) atomically at the stamp's own path; return it."""
     record = {
         "format": FORMAT,
         "red": True,
         "tree": tree,
         "command": key,
-        "written_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "written_at": utc_now(),
         "checkout": checkout,
     }
+    if timing is not None:
+        record["timing"] = timing
     path = stamp_path(root, tree, key)
     write_atomically(path, json.dumps(record, indent=2, sort_keys=True) + "\n")
     return path
@@ -665,20 +694,80 @@ def _measured_dirt(state: TreeState) -> "tuple[list[str], list[str]]":
     return measured, other
 
 
-def _run_lane(opts: Options, line: str, env: "dict[str, str]") -> int:
+@dataclass(frozen=True)
+class LaneResult:
+    """How a lane ended: its exit status, and whether the lane's command ran at all.
+
+    The coverage lane does not run when the coverage stamp already holds for the tree;
+    its stamp then carries no timing, because nothing was measured.
+    """
+
+    status: int
+    ran: bool
+
+
+def _run_lane(opts: Options, line: str, env: "dict[str, str]") -> LaneResult:
     """Run one stamped lane; the coverage lane goes through the coverage stamp's check first."""
     if goals(line) == ["coverage"]:
         gate_args = declared_coverage_gate(opts, env)
         status = coverage_check(opts, env, gate_args)
         if status == _CHECK_USAGE:
-            return _CHECK_USAGE
+            return LaneResult(_CHECK_USAGE, ran=False)
         if status == 0 and not opts.force:
-            return 0
+            return LaneResult(0, ran=False)
         status = opts.runner(line, opts.repo, env).status
         if status != 0:
-            return status
-        return coverage_check(opts, env, gate_args)
-    return opts.runner(line, opts.repo, env).status
+            return LaneResult(status, ran=True)
+        return LaneResult(coverage_check(opts, env, gate_args), ran=True)
+    return LaneResult(opts.runner(line, opts.repo, env).status, ran=True)
+
+
+def lane_timing(
+    repo: Path, started_at: str, before: "dict[str, list[int]] | None", elapsed: int
+) -> dict:
+    """Return what one lane cost, as the stamp records it under ``timing``.
+
+    ``started``/``finished`` are UTC ISO 8601 (wall clock), ``elapsed_s`` whole seconds
+    of the monotonic clock (so a clock step cannot bend it; it may differ from the two
+    wall stamps by a second), ``interpreter`` the Python ``gate_tip.py`` itself ran under
+    (the project venv — a nox lane's own interpreter is in the lane's name), ``nproc`` the
+    CPUs it may run on, and ``junit`` the reports under ``reports/junit`` that are new or
+    rewritten since *before* (the snapshot taken as the lane started; empty when either
+    snapshot could not be taken). A report, never evidence: the pre-push check never
+    reads it.
+    """
+    return {
+        "started": started_at,
+        "finished": utc_now(),
+        "elapsed_s": elapsed,
+        "interpreter": platform.python_version(),
+        "nproc": nproc(),
+        "junit": junit_written(before, junit_snapshot_or_none(repo)),
+    }
+
+
+@dataclass(frozen=True)
+class Row:
+    """One lane's line in the timing table: its outcome, and its elapsed when it ran."""
+
+    lane: str
+    outcome: str
+    elapsed: "int | None" = None
+    written_at: str = ""
+
+
+def _elapsed_cell(elapsed: "int | None") -> str:
+    return f"{elapsed} s" if elapsed is not None else ""
+
+
+def _table(rows: "list[Row]", *, dated: bool = False) -> "list[str]":
+    """Render *rows* as the timing table: elapsed, outcome, [written at,] lane."""
+    width = max((len(r.outcome) for r in rows), default=0)
+    lines = []
+    for row in rows:
+        when = f"{row.written_at}  " if dated else ""
+        lines.append(f"  {_elapsed_cell(row.elapsed):>8}  {row.outcome:<{width}}  {when}{row.lane}")
+    return lines
 
 
 @dataclass
@@ -697,6 +786,7 @@ class _Run:
     red: int = 0
     stopped: bool = False
     missing: "list[str]" = field(default_factory=list)
+    rows: "list[Row]" = field(default_factory=list)
 
 
 def _already_stamped(ctx: _Run, label: str, key: str) -> bool:
@@ -723,10 +813,11 @@ def _already_stamped(ctx: _Run, label: str, key: str) -> bool:
         return False
     _say(ctx.opts, f"{label} … already stamped")
     ctx.already += 1
+    ctx.rows.append(Row(key, "already stamped"))
     return True
 
 
-def _before_lane(ctx: _Run, label: str) -> bool:
+def _before_lane(ctx: _Run, label: str, key: str) -> bool:
     """Check the tree before a lane; say why and return False when the lane cannot run."""
     state = tree_state(ctx.opts.repo)
     measured, _other = _measured_dirt(state)
@@ -745,25 +836,46 @@ def _before_lane(ctx: _Run, label: str) -> bool:
             f"{label} … NOT STAMPED (the tree is dirty before the lane: " + "; ".join(why) + ")",
         )
         ctx.red += 1
+        ctx.rows.append(Row(key, "not stamped"))
         return False
     return True
 
 
-def _mark_red(ctx: _Run, key: str) -> None:
+def _measure(
+    ctx: _Run, label: str, started_at: str, before: "dict[str, list[int]] | None", elapsed: int
+) -> "dict | None":
+    """Return the lane's timing, or None when measuring fails: the verdict never waits on it."""
+    try:
+        return lane_timing(ctx.opts.repo, started_at, before, elapsed)
+    except Exception as exc:  # noqa: BLE001 -- a report must never decide a lane
+        _say(ctx.opts, f"{label} … timing not recorded ({exc!r})")
+        return None
+
+
+def _mark_red(ctx: _Run, key: str, timing: "dict | None" = None) -> None:
     """Count a red lane and leave its red marker, so nothing promotes to this tree for it.
 
-    A lane that could not be framed (a GateFreshError before it ran) leaves one too.
+    A lane that could not be framed (a GateFreshError before it ran) leaves one too, with
+    no timing: nothing ran.
     """
     with store_lock(ctx.root):
-        write_red(ctx.root, tree=ctx.tree, key=key, checkout=str(ctx.opts.repo))
+        write_red(ctx.root, tree=ctx.tree, key=key, checkout=str(ctx.opts.repo), timing=timing)
     ctx.red += 1
+    ctx.rows.append(Row(key, "red", timing["elapsed_s"] if timing else None))
 
 
-def _after_lane(ctx: _Run, label: str, line: str, key: str, status: int, elapsed: int) -> bool:
-    """Judge a finished lane and stamp it on green; return False when the run must stop."""
+def _after_lane(
+    ctx: _Run, label: str, line: str, key: str, status: int, timing: "dict | None"
+) -> bool:
+    """Judge a finished lane and stamp it on green; return False when the run must stop.
+
+    *timing* is what the lane cost, or None when its command did not run (the coverage
+    lane under a coverage stamp that already holds).
+    """
     repo = ctx.opts.repo
     after = tree_state(repo)
     measured, other = _measured_dirt(after)
+    elapsed = timing["elapsed_s"] if timing else None
     if status != 0:
         for path in measured:
             _say(
@@ -771,14 +883,15 @@ def _after_lane(ctx: _Run, label: str, line: str, key: str, status: int, elapsed
                 f"the lane failed and still rewrote {path}: restore it "
                 f"(git checkout -- {path}) or review it before the next run",
             )
-        _say(ctx.opts, f"{label} … RED (exit {status}, {elapsed} s)")
-        _mark_red(ctx, key)
+        _say(ctx.opts, f"{label} … RED (exit {status}, {_elapsed_cell(elapsed) or 'did not run'})")
+        _mark_red(ctx, key, timing)
         return False
     blocking = blocking_untracked(after.untracked, ctx.roots)
     if tree_hash(repo) != ctx.tree or other or blocking:
         what = ", ".join(other + blocking) or "the tree hash moved"
         _say(ctx.opts, f"{label} … NOT STAMPED (the tree changed under the lane: {what})")
         ctx.red += 1
+        ctx.rows.append(Row(key, "not stamped", elapsed))
         return False
     blobs = {path: blob_sha(repo, path) for path in measured}
     with store_lock(ctx.root):
@@ -789,28 +902,33 @@ def _after_lane(ctx: _Run, label: str, line: str, key: str, status: int, elapsed
             base=ctx.merge_base,
             measured=blobs,
             checkout=str(repo),
+            timing=timing,
         )
     for path in measured:
         _say(ctx.opts, f"{line} rewrote {path}: review and commit, or restore it")
-    _say(ctx.opts, f"{label} … stamped ({elapsed} s)")
+    cost = f"{elapsed} s" if timing else "the coverage stamp holds"
+    _say(ctx.opts, f"{label} … stamped ({cost})")
     ctx.stamped += 1
+    ctx.rows.append(Row(key, "stamped", elapsed))
     return True
 
 
 def _stamp_lane(ctx: _Run, label: str, line: str, key: str) -> bool:
     """Run one stamped lane and stamp it on green; return False when the run must stop."""
-    if not _before_lane(ctx, label):
+    if not _before_lane(ctx, label, key):
         return False
     invalidate(ctx.opts.repo, ctx.root, key, tree=ctx.tree)
     _say(ctx.opts, f"{label} …")
-    started = time.monotonic()
+    started_at, before, started = utc_now(), junit_snapshot_or_none(ctx.opts.repo), time.monotonic()
     try:
-        status = _run_lane(ctx.opts, line, ctx.env)
+        result = _run_lane(ctx.opts, line, ctx.env)
     except GateFreshError as exc:
         _say(ctx.opts, f"{label} … RED ({exc})")
         _mark_red(ctx, key)
         return False
-    return _after_lane(ctx, label, line, key, status, int(time.monotonic() - started))
+    elapsed = int(time.monotonic() - started)
+    timing = _measure(ctx, label, started_at, before, elapsed) if result.ran else None
+    return _after_lane(ctx, label, line, key, result.status, timing)
 
 
 def _walk(ctx: _Run, kinds: "list[tuple[str, bool]]") -> None:
@@ -820,6 +938,7 @@ def _walk(ctx: _Run, kinds: "list[tuple[str, bool]]") -> None:
         if live:
             _say(ctx.opts, f"{label} … live at push")
             ctx.live += 1
+            ctx.rows.append(Row(lane_key(line), "live at push"))
             continue
         key = lane_key(line)
         if _already_stamped(ctx, label, key):
@@ -827,6 +946,7 @@ def _walk(ctx: _Run, kinds: "list[tuple[str, bool]]") -> None:
         if ctx.opts.dry_run:
             _say(ctx.opts, f"{label} … missing")
             ctx.missing.append(line)
+            ctx.rows.append(Row(key, "missing"))
             continue
         if not _stamp_lane(ctx, label, line, key):
             break
@@ -869,6 +989,10 @@ def run(opts: Options) -> int:
         f"{ctx.stamped} stamped, {ctx.already} already stamped, "
         f"{ctx.live} live at push, {ctx.red} red",
     )
+    if ctx.rows:
+        _say(opts, "timings (elapsed, outcome, lane)")
+        for row in _table(ctx.rows):
+            print(row, file=opts.out, flush=True)
     if opts.dry_run:
         return 1 if ctx.missing else 0
     return 1 if ctx.red or ctx.stopped else 0
@@ -963,21 +1087,62 @@ def missing_stamps(repo: Path, remote: str, remote_sha: str, tip_sha: str) -> Ve
     return Verdict(missing, out)
 
 
+def timings(repo: Path, root: Path, rev: str) -> "list[str]":
+    """Return the stored timing table for *rev*'s tree (a rev, a commit id, or a tree id).
+
+    One row per stamp or red marker the store holds for the tree, oldest first: elapsed
+    (blank for a promoted stamp, or one older than the timing field), outcome, when it was
+    written, and the lane. Read under the shared lock, like the pre-push check.
+    """
+    tree = tree_hash(repo, rev)  # ``<tree-id>^{tree}`` is the tree id itself
+    with store_lock(root, shared=True):
+        store = load_store(root)
+    entries: "list[Stamp | Red]" = [e for e in [*store.stamps, *store.red] if e.tree == tree]
+    if not entries:
+        return [f"gate-tip: no stamps for tree {tree[:12]}"]
+    rows: "list[Row]" = []
+    for entry in sorted(entries, key=lambda e: e.written_at):
+        if isinstance(entry, Red):
+            outcome = "red"
+        elif entry.promoted_from:
+            outcome = "promoted"
+        else:
+            outcome = "stamped"
+        elapsed = entry.timing["elapsed_s"] if entry.timing else None
+        rows.append(Row(entry.command, outcome, elapsed, entry.written_at))
+    legend = "elapsed, outcome, written at, lane"
+    return [
+        f"gate-tip: timings for tree {tree[:12]} ({len(rows)} lane(s); {legend})",
+        *_table(rows, dated=True),
+    ]
+
+
 def main(argv: "list[str] | None" = None) -> int:
-    """Parse the CLI and run, list, or check; return the script's status."""
+    """Parse the CLI and run, list, check, or print a tree's timings; return the status."""
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("--repo", default=".")
     parser.add_argument("--base", default="origin/main")
     parser.add_argument("--force", action="store_true")
-    parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--overridden", action="append", default=[], metavar="NAME")
-    parser.add_argument("--check", nargs=2, metavar=("REMOTE_SHA", "TIP_SHA"))
     parser.add_argument("--remote", default="origin")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--dry-run", action="store_true")
+    mode.add_argument("--check", nargs=2, metavar=("REMOTE_SHA", "TIP_SHA"))
+    mode.add_argument(
+        "--timings",
+        nargs="?",
+        const="HEAD",
+        metavar="REV",
+        help="print the stored timing table for REV's tree (a rev, commit or tree id; HEAD)",
+    )
     args = parser.parse_args(argv)
     repo = Path(args.repo).resolve()
     try:
+        if args.timings is not None:
+            print("\n".join(timings(repo, stamps_root(repo, STORE), args.timings or "HEAD")))
+            return 0
         if args.check:
             verdict = missing_stamps(repo, args.remote, args.check[0], args.check[1])
             if verdict.lines:

@@ -229,7 +229,19 @@ def test_make_coverage_is_stamped_at_its_start_and_its_end():
     assert prerequisites == ["coverage-stamp-start", "coverage-python", "coverage-ts"], (
         prerequisites
     )
-    assert recipe == ["@$(COVERAGE_STAMP) finish"], recipe
+    assert recipe == ["@$(COVERAGE_STAMP) mark coverage-ts", "@$(COVERAGE_STAMP) finish"], recipe
+    _, legs = _rule(text, "coverage-python")
+    marks = [line for line in legs if "$(COVERAGE_STAMP) mark" in line]
+    assert marks == [
+        "@$(COVERAGE_STAMP) mark dashboard",
+        "@$(COVERAGE_STAMP) mark coverage-python",
+        "@$(COVERAGE_STAMP) mark coverage-python-serial",
+    ], marks
+    assert legs[0] == marks[0], "the dashboard prerequisite ends where the recipe begins"
+    pytest_lines = [i for i, line in enumerate(legs) if "uv run pytest" in line]
+    assert pytest_lines[0] == legs.index(marks[1]) - 1, "the parallel leg is marked right after"
+    assert legs[-1] == marks[2], "the serial leg's mark closes the recipe, after unit-outliers"
+    assert pytest_lines[1] < legs.index(marks[2])
     dist, start = _rule(text, "coverage-stamp-start")
     assert dist == ["$(DASHBOARD_DIST)", "$(COVAPP_DIST)"], (
         "the assets digest is taken at start, so the dist rules must have run before it"

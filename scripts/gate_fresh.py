@@ -27,7 +27,6 @@ import tempfile
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -40,6 +39,7 @@ from scripts.gate_stamp_common import (  # noqa: E402 -- path set up above
     stamps_root,
     tree_hash,
     tree_state,
+    utc_now,
     write_atomically,
 )
 from scripts.process_group import group_alive, group_members, signal_group  # noqa: E402
@@ -157,7 +157,7 @@ def write_stamp(repo: Path, tree: str) -> Path:
         "format": STAMP_FORMAT,
         "tree": tree,
         "targets": GATED_TARGETS,
-        "written_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "written_at": utc_now(),
         "checkout": str(repo),
     }
     path = stamp_path(repo, tree)

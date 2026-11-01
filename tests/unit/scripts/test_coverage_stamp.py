@@ -13,14 +13,16 @@ variable), stop now.
 """
 
 import json
+import os
 import platform
 import shutil
 import sys
+import time
 from pathlib import Path
 
 import pytest
 
-from scripts import coverage_stamp
+from scripts import coverage_stamp, gate_stamp_common
 from scripts.coverage_stamp import assets_digest, main, stamp_path, tree_hash
 from tests._fixtures.gitrepo import TmpGitRepo
 
@@ -426,3 +428,174 @@ def test_refusals_name_every_reason_at_once():
     assert coverage_stamp.refusals(TreeState([], ["tests/unity.py"]), ["tests/unit"], []) == [], (
         "a root is a directory prefix, not a string prefix"
     )
+
+
+# ── Per-leg timing: what each leg of `make coverage` cost, recorded in the stamp ─────────
+
+
+def _junit(repo: TmpGitRepo, group: str) -> str:
+    path = repo.root / "reports" / "junit" / group / f"{group}.xml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('<testsuites><testsuite name="pytest" time="1.0"/></testsuites>\n')
+    return f"reports/junit/{group}/{group}.xml"
+
+
+def test_the_stamp_records_each_legs_elapsed_and_the_reports_the_run_wrote(tmp_path: Path, capsys):
+    repo = _repo(tmp_path)
+    assert _run(repo, *START) == 0
+    assert _run(repo, "mark", "dashboard") == 0
+    written = _junit(repo, "coverage-python")
+    assert _run(repo, "mark", "coverage-python") == 0
+    assert _run(repo, "mark", "coverage-python-serial") == 0
+    assert _run(repo, "mark", "coverage-ts") == 0
+    assert _run(repo, "finish") == 0
+    timing = json.loads(_stamp(repo).read_text())["timing"]
+    assert set(timing) == {"started", "finished", "elapsed_s", "nproc", "workers", "legs", "junit"}
+    assert timing["started"] <= timing["finished"]
+    assert isinstance(timing["elapsed_s"], int)
+    assert timing["elapsed_s"] >= 0
+    assert timing["workers"] == "5"
+    assert timing["nproc"] >= 1
+    assert [leg["leg"] for leg in timing["legs"]] == [
+        "dashboard",
+        "coverage-python",
+        "coverage-python-serial",
+        "coverage-ts",
+    ]
+    assert all(isinstance(leg["seconds"], int) and leg["seconds"] >= 0 for leg in timing["legs"])
+    assert timing["junit"] == [written]
+    assert "stamped tree" in capsys.readouterr().out
+
+
+def test_a_mark_outside_a_stamped_run_is_silent_and_green(tmp_path: Path, capsys):
+    """`make coverage-python` alone (and `make all`) marks legs with no pending record."""
+    repo = _repo(tmp_path)
+    assert _run(repo, "mark", "coverage-python") == 0
+    assert capsys.readouterr().out == ""
+    assert not (repo.root / "reports" / "coverage-stamp.pending.json").exists()
+
+
+def test_a_run_without_marks_still_stamps_with_an_empty_leg_table(tmp_path: Path):
+    repo = _repo(tmp_path)
+    assert _run(repo, *START) == 0
+    assert _run(repo, "finish") == 0
+    timing = json.loads(_stamp(repo).read_text())["timing"]
+    assert timing["legs"] == []
+
+
+def test_a_report_older_than_the_run_is_not_the_runs(tmp_path: Path):
+    repo = _repo(tmp_path)
+    old = _junit(repo, "quick")
+    os.utime(repo.root / old, (1, 1))
+    assert _run(repo, *START) == 0
+    new = _junit(repo, "coverage-python")
+    assert _run(repo, "finish") == 0
+    assert json.loads(_stamp(repo).read_text())["timing"]["junit"] == [new]
+
+
+def test_each_leg_is_measured_from_the_previous_mark(tmp_path: Path, monkeypatch):
+    """One utc_now() per verb: start, four marks, finish's written_at."""
+    repo = _repo(tmp_path)
+    clock = iter(
+        [
+            "2026-01-01T00:00:00+00:00",
+            "2026-01-01T00:00:10+00:00",
+            "2026-01-01T00:00:25+00:00",
+            "2026-01-01T00:00:27+00:00",
+            "2026-01-01T00:01:40+00:00",
+            "2026-01-01T00:02:10+00:00",
+        ]
+    )
+    monkeypatch.setattr(coverage_stamp, "utc_now", lambda: next(clock))
+    assert _run(repo, *START) == 0
+    for leg in ("dashboard", "coverage-python", "coverage-python-serial", "coverage-ts"):
+        assert _run(repo, "mark", leg) == 0
+    assert _run(repo, "finish") == 0
+    timing = json.loads(_stamp(repo).read_text())["timing"]
+    assert timing["legs"] == [
+        {"leg": "dashboard", "seconds": 10},
+        {"leg": "coverage-python", "seconds": 15},
+        {"leg": "coverage-python-serial", "seconds": 2},
+        {"leg": "coverage-ts", "seconds": 73},
+    ]
+    assert timing["elapsed_s"] == 130
+    assert timing["started"] == "2026-01-01T00:00:00+00:00"
+    assert timing["finished"] == "2026-01-01T00:02:10+00:00"
+
+
+def test_a_clock_step_backwards_never_makes_a_negative_leg():
+    assert (
+        coverage_stamp._seconds_between("2026-01-01T00:00:09+00:00", "2026-01-01T00:00:01+00:00")
+        == 0
+    )
+
+
+def test_a_mark_on_a_pending_record_it_cannot_use_is_green_and_changes_nothing(
+    tmp_path: Path, capsys
+):
+    """A failed run never reaches finish, so its record lingers; an older format has no marks."""
+    repo = _repo(tmp_path)
+    pending = repo.root / "reports" / "coverage-stamp.pending.json"
+    pending.parent.mkdir(parents=True, exist_ok=True)
+    older = json.dumps({"format": 1, "tree": "t" * 40})
+    for bad in (older, "{not json", "[]", '"text"', '{"marks": "x"}'):
+        pending.write_text(bad)
+        assert _run(repo, "mark", "dashboard") == 0
+        assert pending.read_text() == bad
+    assert capsys.readouterr().out == ""
+
+
+def test_a_failed_runs_record_takes_marks_until_the_next_start(tmp_path: Path):
+    repo = _repo(tmp_path)
+    assert _run(repo, *START) == 0
+    assert _run(repo, "mark", "dashboard") == 0  # the run then fails: no finish
+    assert _run(repo, "mark", "coverage-python") == 0  # a later bare `make coverage-python`
+    pending = repo.root / "reports" / "coverage-stamp.pending.json"
+    assert [m["leg"] for m in json.loads(pending.read_text())["marks"]] == [
+        "dashboard",
+        "coverage-python",
+    ]
+    assert _run(repo, *START) == 0
+    assert json.loads(pending.read_text())["marks"] == []
+
+
+def test_an_untouched_report_is_never_the_runs_and_a_rewritten_one_is(tmp_path: Path):
+    repo = _repo(tmp_path)
+    untouched = _junit(repo, "quick")
+    future = time.time() + 3600
+    os.utime(repo.root / untouched, (future, future))
+    rewritten = _junit(repo, "dashboard")
+    os.utime(repo.root / rewritten, (1, 1))
+    assert _run(repo, *START) == 0
+    (repo.root / rewritten).write_text("<testsuites/>\n")
+    assert _run(repo, "finish") == 0
+    assert json.loads(_stamp(repo).read_text())["timing"]["junit"] == [rewritten]
+
+
+def _raising_snapshot(_repo):
+    raise OSError("reports unreadable")
+
+
+def test_a_failure_while_collecting_reports_still_stamps_and_attributes_nothing(
+    tmp_path: Path, monkeypatch
+):
+    # at finish
+    repo = _repo(tmp_path)
+    assert _run(repo, *START) == 0
+    monkeypatch.setattr(gate_stamp_common, "junit_snapshot", _raising_snapshot)
+    assert _run(repo, "finish") == 0
+    assert json.loads(_stamp(repo).read_text())["timing"]["junit"] == []
+    # at start: a later readable directory full of other lanes' reports is NOT the run's
+    repo = _repo(tmp_path / "second")
+    _junit(repo, "quick")
+    assert _run(repo, *START) == 0
+    assert (
+        json.loads((repo.root / "reports" / "coverage-stamp.pending.json").read_text())[
+            "junit_before"
+        ]
+        is None
+    )
+    monkeypatch.undo()
+    _junit(repo, "coverage-python")
+    assert _run(repo, "finish") == 0
+    assert json.loads(_stamp(repo).read_text())["timing"]["junit"] == []

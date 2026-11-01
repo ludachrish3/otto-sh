@@ -49,11 +49,23 @@ Lifecycle, driven by the Makefile (`make coverage`, `make release`):
             delete-at-start), then records the tree, the dirt, the
             interpreter, the assets digest and any refusal in
             `reports/coverage-stamp.pending.json`.
+  mark    — between the legs (`make coverage-python` marks `dashboard`,
+            `coverage-python` and `coverage-python-serial`; `make coverage`
+            marks `coverage-ts` before `finish`): appends the leg's end time
+            to the pending record, so the stamp can say what each leg cost.
+            With no record a stamped run's `start` wrote (`make
+            coverage-python` alone, `make all`) it is a silent no-op, and a
+            failed run's leftover record takes marks until the next `start`
+            rewrites it: timing is a report, never a leg's condition.
   finish  — the last thing `make coverage` runs, so it runs only when every
             leg passed: re-reads the tree, the dirt, the interpreter and the
             assets, requires all of them to equal the start's, and writes the
             stamp atomically (temp + rename). A refusal at the start, or
-            anything that changed under the run, means no stamp.
+            anything that changed under the run, means no stamp. The stamp's
+            `timing` says what the run cost: `started`, `finished`,
+            `elapsed_s`, `nproc`, the declared `workers`, each marked leg's
+            `seconds` under `legs` (a list, in run order), and the JUnit
+            reports the run wrote under `junit`.
   check   — the first thing `make release` runs, and its exit status is the
             release's instruction. 0: a stamp for HEAD's tree exists and
             every field matches — trust it. 1: no stamp, or one that does
@@ -72,7 +84,7 @@ import platform
 import subprocess
 import sys
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -83,10 +95,14 @@ from scripts.gate_stamp_common import (  # noqa: E402 -- path set up above
     TreeState,
     blocking_untracked,
     dirt_refusals,
+    junit_snapshot_or_none,
+    junit_written,
+    nproc,
     stamps_root,
     test_roots,
     tree_hash,
     tree_state,
+    utc_now,
     write_atomically,
 )
 
@@ -215,9 +231,11 @@ def start(repo: Path, gate: Gate, overridden: "list[str]") -> int:
         "assets": assets_digest(repo),
         "refusals": why,
         "gate": asdict(gate),
+        "started": utc_now(),
+        "junit_before": junit_snapshot_or_none(repo),
+        "marks": [],
     }
-    (repo / PENDING).parent.mkdir(parents=True, exist_ok=True)
-    (repo / PENDING).write_text(json.dumps(pending, indent=2, sort_keys=True) + "\n")
+    _write_pending(repo, pending)
     if why:
         _say(f"tree {tree[:12]} will NOT be stamped (the legs still run):")
         for reason in why:
@@ -232,6 +250,55 @@ def start(repo: Path, gate: Gate, overridden: "list[str]") -> int:
     return 0
 
 
+def _write_pending(repo: Path, pending: "dict[str, Any]") -> None:
+    """Write the pending record atomically: a half-written one would fail ``finish``."""
+    write_atomically(repo / PENDING, json.dumps(pending, indent=2, sort_keys=True) + "\n")
+
+
+def mark(repo: Path, leg: str) -> int:
+    """Record that *leg* just ended on the record a stamped run's ``start`` wrote; exit 0.
+
+    Silent, and never a leg's verdict. With no such record (``make coverage-python``
+    alone, ``make all``), or one that cannot be read, written, or is not a run record of
+    this format, nothing is recorded and nothing is changed. A record a failed run left
+    behind takes the mark; the next ``start`` rewrites it. Timing is a report.
+    """
+    pending_path = repo / PENDING
+    try:
+        pending = json.loads(pending_path.read_text())
+        if not isinstance(pending, dict) or not isinstance(pending.get("marks"), list):
+            return 0
+        pending["marks"].append({"leg": leg, "at": utc_now()})
+        _write_pending(repo, pending)
+    except (OSError, ValueError):
+        pass
+    return 0
+
+
+def _seconds_between(earlier: str, later: str) -> int:
+    """Whole seconds from *earlier* to *later* (both ``utc_now()`` strings), never negative."""
+    delta = datetime.fromisoformat(later) - datetime.fromisoformat(earlier)
+    return max(0, int(delta.total_seconds()))
+
+
+def _timing(pending: "dict[str, Any]", finished: str) -> "dict[str, Any]":
+    """Return the stamp's ``timing``: the run's cost, per marked leg and in all."""
+    legs: "list[dict[str, Any]]" = []  # a list: the stamp sorts keys, and the order is the run's
+    previous = pending["started"]
+    for item in pending["marks"]:
+        legs.append({"leg": item["leg"], "seconds": _seconds_between(previous, item["at"])})
+        previous = item["at"]
+    return {
+        "started": pending["started"],
+        "finished": finished,
+        "elapsed_s": _seconds_between(pending["started"], finished),
+        "nproc": nproc(),
+        "workers": pending["gate"]["workers"],
+        "legs": legs,
+        "junit": pending["junit"],
+    }
+
+
 def finish(repo: Path) -> int:
     """Stamp the tree when nothing was refused and nothing changed; always exit 0."""
     pending_path = repo / PENDING
@@ -242,6 +309,7 @@ def finish(repo: Path) -> int:
         )
         return 0
     pending = json.loads(pending_path.read_text())
+    pending["junit"] = junit_written(pending["junit_before"], junit_snapshot_or_none(repo))
     pending_path.unlink()
     if pending["refusals"]:
         _say(f"tree {pending['tree'][:12]} not stamped:")
@@ -271,14 +339,16 @@ def finish(repo: Path) -> int:
     if assets != pending["assets"]:
         _say("the built web assets changed during the run; not stamped")
         return 0
+    written_at = utc_now()
     stamp = {
         "format": FORMAT,
         "tree": tree,
         "python": python,
         "assets": assets,
         "gate": pending["gate"],
-        "written_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "written_at": written_at,
         "checkout": str(repo),
+        "timing": _timing(pending, written_at),
     }
     path = stamp_path(repo, tree)
     write_atomically(path, json.dumps(stamp, indent=2, sort_keys=True) + "\n")
@@ -382,7 +452,7 @@ def _overridden_option(parser: argparse.ArgumentParser, consequence: str) -> Non
 
 
 def main(argv: "list[str] | None" = None) -> int:
-    """Run one verb (``start``, ``finish``, ``check``) and return its exit status."""
+    """Run one verb (``start``, ``mark``, ``finish``, ``check``) and return its exit status."""
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--repo", default=".", help="the checkout (default: the current directory)")
     parser = argparse.ArgumentParser(
@@ -394,6 +464,10 @@ def main(argv: "list[str] | None" = None) -> int:
     )
     _gate_options(start_parser, workers=True)
     _overridden_option(start_parser, "the run is then not stamped")
+    mark_parser = verbs.add_parser(
+        "mark", parents=[common], help="record that a leg of the stamped run just ended"
+    )
+    mark_parser.add_argument("leg", help="the leg's name (its JUnit directory's)")
     verbs.add_parser(
         "finish", parents=[common], help="stamp the tree, if every leg passed and nothing changed"
     )
@@ -410,6 +484,8 @@ def main(argv: "list[str] | None" = None) -> int:
         if args.verb == "start":
             gate = Gate(args.threshold, args.selection, args.browsers, args.primary, args.workers)
             return start(repo, gate, args.overridden)
+        if args.verb == "mark":
+            return mark(repo, args.leg)
         if args.verb == "finish":
             return finish(repo)
         gate = Gate(args.threshold, args.selection, args.browsers, args.primary)

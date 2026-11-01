@@ -604,7 +604,9 @@ lanes: the history checks, `lint-arch`, `check-python`, `docs` and
 Coverage is one stamped lane among the others; it runs through
 [the coverage stamp](#the-coverage-stamp)'s own check. `uv run python
 scripts/gate_tip.py --dry-run` lists the lanes without running them and
-`--force` re-runs lanes that are already stamped.
+`--force` re-runs lanes that are already stamped. Every run ends with a
+timing table, and each stamp records what its lane cost: see
+[What a gate costs](#what-a-gate-costs).
 
 Stamps live under `<git common dir>/otto-gate-stamps/<tree>/`, so every
 worktree of the clone shares them. They are keyed by the tree hash and not the
@@ -1629,6 +1631,71 @@ machine with no defect behind it, so a slow test is something to read and act
 on, not something to fail a build over. A JUnit
 time is setup, call and teardown together; for the split, re-run the file
 with pytest's `--durations=N`.
+
+The fourth view is the lane as a whole against its tests:
+
+```bash
+uv run python scripts/junit_durations.py --lane-wall reports/junit/coverage-python/*.xml
+```
+
+prints, per report, the suite's wall (pytest's whole-session clock, the
+`testsuite` element's `time`), its summed test-seconds, their ratio, and when
+the suite started. The ratio is the average number of tests in flight over
+the wall: how much overlap the lane got, not how busy the CPUs were (a test's
+time includes its waits, so sleeps and network calls overlap too). A ratio
+near the worker count says the workers stayed busy; one at or below 1 says
+the lane ran one test at a time, on `xdist_group`s or on `-n0`. How far
+below 1 is the prologue, collection and coverage finalisation, which are in
+the wall and in no test's time: the serial `-n0` leg of `make coverage`
+reads well below 1 for that reason (about 0.3x on the 4-vCPU dev VM, where
+the 2026-10-31 run spent 127 s of wall on 40 s of tests). The wall is the
+number to put against a stamp's `elapsed_s` below.
+
+### What a gate costs
+
+Every stamp records what its lane cost, so a proposed saving is argued from
+numbers and not from memory. A
+[lane stamp](#the-landings-gate-is-stamped) carries a `timing` object:
+`started` and `finished` (UTC), `elapsed_s` (whole seconds of elapsed time,
+monotonic clock), `interpreter` (the Python `gate_tip.py` itself ran under, the project venv;
+a nox lane's own interpreter is in the lane's name), `nproc` (the CPUs the
+lane may run on, what `nproc(1)` prints and what `COVERAGE_WORKERS` reads)
+and `junit` (the reports under `reports/junit/` the lane wrote: those new or
+rewritten between the lane's start and its end). A red marker carries the
+same object. A promoted stamp carries none: the lane did not run on that
+tree. The coverage lane's stamp carries none either when the
+[coverage stamp](#the-coverage-stamp) already held, since nothing ran; the
+run then says `stamped (the coverage stamp holds)`. Timing is a report and
+never evidence: the pre-push check does not read it, a stamp without it (or
+with a malformed one) is evidence all the same, and a failure while
+measuring leaves the lane's verdict and stamp untouched.
+
+The [coverage stamp](#the-coverage-stamp) itself records the run per leg:
+its `timing` has `started`, `finished`, `elapsed_s`, `nproc`, `workers` (the
+`-n` count the Makefile passed, `COVERAGE_WORKERS`), `legs` (a list, in run
+order: `dashboard`, `coverage-python`, `coverage-python-serial` — which
+includes the unit-outliers report printed after it — and `coverage-ts`, each
+with its `seconds`) and `junit`. No verb prints it: read the stamp file,
+`<git common dir>/otto-coverage-stamps/<tree>.json`. The legs are marked by
+`coverage_stamp.py mark <leg>` lines after the Makefile's legs. A mark
+records only onto the record a stamped run's `start` wrote; with none (`make
+coverage-python` alone, `make all`) it is a silent no-op, a failed run's
+leftover record takes marks until the next `start` rewrites it, and a mark
+is never a leg's verdict.
+
+`make gate-tip` ends with the table for the run — elapsed, outcome
+(`stamped`, `already stamped`, `red`, `not stamped`, `live at push`, or
+`missing` in a dry run) and lane — and the stored table for any tree is one
+command away:
+
+```bash
+uv run python scripts/gate_tip.py --timings          # HEAD's tree
+uv run python scripts/gate_tip.py --timings <rev>    # a rev, a commit id or a tree id
+```
+
+It lists every stamp and red marker the store holds for the tree, oldest
+first: elapsed, outcome (`stamped`, `promoted` — the stamp came from another
+tree, so no elapsed — or `red`), when it was written, and the lane.
 
 ### Register built-ins by reference
 

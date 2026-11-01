@@ -11,6 +11,7 @@ import os
 import subprocess
 import tempfile
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 import tomli
@@ -158,3 +159,72 @@ def stamps_root(repo: Path, name: str) -> Path:
     """Return ``<git common dir>/<name>``: one store per clone, shared by its worktrees."""
     common = _git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir").strip()
     return Path(common) / name
+
+
+JUNIT_DIR = Path("reports") / "junit"
+"""Where every lane writes its JUnit XML.
+
+The Makefile's ``JUNIT_DIR`` and noxfile's ``JUNIT_DIR`` spell the same path; the census in
+tests/unit/scripts/test_gate_tip.py pins the three equal.
+"""
+
+
+def utc_now() -> str:
+    """Return the current UTC time as the stamps write it (ISO 8601, seconds)."""
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def nproc() -> int:
+    """Return the CPUs this process may run on (what ``nproc(1)`` prints; 1 when unknown).
+
+    The affinity mask, not the machine's count: a cpuset or ``taskset`` narrows what a
+    lane can spread over, and the Makefile's worker counts read the same number.
+    """
+    if hasattr(os, "sched_getaffinity"):
+        return len(os.sched_getaffinity(0)) or 1
+    return os.cpu_count() or 1
+
+
+def junit_snapshot(repo: Path) -> "dict[str, list[int]]":
+    """Return every JUnit report under *repo* with its mtime (ns) and size.
+
+    Taken before a lane runs and again after it: what is new, or whose mtime or size
+    moved, is what the lane wrote. No clock reference is involved, so a report an earlier
+    run left in the same tick as the lane's start is never the lane's, and a report the
+    lane rewrote in place is.
+    """
+    base = repo / JUNIT_DIR
+    if not base.is_dir():
+        return {}
+    found: "dict[str, list[int]]" = {}
+    for path in base.rglob("*.xml"):
+        try:
+            info = path.stat()
+        except OSError:  # vanished between the glob and the stat: not a report of ours
+            continue
+        found[path.relative_to(repo).as_posix()] = [info.st_mtime_ns, info.st_size]
+    return found
+
+
+def junit_snapshot_or_none(repo: Path) -> "dict[str, list[int]] | None":
+    """Return ``junit_snapshot(repo)``, or None when the directory cannot be read.
+
+    The one answer to "what if the before-snapshot cannot be taken": nothing is
+    attributed (``junit_written`` of None is empty), never everything. A report.
+    """
+    try:
+        return junit_snapshot(repo)
+    except OSError:
+        return None
+
+
+def junit_written(
+    before: "dict[str, list[int]] | None", after: "dict[str, list[int]] | None"
+) -> "list[str]":
+    """Return the reports *after* holds that *before* did not, or holds differently; sorted.
+
+    Either snapshot missing (None: it could not be taken) attributes nothing.
+    """
+    if before is None or after is None:
+        return []
+    return sorted(path for path, mark in after.items() if before.get(path) != mark)

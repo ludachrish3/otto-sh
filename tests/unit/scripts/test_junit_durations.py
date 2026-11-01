@@ -238,3 +238,50 @@ def test_every_outliers_call_in_the_makefile_ignores_its_status(target: str) -> 
     calls = [line for line in _recipe(target) if "unit_outliers" in line]
     assert calls, f"{target} no longer runs the unit outliers report"
     assert all(line.startswith("\t@-") for line in calls), calls
+
+
+# ── --lane-wall: the suite's wall against its summed test-seconds ───────────────
+
+_WALL_XML = """\
+<testsuites>
+  <testsuite name="pytest" tests="3" time="4.0" timestamp="2026-10-31T19:53:33.756122-05:00">
+    <testcase classname="tests.unit.test_a" name="test_1" time="5.0"/>
+    <testcase classname="tests.unit.test_a" name="test_2" time="2.0"/>
+    <testcase classname="tests.unit.test_b" name="test_3" time="1.0"/>
+  </testsuite>
+</testsuites>
+"""
+
+
+def test_lane_wall_prints_wall_summed_and_the_parallelism_ratio(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    report = tmp_path / "lane.xml"
+    report.write_text(_WALL_XML)
+    assert main(["--lane-wall", str(report)]) == 0
+    out = capsys.readouterr().out
+    assert "=== lane wall: 1 report(s) ===" in out
+    assert "wall" in out
+    assert "summed" in out
+    assert "ratio" in out
+    assert "4.0s" in out
+    assert "8.0s" in out
+    assert "2.00x" in out
+    assert "2026-10-31T19:53:33" in out
+    assert str(report) in out
+
+
+def test_lane_wall_names_what_it_cannot_read_and_a_suite_without_a_wall(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    broken = tmp_path / "broken.xml"
+    broken.write_text("<testsuites><testsuite")
+    no_wall = tmp_path / "no_wall.xml"
+    no_wall.write_text(_XML.replace(' time="9.0"', ""))
+    assert main(["--lane-wall", str(broken), str(no_wall), str(tmp_path / "absent.xml")]) == 0
+    out = capsys.readouterr().out
+    assert "skipped" in out
+    assert "broken.xml" in out
+    assert "absent.xml" in out
+    assert "no wall" in out
+    assert "no_wall.xml" in out

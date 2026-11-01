@@ -23,6 +23,17 @@ printed instead of raised. ``--top`` caps how many files it lists.
 ``make unit-outliers`` runs it on the last ``coverage-python`` leg's two
 reports (the parallel leg and the ``serial_timing`` leg).
 
+``--lane-wall`` is the fourth view, one row per report: the suite's wall
+(the ``testsuite`` element's ``time``, pytest's whole-session clock), its
+summed test-seconds, their ratio, and when the suite started. The ratio is
+the average number of tests in flight over the wall — the overlap the lane
+got, not CPU use (a test's time includes its waits). Near the worker count,
+the workers stayed busy; at or below 1 the lane ran one test at a time
+(``xdist_group``s, ``-n0``), and how far below 1 is prologue, collection and
+coverage finalisation, which are in the wall and in no test. A report, like
+``--outliers``: it exits 0, names what it cannot read, and a suite without a
+``time`` prints ``no wall``.
+
 JUnit XML folds setup + call + teardown into one time per testcase. For a
 phase split (is it the fixture or the test?), re-run the lane with pytest's
 ``--durations=N``, which lists the phases as separate rows.
@@ -33,6 +44,7 @@ Usage::
     scripts/junit_durations.py --top 40 reports/junit/nox/tests_all-3.10.xml
     scripts/junit_durations.py --by-file reports/junit/nox/*.xml
     scripts/junit_durations.py --outliers --threshold 0.5 reports/junit/coverage-python/*.xml
+    scripts/junit_durations.py --lane-wall reports/junit/coverage-python/*.xml
 """
 
 import argparse
@@ -72,6 +84,52 @@ def iter_cases(xml_path: Path) -> Generator[Case, None, None]:
     tree = ET.parse(xml_path)  # noqa: S314 — parses our own trusted JUnit output, not untrusted input
     for tc in tree.iter("testcase"):
         yield Case(tc.get("classname") or "", tc.get("name") or "", parse_seconds(tc.get("time")))
+
+
+class LaneWall(NamedTuple):
+    """One report's suite wall, its summed test-seconds, and when the suite started."""
+
+    report: Path
+    wall: float | None
+    """``None`` when no ``testsuite`` carries a usable ``time``."""
+    summed: float
+    timestamp: str
+
+
+def lane_wall(xml_path: Path) -> LaneWall:
+    """Read one report's suite wall (summed over its ``testsuite`` elements) and test-seconds."""
+    tree = ET.parse(xml_path)  # noqa: S314 — our own JUnit output
+    walls = [parse_seconds(s.get("time")) for s in tree.iter("testsuite") if s.get("time")]
+    wall = sum(walls) if walls and all(w is not None for w in walls) else None
+    times = (parse_seconds(tc.get("time")) for tc in tree.iter("testcase"))
+    summed = sum(t for t in times if t is not None)
+    first = next(tree.iter("testsuite"), None)
+    timestamp = (first.get("timestamp") or "") if first is not None else ""
+    return LaneWall(xml_path, wall, summed, timestamp)
+
+
+def lane_wall_report(reports: list[Path]) -> list[str]:
+    """Return the ``--lane-wall`` table: wall, summed, ratio, started, report — per report."""
+    lines = [
+        f"=== lane wall: {len(reports)} report(s) ===",
+        f"  {'wall':>9}  {'summed':>9}  {'ratio':>6}  {'started':<32} report",
+    ]
+    for xml_path in reports:
+        try:
+            row = lane_wall(xml_path)
+        except (OSError, ET.ParseError, LookupError, ValueError) as exc:
+            lines.append(f"  skipped {xml_path}, which could not be read: {exc}")
+            continue
+        if row.wall is None or row.wall <= 0:
+            lines.append(
+                f"  {'no wall':>9}  {row.summed:8.1f}s  {'':>6}  {row.timestamp:<32} {xml_path}"
+            )
+            continue
+        ratio = row.summed / row.wall
+        lines.append(
+            f"  {row.wall:8.1f}s  {row.summed:8.1f}s  {ratio:5.2f}x  {row.timestamp:<32} {xml_path}"
+        )
+    return lines
 
 
 class Distribution(NamedTuple):
@@ -241,6 +299,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Report one tree's time distribution and its tests at or above --threshold, by file",
     )
     parser.add_argument(
+        "--lane-wall",
+        action="store_true",
+        help="Report each suite's wall, its summed test-seconds and their ratio (parallelism)",
+    )
+    parser.add_argument(
         "--threshold", type=float, default=1.0, help="--outliers: seconds (default: 1)"
     )
     parser.add_argument(
@@ -255,6 +318,10 @@ def main(argv: list[str] | None = None) -> int:
         help="--outliers: the repo root the test files are read from (default: .)",
     )
     args = parser.parse_args(argv)
+
+    if args.lane_wall:
+        print("\n".join(lane_wall_report(args.reports)))
+        return 0
 
     cases: list[Case] = []
     for xml_path in args.reports:
