@@ -111,6 +111,28 @@ def test_any_stderr_output_fails_and_is_reprinted(tmp_path: Path) -> None:
     )
 
 
+def test_biomes_run_summary_on_stderr_is_not_a_warning(tmp_path: Path) -> None:
+    """Biome 2.6 writes its receipt line to stderr; 2.5 wrote it to stdout."""
+    result = _run_gate(tmp_path, stderr="Checked 198 files in 1108ms. No fixes applied.\\n")
+    assert result.returncode == 0, result.stderr
+
+
+def test_only_the_full_receipt_shape_is_exempt(tmp_path: Path) -> None:
+    result = _run_gate(tmp_path, stderr="Fixed 3 files.\\n")
+    assert result.returncode != 0, "only the full 'Checked N files in X' receipt is exempt"
+
+
+def test_a_biome_diagnostic_beside_the_summary_still_fails(tmp_path: Path) -> None:
+    """The exemption is one line shape, not Biome's whole stderr."""
+    stderr = (
+        "src/x.ts:1:1 lint/style/useUnicodeRegex ━━━━\\n"
+        "Checked 198 files in 1108ms. No fixes applied.\\n"
+    )
+    result = _run_gate(tmp_path, stderr=stderr)
+    assert result.returncode != 0
+    assert "lint/style/useUnicodeRegex" in result.stderr
+
+
 def test_vite_chunk_size_warning_fails(tmp_path: Path) -> None:
     """Vite 8 reports a chunkSizeWarningLimit overrun on STDERR, so it is the
     any-stderr rule, not the stdout marker scan, that enforces the budget."""

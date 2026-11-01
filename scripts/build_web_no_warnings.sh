@@ -42,6 +42,13 @@
 # coverage:merged) run through it as well: every web/ npm script a Makefile
 # gate calls, pinned by tests/unit/test_ci_web_gate.py.
 #
+# The one line rule 1 lets through: Biome's run summary ("Checked N files in
+# Xms. No fixes applied." / "Fixed N files."). Biome 2.6 writes it to stderr
+# (2.5 wrote it to stdout); it is a receipt, not a diagnostic, and Biome's
+# diagnostics have always gone to stderr on their own lines, so dropping
+# this one shape keeps every info/warning/error failing the gate exactly as
+# before. Pinned by tests/unit/scripts/test_build_web_no_warnings.py.
+#
 # Usage: scripts/build_web_no_warnings.sh <npm-script>   (e.g. build,
 # build:covapp, test, check). Run from the repo root (make does): it runs
 # `npm run` in web/.
@@ -93,7 +100,8 @@ if [ "$status" -ne 0 ]; then
     exit "$status"
 fi
 
-if [ -s "$ERR" ]; then
+BIOME_SUMMARY='^Checked [0-9]+ files? in [0-9.]+(ms|s|m)\. (No fixes applied|Fixed [0-9]+ files?)\.$'
+if grep -qvE "$BIOME_SUMMARY" "$ERR"; then
     {
         echo ""
         echo "build_web_no_warnings: \`npm run $SCRIPT\` wrote to stderr. Any stderr"
