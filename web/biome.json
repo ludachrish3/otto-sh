@@ -74,7 +74,8 @@
         "noUnresolvedImports": "off",
         "useImportExtensions": "off",
         "noSolidDestructuredProps": "off",
-        "useQwikValidLexicalScope": "off"
+        "useQwikValidLexicalScope": "off",
+        "noReactNativeRawText": "off"
       },
       "security": {
         "noSecrets": {
