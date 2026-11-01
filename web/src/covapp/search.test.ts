@@ -185,6 +185,13 @@ describe("statesFromChunk", () => {
   });
 
   it("exports the state vocabulary the contract pins", () => {
-    expect(Object.keys(STATE_CHARS).sort()).toEqual(["-", "a", "c", "s", "u", "x"]);
+    expect(Object.keys(STATE_CHARS).sort((a, b) => a.localeCompare(b))).toEqual([
+      "-",
+      "a",
+      "c",
+      "s",
+      "u",
+      "x",
+    ]);
   });
 });

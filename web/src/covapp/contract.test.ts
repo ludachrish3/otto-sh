@@ -160,7 +160,9 @@ describe("covapp ticket + callback contract (shared with the Python emitter)", (
     ["SymbolsChunk", SYMBOLS_CHUNK_KEYS, contract.symbols_chunk_keys],
     ["FunctionEntry", FUNCTION_JSON_KEYS, contract.function_json_keys],
   ])("%s declares exactly the contract's keys", (_name, declared, expected) => {
-    expect(Object.keys(declared).sort()).toEqual([...expected].sort());
+    expect(Object.keys(declared).sort((a, b) => a.localeCompare(b))).toEqual(
+      [...expected].sort((a, b) => a.localeCompare(b)),
+    );
   });
 
   it("the expected data format matches the Python emitter's", () => {
@@ -415,7 +417,9 @@ describe("covapp payload contract (shared with the Python emitter)", () => {
     ["Stats.flags", STATS_FLAGS_KEYS, contract.stats_flags_keys],
     ["LineJson.state", LINE_STATES, contract.line_states],
   ])("%s declares exactly the contract's keys", (_name, declared, expected) => {
-    expect(Object.keys(declared).sort()).toEqual([...expected].sort());
+    expect(Object.keys(declared).sort((a, b) => a.localeCompare(b))).toEqual(
+      [...expected].sort((a, b) => a.localeCompare(b)),
+    );
   });
 
   it.each([

@@ -158,7 +158,9 @@ describe("EDGE_STYLES", () => {
       expect(EDGE_STYLES[c].label.length).toBeGreaterThan(0);
       expect(EDGE_STYLES[c].hint.length).toBeGreaterThan(0);
     }
-    expect(Object.keys(EDGE_STYLES).sort()).toEqual([...ALL_CLASSES].sort());
+    expect(Object.keys(EDGE_STYLES).sort((a, b) => a.localeCompare(b))).toEqual(
+      [...ALL_CLASSES].sort((a, b) => a.localeCompare(b)),
+    );
   });
 
   it("gives tunnels — and only tunnels — a casing", () => {
