@@ -1632,21 +1632,30 @@ def test_the_census_refuses_a_line_it_cannot_read():
 def test_the_full_gate_is_pinned_literally():
     """Written out, not derived: dropping a line from the production constant reddens this."""
     assert gs.FULL_GATE == [
-        "make coverage",
-        "nox -s tests_hostless-3.14",
         "make check-python",
         "make docs",
         "make gate-fresh",
+        "nox -s tests_hostless-3.14",
+        "make coverage",
     ]
     full = _s([gs.FULL], files=["uv.lock"], unknown=["uv.lock"], full_commit=["no row: uv.lock"])
     assert gs.commands(full, tip=False, base="origin/main") == [
         "make check-breaking",
-        "make coverage",
-        "nox -s tests_hostless-3.14",
         "make check-python",
         "make docs",
         "make gate-fresh",
+        "nox -s tests_hostless-3.14",
+        "make coverage",
     ]
+
+
+def test_the_full_gate_runs_every_static_lane_before_any_test_suite():
+    """Cheap first: a lint, type or docs failure must never wait behind the suites."""
+    suites = [line for line in gs.FULL_GATE if line in gs.TEST_SUITE_LANES]
+    assert suites == gs.TEST_SUITE_LANES, "the suite lanes are the full gate's, in its order"
+    assert gs.FULL_GATE == gs.STATIC_LANES + gs.TEST_SUITE_LANES
+    assert not set(gs.STATIC_LANES) & set(gs.TEST_SUITE_LANES)
+    assert gs.FULL_GATE[0] == "make check-python", "the cheapest check is the first lane"
 
 
 def test_the_full_gates_hostless_session_runs_on_the_canary():
@@ -2059,11 +2068,11 @@ def test_tip_commands_read_the_tree_at_the_given_revision(tmp_path):
     # at HEAD it is gone: the measured matrix has no surviving reader, so the full gate
     assert gs.tip_commands(repo, base, "HEAD", env) == [
         f"make check-breaking RANGE={base}..HEAD",
-        "make coverage",
-        "nox -s tests_hostless-3.14",
         f"make check-python RANGE={base}..HEAD",
         "make docs",
         f"make gate-fresh RANGE={base}..HEAD",
+        "nox -s tests_hostless-3.14",
+        "make coverage",
     ]
 
 

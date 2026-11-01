@@ -528,13 +528,15 @@ QUICK_EXCLUDED = frozenset(
     {"stability", "busybox", "conformance", "kmodcov", "browser", "interpreter_agnostic"}
 )
 """The marks both `make quick` legs deselect (M_QUICK; pinned against the Makefile)."""
-FULL_GATE = [
-    "make coverage",
-    "nox -s tests_hostless-3.14",
-    "make check-python",
-    "make docs",
-    "make gate-fresh",
-]
+STATIC_LANES = ["make check-python", "make docs", "make gate-fresh"]
+"""The full gate's lanes that run no test suite: lint, types, docs, the fresh-tree checks."""
+TEST_SUITE_LANES = ["nox -s tests_hostless-3.14", "make coverage"]
+"""The full gate's lanes that run test suites; every static lane precedes them."""
+FULL_GATE = STATIC_LANES + TEST_SUITE_LANES
+"""The full gate, cheapest first: the static lanes (minutes) before the test suites (the
+hostless session ~9 min, `make coverage` ~20 min on the bed), so a lint, type or docs
+failure costs minutes, never the half hour the suites take to reach it. `gate_tip`
+runs the list in this order; `test_gate_scope` pins it."""
 
 
 def _match(path: str, globs: "tuple[str, ...]") -> bool:

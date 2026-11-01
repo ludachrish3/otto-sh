@@ -482,8 +482,11 @@ Each changed path has a class; a diff takes the union of its paths' classes:
 | `escalate` | a conftest, `tests/_fixtures/`, the registry, a package `__init__`, a build file (`Makefile`, `noxfile.py`, `pyproject.toml`, CI), three or more packages | the full gate, the bed lanes, plus `make quick-guards` (build file) | the full gate and the bed lanes |
 | `full` | any path with no row | the full gate | the full gate |
 
-The full gate is `make coverage`, `nox -s tests_hostless-3.14`,
-`make check-python`, `make docs` and `make gate-fresh`. Beyond the `escalate`
+The full gate is `make check-python`, `make docs`, `make gate-fresh`,
+`nox -s tests_hostless-3.14` and `make coverage`, in that order: the static
+lanes first, so a lint, type or docs failure costs minutes rather than the
+half hour the two suites take to reach it (`make gate-tip` runs the list in
+order and stops at the first red). Beyond the `escalate`
 and `full` classes, the commit column is the full gate when a test module
 carries a `stability` or `chaos` mark outside every lane's files, carries a
 `pytestmark` (or a mark decorator) the oracle cannot read, or leaves no
