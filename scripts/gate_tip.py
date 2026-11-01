@@ -71,7 +71,6 @@ LIVE_GOALS = ["check-breaking", "lint-arch", "check-python", "docs", "gate-fresh
 """History-dependent (RANGE_TARGETS) or run by the push itself; never stamped."""
 STAMPED_GOALS = [
     "coverage",
-    "tests_hostless-3.14",
     "conformance-bed",
     "docs-captures-check",
     "stability-unit",
@@ -104,13 +103,11 @@ class UnknownGoalError(ValueError):
 
 
 def goals(line: str) -> "list[str]":
-    """Return the goals of one oracle line: make targets, the nox session, or the uv tool."""
+    """Return the goals of one oracle line: make targets, or the uv tool (ruff, ty)."""
     words = shlex.split(line)
     if words[:1] == ["make"]:
         found = [w for w in words[1:] if "=" not in w]
-    elif (words[:2] == ["nox", "-s"] and words[2:3]) or (
-        words[:2] == ["uv", "run"] and words[2:3] in (["ruff"], ["ty"])
-    ):
+    elif words[:2] == ["uv", "run"] and words[2:3] in (["ruff"], ["ty"]):
         found = [words[2]]
     else:
         raise UnknownGoalError(f"the oracle emitted a lane this runner does not know: {line}")
@@ -707,7 +704,7 @@ def lane_timing(
     ``started``/``finished`` are UTC ISO 8601 (wall clock), ``elapsed_s`` whole seconds
     of the monotonic clock (so a clock step cannot bend it; it may differ from the two
     wall stamps by a second), ``interpreter`` the Python ``gate_tip.py`` itself ran under
-    (the project venv — a nox lane's own interpreter is in the lane's name), ``nproc`` the
+    (the project venv; a lane's own interpreters are the lane's business), ``nproc`` the
     CPUs it may run on, and ``junit`` the reports under ``reports/junit`` that are new or
     rewritten since *before* (the snapshot taken as the lane started; empty when either
     snapshot could not be taken). A report, never evidence: the pre-push check never

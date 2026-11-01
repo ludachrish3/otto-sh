@@ -531,13 +531,18 @@ QUICK_EXCLUDED = frozenset(
 """The marks both `make quick` legs deselect (M_QUICK; pinned against the Makefile)."""
 STATIC_LANES = ["make check-python", "make docs", "make gate-fresh"]
 """The full gate's lanes that run no test suite: lint, types, docs, the fresh-tree checks."""
-TEST_SUITE_LANES = ["nox -s tests_hostless-3.14", "make coverage"]
-"""The full gate's lanes that run test suites; every static lane precedes them."""
+TEST_SUITE_LANES = ["make coverage"]
+"""The full gate's lanes that run test suites; every static lane precedes them.
+
+The hostless matrix (`tests_hostless-3.10` … `3.14`) is not here: it is the pull
+request's CI, which runs before the landing (#795). The local tip owns what CI
+cannot run: `make coverage` and the diff's bed lanes."""
 FULL_GATE = STATIC_LANES + TEST_SUITE_LANES
-"""The full gate, cheapest first: the static lanes (minutes) before the test suites (the
-hostless session ~9 min, `make coverage` ~20 min on the bed), so a lint, type or docs
-failure costs minutes, never the half hour the suites take to reach it. `gate_tip`
-runs the list in this order; `test_gate_scope` pins it."""
+"""The full gate, cheapest first: the static lanes (minutes) before the test suite
+(`make coverage`, ~20 min on the bed), so that run by hand a lint, type or docs failure
+costs minutes, never the twenty the suite takes to reach it. `gate_tip` walks the list
+in this order, stamping the suite lane and leaving the static lanes (`LIVE_GOALS`) to
+the push; `test_gate_scope` pins it."""
 
 
 def _match(path: str, globs: "tuple[str, ...]") -> bool:

@@ -974,10 +974,8 @@ class TestPrePushCheck:
         assert f"(range {a_sha[:12]}..{c_sha[:12]}):" in err
         larger = _stamped(repo, a_sha, c_sha)
         assert "make coverage" in larger
-        assert "nox -s tests_hostless-3.14" in larger
         bc = _stamped(repo, b_sha, c_sha)
         assert "make coverage" not in bc
-        assert "nox -s tests_hostless-3.14" not in bc
         assert not set(larger) <= set(bc)
         verdict = gt.missing_stamps(repo, "origin", a_sha, c_sha)
         assert [m.lane for m in verdict.missing] == larger

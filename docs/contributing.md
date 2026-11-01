@@ -340,8 +340,8 @@ exposed to them, not the least.
 
 ## Branching and commits
 
-All work branches off `main`. `main` is protected — direct pushes are
-rejected, so every change lands via a pull request.
+All work branches off `main` and lands through a pull request; the landing
+steps are in [Gating a branch before it lands](#gating-a-branch-before-it-lands).
 
 ```bash
 git checkout main
@@ -402,8 +402,10 @@ change. Removing a namespace from `api/public.toml`, or moving one from
 at `HEAD`. The machinery is described in
 [the public-surface declaration](architecture/quality-gates.md#the-public-surface-declaration).
 
-Before pushing, run `make all` locally — it mirrors CI
-(`clean-dist → typecheck → coverage → docs → build`).
+Before pushing, run what `make gate-scope` names for the diff (see
+[Gating a branch before it lands](#gating-a-branch-before-it-lands)); `make all`
+(`clean-dist → typecheck → coverage → docs → build`) is the release's whole
+build, not the gate.
 
 ### Repairing a missing mark
 
@@ -468,6 +470,48 @@ parent (exit 2), and exits 1 when git cannot answer (a missing base, no
 repository). `BASE` and `make quick`'s `PATHS` are read from the command line
 only, never from the environment.
 
+A landing is a pull request, and its checks are split by who can run them.
+**The PR's CI runs everything that needs no lab**: every validation job in
+`.github/workflows/ci.yml`, the hostless matrix (the `tests_hostless-3.10` …
+`3.14` jobs: `tests/unit` and the no-VM e2e on every supported Python) among
+them; the CI column of [the quality-gates
+table](architecture/quality-gates.md#what-binds-each-gate) names them, and only
+the issue-filing job waits for a failed push to `main`. **The local tip adds
+what CI cannot run**: `make coverage` and the diff's bed lanes, which need the
+lab. The static lanes the tip list also names (`make check-python`, `make
+docs`, `make gate-fresh`) run at the push itself, by the pre-push hook
+(`.githooks/pre-push`; [the landing's gate is
+stamped](#the-landings-gate-is-stamped) says what it checks). The hostless
+matrix is therefore not a local tip lane: `make nox-hostless` stays for
+running it by hand. The author lands the PR, in this order:
+
+1. `git fetch origin main` and rebase the branch onto it: the head that lands
+   must be a fast-forward of the current `main` (the hook refuses anything
+   else), and `make gate-tip` compares against `origin/main`. Squash on the
+   branch now if you squash at all.
+2. Push the branch (the hook fires for `main` only, so this push is free) and
+   open the PR.
+3. Run `make gate-tip` on that head. It need not wait for CI: its
+   [stamps](#the-landings-gate-is-stamped) are keyed by tree, so the two halves
+   run in parallel.
+4. Wait for the PR's CI to be green on that sha, and for whatever review the
+   change calls for. If `main` moved meanwhile, go back to step 1: a rebase
+   that changes the tree needs new stamps, one that does not keeps them, and CI
+   runs again either way.
+5. With that head checked out and nothing committed since the push, land it as
+   a fast-forward push of the same sha:
+
+   ```bash
+   git push origin HEAD:main
+   ```
+
+The pushed sha is the PR's head, so the PR closes as merged, and the hook
+still refuses a tip whose lanes are not stamped and still runs `gate-fresh`.
+`main`'s ruleset refuses the push when any of those CI jobs is not green on
+that sha, so step 4 is enforced, not only asked. Never land with GitHub's
+merge button: a squash or merge commit is a new sha nothing has gated, and
+the hook never sees it.
+
 Each changed path has a class; a diff takes the union of its paths' classes:
 
 | Class | Paths | This commit | Tip |
@@ -482,11 +526,12 @@ Each changed path has a class; a diff takes the union of its paths' classes:
 | `escalate` | a conftest, `tests/_fixtures/`, the registry, a package `__init__`, a build file (`Makefile`, `noxfile.py`, `pyproject.toml`, CI), three or more packages | the full gate, the bed lanes, plus `make quick-guards` (build file) | the full gate and the bed lanes |
 | `full` | any path with no row | the full gate | the full gate |
 
-The full gate is `make check-python`, `make docs`, `make gate-fresh`,
-`nox -s tests_hostless-3.14` and `make coverage`, in that order: the static
-lanes first, so a lint, type or docs failure costs minutes rather than the
-half hour the two suites take to reach it (`make gate-tip` runs the list in
-order and stops at the first red). Beyond the `escalate`
+The full gate is `make check-python`, `make docs`, `make gate-fresh` and
+`make coverage`, in that order: the static lanes first, so that run by hand a
+lint, type or docs failure costs minutes rather than the twenty `make coverage`
+takes to reach it. `make gate-tip` stamps only the suite and bed lanes and
+names the static ones "live at push": the pre-push hook runs them, through
+`gate-fresh`, on the tip it is pushing. Beyond the `escalate`
 and `full` classes, the commit column is the full gate when a test module
 carries a `stability` or `chaos` mark outside every lane's files, carries a
 `pytestmark` (or a mark decorator) the oracle cannot read, or leaves no
@@ -518,8 +563,9 @@ embedded tiers, and the tunnel tier at its full depth (`CYCLES` 5). A
 hand. So a regression that only a soak shows is found at nightly for unit, at
 release for tunnel, and only by a hand-run soak for unix and embedded; never at
 the commit. The test-isolation guard is never a local lane either: CI's
-`unit-repeat` job runs the same session on every push, so a test-isolation leak
-shows up in CI after the push. The target stays for running it by hand.
+`unit-repeat` job runs the same session on the pull request before the landing
+(and again on `main`), so a test-isolation leak shows up there. The target
+stays for running it by hand.
 
 Some test trees are a lane's own and are never handed to `quick`. Both `quick`
 legs deselect the items of `tests/conformance/` (`make conformance`; the
@@ -542,7 +588,7 @@ inside the dashboard tree is a plain leaf and runs under `quick` like any other.
 a row, and an oracle census proves that every item pytest collects in every
 test module, changed alone, is selected by a lane the oracle emits.
 
-The bed lanes and `make gate-tip` take [the bed lease](#bed-lease), so a second landing's gate on the same cell waits (`BED_LEASE_WAIT`) or fails fast naming the first. A gate you interrupt (Ctrl-C, or a SIGTERM to `scripts/gate_tip.py` itself) waits for the lane it was running to stop, then reaps the bed and releases the lease itself; a second Ctrl-C kills the lane outright, and the gate reaps and releases the same way once the lane's processes are gone, or, when some outlive the kill, keeps the lease, names them and tells you to run `make bed-reap` once they are ([the bed reap](#bed-reap)). `make gate-fresh` is the full gate's last static lane (the two test suites follow it, and a docs, web or test-only tip ends with it). Run it before handing a branch back or squashing it onto `main`.
+The bed lanes and `make gate-tip` take [the bed lease](#bed-lease), so a second landing's gate on the same cell waits (`BED_LEASE_WAIT`) or fails fast naming the first. A gate you interrupt (Ctrl-C, or a SIGTERM to `scripts/gate_tip.py` itself) waits for the lane it was running to stop, then reaps the bed and releases the lease itself; a second Ctrl-C kills the lane outright, and the gate reaps and releases the same way once the lane's processes are gone, or, when some outlive the kill, keeps the lease, names them and tells you to run `make bed-reap` once they are ([the bed reap](#bed-reap)). `make gate-fresh` is the full gate's last static lane (`make coverage` follows it, and a docs, web or test-only tip ends with it). Run it before handing a branch back or pushing the head its PR will land.
 
 It runs the lanes that catch what a clean checkout sees and your dev tree
 hides: `lint-python`, `lint-arch`, `check-api-snapshot` (the public-API
@@ -615,7 +661,9 @@ Stamps live under `<git common dir>/otto-gate-stamps/<tree>/`, so every
 worktree of the clone shares them. They are keyed by the tree hash and not the
 commit because the tree is what a squash inherits: the squash of a gated tip
 has the same tree, so the gate you ran on the branch is the gate the landing
-shows. Like the coverage stamp, a stamp is a committed-tree contract: a dirty
+shows. Squash on the branch before its final push, though: the PR's CI runs
+on a sha, and the head that lands must be the head it went green on. Like the
+coverage stamp, a stamp is a committed-tree contract: a dirty
 tracked tree, or an untracked file the lanes would import, is refused, and so
 is any command-line variable other than `BASE=` (`make gate-tip X=...` is
 refused). `BASE=` is the one control. The runner shares the coverage stamp's
@@ -763,14 +811,15 @@ Closes #42
 ```
 
 Open as a draft while work is in progress, then mark Ready for review
-once `make all` is green:
+once its CI is green:
 
 ```bash
 gh pr create --draft --base main --title "feat: add SSH retry logic"
 ```
 
-A maintainer will **squash and merge** once approved — you do not need
-to squash yourself. After merge, delete the branch and pull `main`:
+The PR lands by the steps in [Gating a branch before it
+lands](#gating-a-branch-before-it-lands), never by GitHub's merge button. It
+then closes as merged; delete the branch and pull `main`:
 
 ```bash
 git checkout main
@@ -781,7 +830,7 @@ git branch -d <your-branch>
 ### PR checklist
 
 - [ ] Commits follow the conventional commit format
-- [ ] `make all` passes locally
+- [ ] `make gate-tip` has stamped the PR's head, and its CI is green on that sha
 - [ ] Branch is rebased on the latest `main`
 - [ ] Related issue linked (`Closes #N`)
 - [ ] Commit subject reads as the changelog entry it will become (see below)
@@ -1786,7 +1835,7 @@ numbers and not from memory. A
 [lane stamp](#the-landings-gate-is-stamped) carries a `timing` object:
 `started` and `finished` (UTC), `elapsed_s` (whole seconds of elapsed time,
 monotonic clock), `interpreter` (the Python `gate_tip.py` itself ran under, the project venv;
-a nox lane's own interpreter is in the lane's name), `nproc` (the CPUs the
+a lane's own interpreters are the lane's business), `nproc` (the CPUs the
 lane may run on, what `nproc(1)` prints and what `COVERAGE_WORKERS` reads)
 and `junit` (the reports under `reports/junit/` the lane wrote: those new or
 rewritten between the lane's start and its end). A red marker carries the

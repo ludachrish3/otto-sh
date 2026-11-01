@@ -1,6 +1,6 @@
 """Pins for scripts/gate_scope.py — the diff classifier behind `make gate-scope` (#566)."""
 
-import ast
+import itertools
 import json
 import os
 import re
@@ -32,8 +32,6 @@ from tests.unit.test_lane_invariants import (
 from tests.unit.test_tier_marker_invariants import (
     _makefile_marker_variables,
     _makefile_pytest_invocations,
-    _python_pytest_invocations,
-    _string_constants,
 )
 
 pytestmark = pytest.mark.interpreter_agnostic
@@ -1423,8 +1421,6 @@ def test_the_union_composes_every_class_before_deduplication():
 # check-ts is the TypeScript gate). `check-python` and `lint-arch` DO reach pytest (the
 # ast-grep rule tests, `lint-arch`) and are walked like any lane.
 _OUT_OF_SCOPE_LINES = frozenset({"check-breaking", "docs", "gate-fresh", "check-ts"})
-_CANARY = _string_constants(ast.parse((CHECKOUT_ROOT / "noxfile.py").read_text()))["CANARY_PYTHON"]
-_HOSTLESS_LINE = f"nox -s tests_hostless-{_CANARY}"
 # The emitted lines that run no pytest: the type checker and the linter over changed files.
 _NO_PYTEST_PREFIXES = ("uv run ty check ", "uv run ruff check ")
 
@@ -1450,27 +1446,16 @@ def _quick_legs(makefile: str, roots: "list[str]") -> "list[_Leg]":
 def _oracle_legs(lines: "list[str]", makefile: str) -> "list[_Leg]":
     """The pytest legs the oracle's commands run.
 
-    `make quick` is read from its recipe in *makefile* (`$(PATHS)` substituted); the
-    hostless nox session on the canary is read from noxfile.py with the interpreter
-    RESOLVED (`make_legs("nox-hostless")` cannot: the `nox-hostless` target names the
-    session without one and the reader refuses an unresolved ladder); every other
-    `make <x>` is the legs `make <x>` reaches (nox sessions included). Only the ty and ruff
-    lines run no pytest. A line this reader does not know is an error, never a skip.
+    `make quick` is read from its recipe in *makefile* (`$(PATHS)` substituted); every
+    other `make <x>` is the legs `make <x>` reaches (nox sessions included). Only the ty
+    and ruff lines run no pytest. A line this reader does not know is an error, never a
+    skip: the oracle emits no bare `nox` line since the hostless matrix moved to the
+    pull request's CI (#795).
     """
     legs: "list[_Leg]" = []
     for line in lines:
         if line.startswith('make quick PATHS="'):
             legs += _quick_legs(makefile, line[len('make quick PATHS="') : -1].split())
-        elif line == _HOSTLESS_LINE:
-            legs += _legs_including_markerless(
-                f"noxfile.py:tests_hostless@{_CANARY}",
-                _python_pytest_invocations(
-                    CHECKOUT_ROOT / "noxfile.py",
-                    resolve_names=True,
-                    scope="tests_hostless",
-                    python=_CANARY,
-                ),
-            )
         elif line.startswith("make ") and line.split()[1] not in _OUT_OF_SCOPE_LINES:
             legs += make_legs(line.split()[1])
         elif line.startswith(_NO_PYTEST_PREFIXES) or (
@@ -1635,7 +1620,6 @@ def test_the_full_gate_is_pinned_literally():
         "make check-python",
         "make docs",
         "make gate-fresh",
-        "nox -s tests_hostless-3.14",
         "make coverage",
     ]
     full = _s([gs.FULL], files=["uv.lock"], unknown=["uv.lock"], full_commit=["no row: uv.lock"])
@@ -1644,9 +1628,15 @@ def test_the_full_gate_is_pinned_literally():
         "make check-python",
         "make docs",
         "make gate-fresh",
-        "nox -s tests_hostless-3.14",
         "make coverage",
     ]
+
+
+def test_no_tip_list_runs_the_hostless_matrix_locally():
+    """The hostless sessions are the pull request's CI (#795): no oracle line names one
+    (`test_gate_tip`'s census then keeps the stamped goals equal to what the oracle emits)."""
+    every = [*gs.FULL_GATE, *itertools.chain.from_iterable(gs.BED_LANES.values())]
+    assert not [line for line in every if line.startswith("nox") or "hostless" in line]
 
 
 def test_the_full_gate_runs_every_static_lane_before_any_test_suite():
@@ -1656,16 +1646,6 @@ def test_the_full_gate_runs_every_static_lane_before_any_test_suite():
     assert gs.FULL_GATE == gs.STATIC_LANES + gs.TEST_SUITE_LANES
     assert not set(gs.STATIC_LANES) & set(gs.TEST_SUITE_LANES)
     assert gs.FULL_GATE[0] == "make check-python", "the cheapest check is the first lane"
-
-
-def test_the_full_gates_hostless_session_runs_on_the_canary():
-    """A canary bump in noxfile.py renames the session: the oracle must follow it."""
-    canary = _string_constants(ast.parse((CHECKOUT_ROOT / "noxfile.py").read_text()))[
-        "CANARY_PYTHON"
-    ]
-    assert [c for c in gs.FULL_GATE if c.startswith("nox -s tests_hostless-")] == [
-        f"nox -s tests_hostless-{canary}"
-    ]
 
 
 def test_no_special_tree_is_ever_handed_to_quick():
@@ -2071,7 +2051,6 @@ def test_tip_commands_read_the_tree_at_the_given_revision(tmp_path):
         f"make check-python RANGE={base}..HEAD",
         "make docs",
         f"make gate-fresh RANGE={base}..HEAD",
-        "nox -s tests_hostless-3.14",
         "make coverage",
     ]
 

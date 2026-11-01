@@ -106,7 +106,7 @@ class TestGoals:
             ("make check-ts coverage-ts", ["check-ts", "coverage-ts"]),
             ('make quick PATHS="tests/unit/x.py tests/unit/y.py"', ["quick"]),
             ("make check-breaking RANGE=abc..HEAD", ["check-breaking"]),
-            ("nox -s tests_hostless-3.14", ["tests_hostless-3.14"]),
+            (gs.STABILITY_UNIX, ["stability-unix"]),
             ("uv run ruff check tests/unit/x.py", ["ruff"]),
         ],
     )
@@ -634,8 +634,8 @@ class TestInvalidate:
         live = [_live_tree(repo, str(n)) for n in range(3)]
         dead = [c * 40 for c in "abcd"]
         for tree in live + dead:
-            gt.write_stamp(root, tree=tree, key=NOX, base="b", measured={}, checkout="/x")
-        gt.write_red(root, tree="e" * 40, key=NOX, checkout="/y")
+            gt.write_stamp(root, tree=tree, key=LANE, base="b", measured={}, checkout="/x")
+        gt.write_red(root, tree="e" * 40, key=LANE, checkout="/y")
         gated = tree_hash(repo)
         spawns = []
         real = subprocess.run
@@ -645,11 +645,11 @@ class TestInvalidate:
             return real(argv, *args, **kwargs)
 
         monkeypatch.setattr(subprocess, "run", counting)
-        gone = gt.invalidate(repo, root, NOX, tree=gated)
+        gone = gt.invalidate(repo, root, LANE, tree=gated)
         monkeypatch.undo()
         assert [argv[:3] for argv in spawns] == [["git", "cat-file", "--batch-check"]]
-        assert sorted(gone) == sorted(gt.stamp_path(root, t, NOX) for t in [*dead, "e" * 40])
-        assert all(gt.stamp_path(root, t, NOX).exists() for t in live)
+        assert sorted(gone) == sorted(gt.stamp_path(root, t, LANE) for t in [*dead, "e" * 40])
+        assert all(gt.stamp_path(root, t, LANE).exists() for t in live)
 
     def test_nothing_for_the_key_spawns_no_git(self, tmp_path, monkeypatch):
         repo, root = _repo(tmp_path), _store(tmp_path)
@@ -658,7 +658,7 @@ class TestInvalidate:
         )
         spawns = []
         monkeypatch.setattr(subprocess, "run", lambda *a, **k: spawns.append(a))
-        assert gt.invalidate(repo, root, NOX, tree="z" * 40) == []
+        assert gt.invalidate(repo, root, LANE, tree="z" * 40) == []
         assert spawns == []
 
     def test_a_peer_checkouts_stamp_for_another_tree_survives(self, tmp_path):
@@ -709,7 +709,7 @@ class TestInvalidate:
         """The load and the delete hold the store lock, so a peer cannot land in between."""
         repo, root = _repo(tmp_path), _store(tmp_path)
         u_tree = tree_hash(repo)
-        corrupt = gt.stamp_path(root, u_tree, NOX)
+        corrupt = gt.stamp_path(root, u_tree, LANE)
         corrupt.parent.mkdir(parents=True)
         corrupt.write_text("{bad")
         deferred: list = []
@@ -718,17 +718,17 @@ class TestInvalidate:
         def load_then_peer(where):
             store = real(where)
             _peer_write(
-                root, lambda: gt.write_red(root, tree=u_tree, key=NOX, checkout="/peer"), deferred
+                root, lambda: gt.write_red(root, tree=u_tree, key=LANE, checkout="/peer"), deferred
             )
             return store
 
         monkeypatch.setattr(gt, "load_store", load_then_peer)
-        gt.invalidate(repo, root, NOX, tree=u_tree)
+        gt.invalidate(repo, root, LANE, tree=u_tree)
         monkeypatch.undo()
         for write in deferred:
             write()
         assert [r.checkout for r in gt.load_store(root).red] == ["/peer"], "the peer's marker"
-        assert gt.lookup(repo, root, u_tree, NOX).reason.startswith("the lane went red")
+        assert gt.lookup(repo, root, u_tree, LANE).reason.startswith("the lane went red")
 
 
 def _probe(root: Path, mode: int) -> bool:
@@ -816,11 +816,11 @@ class TestRedMarker:
         gt.write_stamp(
             root, tree=s_tree, key="make kmodcov", base="b", measured={SUPPORT: blob}, checkout="/x"
         )
-        gt.write_red(root, tree=s_tree, key=NOX, checkout="/x")
+        gt.write_red(root, tree=s_tree, key=LANE, checkout="/x")
         _git(repo, "commit", "-qam", "measured")
         u_tree = tree_hash(repo)
         assert gt.find_stamp(repo, root, u_tree, "make kmodcov") is not None, "S's witness holds"
-        found = gt.lookup(repo, root, u_tree, NOX)
+        found = gt.lookup(repo, root, u_tree, LANE)
         assert found.stamp is None
         assert found.reason == "no stamp"
 
@@ -828,9 +828,9 @@ class TestRedMarker:
         """Only the lane's next outcome replaces a marker, so an interrupted re-run keeps it."""
         repo, root = _repo(tmp_path), _store(tmp_path)
         u_tree, c_tree = tree_hash(repo), _live_tree(repo, "c")
-        mine = gt.write_red(root, tree=u_tree, key=NOX, checkout="/x")
-        other = gt.write_red(root, tree=c_tree, key=NOX, checkout="/x")
-        assert gt.invalidate(repo, root, NOX, tree=u_tree) == []
+        mine = gt.write_red(root, tree=u_tree, key=LANE, checkout="/x")
+        other = gt.write_red(root, tree=c_tree, key=LANE, checkout="/x")
+        assert gt.invalidate(repo, root, LANE, tree=u_tree) == []
         assert mine.exists()
         assert other.exists()
 
@@ -886,7 +886,7 @@ CHECKER = [
     "3.10",
 ]
 GATE_ARGS = "make -s coverage-gate-args"
-NOX = "nox -s tests_hostless-3.14"
+LANE = gs.STABILITY_UNIX
 SUPPORT = "schemas/support_matrix.json"
 
 
@@ -933,7 +933,7 @@ class TestRunner:
         lines = [
             "make check-breaking RANGE=x..HEAD",
             "make coverage",
-            NOX,
+            LANE,
             "make docs",
             "make gate-fresh RANGE=x..HEAD",
         ]
@@ -944,20 +944,20 @@ class TestRunner:
             " ".join(CHECKER),
             "make coverage",
             " ".join(CHECKER),
-            NOX,
+            LANE,
         ]
         assert runner.calls[1][0] == CHECKER, "the argv as a list, no --overridden"
         for _cmd, _cwd, env in runner.calls:
             assert not {"MAKEFLAGS", "MFLAGS", "PYTEST_ADDOPTS", "BASE"} & set(env)
         root, tree = gt.stamps_root(repo, gt.STORE), tree_hash(repo)
         assert gt.exact_stamp(root, tree, "make coverage") is not None
-        assert gt.exact_stamp(root, tree, NOX) is not None
+        assert gt.exact_stamp(root, tree, LANE) is not None
         assert "\ngate-tip: 2 stamped, 0 already stamped, 3 live at push, 0 red\n" in out
         assert status == 0
 
     def test_an_overridden_variable_refuses_before_any_lane(self, tmp_path, monkeypatch):
         repo, runner = _repo(tmp_path), FakeRunner()
-        status, out, _ = _go(monkeypatch, repo, [NOX], runner, overridden=["BUMP"])
+        status, out, _ = _go(monkeypatch, repo, [LANE], runner, overridden=["BUMP"])
         assert status == 2
         assert runner.calls == []
         assert "came from the command line" in out
@@ -966,40 +966,40 @@ class TestRunner:
         repo, runner = _repo(tmp_path), FakeRunner()
         test_a = repo / "tests" / "unit" / "test_a.py"
         test_a.write_text("def test_a():\n    assert True\n")
-        status, out, _ = _go(monkeypatch, repo, [NOX], runner)
+        status, out, _ = _go(monkeypatch, repo, [LANE], runner)
         assert (status, runner.calls) == (2, [])
         assert "modified or staged" in out
         _git(repo, "checkout", "--", "tests/unit/test_a.py")
         (repo / "tests" / "unit" / "test_new.py").write_text("def test_n():\n    pass\n")
-        status, out, _ = _go(monkeypatch, repo, [NOX], runner)
+        status, out, _ = _go(monkeypatch, repo, [LANE], runner)
         assert (status, runner.calls) == (2, [])
         (repo / "tests" / "unit" / "test_new.py").unlink()
         (repo / "note.md").write_text("scratch\n")
-        status, _out, _ = _go(monkeypatch, repo, [NOX], runner)
+        status, _out, _ = _go(monkeypatch, repo, [LANE], runner)
         assert status == 0
-        assert runner.keys == [NOX]
+        assert runner.keys == [LANE]
 
     def test_dirt_is_rechecked_before_every_lane(self, tmp_path, monkeypatch):
         repo = _repo(tmp_path)
-        lines = [NOX, "make quick-guards"]
+        lines = [LANE, "make quick-guards"]
 
         def untracked():
             (repo / "tests" / "unit" / "test_new.py").write_text("def test_n():\n    pass\n")
 
-        runner = FakeRunner(effects={NOX: untracked})
+        runner = FakeRunner(effects={LANE: untracked})
         status, out, _ = _go(monkeypatch, repo, lines, runner)
         assert status == 1
-        assert runner.keys == [NOX]
+        assert runner.keys == [LANE]
         assert "NOT STAMPED" in out
         (repo / "tests" / "unit" / "test_new.py").unlink()
 
         def tracked():
             (repo / "tests" / "unit" / "test_a.py").write_text("def test_a():\n    assert True\n")
 
-        runner = FakeRunner(effects={NOX: tracked})
+        runner = FakeRunner(effects={LANE: tracked})
         status, out, _ = _go(monkeypatch, repo, lines, runner)
         assert status == 1
-        assert runner.keys == [NOX]
+        assert runner.keys == [LANE]
         assert "NOT STAMPED" in out
 
     def test_the_first_red_lane_stops_the_run_and_leaves_only_a_peers_stamp_and_a_red_marker(
@@ -1011,7 +1011,7 @@ class TestRunner:
         _stamp(repo, "make coverage", tree="a" * 40)  # a and b: trees no object store holds
         _stamp(repo, "make coverage", tree="b" * 40, promoted_from="a" * 40)
         _stamp(repo, "make coverage", tree=p_tree, checkout="/peer")
-        lines = [NOX, "make coverage", "make quick-guards"]
+        lines = [LANE, "make coverage", "make quick-guards"]
         runner = FakeRunner(
             outputs={GATE_ARGS: GATE_LINES}, checker_statuses=[0], statuses={"make coverage": 1}
         )
@@ -1023,18 +1023,18 @@ class TestRunner:
         ], "the pruned trees' stamps go; the peer's stays"
         assert [(r.tree, r.command) for r in store.red] == [(tree_hash(repo), "make coverage")]
         assert "make quick-guards" not in runner.keys
-        assert gt.exact_stamp(root, tree_hash(repo), NOX) is not None
+        assert gt.exact_stamp(root, tree_hash(repo), LANE) is not None
         assert "RED (exit 1" in out
         assert "1 stamped, 0 already stamped, 0 live at push, 1 red\n" in out
 
         def interrupt():
             raise KeyboardInterrupt
 
-        runner = FakeRunner(effects={NOX: interrupt})
-        _oracle(monkeypatch, repo, [NOX])
+        runner = FakeRunner(effects={LANE: interrupt})
+        _oracle(monkeypatch, repo, [LANE])
         with pytest.raises(KeyboardInterrupt):
             gt.run(_options(repo, runner, force=True))
-        assert gt.exact_stamp(root, tree_hash(repo), NOX) is not None, (
+        assert gt.exact_stamp(root, tree_hash(repo), LANE) is not None, (
             "an interrupted forced re-run keeps the tree's earlier green stamp: still true"
         )
 
@@ -1043,13 +1043,13 @@ class TestRunner:
         repo = _repo(tmp_path)
         root = gt.stamps_root(repo, gt.STORE)
         b_tree, c_tree = _live_tree(repo, "b"), _live_tree(repo, "c")
-        _stamp(repo, NOX, tree=b_tree, checkout="/peer")
-        _stamp(repo, NOX, tree=c_tree)  # an earlier landing gated here
-        _stamp(repo, NOX, tree="d" * 40)  # a tree no object store holds
-        runner = FakeRunner(statuses={NOX: 1})
-        status, _out, _ = _go(monkeypatch, repo, [NOX], runner, force=True)
+        _stamp(repo, LANE, tree=b_tree, checkout="/peer")
+        _stamp(repo, LANE, tree=c_tree)  # an earlier landing gated here
+        _stamp(repo, LANE, tree="d" * 40)  # a tree no object store holds
+        runner = FakeRunner(statuses={LANE: 1})
+        status, _out, _ = _go(monkeypatch, repo, [LANE], runner, force=True)
         assert status == 1
-        assert runner.keys == [NOX]
+        assert runner.keys == [LANE]
         assert sorted((s.tree, s.checkout) for s in gt.load_store(root).stamps) == sorted(
             [(b_tree, "/peer"), (c_tree, str(repo))]
         ), "every stamp that can still be true stays; the pruned tree's goes"
@@ -1062,27 +1062,27 @@ class TestRunner:
         root = gt.stamps_root(repo, gt.STORE)
         s_tree = tree_hash(repo)
         b2 = _measure(repo, '{"as_of": "2026-10-20"}\n')
-        _stamp(repo, NOX, tree=s_tree, checkout="/peer", measured={SUPPORT: b2})
+        _stamp(repo, LANE, tree=s_tree, checkout="/peer", measured={SUPPORT: b2})
         _git(repo, "commit", "-qam", "measured")
         u_tree = tree_hash(repo)
-        assert gt.find_stamp(repo, root, u_tree, NOX) is not None, "promotable before the run"
-        runner = FakeRunner(statuses={NOX: 1})
-        status, _out, _ = _go(monkeypatch, repo, [NOX], runner, force=True)
+        assert gt.find_stamp(repo, root, u_tree, LANE) is not None, "promotable before the run"
+        runner = FakeRunner(statuses={LANE: 1})
+        status, _out, _ = _go(monkeypatch, repo, [LANE], runner, force=True)
         assert status == 1
-        assert gt.find_stamp(repo, root, u_tree, NOX) is None
-        peer = gt.exact_stamp(root, s_tree, NOX)
+        assert gt.find_stamp(repo, root, u_tree, LANE) is None
+        peer = gt.exact_stamp(root, s_tree, LANE)
         assert peer is not None
         assert peer.checkout == "/peer"
-        found = gt.lookup(repo, root, u_tree, NOX)
+        found = gt.lookup(repo, root, u_tree, LANE)
         assert found.stamp is None
         assert found.reason.startswith("the lane went red on this tree")
         assert str(repo) in found.reason
 
         runner = FakeRunner()
-        status, _out, _ = _go(monkeypatch, repo, [NOX], runner)
+        status, _out, _ = _go(monkeypatch, repo, [LANE], runner)
         assert status == 0
-        assert runner.keys == [NOX], "a red marker is never evidence: the lane runs again"
-        stamp = gt.exact_stamp(root, u_tree, NOX)
+        assert runner.keys == [LANE], "a red marker is never evidence: the lane runs again"
+        stamp = gt.exact_stamp(root, u_tree, LANE)
         assert stamp is not None
         assert stamp.checkout == str(repo)
         assert gt.load_store(root).red == [], "the green run's stamp replaced the marker"
@@ -1092,20 +1092,20 @@ class TestRunner:
         root = gt.stamps_root(repo, gt.STORE)
         s_tree = tree_hash(repo)
         b2 = _measure(repo, '{"as_of": "2026-10-20"}\n')
-        _stamp(repo, NOX, tree=s_tree, checkout="/peer", measured={SUPPORT: b2})
+        _stamp(repo, LANE, tree=s_tree, checkout="/peer", measured={SUPPORT: b2})
         _git(repo, "commit", "-qam", "measured")
         u_tree = tree_hash(repo)
-        _go(monkeypatch, repo, [NOX], FakeRunner(statuses={NOX: 1}), force=True)
-        assert gt.find_stamp(repo, root, u_tree, NOX) is None
+        _go(monkeypatch, repo, [LANE], FakeRunner(statuses={LANE: 1}), force=True)
+        assert gt.find_stamp(repo, root, u_tree, LANE) is None
 
         def interrupt():
             raise KeyboardInterrupt
 
         with pytest.raises(KeyboardInterrupt):
-            _go(monkeypatch, repo, [NOX], FakeRunner(effects={NOX: interrupt}))
-        assert gt.find_stamp(repo, root, u_tree, NOX) is None, "U never passed"
-        assert gt.lookup(repo, root, u_tree, NOX).reason.startswith("the lane went red")
-        assert gt.exact_stamp(root, s_tree, NOX) is not None, "the peer's stamp stays"
+            _go(monkeypatch, repo, [LANE], FakeRunner(effects={LANE: interrupt}))
+        assert gt.find_stamp(repo, root, u_tree, LANE) is None, "U never passed"
+        assert gt.lookup(repo, root, u_tree, LANE).reason.startswith("the lane went red")
+        assert gt.exact_stamp(root, s_tree, LANE) is not None, "the peer's stamp stays"
 
     def test_a_peers_red_marker_between_lookup_and_promotion_survives(self, tmp_path, monkeypatch):
         """Promotion's lookup and write hold the store lock, so a peer's red cannot land between."""
@@ -1113,7 +1113,7 @@ class TestRunner:
         root = gt.stamps_root(repo, gt.STORE)
         s_tree = tree_hash(repo)
         b2 = _measure(repo, '{"as_of": "2026-10-20"}\n')
-        _stamp(repo, NOX, tree=s_tree, checkout="/peer", measured={SUPPORT: b2})
+        _stamp(repo, LANE, tree=s_tree, checkout="/peer", measured={SUPPORT: b2})
         _git(repo, "commit", "-qam", "measured")
         u_tree = tree_hash(repo)
         deferred: list = []
@@ -1122,26 +1122,26 @@ class TestRunner:
         def find_then_peer(*args):
             found = real(*args)
             _peer_write(
-                root, lambda: gt.write_red(root, tree=u_tree, key=NOX, checkout="/peer"), deferred
+                root, lambda: gt.write_red(root, tree=u_tree, key=LANE, checkout="/peer"), deferred
             )
             return found
 
         monkeypatch.setattr(gt, "find_stamp", find_then_peer)
-        status, out, _ = _go(monkeypatch, repo, [NOX], FakeRunner())
+        status, out, _ = _go(monkeypatch, repo, [LANE], FakeRunner())
         assert (status, "already stamped" in out) == (0, True), "promoted from S"
         for write in deferred:
             write()
-        found = gt.lookup(repo, root, u_tree, NOX)
+        found = gt.lookup(repo, root, u_tree, LANE)
         assert found.stamp is None, "the peer's later red stands"
         assert found.reason.startswith("the lane went red")
-        assert gt.exact_stamp(root, s_tree, NOX) is not None
+        assert gt.exact_stamp(root, s_tree, LANE) is not None
 
     def test_the_lineage_sequence(self, tmp_path, monkeypatch):
         repo = _repo(tmp_path)
         root = gt.stamps_root(repo, gt.STORE)
         s_tree = tree_hash(repo)
         b1 = _measure(repo, '{"as_of": "2026-10-16"}\n')
-        _stamp(repo, NOX)
+        _stamp(repo, LANE)
         _stamp(repo, "make kmodcov", measured={SUPPORT: b1})
         _git(repo, "commit", "-qam", "measured")
         t_sha = _git(repo, "rev-parse", "HEAD").strip()
@@ -1150,10 +1150,10 @@ class TestRunner:
         runner = FakeRunner(
             effects={bed: lambda: _measure(repo, '{"as_of": "2026-10-17"}\n')},
         )
-        status, _out, _ = _go(monkeypatch, repo, [NOX, bed], runner)
+        status, _out, _ = _go(monkeypatch, repo, [LANE, bed], runner)
         assert status == 0
-        assert runner.keys == [bed], "nox is satisfied through the measuring stamp's witness"
-        promoted = gt.exact_stamp(root, t_tree, NOX)
+        assert runner.keys == [bed], "the lane is satisfied through the measuring stamp's witness"
+        promoted = gt.exact_stamp(root, t_tree, LANE)
         assert promoted is not None
         assert promoted.promoted_from == s_tree
         bed_stamp = gt.exact_stamp(root, t_tree, bed)
@@ -1163,25 +1163,25 @@ class TestRunner:
         _git(repo, "commit", "-qam", "measured again")
         u_tree = tree_hash(repo)
 
-        runner = FakeRunner(statuses={NOX: 1})
-        status, _out, _ = _go(monkeypatch, repo, [NOX], runner, force=True)
+        runner = FakeRunner(statuses={LANE: 1})
+        status, _out, _ = _go(monkeypatch, repo, [LANE], runner, force=True)
         assert status == 1
-        assert sorted(s.tree for s in gt.load_store(root).stamps if s.command == NOX) == sorted(
+        assert sorted(s.tree for s in gt.load_store(root).stamps if s.command == LANE) == sorted(
             [s_tree, t_tree]
         ), "S's and T's stamps are still true and stay"
-        assert gt.find_stamp(repo, root, u_tree, NOX) is None, "U went red"
+        assert gt.find_stamp(repo, root, u_tree, LANE) is None, "U went red"
 
         _git(repo, "checkout", "-q", t_sha)
         runner = FakeRunner()
-        status, out, _ = _go(monkeypatch, repo, [NOX], runner)
+        status, out, _ = _go(monkeypatch, repo, [LANE], runner)
         assert status == 0
         assert runner.keys == [], "T's own stamp survived U's red run"
         assert "already stamped" in out
-        t_stamp = gt.exact_stamp(root, t_tree, NOX)
+        t_stamp = gt.exact_stamp(root, t_tree, LANE)
         assert t_stamp is not None
         witnessed = gt.witnesses(gt.load_store(root).stamps, t_tree)
         assert gt.satisfies(repo, t_stamp, u_tree, witnessed), "through the bed's witness"
-        found = gt.lookup(repo, root, u_tree, NOX)
+        found = gt.lookup(repo, root, u_tree, LANE)
         assert found.stamp is None, "U went red: nothing promotes to it until it passes"
         assert found.reason.startswith("the lane went red on this tree")
 
@@ -1344,8 +1344,8 @@ class TestRunner:
             (repo / "tests" / "unit" / "test_a.py").write_text("def test_a():\n    assert True\n")
             _git(repo, "commit", "-qam", "moved under the lane")
 
-        runner = FakeRunner(effects={NOX: commit})
-        status, out, _ = _go(monkeypatch, repo, [NOX], runner)
+        runner = FakeRunner(effects={LANE: commit})
+        status, out, _ = _go(monkeypatch, repo, [LANE], runner)
         assert status == 1
         assert "NOT STAMPED" in out
         assert " 1 red\n" in out
@@ -1354,28 +1354,28 @@ class TestRunner:
         repo = _repo(tmp_path)
         root = gt.stamps_root(repo, gt.STORE)
         b1 = _measure(repo, '{"as_of": "2026-10-16"}\n')
-        _stamp(repo, NOX)
+        _stamp(repo, LANE)
         _stamp(repo, "make kmodcov", measured={SUPPORT: b1})
         _git(repo, "commit", "-qam", "measured")
         with gt.store_lock(root):  # a store written through the runner always has its lock file
             pass
         before = _snapshot(root)
         runner = FakeRunner()
-        lines = [NOX, "make quick-guards"]
+        lines = [LANE, "make quick-guards"]
         status, out, _ = _go(monkeypatch, repo, lines, runner, dry_run=True)
         assert status == 1
         assert runner.calls == []
-        assert f"[1/2] {NOX} … already stamped" in out
+        assert f"[1/2] {LANE} … already stamped" in out
         assert "[2/2] make quick-guards … missing" in out
         assert _snapshot(root) == before
-        status, _out, _ = _go(monkeypatch, repo, [NOX], FakeRunner(), dry_run=True)
+        status, _out, _ = _go(monkeypatch, repo, [LANE], FakeRunner(), dry_run=True)
         assert status == 0
         assert _snapshot(root) == before
 
     def test_an_unknown_goal_refuses_the_whole_run(self, tmp_path, monkeypatch):
         repo, runner = _repo(tmp_path), FakeRunner()
         base = _git(repo, "rev-parse", "HEAD").strip()
-        monkeypatch.setattr(gt, "_tip_list", lambda _r, _b: (base, [NOX, "make frobnicate"]))
+        monkeypatch.setattr(gt, "_tip_list", lambda _r, _b: (base, [LANE, "make frobnicate"]))
         opts = _options(repo, runner)
         assert gt.run(opts) == 2
         assert runner.calls == []
@@ -1384,10 +1384,10 @@ class TestRunner:
         repo = _repo(tmp_path)
         other = tmp_path / "other"
         _git(repo, "worktree", "add", "-q", "--detach", str(other), "HEAD")
-        _stamp(repo, NOX)
+        _stamp(repo, LANE)
         root = gt.stamps_root(other, gt.STORE)
         assert root == gt.stamps_root(repo, gt.STORE)
-        assert gt.find_stamp(other, root, tree_hash(other), NOX) is not None
+        assert gt.find_stamp(other, root, tree_hash(other), LANE) is not None
 
     def test_the_cli_runs_main(self, tmp_path):
         repo = _repo(tmp_path)
@@ -1489,6 +1489,7 @@ class TestCensus:
         assert {"coverage", "conformance-bed", "kmodcov", "dashboard", "quick-guards"} <= seen
         assert "check-breaking" in seen
         assert seen - set(gt.LIVE_GOALS) == set(gt.STAMPED_GOALS)
+        assert not any("hostless" in g for g in gt.STAMPED_GOALS), "the PR's CI owns them (#795)"
 
     @pytest.mark.parametrize(
         "goal", ["conformance-bed", "kmodcov", "dashboard", "quick-guards", "docs-captures-check"]
@@ -1773,10 +1774,10 @@ def _junit_effect(repo: Path, group: str):
 class TestTimings:
     def test_a_run_lane_records_its_timing_and_the_reports_it_wrote(self, tmp_path, monkeypatch):
         repo = _repo(tmp_path)
-        runner = FakeRunner(effects={NOX: _junit_effect(repo, "nox-hostless")})
-        status, _out, _ = _go(monkeypatch, repo, [NOX], runner)
+        runner = FakeRunner(effects={LANE: _junit_effect(repo, "stability-unix")})
+        status, _out, _ = _go(monkeypatch, repo, [LANE], runner)
         assert status == 0
-        stamp = gt.exact_stamp(gt.stamps_root(repo, gt.STORE), tree_hash(repo), NOX)
+        stamp = gt.exact_stamp(gt.stamps_root(repo, gt.STORE), tree_hash(repo), LANE)
         assert stamp is not None
         timing = stamp.timing
         assert timing is not None
@@ -1793,7 +1794,7 @@ class TestTimings:
         assert timing["elapsed_s"] >= 0
         assert timing["interpreter"] == sys.version.split()[0]
         assert timing["nproc"] == gate_stamp_common.nproc()
-        assert timing["junit"] == ["reports/junit/nox-hostless/nox-hostless.xml"]
+        assert timing["junit"] == ["reports/junit/stability-unix/stability-unix.xml"]
         record = json.loads(stamp.path.read_text())
         assert record["timing"] == timing
         assert record["measured"] == {}, "the measured outputs are a different field"
@@ -1803,17 +1804,17 @@ class TestTimings:
         _junit_effect(repo, "quick")()
         old = repo / "reports" / "junit" / "quick" / "quick.xml"
         os.utime(old, (1, 1))
-        runner = FakeRunner(effects={NOX: _junit_effect(repo, "nox-hostless")})
-        _go(monkeypatch, repo, [NOX], runner)
-        stamp = gt.exact_stamp(gt.stamps_root(repo, gt.STORE), tree_hash(repo), NOX)
+        runner = FakeRunner(effects={LANE: _junit_effect(repo, "stability-unix")})
+        _go(monkeypatch, repo, [LANE], runner)
+        stamp = gt.exact_stamp(gt.stamps_root(repo, gt.STORE), tree_hash(repo), LANE)
         assert stamp is not None
         assert stamp.timing is not None
-        assert stamp.timing["junit"] == ["reports/junit/nox-hostless/nox-hostless.xml"]
+        assert stamp.timing["junit"] == ["reports/junit/stability-unix/stability-unix.xml"]
 
     def test_a_stamp_without_timing_is_still_evidence(self, tmp_path):
         repo = _repo(tmp_path)
-        _stamp(repo, NOX)
-        stamp = gt.exact_stamp(gt.stamps_root(repo, gt.STORE), tree_hash(repo), NOX)
+        _stamp(repo, LANE)
+        stamp = gt.exact_stamp(gt.stamps_root(repo, gt.STORE), tree_hash(repo), LANE)
         assert stamp is not None
         assert stamp.timing is None
         record = json.loads(stamp.path.read_text())
@@ -1821,8 +1822,8 @@ class TestTimings:
 
     def test_a_timing_that_is_not_an_object_is_dropped_not_evidence_lost(self, tmp_path):
         repo = _repo(tmp_path)
-        _stamp(repo, NOX)
-        path = gt.stamp_path(gt.stamps_root(repo, gt.STORE), tree_hash(repo), NOX)
+        _stamp(repo, LANE)
+        path = gt.stamp_path(gt.stamps_root(repo, gt.STORE), tree_hash(repo), LANE)
         record = json.loads(path.read_text())
         record["timing"] = "fast"
         path.write_text(json.dumps(record))
@@ -1833,25 +1834,25 @@ class TestTimings:
     def test_a_promoted_stamp_carries_no_timing(self, tmp_path, monkeypatch):
         repo = _repo(tmp_path)
         other = _live_tree(repo, "other")
-        _stamp(repo, NOX, tree=other, measured={SUPPORT: "x" * 40})
+        _stamp(repo, LANE, tree=other, measured={SUPPORT: "x" * 40})
         root = gt.stamps_root(repo, gt.STORE)
         # treat the tip as differing from `other` by a witnessed measured blob only
         monkeypatch.setattr(gt, "satisfies", lambda *_a, **_k: True)
         monkeypatch.setattr(gt, "_pruned", lambda *_a: False)
-        status, out, _ = _go(monkeypatch, repo, [NOX], FakeRunner())
+        status, out, _ = _go(monkeypatch, repo, [LANE], FakeRunner())
         assert status == 0
         assert "already stamped" in out
-        promoted = gt.exact_stamp(root, tree_hash(repo), NOX)
+        promoted = gt.exact_stamp(root, tree_hash(repo), LANE)
         assert promoted is not None
         assert promoted.promoted_from == other
         assert promoted.timing is None
 
     def test_a_red_lane_records_its_timing_on_the_marker(self, tmp_path, monkeypatch):
         repo = _repo(tmp_path)
-        runner = FakeRunner(statuses={NOX: 1})
-        status, _out, _ = _go(monkeypatch, repo, [NOX], runner)
+        runner = FakeRunner(statuses={LANE: 1})
+        status, _out, _ = _go(monkeypatch, repo, [LANE], runner)
         assert status == 1
-        path = gt.stamp_path(gt.stamps_root(repo, gt.STORE), tree_hash(repo), NOX)
+        path = gt.stamp_path(gt.stamps_root(repo, gt.STORE), tree_hash(repo), LANE)
         red = gt.read_entry(path)
         assert isinstance(red, gt.Red)
         assert red.timing is not None
@@ -1873,7 +1874,7 @@ class TestTimings:
     def test_the_run_ends_with_a_timing_table(self, tmp_path, monkeypatch):
         repo = _repo(tmp_path)
         _stamp(repo, "make quick-guards")
-        lines = ["make check-breaking RANGE=x..HEAD", NOX, "make quick-guards", "make quick"]
+        lines = ["make check-breaking RANGE=x..HEAD", LANE, "make quick-guards", "make quick"]
         runner = FakeRunner(statuses={"make quick": 1})
         status, out, _ = _go(monkeypatch, repo, lines, runner)
         assert status == 1
@@ -1882,24 +1883,24 @@ class TestTimings:
         rows = [line for line in table.splitlines() if line.strip()]
         assert rows[0] == "gate-tip: timings (elapsed, outcome, lane)"
         assert re.fullmatch(r"\s+live at push\s+make check-breaking", rows[1])
-        assert re.fullmatch(rf"\s+\d+ s\s+stamped\s+{re.escape(NOX)}", rows[2])
+        assert re.fullmatch(rf"\s+\d+ s\s+stamped\s+{re.escape(LANE)}", rows[2])
         assert re.fullmatch(r"\s+already stamped\s+make quick-guards", rows[3])
         assert re.fullmatch(r"\s+\d+ s\s+red\s+make quick", rows[4])
         assert len(rows) == 5
 
     def test_a_dry_run_lists_outcomes_without_elapsed(self, tmp_path, monkeypatch):
         repo = _repo(tmp_path)
-        _stamp(repo, NOX)
-        status, out, _ = _go(monkeypatch, repo, [NOX, "make quick"], FakeRunner(), dry_run=True)
+        _stamp(repo, LANE)
+        status, out, _ = _go(monkeypatch, repo, [LANE, "make quick"], FakeRunner(), dry_run=True)
         assert status == 1
-        assert re.search(r"\n\s+already stamped\s+nox -s tests_hostless-3\.14\n", out)
+        assert re.search(r"\n\s+already stamped\s+" + re.escape(LANE) + r"\n", out)
         assert re.search(r"\n\s+missing\s+make quick\n", out)
         assert " s " not in out.split("gate-tip: timings")[1]
 
     def test_timings_prints_the_stored_table_for_a_tree(self, tmp_path, monkeypatch):
         repo = _repo(tmp_path)
         runner = FakeRunner(statuses={"make quick": 1})
-        _go(monkeypatch, repo, [NOX, "make quick"], runner)
+        _go(monkeypatch, repo, [LANE, "make quick"], runner)
         _stamp(repo, "make quick-guards")  # a stamp with no timing (an older record's)
         lines = gt.timings(repo, gt.stamps_root(repo, gt.STORE), tree_hash(repo))
         assert lines[0] == (
@@ -1907,7 +1908,7 @@ class TestTimings:
             "(3 lane(s); elapsed, outcome, written at, lane)"
         )
         body = "\n".join(lines[1:])
-        assert re.search(rf"^\s+\d+ s\s+stamped\s+\S+\s+{re.escape(NOX)}$", body, re.MULTILINE)
+        assert re.search(rf"^\s+\d+ s\s+stamped\s+\S+\s+{re.escape(LANE)}$", body, re.MULTILINE)
         assert re.search(r"^\s+\d+ s\s+red\s+\S+\s+make quick$", body, re.MULTILINE)
         assert re.search(r"^\s+stamped\s+\S+\s+make quick-guards$", body, re.MULTILINE)
         monkeypatch.chdir(repo)
@@ -1930,17 +1931,20 @@ class TestTimings:
         repo = _repo(tmp_path)
         quick = "make quick"
         runner = FakeRunner(
-            effects={NOX: _junit_effect(repo, "nox-hostless"), quick: _junit_effect(repo, "quick")}
+            effects={
+                LANE: _junit_effect(repo, "stability-unix"),
+                quick: _junit_effect(repo, "quick"),
+            }
         )
-        status, _out, _ = _go(monkeypatch, repo, [NOX, quick], runner)
+        status, _out, _ = _go(monkeypatch, repo, [LANE, quick], runner)
         assert status == 0
         root, tree = gt.stamps_root(repo, gt.STORE), tree_hash(repo)
-        first, second = gt.exact_stamp(root, tree, NOX), gt.exact_stamp(root, tree, quick)
+        first, second = gt.exact_stamp(root, tree, LANE), gt.exact_stamp(root, tree, quick)
         assert first is not None
         assert first.timing is not None
         assert second is not None
         assert second.timing is not None
-        assert first.timing["junit"] == ["reports/junit/nox-hostless/nox-hostless.xml"]
+        assert first.timing["junit"] == ["reports/junit/stability-unix/stability-unix.xml"]
         assert second.timing["junit"] == ["reports/junit/quick/quick.xml"]
 
     def test_an_untouched_report_is_never_the_lanes_whatever_its_mtime(self, tmp_path, monkeypatch):
@@ -1950,32 +1954,32 @@ class TestTimings:
         stale = repo / "reports" / "junit" / "quick" / "quick.xml"
         future = time.time() + 3600
         os.utime(stale, (future, future))
-        runner = FakeRunner(effects={NOX: _junit_effect(repo, "nox-hostless")})
-        _go(monkeypatch, repo, [NOX], runner)
-        stamp = gt.exact_stamp(gt.stamps_root(repo, gt.STORE), tree_hash(repo), NOX)
+        runner = FakeRunner(effects={LANE: _junit_effect(repo, "stability-unix")})
+        _go(monkeypatch, repo, [LANE], runner)
+        stamp = gt.exact_stamp(gt.stamps_root(repo, gt.STORE), tree_hash(repo), LANE)
         assert stamp is not None
         assert stamp.timing is not None
-        assert stamp.timing["junit"] == ["reports/junit/nox-hostless/nox-hostless.xml"]
+        assert stamp.timing["junit"] == ["reports/junit/stability-unix/stability-unix.xml"]
 
     def test_a_report_the_lane_rewrites_in_place_is_the_lanes(self, tmp_path, monkeypatch):
         repo = _repo(tmp_path)
-        _junit_effect(repo, "nox-hostless")()
-        report = repo / "reports" / "junit" / "nox-hostless" / "nox-hostless.xml"
+        _junit_effect(repo, "stability-unix")()
+        report = repo / "reports" / "junit" / "stability-unix" / "stability-unix.xml"
         os.utime(report, (1, 1))
 
         def rewrite():
             report.write_text(report.read_text() + "<!-- rerun -->\n")
 
-        _go(monkeypatch, repo, [NOX], FakeRunner(effects={NOX: rewrite}))
-        stamp = gt.exact_stamp(gt.stamps_root(repo, gt.STORE), tree_hash(repo), NOX)
+        _go(monkeypatch, repo, [LANE], FakeRunner(effects={LANE: rewrite}))
+        stamp = gt.exact_stamp(gt.stamps_root(repo, gt.STORE), tree_hash(repo), LANE)
         assert stamp is not None
         assert stamp.timing is not None
-        assert stamp.timing["junit"] == ["reports/junit/nox-hostless/nox-hostless.xml"]
+        assert stamp.timing["junit"] == ["reports/junit/stability-unix/stability-unix.xml"]
 
     def test_a_failure_while_measuring_never_touches_the_verdict(self, tmp_path, monkeypatch):
         """A red lane under --force must leave its marker even when the timing raises."""
         repo = _repo(tmp_path)
-        _stamp(repo, NOX)  # the earlier green stamp a forced re-run keeps until the lane ends
+        _stamp(repo, LANE)  # the earlier green stamp a forced re-run keeps until the lane ends
         calls = {"n": 0}
 
         def failing(_repo):
@@ -1985,16 +1989,16 @@ class TestTimings:
             return {}
 
         monkeypatch.setattr(gate_stamp_common, "junit_snapshot", failing)
-        status, out, _ = _go(monkeypatch, repo, [NOX], FakeRunner(statuses={NOX: 1}), force=True)
+        status, out, _ = _go(monkeypatch, repo, [LANE], FakeRunner(statuses={LANE: 1}), force=True)
         assert status == 1
         assert "timing not recorded" in out
-        entry = gt.read_entry(gt.stamp_path(gt.stamps_root(repo, gt.STORE), tree_hash(repo), NOX))
+        entry = gt.read_entry(gt.stamp_path(gt.stamps_root(repo, gt.STORE), tree_hash(repo), LANE))
         assert isinstance(entry, gt.Red)
         assert entry.timing is None
         calls["n"] = 0
-        status, out, _ = _go(monkeypatch, repo, [NOX], FakeRunner(), force=True)
+        status, out, _ = _go(monkeypatch, repo, [LANE], FakeRunner(), force=True)
         assert status == 0
-        stamp = gt.exact_stamp(gt.stamps_root(repo, gt.STORE), tree_hash(repo), NOX)
+        stamp = gt.exact_stamp(gt.stamps_root(repo, gt.STORE), tree_hash(repo), LANE)
         assert stamp is not None
         assert stamp.timing is None, "the green lane is stamped, without a timing"
 
@@ -2005,9 +2009,9 @@ class TestTimings:
         monkeypatch.setattr(
             gate_stamp_common, "junit_snapshot", lambda _repo: (_ for _ in ()).throw(OSError())
         )
-        status, _out, _ = _go(monkeypatch, repo, [NOX], FakeRunner())
+        status, _out, _ = _go(monkeypatch, repo, [LANE], FakeRunner())
         assert status == 0
-        stamp = gt.exact_stamp(gt.stamps_root(repo, gt.STORE), tree_hash(repo), NOX)
+        stamp = gt.exact_stamp(gt.stamps_root(repo, gt.STORE), tree_hash(repo), LANE)
         assert stamp is not None
         assert stamp.timing is not None
         assert stamp.timing["junit"] == []
@@ -2038,11 +2042,13 @@ class TestTimings:
     ):
         repo = _repo(tmp_path)
         runner = FakeRunner(
-            effects={NOX: lambda: (repo / "tests" / "unit" / "test_a.py").write_text("# changed\n")}
+            effects={
+                LANE: lambda: (repo / "tests" / "unit" / "test_a.py").write_text("# changed\n")
+            }
         )
-        status, out, _ = _go(monkeypatch, repo, [NOX], runner)
+        status, out, _ = _go(monkeypatch, repo, [LANE], runner)
         assert status == 1
-        assert re.search(rf"\n\s+\d+ s\s+not stamped\s+{re.escape(NOX)}\n", out)
+        assert re.search(rf"\n\s+\d+ s\s+not stamped\s+{re.escape(LANE)}\n", out)
 
     def test_a_dirty_tree_before_the_lane_gets_a_not_stamped_row_without_elapsed(
         self, tmp_path, monkeypatch
@@ -2057,7 +2063,7 @@ class TestTimings:
             return real(ctx, label, key)
 
         monkeypatch.setattr(gt, "_already_stamped", peer_then_lookup)
-        status, out, _ = _go(monkeypatch, repo, [NOX, "make quick"], FakeRunner())
+        status, out, _ = _go(monkeypatch, repo, [LANE, "make quick"], FakeRunner())
         assert status == 1
         assert "dirty before the lane" in out
         assert re.search(r"\n\s+not stamped\s+make quick\n", out)
@@ -2068,25 +2074,25 @@ class TestTimings:
         monkeypatch.setattr(gt, "utc_now", lambda: "2026-01-01T00:00:09+00:00")
         _stamp(repo, "make quick")
         monkeypatch.setattr(gt, "utc_now", lambda: "2026-01-01T00:00:01+00:00")
-        _stamp(repo, NOX)
+        _stamp(repo, LANE)
         lines = gt.timings(repo, gt.stamps_root(repo, gt.STORE), tree_hash(repo))
-        assert lines[1].endswith(NOX)
+        assert lines[1].endswith(LANE)
         assert lines[2].endswith("make quick")
         assert "2026-01-01T00:00:01+00:00" in lines[1]
 
     def test_timings_takes_a_commit_id_as_a_rev(self, tmp_path, capsys):
         repo = _repo(tmp_path)
-        _stamp(repo, NOX)
+        _stamp(repo, LANE)
         commit = _git(repo, "rev-parse", "HEAD").strip()
         assert gt.main(["--timings", commit, "--repo", str(repo)]) == 0
         out = capsys.readouterr().out
         assert f"timings for tree {tree_hash(repo)[:12]} (1 lane(s);" in out
-        assert out.rstrip().endswith(NOX)
+        assert out.rstrip().endswith(LANE)
 
     def test_a_malformed_timing_is_dropped_and_the_table_still_prints(self, tmp_path):
         repo = _repo(tmp_path)
-        _stamp(repo, NOX)
-        path = gt.stamp_path(gt.stamps_root(repo, gt.STORE), tree_hash(repo), NOX)
+        _stamp(repo, LANE)
+        path = gt.stamp_path(gt.stamps_root(repo, gt.STORE), tree_hash(repo), LANE)
         record = json.loads(path.read_text())
         for bad in ({}, {"elapsed_s": "x"}, {"elapsed_s": 1.5}, ["fast"]):
             path.write_text(json.dumps({**record, "timing": bad}))
@@ -2094,7 +2100,7 @@ class TestTimings:
             assert stamp is not None, bad
             assert stamp.timing is None, bad
             lines = gt.timings(repo, gt.stamps_root(repo, gt.STORE), tree_hash(repo))
-            assert re.fullmatch(r"\s+stamped\s+\S+\s+" + re.escape(NOX), lines[1]), lines
+            assert re.fullmatch(r"\s+stamped\s+\S+\s+" + re.escape(LANE), lines[1]), lines
 
     def test_the_timings_switch_excludes_the_other_modes(self, tmp_path, capsys):
         repo = _repo(tmp_path)
@@ -2211,16 +2217,16 @@ class TestInterrupt:
             return real_wait(self, timeout)
 
         monkeypatch.setattr(subprocess.Popen, "wait", wait_then_interrupt)
-        _oracle(monkeypatch, repo, [NOX])
+        _oracle(monkeypatch, repo, [LANE])
 
         def runner(cmd, cwd, env):
             # The oracle's known lane, run as the spawner through the real runner.
-            return gt._default_runner(lane if cmd == NOX else cmd, cwd, env)
+            return gt._default_runner(lane if cmd == LANE else cmd, cwd, env)
 
         opts = _options(repo, runner, lab=Path("lab.json"))
         assert gt._run_interruptible(opts) == gt.EXIT_INTERRUPTED
         assert order == [True], "the grandchild was gone when the reap ran"
-        assert gt.exact_stamp(gt.stamps_root(repo, gt.STORE), tree_hash(repo), NOX) is None
+        assert gt.exact_stamp(gt.stamps_root(repo, gt.STORE), tree_hash(repo), LANE) is None
 
     def test_reap_and_release_without_a_lab_only_points_at_the_hand_reap(self, monkeypatch):
         out = io.StringIO()
