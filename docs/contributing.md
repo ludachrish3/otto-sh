@@ -1223,6 +1223,19 @@ the run stays green while doing the wrong thing. That is issue #192: nightly's
 instead, and the same bug had quietly disabled the chaos seed's reproduce path
 and `make stability-tunnel CYCLES=N`.
 
+#### Starting a pytest session from a test
+
+A pytest session a test starts must not take its temp files from the shared
+`/tmp/pytest-of-<user>`: at session finish it can delete the temp tree of a
+whole pass that just finished, inside the test's budget. The nightly 3.10 leg
+timed out three nights running on that (#814); the root conftest's
+`_hermetic_child_temproot` fixture explains the mechanism. That fixture points
+`PYTEST_DEBUG_TEMPROOT` at a directory of the test process's own, so start the
+child with an env built from `os.environ`, or with `otto_subprocess_env` or
+`coverage_subprocess_env` from `tests/e2e/_otto_subprocess.py`, which pass the
+variable through. A child given `--basetemp`, as every `pytester` session is,
+needs neither.
+
 ### Patching lazily exported names
 
 Every otto package exports its public names lazily (PEP 562):
